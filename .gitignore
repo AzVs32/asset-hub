@@ -1,0 +1,59 @@
+# Rust build output
+/target/
+
+# Rust compiler and profiling artifacts
+**/*.rs.bk
+*.pdb
+*.profraw
+*.profdata
+
+# Cargo local configuration
+.cargo/
+
+# Local runtime data
+/data/
+
+# Environment and local secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# RustRover / JetBrains IDEs
+.idea/
+*.iml
+*.iws
+
+# VS Code
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+# AI assistant local state
+.codex
+.cline
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
