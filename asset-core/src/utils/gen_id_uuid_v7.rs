@@ -1,16 +1,16 @@
-/// 生成基于 `uuid::Uuid` 的强类型 ID。
+/// 生成基于 UUID v7 的强类型 ID。
 ///
-/// 防止不同业务类型的 ID 被混用。
+/// 防止不同业务类型的 ID 被混用，同时保留 UUID v7 的时间有序特性。
 #[macro_export]
-macro_rules! gen_id_uuid {
+macro_rules! gen_id_uuid_v7 {
     ($name:ident) => {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
         pub struct $name(pub uuid::Uuid);
 
         impl $name {
-            /// 基于 UUID v4 算法创建一个随机 ID。
+            /// 基于 UUID v7 算法创建一个时间有序 ID。
             pub fn new() -> Self {
-                Self(uuid::Uuid::new_v4())
+                Self(uuid::Uuid::now_v7())
             }
 
             /// 从现有的 `uuid::Uuid` 实例构造。
@@ -24,7 +24,7 @@ macro_rules! gen_id_uuid {
             }
         }
 
-        /// 默认实现：通过 `Self::new()` 生成一个随机的唯一 ID。
+        /// 默认实现：通过 `Self::new()` 生成一个唯一 ID。
         impl Default for $name {
             fn default() -> Self {
                 Self::new()

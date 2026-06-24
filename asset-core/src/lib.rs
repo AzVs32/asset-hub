@@ -1,6 +1,7 @@
-mod error;
-mod domain;
-mod utils;
-mod port;
+pub mod domain;
+pub mod error;
+pub mod port;
 
-pub use error::CoreError;
+mod utils;
+
+pub use error::{CoreError, ResourceError};

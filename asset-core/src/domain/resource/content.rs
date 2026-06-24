@@ -1,0 +1,271 @@
+use super::normalize_required_text;
+use crate::error::ResourceError;
+use serde::{Deserialize, Serialize};
+
+/// 内容描述类文本允许的最大字符数。
+const MAX_CONTENT_TEXT_LEN: usize = 255;
+/// 存储键允许的最大字符数。
+const MAX_STORAGE_KEY_LEN: usize = 1024;
+
+// ==================================================
+// 资源内容
+// ==================================================
+
+/// 资源内容引用。
+///
+/// 内容本体由外部存储系统管理，本结构只保存定位和校验所需的信息。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceContent {
+    /// 内容在存储系统中的定位键。
+    key: StorageKey,
+    /// 内容字节大小。
+    size: u64,
+    /// 内容 MIME 类型。
+    mime_type: Option<String>,
+    /// 上传时的原始文件名。
+    original_filename: Option<String>,
+    /// 内容校验和集合。
+    checksum: Vec<Checksum>,
+}
+
+impl ResourceContent {
+    /// 创建内容引用构建器。
+    pub fn builder(key: StorageKey, size: u64) -> ResourceContentBuilder {
+        ResourceContentBuilder::new(key, size)
+    }
+
+    /// 返回内容存储键。
+    pub fn key(&self) -> &StorageKey {
+        &self.key
+    }
+
+    /// 返回内容字节大小。
+    pub fn size(&self) -> u64 {
+        self.size
+    }
+
+    /// 返回内容 MIME 类型。
+    pub fn mime_type(&self) -> Option<&str> {
+        self.mime_type.as_deref()
+    }
+
+    /// 返回上传时的原始文件名。
+    pub fn original_filename(&self) -> Option<&str> {
+        self.original_filename.as_deref()
+    }
+
+    /// 返回内容校验和列表。
+    pub fn checksums(&self) -> &[Checksum] {
+        &self.checksum
+    }
+
+    /// 追加一个内容校验和。
+    pub fn add_checksum(&mut self, checksum: Checksum) {
+        self.checksum.push(checksum);
+    }
+}
+
+/// 资源内容引用构建器。
+#[derive(Debug, Clone)]
+pub struct ResourceContentBuilder {
+    /// 内容在存储系统中的定位键。
+    key: StorageKey,
+    /// 内容字节大小。
+    size: u64,
+    /// 内容 MIME 类型。
+    mime_type: Option<String>,
+    /// 上传时的原始文件名。
+    original_filename: Option<String>,
+    /// 内容校验和集合。
+    checksums: Vec<Checksum>,
+}
+
+impl ResourceContentBuilder {
+    /// 创建资源内容引用构建器。
+    pub fn new(key: StorageKey, size: u64) -> Self {
+        Self {
+            key,
+            size,
+            mime_type: None,
+            original_filename: None,
+            checksums: Vec::new(),
+        }
+    }
+
+    /// 设置内容 MIME 类型。
+    pub fn with_mime_type(mut self, mime_type: impl Into<String>) -> Self {
+        self.mime_type = Some(mime_type.into());
+        self
+    }
+
+    /// 设置上传时的原始文件名。
+    pub fn with_original_filename(mut self, original_filename: impl Into<String>) -> Self {
+        self.original_filename = Some(original_filename.into());
+        self
+    }
+
+    /// 追加一个内容校验和。
+    pub fn with_checksum(mut self, checksum: Checksum) -> Self {
+        self.checksums.push(checksum);
+        self
+    }
+
+    /// 批量追加内容校验和。
+    pub fn with_checksums(mut self, checksums: impl IntoIterator<Item = Checksum>) -> Self {
+        self.checksums.extend(checksums);
+        self
+    }
+
+    /// 完成构建并执行领域校验。
+    pub fn build(self) -> Result<ResourceContent, ResourceError> {
+        let mime_type = self
+            .mime_type
+            .map(|mime_type| {
+                normalize_required_text("content.mime_type", &mime_type, MAX_CONTENT_TEXT_LEN)
+            })
+            .transpose()?;
+
+        let original_filename = self
+            .original_filename
+            .map(|original_filename| {
+                normalize_required_text(
+                    "content.original_filename",
+                    &original_filename,
+                    MAX_CONTENT_TEXT_LEN,
+                )
+            })
+            .transpose()?;
+
+        Ok(ResourceContent {
+            key: self.key,
+            size: self.size,
+            mime_type,
+            original_filename,
+            checksum: self.checksums,
+        })
+    }
+}
+
+/// 存储键值对象。
+///
+/// 存储键是面向存储适配器的相对路径或对象键，不允许使用绝对路径和父级路径片段。
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct StorageKey(String);
+
+impl StorageKey {
+    /// 创建并校验存储键。
+    pub fn new(value: impl Into<String>) -> Result<Self, ResourceError> {
+        let value = normalize_required_text("storage.key", &value.into(), MAX_STORAGE_KEY_LEN)?;
+
+        if value.starts_with('/') {
+            return Err(ResourceError::InvalidFormat {
+                field: "storage.key",
+                reason: "absolute paths are not allowed",
+            });
+        }
+
+        if value.split('/').any(|part| part == "..") {
+            return Err(ResourceError::InvalidFormat {
+                field: "storage.key",
+                reason: "parent path segments are not allowed",
+            });
+        }
+
+        Ok(Self(value))
+    }
+
+    /// 返回存储键原始字符串。
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for StorageKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::str::FromStr for StorageKey {
+    type Err = ResourceError;
+
+    /// 从字符串解析存储键。
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::new(s)
+    }
+}
+
+impl TryFrom<String> for StorageKey {
+    type Error = ResourceError;
+
+    /// 从 `String` 创建并校验存储键。
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl TryFrom<&str> for StorageKey {
+    type Error = ResourceError;
+
+    /// 从字符串切片创建并校验存储键。
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+/// 内容校验和值对象。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Checksum {
+    /// 校验和算法类型。
+    kind: ChecksumKind,
+    /// 校验和值。
+    value: String,
+}
+
+impl Checksum {
+    /// 创建并校验指定类型的校验和。
+    pub fn new(kind: ChecksumKind, value: impl Into<String>) -> Result<Self, ResourceError> {
+        let value = value.into().trim().to_string();
+
+        match kind {
+            ChecksumKind::Sha256 => validate_sha256(&value)?,
+        }
+
+        Ok(Self { kind, value })
+    }
+
+    /// 创建 SHA-256 校验和。
+    pub fn sha256(value: impl Into<String>) -> Result<Self, ResourceError> {
+        Self::new(ChecksumKind::Sha256, value)
+    }
+
+    /// 返回校验和算法类型。
+    pub fn kind(&self) -> ChecksumKind {
+        self.kind
+    }
+
+    /// 返回校验和值。
+    pub fn value(&self) -> &str {
+        &self.value
+    }
+}
+
+/// 内容校验和算法类型。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ChecksumKind {
+    /// SHA-256 校验和。
+    Sha256,
+}
+
+/// 校验 SHA-256 字符串格式。
+fn validate_sha256(value: &str) -> Result<(), ResourceError> {
+    if value.len() != 64 || !value.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err(ResourceError::InvalidFormat {
+            field: "checksum.sha256",
+            reason: "expected 64 hexadecimal characters",
+        });
+    }
+
+    Ok(())
+}
