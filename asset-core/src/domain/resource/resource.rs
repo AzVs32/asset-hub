@@ -40,10 +40,57 @@ pub struct Resource {
     deleted_at: Option<DateTime<Utc>>,
 }
 
+/// 资源聚合快照。
+///
+/// 该结构用于持久化适配器从数据库记录还原 `Resource` 聚合，不作为普通业务创建入口。
+/// 普通业务创建应继续使用 `Resource::builder()`，以便由领域模型分配新 ID 和时间戳。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ResourceSnapshot {
+    /// 资源唯一标识。
+    pub id: ResourceId,
+    /// 资源展示名。
+    pub name: String,
+    /// 资源类型。
+    pub kind: ResourceKind,
+    /// 资源生命周期状态。
+    pub status: ResourceStatus,
+    /// 资源动态元数据。
+    pub metadata: ResourceMetadata,
+    /// 资源内容引用。
+    pub content: Option<ResourceContent>,
+    /// 资源创建时间。
+    pub created_at: DateTime<Utc>,
+    /// 资源最后更新时间。
+    pub updated_at: DateTime<Utc>,
+    /// 软删除时间。
+    pub deleted_at: Option<DateTime<Utc>>,
+}
+
 impl Resource {
     /// 创建资源构建器。
     pub fn builder(name: impl Into<String>) -> ResourceBuilder {
         ResourceBuilder::new(name)
+    }
+
+    /// 从持久化快照还原资源聚合。
+    ///
+    /// 该方法会保留快照中的 ID、时间戳和软删除状态，但仍会重新执行资源名称和类型校验。
+    /// Repository 实现应通过它还原数据库记录，避免绕过领域约束直接构造 `Resource`。
+    pub fn rehydrate(snapshot: ResourceSnapshot) -> Result<Self, ResourceError> {
+        let name = normalize_resource_name(snapshot.name)?;
+        snapshot.kind.validate()?;
+
+        Ok(Self {
+            id: snapshot.id,
+            name,
+            kind: snapshot.kind,
+            status: snapshot.status,
+            metadata: snapshot.metadata,
+            content: snapshot.content,
+            created_at: snapshot.created_at,
+            updated_at: snapshot.updated_at,
+            deleted_at: snapshot.deleted_at,
+        })
     }
 
     /// 返回资源唯一标识。

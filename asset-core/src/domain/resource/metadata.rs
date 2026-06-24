@@ -15,7 +15,6 @@ const MAX_METADATA_KEY_LEN: usize = 255;
 pub struct ResourceMetadata(Value);
 
 impl ResourceMetadata {
-
     /// 使用任意 JSON 值创建元数据。
     pub fn new(value: Value) -> Self {
         Self(value)

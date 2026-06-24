@@ -39,7 +39,7 @@ impl ResourceKind {
     }
 
     /// 判断当前资源类型是否等于指定类型值。
-    /// 
+    ///
     /// 例如
     /// `kind.is(ResourceKind::UNKNOWN)` 或 `kind.is("asset:image")`。
     pub fn is(&self, kind: impl AsRef<str>) -> bool {

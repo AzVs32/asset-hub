@@ -7,7 +7,7 @@ mod status;
 pub use content::{Checksum, ChecksumKind, ResourceContent, ResourceContentBuilder, StorageKey};
 pub use kind::ResourceKind;
 pub use metadata::ResourceMetadata;
-pub use resource::{Resource, ResourceBuilder, ResourceId};
+pub use resource::{Resource, ResourceBuilder, ResourceId, ResourceSnapshot};
 pub use status::ResourceStatus;
 
 use crate::error::ResourceError;
@@ -88,6 +88,36 @@ mod tests {
 
         assert!(resource.kind().is(ResourceKind::UNKNOWN));
         assert_eq!(resource.kind().as_str(), ResourceKind::UNKNOWN);
+    }
+
+    #[test]
+    fn resource_can_be_rehydrated_from_snapshot() {
+        let id = ResourceId::new();
+        let created_at = chrono::Utc::now();
+        let updated_at = created_at + chrono::Duration::seconds(5);
+        let deleted_at = Some(updated_at + chrono::Duration::seconds(5));
+
+        let resource = Resource::rehydrate(ResourceSnapshot {
+            id,
+            name: " restored image ".to_string(),
+            kind: ResourceKind::from("asset:image"),
+            status: ResourceStatus::Archived,
+            metadata: ResourceMetadata::default(),
+            content: None,
+            created_at,
+            updated_at,
+            deleted_at,
+        })
+        .unwrap();
+
+        assert_eq!(resource.id(), id);
+        assert_eq!(resource.name(), "restored image");
+        assert!(resource.kind().is("asset:image"));
+        assert_eq!(resource.status(), ResourceStatus::Archived);
+        assert_eq!(resource.created_at(), created_at);
+        assert_eq!(resource.updated_at(), updated_at);
+        assert_eq!(resource.deleted_at(), deleted_at);
+        assert!(resource.is_deleted());
     }
 
     #[test]
