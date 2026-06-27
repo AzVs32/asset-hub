@@ -18,6 +18,7 @@
 .env.*
 !.env.example
 !.env.*.example
+config.toml
 
 # RustRover / JetBrains IDEs
 .idea/

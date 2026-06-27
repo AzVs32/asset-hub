@@ -6,6 +6,9 @@ mod router;
 mod settings;
 mod state;
 
+#[cfg(test)]
+mod tests;
+
 use asset_apps::AssetRuntime;
 use settings::HttpSettings;
 
@@ -16,6 +19,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = tokio::net::TcpListener::bind(settings.addr()).await?;
 
     println!("asset-http listening on http://{}", settings.addr());
+    println!(
+        "asset-http config file: {}",
+        settings
+            .config_path()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| settings.default_config_file().to_string())
+    );
     println!("asset-http config: {:?}", runtime.config());
 
     axum::serve(listener, router::build(runtime.resource_service())).await?;

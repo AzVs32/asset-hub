@@ -1,0 +1,23 @@
+# Asset Hub configuration example.
+#
+# Runtime lookup order:
+# - If ASSET_HUB_CONFIG is set, asset-http reads that file.
+# - Otherwise asset-http tries ./config.toml.
+# - If ./config.toml does not exist, built-in defaults are used.
+#
+# HTTP entrypoint settings are currently environment variables, not TOML:
+# - ASSET_HTTP_ADDR=127.0.0.1:8080
+# - ASSET_HUB_CONFIG=config.toml
+
+[database]
+# SQLite database file path.
+# Relative paths are resolved from the current working directory.
+sqlite_path = "data/asset-hub.sqlite"
+
+# SQLite connection pool size.
+max_connections = 5
+
+[blob]
+# OpenDAL Fs backend root directory.
+# Relative paths are resolved from the current working directory.
+fs_root = "data/blob"

@@ -4,6 +4,8 @@ use asset_core::domain::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+#[allow(unused_imports)]
+use serde_json::json;
 use std::collections::BTreeMap;
 use utoipa::{IntoParams, ToSchema};
 
@@ -15,6 +17,18 @@ pub(crate) struct BinaryContent(Vec<u8>);
 
 /// 创建纯元数据资源请求。
 #[derive(Debug, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "name": "resources_not_blob",
+    "kind": "asset:document",
+    "metadata": {
+        "description": "A metadata-only resource",
+        "tags": ["demo", "document"],
+        "attributes": {
+            "A": "a",
+            "B": "b"
+        }
+    }
+}))]
 pub(crate) struct CreateResourceRequest {
     /// 资源展示名。
     pub(crate) name: String,
@@ -28,6 +42,21 @@ pub(crate) struct CreateResourceRequest {
 
 /// 上传内容并创建资源请求。
 #[derive(Debug, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "name": "hello.txt",
+    "kind": "asset:text",
+    "storage_key": "examples/hello.txt",
+    "data_base64": "aGVsbG8sIGFzc2V0LWh1YiE=",
+    "metadata": {
+        "description": "A small text file",
+        "tags": ["demo", "text"],
+        "attributes": {
+            "source": "swagger"
+        }
+    },
+    "mime_type": "text/plain",
+    "original_filename": "hello.txt"
+}))]
 pub(crate) struct UploadResourceContentRequest {
     /// 资源展示名。
     pub(crate) name: String,
@@ -97,6 +126,14 @@ impl HealthResponse {
 /// 服务端只接受该结构作为元数据入口。暂时没有被提升为一等字段的业务属性应放入
 /// `attributes`，不要直接把任意 JSON 当作整段 metadata 传入。
 #[derive(Debug, Clone, Default, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "description": "Human readable resource description",
+    "tags": ["demo", "asset"],
+    "attributes": {
+        "A": "a",
+        "B": "b"
+    }
+}))]
 pub(crate) struct ResourceMetadataRequest {
     /// 资源描述。
     pub(crate) description: Option<String>,
@@ -129,6 +166,15 @@ impl ResourceMetadataRequest {
 
 /// 资源元数据响应。
 #[derive(Debug, Serialize, ToSchema)]
+#[schema(example = json!({
+    "schema_version": 1,
+    "description": "Human readable resource description",
+    "tags": ["demo", "asset"],
+    "attributes": {
+        "A": "a",
+        "B": "b"
+    }
+}))]
 pub(crate) struct ResourceMetadataResponse {
     /// 元数据结构版本，由服务端维护。
     pub(crate) schema_version: u32,

@@ -1,7 +1,7 @@
 use asset_core::CoreError;
 use asset_core::service::ResourceService;
 use asset_infra::AssetInfrastructure;
-use asset_infra::config::AssetInfraConfig;
+use asset_infra::config::{AssetInfraConfig, DEFAULT_CONFIG_FILE};
 use std::path::Path;
 
 /// 应用运行时。
@@ -19,6 +19,13 @@ impl AssetRuntime {
         Self::from_config(AssetInfraConfig::default()).await
     }
 
+    /// 使用默认配置文件创建应用运行时。
+    ///
+    /// 当前默认配置文件名是 `config.toml`。文件不存在时使用默认配置。
+    pub async fn from_default_config_file() -> Result<Self, CoreError> {
+        Self::from_config(AssetInfraConfig::from_default_config_file()?).await
+    }
+
     /// 使用显式配置创建应用运行时。
     pub async fn from_config(config: AssetInfraConfig) -> Result<Self, CoreError> {
         let infrastructure = AssetInfrastructure::new(config).await?;
@@ -28,14 +35,20 @@ impl AssetRuntime {
 
     /// 使用可选配置文件创建应用运行时。
     ///
-    /// `path` 为 `None` 时使用默认配置；配置文件存在但内容为空时，也会使用默认配置。
+    /// `path` 为 `Some` 时读取指定配置文件，文件不存在会返回错误。
+    /// `path` 为 `None` 时读取默认 `config.toml`，文件不存在则使用默认配置。
     pub async fn from_optional_config_file(
         path: Option<impl AsRef<Path>>,
     ) -> Result<Self, CoreError> {
         match path {
-            Some(path) => Self::from_config(AssetInfraConfig::from_toml_file(path)?).await,
-            None => Self::with_defaults().await,
+            Some(path) => Self::from_config(AssetInfraConfig::from_config_file(path)?).await,
+            None => Self::from_default_config_file().await,
         }
+    }
+
+    /// 返回默认配置文件名。
+    pub fn default_config_file() -> &'static str {
+        DEFAULT_CONFIG_FILE
     }
 
     /// 返回实际生效的基础设施配置。
