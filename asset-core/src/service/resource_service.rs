@@ -11,7 +11,7 @@ use crate::domain::{
     Checksum, Resource, ResourceContent, ResourceId, ResourceKind, ResourceMetadata,
     ResourceStatus, StorageKey,
 };
-use crate::port::{BlobStorage, ResourceRepository};
+use crate::port::{BlobByteStream, BlobStorage, ResourceRepository};
 use bytes::Bytes;
 use std::sync::Arc;
 
@@ -66,7 +66,7 @@ impl CreateResource {
 
     /// 设置初始资源元数据。
     ///
-    /// 未调用该方法时，资源元数据默认为空 JSON object。
+    /// 未调用该方法时，资源元数据默认为服务端定义的空元数据结构。
     pub fn with_metadata(mut self, metadata: impl Into<ResourceMetadata>) -> Self {
         self.metadata = metadata.into();
         self
@@ -139,7 +139,7 @@ impl UploadResourceContent {
 
     /// 设置初始资源元数据。
     ///
-    /// 未调用该方法时，资源元数据默认为空 JSON object。
+    /// 未调用该方法时，资源元数据默认为服务端定义的空元数据结构。
     pub fn with_metadata(mut self, metadata: impl Into<ResourceMetadata>) -> Self {
         self.metadata = metadata.into();
         self
@@ -172,6 +172,90 @@ impl UploadResourceContent {
     /// 批量追加内容校验和。
     ///
     /// 该方法不会去重；如果调用方传入重复校验和，会按原样保存到资源内容引用中。
+    pub fn with_checksums(mut self, checksums: impl IntoIterator<Item = Checksum>) -> Self {
+        self.checksums.extend(checksums);
+        self
+    }
+}
+
+/// 流式上传内容并创建资源的用例命令。
+///
+/// 该命令用于大文件上传。内容以 `BlobByteStream` 传入，service 会逐块写入对象存储，
+/// 避免把完整文件一次性加载到内存中。
+pub struct UploadResourceContentStream {
+    /// 资源展示名。
+    name: String,
+    /// 资源类型；未设置时使用 `ResourceKind::default()`。
+    kind: Option<ResourceKind>,
+    /// 初始生命周期状态。
+    status: ResourceStatus,
+    /// 初始资源元数据。
+    metadata: ResourceMetadata,
+    /// 内容在对象存储中的定位键。
+    storage_key: StorageKey,
+    /// 需要写入对象存储的内容字节流。
+    data: BlobByteStream,
+    /// 内容 MIME 类型。
+    mime_type: Option<String>,
+    /// 上传时的原始文件名。
+    original_filename: Option<String>,
+    /// 内容校验和集合。
+    checksums: Vec<Checksum>,
+}
+
+impl UploadResourceContentStream {
+    /// 创建流式上传命令，默认使用未知资源类型、活跃状态和空元数据。
+    pub fn new(name: impl Into<String>, storage_key: StorageKey, data: BlobByteStream) -> Self {
+        Self {
+            name: name.into(),
+            kind: None,
+            status: ResourceStatus::default(),
+            metadata: ResourceMetadata::default(),
+            storage_key,
+            data,
+            mime_type: None,
+            original_filename: None,
+            checksums: Vec::new(),
+        }
+    }
+
+    /// 设置资源类型。
+    pub fn with_kind(mut self, kind: impl Into<ResourceKind>) -> Self {
+        self.kind = Some(kind.into());
+        self
+    }
+
+    /// 设置初始生命周期状态。
+    pub fn with_status(mut self, status: ResourceStatus) -> Self {
+        self.status = status;
+        self
+    }
+
+    /// 设置初始资源元数据。
+    pub fn with_metadata(mut self, metadata: impl Into<ResourceMetadata>) -> Self {
+        self.metadata = metadata.into();
+        self
+    }
+
+    /// 设置内容 MIME 类型。
+    pub fn with_mime_type(mut self, mime_type: impl Into<String>) -> Self {
+        self.mime_type = Some(mime_type.into());
+        self
+    }
+
+    /// 设置上传时的原始文件名。
+    pub fn with_original_filename(mut self, original_filename: impl Into<String>) -> Self {
+        self.original_filename = Some(original_filename.into());
+        self
+    }
+
+    /// 追加一个内容校验和。
+    pub fn with_checksum(mut self, checksum: Checksum) -> Self {
+        self.checksums.push(checksum);
+        self
+    }
+
+    /// 批量追加内容校验和。
     pub fn with_checksums(mut self, checksums: impl IntoIterator<Item = Checksum>) -> Self {
         self.checksums.extend(checksums);
         self
@@ -248,22 +332,70 @@ impl ResourceService {
             checksums,
         } = command;
 
-        let mut content = ResourceContent::builder(storage_key.clone(), data.len() as u64);
-
-        if let Some(mime_type) = mime_type {
-            content = content.with_mime_type(mime_type);
-        }
-
-        if let Some(original_filename) = original_filename {
-            content = content.with_original_filename(original_filename);
-        }
-
-        let content = content.with_checksums(checksums).build()?;
+        let content = build_content(
+            storage_key.clone(),
+            data.len() as u64,
+            mime_type,
+            original_filename,
+            checksums,
+        )?;
         let resource = build_resource(name, kind, status, metadata)
             .with_content(content)
             .build()?;
 
         self.blob_storage.put(&storage_key, data).await?;
+
+        if let Err(error) = self.repository.save(&resource).await {
+            let _ = self.blob_storage.delete(&storage_key).await;
+            return Err(error);
+        }
+
+        Ok(resource)
+    }
+
+    /// 流式上传对象内容并创建资源。
+    ///
+    /// 该 usecase 面向大文件上传。内容会以 chunk 流的形式写入 `BlobStorage`，不会在
+    /// service 层聚合成完整 `Bytes`。写入完成后，service 使用存储端口返回的实际字节数
+    /// 构建 `ResourceContent` 并保存资源聚合。
+    ///
+    /// 如果资源保存失败，本方法会尝试删除刚写入的对象内容。该补偿删除是 best-effort，
+    /// 不会覆盖原始仓储错误。
+    pub async fn upload_resource_content_stream(
+        &self,
+        command: UploadResourceContentStream,
+    ) -> Result<Resource, CoreError> {
+        let UploadResourceContentStream {
+            name,
+            kind,
+            status,
+            metadata,
+            storage_key,
+            data,
+            mime_type,
+            original_filename,
+            checksums,
+        } = command;
+
+        let resource_builder = build_resource(name, kind, status, metadata);
+        resource_builder.clone().build()?;
+        build_content(
+            storage_key.clone(),
+            0,
+            mime_type.clone(),
+            original_filename.clone(),
+            checksums.clone(),
+        )?;
+
+        let write_result = self.blob_storage.put_stream(&storage_key, data).await?;
+        let content = build_content(
+            storage_key.clone(),
+            write_result.bytes_written(),
+            mime_type,
+            original_filename,
+            checksums,
+        )?;
+        let resource = resource_builder.with_content(content).build()?;
 
         if let Err(error) = self.repository.save(&resource).await {
             let _ = self.blob_storage.delete(&storage_key).await;
@@ -370,9 +502,31 @@ fn build_resource(
     builder
 }
 
+fn build_content(
+    storage_key: StorageKey,
+    size: u64,
+    mime_type: Option<String>,
+    original_filename: Option<String>,
+    checksums: Vec<Checksum>,
+) -> Result<ResourceContent, CoreError> {
+    let mut content = ResourceContent::builder(storage_key, size);
+
+    if let Some(mime_type) = mime_type {
+        content = content.with_mime_type(mime_type);
+    }
+
+    if let Some(original_filename) = original_filename {
+        content = content.with_original_filename(original_filename);
+    }
+
+    Ok(content.with_checksums(checksums).build()?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::port::BlobWriteResult;
+    use futures_util::StreamExt;
     use serde_json::json;
     use std::collections::HashMap;
     use std::fmt;
@@ -447,6 +601,26 @@ mod tests {
             Ok(())
         }
 
+        async fn put_stream(
+            &self,
+            key: &StorageKey,
+            mut data: BlobByteStream,
+        ) -> Result<BlobWriteResult, CoreError> {
+            let mut bytes = Vec::new();
+
+            while let Some(chunk) = data.next().await {
+                bytes.extend_from_slice(&chunk?);
+            }
+
+            let bytes_written = bytes.len() as u64;
+            self.objects
+                .lock()
+                .unwrap()
+                .insert(key.clone(), Bytes::from(bytes));
+
+            Ok(BlobWriteResult::new(bytes_written))
+        }
+
         async fn get(&self, key: &StorageKey) -> Result<Option<Bytes>, CoreError> {
             Ok(self.get_sync(key))
         }
@@ -504,7 +678,12 @@ mod tests {
     #[test]
     fn create_resource_saves_metadata_only_resource() {
         let (service, repository, _) = service();
-        let metadata = json!({ "tags": ["rust", "asset"] });
+        let metadata = ResourceMetadata::builder()
+            .with_description(" Design document ")
+            .with_tags(["rust", "asset"])
+            .with_attribute("stage", json!("draft"))
+            .build()
+            .unwrap();
 
         let resource = block_on(
             service.create_resource(
@@ -520,10 +699,9 @@ mod tests {
         assert_eq!(resource.name(), "Design Doc");
         assert!(resource.kind().is("doc:markdown"));
         assert!(resource.content().is_none());
-        assert_eq!(
-            saved.metadata().get("tags"),
-            Some(&json!(["rust", "asset"]))
-        );
+        assert_eq!(saved.metadata().description(), Some("Design document"));
+        assert_eq!(saved.metadata().tags(), &["rust", "asset"]);
+        assert_eq!(saved.metadata().attribute("stage"), Some(&json!("draft")));
     }
 
     #[test]
@@ -553,6 +731,37 @@ mod tests {
         assert_eq!(content.original_filename(), Some("image.png"));
         assert_eq!(content.checksums(), &[checksum]);
         assert_eq!(blob_storage.get_sync(&key), Some(data));
+    }
+
+    #[test]
+    fn upload_resource_content_stream_writes_chunks_and_records_size() {
+        let (service, repository, blob_storage) = service();
+        let key = StorageKey::new("assets/large.bin").unwrap();
+        let data: BlobByteStream = Box::pin(futures_util::stream::iter([
+            Ok(Bytes::from_static(b"large ")),
+            Ok(Bytes::from_static(b"file ")),
+            Ok(Bytes::from_static(b"bytes")),
+        ]));
+
+        let resource = block_on(
+            service.upload_resource_content_stream(
+                UploadResourceContentStream::new("large file", key.clone(), data)
+                    .with_kind("asset:binary")
+                    .with_mime_type("application/octet-stream"),
+            ),
+        )
+        .unwrap();
+
+        let saved = repository.find_sync(&resource.id()).unwrap();
+        let content = saved.content().unwrap();
+
+        assert_eq!(content.key(), &key);
+        assert_eq!(content.size(), 16);
+        assert_eq!(content.mime_type(), Some("application/octet-stream"));
+        assert_eq!(
+            blob_storage.get_sync(&key),
+            Some(Bytes::from_static(b"large file bytes"))
+        );
     }
 
     #[test]

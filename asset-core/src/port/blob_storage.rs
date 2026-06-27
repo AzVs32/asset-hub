@@ -5,6 +5,33 @@
 
 use crate::CoreError;
 use crate::domain::StorageKey;
+use bytes::Bytes;
+use futures_core::Stream;
+use std::pin::Pin;
+
+/// 对象内容字节流。
+///
+/// 该类型用于大文件上传场景。每个 chunk 都是已经从调用入口读取到的一段二进制内容；
+/// stream 中的错误会中止写入，并由具体存储适配器负责清理未完成写入。
+pub type BlobByteStream = Pin<Box<dyn Stream<Item = Result<Bytes, CoreError>> + Send + 'static>>;
+
+/// 对象写入结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlobWriteResult {
+    bytes_written: u64,
+}
+
+impl BlobWriteResult {
+    /// 创建对象写入结果。
+    pub fn new(bytes_written: u64) -> Self {
+        Self { bytes_written }
+    }
+
+    /// 返回实际写入的字节数。
+    pub fn bytes_written(&self) -> u64 {
+        self.bytes_written
+    }
+}
 
 /// 对象内容存储端口。
 ///
@@ -23,13 +50,25 @@ pub trait BlobStorage: Send + Sync {
     ///
     /// 成功返回 `Ok(())`。存储系统不可用、权限不足、网络失败、磁盘写入失败等情况
     /// 应返回 `CoreError::Storage`。
-    async fn put(&self, key: &StorageKey, data: bytes::Bytes) -> Result<(), CoreError>;
+    async fn put(&self, key: &StorageKey, data: Bytes) -> Result<(), CoreError>;
+
+    /// 流式写入或覆盖指定存储键对应的对象内容。
+    ///
+    /// 该方法用于大文件上传，调用方不需要把完整文件一次性加载到内存中。实现方应逐块消费
+    /// `BlobByteStream`，并在 stream 或底层存储发生错误时尽量中止并清理未完成写入。
+    ///
+    /// 成功返回实际写入的字节数，上层 usecase 会把它记录到 `ResourceContent::size`。
+    async fn put_stream(
+        &self,
+        key: &StorageKey,
+        data: BlobByteStream,
+    ) -> Result<BlobWriteResult, CoreError>;
 
     /// 读取指定存储键对应的对象内容。
     ///
     /// 当对象不存在时返回 `Ok(None)`，这表示“正常查无结果”。只有存储系统自身故障
     /// 才返回 `Err`，例如连接失败、权限不足或读取过程中发生 I/O 错误。
-    async fn get(&self, key: &StorageKey) -> Result<Option<bytes::Bytes>, CoreError>;
+    async fn get(&self, key: &StorageKey) -> Result<Option<Bytes>, CoreError>;
 
     /// 删除指定存储键对应的对象。
     ///

@@ -6,7 +6,7 @@ mod status;
 
 pub use content::{Checksum, ChecksumKind, ResourceContent, ResourceContentBuilder, StorageKey};
 pub use kind::ResourceKind;
-pub use metadata::ResourceMetadata;
+pub use metadata::{ResourceMetadata, ResourceMetadataBuilder};
 pub use resource::{Resource, ResourceBuilder, ResourceId, ResourceSnapshot};
 pub use status::ResourceStatus;
 
@@ -144,7 +144,11 @@ mod tests {
 
     #[test]
     fn resource_builder_accepts_metadata_and_content() {
-        let metadata = ResourceMetadata::from(json!({ "tags": ["rust", "asset"] }));
+        let metadata = ResourceMetadata::builder()
+            .with_tags(["rust", "asset"])
+            .with_attribute("source", json!("test"))
+            .build()
+            .unwrap();
         let checksum = Checksum::sha256("a".repeat(64)).unwrap();
         let content = ResourceContent::builder(StorageKey::new("assets/image.png").unwrap(), 42)
             .with_mime_type(" image/png ")
@@ -164,9 +168,10 @@ mod tests {
         assert_eq!(content.mime_type(), Some("image/png"));
         assert_eq!(content.original_filename(), Some("image.png"));
         assert_eq!(content.checksums(), &[checksum]);
+        assert_eq!(resource.metadata().tags(), &["rust", "asset"]);
         assert_eq!(
-            resource.metadata().get("tags"),
-            Some(&json!(["rust", "asset"]))
+            resource.metadata().attribute("source"),
+            Some(&json!("test"))
         );
     }
 
@@ -197,9 +202,17 @@ mod tests {
     fn metadata_supports_object_access() {
         let mut metadata = ResourceMetadata::default();
 
-        metadata.insert("tags", json!(["rust", "asset"])).unwrap();
+        metadata.add_tag(" rust ").unwrap();
+        metadata
+            .insert_attribute(" language ", json!("rust"))
+            .unwrap();
 
-        assert_eq!(metadata.get("tags"), Some(&json!(["rust", "asset"])));
+        assert_eq!(
+            metadata.schema_version(),
+            ResourceMetadata::current_schema_version()
+        );
+        assert_eq!(metadata.tags(), &["rust"]);
+        assert_eq!(metadata.attribute("language"), Some(&json!("rust")));
         assert!(!metadata.is_empty());
     }
 

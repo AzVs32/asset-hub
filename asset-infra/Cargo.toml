@@ -1,0 +1,22 @@
+[package]
+name = "asset-infra"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+asset-core.workspace = true
+
+async-trait.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+futures-core.workspace = true
+futures-util.workspace = true
+opendal.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+toml.workspace = true
+uuid.workspace = true
