@@ -19,6 +19,8 @@ pub struct ResourceKindDefinition {
     metadata_schema: Option<Value>,
     /// 是否支持对象内容。
     supports_content: bool,
+    /// kind 支持的能力，例如 `reader`、`thumbnail`。
+    capabilities: Vec<String>,
     /// 定义来源，例如 `builtin`、`config` 或 `plugin:<id>`。
     source: String,
 }
@@ -48,6 +50,7 @@ impl ResourceKindDefinition {
             schema_id,
             metadata_schema: None,
             supports_content,
+            capabilities: Vec::new(),
             source: source.into(),
         }
     }
@@ -55,6 +58,12 @@ impl ResourceKindDefinition {
     /// 设置 kind metadata JSON schema。
     pub fn with_metadata_schema(mut self, metadata_schema: Option<Value>) -> Self {
         self.metadata_schema = metadata_schema;
+        self
+    }
+
+    /// 设置 kind 支持的能力。
+    pub fn with_capabilities(mut self, capabilities: Vec<String>) -> Self {
+        self.capabilities = capabilities;
         self
     }
 
@@ -81,6 +90,18 @@ impl ResourceKindDefinition {
     /// 返回是否支持对象内容。
     pub fn supports_content(&self) -> bool {
         self.supports_content
+    }
+
+    /// 返回 kind 支持的能力。
+    pub fn capabilities(&self) -> &[String] {
+        &self.capabilities
+    }
+
+    /// 判断 kind 是否支持指定能力。
+    pub fn has_capability(&self, capability: &str) -> bool {
+        self.capabilities
+            .iter()
+            .any(|value| value.as_str() == capability)
     }
 
     /// 返回定义来源。

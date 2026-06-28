@@ -1,7 +1,8 @@
 use crate::dto::{
     BinaryContent, CreateResourceRequest, HealthResponse, ListResourcesQuery, ResourceKindResponse,
-    ResourceKindsResponse, ResourceMetadataRequest, ResourcePageResponse, ResourceResponse,
-    UpdateResourceRequest, UploadResourceContentRequest, UploadResourceContentStreamQuery,
+    ResourceKindsResponse, ResourceMetadataRequest, ResourcePageResponse, ResourceReadResponse,
+    ResourceResponse, UpdateResourceRequest, UploadResourceContentRequest,
+    UploadResourceContentStreamQuery,
 };
 use crate::error::HttpError;
 use crate::state::HttpState;
@@ -23,6 +24,7 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use bytes::Bytes;
 use futures_util::StreamExt;
+use std::io::{Cursor, Read};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -31,6 +33,8 @@ pub(crate) const MAX_UPLOAD_BYTES: usize = 16 * 1024 * 1024;
 const DEFAULT_PAGE: u32 = 1;
 const DEFAULT_LIMIT: u32 = 50;
 const MAX_LIMIT: u32 = 100;
+const READER_CAPABILITY: &str = "reader";
+const DEFAULT_CONTENT_TYPE: &str = "application/octet-stream";
 
 /// 健康检查。
 #[utoipa::path(
@@ -351,11 +355,22 @@ pub(crate) async fn get_resource_content(
     Path(id): Path<String>,
 ) -> Result<Response, HttpError> {
     let id = parse_resource_id(&id)?;
+    let Some(resource) = state.service().find_resource(&id).await? else {
+        return Err(HttpError::not_found(format!("resource `{id}` not found")));
+    };
+    let content_type = resource
+        .content()
+        .and_then(|content| content.mime_type())
+        .unwrap_or(DEFAULT_CONTENT_TYPE)
+        .to_string();
 
     match state.service().get_resource_content(&id).await? {
         Some(content) => Ok((
             StatusCode::OK,
-            [(header::CONTENT_TYPE, "application/octet-stream")],
+            [
+                (header::CONTENT_TYPE, content_type),
+                (header::CONTENT_DISPOSITION, "inline".to_string()),
+            ],
             content,
         )
             .into_response()),
@@ -363,6 +378,64 @@ pub(crate) async fn get_resource_content(
             "resource content `{id}` not found"
         ))),
     }
+}
+
+/// 在线阅读资源内容。
+///
+/// 当前 MVP 只支持带 `reader` capability 的 kind，并要求内容是 UTF-8 文本。
+#[utoipa::path(
+    get,
+    path = "/resources/{id}/read",
+    tag = "resources",
+    params(
+        ("id" = String, Path, description = "资源 ID")
+    ),
+    responses(
+        (status = 200, description = "资源阅读内容", body = ResourceReadResponse),
+        (status = 400, description = "资源类型不支持阅读或内容格式不支持", body = crate::dto::ErrorResponse),
+        (status = 404, description = "资源或内容不存在", body = crate::dto::ErrorResponse),
+        (status = 500, description = "服务端错误", body = crate::dto::ErrorResponse)
+    )
+)]
+pub(crate) async fn read_resource(
+    State(state): State<HttpState>,
+    Path(id): Path<String>,
+) -> Result<Json<ResourceReadResponse>, HttpError> {
+    let id = parse_resource_id(&id)?;
+    let Some(resource) = state.service().find_resource(&id).await? else {
+        return Err(HttpError::not_found(format!("resource `{id}` not found")));
+    };
+    let Some(kind) = state.kind_registry().get(resource.kind()) else {
+        return Err(HttpError::bad_request(format!(
+            "resource kind `{}` is not registered",
+            resource.kind()
+        )));
+    };
+
+    if !kind.has_capability(READER_CAPABILITY) {
+        return Err(HttpError::bad_request(format!(
+            "resource kind `{}` does not support online reading",
+            resource.kind()
+        )));
+    }
+
+    let content_ref = resource.content();
+    let mime_type = content_ref.and_then(|content| content.mime_type());
+    let storage_key = content_ref.map(|content| content.key().as_str());
+    let Some(content) = state.service().get_resource_content(&id).await? else {
+        return Err(HttpError::not_found(format!(
+            "resource content `{id}` not found"
+        )));
+    };
+    let (format, text) = readable_text(&content, mime_type, storage_key)?;
+
+    Ok(Json(ResourceReadResponse {
+        id: resource.id().to_string(),
+        name: resource.name().to_string(),
+        kind: resource.kind().as_str().to_string(),
+        format,
+        text,
+    }))
 }
 
 /// 软删除资源。
@@ -599,4 +672,114 @@ fn parse_json_payload<T>(payload: Result<Json<T>, JsonRejection>) -> Result<T, H
     payload
         .map(|Json(payload)| payload)
         .map_err(|error| HttpError::bad_request(format!("invalid JSON request body: {error}")))
+}
+
+fn readable_text(
+    content: &Bytes,
+    mime_type: Option<&str>,
+    storage_key: Option<&str>,
+) -> Result<(String, String), HttpError> {
+    if is_epub(mime_type, storage_key) {
+        return extract_epub_text(content).map(|text| ("epub_text".to_string(), text));
+    }
+
+    if is_pdf(mime_type, storage_key) {
+        return Err(HttpError::bad_request(
+            "PDF resources should be read through the content viewer",
+        ));
+    }
+
+    String::from_utf8(content.to_vec())
+        .map(|text| ("text".to_string(), text))
+        .map_err(|error| {
+            HttpError::bad_request(format!("resource content is not UTF-8 text: {error}"))
+        })
+}
+
+fn is_epub(mime_type: Option<&str>, storage_key: Option<&str>) -> bool {
+    mime_type == Some("application/epub+zip")
+        || storage_key.is_some_and(|key| key.to_ascii_lowercase().ends_with(".epub"))
+}
+
+fn is_pdf(mime_type: Option<&str>, storage_key: Option<&str>) -> bool {
+    mime_type == Some("application/pdf")
+        || storage_key.is_some_and(|key| key.to_ascii_lowercase().ends_with(".pdf"))
+}
+
+fn extract_epub_text(content: &Bytes) -> Result<String, HttpError> {
+    let reader = Cursor::new(content.as_ref());
+    let mut archive = zip::ZipArchive::new(reader)
+        .map_err(|error| HttpError::bad_request(format!("invalid EPUB archive: {error}")))?;
+    let mut text = String::new();
+
+    for index in 0..archive.len() {
+        let mut file = archive
+            .by_index(index)
+            .map_err(|error| HttpError::bad_request(format!("invalid EPUB entry: {error}")))?;
+        let name = file.name().to_ascii_lowercase();
+        if !(name.ends_with(".xhtml") || name.ends_with(".html") || name.ends_with(".htm")) {
+            continue;
+        }
+
+        let mut html = String::new();
+        file.read_to_string(&mut html).map_err(|error| {
+            HttpError::bad_request(format!("invalid EPUB text content: {error}"))
+        })?;
+        let chapter = html_to_text(&html);
+        if !chapter.is_empty() {
+            if !text.is_empty() {
+                text.push_str("\n\n");
+            }
+            text.push_str(&chapter);
+        }
+    }
+
+    if text.is_empty() {
+        return Err(HttpError::bad_request(
+            "EPUB does not contain readable XHTML content",
+        ));
+    }
+
+    Ok(text)
+}
+
+fn html_to_text(value: &str) -> String {
+    let mut output = String::new();
+    let mut in_tag = false;
+    let mut last_was_space = true;
+
+    for ch in value.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => {
+                in_tag = false;
+                push_space(&mut output, &mut last_was_space);
+            }
+            _ if in_tag => {}
+            _ if ch.is_whitespace() => push_space(&mut output, &mut last_was_space),
+            _ => {
+                output.push(ch);
+                last_was_space = false;
+            }
+        }
+    }
+
+    decode_basic_entities(output.trim())
+}
+
+fn push_space(output: &mut String, last_was_space: &mut bool) {
+    if !*last_was_space {
+        output.push(' ');
+        *last_was_space = true;
+    }
+}
+
+fn decode_basic_entities(value: &str) -> String {
+    value
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
 }

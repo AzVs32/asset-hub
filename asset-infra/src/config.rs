@@ -156,6 +156,8 @@ pub struct ResourceKindConfig {
     pub metadata_schema: Option<Value>,
     /// 是否支持对象内容。
     pub supports_content: bool,
+    /// kind 支持的能力，例如 `reader`、`thumbnail`。
+    pub capabilities: Vec<String>,
 }
 
 impl Default for ResourceKindConfig {
@@ -166,6 +168,7 @@ impl Default for ResourceKindConfig {
             schema_id: None,
             metadata_schema: None,
             supports_content: true,
+            capabilities: Vec::new(),
         }
     }
 }

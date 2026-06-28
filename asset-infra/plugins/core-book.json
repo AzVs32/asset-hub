@@ -1,0 +1,23 @@
+{
+  "manifest_version": 1,
+  "plugin_id": "core-book",
+  "name": "Core Book",
+  "version": "0.1.0",
+  "publisher": "official",
+  "resource_kinds": [
+    {
+      "kind": "core:book",
+      "label": "Book",
+      "schema_id": "core:book@1",
+      "supports_content": true,
+      "capabilities": ["reader"],
+      "metadata_schema": {
+        "type": "object",
+        "properties": {
+          "author": { "type": "string" },
+          "title": { "type": "string" }
+        }
+      }
+    }
+  ]
+}

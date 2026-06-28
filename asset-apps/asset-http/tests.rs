@@ -7,9 +7,11 @@ use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
 use serde_json::{Value, json};
+use std::io::{Cursor, Write};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tower::ServiceExt;
+use zip::write::SimpleFileOptions;
 
 const BODY_LIMIT: usize = 1024 * 1024;
 
@@ -73,6 +75,7 @@ async fn configured_resource_kind_is_listed_and_content_support_is_enforced() {
                 }
             })),
             supports_content: false,
+            capabilities: Vec::new(),
         }],
     )
     .await;
@@ -124,6 +127,149 @@ async fn configured_resource_kind_is_listed_and_content_support_is_enforced() {
             .as_str()
             .unwrap()
             .contains("does not support content upload")
+    );
+}
+
+#[tokio::test]
+async fn core_book_resource_can_be_read_online() {
+    let app = test_app("core-book-read").await;
+
+    let (status, kinds) = empty_json_request(&app, Method::GET, "/resource-kinds").await;
+    assert_eq!(status, StatusCode::OK);
+    let book_kind = kinds["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|kind| kind["kind"] == "core:book")
+        .unwrap();
+    assert_eq!(book_kind["source"], "plugin:core-book");
+    assert_eq!(book_kind["capabilities"], json!(["reader"]));
+
+    let (status, resource) = json_request(
+        &app,
+        Method::POST,
+        "/resources/content",
+        json!({
+            "name": "book.txt",
+            "kind": "core:book",
+            "storage_key": "books/book.txt",
+            "data_base64": "SGVsbG8gYm9vaw==",
+            "mime_type": "text/plain"
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::CREATED);
+    let id = resource["id"].as_str().unwrap();
+    let (status, readable) =
+        empty_json_request(&app, Method::GET, &format!("/resources/{id}/read")).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(readable["id"], id);
+    assert_eq!(readable["kind"], "core:book");
+    assert_eq!(readable["format"], "text");
+    assert_eq!(readable["text"], "Hello book");
+}
+
+#[tokio::test]
+async fn core_book_epub_resource_can_be_read_online() {
+    let app = test_app("core-book-epub-read").await;
+    let epub = minimal_epub();
+
+    let response = request(
+        &app,
+        Request::builder()
+            .method(Method::PUT)
+            .uri("/resources/content/stream?name=book.epub&storage_key=books/book.epub&kind=core%3Abook")
+            .header(header::CONTENT_TYPE, "application/epub+zip")
+            .body(Body::from(epub))
+            .unwrap(),
+    )
+    .await;
+    let status = response.status();
+    let resource = response_json(response).await;
+
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(resource["content"]["mime_type"], "application/epub+zip");
+
+    let id = resource["id"].as_str().unwrap();
+    let (status, readable) =
+        empty_json_request(&app, Method::GET, &format!("/resources/{id}/read")).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(readable["kind"], "core:book");
+    assert_eq!(readable["format"], "epub_text");
+    assert!(
+        readable["text"]
+            .as_str()
+            .unwrap()
+            .contains("Chapter One Hello & EPUB")
+    );
+}
+
+#[tokio::test]
+async fn core_book_pdf_resource_uses_inline_content_viewer() {
+    let app = test_app("core-book-pdf-read").await;
+    let pdf = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n";
+
+    let response = request(
+        &app,
+        Request::builder()
+            .method(Method::PUT)
+            .uri("/resources/content/stream?name=book.pdf&storage_key=books/book.pdf&kind=core%3Abook")
+            .header(header::CONTENT_TYPE, "application/pdf")
+            .body(Body::from(pdf.as_slice()))
+            .unwrap(),
+    )
+    .await;
+    let status = response.status();
+    let resource = response_json(response).await;
+
+    assert_eq!(status, StatusCode::CREATED);
+
+    let id = resource["id"].as_str().unwrap();
+    let response = request(
+        &app,
+        Request::builder()
+            .method(Method::GET)
+            .uri(format!("/resources/{id}/content"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get(header::CONTENT_TYPE).unwrap(),
+        "application/pdf"
+    );
+    assert_eq!(
+        response.headers().get(header::CONTENT_DISPOSITION).unwrap(),
+        "inline"
+    );
+    let content = to_bytes(response.into_body(), BODY_LIMIT).await.unwrap();
+    assert_eq!(content.as_ref(), pdf);
+
+    let (status, error) =
+        empty_json_request(&app, Method::GET, &format!("/resources/{id}/read")).await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(error["error"].as_str().unwrap().contains("content viewer"));
+}
+
+#[tokio::test]
+async fn non_reader_resource_rejects_online_reading() {
+    let app = test_app("non-reader").await;
+    let id = create_text_resource(&app, "read/not-book.txt").await;
+    let (status, error) =
+        empty_json_request(&app, Method::GET, &format!("/resources/{id}/read")).await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        error["error"]
+            .as_str()
+            .unwrap()
+            .contains("does not support online reading")
     );
 }
 
@@ -613,6 +759,18 @@ async fn response_json(response: axum::response::Response) -> Value {
     } else {
         serde_json::from_slice(&body).unwrap()
     }
+}
+
+fn minimal_epub() -> Vec<u8> {
+    let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+
+    writer.start_file("OPS/chapter1.xhtml", options).unwrap();
+    writer
+        .write_all(br#"<html><body><h1>Chapter One</h1><p>Hello &amp; EPUB.</p></body></html>"#)
+        .unwrap();
+
+    writer.finish().unwrap().into_inner()
 }
 
 fn unique_temp_root(name: &str) -> PathBuf {

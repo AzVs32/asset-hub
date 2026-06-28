@@ -1,6 +1,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import {
+  BookOpen,
   ChevronLeft,
   ChevronRight,
   Database,
@@ -58,7 +59,16 @@ type ResourceKindOption = {
   schema_id: string | null;
   metadata_schema: Record<string, unknown> | null;
   supports_content: boolean;
+  capabilities: string[];
   source: string;
+};
+
+type ResourceReadResponse = {
+  id: string;
+  name: string;
+  kind: string;
+  format: string;
+  text: string;
 };
 
 type ResourceKindsResponse = {
@@ -110,6 +120,7 @@ const fallbackKinds: ResourceKindOption[] = [
     schema_id: null,
     metadata_schema: null,
     supports_content: true,
+    capabilities: [],
     source: "builtin",
   },
 ];
@@ -137,6 +148,8 @@ function App() {
   const [createDraft, setCreateDraft] = React.useState<Draft>(emptyCreateDraft);
   const [uploadOpen, setUploadOpen] = React.useState(false);
   const [uploadDraft, setUploadDraft] = React.useState<UploadDraft>(emptyUploadDraft);
+  const [reader, setReader] = React.useState<ResourceReadResponse | null>(null);
+  const [pdfReader, setPdfReader] = React.useState<Resource | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -302,6 +315,27 @@ function App() {
       setDraft(toDraft(restored));
       setNotice("Restored");
       await loadResources();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function readSelected() {
+    if (!selected) return;
+
+    if (isPdfResource(selected)) {
+      setPdfReader(selected);
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+
+    try {
+      const readable = await request<ResourceReadResponse>(`/resources/${selected.id}/read`);
+      setReader(readable);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -486,6 +520,7 @@ function App() {
             resourceKinds={resourceKinds}
             busy={busy}
             onSave={saveSelected}
+            onRead={readSelected}
             onDelete={softDeleteSelected}
             onRestore={restoreSelected}
           />
@@ -496,6 +531,46 @@ function App() {
           </div>
         )}
       </aside>
+
+      {reader && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal reader-modal" aria-label="Read resource">
+            <header className="modal-header">
+              <div>
+                <h2>{reader.name}</h2>
+                <span>
+                  {reader.kind} / {reader.format}
+                </span>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setReader(null)} title="Close">
+                <X size={18} />
+              </button>
+            </header>
+            <article className="reader-content">{reader.text}</article>
+          </section>
+        </div>
+      )}
+
+      {pdfReader && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal pdf-modal" aria-label="Read PDF resource">
+            <header className="modal-header">
+              <div>
+                <h2>{pdfReader.name}</h2>
+                <span>{pdfReader.kind} / pdf</span>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setPdfReader(null)} title="Close">
+                <X size={18} />
+              </button>
+            </header>
+            <iframe
+              className="pdf-frame"
+              title={pdfReader.name}
+              src={`${apiBase}/resources/${pdfReader.id}/content`}
+            />
+          </section>
+        </div>
+      )}
 
       {createOpen && (
         <div className="modal-backdrop" role="presentation">
@@ -643,6 +718,7 @@ function ResourceDetail({
   resourceKinds,
   busy,
   onSave,
+  onRead,
   onDelete,
   onRestore,
 }: {
@@ -652,10 +728,12 @@ function ResourceDetail({
   resourceKinds: ResourceKindOption[];
   busy: boolean;
   onSave: () => void;
+  onRead: () => void;
   onDelete: () => void;
   onRestore: () => void;
 }) {
   const kindDefinition = resourceKinds.find((kind) => kind.kind === resource.kind);
+  const canRead = Boolean(resource.content && !resource.deleted_at && kindDefinition?.capabilities.includes("reader"));
 
   return (
     <div className="detail-content">
@@ -676,6 +754,11 @@ function ResourceDetail({
           <a className="icon-button" href={`${apiBase}/resources/${resource.id}/content`} title="Download">
             <Download size={18} />
           </a>
+        )}
+        {canRead && (
+          <button className="icon-button" type="button" onClick={onRead} disabled={busy} title="Read">
+            <BookOpen size={18} />
+          </button>
         )}
         {resource.deleted_at ? (
           <button className="icon-button" type="button" onClick={onRestore} disabled={busy} title="Restore">
@@ -739,6 +822,7 @@ function ResourceDetail({
         <Fact label="Kind source" value={kindDefinition?.source ?? "-"} />
         <Fact label="Kind schema" value={kindDefinition?.schema_id ?? "-"} />
         <Fact label="Content kind" value={kindDefinition ? (kindDefinition.supports_content ? "yes" : "no") : "-"} />
+        <Fact label="Capabilities" value={kindDefinition?.capabilities.join(", ") || "-"} />
       </section>
     </div>
   );
@@ -884,7 +968,15 @@ function kindOptionLabel(option: ResourceKindOption): string {
 function kindOptionHint(option: ResourceKindOption | undefined): string {
   if (!option) return "";
   const content = option.supports_content ? "content" : "metadata only";
-  return `${option.source} / ${content}${option.schema_id ? ` / ${option.schema_id}` : ""}`;
+  const capabilities = option.capabilities.length ? ` / ${option.capabilities.join(", ")}` : "";
+  return `${option.source} / ${content}${option.schema_id ? ` / ${option.schema_id}` : ""}${capabilities}`;
+}
+
+function isPdfResource(resource: Resource): boolean {
+  const content = resource.content;
+  if (!content) return false;
+
+  return content.mime_type === "application/pdf" || content.key.toLowerCase().endsWith(".pdf");
 }
 
 function buildMetadata(description: string, tags: string, schemaId: string, kindData: string) {

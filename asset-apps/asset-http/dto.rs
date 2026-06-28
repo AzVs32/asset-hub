@@ -192,6 +192,8 @@ pub(crate) struct ResourceKindResponse {
     pub(crate) metadata_schema: Option<Value>,
     /// 是否允许上传文件内容。
     pub(crate) supports_content: bool,
+    /// kind 支持的能力。
+    pub(crate) capabilities: Vec<String>,
     /// 定义来源：`builtin`、`config` 或 `plugin:<id>`。
     pub(crate) source: String,
 }
@@ -204,6 +206,7 @@ impl From<&ResourceKindDefinition> for ResourceKindResponse {
             schema_id: definition.schema_id().map(str::to_string),
             metadata_schema: definition.metadata_schema().cloned(),
             supports_content: definition.supports_content(),
+            capabilities: definition.capabilities().to_vec(),
             source: definition.source().to_string(),
         }
     }
@@ -372,6 +375,21 @@ pub(crate) struct ResourcePageResponse {
     pub(crate) page: u32,
     /// 每页数量。
     pub(crate) limit: u32,
+}
+
+/// 在线阅读响应。
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct ResourceReadResponse {
+    /// 资源唯一标识。
+    pub(crate) id: String,
+    /// 资源展示名。
+    pub(crate) name: String,
+    /// 资源类型。
+    pub(crate) kind: String,
+    /// 阅读格式：`text` 或 `epub_text`。
+    pub(crate) format: String,
+    /// 当前阅读内容。MVP 阶段要求内容是 UTF-8 文本。
+    pub(crate) text: String,
 }
 
 impl From<&Resource> for ResourceResponse {

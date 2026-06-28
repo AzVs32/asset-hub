@@ -463,8 +463,40 @@ a[aria-disabled="true"] {
   border-bottom: 1px solid #d8dee8;
 }
 
+.modal-header span {
+  display: block;
+  margin-top: 5px;
+  color: #667085;
+  font-size: 12px;
+}
+
 .modal .form-grid {
   padding: 20px;
+}
+
+.reader-modal {
+  width: min(860px, 100%);
+}
+
+.pdf-modal {
+  width: min(1040px, 100%);
+}
+
+.reader-content {
+  min-height: 420px;
+  padding: 24px 28px;
+  white-space: pre-wrap;
+  color: #1c2430;
+  font-size: 15px;
+  line-height: 1.75;
+}
+
+.pdf-frame {
+  display: block;
+  width: 100%;
+  height: min(760px, 72vh);
+  border: 0;
+  background: #f8fafc;
 }
 
 .modal-actions {
