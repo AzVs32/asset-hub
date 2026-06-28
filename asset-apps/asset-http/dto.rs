@@ -4,6 +4,7 @@ use asset_core::domain::{
     ResourceStatus,
 };
 use asset_core::port::ResourceKindDefinition;
+use asset_core::service::{ReadableResource, ResourceActions};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 #[allow(unused_imports)]
@@ -206,7 +207,11 @@ impl From<&ResourceKindDefinition> for ResourceKindResponse {
             schema_id: definition.schema_id().map(str::to_string),
             metadata_schema: definition.metadata_schema().cloned(),
             supports_content: definition.supports_content(),
-            capabilities: definition.capabilities().to_vec(),
+            capabilities: definition
+                .capabilities()
+                .iter()
+                .map(|capability| capability.as_str().to_string())
+                .collect(),
             source: definition.source().to_string(),
         }
     }
@@ -356,12 +361,29 @@ pub(crate) struct ResourceResponse {
     pub(crate) metadata: ResourceMetadataResponse,
     /// 资源内容引用。
     pub(crate) content: Option<ResourceContentResponse>,
+    /// 当前资源允许的操作。
+    pub(crate) actions: ResourceActionsResponse,
     /// 资源创建时间，RFC3339 格式。
     pub(crate) created_at: String,
     /// 资源最后更新时间，RFC3339 格式。
     pub(crate) updated_at: String,
     /// 软删除时间，RFC3339 格式；为空表示未删除。
     pub(crate) deleted_at: Option<String>,
+}
+
+/// 资源允许的操作集合。
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct ResourceActionsResponse {
+    /// 是否允许下载原始内容。
+    pub(crate) download_content: bool,
+    /// 是否允许在线阅读文本。
+    pub(crate) read: bool,
+    /// 是否允许以内联方式查看内容。
+    pub(crate) view_inline: bool,
+    /// 是否允许预览。
+    pub(crate) preview: bool,
+    /// 是否允许缩略图。
+    pub(crate) thumbnail: bool,
 }
 
 /// 资源分页响应。
@@ -392,8 +414,20 @@ pub(crate) struct ResourceReadResponse {
     pub(crate) text: String,
 }
 
-impl From<&Resource> for ResourceResponse {
-    fn from(resource: &Resource) -> Self {
+impl From<&ReadableResource> for ResourceReadResponse {
+    fn from(resource: &ReadableResource) -> Self {
+        Self {
+            id: resource.id().to_string(),
+            name: resource.name().to_string(),
+            kind: resource.kind().as_str().to_string(),
+            format: resource.format().as_str().to_string(),
+            text: resource.text().to_string(),
+        }
+    }
+}
+
+impl ResourceResponse {
+    pub(crate) fn new(resource: &Resource, actions: ResourceActions) -> Self {
         Self {
             id: resource.id().to_string(),
             name: resource.name().to_string(),
@@ -401,9 +435,22 @@ impl From<&Resource> for ResourceResponse {
             status: status_text(resource.status()).to_string(),
             metadata: ResourceMetadataResponse::from(resource.metadata()),
             content: resource.content().map(ResourceContentResponse::from),
+            actions: ResourceActionsResponse::from(actions),
             created_at: resource.created_at().to_rfc3339(),
             updated_at: resource.updated_at().to_rfc3339(),
             deleted_at: resource.deleted_at().map(|value| value.to_rfc3339()),
+        }
+    }
+}
+
+impl From<ResourceActions> for ResourceActionsResponse {
+    fn from(actions: ResourceActions) -> Self {
+        Self {
+            download_content: actions.download_content(),
+            read: actions.read(),
+            view_inline: actions.view_inline(),
+            preview: actions.preview(),
+            thumbnail: actions.thumbnail(),
         }
     }
 }

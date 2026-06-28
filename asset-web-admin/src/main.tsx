@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Database,
   Download,
+  Eye,
   FileUp,
   Loader2,
   Plus,
@@ -41,6 +42,14 @@ type ResourceContent = {
   checksum: Array<{ kind: string; value: string }>;
 };
 
+type ResourceActions = {
+  download_content: boolean;
+  read: boolean;
+  view_inline: boolean;
+  preview: boolean;
+  thumbnail: boolean;
+};
+
 type Resource = {
   id: string;
   name: string;
@@ -48,6 +57,7 @@ type Resource = {
   status: ResourceStatus;
   metadata: ResourceMetadata;
   content: ResourceContent | null;
+  actions: ResourceActions;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -149,7 +159,7 @@ function App() {
   const [uploadOpen, setUploadOpen] = React.useState(false);
   const [uploadDraft, setUploadDraft] = React.useState<UploadDraft>(emptyUploadDraft);
   const [reader, setReader] = React.useState<ResourceReadResponse | null>(null);
-  const [pdfReader, setPdfReader] = React.useState<Resource | null>(null);
+  const [previewResource, setPreviewResource] = React.useState<Resource | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -325,11 +335,6 @@ function App() {
   async function readSelected() {
     if (!selected) return;
 
-    if (isPdfResource(selected)) {
-      setPdfReader(selected);
-      return;
-    }
-
     setBusy(true);
     setError(null);
 
@@ -341,6 +346,11 @@ function App() {
     } finally {
       setBusy(false);
     }
+  }
+
+  function previewSelected() {
+    if (!selected) return;
+    setPreviewResource(selected);
   }
 
   async function uploadResource(event: React.FormEvent) {
@@ -468,6 +478,11 @@ function App() {
               type="button"
               onClick={() => selectResource(resource)}
             >
+              {resource.actions.thumbnail ? (
+                <img className="row-thumbnail" src={`${apiBase}/resources/${resource.id}/thumbnail`} alt="" />
+              ) : (
+                <div className="row-thumbnail placeholder" aria-hidden="true" />
+              )}
               <div className="row-main">
                 <div className="row-title">
                   <span>{resource.name}</span>
@@ -521,6 +536,7 @@ function App() {
             busy={busy}
             onSave={saveSelected}
             onRead={readSelected}
+            onPreview={previewSelected}
             onDelete={softDeleteSelected}
             onRestore={restoreSelected}
           />
@@ -551,23 +567,33 @@ function App() {
         </div>
       )}
 
-      {pdfReader && (
+      {previewResource && (
         <div className="modal-backdrop" role="presentation">
-          <section className="modal pdf-modal" aria-label="Read PDF resource">
+          <section className="modal pdf-modal" aria-label="Preview resource">
             <header className="modal-header">
               <div>
-                <h2>{pdfReader.name}</h2>
-                <span>{pdfReader.kind} / pdf</span>
+                <h2>{previewResource.name}</h2>
+                <span>{previewResource.kind} / preview</span>
               </div>
-              <button className="icon-button" type="button" onClick={() => setPdfReader(null)} title="Close">
+              <button className="icon-button" type="button" onClick={() => setPreviewResource(null)} title="Close">
                 <X size={18} />
               </button>
             </header>
-            <iframe
-              className="pdf-frame"
-              title={pdfReader.name}
-              src={`${apiBase}/resources/${pdfReader.id}/content`}
-            />
+            {isImageResource(previewResource) ? (
+              <div className="image-preview-shell">
+                <img
+                  className="image-preview"
+                  alt={previewResource.name}
+                  src={`${apiBase}/resources/${previewResource.id}/preview`}
+                />
+              </div>
+            ) : (
+              <iframe
+                className="pdf-frame"
+                title={previewResource.name}
+                src={`${apiBase}/resources/${previewResource.id}/preview`}
+              />
+            )}
           </section>
         </div>
       )}
@@ -719,6 +745,7 @@ function ResourceDetail({
   busy,
   onSave,
   onRead,
+  onPreview,
   onDelete,
   onRestore,
 }: {
@@ -729,11 +756,13 @@ function ResourceDetail({
   busy: boolean;
   onSave: () => void;
   onRead: () => void;
+  onPreview: () => void;
   onDelete: () => void;
   onRestore: () => void;
 }) {
   const kindDefinition = resourceKinds.find((kind) => kind.kind === resource.kind);
-  const canRead = Boolean(resource.content && !resource.deleted_at && kindDefinition?.capabilities.includes("reader"));
+  const canRead = resource.actions.read;
+  const canPreview = resource.actions.preview || resource.actions.view_inline;
 
   return (
     <div className="detail-content">
@@ -750,7 +779,7 @@ function ResourceDetail({
           {busy ? <Loader2 className="spin" size={18} /> : <Save size={18} />}
           Save
         </button>
-        {resource.content && !resource.deleted_at && (
+        {resource.actions.download_content && (
           <a className="icon-button" href={`${apiBase}/resources/${resource.id}/content`} title="Download">
             <Download size={18} />
           </a>
@@ -758,6 +787,11 @@ function ResourceDetail({
         {canRead && (
           <button className="icon-button" type="button" onClick={onRead} disabled={busy} title="Read">
             <BookOpen size={18} />
+          </button>
+        )}
+        {canPreview && (
+          <button className="icon-button" type="button" onClick={onPreview} disabled={busy} title="Preview">
+            <Eye size={18} />
           </button>
         )}
         {resource.deleted_at ? (
@@ -972,11 +1006,9 @@ function kindOptionHint(option: ResourceKindOption | undefined): string {
   return `${option.source} / ${content}${option.schema_id ? ` / ${option.schema_id}` : ""}${capabilities}`;
 }
 
-function isPdfResource(resource: Resource): boolean {
-  const content = resource.content;
-  if (!content) return false;
-
-  return content.mime_type === "application/pdf" || content.key.toLowerCase().endsWith(".pdf");
+function isImageResource(resource: Resource): boolean {
+  const mimeType = resource.content?.mime_type;
+  return Boolean(mimeType && mimeType.startsWith("image/"));
 }
 
 function buildMetadata(description: string, tags: string, schemaId: string, kindData: string) {

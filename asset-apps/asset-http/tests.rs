@@ -107,6 +107,9 @@ async fn configured_resource_kind_is_listed_and_content_support_is_enforced() {
 
     assert_eq!(status, StatusCode::CREATED, "{resource}");
     assert_eq!(resource["kind"], "doc:note");
+    assert_eq!(resource["actions"]["download_content"], false);
+    assert_eq!(resource["actions"]["read"], false);
+    assert_eq!(resource["actions"]["view_inline"], false);
 
     let (status, error) = json_request(
         &app,
@@ -143,7 +146,7 @@ async fn core_book_resource_can_be_read_online() {
         .find(|kind| kind["kind"] == "core:book")
         .unwrap();
     assert_eq!(book_kind["source"], "plugin:core-book");
-    assert_eq!(book_kind["capabilities"], json!(["reader"]));
+    assert_eq!(book_kind["capabilities"], json!(["reader", "preview"]));
 
     let (status, resource) = json_request(
         &app,
@@ -161,6 +164,9 @@ async fn core_book_resource_can_be_read_online() {
 
     assert_eq!(status, StatusCode::CREATED);
     let id = resource["id"].as_str().unwrap();
+    assert_eq!(resource["actions"]["download_content"], true);
+    assert_eq!(resource["actions"]["read"], true);
+    assert_eq!(resource["actions"]["view_inline"], false);
     let (status, readable) =
         empty_json_request(&app, Method::GET, &format!("/resources/{id}/read")).await;
 
@@ -226,8 +232,25 @@ async fn core_book_pdf_resource_uses_inline_content_viewer() {
     let resource = response_json(response).await;
 
     assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(resource["actions"]["download_content"], true);
+    assert_eq!(resource["actions"]["read"], false);
+    assert_eq!(resource["actions"]["view_inline"], true);
 
     let id = resource["id"].as_str().unwrap();
+    let preview = request(
+        &app,
+        Request::builder()
+            .method(Method::GET)
+            .uri(format!("/resources/{id}/preview"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(preview.status(), StatusCode::OK);
+    assert_eq!(
+        preview.headers().get(header::CONTENT_TYPE).unwrap(),
+        "application/pdf"
+    );
     let response = request(
         &app,
         Request::builder()
@@ -255,6 +278,61 @@ async fn core_book_pdf_resource_uses_inline_content_viewer() {
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(error["error"].as_str().unwrap().contains("content viewer"));
+}
+
+#[tokio::test]
+async fn image_resource_exposes_preview_and_thumbnail() {
+    let app = test_app("image-preview-thumbnail").await;
+    let png_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+yF9sAAAAASUVORK5CYII=";
+
+    let (status, resource) = json_request(
+        &app,
+        Method::POST,
+        "/resources/content",
+        json!({
+            "name": "pixel.png",
+            "kind": "asset:image",
+            "storage_key": "images/pixel.png",
+            "data_base64": png_base64,
+            "mime_type": "image/png"
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(resource["actions"]["preview"], true);
+    assert_eq!(resource["actions"]["thumbnail"], true);
+    let id = resource["id"].as_str().unwrap();
+
+    let preview = request(
+        &app,
+        Request::builder()
+            .method(Method::GET)
+            .uri(format!("/resources/{id}/preview"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(preview.status(), StatusCode::OK);
+    assert_eq!(
+        preview.headers().get(header::CONTENT_TYPE).unwrap(),
+        "image/png"
+    );
+
+    let thumbnail = request(
+        &app,
+        Request::builder()
+            .method(Method::GET)
+            .uri(format!("/resources/{id}/thumbnail"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(thumbnail.status(), StatusCode::OK);
+    assert_eq!(
+        thumbnail.headers().get(header::CONTENT_TYPE).unwrap(),
+        "image/png"
+    );
 }
 
 #[tokio::test]

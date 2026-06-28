@@ -11,10 +11,14 @@ use crate::domain::{
     Checksum, ChecksumKind, Resource, ResourceContent, ResourceId, ResourceKind, ResourceMetadata,
     ResourceStatus, StorageKey,
 };
-use crate::port::{BlobByteStream, BlobStorage, ListResources, ResourcePage, ResourceRepository};
+use crate::port::{
+    BlobByteStream, BlobStorage, ListResources, ResourceKindRegistry, ResourcePage,
+    ResourceRepository,
+};
 use bytes::Bytes;
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
+use std::io::{Cursor, Read};
 use std::sync::Arc;
 
 /// 创建纯元数据资源的用例命令。
@@ -316,6 +320,183 @@ impl UpdateResource {
     }
 }
 
+/// 可阅读资源的内容格式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceReadFormat {
+    /// 纯文本。
+    Text,
+    /// 从 EPUB 中提取出的文本。
+    EpubText,
+}
+
+impl ResourceReadFormat {
+    /// 返回稳定文本值。
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::EpubText => "epub_text",
+        }
+    }
+}
+
+/// 应用服务返回的可阅读资源结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadableResource {
+    id: ResourceId,
+    name: String,
+    kind: ResourceKind,
+    format: ResourceReadFormat,
+    text: String,
+}
+
+impl ReadableResource {
+    fn new(
+        id: ResourceId,
+        name: String,
+        kind: ResourceKind,
+        format: ResourceReadFormat,
+        text: String,
+    ) -> Self {
+        Self {
+            id,
+            name,
+            kind,
+            format,
+            text,
+        }
+    }
+
+    /// 返回资源 ID。
+    pub fn id(&self) -> ResourceId {
+        self.id
+    }
+
+    /// 返回资源名称。
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// 返回资源类型。
+    pub fn kind(&self) -> &ResourceKind {
+        &self.kind
+    }
+
+    /// 返回阅读格式。
+    pub fn format(&self) -> ResourceReadFormat {
+        self.format
+    }
+
+    /// 返回阅读内容文本。
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+}
+
+/// 资源当前可执行动作。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ResourceActions {
+    download_content: bool,
+    read: bool,
+    view_inline: bool,
+    preview: bool,
+    thumbnail: bool,
+}
+
+impl ResourceActions {
+    fn new(
+        download_content: bool,
+        read: bool,
+        view_inline: bool,
+        preview: bool,
+        thumbnail: bool,
+    ) -> Self {
+        Self {
+            download_content,
+            read,
+            view_inline,
+            preview,
+            thumbnail,
+        }
+    }
+
+    /// 是否允许下载原始内容。
+    pub fn download_content(&self) -> bool {
+        self.download_content
+    }
+
+    /// 是否允许在线阅读文本。
+    pub fn read(&self) -> bool {
+        self.read
+    }
+
+    /// 是否允许以内联方式查看原始内容。
+    pub fn view_inline(&self) -> bool {
+        self.view_inline
+    }
+
+    /// 是否允许预览。
+    pub fn preview(&self) -> bool {
+        self.preview
+    }
+
+    /// 是否允许生成或读取缩略图。
+    pub fn thumbnail(&self) -> bool {
+        self.thumbnail
+    }
+}
+
+/// 预览资源结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResourcePreview {
+    content_type: String,
+    content: Bytes,
+}
+
+impl ResourcePreview {
+    fn new(content_type: String, content: Bytes) -> Self {
+        Self {
+            content_type,
+            content,
+        }
+    }
+
+    /// 返回内容类型。
+    pub fn content_type(&self) -> &str {
+        &self.content_type
+    }
+
+    /// 返回预览内容。
+    pub fn content(&self) -> &Bytes {
+        &self.content
+    }
+}
+
+/// 缩略图结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResourceThumbnail {
+    content_type: String,
+    content: Bytes,
+}
+
+impl ResourceThumbnail {
+    fn new(content_type: String, content: Bytes) -> Self {
+        Self {
+            content_type,
+            content,
+        }
+    }
+
+    /// 返回内容类型。
+    pub fn content_type(&self) -> &str {
+        &self.content_type
+    }
+
+    /// 返回缩略图内容。
+    pub fn content(&self) -> &Bytes {
+        &self.content
+    }
+}
+
 /// 资源应用服务。
 ///
 /// 该服务是外部调用资源核心能力的主要入口。它负责协调 `Resource` 聚合、
@@ -329,6 +510,8 @@ pub struct ResourceService {
     repository: Arc<dyn ResourceRepository>,
     /// 对象存储端口。
     blob_storage: Arc<dyn BlobStorage>,
+    /// 资源类型注册表。
+    kind_registry: Arc<dyn ResourceKindRegistry>,
 }
 
 impl ResourceService {
@@ -339,10 +522,12 @@ impl ResourceService {
     pub fn new(
         repository: Arc<dyn ResourceRepository>,
         blob_storage: Arc<dyn BlobStorage>,
+        kind_registry: Arc<dyn ResourceKindRegistry>,
     ) -> Self {
         Self {
             repository,
             blob_storage,
+            kind_registry,
         }
     }
 
@@ -353,8 +538,9 @@ impl ResourceService {
     ///
     /// 可能返回的错误包括领域校验错误和仓储保存错误。
     pub async fn create_resource(&self, command: CreateResource) -> Result<Resource, CoreError> {
+        let kind = self.validate_registered_kind(command.kind)?;
         let resource =
-            build_resource(command.name, command.kind, command.status, command.metadata).build()?;
+            build_resource(command.name, Some(kind), command.status, command.metadata).build()?;
 
         self.repository.save(&resource).await?;
 
@@ -385,6 +571,7 @@ impl ResourceService {
             original_filename,
             checksums,
         } = command;
+        let kind = self.validate_content_kind(kind)?;
 
         verify_bytes_checksums(&data, &checksums)?;
 
@@ -395,7 +582,7 @@ impl ResourceService {
             original_filename,
             checksums,
         )?;
-        let resource = build_resource(name, kind, status, metadata)
+        let resource = build_resource(name, Some(kind), status, metadata)
             .with_content(content)
             .build()?;
 
@@ -432,8 +619,9 @@ impl ResourceService {
             original_filename,
             checksums,
         } = command;
+        let kind = self.validate_content_kind(kind)?;
 
-        let resource_builder = build_resource(name, kind, status, metadata);
+        let resource_builder = build_resource(name, Some(kind), status, metadata);
         resource_builder.clone().build()?;
         build_content(
             storage_key.clone(),
@@ -483,7 +671,43 @@ impl ResourceService {
 
     /// 分页列出资源。
     pub async fn list_resources(&self, query: ListResources) -> Result<ResourcePage, CoreError> {
+        if let Some(kind) = query.kind() {
+            self.ensure_kind_registered(kind)?;
+        }
+
         self.repository.list(&query).await
+    }
+
+    /// 计算资源当前可执行动作。
+    ///
+    /// 该方法统一封装资源内容状态、注册 kind 能力和内容格式规则，供不同应用入口复用，
+    /// 避免在 HTTP、CLI、TUI 中重复拼装判断逻辑。
+    pub fn describe_resource_actions(
+        &self,
+        resource: &Resource,
+    ) -> Result<ResourceActions, CoreError> {
+        let definition = self.require_kind_definition(resource.kind())?;
+        let Some(content) = resource.content() else {
+            return Ok(ResourceActions::default());
+        };
+        if resource.is_deleted() {
+            return Ok(ResourceActions::default());
+        }
+
+        let mime_type = content.mime_type();
+        let storage_key = Some(content.key().as_str());
+        let is_pdf = is_pdf(mime_type, storage_key);
+        let is_image = is_image(mime_type, storage_key);
+        let supports_preview = definition.has_capability(crate::port::ResourceCapability::Preview)
+            && (is_pdf || is_image);
+
+        Ok(ResourceActions::new(
+            true,
+            definition.has_capability(crate::port::ResourceCapability::Reader) && !is_pdf,
+            supports_preview && is_pdf,
+            supports_preview,
+            definition.has_capability(crate::port::ResourceCapability::Thumbnail) && is_image,
+        ))
     }
 
     /// 更新资源基础信息、元数据、状态，或恢复软删除资源。
@@ -505,7 +729,7 @@ impl ResourceService {
         }
 
         if let Some(kind) = command.kind {
-            resource.change_kind(kind)?;
+            resource.change_kind(self.validate_registered_kind(Some(kind))?)?;
         }
 
         if let Some(status) = command.status {
@@ -551,6 +775,102 @@ impl ResourceService {
         self.blob_storage.get(content.key()).await
     }
 
+    /// 读取资源的可阅读文本内容。
+    ///
+    /// 该 usecase 统一负责 reader capability 校验、对象内容读取和格式转换，供 HTTP、CLI、
+    /// TUI 等应用入口复用。
+    ///
+    /// 找不到资源、资源已删除或没有内容时返回 `Ok(None)`。资源类型不支持阅读，或内容格式
+    /// 无法转换为当前支持的文本格式时返回 `Err(CoreError::Configuration { .. })`。
+    pub async fn read_resource(
+        &self,
+        id: &ResourceId,
+    ) -> Result<Option<ReadableResource>, CoreError> {
+        let Some(resource) = self.find_resource(id).await? else {
+            return Ok(None);
+        };
+        let actions = self.describe_resource_actions(&resource)?;
+        if !actions.read() {
+            if actions.view_inline() {
+                return Err(CoreError::configuration(
+                    "PDF resources should be read through the content viewer",
+                ));
+            }
+            return Err(CoreError::configuration(format!(
+                "resource kind `{}` does not support online reading",
+                resource.kind()
+            )));
+        }
+
+        let Some(content_ref) = resource.content() else {
+            return Err(CoreError::not_found("resource content", id.to_string()));
+        };
+        let mime_type = content_ref.mime_type();
+        let storage_key = Some(content_ref.key().as_str());
+        let Some(content) = self.blob_storage.get(content_ref.key()).await? else {
+            return Err(CoreError::not_found("resource content", id.to_string()));
+        };
+        let (format, text) = readable_text(&content, mime_type, storage_key)?;
+
+        Ok(Some(ReadableResource::new(
+            resource.id(),
+            resource.name().to_string(),
+            resource.kind().clone(),
+            format,
+            text,
+        )))
+    }
+
+    /// 读取资源预览内容。
+    ///
+    /// 当前 MVP 支持带 `preview` capability 的 PDF 与图片资源，并以原始内容作为预览载体。
+    pub async fn preview_resource(
+        &self,
+        id: &ResourceId,
+    ) -> Result<Option<ResourcePreview>, CoreError> {
+        let Some(resource) = self.find_resource(id).await? else {
+            return Ok(None);
+        };
+        let actions = self.describe_resource_actions(&resource)?;
+        if !actions.preview() {
+            return Err(CoreError::configuration(format!(
+                "resource kind `{}` does not support preview",
+                resource.kind()
+            )));
+        }
+
+        let content = self.load_content_or_not_found(id, &resource).await?;
+        let content_type = content_type_for_preview_or_thumbnail(resource.content())
+            .unwrap_or_else(|| "application/octet-stream".to_string());
+
+        Ok(Some(ResourcePreview::new(content_type, content)))
+    }
+
+    /// 读取资源缩略图内容。
+    ///
+    /// 当前 MVP 对图片资源直接复用原始内容作为缩略图载体，后续可替换为实际缩放流水线。
+    pub async fn thumbnail_resource(
+        &self,
+        id: &ResourceId,
+    ) -> Result<Option<ResourceThumbnail>, CoreError> {
+        let Some(resource) = self.find_resource(id).await? else {
+            return Ok(None);
+        };
+        let actions = self.describe_resource_actions(&resource)?;
+        if !actions.thumbnail() {
+            return Err(CoreError::configuration(format!(
+                "resource kind `{}` does not support thumbnail",
+                resource.kind()
+            )));
+        }
+
+        let content = self.load_content_or_not_found(id, &resource).await?;
+        let content_type = content_type_for_preview_or_thumbnail(resource.content())
+            .unwrap_or_else(|| "application/octet-stream".to_string());
+
+        Ok(Some(ResourceThumbnail::new(content_type, content)))
+    }
+
     /// 软删除资源。
     ///
     /// 软删除只更新资源聚合状态并保存到仓储，不删除对象存储中的内容。这样可以保留恢复、
@@ -593,6 +913,61 @@ impl ResourceService {
         self.repository.remove(id).await?;
 
         Ok(true)
+    }
+
+    fn validate_registered_kind(
+        &self,
+        kind: Option<ResourceKind>,
+    ) -> Result<ResourceKind, CoreError> {
+        let kind = kind.unwrap_or_default();
+        self.ensure_kind_registered(&kind)?;
+        Ok(kind)
+    }
+
+    fn validate_content_kind(&self, kind: Option<ResourceKind>) -> Result<ResourceKind, CoreError> {
+        let kind = self.validate_registered_kind(kind)?;
+        let definition = self.require_kind_definition(&kind)?;
+        if !definition.supports_content() {
+            return Err(CoreError::configuration(format!(
+                "resource kind `{kind}` does not support content upload"
+            )));
+        }
+
+        Ok(kind)
+    }
+
+    fn ensure_kind_registered(&self, kind: &ResourceKind) -> Result<(), CoreError> {
+        if self.kind_registry.supports(kind) {
+            return Ok(());
+        }
+
+        Err(CoreError::configuration(format!(
+            "unsupported resource kind `{kind}`"
+        )))
+    }
+
+    fn require_kind_definition(
+        &self,
+        kind: &ResourceKind,
+    ) -> Result<crate::port::ResourceKindDefinition, CoreError> {
+        self.kind_registry
+            .get(kind)
+            .ok_or_else(|| CoreError::configuration(format!("unsupported resource kind `{kind}`")))
+    }
+
+    async fn load_content_or_not_found(
+        &self,
+        id: &ResourceId,
+        resource: &Resource,
+    ) -> Result<Bytes, CoreError> {
+        let Some(content_ref) = resource.content() else {
+            return Err(CoreError::not_found("resource content", id.to_string()));
+        };
+
+        self.blob_storage
+            .get(content_ref.key())
+            .await?
+            .ok_or_else(|| CoreError::not_found("resource content", id.to_string()))
     }
 }
 
@@ -718,16 +1093,148 @@ fn hex_digest(bytes: &[u8]) -> String {
     output
 }
 
+fn readable_text(
+    content: &Bytes,
+    mime_type: Option<&str>,
+    storage_key: Option<&str>,
+) -> Result<(ResourceReadFormat, String), CoreError> {
+    if is_epub(mime_type, storage_key) {
+        return extract_epub_text(content).map(|text| (ResourceReadFormat::EpubText, text));
+    }
+
+    if is_pdf(mime_type, storage_key) {
+        return Err(CoreError::configuration(
+            "PDF resources should be read through the content viewer",
+        ));
+    }
+
+    String::from_utf8(content.to_vec())
+        .map(|text| (ResourceReadFormat::Text, text))
+        .map_err(|error| {
+            CoreError::configuration(format!("resource content is not UTF-8 text: {error}"))
+        })
+}
+
+fn is_epub(mime_type: Option<&str>, storage_key: Option<&str>) -> bool {
+    mime_type == Some("application/epub+zip")
+        || storage_key.is_some_and(|key| key.to_ascii_lowercase().ends_with(".epub"))
+}
+
+fn is_pdf(mime_type: Option<&str>, storage_key: Option<&str>) -> bool {
+    mime_type == Some("application/pdf")
+        || storage_key.is_some_and(|key| key.to_ascii_lowercase().ends_with(".pdf"))
+}
+
+fn is_image(mime_type: Option<&str>, storage_key: Option<&str>) -> bool {
+    mime_type.is_some_and(|value| value.starts_with("image/"))
+        || storage_key.is_some_and(|key| {
+            let key = key.to_ascii_lowercase();
+            key.ends_with(".png")
+                || key.ends_with(".jpg")
+                || key.ends_with(".jpeg")
+                || key.ends_with(".gif")
+                || key.ends_with(".webp")
+                || key.ends_with(".svg")
+        })
+}
+
+fn content_type_for_preview_or_thumbnail(content: Option<&ResourceContent>) -> Option<String> {
+    content
+        .and_then(|value| value.mime_type())
+        .map(str::to_string)
+}
+
+fn extract_epub_text(content: &Bytes) -> Result<String, CoreError> {
+    let reader = Cursor::new(content.as_ref());
+    let mut archive = zip::ZipArchive::new(reader)
+        .map_err(|error| CoreError::configuration(format!("invalid EPUB archive: {error}")))?;
+    let mut text = String::new();
+
+    for index in 0..archive.len() {
+        let mut file = archive
+            .by_index(index)
+            .map_err(|error| CoreError::configuration(format!("invalid EPUB entry: {error}")))?;
+        let name = file.name().to_ascii_lowercase();
+        if !(name.ends_with(".xhtml") || name.ends_with(".html") || name.ends_with(".htm")) {
+            continue;
+        }
+
+        let mut html = String::new();
+        file.read_to_string(&mut html).map_err(|error| {
+            CoreError::configuration(format!("invalid EPUB text content: {error}"))
+        })?;
+        let chapter = html_to_text(&html);
+        if !chapter.is_empty() {
+            if !text.is_empty() {
+                text.push_str("\n\n");
+            }
+            text.push_str(&chapter);
+        }
+    }
+
+    if text.is_empty() {
+        return Err(CoreError::configuration(
+            "EPUB does not contain readable XHTML content",
+        ));
+    }
+
+    Ok(text)
+}
+
+fn html_to_text(value: &str) -> String {
+    let mut output = String::new();
+    let mut in_tag = false;
+    let mut last_was_space = true;
+
+    for ch in value.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => {
+                in_tag = false;
+                push_space(&mut output, &mut last_was_space);
+            }
+            _ if in_tag => {}
+            _ if ch.is_whitespace() => push_space(&mut output, &mut last_was_space),
+            _ => {
+                output.push(ch);
+                last_was_space = false;
+            }
+        }
+    }
+
+    decode_basic_entities(output.trim())
+}
+
+fn push_space(output: &mut String, last_was_space: &mut bool) {
+    if !*last_was_space {
+        output.push(' ');
+        *last_was_space = true;
+    }
+}
+
+fn decode_basic_entities(value: &str) -> String {
+    value
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::KindMetadata;
-    use crate::port::BlobWriteResult;
+    use crate::port::{
+        BlobWriteResult, ResourceCapability, ResourceKindDefinition, ResourceKindRegistry,
+    };
     use futures_util::StreamExt;
     use serde_json::json;
     use std::collections::HashMap;
     use std::fmt;
     use std::future::Future;
+    use std::io::{Cursor, Write};
     use std::sync::{Arc, Mutex};
     use std::task::{Context, Poll, Wake, Waker};
 
@@ -810,6 +1317,23 @@ mod tests {
         async fn remove(&self, id: &ResourceId) -> Result<(), CoreError> {
             self.resources.lock().unwrap().remove(id);
             Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct InMemoryResourceKindRegistry {
+        definitions: Vec<ResourceKindDefinition>,
+    }
+
+    impl InMemoryResourceKindRegistry {
+        fn with_definitions(definitions: Vec<ResourceKindDefinition>) -> Self {
+            Self { definitions }
+        }
+    }
+
+    impl ResourceKindRegistry for InMemoryResourceKindRegistry {
+        fn list(&self) -> Vec<ResourceKindDefinition> {
+            self.definitions.clone()
         }
     }
 
@@ -938,9 +1462,56 @@ mod tests {
         Arc<InMemoryResourceRepository>,
         Arc<InMemoryBlobStorage>,
     ) {
+        service_with_registry(Arc::new(InMemoryResourceKindRegistry::with_definitions(
+            vec![
+                ResourceKindDefinition::new(ResourceKind::default(), "Unknown", None, true),
+                ResourceKindDefinition::new(
+                    ResourceKind::try_new("doc:markdown").unwrap(),
+                    "Markdown",
+                    None,
+                    false,
+                )
+                .with_capabilities(vec![ResourceCapability::Reader]),
+                ResourceKindDefinition::new(
+                    ResourceKind::try_new("asset:image").unwrap(),
+                    "Image",
+                    None,
+                    true,
+                )
+                .with_capabilities(vec![
+                    ResourceCapability::Preview,
+                    ResourceCapability::Thumbnail,
+                ]),
+                ResourceKindDefinition::new(
+                    ResourceKind::try_new("asset:binary").unwrap(),
+                    "Binary",
+                    None,
+                    true,
+                ),
+                ResourceKindDefinition::new(
+                    ResourceKind::try_new("core:book").unwrap(),
+                    "Book",
+                    None,
+                    true,
+                )
+                .with_capabilities(vec![
+                    ResourceCapability::Reader,
+                    ResourceCapability::Preview,
+                ]),
+            ],
+        )))
+    }
+
+    fn service_with_registry(
+        kind_registry: Arc<dyn ResourceKindRegistry>,
+    ) -> (
+        ResourceService,
+        Arc<InMemoryResourceRepository>,
+        Arc<InMemoryBlobStorage>,
+    ) {
         let repository = Arc::new(InMemoryResourceRepository::default());
         let blob_storage = Arc::new(InMemoryBlobStorage::default());
-        let service = ResourceService::new(repository.clone(), blob_storage.clone());
+        let service = ResourceService::new(repository.clone(), blob_storage.clone(), kind_registry);
 
         (service, repository, blob_storage)
     }
@@ -1053,6 +1624,31 @@ mod tests {
     }
 
     #[test]
+    fn create_resource_rejects_unsupported_kind() {
+        let (service, repository, _) = service_with_registry(Arc::new(
+            InMemoryResourceKindRegistry::with_definitions(vec![ResourceKindDefinition::new(
+                ResourceKind::default(),
+                "Unknown",
+                None,
+                true,
+            )]),
+        ));
+
+        let error = block_on(
+            service.create_resource(CreateResource::new("image").with_kind("plugin:not-installed")),
+        )
+        .unwrap_err();
+
+        match error {
+            CoreError::Configuration { message } => {
+                assert!(message.contains("unsupported resource kind `plugin:not-installed`"))
+            }
+            other => panic!("expected configuration error, got {other:?}"),
+        }
+        assert!(repository.is_empty());
+    }
+
+    #[test]
     fn upload_resource_content_stream_writes_chunks_and_records_size() {
         let (service, repository, blob_storage) = service();
         let key = StorageKey::new("assets/large.bin").unwrap();
@@ -1081,6 +1677,29 @@ mod tests {
             blob_storage.get_sync(&key),
             Some(Bytes::from_static(b"large file bytes"))
         );
+    }
+
+    #[test]
+    fn upload_resource_content_rejects_kind_without_content_support() {
+        let (service, repository, blob_storage) = service();
+        let key = StorageKey::new("docs/readme.md").unwrap();
+
+        let error = block_on(
+            service.upload_resource_content(
+                UploadResourceContent::new("readme", key.clone(), Bytes::from_static(b"hello"))
+                    .with_kind("doc:markdown"),
+            ),
+        )
+        .unwrap_err();
+
+        match error {
+            CoreError::Configuration { message } => {
+                assert!(message.contains("does not support content upload"))
+            }
+            other => panic!("expected configuration error, got {other:?}"),
+        }
+        assert!(repository.is_empty());
+        assert!(!blob_storage.contains(&key));
     }
 
     #[test]
@@ -1149,6 +1768,158 @@ mod tests {
     }
 
     #[test]
+    fn read_resource_returns_text_for_reader_kind() {
+        let (service, _, _) = service();
+        let key = StorageKey::new("books/book.txt").unwrap();
+        let resource = block_on(
+            service.upload_resource_content(
+                UploadResourceContent::new("book", key, Bytes::from_static(b"Hello book"))
+                    .with_kind("core:book"),
+            ),
+        )
+        .unwrap();
+
+        let readable = block_on(service.read_resource(&resource.id()))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(readable.kind().as_str(), "core:book");
+        assert_eq!(readable.format(), ResourceReadFormat::Text);
+        assert_eq!(readable.text(), "Hello book");
+    }
+
+    #[test]
+    fn read_resource_rejects_non_reader_kind() {
+        let (service, _, _) = service();
+        let key = StorageKey::new("files/file.txt").unwrap();
+        let resource = block_on(
+            service.upload_resource_content(
+                UploadResourceContent::new("file", key, Bytes::from_static(b"hello"))
+                    .with_kind("asset:binary"),
+            ),
+        )
+        .unwrap();
+
+        let error = block_on(service.read_resource(&resource.id())).unwrap_err();
+
+        match error {
+            CoreError::Configuration { message } => {
+                assert!(message.contains("does not support online reading"))
+            }
+            other => panic!("expected configuration error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn read_resource_extracts_epub_text_for_reader_kind() {
+        let (service, _, _) = service();
+        let key = StorageKey::new("books/book.epub").unwrap();
+        let resource = block_on(
+            service.upload_resource_content(
+                UploadResourceContent::new("book", key, Bytes::from(minimal_epub()))
+                    .with_kind("core:book")
+                    .with_mime_type("application/epub+zip"),
+            ),
+        )
+        .unwrap();
+
+        let readable = block_on(service.read_resource(&resource.id()))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(readable.format(), ResourceReadFormat::EpubText);
+        assert!(readable.text().contains("Chapter One Hello & EPUB"));
+    }
+
+    #[test]
+    fn describe_resource_actions_distinguishes_read_and_inline_view() {
+        let (service, _, _) = service();
+        let pdf = block_on(
+            service.upload_resource_content(
+                UploadResourceContent::new(
+                    "book",
+                    StorageKey::new("books/book.pdf").unwrap(),
+                    Bytes::from_static(b"%PDF-1.4"),
+                )
+                .with_kind("core:book")
+                .with_mime_type("application/pdf"),
+            ),
+        )
+        .unwrap();
+        let text = block_on(
+            service.upload_resource_content(
+                UploadResourceContent::new(
+                    "book",
+                    StorageKey::new("books/book.txt").unwrap(),
+                    Bytes::from_static(b"hello"),
+                )
+                .with_kind("core:book")
+                .with_mime_type("text/plain"),
+            ),
+        )
+        .unwrap();
+
+        let pdf_actions = service.describe_resource_actions(&pdf).unwrap();
+        let text_actions = service.describe_resource_actions(&text).unwrap();
+
+        assert!(pdf_actions.download_content());
+        assert!(!pdf_actions.read());
+        assert!(pdf_actions.view_inline());
+        assert!(text_actions.download_content());
+        assert!(text_actions.read());
+        assert!(!text_actions.view_inline());
+    }
+
+    #[test]
+    fn preview_resource_returns_pdf_content_for_preview_kind() {
+        let (service, _, _) = service();
+        let resource = block_on(
+            service.upload_resource_content(
+                UploadResourceContent::new(
+                    "book",
+                    StorageKey::new("books/book.pdf").unwrap(),
+                    Bytes::from_static(b"%PDF-1.4"),
+                )
+                .with_kind("core:book")
+                .with_mime_type("application/pdf"),
+            ),
+        )
+        .unwrap();
+
+        let preview = block_on(service.preview_resource(&resource.id()))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(preview.content_type(), "application/pdf");
+        assert_eq!(preview.content().as_ref(), b"%PDF-1.4");
+    }
+
+    #[test]
+    fn thumbnail_resource_returns_image_content_for_thumbnail_kind() {
+        let (service, _, _) = service();
+        let image = Bytes::from_static(b"fake-image");
+        let resource = block_on(
+            service.upload_resource_content(
+                UploadResourceContent::new(
+                    "image",
+                    StorageKey::new("images/pixel.png").unwrap(),
+                    image.clone(),
+                )
+                .with_kind("asset:image")
+                .with_mime_type("image/png"),
+            ),
+        )
+        .unwrap();
+
+        let thumbnail = block_on(service.thumbnail_resource(&resource.id()))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(thumbnail.content_type(), "image/png");
+        assert_eq!(thumbnail.content(), &image);
+    }
+
+    #[test]
     fn soft_delete_resource_keeps_blob_but_hides_content_read() {
         let (service, repository, blob_storage) = service();
         let key = StorageKey::new("assets/image.png").unwrap();
@@ -1185,5 +1956,38 @@ mod tests {
         assert!(repository.find_sync(&resource.id()).is_none());
         assert!(!blob_storage.contains(&key));
         assert!(!block_on(service.remove_resource(&resource.id())).unwrap());
+    }
+
+    fn minimal_epub() -> Vec<u8> {
+        let mut buffer = Cursor::new(Vec::new());
+        let mut zip = zip::ZipWriter::new(&mut buffer);
+        let options = zip::write::SimpleFileOptions::default();
+
+        zip.start_file("mimetype", options).unwrap();
+        zip.write_all(b"application/epub+zip").unwrap();
+        zip.start_file("META-INF/container.xml", options).unwrap();
+        zip.write_all(
+            br#"<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>"#,
+        )
+        .unwrap();
+        zip.start_file("OEBPS/chapter1.xhtml", options).unwrap();
+        zip.write_all(
+            br#"<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <body>
+    <h1>Chapter One</h1>
+    <p>Hello &amp; EPUB</p>
+  </body>
+</html>"#,
+        )
+        .unwrap();
+        zip.finish().unwrap();
+
+        buffer.into_inner()
     }
 }

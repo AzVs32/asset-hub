@@ -10,7 +10,7 @@
       "label": "Book",
       "schema_id": "core:book@1",
       "supports_content": true,
-      "capabilities": ["reader"],
+      "capabilities": ["reader", "preview"],
       "metadata_schema": {
         "type": "object",
         "properties": {

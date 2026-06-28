@@ -43,6 +43,11 @@ pub(crate) fn build(
             "/resources/{id}/content",
             get(handlers::get_resource_content),
         )
+        .route("/resources/{id}/preview", get(handlers::preview_resource))
+        .route(
+            "/resources/{id}/thumbnail",
+            get(handlers::thumbnail_resource),
+        )
         .route("/resources/{id}/read", get(handlers::read_resource))
         .route("/resources/{id}/purge", delete(handlers::remove_resource))
         .layer(DefaultBodyLimit::max(handlers::MAX_UPLOAD_BYTES))

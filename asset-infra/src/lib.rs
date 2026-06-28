@@ -75,6 +75,10 @@ impl AssetInfrastructure {
 
     /// 创建资源应用服务。
     pub fn resource_service(&self) -> ResourceService {
-        ResourceService::new(self.resource_repository(), self.blob_storage())
+        ResourceService::new(
+            self.resource_repository(),
+            self.blob_storage(),
+            self.resource_kind_registry(),
+        )
     }
 }

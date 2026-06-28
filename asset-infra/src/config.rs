@@ -1,5 +1,6 @@
 use ::config::{Config, File, FileFormat};
 use asset_core::CoreError;
+use asset_core::port::ResourceCapability;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -157,7 +158,7 @@ pub struct ResourceKindConfig {
     /// 是否支持对象内容。
     pub supports_content: bool,
     /// kind 支持的能力，例如 `reader`、`thumbnail`。
-    pub capabilities: Vec<String>,
+    pub capabilities: Vec<ResourceCapability>,
 }
 
 impl Default for ResourceKindConfig {

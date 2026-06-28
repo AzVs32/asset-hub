@@ -4,7 +4,37 @@
 //! 后续插件系统可以通过同一端口注册和暴露更多 kind。
 
 use crate::domain::ResourceKind;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+/// 资源类型能力。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceCapability {
+    /// 支持在线阅读。
+    Reader,
+    /// 支持预览。
+    Preview,
+    /// 支持缩略图。
+    Thumbnail,
+}
+
+impl ResourceCapability {
+    /// 返回能力的稳定文本值。
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Reader => "reader",
+            Self::Preview => "preview",
+            Self::Thumbnail => "thumbnail",
+        }
+    }
+}
+
+impl std::fmt::Display for ResourceCapability {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 /// 资源类型定义。
 #[derive(Debug, Clone, PartialEq)]
@@ -20,7 +50,7 @@ pub struct ResourceKindDefinition {
     /// 是否支持对象内容。
     supports_content: bool,
     /// kind 支持的能力，例如 `reader`、`thumbnail`。
-    capabilities: Vec<String>,
+    capabilities: Vec<ResourceCapability>,
     /// 定义来源，例如 `builtin`、`config` 或 `plugin:<id>`。
     source: String,
 }
@@ -62,7 +92,7 @@ impl ResourceKindDefinition {
     }
 
     /// 设置 kind 支持的能力。
-    pub fn with_capabilities(mut self, capabilities: Vec<String>) -> Self {
+    pub fn with_capabilities(mut self, capabilities: Vec<ResourceCapability>) -> Self {
         self.capabilities = capabilities;
         self
     }
@@ -93,15 +123,13 @@ impl ResourceKindDefinition {
     }
 
     /// 返回 kind 支持的能力。
-    pub fn capabilities(&self) -> &[String] {
+    pub fn capabilities(&self) -> &[ResourceCapability] {
         &self.capabilities
     }
 
     /// 判断 kind 是否支持指定能力。
-    pub fn has_capability(&self, capability: &str) -> bool {
-        self.capabilities
-            .iter()
-            .any(|value| value.as_str() == capability)
+    pub fn has_capability(&self, capability: ResourceCapability) -> bool {
+        self.capabilities.contains(&capability)
     }
 
     /// 返回定义来源。
