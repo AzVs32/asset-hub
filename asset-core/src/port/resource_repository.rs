@@ -4,7 +4,105 @@
 //! sqlx 的 SQLite、Postgres 等实现应适配该 trait，而不是让应用层直接依赖数据库 API。
 
 use crate::CoreError;
-use crate::domain::{Resource, ResourceId};
+use crate::domain::{Resource, ResourceId, ResourceKind};
+
+/// 资源列表查询条件。
+#[derive(Debug, Clone)]
+pub struct ListResources {
+    /// 返回数量上限。
+    limit: u32,
+    /// 跳过的记录数量。
+    offset: u64,
+    /// 可选资源类型过滤。
+    kind: Option<ResourceKind>,
+    /// 可选标签过滤。
+    tag: Option<String>,
+    /// 可选名称模糊搜索关键字。
+    q: Option<String>,
+    /// 是否包含软删除资源。
+    include_deleted: bool,
+}
+
+impl ListResources {
+    /// 创建列表查询。
+    pub fn new(limit: u32, offset: u64) -> Self {
+        Self {
+            limit,
+            offset,
+            kind: None,
+            tag: None,
+            q: None,
+            include_deleted: false,
+        }
+    }
+
+    /// 设置资源类型过滤。
+    pub fn with_kind(mut self, kind: ResourceKind) -> Self {
+        self.kind = Some(kind);
+        self
+    }
+
+    /// 设置标签过滤。
+    pub fn with_tag(mut self, tag: impl Into<String>) -> Self {
+        self.tag = Some(tag.into());
+        self
+    }
+
+    /// 设置名称模糊搜索。
+    pub fn with_q(mut self, q: impl Into<String>) -> Self {
+        self.q = Some(q.into());
+        self
+    }
+
+    /// 设置是否包含软删除资源。
+    pub fn with_include_deleted(mut self, include_deleted: bool) -> Self {
+        self.include_deleted = include_deleted;
+        self
+    }
+
+    /// 返回数量上限。
+    pub fn limit(&self) -> u32 {
+        self.limit
+    }
+
+    /// 返回跳过记录数。
+    pub fn offset(&self) -> u64 {
+        self.offset
+    }
+
+    /// 返回资源类型过滤。
+    pub fn kind(&self) -> Option<&ResourceKind> {
+        self.kind.as_ref()
+    }
+
+    /// 返回标签过滤。
+    pub fn tag(&self) -> Option<&str> {
+        self.tag.as_deref()
+    }
+
+    /// 返回名称搜索关键字。
+    pub fn q(&self) -> Option<&str> {
+        self.q.as_deref()
+    }
+
+    /// 返回是否包含软删除资源。
+    pub fn include_deleted(&self) -> bool {
+        self.include_deleted
+    }
+}
+
+/// 资源分页查询结果。
+#[derive(Debug, Clone)]
+pub struct ResourcePage {
+    /// 当前页资源。
+    pub items: Vec<Resource>,
+    /// 符合条件的总记录数。
+    pub total: u64,
+    /// 返回数量上限。
+    pub limit: u32,
+    /// 跳过的记录数量。
+    pub offset: u64,
+}
 
 /// 资源聚合仓储端口。
 ///
@@ -33,6 +131,9 @@ pub trait ResourceRepository: Send + Sync {
     /// 该方法面向聚合还原，不承担复杂检索、分页或条件查询职责。后续若需要列表查询，
     /// 应单独增加查询端口，避免把聚合仓储扩成通用查询服务。
     async fn find_by_id(&self, id: &ResourceId) -> Result<Option<Resource>, CoreError>;
+
+    /// 按条件分页列出资源。
+    async fn list(&self, query: &ListResources) -> Result<ResourcePage, CoreError>;
 
     /// 从持久化存储中物理移除资源记录。
     ///

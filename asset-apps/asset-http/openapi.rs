@@ -1,7 +1,9 @@
 use crate::dto::{
     BinaryContent, ChecksumResponse, CreateResourceRequest, ErrorResponse, HealthResponse,
-    ResourceContentResponse, ResourceMetadataRequest, ResourceMetadataResponse, ResourceResponse,
-    UploadResourceContentRequest,
+    KindMetadataRequest, KindMetadataResponse, ResourceContentResponse, ResourceKindResponse,
+    ResourceKindsResponse, ResourceMetadataRequest, ResourceMetadataResponse, ResourcePageResponse,
+    ResourceResponse, ResourceSummaryMetadataRequest, ResourceSummaryMetadataResponse,
+    UpdateResourceRequest, UploadResourceContentRequest,
 };
 use crate::handlers;
 use utoipa::OpenApi;
@@ -11,10 +13,13 @@ use utoipa::OpenApi;
 #[openapi(
     paths(
         handlers::health,
+        handlers::list_resource_kinds,
+        handlers::list_resources,
         handlers::create_resource,
         handlers::upload_resource_content,
         handlers::upload_resource_content_stream,
         handlers::find_resource,
+        handlers::update_resource,
         handlers::get_resource_content,
         handlers::soft_delete_resource,
         handlers::remove_resource
@@ -26,10 +31,18 @@ use utoipa::OpenApi;
             CreateResourceRequest,
             ErrorResponse,
             HealthResponse,
+            KindMetadataRequest,
+            KindMetadataResponse,
+            ResourceKindResponse,
+            ResourceKindsResponse,
             ResourceContentResponse,
             ResourceMetadataRequest,
             ResourceMetadataResponse,
+            ResourcePageResponse,
             ResourceResponse,
+            ResourceSummaryMetadataRequest,
+            ResourceSummaryMetadataResponse,
+            UpdateResourceRequest,
             UploadResourceContentRequest
         )
     ),

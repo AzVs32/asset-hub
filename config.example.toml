@@ -21,3 +21,18 @@ max_connections = 5
 # OpenDAL Fs backend root directory.
 # Relative paths are resolved from the current working directory.
 fs_root = "data/blob"
+
+[kind]
+# Optional directories containing plugin JSON manifests.
+# Manifest files are loaded at startup; kinds cannot be created through HTTP APIs.
+plugin_manifest_dirs = []
+
+# Optional system-configured resource kinds.
+# Built-in kinds are always available and cannot be overridden.
+#
+# [[kind.definitions]]
+# kind = "doc:note"
+# label = "Note"
+# schema_id = "doc:note@1"
+# supports_content = false
+# metadata_schema = { type = "object" }

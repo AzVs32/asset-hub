@@ -1,12 +1,18 @@
 use crate::dto::{
-    BinaryContent, CreateResourceRequest, HealthResponse, ResourceMetadataRequest,
-    ResourceResponse, UploadResourceContentRequest, UploadResourceContentStreamQuery,
+    BinaryContent, CreateResourceRequest, HealthResponse, ListResourcesQuery, ResourceKindResponse,
+    ResourceKindsResponse, ResourceMetadataRequest, ResourcePageResponse, ResourceResponse,
+    UpdateResourceRequest, UploadResourceContentRequest, UploadResourceContentStreamQuery,
 };
 use crate::error::HttpError;
 use crate::state::HttpState;
+use asset_core::CoreError;
 use asset_core::domain::{Checksum, ResourceId, ResourceKind, ResourceStatus, StorageKey};
-use asset_core::service::{CreateResource, UploadResourceContent, UploadResourceContentStream};
-use asset_core::{CoreError, port::BlobByteStream};
+use asset_core::port::{
+    BlobByteStream, ListResources, ResourceKindDefinition, ResourceKindRegistry,
+};
+use asset_core::service::{
+    CreateResource, UpdateResource, UploadResourceContent, UploadResourceContentStream,
+};
 use axum::Json;
 use axum::body::Body;
 use axum::extract::rejection::JsonRejection;
@@ -18,6 +24,13 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use bytes::Bytes;
 use futures_util::StreamExt;
 use std::str::FromStr;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+pub(crate) const MAX_UPLOAD_BYTES: usize = 16 * 1024 * 1024;
+const DEFAULT_PAGE: u32 = 1;
+const DEFAULT_LIMIT: u32 = 50;
+const MAX_LIMIT: u32 = 100;
 
 /// 健康检查。
 #[utoipa::path(
@@ -30,6 +43,28 @@ use std::str::FromStr;
 )]
 pub(crate) async fn health() -> Json<HealthResponse> {
     Json(HealthResponse::ok())
+}
+
+/// 列出当前后端支持的资源类型。
+#[utoipa::path(
+    get,
+    path = "/resource-kinds",
+    tag = "resources",
+    responses(
+        (status = 200, description = "资源类型列表", body = ResourceKindsResponse)
+    )
+)]
+pub(crate) async fn list_resource_kinds(
+    State(state): State<HttpState>,
+) -> Json<ResourceKindsResponse> {
+    Json(ResourceKindsResponse {
+        items: state
+            .kind_registry()
+            .list()
+            .iter()
+            .map(ResourceKindResponse::from)
+            .collect(),
+    })
 }
 
 /// 创建纯元数据资源。
@@ -50,6 +85,7 @@ pub(crate) async fn create_resource(
 ) -> Result<(StatusCode, Json<ResourceResponse>), HttpError> {
     let payload = parse_json_payload(payload)?;
     let command = apply_common_resource_fields(
+        state.kind_registry(),
         CreateResource::new(payload.name),
         payload.kind,
         payload.status,
@@ -58,6 +94,54 @@ pub(crate) async fn create_resource(
     let resource = state.service().create_resource(command).await?;
 
     Ok((StatusCode::CREATED, Json(ResourceResponse::from(&resource))))
+}
+
+/// 分页列出资源。
+#[utoipa::path(
+    get,
+    path = "/resources",
+    tag = "resources",
+    params(ListResourcesQuery),
+    responses(
+        (status = 200, description = "资源列表", body = ResourcePageResponse),
+        (status = 400, description = "请求参数无效", body = crate::dto::ErrorResponse),
+        (status = 500, description = "服务端错误", body = crate::dto::ErrorResponse)
+    )
+)]
+pub(crate) async fn list_resources(
+    State(state): State<HttpState>,
+    Query(query): Query<ListResourcesQuery>,
+) -> Result<Json<ResourcePageResponse>, HttpError> {
+    let page = query.page.unwrap_or(DEFAULT_PAGE).max(1);
+    let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
+    let offset = u64::from(page - 1) * u64::from(limit);
+    let mut command = ListResources::new(limit, offset)
+        .with_include_deleted(query.include_deleted.unwrap_or(false));
+
+    if let Some(kind) = query.kind {
+        command = command.with_kind(parse_supported_kind(state.kind_registry(), kind)?);
+    }
+
+    if let Some(tag) = query.tag {
+        command = command.with_tag(tag);
+    }
+
+    if let Some(q) = query.q {
+        command = command.with_q(q);
+    }
+
+    let page_result = state.service().list_resources(command).await?;
+
+    Ok(Json(ResourcePageResponse {
+        items: page_result
+            .items
+            .iter()
+            .map(ResourceResponse::from)
+            .collect(),
+        total: page_result.total,
+        page,
+        limit: page_result.limit,
+    }))
 }
 
 /// 上传内容并创建资源。
@@ -82,9 +166,16 @@ pub(crate) async fn upload_resource_content(
         .decode(payload.data_base64.as_bytes())
         .map(Bytes::from)
         .map_err(|error| HttpError::bad_request(format!("invalid base64 content: {error}")))?;
+    ensure_upload_size(data.len() as u64)?;
 
     let mut command = UploadResourceContent::new(payload.name, storage_key, data);
-    command = apply_common_upload_fields(command, payload.kind, payload.status, payload.metadata)?;
+    command = apply_common_upload_fields(
+        state.kind_registry(),
+        command,
+        payload.kind,
+        payload.status,
+        payload.metadata,
+    )?;
 
     if let Some(mime_type) = payload.mime_type {
         command = command.with_mime_type(mime_type);
@@ -130,13 +221,17 @@ pub(crate) async fn upload_resource_content_stream(
     body: Body,
 ) -> Result<(StatusCode, Json<ResourceResponse>), HttpError> {
     let storage_key = StorageKey::new(query.storage_key)?;
-    let data: BlobByteStream = Box::pin(
-        body.into_data_stream()
-            .map(|chunk| chunk.map_err(|error| CoreError::storage("http.request_body", error))),
-    );
+    ensure_content_length(&headers)?;
+    let data = limited_body_stream(body);
 
     let mut command = UploadResourceContentStream::new(query.name, storage_key, data);
-    command = apply_common_stream_fields(command, query.kind, query.status, query.metadata_json)?;
+    command = apply_common_stream_fields(
+        state.kind_registry(),
+        command,
+        query.kind,
+        query.status,
+        query.metadata_json,
+    )?;
 
     if let Some(mime_type) = content_type(&headers)? {
         command = command.with_mime_type(mime_type);
@@ -180,6 +275,57 @@ pub(crate) async fn find_resource(
     let id = parse_resource_id(&id)?;
 
     match state.service().find_resource(&id).await? {
+        Some(resource) => Ok(Json(ResourceResponse::from(&resource))),
+        None => Err(HttpError::not_found(format!("resource `{id}` not found"))),
+    }
+}
+
+/// 更新资源。
+#[utoipa::path(
+    patch,
+    path = "/resources/{id}",
+    tag = "resources",
+    params(
+        ("id" = String, Path, description = "资源 ID")
+    ),
+    request_body = UpdateResourceRequest,
+    responses(
+        (status = 200, description = "资源已更新", body = ResourceResponse),
+        (status = 400, description = "请求参数无效", body = crate::dto::ErrorResponse),
+        (status = 404, description = "资源不存在", body = crate::dto::ErrorResponse),
+        (status = 500, description = "服务端错误", body = crate::dto::ErrorResponse)
+    )
+)]
+pub(crate) async fn update_resource(
+    State(state): State<HttpState>,
+    Path(id): Path<String>,
+    payload: Result<Json<UpdateResourceRequest>, JsonRejection>,
+) -> Result<Json<ResourceResponse>, HttpError> {
+    let id = parse_resource_id(&id)?;
+    let payload = parse_json_payload(payload)?;
+    let mut command = UpdateResource::new();
+
+    if let Some(name) = payload.name {
+        command = command.with_name(name);
+    }
+
+    if let Some(kind) = payload.kind {
+        command = command.with_kind(parse_supported_kind(state.kind_registry(), kind)?);
+    }
+
+    if let Some(status) = payload.status {
+        command = command.with_status(parse_status(&status)?);
+    }
+
+    if let Some(metadata) = payload.metadata {
+        command = command.with_metadata(metadata.into_domain()?);
+    }
+
+    if let Some(restore) = payload.restore {
+        command = command.with_restore(restore);
+    }
+
+    match state.service().update_resource(&id, command).await? {
         Some(resource) => Ok(Json(ResourceResponse::from(&resource))),
         None => Err(HttpError::not_found(format!("resource `{id}` not found"))),
     }
@@ -275,13 +421,14 @@ pub(crate) async fn remove_resource(
 }
 
 fn apply_common_resource_fields(
+    kind_registry: &dyn ResourceKindRegistry,
     mut command: CreateResource,
     kind: Option<String>,
     status: Option<String>,
     metadata: Option<ResourceMetadataRequest>,
 ) -> Result<CreateResource, HttpError> {
     if let Some(kind) = kind {
-        command = command.with_kind(ResourceKind::try_new(kind)?);
+        command = command.with_kind(parse_supported_kind(kind_registry, kind)?);
     }
 
     if let Some(status) = status {
@@ -296,13 +443,14 @@ fn apply_common_resource_fields(
 }
 
 fn apply_common_upload_fields(
+    kind_registry: &dyn ResourceKindRegistry,
     mut command: UploadResourceContent,
     kind: Option<String>,
     status: Option<String>,
     metadata: Option<ResourceMetadataRequest>,
 ) -> Result<UploadResourceContent, HttpError> {
     if let Some(kind) = kind {
-        command = command.with_kind(ResourceKind::try_new(kind)?);
+        command = command.with_kind(parse_content_kind(kind_registry, kind)?);
     }
 
     if let Some(status) = status {
@@ -317,13 +465,14 @@ fn apply_common_upload_fields(
 }
 
 fn apply_common_stream_fields(
+    kind_registry: &dyn ResourceKindRegistry,
     mut command: UploadResourceContentStream,
     kind: Option<String>,
     status: Option<String>,
     metadata_json: Option<String>,
 ) -> Result<UploadResourceContentStream, HttpError> {
     if let Some(kind) = kind {
-        command = command.with_kind(ResourceKind::try_new(kind)?);
+        command = command.with_kind(parse_content_kind(kind_registry, kind)?);
     }
 
     if let Some(status) = status {
@@ -351,6 +500,51 @@ fn content_type(headers: &HeaderMap) -> Result<Option<String>, HttpError> {
         .transpose()
 }
 
+fn ensure_content_length(headers: &HeaderMap) -> Result<(), HttpError> {
+    let Some(value) = headers.get(header::CONTENT_LENGTH) else {
+        return Ok(());
+    };
+    let value = value
+        .to_str()
+        .map_err(|error| HttpError::bad_request(format!("invalid content-length: {error}")))?;
+    let value = value
+        .parse::<u64>()
+        .map_err(|error| HttpError::bad_request(format!("invalid content-length: {error}")))?;
+
+    ensure_upload_size(value)
+}
+
+fn ensure_upload_size(size: u64) -> Result<(), HttpError> {
+    if size > MAX_UPLOAD_BYTES as u64 {
+        return Err(HttpError::bad_request(format!(
+            "request body too large: max {} bytes",
+            MAX_UPLOAD_BYTES
+        )));
+    }
+
+    Ok(())
+}
+
+fn limited_body_stream(body: Body) -> BlobByteStream {
+    let bytes_read = Arc::new(AtomicU64::new(0));
+    let stream_bytes_read = bytes_read.clone();
+
+    Box::pin(body.into_data_stream().map(move |chunk| {
+        let chunk = chunk.map_err(|error| CoreError::storage("http.request_body", error))?;
+        let total =
+            stream_bytes_read.fetch_add(chunk.len() as u64, Ordering::Relaxed) + chunk.len() as u64;
+
+        if total > MAX_UPLOAD_BYTES as u64 {
+            return Err(CoreError::configuration(format!(
+                "request body too large: max {} bytes",
+                MAX_UPLOAD_BYTES
+            )));
+        }
+
+        Ok(chunk)
+    }))
+}
+
 fn parse_status(value: &str) -> Result<ResourceStatus, HttpError> {
     match value.trim().to_ascii_lowercase().as_str() {
         "active" => Ok(ResourceStatus::Active),
@@ -359,6 +553,42 @@ fn parse_status(value: &str) -> Result<ResourceStatus, HttpError> {
             "invalid resource status `{value}`"
         ))),
     }
+}
+
+fn parse_supported_kind(
+    kind_registry: &dyn ResourceKindRegistry,
+    value: impl Into<String>,
+) -> Result<ResourceKind, HttpError> {
+    Ok(parse_kind_definition(kind_registry, value)?.kind().clone())
+}
+
+fn parse_content_kind(
+    kind_registry: &dyn ResourceKindRegistry,
+    value: impl Into<String>,
+) -> Result<ResourceKind, HttpError> {
+    let definition = parse_kind_definition(kind_registry, value)?;
+    if !definition.supports_content() {
+        return Err(HttpError::bad_request(format!(
+            "resource kind `{}` does not support content upload",
+            definition.kind()
+        )));
+    }
+
+    Ok(definition.kind().clone())
+}
+
+fn parse_kind_definition(
+    kind_registry: &dyn ResourceKindRegistry,
+    value: impl Into<String>,
+) -> Result<ResourceKindDefinition, HttpError> {
+    let kind = ResourceKind::try_new(value.into())?;
+    if let Some(definition) = kind_registry.get(&kind) {
+        return Ok(definition);
+    }
+
+    Err(HttpError::bad_request(format!(
+        "unsupported resource kind `{kind}`"
+    )))
 }
 
 fn parse_resource_id(value: &str) -> Result<ResourceId, HttpError> {

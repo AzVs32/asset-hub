@@ -1,11 +1,15 @@
 pub mod config;
+pub mod kind;
 pub mod migration;
 pub mod sqlite;
 pub mod storage;
 
 use asset_core::service::ResourceService;
-use asset_core::{CoreError, port::BlobStorage, port::ResourceRepository};
+use asset_core::{
+    CoreError, port::BlobStorage, port::ResourceKindRegistry, port::ResourceRepository,
+};
 use config::AssetInfraConfig;
+use kind::DefaultResourceKindRegistry;
 use sqlite::SqliteResourceRepository;
 use std::sync::Arc;
 use storage::OpenDalBlobStorage;
@@ -20,6 +24,8 @@ pub struct AssetInfrastructure {
     resource_repository: Arc<SqliteResourceRepository>,
     /// 对象存储适配器。
     blob_storage: Arc<OpenDalBlobStorage>,
+    /// 资源类型注册表。
+    resource_kind_registry: Arc<DefaultResourceKindRegistry>,
 }
 
 impl AssetInfrastructure {
@@ -31,11 +37,14 @@ impl AssetInfrastructure {
         let blob_storage = Arc::new(OpenDalBlobStorage::from_config(&config.blob)?);
         let resource_repository =
             Arc::new(SqliteResourceRepository::connect(&config.database).await?);
+        let resource_kind_registry =
+            Arc::new(DefaultResourceKindRegistry::from_config(&config.kind)?);
 
         Ok(Self {
             config,
             resource_repository,
             blob_storage,
+            resource_kind_registry,
         })
     }
 
@@ -57,6 +66,11 @@ impl AssetInfrastructure {
     /// 返回对象存储端口对象。
     pub fn blob_storage(&self) -> Arc<dyn BlobStorage> {
         self.blob_storage.clone()
+    }
+
+    /// 返回资源类型注册表端口对象。
+    pub fn resource_kind_registry(&self) -> Arc<dyn ResourceKindRegistry> {
+        self.resource_kind_registry.clone()
     }
 
     /// 创建资源应用服务。

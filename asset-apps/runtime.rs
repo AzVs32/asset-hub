@@ -1,8 +1,10 @@
 use asset_core::CoreError;
+use asset_core::port::ResourceKindRegistry;
 use asset_core::service::ResourceService;
 use asset_infra::AssetInfrastructure;
 use asset_infra::config::{AssetInfraConfig, DEFAULT_CONFIG_FILE};
 use std::path::Path;
+use std::sync::Arc;
 
 /// 应用运行时。
 ///
@@ -59,5 +61,10 @@ impl AssetRuntime {
     /// 创建资源应用服务。
     pub fn resource_service(&self) -> ResourceService {
         self.infrastructure.resource_service()
+    }
+
+    /// 返回资源类型注册表。
+    pub fn resource_kind_registry(&self) -> Arc<dyn ResourceKindRegistry> {
+        self.infrastructure.resource_kind_registry()
     }
 }

@@ -2,7 +2,6 @@ use super::normalize_required_text;
 use crate::error::ResourceError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::BTreeMap;
 
 /// 当前资源元数据结构版本。
 const RESOURCE_METADATA_SCHEMA_VERSION: u32 = 1;
@@ -12,31 +11,45 @@ const MAX_METADATA_DESCRIPTION_LEN: usize = 1024;
 const MAX_METADATA_TAGS: usize = 64;
 /// 单个元数据标签允许的最大字符数。
 const MAX_METADATA_TAG_LEN: usize = 64;
-/// 扩展属性键允许的最大字符数。
-const MAX_METADATA_ATTRIBUTE_KEY_LEN: usize = 255;
-
-// ==================================================
-// 资源metadata
-// ==================================================
+/// kind metadata schema id 允许的最大字符数。
+const MAX_KIND_SCHEMA_ID_LEN: usize = 128;
 
 /// 资源元数据。
 ///
-/// 元数据由服务端定义稳定结构，调用方不能把任意 JSON 直接作为整段元数据写入。
-/// `attributes` 是预留的扩展字段，用于承载暂时没有被提升为一等字段的业务属性。
+/// 元数据分为核心摘要和 kind 专属扩展两层：
+/// - `summary` 由 Asset Hub 核心统一理解，用于描述、标签、查询和基础展示。
+/// - `kind` 预留给插件定义 schema 与数据，核心层只要求其是带 schema id 的 JSON object。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ResourceMetadata {
     /// 元数据结构版本，由服务端维护。
     #[serde(default = "default_schema_version")]
     schema_version: u32,
+    /// 核心摘要元数据。
+    #[serde(default)]
+    summary: ResourceSummaryMetadata,
+    /// kind/plugin 专属元数据。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    kind: Option<KindMetadata>,
+}
+
+/// 资源核心摘要元数据。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceSummaryMetadata {
     /// 资源描述。
     #[serde(default)]
     description: Option<String>,
     /// 资源标签。
     #[serde(default)]
     tags: Vec<String>,
-    /// 资源扩展属性。
-    #[serde(default)]
-    attributes: BTreeMap<String, Value>,
+}
+
+/// kind/plugin 专属元数据。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KindMetadata {
+    /// 插件 schema 标识，例如 `mindustry:mod@1`。
+    schema_id: String,
+    /// 经过该 schema 解释的 JSON object。
+    data: Value,
 }
 
 impl ResourceMetadata {
@@ -52,70 +65,51 @@ impl ResourceMetadata {
 
     /// 创建并校验资源元数据。
     pub fn new(
-        description: Option<String>,
-        tags: Vec<String>,
-        attributes: BTreeMap<String, Value>,
+        summary: ResourceSummaryMetadata,
+        kind: Option<KindMetadata>,
     ) -> Result<Self, ResourceError> {
-        let description = normalize_optional_metadata_text(
-            "metadata.description",
-            description,
-            MAX_METADATA_DESCRIPTION_LEN,
-        )?;
-        let tags = normalize_tags(tags)?;
-        let attributes = normalize_attributes(attributes)?;
+        let summary = summary.validate()?;
+        let kind = kind.map(KindMetadata::validate).transpose()?;
 
         Ok(Self {
             schema_version: RESOURCE_METADATA_SCHEMA_VERSION,
-            description,
-            tags,
-            attributes,
+            summary,
+            kind,
         })
     }
 
     /// 从持久化 JSON 值还原资源元数据。
     ///
-    /// 当前版本的持久化格式是包含 `schema_version`、`description`、`tags` 和
-    /// `attributes` 的对象。为了兼容早期保存的任意 JSON object，如果对象没有任何
-    /// 当前结构字段，会把它整体迁移到 `attributes` 中。
+    /// 只接受当前结构，不再兼容历史自由 JSON 格式。
     pub fn from_persisted_value(value: Value) -> Result<Self, ResourceError> {
         match value {
             Value::Null => Ok(Self::default()),
             Value::Object(mut object) => {
-                if is_structured_metadata_object(&object) {
-                    let schema_version = object
-                        .remove("schema_version")
-                        .map(parse_schema_version)
-                        .transpose()?
-                        .unwrap_or(RESOURCE_METADATA_SCHEMA_VERSION);
-                    let description = object
-                        .remove("description")
-                        .map(parse_description)
-                        .transpose()?
-                        .flatten();
-                    let tags = object
-                        .remove("tags")
-                        .map(parse_tags)
-                        .transpose()?
-                        .unwrap_or_default();
-                    let mut attributes = object
-                        .remove("attributes")
-                        .map(parse_attributes)
-                        .transpose()?
-                        .unwrap_or_default();
+                let schema_version = object
+                    .remove("schema_version")
+                    .map(parse_schema_version)
+                    .transpose()?
+                    .unwrap_or(RESOURCE_METADATA_SCHEMA_VERSION);
+                let summary = object
+                    .remove("summary")
+                    .map(parse_summary)
+                    .transpose()?
+                    .unwrap_or_default();
+                let kind = object.remove("kind").map(parse_kind).transpose()?.flatten();
 
-                    attributes.extend(object);
-
-                    Self {
-                        schema_version,
-                        description,
-                        tags,
-                        attributes,
-                    }
-                    .validate()
-                } else {
-                    let attributes: BTreeMap<String, Value> = object.into_iter().collect();
-                    Self::builder().with_attributes(attributes).build()
+                if !object.is_empty() {
+                    return Err(ResourceError::InvalidFormat {
+                        field: "metadata",
+                        reason: "unexpected metadata fields",
+                    });
                 }
+
+                Self {
+                    schema_version,
+                    summary,
+                    kind,
+                }
+                .validate()
             }
             _ => Err(ResourceError::InvalidFormat {
                 field: "metadata",
@@ -129,24 +123,24 @@ impl ResourceMetadata {
         self.schema_version
     }
 
+    /// 返回核心摘要元数据。
+    pub fn summary(&self) -> &ResourceSummaryMetadata {
+        &self.summary
+    }
+
+    /// 返回 kind/plugin 专属元数据。
+    pub fn kind_metadata(&self) -> Option<&KindMetadata> {
+        self.kind.as_ref()
+    }
+
     /// 返回资源描述。
     pub fn description(&self) -> Option<&str> {
-        self.description.as_deref()
+        self.summary.description()
     }
 
     /// 返回资源标签列表。
     pub fn tags(&self) -> &[String] {
-        &self.tags
-    }
-
-    /// 返回扩展属性集合。
-    pub fn attributes(&self) -> &BTreeMap<String, Value> {
-        &self.attributes
-    }
-
-    /// 按 key 读取扩展属性。
-    pub fn attribute(&self, key: &str) -> Option<&Value> {
-        self.attributes.get(key)
+        self.summary.tags()
     }
 
     /// 消费 `ResourceMetadata` 并返回 JSON 值。
@@ -160,16 +154,67 @@ impl ResourceMetadata {
     }
 
     /// 检查元数据是否为空。
-    ///
-    /// 结构版本不参与空判断；只要描述、标签和扩展属性都为空，就视为空元数据。
     pub fn is_empty(&self) -> bool {
-        self.description.is_none() && self.tags.is_empty() && self.attributes.is_empty()
+        self.summary.is_empty() && self.kind.is_none()
+    }
+
+    /// 替换资源描述。
+    pub fn set_description(&mut self, description: Option<String>) -> Result<(), ResourceError> {
+        self.summary.set_description(description)
+    }
+
+    /// 追加标签。
+    pub fn add_tag(&mut self, tag: impl Into<String>) -> Result<(), ResourceError> {
+        self.summary.add_tag(tag)
+    }
+
+    fn validate(self) -> Result<Self, ResourceError> {
+        if self.schema_version != RESOURCE_METADATA_SCHEMA_VERSION {
+            return Err(ResourceError::InvalidFormat {
+                field: "metadata.schema_version",
+                reason: "unsupported resource metadata schema version",
+            });
+        }
+
+        Self::new(self.summary, self.kind)
+    }
+}
+
+impl Default for ResourceMetadata {
+    fn default() -> Self {
+        Self {
+            schema_version: RESOURCE_METADATA_SCHEMA_VERSION,
+            summary: ResourceSummaryMetadata::default(),
+            kind: None,
+        }
+    }
+}
+
+impl ResourceSummaryMetadata {
+    /// 创建核心摘要元数据。
+    pub fn new(description: Option<String>, tags: Vec<String>) -> Result<Self, ResourceError> {
+        Self { description, tags }.validate()
+    }
+
+    /// 返回资源描述。
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+
+    /// 返回资源标签列表。
+    pub fn tags(&self) -> &[String] {
+        &self.tags
+    }
+
+    /// 检查摘要是否为空。
+    pub fn is_empty(&self) -> bool {
+        self.description.is_none() && self.tags.is_empty()
     }
 
     /// 替换资源描述。
     pub fn set_description(&mut self, description: Option<String>) -> Result<(), ResourceError> {
         self.description = normalize_optional_metadata_text(
-            "metadata.description",
+            "metadata.summary.description",
             description,
             MAX_METADATA_DESCRIPTION_LEN,
         )?;
@@ -178,11 +223,12 @@ impl ResourceMetadata {
 
     /// 追加标签。
     pub fn add_tag(&mut self, tag: impl Into<String>) -> Result<(), ResourceError> {
-        let tag = normalize_required_text("metadata.tag", &tag.into(), MAX_METADATA_TAG_LEN)?;
+        let tag =
+            normalize_required_text("metadata.summary.tag", &tag.into(), MAX_METADATA_TAG_LEN)?;
 
         if self.tags.len() >= MAX_METADATA_TAGS && !self.tags.contains(&tag) {
             return Err(ResourceError::TooLong {
-                field: "metadata.tags",
+                field: "metadata.summary.tags",
                 max: MAX_METADATA_TAGS,
             });
         }
@@ -194,54 +240,75 @@ impl ResourceMetadata {
         Ok(())
     }
 
-    /// 写入扩展属性。
-    pub fn insert_attribute(
-        &mut self,
-        key: impl Into<String>,
-        value: Value,
-    ) -> Result<Option<Value>, ResourceError> {
-        let key = normalize_required_text(
-            "metadata.attributes.key",
-            &key.into(),
-            MAX_METADATA_ATTRIBUTE_KEY_LEN,
-        )?;
-
-        Ok(self.attributes.insert(key, value))
-    }
-
     fn validate(self) -> Result<Self, ResourceError> {
-        if self.schema_version != RESOURCE_METADATA_SCHEMA_VERSION {
-            return Err(ResourceError::InvalidFormat {
-                field: "metadata.schema_version",
-                reason: "unsupported resource metadata schema version",
-            });
-        }
+        let description = normalize_optional_metadata_text(
+            "metadata.summary.description",
+            self.description,
+            MAX_METADATA_DESCRIPTION_LEN,
+        )?;
+        let tags = normalize_tags(self.tags)?;
 
-        Self::new(self.description, self.tags, self.attributes)
+        Ok(Self { description, tags })
     }
 }
 
-impl Default for ResourceMetadata {
-    /// 提供默认实现，初始为空元数据。
-    fn default() -> Self {
+impl KindMetadata {
+    /// 创建 kind/plugin 专属元数据。
+    pub fn new(schema_id: impl Into<String>, data: Value) -> Result<Self, ResourceError> {
         Self {
-            schema_version: RESOURCE_METADATA_SCHEMA_VERSION,
-            description: None,
-            tags: Vec::new(),
-            attributes: BTreeMap::new(),
+            schema_id: schema_id.into(),
+            data,
         }
+        .validate()
+    }
+
+    /// 返回 schema id。
+    pub fn schema_id(&self) -> &str {
+        &self.schema_id
+    }
+
+    /// 返回 kind/plugin 专属数据。
+    pub fn data(&self) -> &Value {
+        &self.data
+    }
+
+    fn validate(self) -> Result<Self, ResourceError> {
+        let schema_id = normalize_required_text(
+            "metadata.kind.schema_id",
+            &self.schema_id,
+            MAX_KIND_SCHEMA_ID_LEN,
+        )?;
+
+        if schema_id.chars().any(char::is_whitespace) {
+            return Err(ResourceError::InvalidFormat {
+                field: "metadata.kind.schema_id",
+                reason: "whitespace is not allowed",
+            });
+        }
+
+        if !self.data.is_object() {
+            return Err(ResourceError::InvalidFormat {
+                field: "metadata.kind.data",
+                reason: "kind metadata data must be a JSON object",
+            });
+        }
+
+        Ok(Self {
+            schema_id,
+            data: self.data,
+        })
     }
 }
 
 /// 资源元数据构建器。
 #[derive(Debug, Clone, Default)]
 pub struct ResourceMetadataBuilder {
-    /// 资源描述。
+    /// 核心摘要描述。
     description: Option<String>,
-    /// 资源标签。
+    /// 核心摘要标签。
     tags: Vec<String>,
-    /// 资源扩展属性。
-    attributes: BTreeMap<String, Value>,
+    /// kind/plugin 专属元数据。
+    kind: Option<KindMetadata>,
 }
 
 impl ResourceMetadataBuilder {
@@ -272,41 +339,31 @@ impl ResourceMetadataBuilder {
         self
     }
 
-    /// 写入一个扩展属性。
-    pub fn with_attribute(mut self, key: impl Into<String>, value: Value) -> Self {
-        self.attributes.insert(key.into(), value);
+    /// 设置 kind/plugin 专属元数据。
+    pub fn with_kind_metadata(mut self, kind: KindMetadata) -> Self {
+        self.kind = Some(kind);
         self
     }
 
-    /// 批量写入扩展属性。
-    pub fn with_attributes<T, I>(mut self, attributes: I) -> Self
-    where
-        T: Into<String>,
-        I: IntoIterator<Item = (T, Value)>,
-    {
-        self.attributes.extend(
-            attributes
-                .into_iter()
-                .map(|(key, value)| (key.into(), value)),
-        );
+    /// 清空 kind/plugin 专属元数据。
+    pub fn without_kind_metadata(mut self) -> Self {
+        self.kind = None;
         self
     }
 
     /// 完成构建并执行元数据校验。
     pub fn build(self) -> Result<ResourceMetadata, ResourceError> {
-        ResourceMetadata::new(self.description, self.tags, self.attributes)
+        let summary = ResourceSummaryMetadata {
+            description: self.description,
+            tags: self.tags,
+        };
+
+        ResourceMetadata::new(summary, self.kind)
     }
 }
 
 fn default_schema_version() -> u32 {
     RESOURCE_METADATA_SCHEMA_VERSION
-}
-
-fn is_structured_metadata_object(object: &serde_json::Map<String, Value>) -> bool {
-    object.contains_key("schema_version")
-        || object.contains_key("description")
-        || object.contains_key("tags")
-        || object.contains_key("attributes")
 }
 
 fn normalize_optional_metadata_text(
@@ -322,7 +379,7 @@ fn normalize_optional_metadata_text(
 fn normalize_tags(tags: Vec<String>) -> Result<Vec<String>, ResourceError> {
     if tags.len() > MAX_METADATA_TAGS {
         return Err(ResourceError::TooLong {
-            field: "metadata.tags",
+            field: "metadata.summary.tags",
             max: MAX_METADATA_TAGS,
         });
     }
@@ -330,7 +387,7 @@ fn normalize_tags(tags: Vec<String>) -> Result<Vec<String>, ResourceError> {
     let mut normalized = Vec::with_capacity(tags.len());
 
     for tag in tags {
-        let tag = normalize_required_text("metadata.tag", &tag, MAX_METADATA_TAG_LEN)?;
+        let tag = normalize_required_text("metadata.summary.tag", &tag, MAX_METADATA_TAG_LEN)?;
 
         if !normalized.contains(&tag) {
             normalized.push(tag);
@@ -340,35 +397,87 @@ fn normalize_tags(tags: Vec<String>) -> Result<Vec<String>, ResourceError> {
     Ok(normalized)
 }
 
-fn normalize_attributes(
-    attributes: BTreeMap<String, Value>,
-) -> Result<BTreeMap<String, Value>, ResourceError> {
-    let mut normalized = BTreeMap::new();
-
-    for (key, value) in attributes {
-        let key = normalize_required_text(
-            "metadata.attributes.key",
-            &key,
-            MAX_METADATA_ATTRIBUTE_KEY_LEN,
-        )?;
-        normalized.insert(key, value);
+fn parse_schema_version(value: Value) -> Result<u32, ResourceError> {
+    match value {
+        Value::Number(value) => value
+            .as_u64()
+            .and_then(|value| u32::try_from(value).ok())
+            .ok_or(ResourceError::InvalidFormat {
+                field: "metadata.schema_version",
+                reason: "schema_version must be a positive integer",
+            }),
+        _ => Err(ResourceError::InvalidFormat {
+            field: "metadata.schema_version",
+            reason: "schema_version must be a number",
+        }),
     }
-
-    Ok(normalized)
 }
 
-fn parse_schema_version(value: Value) -> Result<u32, ResourceError> {
-    let Some(version) = value.as_u64() else {
-        return Err(ResourceError::InvalidFormat {
-            field: "metadata.schema_version",
-            reason: "schema version must be an unsigned integer",
-        });
-    };
+fn parse_summary(value: Value) -> Result<ResourceSummaryMetadata, ResourceError> {
+    match value {
+        Value::Object(mut object) => {
+            let description = object
+                .remove("description")
+                .map(parse_description)
+                .transpose()?
+                .flatten();
+            let tags = object
+                .remove("tags")
+                .map(parse_tags)
+                .transpose()?
+                .unwrap_or_default();
 
-    u32::try_from(version).map_err(|_| ResourceError::TooLong {
-        field: "metadata.schema_version",
-        max: u32::MAX as usize,
-    })
+            if !object.is_empty() {
+                return Err(ResourceError::InvalidFormat {
+                    field: "metadata.summary",
+                    reason: "unexpected summary fields",
+                });
+            }
+
+            ResourceSummaryMetadata::new(description, tags)
+        }
+        _ => Err(ResourceError::InvalidFormat {
+            field: "metadata.summary",
+            reason: "summary must be a JSON object",
+        }),
+    }
+}
+
+fn parse_kind(value: Value) -> Result<Option<KindMetadata>, ResourceError> {
+    match value {
+        Value::Null => Ok(None),
+        Value::Object(mut object) => {
+            let schema_id = object
+                .remove("schema_id")
+                .ok_or(ResourceError::InvalidFormat {
+                    field: "metadata.kind.schema_id",
+                    reason: "schema_id is required",
+                })?;
+            let data = object.remove("data").ok_or(ResourceError::InvalidFormat {
+                field: "metadata.kind.data",
+                reason: "data is required",
+            })?;
+
+            if !object.is_empty() {
+                return Err(ResourceError::InvalidFormat {
+                    field: "metadata.kind",
+                    reason: "unexpected kind metadata fields",
+                });
+            }
+
+            match schema_id {
+                Value::String(schema_id) => KindMetadata::new(schema_id, data).map(Some),
+                _ => Err(ResourceError::InvalidFormat {
+                    field: "metadata.kind.schema_id",
+                    reason: "schema_id must be a string",
+                }),
+            }
+        }
+        _ => Err(ResourceError::InvalidFormat {
+            field: "metadata.kind",
+            reason: "kind metadata must be a JSON object or null",
+        }),
+    }
 }
 
 fn parse_description(value: Value) -> Result<Option<String>, ResourceError> {
@@ -376,39 +485,27 @@ fn parse_description(value: Value) -> Result<Option<String>, ResourceError> {
         Value::Null => Ok(None),
         Value::String(value) => Ok(Some(value)),
         _ => Err(ResourceError::InvalidFormat {
-            field: "metadata.description",
-            reason: "description must be a string",
+            field: "metadata.summary.description",
+            reason: "description must be a string or null",
         }),
     }
 }
 
 fn parse_tags(value: Value) -> Result<Vec<String>, ResourceError> {
     match value {
-        Value::Null => Ok(Vec::new()),
         Value::Array(tags) => tags
             .into_iter()
-            .map(|tag| match tag {
-                Value::String(tag) => Ok(tag),
+            .map(|value| match value {
+                Value::String(value) => Ok(value),
                 _ => Err(ResourceError::InvalidFormat {
-                    field: "metadata.tags",
+                    field: "metadata.summary.tags",
                     reason: "tags must be an array of strings",
                 }),
             })
             .collect(),
         _ => Err(ResourceError::InvalidFormat {
-            field: "metadata.tags",
-            reason: "tags must be an array of strings",
-        }),
-    }
-}
-
-fn parse_attributes(value: Value) -> Result<BTreeMap<String, Value>, ResourceError> {
-    match value {
-        Value::Null => Ok(BTreeMap::new()),
-        Value::Object(attributes) => Ok(attributes.into_iter().collect()),
-        _ => Err(ResourceError::InvalidFormat {
-            field: "metadata.attributes",
-            reason: "attributes must be a JSON object",
+            field: "metadata.summary.tags",
+            reason: "tags must be an array",
         }),
     }
 }

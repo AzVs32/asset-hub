@@ -1,12 +1,15 @@
 mod content;
 mod kind;
 mod metadata;
+#[allow(clippy::module_inception)]
 mod resource;
 mod status;
 
 pub use content::{Checksum, ChecksumKind, ResourceContent, ResourceContentBuilder, StorageKey};
 pub use kind::ResourceKind;
-pub use metadata::{ResourceMetadata, ResourceMetadataBuilder};
+pub use metadata::{
+    KindMetadata, ResourceMetadata, ResourceMetadataBuilder, ResourceSummaryMetadata,
+};
 pub use resource::{Resource, ResourceBuilder, ResourceId, ResourceSnapshot};
 pub use status::ResourceStatus;
 
@@ -146,7 +149,9 @@ mod tests {
     fn resource_builder_accepts_metadata_and_content() {
         let metadata = ResourceMetadata::builder()
             .with_tags(["rust", "asset"])
-            .with_attribute("source", json!("test"))
+            .with_kind_metadata(
+                KindMetadata::new("test:resource@1", json!({"source": "test"})).unwrap(),
+            )
             .build()
             .unwrap();
         let checksum = Checksum::sha256("a".repeat(64)).unwrap();
@@ -170,8 +175,8 @@ mod tests {
         assert_eq!(content.checksums(), &[checksum]);
         assert_eq!(resource.metadata().tags(), &["rust", "asset"]);
         assert_eq!(
-            resource.metadata().attribute("source"),
-            Some(&json!("test"))
+            resource.metadata().kind_metadata().unwrap().data(),
+            &json!({"source": "test"})
         );
     }
 
@@ -203,17 +208,43 @@ mod tests {
         let mut metadata = ResourceMetadata::default();
 
         metadata.add_tag(" rust ").unwrap();
-        metadata
-            .insert_attribute(" language ", json!("rust"))
-            .unwrap();
 
         assert_eq!(
             metadata.schema_version(),
             ResourceMetadata::current_schema_version()
         );
         assert_eq!(metadata.tags(), &["rust"]);
-        assert_eq!(metadata.attribute("language"), Some(&json!("rust")));
         assert!(!metadata.is_empty());
+    }
+
+    #[test]
+    fn metadata_accepts_kind_specific_object() {
+        let metadata = ResourceMetadata::from_persisted_value(json!({
+            "schema_version": 1,
+            "summary": {
+                "description": "A resource",
+                "tags": ["asset"]
+            },
+            "kind": {
+                "schema_id": "asset:test@1",
+                "data": {
+                    "A": "a",
+                    "B": "b"
+                }
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(metadata.description(), Some("A resource"));
+        assert_eq!(metadata.tags(), &["asset"]);
+        assert_eq!(
+            metadata.kind_metadata().unwrap().schema_id(),
+            "asset:test@1"
+        );
+        assert_eq!(
+            metadata.kind_metadata().unwrap().data(),
+            &json!({"A": "a", "B": "b"})
+        );
     }
 
     #[test]

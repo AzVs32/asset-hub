@@ -19,6 +19,11 @@ impl ResourceKind {
     /// 资源类型未知
     pub const UNKNOWN: &'static str = "core:unknown";
 
+    /// 返回核心内置资源类型。
+    pub const fn builtin_values() -> &'static [&'static str] {
+        &[Self::UNKNOWN]
+    }
+
     /// 创建一个资源类型实例。支持传入 `String` 或 `&str`。
     ///
     /// 建议采用 `namespace:typename` 的命名规范防止冲突。

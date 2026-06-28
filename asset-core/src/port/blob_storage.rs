@@ -52,6 +52,13 @@ pub trait BlobStorage: Send + Sync {
     /// 应返回 `CoreError::Storage`。
     async fn put(&self, key: &StorageKey, data: Bytes) -> Result<(), CoreError>;
 
+    /// 仅当对象不存在时写入内容。
+    ///
+    /// 该方法用于创建型业务流程，必须尽量使用底层存储的条件写入能力实现，避免
+    /// “先 exists 再 put” 带来的并发覆盖窗口。目标对象已经存在时应返回
+    /// `CoreError::Conflict`。
+    async fn put_if_absent(&self, key: &StorageKey, data: Bytes) -> Result<(), CoreError>;
+
     /// 流式写入或覆盖指定存储键对应的对象内容。
     ///
     /// 该方法用于大文件上传，调用方不需要把完整文件一次性加载到内存中。实现方应逐块消费
@@ -59,6 +66,16 @@ pub trait BlobStorage: Send + Sync {
     ///
     /// 成功返回实际写入的字节数，上层 usecase 会把它记录到 `ResourceContent::size`。
     async fn put_stream(
+        &self,
+        key: &StorageKey,
+        data: BlobByteStream,
+    ) -> Result<BlobWriteResult, CoreError>;
+
+    /// 仅当对象不存在时流式写入内容。
+    ///
+    /// 语义与 `put_if_absent` 一致，但内容以 chunk 流传入。目标对象已经存在时应返回
+    /// `CoreError::Conflict`。
+    async fn put_stream_if_absent(
         &self,
         key: &StorageKey,
         data: BlobByteStream,

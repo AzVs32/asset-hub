@@ -1,6 +1,7 @@
 use ::config::{Config, File, FileFormat};
 use asset_core::CoreError;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 /// 默认配置文件名。
@@ -18,13 +19,15 @@ pub const DEFAULT_SQLITE_MAX_CONNECTIONS: u32 = 5;
 /// - SQLite 数据库文件：`data/asset-hub.sqlite`
 /// - Fs 对象存储根目录：`data/blob`
 /// - SQLite 最大连接数：`5`
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AssetInfraConfig {
     /// 数据存储配置。
     pub database: DatabaseConfig,
     /// 对象存储配置。
     pub blob: BlobConfig,
+    /// 资源类型注册表配置。
+    pub kind: KindRegistryConfig,
 }
 
 impl AssetInfraConfig {
@@ -80,16 +83,13 @@ impl AssetInfraConfig {
     pub fn normalized(mut self) -> Result<Self, CoreError> {
         self.database.sqlite_path = normalize_path(&self.database.sqlite_path)?;
         self.blob.fs_root = normalize_path(&self.blob.fs_root)?;
+        self.kind.plugin_manifest_dirs = self
+            .kind
+            .plugin_manifest_dirs
+            .iter()
+            .map(|path| normalize_path(path))
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(self)
-    }
-}
-
-impl Default for AssetInfraConfig {
-    fn default() -> Self {
-        Self {
-            database: DatabaseConfig::default(),
-            blob: BlobConfig::default(),
-        }
     }
 }
 
@@ -128,6 +128,44 @@ impl Default for BlobConfig {
     fn default() -> Self {
         Self {
             fs_root: PathBuf::from(DEFAULT_FS_ROOT),
+        }
+    }
+}
+
+/// 资源类型注册表配置。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct KindRegistryConfig {
+    /// 由系统配置声明的资源类型。
+    pub definitions: Vec<ResourceKindConfig>,
+    /// 插件 manifest 目录。目录中的 JSON manifest 会在启动时加载。
+    pub plugin_manifest_dirs: Vec<PathBuf>,
+}
+
+/// 配置文件中的资源类型定义。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ResourceKindConfig {
+    /// 资源类型值，例如 `asset:image`。
+    pub kind: String,
+    /// 展示名称；为空时使用 `kind`。
+    pub label: Option<String>,
+    /// 默认 kind metadata schema id。
+    pub schema_id: Option<String>,
+    /// kind metadata JSON schema。
+    pub metadata_schema: Option<Value>,
+    /// 是否支持对象内容。
+    pub supports_content: bool,
+}
+
+impl Default for ResourceKindConfig {
+    fn default() -> Self {
+        Self {
+            kind: String::new(),
+            label: None,
+            schema_id: None,
+            metadata_schema: None,
+            supports_content: true,
         }
     }
 }
@@ -200,6 +238,38 @@ mod tests {
     }
 
     #[test]
+    fn kind_config_accepts_static_definitions_and_plugin_dirs() {
+        let config = AssetInfraConfig::from_config_str(
+            r#"
+            [kind]
+            plugin_manifest_dirs = ["plugins"]
+
+            [[kind.definitions]]
+            kind = "doc:note"
+            label = "Note"
+            schema_id = "doc:note@1"
+            supports_content = false
+            metadata_schema = { type = "object" }
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(config.kind.plugin_manifest_dirs, [PathBuf::from("plugins")]);
+        assert_eq!(config.kind.definitions.len(), 1);
+        assert_eq!(config.kind.definitions[0].kind, "doc:note");
+        assert_eq!(config.kind.definitions[0].label.as_deref(), Some("Note"));
+        assert_eq!(
+            config.kind.definitions[0].schema_id.as_deref(),
+            Some("doc:note@1")
+        );
+        assert!(!config.kind.definitions[0].supports_content);
+        assert_eq!(
+            config.kind.definitions[0].metadata_schema.as_ref().unwrap()["type"],
+            "object"
+        );
+    }
+
+    #[test]
     fn optional_missing_config_file_uses_defaults() {
         let config = AssetInfraConfig::from_optional_config_file(
             std::env::temp_dir().join("asset-hub-missing-config.toml"),
@@ -219,5 +289,20 @@ mod tests {
 
         assert!(config.database.sqlite_path.is_absolute());
         assert!(config.blob.fs_root.is_absolute());
+    }
+
+    #[test]
+    fn normalized_config_turns_plugin_manifest_dirs_into_absolute_paths() {
+        let config = AssetInfraConfig {
+            kind: KindRegistryConfig {
+                plugin_manifest_dirs: vec![PathBuf::from("plugins")],
+                ..KindRegistryConfig::default()
+            },
+            ..AssetInfraConfig::default()
+        }
+        .normalized()
+        .unwrap();
+
+        assert!(config.kind.plugin_manifest_dirs[0].is_absolute());
     }
 }

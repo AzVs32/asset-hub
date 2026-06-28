@@ -4,11 +4,11 @@ use asset_core::domain::{
     Resource, ResourceContent, ResourceId, ResourceKind, ResourceMetadata, ResourceSnapshot,
     ResourceStatus,
 };
-use asset_core::port::ResourceRepository;
+use asset_core::port::{ListResources, ResourcePage, ResourceRepository};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow};
-use sqlx::{Row, Sqlite, SqlitePool};
+use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 use std::fmt;
 
 /// SQLite 版本的资源聚合仓储。
@@ -146,6 +146,31 @@ impl ResourceRepository for SqliteResourceRepository {
         row.map(decode_resource).transpose()
     }
 
+    async fn list(&self, query: &ListResources) -> Result<ResourcePage, CoreError> {
+        let total: i64 = build_list_count_query(query)
+            .build_query_scalar()
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|error| CoreError::repository("list.count", error))?;
+
+        let rows = build_list_select_query(query)
+            .build()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|error| CoreError::repository("list.select", error))?;
+        let items = rows
+            .into_iter()
+            .map(decode_resource)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(ResourcePage {
+            items,
+            total: total as u64,
+            limit: query.limit(),
+            offset: query.offset(),
+        })
+    }
+
     async fn remove(&self, id: &ResourceId) -> Result<(), CoreError> {
         sqlx::query("DELETE FROM resources WHERE id = ?")
             .bind(id.to_string())
@@ -155,6 +180,83 @@ impl ResourceRepository for SqliteResourceRepository {
 
         Ok(())
     }
+}
+
+fn build_list_count_query(query: &ListResources) -> QueryBuilder<Sqlite> {
+    let mut builder = QueryBuilder::new("SELECT COUNT(*) FROM resources");
+    push_list_where(&mut builder, query);
+    builder
+}
+
+fn build_list_select_query(query: &ListResources) -> QueryBuilder<Sqlite> {
+    let mut builder = QueryBuilder::new(
+        r#"
+        SELECT
+            id,
+            name,
+            kind,
+            status,
+            metadata_json,
+            content_json,
+            created_at,
+            updated_at,
+            deleted_at
+        FROM resources
+        "#,
+    );
+    push_list_where(&mut builder, query);
+    builder.push(" ORDER BY updated_at DESC, id DESC LIMIT ");
+    builder.push_bind(i64::from(query.limit()));
+    builder.push(" OFFSET ");
+    builder.push_bind(query.offset() as i64);
+    builder
+}
+
+fn push_list_where(builder: &mut QueryBuilder<Sqlite>, query: &ListResources) {
+    let mut has_where = false;
+
+    if !query.include_deleted() {
+        push_condition_prefix(builder, &mut has_where);
+        builder.push("deleted_at IS NULL");
+    }
+
+    if let Some(kind) = query.kind() {
+        push_condition_prefix(builder, &mut has_where);
+        builder.push("kind = ");
+        builder.push_bind(kind.as_str());
+    }
+
+    if let Some(tag) = query.tag() {
+        push_condition_prefix(builder, &mut has_where);
+        builder.push(
+            "EXISTS (SELECT 1 FROM json_each(resources.metadata_json, '$.summary.tags') WHERE value = ",
+        );
+        builder.push_bind(tag);
+        builder.push(")");
+    }
+
+    if let Some(q) = query.q() {
+        push_condition_prefix(builder, &mut has_where);
+        builder.push("name LIKE ");
+        builder.push_bind(format!("%{}%", escape_like(q)));
+        builder.push(" ESCAPE '\\'");
+    }
+}
+
+fn push_condition_prefix(builder: &mut QueryBuilder<Sqlite>, has_where: &mut bool) {
+    if *has_where {
+        builder.push(" AND ");
+    } else {
+        builder.push(" WHERE ");
+        *has_where = true;
+    }
+}
+
+fn escape_like(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }
 
 fn decode_resource(row: SqliteRow) -> Result<Resource, CoreError> {
@@ -274,7 +376,13 @@ mod tests {
             .with_metadata(
                 ResourceMetadata::builder()
                     .with_tags(["rust", "asset"])
-                    .with_attribute("source", json!("sqlite-test"))
+                    .with_kind_metadata(
+                        asset_core::domain::KindMetadata::new(
+                            "asset:image@1",
+                            json!({"source": "sqlite-test"}),
+                        )
+                        .unwrap(),
+                    )
                     .build()
                     .unwrap(),
             )
@@ -296,8 +404,8 @@ mod tests {
         assert!(restored.kind().is("asset:image"));
         assert_eq!(restored.metadata().tags(), &["rust", "asset"]);
         assert_eq!(
-            restored.metadata().attribute("source"),
-            Some(&json!("sqlite-test"))
+            restored.metadata().kind_metadata().unwrap().data(),
+            &json!({"source": "sqlite-test"})
         );
         assert_eq!(restored_content.key().as_str(), "assets/image.png");
         assert_eq!(restored_content.size(), 42);

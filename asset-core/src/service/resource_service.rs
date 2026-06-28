@@ -8,11 +8,13 @@
 
 use crate::CoreError;
 use crate::domain::{
-    Checksum, Resource, ResourceContent, ResourceId, ResourceKind, ResourceMetadata,
+    Checksum, ChecksumKind, Resource, ResourceContent, ResourceId, ResourceKind, ResourceMetadata,
     ResourceStatus, StorageKey,
 };
-use crate::port::{BlobByteStream, BlobStorage, ResourceRepository};
+use crate::port::{BlobByteStream, BlobStorage, ListResources, ResourcePage, ResourceRepository};
 use bytes::Bytes;
+use futures_util::StreamExt;
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
 /// 创建纯元数据资源的用例命令。
@@ -262,6 +264,58 @@ impl UploadResourceContentStream {
     }
 }
 
+/// 更新资源的用例命令。
+#[derive(Debug, Clone, Default)]
+pub struct UpdateResource {
+    /// 新资源名称。
+    name: Option<String>,
+    /// 新资源类型。
+    kind: Option<ResourceKind>,
+    /// 新生命周期状态。
+    status: Option<ResourceStatus>,
+    /// 新资源元数据。
+    metadata: Option<ResourceMetadata>,
+    /// 是否从软删除状态恢复。
+    restore: bool,
+}
+
+impl UpdateResource {
+    /// 创建空更新命令。
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 设置资源名称。
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    /// 设置资源类型。
+    pub fn with_kind(mut self, kind: impl Into<ResourceKind>) -> Self {
+        self.kind = Some(kind.into());
+        self
+    }
+
+    /// 设置资源状态。
+    pub fn with_status(mut self, status: ResourceStatus) -> Self {
+        self.status = Some(status);
+        self
+    }
+
+    /// 设置资源元数据。
+    pub fn with_metadata(mut self, metadata: impl Into<ResourceMetadata>) -> Self {
+        self.metadata = Some(metadata.into());
+        self
+    }
+
+    /// 设置是否恢复软删除资源。
+    pub fn with_restore(mut self, restore: bool) -> Self {
+        self.restore = restore;
+        self
+    }
+}
+
 /// 资源应用服务。
 ///
 /// 该服务是外部调用资源核心能力的主要入口。它负责协调 `Resource` 聚合、
@@ -332,6 +386,8 @@ impl ResourceService {
             checksums,
         } = command;
 
+        verify_bytes_checksums(&data, &checksums)?;
+
         let content = build_content(
             storage_key.clone(),
             data.len() as u64,
@@ -343,7 +399,7 @@ impl ResourceService {
             .with_content(content)
             .build()?;
 
-        self.blob_storage.put(&storage_key, data).await?;
+        self.blob_storage.put_if_absent(&storage_key, data).await?;
 
         if let Err(error) = self.repository.save(&resource).await {
             let _ = self.blob_storage.delete(&storage_key).await;
@@ -387,7 +443,15 @@ impl ResourceService {
             checksums.clone(),
         )?;
 
-        let write_result = self.blob_storage.put_stream(&storage_key, data).await?;
+        let (data, sha256_state) = stream_with_checksum_tracking(data, &checksums);
+        let write_result = self
+            .blob_storage
+            .put_stream_if_absent(&storage_key, data)
+            .await?;
+        if let Err(error) = verify_tracked_checksums(sha256_state, &checksums) {
+            let _ = self.blob_storage.delete(&storage_key).await;
+            return Err(error);
+        }
         let content = build_content(
             storage_key.clone(),
             write_result.bytes_written(),
@@ -407,10 +471,57 @@ impl ResourceService {
 
     /// 按 ID 查找资源。
     ///
-    /// 找不到资源时返回 `Ok(None)`。该方法不隐藏软删除资源；调用方可以通过
-    /// `Resource::is_deleted()` 判断返回的资源是否已经软删除。
+    /// 找不到资源或资源已经软删除时返回 `Ok(None)`。维护类操作需要读取软删除资源时，
+    /// 应使用专门的恢复或物理删除用例。
     pub async fn find_resource(&self, id: &ResourceId) -> Result<Option<Resource>, CoreError> {
-        self.repository.find_by_id(id).await
+        Ok(self
+            .repository
+            .find_by_id(id)
+            .await?
+            .filter(|resource| !resource.is_deleted()))
+    }
+
+    /// 分页列出资源。
+    pub async fn list_resources(&self, query: ListResources) -> Result<ResourcePage, CoreError> {
+        self.repository.list(&query).await
+    }
+
+    /// 更新资源基础信息、元数据、状态，或恢复软删除资源。
+    pub async fn update_resource(
+        &self,
+        id: &ResourceId,
+        command: UpdateResource,
+    ) -> Result<Option<Resource>, CoreError> {
+        let Some(mut resource) = self.repository.find_by_id(id).await? else {
+            return Ok(None);
+        };
+
+        if command.restore {
+            resource.restore();
+        }
+
+        if let Some(name) = command.name {
+            resource.rename(name)?;
+        }
+
+        if let Some(kind) = command.kind {
+            resource.change_kind(kind)?;
+        }
+
+        if let Some(status) = command.status {
+            match status {
+                ResourceStatus::Active => resource.activate()?,
+                ResourceStatus::Archived => resource.archive()?,
+            }
+        }
+
+        if let Some(metadata) = command.metadata {
+            resource.set_metadata(metadata)?;
+        }
+
+        self.repository.save(&resource).await?;
+
+        Ok(Some(resource))
     }
 
     /// 读取资源对应的对象内容。
@@ -522,9 +633,95 @@ fn build_content(
     Ok(content.with_checksums(checksums).build()?)
 }
 
+fn verify_bytes_checksums(data: &Bytes, checksums: &[Checksum]) -> Result<(), CoreError> {
+    if let Some(expected) = sha256_checksum(checksums) {
+        let actual = hex_sha256(data);
+
+        if !actual.eq_ignore_ascii_case(expected.value()) {
+            return Err(CoreError::conflict("sha256 checksum mismatch"));
+        }
+    }
+
+    Ok(())
+}
+
+fn stream_with_checksum_tracking(
+    data: BlobByteStream,
+    checksums: &[Checksum],
+) -> (BlobByteStream, Option<Arc<std::sync::Mutex<Sha256>>>) {
+    if sha256_checksum(checksums).is_none() {
+        return (data, None);
+    }
+
+    let state = Arc::new(std::sync::Mutex::new(Sha256::new()));
+    let stream_state = state.clone();
+    let stream = data.map(move |chunk| {
+        if let Ok(chunk) = &chunk {
+            stream_state
+                .lock()
+                .expect("sha256 mutex should not be poisoned")
+                .update(chunk);
+        }
+
+        chunk
+    });
+
+    (Box::pin(stream), Some(state))
+}
+
+fn verify_tracked_checksums(
+    sha256_state: Option<Arc<std::sync::Mutex<Sha256>>>,
+    checksums: &[Checksum],
+) -> Result<(), CoreError> {
+    let Some(expected) = sha256_checksum(checksums) else {
+        return Ok(());
+    };
+    let Some(state) = sha256_state else {
+        return Ok(());
+    };
+    let digest = state
+        .lock()
+        .expect("sha256 mutex should not be poisoned")
+        .clone()
+        .finalize();
+    let actual = hex_digest(&digest);
+
+    if !actual.eq_ignore_ascii_case(expected.value()) {
+        return Err(CoreError::conflict("sha256 checksum mismatch"));
+    }
+
+    Ok(())
+}
+
+fn sha256_checksum(checksums: &[Checksum]) -> Option<&Checksum> {
+    checksums
+        .iter()
+        .find(|checksum| checksum.kind() == ChecksumKind::Sha256)
+}
+
+fn hex_sha256(data: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    let digest = hasher.finalize();
+    hex_digest(&digest)
+}
+
+fn hex_digest(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+
+    for byte in bytes {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+
+    output
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::KindMetadata;
     use crate::port::BlobWriteResult;
     use futures_util::StreamExt;
     use serde_json::json;
@@ -573,6 +770,43 @@ mod tests {
             Ok(self.find_sync(id))
         }
 
+        async fn list(&self, query: &ListResources) -> Result<ResourcePage, CoreError> {
+            let mut resources = self
+                .resources
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|resource| query.include_deleted() || !resource.is_deleted())
+                .filter(|resource| {
+                    query
+                        .kind()
+                        .is_none_or(|kind| resource.kind().as_str() == kind.as_str())
+                })
+                .filter(|resource| {
+                    query.tag().is_none_or(|tag| {
+                        resource.metadata().tags().iter().any(|value| value == tag)
+                    })
+                })
+                .filter(|resource| query.q().is_none_or(|q| resource.name().contains(q)))
+                .cloned()
+                .collect::<Vec<_>>();
+            resources.sort_by_key(|resource| std::cmp::Reverse(resource.updated_at()));
+
+            let total = resources.len() as u64;
+            let items = resources
+                .into_iter()
+                .skip(query.offset() as usize)
+                .take(query.limit() as usize)
+                .collect();
+
+            Ok(ResourcePage {
+                items,
+                total,
+                limit: query.limit(),
+                offset: query.offset(),
+            })
+        }
+
         async fn remove(&self, id: &ResourceId) -> Result<(), CoreError> {
             self.resources.lock().unwrap().remove(id);
             Ok(())
@@ -601,6 +835,18 @@ mod tests {
             Ok(())
         }
 
+        async fn put_if_absent(&self, key: &StorageKey, data: Bytes) -> Result<(), CoreError> {
+            let mut objects = self.objects.lock().unwrap();
+            if objects.contains_key(key) {
+                return Err(CoreError::conflict(format!(
+                    "storage key `{key}` already exists"
+                )));
+            }
+
+            objects.insert(key.clone(), data);
+            Ok(())
+        }
+
         async fn put_stream(
             &self,
             key: &StorageKey,
@@ -617,6 +863,30 @@ mod tests {
                 .lock()
                 .unwrap()
                 .insert(key.clone(), Bytes::from(bytes));
+
+            Ok(BlobWriteResult::new(bytes_written))
+        }
+
+        async fn put_stream_if_absent(
+            &self,
+            key: &StorageKey,
+            mut data: BlobByteStream,
+        ) -> Result<BlobWriteResult, CoreError> {
+            let mut bytes = Vec::new();
+
+            while let Some(chunk) = data.next().await {
+                bytes.extend_from_slice(&chunk?);
+            }
+
+            let bytes_written = bytes.len() as u64;
+            let mut objects = self.objects.lock().unwrap();
+            if objects.contains_key(key) {
+                return Err(CoreError::conflict(format!(
+                    "storage key `{key}` already exists"
+                )));
+            }
+
+            objects.insert(key.clone(), Bytes::from(bytes));
 
             Ok(BlobWriteResult::new(bytes_written))
         }
@@ -681,7 +951,9 @@ mod tests {
         let metadata = ResourceMetadata::builder()
             .with_description(" Design document ")
             .with_tags(["rust", "asset"])
-            .with_attribute("stage", json!("draft"))
+            .with_kind_metadata(
+                KindMetadata::new("doc:markdown@1", json!({"stage": "draft"})).unwrap(),
+            )
             .build()
             .unwrap();
 
@@ -701,7 +973,10 @@ mod tests {
         assert!(resource.content().is_none());
         assert_eq!(saved.metadata().description(), Some("Design document"));
         assert_eq!(saved.metadata().tags(), &["rust", "asset"]);
-        assert_eq!(saved.metadata().attribute("stage"), Some(&json!("draft")));
+        assert_eq!(
+            saved.metadata().kind_metadata().unwrap().data(),
+            &json!({"stage": "draft"})
+        );
     }
 
     #[test]
@@ -709,7 +984,7 @@ mod tests {
         let (service, repository, blob_storage) = service();
         let key = StorageKey::new("assets/image.png").unwrap();
         let data = Bytes::from_static(b"image bytes");
-        let checksum = Checksum::sha256("a".repeat(64)).unwrap();
+        let checksum = Checksum::sha256(hex_sha256(&data)).unwrap();
 
         let resource = block_on(
             service.upload_resource_content(
@@ -731,6 +1006,50 @@ mod tests {
         assert_eq!(content.original_filename(), Some("image.png"));
         assert_eq!(content.checksums(), &[checksum]);
         assert_eq!(blob_storage.get_sync(&key), Some(data));
+    }
+
+    #[test]
+    fn upload_resource_content_rejects_checksum_mismatch() {
+        let (service, repository, blob_storage) = service();
+        let key = StorageKey::new("assets/image.png").unwrap();
+        let data = Bytes::from_static(b"image bytes");
+        let checksum = Checksum::sha256("a".repeat(64)).unwrap();
+
+        let error = block_on(service.upload_resource_content(
+            UploadResourceContent::new("image", key.clone(), data).with_checksum(checksum),
+        ))
+        .unwrap_err();
+
+        match error {
+            CoreError::Conflict { message } => assert!(message.contains("sha256")),
+            other => panic!("expected checksum conflict, got {other:?}"),
+        }
+        assert!(repository.is_empty());
+        assert_eq!(blob_storage.get_sync(&key), None);
+    }
+
+    #[test]
+    fn upload_resource_content_rejects_existing_storage_key() {
+        let (service, repository, blob_storage) = service();
+        let key = StorageKey::new("assets/image.png").unwrap();
+        blob_storage
+            .objects
+            .lock()
+            .unwrap()
+            .insert(key.clone(), Bytes::from_static(b"existing"));
+
+        let error = block_on(service.upload_resource_content(UploadResourceContent::new(
+            "image",
+            key,
+            Bytes::from_static(b"new"),
+        )))
+        .unwrap_err();
+
+        match error {
+            CoreError::Conflict { message } => assert!(message.contains("already exists")),
+            other => panic!("expected storage key conflict, got {other:?}"),
+        }
+        assert!(repository.is_empty());
     }
 
     #[test]
@@ -762,6 +1081,33 @@ mod tests {
             blob_storage.get_sync(&key),
             Some(Bytes::from_static(b"large file bytes"))
         );
+    }
+
+    #[test]
+    fn upload_resource_content_stream_removes_blob_on_checksum_mismatch() {
+        let (service, repository, blob_storage) = service();
+        let key = StorageKey::new("assets/large.bin").unwrap();
+        let data: BlobByteStream = Box::pin(futures_util::stream::iter([
+            Ok(Bytes::from_static(b"large ")),
+            Ok(Bytes::from_static(b"file ")),
+            Ok(Bytes::from_static(b"bytes")),
+        ]));
+        let checksum = Checksum::sha256("a".repeat(64)).unwrap();
+
+        let error = block_on(
+            service.upload_resource_content_stream(
+                UploadResourceContentStream::new("large file", key.clone(), data)
+                    .with_checksum(checksum),
+            ),
+        )
+        .unwrap_err();
+
+        match error {
+            CoreError::Conflict { message } => assert!(message.contains("sha256")),
+            other => panic!("expected checksum conflict, got {other:?}"),
+        }
+        assert!(repository.is_empty());
+        assert!(!blob_storage.contains(&key));
     }
 
     #[test]

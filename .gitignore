@@ -1,6 +1,13 @@
 # Rust build output
 /target/
 
+# Frontend build output
+asset-web-admin/node_modules/
+asset-web-admin/dist/
+asset-web-admin/*.tsbuildinfo
+asset-web-admin/vite.config.js
+asset-web-admin/vite.config.d.ts
+
 # Rust compiler and profiling artifacts
 **/*.rs.bk
 *.pdb

@@ -49,6 +49,15 @@ impl BlobStorage for OpenDalBlobStorage {
             .map_err(|error| CoreError::storage("put", error))
     }
 
+    async fn put_if_absent(&self, key: &StorageKey, data: Bytes) -> Result<(), CoreError> {
+        self.operator
+            .write_with(key.as_str(), data)
+            .if_not_exists(true)
+            .await
+            .map(|_| ())
+            .map_err(|error| conditional_write_error("put_if_absent", key, error))
+    }
+
     async fn put_stream(
         &self,
         key: &StorageKey,
@@ -88,6 +97,24 @@ impl BlobStorage for OpenDalBlobStorage {
         Ok(BlobWriteResult::new(bytes_written))
     }
 
+    async fn put_stream_if_absent(
+        &self,
+        key: &StorageKey,
+        data: BlobByteStream,
+    ) -> Result<BlobWriteResult, CoreError> {
+        put_stream_with_writer(
+            self.operator
+                .writer_with(key.as_str())
+                .if_not_exists(true)
+                .await
+                .map_err(|error| {
+                    conditional_write_error("put_stream_if_absent.open", key, error)
+                })?,
+            data,
+        )
+        .await
+    }
+
     async fn get(&self, key: &StorageKey) -> Result<Option<Bytes>, CoreError> {
         match self.operator.read(key.as_str()).await {
             Ok(buffer) => Ok(Some(buffer.to_bytes())),
@@ -109,6 +136,54 @@ impl BlobStorage for OpenDalBlobStorage {
             .await
             .map_err(|error| CoreError::storage("exists", error))
     }
+}
+
+async fn put_stream_with_writer(
+    mut writer: opendal::Writer,
+    mut data: BlobByteStream,
+) -> Result<BlobWriteResult, CoreError> {
+    let mut bytes_written = 0_u64;
+
+    while let Some(chunk) = data.next().await {
+        let chunk = match chunk {
+            Ok(chunk) => chunk,
+            Err(error) => {
+                let _ = writer.abort().await;
+                return Err(error);
+            }
+        };
+
+        bytes_written = bytes_written
+            .checked_add(chunk.len() as u64)
+            .ok_or_else(|| CoreError::storage("put_stream.size", SizeOverflow))?;
+
+        if let Err(error) = writer.write(chunk).await {
+            let _ = writer.abort().await;
+            return Err(CoreError::storage("put_stream.write", error));
+        }
+    }
+
+    writer
+        .close()
+        .await
+        .map_err(|error| CoreError::storage("put_stream.close", error))?;
+
+    Ok(BlobWriteResult::new(bytes_written))
+}
+
+fn conditional_write_error(
+    operation: &'static str,
+    key: &StorageKey,
+    error: opendal::Error,
+) -> CoreError {
+    if matches!(
+        error.kind(),
+        ErrorKind::AlreadyExists | ErrorKind::ConditionNotMatch
+    ) {
+        return CoreError::conflict(format!("storage key `{key}` already exists"));
+    }
+
+    CoreError::storage(operation, error)
 }
 
 #[derive(Debug)]
@@ -160,6 +235,57 @@ mod tests {
         assert_eq!(
             storage.get(&key).await.unwrap(),
             Some(Bytes::from_static(b"large file bytes"))
+        );
+    }
+
+    #[tokio::test]
+    async fn fs_storage_put_if_absent_rejects_existing_blob() {
+        let storage = storage("fs-put-if-absent");
+        let key = StorageKey::new("assets/image.png").unwrap();
+
+        storage
+            .put_if_absent(&key, Bytes::from_static(b"first"))
+            .await
+            .unwrap();
+        let error = storage
+            .put_if_absent(&key, Bytes::from_static(b"second"))
+            .await
+            .unwrap_err();
+
+        match error {
+            CoreError::Conflict { message } => assert!(message.contains("already exists")),
+            other => panic!("expected conflict, got {other:?}"),
+        }
+        assert_eq!(
+            storage.get(&key).await.unwrap(),
+            Some(Bytes::from_static(b"first"))
+        );
+    }
+
+    #[tokio::test]
+    async fn fs_storage_put_stream_if_absent_rejects_existing_blob() {
+        let storage = storage("fs-stream-if-absent");
+        let key = StorageKey::new("assets/large.bin").unwrap();
+        let first: BlobByteStream = Box::pin(futures_util::stream::iter([Ok(Bytes::from_static(
+            b"first",
+        ))]));
+        let second: BlobByteStream = Box::pin(futures_util::stream::iter([Ok(
+            Bytes::from_static(b"second"),
+        )]));
+
+        storage.put_stream_if_absent(&key, first).await.unwrap();
+        let error = storage
+            .put_stream_if_absent(&key, second)
+            .await
+            .unwrap_err();
+
+        match error {
+            CoreError::Conflict { message } => assert!(message.contains("already exists")),
+            other => panic!("expected conflict, got {other:?}"),
+        }
+        assert_eq!(
+            storage.get(&key).await.unwrap(),
+            Some(Bytes::from_static(b"first"))
         );
     }
 

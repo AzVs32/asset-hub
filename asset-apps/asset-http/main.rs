@@ -28,7 +28,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     println!("asset-http config: {:?}", runtime.config());
 
-    axum::serve(listener, router::build(runtime.resource_service())).await?;
+    axum::serve(
+        listener,
+        router::build(runtime.resource_service(), runtime.resource_kind_registry()),
+    )
+    .await?;
 
     Ok(())
 }
