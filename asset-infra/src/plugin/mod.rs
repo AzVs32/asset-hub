@@ -218,6 +218,10 @@ fn status_text(status: ResourceStatus) -> &'static str {
 }
 
 fn load_plugin_manifests(path: &Path) -> Result<Vec<PluginManifest>, CoreError> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+
     let mut files = std::fs::read_dir(path)
         .map_err(|error| CoreError::configuration(format!("read plugin manifest dir: {error}")))?
         .map(|entry| entry.map(|entry| entry.path()))

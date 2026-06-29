@@ -1,0 +1,22 @@
+[package]
+name = "azvs-epub-plugin"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+base64 = "0.22.1"
+extism-pdk = "1.4.1"
+roxmltree = "0.20.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+zip = { version = "3.0.0", default-features = false, features = ["deflate"] }
+
+[profile.release]
+lto = true
+opt-level = "z"
+strip = true
+
+[workspace]

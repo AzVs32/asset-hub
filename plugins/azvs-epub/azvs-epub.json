@@ -1,0 +1,34 @@
+{
+  "manifest_version": 1,
+  "plugin_id": "azvs-epub",
+  "name": "AzVs EPUB",
+  "version": "0.1.0",
+  "publisher": "azvs",
+  "extism": {
+    "wasm_path": "azvs-epub.wasm",
+    "wasi": false
+  },
+  "resource_kinds": [
+    {
+      "kind": "azvs:epub",
+      "label": "EPUB",
+      "schema_id": "azvs:epub@1",
+      "supports_content": true,
+      "actions": [
+        {
+          "id": "azvs:render_epub",
+          "label": "Read EPUB",
+          "handler": "render_epub",
+          "access": "read_only"
+        }
+      ],
+      "metadata_schema": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string" },
+          "author": { "type": "string" }
+        }
+      }
+    }
+  ]
+}

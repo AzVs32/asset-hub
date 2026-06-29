@@ -494,6 +494,10 @@ a[aria-disabled="true"] {
   width: min(1040px, 100%);
 }
 
+.plugin-modal {
+  width: min(920px, 100%);
+}
+
 .reader-content {
   min-height: 420px;
   padding: 24px 28px;
@@ -501,6 +505,34 @@ a[aria-disabled="true"] {
   color: #1c2430;
   font-size: 15px;
   line-height: 1.75;
+}
+
+.plugin-html-frame {
+  display: block;
+  width: 100%;
+  height: min(720px, 72vh);
+  border: 0;
+  background: #ffffff;
+}
+
+.plugin-result {
+  min-height: 320px;
+  padding: 20px;
+  background: #f8fafc;
+}
+
+.plugin-result pre,
+.plugin-markdown {
+  margin: 0;
+  white-space: pre-wrap;
+  color: #1c2430;
+  font: 14px/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.plugin-markdown {
+  min-height: 420px;
+  padding: 24px 28px;
+  background: #ffffff;
 }
 
 .pdf-frame {

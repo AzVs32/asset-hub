@@ -146,6 +146,10 @@ fn load_official_plugin_manifests() -> Result<Vec<PluginManifest>, CoreError> {
 }
 
 fn load_plugin_manifests(path: &Path) -> Result<Vec<PluginManifest>, CoreError> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+
     let mut files = std::fs::read_dir(path)
         .map_err(|error| CoreError::configuration(format!("read plugin manifest dir: {error}")))?
         .map(|entry| entry.map(|entry| entry.path()))

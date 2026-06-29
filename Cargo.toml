@@ -3,7 +3,7 @@ resolver = "3"
 members = [
     "asset-core",
     "asset-infra",
-    "asset-apps"
+    "asset-apps",
 ]
 
 [workspace.package]

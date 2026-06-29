@@ -11,6 +11,8 @@ pub const DEFAULT_CONFIG_FILE: &str = "config.toml";
 pub const DEFAULT_SQLITE_PATH: &str = "data/asset-hub.sqlite";
 /// 默认 Fs 对象存储根目录。
 pub const DEFAULT_FS_ROOT: &str = "data/blob";
+/// 默认插件 manifest 目录。
+pub const DEFAULT_PLUGIN_MANIFEST_DIR: &str = "data/plugins";
 /// 默认 SQLite 连接池最大连接数。
 pub const DEFAULT_SQLITE_MAX_CONNECTIONS: u32 = 5;
 
@@ -134,13 +136,22 @@ impl Default for BlobConfig {
 }
 
 /// 资源类型注册表配置。
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct KindRegistryConfig {
     /// 由系统配置声明的资源类型。
     pub definitions: Vec<ResourceKindConfig>,
     /// 插件 manifest 目录。目录中的 JSON manifest 会在启动时加载。
     pub plugin_manifest_dirs: Vec<PathBuf>,
+}
+
+impl Default for KindRegistryConfig {
+    fn default() -> Self {
+        Self {
+            definitions: Vec::new(),
+            plugin_manifest_dirs: vec![PathBuf::from(DEFAULT_PLUGIN_MANIFEST_DIR)],
+        }
+    }
 }
 
 /// 配置文件中的资源类型定义。
@@ -222,6 +233,10 @@ mod tests {
             DEFAULT_SQLITE_MAX_CONNECTIONS
         );
         assert_eq!(config.blob.fs_root, PathBuf::from(DEFAULT_FS_ROOT));
+        assert_eq!(
+            config.kind.plugin_manifest_dirs,
+            [PathBuf::from(DEFAULT_PLUGIN_MANIFEST_DIR)]
+        );
     }
 
     #[test]
@@ -293,6 +308,7 @@ mod tests {
 
         assert!(config.database.sqlite_path.is_absolute());
         assert!(config.blob.fs_root.is_absolute());
+        assert!(config.kind.plugin_manifest_dirs[0].is_absolute());
     }
 
     #[test]

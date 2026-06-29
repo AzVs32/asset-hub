@@ -24,8 +24,8 @@ fs_root = "data/blob"
 
 [kind]
 # Optional directories containing plugin JSON manifests.
-# Manifest files are loaded at startup; kinds cannot be created through HTTP APIs.
-plugin_manifest_dirs = []
+# Manifest files are loaded at startup; restart the service after adding/removing plugins.
+plugin_manifest_dirs = ["data/plugins"]
 
 # Optional system-configured resource kinds.
 # Built-in kinds are always available and cannot be overridden.

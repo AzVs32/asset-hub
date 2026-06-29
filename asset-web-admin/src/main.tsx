@@ -88,6 +88,24 @@ type ResourceReadResponse = {
   text: string;
 };
 
+type PluginActionOutput = {
+  resource_id: string;
+  action: string;
+  content_type: string;
+  body: PluginActionBody;
+};
+
+type PluginActionBody = {
+  view?: "html" | "markdown" | "text" | "json" | "binary_url";
+  title?: string;
+  content?: unknown;
+  html?: string;
+  markdown?: string;
+  text?: string;
+  url?: string;
+  [key: string]: unknown;
+};
+
 type ResourceKindsResponse = {
   items: ResourceKindOption[];
 };
@@ -167,6 +185,7 @@ function App() {
   const [uploadDraft, setUploadDraft] = React.useState<UploadDraft>(emptyUploadDraft);
   const [reader, setReader] = React.useState<ResourceReadResponse | null>(null);
   const [previewResource, setPreviewResource] = React.useState<Resource | null>(null);
+  const [pluginOutput, setPluginOutput] = React.useState<PluginActionOutput | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -360,6 +379,29 @@ function App() {
     setPreviewResource(selected);
   }
 
+  async function runPluginAction(action: ResourceActionDefinition) {
+    if (!selected) return;
+
+    setBusy(true);
+    setError(null);
+
+    try {
+      const output = await request<PluginActionOutput>(
+        `/resources/${selected.id}/actions/${encodeURIComponent(action.id)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ input: {} }),
+        },
+      );
+      setPluginOutput(output);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function uploadResource(event: React.FormEvent) {
     event.preventDefault();
     if (!uploadDraft.file) {
@@ -544,6 +586,7 @@ function App() {
             onSave={saveSelected}
             onRead={readSelected}
             onPreview={previewSelected}
+            onPluginAction={runPluginAction}
             onDelete={softDeleteSelected}
             onRestore={restoreSelected}
           />
@@ -601,6 +644,23 @@ function App() {
                 src={`${apiBase}/resources/${previewResource.id}/preview`}
               />
             )}
+          </section>
+        </div>
+      )}
+
+      {pluginOutput && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal plugin-modal" aria-label="Action result">
+            <header className="modal-header">
+              <div>
+                <h2>{pluginOutput.body.title || pluginOutput.action}</h2>
+                <span>{pluginOutput.action} / {pluginOutput.body.view || "json"}</span>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setPluginOutput(null)} title="Close">
+                <X size={18} />
+              </button>
+            </header>
+            <PluginActionResult output={pluginOutput} />
           </section>
         </div>
       )}
@@ -753,6 +813,7 @@ function ResourceDetail({
   onSave,
   onRead,
   onPreview,
+  onPluginAction,
   onDelete,
   onRestore,
 }: {
@@ -764,12 +825,14 @@ function ResourceDetail({
   onSave: () => void;
   onRead: () => void;
   onPreview: () => void;
+  onPluginAction: (action: ResourceActionDefinition) => void;
   onDelete: () => void;
   onRestore: () => void;
 }) {
   const kindDefinition = resourceKinds.find((kind) => kind.kind === resource.kind);
   const canRead = resource.actions.read;
   const canPreview = resource.actions.preview || resource.actions.view_inline;
+  const pluginActions = resource.actions.available_actions.filter(isPluginUiAction);
 
   return (
     <div className="detail-content">
@@ -801,6 +864,18 @@ function ResourceDetail({
             <Eye size={18} />
           </button>
         )}
+        {pluginActions.map((action) => (
+          <button
+            key={action.id}
+            className="ghost-button"
+            type="button"
+            onClick={() => onPluginAction(action)}
+            disabled={busy}
+            title={`${action.label} (${action.access})`}
+          >
+            {action.label}
+          </button>
+        ))}
         {resource.deleted_at ? (
           <button className="icon-button" type="button" onClick={onRestore} disabled={busy} title="Restore">
             <RotateCcw size={18} />
@@ -925,6 +1000,51 @@ function Fact({ label, value }: { label: string; value: string }) {
   );
 }
 
+function PluginActionResult({ output }: { output: PluginActionOutput }) {
+  const body = output.body;
+  const view = body.view || "json";
+
+  if (view === "html") {
+    const html = typeof body.html === "string" ? body.html : String(body.content ?? "");
+    return <iframe className="plugin-html-frame" sandbox="allow-scripts" title={output.action} srcDoc={html} />;
+  }
+
+  if (view === "binary_url") {
+    const url = typeof body.url === "string" ? body.url : "";
+    return (
+      <div className="plugin-result">
+        {url ? (
+          <a className="primary-button" href={url} target="_blank" rel="noreferrer">
+            Open
+          </a>
+        ) : (
+          <pre>{JSON.stringify(body, null, 2)}</pre>
+        )}
+      </div>
+    );
+  }
+
+  if (view === "text" || view === "markdown") {
+    const text =
+      typeof body.text === "string"
+        ? body.text
+        : typeof body.markdown === "string"
+          ? body.markdown
+          : String(body.content ?? "");
+    return (
+      <article className={view === "markdown" ? "plugin-markdown" : "reader-content"}>
+        {text}
+      </article>
+    );
+  }
+
+  return (
+    <div className="plugin-result">
+      <pre>{JSON.stringify(body.content ?? body, null, 2)}</pre>
+    </div>
+  );
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiBase}${path}`, init);
   const text = await response.text();
@@ -1020,6 +1140,10 @@ function kindOptionHint(option: ResourceKindOption | undefined): string {
 function isImageResource(resource: Resource): boolean {
   const mimeType = resource.content?.mime_type;
   return Boolean(mimeType && mimeType.startsWith("image/"));
+}
+
+function isPluginUiAction(action: ResourceActionDefinition): boolean {
+  return !["download_content", "read", "view_inline", "preview", "thumbnail"].includes(action.id);
 }
 
 function buildMetadata(description: string, tags: string, schemaId: string, kindData: string) {
