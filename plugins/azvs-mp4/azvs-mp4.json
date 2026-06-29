@@ -1,0 +1,35 @@
+{
+  "manifest_version": 1,
+  "plugin_id": "azvs-mp4",
+  "name": "AzVs MP4",
+  "version": "0.1.0",
+  "publisher": "azvs",
+  "extism": {
+    "wasm_path": "azvs-mp4.wasm",
+    "wasi": false
+  },
+  "resource_kinds": [
+    {
+      "kind": "azvs:mp4",
+      "label": "MP4",
+      "schema_id": "azvs:mp4@1",
+      "supports_content": true,
+      "actions": [
+        {
+          "id": "azvs:play_mp4",
+          "label": "Play MP4",
+          "handler": "play_mp4",
+          "access": "read_only"
+        }
+      ],
+      "metadata_schema": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string" },
+          "description": { "type": "string" },
+          "duration_seconds": { "type": "number" }
+        }
+      }
+    }
+  ]
+}

@@ -34,6 +34,10 @@ struct Chapter {
 
 #[plugin_fn]
 pub fn render_epub(input: String) -> FnResult<String> {
+    render_epub_payload(input)
+}
+
+fn render_epub_payload(input: String) -> FnResult<String> {
     let input: ActionInput = serde_json::from_str(&input)?;
     let content = input
         .content
@@ -753,6 +757,7 @@ fn escape_html(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
     use std::io::Write;
     use zip::write::SimpleFileOptions;
 
@@ -778,6 +783,26 @@ mod tests {
         assert!(rendered.html.contains("NCX Chapter One"));
         assert!(rendered.html.contains("NCX Chapter Two"));
         assert!(rendered.html.contains("Body without heading"));
+    }
+
+    #[test]
+    fn render_epub_returns_html_reader() {
+        let output = render_epub_payload(
+            json!({
+                "content": {
+                    "encoding": "base64",
+                    "data": STANDARD.encode(minimal_epub())
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let output: Value = serde_json::from_str(&output).unwrap();
+
+        assert_eq!(output["view"], "html");
+        assert_eq!(output["title"], "Sample Book");
+        assert!(output["html"].as_str().unwrap().contains("Chapter One"));
+        assert!(output["html"].as_str().unwrap().contains("Hello EPUB"));
     }
 
     fn minimal_epub() -> Vec<u8> {
