@@ -49,6 +49,10 @@ pub(crate) fn build(
             get(handlers::thumbnail_resource),
         )
         .route("/resources/{id}/read", get(handlers::read_resource))
+        .route(
+            "/resources/{id}/actions/{action}",
+            post(handlers::execute_resource_action),
+        )
         .route("/resources/{id}/purge", delete(handlers::remove_resource))
         .layer(DefaultBodyLimit::max(handlers::MAX_UPLOAD_BYTES))
         .with_state(HttpState::new(service, kind_registry))

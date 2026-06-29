@@ -12,8 +12,8 @@ use crate::domain::{
     ResourceStatus, StorageKey,
 };
 use crate::port::{
-    BlobByteStream, BlobStorage, ListResources, ResourceKindRegistry, ResourcePage,
-    ResourceRepository,
+    BlobByteStream, BlobStorage, ListResources, ResourceActionExecutor, ResourceActionOutput,
+    ResourceActionRequest, ResourceKindRegistry, ResourcePage, ResourceRepository,
 };
 use bytes::Bytes;
 use futures_util::StreamExt;
@@ -106,6 +106,29 @@ pub struct UploadResourceContent {
     original_filename: Option<String>,
     /// 内容校验和集合。
     checksums: Vec<Checksum>,
+}
+
+/// 执行资源动作的用例命令。
+#[derive(Debug, Clone)]
+pub struct ExecuteResourceAction {
+    action: crate::port::ResourceAction,
+    input: serde_json::Value,
+}
+
+impl ExecuteResourceAction {
+    /// 创建资源动作执行命令。
+    pub fn new(action: impl Into<crate::port::ResourceAction>) -> Self {
+        Self {
+            action: action.into(),
+            input: serde_json::Value::Object(Default::default()),
+        }
+    }
+
+    /// 设置动作输入。
+    pub fn with_input(mut self, input: serde_json::Value) -> Self {
+        self.input = input;
+        self
+    }
 }
 
 impl UploadResourceContent {
@@ -520,6 +543,8 @@ pub struct ResourceService {
     blob_storage: Arc<dyn BlobStorage>,
     /// 资源类型注册表。
     kind_registry: Arc<dyn ResourceKindRegistry>,
+    /// 插件资源动作执行器。
+    action_executor: Option<Arc<dyn ResourceActionExecutor>>,
 }
 
 impl ResourceService {
@@ -536,6 +561,22 @@ impl ResourceService {
             repository,
             blob_storage,
             kind_registry,
+            action_executor: None,
+        }
+    }
+
+    /// 创建带资源动作执行器的资源应用服务。
+    pub fn new_with_action_executor(
+        repository: Arc<dyn ResourceRepository>,
+        blob_storage: Arc<dyn BlobStorage>,
+        kind_registry: Arc<dyn ResourceKindRegistry>,
+        action_executor: Arc<dyn ResourceActionExecutor>,
+    ) -> Self {
+        Self {
+            repository,
+            blob_storage,
+            kind_registry,
+            action_executor: Some(action_executor),
         }
     }
 
@@ -865,6 +906,59 @@ impl ResourceService {
             format,
             text,
         )))
+    }
+
+    /// 执行资源类型声明的插件动作。
+    ///
+    /// 核心负责资源存在性、删除状态、kind/action 声明、访问边界和对象内容加载；具体 wasm
+    /// 运行时由 `ResourceActionExecutor` 端口承接。
+    pub async fn execute_resource_action(
+        &self,
+        id: &ResourceId,
+        command: ExecuteResourceAction,
+    ) -> Result<Option<ResourceActionOutput>, CoreError> {
+        let Some(resource) = self.find_resource(id).await? else {
+            return Ok(None);
+        };
+        let definition = self.require_kind_definition(resource.kind())?;
+        let Some(action) = definition
+            .actions()
+            .iter()
+            .find(|action| action.id().as_str() == command.action.as_str())
+            .cloned()
+        else {
+            return Err(CoreError::configuration(format!(
+                "resource kind `{}` does not support action `{}`",
+                resource.kind(),
+                command.action
+            )));
+        };
+        let Some(handler) = action.handler() else {
+            return Err(CoreError::configuration(format!(
+                "resource action `{}` is not backed by a plugin handler",
+                command.action
+            )));
+        };
+        let Some(executor) = &self.action_executor else {
+            return Err(CoreError::configuration(
+                "resource action executor is not configured",
+            ));
+        };
+
+        let content = match resource.content() {
+            Some(content_ref) => self.blob_storage.get(content_ref.key()).await?,
+            None => None,
+        };
+        let request = ResourceActionRequest::new(
+            resource,
+            command.action,
+            handler,
+            action.access(),
+            command.input,
+            content,
+        );
+
+        executor.execute(request).await.map(Some)
     }
 
     /// 读取资源预览内容。

@@ -37,7 +37,7 @@ impl From<CoreError> for HttpError {
             CoreError::Resource(_) | CoreError::Configuration { .. } => StatusCode::BAD_REQUEST,
             CoreError::NotFound { .. } => StatusCode::NOT_FOUND,
             CoreError::Conflict { .. } => StatusCode::CONFLICT,
-            CoreError::Storage { .. } | CoreError::Repository { .. } => {
+            CoreError::Storage { .. } | CoreError::Repository { .. } | CoreError::Plugin { .. } => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
         };

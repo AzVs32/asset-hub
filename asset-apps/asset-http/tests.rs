@@ -149,10 +149,10 @@ async fn core_book_resource_can_be_read_online() {
     assert_eq!(
         book_kind["actions"],
         json!([
-            {"id": "download_content", "label": "Download"},
-            {"id": "read", "label": "Read"},
-            {"id": "view_inline", "label": "View"},
-            {"id": "preview", "label": "Preview"}
+            {"id": "download_content", "label": "Download", "access": "read_only"},
+            {"id": "read", "label": "Read", "access": "read_only"},
+            {"id": "view_inline", "label": "View", "access": "read_only"},
+            {"id": "preview", "label": "Preview", "access": "read_only"}
         ])
     );
 
@@ -183,6 +183,37 @@ async fn core_book_resource_can_be_read_online() {
     assert_eq!(readable["kind"], "core:book");
     assert_eq!(readable["format"], "text");
     assert_eq!(readable["text"], "Hello book");
+}
+
+#[tokio::test]
+async fn action_endpoint_requires_plugin_handler() {
+    let app = test_app("action-endpoint-handler").await;
+    let (status, resource) = json_request(
+        &app,
+        Method::POST,
+        "/resources/content",
+        json!({
+            "name": "book.txt",
+            "kind": "core:book",
+            "storage_key": "books/action-book.txt",
+            "data_base64": "SGVsbG8gYWN0aW9u",
+            "mime_type": "text/plain"
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::CREATED, "{resource}");
+    let id = resource["id"].as_str().unwrap();
+    let (status, error) = json_request(
+        &app,
+        Method::POST,
+        &format!("/resources/{id}/actions/read"),
+        json!({"input": {"mode": "test"}}),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(error["error"].as_str().unwrap().contains("plugin handler"));
 }
 
 #[tokio::test]

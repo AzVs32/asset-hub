@@ -1,15 +1,18 @@
 pub mod config;
 pub mod kind;
 pub mod migration;
+pub mod plugin;
 pub mod sqlite;
 pub mod storage;
 
 use asset_core::service::ResourceService;
 use asset_core::{
-    CoreError, port::BlobStorage, port::ResourceKindRegistry, port::ResourceRepository,
+    CoreError, port::BlobStorage, port::ResourceActionExecutor, port::ResourceKindRegistry,
+    port::ResourceRepository,
 };
 use config::AssetInfraConfig;
 use kind::DefaultResourceKindRegistry;
+use plugin::ExtismResourceActionExecutor;
 use sqlite::SqliteResourceRepository;
 use std::sync::Arc;
 use storage::OpenDalBlobStorage;
@@ -26,6 +29,8 @@ pub struct AssetInfrastructure {
     blob_storage: Arc<OpenDalBlobStorage>,
     /// 资源类型注册表。
     resource_kind_registry: Arc<DefaultResourceKindRegistry>,
+    /// 资源动作执行器。
+    resource_action_executor: Arc<ExtismResourceActionExecutor>,
 }
 
 impl AssetInfrastructure {
@@ -39,12 +44,17 @@ impl AssetInfrastructure {
             Arc::new(SqliteResourceRepository::connect(&config.database).await?);
         let resource_kind_registry =
             Arc::new(DefaultResourceKindRegistry::from_config(&config.kind)?);
+        let resource_action_executor = Arc::new(ExtismResourceActionExecutor::from_config(
+            &config.kind,
+            resource_kind_registry.as_ref(),
+        )?);
 
         Ok(Self {
             config,
             resource_repository,
             blob_storage,
             resource_kind_registry,
+            resource_action_executor,
         })
     }
 
@@ -73,12 +83,18 @@ impl AssetInfrastructure {
         self.resource_kind_registry.clone()
     }
 
+    /// 返回资源动作执行器端口对象。
+    pub fn resource_action_executor(&self) -> Arc<dyn ResourceActionExecutor> {
+        self.resource_action_executor.clone()
+    }
+
     /// 创建资源应用服务。
     pub fn resource_service(&self) -> ResourceService {
-        ResourceService::new(
+        ResourceService::new_with_action_executor(
             self.resource_repository(),
             self.blob_storage(),
             self.resource_kind_registry(),
+            self.resource_action_executor(),
         )
     }
 }

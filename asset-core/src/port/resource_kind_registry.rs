@@ -64,6 +64,23 @@ pub struct ResourceActionDefinition {
     id: ResourceAction,
     /// 展示名称。
     label: String,
+    /// 插件导出的处理函数名；核心内置动作可为空。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    handler: Option<String>,
+    /// 动作访问边界。
+    #[serde(default)]
+    access: ResourceActionAccess,
+}
+
+/// 资源动作访问边界。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceActionAccess {
+    /// 只允许读取资源快照和对象内容。
+    #[default]
+    ReadOnly,
+    /// 允许动作请求修改资源；当前由核心端口显式承载，插件不能直接访问仓储。
+    ReadWrite,
 }
 
 impl ResourceActionDefinition {
@@ -72,7 +89,21 @@ impl ResourceActionDefinition {
         Self {
             id: id.into(),
             label: label.into(),
+            handler: None,
+            access: ResourceActionAccess::ReadOnly,
         }
+    }
+
+    /// 设置插件导出处理函数。
+    pub fn with_handler(mut self, handler: impl Into<String>) -> Self {
+        self.handler = Some(handler.into());
+        self
+    }
+
+    /// 设置动作访问边界。
+    pub fn with_access(mut self, access: ResourceActionAccess) -> Self {
+        self.access = access;
+        self
     }
 
     /// 返回动作 ID。
@@ -83,6 +114,16 @@ impl ResourceActionDefinition {
     /// 返回展示名称。
     pub fn label(&self) -> &str {
         &self.label
+    }
+
+    /// 返回插件导出处理函数名。
+    pub fn handler(&self) -> Option<&str> {
+        self.handler.as_deref()
+    }
+
+    /// 返回动作访问边界。
+    pub fn access(&self) -> ResourceActionAccess {
+        self.access
     }
 }
 

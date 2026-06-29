@@ -54,6 +54,7 @@ type ResourceActions = {
 type ResourceActionDefinition = {
   id: string;
   label: string;
+  access: "read_only" | "read_write";
 };
 
 type Resource = {

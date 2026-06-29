@@ -3,7 +3,9 @@ use asset_core::domain::{
     Checksum, ChecksumKind, KindMetadata, Resource, ResourceContent, ResourceMetadata,
     ResourceStatus,
 };
-use asset_core::port::{ResourceActionDefinition, ResourceKindDefinition};
+use asset_core::port::{
+    ResourceActionAccess, ResourceActionDefinition, ResourceActionOutput, ResourceKindDefinition,
+};
 use asset_core::service::{ReadableResource, ResourceActions};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -224,6 +226,8 @@ pub(crate) struct ResourceActionDefinitionResponse {
     pub(crate) id: String,
     /// 展示名称。
     pub(crate) label: String,
+    /// 访问边界。
+    pub(crate) access: String,
 }
 
 impl From<&ResourceActionDefinition> for ResourceActionDefinitionResponse {
@@ -231,7 +235,15 @@ impl From<&ResourceActionDefinition> for ResourceActionDefinitionResponse {
         Self {
             id: action.id().as_str().to_string(),
             label: action.label().to_string(),
+            access: action_access_text(action.access()).to_string(),
         }
+    }
+}
+
+fn action_access_text(access: ResourceActionAccess) -> &'static str {
+    match access {
+        ResourceActionAccess::ReadOnly => "read_only",
+        ResourceActionAccess::ReadWrite => "read_write",
     }
 }
 
@@ -432,6 +444,43 @@ pub(crate) struct ResourceReadResponse {
     pub(crate) format: String,
     /// 当前阅读内容。MVP 阶段要求内容是 UTF-8 文本。
     pub(crate) text: String,
+}
+
+/// 执行资源动作请求。
+#[derive(Debug, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "input": {
+        "mode": "default"
+    }
+}))]
+pub(crate) struct ExecuteResourceActionRequest {
+    /// 传递给插件 action handler 的 JSON 输入。
+    #[serde(default)]
+    pub(crate) input: Value,
+}
+
+/// 执行资源动作响应。
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct ResourceActionOutputResponse {
+    /// 资源唯一标识。
+    pub(crate) resource_id: String,
+    /// 动作 ID。
+    pub(crate) action: String,
+    /// 输出内容类型。
+    pub(crate) content_type: String,
+    /// 插件返回的 JSON 内容。
+    pub(crate) body: Value,
+}
+
+impl From<&ResourceActionOutput> for ResourceActionOutputResponse {
+    fn from(output: &ResourceActionOutput) -> Self {
+        Self {
+            resource_id: output.resource_id().to_string(),
+            action: output.action().as_str().to_string(),
+            content_type: output.content_type().to_string(),
+            body: output.body().clone(),
+        }
+    }
 }
 
 impl From<&ReadableResource> for ResourceReadResponse {

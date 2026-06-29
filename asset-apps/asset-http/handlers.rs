@@ -1,8 +1,8 @@
 use crate::dto::{
-    BinaryContent, CreateResourceRequest, HealthResponse, ListResourcesQuery, ResourceKindResponse,
-    ResourceKindsResponse, ResourceMetadataRequest, ResourcePageResponse, ResourceReadResponse,
-    ResourceResponse, UpdateResourceRequest, UploadResourceContentRequest,
-    UploadResourceContentStreamQuery,
+    BinaryContent, CreateResourceRequest, ExecuteResourceActionRequest, HealthResponse,
+    ListResourcesQuery, ResourceActionOutputResponse, ResourceKindResponse, ResourceKindsResponse,
+    ResourceMetadataRequest, ResourcePageResponse, ResourceReadResponse, ResourceResponse,
+    UpdateResourceRequest, UploadResourceContentRequest, UploadResourceContentStreamQuery,
 };
 use crate::error::HttpError;
 use crate::state::HttpState;
@@ -11,7 +11,8 @@ use asset_core::domain::{Checksum, ResourceId, ResourceKind, ResourceStatus, Sto
 use asset_core::port::BlobByteStream;
 use asset_core::port::ListResources;
 use asset_core::service::{
-    CreateResource, UpdateResource, UploadResourceContent, UploadResourceContentStream,
+    CreateResource, ExecuteResourceAction, UpdateResource, UploadResourceContent,
+    UploadResourceContentStream,
 };
 use axum::Json;
 use axum::body::Body;
@@ -451,6 +452,42 @@ pub(crate) async fn read_resource(
         return Err(HttpError::not_found(format!("resource `{id}` not found")));
     };
     Ok(Json(ResourceReadResponse::from(&resource)))
+}
+
+/// 执行资源插件动作。
+#[utoipa::path(
+    post,
+    path = "/resources/{id}/actions/{action}",
+    tag = "resources",
+    request_body = ExecuteResourceActionRequest,
+    params(
+        ("id" = String, Path, description = "资源 ID"),
+        ("action" = String, Path, description = "动作 ID")
+    ),
+    responses(
+        (status = 200, description = "动作执行结果", body = ResourceActionOutputResponse),
+        (status = 400, description = "资源类型不支持该动作或动作未配置", body = crate::dto::ErrorResponse),
+        (status = 404, description = "资源不存在", body = crate::dto::ErrorResponse),
+        (status = 500, description = "插件或服务端错误", body = crate::dto::ErrorResponse)
+    )
+)]
+pub(crate) async fn execute_resource_action(
+    State(state): State<HttpState>,
+    Path((id, action)): Path<(String, String)>,
+    payload: Result<Json<ExecuteResourceActionRequest>, JsonRejection>,
+) -> Result<Json<ResourceActionOutputResponse>, HttpError> {
+    let id = parse_resource_id(&id)?;
+    let payload = payload.map_err(|error| HttpError::bad_request(error.to_string()))?;
+    let command = ExecuteResourceAction::new(action).with_input(payload.input.clone());
+    let Some(output) = state
+        .service()
+        .execute_resource_action(&id, command)
+        .await?
+    else {
+        return Err(HttpError::not_found(format!("resource `{id}` not found")));
+    };
+
+    Ok(Json(ResourceActionOutputResponse::from(&output)))
 }
 
 /// 软删除资源。

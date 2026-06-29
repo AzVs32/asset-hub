@@ -36,3 +36,32 @@ plugin_manifest_dirs = []
 # schema_id = "doc:note@1"
 # supports_content = false
 # metadata_schema = { type = "object" }
+
+# Extism plugin manifest example (place as JSON inside a plugin_manifest_dirs directory):
+#
+# {
+#   "manifest_version": 1,
+#   "plugin_id": "example-tools",
+#   "name": "Example Tools",
+#   "version": "0.1.0",
+#   "extism": {
+#     "wasm_path": "example-tools.wasm",
+#     "wasi": false
+#   },
+#   "resource_kinds": [
+#     {
+#       "kind": "example:document",
+#       "label": "Document",
+#       "schema_id": "example:document@1",
+#       "supports_content": true,
+#       "actions": [
+#         {
+#           "id": "example:summarize",
+#           "label": "Summarize",
+#           "handler": "summarize",
+#           "access": "read_only"
+#         }
+#       ]
+#     }
+#   ]
+# }

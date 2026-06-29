@@ -53,6 +53,17 @@ pub enum CoreError {
         /// 配置错误说明。
         message: String,
     },
+
+    /// 插件动作执行失败。
+    #[error("plugin `{plugin}` action `{action}` failed: {message}")]
+    Plugin {
+        /// 插件标识。
+        plugin: String,
+        /// 动作标识。
+        action: String,
+        /// 错误说明。
+        message: String,
+    },
 }
 
 impl CoreError {
@@ -96,6 +107,19 @@ impl CoreError {
     /// 创建基础设施配置错误。
     pub fn configuration(message: impl Into<String>) -> Self {
         Self::Configuration {
+            message: message.into(),
+        }
+    }
+
+    /// 创建插件执行错误。
+    pub fn plugin(
+        plugin: impl Into<String>,
+        action: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self::Plugin {
+            plugin: plugin.into(),
+            action: action.into(),
             message: message.into(),
         }
     }

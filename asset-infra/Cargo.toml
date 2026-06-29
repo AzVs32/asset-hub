@@ -9,9 +9,11 @@ authors.workspace = true
 asset-core.workspace = true
 
 async-trait.workspace = true
+base64.workspace = true
 bytes.workspace = true
 chrono.workspace = true
 config.workspace = true
+extism.workspace = true
 futures-core.workspace = true
 futures-util.workspace = true
 opendal.workspace = true
