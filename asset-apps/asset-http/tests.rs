@@ -75,7 +75,7 @@ async fn configured_resource_kind_is_listed_and_content_support_is_enforced() {
                 }
             })),
             supports_content: false,
-            capabilities: Vec::new(),
+            actions: Vec::new(),
         }],
     )
     .await;
@@ -146,7 +146,15 @@ async fn core_book_resource_can_be_read_online() {
         .find(|kind| kind["kind"] == "core:book")
         .unwrap();
     assert_eq!(book_kind["source"], "plugin:core-book");
-    assert_eq!(book_kind["capabilities"], json!(["reader", "preview"]));
+    assert_eq!(
+        book_kind["actions"],
+        json!([
+            {"id": "download_content", "label": "Download"},
+            {"id": "read", "label": "Read"},
+            {"id": "view_inline", "label": "View"},
+            {"id": "preview", "label": "Preview"}
+        ])
+    );
 
     let (status, resource) = json_request(
         &app,

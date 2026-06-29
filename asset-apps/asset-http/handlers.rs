@@ -427,7 +427,7 @@ pub(crate) async fn thumbnail_resource(
 
 /// 在线阅读资源内容。
 ///
-/// 当前 MVP 只支持带 `reader` capability 的 kind，并要求内容是 UTF-8 文本。
+/// 当前 MVP 只支持声明 `read` action 的 kind，并要求内容可转换为文本。
 #[utoipa::path(
     get,
     path = "/resources/{id}/read",

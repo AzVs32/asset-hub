@@ -393,13 +393,14 @@ impl ReadableResource {
 }
 
 /// 资源当前可执行动作。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ResourceActions {
     download_content: bool,
     read: bool,
     view_inline: bool,
     preview: bool,
     thumbnail: bool,
+    available_actions: Vec<crate::port::ResourceActionDefinition>,
 }
 
 impl ResourceActions {
@@ -409,6 +410,7 @@ impl ResourceActions {
         view_inline: bool,
         preview: bool,
         thumbnail: bool,
+        available_actions: Vec<crate::port::ResourceActionDefinition>,
     ) -> Self {
         Self {
             download_content,
@@ -416,6 +418,7 @@ impl ResourceActions {
             view_inline,
             preview,
             thumbnail,
+            available_actions,
         }
     }
 
@@ -442,6 +445,11 @@ impl ResourceActions {
     /// 是否允许生成或读取缩略图。
     pub fn thumbnail(&self) -> bool {
         self.thumbnail
+    }
+
+    /// 返回当前资源可执行的插件动作。
+    pub fn available_actions(&self) -> &[crate::port::ResourceActionDefinition] {
+        &self.available_actions
     }
 }
 
@@ -698,15 +706,53 @@ impl ResourceService {
         let storage_key = Some(content.key().as_str());
         let is_pdf = is_pdf(mime_type, storage_key);
         let is_image = is_image(mime_type, storage_key);
-        let supports_preview = definition.has_capability(crate::port::ResourceCapability::Preview)
-            && (is_pdf || is_image);
+        let declared_actions = definition.actions();
+        let has_declared_action = |action: &str| {
+            declared_actions
+                .iter()
+                .any(|definition| definition.id().as_str() == action)
+        };
+        let supports_preview =
+            has_declared_action(crate::port::ResourceAction::PREVIEW) && (is_pdf || is_image);
+        let read = has_declared_action(crate::port::ResourceAction::READ) && !is_pdf;
+        let view_inline = has_declared_action(crate::port::ResourceAction::VIEW_INLINE) && is_pdf;
+        let thumbnail = has_declared_action(crate::port::ResourceAction::THUMBNAIL) && is_image;
+        let mut available_actions = Vec::new();
+        for action in declared_actions {
+            let enabled = match action.id().as_str() {
+                crate::port::ResourceAction::DOWNLOAD_CONTENT => true,
+                crate::port::ResourceAction::READ => read,
+                crate::port::ResourceAction::VIEW_INLINE => view_inline,
+                crate::port::ResourceAction::PREVIEW => supports_preview,
+                crate::port::ResourceAction::THUMBNAIL => thumbnail,
+                _ => true,
+            };
+
+            if enabled {
+                available_actions.push(action.clone());
+            }
+        }
+
+        if !available_actions
+            .iter()
+            .any(|action| action.id().as_str() == crate::port::ResourceAction::DOWNLOAD_CONTENT)
+        {
+            available_actions.insert(
+                0,
+                crate::port::ResourceActionDefinition::new(
+                    crate::port::ResourceAction::DOWNLOAD_CONTENT,
+                    "Download",
+                ),
+            );
+        }
 
         Ok(ResourceActions::new(
             true,
-            definition.has_capability(crate::port::ResourceCapability::Reader) && !is_pdf,
-            supports_preview && is_pdf,
+            read,
+            view_inline,
             supports_preview,
-            definition.has_capability(crate::port::ResourceCapability::Thumbnail) && is_image,
+            thumbnail,
+            available_actions,
         ))
     }
 
@@ -777,7 +823,7 @@ impl ResourceService {
 
     /// 读取资源的可阅读文本内容。
     ///
-    /// 该 usecase 统一负责 reader capability 校验、对象内容读取和格式转换，供 HTTP、CLI、
+    /// 该 usecase 统一负责 `read` action 校验、对象内容读取和格式转换，供 HTTP、CLI、
     /// TUI 等应用入口复用。
     ///
     /// 找不到资源、资源已删除或没有内容时返回 `Ok(None)`。资源类型不支持阅读，或内容格式
@@ -1227,7 +1273,8 @@ mod tests {
     use super::*;
     use crate::domain::KindMetadata;
     use crate::port::{
-        BlobWriteResult, ResourceCapability, ResourceKindDefinition, ResourceKindRegistry,
+        BlobWriteResult, ResourceAction, ResourceActionDefinition, ResourceKindDefinition,
+        ResourceKindRegistry,
     };
     use futures_util::StreamExt;
     use serde_json::json;
@@ -1471,16 +1518,19 @@ mod tests {
                     None,
                     false,
                 )
-                .with_capabilities(vec![ResourceCapability::Reader]),
+                .with_actions(vec![ResourceActionDefinition::new(
+                    ResourceAction::READ,
+                    "Read",
+                )]),
                 ResourceKindDefinition::new(
                     ResourceKind::try_new("asset:image").unwrap(),
                     "Image",
                     None,
                     true,
                 )
-                .with_capabilities(vec![
-                    ResourceCapability::Preview,
-                    ResourceCapability::Thumbnail,
+                .with_actions(vec![
+                    ResourceActionDefinition::new(ResourceAction::PREVIEW, "Preview"),
+                    ResourceActionDefinition::new(ResourceAction::THUMBNAIL, "Thumbnail"),
                 ]),
                 ResourceKindDefinition::new(
                     ResourceKind::try_new("asset:binary").unwrap(),
@@ -1494,9 +1544,10 @@ mod tests {
                     None,
                     true,
                 )
-                .with_capabilities(vec![
-                    ResourceCapability::Reader,
-                    ResourceCapability::Preview,
+                .with_actions(vec![
+                    ResourceActionDefinition::new(ResourceAction::READ, "Read"),
+                    ResourceActionDefinition::new(ResourceAction::VIEW_INLINE, "View"),
+                    ResourceActionDefinition::new(ResourceAction::PREVIEW, "Preview"),
                 ]),
             ],
         )))

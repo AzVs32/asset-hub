@@ -3,7 +3,7 @@ use asset_core::domain::{
     Checksum, ChecksumKind, KindMetadata, Resource, ResourceContent, ResourceMetadata,
     ResourceStatus,
 };
-use asset_core::port::ResourceKindDefinition;
+use asset_core::port::{ResourceActionDefinition, ResourceKindDefinition};
 use asset_core::service::{ReadableResource, ResourceActions};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -193,8 +193,8 @@ pub(crate) struct ResourceKindResponse {
     pub(crate) metadata_schema: Option<Value>,
     /// 是否允许上传文件内容。
     pub(crate) supports_content: bool,
-    /// kind 支持的能力。
-    pub(crate) capabilities: Vec<String>,
+    /// kind 支持的动作。
+    pub(crate) actions: Vec<ResourceActionDefinitionResponse>,
     /// 定义来源：`builtin`、`config` 或 `plugin:<id>`。
     pub(crate) source: String,
 }
@@ -207,12 +207,30 @@ impl From<&ResourceKindDefinition> for ResourceKindResponse {
             schema_id: definition.schema_id().map(str::to_string),
             metadata_schema: definition.metadata_schema().cloned(),
             supports_content: definition.supports_content(),
-            capabilities: definition
-                .capabilities()
+            actions: definition
+                .actions()
                 .iter()
-                .map(|capability| capability.as_str().to_string())
+                .map(ResourceActionDefinitionResponse::from)
                 .collect(),
             source: definition.source().to_string(),
+        }
+    }
+}
+
+/// 资源动作定义响应。
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub(crate) struct ResourceActionDefinitionResponse {
+    /// 动作 ID。
+    pub(crate) id: String,
+    /// 展示名称。
+    pub(crate) label: String,
+}
+
+impl From<&ResourceActionDefinition> for ResourceActionDefinitionResponse {
+    fn from(action: &ResourceActionDefinition) -> Self {
+        Self {
+            id: action.id().as_str().to_string(),
+            label: action.label().to_string(),
         }
     }
 }
@@ -384,6 +402,8 @@ pub(crate) struct ResourceActionsResponse {
     pub(crate) preview: bool,
     /// 是否允许缩略图。
     pub(crate) thumbnail: bool,
+    /// 当前资源允许的动作。
+    pub(crate) available_actions: Vec<ResourceActionDefinitionResponse>,
 }
 
 /// 资源分页响应。
@@ -451,6 +471,11 @@ impl From<ResourceActions> for ResourceActionsResponse {
             view_inline: actions.view_inline(),
             preview: actions.preview(),
             thumbnail: actions.thumbnail(),
+            available_actions: actions
+                .available_actions()
+                .iter()
+                .map(ResourceActionDefinitionResponse::from)
+                .collect(),
         }
     }
 }

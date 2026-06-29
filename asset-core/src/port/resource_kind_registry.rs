@@ -7,32 +7,82 @@ use crate::domain::ResourceKind;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// 资源类型能力。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ResourceCapability {
-    /// 支持在线阅读。
-    Reader,
-    /// 支持预览。
-    Preview,
-    /// 支持缩略图。
-    Thumbnail,
-}
+/// 资源动作标识。
+///
+/// 核心只保留少量内置动作的执行入口；插件可以声明自己的动作 ID，应用入口据此展示
+/// 或交给插件运行时处理。
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ResourceAction(String);
 
-impl ResourceCapability {
-    /// 返回能力的稳定文本值。
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Reader => "reader",
-            Self::Preview => "preview",
-            Self::Thumbnail => "thumbnail",
-        }
+impl ResourceAction {
+    pub const DOWNLOAD_CONTENT: &'static str = "download_content";
+    pub const READ: &'static str = "read";
+    pub const VIEW_INLINE: &'static str = "view_inline";
+    pub const PREVIEW: &'static str = "preview";
+    pub const THUMBNAIL: &'static str = "thumbnail";
+
+    /// 创建资源动作标识。
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into().trim().to_string())
+    }
+
+    /// 返回动作稳定文本值。
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
     }
 }
 
-impl std::fmt::Display for ResourceCapability {
+impl std::fmt::Display for ResourceAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for ResourceAction {
+    fn from(value: &str) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<String> for ResourceAction {
+    fn from(value: String) -> Self {
+        Self::new(value)
+    }
+}
+
+impl AsRef<str> for ResourceAction {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+/// 资源类型动作定义。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceActionDefinition {
+    /// 动作 ID，例如 `read`、`preview`、`plugin:sync`。
+    id: ResourceAction,
+    /// 展示名称。
+    label: String,
+}
+
+impl ResourceActionDefinition {
+    /// 创建资源动作定义。
+    pub fn new(id: impl Into<ResourceAction>, label: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+        }
+    }
+
+    /// 返回动作 ID。
+    pub fn id(&self) -> &ResourceAction {
+        &self.id
+    }
+
+    /// 返回展示名称。
+    pub fn label(&self) -> &str {
+        &self.label
     }
 }
 
@@ -49,8 +99,8 @@ pub struct ResourceKindDefinition {
     metadata_schema: Option<Value>,
     /// 是否支持对象内容。
     supports_content: bool,
-    /// kind 支持的能力，例如 `reader`、`thumbnail`。
-    capabilities: Vec<ResourceCapability>,
+    /// kind 支持的动作，例如 `read`、`thumbnail`、`plugin:sync`。
+    actions: Vec<ResourceActionDefinition>,
     /// 定义来源，例如 `builtin`、`config` 或 `plugin:<id>`。
     source: String,
 }
@@ -80,7 +130,7 @@ impl ResourceKindDefinition {
             schema_id,
             metadata_schema: None,
             supports_content,
-            capabilities: Vec::new(),
+            actions: Vec::new(),
             source: source.into(),
         }
     }
@@ -91,9 +141,9 @@ impl ResourceKindDefinition {
         self
     }
 
-    /// 设置 kind 支持的能力。
-    pub fn with_capabilities(mut self, capabilities: Vec<ResourceCapability>) -> Self {
-        self.capabilities = capabilities;
+    /// 设置 kind 支持的动作。
+    pub fn with_actions(mut self, actions: Vec<ResourceActionDefinition>) -> Self {
+        self.actions = actions;
         self
     }
 
@@ -122,14 +172,17 @@ impl ResourceKindDefinition {
         self.supports_content
     }
 
-    /// 返回 kind 支持的能力。
-    pub fn capabilities(&self) -> &[ResourceCapability] {
-        &self.capabilities
+    /// 返回 kind 支持的动作。
+    pub fn actions(&self) -> &[ResourceActionDefinition] {
+        &self.actions
     }
 
-    /// 判断 kind 是否支持指定能力。
-    pub fn has_capability(&self, capability: ResourceCapability) -> bool {
-        self.capabilities.contains(&capability)
+    /// 判断 kind 是否支持指定动作。
+    pub fn has_action(&self, action: impl AsRef<str>) -> bool {
+        let action = action.as_ref();
+        self.actions
+            .iter()
+            .any(|definition| definition.id().as_str() == action)
     }
 
     /// 返回定义来源。

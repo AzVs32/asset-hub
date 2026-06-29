@@ -1,7 +1,7 @@
 use crate::config::{KindRegistryConfig, ResourceKindConfig};
 use asset_core::CoreError;
 use asset_core::domain::ResourceKind;
-use asset_core::port::{ResourceCapability, ResourceKindDefinition, ResourceKindRegistry};
+use asset_core::port::{ResourceActionDefinition, ResourceKindDefinition, ResourceKindRegistry};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
@@ -31,19 +31,6 @@ impl DefaultResourceKindRegistry {
                 definition_from_parts(kind, kind, None, None, true, Vec::new(), "builtin")?,
             )?;
         }
-        push_definition(
-            &mut definitions,
-            definition_from_parts(
-                "asset:image",
-                "Image",
-                None,
-                None,
-                true,
-                vec![ResourceCapability::Preview, ResourceCapability::Thumbnail],
-                "builtin",
-            )?,
-        )?;
-
         for manifest in load_official_plugin_manifests()? {
             for config_definition in &manifest.resource_kinds {
                 push_definition(
@@ -122,7 +109,7 @@ fn definition_from_config(
         config.schema_id.clone(),
         config.metadata_schema.clone(),
         config.supports_content,
-        config.capabilities.clone(),
+        config.actions.clone(),
         source,
     )
 }
@@ -133,7 +120,7 @@ fn definition_from_parts(
     schema_id: Option<String>,
     metadata_schema: Option<serde_json::Value>,
     supports_content: bool,
-    capabilities: Vec<ResourceCapability>,
+    actions: Vec<ResourceActionDefinition>,
     source: impl Into<String>,
 ) -> Result<ResourceKindDefinition, CoreError> {
     Ok(ResourceKindDefinition::with_source(
@@ -144,7 +131,7 @@ fn definition_from_parts(
         source,
     )
     .with_metadata_schema(metadata_schema)
-    .with_capabilities(capabilities))
+    .with_actions(actions))
 }
 
 fn load_official_plugin_manifests() -> Result<Vec<PluginManifest>, CoreError> {
@@ -193,6 +180,7 @@ struct PluginManifest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use asset_core::port::ResourceAction;
     use serde_json::json;
     use std::path::PathBuf;
 
@@ -205,7 +193,7 @@ mod tests {
                 schema_id: Some("doc:note@1".to_string()),
                 metadata_schema: Some(json!({"type": "object"})),
                 supports_content: false,
-                capabilities: Vec::new(),
+                actions: Vec::new(),
             }],
             plugin_manifest_dirs: Vec::new(),
         })
@@ -225,7 +213,7 @@ mod tests {
         assert_eq!(note.schema_id(), Some("doc:note@1"));
         assert_eq!(note.metadata_schema().unwrap()["type"], "object");
         assert!(!note.supports_content());
-        assert!(note.capabilities().is_empty());
+        assert!(note.actions().is_empty());
         assert_eq!(note.source(), "config");
     }
 
@@ -239,22 +227,22 @@ mod tests {
         assert_eq!(book.label(), "Book");
         assert_eq!(book.source(), "plugin:core-book");
         assert!(book.supports_content());
-        assert!(book.has_capability(ResourceCapability::Reader));
-        assert!(book.has_capability(ResourceCapability::Preview));
+        assert!(book.has_action(ResourceAction::READ));
+        assert!(book.has_action(ResourceAction::PREVIEW));
     }
 
     #[test]
-    fn registry_includes_builtin_image_kind() {
+    fn registry_includes_official_image_plugin_kind() {
         let registry = DefaultResourceKindRegistry::new().unwrap();
         let image = registry
             .get(&ResourceKind::try_new("asset:image").unwrap())
             .unwrap();
 
         assert_eq!(image.label(), "Image");
-        assert_eq!(image.source(), "builtin");
+        assert_eq!(image.source(), "plugin:core-book");
         assert!(image.supports_content());
-        assert!(image.has_capability(ResourceCapability::Preview));
-        assert!(image.has_capability(ResourceCapability::Thumbnail));
+        assert!(image.has_action(ResourceAction::PREVIEW));
+        assert!(image.has_action(ResourceAction::THUMBNAIL));
     }
 
     #[test]
@@ -272,7 +260,7 @@ mod tests {
                   "label": "Mindustry Mod",
                   "schema_id": "mindustry:mod@1",
                   "supports_content": true,
-                  "capabilities": ["preview"],
+                  "actions": [{"id": "preview", "label": "Preview"}],
                   "metadata_schema": {
                     "type": "object"
                   }
@@ -294,7 +282,7 @@ mod tests {
 
         assert_eq!(definition.label(), "Mindustry Mod");
         assert_eq!(definition.source(), "plugin:mindustry");
-        assert!(definition.has_capability(ResourceCapability::Preview));
+        assert!(definition.has_action(ResourceAction::PREVIEW));
         assert_eq!(definition.metadata_schema().unwrap()["type"], "object");
 
         let _ = std::fs::remove_dir_all(root);

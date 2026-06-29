@@ -1,6 +1,6 @@
 use ::config::{Config, File, FileFormat};
 use asset_core::CoreError;
-use asset_core::port::ResourceCapability;
+use asset_core::port::ResourceActionDefinition;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -157,8 +157,8 @@ pub struct ResourceKindConfig {
     pub metadata_schema: Option<Value>,
     /// 是否支持对象内容。
     pub supports_content: bool,
-    /// kind 支持的能力，例如 `reader`、`thumbnail`。
-    pub capabilities: Vec<ResourceCapability>,
+    /// kind 支持的动作，例如 `read`、`thumbnail`。
+    pub actions: Vec<ResourceActionDefinition>,
 }
 
 impl Default for ResourceKindConfig {
@@ -169,7 +169,7 @@ impl Default for ResourceKindConfig {
             schema_id: None,
             metadata_schema: None,
             supports_content: true,
-            capabilities: Vec::new(),
+            actions: Vec::new(),
         }
     }
 }

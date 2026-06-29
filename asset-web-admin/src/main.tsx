@@ -48,6 +48,12 @@ type ResourceActions = {
   view_inline: boolean;
   preview: boolean;
   thumbnail: boolean;
+  available_actions: ResourceActionDefinition[];
+};
+
+type ResourceActionDefinition = {
+  id: string;
+  label: string;
 };
 
 type Resource = {
@@ -69,7 +75,7 @@ type ResourceKindOption = {
   schema_id: string | null;
   metadata_schema: Record<string, unknown> | null;
   supports_content: boolean;
-  capabilities: string[];
+  actions: ResourceActionDefinition[];
   source: string;
 };
 
@@ -130,7 +136,7 @@ const fallbackKinds: ResourceKindOption[] = [
     schema_id: null,
     metadata_schema: null,
     supports_content: true,
-    capabilities: [],
+    actions: [],
     source: "builtin",
   },
 ];
@@ -856,7 +862,11 @@ function ResourceDetail({
         <Fact label="Kind source" value={kindDefinition?.source ?? "-"} />
         <Fact label="Kind schema" value={kindDefinition?.schema_id ?? "-"} />
         <Fact label="Content kind" value={kindDefinition ? (kindDefinition.supports_content ? "yes" : "no") : "-"} />
-        <Fact label="Capabilities" value={kindDefinition?.capabilities.join(", ") || "-"} />
+        <Fact label="Kind actions" value={kindDefinition?.actions.map((action) => action.id).join(", ") || "-"} />
+        <Fact
+          label="Available actions"
+          value={resource.actions.available_actions.map((action) => action.id).join(", ") || "-"}
+        />
       </section>
     </div>
   );
@@ -1002,8 +1012,8 @@ function kindOptionLabel(option: ResourceKindOption): string {
 function kindOptionHint(option: ResourceKindOption | undefined): string {
   if (!option) return "";
   const content = option.supports_content ? "content" : "metadata only";
-  const capabilities = option.capabilities.length ? ` / ${option.capabilities.join(", ")}` : "";
-  return `${option.source} / ${content}${option.schema_id ? ` / ${option.schema_id}` : ""}${capabilities}`;
+  const actions = option.actions.length ? ` / ${option.actions.map((action) => action.id).join(", ")}` : "";
+  return `${option.source} / ${content}${option.schema_id ? ` / ${option.schema_id}` : ""}${actions}`;
 }
 
 function isImageResource(resource: Resource): boolean {
