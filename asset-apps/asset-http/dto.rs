@@ -103,7 +103,7 @@ pub(crate) struct UpdateResourceRequest {
 #[schema(example = json!({
     "name": "hello.txt",
     "kind": "core:unknown",
-    "storage_key": "examples/hello.txt",
+    "directory": "examples",
     "data_base64": "aGVsbG8sIGFzc2V0LWh1YiE=",
     "metadata": {
         "summary": {
@@ -123,8 +123,10 @@ pub(crate) struct UpdateResourceRequest {
 pub(crate) struct UploadResourceContentRequest {
     /// 资源展示名。
     pub(crate) name: String,
-    /// 对象存储键。
-    pub(crate) storage_key: String,
+    /// 可选对象存储键；未提供时由 `directory` 和原始文件名生成。
+    pub(crate) storage_key: Option<String>,
+    /// 可选上传目录；仅在未提供 `storage_key` 时使用。
+    pub(crate) directory: Option<String>,
     /// base64 编码后的内容字节。
     pub(crate) data_base64: String,
     /// 可选资源类型。
@@ -147,8 +149,10 @@ pub(crate) struct UploadResourceContentRequest {
 pub(crate) struct UploadResourceContentStreamQuery {
     /// 资源展示名。
     pub(crate) name: String,
-    /// 对象存储键。
-    pub(crate) storage_key: String,
+    /// 可选对象存储键；未提供时由 `directory` 和原始文件名生成。
+    pub(crate) storage_key: Option<String>,
+    /// 可选上传目录；仅在未提供 `storage_key` 时使用。
+    pub(crate) directory: Option<String>,
     /// 可选资源类型。
     pub(crate) kind: Option<String>,
     /// 可选初始状态：`active` 或 `archived`。
@@ -195,6 +199,9 @@ pub(crate) struct ResourceKindResponse {
     pub(crate) metadata_schema: Option<Value>,
     /// 是否允许上传文件内容。
     pub(crate) supports_content: bool,
+    /// 文件自动识别规则；为空时不会主动匹配，仅可作为手动选择或兜底。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) detect: Option<ResourceActionWhenResponse>,
     /// kind 支持的动作。
     pub(crate) actions: Vec<ResourceActionDefinitionResponse>,
     /// 定义来源：`builtin`、`config` 或 `plugin:<id>`。
@@ -209,6 +216,10 @@ impl From<&ResourceKindDefinition> for ResourceKindResponse {
             schema_id: definition.schema_id().map(str::to_string),
             metadata_schema: definition.metadata_schema().cloned(),
             supports_content: definition.supports_content(),
+            detect: (!definition.detect().is_empty()).then(|| ResourceActionWhenResponse {
+                mime_types: definition.detect().mime_types().to_vec(),
+                extensions: definition.detect().extensions().to_vec(),
+            }),
             actions: definition
                 .actions()
                 .iter()
@@ -228,6 +239,18 @@ pub(crate) struct ResourceActionDefinitionResponse {
     pub(crate) label: String,
     /// 访问边界。
     pub(crate) access: String,
+    /// 内容匹配条件；为空时表示适用于该 kind 的所有内容。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) when: Option<ResourceActionWhenResponse>,
+}
+
+/// 资源动作内容匹配条件。
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub(crate) struct ResourceActionWhenResponse {
+    /// 匹配的 MIME 类型，支持 `image/*` 这类通配前缀。
+    pub(crate) mime_types: Vec<String>,
+    /// 匹配的文件扩展名。
+    pub(crate) extensions: Vec<String>,
 }
 
 impl From<&ResourceActionDefinition> for ResourceActionDefinitionResponse {
@@ -236,6 +259,10 @@ impl From<&ResourceActionDefinition> for ResourceActionDefinitionResponse {
             id: action.id().as_str().to_string(),
             label: action.label().to_string(),
             access: action_access_text(action.access()).to_string(),
+            when: (!action.when().is_empty()).then(|| ResourceActionWhenResponse {
+                mime_types: action.when().mime_types().to_vec(),
+                extensions: action.when().extensions().to_vec(),
+            }),
         }
     }
 }

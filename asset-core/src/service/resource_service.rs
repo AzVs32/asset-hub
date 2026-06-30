@@ -720,9 +720,10 @@ impl ResourceService {
         let is_video = is_video(mime_type, storage_key);
         let declared_actions = definition.actions();
         let has_declared_action = |action: &str| {
-            declared_actions
-                .iter()
-                .any(|definition| definition.id().as_str() == action)
+            declared_actions.iter().any(|definition| {
+                definition.id().as_str() == action
+                    && definition.matches_content(mime_type, storage_key)
+            })
         };
         let supports_preview = has_declared_action(crate::port::ResourceAction::PREVIEW)
             && (is_image || is_pdf || is_video);
@@ -738,7 +739,7 @@ impl ResourceService {
                 crate::port::ResourceAction::VIEW_INLINE => view_inline,
                 crate::port::ResourceAction::PREVIEW => supports_preview,
                 crate::port::ResourceAction::THUMBNAIL => thumbnail,
-                _ => true,
+                _ => action.matches_content(mime_type, storage_key),
             };
 
             if enabled {
@@ -893,7 +894,14 @@ impl ResourceService {
         let Some(action) = definition
             .actions()
             .iter()
-            .find(|action| action.id().as_str() == action_id.as_str())
+            .find(|action| {
+                let content_ref = resource.content();
+                action.id().as_str() == action_id.as_str()
+                    && action.matches_content(
+                        content_ref.and_then(|content| content.mime_type()),
+                        content_ref.map(|content| content.key().as_str()),
+                    )
+            })
             .cloned()
         else {
             return Err(CoreError::configuration(format!(
@@ -1627,6 +1635,22 @@ mod tests {
                 ResourceActionDefinition::new(ResourceAction::PREVIEW, "Preview")
                     .with_handler("preview_document"),
             ]),
+            ResourceKindDefinition::new(
+                ResourceKind::try_new("core:video").unwrap(),
+                "Video",
+                None,
+                true,
+            )
+            .with_actions(vec![
+                ResourceActionDefinition::new(ResourceAction::PREVIEW, "Preview"),
+                ResourceActionDefinition::new("azvs:play_mp4", "Play MP4")
+                    .with_handler("play_mp4")
+                    .with_when(
+                        crate::port::ResourceActionWhen::new()
+                            .with_mime_types(["video/mp4"])
+                            .with_extensions([".mp4"]),
+                    ),
+            ]),
         ]));
         let repository = Arc::new(InMemoryResourceRepository::default());
         let blob_storage = Arc::new(InMemoryBlobStorage::default());
@@ -1989,6 +2013,51 @@ mod tests {
         assert!(text_actions.download_content());
         assert!(text_actions.read());
         assert!(!text_actions.view_inline());
+    }
+
+    #[test]
+    fn describe_resource_actions_filters_extension_actions_by_content_match() {
+        let (service, _, _) = service();
+        let mp4 = block_on(
+            service.upload_resource_content(
+                UploadResourceContent::new(
+                    "demo.mp4",
+                    StorageKey::new("videos/demo.mp4").unwrap(),
+                    Bytes::from_static(b"mp4"),
+                )
+                .with_kind("core:video")
+                .with_mime_type("video/mp4"),
+            ),
+        )
+        .unwrap();
+        let webm = block_on(
+            service.upload_resource_content(
+                UploadResourceContent::new(
+                    "demo.webm",
+                    StorageKey::new("videos/demo.webm").unwrap(),
+                    Bytes::from_static(b"webm"),
+                )
+                .with_kind("core:video")
+                .with_mime_type("video/webm"),
+            ),
+        )
+        .unwrap();
+
+        let mp4_actions = service.describe_resource_actions(&mp4).unwrap();
+        let webm_actions = service.describe_resource_actions(&webm).unwrap();
+
+        assert!(
+            mp4_actions
+                .available_actions()
+                .iter()
+                .any(|action| action.id().as_str() == "azvs:play_mp4")
+        );
+        assert!(
+            !webm_actions
+                .available_actions()
+                .iter()
+                .any(|action| action.id().as_str() == "azvs:play_mp4")
+        );
     }
 
     #[test]

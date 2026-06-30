@@ -37,7 +37,9 @@ plugin_manifest_dirs = ["data/plugins"]
 # supports_content = false
 # metadata_schema = { type = "object" }
 
-# Extism plugin manifest example (place as JSON inside a plugin_manifest_dirs directory):
+# Plugin manifest example (place as JSON inside a plugin_manifest_dirs directory).
+# Use `resource_kinds` for genuinely new business resource types, and
+# `extends_resource_kinds` to add actions to core/file-format categories.
 #
 # {
 #   "manifest_version": 1,
@@ -59,6 +61,23 @@ plugin_manifest_dirs = ["data/plugins"]
 #           "id": "example:summarize",
 #           "label": "Summarize",
 #           "handler": "summarize",
+#           "access": "read_only"
+#         }
+#       ]
+#     }
+#   ],
+#   "extends_resource_kinds": [
+#     {
+#       "kind": "core:video",
+#       "when": {
+#         "mime_types": ["video/mp4"],
+#         "extensions": [".mp4", ".m4v"]
+#       },
+#       "actions": [
+#         {
+#           "id": "example:play_mp4",
+#           "label": "Play MP4",
+#           "handler": "play_mp4",
 #           "access": "read_only"
 #         }
 #       ]

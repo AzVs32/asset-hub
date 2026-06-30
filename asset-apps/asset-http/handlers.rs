@@ -165,7 +165,12 @@ pub(crate) async fn upload_resource_content(
     payload: Result<Json<UploadResourceContentRequest>, JsonRejection>,
 ) -> Result<(StatusCode, Json<ResourceResponse>), HttpError> {
     let payload = parse_json_payload(payload)?;
-    let storage_key = StorageKey::new(payload.storage_key)?;
+    let original_filename = payload.original_filename.clone();
+    let storage_key = storage_key_from_upload_parts(
+        payload.storage_key,
+        payload.directory,
+        original_filename.as_deref().unwrap_or(&payload.name),
+    )?;
     let data = BASE64_STANDARD
         .decode(payload.data_base64.as_bytes())
         .map(Bytes::from)
@@ -179,7 +184,7 @@ pub(crate) async fn upload_resource_content(
         command = command.with_mime_type(mime_type);
     }
 
-    if let Some(original_filename) = payload.original_filename {
+    if let Some(original_filename) = original_filename {
         command = command.with_original_filename(original_filename);
     }
 
@@ -221,7 +226,11 @@ pub(crate) async fn upload_resource_content_stream(
     headers: HeaderMap,
     body: Body,
 ) -> Result<(StatusCode, Json<ResourceResponse>), HttpError> {
-    let storage_key = StorageKey::new(query.storage_key)?;
+    let storage_key = storage_key_from_upload_parts(
+        query.storage_key,
+        query.directory,
+        query.original_filename.as_deref().unwrap_or(&query.name),
+    )?;
     ensure_content_length(&headers)?;
     let data = limited_body_stream(body);
 
@@ -608,6 +617,69 @@ fn apply_common_stream_fields(
     }
 
     Ok(command)
+}
+
+fn storage_key_from_upload_parts(
+    storage_key: Option<String>,
+    directory: Option<String>,
+    filename: &str,
+) -> Result<StorageKey, HttpError> {
+    if let Some(storage_key) = storage_key.filter(|value| !value.trim().is_empty()) {
+        return StorageKey::new(storage_key).map_err(Into::into);
+    }
+
+    let filename = clean_filename(filename)?;
+    let directory = clean_directory(directory.as_deref())?;
+    let key = if directory.is_empty() {
+        filename
+    } else {
+        format!("{directory}/{filename}")
+    };
+
+    StorageKey::new(key).map_err(Into::into)
+}
+
+fn clean_filename(value: &str) -> Result<String, HttpError> {
+    let filename = value
+        .trim()
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default()
+        .trim();
+    if filename.is_empty() || filename == "." || filename == ".." {
+        return Err(HttpError::bad_request("filename must not be empty"));
+    }
+
+    Ok(filename.to_string())
+}
+
+fn clean_directory(value: Option<&str>) -> Result<String, HttpError> {
+    let Some(value) = value else {
+        return Ok("uploads".to_string());
+    };
+    let value = value.trim().replace('\\', "/");
+    if value.is_empty() {
+        return Ok(String::new());
+    }
+    if value.starts_with('/') {
+        return Err(HttpError::bad_request("directory must be a relative path"));
+    }
+
+    let mut parts = Vec::new();
+    for part in value.split('/') {
+        let part = part.trim();
+        if part.is_empty() || part == "." {
+            continue;
+        }
+        if part == ".." {
+            return Err(HttpError::bad_request(
+                "directory must not contain parent path segments",
+            ));
+        }
+        parts.push(part);
+    }
+
+    Ok(parts.join("/"))
 }
 
 fn content_type(headers: &HeaderMap) -> Result<Option<String>, HttpError> {

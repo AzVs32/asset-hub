@@ -54,6 +54,26 @@ async fn resource_kinds_are_listed_and_unsupported_kind_is_rejected() {
             "missing {kind}"
         );
     }
+    let image_kind = kinds["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|kind| kind["kind"] == "core:image")
+        .unwrap();
+    assert_eq!(image_kind["detect"]["mime_types"], json!(["image/*"]));
+    assert!(
+        image_kind["detect"]["extensions"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(".png"))
+    );
+    let file_kind = kinds["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|kind| kind["kind"] == "core:file")
+        .unwrap();
+    assert!(file_kind.get("detect").is_none());
 
     let (status, error) = json_request(
         &app,
@@ -91,6 +111,7 @@ async fn configured_resource_kind_is_listed_and_content_support_is_enforced() {
             })),
             supports_content: false,
             actions: Vec::new(),
+            ..ResourceKindConfig::default()
         }],
     )
     .await;
@@ -511,6 +532,27 @@ async fn upload_resource_content_roundtrips_small_blob() {
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(content.as_ref(), data);
+
+    let (status, directory_resource) = json_request(
+        &app,
+        Method::POST,
+        "/resources/content",
+        json!({
+            "name": "nested.txt",
+            "kind": "core:file",
+            "directory": "examples/nested",
+            "data_base64": "bmVzdGVk",
+            "mime_type": "text/plain",
+            "original_filename": "nested.txt"
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(
+        directory_resource["content"]["key"],
+        "examples/nested/nested.txt"
+    );
 }
 
 #[tokio::test]
@@ -561,7 +603,7 @@ async fn stream_upload_roundtrips_large_blob_without_buffered_request_dto() {
         &app,
         Request::builder()
             .method(Method::PUT)
-            .uri("/resources/content/stream?name=large-file&storage_key=streams/large.bin&kind=core%3Aunknown&sha256=6d9019b5e7c1d286c231d7f998166f6c036e3f01b972fa46e958e1a5c3750241")
+            .uri("/resources/content/stream?name=large-file&directory=streams&original_filename=large.bin&kind=core%3Aunknown&sha256=6d9019b5e7c1d286c231d7f998166f6c036e3f01b972fa46e958e1a5c3750241")
             .header(header::CONTENT_TYPE, "application/octet-stream")
             .body(Body::from(data.as_slice()))
             .unwrap(),

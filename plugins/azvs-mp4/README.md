@@ -8,9 +8,10 @@ Extism plugin for Asset Hub MP4 playback.
 - `azvs-mp4.wasm`: compiled Extism plugin.
 - `src/lib.rs`: Rust source for rebuilding the wasm.
 
-## Resource Kind
+## Resource Kind Extension
 
-- Kind: `azvs:mp4`
+- Extends kind: `core:video`
+- Matches: `video/mp4`, `.mp4`, `.m4v`
 - Action: `azvs:play_mp4`
 - Handler: `play_mp4`
 
@@ -21,7 +22,7 @@ Asset Hub loads plugin manifests from `data/plugins` by default. To use this plu
 1. Copy `azvs-mp4.json` and `azvs-mp4.wasm` into `data/plugins`, then restart Asset Hub.
 2. Or add `plugins/azvs-mp4` to `kind.plugin_manifest_dirs` in `config.toml`, then restart Asset Hub.
 
-Upload an MP4 as kind `azvs:mp4`. The resource detail panel will show a `Play MP4` action.
+Upload an MP4 as kind `core:video`. The resource detail panel will show a `Play MP4` action when the MIME type or extension matches MP4.
 
 The plugin returns `view: "html"` with a sandboxed video player UI.
 

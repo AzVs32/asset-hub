@@ -1,6 +1,6 @@
 use ::config::{Config, File, FileFormat};
 use asset_core::CoreError;
-use asset_core::port::ResourceActionDefinition;
+use asset_core::port::{ResourceActionDefinition, ResourceActionWhen};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -168,8 +168,32 @@ pub struct ResourceKindConfig {
     pub metadata_schema: Option<Value>,
     /// 是否支持对象内容。
     pub supports_content: bool,
+    /// 文件自动识别规则。上传时前端可用这些规则自动选择 kind。
+    pub detect: ResourceActionWhen,
     /// kind 支持的动作，例如 `read`、`thumbnail`。
     pub actions: Vec<ResourceActionDefinition>,
+}
+
+/// 插件对已有资源类型的动作扩展。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ResourceKindExtensionConfig {
+    /// 被扩展的资源类型。
+    pub kind: String,
+    /// 扩展级匹配条件，会作为默认条件应用到未声明 `when` 的 action 上。
+    pub when: ResourceActionWhen,
+    /// 追加到目标 kind 的动作。
+    pub actions: Vec<ResourceActionDefinition>,
+}
+
+impl Default for ResourceKindExtensionConfig {
+    fn default() -> Self {
+        Self {
+            kind: String::new(),
+            when: ResourceActionWhen::default(),
+            actions: Vec::new(),
+        }
+    }
 }
 
 impl Default for ResourceKindConfig {
@@ -180,6 +204,7 @@ impl Default for ResourceKindConfig {
             schema_id: None,
             metadata_schema: None,
             supports_content: true,
+            detect: ResourceActionWhen::default(),
             actions: Vec::new(),
         }
     }

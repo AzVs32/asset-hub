@@ -8,7 +8,7 @@ pub use resource_action_executor::{
     ResourceActionExecutor, ResourceActionOutput, ResourceActionRequest,
 };
 pub use resource_kind_registry::{
-    ResourceAction, ResourceActionAccess, ResourceActionDefinition, ResourceKindDefinition,
-    ResourceKindRegistry,
+    ResourceAction, ResourceActionAccess, ResourceActionDefinition, ResourceActionWhen,
+    ResourceKindDefinition, ResourceKindRegistry,
 };
 pub use resource_repository::{ListResources, ResourcePage, ResourceRepository};

@@ -1,7 +1,8 @@
 use asset_core::CoreError;
 use asset_core::domain::{ChecksumKind, ResourceStatus};
 use asset_core::port::{
-    ResourceActionExecutor, ResourceActionOutput, ResourceActionRequest, ResourceKindRegistry,
+    ResourceActionDefinition, ResourceActionExecutor, ResourceActionOutput, ResourceActionRequest,
+    ResourceKindRegistry,
 };
 use asset_plugin_api::{
     PluginActionOutput, PluginActionRequest, PluginChecksum, PluginContentBytes,
@@ -16,7 +17,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::config::KindRegistryConfig;
+use crate::config::{KindRegistryConfig, ResourceKindConfig, ResourceKindExtensionConfig};
 
 /// Extism 资源动作执行器。
 #[derive(Debug, Clone)]
@@ -39,29 +40,28 @@ impl ExtismResourceActionExecutor {
                 };
                 let wasm_path = resolve_manifest_path(&manifest.path, &extism.wasm_path);
 
-                for resource_kind in manifest.resource_kinds {
-                    let Some(definition) = kind_registry.get(
-                        &asset_core::domain::ResourceKind::try_new(&resource_kind.kind)?,
-                    ) else {
-                        continue;
-                    };
+                for resource_kind in &manifest.resource_kinds {
+                    bind_actions(
+                        &mut bindings,
+                        kind_registry,
+                        &manifest.plugin_id,
+                        &resource_kind.kind,
+                        &resource_kind.actions,
+                        &wasm_path,
+                        extism.wasi,
+                    )?;
+                }
 
-                    for action in definition.actions() {
-                        let Some(handler) = action.handler() else {
-                            continue;
-                        };
-
-                        bindings.insert(
-                            ActionBindingKey::new(definition.kind().as_str(), action.id().as_str()),
-                            ActionBinding {
-                                plugin_id: manifest.plugin_id.clone(),
-                                action: action.id().as_str().to_string(),
-                                handler: handler.to_string(),
-                                wasm_path: wasm_path.clone(),
-                                wasi: extism.wasi,
-                            },
-                        );
-                    }
+                for extension in &manifest.extends_resource_kinds {
+                    bind_actions(
+                        &mut bindings,
+                        kind_registry,
+                        &manifest.plugin_id,
+                        &extension.kind,
+                        &extension.actions,
+                        &wasm_path,
+                        extism.wasi,
+                    )?;
                 }
             }
         }
@@ -70,6 +70,47 @@ impl ExtismResourceActionExecutor {
             bindings: Arc::new(bindings),
         })
     }
+}
+
+fn bind_actions(
+    bindings: &mut HashMap<ActionBindingKey, ActionBinding>,
+    kind_registry: &dyn ResourceKindRegistry,
+    plugin_id: &str,
+    kind: &str,
+    actions: &[ResourceActionDefinition],
+    wasm_path: &Path,
+    wasi: bool,
+) -> Result<(), CoreError> {
+    let kind = asset_core::domain::ResourceKind::try_new(kind)?;
+    let Some(definition) = kind_registry.get(&kind) else {
+        return Ok(());
+    };
+
+    for action in actions {
+        let Some(handler) = action.handler() else {
+            continue;
+        };
+        if !definition
+            .actions()
+            .iter()
+            .any(|definition_action| definition_action.id().as_str() == action.id().as_str())
+        {
+            continue;
+        }
+
+        bindings.insert(
+            ActionBindingKey::new(definition.kind().as_str(), action.id().as_str()),
+            ActionBinding {
+                plugin_id: plugin_id.to_string(),
+                action: action.id().as_str().to_string(),
+                handler: handler.to_string(),
+                wasm_path: wasm_path.to_path_buf(),
+                wasi,
+            },
+        );
+    }
+
+    Ok(())
 }
 
 #[async_trait]
@@ -278,7 +319,9 @@ struct PluginManifest {
     #[serde(default)]
     extism: Option<ExtismPluginConfig>,
     #[serde(default)]
-    resource_kinds: Vec<PluginResourceKind>,
+    resource_kinds: Vec<ResourceKindConfig>,
+    #[serde(default)]
+    extends_resource_kinds: Vec<ResourceKindExtensionConfig>,
     #[serde(skip)]
     path: PathBuf,
 }
@@ -288,9 +331,4 @@ struct ExtismPluginConfig {
     wasm_path: PathBuf,
     #[serde(default)]
     wasi: bool,
-}
-
-#[derive(Debug, Deserialize)]
-struct PluginResourceKind {
-    kind: String,
 }

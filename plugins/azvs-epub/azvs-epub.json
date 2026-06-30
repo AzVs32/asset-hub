@@ -14,6 +14,10 @@
       "label": "EPUB",
       "schema_id": "azvs:epub@1",
       "supports_content": true,
+      "detect": {
+        "mime_types": ["application/epub+zip"],
+        "extensions": [".epub"]
+      },
       "actions": [
         {
           "id": "azvs:render_epub",

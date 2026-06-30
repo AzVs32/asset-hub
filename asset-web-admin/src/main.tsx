@@ -7,7 +7,9 @@ import {
   Database,
   Download,
   Eye,
+  File as FileIcon,
   FileUp,
+  Folder,
   Loader2,
   Plus,
   RefreshCcw,
@@ -55,6 +57,10 @@ type ResourceActionDefinition = {
   id: string;
   label: string;
   access: "read_only" | "read_write";
+  when?: {
+    mime_types: string[];
+    extensions: string[];
+  };
 };
 
 type Resource = {
@@ -76,6 +82,10 @@ type ResourceKindOption = {
   schema_id: string | null;
   metadata_schema: Record<string, unknown> | null;
   supports_content: boolean;
+  detect?: {
+    mime_types: string[];
+    extensions: string[];
+  };
   actions: ResourceActionDefinition[];
   source: string;
 };
@@ -140,12 +150,26 @@ type UploadDraft = {
   file: File | null;
   name: string;
   kind: string;
-  storageKey: string;
+  directory: string;
   description: string;
   tags: string;
   schemaId: string;
   kindData: string;
 };
+
+type ResourceTreeRow =
+  | {
+      type: "folder";
+      path: string;
+      name: string;
+      depth: number;
+      count: number;
+    }
+  | {
+      type: "resource";
+      resource: Resource;
+      depth: number;
+    };
 
 const apiBase = import.meta.env.VITE_API_BASE_URL || "/api";
 const fallbackKinds: ResourceKindOption[] = [
@@ -155,6 +179,7 @@ const fallbackKinds: ResourceKindOption[] = [
     schema_id: null,
     metadata_schema: null,
     supports_content: true,
+    detect: undefined,
     actions: [],
     source: "builtin",
   },
@@ -242,6 +267,8 @@ function App() {
     () => resourceKinds.filter((kind) => kind.supports_content),
     [resourceKinds],
   );
+  const resourceRows = React.useMemo(() => buildResourceTreeRows(page.items), [page.items]);
+  const uploadDirectories = React.useMemo(() => directoriesFromResources(page.items), [page.items]);
 
   function updateFilters(patch: Partial<Filters>) {
     setFilters((current) => ({ ...current, ...patch, page: patch.page ?? 1 }));
@@ -254,6 +281,11 @@ function App() {
 
   function updateUploadKind(kind: string) {
     setUploadDraft((current) => withKindDefaults({ ...current, kind }, contentKinds));
+  }
+
+  function inferUploadKind(file: File | null): string {
+    if (!file) return fallbackUploadKind(contentKinds);
+    return detectKindForFile(file, contentKinds);
   }
 
   function updateCreateKind(kind: string) {
@@ -417,8 +449,9 @@ function App() {
       const metadata = metadataFromUpload(uploadDraft);
       const params = new URLSearchParams({
         name: uploadDraft.name.trim() || file.name,
-        storage_key: uploadDraft.storageKey.trim() || `uploads/${file.name}`,
+        directory: normalizeDirectoryInput(uploadDraft.directory),
         metadata_json: JSON.stringify(metadata),
+        original_filename: file.name,
       });
 
       if (uploadDraft.kind.trim()) params.set("kind", uploadDraft.kind.trim());
@@ -520,32 +553,48 @@ function App() {
         )}
 
         <div className="resource-list">
-          {page.items.map((resource) => (
-            <button
-              key={resource.id}
-              className={`resource-row ${selected?.id === resource.id ? "selected" : ""}`}
-              type="button"
-              onClick={() => selectResource(resource)}
-            >
-              {resource.actions.thumbnail ? (
-                <img className="row-thumbnail" src={`${apiBase}/resources/${resource.id}/thumbnail`} alt="" />
-              ) : (
-                <div className="row-thumbnail placeholder" aria-hidden="true" />
-              )}
-              <div className="row-main">
-                <div className="row-title">
-                  <span>{resource.name}</span>
-                  {resource.deleted_at && <span className="deleted-pill">deleted</span>}
-                </div>
-                <div className="row-meta">
-                  <span>{resource.kind}</span>
-                  <span>{formatBytes(resource.content?.size ?? 0)}</span>
-                  <span>{formatDate(resource.updated_at)}</span>
-                </div>
+          {resourceRows.map((row) =>
+            row.type === "folder" ? (
+              <div
+                key={`folder:${row.path}`}
+                className="folder-row"
+                style={{ "--depth": row.depth } as React.CSSProperties}
+              >
+                <Folder size={18} aria-hidden="true" />
+                <span>{row.name}</span>
+                <small>{row.count}</small>
               </div>
-              <span className={`status-pill ${resource.status}`}>{resource.status}</span>
-            </button>
-          ))}
+            ) : (
+              <button
+                key={row.resource.id}
+                className={`resource-row ${selected?.id === row.resource.id ? "selected" : ""}`}
+                style={{ "--depth": row.depth } as React.CSSProperties}
+                type="button"
+                onClick={() => selectResource(row.resource)}
+              >
+                {row.resource.actions.thumbnail ? (
+                  <img className="row-thumbnail" src={`${apiBase}/resources/${row.resource.id}/thumbnail`} alt="" />
+                ) : (
+                  <div className="row-thumbnail placeholder" aria-hidden="true">
+                    <FileIcon size={18} />
+                  </div>
+                )}
+                <div className="row-main">
+                  <div className="row-title">
+                    <span>{row.resource.name}</span>
+                    {row.resource.deleted_at && <span className="deleted-pill">deleted</span>}
+                  </div>
+                  <div className="row-meta">
+                    <span>{row.resource.content?.key ?? "metadata"}</span>
+                    <span>{row.resource.kind}</span>
+                    <span>{formatBytes(row.resource.content?.size ?? 0)}</span>
+                    <span>{formatDate(row.resource.updated_at)}</span>
+                  </div>
+                </div>
+                <span className={`status-pill ${row.resource.status}`}>{row.resource.status}</span>
+              </button>
+            ),
+          )}
           {!loading && page.items.length === 0 && <div className="empty-state">No resources</div>}
           {loading && <div className="empty-state">Loading</div>}
         </div>
@@ -745,11 +794,12 @@ function App() {
                   type="file"
                   onChange={(event) => {
                     const file = event.target.files?.[0] ?? null;
+                    const inferredKind = inferUploadKind(file);
                     setUploadDraft((current) => ({
                       ...current,
                       file,
                       name: current.name || file?.name || "",
-                      storageKey: current.storageKey || (file ? `uploads/${file.name}` : ""),
+                      kind: contentKinds.some((kind) => kind.kind === inferredKind) ? inferredKind : current.kind,
                     }));
                   }}
                 />
@@ -764,10 +814,16 @@ function App() {
                 onChange={updateUploadKind}
               />
               <TextInput
-                label="Storage key"
-                value={uploadDraft.storageKey}
-                onChange={(storageKey) => setUploadDraft((d) => ({ ...d, storageKey }))}
+                label="Directory"
+                value={uploadDraft.directory}
+                onChange={(directory) => setUploadDraft((d) => ({ ...d, directory }))}
+                list="upload-directories"
               />
+              <datalist id="upload-directories">
+                {uploadDirectories.map((directory) => (
+                  <option key={directory} value={directory} />
+                ))}
+              </datalist>
               <TextInput
                 label="Description"
                 value={uploadDraft.description}
@@ -952,15 +1008,17 @@ function TextInput({
   label,
   value,
   onChange,
+  list,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
+  list?: string;
 }) {
   return (
     <label className="field">
       <span>{label}</span>
-      <input value={value} onChange={(event) => onChange(event.target.value)} />
+      <input value={value} list={list} onChange={(event) => onChange(event.target.value)} />
     </label>
   );
 }
@@ -1093,8 +1151,8 @@ function emptyUploadDraft(): UploadDraft {
   return {
     file: null,
     name: "",
-    kind: "core:unknown",
-    storageKey: "",
+    kind: "core:file",
+    directory: "uploads",
     description: "",
     tags: "",
     schemaId: "",
@@ -1134,7 +1192,10 @@ function kindOptionHint(option: ResourceKindOption | undefined): string {
   if (!option) return "";
   const content = option.supports_content ? "content" : "metadata only";
   const actions = option.actions.length ? ` / ${option.actions.map((action) => action.id).join(", ")}` : "";
-  return `${option.source} / ${content}${option.schema_id ? ` / ${option.schema_id}` : ""}${actions}`;
+  const detect = option.detect
+    ? ` / detects ${[...option.detect.mime_types, ...option.detect.extensions].join(", ")}`
+    : "";
+  return `${option.source} / ${content}${option.schema_id ? ` / ${option.schema_id}` : ""}${detect}${actions}`;
 }
 
 function isImageResource(resource: Resource): boolean {
@@ -1144,6 +1205,129 @@ function isImageResource(resource: Resource): boolean {
 
 function isPluginUiAction(action: ResourceActionDefinition): boolean {
   return !["download_content", "read", "view_inline", "preview", "thumbnail"].includes(action.id);
+}
+
+function detectKindForFile(file: File, options: ResourceKindOption[]): string {
+  const mimeType = file.type.toLowerCase();
+  const filename = file.name.toLowerCase();
+  const matched = options
+    .filter((option) => option.supports_content && option.detect)
+    .map((option) => ({ option, score: detectScore(option, mimeType, filename) }))
+    .filter((match) => match.score > 0)
+    .sort((left, right) => right.score - left.score)[0];
+
+  return matched?.option.kind ?? fallbackUploadKind(options);
+}
+
+function detectScore(option: ResourceKindOption, mimeType: string, filename: string): number {
+  const detect = option.detect;
+  if (!detect) return 0;
+
+  let score = 0;
+  for (const mimeTypeRule of detect.mime_types) {
+    if (mimeTypeRule.trim().endsWith("/*") && mimeMatches(mimeTypeRule, mimeType)) {
+      score = Math.max(score, 10);
+    } else if (mimeMatches(mimeTypeRule, mimeType)) {
+      score = Math.max(score, 20);
+    }
+  }
+  for (const extension of detect.extensions) {
+    if (filename.endsWith(normalizeExtension(extension))) {
+      score = Math.max(score, 30);
+    }
+  }
+
+  return score;
+}
+
+function fallbackUploadKind(options: ResourceKindOption[]): string {
+  return options.find((option) => option.kind === "core:file")?.kind ?? options[0]?.kind ?? "core:file";
+}
+
+function mimeMatches(rule: string, mimeType: string): boolean {
+  const normalizedRule = rule.trim().toLowerCase();
+  if (!normalizedRule || !mimeType) return false;
+  if (normalizedRule === mimeType) return true;
+  const prefix = normalizedRule.endsWith("/*") ? normalizedRule.slice(0, -1) : "";
+  return Boolean(prefix && mimeType.startsWith(prefix));
+}
+
+function normalizeExtension(value: string): string {
+  const extension = value.trim().toLowerCase();
+  if (!extension) return extension;
+  return extension.startsWith(".") ? extension : `.${extension}`;
+}
+
+function buildResourceTreeRows(resources: Resource[]): ResourceTreeRow[] {
+  const sorted = [...resources].sort((left, right) => resourceSortPath(left).localeCompare(resourceSortPath(right)));
+  const folderCounts = new Map<string, number>();
+
+  for (const resource of sorted) {
+    const segments = resourceDirectorySegments(resource);
+    for (let index = 0; index < segments.length; index += 1) {
+      const path = segments.slice(0, index + 1).join("/");
+      folderCounts.set(path, (folderCounts.get(path) ?? 0) + 1);
+    }
+  }
+
+  const rows: ResourceTreeRow[] = [];
+  const emittedFolders = new Set<string>();
+  for (const resource of sorted) {
+    const segments = resourceDirectorySegments(resource);
+    for (let index = 0; index < segments.length; index += 1) {
+      const path = segments.slice(0, index + 1).join("/");
+      if (emittedFolders.has(path)) continue;
+      emittedFolders.add(path);
+      rows.push({
+        type: "folder",
+        path,
+        name: segments[index],
+        depth: index,
+        count: folderCounts.get(path) ?? 0,
+      });
+    }
+
+    rows.push({
+      type: "resource",
+      resource,
+      depth: segments.length,
+    });
+  }
+
+  return rows;
+}
+
+function directoriesFromResources(resources: Resource[]): string[] {
+  const directories = new Set<string>(["uploads"]);
+  for (const resource of resources) {
+    const segments = resourceDirectorySegments(resource);
+    for (let index = 0; index < segments.length; index += 1) {
+      directories.add(segments.slice(0, index + 1).join("/"));
+    }
+  }
+
+  return [...directories].sort((left, right) => left.localeCompare(right));
+}
+
+function resourceDirectorySegments(resource: Resource): string[] {
+  const key = resource.content?.key;
+  if (!key || !key.includes("/")) return [];
+
+  return key.split("/").slice(0, -1).filter(Boolean);
+}
+
+function resourceSortPath(resource: Resource): string {
+  return resource.content?.key ?? `~metadata/${resource.name}`;
+}
+
+function normalizeDirectoryInput(value: string): string {
+  return value
+    .trim()
+    .replaceAll("\\", "/")
+    .split("/")
+    .map((part) => part.trim())
+    .filter((part) => part && part !== ".")
+    .join("/");
 }
 
 function buildMetadata(description: string, tags: string, schemaId: string, kindData: string) {

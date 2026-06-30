@@ -151,7 +151,7 @@ mod tests {
                 checksum: Vec::new(),
             }),
             id: "01900000-0000-7000-8000-000000000000".to_string(),
-            kind: "azvs:mp4".to_string(),
+            kind: "core:video".to_string(),
             status: "active".to_string(),
             created_at: "2026-01-01T00:00:00Z".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
@@ -179,7 +179,7 @@ mod tests {
                 "resource": {
                     "id": "01900000-0000-7000-8000-000000000000",
                     "name": "demo.mp4",
-                    "kind": "azvs:mp4",
+                    "kind": "core:video",
                     "status": "active",
                     "metadata": {
                         "kind": {

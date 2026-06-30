@@ -10,6 +10,10 @@
       "label": "Document",
       "schema_id": "core:document@1",
       "supports_content": true,
+      "detect": {
+        "mime_types": ["application/pdf"],
+        "extensions": [".pdf"]
+      },
       "actions": [
         { "id": "download_content", "label": "Download" },
         { "id": "view_inline", "label": "View" },

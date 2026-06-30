@@ -4,7 +4,9 @@
 //! 后续插件系统可以通过同一端口注册和暴露更多 kind。
 
 use crate::domain::ResourceKind;
-pub use asset_plugin_api::{ResourceAction, ResourceActionAccess, ResourceActionDefinition};
+pub use asset_plugin_api::{
+    ResourceAction, ResourceActionAccess, ResourceActionDefinition, ResourceActionWhen,
+};
 use serde_json::Value;
 
 /// 资源类型定义。
@@ -20,6 +22,8 @@ pub struct ResourceKindDefinition {
     metadata_schema: Option<Value>,
     /// 是否支持对象内容。
     supports_content: bool,
+    /// 文件自动识别规则。
+    detect: ResourceActionWhen,
     /// kind 支持的动作，例如 `read`、`thumbnail`、`plugin:sync`。
     actions: Vec<ResourceActionDefinition>,
     /// 定义来源，例如 `builtin`、`config` 或 `plugin:<id>`。
@@ -51,6 +55,7 @@ impl ResourceKindDefinition {
             schema_id,
             metadata_schema: None,
             supports_content,
+            detect: ResourceActionWhen::default(),
             actions: Vec::new(),
             source: source.into(),
         }
@@ -59,6 +64,12 @@ impl ResourceKindDefinition {
     /// 设置 kind metadata JSON schema。
     pub fn with_metadata_schema(mut self, metadata_schema: Option<Value>) -> Self {
         self.metadata_schema = metadata_schema;
+        self
+    }
+
+    /// 设置文件自动识别规则。
+    pub fn with_detect(mut self, detect: ResourceActionWhen) -> Self {
+        self.detect = detect;
         self
     }
 
@@ -91,6 +102,11 @@ impl ResourceKindDefinition {
     /// 返回是否支持对象内容。
     pub fn supports_content(&self) -> bool {
         self.supports_content
+    }
+
+    /// 返回文件自动识别规则。
+    pub fn detect(&self) -> &ResourceActionWhen {
+        &self.detect
     }
 
     /// 返回 kind 支持的动作。
