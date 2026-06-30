@@ -1,0 +1,28 @@
+{
+  "manifest_version": 1,
+  "plugin_id": "core-image",
+  "name": "Core Image",
+  "version": "0.1.0",
+  "publisher": "official",
+  "resource_kinds": [
+    {
+      "kind": "core:image",
+      "label": "Image",
+      "schema_id": "core:image@1",
+      "supports_content": true,
+      "actions": [
+        { "id": "download_content", "label": "Download" },
+        { "id": "view_inline", "label": "View" },
+        { "id": "preview", "label": "Preview" },
+        { "id": "thumbnail", "label": "Thumbnail" }
+      ],
+      "metadata_schema": {
+        "type": "object",
+        "properties": {
+          "alt": { "type": "string" },
+          "caption": { "type": "string" }
+        }
+      }
+    }
+  ]
+}

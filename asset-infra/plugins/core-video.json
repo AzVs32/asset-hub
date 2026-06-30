@@ -1,0 +1,28 @@
+{
+  "manifest_version": 1,
+  "plugin_id": "core-video",
+  "name": "Core Video",
+  "version": "0.1.0",
+  "publisher": "official",
+  "resource_kinds": [
+    {
+      "kind": "core:video",
+      "label": "Video",
+      "schema_id": "core:video@1",
+      "supports_content": true,
+      "actions": [
+        { "id": "download_content", "label": "Download" },
+        { "id": "view_inline", "label": "View" },
+        { "id": "preview", "label": "Preview" }
+      ],
+      "metadata_schema": {
+        "type": "object",
+        "properties": {
+          "description": { "type": "string" },
+          "duration_seconds": { "type": "number" },
+          "title": { "type": "string" }
+        }
+      }
+    }
+  ]
+}

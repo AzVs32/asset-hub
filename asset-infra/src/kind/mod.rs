@@ -5,7 +5,12 @@ use asset_core::port::{ResourceActionDefinition, ResourceKindDefinition, Resourc
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
-const OFFICIAL_PLUGIN_MANIFESTS: &[&str] = &[include_str!("../../plugins/core-book.json")];
+const OFFICIAL_PLUGIN_MANIFESTS: &[&str] = &[
+    include_str!("../../plugins/core-file.json"),
+    include_str!("../../plugins/core-image.json"),
+    include_str!("../../plugins/core-document.json"),
+    include_str!("../../plugins/core-video.json"),
+];
 
 /// 默认内置资源类型注册表。
 ///
@@ -222,31 +227,58 @@ mod tests {
     }
 
     #[test]
-    fn registry_includes_official_core_book_plugin() {
+    fn registry_includes_official_core_plugin_fallback_kinds() {
         let registry = DefaultResourceKindRegistry::new().unwrap();
-        let book = registry
-            .get(&ResourceKind::try_new("core:book").unwrap())
-            .unwrap();
 
-        assert_eq!(book.label(), "Book");
-        assert_eq!(book.source(), "plugin:core-book");
-        assert!(book.supports_content());
-        assert!(book.has_action(ResourceAction::READ));
-        assert!(book.has_action(ResourceAction::PREVIEW));
-    }
+        for (kind, label, source, expected_actions) in [
+            (
+                "core:file",
+                "File",
+                "plugin:core-file",
+                vec![ResourceAction::DOWNLOAD_CONTENT],
+            ),
+            (
+                "core:image",
+                "Image",
+                "plugin:core-image",
+                vec![
+                    ResourceAction::DOWNLOAD_CONTENT,
+                    ResourceAction::VIEW_INLINE,
+                    ResourceAction::PREVIEW,
+                    ResourceAction::THUMBNAIL,
+                ],
+            ),
+            (
+                "core:document",
+                "Document",
+                "plugin:core-document",
+                vec![
+                    ResourceAction::DOWNLOAD_CONTENT,
+                    ResourceAction::VIEW_INLINE,
+                    ResourceAction::PREVIEW,
+                ],
+            ),
+            (
+                "core:video",
+                "Video",
+                "plugin:core-video",
+                vec![
+                    ResourceAction::DOWNLOAD_CONTENT,
+                    ResourceAction::VIEW_INLINE,
+                    ResourceAction::PREVIEW,
+                ],
+            ),
+        ] {
+            let definition = registry.get(&ResourceKind::try_new(kind).unwrap()).unwrap();
 
-    #[test]
-    fn registry_includes_official_image_plugin_kind() {
-        let registry = DefaultResourceKindRegistry::new().unwrap();
-        let image = registry
-            .get(&ResourceKind::try_new("asset:image").unwrap())
-            .unwrap();
-
-        assert_eq!(image.label(), "Image");
-        assert_eq!(image.source(), "plugin:core-book");
-        assert!(image.supports_content());
-        assert!(image.has_action(ResourceAction::PREVIEW));
-        assert!(image.has_action(ResourceAction::THUMBNAIL));
+            assert_eq!(definition.label(), label);
+            assert_eq!(definition.source(), source);
+            assert!(definition.supports_content());
+            for action in expected_actions {
+                assert!(definition.has_action(action));
+            }
+            assert!(!definition.has_action(ResourceAction::READ));
+        }
     }
 
     #[test]

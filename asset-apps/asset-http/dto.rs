@@ -440,10 +440,8 @@ pub(crate) struct ResourceReadResponse {
     pub(crate) name: String,
     /// 资源类型。
     pub(crate) kind: String,
-    /// 阅读格式：`text` 或 `epub_text`。
-    pub(crate) format: String,
-    /// 当前阅读内容。MVP 阶段要求内容是 UTF-8 文本。
-    pub(crate) text: String,
+    /// 插件返回的 View。
+    pub(crate) view: Value,
 }
 
 /// 执行资源动作请求。
@@ -466,10 +464,8 @@ pub(crate) struct ResourceActionOutputResponse {
     pub(crate) resource_id: String,
     /// 动作 ID。
     pub(crate) action: String,
-    /// 输出内容类型。
-    pub(crate) content_type: String,
-    /// 插件返回的 JSON 内容。
-    pub(crate) body: Value,
+    /// 插件返回的 View。
+    pub(crate) view: Value,
 }
 
 impl From<&ResourceActionOutput> for ResourceActionOutputResponse {
@@ -477,8 +473,8 @@ impl From<&ResourceActionOutput> for ResourceActionOutputResponse {
         Self {
             resource_id: output.resource_id().to_string(),
             action: output.action().as_str().to_string(),
-            content_type: output.content_type().to_string(),
-            body: output.body().clone(),
+            view: serde_json::to_value(&output.output().view)
+                .expect("plugin view should serialize to JSON"),
         }
     }
 }
@@ -489,8 +485,8 @@ impl From<&ReadableResource> for ResourceReadResponse {
             id: resource.id().to_string(),
             name: resource.name().to_string(),
             kind: resource.kind().as_str().to_string(),
-            format: resource.format().as_str().to_string(),
-            text: resource.text().to_string(),
+            view: serde_json::to_value(resource.view())
+                .expect("plugin view should serialize to JSON"),
         }
     }
 }

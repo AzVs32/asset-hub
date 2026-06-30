@@ -1,5 +1,6 @@
 # Rust build output
 /target/
+plugins/*/target/
 
 # Frontend build output
 asset-web-admin/node_modules/

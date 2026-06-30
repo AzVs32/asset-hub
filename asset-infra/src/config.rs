@@ -158,7 +158,7 @@ impl Default for KindRegistryConfig {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ResourceKindConfig {
-    /// 资源类型值，例如 `asset:image`。
+    /// 资源类型值，例如 `core:image`。
     pub kind: String,
     /// 展示名称；为空时使用 `kind`。
     pub label: Option<String>,

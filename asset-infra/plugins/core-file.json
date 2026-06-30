@@ -1,0 +1,24 @@
+{
+  "manifest_version": 1,
+  "plugin_id": "core-file",
+  "name": "Core File",
+  "version": "0.1.0",
+  "publisher": "official",
+  "resource_kinds": [
+    {
+      "kind": "core:file",
+      "label": "File",
+      "schema_id": "core:file@1",
+      "supports_content": true,
+      "actions": [
+        { "id": "download_content", "label": "Download" }
+      ],
+      "metadata_schema": {
+        "type": "object",
+        "properties": {
+          "description": { "type": "string" }
+        }
+      }
+    }
+  ]
+}

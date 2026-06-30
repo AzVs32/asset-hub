@@ -1,23 +1,13 @@
+use asset_plugin_api::{
+    HtmlView, PluginActionOutput, PluginActionRequest, PluginContentEncoding, PluginView,
+};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use extism_pdk::*;
 use roxmltree::{Document, Node};
-use serde::Deserialize;
-use serde_json::json;
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
 use zip::ZipArchive;
-
-#[derive(Debug, Deserialize)]
-struct ActionInput {
-    content: Option<ContentPayload>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ContentPayload {
-    encoding: String,
-    data: String,
-}
 
 #[derive(Debug, Clone)]
 struct ManifestItem {
@@ -38,24 +28,24 @@ pub fn render_epub(input: String) -> FnResult<String> {
 }
 
 fn render_epub_payload(input: String) -> FnResult<String> {
-    let input: ActionInput = serde_json::from_str(&input)?;
+    let input: PluginActionRequest = serde_json::from_str(&input)?;
     let content = input
         .content
         .ok_or_else(|| Error::msg("missing EPUB content payload"))?;
 
-    if content.encoding != "base64" {
+    if content.encoding != PluginContentEncoding::Base64 {
         return Err(Error::msg("unsupported content encoding").into());
     }
 
     let epub = STANDARD.decode(content.data)?;
     let rendered = render_epub_bytes(&epub)?;
 
-    Ok(json!({
-        "view": "html",
-        "title": rendered.title,
-        "html": rendered.html,
-    })
-    .to_string())
+    Ok(serde_json::to_string(&PluginActionOutput::new(PluginView::Html(
+        HtmlView {
+            title: Some(rendered.title),
+            html: rendered.html,
+        },
+    )))?)
 }
 
 struct RenderedBook {
@@ -757,7 +747,7 @@ fn escape_html(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::Value;
+    use serde_json::{Value, json};
     use std::io::Write;
     use zip::write::SimpleFileOptions;
 
@@ -789,6 +779,25 @@ mod tests {
     fn render_epub_returns_html_reader() {
         let output = render_epub_payload(
             json!({
+                "action": "azvs:render_epub",
+                "access": "read_only",
+                "input": {},
+                "resource": {
+                    "id": "01900000-0000-7000-8000-000000000000",
+                    "name": "book.epub",
+                    "kind": "azvs:epub",
+                    "status": "active",
+                    "metadata": {},
+                    "content": {
+                        "key": "books/book.epub",
+                        "size": 1,
+                        "mime_type": "application/epub+zip",
+                        "original_filename": "book.epub",
+                        "checksum": []
+                    },
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "updated_at": "2026-01-01T00:00:00Z"
+                },
                 "content": {
                     "encoding": "base64",
                     "data": STANDARD.encode(minimal_epub())

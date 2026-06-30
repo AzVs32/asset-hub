@@ -6,6 +6,7 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+asset-plugin-api.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 serde.workspace = true
@@ -13,7 +14,7 @@ serde_json.workspace = true
 sha2.workspace = true
 chrono.workspace = true
 async-trait.workspace = true
+base64.workspace = true
 bytes.workspace = true
 futures-core.workspace = true
 futures-util.workspace = true
-zip.workspace = true

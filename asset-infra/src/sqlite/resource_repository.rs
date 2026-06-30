@@ -372,13 +372,13 @@ mod tests {
             .build()
             .unwrap();
         let resource = Resource::builder("image")
-            .with_kind("asset:image")
+            .with_kind("core:image")
             .with_metadata(
                 ResourceMetadata::builder()
                     .with_tags(["rust", "asset"])
                     .with_kind_metadata(
                         asset_core::domain::KindMetadata::new(
-                            "asset:image@1",
+                            "core:image@1",
                             json!({"source": "sqlite-test"}),
                         )
                         .unwrap(),
@@ -401,7 +401,7 @@ mod tests {
 
         assert_eq!(restored.id(), resource.id());
         assert_eq!(restored.name(), "image");
-        assert!(restored.kind().is("asset:image"));
+        assert!(restored.kind().is("core:image"));
         assert_eq!(restored.metadata().tags(), &["rust", "asset"]);
         assert_eq!(
             restored.metadata().kind_metadata().unwrap().data(),
@@ -418,7 +418,7 @@ mod tests {
     async fn sqlite_repository_upserts_and_removes_resource() {
         let repository = repository("upsert-remove").await;
         let mut resource = Resource::builder("image")
-            .with_kind("asset:image")
+            .with_kind("core:image")
             .build()
             .unwrap();
 

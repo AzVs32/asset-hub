@@ -6,6 +6,7 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+asset-plugin-api.workspace = true
 asset-core.workspace = true
 
 async-trait.workspace = true

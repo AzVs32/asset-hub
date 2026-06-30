@@ -39,6 +39,21 @@ async fn resource_kinds_are_listed_and_unsupported_kind_is_rejected() {
             .iter()
             .any(|kind| { kind["kind"] == "core:unknown" && kind["schema_id"].is_null() })
     );
+    for (kind, source) in [
+        ("core:file", "plugin:core-file"),
+        ("core:image", "plugin:core-image"),
+        ("core:document", "plugin:core-document"),
+        ("core:video", "plugin:core-video"),
+    ] {
+        assert!(
+            kinds["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["kind"] == kind && item["source"] == source),
+            "missing {kind}"
+        );
+    }
 
     let (status, error) = json_request(
         &app,
@@ -134,23 +149,22 @@ async fn configured_resource_kind_is_listed_and_content_support_is_enforced() {
 }
 
 #[tokio::test]
-async fn core_book_resource_can_be_read_online() {
-    let app = test_app("core-book-read").await;
+async fn core_document_resource_exposes_download_only() {
+    let app = test_app("core-document-read").await;
 
     let (status, kinds) = empty_json_request(&app, Method::GET, "/resource-kinds").await;
     assert_eq!(status, StatusCode::OK);
-    let book_kind = kinds["items"]
+    let document_kind = kinds["items"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|kind| kind["kind"] == "core:book")
+        .find(|kind| kind["kind"] == "core:document")
         .unwrap();
-    assert_eq!(book_kind["source"], "plugin:core-book");
+    assert_eq!(document_kind["source"], "plugin:core-document");
     assert_eq!(
-        book_kind["actions"],
+        document_kind["actions"],
         json!([
             {"id": "download_content", "label": "Download", "access": "read_only"},
-            {"id": "read", "label": "Read", "access": "read_only"},
             {"id": "view_inline", "label": "View", "access": "read_only"},
             {"id": "preview", "label": "Preview", "access": "read_only"}
         ])
@@ -162,7 +176,7 @@ async fn core_book_resource_can_be_read_online() {
         "/resources/content",
         json!({
             "name": "book.txt",
-            "kind": "core:book",
+            "kind": "core:document",
             "storage_key": "books/book.txt",
             "data_base64": "SGVsbG8gYm9vaw==",
             "mime_type": "text/plain"
@@ -173,16 +187,13 @@ async fn core_book_resource_can_be_read_online() {
     assert_eq!(status, StatusCode::CREATED);
     let id = resource["id"].as_str().unwrap();
     assert_eq!(resource["actions"]["download_content"], true);
-    assert_eq!(resource["actions"]["read"], true);
+    assert_eq!(resource["actions"]["read"], false);
     assert_eq!(resource["actions"]["view_inline"], false);
-    let (status, readable) =
+    let (status, error) =
         empty_json_request(&app, Method::GET, &format!("/resources/{id}/read")).await;
 
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(readable["id"], id);
-    assert_eq!(readable["kind"], "core:book");
-    assert_eq!(readable["format"], "text");
-    assert_eq!(readable["text"], "Hello book");
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(error["error"].as_str().unwrap().contains("action `read`"));
 }
 
 #[tokio::test]
@@ -194,7 +205,7 @@ async fn action_endpoint_requires_plugin_handler() {
         "/resources/content",
         json!({
             "name": "book.txt",
-            "kind": "core:book",
+            "kind": "core:document",
             "storage_key": "books/action-book.txt",
             "data_base64": "SGVsbG8gYWN0aW9u",
             "mime_type": "text/plain"
@@ -213,19 +224,19 @@ async fn action_endpoint_requires_plugin_handler() {
     .await;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(error["error"].as_str().unwrap().contains("plugin handler"));
+    assert!(error["error"].as_str().unwrap().contains("action `read`"));
 }
 
 #[tokio::test]
-async fn core_book_epub_resource_can_be_read_online() {
-    let app = test_app("core-book-epub-read").await;
+async fn core_document_epub_resource_does_not_get_core_text_extraction() {
+    let app = test_app("core-document-epub-read").await;
     let epub = minimal_epub();
 
     let response = request(
         &app,
         Request::builder()
             .method(Method::PUT)
-            .uri("/resources/content/stream?name=book.epub&storage_key=books/book.epub&kind=core%3Abook")
+            .uri("/resources/content/stream?name=book.epub&storage_key=books/book.epub&kind=core%3Adocument")
             .header(header::CONTENT_TYPE, "application/epub+zip")
             .body(Body::from(epub))
             .unwrap(),
@@ -241,27 +252,25 @@ async fn core_book_epub_resource_can_be_read_online() {
     let (status, readable) =
         empty_json_request(&app, Method::GET, &format!("/resources/{id}/read")).await;
 
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(readable["kind"], "core:book");
-    assert_eq!(readable["format"], "epub_text");
+    assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(
-        readable["text"]
+        readable["error"]
             .as_str()
             .unwrap()
-            .contains("Chapter One Hello & EPUB")
+            .contains("action `read`")
     );
 }
 
 #[tokio::test]
-async fn core_book_pdf_resource_uses_inline_content_viewer() {
-    let app = test_app("core-book-pdf-read").await;
+async fn core_document_pdf_resource_supports_builtin_preview() {
+    let app = test_app("core-document-pdf-read").await;
     let pdf = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n";
 
     let response = request(
         &app,
         Request::builder()
             .method(Method::PUT)
-            .uri("/resources/content/stream?name=book.pdf&storage_key=books/book.pdf&kind=core%3Abook")
+            .uri("/resources/content/stream?name=book.pdf&storage_key=books/book.pdf&kind=core%3Adocument")
             .header(header::CONTENT_TYPE, "application/pdf")
             .body(Body::from(pdf.as_slice()))
             .unwrap(),
@@ -274,6 +283,7 @@ async fn core_book_pdf_resource_uses_inline_content_viewer() {
     assert_eq!(resource["actions"]["download_content"], true);
     assert_eq!(resource["actions"]["read"], false);
     assert_eq!(resource["actions"]["view_inline"], true);
+    assert_eq!(resource["actions"]["preview"], true);
 
     let id = resource["id"].as_str().unwrap();
     let preview = request(
@@ -290,6 +300,8 @@ async fn core_book_pdf_resource_uses_inline_content_viewer() {
         preview.headers().get(header::CONTENT_TYPE).unwrap(),
         "application/pdf"
     );
+    let preview_content = to_bytes(preview.into_body(), BODY_LIMIT).await.unwrap();
+    assert_eq!(preview_content.as_ref(), pdf);
     let response = request(
         &app,
         Request::builder()
@@ -316,11 +328,11 @@ async fn core_book_pdf_resource_uses_inline_content_viewer() {
         empty_json_request(&app, Method::GET, &format!("/resources/{id}/read")).await;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(error["error"].as_str().unwrap().contains("content viewer"));
+    assert!(error["error"].as_str().unwrap().contains("action `read`"));
 }
 
 #[tokio::test]
-async fn image_resource_exposes_preview_and_thumbnail() {
+async fn image_resource_exposes_builtin_preview_and_thumbnail() {
     let app = test_app("image-preview-thumbnail").await;
     let png_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+yF9sAAAAASUVORK5CYII=";
 
@@ -330,7 +342,7 @@ async fn image_resource_exposes_preview_and_thumbnail() {
         "/resources/content",
         json!({
             "name": "pixel.png",
-            "kind": "asset:image",
+            "kind": "core:image",
             "storage_key": "images/pixel.png",
             "data_base64": png_base64,
             "mime_type": "image/png"
@@ -341,6 +353,7 @@ async fn image_resource_exposes_preview_and_thumbnail() {
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(resource["actions"]["preview"], true);
     assert_eq!(resource["actions"]["thumbnail"], true);
+    assert_eq!(resource["actions"]["view_inline"], true);
     let id = resource["id"].as_str().unwrap();
 
     let preview = request(
@@ -382,12 +395,7 @@ async fn non_reader_resource_rejects_online_reading() {
         empty_json_request(&app, Method::GET, &format!("/resources/{id}/read")).await;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(
-        error["error"]
-            .as_str()
-            .unwrap()
-            .contains("does not support online reading")
-    );
+    assert!(error["error"].as_str().unwrap().contains("action `read`"));
 }
 
 #[tokio::test]
@@ -802,6 +810,7 @@ async fn create_text_resource(app: &TestApp, storage_key: &str) -> String {
     .await;
 
     assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(resource["kind"], "core:file");
 
     resource["id"].as_str().unwrap().to_string()
 }

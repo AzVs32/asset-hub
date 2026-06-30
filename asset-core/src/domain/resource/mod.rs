@@ -103,7 +103,7 @@ mod tests {
         let resource = Resource::rehydrate(ResourceSnapshot {
             id,
             name: " restored image ".to_string(),
-            kind: ResourceKind::from("asset:image"),
+            kind: ResourceKind::from("core:image"),
             status: ResourceStatus::Archived,
             metadata: ResourceMetadata::default(),
             content: None,
@@ -115,7 +115,7 @@ mod tests {
 
         assert_eq!(resource.id(), id);
         assert_eq!(resource.name(), "restored image");
-        assert!(resource.kind().is("asset:image"));
+        assert!(resource.kind().is("core:image"));
         assert_eq!(resource.status(), ResourceStatus::Archived);
         assert_eq!(resource.created_at(), created_at);
         assert_eq!(resource.updated_at(), updated_at);
@@ -126,7 +126,7 @@ mod tests {
     #[test]
     fn resource_lifecycle_transitions_update_state() {
         let mut resource = Resource::builder("image")
-            .with_kind("asset:image")
+            .with_kind("core:image")
             .build()
             .unwrap();
 
@@ -163,7 +163,7 @@ mod tests {
             .unwrap();
 
         let resource = Resource::builder("image")
-            .with_kind("asset:image")
+            .with_kind("core:image")
             .with_metadata(metadata)
             .with_content(content)
             .build()
@@ -183,7 +183,7 @@ mod tests {
     #[test]
     fn deleted_resource_rejects_mutations() {
         let mut resource = Resource::builder("image")
-            .with_kind("asset:image")
+            .with_kind("core:image")
             .build()
             .unwrap();
         resource.soft_delete();

@@ -1,14 +1,17 @@
 use asset_core::CoreError;
-use asset_core::domain::ResourceStatus;
+use asset_core::domain::{ChecksumKind, ResourceStatus};
 use asset_core::port::{
     ResourceActionExecutor, ResourceActionOutput, ResourceActionRequest, ResourceKindRegistry,
+};
+use asset_plugin_api::{
+    PluginActionOutput, PluginActionRequest, PluginChecksum, PluginContentBytes,
+    PluginContentEncoding, PluginResource, PluginResourceContent,
 };
 use async_trait::async_trait;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use extism::{Manifest, PluginBuilder, Wasm};
 use serde::Deserialize;
-use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -109,7 +112,6 @@ impl ResourceActionExecutor for ExtismResourceActionExecutor {
         Ok(ResourceActionOutput::new(
             request.resource().id(),
             request.action().clone(),
-            "application/json",
             output,
         ))
     }
@@ -139,7 +141,10 @@ struct ActionBinding {
     wasi: bool,
 }
 
-fn call_extism(binding: ActionBinding, payload: Value) -> Result<Value, CoreError> {
+fn call_extism(
+    binding: ActionBinding,
+    payload: PluginActionRequest,
+) -> Result<PluginActionOutput, CoreError> {
     let manifest = Manifest::new([Wasm::file(&binding.wasm_path)]);
     let mut plugin = PluginBuilder::new(manifest)
         .with_wasi(binding.wasi)
@@ -167,53 +172,61 @@ fn call_extism(binding: ActionBinding, payload: Value) -> Result<Value, CoreErro
         CoreError::plugin(
             &binding.plugin_id,
             &binding.action,
-            format!("plugin returned non-JSON output: {error}"),
+            format!("plugin returned invalid action output: {error}"),
         )
     })
 }
 
-fn build_payload(request: &ResourceActionRequest) -> Value {
+fn build_payload(request: &ResourceActionRequest) -> PluginActionRequest {
     let resource = request.resource();
     let content_ref = resource.content();
-    let content = request.content().map(|content| {
-        json!({
-            "encoding": "base64",
-            "data": STANDARD.encode(content),
-        })
+    let content = request.content().map(|content| PluginContentBytes {
+        encoding: PluginContentEncoding::Base64,
+        data: STANDARD.encode(content),
     });
 
-    json!({
-        "action": request.action().as_str(),
-        "access": request.access(),
-        "input": request.input(),
-        "resource": {
-            "id": resource.id().to_string(),
-            "name": resource.name(),
-            "kind": resource.kind().as_str(),
-            "status": status_text(resource.status()),
-            "metadata": resource.metadata().to_value(),
-            "content": content_ref.map(|content| json!({
-                "key": content.key().as_str(),
-                "size": content.size(),
-                "mime_type": content.mime_type(),
-                "original_filename": content.original_filename(),
-                "checksum": content.checksums().iter().map(|checksum| json!({
-                    "kind": checksum.kind(),
-                    "value": checksum.value(),
-                })).collect::<Vec<_>>(),
-            })),
-            "created_at": resource.created_at().to_rfc3339(),
-            "updated_at": resource.updated_at().to_rfc3339(),
-            "deleted_at": resource.deleted_at().map(|value| value.to_rfc3339()),
+    PluginActionRequest {
+        action: request.action().as_str().to_string(),
+        access: request.access(),
+        input: request.input().clone(),
+        resource: PluginResource {
+            id: resource.id().to_string(),
+            name: resource.name().to_string(),
+            kind: resource.kind().as_str().to_string(),
+            status: status_text(resource.status()).to_string(),
+            metadata: resource.metadata().to_value(),
+            content: content_ref.map(|content| PluginResourceContent {
+                key: content.key().as_str().to_string(),
+                size: content.size(),
+                mime_type: content.mime_type().map(str::to_string),
+                original_filename: content.original_filename().map(str::to_string),
+                checksum: content
+                    .checksums()
+                    .iter()
+                    .map(|checksum| PluginChecksum {
+                        kind: checksum_kind_text(checksum.kind()).to_string(),
+                        value: checksum.value().to_string(),
+                    })
+                    .collect(),
+            }),
+            created_at: resource.created_at().to_rfc3339(),
+            updated_at: resource.updated_at().to_rfc3339(),
+            deleted_at: resource.deleted_at().map(|value| value.to_rfc3339()),
         },
-        "content": content,
-    })
+        content,
+    }
 }
 
 fn status_text(status: ResourceStatus) -> &'static str {
     match status {
         ResourceStatus::Active => "active",
         ResourceStatus::Archived => "archived",
+    }
+}
+
+fn checksum_kind_text(kind: ChecksumKind) -> &'static str {
+    match kind {
+        ChecksumKind::Sha256 => "sha256",
     }
 }
 

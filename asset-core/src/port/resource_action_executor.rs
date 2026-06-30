@@ -6,6 +6,7 @@
 use crate::CoreError;
 use crate::domain::{Resource, ResourceId};
 use crate::port::{ResourceAction, ResourceActionAccess};
+use asset_plugin_api::PluginActionOutput;
 use async_trait::async_trait;
 use bytes::Bytes;
 use serde_json::Value;
@@ -70,22 +71,19 @@ impl ResourceActionRequest {
 pub struct ResourceActionOutput {
     resource_id: ResourceId,
     action: ResourceAction,
-    content_type: String,
-    body: Value,
+    output: PluginActionOutput,
 }
 
 impl ResourceActionOutput {
     pub fn new(
         resource_id: ResourceId,
         action: ResourceAction,
-        content_type: impl Into<String>,
-        body: Value,
+        output: PluginActionOutput,
     ) -> Self {
         Self {
             resource_id,
             action,
-            content_type: content_type.into(),
-            body,
+            output,
         }
     }
 
@@ -97,12 +95,8 @@ impl ResourceActionOutput {
         &self.action
     }
 
-    pub fn content_type(&self) -> &str {
-        &self.content_type
-    }
-
-    pub fn body(&self) -> &Value {
-        &self.body
+    pub fn output(&self) -> &PluginActionOutput {
+        &self.output
     }
 }
 

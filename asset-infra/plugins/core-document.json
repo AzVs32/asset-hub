@@ -1,0 +1,27 @@
+{
+  "manifest_version": 1,
+  "plugin_id": "core-document",
+  "name": "Core Document",
+  "version": "0.1.0",
+  "publisher": "official",
+  "resource_kinds": [
+    {
+      "kind": "core:document",
+      "label": "Document",
+      "schema_id": "core:document@1",
+      "supports_content": true,
+      "actions": [
+        { "id": "download_content", "label": "Download" },
+        { "id": "view_inline", "label": "View" },
+        { "id": "preview", "label": "Preview" }
+      ],
+      "metadata_schema": {
+        "type": "object",
+        "properties": {
+          "author": { "type": "string" },
+          "title": { "type": "string" }
+        }
+      }
+    }
+  ]
+}

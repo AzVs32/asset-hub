@@ -1,32 +1,9 @@
+use asset_plugin_api::{
+    HtmlView, PluginActionOutput, PluginActionRequest, PluginContentEncoding,
+    PluginResource, PluginResourceContent, PluginView,
+};
 use extism_pdk::*;
-use serde::Deserialize;
 use serde_json::{Value, json};
-
-#[derive(Debug, Deserialize)]
-struct ActionInput {
-    resource: ResourcePayload,
-    content: Option<ContentPayload>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ResourcePayload {
-    name: String,
-    #[serde(default)]
-    metadata: Value,
-    content: Option<ResourceContentPayload>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ResourceContentPayload {
-    mime_type: Option<String>,
-    original_filename: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ContentPayload {
-    encoding: String,
-    data: String,
-}
 
 #[plugin_fn]
 pub fn play_mp4(input: String) -> FnResult<String> {
@@ -34,12 +11,12 @@ pub fn play_mp4(input: String) -> FnResult<String> {
 }
 
 fn play_mp4_payload(input: String) -> FnResult<String> {
-    let input: ActionInput = serde_json::from_str(&input)?;
+    let input: PluginActionRequest = serde_json::from_str(&input)?;
     let content = input
         .content
         .ok_or_else(|| Error::msg("missing MP4 content payload"))?;
 
-    if content.encoding != "base64" {
+    if content.encoding != PluginContentEncoding::Base64 {
         return Err(Error::msg("unsupported content encoding").into());
     }
 
@@ -47,15 +24,15 @@ fn play_mp4_payload(input: String) -> FnResult<String> {
     let mime_type = video_mime_type(input.resource.content.as_ref());
     let html = video_html(&title, &mime_type, &content.data);
 
-    Ok(json!({
-        "view": "html",
-        "title": title,
-        "html": html,
-    })
-    .to_string())
+    Ok(serde_json::to_string(&PluginActionOutput::new(PluginView::Html(
+        HtmlView {
+            title: Some(title),
+            html,
+        },
+    )))?)
 }
 
-fn video_title(resource: &ResourcePayload) -> String {
+fn video_title(resource: &PluginResource) -> String {
     resource
         .metadata
         .get("kind")
@@ -71,7 +48,7 @@ fn video_title(resource: &ResourcePayload) -> String {
         .to_string()
 }
 
-fn video_mime_type(content: Option<&ResourceContentPayload>) -> String {
+fn video_mime_type(content: Option<&PluginResourceContent>) -> String {
     content
         .and_then(|content| content.mime_type.as_deref())
         .filter(|mime_type| mime_type.starts_with("video/"))
@@ -157,7 +134,7 @@ mod tests {
 
     #[test]
     fn title_prefers_kind_metadata() {
-        let resource = ResourcePayload {
+        let resource = PluginResource {
             name: "fallback.mp4".to_string(),
             metadata: json!({
                 "kind": {
@@ -166,10 +143,19 @@ mod tests {
                     }
                 }
             }),
-            content: Some(ResourceContentPayload {
+            content: Some(PluginResourceContent {
+                key: "videos/file.mp4".to_string(),
+                size: 4,
                 mime_type: Some("video/mp4".to_string()),
                 original_filename: Some("file.mp4".to_string()),
+                checksum: Vec::new(),
             }),
+            id: "01900000-0000-7000-8000-000000000000".to_string(),
+            kind: "azvs:mp4".to_string(),
+            status: "active".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+            deleted_at: None,
         };
 
         assert_eq!(video_title(&resource), "Demo Video");
@@ -187,8 +173,14 @@ mod tests {
     fn play_mp4_returns_html_player() {
         let output = play_mp4_payload(
             json!({
+                "action": "azvs:play_mp4",
+                "access": "read_only",
+                "input": {},
                 "resource": {
+                    "id": "01900000-0000-7000-8000-000000000000",
                     "name": "demo.mp4",
+                    "kind": "azvs:mp4",
+                    "status": "active",
                     "metadata": {
                         "kind": {
                             "data": {
@@ -197,9 +189,14 @@ mod tests {
                         }
                     },
                     "content": {
+                        "key": "videos/demo.mp4",
+                        "size": 4,
                         "mime_type": "video/mp4",
-                        "original_filename": "demo.mp4"
-                    }
+                        "original_filename": "demo.mp4",
+                        "checksum": []
+                    },
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "updated_at": "2026-01-01T00:00:00Z"
                 },
                 "content": {
                     "encoding": "base64",
