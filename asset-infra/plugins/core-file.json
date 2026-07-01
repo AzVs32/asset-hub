@@ -1,24 +1,69 @@
 {
   "manifest_version": 1,
-  "plugin_id": "core-file",
-  "name": "Core File",
-  "version": "0.1.0",
-  "publisher": "official",
-  "resource_kinds": [
-    {
-      "kind": "core:file",
-      "label": "File",
-      "schema_id": "core:file@1",
-      "supports_content": true,
-      "actions": [
-        { "id": "download_content", "label": "Download" }
-      ],
-      "metadata_schema": {
-        "type": "object",
-        "properties": {
-          "description": { "type": "string" }
+  "plugin": {
+    "id": "core.file",
+    "name": "Core File",
+    "version": "0.1.0",
+    "publisher": "asset-hub",
+    "description": "Built-in generic file resource support."
+  },
+  "runtime": {
+    "type": "builtin"
+  },
+  "capabilities": {
+    "resource_kinds": [
+      {
+        "kind": "core:file",
+        "label": "File",
+        "schema_id": "core:file@1",
+        "supports_content": true,
+        "metadata_schema": {
+          "type": "object",
+          "properties": {
+            "description": { "type": "string" }
+          }
         }
       }
-    }
-  ]
+    ],
+    "resource_actions": [
+      {
+        "id": "download_content",
+        "label": "Download",
+        "description": "Download the original resource content.",
+        "executor": {
+          "type": "builtin"
+        },
+        "applies_to": {
+          "kinds": ["core:file"]
+        },
+        "access": "read",
+        "requires": {
+          "resource": true,
+          "metadata": false,
+          "content": true,
+          "content_delivery": "url"
+        },
+        "output": {
+          "view": ["binary_url"]
+        },
+        "ui": {
+          "group": "open",
+          "order": 10,
+          "locations": ["resource_detail", "context_menu"]
+        }
+      }
+    ]
+  },
+  "permissions": {
+    "resource": {
+      "read": true,
+      "write": false
+    },
+    "content": {
+      "read": true,
+      "write": false
+    },
+    "network": false,
+    "filesystem": false
+  }
 }

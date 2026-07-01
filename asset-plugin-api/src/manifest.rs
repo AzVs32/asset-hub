@@ -1,0 +1,229 @@
+use crate::{ResourceActionAccess, ResourceActionDefinition, ResourceActionWhen};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::path::PathBuf;
+
+/// Current manifest schema version.
+pub const MANIFEST_VERSION: u32 = 1;
+
+/// Complete plugin manifest document.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PluginManifest {
+    pub manifest_version: u32,
+    pub plugin: PluginMetadata,
+    pub runtime: PluginRuntime,
+    #[serde(default)]
+    pub capabilities: PluginCapabilities,
+    pub permissions: PluginPermissions,
+}
+
+impl PluginManifest {
+    pub fn plugin_id(&self) -> &str {
+        &self.plugin.id
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.manifest_version != MANIFEST_VERSION {
+            return Err(format!(
+                "unsupported manifest_version `{}`",
+                self.manifest_version
+            ));
+        }
+        if self.plugin.id.trim().is_empty() {
+            return Err("plugin.id must not be empty".to_string());
+        }
+        Ok(())
+    }
+}
+
+/// Human and registry metadata for a plugin.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginMetadata {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub publisher: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// Runtime used to execute plugin actions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum PluginRuntime {
+    Builtin,
+    Extism {
+        wasm: PathBuf,
+        #[serde(default)]
+        wasi: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        plugin_api: Option<String>,
+    },
+}
+
+/// Capabilities contributed by a plugin.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PluginCapabilities {
+    pub resource_kinds: Vec<ResourceKindCapability>,
+    pub resource_actions: Vec<ResourceActionCapability>,
+}
+
+/// Resource kind contributed by a plugin manifest.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ResourceKindCapability {
+    pub kind: String,
+    pub label: Option<String>,
+    pub schema_id: Option<String>,
+    pub metadata_schema: Option<Value>,
+    pub supports_content: bool,
+    pub detect: ResourceActionWhen,
+}
+
+impl Default for ResourceKindCapability {
+    fn default() -> Self {
+        Self {
+            kind: String::new(),
+            label: None,
+            schema_id: None,
+            metadata_schema: None,
+            supports_content: true,
+            detect: ResourceActionWhen::default(),
+        }
+    }
+}
+
+/// Resource action contributed by a plugin manifest.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ResourceActionCapability {
+    pub id: String,
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executor: Option<ActionExecutor>,
+    #[serde(default)]
+    pub applies_to: ActionAppliesTo,
+    #[serde(default)]
+    pub access: ManifestActionAccess,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requires: Option<ActionRequirements>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<ActionOutputContract>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui: Option<ActionUi>,
+}
+
+impl ResourceActionCapability {
+    pub fn to_definition(&self) -> ResourceActionDefinition {
+        let mut definition = ResourceActionDefinition::new(self.id.clone(), self.label.clone())
+            .with_access(self.access.to_resource_action_access())
+            .with_when(self.applies_to.when());
+        if let Some(handler) = self.plugin_handler() {
+            definition = definition.with_handler(handler);
+        }
+        definition
+    }
+
+    pub fn plugin_handler(&self) -> Option<&str> {
+        match &self.executor {
+            Some(ActionExecutor::Plugin { handler }) => Some(handler.as_str()),
+            _ => None,
+        }
+    }
+}
+
+/// Action executor declaration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ActionExecutor {
+    Builtin,
+    Plugin { handler: String },
+}
+
+/// Manifest-level action access declaration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ManifestActionAccess {
+    #[default]
+    Read,
+    Write,
+}
+
+impl ManifestActionAccess {
+    pub fn to_resource_action_access(self) -> ResourceActionAccess {
+        match self {
+            Self::Read => ResourceActionAccess::ReadOnly,
+            Self::Write => ResourceActionAccess::ReadWrite,
+        }
+    }
+}
+
+/// Resource/action matching declaration.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ActionAppliesTo {
+    pub kinds: Vec<String>,
+    pub media_types: Vec<String>,
+    pub extensions: Vec<String>,
+}
+
+impl ActionAppliesTo {
+    pub fn when(&self) -> ResourceActionWhen {
+        ResourceActionWhen::new()
+            .with_mime_types(self.media_types.clone())
+            .with_extensions(self.extensions.clone())
+    }
+}
+
+/// Data a handler needs to execute an action.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActionRequirements {
+    #[serde(default)]
+    pub resource: bool,
+    #[serde(default)]
+    pub metadata: bool,
+    #[serde(default)]
+    pub content: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_delivery: Option<ContentDelivery>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContentDelivery {
+    Inline,
+    Url,
+}
+
+/// Declared output view families for an action.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ActionOutputContract {
+    pub view: Vec<String>,
+}
+
+/// Optional UI placement hints for host applications.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ActionUi {
+    pub group: Option<String>,
+    pub order: Option<i32>,
+    pub locations: Vec<String>,
+}
+
+/// Plugin permission declaration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginPermissions {
+    pub resource: ReadWritePermission,
+    pub content: ReadWritePermission,
+    pub network: bool,
+    pub filesystem: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReadWritePermission {
+    pub read: bool,
+    pub write: bool,
+}

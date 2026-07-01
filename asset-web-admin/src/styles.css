@@ -553,6 +553,7 @@ a[aria-disabled="true"] {
   min-height: 320px;
   padding: 20px;
   background: #f8fafc;
+  overflow: auto;
 }
 
 .plugin-result pre,
@@ -567,6 +568,48 @@ a[aria-disabled="true"] {
   min-height: 420px;
   padding: 24px 28px;
   background: #ffffff;
+}
+
+.plugin-media {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 420px;
+  padding: 24px;
+  background: #f8fafc;
+}
+
+.plugin-media img,
+.plugin-media video {
+  max-width: 100%;
+  max-height: min(720px, 72vh);
+  border-radius: 6px;
+}
+
+.plugin-table-wrap {
+  min-height: 320px;
+}
+
+.plugin-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #ffffff;
+  font-size: 14px;
+}
+
+.plugin-table th,
+.plugin-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #e2e8f0;
+  text-align: left;
+  vertical-align: top;
+}
+
+.plugin-table th {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 .pdf-frame {

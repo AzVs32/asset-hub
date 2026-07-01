@@ -1,38 +1,80 @@
 {
   "manifest_version": 1,
-  "plugin_id": "azvs-epub",
-  "name": "AzVs EPUB",
-  "version": "0.1.0",
-  "publisher": "azvs",
-  "extism": {
-    "wasm_path": "azvs-epub.wasm",
-    "wasi": false
+  "plugin": {
+    "id": "azvs.epub",
+    "name": "AzVs EPUB",
+    "version": "0.1.0",
+    "publisher": "azvs",
+    "description": "EPUB reading plugin."
   },
-  "resource_kinds": [
-    {
-      "kind": "azvs:epub",
-      "label": "EPUB",
-      "schema_id": "azvs:epub@1",
-      "supports_content": true,
-      "detect": {
-        "mime_types": ["application/epub+zip"],
-        "extensions": [".epub"]
-      },
-      "actions": [
-        {
-          "id": "azvs:render_epub",
-          "label": "Read EPUB",
-          "handler": "render_epub",
-          "access": "read_only"
-        }
-      ],
-      "metadata_schema": {
-        "type": "object",
-        "properties": {
-          "title": { "type": "string" },
-          "author": { "type": "string" }
+  "runtime": {
+    "type": "extism",
+    "wasm": "azvs-epub.wasm",
+    "wasi": false,
+    "plugin_api": "asset-hub.plugin-api@0.1"
+  },
+  "capabilities": {
+    "resource_kinds": [
+      {
+        "kind": "azvs:epub",
+        "label": "EPUB",
+        "schema_id": "azvs:epub@1",
+        "supports_content": true,
+        "detect": {
+          "mime_types": ["application/epub+zip"],
+          "extensions": [".epub"]
+        },
+        "metadata_schema": {
+          "type": "object",
+          "properties": {
+            "title": { "type": "string" },
+            "author": { "type": "string" }
+          }
         }
       }
-    }
-  ]
+    ],
+    "resource_actions": [
+      {
+        "id": "azvs:render_epub",
+        "label": "Read EPUB",
+        "description": "Render EPUB content with AzVs plugin.",
+        "executor": {
+          "type": "plugin",
+          "handler": "render_epub"
+        },
+        "applies_to": {
+          "kinds": ["azvs:epub"],
+          "media_types": ["application/epub+zip"],
+          "extensions": [".epub"]
+        },
+        "access": "read",
+        "requires": {
+          "resource": true,
+          "metadata": true,
+          "content": true,
+          "content_delivery": "inline"
+        },
+        "output": {
+          "view": ["html"]
+        },
+        "ui": {
+          "group": "open",
+          "order": 70,
+          "locations": ["resource_detail", "context_menu"]
+        }
+      }
+    ]
+  },
+  "permissions": {
+    "resource": {
+      "read": true,
+      "write": false
+    },
+    "content": {
+      "read": true,
+      "write": false
+    },
+    "network": false,
+    "filesystem": false
+  }
 }

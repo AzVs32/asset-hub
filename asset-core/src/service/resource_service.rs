@@ -472,6 +472,38 @@ impl ResourcePreview {
     }
 }
 
+/// 流式预览资源结果。
+pub struct ResourcePreviewStream {
+    content_type: String,
+    content_length: Option<u64>,
+    content: BlobByteStream,
+}
+
+impl ResourcePreviewStream {
+    fn new(content_type: String, content_length: Option<u64>, content: BlobByteStream) -> Self {
+        Self {
+            content_type,
+            content_length,
+            content,
+        }
+    }
+
+    /// 返回内容类型。
+    pub fn content_type(&self) -> &str {
+        &self.content_type
+    }
+
+    /// 返回内容长度。
+    pub fn content_length(&self) -> Option<u64> {
+        self.content_length
+    }
+
+    /// 消费并返回预览内容流。
+    pub fn into_content(self) -> BlobByteStream {
+        self.content
+    }
+}
+
 /// 缩略图结果。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResourceThumbnail {
@@ -699,7 +731,7 @@ impl ResourceService {
 
     /// 计算资源当前可执行动作。
     ///
-    /// 该方法统一封装资源内容状态、注册 kind 能力和内容格式规则，供不同应用入口复用，
+    /// 该方法统一封装资源内容状态和注册 kind 能力，供不同应用入口复用，
     /// 避免在 HTTP、CLI、TUI 中重复拼装判断逻辑。
     pub fn describe_resource_actions(
         &self,
@@ -715,9 +747,6 @@ impl ResourceService {
 
         let mime_type = content.mime_type();
         let storage_key = Some(content.key().as_str());
-        let is_pdf = is_pdf(mime_type, storage_key);
-        let is_image = is_image(mime_type, storage_key);
-        let is_video = is_video(mime_type, storage_key);
         let declared_actions = definition.actions();
         let has_declared_action = |action: &str| {
             declared_actions.iter().any(|definition| {
@@ -725,12 +754,10 @@ impl ResourceService {
                     && definition.matches_content(mime_type, storage_key)
             })
         };
-        let supports_preview = has_declared_action(crate::port::ResourceAction::PREVIEW)
-            && (is_image || is_pdf || is_video);
+        let supports_preview = has_declared_action(crate::port::ResourceAction::PREVIEW);
         let read = has_declared_action(crate::port::ResourceAction::READ);
-        let view_inline = has_declared_action(crate::port::ResourceAction::VIEW_INLINE)
-            && (is_image || is_pdf || is_video);
-        let thumbnail = has_declared_action(crate::port::ResourceAction::THUMBNAIL) && is_image;
+        let view_inline = has_declared_action(crate::port::ResourceAction::VIEW_INLINE);
+        let thumbnail = has_declared_action(crate::port::ResourceAction::THUMBNAIL);
         let mut available_actions = Vec::new();
         for action in declared_actions {
             let enabled = match action.id().as_str() {
@@ -955,6 +982,53 @@ impl ResourceService {
         Ok(Some(ResourcePreview::new(content_type, content)))
     }
 
+    /// 返回资源预览内容流。
+    pub async fn preview_resource_stream(
+        &self,
+        id: &ResourceId,
+    ) -> Result<Option<ResourcePreviewStream>, CoreError> {
+        let Some(resource) = self.find_resource(id).await? else {
+            return Ok(None);
+        };
+        let definition = self.require_kind_definition(resource.kind())?;
+        let content_ref = resource.content();
+        let Some(action) = definition.actions().iter().find(|action| {
+            action.id().as_str() == crate::port::ResourceAction::PREVIEW
+                && action.matches_content(
+                    content_ref.and_then(|content| content.mime_type()),
+                    content_ref.map(|content| content.key().as_str()),
+                )
+        }) else {
+            return Err(CoreError::configuration(format!(
+                "resource kind `{}` does not support action `preview`",
+                resource.kind()
+            )));
+        };
+        if action.handler().is_some() {
+            return Err(CoreError::configuration(
+                "plugin preview actions must be executed through the action endpoint",
+            ));
+        }
+        let Some(content_ref) = resource.content() else {
+            return Err(CoreError::not_found(
+                "resource content",
+                resource.id().to_string(),
+            ));
+        };
+        let Some(content) = self.blob_storage.get_stream(content_ref.key()).await? else {
+            return Err(CoreError::not_found(
+                "resource content",
+                resource.id().to_string(),
+            ));
+        };
+
+        Ok(Some(ResourcePreviewStream::new(
+            content_type_for_media(content_ref),
+            Some(content_ref.size()),
+            content,
+        )))
+    }
+
     /// 读取资源缩略图内容。
     pub async fn thumbnail_resource(
         &self,
@@ -1097,15 +1171,10 @@ fn execute_builtin_resource_action(
     };
     let content = content
         .ok_or_else(|| CoreError::not_found("resource content", resource.id().to_string()))?;
-    let mime_type = content_ref.mime_type();
-    let storage_key = Some(content_ref.key().as_str());
     let supported = match action.as_str() {
-        crate::port::ResourceAction::PREVIEW | crate::port::ResourceAction::VIEW_INLINE => {
-            is_image(mime_type, storage_key)
-                || is_pdf(mime_type, storage_key)
-                || is_video(mime_type, storage_key)
-        }
-        crate::port::ResourceAction::THUMBNAIL => is_image(mime_type, storage_key),
+        crate::port::ResourceAction::PREVIEW
+        | crate::port::ResourceAction::VIEW_INLINE
+        | crate::port::ResourceAction::THUMBNAIL => true,
         _ => false,
     };
     if !supported {
@@ -1259,42 +1328,6 @@ fn content_type_for_media(content: &ResourceContent) -> String {
         .mime_type()
         .unwrap_or("application/octet-stream")
         .to_string()
-}
-
-fn is_pdf(mime_type: Option<&str>, storage_key: Option<&str>) -> bool {
-    mime_type.is_some_and(|mime_type| mime_type.eq_ignore_ascii_case("application/pdf"))
-        || storage_key.is_some_and(|key| key.to_ascii_lowercase().ends_with(".pdf"))
-}
-
-fn is_image(mime_type: Option<&str>, storage_key: Option<&str>) -> bool {
-    mime_type.is_some_and(|mime_type| mime_type.starts_with("image/"))
-        || storage_key.is_some_and(|key| {
-            matches!(
-                key.to_ascii_lowercase().as_str(),
-                key if key.ends_with(".png")
-                    || key.ends_with(".jpg")
-                    || key.ends_with(".jpeg")
-                    || key.ends_with(".gif")
-                    || key.ends_with(".webp")
-                    || key.ends_with(".svg")
-                    || key.ends_with(".bmp")
-                    || key.ends_with(".avif")
-            )
-        })
-}
-
-fn is_video(mime_type: Option<&str>, storage_key: Option<&str>) -> bool {
-    mime_type.is_some_and(|mime_type| mime_type.starts_with("video/"))
-        || storage_key.is_some_and(|key| {
-            matches!(
-                key.to_ascii_lowercase().as_str(),
-                key if key.ends_with(".mp4")
-                    || key.ends_with(".webm")
-                    || key.ends_with(".mov")
-                    || key.ends_with(".m4v")
-                    || key.ends_with(".ogv")
-            )
-        })
 }
 
 #[cfg(test)]
@@ -1494,6 +1527,12 @@ mod tests {
 
         async fn get(&self, key: &StorageKey) -> Result<Option<Bytes>, CoreError> {
             Ok(self.get_sync(key))
+        }
+
+        async fn get_stream(&self, key: &StorageKey) -> Result<Option<BlobByteStream>, CoreError> {
+            Ok(self.get_sync(key).map(|content| {
+                Box::pin(futures_util::stream::once(async move { Ok(content) })) as BlobByteStream
+            }))
         }
 
         async fn delete(&self, key: &StorageKey) -> Result<(), CoreError> {

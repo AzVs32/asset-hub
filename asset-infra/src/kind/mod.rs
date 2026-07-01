@@ -2,7 +2,7 @@ use crate::config::{KindRegistryConfig, ResourceKindConfig, ResourceKindExtensio
 use asset_core::CoreError;
 use asset_core::domain::ResourceKind;
 use asset_core::port::{ResourceActionDefinition, ResourceKindDefinition, ResourceKindRegistry};
-use serde::Deserialize;
+use asset_plugin_api::{PluginManifest, ResourceActionCapability, ResourceKindCapability};
 use std::path::{Path, PathBuf};
 
 const OFFICIAL_PLUGIN_MANIFESTS: &[&str] = &[
@@ -51,12 +51,12 @@ impl DefaultResourceKindRegistry {
             )?;
         }
         for manifest in &official_manifests {
-            for config_definition in &manifest.resource_kinds {
+            for config_definition in &manifest.capabilities.resource_kinds {
                 push_definition(
                     &mut definitions,
-                    definition_from_config(
+                    definition_from_manifest_kind(
                         config_definition,
-                        format!("plugin:{}", manifest.plugin_id),
+                        format!("plugin:{}", manifest.plugin_id()),
                     )?,
                 )?;
             }
@@ -70,23 +70,32 @@ impl DefaultResourceKindRegistry {
         }
 
         for manifest in &plugin_manifests {
-            for config_definition in &manifest.resource_kinds {
+            for config_definition in &manifest.manifest.capabilities.resource_kinds {
                 push_definition(
                     &mut definitions,
-                    definition_from_config(
+                    definition_from_manifest_kind(
                         config_definition,
-                        format!("plugin:{}", manifest.plugin_id),
+                        format!("plugin:{}", manifest.manifest.plugin_id()),
                     )?,
                 )?;
             }
         }
 
-        for manifest in official_manifests.iter().chain(plugin_manifests.iter()) {
-            for extension in &manifest.extends_resource_kinds {
-                extend_definition(
+        for manifest in &official_manifests {
+            for action in &manifest.capabilities.resource_actions {
+                extend_definitions_for_action(
                     &mut definitions,
-                    extension,
-                    format!("plugin:{}", manifest.plugin_id),
+                    action,
+                    format!("plugin:{}", manifest.plugin_id()),
+                )?;
+            }
+        }
+        for manifest in &plugin_manifests {
+            for action in &manifest.manifest.capabilities.resource_actions {
+                extend_definitions_for_action(
+                    &mut definitions,
+                    action,
+                    format!("plugin:{}", manifest.manifest.plugin_id()),
                 )?;
             }
         }
@@ -166,6 +175,40 @@ fn extend_definition(
     Ok(())
 }
 
+fn extend_definitions_for_action(
+    definitions: &mut [ResourceKindDefinition],
+    action: &ResourceActionCapability,
+    source: impl Into<String>,
+) -> Result<(), CoreError> {
+    let source = source.into();
+    for kind in &action.applies_to.kinds {
+        let extension = ResourceKindExtensionConfig {
+            kind: kind.clone(),
+            when: asset_core::port::ResourceActionWhen::default(),
+            actions: vec![action.to_definition()],
+        };
+        extend_definition(definitions, &extension, source.clone())?;
+    }
+    Ok(())
+}
+
+fn definition_from_manifest_kind(
+    config: &ResourceKindCapability,
+    source: impl Into<String>,
+) -> Result<ResourceKindDefinition, CoreError> {
+    let label = config.label.as_deref().unwrap_or(config.kind.as_str());
+    definition_from_parts(
+        &config.kind,
+        label,
+        config.schema_id.clone(),
+        config.metadata_schema.clone(),
+        config.supports_content,
+        config.detect.clone(),
+        Vec::new(),
+        source,
+    )
+}
+
 fn definition_from_config(
     config: &ResourceKindConfig,
     source: impl Into<String>,
@@ -209,14 +252,23 @@ fn load_official_plugin_manifests() -> Result<Vec<PluginManifest>, CoreError> {
     OFFICIAL_PLUGIN_MANIFESTS
         .iter()
         .map(|content| {
-            serde_json::from_str(content).map_err(|error| {
+            let manifest: PluginManifest = serde_json::from_str(content).map_err(|error| {
                 CoreError::configuration(format!("parse official plugin manifest: {error}"))
-            })
+            })?;
+            manifest.validate().map_err(|error| {
+                CoreError::configuration(format!("invalid official plugin manifest: {error}"))
+            })?;
+            Ok(manifest)
         })
         .collect()
 }
 
-fn load_plugin_manifests(path: &Path) -> Result<Vec<PluginManifest>, CoreError> {
+#[derive(Debug)]
+struct LoadedPluginManifest {
+    manifest: PluginManifest,
+}
+
+fn load_plugin_manifests(path: &Path) -> Result<Vec<LoadedPluginManifest>, CoreError> {
     if !path.exists() {
         return Ok(Vec::new());
     }
@@ -238,20 +290,15 @@ fn load_plugin_manifests(path: &Path) -> Result<Vec<PluginManifest>, CoreError> 
         .collect()
 }
 
-fn load_plugin_manifest(path: PathBuf) -> Result<PluginManifest, CoreError> {
+fn load_plugin_manifest(path: PathBuf) -> Result<LoadedPluginManifest, CoreError> {
     let content = std::fs::read_to_string(&path)
         .map_err(|error| CoreError::configuration(format!("read plugin manifest: {error}")))?;
-    serde_json::from_str(&content)
-        .map_err(|error| CoreError::configuration(format!("parse plugin manifest: {error}")))
-}
-
-#[derive(Debug, Deserialize)]
-struct PluginManifest {
-    plugin_id: String,
-    #[serde(default)]
-    resource_kinds: Vec<ResourceKindConfig>,
-    #[serde(default)]
-    extends_resource_kinds: Vec<ResourceKindExtensionConfig>,
+    let manifest: PluginManifest = serde_json::from_str(&content)
+        .map_err(|error| CoreError::configuration(format!("parse plugin manifest: {error}")))?;
+    manifest
+        .validate()
+        .map_err(|error| CoreError::configuration(format!("invalid plugin manifest: {error}")))?;
+    Ok(LoadedPluginManifest { manifest })
 }
 
 #[cfg(test)]
@@ -303,13 +350,13 @@ mod tests {
             (
                 "core:file",
                 "File",
-                "plugin:core-file",
+                "plugin:core.file",
                 vec![ResourceAction::DOWNLOAD_CONTENT],
             ),
             (
                 "core:image",
                 "Image",
-                "plugin:core-image",
+                "plugin:core.image",
                 vec![
                     ResourceAction::DOWNLOAD_CONTENT,
                     ResourceAction::VIEW_INLINE,
@@ -320,7 +367,7 @@ mod tests {
             (
                 "core:document",
                 "Document",
-                "plugin:core-document",
+                "plugin:core.document",
                 vec![
                     ResourceAction::DOWNLOAD_CONTENT,
                     ResourceAction::VIEW_INLINE,
@@ -330,7 +377,7 @@ mod tests {
             (
                 "core:video",
                 "Video",
-                "plugin:core-video",
+                "plugin:core.video",
                 vec![
                     ResourceAction::DOWNLOAD_CONTENT,
                     ResourceAction::VIEW_INLINE,
@@ -371,19 +418,55 @@ mod tests {
             root.join("mindustry.json"),
             r#"
             {
-              "plugin_id": "mindustry",
-              "resource_kinds": [
-                {
-                  "kind": "mindustry:mod",
-                  "label": "Mindustry Mod",
-                  "schema_id": "mindustry:mod@1",
-                  "supports_content": true,
-                  "actions": [{"id": "preview", "label": "Preview"}],
-                  "metadata_schema": {
-                    "type": "object"
+              "manifest_version": 1,
+              "plugin": {
+                "id": "mindustry",
+                "name": "Mindustry",
+                "version": "0.1.0",
+                "publisher": "test",
+                "description": "Mindustry test plugin."
+              },
+              "runtime": {
+                "type": "builtin"
+              },
+              "capabilities": {
+                "resource_kinds": [
+                  {
+                    "kind": "mindustry:mod",
+                    "label": "Mindustry Mod",
+                    "schema_id": "mindustry:mod@1",
+                    "supports_content": true,
+                    "metadata_schema": {
+                      "type": "object"
+                    }
                   }
-                }
-              ]
+                ],
+                "resource_actions": [
+                  {
+                    "id": "preview",
+                    "label": "Preview",
+                    "executor": {
+                      "type": "builtin"
+                    },
+                    "applies_to": {
+                      "kinds": ["mindustry:mod"]
+                    },
+                    "access": "read"
+                  }
+                ]
+              },
+              "permissions": {
+                "resource": {
+                  "read": true,
+                  "write": false
+                },
+                "content": {
+                  "read": true,
+                  "write": false
+                },
+                "network": false,
+                "filesystem": false
+              }
             }
             "#,
         )
@@ -414,27 +497,62 @@ mod tests {
             root.join("epub.json"),
             r#"
             {
-              "plugin_id": "epub",
-              "resource_kinds": [
-                {
-                  "kind": "azvs:epub",
-                  "label": "EPUB",
-                  "schema_id": "azvs:epub@1",
-                  "supports_content": true,
-                  "detect": {
-                    "mime_types": ["application/epub+zip"],
-                    "extensions": [".epub"]
-                  },
-                  "actions": [
-                    {
-                      "id": "azvs:render_epub",
-                      "label": "Read EPUB",
-                      "handler": "render_epub",
-                      "access": "read_only"
+              "manifest_version": 1,
+              "plugin": {
+                "id": "epub",
+                "name": "EPUB",
+                "version": "0.1.0",
+                "publisher": "test",
+                "description": "EPUB test plugin."
+              },
+              "runtime": {
+                "type": "extism",
+                "wasm": "epub.wasm",
+                "wasi": false,
+                "plugin_api": "asset-hub.plugin-api@0.1"
+              },
+              "capabilities": {
+                "resource_kinds": [
+                  {
+                    "kind": "azvs:epub",
+                    "label": "EPUB",
+                    "schema_id": "azvs:epub@1",
+                    "supports_content": true,
+                    "detect": {
+                      "mime_types": ["application/epub+zip"],
+                      "extensions": [".epub"]
                     }
-                  ]
-                }
-              ]
+                  }
+                ],
+                "resource_actions": [
+                  {
+                    "id": "azvs:render_epub",
+                    "label": "Read EPUB",
+                    "executor": {
+                      "type": "plugin",
+                      "handler": "render_epub"
+                    },
+                    "applies_to": {
+                      "kinds": ["azvs:epub"],
+                      "media_types": ["application/epub+zip"],
+                      "extensions": [".epub"]
+                    },
+                    "access": "read"
+                  }
+                ]
+              },
+              "permissions": {
+                "resource": {
+                  "read": true,
+                  "write": false
+                },
+                "content": {
+                  "read": true,
+                  "write": false
+                },
+                "network": false,
+                "filesystem": false
+              }
             }
             "#,
         )
@@ -468,24 +586,51 @@ mod tests {
             root.join("mp4-tools.json"),
             r#"
             {
-              "plugin_id": "mp4-tools",
-              "extends_resource_kinds": [
-                {
-                  "kind": "core:video",
-                  "when": {
-                    "mime_types": ["video/mp4"],
-                    "extensions": [".mp4"]
-                  },
-                  "actions": [
-                    {
-                      "id": "mp4-tools:inspect",
-                      "label": "Inspect MP4",
-                      "handler": "inspect_mp4",
-                      "access": "read_only"
-                    }
-                  ]
-                }
-              ]
+              "manifest_version": 1,
+              "plugin": {
+                "id": "mp4-tools",
+                "name": "MP4 Tools",
+                "version": "0.1.0",
+                "publisher": "test",
+                "description": "MP4 test plugin."
+              },
+              "runtime": {
+                "type": "extism",
+                "wasm": "mp4-tools.wasm",
+                "wasi": false,
+                "plugin_api": "asset-hub.plugin-api@0.1"
+              },
+              "capabilities": {
+                "resource_kinds": [],
+                "resource_actions": [
+                  {
+                    "id": "mp4-tools:inspect",
+                    "label": "Inspect MP4",
+                    "executor": {
+                      "type": "plugin",
+                      "handler": "inspect_mp4"
+                    },
+                    "applies_to": {
+                      "kinds": ["core:video"],
+                      "media_types": ["video/mp4"],
+                      "extensions": [".mp4"]
+                    },
+                    "access": "read"
+                  }
+                ]
+              },
+              "permissions": {
+                "resource": {
+                  "read": true,
+                  "write": false
+                },
+                "content": {
+                  "read": true,
+                  "write": false
+                },
+                "network": false,
+                "filesystem": false
+              }
             }
             "#,
         )

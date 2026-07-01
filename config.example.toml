@@ -38,49 +38,72 @@ plugin_manifest_dirs = ["data/plugins"]
 # metadata_schema = { type = "object" }
 
 # Plugin manifest example (place as JSON inside a plugin_manifest_dirs directory).
-# Use `resource_kinds` for genuinely new business resource types, and
-# `extends_resource_kinds` to add actions to core/file-format categories.
+# Use `capabilities.resource_kinds` for new resource types, and flat
+# `capabilities.resource_actions` with `applies_to.kinds` for actions.
 #
 # {
 #   "manifest_version": 1,
-#   "plugin_id": "example-tools",
-#   "name": "Example Tools",
-#   "version": "0.1.0",
-#   "extism": {
-#     "wasm_path": "example-tools.wasm",
-#     "wasi": false
+#   "plugin": {
+#     "id": "example.tools",
+#     "name": "Example Tools",
+#     "version": "0.1.0",
+#     "publisher": "example",
+#     "description": "Example external plugin."
 #   },
-#   "resource_kinds": [
-#     {
-#       "kind": "example:document",
-#       "label": "Document",
-#       "schema_id": "example:document@1",
-#       "supports_content": true,
-#       "actions": [
-#         {
-#           "id": "example:summarize",
-#           "label": "Summarize",
-#           "handler": "summarize",
-#           "access": "read_only"
-#         }
-#       ]
-#     }
-#   ],
-#   "extends_resource_kinds": [
-#     {
-#       "kind": "core:video",
-#       "when": {
-#         "mime_types": ["video/mp4"],
-#         "extensions": [".mp4", ".m4v"]
+#   "runtime": {
+#     "type": "extism",
+#     "wasm": "example-tools.wasm",
+#     "wasi": false,
+#     "plugin_api": "asset-hub.plugin-api@0.1"
+#   },
+#   "capabilities": {
+#     "resource_kinds": [
+#       {
+#         "kind": "example:document",
+#         "label": "Document",
+#         "schema_id": "example:document@1",
+#         "supports_content": true
+#       }
+#     ],
+#     "resource_actions": [
+#       {
+#         "id": "example:summarize",
+#         "label": "Summarize",
+#         "executor": {
+#           "type": "plugin",
+#           "handler": "summarize"
+#         },
+#         "applies_to": {
+#           "kinds": ["example:document"]
+#         },
+#         "access": "read"
 #       },
-#       "actions": [
-#         {
-#           "id": "example:play_mp4",
-#           "label": "Play MP4",
-#           "handler": "play_mp4",
-#           "access": "read_only"
-#         }
-#       ]
-#     }
-#   ]
+#       {
+#         "id": "example:play_mp4",
+#         "label": "Play MP4",
+#         "executor": {
+#           "type": "plugin",
+#           "handler": "play_mp4"
+#         },
+#         "applies_to": {
+#           "kinds": ["core:video"],
+#           "media_types": ["video/mp4"],
+#           "extensions": [".mp4", ".m4v"]
+#         },
+#         "access": "read"
+#       }
+#     ]
+#   },
+#   "permissions": {
+#     "resource": {
+#       "read": true,
+#       "write": false
+#     },
+#     "content": {
+#       "read": true,
+#       "write": false
+#     },
+#     "network": false,
+#     "filesystem": false
+#   }
 # }

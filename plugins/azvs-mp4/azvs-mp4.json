@@ -1,28 +1,62 @@
 {
   "manifest_version": 1,
-  "plugin_id": "azvs-mp4",
-  "name": "AzVs MP4",
-  "version": "0.1.0",
-  "publisher": "azvs",
-  "extism": {
-    "wasm_path": "azvs-mp4.wasm",
-    "wasi": false
+  "plugin": {
+    "id": "azvs.mp4",
+    "name": "AzVs MP4",
+    "version": "0.1.0",
+    "publisher": "azvs",
+    "description": "MP4 enhancement plugin."
   },
-  "extends_resource_kinds": [
-    {
-      "kind": "core:video",
-      "when": {
-        "mime_types": ["video/mp4"],
-        "extensions": [".mp4", ".m4v"]
-      },
-      "actions": [
-        {
-          "id": "azvs:play_mp4",
-          "label": "Play MP4",
-          "handler": "play_mp4",
-          "access": "read_only"
+  "runtime": {
+    "type": "extism",
+    "wasm": "azvs-mp4.wasm",
+    "wasi": false,
+    "plugin_api": "asset-hub.plugin-api@0.1"
+  },
+  "capabilities": {
+    "resource_kinds": [],
+    "resource_actions": [
+      {
+        "id": "azvs:play_mp4",
+        "label": "Play with AzVs MP4",
+        "description": "Play MP4 with AzVs plugin.",
+        "executor": {
+          "type": "plugin",
+          "handler": "play_mp4"
+        },
+        "applies_to": {
+          "kinds": ["core:video"],
+          "media_types": ["video/mp4"],
+          "extensions": [".mp4", ".m4v"]
+        },
+        "access": "read",
+        "requires": {
+          "resource": true,
+          "metadata": true,
+          "content": true,
+          "content_delivery": "url"
+        },
+        "output": {
+          "view": ["media", "html", "binary_url"]
+        },
+        "ui": {
+          "group": "open",
+          "order": 80,
+          "locations": ["resource_detail", "context_menu"]
         }
-      ]
-    }
-  ]
+      }
+    ]
+  },
+  "permissions": {
+    "resource": {
+      "read": true,
+      "write": false
+    },
+    "content": {
+      "read": true,
+      "write": false
+    },
+    "network": false,
+    "filesystem": false
+  }
 }

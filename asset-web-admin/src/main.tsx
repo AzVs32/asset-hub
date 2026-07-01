@@ -94,27 +94,57 @@ type ResourceReadResponse = {
   id: string;
   name: string;
   kind: string;
-  format: string;
-  text: string;
+  view: PluginView;
 };
 
 type PluginActionOutput = {
   resource_id: string;
   action: string;
-  content_type: string;
-  body: PluginActionBody;
+  view: PluginView;
 };
 
-type PluginActionBody = {
-  view?: "html" | "markdown" | "text" | "json" | "binary_url";
-  title?: string;
-  content?: unknown;
-  html?: string;
-  markdown?: string;
-  text?: string;
-  url?: string;
-  [key: string]: unknown;
-};
+type PluginView =
+  | {
+      view: "text";
+      text: string;
+    }
+  | {
+      view: "markdown";
+      markdown: string;
+    }
+  | {
+      view: "html";
+      title?: string;
+      html: string;
+    }
+  | {
+      view: "json";
+      data: unknown;
+    }
+  | {
+      view: "media";
+      mime_type: string;
+      title?: string;
+      encoding: "base64";
+      data: string;
+    }
+  | {
+      view: "binary_url";
+      url: string;
+      mime_type?: string;
+      filename?: string;
+    }
+  | {
+      view: "table";
+      columns: Array<{ key: string; label: string }>;
+      rows: unknown[];
+    }
+  | {
+      view: "form";
+      schema: unknown;
+      value?: unknown;
+      submit_action?: string;
+    };
 
 type ResourceKindsResponse = {
   items: ResourceKindOption[];
@@ -654,14 +684,14 @@ function App() {
               <div>
                 <h2>{reader.name}</h2>
                 <span>
-                  {reader.kind} / {reader.format}
+                  {reader.kind} / {reader.view.view}
                 </span>
               </div>
               <button className="icon-button" type="button" onClick={() => setReader(null)} title="Close">
                 <X size={18} />
               </button>
             </header>
-            <article className="reader-content">{reader.text}</article>
+            <PluginViewResult view={reader.view} title={reader.name} />
           </section>
         </div>
       )}
@@ -702,8 +732,8 @@ function App() {
           <section className="modal plugin-modal" aria-label="Action result">
             <header className="modal-header">
               <div>
-                <h2>{pluginOutput.body.title || pluginOutput.action}</h2>
-                <span>{pluginOutput.action} / {pluginOutput.body.view || "json"}</span>
+                <h2>{pluginViewTitle(pluginOutput.view) || pluginOutput.action}</h2>
+                <span>{pluginOutput.action} / {pluginOutput.view.view}</span>
               </div>
               <button className="icon-button" type="button" onClick={() => setPluginOutput(null)} title="Close">
                 <X size={18} />
@@ -1059,48 +1089,98 @@ function Fact({ label, value }: { label: string; value: string }) {
 }
 
 function PluginActionResult({ output }: { output: PluginActionOutput }) {
-  const body = output.body;
-  const view = body.view || "json";
+  return <PluginViewResult view={output.view} title={output.action} />;
+}
 
-  if (view === "html") {
-    const html = typeof body.html === "string" ? body.html : String(body.content ?? "");
-    return <iframe className="plugin-html-frame" sandbox="allow-scripts" title={output.action} srcDoc={html} />;
+function PluginViewResult({ view, title }: { view: PluginView; title: string }) {
+  if (view.view === "html") {
+    return <iframe className="plugin-html-frame" sandbox="allow-scripts" title={title} srcDoc={view.html} />;
   }
 
-  if (view === "binary_url") {
-    const url = typeof body.url === "string" ? body.url : "";
+  if (view.view === "media") {
+    const src = view.encoding === "base64" ? `data:${view.mime_type};base64,${view.data}` : "";
+    if (view.mime_type.startsWith("image/")) {
+      return (
+        <div className="plugin-media">
+          <img src={src} alt={view.title || title} />
+        </div>
+      );
+    }
+    if (view.mime_type.startsWith("video/")) {
+      return (
+        <div className="plugin-media">
+          <video src={src} title={view.title || title} controls />
+        </div>
+      );
+    }
+    if (view.mime_type === "application/pdf") {
+      return <iframe className="plugin-html-frame" title={view.title || title} src={src} />;
+    }
     return (
       <div className="plugin-result">
-        {url ? (
-          <a className="primary-button" href={url} target="_blank" rel="noreferrer">
-            Open
-          </a>
-        ) : (
-          <pre>{JSON.stringify(body, null, 2)}</pre>
-        )}
+        <a className="primary-button" href={src} download={view.title || title}>
+          Download
+        </a>
       </div>
     );
   }
 
-  if (view === "text" || view === "markdown") {
-    const text =
-      typeof body.text === "string"
-        ? body.text
-        : typeof body.markdown === "string"
-          ? body.markdown
-          : String(body.content ?? "");
+  if (view.view === "binary_url") {
     return (
-      <article className={view === "markdown" ? "plugin-markdown" : "reader-content"}>
-        {text}
-      </article>
+      <div className="plugin-result">
+        <a className="primary-button" href={view.url} target="_blank" rel="noreferrer">
+          Open
+        </a>
+      </div>
+    );
+  }
+
+  if (view.view === "text" || view.view === "markdown") {
+    const text = view.view === "markdown" ? view.markdown : view.text;
+    return <article className={view.view === "markdown" ? "plugin-markdown" : "reader-content"}>{text}</article>;
+  }
+
+  if (view.view === "table") {
+    return (
+      <div className="plugin-result plugin-table-wrap">
+        <table className="plugin-table">
+          <thead>
+            <tr>
+              {view.columns.map((column) => (
+                <th key={column.key}>{column.label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {view.rows.map((row, rowIndex) => (
+              <tr key={rowIndex}>
+                {view.columns.map((column) => (
+                  <td key={column.key}>{formatTableCell(row, column.key)}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     );
   }
 
   return (
     <div className="plugin-result">
-      <pre>{JSON.stringify(body.content ?? body, null, 2)}</pre>
+      <pre>{JSON.stringify(view.view === "json" ? view.data : view, null, 2)}</pre>
     </div>
   );
+}
+
+function pluginViewTitle(view: PluginView): string | null {
+  if ((view.view === "html" || view.view === "media") && view.title) return view.title;
+  if (view.view === "binary_url" && view.filename) return view.filename;
+  return null;
+}
+
+function formatTableCell(row: unknown, key: string): string {
+  const value = row && typeof row === "object" ? (row as Record<string, unknown>)[key] : undefined;
+  return typeof value === "string" ? value : JSON.stringify(value ?? "");
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -1323,10 +1403,10 @@ function resourceSortPath(resource: Resource): string {
 function normalizeDirectoryInput(value: string): string {
   return value
     .trim()
-    .replaceAll("\\", "/")
+    .replace(/\\/g, "/")
     .split("/")
-    .map((part) => part.trim())
-    .filter((part) => part && part !== ".")
+    .map((part: string) => part.trim())
+    .filter((part: string) => part && part !== ".")
     .join("/");
 }
 

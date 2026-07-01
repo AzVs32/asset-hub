@@ -3,7 +3,7 @@ use asset_core::CoreError;
 use asset_core::domain::StorageKey;
 use asset_core::port::{BlobByteStream, BlobStorage, BlobWriteResult};
 use bytes::Bytes;
-use futures_util::StreamExt;
+use futures_util::{StreamExt, TryStreamExt};
 use opendal::services::Fs;
 use opendal::{ErrorKind, Operator};
 
@@ -121,6 +121,26 @@ impl BlobStorage for OpenDalBlobStorage {
             Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
             Err(error) => Err(CoreError::storage("get", error)),
         }
+    }
+
+    async fn get_stream(&self, key: &StorageKey) -> Result<Option<BlobByteStream>, CoreError> {
+        let reader = match self
+            .operator
+            .reader_with(key.as_str())
+            .chunk(256 * 1024)
+            .await
+        {
+            Ok(reader) => reader,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(CoreError::storage("get_stream.open", error)),
+        };
+        let stream = reader
+            .into_bytes_stream(..)
+            .await
+            .map_err(|error| CoreError::storage("get_stream.open", error))?
+            .map_err(|error| CoreError::storage("get_stream.read", error));
+
+        Ok(Some(Box::pin(stream)))
     }
 
     async fn delete(&self, key: &StorageKey) -> Result<(), CoreError> {

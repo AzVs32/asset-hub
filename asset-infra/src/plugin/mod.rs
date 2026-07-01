@@ -1,23 +1,22 @@
 use asset_core::CoreError;
 use asset_core::domain::{ChecksumKind, ResourceStatus};
 use asset_core::port::{
-    ResourceActionDefinition, ResourceActionExecutor, ResourceActionOutput, ResourceActionRequest,
-    ResourceKindRegistry,
+    ResourceActionExecutor, ResourceActionOutput, ResourceActionRequest, ResourceKindRegistry,
 };
 use asset_plugin_api::{
     PluginActionOutput, PluginActionRequest, PluginChecksum, PluginContentBytes,
-    PluginContentEncoding, PluginResource, PluginResourceContent,
+    PluginContentEncoding, PluginManifest, PluginResource, PluginResourceContent, PluginRuntime,
+    ResourceActionCapability,
 };
 use async_trait::async_trait;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use extism::{Manifest, PluginBuilder, Wasm};
-use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::config::{KindRegistryConfig, ResourceKindConfig, ResourceKindExtensionConfig};
+use crate::config::KindRegistryConfig;
 
 /// Extism 资源动作执行器。
 #[derive(Debug, Clone)]
@@ -34,33 +33,25 @@ impl ExtismResourceActionExecutor {
         let mut bindings = HashMap::new();
 
         for manifest_dir in &config.plugin_manifest_dirs {
-            for manifest in load_plugin_manifests(manifest_dir)? {
-                let Some(extism) = manifest.extism else {
+            for loaded_manifest in load_plugin_manifests(manifest_dir)? {
+                let manifest = &loaded_manifest.manifest;
+                let PluginRuntime::Extism { wasm, wasi, .. } = &manifest.runtime else {
                     continue;
                 };
-                let wasm_path = resolve_manifest_path(&manifest.path, &extism.wasm_path);
+                let wasm_path = resolve_manifest_path(&loaded_manifest.path, wasm);
 
-                for resource_kind in &manifest.resource_kinds {
-                    bind_actions(
+                for action in &manifest.capabilities.resource_actions {
+                    let Some(handler) = action.plugin_handler() else {
+                        continue;
+                    };
+                    bind_action(
                         &mut bindings,
                         kind_registry,
-                        &manifest.plugin_id,
-                        &resource_kind.kind,
-                        &resource_kind.actions,
+                        manifest.plugin_id(),
+                        action,
+                        handler,
                         &wasm_path,
-                        extism.wasi,
-                    )?;
-                }
-
-                for extension in &manifest.extends_resource_kinds {
-                    bind_actions(
-                        &mut bindings,
-                        kind_registry,
-                        &manifest.plugin_id,
-                        &extension.kind,
-                        &extension.actions,
-                        &wasm_path,
-                        extism.wasi,
+                        *wasi,
                     )?;
                 }
             }
@@ -72,37 +63,33 @@ impl ExtismResourceActionExecutor {
     }
 }
 
-fn bind_actions(
+fn bind_action(
     bindings: &mut HashMap<ActionBindingKey, ActionBinding>,
     kind_registry: &dyn ResourceKindRegistry,
     plugin_id: &str,
-    kind: &str,
-    actions: &[ResourceActionDefinition],
+    action: &ResourceActionCapability,
+    handler: &str,
     wasm_path: &Path,
     wasi: bool,
 ) -> Result<(), CoreError> {
-    let kind = asset_core::domain::ResourceKind::try_new(kind)?;
-    let Some(definition) = kind_registry.get(&kind) else {
-        return Ok(());
-    };
-
-    for action in actions {
-        let Some(handler) = action.handler() else {
+    for kind in &action.applies_to.kinds {
+        let kind = asset_core::domain::ResourceKind::try_new(kind)?;
+        let Some(definition) = kind_registry.get(&kind) else {
             continue;
         };
         if !definition
             .actions()
             .iter()
-            .any(|definition_action| definition_action.id().as_str() == action.id().as_str())
+            .any(|definition_action| definition_action.id().as_str() == action.id.as_str())
         {
             continue;
         }
 
         bindings.insert(
-            ActionBindingKey::new(definition.kind().as_str(), action.id().as_str()),
+            ActionBindingKey::new(definition.kind().as_str(), action.id.as_str()),
             ActionBinding {
                 plugin_id: plugin_id.to_string(),
-                action: action.id().as_str().to_string(),
+                action: action.id.clone(),
                 handler: handler.to_string(),
                 wasm_path: wasm_path.to_path_buf(),
                 wasi,
@@ -271,7 +258,13 @@ fn checksum_kind_text(kind: ChecksumKind) -> &'static str {
     }
 }
 
-fn load_plugin_manifests(path: &Path) -> Result<Vec<PluginManifest>, CoreError> {
+#[derive(Debug)]
+struct LoadedPluginManifest {
+    manifest: PluginManifest,
+    path: PathBuf,
+}
+
+fn load_plugin_manifests(path: &Path) -> Result<Vec<LoadedPluginManifest>, CoreError> {
     if !path.exists() {
         return Ok(Vec::new());
     }
@@ -293,13 +286,15 @@ fn load_plugin_manifests(path: &Path) -> Result<Vec<PluginManifest>, CoreError> 
         .collect()
 }
 
-fn load_plugin_manifest(path: PathBuf) -> Result<PluginManifest, CoreError> {
+fn load_plugin_manifest(path: PathBuf) -> Result<LoadedPluginManifest, CoreError> {
     let content = std::fs::read_to_string(&path)
         .map_err(|error| CoreError::configuration(format!("read plugin manifest: {error}")))?;
-    let mut manifest: PluginManifest = serde_json::from_str(&content)
+    let manifest: PluginManifest = serde_json::from_str(&content)
         .map_err(|error| CoreError::configuration(format!("parse plugin manifest: {error}")))?;
-    manifest.path = path;
-    Ok(manifest)
+    manifest
+        .validate()
+        .map_err(|error| CoreError::configuration(format!("invalid plugin manifest: {error}")))?;
+    Ok(LoadedPluginManifest { manifest, path })
 }
 
 fn resolve_manifest_path(manifest_path: &Path, configured_path: &Path) -> PathBuf {
@@ -311,24 +306,4 @@ fn resolve_manifest_path(manifest_path: &Path, configured_path: &Path) -> PathBu
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join(configured_path)
-}
-
-#[derive(Debug, Deserialize)]
-struct PluginManifest {
-    plugin_id: String,
-    #[serde(default)]
-    extism: Option<ExtismPluginConfig>,
-    #[serde(default)]
-    resource_kinds: Vec<ResourceKindConfig>,
-    #[serde(default)]
-    extends_resource_kinds: Vec<ResourceKindExtensionConfig>,
-    #[serde(skip)]
-    path: PathBuf,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct ExtismPluginConfig {
-    wasm_path: PathBuf,
-    #[serde(default)]
-    wasi: bool,
 }

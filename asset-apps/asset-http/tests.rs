@@ -40,10 +40,10 @@ async fn resource_kinds_are_listed_and_unsupported_kind_is_rejected() {
             .any(|kind| { kind["kind"] == "core:unknown" && kind["schema_id"].is_null() })
     );
     for (kind, source) in [
-        ("core:file", "plugin:core-file"),
-        ("core:image", "plugin:core-image"),
-        ("core:document", "plugin:core-document"),
-        ("core:video", "plugin:core-video"),
+        ("core:file", "plugin:core.file"),
+        ("core:image", "plugin:core.image"),
+        ("core:document", "plugin:core.document"),
+        ("core:video", "plugin:core.video"),
     ] {
         assert!(
             kinds["items"]
@@ -181,13 +181,29 @@ async fn core_document_resource_exposes_download_only() {
         .iter()
         .find(|kind| kind["kind"] == "core:document")
         .unwrap();
-    assert_eq!(document_kind["source"], "plugin:core-document");
+    assert_eq!(document_kind["source"], "plugin:core.document");
     assert_eq!(
         document_kind["actions"],
         json!([
             {"id": "download_content", "label": "Download", "access": "read_only"},
-            {"id": "view_inline", "label": "View", "access": "read_only"},
-            {"id": "preview", "label": "Preview", "access": "read_only"}
+            {
+                "id": "view_inline",
+                "label": "View",
+                "access": "read_only",
+                "when": {
+                    "mime_types": ["application/pdf"],
+                    "extensions": [".pdf"]
+                }
+            },
+            {
+                "id": "preview",
+                "label": "Preview",
+                "access": "read_only",
+                "when": {
+                    "mime_types": ["application/pdf"],
+                    "extensions": [".pdf"]
+                }
+            }
         ])
     );
 

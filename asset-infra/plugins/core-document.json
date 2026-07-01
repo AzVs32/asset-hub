@@ -1,31 +1,130 @@
 {
   "manifest_version": 1,
-  "plugin_id": "core-document",
-  "name": "Core Document",
-  "version": "0.1.0",
-  "publisher": "official",
-  "resource_kinds": [
-    {
-      "kind": "core:document",
-      "label": "Document",
-      "schema_id": "core:document@1",
-      "supports_content": true,
-      "detect": {
-        "mime_types": ["application/pdf"],
-        "extensions": [".pdf"]
-      },
-      "actions": [
-        { "id": "download_content", "label": "Download" },
-        { "id": "view_inline", "label": "View" },
-        { "id": "preview", "label": "Preview" }
-      ],
-      "metadata_schema": {
-        "type": "object",
-        "properties": {
-          "author": { "type": "string" },
-          "title": { "type": "string" }
+  "plugin": {
+    "id": "core.document",
+    "name": "Core Document",
+    "version": "0.1.0",
+    "publisher": "asset-hub",
+    "description": "Built-in document resource support."
+  },
+  "runtime": {
+    "type": "builtin"
+  },
+  "capabilities": {
+    "resource_kinds": [
+      {
+        "kind": "core:document",
+        "label": "Document",
+        "schema_id": "core:document@1",
+        "supports_content": true,
+        "detect": {
+          "mime_types": ["application/pdf"],
+          "extensions": [".pdf"]
+        },
+        "metadata_schema": {
+          "type": "object",
+          "properties": {
+            "author": { "type": "string" },
+            "title": { "type": "string" }
+          }
         }
       }
-    }
-  ]
+    ],
+    "resource_actions": [
+      {
+        "id": "download_content",
+        "label": "Download",
+        "description": "Download the original document content.",
+        "executor": {
+          "type": "builtin"
+        },
+        "applies_to": {
+          "kinds": ["core:document"]
+        },
+        "access": "read",
+        "requires": {
+          "resource": true,
+          "metadata": false,
+          "content": true,
+          "content_delivery": "url"
+        },
+        "output": {
+          "view": ["binary_url"]
+        },
+        "ui": {
+          "group": "open",
+          "order": 10,
+          "locations": ["resource_detail", "context_menu"]
+        }
+      },
+      {
+        "id": "view_inline",
+        "label": "View",
+        "description": "View the document inline.",
+        "executor": {
+          "type": "builtin"
+        },
+        "applies_to": {
+          "kinds": ["core:document"],
+          "media_types": ["application/pdf"],
+          "extensions": [".pdf"]
+        },
+        "access": "read",
+        "requires": {
+          "resource": true,
+          "metadata": true,
+          "content": true,
+          "content_delivery": "inline"
+        },
+        "output": {
+          "view": ["media"]
+        },
+        "ui": {
+          "group": "open",
+          "order": 20,
+          "locations": ["resource_detail"]
+        }
+      },
+      {
+        "id": "preview",
+        "label": "Preview",
+        "description": "Preview the document.",
+        "executor": {
+          "type": "builtin"
+        },
+        "applies_to": {
+          "kinds": ["core:document"],
+          "media_types": ["application/pdf"],
+          "extensions": [".pdf"]
+        },
+        "access": "read",
+        "requires": {
+          "resource": true,
+          "metadata": true,
+          "content": true,
+          "content_delivery": "inline"
+        },
+        "output": {
+          "view": ["media"]
+        },
+        "ui": {
+          "group": "preview",
+          "order": 30,
+          "locations": ["resource_detail"]
+        }
+      }
+    ]
+  },
+  "permissions": {
+    "resource": {
+      "read": true,
+      "write": false
+    },
+    "content": {
+      "read": true,
+      "write": false
+    },
+    "network": false,
+    "filesystem": false
+  }
 }

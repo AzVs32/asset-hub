@@ -1,32 +1,131 @@
 {
   "manifest_version": 1,
-  "plugin_id": "core-video",
-  "name": "Core Video",
-  "version": "0.1.0",
-  "publisher": "official",
-  "resource_kinds": [
-    {
-      "kind": "core:video",
-      "label": "Video",
-      "schema_id": "core:video@1",
-      "supports_content": true,
-      "detect": {
-        "mime_types": ["video/*"],
-        "extensions": [".mp4", ".webm", ".mov", ".m4v", ".ogv"]
-      },
-      "actions": [
-        { "id": "download_content", "label": "Download" },
-        { "id": "view_inline", "label": "View" },
-        { "id": "preview", "label": "Preview" }
-      ],
-      "metadata_schema": {
-        "type": "object",
-        "properties": {
-          "description": { "type": "string" },
-          "duration_seconds": { "type": "number" },
-          "title": { "type": "string" }
+  "plugin": {
+    "id": "core.video",
+    "name": "Core Video",
+    "version": "0.1.0",
+    "publisher": "asset-hub",
+    "description": "Built-in video resource support."
+  },
+  "runtime": {
+    "type": "builtin"
+  },
+  "capabilities": {
+    "resource_kinds": [
+      {
+        "kind": "core:video",
+        "label": "Video",
+        "schema_id": "core:video@1",
+        "supports_content": true,
+        "detect": {
+          "mime_types": ["video/*"],
+          "extensions": [".mp4", ".webm", ".mov", ".m4v", ".ogv"]
+        },
+        "metadata_schema": {
+          "type": "object",
+          "properties": {
+            "description": { "type": "string" },
+            "duration_seconds": { "type": "number" },
+            "title": { "type": "string" }
+          }
         }
       }
-    }
-  ]
+    ],
+    "resource_actions": [
+      {
+        "id": "download_content",
+        "label": "Download",
+        "description": "Download the original video content.",
+        "executor": {
+          "type": "builtin"
+        },
+        "applies_to": {
+          "kinds": ["core:video"]
+        },
+        "access": "read",
+        "requires": {
+          "resource": true,
+          "metadata": false,
+          "content": true,
+          "content_delivery": "url"
+        },
+        "output": {
+          "view": ["binary_url"]
+        },
+        "ui": {
+          "group": "open",
+          "order": 10,
+          "locations": ["resource_detail", "context_menu"]
+        }
+      },
+      {
+        "id": "view_inline",
+        "label": "View",
+        "description": "View the video inline.",
+        "executor": {
+          "type": "builtin"
+        },
+        "applies_to": {
+          "kinds": ["core:video"],
+          "media_types": ["video/*"],
+          "extensions": [".mp4", ".webm", ".mov", ".m4v", ".ogv"]
+        },
+        "access": "read",
+        "requires": {
+          "resource": true,
+          "metadata": true,
+          "content": true,
+          "content_delivery": "inline"
+        },
+        "output": {
+          "view": ["media"]
+        },
+        "ui": {
+          "group": "open",
+          "order": 20,
+          "locations": ["resource_detail"]
+        }
+      },
+      {
+        "id": "preview",
+        "label": "Preview",
+        "description": "Preview the video.",
+        "executor": {
+          "type": "builtin"
+        },
+        "applies_to": {
+          "kinds": ["core:video"],
+          "media_types": ["video/*"],
+          "extensions": [".mp4", ".webm", ".mov", ".m4v", ".ogv"]
+        },
+        "access": "read",
+        "requires": {
+          "resource": true,
+          "metadata": true,
+          "content": true,
+          "content_delivery": "inline"
+        },
+        "output": {
+          "view": ["media"]
+        },
+        "ui": {
+          "group": "preview",
+          "order": 30,
+          "locations": ["resource_detail"]
+        }
+      }
+    ]
+  },
+  "permissions": {
+    "resource": {
+      "read": true,
+      "write": false
+    },
+    "content": {
+      "read": true,
+      "write": false
+    },
+    "network": false,
+    "filesystem": false
+  }
 }

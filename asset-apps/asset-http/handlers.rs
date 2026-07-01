@@ -395,13 +395,14 @@ pub(crate) async fn preview_resource(
     Path(id): Path<String>,
 ) -> Result<Response, HttpError> {
     let id = parse_resource_id(&id)?;
-    let Some(preview) = state.service().preview_resource(&id).await? else {
+    let Some(preview) = state.service().preview_resource_stream(&id).await? else {
         return Err(HttpError::not_found(format!("resource `{id}` not found")));
     };
 
-    Ok(binary_response(
+    Ok(binary_stream_response(
         preview.content_type().to_string(),
-        preview.content().clone(),
+        preview.content_length(),
+        preview.into_content(),
     ))
 }
 
@@ -763,6 +764,37 @@ fn binary_response(content_type: String, content: Bytes) -> Response {
         content,
     )
         .into_response()
+}
+
+fn binary_stream_response(
+    content_type: String,
+    content_length: Option<u64>,
+    content: BlobByteStream,
+) -> Response {
+    let mut response = Body::from_stream(content).into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        content_type
+            .parse()
+            .expect("content type should be a valid header value"),
+    );
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        "inline"
+            .parse()
+            .expect("content disposition should be a valid header value"),
+    );
+    if let Some(content_length) = content_length {
+        headers.insert(
+            header::CONTENT_LENGTH,
+            content_length
+                .to_string()
+                .parse()
+                .expect("content length should be a valid header value"),
+        );
+    }
+    response
 }
 
 fn resource_response(
