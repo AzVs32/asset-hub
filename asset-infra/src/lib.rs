@@ -2,6 +2,7 @@ pub mod config;
 pub mod kind;
 pub mod migration;
 pub mod plugin;
+mod plugin_manifest;
 pub mod sqlite;
 pub mod storage;
 

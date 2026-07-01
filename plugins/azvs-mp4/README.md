@@ -17,10 +17,10 @@ Extism plugin for Asset Hub MP4 playback.
 
 ## Use
 
-Asset Hub loads plugin manifests from `data/plugins` by default. To use this plugin, either:
+Asset Hub loads plugin manifests listed in `kind.plugin_manifests`. To use this plugin:
 
-1. Copy `azvs-mp4.json` and `azvs-mp4.wasm` into `data/plugins`, then restart Asset Hub.
-2. Or add `plugins/azvs-mp4` to `kind.plugin_manifest_dirs` in `config.toml`, then restart Asset Hub.
+1. Add `plugins/azvs-mp4/azvs-mp4.json` to `kind.plugin_manifests` in `config.toml`.
+2. Restart Asset Hub.
 
 Upload an MP4 as kind `core:video`. The resource detail panel will show a `Play MP4` action when the MIME type or extension matches MP4.
 

@@ -1,0 +1,20 @@
+{
+  "name": "azvs-markdown",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Asset Hub Markdown processing plugin.",
+  "type": "module",
+  "scripts": {
+    "build": "node esbuild.config.cjs && extism-js dist/index.js -i src/index.d.ts -o azvs-markdown.wasm",
+    "typecheck": "tsc --noEmit",
+    "test": "tsc --outDir .test-dist --rootDir src && node --test .test-dist/markdown.test.js"
+  },
+  "dependencies": {
+    "@extism/js-pdk": "^1.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.3",
+    "esbuild": "^0.27.1",
+    "typescript": "^5.9.3"
+  }
+}

@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::config::KindRegistryConfig;
+use crate::plugin_manifest::load_plugin_manifest_file;
 
 /// Extism 资源动作执行器。
 #[derive(Debug, Clone)]
@@ -32,28 +33,27 @@ impl ExtismResourceActionExecutor {
     ) -> Result<Self, CoreError> {
         let mut bindings = HashMap::new();
 
-        for manifest_dir in &config.plugin_manifest_dirs {
-            for loaded_manifest in load_plugin_manifests(manifest_dir)? {
-                let manifest = &loaded_manifest.manifest;
-                let PluginRuntime::Extism { wasm, wasi, .. } = &manifest.runtime else {
+        for manifest_path in &config.plugin_manifests {
+            let loaded_manifest = load_plugin_manifest(manifest_path.clone())?;
+            let manifest = &loaded_manifest.manifest;
+            let PluginRuntime::Extism { wasm, wasi, .. } = &manifest.runtime else {
+                continue;
+            };
+            let wasm_path = resolve_manifest_path(&loaded_manifest.path, wasm);
+
+            for action in &manifest.capabilities.resource_actions {
+                let Some(handler) = action.plugin_handler() else {
                     continue;
                 };
-                let wasm_path = resolve_manifest_path(&loaded_manifest.path, wasm);
-
-                for action in &manifest.capabilities.resource_actions {
-                    let Some(handler) = action.plugin_handler() else {
-                        continue;
-                    };
-                    bind_action(
-                        &mut bindings,
-                        kind_registry,
-                        manifest.plugin_id(),
-                        action,
-                        handler,
-                        &wasm_path,
-                        *wasi,
-                    )?;
-                }
+                bind_action(
+                    &mut bindings,
+                    kind_registry,
+                    manifest.plugin_id(),
+                    action,
+                    handler,
+                    &wasm_path,
+                    *wasi,
+                )?;
             }
         }
 
@@ -264,37 +264,11 @@ struct LoadedPluginManifest {
     path: PathBuf,
 }
 
-fn load_plugin_manifests(path: &Path) -> Result<Vec<LoadedPluginManifest>, CoreError> {
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-
-    let mut files = std::fs::read_dir(path)
-        .map_err(|error| CoreError::configuration(format!("read plugin manifest dir: {error}")))?
-        .map(|entry| entry.map(|entry| entry.path()))
-        .collect::<Result<Vec<PathBuf>, _>>()
-        .map_err(|error| CoreError::configuration(format!("read plugin manifest dir: {error}")))?;
-    files.sort();
-
-    files
-        .into_iter()
-        .filter(|path| {
-            path.extension()
-                .is_some_and(|extension| extension == "json")
-        })
-        .map(load_plugin_manifest)
-        .collect()
-}
-
 fn load_plugin_manifest(path: PathBuf) -> Result<LoadedPluginManifest, CoreError> {
-    let content = std::fs::read_to_string(&path)
-        .map_err(|error| CoreError::configuration(format!("read plugin manifest: {error}")))?;
-    let manifest: PluginManifest = serde_json::from_str(&content)
-        .map_err(|error| CoreError::configuration(format!("parse plugin manifest: {error}")))?;
-    manifest
-        .validate()
-        .map_err(|error| CoreError::configuration(format!("invalid plugin manifest: {error}")))?;
-    Ok(LoadedPluginManifest { manifest, path })
+    Ok(LoadedPluginManifest {
+        manifest: load_plugin_manifest_file(&path)?,
+        path,
+    })
 }
 
 fn resolve_manifest_path(manifest_path: &Path, configured_path: &Path) -> PathBuf {

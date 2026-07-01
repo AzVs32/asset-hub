@@ -16,10 +16,10 @@ Extism plugin for Asset Hub EPUB reading.
 
 ## Use
 
-Asset Hub loads plugin manifests from `data/plugins` by default. To use this plugin, either:
+Asset Hub loads plugin manifests listed in `kind.plugin_manifests`. To use this plugin:
 
-1. Copy `azvs-epub.json` and `azvs-epub.wasm` into `data/plugins`, then restart Asset Hub.
-2. Or add `plugins/azvs-epub` to `kind.plugin_manifest_dirs` in `config.toml`, then restart Asset Hub.
+1. Add `plugins/azvs-epub/azvs-epub.json` to `kind.plugin_manifests` in `config.toml`.
+2. Restart Asset Hub.
 
 Upload an EPUB as kind `azvs:epub`. The resource detail panel will show a `Read EPUB` action.
 

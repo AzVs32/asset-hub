@@ -844,7 +844,7 @@ async fn test_app_with_kind_definitions(
         },
         kind: KindRegistryConfig {
             definitions: kind_definitions,
-            plugin_manifest_dirs: Vec::new(),
+            plugin_manifests: Vec::new(),
         },
     };
     let runtime = AssetRuntime::from_config(config).await.unwrap();

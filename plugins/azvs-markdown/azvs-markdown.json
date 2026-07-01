@@ -1,0 +1,62 @@
+{
+  "manifest_version": 1,
+  "plugin": {
+    "id": "azvs.markdown",
+    "name": "AzVs Markdown",
+    "version": "0.1.0",
+    "publisher": "azvs",
+    "description": "Markdown document processing plugin."
+  },
+  "runtime": {
+    "type": "extism",
+    "wasm": "azvs-markdown.wasm",
+    "wasi": true,
+    "plugin_api": "asset-hub.plugin-api@0.1"
+  },
+  "capabilities": {
+    "resource_kinds": [],
+    "resource_actions": [
+      {
+        "id": "azvs:render_markdown",
+        "label": "Read Markdown",
+        "description": "Parse Markdown into a platform-neutral document view.",
+        "executor": {
+          "type": "plugin",
+          "handler": "render_markdown"
+        },
+        "applies_to": {
+          "kinds": ["core:document"],
+          "media_types": ["text/markdown", "text/x-markdown"],
+          "extensions": [".md", ".markdown", ".mdown", ".mkd"]
+        },
+        "access": "read",
+        "requires": {
+          "resource": true,
+          "metadata": true,
+          "content": true,
+          "content_delivery": "inline"
+        },
+        "output": {
+          "view": ["markdown"]
+        },
+        "ui": {
+          "group": "open",
+          "order": 60,
+          "locations": ["resource_detail", "context_menu"]
+        }
+      }
+    ]
+  },
+  "permissions": {
+    "resource": {
+      "read": true,
+      "write": false
+    },
+    "content": {
+      "read": true,
+      "write": false
+    },
+    "network": false,
+    "filesystem": false
+  }
+}

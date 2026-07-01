@@ -11,8 +11,6 @@ pub const DEFAULT_CONFIG_FILE: &str = "config.toml";
 pub const DEFAULT_SQLITE_PATH: &str = "data/asset-hub.sqlite";
 /// 默认 Fs 对象存储根目录。
 pub const DEFAULT_FS_ROOT: &str = "data/blob";
-/// 默认插件 manifest 目录。
-pub const DEFAULT_PLUGIN_MANIFEST_DIR: &str = "data/plugins";
 /// 默认 SQLite 连接池最大连接数。
 pub const DEFAULT_SQLITE_MAX_CONNECTIONS: u32 = 5;
 
@@ -86,9 +84,9 @@ impl AssetInfraConfig {
     pub fn normalized(mut self) -> Result<Self, CoreError> {
         self.database.sqlite_path = normalize_path(&self.database.sqlite_path)?;
         self.blob.fs_root = normalize_path(&self.blob.fs_root)?;
-        self.kind.plugin_manifest_dirs = self
+        self.kind.plugin_manifests = self
             .kind
-            .plugin_manifest_dirs
+            .plugin_manifests
             .iter()
             .map(|path| normalize_path(path))
             .collect::<Result<Vec<_>, _>>()?;
@@ -141,15 +139,15 @@ impl Default for BlobConfig {
 pub struct KindRegistryConfig {
     /// 由系统配置声明的资源类型。
     pub definitions: Vec<ResourceKindConfig>,
-    /// 插件 manifest 目录。目录中的 JSON manifest 会在启动时加载。
-    pub plugin_manifest_dirs: Vec<PathBuf>,
+    /// 插件 manifest 文件。每个文件会在启动时加载。
+    pub plugin_manifests: Vec<PathBuf>,
 }
 
 impl Default for KindRegistryConfig {
     fn default() -> Self {
         Self {
             definitions: Vec::new(),
-            plugin_manifest_dirs: vec![PathBuf::from(DEFAULT_PLUGIN_MANIFEST_DIR)],
+            plugin_manifests: Vec::new(),
         }
     }
 }
@@ -258,10 +256,7 @@ mod tests {
             DEFAULT_SQLITE_MAX_CONNECTIONS
         );
         assert_eq!(config.blob.fs_root, PathBuf::from(DEFAULT_FS_ROOT));
-        assert_eq!(
-            config.kind.plugin_manifest_dirs,
-            [PathBuf::from(DEFAULT_PLUGIN_MANIFEST_DIR)]
-        );
+        assert!(config.kind.plugin_manifests.is_empty());
     }
 
     #[test]
@@ -282,11 +277,11 @@ mod tests {
     }
 
     #[test]
-    fn kind_config_accepts_static_definitions_and_plugin_dirs() {
+    fn kind_config_accepts_static_definitions_and_plugin_manifests() {
         let config = AssetInfraConfig::from_config_str(
             r#"
             [kind]
-            plugin_manifest_dirs = ["plugins"]
+            plugin_manifests = ["plugins/example.json"]
 
             [[kind.definitions]]
             kind = "doc:note"
@@ -298,7 +293,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(config.kind.plugin_manifest_dirs, [PathBuf::from("plugins")]);
+        assert_eq!(
+            config.kind.plugin_manifests,
+            [PathBuf::from("plugins/example.json")]
+        );
         assert_eq!(config.kind.definitions.len(), 1);
         assert_eq!(config.kind.definitions[0].kind, "doc:note");
         assert_eq!(config.kind.definitions[0].label.as_deref(), Some("Note"));
@@ -333,14 +331,14 @@ mod tests {
 
         assert!(config.database.sqlite_path.is_absolute());
         assert!(config.blob.fs_root.is_absolute());
-        assert!(config.kind.plugin_manifest_dirs[0].is_absolute());
+        assert!(config.kind.plugin_manifests.is_empty());
     }
 
     #[test]
-    fn normalized_config_turns_plugin_manifest_dirs_into_absolute_paths() {
+    fn normalized_config_turns_plugin_manifests_into_absolute_paths() {
         let config = AssetInfraConfig {
             kind: KindRegistryConfig {
-                plugin_manifest_dirs: vec![PathBuf::from("plugins")],
+                plugin_manifests: vec![PathBuf::from("plugins/example.json")],
                 ..KindRegistryConfig::default()
             },
             ..AssetInfraConfig::default()
@@ -348,6 +346,6 @@ mod tests {
         .normalized()
         .unwrap();
 
-        assert!(config.kind.plugin_manifest_dirs[0].is_absolute());
+        assert!(config.kind.plugin_manifests[0].is_absolute());
     }
 }

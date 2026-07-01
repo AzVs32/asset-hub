@@ -1,9 +1,10 @@
 use crate::config::{KindRegistryConfig, ResourceKindConfig, ResourceKindExtensionConfig};
+use crate::plugin_manifest::load_plugin_manifest_file;
 use asset_core::CoreError;
 use asset_core::domain::ResourceKind;
 use asset_core::port::{ResourceActionDefinition, ResourceKindDefinition, ResourceKindRegistry};
 use asset_plugin_api::{PluginManifest, ResourceActionCapability, ResourceKindCapability};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 const OFFICIAL_PLUGIN_MANIFESTS: &[&str] = &[
     include_str!("../../plugins/core-file.json"),
@@ -31,8 +32,8 @@ impl DefaultResourceKindRegistry {
         let mut definitions = Vec::new();
         let official_manifests = load_official_plugin_manifests()?;
         let mut plugin_manifests = Vec::new();
-        for manifest_dir in &config.plugin_manifest_dirs {
-            plugin_manifests.extend(load_plugin_manifests(manifest_dir)?);
+        for manifest_path in &config.plugin_manifests {
+            plugin_manifests.push(load_plugin_manifest(manifest_path.clone())?);
         }
 
         for kind in ResourceKind::builtin_values() {
@@ -268,37 +269,10 @@ struct LoadedPluginManifest {
     manifest: PluginManifest,
 }
 
-fn load_plugin_manifests(path: &Path) -> Result<Vec<LoadedPluginManifest>, CoreError> {
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-
-    let mut files = std::fs::read_dir(path)
-        .map_err(|error| CoreError::configuration(format!("read plugin manifest dir: {error}")))?
-        .map(|entry| entry.map(|entry| entry.path()))
-        .collect::<Result<Vec<PathBuf>, _>>()
-        .map_err(|error| CoreError::configuration(format!("read plugin manifest dir: {error}")))?;
-    files.sort();
-
-    files
-        .into_iter()
-        .filter(|path| {
-            path.extension()
-                .is_some_and(|extension| extension == "json")
-        })
-        .map(load_plugin_manifest)
-        .collect()
-}
-
 fn load_plugin_manifest(path: PathBuf) -> Result<LoadedPluginManifest, CoreError> {
-    let content = std::fs::read_to_string(&path)
-        .map_err(|error| CoreError::configuration(format!("read plugin manifest: {error}")))?;
-    let manifest: PluginManifest = serde_json::from_str(&content)
-        .map_err(|error| CoreError::configuration(format!("parse plugin manifest: {error}")))?;
-    manifest
-        .validate()
-        .map_err(|error| CoreError::configuration(format!("invalid plugin manifest: {error}")))?;
-    Ok(LoadedPluginManifest { manifest })
+    Ok(LoadedPluginManifest {
+        manifest: load_plugin_manifest_file(&path)?,
+    })
 }
 
 #[cfg(test)]
@@ -320,7 +294,7 @@ mod tests {
                 actions: Vec::new(),
                 ..ResourceKindConfig::default()
             }],
-            plugin_manifest_dirs: Vec::new(),
+            plugin_manifests: Vec::new(),
         })
         .unwrap();
 
@@ -474,7 +448,7 @@ mod tests {
 
         let registry = DefaultResourceKindRegistry::from_config(&KindRegistryConfig {
             definitions: Vec::new(),
-            plugin_manifest_dirs: vec![root.clone()],
+            plugin_manifests: vec![root.join("mindustry.json")],
         })
         .unwrap();
         let definition = registry
@@ -560,7 +534,7 @@ mod tests {
 
         let registry = DefaultResourceKindRegistry::from_config(&KindRegistryConfig {
             definitions: Vec::new(),
-            plugin_manifest_dirs: vec![root.clone()],
+            plugin_manifests: vec![root.join("epub.json")],
         })
         .unwrap();
         let epub = registry
@@ -638,7 +612,7 @@ mod tests {
 
         let registry = DefaultResourceKindRegistry::from_config(&KindRegistryConfig {
             definitions: Vec::new(),
-            plugin_manifest_dirs: vec![root.clone()],
+            plugin_manifests: vec![root.join("mp4-tools.json")],
         })
         .unwrap();
         let video = registry
@@ -664,7 +638,7 @@ mod tests {
                 kind: ResourceKind::UNKNOWN.to_string(),
                 ..ResourceKindConfig::default()
             }],
-            plugin_manifest_dirs: Vec::new(),
+            plugin_manifests: Vec::new(),
         })
         .unwrap_err();
 
