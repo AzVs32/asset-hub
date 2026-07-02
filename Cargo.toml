@@ -36,6 +36,7 @@ opendal = { version = "0.57.0", default-features = false, features = ["services-
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "chrono", "uuid", "json", "macros", "migrate"] }
 tokio = { version = "1.48.0", features = ["macros", "net", "rt-multi-thread"] }
 tower = { version = "0.5.2", features = ["util"] }
+tower-http = { version = "0.6.6", features = ["cors", "timeout", "trace"] }
 utoipa = "5.5.0"
 utoipa-swagger-ui = { version = "9.0.2", features = ["axum", "vendored"] }
 zip = { version = "3.0.0", default-features = false, features = ["deflate"] }

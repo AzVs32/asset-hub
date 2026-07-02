@@ -555,6 +555,13 @@ pub(crate) async fn remove_resource(
     }
 }
 
+/// 物理删除接口已被启动配置禁用。
+pub(crate) async fn purge_disabled() -> Result<StatusCode, HttpError> {
+    Err(HttpError::forbidden(
+        "resource purge endpoint is disabled by ASSET_HTTP_ENABLE_PURGE",
+    ))
+}
+
 fn apply_common_resource_fields(
     mut command: CreateResource,
     kind: Option<String>,

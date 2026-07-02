@@ -1,4 +1,5 @@
 use crate::router;
+use crate::settings::{CorsPolicy, RouterOptions};
 use asset_apps::AssetRuntime;
 use asset_infra::config::{
     AssetInfraConfig, BlobConfig, DatabaseConfig, KindRegistryConfig, ResourceKindConfig,
@@ -9,6 +10,7 @@ use axum::http::{Method, Request, StatusCode, header};
 use serde_json::{Value, json};
 use std::io::{Cursor, Write};
 use std::path::PathBuf;
+use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tower::ServiceExt;
 use zip::write::SimpleFileOptions;
@@ -680,6 +682,61 @@ async fn soft_delete_hides_content_and_purge_removes_resource() {
 }
 
 #[tokio::test]
+async fn disabled_purge_endpoint_returns_forbidden() {
+    let app = test_app_with_router_options(
+        "purge-disabled",
+        RouterOptions {
+            enable_purge: false,
+            ..RouterOptions::default()
+        },
+    )
+    .await;
+    let id = create_text_resource(&app, "delete/no-purge.txt").await;
+
+    let (status, error) =
+        empty_json_request(&app, Method::DELETE, &format!("/resources/{id}/purge")).await;
+
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(
+        error["error"]
+            .as_str()
+            .unwrap()
+            .contains("ASSET_HTTP_ENABLE_PURGE")
+    );
+}
+
+#[tokio::test]
+async fn cors_policy_adds_allowed_origin_header() {
+    let app = test_app_with_router_options(
+        "cors-origin",
+        RouterOptions {
+            cors: CorsPolicy::Origins(vec![header::HeaderValue::from_static(
+                "http://127.0.0.1:5173",
+            )]),
+            request_timeout: Duration::from_secs(5),
+            ..RouterOptions::default()
+        },
+    )
+    .await;
+    let response = request(
+        &app,
+        Request::builder()
+            .method(Method::GET)
+            .uri("/health")
+            .header(header::ORIGIN, "http://127.0.0.1:5173")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN),
+        Some(&header::HeaderValue::from_static("http://127.0.0.1:5173"))
+    );
+}
+
+#[tokio::test]
 async fn list_resources_filters_by_kind_tag_and_query() {
     let app = test_app("list-resources").await;
 
@@ -829,9 +886,26 @@ async fn test_app(name: &str) -> TestApp {
     test_app_with_kind_definitions(name, Vec::new()).await
 }
 
+async fn test_app_with_router_options(name: &str, options: RouterOptions) -> TestApp {
+    test_app_with_kind_definitions_and_router_options(name, Vec::new(), options).await
+}
+
 async fn test_app_with_kind_definitions(
     name: &str,
     kind_definitions: Vec<ResourceKindConfig>,
+) -> TestApp {
+    test_app_with_kind_definitions_and_router_options(
+        name,
+        kind_definitions,
+        RouterOptions::default(),
+    )
+    .await
+}
+
+async fn test_app_with_kind_definitions_and_router_options(
+    name: &str,
+    kind_definitions: Vec<ResourceKindConfig>,
+    options: RouterOptions,
 ) -> TestApp {
     let root = unique_temp_root(name);
     let config = AssetInfraConfig {
@@ -848,7 +922,15 @@ async fn test_app_with_kind_definitions(
         },
     };
     let runtime = AssetRuntime::from_config(config).await.unwrap();
-    let router = router::build(runtime.resource_service(), runtime.resource_kind_registry());
+    let router = if options == RouterOptions::default() {
+        router::build(runtime.resource_service(), runtime.resource_kind_registry())
+    } else {
+        router::build_with_options(
+            runtime.resource_service(),
+            runtime.resource_kind_registry(),
+            options,
+        )
+    };
 
     TestApp { router, root }
 }

@@ -87,6 +87,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tower",
+ "tower-http",
  "utoipa",
  "utoipa-swagger-ui",
  "zip",
@@ -3479,9 +3480,11 @@ dependencies = [
  "http",
  "http-body",
  "pin-project-lite",
+ "tokio",
  "tower",
  "tower-layer",
  "tower-service",
+ "tracing",
  "url",
 ]
 

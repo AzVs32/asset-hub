@@ -29,6 +29,14 @@ impl HttpError {
             message: message.into(),
         }
     }
+
+    /// 构造 403 Forbidden。
+    pub(crate) fn forbidden(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::FORBIDDEN,
+            message: message.into(),
+        }
+    }
 }
 
 impl From<CoreError> for HttpError {

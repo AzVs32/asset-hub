@@ -30,7 +30,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     axum::serve(
         listener,
-        router::build(runtime.resource_service(), runtime.resource_kind_registry()),
+        router::build_with_options(
+            runtime.resource_service(),
+            runtime.resource_kind_registry(),
+            settings.router_options().clone(),
+        ),
     )
     .await?;
 
