@@ -3,11 +3,19 @@ use asset_plugin_api::{
 };
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use extism_pdk::*;
+#[cfg(target_arch = "wasm32")]
+use extism_pdk::host_fn;
+use extism_pdk::{plugin_fn, Error, FnResult};
 use roxmltree::{Document, Node};
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
 use zip::ZipArchive;
+
+#[cfg(target_arch = "wasm32")]
+#[host_fn]
+extern "ExtismHost" {
+    fn asset_hub_content_read(url: String) -> String;
+}
 
 #[derive(Debug, Clone)]
 struct ManifestItem {
@@ -29,15 +37,7 @@ pub fn render_epub(input: String) -> FnResult<String> {
 
 fn render_epub_payload(input: String) -> FnResult<String> {
     let input: PluginActionRequest = serde_json::from_str(&input)?;
-    let content = input
-        .content
-        .ok_or_else(|| Error::msg("missing EPUB content payload"))?;
-
-    if content.encoding != PluginContentEncoding::Base64 {
-        return Err(Error::msg("unsupported content encoding").into());
-    }
-
-    let epub = STANDARD.decode(content.data)?;
+    let epub = STANDARD.decode(epub_content_base64(&input)?)?;
     let rendered = render_epub_bytes(&epub)?;
 
     Ok(serde_json::to_string(&PluginActionOutput::new(PluginView::Html(
@@ -46,6 +46,35 @@ fn render_epub_payload(input: String) -> FnResult<String> {
             html: rendered.html,
         },
     )))?)
+}
+
+fn epub_content_base64(input: &PluginActionRequest) -> FnResult<String> {
+    if let Some(content) = &input.content {
+        if content.encoding != PluginContentEncoding::Base64 {
+            return Err(Error::msg("unsupported content encoding").into());
+        }
+        return Ok(content.data.clone());
+    }
+
+    let content_ref = input
+        .content_ref
+        .as_ref()
+        .ok_or_else(|| Error::msg("missing EPUB content payload"))?;
+    if content_ref.encoding != PluginContentEncoding::Url {
+        return Err(Error::msg("unsupported content reference encoding").into());
+    }
+
+    read_content_ref_base64(&content_ref.url)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn read_content_ref_base64(url: &str) -> FnResult<String> {
+    unsafe { asset_hub_content_read(url.to_string()) }.map_err(Into::into)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn read_content_ref_base64(_url: &str) -> FnResult<String> {
+    Err(Error::msg("content references are only available in the wasm host").into())
 }
 
 struct RenderedBook {

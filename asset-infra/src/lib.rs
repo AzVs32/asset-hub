@@ -1,6 +1,7 @@
 pub mod config;
 pub mod kind;
 pub mod migration;
+pub mod official_plugins;
 pub mod plugin;
 mod plugin_manifest;
 pub mod sqlite;
@@ -8,8 +9,8 @@ pub mod storage;
 
 use asset_core::service::ResourceService;
 use asset_core::{
-    CoreError, port::BlobStorage, port::ResourceActionExecutor, port::ResourceKindRegistry,
-    port::ResourceRepository,
+    CoreError, port::BlobStorage, port::ResourceActionExecutor, port::ResourceActionRegistry,
+    port::ResourceKindRegistry, port::ResourceRepository,
 };
 use config::AssetInfraConfig;
 use kind::DefaultResourceKindRegistry;
@@ -89,12 +90,18 @@ impl AssetInfrastructure {
         self.resource_action_executor.clone()
     }
 
+    /// 返回全局资源动作注册表端口对象。
+    pub fn resource_action_registry(&self) -> Arc<dyn ResourceActionRegistry> {
+        self.resource_kind_registry.clone()
+    }
+
     /// 创建资源应用服务。
     pub fn resource_service(&self) -> ResourceService {
-        ResourceService::new_with_action_executor(
+        ResourceService::new_with_action_registry_and_executor(
             self.resource_repository(),
             self.blob_storage(),
             self.resource_kind_registry(),
+            self.resource_action_registry(),
             self.resource_action_executor(),
         )
     }

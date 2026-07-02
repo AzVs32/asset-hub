@@ -125,7 +125,7 @@ type PluginView =
       view: "media";
       mime_type: string;
       title?: string;
-      encoding: "base64";
+      encoding: "base64" | "url";
       data: string;
     }
   | {
@@ -1098,7 +1098,8 @@ function PluginViewResult({ view, title }: { view: PluginView; title: string }) 
   }
 
   if (view.view === "media") {
-    const src = view.encoding === "base64" ? `data:${view.mime_type};base64,${view.data}` : "";
+    const src =
+      view.encoding === "base64" ? `data:${view.mime_type};base64,${view.data}` : mediaUrl(view.data);
     if (view.mime_type.startsWith("image/")) {
       return (
         <div className="plugin-media">
@@ -1170,6 +1171,13 @@ function PluginViewResult({ view, title }: { view: PluginView; title: string }) 
       <pre>{JSON.stringify(view.view === "json" ? view.data : view, null, 2)}</pre>
     </div>
   );
+}
+
+function mediaUrl(value: string): string {
+  if (/^https?:\/\//i.test(value)) {
+    return value;
+  }
+  return `${apiBase}${value.startsWith("/") ? value : `/${value}`}`;
 }
 
 function pluginViewTitle(view: PluginView): string | null {

@@ -33,7 +33,7 @@
         "requires": {
           "resource": true,
           "metadata": true,
-          "content": true,
+          "content": false,
           "content_delivery": "url"
         },
         "output": {

@@ -5,13 +5,13 @@ use asset_core::port::{
 };
 use asset_plugin_api::{
     PluginActionOutput, PluginActionRequest, PluginChecksum, PluginContentBytes,
-    PluginContentEncoding, PluginManifest, PluginResource, PluginResourceContent, PluginRuntime,
-    ResourceActionCapability,
+    PluginContentEncoding, PluginContentReference, PluginManifest, PluginPermissions,
+    PluginResource, PluginResourceContent, PluginRuntime, ResourceActionCapability,
 };
 use async_trait::async_trait;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use extism::{Manifest, PluginBuilder, Wasm};
+use extism::{Function, Manifest, PTR, PluginBuilder, UserData, Wasm};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -19,19 +19,32 @@ use std::sync::Arc;
 use crate::config::KindRegistryConfig;
 use crate::plugin_manifest::load_plugin_manifest_file;
 
+type HostContentMap = HashMap<String, String>;
+
+extism::host_fn!(asset_hub_content_read(user_data: HostContentMap; url: String) -> String {
+    let content = user_data.get()?;
+    let content = content
+        .lock()
+        .map_err(|_| extism::Error::msg("content host data lock poisoned"))?;
+    content
+        .get(&url)
+        .cloned()
+        .ok_or_else(|| extism::Error::msg(format!("content reference `{url}` is not available")))
+});
+
 /// Extism 资源动作执行器。
 #[derive(Debug, Clone)]
 pub struct ExtismResourceActionExecutor {
-    bindings: Arc<HashMap<ActionBindingKey, ActionBinding>>,
+    bindings: Arc<Vec<ActionBinding>>,
 }
 
 impl ExtismResourceActionExecutor {
     /// 从插件 manifest 目录创建 Extism 执行器。
     pub fn from_config(
         config: &KindRegistryConfig,
-        kind_registry: &dyn ResourceKindRegistry,
+        _kind_registry: &dyn ResourceKindRegistry,
     ) -> Result<Self, CoreError> {
-        let mut bindings = HashMap::new();
+        let mut bindings = Vec::new();
 
         for manifest_path in &config.plugin_manifests {
             let loaded_manifest = load_plugin_manifest(manifest_path.clone())?;
@@ -47,8 +60,8 @@ impl ExtismResourceActionExecutor {
                 };
                 bind_action(
                     &mut bindings,
-                    kind_registry,
                     manifest.plugin_id(),
+                    &manifest.permissions,
                     action,
                     handler,
                     &wasm_path,
@@ -64,38 +77,39 @@ impl ExtismResourceActionExecutor {
 }
 
 fn bind_action(
-    bindings: &mut HashMap<ActionBindingKey, ActionBinding>,
-    kind_registry: &dyn ResourceKindRegistry,
+    bindings: &mut Vec<ActionBinding>,
     plugin_id: &str,
+    permissions: &PluginPermissions,
     action: &ResourceActionCapability,
     handler: &str,
     wasm_path: &Path,
     wasi: bool,
 ) -> Result<(), CoreError> {
-    for kind in &action.applies_to.kinds {
-        let kind = asset_core::domain::ResourceKind::try_new(kind)?;
-        let Some(definition) = kind_registry.get(&kind) else {
-            continue;
-        };
-        if !definition
-            .actions()
-            .iter()
-            .any(|definition_action| definition_action.id().as_str() == action.id.as_str())
-        {
-            continue;
-        }
-
-        bindings.insert(
-            ActionBindingKey::new(definition.kind().as_str(), action.id.as_str()),
-            ActionBinding {
-                plugin_id: plugin_id.to_string(),
-                action: action.id.clone(),
-                handler: handler.to_string(),
-                wasm_path: wasm_path.to_path_buf(),
-                wasi,
-            },
-        );
+    if permissions.filesystem.enabled() && !permissions.filesystem.has_scope() {
+        return Err(CoreError::configuration(format!(
+            "plugin `{plugin_id}` action `{}` declares unscoped filesystem permission",
+            action.id
+        )));
     }
+    if permissions.network.enabled() && !permissions.network.has_scope() {
+        return Err(CoreError::configuration(format!(
+            "plugin `{plugin_id}` action `{}` declares unscoped network permission",
+            action.id
+        )));
+    }
+    for kind in &action.applies_to.kinds {
+        asset_core::domain::ResourceKind::try_new(kind)?;
+    }
+
+    bindings.push(ActionBinding {
+        plugin_id: plugin_id.to_string(),
+        action: action.id.clone(),
+        handler: handler.to_string(),
+        applies_to: action.applies_to.when(),
+        permissions: permissions.clone(),
+        wasm_path: wasm_path.to_path_buf(),
+        wasi,
+    });
 
     Ok(())
 }
@@ -106,11 +120,16 @@ impl ResourceActionExecutor for ExtismResourceActionExecutor {
         &self,
         request: ResourceActionRequest,
     ) -> Result<ResourceActionOutput, CoreError> {
-        let key = ActionBindingKey::new(
-            request.resource().kind().as_str(),
-            request.action().as_str(),
-        );
-        let Some(binding) = self.bindings.get(&key) else {
+        let Some(binding) = self.bindings.iter().find(|binding| {
+            let content = request.resource().content();
+            binding.action == request.action().as_str()
+                && binding.handler == request.handler()
+                && binding.applies_to.matches_resource(
+                    request.resource().kind().as_str(),
+                    content.and_then(|content| content.mime_type()),
+                    content.map(|content| content.key().as_str()),
+                )
+        }) else {
             return Err(CoreError::configuration(format!(
                 "no Extism binding for resource kind `{}` action `{}`",
                 request.resource().kind(),
@@ -118,24 +137,21 @@ impl ResourceActionExecutor for ExtismResourceActionExecutor {
             )));
         };
 
-        if binding.handler != request.handler() {
-            return Err(CoreError::configuration(format!(
-                "Extism binding handler mismatch for action `{}`",
-                request.action()
-            )));
-        }
+        verify_permissions(binding, &request)?;
 
         let binding = binding.clone();
         let payload = build_payload(&request);
-        let output = tokio::task::spawn_blocking(move || call_extism(binding, payload))
-            .await
-            .map_err(|error| {
-                CoreError::plugin(
-                    "extism",
-                    request.action().as_str(),
-                    format!("join plugin task: {error}"),
-                )
-            })??;
+        let host_content = host_content_map(&request);
+        let output =
+            tokio::task::spawn_blocking(move || call_extism(binding, payload, host_content))
+                .await
+                .map_err(|error| {
+                    CoreError::plugin(
+                        "extism",
+                        request.action().as_str(),
+                        format!("join plugin task: {error}"),
+                    )
+                })??;
 
         Ok(ResourceActionOutput::new(
             request.resource().id(),
@@ -145,37 +161,73 @@ impl ResourceActionExecutor for ExtismResourceActionExecutor {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct ActionBindingKey {
-    kind: String,
-    action: String,
-}
-
-impl ActionBindingKey {
-    fn new(kind: impl Into<String>, action: impl Into<String>) -> Self {
-        Self {
-            kind: kind.into(),
-            action: action.into(),
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 struct ActionBinding {
     plugin_id: String,
     action: String,
     handler: String,
+    applies_to: asset_plugin_api::ResourceActionWhen,
+    permissions: PluginPermissions,
     wasm_path: PathBuf,
     wasi: bool,
+}
+
+fn verify_permissions(
+    binding: &ActionBinding,
+    request: &ResourceActionRequest,
+) -> Result<(), CoreError> {
+    if !binding.permissions.resource.read {
+        return Err(CoreError::configuration(format!(
+            "plugin `{}` action `{}` lacks resource.read permission",
+            binding.plugin_id, binding.action
+        )));
+    }
+    if matches!(
+        request.access(),
+        asset_plugin_api::ResourceActionAccess::ReadWrite
+    ) && !binding.permissions.resource.write
+    {
+        return Err(CoreError::configuration(format!(
+            "plugin `{}` action `{}` lacks resource.write permission",
+            binding.plugin_id, binding.action
+        )));
+    }
+    if request.resource().content().is_some() && !binding.permissions.content.read {
+        return Err(CoreError::configuration(format!(
+            "plugin `{}` action `{}` lacks content.read permission",
+            binding.plugin_id, binding.action
+        )));
+    }
+    if matches!(
+        request.access(),
+        asset_plugin_api::ResourceActionAccess::ReadWrite
+    ) && !binding.permissions.content.write
+    {
+        return Err(CoreError::configuration(format!(
+            "plugin `{}` action `{}` lacks content.write permission",
+            binding.plugin_id, binding.action
+        )));
+    }
+
+    Ok(())
 }
 
 fn call_extism(
     binding: ActionBinding,
     payload: PluginActionRequest,
+    host_content: HostContentMap,
 ) -> Result<PluginActionOutput, CoreError> {
-    let manifest = Manifest::new([Wasm::file(&binding.wasm_path)]);
+    let manifest = manifest_for_binding(&binding);
+    let content_read = Function::new(
+        "asset_hub_content_read",
+        [PTR],
+        [PTR],
+        UserData::new(host_content),
+        asset_hub_content_read,
+    );
     let mut plugin = PluginBuilder::new(manifest)
         .with_wasi(binding.wasi)
+        .with_functions([content_read])
         .build()
         .map_err(|error| {
             CoreError::plugin(
@@ -205,13 +257,61 @@ fn call_extism(
     })
 }
 
+fn manifest_for_binding(binding: &ActionBinding) -> Manifest {
+    let mut manifest = Manifest::new([Wasm::file(&binding.wasm_path)]);
+
+    if binding.permissions.network.enabled() {
+        manifest = manifest.with_allowed_hosts(binding.permissions.network.hosts().iter().cloned());
+    }
+
+    for path in binding.permissions.filesystem.read_paths() {
+        manifest = manifest.with_allowed_path(format!("ro:{path}"), path);
+    }
+    for path in binding.permissions.filesystem.write_paths() {
+        manifest = manifest.with_allowed_path(path.clone(), path);
+    }
+
+    manifest
+}
+
+fn host_content_map(request: &ResourceActionRequest) -> HostContentMap {
+    let mut map = HashMap::new();
+    let Some(content_ref) = request.resource().content() else {
+        return map;
+    };
+    let Some(content) = request.content() else {
+        return map;
+    };
+
+    map.insert(
+        content_ref_url(content_ref.key().as_str()),
+        STANDARD.encode(content),
+    );
+    map
+}
+
 fn build_payload(request: &ResourceActionRequest) -> PluginActionRequest {
     let resource = request.resource();
     let content_ref = resource.content();
-    let content = request.content().map(|content| PluginContentBytes {
-        encoding: PluginContentEncoding::Base64,
-        data: STANDARD.encode(content),
-    });
+    let content = if matches!(
+        request.content_delivery(),
+        asset_plugin_api::ResourceActionContentDelivery::Url
+    ) {
+        None
+    } else {
+        request.content().map(|content| PluginContentBytes {
+            encoding: PluginContentEncoding::Base64,
+            data: STANDARD.encode(content),
+        })
+    };
+    let content_ref_payload = if content.is_none() {
+        content_ref.map(|content| PluginContentReference {
+            encoding: PluginContentEncoding::Url,
+            url: content_ref_url(content.key().as_str()),
+        })
+    } else {
+        None
+    };
 
     PluginActionRequest {
         action: request.action().as_str().to_string(),
@@ -242,7 +342,12 @@ fn build_payload(request: &ResourceActionRequest) -> PluginActionRequest {
             deleted_at: resource.deleted_at().map(|value| value.to_rfc3339()),
         },
         content,
+        content_ref: content_ref_payload,
     }
+}
+
+fn content_ref_url(storage_key: &str) -> String {
+    format!("asset://content/{storage_key}")
 }
 
 fn status_text(status: ResourceStatus) -> &'static str {

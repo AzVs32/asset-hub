@@ -1,17 +1,13 @@
 use crate::config::{KindRegistryConfig, ResourceKindConfig, ResourceKindExtensionConfig};
+use crate::official_plugins;
 use crate::plugin_manifest::load_plugin_manifest_file;
 use asset_core::CoreError;
 use asset_core::domain::ResourceKind;
-use asset_core::port::{ResourceActionDefinition, ResourceKindDefinition, ResourceKindRegistry};
+use asset_core::port::{
+    ResourceActionDefinition, ResourceActionRegistry, ResourceKindDefinition, ResourceKindRegistry,
+};
 use asset_plugin_api::{PluginManifest, ResourceActionCapability, ResourceKindCapability};
 use std::path::PathBuf;
-
-const OFFICIAL_PLUGIN_MANIFESTS: &[&str] = &[
-    include_str!("../../plugins/core-file.json"),
-    include_str!("../../plugins/core-image.json"),
-    include_str!("../../plugins/core-document.json"),
-    include_str!("../../plugins/core-video.json"),
-];
 
 /// 默认内置资源类型注册表。
 ///
@@ -19,6 +15,7 @@ const OFFICIAL_PLUGIN_MANIFESTS: &[&str] = &[
 #[derive(Debug, Clone)]
 pub struct DefaultResourceKindRegistry {
     definitions: Vec<ResourceKindDefinition>,
+    actions: Vec<ResourceActionDefinition>,
 }
 
 impl DefaultResourceKindRegistry {
@@ -82,8 +79,14 @@ impl DefaultResourceKindRegistry {
             }
         }
 
+        let mut actions = Vec::new();
         for manifest in &official_manifests {
             for action in &manifest.capabilities.resource_actions {
+                push_action_definition(
+                    &mut actions,
+                    action.to_definition(),
+                    format!("plugin:{}", manifest.plugin_id()),
+                )?;
                 extend_definitions_for_action(
                     &mut definitions,
                     action,
@@ -93,6 +96,11 @@ impl DefaultResourceKindRegistry {
         }
         for manifest in &plugin_manifests {
             for action in &manifest.manifest.capabilities.resource_actions {
+                push_action_definition(
+                    &mut actions,
+                    action.to_definition(),
+                    format!("plugin:{}", manifest.manifest.plugin_id()),
+                )?;
                 extend_definitions_for_action(
                     &mut definitions,
                     action,
@@ -101,7 +109,10 @@ impl DefaultResourceKindRegistry {
             }
         }
 
-        Ok(Self { definitions })
+        Ok(Self {
+            definitions,
+            actions,
+        })
     }
 }
 
@@ -114,6 +125,12 @@ impl Default for DefaultResourceKindRegistry {
 impl ResourceKindRegistry for DefaultResourceKindRegistry {
     fn list(&self) -> Vec<ResourceKindDefinition> {
         self.definitions.clone()
+    }
+}
+
+impl ResourceActionRegistry for DefaultResourceKindRegistry {
+    fn list_actions(&self) -> Vec<ResourceActionDefinition> {
+        self.actions.clone()
     }
 }
 
@@ -193,6 +210,15 @@ fn extend_definitions_for_action(
     Ok(())
 }
 
+fn push_action_definition(
+    actions: &mut Vec<ResourceActionDefinition>,
+    action: ResourceActionDefinition,
+    _source: impl Into<String>,
+) -> Result<(), CoreError> {
+    actions.push(action);
+    Ok(())
+}
+
 fn definition_from_manifest_kind(
     config: &ResourceKindCapability,
     source: impl Into<String>,
@@ -250,7 +276,7 @@ fn definition_from_parts(
 }
 
 fn load_official_plugin_manifests() -> Result<Vec<PluginManifest>, CoreError> {
-    OFFICIAL_PLUGIN_MANIFESTS
+    official_plugins::MANIFESTS
         .iter()
         .map(|content| {
             let manifest: PluginManifest = serde_json::from_str(content).map_err(|error| {
@@ -382,6 +408,21 @@ mod tests {
             .get(&ResourceKind::try_new("core:file").unwrap())
             .unwrap();
         assert!(file.detect().is_empty());
+    }
+
+    #[test]
+    fn registry_exposes_actions_as_global_capabilities() {
+        let registry = DefaultResourceKindRegistry::new().unwrap();
+        let actions = registry.list_actions();
+
+        assert!(actions.iter().any(|action| {
+            action.id().as_str() == ResourceAction::PREVIEW
+                && action.matches_resource("core:video", Some("video/mp4"), Some("demo.mp4"))
+        }));
+        assert!(actions.iter().any(|action| {
+            action.id().as_str() == ResourceAction::PREVIEW
+                && action.matches_resource("core:image", Some("image/png"), Some("demo.png"))
+        }));
     }
 
     #[test]

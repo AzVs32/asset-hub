@@ -5,7 +5,8 @@
 
 use crate::domain::ResourceKind;
 pub use asset_plugin_api::{
-    ResourceAction, ResourceActionAccess, ResourceActionDefinition, ResourceActionWhen,
+    ResourceAction, ResourceActionAccess, ResourceActionContentDelivery, ResourceActionDefinition,
+    ResourceActionWhen,
 };
 use serde_json::Value;
 

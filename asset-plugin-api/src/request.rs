@@ -12,6 +12,8 @@ pub struct PluginActionRequest {
     pub resource: PluginResource,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content: Option<PluginContentBytes>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_ref: Option<PluginContentReference>,
 }
 
 /// Resource snapshot exposed to plugin handlers.
@@ -55,4 +57,11 @@ pub struct PluginChecksum {
 pub struct PluginContentBytes {
     pub encoding: PluginContentEncoding,
     pub data: String,
+}
+
+/// Non-inline object content supplied to a plugin.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginContentReference {
+    pub encoding: PluginContentEncoding,
+    pub url: String,
 }

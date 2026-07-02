@@ -5,7 +5,7 @@
 
 use crate::CoreError;
 use crate::domain::{Resource, ResourceId};
-use crate::port::{ResourceAction, ResourceActionAccess};
+use crate::port::{ResourceAction, ResourceActionAccess, ResourceActionContentDelivery};
 use asset_plugin_api::PluginActionOutput;
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -18,6 +18,7 @@ pub struct ResourceActionRequest {
     action: ResourceAction,
     handler: String,
     access: ResourceActionAccess,
+    content_delivery: ResourceActionContentDelivery,
     input: Value,
     content: Option<Bytes>,
 }
@@ -28,6 +29,7 @@ impl ResourceActionRequest {
         action: ResourceAction,
         handler: impl Into<String>,
         access: ResourceActionAccess,
+        content_delivery: ResourceActionContentDelivery,
         input: Value,
         content: Option<Bytes>,
     ) -> Self {
@@ -36,6 +38,7 @@ impl ResourceActionRequest {
             action,
             handler: handler.into(),
             access,
+            content_delivery,
             input,
             content,
         }
@@ -55,6 +58,10 @@ impl ResourceActionRequest {
 
     pub fn access(&self) -> ResourceActionAccess {
         self.access
+    }
+
+    pub fn content_delivery(&self) -> ResourceActionContentDelivery {
+        self.content_delivery
     }
 
     pub fn input(&self) -> &Value {

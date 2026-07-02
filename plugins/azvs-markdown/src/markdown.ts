@@ -1,8 +1,15 @@
+declare module "extism:host" {
+  interface user {
+    asset_hub_content_read(url: PTR): PTR;
+  }
+}
+
 export interface PluginActionRequest {
   action: string;
   input?: unknown;
   resource: PluginResource;
   content?: PluginContentBytes;
+  content_ref?: PluginContentReference;
 }
 
 export interface PluginResource {
@@ -26,6 +33,11 @@ export interface PluginResource {
 export interface PluginContentBytes {
   encoding: "base64";
   data: string;
+}
+
+export interface PluginContentReference {
+  encoding: "url";
+  url: string;
 }
 
 export interface MarkdownHeading {
@@ -100,14 +112,7 @@ interface FrontMatterResult {
 }
 
 export function buildMarkdownView(request: PluginActionRequest): MarkdownViewDescription {
-  if (!request.content) {
-    throw new Error("missing Markdown content payload");
-  }
-  if (request.content.encoding !== "base64") {
-    throw new Error("unsupported content encoding");
-  }
-
-  const markdown = decodeBase64Utf8(request.content.data).replace(/^\uFEFF/, "");
+  const markdown = markdownContent(request).replace(/^\uFEFF/, "");
   const parsed = parseMarkdown(markdown);
   const firstHeading = parsed.flatHeadings.find((heading) => heading.level === 1) ?? parsed.flatHeadings[0];
   const frontMatterTitle = stringMetadata(parsed.frontMatter.data.title);
@@ -145,6 +150,38 @@ export function buildMarkdownView(request: PluginActionRequest): MarkdownViewDes
       markdown,
     },
   };
+}
+
+function markdownContent(request: PluginActionRequest): string {
+  if (request.content) {
+    if (request.content.encoding !== "base64") {
+      throw new Error("unsupported content encoding");
+    }
+    return decodeBase64Utf8(request.content.data);
+  }
+
+  if (request.content_ref) {
+    if (request.content_ref.encoding !== "url") {
+      throw new Error("unsupported content reference encoding");
+    }
+    return decodeBase64Utf8(readContentRefBase64(request.content_ref.url));
+  }
+
+  throw new Error("missing Markdown content payload");
+}
+
+function readContentRefBase64(url: string): string {
+  const input = Memory.fromString(url);
+  try {
+    const output = Memory.find(Host.getFunctions().asset_hub_content_read(input.offset));
+    try {
+      return output.readString();
+    } finally {
+      output.free();
+    }
+  } finally {
+    input.free();
+  }
 }
 
 export function parseMarkdown(markdown: string): {

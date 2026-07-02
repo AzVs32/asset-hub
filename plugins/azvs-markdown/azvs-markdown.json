@@ -34,7 +34,7 @@
           "resource": true,
           "metadata": true,
           "content": true,
-          "content_delivery": "inline"
+          "content_delivery": "url"
         },
         "output": {
           "view": ["markdown"]

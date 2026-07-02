@@ -5,6 +5,7 @@ use serde_json::Value;
 #[serde(rename_all = "snake_case")]
 pub enum PluginContentEncoding {
     Base64,
+    Url,
 }
 
 /// Standard action output.

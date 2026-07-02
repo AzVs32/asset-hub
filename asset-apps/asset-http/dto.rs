@@ -259,7 +259,9 @@ impl From<&ResourceActionDefinition> for ResourceActionDefinitionResponse {
             id: action.id().as_str().to_string(),
             label: action.label().to_string(),
             access: action_access_text(action.access()).to_string(),
-            when: (!action.when().is_empty()).then(|| ResourceActionWhenResponse {
+            when: (!action.when().mime_types().is_empty()
+                || !action.when().extensions().is_empty())
+            .then(|| ResourceActionWhenResponse {
                 mime_types: action.when().mime_types().to_vec(),
                 extensions: action.when().extensions().to_vec(),
             }),

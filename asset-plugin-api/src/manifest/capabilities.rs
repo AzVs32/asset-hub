@@ -1,65 +1,9 @@
-use crate::{ResourceActionAccess, ResourceActionDefinition, ResourceActionWhen};
+use crate::{
+    ResourceActionAccess, ResourceActionContentDelivery, ResourceActionDefinition,
+    ResourceActionWhen,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::path::PathBuf;
-
-/// Current manifest schema version.
-pub const MANIFEST_VERSION: u32 = 1;
-
-/// Complete plugin manifest document.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PluginManifest {
-    pub manifest_version: u32,
-    pub plugin: PluginMetadata,
-    pub runtime: PluginRuntime,
-    #[serde(default)]
-    pub capabilities: PluginCapabilities,
-    pub permissions: PluginPermissions,
-}
-
-impl PluginManifest {
-    pub fn plugin_id(&self) -> &str {
-        &self.plugin.id
-    }
-
-    pub fn validate(&self) -> Result<(), String> {
-        if self.manifest_version != MANIFEST_VERSION {
-            return Err(format!(
-                "unsupported manifest_version `{}`",
-                self.manifest_version
-            ));
-        }
-        if self.plugin.id.trim().is_empty() {
-            return Err("plugin.id must not be empty".to_string());
-        }
-        Ok(())
-    }
-}
-
-/// Human and registry metadata for a plugin.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PluginMetadata {
-    pub id: String,
-    pub name: String,
-    pub version: String,
-    pub publisher: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-}
-
-/// Runtime used to execute plugin actions.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum PluginRuntime {
-    Builtin,
-    Extism {
-        wasm: PathBuf,
-        #[serde(default)]
-        wasi: bool,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        plugin_api: Option<String>,
-    },
-}
 
 /// Capabilities contributed by a plugin.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -120,6 +64,12 @@ impl ResourceActionCapability {
         let mut definition = ResourceActionDefinition::new(self.id.clone(), self.label.clone())
             .with_access(self.access.to_resource_action_access())
             .with_when(self.applies_to.when());
+        if let Some(requires) = &self.requires {
+            definition = definition.with_requires_content(requires.content);
+            if let Some(delivery) = requires.content_delivery {
+                definition = definition.with_content_delivery(delivery.to_resource_delivery());
+            }
+        }
         if let Some(handler) = self.plugin_handler() {
             definition = definition.with_handler(handler);
         }
@@ -172,6 +122,7 @@ pub struct ActionAppliesTo {
 impl ActionAppliesTo {
     pub fn when(&self) -> ResourceActionWhen {
         ResourceActionWhen::new()
+            .with_kinds(self.kinds.clone())
             .with_mime_types(self.media_types.clone())
             .with_extensions(self.extensions.clone())
     }
@@ -197,6 +148,15 @@ pub enum ContentDelivery {
     Url,
 }
 
+impl ContentDelivery {
+    pub fn to_resource_delivery(self) -> ResourceActionContentDelivery {
+        match self {
+            Self::Inline => ResourceActionContentDelivery::Inline,
+            Self::Url => ResourceActionContentDelivery::Url,
+        }
+    }
+}
+
 /// Declared output view families for an action.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -211,19 +171,4 @@ pub struct ActionUi {
     pub group: Option<String>,
     pub order: Option<i32>,
     pub locations: Vec<String>,
-}
-
-/// Plugin permission declaration.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PluginPermissions {
-    pub resource: ReadWritePermission,
-    pub content: ReadWritePermission,
-    pub network: bool,
-    pub filesystem: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReadWritePermission {
-    pub read: bool,
-    pub write: bool,
 }

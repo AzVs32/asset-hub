@@ -54,6 +54,16 @@ pub enum ResourceActionAccess {
     ReadWrite,
 }
 
+/// How the host should deliver object content to an action handler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceActionContentDelivery {
+    #[default]
+    Auto,
+    Inline,
+    Url,
+}
+
 /// Resource kind action declaration after manifest capabilities are resolved.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResourceActionDefinition {
@@ -65,11 +75,19 @@ pub struct ResourceActionDefinition {
     access: ResourceActionAccess,
     #[serde(default, skip_serializing_if = "ResourceActionWhen::is_empty")]
     when: ResourceActionWhen,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    kinds: Vec<String>,
+    #[serde(default)]
+    content_delivery: ResourceActionContentDelivery,
+    #[serde(default)]
+    requires_content: bool,
 }
 
-/// Content matching rules for an action.
+/// Resource and content matching rules for an action.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ResourceActionWhen {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    kinds: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     mime_types: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -84,6 +102,9 @@ impl ResourceActionDefinition {
             handler: None,
             access: ResourceActionAccess::ReadOnly,
             when: ResourceActionWhen::default(),
+            kinds: Vec::new(),
+            content_delivery: ResourceActionContentDelivery::Auto,
+            requires_content: false,
         }
     }
 
@@ -98,7 +119,24 @@ impl ResourceActionDefinition {
     }
 
     pub fn with_when(mut self, when: ResourceActionWhen) -> Self {
+        self.kinds = when.kinds.clone();
         self.when = when;
+        self
+    }
+
+    pub fn with_kinds(mut self, kinds: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.kinds = normalize_kinds(kinds);
+        self.when.kinds = self.kinds.clone();
+        self
+    }
+
+    pub fn with_content_delivery(mut self, delivery: ResourceActionContentDelivery) -> Self {
+        self.content_delivery = delivery;
+        self
+    }
+
+    pub fn with_requires_content(mut self, requires_content: bool) -> Self {
+        self.requires_content = requires_content;
         self
     }
 
@@ -118,12 +156,33 @@ impl ResourceActionDefinition {
         self.access
     }
 
+    pub fn content_delivery(&self) -> ResourceActionContentDelivery {
+        self.content_delivery
+    }
+
+    pub fn requires_content(&self) -> bool {
+        self.requires_content
+    }
+
     pub fn when(&self) -> &ResourceActionWhen {
         &self.when
     }
 
+    pub fn kinds(&self) -> &[String] {
+        &self.kinds
+    }
+
     pub fn matches_content(&self, mime_type: Option<&str>, storage_key: Option<&str>) -> bool {
         self.when.matches(mime_type, storage_key)
+    }
+
+    pub fn matches_resource(
+        &self,
+        kind: &str,
+        mime_type: Option<&str>,
+        storage_key: Option<&str>,
+    ) -> bool {
+        self.when.matches_resource(kind, mime_type, storage_key)
     }
 }
 
@@ -144,6 +203,11 @@ impl ResourceActionWhen {
         self
     }
 
+    pub fn with_kinds(mut self, kinds: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.kinds = normalize_kinds(kinds);
+        self
+    }
+
     pub fn with_extensions(
         mut self,
         extensions: impl IntoIterator<Item = impl Into<String>>,
@@ -160,15 +224,45 @@ impl ResourceActionWhen {
         &self.mime_types
     }
 
+    pub fn kinds(&self) -> &[String] {
+        &self.kinds
+    }
+
     pub fn extensions(&self) -> &[String] {
         &self.extensions
     }
 
     pub fn is_empty(&self) -> bool {
-        self.mime_types.is_empty() && self.extensions.is_empty()
+        self.kinds.is_empty() && self.mime_types.is_empty() && self.extensions.is_empty()
     }
 
     pub fn matches(&self, mime_type: Option<&str>, storage_key: Option<&str>) -> bool {
+        self.matches_content(mime_type, storage_key)
+    }
+
+    pub fn matches_resource(
+        &self,
+        kind: &str,
+        mime_type: Option<&str>,
+        storage_key: Option<&str>,
+    ) -> bool {
+        if !self.kinds.is_empty()
+            && !self
+                .kinds
+                .iter()
+                .any(|expected| expected.eq_ignore_ascii_case(kind))
+        {
+            return false;
+        }
+
+        self.matches_content(mime_type, storage_key)
+    }
+
+    fn matches_content(&self, mime_type: Option<&str>, storage_key: Option<&str>) -> bool {
+        if self.mime_types.is_empty() && self.extensions.is_empty() {
+            return true;
+        }
+
         if self.is_empty() {
             return true;
         }
@@ -199,6 +293,14 @@ impl ResourceActionWhen {
     }
 }
 
+fn normalize_kinds(kinds: impl IntoIterator<Item = impl Into<String>>) -> Vec<String> {
+    kinds
+        .into_iter()
+        .map(|value| value.into().trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+        .collect()
+}
+
 fn normalize_extension(value: impl Into<String>) -> String {
     let value = value.into().trim().to_ascii_lowercase();
     if value.is_empty() {
@@ -218,4 +320,22 @@ fn mime_matches(expected: &str, actual: &str) -> bool {
     expected
         .strip_suffix("/*")
         .is_some_and(|prefix| actual.starts_with(&format!("{prefix}/")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn action_when_matches_kind_mime_and_extension() {
+        let when = ResourceActionWhen::new()
+            .with_kinds(["core:video"])
+            .with_mime_types(["video/*"])
+            .with_extensions(["mp4"]);
+
+        assert!(when.matches_resource("core:video", Some("video/mp4"), Some("demo.bin")));
+        assert!(when.matches_resource("CORE:VIDEO", None, Some("demo.mp4")));
+        assert!(!when.matches_resource("core:image", Some("video/mp4"), Some("demo.mp4")));
+        assert!(!when.matches_resource("core:video", Some("application/pdf"), Some("demo.pdf")));
+    }
 }

@@ -1,8 +1,8 @@
 use asset_plugin_api::{
-    HtmlView, PluginActionOutput, PluginActionRequest, PluginContentEncoding,
+    MediaView, PluginActionOutput, PluginActionRequest, PluginContentEncoding,
     PluginResource, PluginResourceContent, PluginView,
 };
-use extism_pdk::*;
+use extism_pdk::{plugin_fn, FnResult};
 use serde_json::{Value, json};
 
 #[plugin_fn]
@@ -12,24 +12,17 @@ pub fn play_mp4(input: String) -> FnResult<String> {
 
 fn play_mp4_payload(input: String) -> FnResult<String> {
     let input: PluginActionRequest = serde_json::from_str(&input)?;
-    let content = input
-        .content
-        .ok_or_else(|| Error::msg("missing MP4 content payload"))?;
-
-    if content.encoding != PluginContentEncoding::Base64 {
-        return Err(Error::msg("unsupported content encoding").into());
-    }
-
     let title = video_title(&input.resource);
     let mime_type = video_mime_type(input.resource.content.as_ref());
-    let html = video_html(&title, &mime_type, &content.data);
 
-    Ok(serde_json::to_string(&PluginActionOutput::new(PluginView::Html(
-        HtmlView {
+    Ok(serde_json::to_string(&PluginActionOutput::new(
+        PluginView::Media(MediaView {
+            mime_type,
             title: Some(title),
-            html,
-        },
-    )))?)
+            encoding: PluginContentEncoding::Url,
+            data: format!("/resources/{}/content", input.resource.id),
+        }),
+    ))?)
 }
 
 fn video_title(resource: &PluginResource) -> String {
@@ -54,78 +47,6 @@ fn video_mime_type(content: Option<&PluginResourceContent>) -> String {
         .filter(|mime_type| mime_type.starts_with("video/"))
         .unwrap_or("video/mp4")
         .to_string()
-}
-
-fn video_html(title: &str, mime_type: &str, data_base64: &str) -> String {
-    let title = escape_html(title);
-    let mime_type = escape_attr(mime_type);
-
-    format!(
-        r#"<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{title}</title>
-  <style>
-    :root {{
-      color-scheme: dark;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #111;
-      color: #f7f7f7;
-    }}
-    * {{ box-sizing: border-box; }}
-    body {{
-      margin: 0;
-      min-height: 100vh;
-      display: grid;
-      grid-template-rows: auto 1fr;
-      background: #111;
-    }}
-    header {{
-      padding: 16px 20px 12px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.12);
-    }}
-    h1 {{
-      margin: 0;
-      font-size: 16px;
-      font-weight: 650;
-      line-height: 1.35;
-    }}
-    main {{
-      display: grid;
-      align-items: center;
-      padding: 20px;
-    }}
-    video {{
-      width: 100%;
-      max-height: calc(100vh - 94px);
-      background: #000;
-      outline: none;
-    }}
-  </style>
-</head>
-<body>
-  <header><h1>{title}</h1></header>
-  <main>
-    <video controls preload="metadata" src="data:{mime_type};base64,{data_base64}"></video>
-  </main>
-</body>
-</html>"#
-    )
-}
-
-fn escape_html(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
-}
-
-fn escape_attr(value: &str) -> String {
-    escape_html(value)
 }
 
 #[cfg(test)]
@@ -162,15 +83,7 @@ mod tests {
     }
 
     #[test]
-    fn html_escapes_title() {
-        let html = video_html("<Video>", "video/mp4", "AAAA");
-
-        assert!(html.contains("&lt;Video&gt;"));
-        assert!(!html.contains("<Video>"));
-    }
-
-    #[test]
-    fn play_mp4_returns_html_player() {
+    fn play_mp4_returns_url_media_view() {
         let output = play_mp4_payload(
             json!({
                 "action": "azvs:play_mp4",
@@ -198,9 +111,9 @@ mod tests {
                     "created_at": "2026-01-01T00:00:00Z",
                     "updated_at": "2026-01-01T00:00:00Z"
                 },
-                "content": {
-                    "encoding": "base64",
-                    "data": "AAAA"
+                "content_ref": {
+                    "encoding": "url",
+                    "url": "asset://content/videos/demo.mp4"
                 }
             })
             .to_string(),
@@ -208,14 +121,13 @@ mod tests {
         .unwrap();
         let output: Value = serde_json::from_str(&output).unwrap();
 
-        assert_eq!(output["view"], "html");
+        assert_eq!(output["view"], "media");
+        assert_eq!(output["mime_type"], "video/mp4");
         assert_eq!(output["title"], "Demo MP4");
-        assert!(output["html"].as_str().unwrap().contains("<video controls"));
-        assert!(
-            output["html"]
-                .as_str()
-                .unwrap()
-                .contains("data:video/mp4;base64,AAAA")
+        assert_eq!(output["encoding"], "url");
+        assert_eq!(
+            output["data"],
+            "/resources/01900000-0000-7000-8000-000000000000/content"
         );
     }
 }
