@@ -645,6 +645,40 @@ async fn stream_upload_roundtrips_large_blob_without_buffered_request_dto() {
 }
 
 #[tokio::test]
+async fn upload_detects_parent_kind_from_plugin_action_rules() {
+    let app = test_app_with_plugin_manifests(
+        "markdown-plugin-detect",
+        vec![
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../plugins/azvs-markdown/azvs-markdown.json"),
+        ],
+    )
+    .await;
+    let response = request(
+        &app,
+        Request::builder()
+            .method(Method::PUT)
+            .uri("/resources/content/stream?name=README.md&original_filename=README.md")
+            .header(header::CONTENT_TYPE, "text/plain")
+            .body(Body::from("# README"))
+            .unwrap(),
+    )
+    .await;
+    let status = response.status();
+    let resource = response_json(response).await;
+
+    assert_eq!(status, StatusCode::CREATED, "{resource}");
+    assert_eq!(resource["kind"], "core:document");
+    assert!(
+        resource["actions"]["available_actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|action| action["id"] == "azvs:render_markdown")
+    );
+}
+
+#[tokio::test]
 async fn soft_delete_hides_content_and_purge_removes_resource() {
     let app = test_app("delete-resource").await;
     let id = create_text_resource(&app, "delete/me.txt").await;
@@ -890,6 +924,18 @@ async fn test_app_with_router_options(name: &str, options: RouterOptions) -> Tes
     test_app_with_kind_definitions_and_router_options(name, Vec::new(), options).await
 }
 
+async fn test_app_with_plugin_manifests(name: &str, plugin_manifests: Vec<PathBuf>) -> TestApp {
+    test_app_with_config(
+        name,
+        KindRegistryConfig {
+            definitions: Vec::new(),
+            plugin_manifests,
+        },
+        RouterOptions::default(),
+    )
+    .await
+}
+
 async fn test_app_with_kind_definitions(
     name: &str,
     kind_definitions: Vec<ResourceKindConfig>,
@@ -907,6 +953,22 @@ async fn test_app_with_kind_definitions_and_router_options(
     kind_definitions: Vec<ResourceKindConfig>,
     options: RouterOptions,
 ) -> TestApp {
+    test_app_with_config(
+        name,
+        KindRegistryConfig {
+            definitions: kind_definitions,
+            plugin_manifests: Vec::new(),
+        },
+        options,
+    )
+    .await
+}
+
+async fn test_app_with_config(
+    name: &str,
+    kind: KindRegistryConfig,
+    options: RouterOptions,
+) -> TestApp {
     let root = unique_temp_root(name);
     let config = AssetInfraConfig {
         database: DatabaseConfig {
@@ -916,10 +978,7 @@ async fn test_app_with_kind_definitions_and_router_options(
         blob: BlobConfig {
             fs_root: root.join("blob"),
         },
-        kind: KindRegistryConfig {
-            definitions: kind_definitions,
-            plugin_manifests: Vec::new(),
-        },
+        kind,
     };
     let runtime = AssetRuntime::from_config(config).await.unwrap();
     let router = if options == RouterOptions::default() {

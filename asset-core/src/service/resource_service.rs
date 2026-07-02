@@ -35,7 +35,7 @@ const MAX_INLINE_PLUGIN_CONTENT_BYTES: u64 = 4 * 1024 * 1024;
 pub struct CreateResource {
     /// 资源展示名。
     name: String,
-    /// 资源类型；未设置时使用 `core:file`。
+    /// 资源类型；未设置时会按内容特征自动推断，推断失败时使用 `core:file`。
     kind: Option<ResourceKind>,
     /// 初始生命周期状态。
     status: ResourceStatus,
@@ -44,7 +44,7 @@ pub struct CreateResource {
 }
 
 impl CreateResource {
-    /// 创建命令，默认使用 `core:file`、活跃状态和空元数据。
+    /// 创建命令，默认自动推断资源类型、使用活跃状态和空元数据。
     ///
     /// `name` 会在 usecase 执行时去除首尾空白并校验，不会在命令构造阶段提前校验。
     pub fn new(name: impl Into<String>) -> Self {
@@ -155,7 +155,7 @@ impl UploadResourceContent {
 
     /// 设置资源类型。
     ///
-    /// 未调用该方法时，资源类型使用 `core:file`。
+    /// 未调用该方法时，会按内容 MIME 类型、文件名和插件 action 规则自动推断资源类型。
     pub fn with_kind(mut self, kind: impl Into<ResourceKind>) -> Self {
         self.kind = Some(kind.into());
         self
@@ -217,7 +217,7 @@ impl UploadResourceContent {
 pub struct UploadResourceContentStream {
     /// 资源展示名。
     name: String,
-    /// 资源类型；未设置时使用 `core:file`。
+    /// 资源类型；未设置时会按内容特征自动推断，推断失败时使用 `core:file`。
     kind: Option<ResourceKind>,
     /// 初始生命周期状态。
     status: ResourceStatus,
@@ -236,7 +236,7 @@ pub struct UploadResourceContentStream {
 }
 
 impl UploadResourceContentStream {
-    /// 创建流式上传命令，默认使用 `core:file`、活跃状态和空元数据。
+    /// 创建流式上传命令，默认自动推断资源类型、使用活跃状态和空元数据。
     pub fn new(name: impl Into<String>, storage_key: StorageKey, data: BlobByteStream) -> Self {
         Self {
             name: name.into(),
@@ -644,7 +644,13 @@ impl ResourceService {
             original_filename,
             checksums,
         } = command;
-        let kind = self.validate_content_kind(kind)?;
+        let kind = self.resolve_content_kind(
+            kind,
+            mime_type.as_deref(),
+            original_filename
+                .as_deref()
+                .or_else(|| Some(storage_key.as_str())),
+        )?;
 
         verify_bytes_checksums(&data, &checksums)?;
 
@@ -692,7 +698,13 @@ impl ResourceService {
             original_filename,
             checksums,
         } = command;
-        let kind = self.validate_content_kind(kind)?;
+        let kind = self.resolve_content_kind(
+            kind,
+            mime_type.as_deref(),
+            original_filename
+                .as_deref()
+                .or_else(|| Some(storage_key.as_str())),
+        )?;
 
         let resource_builder = build_resource(name, Some(kind), status, metadata);
         resource_builder.clone().build()?;
@@ -1148,6 +1160,19 @@ impl ResourceService {
         }
 
         Ok(kind)
+    }
+
+    fn resolve_content_kind(
+        &self,
+        kind: Option<ResourceKind>,
+        mime_type: Option<&str>,
+        storage_key: Option<&str>,
+    ) -> Result<ResourceKind, CoreError> {
+        let kind = kind.or_else(|| {
+            self.kind_registry
+                .detect_content_kind(mime_type, storage_key)
+        });
+        self.validate_content_kind(kind)
     }
 
     fn ensure_kind_registered(&self, kind: &ResourceKind) -> Result<(), CoreError> {
@@ -1660,6 +1685,13 @@ mod tests {
             .with_actions(vec![
                 ResourceActionDefinition::new(ResourceAction::READ, "Read")
                     .with_handler("read_document"),
+                ResourceActionDefinition::new("azvs:render_markdown", "Read Markdown")
+                    .with_handler("render_markdown")
+                    .with_when(
+                        crate::port::ResourceActionWhen::new()
+                            .with_mime_types(["text/markdown", "text/x-markdown"])
+                            .with_extensions([".md", ".markdown"]),
+                    ),
                 ResourceActionDefinition::new(ResourceAction::PREVIEW, "Preview")
                     .with_handler("preview_document"),
             ]),
@@ -1767,6 +1799,25 @@ mod tests {
         assert_eq!(content.original_filename(), Some("image.png"));
         assert_eq!(content.checksums(), &[checksum]);
         assert_eq!(blob_storage.get_sync(&key), Some(data));
+    }
+
+    #[test]
+    fn upload_resource_content_detects_parent_kind_from_action_rules() {
+        let (service, repository, _) = service();
+        let key = StorageKey::new("docs/readme.md").unwrap();
+
+        let resource = block_on(
+            service.upload_resource_content(
+                UploadResourceContent::new("readme", key, Bytes::from_static(b"# Readme"))
+                    .with_mime_type("text/plain")
+                    .with_original_filename("README.md"),
+            ),
+        )
+        .unwrap();
+
+        let saved = repository.find_sync(&resource.id()).unwrap();
+
+        assert!(saved.kind().is("core:document"));
     }
 
     #[test]

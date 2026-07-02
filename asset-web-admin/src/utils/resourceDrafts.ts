@@ -96,7 +96,7 @@ export function detectKindForFile(file: File, options: ResourceKindOption[]): st
   const mimeType = file.type.toLowerCase();
   const filename = file.name.toLowerCase();
   const matched = options
-    .filter((option) => option.supports_content && option.detect)
+    .filter((option) => option.supports_content)
     .map((option) => ({ option, score: detectScore(option, mimeType, filename) }))
     .filter((match) => match.score > 0)
     .sort((left, right) => right.score - left.score)[0];
@@ -105,20 +105,34 @@ export function detectKindForFile(file: File, options: ResourceKindOption[]): st
 }
 
 function detectScore(option: ResourceKindOption, mimeType: string, filename: string): number {
-  const detect = option.detect;
+  let score = 0;
+  score = Math.max(score, detectRuleScore(option.detect, mimeType, filename, 100));
+  for (const action of option.actions) {
+    score = Math.max(score, detectRuleScore(action.when, mimeType, filename, 0));
+  }
+
+  return score;
+}
+
+function detectRuleScore(
+  detect: { mime_types: string[]; extensions: string[] } | undefined,
+  mimeType: string,
+  filename: string,
+  base: number,
+): number {
   if (!detect) return 0;
 
   let score = 0;
   for (const mimeTypeRule of detect.mime_types) {
     if (mimeTypeRule.trim().endsWith("/*") && mimeMatches(mimeTypeRule, mimeType)) {
-      score = Math.max(score, 10);
+      score = Math.max(score, base + 10);
     } else if (mimeMatches(mimeTypeRule, mimeType)) {
-      score = Math.max(score, 20);
+      score = Math.max(score, base + 20);
     }
   }
   for (const extension of detect.extensions) {
     if (filename.endsWith(normalizeExtension(extension))) {
-      score = Math.max(score, 30);
+      score = Math.max(score, base + 30);
     }
   }
 
