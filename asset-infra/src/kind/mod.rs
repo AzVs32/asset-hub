@@ -253,6 +253,7 @@ fn definition_from_config(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn definition_from_parts(
     kind: &str,
     label: &str,

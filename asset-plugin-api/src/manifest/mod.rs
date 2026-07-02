@@ -50,12 +50,11 @@ impl PluginManifest {
             plugin_api: Some(plugin_api),
             ..
         } = &self.runtime
+            && plugin_api != PLUGIN_API_VERSION
         {
-            if plugin_api != PLUGIN_API_VERSION {
-                return Err(format!(
-                    "unsupported runtime.plugin_api `{plugin_api}`, expected `{PLUGIN_API_VERSION}`"
-                ));
-            }
+            return Err(format!(
+                "unsupported runtime.plugin_api `{plugin_api}`, expected `{PLUGIN_API_VERSION}`"
+            ));
         }
         validate_capabilities(&self.capabilities)?;
         Ok(())

@@ -268,25 +268,23 @@ impl ResourceActionWhen {
         }
 
         let mime_type = mime_type.map(|value| value.to_ascii_lowercase());
-        if let Some(mime_type) = mime_type.as_deref() {
-            if self
+        if let Some(mime_type) = mime_type.as_deref()
+            && self
                 .mime_types
                 .iter()
                 .any(|expected| mime_matches(expected, mime_type))
-            {
-                return true;
-            }
+        {
+            return true;
         }
 
         let storage_key = storage_key.map(|value| value.to_ascii_lowercase());
-        if let Some(storage_key) = storage_key.as_deref() {
-            if self
+        if let Some(storage_key) = storage_key.as_deref()
+            && self
                 .extensions
                 .iter()
                 .any(|extension| storage_key.ends_with(extension))
-            {
-                return true;
-            }
+        {
+            return true;
         }
 
         false

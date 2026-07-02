@@ -134,22 +134,13 @@ impl Default for BlobConfig {
 }
 
 /// 资源类型注册表配置。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct KindRegistryConfig {
     /// 由系统配置声明的资源类型。
     pub definitions: Vec<ResourceKindConfig>,
     /// 插件 manifest 文件。每个文件会在启动时加载。
     pub plugin_manifests: Vec<PathBuf>,
-}
-
-impl Default for KindRegistryConfig {
-    fn default() -> Self {
-        Self {
-            definitions: Vec::new(),
-            plugin_manifests: Vec::new(),
-        }
-    }
 }
 
 /// 配置文件中的资源类型定义。
@@ -173,7 +164,7 @@ pub struct ResourceKindConfig {
 }
 
 /// 插件对已有资源类型的动作扩展。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ResourceKindExtensionConfig {
     /// 被扩展的资源类型。
@@ -182,16 +173,6 @@ pub struct ResourceKindExtensionConfig {
     pub when: ResourceActionWhen,
     /// 追加到目标 kind 的动作。
     pub actions: Vec<ResourceActionDefinition>,
-}
-
-impl Default for ResourceKindExtensionConfig {
-    fn default() -> Self {
-        Self {
-            kind: String::new(),
-            when: ResourceActionWhen::default(),
-            actions: Vec::new(),
-        }
-    }
 }
 
 impl Default for ResourceKindConfig {
