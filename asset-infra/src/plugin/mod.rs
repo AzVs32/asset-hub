@@ -6,7 +6,7 @@ use asset_core::port::{
 use asset_plugin_api::{
     PluginActionOutput, PluginActionRequest, PluginChecksum, PluginContentBytes,
     PluginContentEncoding, PluginContentReference, PluginManifest, PluginPermissions,
-    PluginResource, PluginResourceContent, PluginRuntime, ResourceActionCapability,
+    PluginResource, PluginResourceContent, PluginRuntime, PluginView, ResourceActionCapability,
 };
 use async_trait::async_trait;
 use base64::Engine;
@@ -105,7 +105,7 @@ fn bind_action(
         plugin_id: plugin_id.to_string(),
         action: action.id.clone(),
         handler: handler.to_string(),
-        applies_to: action.applies_to.when(),
+        applies_to: action.applies_to.to_definition(),
         permissions: permissions.clone(),
         wasm_path: wasm_path.to_path_buf(),
         wasi,
@@ -123,7 +123,7 @@ impl ResourceActionExecutor for ExtismResourceActionExecutor {
         let Some(binding) = self.bindings.iter().find(|binding| {
             let content = request.resource().content();
             binding.action == request.action().as_str()
-                && binding.handler == request.handler()
+                && request.handler() == Some(binding.handler.as_str())
                 && binding.applies_to.matches_resource(
                     request.resource().kind().as_str(),
                     content.and_then(|content| content.mime_type()),
@@ -166,7 +166,7 @@ struct ActionBinding {
     plugin_id: String,
     action: String,
     handler: String,
-    applies_to: asset_plugin_api::ResourceActionWhen,
+    applies_to: asset_plugin_api::ResourceActionAppliesTo,
     permissions: PluginPermissions,
     wasm_path: PathBuf,
     wasi: bool,
@@ -248,13 +248,16 @@ fn call_extism(
             CoreError::plugin(&binding.plugin_id, &binding.action, error.to_string())
         })?;
 
-    serde_json::from_str(&output).map_err(|error| {
+    let mut output: PluginActionOutput = serde_json::from_str(&output).map_err(|error| {
         CoreError::plugin(
             &binding.plugin_id,
             &binding.action,
             format!("plugin returned invalid action output: {error}"),
         )
-    })
+    })?;
+    resolve_plugin_output_urls(&mut output, &binding.plugin_id);
+
+    Ok(output)
 }
 
 fn manifest_for_binding(binding: &ActionBinding) -> Manifest {
@@ -350,6 +353,34 @@ fn content_ref_url(storage_key: &str) -> String {
     format!("asset://content/{storage_key}")
 }
 
+fn resolve_plugin_output_urls(output: &mut PluginActionOutput, plugin_id: &str) {
+    if let PluginView::PluginFrame(frame) = &mut output.view {
+        frame.url = plugin_web_asset_url(plugin_id, &frame.url);
+    }
+}
+
+fn plugin_web_asset_url(plugin_id: &str, url: &str) -> String {
+    let url = url.trim();
+    if is_public_or_protocol_url(url) {
+        return url.to_string();
+    }
+
+    let relative = url.trim_start_matches("./");
+    let relative = if relative.is_empty() {
+        "index.html".to_string()
+    } else if relative.starts_with('#') || relative.starts_with('?') {
+        format!("index.html{relative}")
+    } else {
+        relative.to_string()
+    };
+
+    format!("/plugins/{plugin_id}/{relative}")
+}
+
+fn is_public_or_protocol_url(url: &str) -> bool {
+    url.starts_with('/') || url.contains("://")
+}
+
 fn status_text(status: ResourceStatus) -> &'static str {
     match status {
         ResourceStatus::Active => "active",
@@ -385,4 +416,49 @@ fn resolve_manifest_path(manifest_path: &Path, configured_path: &Path) -> PathBu
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join(configured_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use asset_plugin_api::PluginFrameView;
+
+    #[test]
+    fn plugin_frame_relative_url_is_resolved_to_plugin_web_route() {
+        let mut output = PluginActionOutput::new(PluginView::PluginFrame(PluginFrameView {
+            title: Some("demo.md".to_string()),
+            url: "index.html#payload=abc".to_string(),
+        }));
+
+        resolve_plugin_output_urls(&mut output, "azvs.markdown");
+
+        let PluginView::PluginFrame(frame) = output.view else {
+            panic!("expected plugin frame");
+        };
+        assert_eq!(frame.url, "/plugins/azvs.markdown/index.html#payload=abc");
+    }
+
+    #[test]
+    fn plugin_frame_public_or_protocol_url_is_kept() {
+        assert_eq!(
+            plugin_web_asset_url("azvs.markdown", "/plugins/custom/index.html"),
+            "/plugins/custom/index.html"
+        );
+        assert_eq!(
+            plugin_web_asset_url("azvs.markdown", "asset://content/demo.md"),
+            "asset://content/demo.md"
+        );
+        assert_eq!(
+            plugin_web_asset_url("azvs.markdown", "https://example.com/view"),
+            "https://example.com/view"
+        );
+    }
+
+    #[test]
+    fn plugin_frame_hash_only_url_defaults_to_index_html() {
+        assert_eq!(
+            plugin_web_asset_url("azvs.markdown", "#payload=abc"),
+            "/plugins/azvs.markdown/index.html#payload=abc"
+        );
+    }
 }

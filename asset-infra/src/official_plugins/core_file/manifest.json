@@ -31,10 +31,11 @@
         "label": "Download",
         "description": "Download the original resource content.",
         "executor": {
-          "type": "builtin"
+          "type": "builtin",
+          "handler": "builtin.content.download"
         },
         "applies_to": {
-          "kinds": ["core:file"]
+          "kinds": ["core:file", "core:image", "core:document", "core:video"]
         },
         "access": "read",
         "requires": {
@@ -50,6 +51,64 @@
           "group": "open",
           "order": 10,
           "locations": ["resource_detail", "context_menu"]
+        }
+      },
+      {
+        "id": "view_inline",
+        "label": "View",
+        "description": "View supported media inline.",
+        "executor": {
+          "type": "builtin",
+          "handler": "builtin.media.view"
+        },
+        "applies_to": {
+          "kinds": ["core:image", "core:document", "core:video"],
+          "media_types": ["image/*", "application/pdf", "video/*"],
+          "extensions": [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".avif", ".pdf", ".mp4", ".webm", ".mov", ".m4v", ".ogv"]
+        },
+        "access": "read",
+        "requires": {
+          "resource": true,
+          "metadata": true,
+          "content": true,
+          "content_delivery": "url"
+        },
+        "output": {
+          "view": ["media"]
+        },
+        "ui": {
+          "group": "open",
+          "order": 20,
+          "locations": ["resource_detail"]
+        }
+      },
+      {
+        "id": "preview",
+        "label": "Preview",
+        "description": "Preview supported media.",
+        "executor": {
+          "type": "builtin",
+          "handler": "builtin.media.preview"
+        },
+        "applies_to": {
+          "kinds": ["core:image", "core:document", "core:video"],
+          "media_types": ["image/*", "application/pdf", "video/*"],
+          "extensions": [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".avif", ".pdf", ".mp4", ".webm", ".mov", ".m4v", ".ogv"]
+        },
+        "access": "read",
+        "requires": {
+          "resource": true,
+          "metadata": true,
+          "content": true,
+          "content_delivery": "url"
+        },
+        "output": {
+          "view": ["media"]
+        },
+        "ui": {
+          "group": "preview",
+          "order": 30,
+          "locations": ["resource_detail"]
         }
       }
     ]

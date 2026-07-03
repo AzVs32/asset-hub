@@ -953,60 +953,87 @@ impl ResourceService {
         let Some(mut resource) = self.find_resource(id).await? else {
             return Ok(None);
         };
+
+        // 1. Resolve the action from the resource kind/global action registry before touching
+        //    content or plugin runtime state.
+        let action = self.resolve_declared_resource_action(&resource, &action_id)?;
+
+        // 2. Load content only when the action contract says the executor should receive it.
+        let content = self
+            .load_declared_resource_action_content(&resource, &action)
+            .await?;
+
+        // 3. Dispatch the request through the configured action executor.
+        let access = action.access();
+        let output = self
+            .execute_resource_action_request(&resource, action_id, &action, input, content)
+            .await?;
+
+        // 4. Apply write effects after the executor returns, guarded by the action access boundary.
+        self.apply_action_effects(&mut resource, &output, access)
+            .await?;
+
+        Ok(Some(output))
+    }
+
+    fn resolve_declared_resource_action(
+        &self,
+        resource: &Resource,
+        action_id: &crate::port::ResourceAction,
+    ) -> Result<crate::port::ResourceActionDefinition, CoreError> {
         let definition = self.require_kind_definition(resource.kind())?;
-        let declared_actions = self.actions_for_resource(&resource, &definition);
-        let Some(action) = declared_actions
-            .iter()
-            .find(|action| {
-                let content_ref = resource.content();
-                action.id().as_str() == action_id.as_str()
-                    && action.matches_resource(
-                        resource.kind().as_str(),
-                        content_ref.and_then(|content| content.mime_type()),
-                        content_ref.map(|content| content.key().as_str()),
-                    )
+        let declared_actions = self.actions_for_resource(resource, &definition);
+        declared_actions
+            .into_iter()
+            .find(|action| declared_action_matches_resource(action, action_id, resource))
+            .ok_or_else(|| {
+                CoreError::configuration(format!(
+                    "resource kind `{}` does not support action `{}`",
+                    resource.kind(),
+                    action_id
+                ))
             })
-            .cloned()
-        else {
-            return Err(CoreError::configuration(format!(
-                "resource kind `{}` does not support action `{}`",
-                resource.kind(),
-                action_id
-            )));
+    }
+
+    async fn load_declared_resource_action_content(
+        &self,
+        resource: &Resource,
+        action: &crate::port::ResourceActionDefinition,
+    ) -> Result<Option<Bytes>, CoreError> {
+        let Some(content_ref) = resource.content() else {
+            return Ok(None);
         };
-        let content = match resource.content() {
-            Some(content_ref)
-                if action.handler().is_none()
-                    || should_load_action_content(&action, content_ref.size()) =>
-            {
-                self.blob_storage.get(content_ref.key()).await?
-            }
-            _ => None,
-        };
-        let Some(handler) = action.handler() else {
-            return crate::action::builtin::execute(resource, action_id, content).map(Some);
-        };
+        if !should_load_declared_action_content(action, content_ref) {
+            return Ok(None);
+        }
+
+        self.blob_storage.get(content_ref.key()).await
+    }
+
+    async fn execute_resource_action_request(
+        &self,
+        resource: &Resource,
+        action_id: crate::port::ResourceAction,
+        action: &crate::port::ResourceActionDefinition,
+        input: serde_json::Value,
+        content: Option<Bytes>,
+    ) -> Result<ResourceActionOutput, CoreError> {
         let Some(executor) = &self.action_executor else {
             return Err(CoreError::configuration(
                 "resource action executor is not configured",
             ));
         };
-        let access = action.access();
         let request = ResourceActionRequest::new(
             resource.clone(),
             action_id,
-            handler,
-            access,
+            action.handler(),
+            action.access(),
             action.content_delivery(),
             input,
             content,
         );
 
-        let output = executor.execute(request).await?;
-        self.apply_action_effects(&mut resource, &output, access)
-            .await?;
-
-        Ok(Some(output))
+        executor.execute(request).await
     }
 
     async fn apply_action_effects(
@@ -1089,10 +1116,13 @@ impl ResourceService {
         else {
             return Ok(None);
         };
-        let (content_type, content) = crate::action::builtin::decode_media_view(
-            crate::port::ResourceAction::PREVIEW,
-            &output.output().view,
-        )?;
+        let (content_type, content) = self
+            .media_view_content(
+                id,
+                crate::port::ResourceAction::PREVIEW,
+                &output.output().view,
+            )
+            .await?;
 
         Ok(Some(ResourcePreview::new(content_type, content)))
     }
@@ -1121,7 +1151,7 @@ impl ResourceService {
                 resource.kind()
             )));
         };
-        if action.handler().is_some() {
+        if action.executor() != crate::port::ResourceActionExecutorKind::Builtin {
             return Err(CoreError::configuration(
                 "plugin preview actions must be executed through the action endpoint",
             ));
@@ -1140,7 +1170,7 @@ impl ResourceService {
         };
 
         Ok(Some(ResourcePreviewStream::new(
-            crate::action::builtin::content_type_for_media(content_ref),
+            content_type_for_media(content_ref),
             Some(content_ref.size()),
             content,
         )))
@@ -1161,12 +1191,49 @@ impl ResourceService {
         else {
             return Ok(None);
         };
-        let (content_type, content) = crate::action::builtin::decode_media_view(
-            crate::port::ResourceAction::THUMBNAIL,
-            &output.output().view,
-        )?;
+        let (content_type, content) = self
+            .media_view_content(
+                id,
+                crate::port::ResourceAction::THUMBNAIL,
+                &output.output().view,
+            )
+            .await?;
 
         Ok(Some(ResourceThumbnail::new(content_type, content)))
+    }
+
+    async fn media_view_content(
+        &self,
+        id: &ResourceId,
+        action: &str,
+        view: &PluginView,
+    ) -> Result<(String, Bytes), CoreError> {
+        let PluginView::Media(media) = view else {
+            return Err(CoreError::configuration(format!(
+                "resource action `{action}` must return a media view"
+            )));
+        };
+
+        match media.encoding {
+            PluginContentEncoding::Base64 => decode_media_view(action, view),
+            PluginContentEncoding::Url => {
+                let Some(resource) = self.find_resource(id).await? else {
+                    return Err(CoreError::not_found("resource", id.to_string()));
+                };
+                let Some(content_ref) = resource.content() else {
+                    return Err(CoreError::not_found("resource content", id.to_string()));
+                };
+                let Some(content) = self.blob_storage.get(content_ref.key()).await? else {
+                    return Err(CoreError::not_found("resource content", id.to_string()));
+                };
+                let content_type = if media.mime_type.trim().is_empty() {
+                    content_type_for_media(content_ref)
+                } else {
+                    media.mime_type.clone()
+                };
+                Ok((content_type, content))
+            }
+        }
     }
 
     /// 软删除资源。
@@ -1284,6 +1351,54 @@ fn should_load_action_content(action: &crate::port::ResourceActionDefinition, si
         crate::port::ResourceActionContentDelivery::Url => action.requires_content(),
         crate::port::ResourceActionContentDelivery::Auto => size <= MAX_INLINE_PLUGIN_CONTENT_BYTES,
     }
+}
+
+fn should_load_declared_action_content(
+    action: &crate::port::ResourceActionDefinition,
+    content: &ResourceContent,
+) -> bool {
+    should_load_action_content(action, content.size())
+}
+
+fn declared_action_matches_resource(
+    action: &crate::port::ResourceActionDefinition,
+    action_id: &crate::port::ResourceAction,
+    resource: &Resource,
+) -> bool {
+    let content_ref = resource.content();
+    action.id().as_str() == action_id.as_str()
+        && action.matches_resource(
+            resource.kind().as_str(),
+            content_ref.and_then(|content| content.mime_type()),
+            content_ref.map(|content| content.key().as_str()),
+        )
+}
+
+fn decode_media_view(action: &str, view: &PluginView) -> Result<(String, Bytes), CoreError> {
+    let PluginView::Media(media) = view else {
+        return Err(CoreError::configuration(format!(
+            "resource action `{action}` must return a media view"
+        )));
+    };
+    if media.encoding != PluginContentEncoding::Base64 {
+        return Err(CoreError::configuration(format!(
+            "resource action `{action}` returned unsupported media encoding"
+        )));
+    }
+    let content = BASE64_STANDARD.decode(&media.data).map_err(|error| {
+        CoreError::configuration(format!(
+            "resource action `{action}` returned invalid media: {error}"
+        ))
+    })?;
+
+    Ok((media.mime_type.clone(), Bytes::from(content)))
+}
+
+fn content_type_for_media(content: &ResourceContent) -> String {
+    content
+        .mime_type()
+        .unwrap_or("application/octet-stream")
+        .to_string()
 }
 
 fn build_resource(
@@ -1809,16 +1924,16 @@ mod tests {
                     .with_handler("read_document"),
                 ResourceActionDefinition::new("azvs.markdown.render", "Read Markdown")
                     .with_handler("render_markdown")
-                    .with_when(
-                        crate::port::ResourceActionWhen::new()
+                    .with_content_matcher(
+                        crate::port::ResourceContentMatcher::new()
                             .with_mime_types(["text/markdown", "text/x-markdown"])
                             .with_extensions([".md", ".markdown"]),
                     ),
                 ResourceActionDefinition::new("azvs.markdown.update", "Edit Markdown")
                     .with_handler("update_markdown")
                     .with_access(crate::port::ResourceActionAccess::ReadWrite)
-                    .with_when(
-                        crate::port::ResourceActionWhen::new()
+                    .with_content_matcher(
+                        crate::port::ResourceContentMatcher::new()
                             .with_mime_types(["text/markdown", "text/x-markdown"])
                             .with_extensions([".md", ".markdown"]),
                     ),
@@ -1835,8 +1950,8 @@ mod tests {
                 ResourceActionDefinition::new(ResourceAction::PREVIEW, "Preview"),
                 ResourceActionDefinition::new("azvs.mp4.play", "Play MP4")
                     .with_handler("play_mp4")
-                    .with_when(
-                        crate::port::ResourceActionWhen::new()
+                    .with_content_matcher(
+                        crate::port::ResourceContentMatcher::new()
                             .with_mime_types(["video/mp4"])
                             .with_extensions([".mp4"]),
                     ),

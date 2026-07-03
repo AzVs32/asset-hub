@@ -10,7 +10,8 @@ pub use resource_action_executor::{
 };
 pub use resource_action_registry::ResourceActionRegistry;
 pub use resource_kind_registry::{
-    ResourceAction, ResourceActionAccess, ResourceActionContentDelivery, ResourceActionDefinition,
-    ResourceActionWhen, ResourceKindDefinition, ResourceKindRegistry,
+    ResourceAction, ResourceActionAccess, ResourceActionAppliesTo, ResourceActionContentDelivery,
+    ResourceActionDefinition, ResourceActionExecutorKind, ResourceContentMatcher,
+    ResourceKindDefinition, ResourceKindRegistry,
 };
 pub use resource_repository::{ListResources, ResourcePage, ResourceRepository};

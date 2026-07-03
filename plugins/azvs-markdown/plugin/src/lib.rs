@@ -9,7 +9,7 @@ use extism_pdk::host_fn;
 use extism_pdk::{Error, FnResult, plugin_fn};
 use serde_json::{Value, json};
 
-const VIEWER_URL: &str = "/plugins/azvs.markdown/index.html";
+const VIEWER_ENTRYPOINT: &str = "index.html";
 const SAVE_ACTION: &str = "azvs.markdown.update";
 
 #[cfg(target_arch = "wasm32")]
@@ -82,7 +82,7 @@ fn frame_response(request: &PluginActionRequest, markdown: String, mode: &str) -
     let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload)?);
     let output = PluginActionOutput::new(PluginView::PluginFrame(PluginFrameView {
         title: Some(request.resource.name.clone()),
-        url: format!("{VIEWER_URL}#payload={payload}"),
+        url: format!("{VIEWER_ENTRYPOINT}#payload={payload}"),
     }));
 
     Ok(serde_json::to_string(&output)?)
@@ -155,7 +155,7 @@ mod tests {
             output["url"]
                 .as_str()
                 .unwrap()
-                .starts_with("/plugins/azvs.markdown/index.html#payload=")
+                .starts_with("index.html#payload=")
         );
     }
 

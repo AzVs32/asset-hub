@@ -32,93 +32,12 @@
     ],
     "resource_actions": [
       {
-        "id": "download_content",
-        "label": "Download",
-        "description": "Download the original image content.",
-        "executor": {
-          "type": "builtin"
-        },
-        "applies_to": {
-          "kinds": ["core:image"]
-        },
-        "access": "read",
-        "requires": {
-          "resource": true,
-          "metadata": false,
-          "content": true,
-          "content_delivery": "url"
-        },
-        "output": {
-          "view": ["binary_url"]
-        },
-        "ui": {
-          "group": "open",
-          "order": 10,
-          "locations": ["resource_detail", "context_menu"]
-        }
-      },
-      {
-        "id": "view_inline",
-        "label": "View",
-        "description": "View the image inline.",
-        "executor": {
-          "type": "builtin"
-        },
-        "applies_to": {
-          "kinds": ["core:image"],
-          "media_types": ["image/*"],
-          "extensions": [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".avif"]
-        },
-        "access": "read",
-        "requires": {
-          "resource": true,
-          "metadata": true,
-          "content": true,
-          "content_delivery": "inline"
-        },
-        "output": {
-          "view": ["media"]
-        },
-        "ui": {
-          "group": "open",
-          "order": 20,
-          "locations": ["resource_detail"]
-        }
-      },
-      {
-        "id": "preview",
-        "label": "Preview",
-        "description": "Preview the image.",
-        "executor": {
-          "type": "builtin"
-        },
-        "applies_to": {
-          "kinds": ["core:image"],
-          "media_types": ["image/*"],
-          "extensions": [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".avif"]
-        },
-        "access": "read",
-        "requires": {
-          "resource": true,
-          "metadata": true,
-          "content": true,
-          "content_delivery": "inline"
-        },
-        "output": {
-          "view": ["media"]
-        },
-        "ui": {
-          "group": "preview",
-          "order": 30,
-          "locations": ["resource_detail"]
-        }
-      },
-      {
         "id": "thumbnail",
         "label": "Thumbnail",
         "description": "Generate an image thumbnail.",
         "executor": {
-          "type": "builtin"
+          "type": "builtin",
+          "handler": "builtin.media.thumbnail"
         },
         "applies_to": {
           "kinds": ["core:image"],

@@ -1,3 +1,4 @@
+pub mod action;
 pub mod config;
 pub mod kind;
 pub mod migration;
@@ -7,13 +8,14 @@ mod plugin_manifest;
 pub mod sqlite;
 pub mod storage;
 
+use action::DefaultResourceActionExecutor;
 use asset_core::service::ResourceService;
 use asset_core::{
     CoreError, port::BlobStorage, port::ResourceActionExecutor, port::ResourceActionRegistry,
     port::ResourceKindRegistry, port::ResourceRepository,
 };
 use config::AssetInfraConfig;
-use kind::DefaultResourceKindRegistry;
+use kind::{DefaultResourceActionRegistry, DefaultResourceKindRegistry};
 use plugin::ExtismResourceActionExecutor;
 use sqlite::SqliteResourceRepository;
 use std::sync::Arc;
@@ -31,8 +33,10 @@ pub struct AssetInfrastructure {
     blob_storage: Arc<OpenDalBlobStorage>,
     /// 资源类型注册表。
     resource_kind_registry: Arc<DefaultResourceKindRegistry>,
+    /// 资源动作注册表。
+    resource_action_registry: Arc<DefaultResourceActionRegistry>,
     /// 资源动作执行器。
-    resource_action_executor: Arc<ExtismResourceActionExecutor>,
+    resource_action_executor: Arc<DefaultResourceActionExecutor>,
 }
 
 impl AssetInfrastructure {
@@ -46,16 +50,21 @@ impl AssetInfrastructure {
             Arc::new(SqliteResourceRepository::connect(&config.database).await?);
         let resource_kind_registry =
             Arc::new(DefaultResourceKindRegistry::from_config(&config.kind)?);
-        let resource_action_executor = Arc::new(ExtismResourceActionExecutor::from_config(
+        let resource_action_registry =
+            Arc::new(DefaultResourceActionRegistry::from_config(&config.kind)?);
+        let extism_action_executor = ExtismResourceActionExecutor::from_config(
             &config.kind,
             resource_kind_registry.as_ref(),
-        )?);
+        )?;
+        let resource_action_executor =
+            Arc::new(DefaultResourceActionExecutor::new(extism_action_executor));
 
         Ok(Self {
             config,
             resource_repository,
             blob_storage,
             resource_kind_registry,
+            resource_action_registry,
             resource_action_executor,
         })
     }
@@ -92,7 +101,7 @@ impl AssetInfrastructure {
 
     /// 返回全局资源动作注册表端口对象。
     pub fn resource_action_registry(&self) -> Arc<dyn ResourceActionRegistry> {
-        self.resource_kind_registry.clone()
+        self.resource_action_registry.clone()
     }
 
     /// 创建资源应用服务。

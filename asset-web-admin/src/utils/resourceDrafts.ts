@@ -108,7 +108,7 @@ function detectScore(option: ResourceKindOption, mimeType: string, filename: str
   let score = 0;
   score = Math.max(score, detectRuleScore(option.detect, mimeType, filename, 100));
   for (const action of option.actions) {
-    score = Math.max(score, detectRuleScore(action.when, mimeType, filename, 0));
+    score = Math.max(score, detectRuleScore(action.applies_to, mimeType, filename, 0));
   }
 
   return score;

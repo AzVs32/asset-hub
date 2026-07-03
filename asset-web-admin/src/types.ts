@@ -32,8 +32,28 @@ export type ResourceActions = {
 export type ResourceActionDefinition = {
   id: string;
   label: string;
+  description: string | null;
+  executor: {
+    type: "builtin" | "plugin";
+    handler: string | null;
+  };
   access: "read_only" | "read_write";
-  when?: {
+  requires: {
+    resource: boolean;
+    metadata: boolean;
+    content: boolean;
+    content_delivery: "auto" | "inline" | "url";
+  };
+  output: {
+    view: string[];
+  };
+  ui: {
+    group: string | null;
+    order: number | null;
+    locations: string[];
+  };
+  applies_to: {
+    kinds: string[];
     mime_types: string[];
     extensions: string[];
   };
@@ -181,4 +201,3 @@ export type ResourceTreeRow =
       resource: Resource;
       depth: number;
     };
-

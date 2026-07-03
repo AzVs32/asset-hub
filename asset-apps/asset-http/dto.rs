@@ -4,7 +4,8 @@ use asset_core::domain::{
     ResourceStatus,
 };
 use asset_core::port::{
-    ResourceActionAccess, ResourceActionDefinition, ResourceActionOutput, ResourceKindDefinition,
+    ResourceActionAccess, ResourceActionContentDelivery, ResourceActionDefinition,
+    ResourceActionExecutorKind, ResourceActionOutput, ResourceKindDefinition,
 };
 use asset_core::service::{ReadableResource, ResourceActions};
 use serde::{Deserialize, Serialize};
@@ -201,7 +202,7 @@ pub(crate) struct ResourceKindResponse {
     pub(crate) supports_content: bool,
     /// 文件自动识别规则；为空时不会主动匹配，仅可作为手动选择或兜底。
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) detect: Option<ResourceActionWhenResponse>,
+    pub(crate) detect: Option<ResourceContentMatcherResponse>,
     /// kind 支持的动作。
     pub(crate) actions: Vec<ResourceActionDefinitionResponse>,
     /// 定义来源：`builtin`、`config` 或 `plugin:<id>`。
@@ -216,7 +217,7 @@ impl From<&ResourceKindDefinition> for ResourceKindResponse {
             schema_id: definition.schema_id().map(str::to_string),
             metadata_schema: definition.metadata_schema().cloned(),
             supports_content: definition.supports_content(),
-            detect: (!definition.detect().is_empty()).then(|| ResourceActionWhenResponse {
+            detect: (!definition.detect().is_empty()).then(|| ResourceContentMatcherResponse {
                 mime_types: definition.detect().mime_types().to_vec(),
                 extensions: definition.detect().extensions().to_vec(),
             }),
@@ -237,19 +238,63 @@ pub(crate) struct ResourceActionDefinitionResponse {
     pub(crate) id: String,
     /// 展示名称。
     pub(crate) label: String,
+    /// 动作说明。
+    pub(crate) description: Option<String>,
+    /// 执行器声明。
+    pub(crate) executor: ResourceActionExecutorResponse,
     /// 访问边界。
     pub(crate) access: String,
-    /// 内容匹配条件；为空时表示适用于该 kind 的所有内容。
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) when: Option<ResourceActionWhenResponse>,
+    /// 动作所需数据。
+    pub(crate) requires: ResourceActionRequirementsResponse,
+    /// 输出约定。
+    pub(crate) output: ResourceActionOutputContractResponse,
+    /// UI 展示提示。
+    pub(crate) ui: ResourceActionUiResponse,
+    /// 资源和内容匹配条件。
+    pub(crate) applies_to: ResourceActionAppliesToResponse,
 }
 
-/// 资源动作内容匹配条件。
 #[derive(Debug, Clone, Serialize, ToSchema)]
-pub(crate) struct ResourceActionWhenResponse {
+pub(crate) struct ResourceActionExecutorResponse {
+    #[serde(rename = "type")]
+    pub(crate) kind: String,
+    pub(crate) handler: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub(crate) struct ResourceActionRequirementsResponse {
+    pub(crate) resource: bool,
+    pub(crate) metadata: bool,
+    pub(crate) content: bool,
+    pub(crate) content_delivery: String,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub(crate) struct ResourceActionOutputContractResponse {
+    pub(crate) view: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub(crate) struct ResourceActionUiResponse {
+    pub(crate) group: Option<String>,
+    pub(crate) order: Option<i32>,
+    pub(crate) locations: Vec<String>,
+}
+
+/// 内容匹配条件。
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub(crate) struct ResourceContentMatcherResponse {
     /// 匹配的 MIME 类型，支持 `image/*` 这类通配前缀。
     pub(crate) mime_types: Vec<String>,
     /// 匹配的文件扩展名。
+    pub(crate) extensions: Vec<String>,
+}
+
+/// 资源动作适用范围。
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub(crate) struct ResourceActionAppliesToResponse {
+    pub(crate) kinds: Vec<String>,
+    pub(crate) mime_types: Vec<String>,
     pub(crate) extensions: Vec<String>,
 }
 
@@ -258,14 +303,40 @@ impl From<&ResourceActionDefinition> for ResourceActionDefinitionResponse {
         Self {
             id: action.id().as_str().to_string(),
             label: action.label().to_string(),
+            description: action.description().map(str::to_string),
+            executor: ResourceActionExecutorResponse {
+                kind: action_executor_text(action.executor()).to_string(),
+                handler: action.handler().map(str::to_string),
+            },
             access: action_access_text(action.access()).to_string(),
-            when: (!action.when().mime_types().is_empty()
-                || !action.when().extensions().is_empty())
-            .then(|| ResourceActionWhenResponse {
-                mime_types: action.when().mime_types().to_vec(),
-                extensions: action.when().extensions().to_vec(),
-            }),
+            requires: ResourceActionRequirementsResponse {
+                resource: action.requirements().resource,
+                metadata: action.requirements().metadata,
+                content: action.requirements().content,
+                content_delivery: content_delivery_text(action.requirements().content_delivery)
+                    .to_string(),
+            },
+            output: ResourceActionOutputContractResponse {
+                view: action.output().view.clone(),
+            },
+            ui: ResourceActionUiResponse {
+                group: action.ui().group.clone(),
+                order: action.ui().order,
+                locations: action.ui().locations.clone(),
+            },
+            applies_to: ResourceActionAppliesToResponse {
+                kinds: action.applies_to().kinds().to_vec(),
+                mime_types: action.content_matcher().mime_types().to_vec(),
+                extensions: action.content_matcher().extensions().to_vec(),
+            },
         }
+    }
+}
+
+fn action_executor_text(executor: ResourceActionExecutorKind) -> &'static str {
+    match executor {
+        ResourceActionExecutorKind::Builtin => "builtin",
+        ResourceActionExecutorKind::Plugin => "plugin",
     }
 }
 
@@ -273,6 +344,14 @@ fn action_access_text(access: ResourceActionAccess) -> &'static str {
     match access {
         ResourceActionAccess::ReadOnly => "read_only",
         ResourceActionAccess::ReadWrite => "read_write",
+    }
+}
+
+fn content_delivery_text(delivery: ResourceActionContentDelivery) -> &'static str {
+    match delivery {
+        ResourceActionContentDelivery::Auto => "auto",
+        ResourceActionContentDelivery::Inline => "inline",
+        ResourceActionContentDelivery::Url => "url",
     }
 }
 

@@ -25,14 +25,15 @@ The action returns an Asset Hub `PluginView` frame payload:
 {
   "view": "plugin_frame",
   "title": "note.md",
-  "url": "/plugins/azvs.markdown/index.html#payload=..."
+  "url": "index.html#payload=..."
 }
 ```
 
 The Rust plugin reads Markdown content, returns a `plugin_frame` view, and
-handles writeback through a `replace_content` effect. The frame URL loads
-`web/dist/index.html`. The browser viewer uses `markdown-it` to render Markdown,
-shows a title tree on the left, and defaults to displaying the full document.
+handles writeback through a `replace_content` effect. The frame URL is relative
+to the plugin web root; Asset Hub resolves it to the public plugin asset route.
+The browser viewer uses `markdown-it` to render Markdown, shows a title tree on
+the left, and defaults to displaying the full document.
 
 ## Build
 

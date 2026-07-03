@@ -1,6 +1,7 @@
 use crate::{
-    ResourceActionAccess, ResourceActionContentDelivery, ResourceActionDefinition,
-    ResourceActionWhen,
+    ResourceActionAccess, ResourceActionAppliesTo, ResourceActionContentDelivery,
+    ResourceActionDefinition, ResourceActionExecutorKind, ResourceActionOutputContract,
+    ResourceActionRequirements, ResourceActionUi, ResourceContentMatcher,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -22,7 +23,7 @@ pub struct ResourceKindCapability {
     pub schema_id: Option<String>,
     pub metadata_schema: Option<Value>,
     pub supports_content: bool,
-    pub detect: ResourceActionWhen,
+    pub detect: ResourceContentMatcher,
 }
 
 impl Default for ResourceKindCapability {
@@ -33,7 +34,7 @@ impl Default for ResourceKindCapability {
             schema_id: None,
             metadata_schema: None,
             supports_content: true,
-            detect: ResourceActionWhen::default(),
+            detect: ResourceContentMatcher::default(),
         }
     }
 }
@@ -62,18 +63,44 @@ pub struct ResourceActionCapability {
 impl ResourceActionCapability {
     pub fn to_definition(&self) -> ResourceActionDefinition {
         let mut definition = ResourceActionDefinition::new(self.id.clone(), self.label.clone())
+            .with_description(self.description.clone())
             .with_access(self.access.to_resource_action_access())
-            .with_when(self.applies_to.when());
+            .with_applies_to(self.applies_to.to_definition());
         if let Some(requires) = &self.requires {
-            definition = definition.with_requires_content(requires.content);
-            if let Some(delivery) = requires.content_delivery {
-                definition = definition.with_content_delivery(delivery.to_resource_delivery());
-            }
+            definition = definition.with_requirements(requires.to_definition());
         }
-        if let Some(handler) = self.plugin_handler() {
+        if let Some(output) = &self.output {
+            definition = definition.with_output(ResourceActionOutputContract {
+                view: output.view.clone(),
+            });
+        }
+        if let Some(ui) = &self.ui {
+            definition = definition.with_ui(ResourceActionUi {
+                group: ui.group.clone(),
+                order: ui.order,
+                locations: ui.locations.clone(),
+            });
+        }
+        if let Some(handler) = self.handler() {
             definition = definition.with_handler(handler);
         }
+        definition = definition.with_executor(self.executor_kind());
         definition
+    }
+
+    pub fn executor_kind(&self) -> ResourceActionExecutorKind {
+        match &self.executor {
+            Some(ActionExecutor::Plugin { .. }) => ResourceActionExecutorKind::Plugin,
+            _ => ResourceActionExecutorKind::Builtin,
+        }
+    }
+
+    pub fn handler(&self) -> Option<&str> {
+        match &self.executor {
+            Some(ActionExecutor::Builtin { handler })
+            | Some(ActionExecutor::Plugin { handler }) => Some(handler.as_str()),
+            _ => None,
+        }
     }
 
     pub fn plugin_handler(&self) -> Option<&str> {
@@ -88,7 +115,7 @@ impl ResourceActionCapability {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ActionExecutor {
-    Builtin,
+    Builtin { handler: String },
     Plugin { handler: String },
 }
 
@@ -120,8 +147,8 @@ pub struct ActionAppliesTo {
 }
 
 impl ActionAppliesTo {
-    pub fn when(&self) -> ResourceActionWhen {
-        ResourceActionWhen::new()
+    pub fn to_definition(&self) -> ResourceActionAppliesTo {
+        ResourceActionAppliesTo::new()
             .with_kinds(self.kinds.clone())
             .with_mime_types(self.media_types.clone())
             .with_extensions(self.extensions.clone())
@@ -139,6 +166,20 @@ pub struct ActionRequirements {
     pub content: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_delivery: Option<ContentDelivery>,
+}
+
+impl ActionRequirements {
+    pub fn to_definition(&self) -> ResourceActionRequirements {
+        ResourceActionRequirements {
+            resource: self.resource,
+            metadata: self.metadata,
+            content: self.content,
+            content_delivery: self
+                .content_delivery
+                .map(ContentDelivery::to_resource_delivery)
+                .unwrap_or(ResourceActionContentDelivery::Auto),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

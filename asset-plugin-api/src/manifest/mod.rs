@@ -85,8 +85,11 @@ fn validate_capabilities(capabilities: &PluginCapabilities) -> Result<(), String
                 action.id
             ));
         }
-        if matches!(action.executor, Some(ActionExecutor::Plugin { ref handler }) if handler.trim().is_empty())
-        {
+        if matches!(
+            action.executor,
+            Some(ActionExecutor::Builtin { ref handler } | ActionExecutor::Plugin { ref handler })
+                if handler.trim().is_empty()
+        ) {
             return Err(format!(
                 "capabilities.resource_actions[`{}`].executor.handler must not be empty",
                 action.id

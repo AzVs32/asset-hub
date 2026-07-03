@@ -16,7 +16,7 @@ use serde_json::Value;
 pub struct ResourceActionRequest {
     resource: Resource,
     action: ResourceAction,
-    handler: String,
+    handler: Option<String>,
     access: ResourceActionAccess,
     content_delivery: ResourceActionContentDelivery,
     input: Value,
@@ -27,7 +27,7 @@ impl ResourceActionRequest {
     pub fn new(
         resource: Resource,
         action: ResourceAction,
-        handler: impl Into<String>,
+        handler: Option<impl Into<String>>,
         access: ResourceActionAccess,
         content_delivery: ResourceActionContentDelivery,
         input: Value,
@@ -36,7 +36,7 @@ impl ResourceActionRequest {
         Self {
             resource,
             action,
-            handler: handler.into(),
+            handler: handler.map(Into::into),
             access,
             content_delivery,
             input,
@@ -52,8 +52,8 @@ impl ResourceActionRequest {
         &self.action
     }
 
-    pub fn handler(&self) -> &str {
-        &self.handler
+    pub fn handler(&self) -> Option<&str> {
+        self.handler.as_deref()
     }
 
     pub fn access(&self) -> ResourceActionAccess {

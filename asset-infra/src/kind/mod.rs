@@ -15,6 +15,11 @@ use std::path::PathBuf;
 #[derive(Debug, Clone)]
 pub struct DefaultResourceKindRegistry {
     definitions: Vec<ResourceKindDefinition>,
+}
+
+/// 默认资源动作注册表。
+#[derive(Debug, Clone)]
+pub struct DefaultResourceActionRegistry {
     actions: Vec<ResourceActionDefinition>,
 }
 
@@ -26,99 +31,122 @@ impl DefaultResourceKindRegistry {
 
     /// 从配置和插件 manifest 创建资源类型注册表。
     pub fn from_config(config: &KindRegistryConfig) -> Result<Self, CoreError> {
-        let mut definitions = Vec::new();
-        let official_manifests = load_official_plugin_manifests()?;
-        let mut plugin_manifests = Vec::new();
-        for manifest_path in &config.plugin_manifests {
-            plugin_manifests.push(load_plugin_manifest(manifest_path.clone())?);
-        }
+        let (definitions, _) = build_registries(config)?;
+        Ok(Self { definitions })
+    }
+}
 
-        for kind in ResourceKind::builtin_values() {
+impl DefaultResourceActionRegistry {
+    /// 创建默认资源动作注册表。
+    pub fn new() -> Result<Self, CoreError> {
+        Self::from_config(&KindRegistryConfig::default())
+    }
+
+    /// 从配置和插件 manifest 创建资源动作注册表。
+    pub fn from_config(config: &KindRegistryConfig) -> Result<Self, CoreError> {
+        let (_, actions) = build_registries(config)?;
+        Ok(Self { actions })
+    }
+}
+
+fn build_registries(
+    config: &KindRegistryConfig,
+) -> Result<(Vec<ResourceKindDefinition>, Vec<ResourceActionDefinition>), CoreError> {
+    let mut definitions = Vec::new();
+    let official_manifests = load_official_plugin_manifests()?;
+    let mut plugin_manifests = Vec::new();
+    for manifest_path in &config.plugin_manifests {
+        plugin_manifests.push(load_plugin_manifest(manifest_path.clone())?);
+    }
+
+    for kind in ResourceKind::builtin_values() {
+        push_definition(
+            &mut definitions,
+            definition_from_parts(
+                kind,
+                kind,
+                None,
+                None,
+                true,
+                asset_core::port::ResourceContentMatcher::default(),
+                Vec::new(),
+                "builtin",
+            )?,
+        )?;
+    }
+    for manifest in &official_manifests {
+        for config_definition in &manifest.capabilities.resource_kinds {
             push_definition(
                 &mut definitions,
-                definition_from_parts(
-                    kind,
-                    kind,
-                    None,
-                    None,
-                    true,
-                    asset_core::port::ResourceActionWhen::default(),
-                    Vec::new(),
-                    "builtin",
+                definition_from_manifest_kind(
+                    config_definition,
+                    format!("plugin:{}", manifest.plugin_id()),
                 )?,
             )?;
         }
-        for manifest in &official_manifests {
-            for config_definition in &manifest.capabilities.resource_kinds {
-                push_definition(
-                    &mut definitions,
-                    definition_from_manifest_kind(
-                        config_definition,
-                        format!("plugin:{}", manifest.plugin_id()),
-                    )?,
-                )?;
-            }
-        }
+    }
 
-        for config_definition in &config.definitions {
+    for config_definition in &config.definitions {
+        push_definition(
+            &mut definitions,
+            definition_from_config(config_definition, "config")?,
+        )?;
+    }
+
+    for manifest in &plugin_manifests {
+        for config_definition in &manifest.manifest.capabilities.resource_kinds {
             push_definition(
                 &mut definitions,
-                definition_from_config(config_definition, "config")?,
+                definition_from_manifest_kind(
+                    config_definition,
+                    format!("plugin:{}", manifest.manifest.plugin_id()),
+                )?,
             )?;
         }
-
-        for manifest in &plugin_manifests {
-            for config_definition in &manifest.manifest.capabilities.resource_kinds {
-                push_definition(
-                    &mut definitions,
-                    definition_from_manifest_kind(
-                        config_definition,
-                        format!("plugin:{}", manifest.manifest.plugin_id()),
-                    )?,
-                )?;
-            }
-        }
-
-        let mut actions = Vec::new();
-        for manifest in &official_manifests {
-            for action in &manifest.capabilities.resource_actions {
-                push_action_definition(
-                    &mut actions,
-                    action.to_definition(),
-                    format!("plugin:{}", manifest.plugin_id()),
-                )?;
-                extend_definitions_for_action(
-                    &mut definitions,
-                    action,
-                    format!("plugin:{}", manifest.plugin_id()),
-                )?;
-            }
-        }
-        for manifest in &plugin_manifests {
-            for action in &manifest.manifest.capabilities.resource_actions {
-                push_action_definition(
-                    &mut actions,
-                    action.to_definition(),
-                    format!("plugin:{}", manifest.manifest.plugin_id()),
-                )?;
-                extend_definitions_for_action(
-                    &mut definitions,
-                    action,
-                    format!("plugin:{}", manifest.manifest.plugin_id()),
-                )?;
-            }
-        }
-
-        Ok(Self {
-            definitions,
-            actions,
-        })
     }
+
+    let mut actions = Vec::new();
+    for manifest in &official_manifests {
+        for action in &manifest.capabilities.resource_actions {
+            push_action_definition(
+                &mut actions,
+                action.to_definition(),
+                format!("plugin:{}", manifest.plugin_id()),
+            )?;
+            extend_definitions_for_action(
+                &mut definitions,
+                action,
+                format!("plugin:{}", manifest.plugin_id()),
+            )?;
+        }
+    }
+    for manifest in &plugin_manifests {
+        for action in &manifest.manifest.capabilities.resource_actions {
+            push_action_definition(
+                &mut actions,
+                action.to_definition(),
+                format!("plugin:{}", manifest.manifest.plugin_id()),
+            )?;
+            extend_definitions_for_action(
+                &mut definitions,
+                action,
+                format!("plugin:{}", manifest.manifest.plugin_id()),
+            )?;
+        }
+    }
+
+    Ok((definitions, actions))
 }
 
 impl Default for DefaultResourceKindRegistry {
     fn default() -> Self {
         Self::new().expect("default resource kind definitions should be valid")
+    }
+}
+
+impl Default for DefaultResourceActionRegistry {
+    fn default() -> Self {
+        Self::new().expect("default resource action definitions should be valid")
     }
 }
 
@@ -128,9 +156,9 @@ impl ResourceKindRegistry for DefaultResourceKindRegistry {
     }
 }
 
-impl ResourceActionRegistry for DefaultResourceKindRegistry {
-    fn list_actions(&self) -> Vec<ResourceActionDefinition> {
-        self.actions.clone()
+impl ResourceActionRegistry for DefaultResourceActionRegistry {
+    fn actions(&self) -> &[ResourceActionDefinition] {
+        &self.actions
     }
 }
 
@@ -181,8 +209,10 @@ fn extend_definition(
             )));
         }
 
-        let action = if action.when().is_empty() && !extension.when.is_empty() {
-            action.clone().with_when(extension.when.clone())
+        let action = if action.content_matcher().is_empty() && !extension.content.is_empty() {
+            action
+                .clone()
+                .with_content_matcher(extension.content.clone())
         } else {
             action.clone()
         };
@@ -202,7 +232,7 @@ fn extend_definitions_for_action(
     for kind in &action.applies_to.kinds {
         let extension = ResourceKindExtensionConfig {
             kind: kind.clone(),
-            when: asset_core::port::ResourceActionWhen::default(),
+            content: asset_core::port::ResourceContentMatcher::default(),
             actions: vec![action.to_definition()],
         };
         extend_definition(definitions, &extension, source.clone())?;
@@ -213,8 +243,19 @@ fn extend_definitions_for_action(
 fn push_action_definition(
     actions: &mut Vec<ResourceActionDefinition>,
     action: ResourceActionDefinition,
-    _source: impl Into<String>,
+    source: impl Into<String>,
 ) -> Result<(), CoreError> {
+    let source = source.into();
+    if actions
+        .iter()
+        .any(|existing| existing.id().as_str() == action.id().as_str())
+    {
+        return Err(CoreError::configuration(format!(
+            "duplicate global resource action `{}` from {source}",
+            action.id()
+        )));
+    }
+
     actions.push(action);
     Ok(())
 }
@@ -260,7 +301,7 @@ fn definition_from_parts(
     schema_id: Option<String>,
     metadata_schema: Option<serde_json::Value>,
     supports_content: bool,
-    detect: asset_core::port::ResourceActionWhen,
+    detect: asset_core::port::ResourceContentMatcher,
     actions: Vec<ResourceActionDefinition>,
     source: impl Into<String>,
 ) -> Result<ResourceKindDefinition, CoreError> {
@@ -413,8 +454,8 @@ mod tests {
 
     #[test]
     fn registry_exposes_actions_as_global_capabilities() {
-        let registry = DefaultResourceKindRegistry::new().unwrap();
-        let actions = registry.list_actions();
+        let registry = DefaultResourceActionRegistry::new().unwrap();
+        let actions = registry.actions();
 
         assert!(actions.iter().any(|action| {
             action.id().as_str() == ResourceAction::PREVIEW
@@ -459,10 +500,11 @@ mod tests {
                 ],
                 "resource_actions": [
                   {
-                    "id": "preview",
+                    "id": "mindustry.preview",
                     "label": "Preview",
                     "executor": {
-                      "type": "builtin"
+                      "type": "builtin",
+                      "handler": "builtin.media.preview"
                     },
                     "applies_to": {
                       "kinds": ["mindustry:mod"]
@@ -499,7 +541,7 @@ mod tests {
 
         assert_eq!(definition.label(), "Mindustry Mod");
         assert_eq!(definition.source(), "plugin:mindustry");
-        assert!(definition.has_action(ResourceAction::PREVIEW));
+        assert!(definition.has_action("mindustry.preview"));
         assert_eq!(definition.metadata_schema().unwrap()["type"], "object");
 
         let _ = std::fs::remove_dir_all(root);
@@ -685,6 +727,74 @@ mod tests {
         .unwrap_err();
 
         assert!(error.to_string().contains("duplicate resource kind"));
+    }
+
+    #[test]
+    fn registry_rejects_duplicate_global_action_ids() {
+        let root = unique_temp_path("duplicate-action");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("duplicate-preview.json"),
+            r#"
+            {
+              "manifest_version": 1,
+              "plugin": {
+                "id": "duplicate-preview",
+                "name": "Duplicate Preview",
+                "version": "0.1.0",
+                "publisher": "test",
+                "description": "Duplicate action id test plugin."
+              },
+              "runtime": {
+                "type": "builtin"
+              },
+              "capabilities": {
+                "resource_kinds": [],
+                "resource_actions": [
+                  {
+                    "id": "preview",
+                    "label": "Preview",
+                    "executor": {
+                      "type": "builtin",
+                      "handler": "builtin.media.preview"
+                    },
+                    "applies_to": {
+                      "kinds": ["core:image"]
+                    },
+                    "access": "read"
+                  }
+                ]
+              },
+              "permissions": {
+                "resource": {
+                  "read": true,
+                  "write": false
+                },
+                "content": {
+                  "read": true,
+                  "write": false
+                },
+                "network": false,
+                "filesystem": false
+              }
+            }
+            "#,
+        )
+        .unwrap();
+
+        let error = DefaultResourceActionRegistry::from_config(&KindRegistryConfig {
+            definitions: Vec::new(),
+            plugin_manifests: vec![root.join("duplicate-preview.json")],
+        })
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("duplicate global resource action `preview`")
+        );
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     fn unique_temp_path(name: &str) -> PathBuf {

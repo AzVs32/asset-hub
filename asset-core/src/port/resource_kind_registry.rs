@@ -5,8 +5,8 @@
 
 use crate::domain::ResourceKind;
 pub use asset_plugin_api::{
-    ResourceAction, ResourceActionAccess, ResourceActionContentDelivery, ResourceActionDefinition,
-    ResourceActionWhen,
+    ResourceAction, ResourceActionAccess, ResourceActionAppliesTo, ResourceActionContentDelivery,
+    ResourceActionDefinition, ResourceActionExecutorKind, ResourceContentMatcher,
 };
 use serde_json::Value;
 
@@ -24,7 +24,7 @@ pub struct ResourceKindDefinition {
     /// 是否支持对象内容。
     supports_content: bool,
     /// 文件自动识别规则。
-    detect: ResourceActionWhen,
+    detect: ResourceContentMatcher,
     /// kind 支持的动作，例如 `read`、`thumbnail`、`plugin:sync`。
     actions: Vec<ResourceActionDefinition>,
     /// 定义来源，例如 `builtin`、`config` 或 `plugin:<id>`。
@@ -56,7 +56,7 @@ impl ResourceKindDefinition {
             schema_id,
             metadata_schema: None,
             supports_content,
-            detect: ResourceActionWhen::default(),
+            detect: ResourceContentMatcher::default(),
             actions: Vec::new(),
             source: source.into(),
         }
@@ -69,7 +69,7 @@ impl ResourceKindDefinition {
     }
 
     /// 设置文件自动识别规则。
-    pub fn with_detect(mut self, detect: ResourceActionWhen) -> Self {
+    pub fn with_detect(mut self, detect: ResourceContentMatcher) -> Self {
         self.detect = detect;
         self
     }
@@ -106,7 +106,7 @@ impl ResourceKindDefinition {
     }
 
     /// 返回文件自动识别规则。
-    pub fn detect(&self) -> &ResourceActionWhen {
+    pub fn detect(&self) -> &ResourceContentMatcher {
         &self.detect
     }
 
@@ -165,7 +165,7 @@ pub trait ResourceKindRegistry: Send + Sync {
             let mut score = content_match_score(definition.detect(), mime_type, storage_key, 100);
             for action in definition.actions() {
                 score = score.max(content_match_score(
-                    action.when(),
+                    action.content_matcher(),
                     mime_type,
                     storage_key,
                     0,
@@ -189,7 +189,7 @@ pub trait ResourceKindRegistry: Send + Sync {
 }
 
 fn content_match_score(
-    when: &ResourceActionWhen,
+    when: &ResourceContentMatcher,
     mime_type: Option<&str>,
     storage_key: Option<&str>,
     base: u8,
@@ -259,8 +259,8 @@ mod tests {
                 )
                 .with_actions(vec![
                     ResourceActionDefinition::new("azvs.markdown.render", "Read Markdown")
-                        .with_when(
-                            ResourceActionWhen::new()
+                        .with_applies_to(
+                            ResourceActionAppliesTo::new()
                                 .with_kinds(["core:document"])
                                 .with_mime_types(["text/markdown"])
                                 .with_extensions([".md"]),
@@ -280,11 +280,13 @@ mod tests {
         let registry = TestRegistry {
             definitions: vec![
                 ResourceKindDefinition::new(ResourceKind::from("core:image"), "Image", None, true)
-                    .with_detect(ResourceActionWhen::new().with_extensions([".png"])),
+                    .with_detect(ResourceContentMatcher::new().with_extensions([".png"])),
                 ResourceKindDefinition::new(ResourceKind::from("core:file"), "File", None, true)
                     .with_actions(vec![
                         ResourceActionDefinition::new("demo:png_action", "PNG action")
-                            .with_when(ResourceActionWhen::new().with_extensions([".png"])),
+                            .with_content_matcher(
+                                ResourceContentMatcher::new().with_extensions([".png"]),
+                            ),
                     ]),
             ],
         };

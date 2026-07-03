@@ -12,11 +12,7 @@ Asset Hub is a local-first asset management service. The current workspace conta
 ## Requirements
 
 - Rust toolchain with the edition 2024 crates supported.
-- Node.js for the admin UI and TypeScript plugin checks. On this machine the expected Node path is:
-
-```bash
-export PATH=/storage/apps/node-v22.20.0/bin:$PATH
-```
+- Node.js for the admin UI and TypeScript plugin checks.
 
 ## Run The API
 
