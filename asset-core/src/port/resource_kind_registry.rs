@@ -258,7 +258,7 @@ mod tests {
                     true,
                 )
                 .with_actions(vec![
-                    ResourceActionDefinition::new("azvs:render_markdown", "Read Markdown")
+                    ResourceActionDefinition::new("azvs.markdown.render", "Read Markdown")
                         .with_when(
                             ResourceActionWhen::new()
                                 .with_kinds(["core:document"])

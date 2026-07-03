@@ -11,7 +11,7 @@ Extism plugin for Asset Hub EPUB reading.
 ## Resource Kind
 
 - Kind: `azvs:epub`
-- Action: `azvs:render_epub`
+- Action: `azvs.epub.render`
 - Handler: `render_epub`
 
 ## Use

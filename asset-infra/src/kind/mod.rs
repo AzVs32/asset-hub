@@ -542,7 +542,7 @@ mod tests {
                 ],
                 "resource_actions": [
                   {
-                    "id": "azvs:render_epub",
+                    "id": "azvs.epub.render",
                     "label": "Read EPUB",
                     "executor": {
                       "type": "plugin",
@@ -585,7 +585,7 @@ mod tests {
 
         assert_eq!(epub.label(), "EPUB");
         assert_eq!(epub.source(), "plugin:epub");
-        assert!(epub.has_action("azvs:render_epub"));
+        assert!(epub.has_action("azvs.epub.render"));
         assert!(
             epub.detect()
                 .matches(Some("application/epub+zip"), Some("books/book.epub"))

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Markdown</title>
+    <link rel="stylesheet" href="./viewer.css" />
+  </head>
+  <body>
+    <header id="editor-toolbar" class="editor-toolbar" hidden>
+      <strong id="editor-title">Markdown</strong>
+      <span id="save-status" class="save-status"></span>
+      <button id="save-button" type="button">Save</button>
+    </header>
+    <main class="viewer">
+      <nav id="title-tree" class="title-tree" aria-label="Document headings"></nav>
+      <section id="editor-pane" class="editor-pane" hidden>
+        <textarea id="markdown-editor" spellcheck="false"></textarea>
+      </section>
+      <article id="content" class="markdown-body"></article>
+    </main>
+    <script src="./viewer.js"></script>
+  </body>
+</html>

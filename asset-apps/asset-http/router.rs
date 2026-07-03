@@ -19,6 +19,7 @@ use utoipa_swagger_ui::SwaggerUi;
 /// 构建 HTTP 路由。
 ///
 /// 该函数只负责路由注册和共享状态注入，不做运行时初始化。
+#[allow(dead_code)]
 pub(crate) fn build(
     service: ResourceService,
     kind_registry: Arc<dyn ResourceKindRegistry>,
@@ -27,13 +28,28 @@ pub(crate) fn build(
 }
 
 /// 使用显式边界配置构建 HTTP 路由。
+#[allow(dead_code)]
 pub(crate) fn build_with_options(
     service: ResourceService,
     kind_registry: Arc<dyn ResourceKindRegistry>,
     options: RouterOptions,
 ) -> Router {
+    build_with_options_and_plugin_web_roots(service, kind_registry, options, Default::default())
+}
+
+/// 使用显式边界配置和插件 web 根目录构建 HTTP 路由。
+pub(crate) fn build_with_options_and_plugin_web_roots(
+    service: ResourceService,
+    kind_registry: Arc<dyn ResourceKindRegistry>,
+    options: RouterOptions,
+    plugin_web_roots: std::collections::HashMap<String, std::path::PathBuf>,
+) -> Router {
     let mut router = Router::new()
         .route("/health", get(handlers::health))
+        .route(
+            "/plugins/{plugin_id}/{*path}",
+            get(handlers::plugin_web_asset),
+        )
         .route("/resource-kinds", get(handlers::list_resource_kinds))
         .route(
             "/resources",
@@ -90,7 +106,11 @@ pub(crate) fn build_with_options(
                 .layer(cors_layer(options.cors))
                 .layer(DefaultBodyLimit::max(handlers::MAX_UPLOAD_BYTES)),
         )
-        .with_state(HttpState::new(service, kind_registry))
+        .with_state(HttpState::new_with_plugin_web_roots(
+            service,
+            kind_registry,
+            plugin_web_roots,
+        ))
 }
 
 fn cors_layer(policy: CorsPolicy) -> CorsLayer {

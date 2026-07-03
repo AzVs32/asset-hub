@@ -24,6 +24,7 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use bytes::Bytes;
 use futures_util::StreamExt;
+use std::path::{Component, Path as FsPath};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -45,6 +46,66 @@ const DEFAULT_CONTENT_TYPE: &str = "application/octet-stream";
 )]
 pub(crate) async fn health() -> Json<HealthResponse> {
     Json(HealthResponse::ok())
+}
+
+pub(crate) async fn plugin_web_asset(
+    State(state): State<HttpState>,
+    Path((plugin_id, path)): Path<(String, String)>,
+) -> Result<Response, HttpError> {
+    let Some(root) = state.plugin_web_root(&plugin_id) else {
+        return Err(HttpError::not_found(format!(
+            "plugin `{plugin_id}` has no web assets"
+        )));
+    };
+    let Some(relative_path) = clean_plugin_asset_path(&path) else {
+        return Err(HttpError::bad_request("invalid plugin asset path"));
+    };
+    let file_path = root.join(relative_path);
+    let bytes = std::fs::read(&file_path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            HttpError::not_found(format!("plugin asset `{path}` not found"))
+        } else {
+            HttpError::from(CoreError::configuration(format!(
+                "read plugin asset `{}`: {error}",
+                file_path.display()
+            )))
+        }
+    })?;
+    let content_type = plugin_asset_content_type(&file_path);
+
+    Ok((
+        [(header::CONTENT_TYPE, content_type)],
+        axum::body::Body::from(bytes),
+    )
+        .into_response())
+}
+
+fn clean_plugin_asset_path(path: &str) -> Option<std::path::PathBuf> {
+    let path = path.trim_start_matches('/');
+    let path = if path.is_empty() { "index.html" } else { path };
+    let mut clean = std::path::PathBuf::new();
+    for component in FsPath::new(path).components() {
+        match component {
+            Component::Normal(part) => clean.push(part),
+            Component::CurDir => {}
+            _ => return None,
+        }
+    }
+    (!clean.as_os_str().is_empty()).then_some(clean)
+}
+
+fn plugin_asset_content_type(path: &FsPath) -> &'static str {
+    match path.extension().and_then(|value| value.to_str()) {
+        Some("css") => "text/css; charset=utf-8",
+        Some("html") => "text/html; charset=utf-8",
+        Some("js") => "text/javascript; charset=utf-8",
+        Some("json") => "application/json; charset=utf-8",
+        Some("svg") => "image/svg+xml",
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        _ => DEFAULT_CONTENT_TYPE,
+    }
 }
 
 /// 列出当前后端支持的资源类型。

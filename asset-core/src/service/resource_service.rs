@@ -16,7 +16,9 @@ use crate::port::{
     ResourceActionRegistry, ResourceActionRequest, ResourceKindRegistry, ResourcePage,
     ResourceRepository,
 };
-use asset_plugin_api::PluginView;
+use asset_plugin_api::{PluginActionEffect, PluginContentEncoding, PluginView};
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use bytes::Bytes;
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
@@ -948,7 +950,7 @@ impl ResourceService {
         action_id: crate::port::ResourceAction,
         input: serde_json::Value,
     ) -> Result<Option<ResourceActionOutput>, CoreError> {
-        let Some(resource) = self.find_resource(id).await? else {
+        let Some(mut resource) = self.find_resource(id).await? else {
             return Ok(None);
         };
         let definition = self.require_kind_definition(resource.kind())?;
@@ -989,17 +991,87 @@ impl ResourceService {
                 "resource action executor is not configured",
             ));
         };
+        let access = action.access();
         let request = ResourceActionRequest::new(
-            resource,
+            resource.clone(),
             action_id,
             handler,
-            action.access(),
+            access,
             action.content_delivery(),
             input,
             content,
         );
 
-        executor.execute(request).await.map(Some)
+        let output = executor.execute(request).await?;
+        self.apply_action_effects(&mut resource, &output, access)
+            .await?;
+
+        Ok(Some(output))
+    }
+
+    async fn apply_action_effects(
+        &self,
+        resource: &mut Resource,
+        output: &ResourceActionOutput,
+        access: crate::port::ResourceActionAccess,
+    ) -> Result<(), CoreError> {
+        if output.output().effects.is_empty() {
+            return Ok(());
+        }
+        if !matches!(access, crate::port::ResourceActionAccess::ReadWrite) {
+            return Err(CoreError::configuration(format!(
+                "action `{}` returned effects without write access",
+                output.action()
+            )));
+        }
+
+        for effect in &output.output().effects {
+            match effect {
+                PluginActionEffect::ReplaceContent(effect) => {
+                    let Some(current_content) = resource.content().cloned() else {
+                        return Err(CoreError::configuration(format!(
+                            "action `{}` cannot replace missing resource content",
+                            output.action()
+                        )));
+                    };
+                    if !matches!(effect.encoding, PluginContentEncoding::Base64) {
+                        return Err(CoreError::configuration(format!(
+                            "action `{}` returned unsupported replace_content encoding",
+                            output.action()
+                        )));
+                    }
+                    let data = BASE64_STANDARD
+                        .decode(effect.data.as_bytes())
+                        .map(Bytes::from)
+                        .map_err(|error| {
+                            CoreError::configuration(format!(
+                                "action `{}` returned invalid replace_content base64: {error}",
+                                output.action()
+                            ))
+                        })?;
+                    let checksums = plugin_checksums(&effect.checksum, &data)?;
+                    let content = build_content(
+                        current_content.key().clone(),
+                        data.len() as u64,
+                        effect
+                            .mime_type
+                            .clone()
+                            .or_else(|| current_content.mime_type().map(str::to_string)),
+                        effect
+                            .original_filename
+                            .clone()
+                            .or_else(|| current_content.original_filename().map(str::to_string)),
+                        checksums,
+                    )?;
+
+                    self.blob_storage.put(current_content.key(), data).await?;
+                    resource.attach_content(content)?;
+                    self.repository.save(resource).await?;
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// 读取资源预览内容。
@@ -1267,6 +1339,29 @@ fn verify_bytes_checksums(data: &Bytes, checksums: &[Checksum]) -> Result<(), Co
     Ok(())
 }
 
+fn plugin_checksums(
+    checksums: &[asset_plugin_api::PluginChecksum],
+    data: &Bytes,
+) -> Result<Vec<Checksum>, CoreError> {
+    if checksums.is_empty() {
+        return Ok(vec![Checksum::sha256(hex_sha256(data))?]);
+    }
+
+    let mut converted = Vec::with_capacity(checksums.len());
+    for checksum in checksums {
+        match checksum.kind.as_str() {
+            "sha256" => converted.push(Checksum::sha256(checksum.value.clone())?),
+            other => {
+                return Err(CoreError::configuration(format!(
+                    "unsupported plugin checksum kind `{other}`"
+                )));
+            }
+        }
+    }
+    verify_bytes_checksums(data, &converted)?;
+    Ok(converted)
+}
+
 fn stream_with_checksum_tracking(
     data: BlobByteStream,
     checksums: &[Checksum],
@@ -1349,7 +1444,8 @@ mod tests {
         ResourceKindRegistry,
     };
     use asset_plugin_api::{
-        MediaView, PluginActionOutput, PluginContentEncoding, PluginView, TextView,
+        MediaView, PluginActionEffect, PluginActionOutput, PluginContentEncoding, PluginView,
+        ReplaceContentEffect, TextView,
     };
     use async_trait::async_trait;
     use base64::Engine;
@@ -1603,6 +1699,32 @@ mod tests {
                         data: STANDARD.encode(content),
                     })
                 }
+                "azvs.markdown.update" => {
+                    let markdown = request
+                        .input()
+                        .get("markdown")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    let mut output = PluginActionOutput::new(PluginView::Text(TextView {
+                        text: "saved".to_string(),
+                    }));
+                    output
+                        .effects
+                        .push(PluginActionEffect::ReplaceContent(ReplaceContentEffect {
+                            encoding: PluginContentEncoding::Base64,
+                            data: STANDARD.encode(markdown),
+                            mime_type: Some("text/markdown".to_string()),
+                            original_filename: Some("note.md".to_string()),
+                            checksum: Vec::new(),
+                        }));
+
+                    return Ok(ResourceActionOutput::new(
+                        request.resource().id(),
+                        request.action().clone(),
+                        output,
+                    ));
+                }
                 action => {
                     return Err(CoreError::configuration(format!(
                         "unexpected test action `{action}`"
@@ -1685,8 +1807,16 @@ mod tests {
             .with_actions(vec![
                 ResourceActionDefinition::new(ResourceAction::READ, "Read")
                     .with_handler("read_document"),
-                ResourceActionDefinition::new("azvs:render_markdown", "Read Markdown")
+                ResourceActionDefinition::new("azvs.markdown.render", "Read Markdown")
                     .with_handler("render_markdown")
+                    .with_when(
+                        crate::port::ResourceActionWhen::new()
+                            .with_mime_types(["text/markdown", "text/x-markdown"])
+                            .with_extensions([".md", ".markdown"]),
+                    ),
+                ResourceActionDefinition::new("azvs.markdown.update", "Edit Markdown")
+                    .with_handler("update_markdown")
+                    .with_access(crate::port::ResourceActionAccess::ReadWrite)
                     .with_when(
                         crate::port::ResourceActionWhen::new()
                             .with_mime_types(["text/markdown", "text/x-markdown"])
@@ -1703,7 +1833,7 @@ mod tests {
             )
             .with_actions(vec![
                 ResourceActionDefinition::new(ResourceAction::PREVIEW, "Preview"),
-                ResourceActionDefinition::new("azvs:play_mp4", "Play MP4")
+                ResourceActionDefinition::new("azvs.mp4.play", "Play MP4")
                     .with_handler("play_mp4")
                     .with_when(
                         crate::port::ResourceActionWhen::new()
@@ -2034,6 +2164,44 @@ mod tests {
     }
 
     #[test]
+    fn execute_write_action_replaces_resource_content() {
+        let (service, repository, blob_storage) = service();
+        let key = StorageKey::new("docs/note.md").unwrap();
+        let resource = block_on(
+            service.upload_resource_content(
+                UploadResourceContent::new("note.md", key.clone(), Bytes::from_static(b"# Old"))
+                    .with_kind("core:document")
+                    .with_mime_type("text/markdown")
+                    .with_original_filename("note.md"),
+            ),
+        )
+        .unwrap();
+
+        let output = block_on(
+            service.execute_resource_action(
+                &resource.id(),
+                ExecuteResourceAction::new("azvs.markdown.update")
+                    .with_input(json!({"markdown": "# New\n\nUpdated."})),
+            ),
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(output.action().as_str(), "azvs.markdown.update");
+        assert_eq!(
+            blob_storage.get_sync(&key).unwrap(),
+            Bytes::from_static(b"# New\n\nUpdated.")
+        );
+        let updated = repository.find_sync(&resource.id()).unwrap();
+        let content = updated.content().unwrap();
+        assert_eq!(content.size(), 15);
+        assert_eq!(content.mime_type(), Some("text/markdown"));
+        assert_eq!(content.original_filename(), Some("note.md"));
+        assert_eq!(content.checksums().len(), 1);
+        assert_eq!(content.checksums()[0].kind(), ChecksumKind::Sha256);
+    }
+
+    #[test]
     fn read_resource_rejects_non_reader_kind() {
         let (service, _, _) = service();
         let key = StorageKey::new("files/file.txt").unwrap();
@@ -2129,13 +2297,13 @@ mod tests {
             mp4_actions
                 .available_actions()
                 .iter()
-                .any(|action| action.id().as_str() == "azvs:play_mp4")
+                .any(|action| action.id().as_str() == "azvs.mp4.play")
         );
         assert!(
             !webm_actions
                 .available_actions()
                 .iter()
-                .any(|action| action.id().as_str() == "azvs:play_mp4")
+                .any(|action| action.id().as_str() == "azvs.mp4.play")
         );
     }
 

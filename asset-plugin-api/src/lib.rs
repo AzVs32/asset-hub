@@ -37,6 +37,7 @@ pub use request::{
     PluginResource, PluginResourceContent,
 };
 pub use view::{
-    BinaryUrlView, FormView, HtmlView, JsonView, MarkdownView, MediaView, PluginActionOutput,
-    PluginContentEncoding, PluginView, TableColumn, TableView, TextView,
+    BinaryUrlView, FormView, HtmlView, JsonView, MarkdownView, MediaView, PluginActionEffect,
+    PluginActionOutput, PluginContentEncoding, PluginFrameView, PluginView, ReplaceContentEffect,
+    TableColumn, TableView, TextView,
 };

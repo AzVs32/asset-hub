@@ -13,11 +13,14 @@
     "wasi": true,
     "plugin_api": "asset-hub.plugin-api@0.1"
   },
+  "web": {
+    "root": "web/dist"
+  },
   "capabilities": {
     "resource_kinds": [],
     "resource_actions": [
       {
-        "id": "azvs:render_markdown",
+        "id": "azvs.markdown.render",
         "label": "Read Markdown",
         "description": "Parse Markdown into a platform-neutral document view.",
         "executor": {
@@ -37,11 +40,40 @@
           "content_delivery": "url"
         },
         "output": {
-          "view": ["markdown"]
+          "view": ["plugin_frame"]
         },
         "ui": {
           "group": "open",
           "order": 60,
+          "locations": ["resource_detail", "context_menu"]
+        }
+      },
+      {
+        "id": "azvs.markdown.update",
+        "label": "Edit Markdown",
+        "description": "Edit Markdown content and write it back to the resource.",
+        "executor": {
+          "type": "plugin",
+          "handler": "update_markdown"
+        },
+        "applies_to": {
+          "kinds": ["core:document"],
+          "media_types": ["text/markdown", "text/x-markdown"],
+          "extensions": [".md", ".markdown", ".mdown", ".mkd"]
+        },
+        "access": "write",
+        "requires": {
+          "resource": true,
+          "metadata": true,
+          "content": true,
+          "content_delivery": "url"
+        },
+        "output": {
+          "view": ["plugin_frame", "text"]
+        },
+        "ui": {
+          "group": "edit",
+          "order": 70,
           "locations": ["resource_detail", "context_menu"]
         }
       }
@@ -50,11 +82,11 @@
   "permissions": {
     "resource": {
       "read": true,
-      "write": false
+      "write": true
     },
     "content": {
       "read": true,
-      "write": false
+      "write": true
     },
     "network": false,
     "filesystem": false

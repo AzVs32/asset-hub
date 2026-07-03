@@ -12,7 +12,7 @@ Extism plugin for Asset Hub MP4 playback.
 
 - Extends kind: `core:video`
 - Matches: `video/mp4`, `.mp4`, `.m4v`
-- Action: `azvs:play_mp4`
+- Action: `azvs.mp4.play`
 - Handler: `play_mp4`
 
 ## Use

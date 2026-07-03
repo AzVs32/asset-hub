@@ -94,6 +94,11 @@ export type PluginView =
       html: string;
     }
   | {
+      view: "plugin_frame";
+      title?: string;
+      url: string;
+    }
+  | {
       view: "json";
       data: unknown;
     }
@@ -176,5 +181,4 @@ export type ResourceTreeRow =
       resource: Resource;
       depth: number;
     };
-
 

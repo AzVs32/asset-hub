@@ -86,7 +86,7 @@ mod tests {
     fn play_mp4_returns_url_media_view() {
         let output = play_mp4_payload(
             json!({
-                "action": "azvs:play_mp4",
+                "action": "azvs.mp4.play",
                 "access": "read_only",
                 "input": {},
                 "resource": {

@@ -1,3 +1,4 @@
+import React from "react";
 import { apiBase } from "../api";
 import type { PluginActionOutput, PluginView } from "../types";
 
@@ -8,6 +9,10 @@ export function PluginActionResult({ output }: { output: PluginActionOutput }) {
 export function PluginViewResult({ view, title }: { view: PluginView; title: string }) {
   if (view.view === "html") {
     return <iframe className="plugin-html-frame" sandbox="allow-scripts" title={title} srcDoc={view.html} />;
+  }
+
+  if (view.view === "plugin_frame") {
+    return <PluginFrame view={view} title={title} />;
   }
 
   if (view.view === "media") {
@@ -86,6 +91,74 @@ export function PluginViewResult({ view, title }: { view: PluginView; title: str
   );
 }
 
+function PluginFrame({
+  view,
+  title,
+}: {
+  view: Extract<PluginView, { view: "plugin_frame" }>;
+  title: string;
+}) {
+  const ref = React.useRef<HTMLIFrameElement | null>(null);
+
+  React.useEffect(() => {
+    async function onMessage(event: MessageEvent) {
+      if (event.source !== ref.current?.contentWindow) return;
+      const message = event.data;
+      if (!message || message.type !== "asset-hub:execute-resource-action") return;
+
+      try {
+        const response = await fetch(
+          `${apiBase}/resources/${encodeURIComponent(message.resource_id)}/actions/${encodeURIComponent(message.action)}`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              input: message.input ?? {},
+            }),
+          },
+        );
+        const data = await response.json().catch(() => ({}));
+        ref.current?.contentWindow?.postMessage(
+          {
+            type: "asset-hub:execute-resource-action-result",
+            request_id: message.request_id,
+            ok: response.ok,
+            data,
+            error: response.ok ? null : data?.error ?? `${response.status} ${response.statusText}`,
+          },
+          "*",
+        );
+      } catch (error) {
+        ref.current?.contentWindow?.postMessage(
+          {
+            type: "asset-hub:execute-resource-action-result",
+            request_id: message.request_id,
+            ok: false,
+            data: null,
+            error: error instanceof Error ? error.message : "Request failed",
+          },
+          "*",
+        );
+      }
+    }
+
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
+
+  return (
+    <iframe
+      ref={ref}
+      className="plugin-html-frame"
+      sandbox="allow-scripts"
+      title={view.title || title}
+      src={mediaUrl(view.url)}
+    />
+  );
+}
+
 function mediaUrl(value: string): string {
   if (/^https?:\/\//i.test(value)) {
     return value;
@@ -94,7 +167,7 @@ function mediaUrl(value: string): string {
 }
 
 export function pluginViewTitle(view: PluginView): string | null {
-  if ((view.view === "html" || view.view === "media") && view.title) return view.title;
+  if ((view.view === "html" || view.view === "plugin_frame" || view.view === "media") && view.title) return view.title;
   if (view.view === "binary_url" && view.filename) return view.filename;
   return null;
 }
@@ -103,6 +176,4 @@ function formatTableCell(row: unknown, key: string): string {
   const value = row && typeof row === "object" ? (row as Record<string, unknown>)[key] : undefined;
   return typeof value === "string" ? value : JSON.stringify(value ?? "");
 }
-
-
 

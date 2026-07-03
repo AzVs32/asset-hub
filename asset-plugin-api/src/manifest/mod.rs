@@ -26,9 +26,17 @@ pub struct PluginManifest {
     pub manifest_version: u32,
     pub plugin: PluginMetadata,
     pub runtime: PluginRuntime,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web: Option<PluginWeb>,
     #[serde(default)]
     pub capabilities: PluginCapabilities,
     pub permissions: PluginPermissions,
+}
+
+/// Browser-facing assets contributed by a plugin.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginWeb {
+    pub root: std::path::PathBuf,
 }
 
 impl PluginManifest {

@@ -1,5 +1,7 @@
 use asset_core::port::ResourceKindRegistry;
 use asset_core::service::ResourceService;
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 /// HTTP handler 共享状态。
@@ -9,17 +11,19 @@ use std::sync::Arc;
 pub(crate) struct HttpState {
     service: ResourceService,
     kind_registry: Arc<dyn ResourceKindRegistry>,
+    plugin_web_roots: Arc<HashMap<String, PathBuf>>,
 }
 
 impl HttpState {
-    /// 创建 HTTP 共享状态。
-    pub(crate) fn new(
+    pub(crate) fn new_with_plugin_web_roots(
         service: ResourceService,
         kind_registry: Arc<dyn ResourceKindRegistry>,
+        plugin_web_roots: HashMap<String, PathBuf>,
     ) -> Self {
         Self {
             service,
             kind_registry,
+            plugin_web_roots: Arc::new(plugin_web_roots),
         }
     }
 
@@ -31,5 +35,9 @@ impl HttpState {
     /// 返回资源类型注册表。
     pub(crate) fn kind_registry(&self) -> &dyn ResourceKindRegistry {
         self.kind_registry.as_ref()
+    }
+
+    pub(crate) fn plugin_web_root(&self, plugin_id: &str) -> Option<&PathBuf> {
+        self.plugin_web_roots.get(plugin_id)
     }
 }

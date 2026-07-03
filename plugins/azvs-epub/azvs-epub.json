@@ -35,7 +35,7 @@
     ],
     "resource_actions": [
       {
-        "id": "azvs:render_epub",
+        "id": "azvs.epub.render",
         "label": "Read EPUB",
         "description": "Render EPUB content with AzVs plugin.",
         "executor": {

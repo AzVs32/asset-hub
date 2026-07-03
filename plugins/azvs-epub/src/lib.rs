@@ -808,7 +808,7 @@ mod tests {
     fn render_epub_returns_html_reader() {
         let output = render_epub_payload(
             json!({
-                "action": "azvs:render_epub",
+                "action": "azvs.epub.render",
                 "access": "read_only",
                 "input": {},
                 "resource": {

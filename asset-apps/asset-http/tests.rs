@@ -8,6 +8,7 @@ use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::io::{Cursor, Write};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -674,7 +675,7 @@ async fn upload_detects_parent_kind_from_plugin_action_rules() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|action| action["id"] == "azvs:render_markdown")
+            .any(|action| action["id"] == "azvs.markdown.render")
     );
 }
 
@@ -916,6 +917,29 @@ async fn openapi_documents_metadata_examples() {
     assert_eq!(upload_example["data_base64"], "aGVsbG8sIGFzc2V0LWh1YiE=");
 }
 
+#[tokio::test]
+async fn plugin_web_assets_are_served_from_declared_roots() {
+    let app_root = unique_temp_root("plugin-web");
+    let web_root = app_root.join("plugins/azvs-markdown/web");
+    std::fs::create_dir_all(&web_root).unwrap();
+    std::fs::write(
+        web_root.join("index.html"),
+        "<!doctype html><title>Markdown</title>",
+    )
+    .unwrap();
+
+    let app = test_app_with_plugin_web_roots(
+        app_root,
+        HashMap::from([("azvs.markdown".to_string(), web_root)]),
+    )
+    .await;
+    let (status, body) =
+        empty_bytes_request(&app, Method::GET, "/plugins/azvs.markdown/index.html").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, "<!doctype html><title>Markdown</title>");
+}
+
 async fn test_app(name: &str) -> TestApp {
     test_app_with_kind_definitions(name, Vec::new()).await
 }
@@ -990,6 +1014,31 @@ async fn test_app_with_config(
             options,
         )
     };
+
+    TestApp { router, root }
+}
+
+async fn test_app_with_plugin_web_roots(
+    root: PathBuf,
+    plugin_web_roots: HashMap<String, PathBuf>,
+) -> TestApp {
+    let config = AssetInfraConfig {
+        database: DatabaseConfig {
+            sqlite_path: root.join("asset-hub.sqlite"),
+            max_connections: 1,
+        },
+        blob: BlobConfig {
+            fs_root: root.join("blob"),
+        },
+        kind: KindRegistryConfig::default(),
+    };
+    let runtime = AssetRuntime::from_config(config).await.unwrap();
+    let router = router::build_with_options_and_plugin_web_roots(
+        runtime.resource_service(),
+        runtime.resource_kind_registry(),
+        RouterOptions::default(),
+        plugin_web_roots,
+    );
 
     TestApp { router, root }
 }

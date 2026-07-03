@@ -17,7 +17,7 @@
     "resource_kinds": [],
     "resource_actions": [
       {
-        "id": "azvs:play_mp4",
+        "id": "azvs.mp4.play",
         "label": "Play with AzVs MP4",
         "description": "Play MP4 with AzVs plugin.",
         "executor": {

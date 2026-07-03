@@ -5,12 +5,13 @@
   "description": "Asset Hub Markdown processing plugin.",
   "type": "module",
   "scripts": {
-    "build": "node esbuild.config.cjs && extism-js dist/index.js -i src/index.d.ts -o azvs-markdown.wasm",
-    "typecheck": "tsc --noEmit",
-    "test": "tsc --outDir .test-dist --rootDir src && node --test .test-dist/markdown.test.js"
+    "build": "npm run build:web",
+    "build:web": "node esbuild.config.cjs",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@extism/js-pdk": "^1.1.1"
+    "@types/markdown-it": "^14.1.2",
+    "markdown-it": "^14.3.0"
   },
   "devDependencies": {
     "@types/node": "^22.19.3",
