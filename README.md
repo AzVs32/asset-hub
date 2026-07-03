@@ -90,13 +90,7 @@ plugin_manifests = [
 
 ## Checks
 
-Run the local check script:
-
-```bash
-./scripts/check-local.sh
-```
-
-The script runs:
+Run the local checks:
 
 - `cargo test --workspace`
 - `cargo test --manifest-path plugins/azvs-epub/Cargo.toml`

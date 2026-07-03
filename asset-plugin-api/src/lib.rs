@@ -31,7 +31,7 @@ pub use manifest::{
     ActionAppliesTo, ActionExecutor, ActionOutputContract, ActionRequirements, ActionUi,
     ContentDelivery, FilesystemPermission, MANIFEST_VERSION, ManifestActionAccess,
     NetworkPermission, PLUGIN_API_VERSION, PluginCapabilities, PluginManifest, PluginMetadata,
-    PluginPermissions, PluginRuntime, ReadWritePermission, ResourceActionCapability,
+    PluginPermissions, PluginRuntime, PluginWeb, ReadWritePermission, ResourceActionCapability,
     ResourceKindCapability,
 };
 pub use request::{

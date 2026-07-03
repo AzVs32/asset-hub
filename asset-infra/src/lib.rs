@@ -17,7 +17,10 @@ use asset_core::{
 use config::AssetInfraConfig;
 use kind::{DefaultResourceActionRegistry, DefaultResourceKindRegistry};
 use plugin::ExtismResourceActionExecutor;
+use plugin_manifest::load_plugin_manifest_file;
 use sqlite::SqliteResourceRepository;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use storage::OpenDalBlobStorage;
 
@@ -104,6 +107,11 @@ impl AssetInfrastructure {
         self.resource_action_registry.clone()
     }
 
+    /// 返回插件浏览器静态资源根目录。
+    pub fn plugin_web_roots(&self) -> Result<HashMap<String, PathBuf>, CoreError> {
+        plugin_web_roots_from_config(&self.config)
+    }
+
     /// 创建资源应用服务。
     pub fn resource_service(&self) -> ResourceService {
         ResourceService::new_with_action_registry_and_executor(
@@ -114,4 +122,33 @@ impl AssetInfrastructure {
             self.resource_action_executor(),
         )
     }
+}
+
+/// 从配置的插件 manifest 中收集浏览器静态资源根目录。
+pub fn plugin_web_roots_from_config(
+    config: &AssetInfraConfig,
+) -> Result<HashMap<String, PathBuf>, CoreError> {
+    let mut roots = HashMap::new();
+    for manifest_path in &config.kind.plugin_manifests {
+        let manifest = load_plugin_manifest_file(manifest_path)?;
+        let Some(web) = &manifest.web else {
+            continue;
+        };
+        roots.insert(
+            manifest.plugin_id().to_string(),
+            resolve_manifest_path(manifest_path, &web.root),
+        );
+    }
+    Ok(roots)
+}
+
+fn resolve_manifest_path(manifest_path: &Path, configured_path: &Path) -> PathBuf {
+    if configured_path.is_absolute() {
+        return configured_path.to_path_buf();
+    }
+
+    manifest_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(configured_path)
 }

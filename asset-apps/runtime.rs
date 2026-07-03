@@ -3,7 +3,9 @@ use asset_core::port::ResourceKindRegistry;
 use asset_core::service::ResourceService;
 use asset_infra::AssetInfrastructure;
 use asset_infra::config::{AssetInfraConfig, DEFAULT_CONFIG_FILE};
+use std::collections::HashMap;
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 /// 应用运行时。
@@ -66,5 +68,10 @@ impl AssetRuntime {
     /// 返回资源类型注册表。
     pub fn resource_kind_registry(&self) -> Arc<dyn ResourceKindRegistry> {
         self.infrastructure.resource_kind_registry()
+    }
+
+    /// 返回插件浏览器静态资源根目录。
+    pub fn plugin_web_roots(&self) -> Result<HashMap<String, PathBuf>, CoreError> {
+        self.infrastructure.plugin_web_roots()
     }
 }

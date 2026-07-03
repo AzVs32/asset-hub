@@ -5,7 +5,7 @@ use crate::dto::{
     ResourceContentResponse, ResourceKindResponse, ResourceKindsResponse, ResourceMetadataRequest,
     ResourceMetadataResponse, ResourcePageResponse, ResourceReadResponse, ResourceResponse,
     ResourceSummaryMetadataRequest, ResourceSummaryMetadataResponse, UpdateResourceRequest,
-    UploadResourceContentRequest,
+    UploadResourceContentRequest, UploadResourceContentStreamQuery,
 };
 use crate::handlers;
 use utoipa::OpenApi;
@@ -54,7 +54,8 @@ use utoipa::OpenApi;
             ResourceSummaryMetadataRequest,
             ResourceSummaryMetadataResponse,
             UpdateResourceRequest,
-            UploadResourceContentRequest
+            UploadResourceContentRequest,
+            UploadResourceContentStreamQuery
         )
     ),
     tags(

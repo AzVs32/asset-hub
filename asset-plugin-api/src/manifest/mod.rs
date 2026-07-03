@@ -13,8 +13,20 @@ pub use permissions::{
 };
 pub use plugin::PluginMetadata;
 pub use runtime::PluginRuntime;
+pub use web::PluginWeb;
 
 use serde::{Deserialize, Serialize};
+
+mod web {
+    use serde::{Deserialize, Serialize};
+    use std::path::PathBuf;
+
+    /// Browser-facing assets contributed by a plugin.
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct PluginWeb {
+        pub root: PathBuf,
+    }
+}
 
 /// Current manifest schema version.
 pub const MANIFEST_VERSION: u32 = 1;
@@ -31,12 +43,6 @@ pub struct PluginManifest {
     #[serde(default)]
     pub capabilities: PluginCapabilities,
     pub permissions: PluginPermissions,
-}
-
-/// Browser-facing assets contributed by a plugin.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PluginWeb {
-    pub root: std::path::PathBuf,
 }
 
 impl PluginManifest {

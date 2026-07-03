@@ -145,7 +145,7 @@ pub(crate) struct UploadResourceContentRequest {
 }
 
 /// 流式上传内容并创建资源的 query 参数。
-#[derive(Debug, Deserialize, IntoParams)]
+#[derive(Debug, Deserialize, IntoParams, ToSchema)]
 #[into_params(parameter_in = Query)]
 pub(crate) struct UploadResourceContentStreamQuery {
     /// 资源展示名。
