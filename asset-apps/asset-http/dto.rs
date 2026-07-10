@@ -45,6 +45,8 @@ pub(crate) struct CreateResourceRequest {
     pub(crate) kind: Option<String>,
     /// 可选初始状态：`active` 或 `archived`。
     pub(crate) status: Option<String>,
+    /// 资源所在逻辑目录；根目录为空字符串。
+    pub(crate) directory: Option<String>,
     /// 可选资源元数据。
     pub(crate) metadata: Option<ResourceMetadataRequest>,
 }
@@ -56,6 +58,28 @@ pub(crate) struct ListResourcesQuery {
     /// 页码，从 1 开始。
     pub(crate) page: Option<u32>,
     /// 每页数量。
+    pub(crate) limit: Option<u32>,
+    /// 可选资源类型过滤。
+    pub(crate) kind: Option<String>,
+    /// 可选标签过滤。
+    pub(crate) tag: Option<String>,
+    /// 可选名称模糊搜索关键字。
+    pub(crate) q: Option<String>,
+    /// 可选逻辑目录过滤；根目录为空字符串。
+    pub(crate) directory: Option<String>,
+    /// 是否包含软删除资源。
+    pub(crate) include_deleted: Option<bool>,
+}
+
+/// 目录浏览查询参数。
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct ListDirectoryQuery {
+    /// 当前目录路径；根目录为空字符串。
+    pub(crate) path: Option<String>,
+    /// 资源页码，从 1 开始。
+    pub(crate) page: Option<u32>,
+    /// 每页资源数量。
     pub(crate) limit: Option<u32>,
     /// 可选资源类型过滤。
     pub(crate) kind: Option<String>,
@@ -93,6 +117,8 @@ pub(crate) struct UpdateResourceRequest {
     pub(crate) kind: Option<String>,
     /// 可选新状态：`active` 或 `archived`。
     pub(crate) status: Option<String>,
+    /// 可选新逻辑目录；根目录为空字符串。
+    pub(crate) directory: Option<String>,
     /// 可选新资源元数据；会整体替换旧元数据。
     pub(crate) metadata: Option<ResourceMetadataRequest>,
     /// 是否恢复软删除资源。
@@ -164,6 +190,19 @@ pub(crate) struct UploadResourceContentStreamQuery {
     pub(crate) original_filename: Option<String>,
     /// 可选 SHA-256 校验和。
     pub(crate) sha256: Option<String>,
+}
+
+/// 扫描本地对象存储目录请求。
+#[derive(Debug, Default, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "path": "uploads",
+    "sha256": true
+}))]
+pub(crate) struct ScanStorageRequest {
+    /// 可选扫描子目录；未提供时扫描整个对象存储根目录。
+    pub(crate) path: Option<String>,
+    /// 是否计算并保存 SHA-256。默认开启。
+    pub(crate) sha256: Option<bool>,
 }
 
 /// 统一 HTTP 错误响应。
@@ -491,6 +530,8 @@ pub(crate) struct ResourceResponse {
     pub(crate) id: String,
     /// 资源展示名。
     pub(crate) name: String,
+    /// 资源所在逻辑目录，根目录为空字符串。
+    pub(crate) directory: String,
     /// 资源类型。
     pub(crate) kind: String,
     /// 资源生命周期状态。
@@ -537,6 +578,56 @@ pub(crate) struct ResourcePageResponse {
     pub(crate) page: u32,
     /// 每页数量。
     pub(crate) limit: u32,
+}
+
+/// 逻辑目录响应。
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct ResourceDirectoryResponse {
+    /// 目录完整路径。
+    pub(crate) path: String,
+    /// 父目录路径。
+    pub(crate) parent_path: String,
+    /// 当前目录名。
+    pub(crate) name: String,
+}
+
+/// 目录浏览响应。
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct DirectoryListingResponse {
+    /// 当前目录路径。
+    pub(crate) path: String,
+    /// 直接子目录。
+    pub(crate) folders: Vec<ResourceDirectoryResponse>,
+    /// 当前目录下的资源分页。
+    pub(crate) resources: ResourcePageResponse,
+}
+
+/// 扫描本地对象存储目录响应。
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct ScanStorageResponse {
+    /// 扫描根路径。
+    pub(crate) root: String,
+    /// 扫描的逻辑子目录。
+    pub(crate) path: String,
+    /// 扫描到的普通文件数量。
+    pub(crate) scanned: u64,
+    /// 新导入的资源数量。
+    pub(crate) imported: u64,
+    /// 因已存在或导入失败而跳过的数量。
+    pub(crate) skipped: u64,
+    /// 单文件失败信息。
+    pub(crate) errors: Vec<ScanStorageErrorResponse>,
+    /// 本次新导入的资源。
+    pub(crate) resources: Vec<ResourceResponse>,
+}
+
+/// 单文件扫描失败响应。
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct ScanStorageErrorResponse {
+    /// 内容存储键。
+    pub(crate) key: String,
+    /// 失败原因。
+    pub(crate) error: String,
 }
 
 /// 在线阅读响应。
@@ -604,6 +695,7 @@ impl ResourceResponse {
         Self {
             id: resource.id().to_string(),
             name: resource.name().to_string(),
+            directory: resource.directory().to_string(),
             kind: resource.kind().as_str().to_string(),
             status: status_text(resource.status()).to_string(),
             metadata: ResourceMetadataResponse::from(resource.metadata()),

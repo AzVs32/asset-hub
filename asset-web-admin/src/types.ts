@@ -62,6 +62,7 @@ export type ResourceActionDefinition = {
 export type Resource = {
   id: string;
   name: string;
+  directory: string;
   kind: string;
   status: ResourceStatus;
   metadata: ResourceMetadata;
@@ -158,6 +159,28 @@ export type ResourcePage = {
   limit: number;
 };
 
+export type ResourceDirectory = {
+  path: string;
+  parent_path: string;
+  name: string;
+};
+
+export type DirectoryListing = {
+  path: string;
+  folders: ResourceDirectory[];
+  resources: ResourcePage;
+};
+
+export type ScanStorageResponse = {
+  root: string;
+  path: string;
+  scanned: number;
+  imported: number;
+  skipped: number;
+  errors: Array<{ key: string; error: string }>;
+  resources: Resource[];
+};
+
 export type Filters = {
   q: string;
   kind: string;
@@ -169,6 +192,7 @@ export type Filters = {
 
 export type Draft = {
   name: string;
+  directory: string;
   kind: string;
   status: ResourceStatus;
   description: string;
@@ -187,17 +211,3 @@ export type UploadDraft = {
   schemaId: string;
   kindData: string;
 };
-
-export type ResourceTreeRow =
-  | {
-      type: "folder";
-      path: string;
-      name: string;
-      depth: number;
-      count: number;
-    }
-  | {
-      type: "resource";
-      resource: Resource;
-      depth: number;
-    };

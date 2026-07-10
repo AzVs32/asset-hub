@@ -1,8 +1,10 @@
 use crate::dto::{
-    BinaryContent, CreateResourceRequest, ExecuteResourceActionRequest, HealthResponse,
-    ListResourcesQuery, ResourceActionOutputResponse, ResourceKindResponse, ResourceKindsResponse,
+    BinaryContent, CreateResourceRequest, DirectoryListingResponse, ExecuteResourceActionRequest,
+    HealthResponse, ListDirectoryQuery, ListResourcesQuery, ResourceActionOutputResponse,
+    ResourceDirectoryResponse, ResourceKindResponse, ResourceKindsResponse,
     ResourceMetadataRequest, ResourcePageResponse, ResourceReadResponse, ResourceResponse,
-    UpdateResourceRequest, UploadResourceContentRequest, UploadResourceContentStreamQuery,
+    ScanStorageErrorResponse, ScanStorageRequest, ScanStorageResponse, UpdateResourceRequest,
+    UploadResourceContentRequest, UploadResourceContentStreamQuery,
 };
 use crate::error::HttpError;
 use crate::state::HttpState;
@@ -11,8 +13,8 @@ use asset_core::domain::{Checksum, ResourceId, ResourceKind, ResourceStatus, Sto
 use asset_core::port::BlobByteStream;
 use asset_core::port::ListResources;
 use asset_core::service::{
-    CreateResource, ExecuteResourceAction, UpdateResource, UploadResourceContent,
-    UploadResourceContentStream,
+    CreateResource, ExecuteResourceAction, ImportResourceContent, UpdateResource,
+    UploadResourceContent, UploadResourceContentStream,
 };
 use axum::Json;
 use axum::body::Body;
@@ -24,6 +26,9 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use bytes::Bytes;
 use futures_util::StreamExt;
+use sha2::{Digest, Sha256};
+use std::fs::File;
+use std::io::Read;
 use std::path::{Component, Path as FsPath};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -151,6 +156,7 @@ pub(crate) async fn create_resource(
         CreateResource::new(payload.name),
         payload.kind,
         payload.status,
+        payload.directory,
         payload.metadata,
     )?;
     let resource = state.service().create_resource(command).await?;
@@ -195,17 +201,149 @@ pub(crate) async fn list_resources(
         command = command.with_q(q);
     }
 
+    if let Some(directory) = query.directory {
+        command = command.with_directory(clean_directory(Some(directory.as_str()), "")?);
+    }
+
     let page_result = state.service().list_resources(command).await?;
 
-    Ok(Json(ResourcePageResponse {
-        items: page_result
-            .items
-            .iter()
-            .map(|resource| resource_response(state.service(), resource))
-            .collect::<Result<Vec<_>, _>>()?,
-        total: page_result.total,
+    Ok(Json(resource_page_response(
+        state.service(),
+        page_result,
         page,
-        limit: page_result.limit,
+    )?))
+}
+
+/// 列出当前目录的直接子目录和资源。
+#[utoipa::path(
+    get,
+    path = "/directories",
+    tag = "resources",
+    params(ListDirectoryQuery),
+    responses(
+        (status = 200, description = "目录列表", body = DirectoryListingResponse),
+        (status = 400, description = "请求参数无效", body = crate::dto::ErrorResponse),
+        (status = 500, description = "服务端错误", body = crate::dto::ErrorResponse)
+    )
+)]
+pub(crate) async fn list_directory(
+    State(state): State<HttpState>,
+    Query(query): Query<ListDirectoryQuery>,
+) -> Result<Json<DirectoryListingResponse>, HttpError> {
+    let path = clean_directory(query.path.as_deref(), "")?;
+    let page = query.page.unwrap_or(DEFAULT_PAGE).max(1);
+    let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
+    let offset = u64::from(page - 1) * u64::from(limit);
+    let mut resources_query = ListResources::new(limit, offset)
+        .with_directory(path.clone())
+        .with_include_deleted(query.include_deleted.unwrap_or(false));
+
+    if let Some(kind) = query.kind {
+        resources_query = resources_query.with_kind(parse_kind(kind)?);
+    }
+
+    if let Some(tag) = query.tag {
+        resources_query = resources_query.with_tag(tag);
+    }
+
+    if let Some(q) = query.q {
+        resources_query = resources_query.with_q(q);
+    }
+
+    let folders = state
+        .service()
+        .list_directories(&path)
+        .await?
+        .into_iter()
+        .map(|directory| ResourceDirectoryResponse {
+            path: directory.path,
+            parent_path: directory.parent_path,
+            name: directory.name,
+        })
+        .collect();
+    let resources = state.service().list_resources(resources_query).await?;
+
+    Ok(Json(DirectoryListingResponse {
+        path,
+        folders,
+        resources: resource_page_response(state.service(), resources, page)?,
+    }))
+}
+
+/// 扫描本地对象存储目录并补齐资源数据库。
+#[utoipa::path(
+    post,
+    path = "/scan",
+    tag = "resources",
+    request_body = ScanStorageRequest,
+    responses(
+        (status = 200, description = "扫描结果", body = ScanStorageResponse),
+        (status = 400, description = "请求参数无效", body = crate::dto::ErrorResponse),
+        (status = 500, description = "服务端错误", body = crate::dto::ErrorResponse)
+    )
+)]
+pub(crate) async fn scan_storage(
+    State(state): State<HttpState>,
+    payload: Option<Json<ScanStorageRequest>>,
+) -> Result<Json<ScanStorageResponse>, HttpError> {
+    let payload = payload.map(|Json(payload)| payload).unwrap_or_default();
+    let path = clean_directory(payload.path.as_deref(), "")?;
+    let scan_root = if path.is_empty() {
+        state.storage_root().clone()
+    } else {
+        state.storage_root().join(&path)
+    };
+    ensure_scan_root(state.storage_root(), &scan_root)?;
+    let include_sha256 = payload.sha256.unwrap_or(true);
+    let files = tokio::task::spawn_blocking({
+        let storage_root = state.storage_root().clone();
+        move || scan_storage_files(&storage_root, &scan_root, include_sha256)
+    })
+    .await
+    .map_err(|error| CoreError::configuration(format!("scan task failed: {error}")))??;
+
+    let scanned = files.len() as u64;
+    let mut imported = Vec::new();
+    let mut errors = Vec::new();
+    let mut skipped = 0_u64;
+
+    for file in files {
+        let mut command = ImportResourceContent::new(
+            file.name.clone(),
+            StorageKey::new(file.key.clone())?,
+            file.size,
+        )
+        .with_directory(file.directory.clone())
+        .with_original_filename(file.name.clone());
+
+        if let Some(mime_type) = file.mime_type {
+            command = command.with_mime_type(mime_type);
+        }
+        if let Some(sha256) = file.sha256 {
+            command = command.with_checksum(Checksum::sha256(sha256)?);
+        }
+
+        match state.service().import_resource_content(command).await {
+            Ok(Some(resource)) => imported.push(resource_response(state.service(), &resource)?),
+            Ok(None) => skipped += 1,
+            Err(error) => {
+                skipped += 1;
+                errors.push(ScanStorageErrorResponse {
+                    key: file.key,
+                    error: error.to_string(),
+                });
+            }
+        }
+    }
+
+    Ok(Json(ScanStorageResponse {
+        root: state.storage_root().display().to_string(),
+        path,
+        scanned,
+        imported: imported.len() as u64,
+        skipped,
+        errors,
+        resources: imported,
     }))
 }
 
@@ -227,9 +365,10 @@ pub(crate) async fn upload_resource_content(
 ) -> Result<(StatusCode, Json<ResourceResponse>), HttpError> {
     let payload = parse_json_payload(payload)?;
     let original_filename = payload.original_filename.clone();
+    let directory = clean_directory(payload.directory.as_deref(), "uploads")?;
     let storage_key = storage_key_from_upload_parts(
         payload.storage_key,
-        payload.directory,
+        Some(directory.clone()),
         original_filename.as_deref().unwrap_or(&payload.name),
     )?;
     let data = BASE64_STANDARD
@@ -239,6 +378,7 @@ pub(crate) async fn upload_resource_content(
     ensure_upload_size(data.len() as u64)?;
 
     let mut command = UploadResourceContent::new(payload.name, storage_key, data);
+    command = command.with_directory(directory);
     command = apply_common_upload_fields(command, payload.kind, payload.status, payload.metadata)?;
 
     if let Some(mime_type) = payload.mime_type {
@@ -287,15 +427,17 @@ pub(crate) async fn upload_resource_content_stream(
     headers: HeaderMap,
     body: Body,
 ) -> Result<(StatusCode, Json<ResourceResponse>), HttpError> {
+    let directory = clean_directory(query.directory.as_deref(), "uploads")?;
     let storage_key = storage_key_from_upload_parts(
         query.storage_key,
-        query.directory,
+        Some(directory.clone()),
         query.original_filename.as_deref().unwrap_or(&query.name),
     )?;
     ensure_content_length(&headers)?;
     let data = limited_body_stream(body);
 
     let mut command = UploadResourceContentStream::new(query.name, storage_key, data);
+    command = command.with_directory(directory);
     command = apply_common_stream_fields(command, query.kind, query.status, query.metadata_json)?;
 
     if let Some(mime_type) = content_type(&headers)? {
@@ -383,6 +525,10 @@ pub(crate) async fn update_resource(
 
     if let Some(status) = payload.status {
         command = command.with_status(parse_status(&status)?);
+    }
+
+    if let Some(directory) = payload.directory {
+        command = command.with_directory(clean_directory(Some(&directory), "")?);
     }
 
     if let Some(metadata) = payload.metadata {
@@ -627,6 +773,7 @@ fn apply_common_resource_fields(
     mut command: CreateResource,
     kind: Option<String>,
     status: Option<String>,
+    directory: Option<String>,
     metadata: Option<ResourceMetadataRequest>,
 ) -> Result<CreateResource, HttpError> {
     if let Some(kind) = kind {
@@ -635,6 +782,10 @@ fn apply_common_resource_fields(
 
     if let Some(status) = status {
         command = command.with_status(parse_status(&status)?);
+    }
+
+    if let Some(directory) = directory {
+        command = command.with_directory(clean_directory(Some(&directory), "")?);
     }
 
     if let Some(metadata) = metadata {
@@ -698,7 +849,7 @@ fn storage_key_from_upload_parts(
     }
 
     let filename = clean_filename(filename)?;
-    let directory = clean_directory(directory.as_deref())?;
+    let directory = clean_directory(directory.as_deref(), "uploads")?;
     let key = if directory.is_empty() {
         filename
     } else {
@@ -722,9 +873,9 @@ fn clean_filename(value: &str) -> Result<String, HttpError> {
     Ok(filename.to_string())
 }
 
-fn clean_directory(value: Option<&str>) -> Result<String, HttpError> {
+fn clean_directory(value: Option<&str>, default: &str) -> Result<String, HttpError> {
     let Some(value) = value else {
-        return Ok("uploads".to_string());
+        return Ok(default.to_string());
     };
     let value = value.trim().replace('\\', "/");
     if value.is_empty() {
@@ -865,12 +1016,191 @@ fn binary_stream_response(
     response
 }
 
+#[derive(Debug)]
+struct ScannedStorageFile {
+    key: String,
+    name: String,
+    directory: String,
+    size: u64,
+    mime_type: Option<String>,
+    sha256: Option<String>,
+}
+
+fn ensure_scan_root(storage_root: &FsPath, scan_root: &FsPath) -> Result<(), HttpError> {
+    let storage_root = storage_root.canonicalize().map_err(|error| {
+        CoreError::configuration(format!("storage root is not readable: {error}"))
+    })?;
+    let scan_root = scan_root
+        .canonicalize()
+        .map_err(|error| HttpError::bad_request(format!("scan path is not readable: {error}")))?;
+
+    if !scan_root.starts_with(&storage_root) {
+        return Err(HttpError::bad_request(
+            "scan path must be inside storage root",
+        ));
+    }
+
+    if !scan_root.is_dir() {
+        return Err(HttpError::bad_request("scan path must be a directory"));
+    }
+
+    Ok(())
+}
+
+fn scan_storage_files(
+    storage_root: &FsPath,
+    scan_root: &FsPath,
+    include_sha256: bool,
+) -> Result<Vec<ScannedStorageFile>, CoreError> {
+    let storage_root = storage_root.canonicalize().map_err(|error| {
+        CoreError::configuration(format!("storage root is not readable: {error}"))
+    })?;
+    let scan_root = scan_root
+        .canonicalize()
+        .map_err(|error| CoreError::configuration(format!("scan path is not readable: {error}")))?;
+    let mut files = Vec::new();
+    collect_storage_files(&storage_root, &scan_root, include_sha256, &mut files)?;
+    files.sort_by(|left, right| left.key.cmp(&right.key));
+    Ok(files)
+}
+
+fn collect_storage_files(
+    storage_root: &FsPath,
+    current: &FsPath,
+    include_sha256: bool,
+    files: &mut Vec<ScannedStorageFile>,
+) -> Result<(), CoreError> {
+    let entries =
+        std::fs::read_dir(current).map_err(|error| CoreError::storage("scan.read_dir", error))?;
+
+    for entry in entries {
+        let entry = entry.map_err(|error| CoreError::storage("scan.read_dir_entry", error))?;
+        let path = entry.path();
+        let metadata = entry
+            .metadata()
+            .map_err(|error| CoreError::storage("scan.metadata", error))?;
+
+        if metadata.is_dir() {
+            collect_storage_files(storage_root, &path, include_sha256, files)?;
+            continue;
+        }
+
+        if !metadata.is_file() {
+            continue;
+        }
+
+        let Some(key) = storage_key_from_file_path(storage_root, &path) else {
+            continue;
+        };
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or(key.as_str())
+            .to_string();
+        let directory = key
+            .rsplit_once('/')
+            .map(|(directory, _)| directory.to_string())
+            .unwrap_or_default();
+        let sha256 = if include_sha256 {
+            Some(sha256_file(&path)?)
+        } else {
+            None
+        };
+
+        files.push(ScannedStorageFile {
+            key,
+            name,
+            directory,
+            size: metadata.len(),
+            mime_type: content_type_from_path(&path).map(str::to_string),
+            sha256,
+        });
+    }
+
+    Ok(())
+}
+
+fn storage_key_from_file_path(storage_root: &FsPath, path: &FsPath) -> Option<String> {
+    let relative = path.strip_prefix(storage_root).ok()?;
+    let mut parts = Vec::new();
+    for component in relative.components() {
+        match component {
+            Component::Normal(part) => parts.push(part.to_str()?.to_string()),
+            Component::CurDir => {}
+            _ => return None,
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join("/"))
+}
+
+fn sha256_file(path: &FsPath) -> Result<String, CoreError> {
+    let mut file = File::open(path).map_err(|error| CoreError::storage("scan.open", error))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|error| CoreError::storage("scan.read", error))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn content_type_from_path(path: &FsPath) -> Option<&'static str> {
+    match path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("txt") => Some("text/plain; charset=utf-8"),
+        Some("md") | Some("markdown") => Some("text/markdown; charset=utf-8"),
+        Some("json") => Some("application/json"),
+        Some("html") | Some("htm") => Some("text/html; charset=utf-8"),
+        Some("css") => Some("text/css; charset=utf-8"),
+        Some("js") | Some("mjs") => Some("text/javascript"),
+        Some("png") => Some("image/png"),
+        Some("jpg") | Some("jpeg") => Some("image/jpeg"),
+        Some("gif") => Some("image/gif"),
+        Some("webp") => Some("image/webp"),
+        Some("svg") => Some("image/svg+xml"),
+        Some("pdf") => Some("application/pdf"),
+        Some("epub") => Some("application/epub+zip"),
+        Some("mp3") => Some("audio/mpeg"),
+        Some("mp4") => Some("video/mp4"),
+        Some("zip") => Some("application/zip"),
+        _ => None,
+    }
+}
+
 fn resource_response(
     service: &asset_core::service::ResourceService,
     resource: &asset_core::domain::Resource,
 ) -> Result<ResourceResponse, CoreError> {
     let actions = service.describe_resource_actions(resource)?;
     Ok(ResourceResponse::new(resource, actions))
+}
+
+fn resource_page_response(
+    service: &asset_core::service::ResourceService,
+    page_result: asset_core::port::ResourcePage,
+    page: u32,
+) -> Result<ResourcePageResponse, CoreError> {
+    Ok(ResourcePageResponse {
+        items: page_result
+            .items
+            .iter()
+            .map(|resource| resource_response(service, resource))
+            .collect::<Result<Vec<_>, _>>()?,
+        total: page_result.total,
+        page,
+        limit: page_result.limit,
+    })
 }
 
 fn parse_resource_id(value: &str) -> Result<ResourceId, HttpError> {

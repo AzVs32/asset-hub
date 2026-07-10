@@ -4,7 +4,7 @@
 //! sqlx 的 SQLite、Postgres 等实现应适配该 trait，而不是让应用层直接依赖数据库 API。
 
 use crate::CoreError;
-use crate::domain::{Resource, ResourceId, ResourceKind};
+use crate::domain::{Resource, ResourceId, ResourceKind, StorageKey};
 
 /// 资源列表查询条件。
 #[derive(Debug, Clone)]
@@ -19,6 +19,8 @@ pub struct ListResources {
     tag: Option<String>,
     /// 可选名称模糊搜索关键字。
     q: Option<String>,
+    /// 可选逻辑目录过滤。
+    directory: Option<String>,
     /// 是否包含软删除资源。
     include_deleted: bool,
 }
@@ -32,6 +34,7 @@ impl ListResources {
             kind: None,
             tag: None,
             q: None,
+            directory: None,
             include_deleted: false,
         }
     }
@@ -51,6 +54,12 @@ impl ListResources {
     /// 设置名称模糊搜索。
     pub fn with_q(mut self, q: impl Into<String>) -> Self {
         self.q = Some(q.into());
+        self
+    }
+
+    /// 设置逻辑目录过滤。
+    pub fn with_directory(mut self, directory: impl Into<String>) -> Self {
+        self.directory = Some(directory.into());
         self
     }
 
@@ -85,10 +94,26 @@ impl ListResources {
         self.q.as_deref()
     }
 
+    /// 返回逻辑目录过滤。
+    pub fn directory(&self) -> Option<&str> {
+        self.directory.as_deref()
+    }
+
     /// 返回是否包含软删除资源。
     pub fn include_deleted(&self) -> bool {
         self.include_deleted
     }
+}
+
+/// 逻辑目录条目。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResourceDirectory {
+    /// 目录完整路径，根目录下的 `uploads` 路径为 `uploads`。
+    pub path: String,
+    /// 父目录路径，根目录为空字符串。
+    pub parent_path: String,
+    /// 当前目录名。
+    pub name: String,
 }
 
 /// 资源分页查询结果。
@@ -132,8 +157,19 @@ pub trait ResourceRepository: Send + Sync {
     /// 应单独增加查询端口，避免把聚合仓储扩成通用查询服务。
     async fn find_by_id(&self, id: &ResourceId) -> Result<Option<Resource>, CoreError>;
 
+    /// 按内容存储键查找资源聚合。
+    ///
+    /// 该方法用于维护导入和扫描任务做幂等去重。找不到记录时返回 `Ok(None)`。
+    async fn find_by_content_key(&self, key: &StorageKey) -> Result<Option<Resource>, CoreError>;
+
     /// 按条件分页列出资源。
     async fn list(&self, query: &ListResources) -> Result<ResourcePage, CoreError>;
+
+    /// 列出指定父目录下的直接子目录。
+    async fn list_directories(
+        &self,
+        parent_path: &str,
+    ) -> Result<Vec<ResourceDirectory>, CoreError>;
 
     /// 从持久化存储中物理移除资源记录。
     ///

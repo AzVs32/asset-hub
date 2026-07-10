@@ -26,8 +26,14 @@ impl<'a> ResourceCommandService<'a> {
     /// 可能返回的错误包括领域校验错误和仓储保存错误。
     pub async fn create_resource(&self, command: CreateResource) -> Result<Resource, CoreError> {
         let kind = self.service.validate_registered_kind(command.kind)?;
-        let resource =
-            build_resource(command.name, Some(kind), command.status, command.metadata).build()?;
+        let resource = build_resource(
+            command.name,
+            command.directory,
+            Some(kind),
+            command.status,
+            command.metadata,
+        )
+        .build()?;
 
         self.service.repository.save(&resource).await?;
 
@@ -72,6 +78,10 @@ impl<'a> ResourceCommandService<'a> {
 
         if let Some(name) = command.name {
             resource.rename(name)?;
+        }
+
+        if let Some(directory) = command.directory {
+            resource.move_to_directory(directory)?;
         }
 
         if let Some(kind) = command.kind {

@@ -13,8 +13,8 @@ use crate::domain::{
 };
 use crate::port::{
     BlobByteStream, BlobStorage, ListResources, ResourceActionExecutor, ResourceActionOutput,
-    ResourceActionRegistry, ResourceActionRequest, ResourceKindRegistry, ResourcePage,
-    ResourceRepository,
+    ResourceActionRegistry, ResourceActionRequest, ResourceDirectory, ResourceKindRegistry,
+    ResourcePage, ResourceRepository,
 };
 use asset_plugin_api::{PluginActionEffect, PluginContentEncoding, PluginView};
 use base64::Engine;
@@ -51,6 +51,8 @@ pub struct CreateResource {
     kind: Option<ResourceKind>,
     /// 初始生命周期状态。
     status: ResourceStatus,
+    /// 资源所在的逻辑目录。
+    directory: String,
     /// 初始资源元数据。
     metadata: ResourceMetadata,
 }
@@ -64,6 +66,7 @@ impl CreateResource {
             name: name.into(),
             kind: None,
             status: ResourceStatus::default(),
+            directory: String::new(),
             metadata: ResourceMetadata::default(),
         }
     }
@@ -82,6 +85,12 @@ impl CreateResource {
     /// 未调用该方法时，资源状态默认为 `ResourceStatus::Active`。
     pub fn with_status(mut self, status: ResourceStatus) -> Self {
         self.status = status;
+        self
+    }
+
+    /// 设置资源所在逻辑目录。
+    pub fn with_directory(mut self, directory: impl Into<String>) -> Self {
+        self.directory = directory.into();
         self
     }
 
@@ -109,6 +118,8 @@ pub struct UploadResourceContent {
     kind: Option<ResourceKind>,
     /// 初始生命周期状态。
     status: ResourceStatus,
+    /// 资源所在的逻辑目录。
+    directory: String,
     /// 初始资源元数据。
     metadata: ResourceMetadata,
     /// 内容在对象存储中的定位键。
@@ -118,6 +129,34 @@ pub struct UploadResourceContent {
     /// 内容 MIME 类型。
     mime_type: Option<String>,
     /// 上传时的原始文件名。
+    original_filename: Option<String>,
+    /// 内容校验和集合。
+    checksums: Vec<Checksum>,
+}
+
+/// 导入已存在对象内容并创建资源的用例命令。
+///
+/// 该命令只创建资源记录，不向对象存储写入内容；调用方必须保证 `storage_key`
+/// 指向的对象已经存在。它主要用于扫描本地存储目录后补齐数据库。
+#[derive(Debug, Clone)]
+pub struct ImportResourceContent {
+    /// 资源展示名。
+    name: String,
+    /// 资源类型；未设置时会按内容特征自动推断。
+    kind: Option<ResourceKind>,
+    /// 初始生命周期状态。
+    status: ResourceStatus,
+    /// 资源所在的逻辑目录。
+    directory: String,
+    /// 初始资源元数据。
+    metadata: ResourceMetadata,
+    /// 内容在对象存储中的定位键。
+    storage_key: StorageKey,
+    /// 内容字节大小。
+    size: u64,
+    /// 内容 MIME 类型。
+    mime_type: Option<String>,
+    /// 原始文件名。
     original_filename: Option<String>,
     /// 内容校验和集合。
     checksums: Vec<Checksum>,
@@ -156,6 +195,7 @@ impl UploadResourceContent {
             name: name.into(),
             kind: None,
             status: ResourceStatus::default(),
+            directory: String::new(),
             metadata: ResourceMetadata::default(),
             storage_key,
             data,
@@ -178,6 +218,12 @@ impl UploadResourceContent {
     /// 未调用该方法时，资源状态默认为 `ResourceStatus::Active`。
     pub fn with_status(mut self, status: ResourceStatus) -> Self {
         self.status = status;
+        self
+    }
+
+    /// 设置资源所在逻辑目录。
+    pub fn with_directory(mut self, directory: impl Into<String>) -> Self {
+        self.directory = directory.into();
         self
     }
 
@@ -222,6 +268,72 @@ impl UploadResourceContent {
     }
 }
 
+impl ImportResourceContent {
+    /// 创建导入命令，默认自动推断资源类型、使用活跃状态和空元数据。
+    pub fn new(name: impl Into<String>, storage_key: StorageKey, size: u64) -> Self {
+        Self {
+            name: name.into(),
+            kind: None,
+            status: ResourceStatus::default(),
+            directory: String::new(),
+            metadata: ResourceMetadata::default(),
+            storage_key,
+            size,
+            mime_type: None,
+            original_filename: None,
+            checksums: Vec::new(),
+        }
+    }
+
+    /// 设置资源类型。
+    pub fn with_kind(mut self, kind: impl Into<ResourceKind>) -> Self {
+        self.kind = Some(kind.into());
+        self
+    }
+
+    /// 设置初始生命周期状态。
+    pub fn with_status(mut self, status: ResourceStatus) -> Self {
+        self.status = status;
+        self
+    }
+
+    /// 设置资源所在逻辑目录。
+    pub fn with_directory(mut self, directory: impl Into<String>) -> Self {
+        self.directory = directory.into();
+        self
+    }
+
+    /// 设置初始资源元数据。
+    pub fn with_metadata(mut self, metadata: impl Into<ResourceMetadata>) -> Self {
+        self.metadata = metadata.into();
+        self
+    }
+
+    /// 设置内容 MIME 类型。
+    pub fn with_mime_type(mut self, mime_type: impl Into<String>) -> Self {
+        self.mime_type = Some(mime_type.into());
+        self
+    }
+
+    /// 设置原始文件名。
+    pub fn with_original_filename(mut self, original_filename: impl Into<String>) -> Self {
+        self.original_filename = Some(original_filename.into());
+        self
+    }
+
+    /// 追加一个内容校验和。
+    pub fn with_checksum(mut self, checksum: Checksum) -> Self {
+        self.checksums.push(checksum);
+        self
+    }
+
+    /// 批量追加内容校验和。
+    pub fn with_checksums(mut self, checksums: impl IntoIterator<Item = Checksum>) -> Self {
+        self.checksums.extend(checksums);
+        self
+    }
+}
+
 /// 流式上传内容并创建资源的用例命令。
 ///
 /// 该命令用于大文件上传。内容以 `BlobByteStream` 传入，service 会逐块写入对象存储，
@@ -233,6 +345,8 @@ pub struct UploadResourceContentStream {
     kind: Option<ResourceKind>,
     /// 初始生命周期状态。
     status: ResourceStatus,
+    /// 资源所在的逻辑目录。
+    directory: String,
     /// 初始资源元数据。
     metadata: ResourceMetadata,
     /// 内容在对象存储中的定位键。
@@ -254,6 +368,7 @@ impl UploadResourceContentStream {
             name: name.into(),
             kind: None,
             status: ResourceStatus::default(),
+            directory: String::new(),
             metadata: ResourceMetadata::default(),
             storage_key,
             data,
@@ -272,6 +387,12 @@ impl UploadResourceContentStream {
     /// 设置初始生命周期状态。
     pub fn with_status(mut self, status: ResourceStatus) -> Self {
         self.status = status;
+        self
+    }
+
+    /// 设置资源所在逻辑目录。
+    pub fn with_directory(mut self, directory: impl Into<String>) -> Self {
+        self.directory = directory.into();
         self
     }
 
@@ -311,6 +432,8 @@ impl UploadResourceContentStream {
 pub struct UpdateResource {
     /// 新资源名称。
     name: Option<String>,
+    /// 新逻辑目录。
+    directory: Option<String>,
     /// 新资源类型。
     kind: Option<ResourceKind>,
     /// 新生命周期状态。
@@ -330,6 +453,12 @@ impl UpdateResource {
     /// 设置资源名称。
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
+        self
+    }
+
+    /// 设置新逻辑目录。
+    pub fn with_directory(mut self, directory: impl Into<String>) -> Self {
+        self.directory = Some(directory.into());
         self
     }
 
@@ -658,6 +787,14 @@ impl ResourceService {
         self.content().upload_resource_content(command).await
     }
 
+    /// 导入已存在对象内容并创建资源。
+    pub async fn import_resource_content(
+        &self,
+        command: ImportResourceContent,
+    ) -> Result<Option<Resource>, CoreError> {
+        self.content().import_resource_content(command).await
+    }
+
     /// 流式上传对象内容并创建资源。
     pub async fn upload_resource_content_stream(
         &self,
@@ -674,6 +811,14 @@ impl ResourceService {
     /// 分页列出资源。
     pub async fn list_resources(&self, query: ListResources) -> Result<ResourcePage, CoreError> {
         self.commands().list_resources(query).await
+    }
+
+    /// 列出指定父目录下的直接子目录。
+    pub async fn list_directories(
+        &self,
+        parent_path: &str,
+    ) -> Result<Vec<ResourceDirectory>, CoreError> {
+        self.repository.list_directories(parent_path).await
     }
 
     /// 计算资源当前可执行动作。
@@ -875,11 +1020,13 @@ fn content_type_for_media(content: &ResourceContent) -> String {
 
 fn build_resource(
     name: String,
+    directory: String,
     kind: Option<ResourceKind>,
     status: ResourceStatus,
     metadata: ResourceMetadata,
 ) -> crate::domain::ResourceBuilder {
     let mut builder = Resource::builder(name)
+        .with_directory(directory)
         .with_status(status)
         .with_metadata(metadata);
 
@@ -1084,6 +1231,23 @@ mod tests {
             Ok(self.find_sync(id))
         }
 
+        async fn find_by_content_key(
+            &self,
+            key: &StorageKey,
+        ) -> Result<Option<Resource>, CoreError> {
+            Ok(self
+                .resources
+                .lock()
+                .unwrap()
+                .values()
+                .find(|resource| {
+                    resource
+                        .content()
+                        .is_some_and(|content| content.key().as_str() == key.as_str())
+                })
+                .cloned())
+        }
+
         async fn list(&self, query: &ListResources) -> Result<ResourcePage, CoreError> {
             let mut resources = self
                 .resources
@@ -1102,6 +1266,11 @@ mod tests {
                     })
                 })
                 .filter(|resource| query.q().is_none_or(|q| resource.name().contains(q)))
+                .filter(|resource| {
+                    query
+                        .directory()
+                        .is_none_or(|directory| resource.directory() == directory)
+                })
                 .cloned()
                 .collect::<Vec<_>>();
             resources.sort_by_key(|resource| std::cmp::Reverse(resource.updated_at()));
@@ -1125,6 +1294,45 @@ mod tests {
             self.resources.lock().unwrap().remove(id);
             Ok(())
         }
+
+        async fn list_directories(
+            &self,
+            parent_path: &str,
+        ) -> Result<Vec<ResourceDirectory>, CoreError> {
+            let mut directories = self
+                .resources
+                .lock()
+                .unwrap()
+                .values()
+                .filter_map(|resource| child_directory(resource.directory(), parent_path))
+                .collect::<Vec<_>>();
+            directories.sort_by(|left, right| left.path.cmp(&right.path));
+            directories.dedup_by(|left, right| left.path == right.path);
+            Ok(directories)
+        }
+    }
+
+    fn child_directory(directory: &str, parent_path: &str) -> Option<ResourceDirectory> {
+        if directory.is_empty() {
+            return None;
+        }
+        let remainder = if parent_path.is_empty() {
+            directory
+        } else {
+            directory.strip_prefix(parent_path)?.strip_prefix('/')?
+        };
+        let name = remainder.split('/').next()?.to_string();
+        let path = if parent_path.is_empty() {
+            name.clone()
+        } else {
+            format!("{parent_path}/{name}")
+        };
+
+        Some(ResourceDirectory {
+            path,
+            parent_path: parent_path.to_string(),
+            name,
+        })
     }
 
     #[derive(Default)]

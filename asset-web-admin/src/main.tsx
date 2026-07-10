@@ -19,8 +19,8 @@ import { apiBase, request } from "./api";
 import { PluginActionResult, PluginViewResult, pluginViewTitle } from "./components/PluginViewResult";
 import { ResourceDetail } from "./components/ResourceDetail";
 import { SelectInput, TextInput } from "./components/forms";
-import type { Draft, Filters, PluginActionOutput, Resource, ResourceActionDefinition, ResourceKindOption, ResourceKindsResponse, ResourcePage, ResourceReadResponse, ResourceStatus, UploadDraft } from "./types";
-import { buildResourceTreeRows, detectKindForFile, directoriesFromResources, emptyCreateDraft, emptyUploadDraft, errorMessage, fallbackUploadKind, formatBytes, formatDate, isImageResource, metadataFromDraft, metadataFromUpload, normalizeDirectoryInput, normalizeDraftKind, sha256Hex, toDraft, withKindDefaults } from "./utils/resourceDrafts";
+import type { DirectoryListing, Draft, Filters, PluginActionOutput, Resource, ResourceActionDefinition, ResourceDirectory, ResourceKindOption, ResourceKindsResponse, ResourcePage, ResourceReadResponse, ResourceStatus, ScanStorageResponse, UploadDraft } from "./types";
+import { detectKindForFile, directoriesFromResources, emptyCreateDraft, emptyUploadDraft, errorMessage, fallbackUploadKind, formatBytes, formatDate, isImageResource, metadataFromDraft, metadataFromUpload, normalizeDirectoryInput, normalizeDraftKind, sha256Hex, toDraft, withKindDefaults } from "./utils/resourceDrafts";
 
 const fallbackKinds: ResourceKindOption[] = [
   {
@@ -51,6 +51,8 @@ function App() {
     page: 1,
     limit: defaultFilters.limit,
   });
+  const [currentDirectory, setCurrentDirectory] = React.useState("");
+  const [folders, setFolders] = React.useState<ResourceDirectory[]>([]);
   const [selected, setSelected] = React.useState<Resource | null>(null);
   const [draft, setDraft] = React.useState<Draft | null>(null);
   const [resourceKinds, setResourceKinds] = React.useState<ResourceKindOption[]>(fallbackKinds);
@@ -92,6 +94,7 @@ function App() {
       const params = new URLSearchParams({
         page: String(filters.page),
         limit: String(filters.limit),
+        path: currentDirectory,
       });
 
       if (filters.q.trim()) params.set("q", filters.q.trim());
@@ -99,14 +102,15 @@ function App() {
       if (filters.tag.trim()) params.set("tag", filters.tag.trim());
       if (filters.includeDeleted) params.set("include_deleted", "true");
 
-      const result = await request<ResourcePage>(`/resources?${params.toString()}`);
-      setPage(result);
+      const result = await request<DirectoryListing>(`/directories?${params.toString()}`);
+      setFolders(result.folders);
+      setPage(result.resources);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
       setLoading(false);
     }
-  }, [filters]);
+  }, [currentDirectory, filters]);
 
   React.useEffect(() => {
     void loadResources();
@@ -117,11 +121,28 @@ function App() {
     () => resourceKinds.filter((kind) => kind.supports_content),
     [resourceKinds],
   );
-  const resourceRows = React.useMemo(() => buildResourceTreeRows(page.items), [page.items]);
-  const uploadDirectories = React.useMemo(() => directoriesFromResources(page.items), [page.items]);
+  const uploadDirectories = React.useMemo(
+    () =>
+      Array.from(
+        new Set([
+          currentDirectory || "uploads",
+          ...folders.map((folder) => folder.path),
+          ...directoriesFromResources(page.items),
+        ]),
+      ).sort((left, right) => left.localeCompare(right)),
+    [currentDirectory, folders, page.items],
+  );
+  const breadcrumbs = React.useMemo(() => directoryBreadcrumbs(currentDirectory), [currentDirectory]);
 
   function updateFilters(patch: Partial<Filters>) {
     setFilters((current) => ({ ...current, ...patch, page: patch.page ?? 1 }));
+  }
+
+  function openDirectory(path: string) {
+    setCurrentDirectory(path);
+    setFilters((current) => ({ ...current, page: 1 }));
+    setSelected(null);
+    setDraft(null);
   }
 
   function selectResource(resource: Resource) {
@@ -151,11 +172,12 @@ function App() {
       const created = await request<Resource>("/resources", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: createDraft.name,
-          kind: createDraft.kind,
-          status: createDraft.status,
-          metadata: metadataFromDraft(createDraft),
+          body: JSON.stringify({
+            name: createDraft.name,
+            directory: normalizeDirectoryInput(createDraft.directory),
+            kind: createDraft.kind,
+            status: createDraft.status,
+            metadata: metadataFromDraft(createDraft),
         }),
       });
       setCreateOpen(false);
@@ -180,11 +202,12 @@ function App() {
       const updated = await request<Resource>(`/resources/${selected.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: draft.name,
-          kind: draft.kind,
-          status: draft.status,
-          metadata: metadataFromDraft(draft),
+          body: JSON.stringify({
+            name: draft.name,
+            directory: normalizeDirectoryInput(draft.directory),
+            kind: draft.kind,
+            status: draft.status,
+            metadata: metadataFromDraft(draft),
         }),
       });
       setSelected(updated);
@@ -328,6 +351,29 @@ function App() {
     }
   }
 
+  async function scanStorage() {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+
+    try {
+      const result = await request<ScanStorageResponse>("/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          path: currentDirectory,
+          sha256: true,
+        }),
+      });
+      setNotice(`Scanned ${result.scanned}, imported ${result.imported}, skipped ${result.skipped}`);
+      await loadResources();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <main className="app-shell">
       <section className="resource-browser" aria-label="Resources">
@@ -343,11 +389,29 @@ function App() {
             <button className="icon-button" type="button" onClick={loadResources} title="Refresh">
               {loading ? <Loader2 className="spin" size={18} /> : <RefreshCcw size={18} />}
             </button>
-            <button className="ghost-button" type="button" onClick={() => setCreateOpen(true)}>
+            <button className="ghost-button" type="button" onClick={scanStorage} disabled={busy}>
+              {busy ? <Loader2 className="spin" size={18} /> : <Database size={18} />}
+              Scan
+            </button>
+            <button
+              className="ghost-button"
+              type="button"
+              onClick={() => {
+                setCreateDraft((draft) => ({ ...draft, directory: currentDirectory }));
+                setCreateOpen(true);
+              }}
+            >
               <Plus size={18} />
               New
             </button>
-            <button className="primary-button" type="button" onClick={() => setUploadOpen(true)}>
+            <button
+              className="primary-button"
+              type="button"
+              onClick={() => {
+                setUploadDraft((draft) => ({ ...draft, directory: currentDirectory || "uploads" }));
+                setUploadOpen(true);
+              }}
+            >
               <FileUp size={18} />
               Upload
             </button>
@@ -402,50 +466,60 @@ function App() {
           </div>
         )}
 
-        <div className="resource-list">
-          {resourceRows.map((row) =>
-            row.type === "folder" ? (
-              <div
-                key={`folder:${row.path}`}
-                className="folder-row"
-                style={{ "--depth": row.depth } as React.CSSProperties}
-              >
-                <Folder size={18} aria-hidden="true" />
-                <span>{row.name}</span>
-                <small>{row.count}</small>
-              </div>
-            ) : (
-              <button
-                key={row.resource.id}
-                className={`resource-row ${selected?.id === row.resource.id ? "selected" : ""}`}
-                style={{ "--depth": row.depth } as React.CSSProperties}
-                type="button"
-                onClick={() => selectResource(row.resource)}
-              >
-                {row.resource.actions.thumbnail ? (
-                  <img className="row-thumbnail" src={`${apiBase}/resources/${row.resource.id}/thumbnail`} alt="" />
-                ) : (
-                  <div className="row-thumbnail placeholder" aria-hidden="true">
-                    <FileIcon size={18} />
-                  </div>
-                )}
-                <div className="row-main">
-                  <div className="row-title">
-                    <span>{row.resource.name}</span>
-                    {row.resource.deleted_at && <span className="deleted-pill">deleted</span>}
-                  </div>
-                  <div className="row-meta">
-                    <span>{row.resource.content?.key ?? "metadata"}</span>
-                    <span>{row.resource.kind}</span>
-                    <span>{formatBytes(row.resource.content?.size ?? 0)}</span>
-                    <span>{formatDate(row.resource.updated_at)}</span>
-                  </div>
-                </div>
-                <span className={`status-pill ${row.resource.status}`}>{row.resource.status}</span>
+        <nav className="breadcrumbs" aria-label="Current directory">
+          {breadcrumbs.map((crumb, index) => (
+            <React.Fragment key={crumb.path || "root"}>
+              {index > 0 && <ChevronRight size={14} aria-hidden="true" />}
+              <button type="button" onClick={() => openDirectory(crumb.path)}>
+                {crumb.label}
               </button>
-            ),
+            </React.Fragment>
+          ))}
+        </nav>
+
+        <div className="resource-list">
+          {currentDirectory && (
+            <button className="folder-row" type="button" onClick={() => openDirectory(parentDirectory(currentDirectory))}>
+              <Folder size={18} aria-hidden="true" />
+              <span>..</span>
+            </button>
           )}
-          {!loading && page.items.length === 0 && <div className="empty-state">No resources</div>}
+          {folders.map((folder) => (
+            <button key={folder.path} className="folder-row" type="button" onClick={() => openDirectory(folder.path)}>
+              <Folder size={18} aria-hidden="true" />
+              <span>{folder.name}</span>
+            </button>
+          ))}
+          {page.items.map((resource) => (
+            <button
+              key={resource.id}
+              className={`resource-row ${selected?.id === resource.id ? "selected" : ""}`}
+              type="button"
+              onClick={() => selectResource(resource)}
+            >
+              {resource.actions.thumbnail ? (
+                <img className="row-thumbnail" src={`${apiBase}/resources/${resource.id}/thumbnail`} alt="" />
+              ) : (
+                <div className="row-thumbnail placeholder" aria-hidden="true">
+                  <FileIcon size={18} />
+                </div>
+              )}
+              <div className="row-main">
+                <div className="row-title">
+                  <span>{resource.name}</span>
+                  {resource.deleted_at && <span className="deleted-pill">deleted</span>}
+                </div>
+                <div className="row-meta">
+                  <span>{resource.content?.key ?? "metadata"}</span>
+                  <span>{resource.kind}</span>
+                  <span>{formatBytes(resource.content?.size ?? 0)}</span>
+                  <span>{formatDate(resource.updated_at)}</span>
+                </div>
+              </div>
+              <span className={`status-pill ${resource.status}`}>{resource.status}</span>
+            </button>
+          ))}
+          {!loading && folders.length === 0 && page.items.length === 0 && <div className="empty-state">No resources</div>}
           {loading && <div className="empty-state">Loading</div>}
         </div>
 
@@ -579,6 +653,11 @@ function App() {
                 value={createDraft.name}
                 onChange={(name) => setCreateDraft((draft) => ({ ...draft, name }))}
               />
+              <TextInput
+                label="Directory"
+                value={createDraft.directory}
+                onChange={(directory) => setCreateDraft((draft) => ({ ...draft, directory }))}
+              />
               <SelectInput label="Kind" value={createDraft.kind} options={resourceKinds} onChange={updateCreateKind} />
               <label className="field">
                 <span>Status</span>
@@ -708,6 +787,24 @@ function App() {
       )}
     </main>
   );
+}
+
+function directoryBreadcrumbs(directory: string): Array<{ label: string; path: string }> {
+  const crumbs = [{ label: "Root", path: "" }];
+  const parts = directory.split("/").filter(Boolean);
+  for (let index = 0; index < parts.length; index += 1) {
+    crumbs.push({
+      label: parts[index],
+      path: parts.slice(0, index + 1).join("/"),
+    });
+  }
+  return crumbs;
+}
+
+function parentDirectory(directory: string): string {
+  const parts = directory.split("/").filter(Boolean);
+  parts.pop();
+  return parts.join("/");
 }
 
 createRoot(document.getElementById("root")!).render(

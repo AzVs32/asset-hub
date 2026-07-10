@@ -631,6 +631,7 @@ async fn upload_resource_content_roundtrips_small_blob() {
         json!({
             "name": "hello.txt",
             "kind": "core:unknown",
+            "directory": "examples",
             "storage_key": "examples/hello.txt",
             "data_base64": "aGVsbG8sIGFzc2V0LWh1YiE=",
             "metadata": {
@@ -681,10 +682,61 @@ async fn upload_resource_content_roundtrips_small_blob() {
     .await;
 
     assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(directory_resource["directory"], "examples/nested");
     assert_eq!(
         directory_resource["content"]["key"],
         "examples/nested/nested.txt"
     );
+
+    let (status, root_listing) = empty_json_request(&app, Method::GET, "/directories").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(root_listing["path"], "");
+    assert_eq!(root_listing["folders"][0]["path"], "examples");
+    assert_eq!(root_listing["resources"]["total"], 0);
+
+    let (status, examples_listing) =
+        empty_json_request(&app, Method::GET, "/directories?path=examples").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(examples_listing["folders"][0]["path"], "examples/nested");
+    assert_eq!(examples_listing["resources"]["total"], 1);
+    assert_eq!(
+        examples_listing["resources"]["items"][0]["name"],
+        "hello.txt"
+    );
+}
+
+#[tokio::test]
+async fn scan_storage_imports_existing_files_idempotently() {
+    let app = test_app("scan-storage").await;
+    let file_path = app.root.join("blob").join("docs").join("readme.md");
+    std::fs::create_dir_all(file_path.parent().unwrap()).unwrap();
+    std::fs::write(&file_path, b"# Existing file\n").unwrap();
+
+    let (status, scan) = json_request(&app, Method::POST, "/scan", json!({ "sha256": true })).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(scan["path"], "");
+    assert_eq!(scan["scanned"], 1);
+    assert_eq!(scan["imported"], 1);
+    assert_eq!(scan["skipped"], 0);
+    assert_eq!(scan["resources"][0]["name"], "readme.md");
+    assert_eq!(scan["resources"][0]["directory"], "docs");
+    assert_eq!(scan["resources"][0]["content"]["key"], "docs/readme.md");
+    assert_eq!(scan["resources"][0]["content"]["size"], 16);
+    assert_eq!(
+        scan["resources"][0]["content"]["checksum"][0]["kind"],
+        "sha256"
+    );
+
+    let (status, listing) = empty_json_request(&app, Method::GET, "/directories?path=docs").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(listing["resources"]["total"], 1);
+    assert_eq!(listing["resources"]["items"][0]["name"], "readme.md");
+
+    let (status, scan) = json_request(&app, Method::POST, "/scan", json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(scan["scanned"], 1);
+    assert_eq!(scan["imported"], 0);
+    assert_eq!(scan["skipped"], 1);
 }
 
 #[tokio::test]
@@ -1118,15 +1170,13 @@ async fn test_app_with_config(
         kind,
     };
     let runtime = AssetRuntime::from_config(config).await.unwrap();
-    let router = if options == RouterOptions::default() {
-        router::build(runtime.resource_service(), runtime.resource_kind_registry())
-    } else {
-        router::build_with_options(
-            runtime.resource_service(),
-            runtime.resource_kind_registry(),
-            options,
-        )
-    };
+    let router = router::build_with_options_and_plugin_web_roots(
+        runtime.resource_service(),
+        runtime.resource_kind_registry(),
+        options,
+        HashMap::new(),
+        runtime.config().blob.fs_root.clone(),
+    );
 
     TestApp { router, root }
 }
@@ -1151,6 +1201,7 @@ async fn test_app_with_plugin_web_roots(
         runtime.resource_kind_registry(),
         RouterOptions::default(),
         plugin_web_roots,
+        runtime.config().blob.fs_root.clone(),
     );
 
     TestApp { router, root }

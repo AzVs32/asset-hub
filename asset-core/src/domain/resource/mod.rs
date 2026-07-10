@@ -103,6 +103,7 @@ mod tests {
         let resource = Resource::rehydrate(ResourceSnapshot {
             id,
             name: " restored image ".to_string(),
+            directory: " images/raw ".to_string(),
             kind: ResourceKind::from("core:image"),
             status: ResourceStatus::Archived,
             metadata: ResourceMetadata::default(),
@@ -115,6 +116,7 @@ mod tests {
 
         assert_eq!(resource.id(), id);
         assert_eq!(resource.name(), "restored image");
+        assert_eq!(resource.directory(), "images/raw");
         assert!(resource.kind().is("core:image"));
         assert_eq!(resource.status(), ResourceStatus::Archived);
         assert_eq!(resource.created_at(), created_at);

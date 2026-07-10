@@ -2,9 +2,9 @@ use crate::{config::DatabaseConfig, migration};
 use asset_core::CoreError;
 use asset_core::domain::{
     Resource, ResourceContent, ResourceId, ResourceKind, ResourceMetadata, ResourceSnapshot,
-    ResourceStatus,
+    ResourceStatus, StorageKey,
 };
-use asset_core::port::{ListResources, ResourcePage, ResourceRepository};
+use asset_core::port::{ListResources, ResourceDirectory, ResourcePage, ResourceRepository};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow};
@@ -72,6 +72,8 @@ impl SqliteResourceRepository {
 #[async_trait::async_trait]
 impl ResourceRepository for SqliteResourceRepository {
     async fn save(&self, resource: &Resource) -> Result<(), CoreError> {
+        ensure_directory_path(&self.pool, resource.directory()).await?;
+
         let metadata_json = serde_json::to_string(resource.metadata())
             .map_err(|error| CoreError::repository("resource.encode_metadata", error))?;
         let content_json = resource
@@ -85,6 +87,7 @@ impl ResourceRepository for SqliteResourceRepository {
             INSERT INTO resources (
                 id,
                 name,
+                directory,
                 kind,
                 status,
                 metadata_json,
@@ -93,9 +96,10 @@ impl ResourceRepository for SqliteResourceRepository {
                 updated_at,
                 deleted_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
+                directory = excluded.directory,
                 kind = excluded.kind,
                 status = excluded.status,
                 metadata_json = excluded.metadata_json,
@@ -107,6 +111,7 @@ impl ResourceRepository for SqliteResourceRepository {
         )
         .bind(resource.id().to_string())
         .bind(resource.name())
+        .bind(resource.directory())
         .bind(resource.kind().as_str())
         .bind(status_to_str(resource.status()))
         .bind(metadata_json)
@@ -127,6 +132,7 @@ impl ResourceRepository for SqliteResourceRepository {
             SELECT
                 id,
                 name,
+                directory,
                 kind,
                 status,
                 metadata_json,
@@ -142,6 +148,32 @@ impl ResourceRepository for SqliteResourceRepository {
         .fetch_optional(&self.pool)
         .await
         .map_err(|error| CoreError::repository("find_by_id", error))?;
+
+        row.map(decode_resource).transpose()
+    }
+
+    async fn find_by_content_key(&self, key: &StorageKey) -> Result<Option<Resource>, CoreError> {
+        let row = sqlx::query(
+            r#"
+            SELECT
+                id,
+                name,
+                directory,
+                kind,
+                status,
+                metadata_json,
+                content_json,
+                created_at,
+                updated_at,
+                deleted_at
+            FROM resources
+            WHERE json_extract(content_json, '$.key') = ?
+            "#,
+        )
+        .bind(key.as_str())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| CoreError::repository("find_by_content_key", error))?;
 
         row.map(decode_resource).transpose()
     }
@@ -180,6 +212,34 @@ impl ResourceRepository for SqliteResourceRepository {
 
         Ok(())
     }
+
+    async fn list_directories(
+        &self,
+        parent_path: &str,
+    ) -> Result<Vec<ResourceDirectory>, CoreError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT path, parent_path, name
+            FROM directories
+            WHERE parent_path = ?
+            ORDER BY name ASC
+            "#,
+        )
+        .bind(parent_path)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| CoreError::repository("list_directories", error))?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(ResourceDirectory {
+                    path: column(&row, "path")?,
+                    parent_path: column(&row, "parent_path")?,
+                    name: column(&row, "name")?,
+                })
+            })
+            .collect()
+    }
 }
 
 fn build_list_count_query(query: &ListResources) -> QueryBuilder<Sqlite> {
@@ -194,6 +254,7 @@ fn build_list_select_query(query: &ListResources) -> QueryBuilder<Sqlite> {
         SELECT
             id,
             name,
+            directory,
             kind,
             status,
             metadata_json,
@@ -241,6 +302,12 @@ fn push_list_where(builder: &mut QueryBuilder<Sqlite>, query: &ListResources) {
         builder.push_bind(format!("%{}%", escape_like(q)));
         builder.push(" ESCAPE '\\'");
     }
+
+    if let Some(directory) = query.directory() {
+        push_condition_prefix(builder, &mut has_where);
+        builder.push("directory = ");
+        builder.push_bind(directory);
+    }
 }
 
 fn push_condition_prefix(builder: &mut QueryBuilder<Sqlite>, has_where: &mut bool) {
@@ -262,6 +329,7 @@ fn escape_like(value: &str) -> String {
 fn decode_resource(row: SqliteRow) -> Result<Resource, CoreError> {
     let id = decode_id(column(&row, "id")?)?;
     let name = column(&row, "name")?;
+    let directory = column(&row, "directory")?;
     let kind = ResourceKind::try_new(column::<String>(&row, "kind")?)?;
     let status = status_from_str(column(&row, "status")?)?;
     let metadata = decode_metadata(column(&row, "metadata_json")?)?;
@@ -275,6 +343,7 @@ fn decode_resource(row: SqliteRow) -> Result<Resource, CoreError> {
     Resource::rehydrate(ResourceSnapshot {
         id,
         name,
+        directory,
         kind,
         status,
         metadata,
@@ -284,6 +353,45 @@ fn decode_resource(row: SqliteRow) -> Result<Resource, CoreError> {
         deleted_at,
     })
     .map_err(CoreError::from)
+}
+
+async fn ensure_directory_path(pool: &SqlitePool, directory: &str) -> Result<(), CoreError> {
+    if directory.is_empty() {
+        return Ok(());
+    }
+
+    let now = encode_timestamp(Utc::now());
+    let mut parent_path = String::new();
+    for name in directory.split('/') {
+        let path = if parent_path.is_empty() {
+            name.to_string()
+        } else {
+            format!("{parent_path}/{name}")
+        };
+
+        sqlx::query(
+            r#"
+            INSERT INTO directories (path, parent_path, name, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(path) DO UPDATE SET
+                parent_path = excluded.parent_path,
+                name = excluded.name,
+                updated_at = excluded.updated_at
+            "#,
+        )
+        .bind(&path)
+        .bind(&parent_path)
+        .bind(name)
+        .bind(&now)
+        .bind(&now)
+        .execute(pool)
+        .await
+        .map_err(|error| CoreError::repository("directory.save", error))?;
+
+        parent_path = path;
+    }
+
+    Ok(())
 }
 
 fn column<T>(row: &SqliteRow, name: &'static str) -> Result<T, CoreError>

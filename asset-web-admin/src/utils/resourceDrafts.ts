@@ -1,8 +1,9 @@
-import type { Draft, Resource, ResourceActionDefinition, ResourceKindOption, ResourceTreeRow, UploadDraft } from "../types";
+import type { Draft, Resource, ResourceActionDefinition, ResourceKindOption, UploadDraft } from "../types";
 
 export function toDraft(resource: Resource): Draft {
   return {
     name: resource.name,
+    directory: resource.directory,
     kind: resource.kind,
     status: resource.status,
     description: resource.metadata.summary.description ?? "",
@@ -23,6 +24,7 @@ export function metadataFromUpload(draft: UploadDraft) {
 export function emptyCreateDraft(): Draft {
   return {
     name: "",
+    directory: "",
     kind: "core:unknown",
     status: "active",
     description: "",
@@ -157,66 +159,16 @@ function normalizeExtension(value: string): string {
   return extension.startsWith(".") ? extension : `.${extension}`;
 }
 
-export function buildResourceTreeRows(resources: Resource[]): ResourceTreeRow[] {
-  const sorted = [...resources].sort((left, right) => resourceSortPath(left).localeCompare(resourceSortPath(right)));
-  const folderCounts = new Map<string, number>();
-
-  for (const resource of sorted) {
-    const segments = resourceDirectorySegments(resource);
-    for (let index = 0; index < segments.length; index += 1) {
-      const path = segments.slice(0, index + 1).join("/");
-      folderCounts.set(path, (folderCounts.get(path) ?? 0) + 1);
-    }
-  }
-
-  const rows: ResourceTreeRow[] = [];
-  const emittedFolders = new Set<string>();
-  for (const resource of sorted) {
-    const segments = resourceDirectorySegments(resource);
-    for (let index = 0; index < segments.length; index += 1) {
-      const path = segments.slice(0, index + 1).join("/");
-      if (emittedFolders.has(path)) continue;
-      emittedFolders.add(path);
-      rows.push({
-        type: "folder",
-        path,
-        name: segments[index],
-        depth: index,
-        count: folderCounts.get(path) ?? 0,
-      });
-    }
-
-    rows.push({
-      type: "resource",
-      resource,
-      depth: segments.length,
-    });
-  }
-
-  return rows;
-}
-
 export function directoriesFromResources(resources: Resource[]): string[] {
   const directories = new Set<string>(["uploads"]);
   for (const resource of resources) {
-    const segments = resourceDirectorySegments(resource);
+    const segments = resource.directory.split("/").filter(Boolean);
     for (let index = 0; index < segments.length; index += 1) {
       directories.add(segments.slice(0, index + 1).join("/"));
     }
   }
 
   return [...directories].sort((left, right) => left.localeCompare(right));
-}
-
-function resourceDirectorySegments(resource: Resource): string[] {
-  const key = resource.content?.key;
-  if (!key || !key.includes("/")) return [];
-
-  return key.split("/").slice(0, -1).filter(Boolean);
-}
-
-function resourceSortPath(resource: Resource): string {
-  return resource.content?.key ?? `~metadata/${resource.name}`;
 }
 
 export function normalizeDirectoryInput(value: string): string {

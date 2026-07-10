@@ -14,4 +14,4 @@ pub use resource_kind_registry::{
     ResourceActionDefinition, ResourceActionExecutorKind, ResourceContentMatcher,
     ResourceKindDefinition, ResourceKindRegistry,
 };
-pub use resource_repository::{ListResources, ResourcePage, ResourceRepository};
+pub use resource_repository::{ListResources, ResourceDirectory, ResourcePage, ResourceRepository};

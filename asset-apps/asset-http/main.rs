@@ -38,6 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             runtime.resource_kind_registry(),
             settings.router_options().clone(),
             runtime.plugin_web_roots()?,
+            runtime.config().blob.fs_root.clone(),
         ),
     )
     .await?;

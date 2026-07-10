@@ -34,7 +34,13 @@ pub(crate) fn build_with_options(
     kind_registry: Arc<dyn ResourceKindRegistry>,
     options: RouterOptions,
 ) -> Router {
-    build_with_options_and_plugin_web_roots(service, kind_registry, options, Default::default())
+    build_with_options_and_plugin_web_roots(
+        service,
+        kind_registry,
+        options,
+        Default::default(),
+        std::path::PathBuf::from("storage/blobs"),
+    )
 }
 
 /// 使用显式边界配置和插件 web 根目录构建 HTTP 路由。
@@ -43,6 +49,7 @@ pub(crate) fn build_with_options_and_plugin_web_roots(
     kind_registry: Arc<dyn ResourceKindRegistry>,
     options: RouterOptions,
     plugin_web_roots: std::collections::HashMap<String, std::path::PathBuf>,
+    storage_root: std::path::PathBuf,
 ) -> Router {
     let mut router = Router::new()
         .route("/health", get(handlers::health))
@@ -51,6 +58,8 @@ pub(crate) fn build_with_options_and_plugin_web_roots(
             get(handlers::plugin_web_asset),
         )
         .route("/resource-kinds", get(handlers::list_resource_kinds))
+        .route("/directories", get(handlers::list_directory))
+        .route("/scan", post(handlers::scan_storage))
         .route(
             "/resources",
             get(handlers::list_resources).post(handlers::create_resource),
@@ -110,6 +119,7 @@ pub(crate) fn build_with_options_and_plugin_web_roots(
             service,
             kind_registry,
             plugin_web_roots,
+            storage_root,
         ))
 }
 

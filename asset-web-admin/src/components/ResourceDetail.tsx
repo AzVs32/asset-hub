@@ -90,6 +90,11 @@ export function ResourceDetail({
 
       <div className="form-grid detail-form">
         <TextInput label="Name" value={draft.name} onChange={(name) => setDraft((d) => d && { ...d, name })} />
+        <TextInput
+          label="Directory"
+          value={draft.directory}
+          onChange={(directory) => setDraft((d) => d && { ...d, directory })}
+        />
         <SelectInput
           label="Kind"
           value={draft.kind}
@@ -133,6 +138,7 @@ export function ResourceDetail({
         <Fact label="Created" value={formatDate(resource.created_at)} />
         <Fact label="Updated" value={formatDate(resource.updated_at)} />
         <Fact label="Deleted" value={resource.deleted_at ? formatDate(resource.deleted_at) : "-"} />
+        <Fact label="Directory" value={resource.directory || "/"} />
         <Fact label="Object" value={resource.content?.key ?? "-"} />
         <Fact label="Size" value={formatBytes(resource.content?.size ?? 0)} />
         <Fact label="MIME" value={resource.content?.mime_type ?? "-"} />
@@ -148,6 +154,5 @@ export function ResourceDetail({
     </div>
   );
 }
-
 
 

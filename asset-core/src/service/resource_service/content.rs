@@ -34,6 +34,7 @@ impl<'a> ResourceContentService<'a> {
             name,
             kind,
             status,
+            directory,
             metadata,
             storage_key,
             data,
@@ -58,7 +59,7 @@ impl<'a> ResourceContentService<'a> {
             original_filename,
             checksums,
         )?;
-        let resource = build_resource(name, Some(kind), status, metadata)
+        let resource = build_resource(name, directory, Some(kind), status, metadata)
             .with_content(content)
             .build()?;
 
@@ -73,6 +74,54 @@ impl<'a> ResourceContentService<'a> {
         }
 
         Ok(resource)
+    }
+
+    /// 导入已存在对象内容并创建资源。
+    ///
+    /// 该 usecase 不写入对象存储，只保存指向现有对象的内容引用。若相同 storage key 已有
+    /// 资源记录，则返回 `Ok(None)`，用于支持扫描任务幂等执行。
+    pub async fn import_resource_content(
+        &self,
+        command: ImportResourceContent,
+    ) -> Result<Option<Resource>, CoreError> {
+        let ImportResourceContent {
+            name,
+            kind,
+            status,
+            directory,
+            metadata,
+            storage_key,
+            size,
+            mime_type,
+            original_filename,
+            checksums,
+        } = command;
+
+        if self
+            .service
+            .repository
+            .find_by_content_key(&storage_key)
+            .await?
+            .is_some()
+        {
+            return Ok(None);
+        }
+
+        let kind = self.service.resolve_content_kind(
+            kind,
+            mime_type.as_deref(),
+            original_filename
+                .as_deref()
+                .or_else(|| Some(storage_key.as_str())),
+        )?;
+        let content = build_content(storage_key, size, mime_type, original_filename, checksums)?;
+        let resource = build_resource(name, directory, Some(kind), status, metadata)
+            .with_content(content)
+            .build()?;
+
+        self.service.repository.save(&resource).await?;
+
+        Ok(Some(resource))
     }
 
     /// 流式上传对象内容并创建资源。
@@ -91,6 +140,7 @@ impl<'a> ResourceContentService<'a> {
             name,
             kind,
             status,
+            directory,
             metadata,
             storage_key,
             data,
@@ -106,7 +156,7 @@ impl<'a> ResourceContentService<'a> {
                 .or_else(|| Some(storage_key.as_str())),
         )?;
 
-        let resource_builder = build_resource(name, Some(kind), status, metadata);
+        let resource_builder = build_resource(name, directory, Some(kind), status, metadata);
         resource_builder.clone().build()?;
         build_content(
             storage_key.clone(),

@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 /// 资源名称允许的最大字符数。
 const MAX_RESOURCE_NAME_LEN: usize = 255;
+const MAX_RESOURCE_DIRECTORY_LEN: usize = 1024;
 
 // ==================================================
 // 核心聚合根
@@ -24,6 +25,8 @@ pub struct Resource {
     id: ResourceId,
     /// 资源展示名，用于检索、展示和人工识别。
     name: String,
+    /// 资源所在的逻辑目录，根目录为空字符串。
+    directory: String,
     /// 资源类型，用于区分图片、文档、音频等不同业务资源。
     kind: ResourceKind,
     /// 资源生命周期状态，不包含软删除状态。
@@ -50,6 +53,8 @@ pub struct ResourceSnapshot {
     pub id: ResourceId,
     /// 资源展示名。
     pub name: String,
+    /// 资源所在的逻辑目录，根目录为空字符串。
+    pub directory: String,
     /// 资源类型。
     pub kind: ResourceKind,
     /// 资源生命周期状态。
@@ -78,11 +83,13 @@ impl Resource {
     /// Repository 实现应通过它还原数据库记录，避免绕过领域约束直接构造 `Resource`。
     pub fn rehydrate(snapshot: ResourceSnapshot) -> Result<Self, ResourceError> {
         let name = normalize_resource_name(snapshot.name)?;
+        let directory = normalize_resource_directory(snapshot.directory)?;
         snapshot.kind.validate()?;
 
         Ok(Self {
             id: snapshot.id,
             name,
+            directory,
             kind: snapshot.kind,
             status: snapshot.status,
             metadata: snapshot.metadata,
@@ -101,6 +108,11 @@ impl Resource {
     /// 返回资源展示名。
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// 返回资源所在逻辑目录。
+    pub fn directory(&self) -> &str {
+        &self.directory
     }
 
     /// 返回资源类型。
@@ -164,6 +176,19 @@ impl Resource {
 
         if self.name != name {
             self.name = name;
+            self.touch();
+        }
+
+        Ok(())
+    }
+
+    /// 移动资源到新的逻辑目录。
+    pub fn move_to_directory(&mut self, directory: impl Into<String>) -> Result<(), ResourceError> {
+        self.ensure_not_deleted()?;
+        let directory = normalize_resource_directory(directory.into())?;
+
+        if self.directory != directory {
+            self.directory = directory;
             self.touch();
         }
 
@@ -278,6 +303,45 @@ fn normalize_resource_name(value: String) -> Result<String, ResourceError> {
     normalize_required_text("resource.name", &value, MAX_RESOURCE_NAME_LEN)
 }
 
+fn normalize_resource_directory(value: String) -> Result<String, ResourceError> {
+    let value = value.trim().replace('\\', "/");
+    if value.is_empty() {
+        return Ok(String::new());
+    }
+    if value.starts_with('/') {
+        return Err(ResourceError::InvalidFormat {
+            field: "resource.directory",
+            reason: "absolute paths are not allowed",
+        });
+    }
+
+    let mut parts = Vec::new();
+    for part in value.split('/') {
+        let part = part.trim();
+        if part.is_empty() || part == "." {
+            continue;
+        }
+        if part == ".." {
+            return Err(ResourceError::InvalidFormat {
+                field: "resource.directory",
+                reason: "parent path segments are not allowed",
+            });
+        }
+        let part = normalize_required_text("resource.directory", part, MAX_RESOURCE_NAME_LEN)?;
+        parts.push(part);
+    }
+
+    let directory = parts.join("/");
+    if directory.chars().count() > MAX_RESOURCE_DIRECTORY_LEN {
+        return Err(ResourceError::TooLong {
+            field: "resource.directory",
+            max: MAX_RESOURCE_DIRECTORY_LEN,
+        });
+    }
+
+    Ok(directory)
+}
+
 /// 资源构建器。
 ///
 /// 用于统一创建包含可选元数据和可选内容引用的 `Resource`。
@@ -289,6 +353,8 @@ pub struct ResourceBuilder {
     kind: ResourceKind,
     /// 初始生命周期状态。
     status: ResourceStatus,
+    /// 初始逻辑目录。
+    directory: String,
     /// 初始元数据。
     metadata: ResourceMetadata,
     /// 初始内容引用。
@@ -302,6 +368,7 @@ impl ResourceBuilder {
             name: name.into(),
             kind: ResourceKind::default(),
             status: ResourceStatus::default(),
+            directory: String::new(),
             metadata: ResourceMetadata::default(),
             content: None,
         }
@@ -316,6 +383,12 @@ impl ResourceBuilder {
     /// 设置初始生命周期状态。
     pub fn with_status(mut self, status: ResourceStatus) -> Self {
         self.status = status;
+        self
+    }
+
+    /// 设置初始逻辑目录。
+    pub fn with_directory(mut self, directory: impl Into<String>) -> Self {
+        self.directory = directory.into();
         self
     }
 
@@ -334,12 +407,14 @@ impl ResourceBuilder {
     /// 完成构建并执行领域校验。
     pub fn build(self) -> Result<Resource, ResourceError> {
         let name = normalize_resource_name(self.name)?;
+        let directory = normalize_resource_directory(self.directory)?;
         self.kind.validate()?;
         let now = Utc::now();
 
         Ok(Resource {
             id: ResourceId::new(),
             name,
+            directory,
             kind: self.kind,
             status: self.status,
             metadata: self.metadata,
