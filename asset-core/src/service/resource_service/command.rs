@@ -1,0 +1,140 @@
+//! 资源命令服务。
+//!
+//! 本模块承接资源聚合本身的生命周期用例：创建、更新、软删除和物理移除。
+//! 它不直接处理预览渲染或插件动作，只在需要硬删除时协调对象内容清理。
+
+use super::*;
+
+/// 资源命令服务。
+///
+/// 该服务以 `ResourceService` 门面作为上下文，复用其中注入的仓储、对象存储和 kind registry。
+pub struct ResourceCommandService<'a> {
+    service: &'a ResourceService,
+}
+
+impl<'a> ResourceCommandService<'a> {
+    /// 创建资源命令服务。
+    pub(super) fn new(service: &'a ResourceService) -> Self {
+        Self { service }
+    }
+
+    /// 创建纯元数据资源。
+    ///
+    /// 该 usecase 只保存资源聚合，不写入对象存储。成功时返回已经保存的 `Resource`，
+    /// 其中包含新生成的 `ResourceId`、创建时间和更新时间。
+    ///
+    /// 可能返回的错误包括领域校验错误和仓储保存错误。
+    pub async fn create_resource(&self, command: CreateResource) -> Result<Resource, CoreError> {
+        let kind = self.service.validate_registered_kind(command.kind)?;
+        let resource =
+            build_resource(command.name, Some(kind), command.status, command.metadata).build()?;
+
+        self.service.repository.save(&resource).await?;
+
+        Ok(resource)
+    }
+
+    /// 按 ID 查找资源。
+    ///
+    /// 找不到资源或资源已经软删除时返回 `Ok(None)`。维护类操作需要读取软删除资源时，
+    /// 应使用专门的恢复或物理删除用例。
+    pub async fn find_resource(&self, id: &ResourceId) -> Result<Option<Resource>, CoreError> {
+        Ok(self
+            .service
+            .repository
+            .find_by_id(id)
+            .await?
+            .filter(|resource| !resource.is_deleted()))
+    }
+
+    /// 分页列出资源。
+    pub async fn list_resources(&self, query: ListResources) -> Result<ResourcePage, CoreError> {
+        if let Some(kind) = query.kind() {
+            self.service.ensure_kind_registered(kind)?;
+        }
+
+        self.service.repository.list(&query).await
+    }
+
+    /// 更新资源基础信息、元数据、状态，或恢复软删除资源。
+    pub async fn update_resource(
+        &self,
+        id: &ResourceId,
+        command: UpdateResource,
+    ) -> Result<Option<Resource>, CoreError> {
+        let Some(mut resource) = self.service.repository.find_by_id(id).await? else {
+            return Ok(None);
+        };
+
+        if command.restore {
+            resource.restore();
+        }
+
+        if let Some(name) = command.name {
+            resource.rename(name)?;
+        }
+
+        if let Some(kind) = command.kind {
+            resource.change_kind(self.service.validate_registered_kind(Some(kind))?)?;
+        }
+
+        if let Some(status) = command.status {
+            match status {
+                ResourceStatus::Active => resource.activate()?,
+                ResourceStatus::Archived => resource.archive()?,
+            }
+        }
+
+        if let Some(metadata) = command.metadata {
+            resource.set_metadata(metadata)?;
+        }
+
+        self.service.repository.save(&resource).await?;
+
+        Ok(Some(resource))
+    }
+
+    /// 软删除资源。
+    ///
+    /// 软删除只更新资源聚合状态并保存到仓储，不删除对象存储中的内容。这样可以保留恢复、
+    /// 审计或异步清理的空间。
+    ///
+    /// 找不到资源时返回 `Ok(None)`；找到资源时返回保存后的资源状态。重复软删除同一资源是
+    /// 幂等的，领域模型不会反复刷新删除时间。
+    pub async fn soft_delete_resource(
+        &self,
+        id: &ResourceId,
+    ) -> Result<Option<Resource>, CoreError> {
+        let Some(mut resource) = self.service.repository.find_by_id(id).await? else {
+            return Ok(None);
+        };
+
+        resource.soft_delete();
+        self.service.repository.save(&resource).await?;
+
+        Ok(Some(resource))
+    }
+
+    /// 物理移除资源及其对象内容。
+    ///
+    /// 该 usecase 用于维护任务或明确需要硬删除的场景，不是默认业务删除入口。
+    ///
+    /// 执行顺序是先删除对象内容，再物理移除资源记录。这样即使仓储移除失败，调用方也可以
+    /// 安全重试，因为 `BlobStorage::delete` 被定义为幂等操作。
+    ///
+    /// 返回值表示是否找到并尝试移除了资源：资源不存在时返回 `Ok(false)`，找到并完成移除时
+    /// 返回 `Ok(true)`。
+    pub async fn remove_resource(&self, id: &ResourceId) -> Result<bool, CoreError> {
+        let Some(resource) = self.service.repository.find_by_id(id).await? else {
+            return Ok(false);
+        };
+
+        if let Some(content) = resource.content() {
+            self.service.blob_storage.delete(content.key()).await?;
+        }
+
+        self.service.repository.remove(id).await?;
+
+        Ok(true)
+    }
+}

@@ -26,6 +26,16 @@ use std::sync::Arc;
 
 const MAX_INLINE_PLUGIN_CONTENT_BYTES: u64 = 4 * 1024 * 1024;
 
+mod action;
+mod command;
+mod content;
+mod preview;
+
+pub use action::ResourceActionService;
+pub use command::ResourceCommandService;
+pub use content::ResourceContentService;
+pub use preview::ResourcePreviewService;
+
 /// 创建纯元数据资源的用例命令。
 ///
 /// 该命令描述“创建一条没有对象内容的资源”的输入参数。它只收集调用方传入的数据，
@@ -537,6 +547,8 @@ impl ResourceThumbnail {
 ///
 /// 该服务是外部调用资源核心能力的主要入口。它负责协调 `Resource` 聚合、
 /// `ResourceRepository` 和 `BlobStorage`，但不拥有具体数据库或对象存储实现。
+/// 具体用例按职责拆分到命令、内容、动作和预览服务中；本类型保留为兼容门面，
+/// 让 HTTP、CLI 等入口可以继续通过一个对象访问核心能力。
 ///
 /// 对象存储和数据库之间没有分布式事务。本服务会在关键流程中做必要的顺序控制和
 /// 最小补偿，但调用方仍应根据业务需要在更外层增加重试、任务补偿或审计机制。
@@ -605,232 +617,71 @@ impl ResourceService {
             action_executor: Some(action_executor),
         }
     }
+    /// 返回资源命令服务。
+    ///
+    /// 命令服务负责资源聚合本身的生命周期变化，例如创建、更新、软删除和物理移除。
+    pub fn commands(&self) -> ResourceCommandService<'_> {
+        ResourceCommandService::new(self)
+    }
+
+    /// 返回资源内容服务。
+    ///
+    /// 内容服务负责对象内容的上传、流式上传和下载，并处理对象存储与资源仓储之间的补偿。
+    pub fn content(&self) -> ResourceContentService<'_> {
+        ResourceContentService::new(self)
+    }
+
+    /// 返回资源动作服务。
+    ///
+    /// 动作服务负责解析 kind/action 声明、执行动作和应用动作返回的写入效果。
+    pub fn actions(&self) -> ResourceActionService<'_> {
+        ResourceActionService::new(self)
+    }
+
+    /// 返回资源预览服务。
+    ///
+    /// 预览服务负责 read、preview、thumbnail 等面向展示的读取流程。
+    pub fn previews(&self) -> ResourcePreviewService<'_> {
+        ResourcePreviewService::new(self)
+    }
 
     /// 创建纯元数据资源。
-    ///
-    /// 该 usecase 只保存资源聚合，不写入对象存储。成功时返回已经保存的 `Resource`，
-    /// 其中包含新生成的 `ResourceId`、创建时间和更新时间。
-    ///
-    /// 可能返回的错误包括领域校验错误和仓储保存错误。
     pub async fn create_resource(&self, command: CreateResource) -> Result<Resource, CoreError> {
-        let kind = self.validate_registered_kind(command.kind)?;
-        let resource =
-            build_resource(command.name, Some(kind), command.status, command.metadata).build()?;
-
-        self.repository.save(&resource).await?;
-
-        Ok(resource)
+        self.commands().create_resource(command).await
     }
 
     /// 上传对象内容并创建资源。
-    ///
-    /// 该 usecase 会先完成领域对象构建和校验，再把内容写入 `BlobStorage`，最后通过
-    /// `ResourceRepository` 保存资源聚合。
-    ///
-    /// 如果对象写入成功但资源保存失败，本方法会尝试删除刚写入的对象内容。该补偿删除是
-    /// best-effort：补偿失败不会覆盖原始仓储错误，调用方可以通过日志或外层任务继续清理。
-    ///
-    /// 成功时返回已经保存的 `Resource`，其中的 `content` 指向刚写入的对象。
     pub async fn upload_resource_content(
         &self,
         command: UploadResourceContent,
     ) -> Result<Resource, CoreError> {
-        let UploadResourceContent {
-            name,
-            kind,
-            status,
-            metadata,
-            storage_key,
-            data,
-            mime_type,
-            original_filename,
-            checksums,
-        } = command;
-        let kind = self.resolve_content_kind(
-            kind,
-            mime_type.as_deref(),
-            original_filename
-                .as_deref()
-                .or_else(|| Some(storage_key.as_str())),
-        )?;
-
-        verify_bytes_checksums(&data, &checksums)?;
-
-        let content = build_content(
-            storage_key.clone(),
-            data.len() as u64,
-            mime_type,
-            original_filename,
-            checksums,
-        )?;
-        let resource = build_resource(name, Some(kind), status, metadata)
-            .with_content(content)
-            .build()?;
-
-        self.blob_storage.put_if_absent(&storage_key, data).await?;
-
-        if let Err(error) = self.repository.save(&resource).await {
-            let _ = self.blob_storage.delete(&storage_key).await;
-            return Err(error);
-        }
-
-        Ok(resource)
+        self.content().upload_resource_content(command).await
     }
 
     /// 流式上传对象内容并创建资源。
-    ///
-    /// 该 usecase 面向大文件上传。内容会以 chunk 流的形式写入 `BlobStorage`，不会在
-    /// service 层聚合成完整 `Bytes`。写入完成后，service 使用存储端口返回的实际字节数
-    /// 构建 `ResourceContent` 并保存资源聚合。
-    ///
-    /// 如果资源保存失败，本方法会尝试删除刚写入的对象内容。该补偿删除是 best-effort，
-    /// 不会覆盖原始仓储错误。
     pub async fn upload_resource_content_stream(
         &self,
         command: UploadResourceContentStream,
     ) -> Result<Resource, CoreError> {
-        let UploadResourceContentStream {
-            name,
-            kind,
-            status,
-            metadata,
-            storage_key,
-            data,
-            mime_type,
-            original_filename,
-            checksums,
-        } = command;
-        let kind = self.resolve_content_kind(
-            kind,
-            mime_type.as_deref(),
-            original_filename
-                .as_deref()
-                .or_else(|| Some(storage_key.as_str())),
-        )?;
-
-        let resource_builder = build_resource(name, Some(kind), status, metadata);
-        resource_builder.clone().build()?;
-        build_content(
-            storage_key.clone(),
-            0,
-            mime_type.clone(),
-            original_filename.clone(),
-            checksums.clone(),
-        )?;
-
-        let (data, sha256_state) = stream_with_checksum_tracking(data, &checksums);
-        let write_result = self
-            .blob_storage
-            .put_stream_if_absent(&storage_key, data)
-            .await?;
-        if let Err(error) = verify_tracked_checksums(sha256_state, &checksums) {
-            let _ = self.blob_storage.delete(&storage_key).await;
-            return Err(error);
-        }
-        let content = build_content(
-            storage_key.clone(),
-            write_result.bytes_written(),
-            mime_type,
-            original_filename,
-            checksums,
-        )?;
-        let resource = resource_builder.with_content(content).build()?;
-
-        if let Err(error) = self.repository.save(&resource).await {
-            let _ = self.blob_storage.delete(&storage_key).await;
-            return Err(error);
-        }
-
-        Ok(resource)
+        self.content().upload_resource_content_stream(command).await
     }
 
-    /// 按 ID 查找资源。
-    ///
-    /// 找不到资源或资源已经软删除时返回 `Ok(None)`。维护类操作需要读取软删除资源时，
-    /// 应使用专门的恢复或物理删除用例。
+    /// 按 ID 查找未删除资源。
     pub async fn find_resource(&self, id: &ResourceId) -> Result<Option<Resource>, CoreError> {
-        Ok(self
-            .repository
-            .find_by_id(id)
-            .await?
-            .filter(|resource| !resource.is_deleted()))
+        self.commands().find_resource(id).await
     }
 
     /// 分页列出资源。
     pub async fn list_resources(&self, query: ListResources) -> Result<ResourcePage, CoreError> {
-        if let Some(kind) = query.kind() {
-            self.ensure_kind_registered(kind)?;
-        }
-
-        self.repository.list(&query).await
+        self.commands().list_resources(query).await
     }
 
     /// 计算资源当前可执行动作。
-    ///
-    /// 该方法统一封装资源内容状态和注册 kind 能力，供不同应用入口复用，
-    /// 避免在 HTTP、CLI、TUI 中重复拼装判断逻辑。
     pub fn describe_resource_actions(
         &self,
         resource: &Resource,
     ) -> Result<ResourceActions, CoreError> {
-        let definition = self.require_kind_definition(resource.kind())?;
-        let Some(content) = resource.content() else {
-            return Ok(ResourceActions::default());
-        };
-        if resource.is_deleted() {
-            return Ok(ResourceActions::default());
-        }
-
-        let mime_type = content.mime_type();
-        let storage_key = Some(content.key().as_str());
-        let declared_actions = self.actions_for_resource(resource, &definition);
-        let has_declared_action = |action: &str| {
-            declared_actions.iter().any(|definition| {
-                definition.id().as_str() == action
-                    && definition.matches_content(mime_type, storage_key)
-            })
-        };
-        let supports_preview = has_declared_action(crate::port::ResourceAction::PREVIEW);
-        let read = has_declared_action(crate::port::ResourceAction::READ);
-        let view_inline = has_declared_action(crate::port::ResourceAction::VIEW_INLINE);
-        let thumbnail = has_declared_action(crate::port::ResourceAction::THUMBNAIL);
-        let mut available_actions = Vec::new();
-        for action in &declared_actions {
-            let enabled = match action.id().as_str() {
-                crate::port::ResourceAction::DOWNLOAD_CONTENT => true,
-                crate::port::ResourceAction::READ => read,
-                crate::port::ResourceAction::VIEW_INLINE => view_inline,
-                crate::port::ResourceAction::PREVIEW => supports_preview,
-                crate::port::ResourceAction::THUMBNAIL => thumbnail,
-                _ => action.matches_resource(resource.kind().as_str(), mime_type, storage_key),
-            };
-
-            if enabled {
-                available_actions.push(action.clone());
-            }
-        }
-
-        if !available_actions
-            .iter()
-            .any(|action| action.id().as_str() == crate::port::ResourceAction::DOWNLOAD_CONTENT)
-        {
-            available_actions.insert(
-                0,
-                crate::port::ResourceActionDefinition::new(
-                    crate::port::ResourceAction::DOWNLOAD_CONTENT,
-                    "Download",
-                ),
-            );
-        }
-
-        Ok(ResourceActions::new(
-            true,
-            read,
-            view_inline,
-            supports_preview,
-            thumbnail,
-            available_actions,
-        ))
+        self.actions().describe_resource_actions(resource)
     }
 
     /// 更新资源基础信息、元数据、状态，或恢复软删除资源。
@@ -839,266 +690,29 @@ impl ResourceService {
         id: &ResourceId,
         command: UpdateResource,
     ) -> Result<Option<Resource>, CoreError> {
-        let Some(mut resource) = self.repository.find_by_id(id).await? else {
-            return Ok(None);
-        };
-
-        if command.restore {
-            resource.restore();
-        }
-
-        if let Some(name) = command.name {
-            resource.rename(name)?;
-        }
-
-        if let Some(kind) = command.kind {
-            resource.change_kind(self.validate_registered_kind(Some(kind))?)?;
-        }
-
-        if let Some(status) = command.status {
-            match status {
-                ResourceStatus::Active => resource.activate()?,
-                ResourceStatus::Archived => resource.archive()?,
-            }
-        }
-
-        if let Some(metadata) = command.metadata {
-            resource.set_metadata(metadata)?;
-        }
-
-        self.repository.save(&resource).await?;
-
-        Ok(Some(resource))
+        self.commands().update_resource(id, command).await
     }
 
     /// 读取资源对应的对象内容。
-    ///
-    /// 该 usecase 会先读取资源聚合，再根据资源内容引用读取对象存储。
-    ///
-    /// 以下情况统一返回 `Ok(None)`：
-    /// - 资源不存在。
-    /// - 资源已软删除。
-    /// - 资源没有内容引用。
-    /// - 内容引用存在，但对象存储中没有对应对象。
-    ///
-    /// 对象存储自身故障会返回 `Err(CoreError::Storage { .. })`。
     pub async fn get_resource_content(&self, id: &ResourceId) -> Result<Option<Bytes>, CoreError> {
-        let Some(resource) = self.repository.find_by_id(id).await? else {
-            return Ok(None);
-        };
-
-        if resource.is_deleted() {
-            return Ok(None);
-        }
-
-        let Some(content) = resource.content() else {
-            return Ok(None);
-        };
-
-        self.blob_storage.get(content.key()).await
+        self.content().get_resource_content(id).await
     }
 
     /// 读取资源的可阅读 View。
-    ///
-    /// 该 usecase 统一负责 `read` action 校验、对象内容读取和插件调度，供 HTTP、CLI、
-    /// TUI 等应用入口复用。具体格式解析由插件负责。
-    ///
-    /// 找不到资源、资源已删除或没有内容时返回 `Ok(None)`。资源类型不支持阅读，或内容格式
-    /// 没有插件 handler 时返回 `Err(CoreError::Configuration { .. })`。
     pub async fn read_resource(
         &self,
         id: &ResourceId,
     ) -> Result<Option<ReadableResource>, CoreError> {
-        let Some(output) = self
-            .execute_declared_resource_action(
-                id,
-                crate::port::ResourceAction::READ.into(),
-                serde_json::Value::Null,
-            )
-            .await?
-        else {
-            return Ok(None);
-        };
-        let Some(resource) = self.find_resource(id).await? else {
-            return Ok(None);
-        };
-
-        Ok(Some(ReadableResource::new(
-            resource.id(),
-            resource.name().to_string(),
-            resource.kind().clone(),
-            output.output().view.clone(),
-        )))
+        self.previews().read_resource(id).await
     }
 
-    /// 执行资源类型声明的插件动作。
-    ///
-    /// 核心负责资源存在性、删除状态、kind/action 声明、访问边界和对象内容加载；具体 wasm
-    /// 运行时由 `ResourceActionExecutor` 端口承接。
+    /// 执行资源类型声明的动作。
     pub async fn execute_resource_action(
         &self,
         id: &ResourceId,
         command: ExecuteResourceAction,
     ) -> Result<Option<ResourceActionOutput>, CoreError> {
-        self.execute_declared_resource_action(id, command.action, command.input)
-            .await
-    }
-
-    async fn execute_declared_resource_action(
-        &self,
-        id: &ResourceId,
-        action_id: crate::port::ResourceAction,
-        input: serde_json::Value,
-    ) -> Result<Option<ResourceActionOutput>, CoreError> {
-        let Some(mut resource) = self.find_resource(id).await? else {
-            return Ok(None);
-        };
-
-        // 1. Resolve the action from the resource kind/global action registry before touching
-        //    content or plugin runtime state.
-        let action = self.resolve_declared_resource_action(&resource, &action_id)?;
-
-        // 2. Load content only when the action contract says the executor should receive it.
-        let content = self
-            .load_declared_resource_action_content(&resource, &action)
-            .await?;
-
-        // 3. Dispatch the request through the configured action executor.
-        let access = action.access();
-        let output = self
-            .execute_resource_action_request(&resource, action_id, &action, input, content)
-            .await?;
-
-        // 4. Apply write effects after the executor returns, guarded by the action access boundary.
-        self.apply_action_effects(&mut resource, &output, access)
-            .await?;
-
-        Ok(Some(output))
-    }
-
-    fn resolve_declared_resource_action(
-        &self,
-        resource: &Resource,
-        action_id: &crate::port::ResourceAction,
-    ) -> Result<crate::port::ResourceActionDefinition, CoreError> {
-        let definition = self.require_kind_definition(resource.kind())?;
-        let declared_actions = self.actions_for_resource(resource, &definition);
-        declared_actions
-            .into_iter()
-            .find(|action| declared_action_matches_resource(action, action_id, resource))
-            .ok_or_else(|| {
-                CoreError::configuration(format!(
-                    "resource kind `{}` does not support action `{}`",
-                    resource.kind(),
-                    action_id
-                ))
-            })
-    }
-
-    async fn load_declared_resource_action_content(
-        &self,
-        resource: &Resource,
-        action: &crate::port::ResourceActionDefinition,
-    ) -> Result<Option<Bytes>, CoreError> {
-        let Some(content_ref) = resource.content() else {
-            return Ok(None);
-        };
-        if !should_load_declared_action_content(action, content_ref) {
-            return Ok(None);
-        }
-
-        self.blob_storage.get(content_ref.key()).await
-    }
-
-    async fn execute_resource_action_request(
-        &self,
-        resource: &Resource,
-        action_id: crate::port::ResourceAction,
-        action: &crate::port::ResourceActionDefinition,
-        input: serde_json::Value,
-        content: Option<Bytes>,
-    ) -> Result<ResourceActionOutput, CoreError> {
-        let Some(executor) = &self.action_executor else {
-            return Err(CoreError::configuration(
-                "resource action executor is not configured",
-            ));
-        };
-        let request = ResourceActionRequest::new(
-            resource.clone(),
-            action_id,
-            action.handler(),
-            action.access(),
-            action.content_delivery(),
-            input,
-            content,
-        );
-
-        executor.execute(request).await
-    }
-
-    async fn apply_action_effects(
-        &self,
-        resource: &mut Resource,
-        output: &ResourceActionOutput,
-        access: crate::port::ResourceActionAccess,
-    ) -> Result<(), CoreError> {
-        if output.output().effects.is_empty() {
-            return Ok(());
-        }
-        if !matches!(access, crate::port::ResourceActionAccess::ReadWrite) {
-            return Err(CoreError::configuration(format!(
-                "action `{}` returned effects without write access",
-                output.action()
-            )));
-        }
-
-        for effect in &output.output().effects {
-            match effect {
-                PluginActionEffect::ReplaceContent(effect) => {
-                    let Some(current_content) = resource.content().cloned() else {
-                        return Err(CoreError::configuration(format!(
-                            "action `{}` cannot replace missing resource content",
-                            output.action()
-                        )));
-                    };
-                    if !matches!(effect.encoding, PluginContentEncoding::Base64) {
-                        return Err(CoreError::configuration(format!(
-                            "action `{}` returned unsupported replace_content encoding",
-                            output.action()
-                        )));
-                    }
-                    let data = BASE64_STANDARD
-                        .decode(effect.data.as_bytes())
-                        .map(Bytes::from)
-                        .map_err(|error| {
-                            CoreError::configuration(format!(
-                                "action `{}` returned invalid replace_content base64: {error}",
-                                output.action()
-                            ))
-                        })?;
-                    let checksums = plugin_checksums(&effect.checksum, &data)?;
-                    let content = build_content(
-                        current_content.key().clone(),
-                        data.len() as u64,
-                        effect
-                            .mime_type
-                            .clone()
-                            .or_else(|| current_content.mime_type().map(str::to_string)),
-                        effect
-                            .original_filename
-                            .clone()
-                            .or_else(|| current_content.original_filename().map(str::to_string)),
-                        checksums,
-                    )?;
-
-                    self.blob_storage.put(current_content.key(), data).await?;
-                    resource.attach_content(content)?;
-                    self.repository.save(resource).await?;
-                }
-            }
-        }
-
-        Ok(())
+        self.actions().execute_resource_action(id, command).await
     }
 
     /// 读取资源预览内容。
@@ -1106,25 +720,7 @@ impl ResourceService {
         &self,
         id: &ResourceId,
     ) -> Result<Option<ResourcePreview>, CoreError> {
-        let Some(output) = self
-            .execute_declared_resource_action(
-                id,
-                crate::port::ResourceAction::PREVIEW.into(),
-                serde_json::Value::Null,
-            )
-            .await?
-        else {
-            return Ok(None);
-        };
-        let (content_type, content) = self
-            .media_view_content(
-                id,
-                crate::port::ResourceAction::PREVIEW,
-                &output.output().view,
-            )
-            .await?;
-
-        Ok(Some(ResourcePreview::new(content_type, content)))
+        self.previews().preview_resource(id).await
     }
 
     /// 返回资源预览内容流。
@@ -1132,48 +728,7 @@ impl ResourceService {
         &self,
         id: &ResourceId,
     ) -> Result<Option<ResourcePreviewStream>, CoreError> {
-        let Some(resource) = self.find_resource(id).await? else {
-            return Ok(None);
-        };
-        let definition = self.require_kind_definition(resource.kind())?;
-        let declared_actions = self.actions_for_resource(&resource, &definition);
-        let content_ref = resource.content();
-        let Some(action) = declared_actions.iter().find(|action| {
-            action.id().as_str() == crate::port::ResourceAction::PREVIEW
-                && action.matches_resource(
-                    resource.kind().as_str(),
-                    content_ref.and_then(|content| content.mime_type()),
-                    content_ref.map(|content| content.key().as_str()),
-                )
-        }) else {
-            return Err(CoreError::configuration(format!(
-                "resource kind `{}` does not support action `preview`",
-                resource.kind()
-            )));
-        };
-        if action.executor() != crate::port::ResourceActionExecutorKind::Builtin {
-            return Err(CoreError::configuration(
-                "plugin preview actions must be executed through the action endpoint",
-            ));
-        }
-        let Some(content_ref) = resource.content() else {
-            return Err(CoreError::not_found(
-                "resource content",
-                resource.id().to_string(),
-            ));
-        };
-        let Some(content) = self.blob_storage.get_stream(content_ref.key()).await? else {
-            return Err(CoreError::not_found(
-                "resource content",
-                resource.id().to_string(),
-            ));
-        };
-
-        Ok(Some(ResourcePreviewStream::new(
-            content_type_for_media(content_ref),
-            Some(content_ref.size()),
-            content,
-        )))
+        self.previews().preview_resource_stream(id).await
     }
 
     /// 读取资源缩略图内容。
@@ -1181,103 +736,20 @@ impl ResourceService {
         &self,
         id: &ResourceId,
     ) -> Result<Option<ResourceThumbnail>, CoreError> {
-        let Some(output) = self
-            .execute_declared_resource_action(
-                id,
-                crate::port::ResourceAction::THUMBNAIL.into(),
-                serde_json::Value::Null,
-            )
-            .await?
-        else {
-            return Ok(None);
-        };
-        let (content_type, content) = self
-            .media_view_content(
-                id,
-                crate::port::ResourceAction::THUMBNAIL,
-                &output.output().view,
-            )
-            .await?;
-
-        Ok(Some(ResourceThumbnail::new(content_type, content)))
-    }
-
-    async fn media_view_content(
-        &self,
-        id: &ResourceId,
-        action: &str,
-        view: &PluginView,
-    ) -> Result<(String, Bytes), CoreError> {
-        let PluginView::Media(media) = view else {
-            return Err(CoreError::configuration(format!(
-                "resource action `{action}` must return a media view"
-            )));
-        };
-
-        match media.encoding {
-            PluginContentEncoding::Base64 => decode_media_view(action, view),
-            PluginContentEncoding::Url => {
-                let Some(resource) = self.find_resource(id).await? else {
-                    return Err(CoreError::not_found("resource", id.to_string()));
-                };
-                let Some(content_ref) = resource.content() else {
-                    return Err(CoreError::not_found("resource content", id.to_string()));
-                };
-                let Some(content) = self.blob_storage.get(content_ref.key()).await? else {
-                    return Err(CoreError::not_found("resource content", id.to_string()));
-                };
-                let content_type = if media.mime_type.trim().is_empty() {
-                    content_type_for_media(content_ref)
-                } else {
-                    media.mime_type.clone()
-                };
-                Ok((content_type, content))
-            }
-        }
+        self.previews().thumbnail_resource(id).await
     }
 
     /// 软删除资源。
-    ///
-    /// 软删除只更新资源聚合状态并保存到仓储，不删除对象存储中的内容。这样可以保留恢复、
-    /// 审计或异步清理的空间。
-    ///
-    /// 找不到资源时返回 `Ok(None)`；找到资源时返回保存后的资源状态。重复软删除同一资源是
-    /// 幂等的，领域模型不会反复刷新删除时间。
     pub async fn soft_delete_resource(
         &self,
         id: &ResourceId,
     ) -> Result<Option<Resource>, CoreError> {
-        let Some(mut resource) = self.repository.find_by_id(id).await? else {
-            return Ok(None);
-        };
-
-        resource.soft_delete();
-        self.repository.save(&resource).await?;
-
-        Ok(Some(resource))
+        self.commands().soft_delete_resource(id).await
     }
 
     /// 物理移除资源及其对象内容。
-    ///
-    /// 该 usecase 用于维护任务或明确需要硬删除的场景，不是默认业务删除入口。
-    ///
-    /// 执行顺序是先删除对象内容，再物理移除资源记录。这样即使仓储移除失败，调用方也可以
-    /// 安全重试，因为 `BlobStorage::delete` 被定义为幂等操作。
-    ///
-    /// 返回值表示是否找到并尝试移除了资源：资源不存在时返回 `Ok(false)`，找到并完成移除时
-    /// 返回 `Ok(true)`。
     pub async fn remove_resource(&self, id: &ResourceId) -> Result<bool, CoreError> {
-        let Some(resource) = self.repository.find_by_id(id).await? else {
-            return Ok(false);
-        };
-
-        if let Some(content) = resource.content() {
-            self.blob_storage.delete(content.key()).await?;
-        }
-
-        self.repository.remove(id).await?;
-
-        Ok(true)
+        self.commands().remove_resource(id).await
     }
 
     fn validate_registered_kind(

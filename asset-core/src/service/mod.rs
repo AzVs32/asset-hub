@@ -9,7 +9,8 @@
 mod resource_service;
 
 pub use resource_service::{
-    CreateResource, ExecuteResourceAction, ReadableResource, ResourceActions, ResourcePreview,
-    ResourceService, ResourceThumbnail, UpdateResource, UploadResourceContent,
-    UploadResourceContentStream,
+    CreateResource, ExecuteResourceAction, ReadableResource, ResourceActionService,
+    ResourceActions, ResourceCommandService, ResourceContentService, ResourcePreview,
+    ResourcePreviewService, ResourceService, ResourceThumbnail, UpdateResource,
+    UploadResourceContent, UploadResourceContentStream,
 };
