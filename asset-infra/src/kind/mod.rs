@@ -7,6 +7,7 @@ use asset_core::port::{
     ResourceActionDefinition, ResourceActionRegistry, ResourceKindDefinition, ResourceKindRegistry,
 };
 use asset_plugin_api::{PluginManifest, ResourceActionCapability, ResourceKindCapability};
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 /// 默认内置资源类型注册表。
@@ -60,11 +61,13 @@ fn build_registries(
     }
 
     for kind in ResourceKind::builtin_values() {
+        let parent = (*kind == ResourceKind::UNKNOWN).then_some("core:file");
         push_definition(
             &mut definitions,
             definition_from_parts(
                 kind,
                 kind,
+                parent,
                 None,
                 None,
                 true,
@@ -104,6 +107,7 @@ fn build_registries(
             )?;
         }
     }
+    validate_kind_hierarchy(&definitions)?;
 
     let mut actions = Vec::new();
     for manifest in &official_manifests {
@@ -136,6 +140,38 @@ fn build_registries(
     }
 
     Ok((definitions, actions))
+}
+
+fn validate_kind_hierarchy(definitions: &[ResourceKindDefinition]) -> Result<(), CoreError> {
+    let parents = definitions
+        .iter()
+        .map(|definition| {
+            (
+                definition.kind().as_str(),
+                definition.parent().map(|parent| parent.as_str()),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+
+    for definition in definitions {
+        let mut current = Some(definition.kind().as_str());
+        let mut visited = HashSet::new();
+        while let Some(kind) = current {
+            if !visited.insert(kind) {
+                return Err(CoreError::configuration(format!(
+                    "resource kind hierarchy contains a cycle at `{kind}`"
+                )));
+            }
+            let Some(parent) = parents.get(kind) else {
+                return Err(CoreError::configuration(format!(
+                    "resource kind `{}` references unknown parent `{kind}`",
+                    definition.kind()
+                )));
+            };
+            current = *parent;
+        }
+    }
+    Ok(())
 }
 
 impl Default for DefaultResourceKindRegistry {
@@ -268,6 +304,7 @@ fn definition_from_manifest_kind(
     definition_from_parts(
         &config.kind,
         label,
+        config.parent.as_deref(),
         config.schema_id.clone(),
         config.metadata_schema.clone(),
         config.supports_content,
@@ -285,6 +322,7 @@ fn definition_from_config(
     definition_from_parts(
         &config.kind,
         label,
+        config.parent.as_deref(),
         config.schema_id.clone(),
         config.metadata_schema.clone(),
         config.supports_content,
@@ -298,6 +336,7 @@ fn definition_from_config(
 fn definition_from_parts(
     kind: &str,
     label: &str,
+    parent: Option<&str>,
     schema_id: Option<String>,
     metadata_schema: Option<serde_json::Value>,
     supports_content: bool,
@@ -312,6 +351,7 @@ fn definition_from_parts(
         supports_content,
         source,
     )
+    .with_parent(parent.map(ResourceKind::try_new).transpose()?)
     .with_metadata_schema(metadata_schema)
     .with_detect(detect)
     .with_actions(actions))
@@ -385,8 +425,63 @@ mod tests {
     }
 
     #[test]
+    fn registry_rejects_unknown_parents_and_cycles() {
+        let unknown_parent = KindRegistryConfig {
+            definitions: vec![ResourceKindConfig {
+                kind: "code:c".to_string(),
+                parent: Some("core:missing".to_string()),
+                ..ResourceKindConfig::default()
+            }],
+            plugin_manifests: Vec::new(),
+        };
+        assert!(
+            DefaultResourceKindRegistry::from_config(&unknown_parent)
+                .unwrap_err()
+                .to_string()
+                .contains("unknown parent")
+        );
+
+        let cycle = KindRegistryConfig {
+            definitions: vec![
+                ResourceKindConfig {
+                    kind: "code:a".to_string(),
+                    parent: Some("code:b".to_string()),
+                    ..ResourceKindConfig::default()
+                },
+                ResourceKindConfig {
+                    kind: "code:b".to_string(),
+                    parent: Some("code:a".to_string()),
+                    ..ResourceKindConfig::default()
+                },
+            ],
+            plugin_manifests: Vec::new(),
+        };
+        assert!(
+            DefaultResourceKindRegistry::from_config(&cycle)
+                .unwrap_err()
+                .to_string()
+                .contains("cycle")
+        );
+    }
+
+    #[test]
     fn registry_includes_official_core_plugin_fallback_kinds() {
         let registry = DefaultResourceKindRegistry::new().unwrap();
+
+        let file = registry
+            .get(&ResourceKind::try_new("core:file").unwrap())
+            .unwrap();
+        let unknown = registry
+            .get(&ResourceKind::try_new(ResourceKind::UNKNOWN).unwrap())
+            .unwrap();
+        assert!(file.parent().is_none());
+        assert_eq!(unknown.parent(), Some(file.kind()));
+        assert!(
+            registry
+                .actions_for_kind(unknown.kind())
+                .iter()
+                .any(|action| action.id().as_str() == ResourceAction::DOWNLOAD_CONTENT)
+        );
 
         for (kind, label, source, expected_actions) in [
             (
@@ -432,10 +527,19 @@ mod tests {
             assert_eq!(definition.label(), label);
             assert_eq!(definition.source(), source);
             assert!(definition.supports_content());
+            let inherited_actions = registry.actions_for_kind(definition.kind());
             for action in expected_actions {
-                assert!(definition.has_action(action));
+                assert!(
+                    inherited_actions
+                        .iter()
+                        .any(|definition| definition.id().as_str() == action)
+                );
             }
-            assert!(!definition.has_action(ResourceAction::READ));
+            assert!(
+                !inherited_actions
+                    .iter()
+                    .any(|definition| definition.id().as_str() == ResourceAction::READ)
+            );
         }
 
         let image = registry

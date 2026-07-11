@@ -80,6 +80,13 @@ fn validate_capabilities(capabilities: &PluginCapabilities) -> Result<(), String
         if kind.kind.trim().is_empty() {
             return Err("capabilities.resource_kinds[].kind must not be empty".to_string());
         }
+        if kind
+            .parent
+            .as_ref()
+            .is_some_and(|parent| parent.trim().is_empty())
+        {
+            return Err("capabilities.resource_kinds[].parent must not be empty".to_string());
+        }
     }
     for action in &capabilities.resource_actions {
         if action.id.trim().is_empty() {

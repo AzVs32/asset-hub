@@ -14,6 +14,7 @@
     "resource_kinds": [
       {
         "kind": "core:document",
+        "parent": "core:file",
         "label": "Document",
         "schema_id": "core:document@1",
         "supports_content": true,

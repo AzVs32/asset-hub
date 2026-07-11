@@ -17,6 +17,7 @@
     "resource_kinds": [
       {
         "kind": "azvs:epub",
+        "parent": "core:document",
         "label": "EPUB",
         "schema_id": "azvs:epub@1",
         "supports_content": true,

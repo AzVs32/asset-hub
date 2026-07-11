@@ -19,6 +19,7 @@ pub struct PluginCapabilities {
 #[serde(default)]
 pub struct ResourceKindCapability {
     pub kind: String,
+    pub parent: Option<String>,
     pub label: Option<String>,
     pub schema_id: Option<String>,
     pub metadata_schema: Option<Value>,
@@ -30,6 +31,7 @@ impl Default for ResourceKindCapability {
     fn default() -> Self {
         Self {
             kind: String::new(),
+            parent: None,
             label: None,
             schema_id: None,
             metadata_schema: None,

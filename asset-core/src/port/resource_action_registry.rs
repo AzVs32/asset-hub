@@ -1,6 +1,6 @@
 //! Resource action registry port.
 
-use crate::domain::Resource;
+use crate::domain::{Resource, ResourceKind};
 pub use asset_plugin_api::{ResourceAction, ResourceActionDefinition};
 
 /// Registry for globally contributed resource actions.
@@ -18,15 +18,25 @@ pub trait ResourceActionRegistry: Send + Sync {
 
     /// List actions whose applies_to model matches a concrete resource.
     fn actions_for_resource(&self, resource: &Resource) -> Vec<ResourceActionDefinition> {
+        self.actions_for_resource_kinds(resource, std::slice::from_ref(resource.kind()))
+    }
+
+    fn actions_for_resource_kinds(
+        &self,
+        resource: &Resource,
+        kinds: &[ResourceKind],
+    ) -> Vec<ResourceActionDefinition> {
         let content = resource.content();
         self.actions()
             .iter()
             .filter(|action| {
-                action.matches_resource(
-                    resource.kind().as_str(),
-                    content.and_then(|content| content.mime_type()),
-                    content.map(|content| content.key().as_str()),
-                )
+                kinds.iter().any(|kind| {
+                    action.matches_resource(
+                        kind.as_str(),
+                        content.and_then(|content| content.mime_type()),
+                        content.map(|content| content.key().as_str()),
+                    )
+                })
             })
             .cloned()
             .collect()

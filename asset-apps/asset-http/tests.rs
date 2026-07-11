@@ -35,13 +35,14 @@ async fn resource_kinds_are_listed_and_unsupported_kind_is_rejected() {
     let (status, kinds) = empty_json_request(&app, Method::GET, "/resource-kinds").await;
 
     assert_eq!(status, StatusCode::OK);
-    assert!(
-        kinds["items"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|kind| { kind["kind"] == "core:unknown" && kind["schema_id"].is_null() })
-    );
+    let unknown = kinds["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|kind| kind["kind"] == "core:unknown")
+        .unwrap();
+    assert_eq!(unknown["parent"], "core:file");
+    assert_eq!(unknown["schema_id"], "core:file@1");
     for (kind, source) in [
         ("core:file", "plugin:core.file"),
         ("core:image", "plugin:core.image"),
@@ -821,7 +822,7 @@ async fn stream_upload_roundtrips_large_blob_without_buffered_request_dto() {
 }
 
 #[tokio::test]
-async fn upload_detects_parent_kind_from_plugin_action_rules() {
+async fn upload_detects_most_specific_plugin_kind() {
     let app = test_app_with_plugin_manifests(
         "markdown-plugin-detect",
         vec![
@@ -844,14 +845,29 @@ async fn upload_detects_parent_kind_from_plugin_action_rules() {
     let resource = response_json(response).await;
 
     assert_eq!(status, StatusCode::CREATED, "{resource}");
-    assert_eq!(resource["kind"], "core:document");
+    assert_eq!(resource["kind"], "azvs:markdown");
+    let actions = resource["actions"]["available_actions"].as_array().unwrap();
     assert!(
-        resource["actions"]["available_actions"]
-            .as_array()
-            .unwrap()
+        actions
             .iter()
             .any(|action| action["id"] == "azvs.markdown.render")
     );
+    assert!(
+        actions
+            .iter()
+            .any(|action| action["id"] == "download_content")
+    );
+
+    let resource_id = resource["id"].as_str().unwrap();
+    let (status, rendered) = json_request(
+        &app,
+        Method::POST,
+        &format!("/resources/{resource_id}/actions/azvs.markdown.render"),
+        json!({ "input": {} }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{rendered}");
+    assert_eq!(rendered["action"], "azvs.markdown.render");
 }
 
 #[tokio::test]
@@ -1019,6 +1035,84 @@ async fn list_resources_filters_by_kind_tag_and_query() {
     assert_eq!(page["limit"], 10);
     assert_eq!(page["items"][0]["name"], "alpha image");
     assert_eq!(page["items"][0]["status"], "active");
+}
+
+#[tokio::test]
+async fn kind_filter_can_include_all_descendants() {
+    let app = test_app_with_kind_definitions(
+        "kind-descendant-filter",
+        vec![
+            ResourceKindConfig {
+                kind: "core:code".to_string(),
+                parent: Some("core:document".to_string()),
+                label: Some("Code".to_string()),
+                ..ResourceKindConfig::default()
+            },
+            ResourceKindConfig {
+                kind: "code:c".to_string(),
+                parent: Some("core:code".to_string()),
+                label: Some("C".to_string()),
+                ..ResourceKindConfig::default()
+            },
+            ResourceKindConfig {
+                kind: "code:cpp".to_string(),
+                parent: Some("core:code".to_string()),
+                label: Some("C++".to_string()),
+                ..ResourceKindConfig::default()
+            },
+        ],
+    )
+    .await;
+
+    for (name, kind) in [
+        ("generic code", "core:code"),
+        ("main.c", "code:c"),
+        ("main.cpp", "code:cpp"),
+    ] {
+        let (status, _) = json_request(
+            &app,
+            Method::POST,
+            "/resources",
+            json!({ "name": name, "kind": kind }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+    }
+
+    let (status, exact) =
+        empty_json_request(&app, Method::GET, "/resources?kind=core%3Acode").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(exact["total"], 1);
+
+    let (status, hierarchy) = empty_json_request(
+        &app,
+        Method::GET,
+        "/resources?kind=core%3Acode&include_descendants=true",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(hierarchy["total"], 3);
+
+    let (status, kinds) = empty_json_request(&app, Method::GET, "/resource-kinds").await;
+    assert_eq!(status, StatusCode::OK);
+    let c = kinds["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|kind| kind["kind"] == "code:c")
+        .unwrap();
+    assert_eq!(c["parent"], "core:code");
+    assert_eq!(
+        c["ancestors"],
+        json!(["core:code", "core:document", "core:file"])
+    );
+    assert!(
+        c["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|action| action["id"] == "download_content")
+    );
 }
 
 #[tokio::test]

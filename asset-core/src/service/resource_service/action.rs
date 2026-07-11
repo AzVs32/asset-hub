@@ -56,7 +56,7 @@ impl<'a> ResourceActionService<'a> {
                 crate::port::ResourceAction::VIEW_INLINE => view_inline,
                 crate::port::ResourceAction::PREVIEW => supports_preview,
                 crate::port::ResourceAction::THUMBNAIL => thumbnail,
-                _ => action.matches_resource(resource.kind().as_str(), mime_type, storage_key),
+                _ => self.service.action_matches_resource(action, resource),
             };
 
             if enabled {
@@ -141,7 +141,10 @@ impl<'a> ResourceActionService<'a> {
         let declared_actions = self.service.actions_for_resource(resource, &definition);
         declared_actions
             .into_iter()
-            .find(|action| declared_action_matches_resource(action, action_id, resource))
+            .find(|action| {
+                action.id().as_str() == action_id.as_str()
+                    && self.service.action_matches_resource(action, resource)
+            })
             .ok_or_else(|| {
                 CoreError::configuration(format!(
                     "resource kind `{}` does not support action `{}`",

@@ -9,12 +9,15 @@ pub use asset_plugin_api::{
     ResourceActionDefinition, ResourceActionExecutorKind, ResourceContentMatcher,
 };
 use serde_json::Value;
+use std::collections::HashSet;
 
 /// 资源类型定义。
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResourceKindDefinition {
     /// 资源类型值，例如 `core:file`、`mindustry:mod`。
     kind: ResourceKind,
+    /// 可选父资源类型。父级能力会被后代继承。
+    parent: Option<ResourceKind>,
     /// 展示名称。
     label: String,
     /// 默认 kind metadata schema id。
@@ -52,6 +55,7 @@ impl ResourceKindDefinition {
     ) -> Self {
         Self {
             kind,
+            parent: None,
             label: label.into(),
             schema_id,
             metadata_schema: None,
@@ -60,6 +64,11 @@ impl ResourceKindDefinition {
             actions: Vec::new(),
             source: source.into(),
         }
+    }
+
+    pub fn with_parent(mut self, parent: Option<ResourceKind>) -> Self {
+        self.parent = parent;
+        self
     }
 
     /// 设置 kind metadata JSON schema。
@@ -83,6 +92,10 @@ impl ResourceKindDefinition {
     /// 返回资源类型。
     pub fn kind(&self) -> &ResourceKind {
         &self.kind
+    }
+
+    pub fn parent(&self) -> Option<&ResourceKind> {
+        self.parent.as_ref()
     }
 
     /// 返回展示名称。
@@ -146,45 +159,99 @@ pub trait ResourceKindRegistry: Send + Sync {
         self.get(kind).is_some()
     }
 
+    /// 从具体 kind 开始返回完整谱系：自身、父级，直至根节点。
+    fn lineage(&self, kind: &ResourceKind) -> Vec<ResourceKind> {
+        let definitions = self.list();
+        let mut lineage = Vec::new();
+        let mut current = Some(kind.clone());
+        let mut visited = HashSet::new();
+        while let Some(kind) = current {
+            if !visited.insert(kind.as_str().to_owned()) {
+                break;
+            }
+            let Some(definition) = definitions.iter().find(|item| item.kind() == &kind) else {
+                break;
+            };
+            lineage.push(kind);
+            current = definition.parent().cloned();
+        }
+        lineage
+    }
+
+    fn is_a(&self, kind: &ResourceKind, ancestor: &ResourceKind) -> bool {
+        self.lineage(kind).iter().any(|item| item == ancestor)
+    }
+
+    fn descendants(&self, kind: &ResourceKind) -> Vec<ResourceKind> {
+        self.list()
+            .into_iter()
+            .filter(|definition| self.is_a(definition.kind(), kind))
+            .map(|definition| definition.kind().clone())
+            .collect()
+    }
+
+    /// 返回包含祖先继承结果的 action；更具体 kind 上的同 ID action 优先。
+    fn actions_for_kind(&self, kind: &ResourceKind) -> Vec<ResourceActionDefinition> {
+        let mut actions = Vec::new();
+        for lineage_kind in self.lineage(kind) {
+            let Some(definition) = self.get(&lineage_kind) else {
+                continue;
+            };
+            for action in definition.actions() {
+                if !actions
+                    .iter()
+                    .any(|existing: &ResourceActionDefinition| existing.id() == action.id())
+                {
+                    actions.push(action.clone());
+                }
+            }
+        }
+        actions
+    }
+
+    fn effective_metadata_schema(&self, kind: &ResourceKind) -> Option<Value> {
+        self.lineage(kind)
+            .into_iter()
+            .find_map(|item| self.get(&item)?.metadata_schema().cloned())
+    }
+
+    fn effective_schema_id(&self, kind: &ResourceKind) -> Option<String> {
+        self.lineage(kind)
+            .into_iter()
+            .find_map(|item| self.get(&item)?.schema_id().map(str::to_owned))
+    }
+
     /// 根据内容特征推断父资源类型。
     ///
-    /// 该方法同时参考 kind 自身的 `detect` 和挂载在该 kind 上的 action 匹配规则。
-    /// 插件贡献的 action 只会让识别结果落到 action 所属的父 kind，而不会产生新的插件 kind。
+    /// 检测只参考 kind 自身的 `detect`。格式插件应贡献具体子 kind，而不是借 action
+    /// 匹配规则隐式改变资源类型。
     fn detect_content_kind(
         &self,
         mime_type: Option<&str>,
         storage_key: Option<&str>,
     ) -> Option<ResourceKind> {
-        let mut best: Option<(ResourceKind, u8)> = None;
+        let mut best: Option<(ResourceKind, u8, usize)> = None;
 
         for definition in self
             .list()
             .into_iter()
             .filter(ResourceKindDefinition::supports_content)
         {
-            let mut score = content_match_score(definition.detect(), mime_type, storage_key, 100);
-            for action in definition.actions() {
-                score = score.max(content_match_score(
-                    action.content_matcher(),
-                    mime_type,
-                    storage_key,
-                    0,
-                ));
-            }
+            let score = content_match_score(definition.detect(), mime_type, storage_key, 100);
 
             if score == 0 {
                 continue;
             }
 
-            if best
-                .as_ref()
-                .is_none_or(|(_, best_score)| score > *best_score)
-            {
-                best = Some((definition.kind().clone(), score));
+            let depth = self.lineage(definition.kind()).len();
+            if best.as_ref().is_none_or(|(_, best_score, best_depth)| {
+                score > *best_score || (score == *best_score && depth > *best_depth)
+            }) {
+                best = Some((definition.kind().clone(), score, depth));
             }
         }
 
-        best.map(|(kind, _)| kind)
+        best.map(|(kind, _, _)| kind)
     }
 }
 
@@ -247,7 +314,7 @@ mod tests {
     }
 
     #[test]
-    fn detects_parent_kind_from_action_rules() {
+    fn action_rules_do_not_implicitly_define_resource_kinds() {
         let registry = TestRegistry {
             definitions: vec![
                 ResourceKindDefinition::new(ResourceKind::from("core:file"), "File", None, true),
@@ -271,7 +338,7 @@ mod tests {
 
         assert_eq!(
             registry.detect_content_kind(Some("text/plain"), Some("notes/readme.md")),
-            Some(ResourceKind::from("core:document"))
+            None
         );
     }
 
@@ -294,6 +361,54 @@ mod tests {
         assert_eq!(
             registry.detect_content_kind(None, Some("images/demo.png")),
             Some(ResourceKind::from("core:image"))
+        );
+    }
+
+    #[test]
+    fn supports_arbitrary_depth_lineage_inheritance_and_leaf_detection() {
+        let document = ResourceKind::from("core:document");
+        let code = ResourceKind::from("core:code");
+        let c = ResourceKind::from("code:c");
+        let registry = TestRegistry {
+            definitions: vec![
+                ResourceKindDefinition::new(
+                    document.clone(),
+                    "Document",
+                    Some("core:document@1".to_string()),
+                    true,
+                )
+                .with_metadata_schema(Some(serde_json::json!({"type": "object"})))
+                .with_actions(vec![ResourceActionDefinition::new("document:open", "Open")]),
+                ResourceKindDefinition::new(code.clone(), "Code", None, true)
+                    .with_parent(Some(document.clone())),
+                ResourceKindDefinition::new(c.clone(), "C", None, true)
+                    .with_parent(Some(code.clone()))
+                    .with_detect(ResourceContentMatcher::new().with_extensions([".c", ".h"])),
+            ],
+        };
+
+        assert_eq!(
+            registry.lineage(&c),
+            vec![c.clone(), code.clone(), document]
+        );
+        assert!(registry.descendants(&code).contains(&c));
+        assert_eq!(
+            registry.effective_schema_id(&c).as_deref(),
+            Some("core:document@1")
+        );
+        assert_eq!(
+            registry.effective_metadata_schema(&c).unwrap()["type"],
+            "object"
+        );
+        assert!(
+            registry
+                .actions_for_kind(&c)
+                .iter()
+                .any(|action| action.id().as_str() == "document:open")
+        );
+        assert_eq!(
+            registry.detect_content_kind(Some("text/plain"), Some("src/main.c")),
+            Some(c)
         );
     }
 }

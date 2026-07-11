@@ -71,6 +71,8 @@ pub(crate) struct ListResourcesQuery {
     pub(crate) limit: Option<u32>,
     /// 可选资源类型过滤。
     pub(crate) kind: Option<String>,
+    /// kind 过滤是否包含所有后代类型。
+    pub(crate) include_descendants: Option<bool>,
     /// 可选标签过滤。
     pub(crate) tag: Option<String>,
     /// 可选名称模糊搜索关键字。
@@ -93,6 +95,8 @@ pub(crate) struct ListDirectoryQuery {
     pub(crate) limit: Option<u32>,
     /// 可选资源类型过滤。
     pub(crate) kind: Option<String>,
+    /// kind 过滤是否包含所有后代类型。
+    pub(crate) include_descendants: Option<bool>,
     /// 可选标签过滤。
     pub(crate) tag: Option<String>,
     /// 可选名称模糊搜索关键字。
@@ -241,6 +245,10 @@ pub(crate) struct ResourceKindsResponse {
 pub(crate) struct ResourceKindResponse {
     /// 资源类型值。
     pub(crate) kind: String,
+    /// 直接父类型；根类型为 null。
+    pub(crate) parent: Option<String>,
+    /// 从直接父类型到根类型的完整祖先链。
+    pub(crate) ancestors: Vec<String>,
     /// 展示名称。
     pub(crate) label: String,
     /// 默认 kind metadata schema id。
@@ -258,20 +266,30 @@ pub(crate) struct ResourceKindResponse {
     pub(crate) source: String,
 }
 
-impl From<&ResourceKindDefinition> for ResourceKindResponse {
-    fn from(definition: &ResourceKindDefinition) -> Self {
+impl ResourceKindResponse {
+    pub(crate) fn from_definition(
+        definition: &ResourceKindDefinition,
+        registry: &dyn asset_core::port::ResourceKindRegistry,
+    ) -> Self {
         Self {
             kind: definition.kind().as_str().to_string(),
+            parent: definition.parent().map(|parent| parent.as_str().to_owned()),
+            ancestors: registry
+                .lineage(definition.kind())
+                .into_iter()
+                .skip(1)
+                .map(|kind| kind.as_str().to_owned())
+                .collect(),
             label: definition.label().to_string(),
-            schema_id: definition.schema_id().map(str::to_string),
-            metadata_schema: definition.metadata_schema().cloned(),
+            schema_id: registry.effective_schema_id(definition.kind()),
+            metadata_schema: registry.effective_metadata_schema(definition.kind()),
             supports_content: definition.supports_content(),
             detect: (!definition.detect().is_empty()).then(|| ResourceContentMatcherResponse {
                 mime_types: definition.detect().mime_types().to_vec(),
                 extensions: definition.detect().extensions().to_vec(),
             }),
-            actions: definition
-                .actions()
+            actions: registry
+                .actions_for_kind(definition.kind())
                 .iter()
                 .map(ResourceActionDefinitionResponse::from)
                 .collect(),

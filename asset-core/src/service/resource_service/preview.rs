@@ -93,14 +93,9 @@ impl<'a> ResourcePreviewService<'a> {
         };
         let definition = self.service.require_kind_definition(resource.kind())?;
         let declared_actions = self.service.actions_for_resource(&resource, &definition);
-        let content_ref = resource.content();
         let Some(action) = declared_actions.iter().find(|action| {
             action.id().as_str() == crate::port::ResourceAction::PREVIEW
-                && action.matches_resource(
-                    resource.kind().as_str(),
-                    content_ref.and_then(|content| content.mime_type()),
-                    content_ref.map(|content| content.key().as_str()),
-                )
+                && self.service.action_matches_resource(action, &resource)
         }) else {
             return Err(CoreError::configuration(format!(
                 "resource kind `{}` does not support action `preview`",

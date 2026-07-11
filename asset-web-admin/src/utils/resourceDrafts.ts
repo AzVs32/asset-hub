@@ -72,7 +72,7 @@ export function withKindDefaults<T extends { kind: string; schemaId: string }>(
 }
 
 export function kindOptionLabel(option: ResourceKindOption): string {
-  return `${option.label} (${option.kind})`;
+  return `${"— ".repeat(option.ancestors.length)}${option.label} (${option.kind})`;
 }
 
 export function kindOptionHint(option: ResourceKindOption | undefined): string {
@@ -82,7 +82,29 @@ export function kindOptionHint(option: ResourceKindOption | undefined): string {
   const detect = option.detect
     ? ` / detects ${[...option.detect.mime_types, ...option.detect.extensions].join(", ")}`
     : "";
-  return `${option.source} / ${content}${option.schema_id ? ` / ${option.schema_id}` : ""}${detect}${actions}`;
+  const hierarchy = option.parent ? ` / parent ${option.parent}` : " / root kind";
+  return `${option.source}${hierarchy} / ${content}${option.schema_id ? ` / ${option.schema_id}` : ""}${detect}${actions}`;
+}
+
+export function sortKindsForHierarchy(options: ResourceKindOption[]): ResourceKindOption[] {
+  const children = new Map<string | null, ResourceKindOption[]>();
+  for (const option of options) {
+    const siblings = children.get(option.parent) ?? [];
+    siblings.push(option);
+    children.set(option.parent, siblings);
+  }
+  for (const siblings of children.values()) {
+    siblings.sort((left, right) => left.label.localeCompare(right.label));
+  }
+  const sorted: ResourceKindOption[] = [];
+  const visit = (parent: string | null) => {
+    for (const child of children.get(parent) ?? []) {
+      sorted.push(child);
+      visit(child.kind);
+    }
+  };
+  visit(null);
+  return sorted;
 }
 
 export function isImageResource(resource: Resource): boolean {
@@ -101,19 +123,16 @@ export function detectKindForFile(file: File, options: ResourceKindOption[]): st
     .filter((option) => option.supports_content)
     .map((option) => ({ option, score: detectScore(option, mimeType, filename) }))
     .filter((match) => match.score > 0)
-    .sort((left, right) => right.score - left.score)[0];
+    .sort(
+      (left, right) =>
+        right.score - left.score || right.option.ancestors.length - left.option.ancestors.length,
+    )[0];
 
   return matched?.option.kind ?? fallbackUploadKind(options);
 }
 
 function detectScore(option: ResourceKindOption, mimeType: string, filename: string): number {
-  let score = 0;
-  score = Math.max(score, detectRuleScore(option.detect, mimeType, filename, 100));
-  for (const action of option.actions) {
-    score = Math.max(score, detectRuleScore(action.applies_to, mimeType, filename, 0));
-  }
-
-  return score;
+  return detectRuleScore(option.detect, mimeType, filename, 100);
 }
 
 function detectRuleScore(

@@ -146,7 +146,9 @@ pub(crate) async fn list_resource_kinds(
             .kind_registry()
             .list()
             .iter()
-            .map(ResourceKindResponse::from)
+            .map(|definition| {
+                ResourceKindResponse::from_definition(definition, state.kind_registry())
+            })
             .collect(),
     })
 }
@@ -210,6 +212,7 @@ pub(crate) async fn list_resources(
     if let Some(kind) = query.kind {
         command = command.with_kind(parse_kind(kind)?);
     }
+    command = command.with_include_descendants(query.include_descendants.unwrap_or(false));
 
     if let Some(tag) = query.tag {
         command = command.with_tag(tag);
@@ -260,6 +263,8 @@ pub(crate) async fn list_directory(
     if let Some(kind) = query.kind {
         resources_query = resources_query.with_kind(parse_kind(kind)?);
     }
+    resources_query =
+        resources_query.with_include_descendants(query.include_descendants.unwrap_or(false));
 
     if let Some(tag) = query.tag {
         resources_query = resources_query.with_tag(tag);

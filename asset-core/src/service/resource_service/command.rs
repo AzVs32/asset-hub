@@ -54,9 +54,17 @@ impl<'a> ResourceCommandService<'a> {
     }
 
     /// 分页列出资源。
-    pub async fn list_resources(&self, query: ListResources) -> Result<ResourcePage, CoreError> {
-        if let Some(kind) = query.kind() {
+    pub async fn list_resources(
+        &self,
+        mut query: ListResources,
+    ) -> Result<ResourcePage, CoreError> {
+        for kind in query.kinds() {
             self.service.ensure_kind_registered(kind)?;
+        }
+        if query.include_descendants()
+            && let Some(kind) = query.kind().cloned()
+        {
+            query = query.with_kinds(self.service.kind_registry.descendants(&kind));
         }
 
         self.service.repository.list(&query).await

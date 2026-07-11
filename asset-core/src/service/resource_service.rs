@@ -995,12 +995,39 @@ impl ResourceService {
     fn actions_for_resource(
         &self,
         resource: &Resource,
-        definition: &crate::port::ResourceKindDefinition,
+        _definition: &crate::port::ResourceKindDefinition,
     ) -> Vec<crate::port::ResourceActionDefinition> {
-        self.action_registry
-            .as_ref()
-            .map(|registry| registry.actions_for_resource(resource))
-            .unwrap_or_else(|| definition.actions().to_vec())
+        let lineage = self.kind_registry.lineage(resource.kind());
+        let mut actions = self.kind_registry.actions_for_kind(resource.kind());
+        if let Some(registry) = &self.action_registry {
+            for action in registry.actions_for_resource_kinds(resource, &lineage) {
+                if !actions.iter().any(|existing| existing.id() == action.id()) {
+                    actions.push(action);
+                }
+            }
+        }
+        actions
+            .into_iter()
+            .filter(|action| self.action_matches_resource(action, resource))
+            .collect()
+    }
+
+    fn action_matches_resource(
+        &self,
+        action: &crate::port::ResourceActionDefinition,
+        resource: &Resource,
+    ) -> bool {
+        let content = resource.content();
+        self.kind_registry
+            .lineage(resource.kind())
+            .iter()
+            .any(|kind| {
+                action.matches_resource(
+                    kind.as_str(),
+                    content.and_then(|content| content.mime_type()),
+                    content.map(|content| content.key().as_str()),
+                )
+            })
     }
 }
 
@@ -1017,20 +1044,6 @@ fn should_load_declared_action_content(
     content: &ResourceContent,
 ) -> bool {
     should_load_action_content(action, content.size())
-}
-
-fn declared_action_matches_resource(
-    action: &crate::port::ResourceActionDefinition,
-    action_id: &crate::port::ResourceAction,
-    resource: &Resource,
-) -> bool {
-    let content_ref = resource.content();
-    action.id().as_str() == action_id.as_str()
-        && action.matches_resource(
-            resource.kind().as_str(),
-            content_ref.and_then(|content| content.mime_type()),
-            content_ref.map(|content| content.key().as_str()),
-        )
 }
 
 fn decode_media_view(action: &str, view: &PluginView) -> Result<(String, Bytes), CoreError> {
@@ -1659,6 +1672,18 @@ mod tests {
                     .with_handler("preview_document"),
             ]),
             ResourceKindDefinition::new(
+                ResourceKind::try_new("azvs:markdown").unwrap(),
+                "Markdown Document",
+                None,
+                true,
+            )
+            .with_parent(Some(ResourceKind::try_new("core:document").unwrap()))
+            .with_detect(
+                crate::port::ResourceContentMatcher::new()
+                    .with_mime_types(["text/markdown", "text/x-markdown"])
+                    .with_extensions([".md", ".markdown"]),
+            ),
+            ResourceKindDefinition::new(
                 ResourceKind::try_new("core:video").unwrap(),
                 "Video",
                 None,
@@ -1765,7 +1790,7 @@ mod tests {
     }
 
     #[test]
-    fn upload_resource_content_detects_parent_kind_from_action_rules() {
+    fn upload_resource_content_detects_most_specific_kind() {
         let (service, repository, _) = service();
         let key = StorageKey::new("docs/readme.md").unwrap();
 
@@ -1780,7 +1805,7 @@ mod tests {
 
         let saved = repository.find_sync(&resource.id()).unwrap();
 
-        assert!(saved.kind().is("core:document"));
+        assert!(saved.kind().is("azvs:markdown"));
     }
 
     #[test]

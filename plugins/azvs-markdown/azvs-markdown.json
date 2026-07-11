@@ -17,7 +17,19 @@
     "root": "web/dist"
   },
   "capabilities": {
-    "resource_kinds": [],
+    "resource_kinds": [
+      {
+        "kind": "azvs:markdown",
+        "parent": "core:document",
+        "label": "Markdown",
+        "schema_id": "azvs:markdown@1",
+        "supports_content": true,
+        "detect": {
+          "mime_types": ["text/markdown", "text/x-markdown"],
+          "extensions": [".md", ".markdown", ".mdown", ".mkd"]
+        }
+      }
+    ],
     "resource_actions": [
       {
         "id": "azvs.markdown.render",
@@ -28,7 +40,7 @@
           "handler": "render_markdown"
         },
         "applies_to": {
-          "kinds": ["core:document"],
+          "kinds": ["azvs:markdown"],
           "media_types": ["text/markdown", "text/x-markdown"],
           "extensions": [".md", ".markdown", ".mdown", ".mkd"]
         },
@@ -57,7 +69,7 @@
           "handler": "update_markdown"
         },
         "applies_to": {
-          "kinds": ["core:document"],
+          "kinds": ["azvs:markdown"],
           "media_types": ["text/markdown", "text/x-markdown"],
           "extensions": [".md", ".markdown", ".mdown", ".mkd"]
         },

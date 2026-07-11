@@ -44,7 +44,7 @@ impl ExtismResourceActionExecutor {
     /// 从插件 manifest 目录创建 Extism 执行器。
     pub fn from_config(
         config: &KindRegistryConfig,
-        _kind_registry: &dyn ResourceKindRegistry,
+        kind_registry: &dyn ResourceKindRegistry,
     ) -> Result<Self, CoreError> {
         let mut bindings = Vec::new();
 
@@ -60,15 +60,15 @@ impl ExtismResourceActionExecutor {
                 let Some(handler) = action.plugin_handler() else {
                     continue;
                 };
-                bind_action(
-                    &mut bindings,
+                bindings.push(bind_action(
                     manifest.plugin_id(),
                     &manifest.permissions,
                     action,
                     handler,
                     &wasm_path,
                     *wasi,
-                )?;
+                    kind_registry,
+                )?);
             }
         }
 
@@ -79,14 +79,14 @@ impl ExtismResourceActionExecutor {
 }
 
 fn bind_action(
-    bindings: &mut Vec<ActionBinding>,
     plugin_id: &str,
     permissions: &PluginPermissions,
     action: &ResourceActionCapability,
     handler: &str,
     wasm_path: &Path,
     wasi: bool,
-) -> Result<(), CoreError> {
+    kind_registry: &dyn ResourceKindRegistry,
+) -> Result<ActionBinding, CoreError> {
     if permissions.filesystem.enabled() && !permissions.filesystem.has_scope() {
         return Err(CoreError::configuration(format!(
             "plugin `{plugin_id}` action `{}` declares unscoped filesystem permission",
@@ -103,17 +103,37 @@ fn bind_action(
         asset_core::domain::ResourceKind::try_new(kind)?;
     }
 
-    bindings.push(ActionBinding {
+    let applicable_kinds = if action.applies_to.kinds.is_empty() {
+        Vec::new()
+    } else {
+        kind_registry
+            .list()
+            .into_iter()
+            .filter(|definition| {
+                action.applies_to.kinds.iter().any(|ancestor| {
+                    kind_registry.is_a(
+                        definition.kind(),
+                        &asset_core::domain::ResourceKind::new(ancestor),
+                    )
+                })
+            })
+            .map(|definition| definition.kind().as_str().to_owned())
+            .collect()
+    };
+    let applies_to = action
+        .applies_to
+        .to_definition()
+        .with_kinds(applicable_kinds);
+
+    Ok(ActionBinding {
         plugin_id: plugin_id.to_string(),
         action: action.id.clone(),
         handler: handler.to_string(),
-        applies_to: action.applies_to.to_definition(),
+        applies_to,
         permissions: permissions.clone(),
         wasm_path: wasm_path.to_path_buf(),
         wasi,
-    });
-
-    Ok(())
+    })
 }
 
 #[async_trait]

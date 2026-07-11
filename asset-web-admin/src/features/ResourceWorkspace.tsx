@@ -23,11 +23,13 @@ import { SelectInput, TextInput } from "../components/forms";
 import type { CurrentUser } from "../components/AuthGate";
 import { UserAdministration } from "../components/UserAdministration";
 import type { DirectoryListing, Draft, Filters, PluginActionOutput, Resource, ResourceActionDefinition, ResourceDirectory, ResourceKindOption, ResourceKindsResponse, ResourcePage, ResourceReadResponse, ResourceStatus, ScanStorageResponse, UploadDraft } from "../types";
-import { detectKindForFile, directoriesFromResources, emptyCreateDraft, emptyUploadDraft, errorMessage, fallbackUploadKind, formatBytes, formatDate, isImageResource, metadataFromDraft, metadataFromUpload, normalizeDirectoryInput, normalizeDraftKind, sha256Hex, toDraft, withKindDefaults } from "../utils/resourceDrafts";
+import { detectKindForFile, directoriesFromResources, emptyCreateDraft, emptyUploadDraft, errorMessage, fallbackUploadKind, formatBytes, formatDate, isImageResource, kindOptionLabel, metadataFromDraft, metadataFromUpload, normalizeDirectoryInput, normalizeDraftKind, sha256Hex, sortKindsForHierarchy, toDraft, withKindDefaults } from "../utils/resourceDrafts";
 
 const fallbackKinds: ResourceKindOption[] = [
   {
     kind: "core:unknown",
+    parent: null,
+    ancestors: [],
     label: "core:unknown",
     schema_id: null,
     metadata_schema: null,
@@ -42,6 +44,7 @@ const defaultFilters: Filters = {
   kind: "",
   tag: "",
   includeDeleted: false,
+  includeDescendants: true,
   page: 1,
   limit: 20,
 };
@@ -82,10 +85,11 @@ export function ResourceWorkspace({ initialDirectory = "", user, onLogout }: { i
     try {
       const result = await request<ResourceKindsResponse>("/resource-kinds");
       if (result.items.length > 0) {
-        const uploadKinds = result.items.filter((kind) => kind.supports_content);
-        setResourceKinds(result.items);
-        setCreateDraft((current) => normalizeDraftKind(current, result.items));
-        setUploadDraft((current) => normalizeDraftKind(current, uploadKinds.length ? uploadKinds : result.items));
+        const kinds = sortKindsForHierarchy(result.items);
+        const uploadKinds = kinds.filter((kind) => kind.supports_content);
+        setResourceKinds(kinds);
+        setCreateDraft((current) => normalizeDraftKind(current, kinds));
+        setUploadDraft((current) => normalizeDraftKind(current, uploadKinds.length ? uploadKinds : kinds));
       }
     } catch (err) {
       setError(errorMessage(err));
@@ -107,6 +111,7 @@ export function ResourceWorkspace({ initialDirectory = "", user, onLogout }: { i
       if (filters.kind.trim()) params.set("kind", filters.kind.trim());
       if (filters.tag.trim()) params.set("tag", filters.tag.trim());
       if (filters.includeDeleted) params.set("include_deleted", "true");
+      if (filters.kind && filters.includeDescendants) params.set("include_descendants", "true");
 
       const result = await request<DirectoryListing>(`/directories?${params.toString()}`);
       setFolders(result.folders);
@@ -472,7 +477,7 @@ export function ResourceWorkspace({ initialDirectory = "", user, onLogout }: { i
               <option value="">All kinds</option>
               {resourceKinds.map((kind) => (
                 <option key={kind.kind} value={kind.kind}>
-                  {kind.label}
+                  {kindOptionLabel(kind)}
                 </option>
               ))}
             </select>
@@ -491,6 +496,15 @@ export function ResourceWorkspace({ initialDirectory = "", user, onLogout }: { i
               onChange={(event) => updateFilters({ includeDeleted: event.target.checked })}
             />
             Deleted
+          </label>
+          <label className="toggle-field">
+            <input
+              type="checkbox"
+              checked={filters.includeDescendants}
+              disabled={!filters.kind}
+              onChange={(event) => updateFilters({ includeDescendants: event.target.checked })}
+            />
+            Descendants
           </label>
         </div>
 

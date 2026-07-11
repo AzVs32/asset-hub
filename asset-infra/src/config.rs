@@ -149,6 +149,8 @@ pub struct KindRegistryConfig {
 pub struct ResourceKindConfig {
     /// 资源类型值，例如 `core:image`。
     pub kind: String,
+    /// 可选父类型；父类型必须由内置、配置或插件定义。
+    pub parent: Option<String>,
     /// 展示名称；为空时使用 `kind`。
     pub label: Option<String>,
     /// 默认 kind metadata schema id。
@@ -179,6 +181,7 @@ impl Default for ResourceKindConfig {
     fn default() -> Self {
         Self {
             kind: String::new(),
+            parent: None,
             label: None,
             schema_id: None,
             metadata_schema: None,

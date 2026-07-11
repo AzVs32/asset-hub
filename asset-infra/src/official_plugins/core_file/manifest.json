@@ -35,7 +35,7 @@
           "handler": "builtin.content.download"
         },
         "applies_to": {
-          "kinds": ["core:file", "core:image", "core:document", "core:video"]
+          "kinds": ["core:file"]
         },
         "access": "read",
         "requires": {

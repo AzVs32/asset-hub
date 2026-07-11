@@ -144,6 +144,17 @@ Also add the UI origin to `ASSET_HTTP_CORS_ALLOWED_ORIGINS`. Credentialed CORS o
 
 Plugin manifest paths are configured under `[kind].plugin_manifests` in `config.toml`.
 Manifest paths are loaded at API startup; restart the service after changing plugin manifests or WASM files.
+
+Resource kinds form an arbitrary-depth acyclic hierarchy through the optional
+`parent` field. Child kinds inherit actions and the nearest metadata schema from
+their ancestors; their own declarations override inherited values. Detection
+returns the most specific matching kind. For example, the bundled hierarchy
+contains `core:file → core:document → azvs:markdown`; `core:unknown` is another
+child of `core:file` for files whose concrete format has not been identified.
+
+Kind-filtered list endpoints accept `include_descendants=true`. A query for
+`core:document` can therefore include Markdown, EPUB, source-code families, and
+any future nested document formats.
 Plugin calls are limited to 64 MiB of resource input, 256 MiB of WASM linear
 memory, and 20 seconds of execution time. Larger assets remain downloadable but
 cannot be passed to the current in-memory plugin ABI.

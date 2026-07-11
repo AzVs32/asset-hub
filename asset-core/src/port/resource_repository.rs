@@ -14,7 +14,8 @@ pub struct ListResources {
     /// 跳过的记录数量。
     offset: u64,
     /// 可选资源类型过滤。
-    kind: Option<ResourceKind>,
+    kinds: Vec<ResourceKind>,
+    include_descendants: bool,
     /// 可选标签过滤。
     tag: Option<String>,
     /// 可选名称模糊搜索关键字。
@@ -31,7 +32,8 @@ impl ListResources {
         Self {
             limit,
             offset,
-            kind: None,
+            kinds: Vec::new(),
+            include_descendants: false,
             tag: None,
             q: None,
             directory: None,
@@ -41,7 +43,17 @@ impl ListResources {
 
     /// 设置资源类型过滤。
     pub fn with_kind(mut self, kind: ResourceKind) -> Self {
-        self.kind = Some(kind);
+        self.kinds = vec![kind];
+        self
+    }
+
+    pub fn with_kinds(mut self, kinds: Vec<ResourceKind>) -> Self {
+        self.kinds = kinds;
+        self
+    }
+
+    pub fn with_include_descendants(mut self, include_descendants: bool) -> Self {
+        self.include_descendants = include_descendants;
         self
     }
 
@@ -81,7 +93,15 @@ impl ListResources {
 
     /// 返回资源类型过滤。
     pub fn kind(&self) -> Option<&ResourceKind> {
-        self.kind.as_ref()
+        self.kinds.first()
+    }
+
+    pub fn kinds(&self) -> &[ResourceKind] {
+        &self.kinds
+    }
+
+    pub fn include_descendants(&self) -> bool {
+        self.include_descendants
     }
 
     /// 返回标签过滤。

@@ -75,6 +75,8 @@ export type Resource = {
 
 export type ResourceKindOption = {
   kind: string;
+  parent: string | null;
+  ancestors: string[];
   label: string;
   schema_id: string | null;
   metadata_schema: Record<string, unknown> | null;
@@ -186,6 +188,7 @@ export type Filters = {
   kind: string;
   tag: string;
   includeDeleted: boolean;
+  includeDescendants: boolean;
   page: number;
   limit: number;
 };

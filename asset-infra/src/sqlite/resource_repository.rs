@@ -303,10 +303,14 @@ fn push_list_where(builder: &mut QueryBuilder<Sqlite>, query: &ListResources) {
         builder.push("deleted_at IS NULL");
     }
 
-    if let Some(kind) = query.kind() {
+    if !query.kinds().is_empty() {
         push_condition_prefix(builder, &mut has_where);
-        builder.push("kind = ");
-        builder.push_bind(kind.as_str());
+        builder.push("kind IN (");
+        let mut separated = builder.separated(", ");
+        for kind in query.kinds() {
+            separated.push_bind(kind.as_str());
+        }
+        separated.push_unseparated(")");
     }
 
     if let Some(tag) = query.tag() {

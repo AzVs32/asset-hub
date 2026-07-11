@@ -38,10 +38,33 @@ plugin_manifests = []
 #
 # [[kind.definitions]]
 # kind = "doc:note"
+# parent = "core:document"
 # label = "Note"
 # schema_id = "doc:note@1"
 # supports_content = false
 # metadata_schema = { type = "object" }
+
+# Arbitrarily deep hierarchy example. Actions declared for `core:document`
+# are inherited by `core:code`, `code:c`, and `code:cpp`.
+# [[kind.definitions]]
+# kind = "core:code"
+# parent = "core:document"
+# label = "Source Code"
+# supports_content = true
+#
+# [[kind.definitions]]
+# kind = "code:c"
+# parent = "core:code"
+# label = "C"
+# supports_content = true
+# detect = { mime_types = ["text/x-c"], extensions = [".c", ".h"] }
+#
+# [[kind.definitions]]
+# kind = "code:cpp"
+# parent = "core:code"
+# label = "C++"
+# supports_content = true
+# detect = { mime_types = ["text/x-c++"], extensions = [".cc", ".cpp", ".cxx", ".hpp"] }
 
 # Plugin manifest example.
 # Use `capabilities.resource_kinds` for new resource types, and flat
