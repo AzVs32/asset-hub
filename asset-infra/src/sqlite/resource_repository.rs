@@ -232,13 +232,35 @@ impl ResourceRepository for SqliteResourceRepository {
 
         rows.into_iter()
             .map(|row| {
-                Ok(ResourceDirectory {
-                    path: column(&row, "path")?,
-                    parent_path: column(&row, "parent_path")?,
-                    name: column(&row, "name")?,
-                })
+                ResourceDirectory::rehydrate(
+                    column(&row, "path")?,
+                    column(&row, "parent_path")?,
+                    column(&row, "name")?,
+                )
+                .map_err(CoreError::from)
             })
             .collect()
+    }
+
+    async fn save_directory(&self, directory: &ResourceDirectory) -> Result<(), CoreError> {
+        ensure_directory_path(&self.pool, directory.parent_path()).await?;
+        let now = encode_timestamp(Utc::now());
+        sqlx::query("INSERT INTO directories (path, parent_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
+            .bind(directory.path())
+            .bind(directory.parent_path())
+            .bind(directory.name())
+            .bind(&now)
+            .bind(&now)
+            .execute(&self.pool)
+            .await
+            .map_err(|error| {
+                if error.to_string().contains("UNIQUE") {
+                    CoreError::conflict(format!("directory `{}` already exists", directory.path()))
+                } else {
+                    CoreError::repository("directory.create", error)
+                }
+            })?;
+        Ok(())
     }
 }
 

@@ -768,3 +768,64 @@ a[aria-disabled="true"] {
     padding: 12px;
   }
 }
+/* Authentication shell */
+.auth-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--surface, #f5f6f8);
+}
+
+.auth-card {
+  width: min(100%, 380px);
+  display: grid;
+  gap: 18px;
+  padding: 32px;
+  border: 1px solid #dfe3e8;
+  border-radius: 16px;
+  background: white;
+  box-shadow: 0 16px 48px rgb(15 23 42 / 10%);
+}
+
+.user-admin-modal {
+  width: min(720px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+}
+
+.user-list {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+
+.user-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) 160px 140px auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+}
+
+.grant-row {
+  display: grid;
+  grid-template-columns: 1fr 100px auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.admin-create-form {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid #d8dee8;
+  padding-top: 18px;
+}
+
+@media (max-width: 640px) {
+  .user-row { grid-template-columns: 1fr; }
+}
+
+.auth-card h1 { margin: 0; }

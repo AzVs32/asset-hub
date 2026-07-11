@@ -4,6 +4,8 @@
   "private": true,
   "description": "Asset Hub Markdown processing plugin.",
   "type": "module",
+  "packageManager": "npm@10.9.7",
+  "engines": { "node": ">=22 <23" },
   "scripts": {
     "build": "npm run build:web",
     "build:web": "node esbuild.config.cjs",

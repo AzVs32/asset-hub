@@ -1,5 +1,6 @@
+use asset_core::domain::AccessContext;
 use asset_core::port::ResourceKindRegistry;
-use asset_core::service::ResourceService;
+use asset_core::service::{AuthorizationService, ResourceService, SecuredResourceService};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -13,6 +14,7 @@ pub(crate) struct HttpState {
     kind_registry: Arc<dyn ResourceKindRegistry>,
     plugin_web_roots: Arc<HashMap<String, PathBuf>>,
     storage_root: Arc<PathBuf>,
+    authorization: Option<AuthorizationService>,
 }
 
 impl HttpState {
@@ -21,13 +23,24 @@ impl HttpState {
         kind_registry: Arc<dyn ResourceKindRegistry>,
         plugin_web_roots: HashMap<String, PathBuf>,
         storage_root: PathBuf,
+        authorization: Option<AuthorizationService>,
     ) -> Self {
         Self {
             service,
             kind_registry,
             plugin_web_roots: Arc::new(plugin_web_roots),
             storage_root: Arc::new(storage_root),
+            authorization,
         }
+    }
+
+    pub(crate) fn secured<'a>(
+        &'a self,
+        context: &'a AccessContext,
+    ) -> Option<SecuredResourceService<'a>> {
+        self.authorization
+            .as_ref()
+            .map(|authorization| self.service.secured(authorization, context))
     }
 
     /// 返回资源应用服务。

@@ -20,6 +20,8 @@ use crate::config::KindRegistryConfig;
 use crate::plugin_manifest::load_plugin_manifest_file;
 
 type HostContentMap = HashMap<String, String>;
+const PLUGIN_MEMORY_MAX_PAGES: u32 = 4096;
+const PLUGIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
 extism::host_fn!(asset_hub_content_read(user_data: HostContentMap; url: String) -> String {
     let content = user_data.get()?;
@@ -261,7 +263,9 @@ fn call_extism(
 }
 
 fn manifest_for_binding(binding: &ActionBinding) -> Manifest {
-    let mut manifest = Manifest::new([Wasm::file(&binding.wasm_path)]);
+    let mut manifest = Manifest::new([Wasm::file(&binding.wasm_path)])
+        .with_memory_max(PLUGIN_MEMORY_MAX_PAGES)
+        .with_timeout(PLUGIN_TIMEOUT);
 
     if binding.permissions.network.enabled() {
         manifest = manifest.with_allowed_hosts(binding.permissions.network.hosts().iter().cloned());

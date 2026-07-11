@@ -1,6 +1,6 @@
 use asset_core::CoreError;
 use asset_core::port::ResourceKindRegistry;
-use asset_core::service::ResourceService;
+use asset_core::service::{AuthorizationService, ResourceService, UserService};
 use asset_infra::AssetInfrastructure;
 use asset_infra::config::{AssetInfraConfig, DEFAULT_CONFIG_FILE};
 use std::collections::HashMap;
@@ -63,6 +63,14 @@ impl AssetRuntime {
     /// 创建资源应用服务。
     pub fn resource_service(&self) -> ResourceService {
         self.infrastructure.resource_service()
+    }
+
+    pub fn user_service(&self) -> UserService {
+        self.infrastructure.user_service()
+    }
+
+    pub fn authorization_service(&self) -> AuthorizationService {
+        self.infrastructure.authorization_service()
     }
 
     /// 返回资源类型注册表。

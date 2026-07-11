@@ -6,11 +6,16 @@
 //! 该层不依赖 OpenDAL、sqlx 等具体基础设施实现；调用方需要在应用启动时注入
 //! `ResourceRepository` 和 `BlobStorage` 的具体适配器。
 
+mod authorization_service;
 mod resource_service;
+mod user_service;
+
+pub use authorization_service::AuthorizationService;
+pub use user_service::UserService;
 
 pub use resource_service::{
     CreateResource, ExecuteResourceAction, ImportResourceContent, ReadableResource,
     ResourceActionService, ResourceActions, ResourceCommandService, ResourceContentService,
-    ResourcePreview, ResourcePreviewService, ResourceService, ResourceThumbnail, UpdateResource,
-    UploadResourceContent, UploadResourceContentStream,
+    ResourcePreview, ResourcePreviewService, ResourceService, ResourceThumbnail,
+    SecuredResourceService, UpdateResource, UploadResourceContent, UploadResourceContentStream,
 };

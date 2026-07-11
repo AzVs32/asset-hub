@@ -4,7 +4,7 @@
 //! sqlx 的 SQLite、Postgres 等实现应适配该 trait，而不是让应用层直接依赖数据库 API。
 
 use crate::CoreError;
-use crate::domain::{Resource, ResourceId, ResourceKind, StorageKey};
+use crate::domain::{Resource, ResourceDirectory, ResourceId, ResourceKind, StorageKey};
 
 /// 资源列表查询条件。
 #[derive(Debug, Clone)]
@@ -105,17 +105,6 @@ impl ListResources {
     }
 }
 
-/// 逻辑目录条目。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResourceDirectory {
-    /// 目录完整路径，根目录下的 `uploads` 路径为 `uploads`。
-    pub path: String,
-    /// 父目录路径，根目录为空字符串。
-    pub parent_path: String,
-    /// 当前目录名。
-    pub name: String,
-}
-
 /// 资源分页查询结果。
 #[derive(Debug, Clone)]
 pub struct ResourcePage {
@@ -170,6 +159,13 @@ pub trait ResourceRepository: Send + Sync {
         &self,
         parent_path: &str,
     ) -> Result<Vec<ResourceDirectory>, CoreError>;
+
+    /// 保存一个可独立存在的逻辑目录。
+    async fn save_directory(&self, _directory: &ResourceDirectory) -> Result<(), CoreError> {
+        Err(CoreError::configuration(
+            "directory persistence is not supported by this repository",
+        ))
+    }
 
     /// 从持久化存储中物理移除资源记录。
     ///

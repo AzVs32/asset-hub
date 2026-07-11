@@ -27,6 +27,8 @@ chrono = { version = "0.4.45", features = ["serde"] }
 async-trait = "0.1.89"
 bytes = "1.12.0"
 axum = "0.8.9"
+argon2 = "0.5.3"
+axum-login = "0.18.0"
 base64 = "0.22.1"
 config = { version = "0.15.25", default-features = false, features = ["toml"] }
 futures-core = "0.3.32"
@@ -35,7 +37,10 @@ extism = { version = "1.30.0", default-features = false, features = ["register-f
 opendal = { version = "0.57.0", default-features = false, features = ["services-fs"] }
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "chrono", "uuid", "json", "macros", "migrate"] }
 tokio = { version = "1.48.0", features = ["macros", "net", "rt-multi-thread"] }
+time = "0.3.53"
 tower = { version = "0.5.2", features = ["util"] }
+tower-sessions = "0.14.0"
+tower-sessions-sqlx-store = { version = "0.15.0", features = ["sqlite"] }
 tower-http = { version = "0.6.6", features = ["cors", "timeout", "trace"] }
 tracing = "0.1.42"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt"] }

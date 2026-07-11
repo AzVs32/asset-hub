@@ -1,18 +1,31 @@
+use crate::auth::{self, AuthBackend};
 use crate::handlers;
 use crate::openapi::ApiDoc;
-use crate::settings::{CorsPolicy, RouterOptions};
+use crate::settings::{CorsPolicy, RouterOptions, SessionOptions};
 use crate::state::HttpState;
 use asset_core::port::ResourceKindRegistry;
 use asset_core::service::ResourceService;
+use asset_core::service::{AuthorizationService, UserService};
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderName, Method, StatusCode};
+use axum::middleware;
 use axum::routing::{delete, get, post, put};
+use axum_login::AuthManagerLayerBuilder;
 use std::sync::Arc;
 use tower::ServiceBuilder;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::CorsLayer;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
+use tower_sessions::{
+    Expiry, SessionManagerLayer, cookie::SameSite, session_store::ExpiredDeletion,
+};
+use tower_sessions_sqlx_store::{
+    SqliteStore,
+    sqlx::sqlite::{
+        SqliteConnectOptions as SessionConnectOptions, SqlitePoolOptions as SessionPoolOptions,
+    },
+};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -40,6 +53,7 @@ pub(crate) fn build_with_options(
         options,
         Default::default(),
         std::path::PathBuf::from("storage/blobs"),
+        None,
     )
 }
 
@@ -50,6 +64,7 @@ pub(crate) fn build_with_options_and_plugin_web_roots(
     options: RouterOptions,
     plugin_web_roots: std::collections::HashMap<String, std::path::PathBuf>,
     storage_root: std::path::PathBuf,
+    authorization: Option<AuthorizationService>,
 ) -> Router {
     let mut router = Router::new()
         .route("/health", get(handlers::health))
@@ -58,7 +73,10 @@ pub(crate) fn build_with_options_and_plugin_web_roots(
             get(handlers::plugin_web_asset),
         )
         .route("/resource-kinds", get(handlers::list_resource_kinds))
-        .route("/directories", get(handlers::list_directory))
+        .route(
+            "/directories",
+            get(handlers::list_directory).post(handlers::create_directory),
+        )
         .route("/scan", post(handlers::scan_storage))
         .route(
             "/resources",
@@ -66,7 +84,9 @@ pub(crate) fn build_with_options_and_plugin_web_roots(
         )
         .route(
             "/resources/content",
-            post(handlers::upload_resource_content),
+            post(handlers::upload_resource_content).layer(DefaultBodyLimit::max(
+                handlers::MAX_BUFFERED_UPLOAD_REQUEST_BYTES,
+            )),
         )
         .route(
             "/resources/content/stream",
@@ -120,7 +140,65 @@ pub(crate) fn build_with_options_and_plugin_web_roots(
             kind_registry,
             plugin_web_roots,
             storage_root,
+            authorization,
         ))
+}
+
+/// 为既有 API 增加 SQLite 会话、登录接口和登录保护。
+pub(crate) async fn with_authentication(
+    router: Router,
+    users: UserService,
+    authorization: AuthorizationService,
+    sqlite_path: &std::path::Path,
+    bootstrap_admin: Option<(&str, &str)>,
+    session_options: &SessionOptions,
+) -> Result<Router, Box<dyn std::error::Error>> {
+    let backend = AuthBackend::new(users, authorization);
+    backend.initialize(bootstrap_admin).await?;
+
+    let session_connect_options = SessionConnectOptions::new()
+        .filename(sqlite_path)
+        .create_if_missing(true);
+    let session_pool = SessionPoolOptions::new()
+        .max_connections(2)
+        .connect_with(session_connect_options)
+        .await?;
+    let session_store = SqliteStore::new(session_pool);
+    session_store.migrate().await?;
+    let _session_cleanup = tokio::spawn(
+        session_store
+            .clone()
+            .continuously_delete_expired(std::time::Duration::from_secs(60 * 60)),
+    );
+    let inactivity_seconds = i64::try_from(session_options.inactivity_timeout.as_secs())?;
+    let session_layer = SessionManagerLayer::new(session_store)
+        .with_secure(session_options.cookie_secure)
+        .with_http_only(true)
+        .with_same_site(SameSite::Strict)
+        .with_expiry(Expiry::OnInactivity(time::Duration::seconds(
+            inactivity_seconds,
+        )))
+        .with_name("asset_hub_session");
+    let auth_layer = AuthManagerLayerBuilder::new(backend, session_layer).build();
+
+    let protected = router.route_layer(middleware::from_fn(auth::authorize_request));
+    let public = Router::new()
+        .route("/auth/login", post(auth::login))
+        .route("/auth/logout", post(auth::logout))
+        .route("/auth/me", get(auth::me))
+        .route("/auth/users", get(auth::list_users).post(auth::create_user))
+        .route(
+            "/auth/users/{id}",
+            axum::routing::patch(auth::update_user_access),
+        )
+        .route(
+            "/auth/directory-grants",
+            get(auth::my_directory_grants)
+                .put(auth::grant_directory)
+                .delete(auth::revoke_directory),
+        );
+
+    Ok(protected.merge(public).layer(auth_layer))
 }
 
 fn cors_layer(policy: CorsPolicy) -> CorsLayer {
@@ -139,7 +217,6 @@ fn cors_layer(policy: CorsPolicy) -> CorsLayer {
 
     match policy {
         CorsPolicy::None => layer,
-        CorsPolicy::Any => layer.allow_origin(Any),
-        CorsPolicy::Origins(origins) => layer.allow_origin(origins),
+        CorsPolicy::Origins(origins) => layer.allow_origin(origins).allow_credentials(true),
     }
 }

@@ -30,11 +30,13 @@ mod action;
 mod command;
 mod content;
 mod preview;
+mod secured;
 
 pub use action::ResourceActionService;
 pub use command::ResourceCommandService;
 pub use content::ResourceContentService;
 pub use preview::ResourcePreviewService;
+pub use secured::SecuredResourceService;
 
 /// 创建纯元数据资源的用例命令。
 ///
@@ -100,6 +102,10 @@ impl CreateResource {
     pub fn with_metadata(mut self, metadata: impl Into<ResourceMetadata>) -> Self {
         self.metadata = metadata.into();
         self
+    }
+
+    pub fn directory(&self) -> &str {
+        &self.directory
     }
 }
 
@@ -266,6 +272,10 @@ impl UploadResourceContent {
         self.checksums.extend(checksums);
         self
     }
+
+    pub fn directory(&self) -> &str {
+        &self.directory
+    }
 }
 
 impl ImportResourceContent {
@@ -331,6 +341,10 @@ impl ImportResourceContent {
     pub fn with_checksums(mut self, checksums: impl IntoIterator<Item = Checksum>) -> Self {
         self.checksums.extend(checksums);
         self
+    }
+
+    pub fn directory(&self) -> &str {
+        &self.directory
     }
 }
 
@@ -425,6 +439,10 @@ impl UploadResourceContentStream {
         self.checksums.extend(checksums);
         self
     }
+
+    pub fn directory(&self) -> &str {
+        &self.directory
+    }
 }
 
 /// 更新资源的用例命令。
@@ -484,6 +502,10 @@ impl UpdateResource {
     pub fn with_restore(mut self, restore: bool) -> Self {
         self.restore = restore;
         self
+    }
+
+    pub fn directory(&self) -> Option<&str> {
+        self.directory.as_deref()
     }
 }
 
@@ -774,6 +796,15 @@ impl ResourceService {
         ResourcePreviewService::new(self)
     }
 
+    /// 将资源用例绑定到访问主体。HTTP、CLI、TUI 等非可信入口应通过该门面执行资源操作。
+    pub fn secured<'a>(
+        &'a self,
+        authorization: &'a crate::service::AuthorizationService,
+        context: &'a crate::domain::AccessContext,
+    ) -> SecuredResourceService<'a> {
+        SecuredResourceService::new(self, authorization, context)
+    }
+
     /// 创建纯元数据资源。
     pub async fn create_resource(&self, command: CreateResource) -> Result<Resource, CoreError> {
         self.commands().create_resource(command).await
@@ -819,6 +850,17 @@ impl ResourceService {
         parent_path: &str,
     ) -> Result<Vec<ResourceDirectory>, CoreError> {
         self.repository.list_directories(parent_path).await
+    }
+
+    /// 在指定父目录下创建一个可独立存在的逻辑目录。
+    pub async fn create_directory(
+        &self,
+        parent_path: impl Into<String>,
+        name: impl Into<String>,
+    ) -> Result<ResourceDirectory, CoreError> {
+        let directory = ResourceDirectory::new(parent_path, name)?;
+        self.repository.save_directory(&directory).await?;
+        Ok(directory)
     }
 
     /// 计算资源当前可执行动作。
@@ -1306,8 +1348,8 @@ mod tests {
                 .values()
                 .filter_map(|resource| child_directory(resource.directory(), parent_path))
                 .collect::<Vec<_>>();
-            directories.sort_by(|left, right| left.path.cmp(&right.path));
-            directories.dedup_by(|left, right| left.path == right.path);
+            directories.sort_by(|left, right| left.path().cmp(right.path()));
+            directories.dedup_by(|left, right| left.path() == right.path());
             Ok(directories)
         }
     }
@@ -1328,11 +1370,7 @@ mod tests {
             format!("{parent_path}/{name}")
         };
 
-        Some(ResourceDirectory {
-            path,
-            parent_path: parent_path.to_string(),
-            name,
-        })
+        ResourceDirectory::rehydrate(path, parent_path.to_string(), name).ok()
     }
 
     #[derive(Default)]

@@ -51,6 +51,16 @@ pub(crate) struct CreateResourceRequest {
     pub(crate) metadata: Option<ResourceMetadataRequest>,
 }
 
+/// 创建逻辑目录请求。
+#[derive(Debug, Deserialize, ToSchema)]
+pub(crate) struct CreateDirectoryRequest {
+    /// 父目录路径，根目录为空字符串。
+    #[serde(default)]
+    pub(crate) parent_path: String,
+    /// 新目录名称，只允许单个路径段。
+    pub(crate) name: String,
+}
+
 /// 资源列表查询参数。
 #[derive(Debug, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]

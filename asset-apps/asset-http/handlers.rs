@@ -1,15 +1,17 @@
 use crate::dto::{
-    BinaryContent, CreateResourceRequest, DirectoryListingResponse, ExecuteResourceActionRequest,
-    HealthResponse, ListDirectoryQuery, ListResourcesQuery, ResourceActionOutputResponse,
-    ResourceDirectoryResponse, ResourceKindResponse, ResourceKindsResponse,
-    ResourceMetadataRequest, ResourcePageResponse, ResourceReadResponse, ResourceResponse,
-    ScanStorageErrorResponse, ScanStorageRequest, ScanStorageResponse, UpdateResourceRequest,
-    UploadResourceContentRequest, UploadResourceContentStreamQuery,
+    BinaryContent, CreateDirectoryRequest, CreateResourceRequest, DirectoryListingResponse,
+    ExecuteResourceActionRequest, HealthResponse, ListDirectoryQuery, ListResourcesQuery,
+    ResourceActionOutputResponse, ResourceDirectoryResponse, ResourceKindResponse,
+    ResourceKindsResponse, ResourceMetadataRequest, ResourcePageResponse, ResourceReadResponse,
+    ResourceResponse, ScanStorageErrorResponse, ScanStorageRequest, ScanStorageResponse,
+    UpdateResourceRequest, UploadResourceContentRequest, UploadResourceContentStreamQuery,
 };
 use crate::error::HttpError;
 use crate::state::HttpState;
 use asset_core::CoreError;
-use asset_core::domain::{Checksum, ResourceId, ResourceKind, ResourceStatus, StorageKey};
+use asset_core::domain::{
+    AccessContext, Checksum, ResourceId, ResourceKind, ResourceStatus, StorageKey,
+};
 use asset_core::port::BlobByteStream;
 use asset_core::port::ListResources;
 use asset_core::service::{
@@ -19,7 +21,7 @@ use asset_core::service::{
 use axum::Json;
 use axum::body::Body;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Extension, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use base64::Engine;
@@ -35,16 +37,30 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub(crate) const MAX_UPLOAD_BYTES: usize = 4 * 1024 * 1024 * 1024;
+const MAX_BUFFERED_UPLOAD_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const MAX_BUFFERED_UPLOAD_REQUEST_BYTES: usize = 48 * 1024 * 1024;
+const MAX_SCAN_ENTRIES: usize = 100_000;
 const DEFAULT_PAGE: u32 = 1;
 const DEFAULT_LIMIT: u32 = 50;
 const MAX_LIMIT: u32 = 100;
 const DEFAULT_CONTENT_TYPE: &str = "application/octet-stream";
+
+macro_rules! resource_call {
+    ($state:expr, $access:expr, $method:ident($($argument:expr),* $(,)?)) => {{
+        if let Some(Extension(context)) = $access.as_ref() {
+            $state.secured(context).expect("authenticated router must configure authorization").$method($($argument),*).await
+        } else {
+            $state.service().$method($($argument),*).await
+        }
+    }};
+}
 
 /// 健康检查。
 #[utoipa::path(
     get,
     path = "/health",
     tag = "system",
+    security(()),
     responses(
         (status = 200, description = "服务正常", body = HealthResponse)
     )
@@ -149,6 +165,7 @@ pub(crate) async fn list_resource_kinds(
 )]
 pub(crate) async fn create_resource(
     State(state): State<HttpState>,
+    access: Option<Extension<AccessContext>>,
     payload: Result<Json<CreateResourceRequest>, JsonRejection>,
 ) -> Result<(StatusCode, Json<ResourceResponse>), HttpError> {
     let payload = parse_json_payload(payload)?;
@@ -159,7 +176,7 @@ pub(crate) async fn create_resource(
         payload.directory,
         payload.metadata,
     )?;
-    let resource = state.service().create_resource(command).await?;
+    let resource = resource_call!(state, access, create_resource(command))?;
 
     Ok((
         StatusCode::CREATED,
@@ -181,6 +198,7 @@ pub(crate) async fn create_resource(
 )]
 pub(crate) async fn list_resources(
     State(state): State<HttpState>,
+    access: Option<Extension<AccessContext>>,
     Query(query): Query<ListResourcesQuery>,
 ) -> Result<Json<ResourcePageResponse>, HttpError> {
     let page = query.page.unwrap_or(DEFAULT_PAGE).max(1);
@@ -205,7 +223,7 @@ pub(crate) async fn list_resources(
         command = command.with_directory(clean_directory(Some(directory.as_str()), "")?);
     }
 
-    let page_result = state.service().list_resources(command).await?;
+    let page_result = resource_call!(state, access, list_resources(command))?;
 
     Ok(Json(resource_page_response(
         state.service(),
@@ -228,6 +246,7 @@ pub(crate) async fn list_resources(
 )]
 pub(crate) async fn list_directory(
     State(state): State<HttpState>,
+    access: Option<Extension<AccessContext>>,
     Query(query): Query<ListDirectoryQuery>,
 ) -> Result<Json<DirectoryListingResponse>, HttpError> {
     let path = clean_directory(query.path.as_deref(), "")?;
@@ -250,24 +269,51 @@ pub(crate) async fn list_directory(
         resources_query = resources_query.with_q(q);
     }
 
-    let folders = state
-        .service()
-        .list_directories(&path)
-        .await?
+    let folders = resource_call!(state, access, list_directories(&path))?
         .into_iter()
         .map(|directory| ResourceDirectoryResponse {
-            path: directory.path,
-            parent_path: directory.parent_path,
-            name: directory.name,
+            path: directory.path().to_owned(),
+            parent_path: directory.parent_path().to_owned(),
+            name: directory.name().to_owned(),
         })
         .collect();
-    let resources = state.service().list_resources(resources_query).await?;
+    let resources = resource_call!(state, access, list_resources(resources_query))?;
 
     Ok(Json(DirectoryListingResponse {
         path,
         folders,
         resources: resource_page_response(state.service(), resources, page)?,
     }))
+}
+
+/// 创建一个空逻辑目录。
+#[utoipa::path(
+    post,
+    path = "/directories",
+    tag = "resources",
+    request_body = CreateDirectoryRequest,
+    responses(
+        (status = 201, description = "目录已创建", body = ResourceDirectoryResponse),
+        (status = 400, description = "目录名称无效", body = crate::dto::ErrorResponse),
+        (status = 403, description = "没有父目录写权限", body = crate::dto::ErrorResponse)
+    )
+)]
+pub(crate) async fn create_directory(
+    State(state): State<HttpState>,
+    access: Option<Extension<AccessContext>>,
+    payload: Result<Json<CreateDirectoryRequest>, JsonRejection>,
+) -> Result<(StatusCode, Json<ResourceDirectoryResponse>), HttpError> {
+    let payload = parse_json_payload(payload)?;
+    let parent_path = clean_directory(Some(&payload.parent_path), "")?;
+    let directory = resource_call!(state, access, create_directory(parent_path, payload.name))?;
+    Ok((
+        StatusCode::CREATED,
+        Json(ResourceDirectoryResponse {
+            path: directory.path().to_owned(),
+            parent_path: directory.parent_path().to_owned(),
+            name: directory.name().to_owned(),
+        }),
+    ))
 }
 
 /// 扫描本地对象存储目录并补齐资源数据库。
@@ -284,17 +330,25 @@ pub(crate) async fn list_directory(
 )]
 pub(crate) async fn scan_storage(
     State(state): State<HttpState>,
+    access: Option<Extension<AccessContext>>,
     payload: Option<Json<ScanStorageRequest>>,
 ) -> Result<Json<ScanStorageResponse>, HttpError> {
     let payload = payload.map(|Json(payload)| payload).unwrap_or_default();
     let path = clean_directory(payload.path.as_deref(), "")?;
+    if let Some(Extension(context)) = access.as_ref()
+        && !context.is_administrator()
+    {
+        return Err(HttpError::forbidden(
+            "storage scanning is restricted to administrators",
+        ));
+    }
     let scan_root = if path.is_empty() {
         state.storage_root().clone()
     } else {
         state.storage_root().join(&path)
     };
     ensure_scan_root(state.storage_root(), &scan_root)?;
-    let include_sha256 = payload.sha256.unwrap_or(true);
+    let include_sha256 = payload.sha256.unwrap_or(false);
     let files = tokio::task::spawn_blocking({
         let storage_root = state.storage_root().clone();
         move || scan_storage_files(&storage_root, &scan_root, include_sha256)
@@ -323,7 +377,7 @@ pub(crate) async fn scan_storage(
             command = command.with_checksum(Checksum::sha256(sha256)?);
         }
 
-        match state.service().import_resource_content(command).await {
+        match resource_call!(state, access, import_resource_content(command)) {
             Ok(Some(resource)) => imported.push(resource_response(state.service(), &resource)?),
             Ok(None) => skipped += 1,
             Err(error) => {
@@ -361,6 +415,7 @@ pub(crate) async fn scan_storage(
 )]
 pub(crate) async fn upload_resource_content(
     State(state): State<HttpState>,
+    access: Option<Extension<AccessContext>>,
     payload: Result<Json<UploadResourceContentRequest>, JsonRejection>,
 ) -> Result<(StatusCode, Json<ResourceResponse>), HttpError> {
     let payload = parse_json_payload(payload)?;
@@ -375,7 +430,7 @@ pub(crate) async fn upload_resource_content(
         .decode(payload.data_base64.as_bytes())
         .map(Bytes::from)
         .map_err(|error| HttpError::bad_request(format!("invalid base64 content: {error}")))?;
-    ensure_upload_size(data.len() as u64)?;
+    ensure_buffered_upload_size(data.len() as u64)?;
 
     let mut command = UploadResourceContent::new(payload.name, storage_key, data);
     command = command.with_directory(directory);
@@ -393,7 +448,7 @@ pub(crate) async fn upload_resource_content(
         command = command.with_checksum(Checksum::sha256(sha256)?);
     }
 
-    let resource = state.service().upload_resource_content(command).await?;
+    let resource = resource_call!(state, access, upload_resource_content(command))?;
 
     Ok((
         StatusCode::CREATED,
@@ -423,6 +478,7 @@ pub(crate) async fn upload_resource_content(
 )]
 pub(crate) async fn upload_resource_content_stream(
     State(state): State<HttpState>,
+    access: Option<Extension<AccessContext>>,
     Query(query): Query<UploadResourceContentStreamQuery>,
     headers: HeaderMap,
     body: Body,
@@ -452,10 +508,7 @@ pub(crate) async fn upload_resource_content_stream(
         command = command.with_checksum(Checksum::sha256(sha256)?);
     }
 
-    let resource = state
-        .service()
-        .upload_resource_content_stream(command)
-        .await?;
+    let resource = resource_call!(state, access, upload_resource_content_stream(command))?;
 
     Ok((
         StatusCode::CREATED,
@@ -480,11 +533,12 @@ pub(crate) async fn upload_resource_content_stream(
 )]
 pub(crate) async fn find_resource(
     State(state): State<HttpState>,
+    access: Option<Extension<AccessContext>>,
     Path(id): Path<String>,
 ) -> Result<Json<ResourceResponse>, HttpError> {
     let id = parse_resource_id(&id)?;
 
-    match state.service().find_resource(&id).await? {
+    match resource_call!(state, access, find_resource(&id))? {
         Some(resource) => Ok(Json(resource_response(state.service(), &resource)?)),
         None => Err(HttpError::not_found(format!("resource `{id}` not found"))),
     }
@@ -508,6 +562,7 @@ pub(crate) async fn find_resource(
 )]
 pub(crate) async fn update_resource(
     State(state): State<HttpState>,
+    access: Option<Extension<AccessContext>>,
     Path(id): Path<String>,
     payload: Result<Json<UpdateResourceRequest>, JsonRejection>,
 ) -> Result<Json<ResourceResponse>, HttpError> {
@@ -539,7 +594,7 @@ pub(crate) async fn update_resource(
         command = command.with_restore(restore);
     }
 
-    match state.service().update_resource(&id, command).await? {
+    match resource_call!(state, access, update_resource(&id, command))? {
         Some(resource) => Ok(Json(resource_response(state.service(), &resource)?)),
         None => Err(HttpError::not_found(format!("resource `{id}` not found"))),
     }
@@ -562,10 +617,11 @@ pub(crate) async fn update_resource(
 )]
 pub(crate) async fn get_resource_content(
     State(state): State<HttpState>,
+    access: Option<Extension<AccessContext>>,
     Path(id): Path<String>,
 ) -> Result<Response, HttpError> {
     let id = parse_resource_id(&id)?;
-    let Some(resource) = state.service().find_resource(&id).await? else {
+    let Some(resource) = resource_call!(state, access, find_resource(&id))? else {
         return Err(HttpError::not_found(format!("resource `{id}` not found")));
     };
     let content_type = resource
@@ -574,7 +630,7 @@ pub(crate) async fn get_resource_content(
         .unwrap_or(DEFAULT_CONTENT_TYPE)
         .to_string();
 
-    match state.service().get_resource_content(&id).await? {
+    match resource_call!(state, access, get_resource_content(&id))? {
         Some(content) => Ok(binary_response(content_type, content)),
         None => Err(HttpError::not_found(format!(
             "resource content `{id}` not found"
@@ -599,10 +655,11 @@ pub(crate) async fn get_resource_content(
 )]
 pub(crate) async fn preview_resource(
     State(state): State<HttpState>,
+    access: Option<Extension<AccessContext>>,
     Path(id): Path<String>,
 ) -> Result<Response, HttpError> {
     let id = parse_resource_id(&id)?;
-    let Some(preview) = state.service().preview_resource_stream(&id).await? else {
+    let Some(preview) = resource_call!(state, access, preview_resource_stream(&id))? else {
         return Err(HttpError::not_found(format!("resource `{id}` not found")));
     };
 
@@ -630,10 +687,11 @@ pub(crate) async fn preview_resource(
 )]
 pub(crate) async fn thumbnail_resource(
     State(state): State<HttpState>,
+    access: Option<Extension<AccessContext>>,
     Path(id): Path<String>,
 ) -> Result<Response, HttpError> {
     let id = parse_resource_id(&id)?;
-    let Some(thumbnail) = state.service().thumbnail_resource(&id).await? else {
+    let Some(thumbnail) = resource_call!(state, access, thumbnail_resource(&id))? else {
         return Err(HttpError::not_found(format!("resource `{id}` not found")));
     };
 
@@ -662,10 +720,11 @@ pub(crate) async fn thumbnail_resource(
 )]
 pub(crate) async fn read_resource(
     State(state): State<HttpState>,
+    access: Option<Extension<AccessContext>>,
     Path(id): Path<String>,
 ) -> Result<Json<ResourceReadResponse>, HttpError> {
     let id = parse_resource_id(&id)?;
-    let Some(resource) = state.service().read_resource(&id).await? else {
+    let Some(resource) = resource_call!(state, access, read_resource(&id))? else {
         return Err(HttpError::not_found(format!("resource `{id}` not found")));
     };
     Ok(Json(ResourceReadResponse::from(&resource)))
@@ -690,17 +749,14 @@ pub(crate) async fn read_resource(
 )]
 pub(crate) async fn execute_resource_action(
     State(state): State<HttpState>,
+    access: Option<Extension<AccessContext>>,
     Path((id, action)): Path<(String, String)>,
     payload: Result<Json<ExecuteResourceActionRequest>, JsonRejection>,
 ) -> Result<Json<ResourceActionOutputResponse>, HttpError> {
     let id = parse_resource_id(&id)?;
     let payload = payload.map_err(|error| HttpError::bad_request(error.to_string()))?;
     let command = ExecuteResourceAction::new(action).with_input(payload.input.clone());
-    let Some(output) = state
-        .service()
-        .execute_resource_action(&id, command)
-        .await?
-    else {
+    let Some(output) = resource_call!(state, access, execute_resource_action(&id, command))? else {
         return Err(HttpError::not_found(format!("resource `{id}` not found")));
     };
 
@@ -724,11 +780,12 @@ pub(crate) async fn execute_resource_action(
 )]
 pub(crate) async fn soft_delete_resource(
     State(state): State<HttpState>,
+    access: Option<Extension<AccessContext>>,
     Path(id): Path<String>,
 ) -> Result<Json<ResourceResponse>, HttpError> {
     let id = parse_resource_id(&id)?;
 
-    match state.service().soft_delete_resource(&id).await? {
+    match resource_call!(state, access, soft_delete_resource(&id))? {
         Some(resource) => Ok(Json(resource_response(state.service(), &resource)?)),
         None => Err(HttpError::not_found(format!("resource `{id}` not found"))),
     }
@@ -751,11 +808,12 @@ pub(crate) async fn soft_delete_resource(
 )]
 pub(crate) async fn remove_resource(
     State(state): State<HttpState>,
+    access: Option<Extension<AccessContext>>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, HttpError> {
     let id = parse_resource_id(&id)?;
 
-    if state.service().remove_resource(&id).await? {
+    if resource_call!(state, access, remove_resource(&id))? {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(HttpError::not_found(format!("resource `{id}` not found")))
@@ -939,6 +997,16 @@ fn ensure_upload_size(size: u64) -> Result<(), HttpError> {
     Ok(())
 }
 
+fn ensure_buffered_upload_size(size: u64) -> Result<(), HttpError> {
+    if size > MAX_BUFFERED_UPLOAD_BYTES as u64 {
+        return Err(HttpError::bad_request(format!(
+            "buffered upload too large: max {} bytes; use the streaming upload endpoint",
+            MAX_BUFFERED_UPLOAD_BYTES
+        )));
+    }
+    Ok(())
+}
+
 fn limited_body_stream(body: Body) -> BlobByteStream {
     let bytes_read = Arc::new(AtomicU64::new(0));
     let stream_bytes_read = bytes_read.clone();
@@ -1059,7 +1127,14 @@ fn scan_storage_files(
         .canonicalize()
         .map_err(|error| CoreError::configuration(format!("scan path is not readable: {error}")))?;
     let mut files = Vec::new();
-    collect_storage_files(&storage_root, &scan_root, include_sha256, &mut files)?;
+    let mut visited = 0;
+    collect_storage_files(
+        &storage_root,
+        &scan_root,
+        include_sha256,
+        &mut visited,
+        &mut files,
+    )?;
     files.sort_by(|left, right| left.key.cmp(&right.key));
     Ok(files)
 }
@@ -1068,20 +1143,30 @@ fn collect_storage_files(
     storage_root: &FsPath,
     current: &FsPath,
     include_sha256: bool,
+    visited: &mut usize,
     files: &mut Vec<ScannedStorageFile>,
 ) -> Result<(), CoreError> {
     let entries =
         std::fs::read_dir(current).map_err(|error| CoreError::storage("scan.read_dir", error))?;
 
     for entry in entries {
+        *visited += 1;
+        if *visited > MAX_SCAN_ENTRIES {
+            return Err(CoreError::configuration(format!(
+                "storage scan exceeds the limit of {MAX_SCAN_ENTRIES} entries"
+            )));
+        }
         let entry = entry.map_err(|error| CoreError::storage("scan.read_dir_entry", error))?;
         let path = entry.path();
-        let metadata = entry
-            .metadata()
+        let metadata = std::fs::symlink_metadata(&path)
             .map_err(|error| CoreError::storage("scan.metadata", error))?;
 
+        if metadata.file_type().is_symlink() {
+            continue;
+        }
+
         if metadata.is_dir() {
-            collect_storage_files(storage_root, &path, include_sha256, files)?;
+            collect_storage_files(storage_root, &path, include_sha256, visited, files)?;
             continue;
         }
 

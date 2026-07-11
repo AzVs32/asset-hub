@@ -1,5 +1,5 @@
 use crate::router;
-use crate::settings::{CorsPolicy, RouterOptions};
+use crate::settings::{CorsPolicy, RouterOptions, SessionOptions};
 use asset_apps::AssetRuntime;
 use asset_infra::config::{
     AssetInfraConfig, BlobConfig, DatabaseConfig, KindRegistryConfig, ResourceKindConfig,
@@ -711,6 +711,14 @@ async fn scan_storage_imports_existing_files_idempotently() {
     let file_path = app.root.join("blob").join("docs").join("readme.md");
     std::fs::create_dir_all(file_path.parent().unwrap()).unwrap();
     std::fs::write(&file_path, b"# Existing file\n").unwrap();
+    #[cfg(unix)]
+    let outside = {
+        let outside = unique_temp_root("scan-outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), b"must not be scanned").unwrap();
+        std::os::unix::fs::symlink(&outside, app.root.join("blob").join("outside-link")).unwrap();
+        outside
+    };
 
     let (status, scan) = json_request(&app, Method::POST, "/scan", json!({ "sha256": true })).await;
     assert_eq!(status, StatusCode::OK);
@@ -726,6 +734,8 @@ async fn scan_storage_imports_existing_files_idempotently() {
         scan["resources"][0]["content"]["checksum"][0]["kind"],
         "sha256"
     );
+    #[cfg(unix)]
+    std::fs::remove_dir_all(outside).unwrap();
 
     let (status, listing) = empty_json_request(&app, Method::GET, "/directories?path=docs").await;
     assert_eq!(status, StatusCode::OK);
@@ -934,6 +944,12 @@ async fn cors_policy_adds_allowed_origin_header() {
         response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN),
         Some(&header::HeaderValue::from_static("http://127.0.0.1:5173"))
     );
+    assert_eq!(
+        response
+            .headers()
+            .get(header::ACCESS_CONTROL_ALLOW_CREDENTIALS),
+        Some(&header::HeaderValue::from_static("true"))
+    );
 }
 
 #[tokio::test]
@@ -1080,6 +1096,12 @@ async fn openapi_documents_metadata_examples() {
         "test:metadata@1"
     );
     assert_eq!(upload_example["data_base64"], "aGVsbG8sIGFzc2V0LWh1YiE=");
+    assert!(document["paths"].get("/auth/login").is_some());
+    assert!(document["paths"].get("/auth/users/{id}").is_some());
+    assert_eq!(
+        document["components"]["securitySchemes"]["cookie_auth"]["in"],
+        "cookie"
+    );
 }
 
 #[tokio::test]
@@ -1176,6 +1198,7 @@ async fn test_app_with_config(
         options,
         HashMap::new(),
         runtime.config().blob.fs_root.clone(),
+        None,
     );
 
     TestApp { router, root }
@@ -1202,6 +1225,7 @@ async fn test_app_with_plugin_web_roots(
         RouterOptions::default(),
         plugin_web_roots,
         runtime.config().blob.fs_root.clone(),
+        None,
     );
 
     TestApp { router, root }
@@ -1225,6 +1249,196 @@ async fn create_text_resource(app: &TestApp, storage_key: &str) -> String {
     assert_eq!(resource["kind"], "core:file");
 
     resource["id"].as_str().unwrap().to_string()
+}
+
+#[tokio::test]
+async fn authenticated_user_is_confined_to_granted_directory() {
+    let root = unique_temp_root("authenticated-directory-acl");
+    let config = AssetInfraConfig {
+        database: DatabaseConfig {
+            sqlite_path: root.join("asset-hub.sqlite"),
+            max_connections: 2,
+        },
+        blob: BlobConfig {
+            fs_root: root.join("blob"),
+        },
+        kind: KindRegistryConfig::default(),
+    };
+    let runtime = AssetRuntime::from_config(config).await.unwrap();
+    let authorization = runtime.authorization_service();
+    let base = router::build_with_options_and_plugin_web_roots(
+        runtime.resource_service(),
+        runtime.resource_kind_registry(),
+        RouterOptions::default(),
+        HashMap::new(),
+        runtime.config().blob.fs_root.clone(),
+        Some(authorization.clone()),
+    );
+    let router = router::with_authentication(
+        base,
+        runtime.user_service(),
+        authorization,
+        &runtime.config().database.sqlite_path,
+        Some(("admin", "administrator-password")),
+        &SessionOptions {
+            cookie_secure: false,
+            inactivity_timeout: Duration::from_secs(3600),
+        },
+    )
+    .await
+    .unwrap();
+    let app = TestApp { router, root };
+
+    let health = request(
+        &app,
+        Request::builder()
+            .method(Method::GET)
+            .uri("/health")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(health.status(), StatusCode::OK);
+
+    let unauthenticated = request(
+        &app,
+        Request::builder()
+            .method(Method::GET)
+            .uri("/resources?directory=teams/alice")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+
+    let (admin_cookie, _) = login_with_password(&app, "admin", "administrator-password").await;
+    let response = request_with_cookie(
+        &app,
+        Method::POST,
+        "/auth/users",
+        json!({
+            "username": "alice", "password": "alice-secure-password", "is_admin": false
+        }),
+        &admin_cookie,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let alice = response_json(response).await;
+    let alice_id = alice["user"]["id"].as_str().unwrap();
+
+    let response = request_with_cookie(
+        &app,
+        Method::PUT,
+        "/auth/directory-grants",
+        json!({
+            "user_id": alice_id, "directory": "teams/alice", "permission": "write"
+        }),
+        &admin_cookie,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    let (alice_cookie, _) = login_with_password(&app, "alice", "alice-secure-password").await;
+    let scan = request_with_cookie(&app, Method::POST, "/scan", json!({}), &alice_cookie).await;
+    assert_eq!(scan.status(), StatusCode::FORBIDDEN);
+    let folder = request_with_cookie(
+        &app,
+        Method::POST,
+        "/directories",
+        json!({ "parent_path": "teams/alice", "name": "empty-folder" }),
+        &alice_cookie,
+    )
+    .await;
+    assert_eq!(folder.status(), StatusCode::CREATED);
+    let folder = response_json(folder).await;
+    assert_eq!(folder["path"], "teams/alice/empty-folder");
+
+    let denied_folder = request_with_cookie(
+        &app,
+        Method::POST,
+        "/directories",
+        json!({ "parent_path": "teams/bob", "name": "forbidden" }),
+        &alice_cookie,
+    )
+    .await;
+    assert_eq!(denied_folder.status(), StatusCode::FORBIDDEN);
+
+    let allowed = request_with_cookie(
+        &app,
+        Method::POST,
+        "/resources",
+        json!({
+            "name": "allowed", "directory": "teams/alice"
+        }),
+        &alice_cookie,
+    )
+    .await;
+    assert_eq!(allowed.status(), StatusCode::CREATED);
+    let denied = request_with_cookie(
+        &app,
+        Method::POST,
+        "/resources",
+        json!({
+            "name": "denied", "directory": "teams/bob"
+        }),
+        &alice_cookie,
+    )
+    .await;
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+
+    let disabled = request_with_cookie(
+        &app,
+        Method::PATCH,
+        &format!("/auth/users/{alice_id}"),
+        json!({ "role": "member", "status": "disabled" }),
+        &admin_cookie,
+    )
+    .await;
+    assert_eq!(disabled.status(), StatusCode::OK);
+    let stale_session =
+        request_with_cookie(&app, Method::GET, "/auth/me", json!({}), &alice_cookie).await;
+    assert_eq!(stale_session.status(), StatusCode::UNAUTHORIZED);
+}
+
+async fn login_with_password(app: &TestApp, username: &str, password: &str) -> (String, Value) {
+    let response = request_with_cookie(
+        app,
+        Method::POST,
+        "/auth/login",
+        json!({ "username": username, "password": password }),
+        "",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let cookie = response
+        .headers()
+        .get(header::SET_COOKIE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let body = response_json(response).await;
+    (cookie, body)
+}
+
+async fn request_with_cookie(
+    app: &TestApp,
+    method: Method,
+    uri: &str,
+    body: Value,
+    cookie: &str,
+) -> axum::response::Response {
+    let mut builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(header::CONTENT_TYPE, "application/json");
+    if !cookie.is_empty() {
+        builder = builder.header(header::COOKIE, cookie);
+    }
+    request(app, builder.body(Body::from(body.to_string())).unwrap()).await
 }
 
 async fn json_request(

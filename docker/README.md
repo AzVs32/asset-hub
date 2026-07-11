@@ -1,0 +1,261 @@
+# Asset Hub Docker 部署
+
+本目录提供两类镜像，均由同一个 `Dockerfile` 构建：
+
+- `api`：Rust HTTP 服务、SQLite migration、内置及示例插件。
+- `web`：React 管理端和 Nginx；将 `/api`、`/plugins` 转发到 API。
+
+Compose 会同时启动两者，对外只暴露 Web 端口。浏览器和 API 保持同源，Session Cookie
+不需要额外的跨域配置。
+
+## 前置要求
+
+- Docker Engine 24 或更高版本。
+- Docker Compose v2（使用 `docker compose` 命令）。
+- 首次构建需要访问 crates.io、npm registry 和 Debian/Alpine 镜像仓库。
+- 建议至少预留 4 GB 内存和 10 GB 构建磁盘空间；Rust release 构建需要一些时间。
+
+运行容器不需要本机安装 Rust、Node.js、SQLite 或 Nginx。
+
+## 快速启动
+
+在项目根目录执行：
+
+```bash
+cp docker/.env.example docker/.env
+```
+
+编辑 `docker/.env`，至少修改：
+
+```dotenv
+ASSET_HUB_BOOTSTRAP_ADMIN_USERNAME=admin
+ASSET_HUB_BOOTSTRAP_ADMIN_PASSWORD=一个足够长且随机的密码
+```
+
+然后启动：
+
+```bash
+cd docker
+docker compose up -d --build
+```
+
+查看状态和日志：
+
+```bash
+docker compose ps
+docker compose logs -f api
+```
+
+打开：
+
+- 管理端：`http://127.0.0.1:8080`
+- 经 Nginx 转发的 API：`http://127.0.0.1:8080/api`
+- Swagger：默认关闭；启用后访问 `http://127.0.0.1:8080/swagger-ui/`
+
+停止服务但保留数据：
+
+```bash
+docker compose down
+```
+
+## 首次启动必须配置的内容
+
+`docker/.env` 中以下两项在 Compose 启动时必填：
+
+| 配置 | 用途 | 要求 |
+| --- | --- | --- |
+| `ASSET_HUB_BOOTSTRAP_ADMIN_USERNAME` | 创建首个管理员 | 3–64 位，仅字母、数字、`.`、`_`、`-` |
+| `ASSET_HUB_BOOTSTRAP_ADMIN_PASSWORD` | 首个管理员密码 | 至少 10 个字符，生产环境应使用随机强密码 |
+
+只有 `users` 表为空时才会创建初始管理员。数据库已有用户后，这两个值不会覆盖用户、
+重置密码或创建第二个管理员。Compose 为避免空数据库无法登录，仍要求变量存在；首次
+启动完成后可将其替换为新的随机占位值。
+
+不要提交 `docker/.env`。该文件已经被 `.gitignore` 排除。
+
+## 可选环境变量
+
+| 配置 | 默认值 | 说明 |
+| --- | --- | --- |
+| `ASSET_HUB_PORT` | `8080` | 宿主机对外提供管理端的端口 |
+| `ASSET_HUB_IMAGE_TAG` | `local` | Compose 生成镜像的标签 |
+| `ASSET_HTTP_ENABLE_SWAGGER` | `false` | 是否开放 Swagger/OpenAPI |
+| `ASSET_HTTP_ENABLE_PURGE` | `false` | 是否允许物理删除资源及文件 |
+| `ASSET_HTTP_REQUEST_TIMEOUT_SECS` | `30` | API 请求超时秒数；大文件或慢插件可适当提高 |
+| `ASSET_HTTP_COOKIE_SECURE` | `false` | 公网入口为 HTTPS 时必须设为 `true` |
+| `ASSET_HTTP_SESSION_INACTIVITY_SECS` | `43200` | Session 非活动过期秒数 |
+| `RUST_LOG` | `asset_http=info,tower_http=info` | Rust 日志过滤规则 |
+
+容器内部已经固定以下运行参数，通常无需修改：
+
+| 配置 | 容器值 | 说明 |
+| --- | --- | --- |
+| `ASSET_HTTP_ADDR` | `0.0.0.0:8080` | API 容器监听地址 |
+| `ASSET_HUB_CONFIG` | `/app/config.toml` | 容器配置文件路径 |
+
+## 数据和配置文件
+
+Compose 创建命名卷 `asset-hub-data`，挂载到 API 容器的 `/data`：
+
+```text
+/data/asset-hub.sqlite  SQLite 元数据、用户、ACL、Session
+/data/blob/             上传的原始文件内容
+```
+
+容器配置位于 [config.toml](config.toml)：
+
+```toml
+[database]
+sqlite_path = "/data/asset-hub.sqlite"
+max_connections = 5
+
+[blob]
+fs_root = "/data/blob"
+```
+
+不要把 SQLite 与 blob 目录拆开备份，两者共同组成一次完整的 Asset Hub 状态。
+
+查看卷位置：
+
+```bash
+docker volume inspect asset-hub-data
+```
+
+删除容器和全部数据是破坏性操作：
+
+```bash
+docker compose down -v
+```
+
+除非确认不再需要数据，否则不要加 `-v`。
+
+## 插件配置
+
+默认镜像启用：
+
+- `azvs-markdown`
+- `azvs-epub`
+- `azvs-mp4`
+
+Manifest 和 WASM 位于容器 `/app/plugins`。配置文件中的绝对路径为：
+
+```toml
+[kind]
+plugin_manifests = [
+  "/app/plugins/azvs-markdown/azvs-markdown.json",
+  "/app/plugins/azvs-epub/azvs-epub.json",
+  "/app/plugins/azvs-mp4/azvs-mp4.json",
+]
+```
+
+Markdown 的浏览器资源会在 Docker 构建期间通过 `npm ci && npm run build` 生成。现有
+WASM 文件直接打包进镜像；修改插件 Rust 源码后，应先重新生成对应 `.wasm`，再重建 API
+镜像。
+
+## 单独构建镜像
+
+不使用 Compose 时，可从项目根目录构建指定 target：
+
+```bash
+docker build -f docker/Dockerfile --target api -t asset-hub-api:local .
+docker build -f docker/Dockerfile --target web -t asset-hub-web:local .
+```
+
+API 单容器运行示例：
+
+```bash
+docker volume create asset-hub-data
+docker run --rm \
+  --name asset-hub-api \
+  -p 8080:8080 \
+  -v asset-hub-data:/data \
+  -e ASSET_HUB_BOOTSTRAP_ADMIN_USERNAME=admin \
+  -e ASSET_HUB_BOOTSTRAP_ADMIN_PASSWORD='替换为强密码' \
+  asset-hub-api:local
+```
+
+此方式只提供 API，不包含管理端。完整部署建议使用 Compose。
+
+## 更新与数据库迁移
+
+应用启动时自动执行尚未应用的 SQLx migration，不需要删除原数据库。更新步骤：
+
+```bash
+cd docker
+docker compose down
+docker compose build --pull
+docker compose up -d
+docker compose logs -f api
+```
+
+生产环境更新前先备份数据。不要修改已经发布并执行过的 migration；数据库结构变化应
+始终新增 migration 文件。
+
+## 备份与恢复
+
+一致性要求最高的简单备份方式是短暂停止服务：
+
+```bash
+cd docker
+docker compose stop api
+docker run --rm \
+  -v asset-hub-data:/data:ro \
+  -v "$PWD/backup:/backup" \
+  alpine:3.21 \
+  tar czf /backup/asset-hub-$(date +%Y%m%d-%H%M%S).tar.gz -C /data .
+docker compose start api
+```
+
+恢复到空卷：
+
+```bash
+docker compose down
+docker volume rm asset-hub-data
+docker volume create asset-hub-data
+docker run --rm \
+  -v asset-hub-data:/data \
+  -v "$PWD/backup:/backup:ro" \
+  alpine:3.21 \
+  tar xzf /backup/你的备份文件.tar.gz -C /data
+docker compose up -d
+```
+
+## 生产环境建议
+
+- 保持 `ASSET_HTTP_ENABLE_PURGE=false`，除非明确需要不可恢复的物理删除。
+- 保持 `ASSET_HTTP_ENABLE_SWAGGER=false`，或仅在受信网络开放。
+- 在 Nginx、Caddy、Traefik 或云负载均衡器上配置 HTTPS。
+- 不要把 API 容器的 `8080` 端口直接发布到公网；Compose 默认只对 Web 容器暴露端口。
+- 使用防火墙限制管理端来源。
+- 定期同时备份 SQLite 和 `/data/blob`。
+- 生产编排平台应通过 Secret 注入管理员初始密码，避免写入镜像或 Compose 文件。
+- 设置日志收集和磁盘/卷容量监控。
+
+## 常见问题
+
+### API 不健康或不断重启
+
+```bash
+docker compose logs --tail=200 api
+```
+
+常见原因包括：初始管理员变量缺失、数据卷不可写、配置路径错误、SQLite migration
+失败或插件 Manifest/WASM 不匹配。
+
+### 登录后接口返回 403
+
+管理员不受目录 ACL 限制。普通用户必须被授予目标目录的 `read`、`write` 或 `manage`
+权限；父目录授权会向子目录继承。
+
+### 上传返回 413
+
+镜像中的 Nginx 已设置 `client_max_body_size 4g`，与 API 上限一致。若外层还有反向代理，
+也需要同步调整其请求体上限。
+
+### 修改了 `.env` 但容器配置未变化
+
+重建容器以应用环境变量：
+
+```bash
+docker compose up -d --force-recreate
+```

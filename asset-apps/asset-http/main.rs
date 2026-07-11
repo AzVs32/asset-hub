@@ -1,3 +1,4 @@
+mod auth;
 mod dto;
 mod error;
 mod handlers;
@@ -31,17 +32,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     info!(config = ?runtime.config(), "asset-http config");
 
-    axum::serve(
-        listener,
-        router::build_with_options_and_plugin_web_roots(
-            runtime.resource_service(),
-            runtime.resource_kind_registry(),
-            settings.router_options().clone(),
-            runtime.plugin_web_roots()?,
-            runtime.config().blob.fs_root.clone(),
-        ),
+    let authorization = runtime.authorization_service();
+    let app = router::build_with_options_and_plugin_web_roots(
+        runtime.resource_service(),
+        runtime.resource_kind_registry(),
+        settings.router_options().clone(),
+        runtime.plugin_web_roots()?,
+        runtime.config().blob.fs_root.clone(),
+        Some(authorization.clone()),
+    );
+    let bootstrap_username = std::env::var("ASSET_HUB_BOOTSTRAP_ADMIN_USERNAME").ok();
+    let bootstrap_password = std::env::var("ASSET_HUB_BOOTSTRAP_ADMIN_PASSWORD").ok();
+    let bootstrap_admin = bootstrap_username
+        .as_deref()
+        .zip(bootstrap_password.as_deref());
+    let app = router::with_authentication(
+        app,
+        runtime.user_service(),
+        authorization,
+        &runtime.config().database.sqlite_path,
+        bootstrap_admin,
+        settings.session_options(),
     )
     .await?;
+
+    axum::serve(listener, app).await?;
 
     Ok(())
 }

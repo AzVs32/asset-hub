@@ -10,6 +10,7 @@ asset-plugin-api.workspace = true
 asset-core.workspace = true
 
 async-trait.workspace = true
+argon2.workspace = true
 base64.workspace = true
 bytes.workspace = true
 chrono.workspace = true

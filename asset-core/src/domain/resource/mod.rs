@@ -1,4 +1,5 @@
 mod content;
+mod directory;
 mod kind;
 mod metadata;
 #[allow(clippy::module_inception)]
@@ -6,6 +7,7 @@ mod resource;
 mod status;
 
 pub use content::{Checksum, ChecksumKind, ResourceContent, ResourceContentBuilder, StorageKey};
+pub use directory::ResourceDirectory;
 pub use kind::ResourceKind;
 pub use metadata::{
     KindMetadata, ResourceMetadata, ResourceMetadataBuilder, ResourceSummaryMetadata,

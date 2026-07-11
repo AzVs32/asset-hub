@@ -1,0 +1,46 @@
+name: asset-hub
+
+services:
+  api:
+    image: asset-hub-api:${ASSET_HUB_IMAGE_TAG:-local}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: api
+    restart: unless-stopped
+    environment:
+      ASSET_HUB_BOOTSTRAP_ADMIN_USERNAME: ${ASSET_HUB_BOOTSTRAP_ADMIN_USERNAME:?set it in docker/.env}
+      ASSET_HUB_BOOTSTRAP_ADMIN_PASSWORD: ${ASSET_HUB_BOOTSTRAP_ADMIN_PASSWORD:?set it in docker/.env}
+      ASSET_HTTP_ENABLE_SWAGGER: ${ASSET_HTTP_ENABLE_SWAGGER:-false}
+      ASSET_HTTP_ENABLE_PURGE: ${ASSET_HTTP_ENABLE_PURGE:-false}
+      ASSET_HTTP_REQUEST_TIMEOUT_SECS: ${ASSET_HTTP_REQUEST_TIMEOUT_SECS:-30}
+      ASSET_HTTP_COOKIE_SECURE: ${ASSET_HTTP_COOKIE_SECURE:-false}
+      ASSET_HTTP_SESSION_INACTIVITY_SECS: ${ASSET_HTTP_SESSION_INACTIVITY_SECS:-43200}
+      RUST_LOG: ${RUST_LOG:-asset_http=info,tower_http=info}
+    volumes:
+      - asset-hub-data:/data
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:8080/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+
+  web:
+    image: asset-hub-web:${ASSET_HUB_IMAGE_TAG:-local}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${ASSET_HUB_PORT:-8080}:80"
+
+volumes:
+  asset-hub-data:
+    name: asset-hub-data

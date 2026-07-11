@@ -3,16 +3,16 @@ import { apiBase } from "../api";
 import type { PluginActionOutput, PluginView } from "../types";
 
 export function PluginActionResult({ output }: { output: PluginActionOutput }) {
-  return <PluginViewResult view={output.view} title={output.action} />;
+  return <PluginViewResult view={output.view} title={output.action} resourceId={output.resource_id} />;
 }
 
-export function PluginViewResult({ view, title }: { view: PluginView; title: string }) {
+export function PluginViewResult({ view, title, resourceId }: { view: PluginView; title: string; resourceId?: string }) {
   if (view.view === "html") {
     return <iframe className="plugin-html-frame" sandbox="allow-scripts" title={title} srcDoc={view.html} />;
   }
 
   if (view.view === "plugin_frame") {
-    return <PluginFrame view={view} title={title} />;
+    return <PluginFrame view={view} title={title} resourceId={resourceId} />;
   }
 
   if (view.view === "media") {
@@ -94,9 +94,11 @@ export function PluginViewResult({ view, title }: { view: PluginView; title: str
 function PluginFrame({
   view,
   title,
+  resourceId,
 }: {
   view: Extract<PluginView, { view: "plugin_frame" }>;
   title: string;
+  resourceId?: string;
 }) {
   const ref = React.useRef<HTMLIFrameElement | null>(null);
 
@@ -105,12 +107,14 @@ function PluginFrame({
       if (event.source !== ref.current?.contentWindow) return;
       const message = event.data;
       if (!message || message.type !== "asset-hub:execute-resource-action") return;
+      if (!resourceId || message.resource_id !== resourceId || typeof message.action !== "string") return;
 
       try {
         const response = await fetch(
           `${apiBase}/resources/${encodeURIComponent(message.resource_id)}/actions/${encodeURIComponent(message.action)}`,
           {
             method: "POST",
+            credentials: "include",
             headers: {
               "Content-Type": "application/json",
             },
@@ -146,7 +150,7 @@ function PluginFrame({
 
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, []);
+  }, [resourceId]);
 
   return (
     <iframe
@@ -176,4 +180,3 @@ function formatTableCell(row: unknown, key: string): string {
   const value = row && typeof row === "object" ? (row as Record<string, unknown>)[key] : undefined;
   return typeof value === "string" ? value : JSON.stringify(value ?? "");
 }
-

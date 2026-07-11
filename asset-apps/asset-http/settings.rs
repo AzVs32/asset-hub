@@ -13,15 +13,16 @@ const ENABLE_SWAGGER_ENV: &str = "ASSET_HTTP_ENABLE_SWAGGER";
 const ENABLE_PURGE_ENV: &str = "ASSET_HTTP_ENABLE_PURGE";
 const CORS_ALLOWED_ORIGINS_ENV: &str = "ASSET_HTTP_CORS_ALLOWED_ORIGINS";
 const REQUEST_TIMEOUT_SECS_ENV: &str = "ASSET_HTTP_REQUEST_TIMEOUT_SECS";
+const COOKIE_SECURE_ENV: &str = "ASSET_HTTP_COOKIE_SECURE";
+const SESSION_INACTIVITY_SECS_ENV: &str = "ASSET_HTTP_SESSION_INACTIVITY_SECS";
 const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 30;
+const DEFAULT_SESSION_INACTIVITY_SECS: u64 = 12 * 60 * 60;
 
 /// HTTP CORS 策略。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CorsPolicy {
     /// 不启用 CORS 响应头。
     None,
-    /// 允许任意 origin，适合本地或受控内网调试。
-    Any,
     /// 只允许显式配置的 origin。
     Origins(Vec<HeaderValue>),
 }
@@ -33,6 +34,12 @@ pub(crate) struct RouterOptions {
     pub(crate) enable_purge: bool,
     pub(crate) cors: CorsPolicy,
     pub(crate) request_timeout: Duration,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SessionOptions {
+    pub(crate) cookie_secure: bool,
+    pub(crate) inactivity_timeout: Duration,
 }
 
 impl Default for RouterOptions {
@@ -55,6 +62,7 @@ pub(crate) struct HttpSettings {
     addr: SocketAddr,
     config_path: Option<PathBuf>,
     router_options: RouterOptions,
+    session_options: SessionOptions,
 }
 
 impl HttpSettings {
@@ -80,11 +88,19 @@ impl HttpSettings {
                 DEFAULT_REQUEST_TIMEOUT_SECS,
             )?),
         };
+        let session_options = SessionOptions {
+            cookie_secure: parse_bool_env(COOKIE_SECURE_ENV, false)?,
+            inactivity_timeout: Duration::from_secs(parse_positive_u64_env(
+                SESSION_INACTIVITY_SECS_ENV,
+                DEFAULT_SESSION_INACTIVITY_SECS,
+            )?),
+        };
 
         Ok(Self {
             addr,
             config_path,
             router_options,
+            session_options,
         })
     }
 
@@ -101,6 +117,10 @@ impl HttpSettings {
     /// 返回 HTTP 路由边界配置。
     pub(crate) fn router_options(&self) -> &RouterOptions {
         &self.router_options
+    }
+
+    pub(crate) fn session_options(&self) -> &SessionOptions {
+        &self.session_options
     }
 
     /// 返回当前生效的默认配置文件名。
@@ -136,6 +156,14 @@ fn parse_u64_env(name: &str, default: u64) -> Result<u64, Box<dyn std::error::Er
     }
 }
 
+fn parse_positive_u64_env(name: &str, default: u64) -> Result<u64, Box<dyn std::error::Error>> {
+    let value = parse_u64_env(name, default)?;
+    if value == 0 {
+        return Err(format!("{name} must be greater than zero").into());
+    }
+    Ok(value)
+}
+
 fn parse_cors_policy(value: Option<String>) -> Result<CorsPolicy, Box<dyn std::error::Error>> {
     let Some(value) = value else {
         return Ok(CorsPolicy::None);
@@ -148,8 +176,11 @@ fn parse_cors_policy(value: Option<String>) -> Result<CorsPolicy, Box<dyn std::e
     if origins.is_empty() {
         return Ok(CorsPolicy::None);
     }
-    if origins.iter().any(|origin| *origin == "*") {
-        return Ok(CorsPolicy::Any);
+    if origins.contains(&"*") {
+        return Err(
+            "wildcard CORS is not supported with cookie authentication; configure explicit origins"
+                .into(),
+        );
     }
 
     let origins = origins
@@ -174,10 +205,7 @@ mod tests {
     #[test]
     fn parses_cors_policy() {
         assert_eq!(parse_cors_policy(None).unwrap(), CorsPolicy::None);
-        assert_eq!(
-            parse_cors_policy(Some("*".to_string())).unwrap(),
-            CorsPolicy::Any
-        );
+        assert!(parse_cors_policy(Some("*".to_string())).is_err());
         assert_eq!(
             parse_cors_policy(Some(
                 "http://127.0.0.1:5173, https://example.com".to_string()

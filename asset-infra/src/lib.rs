@@ -3,22 +3,25 @@ pub mod config;
 pub mod kind;
 pub mod migration;
 pub mod official_plugins;
+pub mod password;
 pub mod plugin;
 mod plugin_manifest;
 pub mod sqlite;
 pub mod storage;
 
 use action::DefaultResourceActionExecutor;
-use asset_core::service::ResourceService;
+use asset_core::service::{AuthorizationService, ResourceService, UserService};
 use asset_core::{
     CoreError, port::BlobStorage, port::ResourceActionExecutor, port::ResourceActionRegistry,
     port::ResourceKindRegistry, port::ResourceRepository,
 };
 use config::AssetInfraConfig;
 use kind::{DefaultResourceActionRegistry, DefaultResourceKindRegistry};
+use password::Argon2PasswordHasher;
 use plugin::ExtismResourceActionExecutor;
 use plugin_manifest::load_plugin_manifest_file;
-use sqlite::SqliteResourceRepository;
+use sqlite::{SqliteIdentityRepository, SqliteResourceRepository};
+use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -32,6 +35,7 @@ pub struct AssetInfrastructure {
     config: AssetInfraConfig,
     /// 资源仓储适配器。
     resource_repository: Arc<SqliteResourceRepository>,
+    identity_repository: Arc<SqliteIdentityRepository>,
     /// 对象存储适配器。
     blob_storage: Arc<OpenDalBlobStorage>,
     /// 资源类型注册表。
@@ -51,6 +55,9 @@ impl AssetInfrastructure {
         let blob_storage = Arc::new(OpenDalBlobStorage::from_config(&config.blob)?);
         let resource_repository =
             Arc::new(SqliteResourceRepository::connect(&config.database).await?);
+        let identity_repository = Arc::new(SqliteIdentityRepository::new(
+            resource_repository.pool().clone(),
+        ));
         let resource_kind_registry =
             Arc::new(DefaultResourceKindRegistry::from_config(&config.kind)?);
         let resource_action_registry =
@@ -65,6 +72,7 @@ impl AssetInfrastructure {
         Ok(Self {
             config,
             resource_repository,
+            identity_repository,
             blob_storage,
             resource_kind_registry,
             resource_action_registry,
@@ -85,6 +93,22 @@ impl AssetInfrastructure {
     /// 返回资源仓储端口对象。
     pub fn resource_repository(&self) -> Arc<dyn ResourceRepository> {
         self.resource_repository.clone()
+    }
+
+    /// 返回共享数据库连接池，供会话、用户与授权适配器复用。
+    pub fn database_pool(&self) -> SqlitePool {
+        self.resource_repository.pool().clone()
+    }
+
+    pub fn user_service(&self) -> UserService {
+        UserService::new(
+            self.identity_repository.clone(),
+            Arc::new(Argon2PasswordHasher),
+        )
+    }
+
+    pub fn authorization_service(&self) -> AuthorizationService {
+        AuthorizationService::new(self.identity_repository.clone())
     }
 
     /// 返回对象存储端口对象。

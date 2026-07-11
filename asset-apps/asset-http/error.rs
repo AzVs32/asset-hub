@@ -13,7 +13,28 @@ pub(crate) struct HttpError {
     message: String,
 }
 
+impl std::fmt::Display for HttpError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for HttpError {}
+
 impl HttpError {
+    pub(crate) fn unauthorized(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::UNAUTHORIZED,
+            message: message.into(),
+        }
+    }
+
+    pub(crate) fn internal(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: message.into(),
+        }
+    }
     /// 构造 400 Bad Request。
     pub(crate) fn bad_request(message: impl Into<String>) -> Self {
         Self {
@@ -37,12 +58,23 @@ impl HttpError {
             message: message.into(),
         }
     }
+
+    pub(crate) fn too_many_requests(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            message: message.into(),
+        }
+    }
 }
 
 impl From<CoreError> for HttpError {
     fn from(error: CoreError) -> Self {
         let status = match &error {
-            CoreError::Resource(_) | CoreError::Configuration { .. } => StatusCode::BAD_REQUEST,
+            CoreError::Resource(_) | CoreError::User(_) | CoreError::Configuration { .. } => {
+                StatusCode::BAD_REQUEST
+            }
+            CoreError::Unauthenticated => StatusCode::UNAUTHORIZED,
+            CoreError::Forbidden { .. } => StatusCode::FORBIDDEN,
             CoreError::NotFound { .. } => StatusCode::NOT_FOUND,
             CoreError::Conflict { .. } => StatusCode::CONFLICT,
             CoreError::Storage { .. } | CoreError::Repository { .. } | CoreError::Plugin { .. } => {

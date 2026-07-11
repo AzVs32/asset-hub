@@ -1,25 +1,51 @@
 use crate::dto::{
-    BinaryContent, ChecksumResponse, CreateResourceRequest, DirectoryListingResponse,
-    ErrorResponse, ExecuteResourceActionRequest, HealthResponse, KindMetadataRequest,
-    KindMetadataResponse, ResourceActionDefinitionResponse, ResourceActionOutputResponse,
-    ResourceActionsResponse, ResourceContentResponse, ResourceDirectoryResponse,
-    ResourceKindResponse, ResourceKindsResponse, ResourceMetadataRequest, ResourceMetadataResponse,
-    ResourcePageResponse, ResourceReadResponse, ResourceResponse, ResourceSummaryMetadataRequest,
-    ResourceSummaryMetadataResponse, ScanStorageErrorResponse, ScanStorageRequest,
-    ScanStorageResponse, UpdateResourceRequest, UploadResourceContentRequest,
-    UploadResourceContentStreamQuery,
+    BinaryContent, ChecksumResponse, CreateDirectoryRequest, CreateResourceRequest,
+    DirectoryListingResponse, ErrorResponse, ExecuteResourceActionRequest, HealthResponse,
+    KindMetadataRequest, KindMetadataResponse, ResourceActionDefinitionResponse,
+    ResourceActionOutputResponse, ResourceActionsResponse, ResourceContentResponse,
+    ResourceDirectoryResponse, ResourceKindResponse, ResourceKindsResponse,
+    ResourceMetadataRequest, ResourceMetadataResponse, ResourcePageResponse, ResourceReadResponse,
+    ResourceResponse, ResourceSummaryMetadataRequest, ResourceSummaryMetadataResponse,
+    ScanStorageErrorResponse, ScanStorageRequest, ScanStorageResponse, UpdateResourceRequest,
+    UploadResourceContentRequest, UploadResourceContentStreamQuery,
 };
-use crate::handlers;
-use utoipa::OpenApi;
+use crate::{auth, handlers};
+use utoipa::{
+    Modify, OpenApi,
+    openapi::security::{ApiKey, ApiKeyValue, SecurityScheme},
+};
+
+struct CookieSecurity;
+
+impl Modify for CookieSecurity {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        if let Some(components) = openapi.components.as_mut() {
+            components.add_security_scheme(
+                "cookie_auth",
+                SecurityScheme::ApiKey(ApiKey::Cookie(ApiKeyValue::new("asset_hub_session"))),
+            );
+        }
+    }
+}
 
 /// asset-http OpenAPI 文档。
 #[derive(OpenApi)]
 #[openapi(
     paths(
+        auth::login,
+        auth::logout,
+        auth::me,
+        auth::create_user,
+        auth::list_users,
+        auth::update_user_access,
+        auth::grant_directory,
+        auth::my_directory_grants,
+        auth::revoke_directory,
         handlers::health,
         handlers::list_resource_kinds,
         handlers::list_resources,
         handlers::list_directory,
+        handlers::create_directory,
         handlers::scan_storage,
         handlers::create_resource,
         handlers::upload_resource_content,
@@ -39,6 +65,7 @@ use utoipa::OpenApi;
             ChecksumResponse,
             BinaryContent,
             CreateResourceRequest,
+            CreateDirectoryRequest,
             DirectoryListingResponse,
             ErrorResponse,
             ExecuteResourceActionRequest,
@@ -65,11 +92,22 @@ use utoipa::OpenApi;
             UpdateResourceRequest,
             UploadResourceContentRequest,
             UploadResourceContentStreamQuery
+            ,auth::AuthenticatedUser
+            ,auth::Credentials
+            ,auth::MeResponse
+            ,auth::CreateUserRequest
+            ,auth::GrantDirectoryRequest
+            ,auth::DirectoryGrantResponse
+            ,auth::ManagedUserResponse
+            ,auth::UpdateUserAccessRequest
         )
     ),
+    modifiers(&CookieSecurity),
+    security(("cookie_auth" = [])),
     tags(
         (name = "system", description = "系统状态接口"),
         (name = "resources", description = "资源管理接口")
+        ,(name = "authentication", description = "登录、用户和目录授权接口")
     )
 )]
 pub(crate) struct ApiDoc;

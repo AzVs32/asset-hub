@@ -4,6 +4,8 @@
 
 use super::*;
 
+const MAX_PLUGIN_ACTION_CONTENT_BYTES: u64 = 64 * 1024 * 1024;
+
 /// 资源动作服务。
 ///
 /// 动作服务不决定 HTTP 表达形式，只返回核心层的动作输出和资源能力描述。
@@ -159,6 +161,11 @@ impl<'a> ResourceActionService<'a> {
         };
         if !should_load_declared_action_content(action, content_ref) {
             return Ok(None);
+        }
+        if content_ref.size() > MAX_PLUGIN_ACTION_CONTENT_BYTES {
+            return Err(CoreError::configuration(format!(
+                "plugin actions are limited to {MAX_PLUGIN_ACTION_CONTENT_BYTES} bytes of resource content"
+            )));
         }
 
         self.service.blob_storage.get(content_ref.key()).await

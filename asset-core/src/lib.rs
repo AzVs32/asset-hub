@@ -5,4 +5,4 @@ pub mod service;
 
 mod utils;
 
-pub use error::{CoreError, ResourceError};
+pub use error::{CoreError, ResourceError, UserError};
