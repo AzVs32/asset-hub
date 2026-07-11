@@ -4,6 +4,7 @@ import { apiBase } from "../api";
 import type { Draft, Resource, ResourceActionDefinition, ResourceKindOption, ResourceStatus } from "../types";
 import { formatBytes, formatDate, isPluginUiAction, withKindDefaults } from "../utils/resourceDrafts";
 import { Fact, SelectInput, TextInput } from "./forms";
+import { cx, dangerIconButtonClass, iconButtonClass, inputClass, primaryButtonClass, secondaryButtonClass, textareaClass } from "./ui";
 
 export function ResourceDetail({
   resource,
@@ -36,39 +37,39 @@ export function ResourceDetail({
   const pluginActions = resource.actions.available_actions.filter(isPluginUiAction);
 
   return (
-    <div className="detail-content">
-      <header className="detail-header">
-        <div>
-          <h2>{resource.name}</h2>
-          <span>{resource.id}</span>
+    <div className="flex flex-col gap-6 p-6 max-sm:p-4">
+      <header className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h2 className="break-words text-xl font-bold text-slate-900">{resource.name}</h2>
+          <span className="mt-1 block truncate font-mono text-xs text-slate-400">{resource.id}</span>
         </div>
-        <span className={`status-pill ${resource.status}`}>{resource.status}</span>
+        <span className={cx("inline-flex rounded-full px-2.5 py-1 text-xs font-semibold", resource.status === "active" ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600")}>{resource.status}</span>
       </header>
 
-      <div className="detail-actions">
-        <button className="primary-button" type="button" onClick={onSave} disabled={busy || Boolean(resource.deleted_at)}>
-          {busy ? <Loader2 className="spin" size={18} /> : <Save size={18} />}
+      <div className="flex flex-wrap items-center gap-2">
+        <button className={primaryButtonClass} type="button" onClick={onSave} disabled={busy || Boolean(resource.deleted_at)}>
+          {busy ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />}
           Save
         </button>
         {resource.actions.download_content && (
-          <a className="icon-button" href={`${apiBase}/resources/${resource.id}/content`} title="Download">
+          <a className={iconButtonClass} href={`${apiBase}/resources/${resource.id}/content`} title="Download">
             <Download size={18} />
           </a>
         )}
         {canRead && (
-          <button className="icon-button" type="button" onClick={onRead} disabled={busy} title="Read">
+          <button className={iconButtonClass} type="button" onClick={onRead} disabled={busy} title="Read">
             <BookOpen size={18} />
           </button>
         )}
         {canPreview && (
-          <button className="icon-button" type="button" onClick={onPreview} disabled={busy} title="Preview">
+          <button className={iconButtonClass} type="button" onClick={onPreview} disabled={busy} title="Preview">
             <Eye size={18} />
           </button>
         )}
         {pluginActions.map((action) => (
           <button
             key={action.id}
-            className="ghost-button"
+            className={secondaryButtonClass}
             type="button"
             onClick={() => onPluginAction(action)}
             disabled={busy}
@@ -78,17 +79,17 @@ export function ResourceDetail({
           </button>
         ))}
         {resource.deleted_at ? (
-          <button className="icon-button" type="button" onClick={onRestore} disabled={busy} title="Restore">
+          <button className={iconButtonClass} type="button" onClick={onRestore} disabled={busy} title="Restore">
             <RotateCcw size={18} />
           </button>
         ) : (
-          <button className="icon-button danger" type="button" onClick={onDelete} disabled={busy} title="Delete">
+          <button className={dangerIconButtonClass} type="button" onClick={onDelete} disabled={busy} title="Delete">
             <Trash2 size={18} />
           </button>
         )}
       </div>
 
-      <div className="form-grid detail-form">
+      <div className="grid grid-cols-2 gap-4 max-sm:grid-cols-1">
         <TextInput label="Name" value={draft.name} onChange={(name) => setDraft((d) => d && { ...d, name })} />
         <TextInput
           label="Directory"
@@ -101,9 +102,10 @@ export function ResourceDetail({
           options={resourceKinds}
           onChange={(kind) => setDraft((d) => d && withKindDefaults({ ...d, kind }, resourceKinds))}
         />
-        <label className="field">
-          <span>Status</span>
+        <label className="grid gap-2">
+          <span className="text-xs font-semibold text-slate-600">Status</span>
           <select
+            className={inputClass}
             value={draft.status}
             onChange={(event) => setDraft((d) => d && { ...d, status: event.target.value as ResourceStatus })}
             disabled={Boolean(resource.deleted_at)}
@@ -123,9 +125,10 @@ export function ResourceDetail({
           value={draft.schemaId}
           onChange={(schemaId) => setDraft((d) => d && { ...d, schemaId })}
         />
-        <label className="field full">
-          <span>Kind data JSON</span>
+        <label className="col-span-full grid gap-2">
+          <span className="text-xs font-semibold text-slate-600">Kind data JSON</span>
           <textarea
+            className={textareaClass}
             value={draft.kindData}
             onChange={(event) => setDraft((d) => d && { ...d, kindData: event.target.value })}
             rows={7}
@@ -134,7 +137,7 @@ export function ResourceDetail({
         </label>
       </div>
 
-      <section className="facts">
+      <section className="grid grid-cols-2 gap-x-4 max-sm:grid-cols-1">
         <Fact label="Created" value={formatDate(resource.created_at)} />
         <Fact label="Updated" value={formatDate(resource.updated_at)} />
         <Fact label="Deleted" value={resource.deleted_at ? formatDate(resource.deleted_at) : "-"} />
@@ -154,5 +157,4 @@ export function ResourceDetail({
     </div>
   );
 }
-
 

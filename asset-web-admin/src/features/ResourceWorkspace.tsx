@@ -22,6 +22,7 @@ import { ResourceDetail } from "../components/ResourceDetail";
 import { SelectInput, TextInput } from "../components/forms";
 import type { CurrentUser } from "../components/AuthGate";
 import { UserAdministration } from "../components/UserAdministration";
+import { cx, iconButtonClass, inputClass, primaryButtonClass, secondaryButtonClass, textareaClass } from "../components/ui";
 import type { DirectoryListing, Draft, Filters, PluginActionOutput, Resource, ResourceActionDefinition, ResourceDirectory, ResourceKindOption, ResourceKindsResponse, ResourcePage, ResourceReadResponse, ResourceStatus, ScanStorageResponse, UploadDraft } from "../types";
 import { detectKindForFile, directoriesFromResources, emptyCreateDraft, emptyUploadDraft, errorMessage, fallbackUploadKind, formatBytes, formatDate, isImageResource, kindOptionLabel, metadataFromDraft, metadataFromUpload, normalizeDirectoryInput, normalizeDraftKind, sha256Hex, sortKindsForHierarchy, toDraft, withKindDefaults } from "../utils/resourceDrafts";
 
@@ -48,6 +49,11 @@ const defaultFilters: Filters = {
   page: 1,
   limit: 20,
 };
+const modalBackdropClass = "fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-slate-950/50 p-4 backdrop-blur-sm";
+const modalClass = "max-h-[calc(100vh-2rem)] w-full max-w-2xl overflow-auto rounded-2xl bg-white shadow-2xl";
+const modalHeaderClass = "flex items-center justify-between border-b border-slate-200 px-6 py-5";
+const modalFormClass = "grid grid-cols-2 gap-4 p-6 max-sm:grid-cols-1";
+const modalActionsClass = "col-span-full flex justify-end gap-2";
 
 export function ResourceWorkspace({ initialDirectory = "", user, onLogout }: { initialDirectory?: string; user: CurrentUser; onLogout: () => Promise<void> }) {
   const [filters, setFilters] = React.useState<Filters>(defaultFilters);
@@ -407,26 +413,26 @@ export function ResourceWorkspace({ initialDirectory = "", user, onLogout }: { i
   }
 
   return (
-    <main className="app-shell">
-      <section className="resource-browser" aria-label="Resources">
-        <header className="topbar">
-          <div className="brand">
-            <Database size={22} aria-hidden="true" />
+    <main className="grid min-h-screen bg-slate-100 lg:grid-cols-[minmax(0,1fr)_28rem]">
+      <section className="flex min-w-0 flex-col border-r border-slate-200 bg-white" aria-label="Resources">
+        <header className="flex min-h-20 items-center justify-between gap-4 border-b border-slate-200 px-6 py-4 max-md:flex-col max-md:items-stretch">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex size-10 items-center justify-center rounded-xl bg-blue-600 text-white"><Database size={20} aria-hidden="true" /></div>
             <div>
-              <h1>Asset Hub</h1>
-              <span>{page.total} resources</span>
+              <h1 className="text-lg font-bold tracking-tight text-slate-900">Asset Hub</h1>
+              <span className="text-xs text-slate-500">{page.total} resources</span>
             </div>
           </div>
-          <div className="topbar-actions">
-            <button className="icon-button" type="button" onClick={loadResources} title="Refresh">
-              {loading ? <Loader2 className="spin" size={18} /> : <RefreshCcw size={18} />}
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <button className={iconButtonClass} type="button" onClick={loadResources} title="Refresh">
+              {loading ? <Loader2 className="animate-spin" size={18} /> : <RefreshCcw size={18} />}
             </button>
-            {user.is_admin && <button className="ghost-button" type="button" onClick={scanStorage} disabled={busy}>
-              {busy ? <Loader2 className="spin" size={18} /> : <Database size={18} />}Scan
+            {user.is_admin && <button className={secondaryButtonClass} type="button" onClick={scanStorage} disabled={busy}>
+              {busy ? <Loader2 className="animate-spin" size={18} /> : <Database size={18} />}Scan
             </button>}
-            {user.is_admin && <button className="ghost-button" type="button" onClick={() => setUserAdminOpen(true)}><Users size={18} />Users</button>}
+            {user.is_admin && <button className={secondaryButtonClass} type="button" onClick={() => setUserAdminOpen(true)}><Users size={18} />Users</button>}
             <button
-              className="ghost-button"
+              className={secondaryButtonClass}
               type="button"
               onClick={() => {
                 setFolderName("");
@@ -437,7 +443,7 @@ export function ResourceWorkspace({ initialDirectory = "", user, onLogout }: { i
               New folder
             </button>
             <button
-              className="ghost-button"
+              className={secondaryButtonClass}
               type="button"
               onClick={() => {
                 setCreateDraft((draft) => ({ ...draft, directory: currentDirectory }));
@@ -448,7 +454,7 @@ export function ResourceWorkspace({ initialDirectory = "", user, onLogout }: { i
               New
             </button>
             <button
-              className="primary-button"
+              className={primaryButtonClass}
               type="button"
               onClick={() => {
                 setUploadDraft((draft) => ({ ...draft, directory: currentDirectory || "uploads" }));
@@ -458,22 +464,22 @@ export function ResourceWorkspace({ initialDirectory = "", user, onLogout }: { i
               <FileUp size={18} />
               Upload
             </button>
-            <button className="icon-button" type="button" onClick={() => void onLogout()} title={`Sign out ${user.username}`}><LogOut size={18} /></button>
+            <button className={iconButtonClass} type="button" onClick={() => void onLogout()} title={`Sign out ${user.username}`}><LogOut size={18} /></button>
           </div>
         </header>
 
-        <div className="filter-row">
-          <label className="search-field">
+        <div className="grid gap-3 border-b border-slate-200 bg-slate-50 p-4 sm:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_minmax(180px,240px)_minmax(120px,180px)_auto_auto]">
+          <label className="flex h-10 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 focus-within:border-blue-500 focus-within:ring-4 focus-within:ring-blue-500/10">
             <Search size={17} aria-hidden="true" />
-            <input
+            <input className="w-full min-w-0 border-0 bg-transparent text-sm outline-none"
               value={filters.q}
               onChange={(event) => updateFilters({ q: event.target.value })}
               placeholder="Search name"
             />
           </label>
-          <label className="compact-field">
+          <label className="flex h-10 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 focus-within:border-blue-500 focus-within:ring-4 focus-within:ring-blue-500/10">
             <SlidersHorizontal size={16} aria-hidden="true" />
-            <select value={filters.kind} onChange={(event) => updateFilters({ kind: event.target.value })}>
+            <select className="w-full min-w-0 border-0 bg-transparent text-sm outline-none" value={filters.kind} onChange={(event) => updateFilters({ kind: event.target.value })}>
               <option value="">All kinds</option>
               {resourceKinds.map((kind) => (
                 <option key={kind.kind} value={kind.kind}>
@@ -482,23 +488,23 @@ export function ResourceWorkspace({ initialDirectory = "", user, onLogout }: { i
               ))}
             </select>
           </label>
-          <label className="compact-field">
-            <input
+          <label className="flex h-10 items-center rounded-lg border border-slate-300 bg-white px-3 focus-within:border-blue-500 focus-within:ring-4 focus-within:ring-blue-500/10">
+            <input className="w-full min-w-0 border-0 bg-transparent text-sm outline-none"
               value={filters.tag}
               onChange={(event) => updateFilters({ tag: event.target.value })}
               placeholder="tag"
             />
           </label>
-          <label className="toggle-field">
-            <input
+          <label className="flex h-10 items-center gap-2 whitespace-nowrap rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700">
+            <input className="size-4 rounded border-slate-300 text-blue-600"
               type="checkbox"
               checked={filters.includeDeleted}
               onChange={(event) => updateFilters({ includeDeleted: event.target.checked })}
             />
             Deleted
           </label>
-          <label className="toggle-field">
-            <input
+          <label className="flex h-10 items-center gap-2 whitespace-nowrap rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700">
+            <input className="size-4 rounded border-slate-300 text-blue-600"
               type="checkbox"
               checked={filters.includeDescendants}
               disabled={!filters.kind}
@@ -509,76 +515,76 @@ export function ResourceWorkspace({ initialDirectory = "", user, onLogout }: { i
         </div>
 
         {error && (
-          <div className="message error-message" role="alert">
+          <div className="mx-4 mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">
             {error}
           </div>
         )}
         {notice && (
-          <div className="message notice-message" role="status" onAnimationEnd={() => setNotice(null)}>
+          <div className="mx-4 mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700" role="status" onAnimationEnd={() => setNotice(null)}>
             {notice}
           </div>
         )}
 
-        <nav className="breadcrumbs" aria-label="Current directory">
+        <nav className="flex min-h-10 items-center gap-1 border-b border-slate-200 px-6 text-sm text-slate-500" aria-label="Current directory">
           {breadcrumbs.map((crumb, index) => (
             <React.Fragment key={crumb.path || "root"}>
               {index > 0 && <ChevronRight size={14} aria-hidden="true" />}
-              <button type="button" onClick={() => openDirectory(crumb.path)}>
+              <button className="font-medium text-blue-600 hover:underline" type="button" onClick={() => openDirectory(crumb.path)}>
                 {crumb.label}
               </button>
             </React.Fragment>
           ))}
         </nav>
 
-        <div className="resource-list">
+        <div className="flex min-h-0 flex-1 flex-col overflow-auto">
           {currentDirectory && (
-            <button className="folder-row" type="button" onClick={() => openDirectory(parentDirectory(currentDirectory))}>
-              <Folder size={18} aria-hidden="true" />
-              <span>..</span>
+            <button className="grid min-h-11 w-full grid-cols-[1.5rem_1fr] items-center gap-2 border-b border-slate-200 bg-slate-50 px-6 py-2 text-left text-sm font-semibold text-slate-600 hover:bg-blue-50" type="button" onClick={() => openDirectory(parentDirectory(currentDirectory))}>
+              <Folder className="text-blue-600" size={18} aria-hidden="true" />
+              <span className="truncate">..</span>
             </button>
           )}
           {folders.map((folder) => (
-            <button key={folder.path} className="folder-row" type="button" onClick={() => openDirectory(folder.path)}>
-              <Folder size={18} aria-hidden="true" />
-              <span>{folder.name}</span>
+            <button key={folder.path} className="grid min-h-11 w-full grid-cols-[1.5rem_1fr] items-center gap-2 border-b border-slate-200 bg-slate-50 px-6 py-2 text-left text-sm font-semibold text-slate-600 hover:bg-blue-50" type="button" onClick={() => openDirectory(folder.path)}>
+              <Folder className="text-blue-600" size={18} aria-hidden="true" />
+              <span className="truncate">{folder.name}</span>
             </button>
           ))}
           {page.items.map((resource) => (
             <button
               key={resource.id}
-              className={`resource-row ${selected?.id === resource.id ? "selected" : ""}`}
+              className={cx("grid min-h-20 w-full grid-cols-[3.5rem_minmax(0,1fr)_auto] items-center gap-4 border-b border-slate-200 px-6 py-3 text-left transition hover:bg-blue-50 max-sm:grid-cols-[3rem_minmax(0,1fr)_auto] max-sm:px-4", selected?.id === resource.id && "bg-blue-50 ring-1 ring-inset ring-blue-200")}
               type="button"
               onClick={() => selectResource(resource)}
             >
               {resource.actions.thumbnail ? (
-                <img className="row-thumbnail" src={`${apiBase}/resources/${resource.id}/thumbnail`} alt="" />
+                <img className="size-14 rounded-lg bg-slate-100 object-cover max-sm:size-12" src={`${apiBase}/resources/${resource.id}/thumbnail`} alt="" />
               ) : (
-                <div className="row-thumbnail placeholder" aria-hidden="true">
+                <div className="flex size-14 items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 text-slate-400 max-sm:size-12" aria-hidden="true">
                   <FileIcon size={18} />
                 </div>
               )}
-              <div className="row-main">
-                <div className="row-title">
-                  <span>{resource.name}</span>
-                  {resource.deleted_at && <span className="deleted-pill">deleted</span>}
+              <div className="min-w-0">
+                <div className="mb-1.5 flex min-w-0 items-center gap-2">
+                  <span className="truncate font-semibold text-slate-900">{resource.name}</span>
+                  {resource.deleted_at && <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">deleted</span>}
                 </div>
-                <div className="row-meta">
-                  <span>{resource.content?.key ?? "metadata"}</span>
-                  <span>{resource.kind}</span>
-                  <span>{formatBytes(resource.content?.size ?? 0)}</span>
-                  <span>{formatDate(resource.updated_at)}</span>
+                <div className="flex min-w-0 gap-3 text-xs text-slate-500 max-sm:flex-wrap">
+                  <span className="truncate">{resource.content?.key ?? "metadata"}</span>
+                  <span className="truncate">{resource.kind}</span>
+                  <span className="truncate">{formatBytes(resource.content?.size ?? 0)}</span>
+                  <span className="truncate">{formatDate(resource.updated_at)}</span>
                 </div>
               </div>
-              <span className={`status-pill ${resource.status}`}>{resource.status}</span>
+              <span className={cx("rounded-full px-2.5 py-1 text-xs font-semibold", resource.status === "active" ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600")}>{resource.status}</span>
             </button>
           ))}
-          {!loading && folders.length === 0 && page.items.length === 0 && <div className="empty-state">No resources</div>}
-          {loading && <div className="empty-state">Loading</div>}
+          {!loading && folders.length === 0 && page.items.length === 0 && <div className="grid min-h-48 place-items-center text-sm text-slate-500">No resources</div>}
+          {loading && <div className="grid min-h-48 place-items-center text-sm text-slate-500">Loading</div>}
         </div>
 
-        <footer className="pager">
+        <footer className="flex min-h-16 items-center justify-end gap-3 border-t border-slate-200 bg-white px-6 py-3 text-sm text-slate-600">
           <button
-            className="icon-button"
+            className={iconButtonClass}
             type="button"
             disabled={filters.page <= 1}
             onClick={() => setFilters((current) => ({ ...current, page: current.page - 1 }))}
@@ -590,7 +596,7 @@ export function ResourceWorkspace({ initialDirectory = "", user, onLogout }: { i
             {filters.page} / {totalPages}
           </span>
           <button
-            className="icon-button"
+            className={iconButtonClass}
             type="button"
             disabled={filters.page >= totalPages}
             onClick={() => setFilters((current) => ({ ...current, page: current.page + 1 }))}
@@ -601,7 +607,7 @@ export function ResourceWorkspace({ initialDirectory = "", user, onLogout }: { i
         </footer>
       </section>
 
-      <aside className="detail-panel" aria-label="Resource detail">
+      <aside className="min-w-0 bg-white max-lg:border-t max-lg:border-slate-200" aria-label="Resource detail">
         {selected && draft ? (
           <ResourceDetail
             resource={selected}
@@ -617,24 +623,24 @@ export function ResourceWorkspace({ initialDirectory = "", user, onLogout }: { i
             onRestore={restoreSelected}
           />
         ) : (
-          <div className="detail-empty">
-            <Database size={32} aria-hidden="true" />
-            <span>Select a resource</span>
+          <div className="grid min-h-64 place-items-center p-8 text-slate-400 lg:min-h-screen">
+            <div className="grid justify-items-center gap-3"><Database size={32} aria-hidden="true" />
+            <span className="text-sm">Select a resource</span></div>
           </div>
         )}
       </aside>
 
       {reader && (
-        <div className="modal-backdrop" role="presentation">
-          <section className="modal reader-modal" aria-label="Read resource">
-            <header className="modal-header">
+        <div className={modalBackdropClass} role="presentation">
+          <section className={cx(modalClass, "max-w-4xl")} aria-label="Read resource">
+            <header className={modalHeaderClass}>
               <div>
-                <h2>{reader.name}</h2>
-                <span>
+                <h2 className="text-xl font-bold text-slate-900">{reader.name}</h2>
+                <span className="mt-1 block text-xs text-slate-500">
                   {reader.kind} / {reader.view.view}
                 </span>
               </div>
-              <button className="icon-button" type="button" onClick={() => setReader(null)} title="Close">
+              <button className={iconButtonClass} type="button" onClick={() => setReader(null)} title="Close">
                 <X size={18} />
               </button>
             </header>
@@ -644,28 +650,28 @@ export function ResourceWorkspace({ initialDirectory = "", user, onLogout }: { i
       )}
 
       {previewResource && (
-        <div className="modal-backdrop" role="presentation">
-          <section className="modal pdf-modal" aria-label="Preview resource">
-            <header className="modal-header">
+        <div className={modalBackdropClass} role="presentation">
+          <section className={cx(modalClass, "max-w-5xl")} aria-label="Preview resource">
+            <header className={modalHeaderClass}>
               <div>
-                <h2>{previewResource.name}</h2>
-                <span>{previewResource.kind} / preview</span>
+                <h2 className="text-xl font-bold text-slate-900">{previewResource.name}</h2>
+                <span className="mt-1 block text-xs text-slate-500">{previewResource.kind} / preview</span>
               </div>
-              <button className="icon-button" type="button" onClick={() => setPreviewResource(null)} title="Close">
+              <button className={iconButtonClass} type="button" onClick={() => setPreviewResource(null)} title="Close">
                 <X size={18} />
               </button>
             </header>
             {isImageResource(previewResource) ? (
-              <div className="image-preview-shell">
+              <div className="flex min-h-105 items-center justify-center bg-slate-50 p-6">
                 <img
-                  className="image-preview"
+                  className="max-h-[72vh] max-w-full rounded-lg object-contain"
                   alt={previewResource.name}
                   src={`${apiBase}/resources/${previewResource.id}/preview`}
                 />
               </div>
             ) : (
               <iframe
-                className="pdf-frame"
+                className="block h-[72vh] w-full border-0 bg-slate-50"
                 title={previewResource.name}
                 src={`${apiBase}/resources/${previewResource.id}/preview`}
               />
@@ -675,14 +681,14 @@ export function ResourceWorkspace({ initialDirectory = "", user, onLogout }: { i
       )}
 
       {pluginOutput && (
-        <div className="modal-backdrop" role="presentation">
-          <section className="modal plugin-modal" aria-label="Action result">
-            <header className="modal-header">
+        <div className={modalBackdropClass} role="presentation">
+          <section className={cx(modalClass, "max-w-4xl")} aria-label="Action result">
+            <header className={modalHeaderClass}>
               <div>
-                <h2>{pluginViewTitle(pluginOutput.view) || pluginOutput.action}</h2>
-                <span>{pluginOutput.action} / {pluginOutput.view.view}</span>
+                <h2 className="text-xl font-bold text-slate-900">{pluginViewTitle(pluginOutput.view) || pluginOutput.action}</h2>
+                <span className="mt-1 block text-xs text-slate-500">{pluginOutput.action} / {pluginOutput.view.view}</span>
               </div>
-              <button className="icon-button" type="button" onClick={() => setPluginOutput(null)} title="Close">
+              <button className={iconButtonClass} type="button" onClick={() => setPluginOutput(null)} title="Close">
                 <X size={18} />
               </button>
             </header>
@@ -692,15 +698,15 @@ export function ResourceWorkspace({ initialDirectory = "", user, onLogout }: { i
       )}
 
       {createOpen && (
-        <div className="modal-backdrop" role="presentation">
-          <section className="modal" aria-label="Create resource">
-            <header className="modal-header">
-              <h2>New resource</h2>
-              <button className="icon-button" type="button" onClick={() => setCreateOpen(false)} title="Close">
+        <div className={modalBackdropClass} role="presentation">
+          <section className={modalClass} aria-label="Create resource">
+            <header className={modalHeaderClass}>
+              <h2 className="text-xl font-bold text-slate-900">New resource</h2>
+              <button className={iconButtonClass} type="button" onClick={() => setCreateOpen(false)} title="Close">
                 <X size={18} />
               </button>
             </header>
-            <form className="form-grid" onSubmit={createResource}>
+            <form className={modalFormClass} onSubmit={createResource}>
               <TextInput
                 label="Name"
                 value={createDraft.name}
@@ -712,9 +718,9 @@ export function ResourceWorkspace({ initialDirectory = "", user, onLogout }: { i
                 onChange={(directory) => setCreateDraft((draft) => ({ ...draft, directory }))}
               />
               <SelectInput label="Kind" value={createDraft.kind} options={resourceKinds} onChange={updateCreateKind} />
-              <label className="field">
-                <span>Status</span>
-                <select
+              <label className="grid gap-2">
+                <span className="text-xs font-semibold text-slate-600">Status</span>
+                <select className={inputClass}
                   value={createDraft.status}
                   onChange={(event) =>
                     setCreateDraft((draft) => ({ ...draft, status: event.target.value as ResourceStatus }))
@@ -739,20 +745,20 @@ export function ResourceWorkspace({ initialDirectory = "", user, onLogout }: { i
                 value={createDraft.schemaId}
                 onChange={(schemaId) => setCreateDraft((draft) => ({ ...draft, schemaId }))}
               />
-              <label className="field full">
-                <span>Kind data JSON</span>
-                <textarea
+              <label className="col-span-full grid gap-2">
+                <span className="text-xs font-semibold text-slate-600">Kind data JSON</span>
+                <textarea className={textareaClass}
                   value={createDraft.kindData}
                   onChange={(event) => setCreateDraft((draft) => ({ ...draft, kindData: event.target.value }))}
                   rows={6}
                 />
               </label>
-              <div className="modal-actions">
-                <button className="ghost-button" type="button" onClick={() => setCreateOpen(false)}>
+              <div className={modalActionsClass}>
+                <button className={secondaryButtonClass} type="button" onClick={() => setCreateOpen(false)}>
                   Cancel
                 </button>
-                <button className="primary-button" type="submit" disabled={busy}>
-                  {busy ? <Loader2 className="spin" size={18} /> : <Plus size={18} />}
+                <button className={primaryButtonClass} type="submit" disabled={busy}>
+                  {busy ? <Loader2 className="animate-spin" size={18} /> : <Plus size={18} />}
                   Create
                 </button>
               </div>
@@ -762,23 +768,23 @@ export function ResourceWorkspace({ initialDirectory = "", user, onLogout }: { i
       )}
 
       {folderOpen && (
-        <div className="modal-backdrop" role="presentation">
-          <section className="modal" aria-label="Create folder">
-            <header className="modal-header">
+        <div className={modalBackdropClass} role="presentation">
+          <section className={modalClass} aria-label="Create folder">
+            <header className={modalHeaderClass}>
               <div>
-                <h2>New folder</h2>
-                <span>{currentDirectory || "Root"}</span>
+                <h2 className="text-xl font-bold text-slate-900">New folder</h2>
+                <span className="mt-1 block text-xs text-slate-500">{currentDirectory || "Root"}</span>
               </div>
-              <button className="icon-button" type="button" onClick={() => setFolderOpen(false)} title="Close">
+              <button className={iconButtonClass} type="button" onClick={() => setFolderOpen(false)} title="Close">
                 <X size={18} />
               </button>
             </header>
-            <form className="form-grid" onSubmit={createFolder}>
+            <form className={modalFormClass} onSubmit={createFolder}>
               <TextInput label="Folder name" value={folderName} onChange={setFolderName} />
-              <div className="modal-actions">
-                <button className="ghost-button" type="button" onClick={() => setFolderOpen(false)}>Cancel</button>
-                <button className="primary-button" type="submit" disabled={busy || !folderName.trim()}>
-                  {busy ? <Loader2 className="spin" size={18} /> : <FolderPlus size={18} />}
+              <div className={modalActionsClass}>
+                <button className={secondaryButtonClass} type="button" onClick={() => setFolderOpen(false)}>Cancel</button>
+                <button className={primaryButtonClass} type="submit" disabled={busy || !folderName.trim()}>
+                  {busy ? <Loader2 className="animate-spin" size={18} /> : <FolderPlus size={18} />}
                   Create folder
                 </button>
               </div>
@@ -788,17 +794,17 @@ export function ResourceWorkspace({ initialDirectory = "", user, onLogout }: { i
       )}
 
       {uploadOpen && (
-        <div className="modal-backdrop" role="presentation">
-          <section className="modal" aria-label="Upload resource">
-            <header className="modal-header">
-              <h2>Upload</h2>
-              <button className="icon-button" type="button" onClick={() => setUploadOpen(false)} title="Close">
+        <div className={modalBackdropClass} role="presentation">
+          <section className={modalClass} aria-label="Upload resource">
+            <header className={modalHeaderClass}>
+              <h2 className="text-xl font-bold text-slate-900">Upload</h2>
+              <button className={iconButtonClass} type="button" onClick={() => setUploadOpen(false)} title="Close">
                 <X size={18} />
               </button>
             </header>
-            <form className="form-grid" onSubmit={uploadResource}>
-              <label className="file-drop">
-                <input
+            <form className={modalFormClass} onSubmit={uploadResource}>
+              <label className="col-span-full flex min-h-20 cursor-pointer items-center gap-3 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 p-4 text-sm font-medium text-slate-600 transition hover:border-blue-400 hover:bg-blue-50">
+                <input className="sr-only"
                   type="file"
                   onChange={(event) => {
                     const file = event.target.files?.[0] ?? null;
@@ -843,20 +849,20 @@ export function ResourceWorkspace({ initialDirectory = "", user, onLogout }: { i
                 value={uploadDraft.schemaId}
                 onChange={(schemaId) => setUploadDraft((d) => ({ ...d, schemaId }))}
               />
-              <label className="field full">
-                <span>Kind data JSON</span>
-                <textarea
+              <label className="col-span-full grid gap-2">
+                <span className="text-xs font-semibold text-slate-600">Kind data JSON</span>
+                <textarea className={textareaClass}
                   value={uploadDraft.kindData}
                   onChange={(event) => setUploadDraft((d) => ({ ...d, kindData: event.target.value }))}
                   rows={5}
                 />
               </label>
-              <div className="modal-actions">
-                <button className="ghost-button" type="button" onClick={() => setUploadOpen(false)}>
+              <div className={modalActionsClass}>
+                <button className={secondaryButtonClass} type="button" onClick={() => setUploadOpen(false)}>
                   Cancel
                 </button>
-                <button className="primary-button" type="submit" disabled={busy}>
-                  {busy ? <Loader2 className="spin" size={18} /> : <FileUp size={18} />}
+                <button className={primaryButtonClass} type="submit" disabled={busy}>
+                  {busy ? <Loader2 className="animate-spin" size={18} /> : <FileUp size={18} />}
                   Upload
                 </button>
               </div>

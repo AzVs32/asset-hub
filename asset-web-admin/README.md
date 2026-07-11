@@ -2,6 +2,10 @@
 
 Internal admin UI for Asset Hub.
 
+Styling uses Tailwind CSS v4 through the official `@tailwindcss/vite` plugin.
+Components use utility classes directly; `src/styles.css` only imports Tailwind
+and defines the global font/body baseline.
+
 ## Development
 
 Start the API server from the repository root:

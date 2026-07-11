@@ -1,6 +1,7 @@
 import React from "react";
 import { apiBase } from "../api";
 import type { PluginActionOutput, PluginView } from "../types";
+import { primaryButtonClass } from "./ui";
 
 export function PluginActionResult({ output }: { output: PluginActionOutput }) {
   return <PluginViewResult view={output.view} title={output.action} resourceId={output.resource_id} />;
@@ -8,7 +9,7 @@ export function PluginActionResult({ output }: { output: PluginActionOutput }) {
 
 export function PluginViewResult({ view, title, resourceId }: { view: PluginView; title: string; resourceId?: string }) {
   if (view.view === "html") {
-    return <iframe className="plugin-html-frame" sandbox="allow-scripts" title={title} srcDoc={view.html} />;
+    return <iframe className="block h-[72vh] max-h-180 w-full border-0 bg-white" sandbox="allow-scripts" title={title} srcDoc={view.html} />;
   }
 
   if (view.view === "plugin_frame") {
@@ -20,24 +21,24 @@ export function PluginViewResult({ view, title, resourceId }: { view: PluginView
       view.encoding === "base64" ? `data:${view.mime_type};base64,${view.data}` : mediaUrl(view.data);
     if (view.mime_type.startsWith("image/")) {
       return (
-        <div className="plugin-media">
-          <img src={src} alt={view.title || title} />
+        <div className="flex min-h-105 items-center justify-center bg-slate-50 p-6">
+          <img className="max-h-[72vh] max-w-full rounded-lg object-contain" src={src} alt={view.title || title} />
         </div>
       );
     }
     if (view.mime_type.startsWith("video/")) {
       return (
-        <div className="plugin-media">
-          <video src={src} title={view.title || title} controls />
+        <div className="flex min-h-105 items-center justify-center bg-slate-50 p-6">
+          <video className="max-h-[72vh] max-w-full rounded-lg" src={src} title={view.title || title} controls />
         </div>
       );
     }
     if (view.mime_type === "application/pdf") {
-      return <iframe className="plugin-html-frame" title={view.title || title} src={src} />;
+      return <iframe className="block h-[72vh] max-h-180 w-full border-0 bg-white" title={view.title || title} src={src} />;
     }
     return (
-      <div className="plugin-result">
-        <a className="primary-button" href={src} download={view.title || title}>
+      <div className="min-h-80 overflow-auto bg-slate-50 p-5">
+        <a className={primaryButtonClass} href={src} download={view.title || title}>
           Download
         </a>
       </div>
@@ -46,8 +47,8 @@ export function PluginViewResult({ view, title, resourceId }: { view: PluginView
 
   if (view.view === "binary_url") {
     return (
-      <div className="plugin-result">
-        <a className="primary-button" href={view.url} target="_blank" rel="noreferrer">
+      <div className="min-h-80 overflow-auto bg-slate-50 p-5">
+        <a className={primaryButtonClass} href={view.url} target="_blank" rel="noreferrer">
           Open
         </a>
       </div>
@@ -56,17 +57,17 @@ export function PluginViewResult({ view, title, resourceId }: { view: PluginView
 
   if (view.view === "text" || view.view === "markdown") {
     const text = view.view === "markdown" ? view.markdown : view.text;
-    return <article className={view.view === "markdown" ? "plugin-markdown" : "reader-content"}>{text}</article>;
+    return <article className={view.view === "markdown" ? "min-h-105 whitespace-pre-wrap bg-white px-7 py-6 font-mono text-sm leading-7 text-slate-800" : "min-h-105 whitespace-pre-wrap bg-white px-7 py-6 text-[15px] leading-7 text-slate-800"}>{text}</article>;
   }
 
   if (view.view === "table") {
     return (
-      <div className="plugin-result plugin-table-wrap">
-        <table className="plugin-table">
+      <div className="min-h-80 overflow-auto bg-slate-50 p-5">
+        <table className="w-full border-collapse bg-white text-sm">
           <thead>
             <tr>
               {view.columns.map((column) => (
-                <th key={column.key}>{column.label}</th>
+                <th className="border-b border-slate-200 px-3 py-2.5 text-left text-xs font-bold uppercase text-slate-600" key={column.key}>{column.label}</th>
               ))}
             </tr>
           </thead>
@@ -74,7 +75,7 @@ export function PluginViewResult({ view, title, resourceId }: { view: PluginView
             {view.rows.map((row, rowIndex) => (
               <tr key={rowIndex}>
                 {view.columns.map((column) => (
-                  <td key={column.key}>{formatTableCell(row, column.key)}</td>
+                  <td className="border-b border-slate-200 px-3 py-2.5 text-left align-top" key={column.key}>{formatTableCell(row, column.key)}</td>
                 ))}
               </tr>
             ))}
@@ -85,8 +86,8 @@ export function PluginViewResult({ view, title, resourceId }: { view: PluginView
   }
 
   return (
-    <div className="plugin-result">
-      <pre>{JSON.stringify(view.view === "json" ? view.data : view, null, 2)}</pre>
+    <div className="min-h-80 overflow-auto bg-slate-50 p-5">
+      <pre className="m-0 whitespace-pre-wrap font-mono text-sm leading-6 text-slate-800">{JSON.stringify(view.view === "json" ? view.data : view, null, 2)}</pre>
     </div>
   );
 }
@@ -155,7 +156,7 @@ function PluginFrame({
   return (
     <iframe
       ref={ref}
-      className="plugin-html-frame"
+      className="block h-[72vh] max-h-180 w-full border-0 bg-white"
       sandbox="allow-scripts"
       title={view.title || title}
       src={mediaUrl(view.url)}
