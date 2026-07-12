@@ -252,6 +252,23 @@ mod tests {
     }
 
     #[test]
+    fn persisted_metadata_rejects_missing_or_legacy_fields() {
+        for value in [
+            json!(null),
+            json!({}),
+            json!({"schema_version": 1}),
+            json!({"schema_version": 1, "summary": {}}),
+            json!({
+                "schema_version": 1,
+                "summary": {"description": null, "tags": []},
+                "legacy": true
+            }),
+        ] {
+            assert!(ResourceMetadata::from_persisted_value(value).is_err());
+        }
+    }
+
+    #[test]
     fn storage_key_rejects_unsafe_paths() {
         assert!(StorageKey::new("assets/image.png").is_ok());
         assert_eq!(

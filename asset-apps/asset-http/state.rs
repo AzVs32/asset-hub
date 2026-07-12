@@ -13,8 +13,7 @@ pub(crate) struct HttpState {
     service: ResourceService,
     kind_registry: Arc<dyn ResourceKindRegistry>,
     plugin_web_roots: Arc<HashMap<String, PathBuf>>,
-    storage_root: Arc<PathBuf>,
-    authorization: Option<AuthorizationService>,
+    authorization: AuthorizationService,
 }
 
 impl HttpState {
@@ -22,25 +21,18 @@ impl HttpState {
         service: ResourceService,
         kind_registry: Arc<dyn ResourceKindRegistry>,
         plugin_web_roots: HashMap<String, PathBuf>,
-        storage_root: PathBuf,
-        authorization: Option<AuthorizationService>,
+        authorization: AuthorizationService,
     ) -> Self {
         Self {
             service,
             kind_registry,
             plugin_web_roots: Arc::new(plugin_web_roots),
-            storage_root: Arc::new(storage_root),
             authorization,
         }
     }
 
-    pub(crate) fn secured<'a>(
-        &'a self,
-        context: &'a AccessContext,
-    ) -> Option<SecuredResourceService<'a>> {
-        self.authorization
-            .as_ref()
-            .map(|authorization| self.service.secured(authorization, context))
+    pub(crate) fn secured<'a>(&'a self, context: &'a AccessContext) -> SecuredResourceService<'a> {
+        self.service.secured(&self.authorization, context)
     }
 
     /// 返回资源应用服务。
@@ -55,9 +47,5 @@ impl HttpState {
 
     pub(crate) fn plugin_web_root(&self, plugin_id: &str) -> Option<&PathBuf> {
         self.plugin_web_roots.get(plugin_id)
-    }
-
-    pub(crate) fn storage_root(&self) -> &PathBuf {
-        self.storage_root.as_ref()
     }
 }

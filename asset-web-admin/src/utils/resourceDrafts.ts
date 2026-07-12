@@ -38,7 +38,7 @@ export function emptyUploadDraft(): UploadDraft {
   return {
     file: null,
     name: "",
-    kind: "core:file",
+    kind: "",
     directory: "uploads",
     description: "",
     tags: "",
@@ -113,69 +113,11 @@ export function isImageResource(resource: Resource): boolean {
 }
 
 export function isPluginUiAction(action: ResourceActionDefinition): boolean {
-  return !["download_content", "read", "view_inline", "preview", "thumbnail"].includes(action.id);
+  return action.executor.type === "plugin";
 }
 
-export function detectKindForFile(file: File, options: ResourceKindOption[]): string {
-  const mimeType = file.type.toLowerCase();
-  const filename = file.name.toLowerCase();
-  const matched = options
-    .filter((option) => option.supports_content)
-    .map((option) => ({ option, score: detectScore(option, mimeType, filename) }))
-    .filter((match) => match.score > 0)
-    .sort(
-      (left, right) =>
-        right.score - left.score || right.option.ancestors.length - left.option.ancestors.length,
-    )[0];
-
-  return matched?.option.kind ?? fallbackUploadKind(options);
-}
-
-function detectScore(option: ResourceKindOption, mimeType: string, filename: string): number {
-  return detectRuleScore(option.detect, mimeType, filename, 100);
-}
-
-function detectRuleScore(
-  detect: { mime_types: string[]; extensions: string[] } | undefined,
-  mimeType: string,
-  filename: string,
-  base: number,
-): number {
-  if (!detect) return 0;
-
-  let score = 0;
-  for (const mimeTypeRule of detect.mime_types) {
-    if (mimeTypeRule.trim().endsWith("/*") && mimeMatches(mimeTypeRule, mimeType)) {
-      score = Math.max(score, base + 10);
-    } else if (mimeMatches(mimeTypeRule, mimeType)) {
-      score = Math.max(score, base + 20);
-    }
-  }
-  for (const extension of detect.extensions) {
-    if (filename.endsWith(normalizeExtension(extension))) {
-      score = Math.max(score, base + 30);
-    }
-  }
-
-  return score;
-}
-
-export function fallbackUploadKind(options: ResourceKindOption[]): string {
-  return options.find((option) => option.kind === "core:file")?.kind ?? options[0]?.kind ?? "core:file";
-}
-
-function mimeMatches(rule: string, mimeType: string): boolean {
-  const normalizedRule = rule.trim().toLowerCase();
-  if (!normalizedRule || !mimeType) return false;
-  if (normalizedRule === mimeType) return true;
-  const prefix = normalizedRule.endsWith("/*") ? normalizedRule.slice(0, -1) : "";
-  return Boolean(prefix && mimeType.startsWith(prefix));
-}
-
-function normalizeExtension(value: string): string {
-  const extension = value.trim().toLowerCase();
-  if (!extension) return extension;
-  return extension.startsWith(".") ? extension : `.${extension}`;
+export function hasAction(resource: Resource, actionId: string): boolean {
+  return resource.actions.available_actions.some((action) => action.id === actionId);
 }
 
 export function directoriesFromResources(resources: Resource[]): string[] {
@@ -233,14 +175,6 @@ function parseKindData(value: string): Record<string, unknown> {
   }
 
   return parsed as Record<string, unknown>;
-}
-
-export async function sha256Hex(file: File): Promise<string> {
-  const buffer = await file.arrayBuffer();
-  const digest = await crypto.subtle.digest("SHA-256", buffer);
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
 }
 
 export function formatBytes(value: number): string {

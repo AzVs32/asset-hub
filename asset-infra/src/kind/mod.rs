@@ -16,6 +16,9 @@ use std::path::PathBuf;
 #[derive(Debug, Clone)]
 pub struct DefaultResourceKindRegistry {
     definitions: Vec<ResourceKindDefinition>,
+    indices: HashMap<ResourceKind, usize>,
+    lineages: HashMap<ResourceKind, Vec<ResourceKind>>,
+    descendants: HashMap<ResourceKind, Vec<ResourceKind>>,
 }
 
 /// 默认资源动作注册表。
@@ -33,7 +36,46 @@ impl DefaultResourceKindRegistry {
     /// 从配置和插件 manifest 创建资源类型注册表。
     pub fn from_config(config: &KindRegistryConfig) -> Result<Self, CoreError> {
         let (definitions, _) = build_registries(config)?;
-        Ok(Self { definitions })
+        Self::from_definitions(definitions)
+    }
+
+    fn from_definitions(definitions: Vec<ResourceKindDefinition>) -> Result<Self, CoreError> {
+        let indices = definitions
+            .iter()
+            .enumerate()
+            .map(|(index, definition)| (definition.kind().clone(), index))
+            .collect::<HashMap<_, _>>();
+        let mut lineages = HashMap::with_capacity(definitions.len());
+        for definition in &definitions {
+            let mut lineage = Vec::new();
+            let mut current = Some(definition.kind());
+            while let Some(kind) = current {
+                lineage.push(kind.clone());
+                current = indices
+                    .get(kind)
+                    .and_then(|index| definitions[*index].parent());
+            }
+            lineages.insert(definition.kind().clone(), lineage);
+        }
+        let mut descendants = definitions
+            .iter()
+            .map(|definition| (definition.kind().clone(), Vec::new()))
+            .collect::<HashMap<_, _>>();
+        for (kind, lineage) in &lineages {
+            for ancestor in lineage {
+                descendants
+                    .get_mut(ancestor)
+                    .expect("lineage kinds must be indexed")
+                    .push(kind.clone());
+            }
+        }
+
+        Ok(Self {
+            definitions,
+            indices,
+            lineages,
+            descendants,
+        })
     }
 }
 
@@ -187,8 +229,22 @@ impl Default for DefaultResourceActionRegistry {
 }
 
 impl ResourceKindRegistry for DefaultResourceKindRegistry {
-    fn list(&self) -> Vec<ResourceKindDefinition> {
-        self.definitions.clone()
+    fn definitions(&self) -> &[ResourceKindDefinition] {
+        &self.definitions
+    }
+
+    fn get(&self, kind: &ResourceKind) -> Option<&ResourceKindDefinition> {
+        self.indices
+            .get(kind)
+            .map(|index| &self.definitions[*index])
+    }
+
+    fn lineage(&self, kind: &ResourceKind) -> Vec<ResourceKind> {
+        self.lineages.get(kind).cloned().unwrap_or_default()
+    }
+
+    fn descendants(&self, kind: &ResourceKind) -> Vec<ResourceKind> {
+        self.descendants.get(kind).cloned().unwrap_or_default()
     }
 }
 
@@ -407,8 +463,8 @@ mod tests {
         .unwrap();
 
         let builtin = registry
-            .list()
-            .into_iter()
+            .definitions()
+            .iter()
             .find(|definition| definition.kind().is(ResourceKind::UNKNOWN))
             .unwrap();
         assert_eq!(builtin.source(), "builtin");

@@ -7,7 +7,7 @@ use crate::dto::{
     ResourceMetadataRequest, ResourceMetadataResponse, ResourcePageResponse, ResourceReadResponse,
     ResourceResponse, ResourceSummaryMetadataRequest, ResourceSummaryMetadataResponse,
     ScanStorageErrorResponse, ScanStorageRequest, ScanStorageResponse, UpdateResourceRequest,
-    UploadResourceContentRequest, UploadResourceContentStreamQuery,
+    UploadResourceContentStreamQuery,
 };
 use crate::{auth, handlers};
 use utoipa::{
@@ -48,7 +48,6 @@ impl Modify for CookieSecurity {
         handlers::create_directory,
         handlers::scan_storage,
         handlers::create_resource,
-        handlers::upload_resource_content,
         handlers::upload_resource_content_stream,
         handlers::find_resource,
         handlers::update_resource,
@@ -90,7 +89,6 @@ impl Modify for CookieSecurity {
             ScanStorageRequest,
             ScanStorageResponse,
             UpdateResourceRequest,
-            UploadResourceContentRequest,
             UploadResourceContentStreamQuery
             ,auth::AuthenticatedUser
             ,auth::Credentials

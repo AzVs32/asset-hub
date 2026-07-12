@@ -70,6 +70,25 @@ impl<'a> ResourceCommandService<'a> {
         self.service.repository.list(&query).await
     }
 
+    /// 列出指定父目录下的直接子目录。
+    pub async fn list_directories(
+        &self,
+        parent_path: &str,
+    ) -> Result<Vec<ResourceDirectory>, CoreError> {
+        self.service.repository.list_directories(parent_path).await
+    }
+
+    /// 在指定父目录下创建一个可独立存在的逻辑目录。
+    pub async fn create_directory(
+        &self,
+        parent_path: impl Into<String>,
+        name: impl Into<String>,
+    ) -> Result<ResourceDirectory, CoreError> {
+        let directory = ResourceDirectory::new(parent_path, name)?;
+        self.service.repository.save_directory(&directory).await?;
+        Ok(directory)
+    }
+
     /// 更新资源基础信息、元数据、状态，或恢复软删除资源。
     pub async fn update_resource(
         &self,

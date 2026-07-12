@@ -21,11 +21,6 @@ export type ResourceContent = {
 };
 
 export type ResourceActions = {
-  download_content: boolean;
-  read: boolean;
-  view_inline: boolean;
-  preview: boolean;
-  thumbnail: boolean;
   available_actions: ResourceActionDefinition[];
 };
 
@@ -174,7 +169,6 @@ export type DirectoryListing = {
 };
 
 export type ScanStorageResponse = {
-  root: string;
   path: string;
   scanned: number;
   imported: number;

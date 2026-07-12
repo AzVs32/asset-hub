@@ -20,12 +20,11 @@ const MAX_KIND_SCHEMA_ID_LEN: usize = 128;
 /// - `summary` 由 Asset Hub 核心统一理解，用于描述、标签、查询和基础展示。
 /// - `kind` 预留给插件定义 schema 与数据，核心层只要求其是带 schema id 的 JSON object。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ResourceMetadata {
     /// 元数据结构版本，由服务端维护。
-    #[serde(default = "default_schema_version")]
     schema_version: u32,
     /// 核心摘要元数据。
-    #[serde(default)]
     summary: ResourceSummaryMetadata,
     /// kind/plugin 专属元数据。
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -34,17 +33,17 @@ pub struct ResourceMetadata {
 
 /// 资源核心摘要元数据。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ResourceSummaryMetadata {
     /// 资源描述。
-    #[serde(default)]
     description: Option<String>,
     /// 资源标签。
-    #[serde(default)]
     tags: Vec<String>,
 }
 
 /// kind/plugin 专属元数据。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct KindMetadata {
     /// 插件 schema 标识，例如 `mindustry:mod@1`。
     schema_id: String,
@@ -83,18 +82,21 @@ impl ResourceMetadata {
     /// 只接受当前结构，不再兼容历史自由 JSON 格式。
     pub fn from_persisted_value(value: Value) -> Result<Self, ResourceError> {
         match value {
-            Value::Null => Ok(Self::default()),
             Value::Object(mut object) => {
                 let schema_version = object
                     .remove("schema_version")
-                    .map(parse_schema_version)
-                    .transpose()?
-                    .unwrap_or(RESOURCE_METADATA_SCHEMA_VERSION);
+                    .ok_or(ResourceError::InvalidFormat {
+                        field: "metadata.schema_version",
+                        reason: "schema_version is required",
+                    })
+                    .and_then(parse_schema_version)?;
                 let summary = object
                     .remove("summary")
-                    .map(parse_summary)
-                    .transpose()?
-                    .unwrap_or_default();
+                    .ok_or(ResourceError::InvalidFormat {
+                        field: "metadata.summary",
+                        reason: "summary is required",
+                    })
+                    .and_then(parse_summary)?;
                 let kind = object.remove("kind").map(parse_kind).transpose()?.flatten();
 
                 if !object.is_empty() {
@@ -362,10 +364,6 @@ impl ResourceMetadataBuilder {
     }
 }
 
-fn default_schema_version() -> u32 {
-    RESOURCE_METADATA_SCHEMA_VERSION
-}
-
 fn normalize_optional_metadata_text(
     field: &'static str,
     value: Option<String>,
@@ -418,14 +416,18 @@ fn parse_summary(value: Value) -> Result<ResourceSummaryMetadata, ResourceError>
         Value::Object(mut object) => {
             let description = object
                 .remove("description")
-                .map(parse_description)
-                .transpose()?
-                .flatten();
+                .ok_or(ResourceError::InvalidFormat {
+                    field: "metadata.summary.description",
+                    reason: "description is required",
+                })
+                .and_then(parse_description)?;
             let tags = object
                 .remove("tags")
-                .map(parse_tags)
-                .transpose()?
-                .unwrap_or_default();
+                .ok_or(ResourceError::InvalidFormat {
+                    field: "metadata.summary.tags",
+                    reason: "tags is required",
+                })
+                .and_then(parse_tags)?;
 
             if !object.is_empty() {
                 return Err(ResourceError::InvalidFormat {

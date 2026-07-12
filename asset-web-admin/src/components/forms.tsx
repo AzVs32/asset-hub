@@ -26,16 +26,19 @@ export function SelectInput({
   value,
   options,
   onChange,
+  placeholder,
 }: {
   label: string;
   value: string;
   options: ResourceKindOption[];
   onChange: (value: string) => void;
+  placeholder?: string;
 }) {
   return (
     <label className="grid min-w-0 gap-2">
       <span className="text-xs font-semibold text-slate-600">{label}</span>
       <select className={inputClass} value={value} onChange={(event) => onChange(event.target.value)}>
+        {placeholder && <option value="">{placeholder}</option>}
         {options.map((option) => (
           <option key={option.kind} value={option.kind}>
             {kindOptionLabel(option)}
@@ -55,4 +58,3 @@ export function Fact({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
-

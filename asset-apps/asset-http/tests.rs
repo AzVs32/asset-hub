@@ -1,12 +1,13 @@
 use crate::router;
 use crate::settings::{CorsPolicy, RouterOptions, SessionOptions};
 use asset_apps::AssetRuntime;
+use asset_core::domain::{AccessContext, UserId};
 use asset_infra::config::{
     AssetInfraConfig, BlobConfig, DatabaseConfig, KindRegistryConfig, ResourceKindConfig,
 };
-use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
+use axum::{Extension, Router};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::io::{Cursor, Write};
@@ -147,20 +148,15 @@ async fn configured_resource_kind_is_listed_and_content_support_is_enforced() {
 
     assert_eq!(status, StatusCode::CREATED, "{resource}");
     assert_eq!(resource["kind"], "doc:note");
-    assert_eq!(resource["actions"]["download_content"], false);
-    assert_eq!(resource["actions"]["read"], false);
-    assert_eq!(resource["actions"]["view_inline"], false);
+    assert!(!has_action(&resource, "download_content"));
+    assert!(!has_action(&resource, "read"));
+    assert!(!has_action(&resource, "view_inline"));
 
-    let (status, error) = json_request(
+    let (status, error) = stream_upload(
         &app,
-        Method::POST,
-        "/resources/content",
-        json!({
-            "name": "note.txt",
-            "kind": "doc:note",
-            "storage_key": "notes/note.txt",
-            "data_base64": "bm90ZQ=="
-        }),
+        "/resources/content/stream?name=note.txt&kind=doc%3Anote&storage_key=notes%2Fnote.txt",
+        "text/plain",
+        b"note",
     )
     .await;
 
@@ -226,25 +222,19 @@ async fn core_document_resource_exposes_download_only() {
     assert_eq!(preview["executor"]["handler"], "builtin.media.preview");
     assert_eq!(preview["ui"]["group"], "preview");
 
-    let (status, resource) = json_request(
+    let (status, resource) = stream_upload(
         &app,
-        Method::POST,
-        "/resources/content",
-        json!({
-            "name": "book.txt",
-            "kind": "core:document",
-            "storage_key": "books/book.txt",
-            "data_base64": "SGVsbG8gYm9vaw==",
-            "mime_type": "text/plain"
-        }),
+        "/resources/content/stream?name=book.txt&kind=core%3Adocument&storage_key=books%2Fbook.txt",
+        "text/plain",
+        b"Hello book",
     )
     .await;
 
     assert_eq!(status, StatusCode::CREATED);
     let id = resource["id"].as_str().unwrap();
-    assert_eq!(resource["actions"]["download_content"], true);
-    assert_eq!(resource["actions"]["read"], false);
-    assert_eq!(resource["actions"]["view_inline"], false);
+    assert!(has_action(&resource, "download_content"));
+    assert!(!has_action(&resource, "read"));
+    assert!(!has_action(&resource, "view_inline"));
     let (status, error) =
         empty_json_request(&app, Method::GET, &format!("/resources/{id}/read")).await;
 
@@ -255,17 +245,11 @@ async fn core_document_resource_exposes_download_only() {
 #[tokio::test]
 async fn action_endpoint_requires_plugin_handler() {
     let app = test_app("action-endpoint-handler").await;
-    let (status, resource) = json_request(
+    let (status, resource) = stream_upload(
         &app,
-        Method::POST,
-        "/resources/content",
-        json!({
-            "name": "book.txt",
-            "kind": "core:document",
-            "storage_key": "books/action-book.txt",
-            "data_base64": "SGVsbG8gYWN0aW9u",
-            "mime_type": "text/plain"
-        }),
+        "/resources/content/stream?name=book.txt&kind=core%3Adocument&storage_key=books%2Faction-book.txt",
+        "text/plain",
+        b"Hello action",
     )
     .await;
 
@@ -336,10 +320,10 @@ async fn core_document_pdf_resource_supports_builtin_preview() {
     let resource = response_json(response).await;
 
     assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(resource["actions"]["download_content"], true);
-    assert_eq!(resource["actions"]["read"], false);
-    assert_eq!(resource["actions"]["view_inline"], true);
-    assert_eq!(resource["actions"]["preview"], true);
+    assert!(has_action(&resource, "download_content"));
+    assert!(!has_action(&resource, "read"));
+    assert!(has_action(&resource, "view_inline"));
+    assert!(has_action(&resource, "preview"));
 
     let id = resource["id"].as_str().unwrap();
     let preview = request(
@@ -425,24 +409,18 @@ async fn image_resource_exposes_builtin_preview_and_thumbnail() {
     let app = test_app("image-preview-thumbnail").await;
     let png_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+yF9sAAAAASUVORK5CYII=";
 
-    let (status, resource) = json_request(
+    let (status, resource) = stream_upload(
         &app,
-        Method::POST,
-        "/resources/content",
-        json!({
-            "name": "pixel.png",
-            "kind": "core:image",
-            "storage_key": "images/pixel.png",
-            "data_base64": png_base64,
-            "mime_type": "image/png"
-        }),
+        "/resources/content/stream?name=pixel.png&kind=core%3Aimage&storage_key=images%2Fpixel.png",
+        "image/png",
+        png_base64.as_bytes(),
     )
     .await;
 
     assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(resource["actions"]["preview"], true);
-    assert_eq!(resource["actions"]["thumbnail"], true);
-    assert_eq!(resource["actions"]["view_inline"], true);
+    assert!(has_action(&resource, "preview"));
+    assert!(has_action(&resource, "thumbnail"));
+    assert!(has_action(&resource, "view_inline"));
     let id = resource["id"].as_str().unwrap();
 
     let preview = request(
@@ -513,17 +491,11 @@ async fn builtin_image_thumbnail_action_stays_inline() {
     let app = test_app("image-thumbnail-inline").await;
     let png_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+yF9sAAAAASUVORK5CYII=";
 
-    let (status, resource) = json_request(
+    let (status, resource) = stream_upload(
         &app,
-        Method::POST,
-        "/resources/content",
-        json!({
-            "name": "pixel.png",
-            "kind": "core:image",
-            "storage_key": "images/thumbnail-pixel.png",
-            "data_base64": png_base64,
-            "mime_type": "image/png"
-        }),
+        "/resources/content/stream?name=pixel.png&kind=core%3Aimage&storage_key=images%2Fthumbnail-pixel.png",
+        "image/png",
+        png_base64.as_bytes(),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
@@ -621,36 +593,15 @@ async fn create_resource_accepts_structured_metadata_and_rejects_metadata_string
 }
 
 #[tokio::test]
-async fn upload_resource_content_roundtrips_small_blob() {
+async fn stream_upload_roundtrips_small_blob_and_creates_directories() {
     let app = test_app("small-upload").await;
     let data = b"hello, asset-hub!";
 
-    let (status, resource) = json_request(
+    let (status, resource) = stream_upload(
         &app,
-        Method::POST,
-        "/resources/content",
-        json!({
-            "name": "hello.txt",
-            "kind": "core:unknown",
-            "directory": "examples",
-            "storage_key": "examples/hello.txt",
-            "data_base64": "aGVsbG8sIGFzc2V0LWh1YiE=",
-            "metadata": {
-                "summary": {
-                    "description": "small text file",
-                    "tags": ["demo", "text"]
-                },
-                "kind": {
-                    "schema_id": "test:metadata@1",
-                    "data": {
-                        "source": "test"
-                    }
-                }
-            },
-            "mime_type": "text/plain",
-            "original_filename": "hello.txt",
-            "sha256": "ee6d5b2c127b5113e886343345d8f11810024201f0c46f54b76d8cc2908c538c"
-        }),
+        "/resources/content/stream?name=hello.txt&kind=core%3Aunknown&directory=examples&storage_key=examples%2Fhello.txt&original_filename=hello.txt&sha256=ee6d5b2c127b5113e886343345d8f11810024201f0c46f54b76d8cc2908c538c",
+        "text/plain",
+        data,
     )
     .await;
 
@@ -658,7 +609,11 @@ async fn upload_resource_content_roundtrips_small_blob() {
     assert_eq!(resource["content"]["key"], "examples/hello.txt");
     assert_eq!(resource["content"]["size"], data.len() as u64);
     assert_eq!(resource["content"]["mime_type"], "text/plain");
-    assert_eq!(resource["metadata"]["kind"]["data"]["source"], "test");
+    assert_eq!(resource["content"]["checksum"][0]["kind"], "sha256");
+    assert_eq!(
+        resource["content"]["checksum"][0]["value"],
+        "ee6d5b2c127b5113e886343345d8f11810024201f0c46f54b76d8cc2908c538c"
+    );
 
     let id = resource["id"].as_str().unwrap();
     let (status, content) =
@@ -667,18 +622,11 @@ async fn upload_resource_content_roundtrips_small_blob() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(content.as_ref(), data);
 
-    let (status, directory_resource) = json_request(
+    let (status, directory_resource) = stream_upload(
         &app,
-        Method::POST,
-        "/resources/content",
-        json!({
-            "name": "nested.txt",
-            "kind": "core:file",
-            "directory": "examples/nested",
-            "data_base64": "bmVzdGVk",
-            "mime_type": "text/plain",
-            "original_filename": "nested.txt"
-        }),
+        "/resources/content/stream?name=nested.txt&kind=core%3Afile&directory=examples%2Fnested&original_filename=nested.txt",
+        "text/plain",
+        b"nested",
     )
     .await;
 
@@ -754,16 +702,11 @@ async fn scan_storage_imports_existing_files_idempotently() {
 async fn upload_rejects_checksum_mismatch_and_existing_storage_key() {
     let app = test_app("upload-security").await;
 
-    let (status, error) = json_request(
+    let (status, error) = stream_upload(
         &app,
-        Method::POST,
-        "/resources/content",
-        json!({
-            "name": "bad.txt",
-            "storage_key": "secure/bad.txt",
-            "data_base64": "aGVsbG8sIGFzc2V0LWh1YiE=",
-            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-        }),
+        "/resources/content/stream?name=bad.txt&storage_key=secure%2Fbad.txt&sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "text/plain",
+        b"hello, asset-hub!",
     )
     .await;
 
@@ -773,15 +716,11 @@ async fn upload_rejects_checksum_mismatch_and_existing_storage_key() {
     let id = create_text_resource(&app, "secure/existing.txt").await;
     assert!(!id.is_empty());
 
-    let (status, error) = json_request(
+    let (status, error) = stream_upload(
         &app,
-        Method::POST,
-        "/resources/content",
-        json!({
-            "name": "duplicate.txt",
-            "storage_key": "secure/existing.txt",
-            "data_base64": "aGVsbG8sIGFzc2V0LWh1YiE="
-        }),
+        "/resources/content/stream?name=duplicate.txt&storage_key=secure%2Fexisting.txt",
+        "text/plain",
+        b"hello, asset-hub!",
     )
     .await;
 
@@ -1181,15 +1120,13 @@ async fn openapi_documents_metadata_examples() {
 
     let metadata_example = &document["components"]["schemas"]["ResourceMetadataRequest"]["example"];
     let create_example = &document["components"]["schemas"]["CreateResourceRequest"]["example"];
-    let upload_example =
-        &document["components"]["schemas"]["UploadResourceContentRequest"]["example"];
-
     assert_eq!(metadata_example["kind"]["data"]["source"], "swagger");
     assert_eq!(
         create_example["metadata"]["kind"]["schema_id"],
         "test:metadata@1"
     );
-    assert_eq!(upload_example["data_base64"], "aGVsbG8sIGFzc2V0LWh1YiE=");
+    assert!(document["paths"].get("/resources/content").is_none());
+    assert!(document["paths"].get("/resources/content/stream").is_some());
     assert!(document["paths"].get("/auth/login").is_some());
     assert!(document["paths"].get("/auth/users/{id}").is_some());
     assert_eq!(
@@ -1286,14 +1223,15 @@ async fn test_app_with_config(
         kind,
     };
     let runtime = AssetRuntime::from_config(config).await.unwrap();
+    let authorization = runtime.authorization_service();
     let router = router::build_with_options_and_plugin_web_roots(
         runtime.resource_service(),
         runtime.resource_kind_registry(),
         options,
         HashMap::new(),
-        runtime.config().blob.fs_root.clone(),
-        None,
-    );
+        authorization,
+    )
+    .layer(Extension(AccessContext::administrator(UserId::new())));
 
     TestApp { router, root }
 }
@@ -1313,36 +1251,51 @@ async fn test_app_with_plugin_web_roots(
         kind: KindRegistryConfig::default(),
     };
     let runtime = AssetRuntime::from_config(config).await.unwrap();
+    let authorization = runtime.authorization_service();
     let router = router::build_with_options_and_plugin_web_roots(
         runtime.resource_service(),
         runtime.resource_kind_registry(),
         RouterOptions::default(),
         plugin_web_roots,
-        runtime.config().blob.fs_root.clone(),
-        None,
-    );
+        authorization,
+    )
+    .layer(Extension(AccessContext::administrator(UserId::new())));
 
     TestApp { router, root }
 }
 
 async fn create_text_resource(app: &TestApp, storage_key: &str) -> String {
-    let (status, resource) = json_request(
-        app,
-        Method::POST,
-        "/resources/content",
-        json!({
-            "name": "delete-me.txt",
-            "storage_key": storage_key,
-            "data_base64": "ZGVsZXRlIG1l",
-            "mime_type": "text/plain"
-        }),
-    )
-    .await;
+    let uri = format!(
+        "/resources/content/stream?name=delete-me.txt&storage_key={}",
+        storage_key.replace('/', "%2F")
+    );
+    let (status, resource) = stream_upload(app, &uri, "text/plain", b"delete me").await;
 
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(resource["kind"], "core:file");
 
     resource["id"].as_str().unwrap().to_string()
+}
+
+async fn stream_upload(
+    app: &TestApp,
+    uri: &str,
+    content_type: &str,
+    data: impl AsRef<[u8]>,
+) -> (StatusCode, Value) {
+    let response = request(
+        app,
+        Request::builder()
+            .method(Method::PUT)
+            .uri(uri)
+            .header(header::CONTENT_TYPE, content_type)
+            .body(Body::from(data.as_ref().to_vec()))
+            .unwrap(),
+    )
+    .await;
+    let status = response.status();
+    let body = response_json(response).await;
+    (status, body)
 }
 
 #[tokio::test]
@@ -1365,8 +1318,7 @@ async fn authenticated_user_is_confined_to_granted_directory() {
         runtime.resource_kind_registry(),
         RouterOptions::default(),
         HashMap::new(),
-        runtime.config().blob.fs_root.clone(),
-        Some(authorization.clone()),
+        authorization.clone(),
     );
     let router = router::with_authentication(
         base,
@@ -1605,6 +1557,12 @@ async fn response_json(response: axum::response::Response) -> Value {
     } else {
         serde_json::from_slice(&body).unwrap()
     }
+}
+
+fn has_action(resource: &Value, id: &str) -> bool {
+    resource["actions"]["available_actions"]
+        .as_array()
+        .is_some_and(|actions| actions.iter().any(|action| action["id"] == id))
 }
 
 fn minimal_epub() -> Vec<u8> {

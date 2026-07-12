@@ -44,7 +44,7 @@ impl<'a> ResourcePreviewService<'a> {
         else {
             return Ok(None);
         };
-        let Some(resource) = self.service.find_resource(id).await? else {
+        let Some(resource) = self.service.commands().find_resource(id).await? else {
             return Ok(None);
         };
 
@@ -88,11 +88,11 @@ impl<'a> ResourcePreviewService<'a> {
         &self,
         id: &ResourceId,
     ) -> Result<Option<ResourcePreviewStream>, CoreError> {
-        let Some(resource) = self.service.find_resource(id).await? else {
+        let Some(resource) = self.service.commands().find_resource(id).await? else {
             return Ok(None);
         };
         let definition = self.service.require_kind_definition(resource.kind())?;
-        let declared_actions = self.service.actions_for_resource(&resource, &definition);
+        let declared_actions = self.service.actions_for_resource(&resource, definition);
         let Some(action) = declared_actions.iter().find(|action| {
             action.id().as_str() == crate::port::ResourceAction::PREVIEW
                 && self.service.action_matches_resource(action, &resource)
@@ -174,7 +174,7 @@ impl<'a> ResourcePreviewService<'a> {
         match media.encoding {
             PluginContentEncoding::Base64 => decode_media_view(action, view),
             PluginContentEncoding::Url => {
-                let Some(resource) = self.service.find_resource(id).await? else {
+                let Some(resource) = self.service.commands().find_resource(id).await? else {
                     return Err(CoreError::not_found("resource", id.to_string()));
                 };
                 let Some(content_ref) = resource.content() else {

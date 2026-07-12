@@ -29,42 +29,13 @@ use tower_sessions_sqlx_store::{
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
-/// 构建 HTTP 路由。
-///
-/// 该函数只负责路由注册和共享状态注入，不做运行时初始化。
-#[allow(dead_code)]
-pub(crate) fn build(
-    service: ResourceService,
-    kind_registry: Arc<dyn ResourceKindRegistry>,
-) -> Router {
-    build_with_options(service, kind_registry, RouterOptions::default())
-}
-
-/// 使用显式边界配置构建 HTTP 路由。
-#[allow(dead_code)]
-pub(crate) fn build_with_options(
-    service: ResourceService,
-    kind_registry: Arc<dyn ResourceKindRegistry>,
-    options: RouterOptions,
-) -> Router {
-    build_with_options_and_plugin_web_roots(
-        service,
-        kind_registry,
-        options,
-        Default::default(),
-        std::path::PathBuf::from("storage/blobs"),
-        None,
-    )
-}
-
 /// 使用显式边界配置和插件 web 根目录构建 HTTP 路由。
 pub(crate) fn build_with_options_and_plugin_web_roots(
     service: ResourceService,
     kind_registry: Arc<dyn ResourceKindRegistry>,
     options: RouterOptions,
     plugin_web_roots: std::collections::HashMap<String, std::path::PathBuf>,
-    storage_root: std::path::PathBuf,
-    authorization: Option<AuthorizationService>,
+    authorization: AuthorizationService,
 ) -> Router {
     let mut router = Router::new()
         .route("/health", get(handlers::health))
@@ -81,12 +52,6 @@ pub(crate) fn build_with_options_and_plugin_web_roots(
         .route(
             "/resources",
             get(handlers::list_resources).post(handlers::create_resource),
-        )
-        .route(
-            "/resources/content",
-            post(handlers::upload_resource_content).layer(DefaultBodyLimit::max(
-                handlers::MAX_BUFFERED_UPLOAD_REQUEST_BYTES,
-            )),
         )
         .route(
             "/resources/content/stream",
@@ -139,7 +104,6 @@ pub(crate) fn build_with_options_and_plugin_web_roots(
             service,
             kind_registry,
             plugin_web_roots,
-            storage_root,
             authorization,
         ))
 }

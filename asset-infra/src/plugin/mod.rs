@@ -107,8 +107,8 @@ fn bind_action(
         Vec::new()
     } else {
         kind_registry
-            .list()
-            .into_iter()
+            .definitions()
+            .iter()
             .filter(|definition| {
                 action.applies_to.kinds.iter().any(|ancestor| {
                     kind_registry.is_a(

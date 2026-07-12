@@ -1,6 +1,6 @@
 //! 资源内容服务。
 //!
-//! 本模块负责对象内容的写入和读取，包括普通上传、流式上传、校验和校验，以及仓储保存失败后的对象清理补偿。
+//! 本模块负责对象内容的流式写入、导入和读取，包括校验和校验以及仓储保存失败后的对象清理补偿。
 
 use super::*;
 
@@ -17,63 +17,57 @@ impl<'a> ResourceContentService<'a> {
         Self { service }
     }
 
-    /// 上传对象内容并创建资源。
-    ///
-    /// 该 usecase 会先完成领域对象构建和校验，再把内容写入 `BlobStorage`，最后通过
-    /// `ResourceRepository` 保存资源聚合。
-    ///
-    /// 如果对象写入成功但资源保存失败，本方法会尝试删除刚写入的对象内容。该补偿删除是
-    /// best-effort：补偿失败不会覆盖原始仓储错误，调用方可以通过日志或外层任务继续清理。
-    ///
-    /// 成功时返回已经保存的 `Resource`，其中的 `content` 指向刚写入的对象。
-    pub async fn upload_resource_content(
-        &self,
-        command: UploadResourceContent,
-    ) -> Result<Resource, CoreError> {
-        let UploadResourceContent {
-            name,
-            kind,
-            status,
-            directory,
-            metadata,
-            storage_key,
-            data,
-            mime_type,
-            original_filename,
-            checksums,
-        } = command;
-        let kind = self.service.resolve_content_kind(
-            kind,
-            mime_type.as_deref(),
-            original_filename
-                .as_deref()
-                .or_else(|| Some(storage_key.as_str())),
-        )?;
+    /// 扫描对象存储并为尚未登记的对象创建资源记录。
+    pub async fn scan_storage(&self, command: ScanStorage) -> Result<ScanStorageResult, CoreError> {
+        const MAX_SCAN_ENTRIES: usize = 100_000;
 
-        verify_bytes_checksums(&data, &checksums)?;
-
-        let content = build_content(
-            storage_key.clone(),
-            data.len() as u64,
-            mime_type,
-            original_filename,
-            checksums,
-        )?;
-        let resource = build_resource(name, directory, Some(kind), status, metadata)
-            .with_content(content)
-            .build()?;
-
-        self.service
+        let directory = crate::domain::normalize_directory(command.directory)?;
+        let files = self
+            .service
             .blob_storage
-            .put_if_absent(&storage_key, data)
+            .scan(&directory, command.include_sha256, MAX_SCAN_ENTRIES)
             .await?;
+        let scanned = files.len() as u64;
+        let mut resources = Vec::new();
+        let mut errors = Vec::new();
+        let mut skipped = 0_u64;
 
-        if let Err(error) = self.service.repository.save(&resource).await {
-            let _ = self.service.blob_storage.delete(&storage_key).await;
-            return Err(error);
+        for file in files {
+            let key = file.key.as_str().to_owned();
+            let (file_directory, name) = key
+                .rsplit_once('/')
+                .map(|(directory, name)| (directory.to_owned(), name.to_owned()))
+                .unwrap_or_else(|| (String::new(), key.clone()));
+            let mut import = ImportResourceContent::new(name.clone(), file.key, file.size)
+                .with_directory(file_directory)
+                .with_original_filename(name);
+            if let Some(mime_type) = file.mime_type {
+                import = import.with_mime_type(mime_type);
+            }
+            if let Some(sha256) = file.sha256 {
+                import = import.with_checksum(Checksum::sha256(sha256)?);
+            }
+
+            match self.import_resource_content(import).await {
+                Ok(Some(resource)) => resources.push(resource),
+                Ok(None) => skipped += 1,
+                Err(error) => {
+                    skipped += 1;
+                    errors.push(ScanStorageError {
+                        key,
+                        error: error.to_string(),
+                    });
+                }
+            }
         }
 
-        Ok(resource)
+        Ok(ScanStorageResult {
+            directory,
+            scanned,
+            skipped,
+            errors,
+            resources,
+        })
     }
 
     /// 导入已存在对象内容并创建资源。
@@ -91,7 +85,7 @@ impl<'a> ResourceContentService<'a> {
             directory,
             metadata,
             storage_key,
-            size,
+            payload: size,
             mime_type,
             original_filename,
             checksums,
@@ -143,10 +137,10 @@ impl<'a> ResourceContentService<'a> {
             directory,
             metadata,
             storage_key,
-            data,
+            payload: data,
             mime_type,
             original_filename,
-            checksums,
+            mut checksums,
         } = command;
         let kind = self.service.resolve_content_kind(
             kind,
@@ -166,15 +160,21 @@ impl<'a> ResourceContentService<'a> {
             checksums.clone(),
         )?;
 
-        let (data, sha256_state) = stream_with_checksum_tracking(data, &checksums);
+        let (data, sha256_state) = stream_with_checksum_tracking(data);
         let write_result = self
             .service
             .blob_storage
             .put_stream_if_absent(&storage_key, data)
             .await?;
-        if let Err(error) = verify_tracked_checksums(sha256_state, &checksums) {
-            let _ = self.service.blob_storage.delete(&storage_key).await;
-            return Err(error);
+        let actual_sha256 = match finalize_tracked_checksum(sha256_state, &checksums) {
+            Ok(checksum) => checksum,
+            Err(error) => {
+                let _ = self.service.blob_storage.delete(&storage_key).await;
+                return Err(error);
+            }
+        };
+        if sha256_checksum(&checksums).is_none() {
+            checksums.push(actual_sha256);
         }
         let content = build_content(
             storage_key.clone(),

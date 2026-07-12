@@ -2,7 +2,7 @@ import React from "react";
 import { BookOpen, Download, Eye, Loader2, RotateCcw, Save, Trash2 } from "lucide-react";
 import { apiBase } from "../api";
 import type { Draft, Resource, ResourceActionDefinition, ResourceKindOption, ResourceStatus } from "../types";
-import { formatBytes, formatDate, isPluginUiAction, withKindDefaults } from "../utils/resourceDrafts";
+import { formatBytes, formatDate, hasAction, isPluginUiAction, withKindDefaults } from "../utils/resourceDrafts";
 import { Fact, SelectInput, TextInput } from "./forms";
 import { cx, dangerIconButtonClass, iconButtonClass, inputClass, primaryButtonClass, secondaryButtonClass, textareaClass } from "./ui";
 
@@ -32,8 +32,8 @@ export function ResourceDetail({
   onRestore: () => void;
 }) {
   const kindDefinition = resourceKinds.find((kind) => kind.kind === resource.kind);
-  const canRead = resource.actions.read;
-  const canPreview = resource.actions.preview || resource.actions.view_inline;
+  const canRead = hasAction(resource, "read");
+  const canPreview = hasAction(resource, "preview") || hasAction(resource, "view_inline");
   const pluginActions = resource.actions.available_actions.filter(isPluginUiAction);
 
   return (
@@ -51,7 +51,7 @@ export function ResourceDetail({
           {busy ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />}
           Save
         </button>
-        {resource.actions.download_content && (
+        {hasAction(resource, "download_content") && (
           <a className={iconButtonClass} href={`${apiBase}/resources/${resource.id}/content`} title="Download">
             <Download size={18} />
           </a>
@@ -157,4 +157,3 @@ export function ResourceDetail({
     </div>
   );
 }
-

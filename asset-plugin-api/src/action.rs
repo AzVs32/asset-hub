@@ -143,10 +143,6 @@ pub struct ResourceActionDefinition {
     #[serde(default, skip_serializing_if = "ResourceActionAppliesTo::is_empty")]
     applies_to: ResourceActionAppliesTo,
     #[serde(default)]
-    content_delivery: ResourceActionContentDelivery,
-    #[serde(default)]
-    requires_content: bool,
-    #[serde(default)]
     executor: ResourceActionExecutorKind,
     #[serde(default)]
     requires: ResourceActionRequirements,
@@ -165,8 +161,6 @@ impl ResourceActionDefinition {
             handler: None,
             access: ResourceActionAccess::ReadOnly,
             applies_to: ResourceActionAppliesTo::default(),
-            content_delivery: ResourceActionContentDelivery::Auto,
-            requires_content: false,
             executor: ResourceActionExecutorKind::Builtin,
             requires: ResourceActionRequirements::default(),
             output: ResourceActionOutputContract::default(),
@@ -204,24 +198,12 @@ impl ResourceActionDefinition {
         self
     }
 
-    pub fn with_content_delivery(mut self, delivery: ResourceActionContentDelivery) -> Self {
-        self.content_delivery = delivery;
-        self
-    }
-
-    pub fn with_requires_content(mut self, requires_content: bool) -> Self {
-        self.requires_content = requires_content;
-        self
-    }
-
     pub fn with_executor(mut self, executor: ResourceActionExecutorKind) -> Self {
         self.executor = executor;
         self
     }
 
     pub fn with_requirements(mut self, requirements: ResourceActionRequirements) -> Self {
-        self.requires_content = requirements.content;
-        self.content_delivery = requirements.content_delivery;
         self.requires = requirements;
         self
     }
@@ -254,14 +236,6 @@ impl ResourceActionDefinition {
 
     pub fn access(&self) -> ResourceActionAccess {
         self.access
-    }
-
-    pub fn content_delivery(&self) -> ResourceActionContentDelivery {
-        self.content_delivery
-    }
-
-    pub fn requires_content(&self) -> bool {
-        self.requires_content
     }
 
     pub fn executor(&self) -> ResourceActionExecutorKind {
@@ -487,6 +461,24 @@ fn mime_matches(expected: &str, actual: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn action_requirements_are_the_only_content_requirement_state() {
+        let action = ResourceActionDefinition::new("preview", "Preview").with_requirements(
+            ResourceActionRequirements {
+                resource: true,
+                metadata: false,
+                content: true,
+                content_delivery: ResourceActionContentDelivery::Url,
+            },
+        );
+
+        let value = serde_json::to_value(action).unwrap();
+        assert_eq!(value["requires"]["content"], true);
+        assert_eq!(value["requires"]["content_delivery"], "url");
+        assert!(value.get("requires_content").is_none());
+        assert!(value.get("content_delivery").is_none());
+    }
 
     #[test]
     fn action_applies_to_matches_kind_mime_and_extension() {

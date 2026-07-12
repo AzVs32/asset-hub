@@ -111,8 +111,8 @@ npm run dev
 
 Vite serves `http://127.0.0.1:5173` and proxies `/api` to `http://127.0.0.1:8080`.
 
-The JSON/base64 upload endpoint is limited to 32 MiB of decoded content. The
-admin UI uses the streaming upload endpoint, which supports files up to 4 GiB.
+Uploads use the raw-body streaming endpoint, which supports files up to 4 GiB
+without encoding them as base64 or buffering the complete file in application memory.
 
 ## Docker
 

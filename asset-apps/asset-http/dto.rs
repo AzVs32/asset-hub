@@ -140,50 +140,6 @@ pub(crate) struct UpdateResourceRequest {
 }
 
 /// 上传内容并创建资源请求。
-#[derive(Debug, Deserialize, ToSchema)]
-#[schema(example = json!({
-    "name": "hello.txt",
-    "kind": "core:unknown",
-    "directory": "examples",
-    "data_base64": "aGVsbG8sIGFzc2V0LWh1YiE=",
-    "metadata": {
-        "summary": {
-            "description": "A small text file",
-            "tags": ["demo", "text"]
-        },
-        "kind": {
-            "schema_id": "test:metadata@1",
-            "data": {
-                "source": "swagger"
-            }
-        }
-    },
-    "mime_type": "text/plain",
-    "original_filename": "hello.txt"
-}))]
-pub(crate) struct UploadResourceContentRequest {
-    /// 资源展示名。
-    pub(crate) name: String,
-    /// 可选对象存储键；未提供时由 `directory` 和原始文件名生成。
-    pub(crate) storage_key: Option<String>,
-    /// 可选上传目录；仅在未提供 `storage_key` 时使用。
-    pub(crate) directory: Option<String>,
-    /// base64 编码后的内容字节。
-    pub(crate) data_base64: String,
-    /// 可选资源类型。
-    pub(crate) kind: Option<String>,
-    /// 可选初始状态：`active` 或 `archived`。
-    pub(crate) status: Option<String>,
-    /// 可选资源元数据。
-    pub(crate) metadata: Option<ResourceMetadataRequest>,
-    /// 可选 MIME 类型。
-    pub(crate) mime_type: Option<String>,
-    /// 可选原始文件名。
-    pub(crate) original_filename: Option<String>,
-    /// 可选 SHA-256 校验和。
-    pub(crate) sha256: Option<String>,
-}
-
 /// 流式上传内容并创建资源的 query 参数。
 #[derive(Debug, Deserialize, IntoParams, ToSchema)]
 #[into_params(parameter_in = Query)]
@@ -581,16 +537,6 @@ pub(crate) struct ResourceResponse {
 /// 资源允许的操作集合。
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct ResourceActionsResponse {
-    /// 是否允许下载原始内容。
-    pub(crate) download_content: bool,
-    /// 是否允许在线阅读文本。
-    pub(crate) read: bool,
-    /// 是否允许以内联方式查看内容。
-    pub(crate) view_inline: bool,
-    /// 是否允许预览。
-    pub(crate) preview: bool,
-    /// 是否允许缩略图。
-    pub(crate) thumbnail: bool,
     /// 当前资源允许的动作。
     pub(crate) available_actions: Vec<ResourceActionDefinitionResponse>,
 }
@@ -633,8 +579,6 @@ pub(crate) struct DirectoryListingResponse {
 /// 扫描本地对象存储目录响应。
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct ScanStorageResponse {
-    /// 扫描根路径。
-    pub(crate) root: String,
     /// 扫描的逻辑子目录。
     pub(crate) path: String,
     /// 扫描到的普通文件数量。
@@ -739,11 +683,6 @@ impl ResourceResponse {
 impl From<ResourceActions> for ResourceActionsResponse {
     fn from(actions: ResourceActions) -> Self {
         Self {
-            download_content: actions.download_content(),
-            read: actions.read(),
-            view_inline: actions.view_inline(),
-            preview: actions.preview(),
-            thumbnail: actions.thumbnail(),
             available_actions: actions
                 .available_actions()
                 .iter()

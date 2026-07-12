@@ -37,29 +37,12 @@ impl<'a> ResourceActionService<'a> {
 
         let mime_type = content.mime_type();
         let storage_key = Some(content.key().as_str());
-        let declared_actions = self.service.actions_for_resource(resource, &definition);
-        let has_declared_action = |action: &str| {
-            declared_actions.iter().any(|definition| {
-                definition.id().as_str() == action
-                    && definition.matches_content(mime_type, storage_key)
-            })
-        };
-        let supports_preview = has_declared_action(crate::port::ResourceAction::PREVIEW);
-        let read = has_declared_action(crate::port::ResourceAction::READ);
-        let view_inline = has_declared_action(crate::port::ResourceAction::VIEW_INLINE);
-        let thumbnail = has_declared_action(crate::port::ResourceAction::THUMBNAIL);
+        let declared_actions = self.service.actions_for_resource(resource, definition);
         let mut available_actions = Vec::new();
         for action in &declared_actions {
-            let enabled = match action.id().as_str() {
-                crate::port::ResourceAction::DOWNLOAD_CONTENT => true,
-                crate::port::ResourceAction::READ => read,
-                crate::port::ResourceAction::VIEW_INLINE => view_inline,
-                crate::port::ResourceAction::PREVIEW => supports_preview,
-                crate::port::ResourceAction::THUMBNAIL => thumbnail,
-                _ => self.service.action_matches_resource(action, resource),
-            };
-
-            if enabled {
+            if action.matches_content(mime_type, storage_key)
+                && self.service.action_matches_resource(action, resource)
+            {
                 available_actions.push(action.clone());
             }
         }
@@ -77,14 +60,7 @@ impl<'a> ResourceActionService<'a> {
             );
         }
 
-        Ok(ResourceActions::new(
-            true,
-            read,
-            view_inline,
-            supports_preview,
-            thumbnail,
-            available_actions,
-        ))
+        Ok(ResourceActions::new(available_actions))
     }
 
     /// 执行资源类型声明的插件动作。
@@ -106,7 +82,7 @@ impl<'a> ResourceActionService<'a> {
         action_id: crate::port::ResourceAction,
         input: serde_json::Value,
     ) -> Result<Option<ResourceActionOutput>, CoreError> {
-        let Some(mut resource) = self.service.find_resource(id).await? else {
+        let Some(mut resource) = self.service.commands().find_resource(id).await? else {
             return Ok(None);
         };
 
@@ -138,7 +114,7 @@ impl<'a> ResourceActionService<'a> {
         action_id: &crate::port::ResourceAction,
     ) -> Result<crate::port::ResourceActionDefinition, CoreError> {
         let definition = self.service.require_kind_definition(resource.kind())?;
-        let declared_actions = self.service.actions_for_resource(resource, &definition);
+        let declared_actions = self.service.actions_for_resource(resource, definition);
         declared_actions
             .into_iter()
             .find(|action| {
@@ -192,7 +168,7 @@ impl<'a> ResourceActionService<'a> {
             action_id,
             action.handler(),
             action.access(),
-            action.content_delivery(),
+            action.requirements().content_delivery,
             input,
             content,
         );

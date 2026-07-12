@@ -38,8 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         runtime.resource_kind_registry(),
         settings.router_options().clone(),
         runtime.plugin_web_roots()?,
-        runtime.config().blob.fs_root.clone(),
-        Some(authorization.clone()),
+        authorization.clone(),
     );
     let bootstrap_username = std::env::var("ASSET_HUB_BOOTSTRAP_ADMIN_USERNAME").ok();
     let bootstrap_password = std::env::var("ASSET_HUB_BOOTSTRAP_ADMIN_PASSWORD").ok();

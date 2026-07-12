@@ -21,6 +21,15 @@ pub struct BlobWriteResult {
     bytes_written: u64,
 }
 
+/// 扫描存储时发现的对象。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScannedBlob {
+    pub key: StorageKey,
+    pub size: u64,
+    pub mime_type: Option<String>,
+    pub sha256: Option<String>,
+}
+
 impl BlobWriteResult {
     /// 创建对象写入结果。
     pub fn new(bytes_written: u64) -> Self {
@@ -43,6 +52,14 @@ impl BlobWriteResult {
 /// 不应把具体基础设施错误类型暴露到端口签名中。
 #[async_trait::async_trait]
 pub trait BlobStorage: Send + Sync {
+    /// 枚举指定逻辑目录下的对象。实现必须阻止路径逃逸、跳过符号链接并限制遍历数量。
+    async fn scan(
+        &self,
+        directory: &str,
+        include_sha256: bool,
+        max_entries: usize,
+    ) -> Result<Vec<ScannedBlob>, CoreError>;
+
     /// 写入或覆盖指定存储键对应的对象内容。
     ///
     /// 该方法的语义是 upsert：对象不存在时创建，已存在时覆盖。是否允许覆盖由上层

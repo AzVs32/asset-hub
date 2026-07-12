@@ -109,43 +109,10 @@ impl CreateResource {
     }
 }
 
-/// 上传内容并创建资源的用例命令。
-///
-/// 该命令描述“写入对象内容并创建资源记录”的输入参数。执行时会先构建
-/// `ResourceContent`，再写入 `BlobStorage`，最后通过 `ResourceRepository` 保存资源聚合。
-///
-/// `storage_key` 必须由 `StorageKey` 构造，确保对象键已经通过领域规则校验。内容大小由
-/// `data.len()` 自动计算，调用方不需要单独传入。
+/// 创建带内容资源的通用命令。公共资源和内容字段只在这里维护，`payload` 表示
+/// 不同用例特有的输入，例如已存在对象的大小或待写入的字节流。
 #[derive(Debug, Clone)]
-pub struct UploadResourceContent {
-    /// 资源展示名。
-    name: String,
-    /// 资源类型；未设置时使用 `core:file`。
-    kind: Option<ResourceKind>,
-    /// 初始生命周期状态。
-    status: ResourceStatus,
-    /// 资源所在的逻辑目录。
-    directory: String,
-    /// 初始资源元数据。
-    metadata: ResourceMetadata,
-    /// 内容在对象存储中的定位键。
-    storage_key: StorageKey,
-    /// 需要写入对象存储的内容字节。
-    data: Bytes,
-    /// 内容 MIME 类型。
-    mime_type: Option<String>,
-    /// 上传时的原始文件名。
-    original_filename: Option<String>,
-    /// 内容校验和集合。
-    checksums: Vec<Checksum>,
-}
-
-/// 导入已存在对象内容并创建资源的用例命令。
-///
-/// 该命令只创建资源记录，不向对象存储写入内容；调用方必须保证 `storage_key`
-/// 指向的对象已经存在。它主要用于扫描本地存储目录后补齐数据库。
-#[derive(Debug, Clone)]
-pub struct ImportResourceContent {
+pub struct ResourceContentCommand<T> {
     /// 资源展示名。
     name: String,
     /// 资源类型；未设置时会按内容特征自动推断。
@@ -158,14 +125,60 @@ pub struct ImportResourceContent {
     metadata: ResourceMetadata,
     /// 内容在对象存储中的定位键。
     storage_key: StorageKey,
-    /// 内容字节大小。
-    size: u64,
+    /// 用例特有的内容输入。
+    payload: T,
     /// 内容 MIME 类型。
     mime_type: Option<String>,
     /// 原始文件名。
     original_filename: Option<String>,
     /// 内容校验和集合。
     checksums: Vec<Checksum>,
+}
+
+/// 导入已存在对象内容并创建资源；payload 是对象字节大小。
+pub type ImportResourceContent = ResourceContentCommand<u64>;
+
+/// 流式上传内容并创建资源；payload 是待写入对象存储的字节流。
+pub type UploadResourceContentStream = ResourceContentCommand<BlobByteStream>;
+
+/// 扫描对象存储并导入尚未登记资源的命令。
+#[derive(Debug, Clone, Default)]
+pub struct ScanStorage {
+    directory: String,
+    include_sha256: bool,
+}
+
+impl ScanStorage {
+    pub fn new(directory: impl Into<String>) -> Self {
+        Self {
+            directory: directory.into(),
+            include_sha256: false,
+        }
+    }
+
+    pub fn with_sha256(mut self, include_sha256: bool) -> Self {
+        self.include_sha256 = include_sha256;
+        self
+    }
+
+    pub fn directory(&self) -> &str {
+        &self.directory
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ScanStorageError {
+    pub key: String,
+    pub error: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ScanStorageResult {
+    pub directory: String,
+    pub scanned: u64,
+    pub skipped: u64,
+    pub errors: Vec<ScanStorageError>,
+    pub resources: Vec<Resource>,
 }
 
 /// 执行资源动作的用例命令。
@@ -191,12 +204,9 @@ impl ExecuteResourceAction {
     }
 }
 
-impl UploadResourceContent {
-    /// 创建命令，默认使用 `core:file`、活跃状态和空元数据。
-    ///
-    /// 该命令当前以 `Bytes` 承载完整内容，适合普通文件和测试场景。后续如需支持超大文件，
-    /// 可以在保持 usecase 语义不变的前提下扩展流式上传端口。
-    pub fn new(name: impl Into<String>, storage_key: StorageKey, data: Bytes) -> Self {
+impl<T> ResourceContentCommand<T> {
+    /// 创建命令，默认自动推断资源类型、使用活跃状态和空元数据。
+    pub fn new(name: impl Into<String>, storage_key: StorageKey, payload: T) -> Self {
         Self {
             name: name.into(),
             kind: None,
@@ -204,91 +214,7 @@ impl UploadResourceContent {
             directory: String::new(),
             metadata: ResourceMetadata::default(),
             storage_key,
-            data,
-            mime_type: None,
-            original_filename: None,
-            checksums: Vec::new(),
-        }
-    }
-
-    /// 设置资源类型。
-    ///
-    /// 未调用该方法时，会按内容 MIME 类型、文件名和插件 action 规则自动推断资源类型。
-    pub fn with_kind(mut self, kind: impl Into<ResourceKind>) -> Self {
-        self.kind = Some(kind.into());
-        self
-    }
-
-    /// 设置初始生命周期状态。
-    ///
-    /// 未调用该方法时，资源状态默认为 `ResourceStatus::Active`。
-    pub fn with_status(mut self, status: ResourceStatus) -> Self {
-        self.status = status;
-        self
-    }
-
-    /// 设置资源所在逻辑目录。
-    pub fn with_directory(mut self, directory: impl Into<String>) -> Self {
-        self.directory = directory.into();
-        self
-    }
-
-    /// 设置初始资源元数据。
-    ///
-    /// 未调用该方法时，资源元数据默认为服务端定义的空元数据结构。
-    pub fn with_metadata(mut self, metadata: impl Into<ResourceMetadata>) -> Self {
-        self.metadata = metadata.into();
-        self
-    }
-
-    /// 设置内容 MIME 类型。
-    ///
-    /// 该值会在构建 `ResourceContent` 时去除首尾空白并校验。
-    pub fn with_mime_type(mut self, mime_type: impl Into<String>) -> Self {
-        self.mime_type = Some(mime_type.into());
-        self
-    }
-
-    /// 设置上传时的原始文件名。
-    ///
-    /// 该值仅作为内容描述信息保存，不参与对象存储路径生成。
-    pub fn with_original_filename(mut self, original_filename: impl Into<String>) -> Self {
-        self.original_filename = Some(original_filename.into());
-        self
-    }
-
-    /// 追加一个内容校验和。
-    ///
-    /// 校验和应在传入前通过 `Checksum` 的构造函数完成格式校验。
-    pub fn with_checksum(mut self, checksum: Checksum) -> Self {
-        self.checksums.push(checksum);
-        self
-    }
-
-    /// 批量追加内容校验和。
-    ///
-    /// 该方法不会去重；如果调用方传入重复校验和，会按原样保存到资源内容引用中。
-    pub fn with_checksums(mut self, checksums: impl IntoIterator<Item = Checksum>) -> Self {
-        self.checksums.extend(checksums);
-        self
-    }
-
-    pub fn directory(&self) -> &str {
-        &self.directory
-    }
-}
-
-impl ImportResourceContent {
-    /// 创建导入命令，默认自动推断资源类型、使用活跃状态和空元数据。
-    pub fn new(name: impl Into<String>, storage_key: StorageKey, size: u64) -> Self {
-        Self {
-            name: name.into(),
-            kind: None,
-            status: ResourceStatus::default(),
-            directory: String::new(),
-            metadata: ResourceMetadata::default(),
-            storage_key,
-            size,
+            payload,
             mime_type: None,
             original_filename: None,
             checksums: Vec::new(),
@@ -326,103 +252,6 @@ impl ImportResourceContent {
     }
 
     /// 设置原始文件名。
-    pub fn with_original_filename(mut self, original_filename: impl Into<String>) -> Self {
-        self.original_filename = Some(original_filename.into());
-        self
-    }
-
-    /// 追加一个内容校验和。
-    pub fn with_checksum(mut self, checksum: Checksum) -> Self {
-        self.checksums.push(checksum);
-        self
-    }
-
-    /// 批量追加内容校验和。
-    pub fn with_checksums(mut self, checksums: impl IntoIterator<Item = Checksum>) -> Self {
-        self.checksums.extend(checksums);
-        self
-    }
-
-    pub fn directory(&self) -> &str {
-        &self.directory
-    }
-}
-
-/// 流式上传内容并创建资源的用例命令。
-///
-/// 该命令用于大文件上传。内容以 `BlobByteStream` 传入，service 会逐块写入对象存储，
-/// 避免把完整文件一次性加载到内存中。
-pub struct UploadResourceContentStream {
-    /// 资源展示名。
-    name: String,
-    /// 资源类型；未设置时会按内容特征自动推断，推断失败时使用 `core:file`。
-    kind: Option<ResourceKind>,
-    /// 初始生命周期状态。
-    status: ResourceStatus,
-    /// 资源所在的逻辑目录。
-    directory: String,
-    /// 初始资源元数据。
-    metadata: ResourceMetadata,
-    /// 内容在对象存储中的定位键。
-    storage_key: StorageKey,
-    /// 需要写入对象存储的内容字节流。
-    data: BlobByteStream,
-    /// 内容 MIME 类型。
-    mime_type: Option<String>,
-    /// 上传时的原始文件名。
-    original_filename: Option<String>,
-    /// 内容校验和集合。
-    checksums: Vec<Checksum>,
-}
-
-impl UploadResourceContentStream {
-    /// 创建流式上传命令，默认自动推断资源类型、使用活跃状态和空元数据。
-    pub fn new(name: impl Into<String>, storage_key: StorageKey, data: BlobByteStream) -> Self {
-        Self {
-            name: name.into(),
-            kind: None,
-            status: ResourceStatus::default(),
-            directory: String::new(),
-            metadata: ResourceMetadata::default(),
-            storage_key,
-            data,
-            mime_type: None,
-            original_filename: None,
-            checksums: Vec::new(),
-        }
-    }
-
-    /// 设置资源类型。
-    pub fn with_kind(mut self, kind: impl Into<ResourceKind>) -> Self {
-        self.kind = Some(kind.into());
-        self
-    }
-
-    /// 设置初始生命周期状态。
-    pub fn with_status(mut self, status: ResourceStatus) -> Self {
-        self.status = status;
-        self
-    }
-
-    /// 设置资源所在逻辑目录。
-    pub fn with_directory(mut self, directory: impl Into<String>) -> Self {
-        self.directory = directory.into();
-        self
-    }
-
-    /// 设置初始资源元数据。
-    pub fn with_metadata(mut self, metadata: impl Into<ResourceMetadata>) -> Self {
-        self.metadata = metadata.into();
-        self
-    }
-
-    /// 设置内容 MIME 类型。
-    pub fn with_mime_type(mut self, mime_type: impl Into<String>) -> Self {
-        self.mime_type = Some(mime_type.into());
-        self
-    }
-
-    /// 设置上传时的原始文件名。
     pub fn with_original_filename(mut self, original_filename: impl Into<String>) -> Self {
         self.original_filename = Some(original_filename.into());
         self
@@ -552,59 +381,15 @@ impl ReadableResource {
 /// 资源当前可执行动作。
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ResourceActions {
-    download_content: bool,
-    read: bool,
-    view_inline: bool,
-    preview: bool,
-    thumbnail: bool,
     available_actions: Vec<crate::port::ResourceActionDefinition>,
 }
 
 impl ResourceActions {
-    fn new(
-        download_content: bool,
-        read: bool,
-        view_inline: bool,
-        preview: bool,
-        thumbnail: bool,
-        available_actions: Vec<crate::port::ResourceActionDefinition>,
-    ) -> Self {
-        Self {
-            download_content,
-            read,
-            view_inline,
-            preview,
-            thumbnail,
-            available_actions,
-        }
+    fn new(available_actions: Vec<crate::port::ResourceActionDefinition>) -> Self {
+        Self { available_actions }
     }
 
-    /// 是否允许下载原始内容。
-    pub fn download_content(&self) -> bool {
-        self.download_content
-    }
-
-    /// 是否允许在线阅读文本。
-    pub fn read(&self) -> bool {
-        self.read
-    }
-
-    /// 是否允许以内联方式查看原始内容。
-    pub fn view_inline(&self) -> bool {
-        self.view_inline
-    }
-
-    /// 是否允许预览。
-    pub fn preview(&self) -> bool {
-        self.preview
-    }
-
-    /// 是否允许生成或读取缩略图。
-    pub fn thumbnail(&self) -> bool {
-        self.thumbnail
-    }
-
-    /// 返回当前资源可执行的插件动作。
+    /// 返回当前资源可执行的全部动作。
     pub fn available_actions(&self) -> &[crate::port::ResourceActionDefinition] {
         &self.available_actions
     }
@@ -698,8 +483,7 @@ impl ResourceThumbnail {
 ///
 /// 该服务是外部调用资源核心能力的主要入口。它负责协调 `Resource` 聚合、
 /// `ResourceRepository` 和 `BlobStorage`，但不拥有具体数据库或对象存储实现。
-/// 具体用例按职责拆分到命令、内容、动作和预览服务中；本类型保留为兼容门面，
-/// 让 HTTP、CLI 等入口可以继续通过一个对象访问核心能力。
+/// 具体用例按职责拆分到命令、内容、动作和预览服务中，调用方通过对应的子服务访问能力。
 ///
 /// 对象存储和数据库之间没有分布式事务。本服务会在关键流程中做必要的顺序控制和
 /// 最小补偿，但调用方仍应根据业务需要在更外层增加重试、任务补偿或审计机制。
@@ -805,140 +589,6 @@ impl ResourceService {
         SecuredResourceService::new(self, authorization, context)
     }
 
-    /// 创建纯元数据资源。
-    pub async fn create_resource(&self, command: CreateResource) -> Result<Resource, CoreError> {
-        self.commands().create_resource(command).await
-    }
-
-    /// 上传对象内容并创建资源。
-    pub async fn upload_resource_content(
-        &self,
-        command: UploadResourceContent,
-    ) -> Result<Resource, CoreError> {
-        self.content().upload_resource_content(command).await
-    }
-
-    /// 导入已存在对象内容并创建资源。
-    pub async fn import_resource_content(
-        &self,
-        command: ImportResourceContent,
-    ) -> Result<Option<Resource>, CoreError> {
-        self.content().import_resource_content(command).await
-    }
-
-    /// 流式上传对象内容并创建资源。
-    pub async fn upload_resource_content_stream(
-        &self,
-        command: UploadResourceContentStream,
-    ) -> Result<Resource, CoreError> {
-        self.content().upload_resource_content_stream(command).await
-    }
-
-    /// 按 ID 查找未删除资源。
-    pub async fn find_resource(&self, id: &ResourceId) -> Result<Option<Resource>, CoreError> {
-        self.commands().find_resource(id).await
-    }
-
-    /// 分页列出资源。
-    pub async fn list_resources(&self, query: ListResources) -> Result<ResourcePage, CoreError> {
-        self.commands().list_resources(query).await
-    }
-
-    /// 列出指定父目录下的直接子目录。
-    pub async fn list_directories(
-        &self,
-        parent_path: &str,
-    ) -> Result<Vec<ResourceDirectory>, CoreError> {
-        self.repository.list_directories(parent_path).await
-    }
-
-    /// 在指定父目录下创建一个可独立存在的逻辑目录。
-    pub async fn create_directory(
-        &self,
-        parent_path: impl Into<String>,
-        name: impl Into<String>,
-    ) -> Result<ResourceDirectory, CoreError> {
-        let directory = ResourceDirectory::new(parent_path, name)?;
-        self.repository.save_directory(&directory).await?;
-        Ok(directory)
-    }
-
-    /// 计算资源当前可执行动作。
-    pub fn describe_resource_actions(
-        &self,
-        resource: &Resource,
-    ) -> Result<ResourceActions, CoreError> {
-        self.actions().describe_resource_actions(resource)
-    }
-
-    /// 更新资源基础信息、元数据、状态，或恢复软删除资源。
-    pub async fn update_resource(
-        &self,
-        id: &ResourceId,
-        command: UpdateResource,
-    ) -> Result<Option<Resource>, CoreError> {
-        self.commands().update_resource(id, command).await
-    }
-
-    /// 读取资源对应的对象内容。
-    pub async fn get_resource_content(&self, id: &ResourceId) -> Result<Option<Bytes>, CoreError> {
-        self.content().get_resource_content(id).await
-    }
-
-    /// 读取资源的可阅读 View。
-    pub async fn read_resource(
-        &self,
-        id: &ResourceId,
-    ) -> Result<Option<ReadableResource>, CoreError> {
-        self.previews().read_resource(id).await
-    }
-
-    /// 执行资源类型声明的动作。
-    pub async fn execute_resource_action(
-        &self,
-        id: &ResourceId,
-        command: ExecuteResourceAction,
-    ) -> Result<Option<ResourceActionOutput>, CoreError> {
-        self.actions().execute_resource_action(id, command).await
-    }
-
-    /// 读取资源预览内容。
-    pub async fn preview_resource(
-        &self,
-        id: &ResourceId,
-    ) -> Result<Option<ResourcePreview>, CoreError> {
-        self.previews().preview_resource(id).await
-    }
-
-    /// 返回资源预览内容流。
-    pub async fn preview_resource_stream(
-        &self,
-        id: &ResourceId,
-    ) -> Result<Option<ResourcePreviewStream>, CoreError> {
-        self.previews().preview_resource_stream(id).await
-    }
-
-    /// 读取资源缩略图内容。
-    pub async fn thumbnail_resource(
-        &self,
-        id: &ResourceId,
-    ) -> Result<Option<ResourceThumbnail>, CoreError> {
-        self.previews().thumbnail_resource(id).await
-    }
-
-    /// 软删除资源。
-    pub async fn soft_delete_resource(
-        &self,
-        id: &ResourceId,
-    ) -> Result<Option<Resource>, CoreError> {
-        self.commands().soft_delete_resource(id).await
-    }
-
-    /// 物理移除资源及其对象内容。
-    pub async fn remove_resource(&self, id: &ResourceId) -> Result<bool, CoreError> {
-        self.commands().remove_resource(id).await
-    }
-
     fn validate_registered_kind(
         &self,
         kind: Option<ResourceKind>,
@@ -986,7 +636,7 @@ impl ResourceService {
     fn require_kind_definition(
         &self,
         kind: &ResourceKind,
-    ) -> Result<crate::port::ResourceKindDefinition, CoreError> {
+    ) -> Result<&crate::port::ResourceKindDefinition, CoreError> {
         self.kind_registry
             .get(kind)
             .ok_or_else(|| CoreError::configuration(format!("unsupported resource kind `{kind}`")))
@@ -1032,9 +682,9 @@ impl ResourceService {
 }
 
 fn should_load_action_content(action: &crate::port::ResourceActionDefinition, size: u64) -> bool {
-    match action.content_delivery() {
+    match action.requirements().content_delivery {
         crate::port::ResourceActionContentDelivery::Inline => true,
-        crate::port::ResourceActionContentDelivery::Url => action.requires_content(),
+        crate::port::ResourceActionContentDelivery::Url => action.requirements().content,
         crate::port::ResourceActionContentDelivery::Auto => size <= MAX_INLINE_PLUGIN_CONTENT_BYTES,
     }
 }
@@ -1153,12 +803,7 @@ fn plugin_checksums(
 
 fn stream_with_checksum_tracking(
     data: BlobByteStream,
-    checksums: &[Checksum],
-) -> (BlobByteStream, Option<Arc<std::sync::Mutex<Sha256>>>) {
-    if sha256_checksum(checksums).is_none() {
-        return (data, None);
-    }
-
+) -> (BlobByteStream, Arc<std::sync::Mutex<Sha256>>) {
     let state = Arc::new(std::sync::Mutex::new(Sha256::new()));
     let stream_state = state.clone();
     let stream = data.map(move |chunk| {
@@ -1172,31 +817,27 @@ fn stream_with_checksum_tracking(
         chunk
     });
 
-    (Box::pin(stream), Some(state))
+    (Box::pin(stream), state)
 }
 
-fn verify_tracked_checksums(
-    sha256_state: Option<Arc<std::sync::Mutex<Sha256>>>,
+fn finalize_tracked_checksum(
+    sha256_state: Arc<std::sync::Mutex<Sha256>>,
     checksums: &[Checksum],
-) -> Result<(), CoreError> {
-    let Some(expected) = sha256_checksum(checksums) else {
-        return Ok(());
-    };
-    let Some(state) = sha256_state else {
-        return Ok(());
-    };
-    let digest = state
+) -> Result<Checksum, CoreError> {
+    let digest = sha256_state
         .lock()
         .expect("sha256 mutex should not be poisoned")
         .clone()
         .finalize();
     let actual = hex_digest(&digest);
 
-    if !actual.eq_ignore_ascii_case(expected.value()) {
+    if let Some(expected) = sha256_checksum(checksums)
+        && !actual.eq_ignore_ascii_case(expected.value())
+    {
         return Err(CoreError::conflict("sha256 checksum mismatch"));
     }
 
-    Ok(())
+    Checksum::sha256(actual).map_err(Into::into)
 }
 
 fn sha256_checksum(checksums: &[Checksum]) -> Option<&Checksum> {
@@ -1398,8 +1039,8 @@ mod tests {
     }
 
     impl ResourceKindRegistry for InMemoryResourceKindRegistry {
-        fn list(&self) -> Vec<ResourceKindDefinition> {
-            self.definitions.clone()
+        fn definitions(&self) -> &[ResourceKindDefinition] {
+            &self.definitions
         }
     }
 
@@ -1420,6 +1061,15 @@ mod tests {
 
     #[async_trait::async_trait]
     impl BlobStorage for InMemoryBlobStorage {
+        async fn scan(
+            &self,
+            _directory: &str,
+            _include_sha256: bool,
+            _max_entries: usize,
+        ) -> Result<Vec<crate::port::ScannedBlob>, CoreError> {
+            Ok(Vec::new())
+        }
+
         async fn put(&self, key: &StorageKey, data: Bytes) -> Result<(), CoreError> {
             self.objects.lock().unwrap().insert(key.clone(), data);
             Ok(())
@@ -1712,6 +1362,15 @@ mod tests {
         (service, repository, blob_storage)
     }
 
+    fn stream_upload_command(
+        name: impl Into<String>,
+        storage_key: StorageKey,
+        data: Bytes,
+    ) -> UploadResourceContentStream {
+        let stream = futures_util::stream::once(async move { Ok(data) });
+        UploadResourceContentStream::new(name, storage_key, Box::pin(stream))
+    }
+
     fn service_with_registry(
         kind_registry: Arc<dyn ResourceKindRegistry>,
     ) -> (
@@ -1739,7 +1398,7 @@ mod tests {
             .unwrap();
 
         let resource = block_on(
-            service.create_resource(
+            service.commands().create_resource(
                 CreateResource::new(" Design Doc ")
                     .with_kind("doc:markdown")
                     .with_metadata(metadata.clone()),
@@ -1761,15 +1420,15 @@ mod tests {
     }
 
     #[test]
-    fn upload_resource_content_writes_blob_then_saves_resource() {
+    fn stream_upload_resource_content_writes_blob_then_saves_resource() {
         let (service, repository, blob_storage) = service();
         let key = StorageKey::new("assets/image.png").unwrap();
         let data = Bytes::from_static(b"image bytes");
         let checksum = Checksum::sha256(hex_sha256(&data)).unwrap();
 
         let resource = block_on(
-            service.upload_resource_content(
-                UploadResourceContent::new("image", key.clone(), data.clone())
+            service.content().upload_resource_content_stream(
+                stream_upload_command("image", key.clone(), data.clone())
                     .with_kind("core:image")
                     .with_mime_type(" image/png ")
                     .with_original_filename(" image.png ")
@@ -1790,13 +1449,13 @@ mod tests {
     }
 
     #[test]
-    fn upload_resource_content_detects_most_specific_kind() {
+    fn stream_upload_resource_content_detects_most_specific_kind() {
         let (service, repository, _) = service();
         let key = StorageKey::new("docs/readme.md").unwrap();
 
         let resource = block_on(
-            service.upload_resource_content(
-                UploadResourceContent::new("readme", key, Bytes::from_static(b"# Readme"))
+            service.content().upload_resource_content_stream(
+                stream_upload_command("readme", key, Bytes::from_static(b"# Readme"))
                     .with_mime_type("text/plain")
                     .with_original_filename("README.md"),
             ),
@@ -1809,14 +1468,14 @@ mod tests {
     }
 
     #[test]
-    fn upload_resource_content_rejects_checksum_mismatch() {
+    fn stream_upload_resource_content_rejects_checksum_mismatch() {
         let (service, repository, blob_storage) = service();
         let key = StorageKey::new("assets/image.png").unwrap();
         let data = Bytes::from_static(b"image bytes");
         let checksum = Checksum::sha256("a".repeat(64)).unwrap();
 
-        let error = block_on(service.upload_resource_content(
-            UploadResourceContent::new("image", key.clone(), data).with_checksum(checksum),
+        let error = block_on(service.content().upload_resource_content_stream(
+            stream_upload_command("image", key.clone(), data).with_checksum(checksum),
         ))
         .unwrap_err();
 
@@ -1829,7 +1488,7 @@ mod tests {
     }
 
     #[test]
-    fn upload_resource_content_rejects_existing_storage_key() {
+    fn stream_upload_resource_content_rejects_existing_storage_key() {
         let (service, repository, blob_storage) = service();
         let key = StorageKey::new("assets/image.png").unwrap();
         blob_storage
@@ -1838,11 +1497,9 @@ mod tests {
             .unwrap()
             .insert(key.clone(), Bytes::from_static(b"existing"));
 
-        let error = block_on(service.upload_resource_content(UploadResourceContent::new(
-            "image",
-            key,
-            Bytes::from_static(b"new"),
-        )))
+        let error = block_on(service.content().upload_resource_content_stream(
+            stream_upload_command("image", key, Bytes::from_static(b"new")),
+        ))
         .unwrap_err();
 
         match error {
@@ -1864,7 +1521,9 @@ mod tests {
         ));
 
         let error = block_on(
-            service.create_resource(CreateResource::new("image").with_kind("plugin:not-installed")),
+            service
+                .commands()
+                .create_resource(CreateResource::new("image").with_kind("plugin:not-installed")),
         )
         .unwrap_err();
 
@@ -1878,7 +1537,7 @@ mod tests {
     }
 
     #[test]
-    fn upload_resource_content_stream_writes_chunks_and_records_size() {
+    fn stream_upload_resource_content_stream_writes_chunks_and_records_size() {
         let (service, repository, blob_storage) = service();
         let key = StorageKey::new("assets/large.bin").unwrap();
         let data: BlobByteStream = Box::pin(futures_util::stream::iter([
@@ -1888,7 +1547,7 @@ mod tests {
         ]));
 
         let resource = block_on(
-            service.upload_resource_content_stream(
+            service.content().upload_resource_content_stream(
                 UploadResourceContentStream::new("large file", key.clone(), data)
                     .with_kind("asset:binary")
                     .with_mime_type("application/octet-stream"),
@@ -1909,13 +1568,13 @@ mod tests {
     }
 
     #[test]
-    fn upload_resource_content_rejects_kind_without_content_support() {
+    fn stream_upload_resource_content_rejects_kind_without_content_support() {
         let (service, repository, blob_storage) = service();
         let key = StorageKey::new("docs/readme.md").unwrap();
 
         let error = block_on(
-            service.upload_resource_content(
-                UploadResourceContent::new("readme", key.clone(), Bytes::from_static(b"hello"))
+            service.content().upload_resource_content_stream(
+                stream_upload_command("readme", key.clone(), Bytes::from_static(b"hello"))
                     .with_kind("doc:markdown"),
             ),
         )
@@ -1932,7 +1591,7 @@ mod tests {
     }
 
     #[test]
-    fn upload_resource_content_stream_removes_blob_on_checksum_mismatch() {
+    fn stream_upload_resource_content_stream_removes_blob_on_checksum_mismatch() {
         let (service, repository, blob_storage) = service();
         let key = StorageKey::new("assets/large.bin").unwrap();
         let data: BlobByteStream = Box::pin(futures_util::stream::iter([
@@ -1943,7 +1602,7 @@ mod tests {
         let checksum = Checksum::sha256("a".repeat(64)).unwrap();
 
         let error = block_on(
-            service.upload_resource_content_stream(
+            service.content().upload_resource_content_stream(
                 UploadResourceContentStream::new("large file", key.clone(), data)
                     .with_checksum(checksum),
             ),
@@ -1959,16 +1618,14 @@ mod tests {
     }
 
     #[test]
-    fn upload_resource_content_removes_blob_when_save_fails() {
+    fn stream_upload_resource_content_removes_blob_when_save_fails() {
         let (service, repository, blob_storage) = service();
         let key = StorageKey::new("assets/image.png").unwrap();
         repository.fail_next_save();
 
-        let result = block_on(service.upload_resource_content(UploadResourceContent::new(
-            "image",
-            key.clone(),
-            Bytes::from_static(b"image bytes"),
-        )));
+        let result = block_on(service.content().upload_resource_content_stream(
+            stream_upload_command("image", key.clone(), Bytes::from_static(b"image bytes")),
+        ));
 
         match result {
             Err(CoreError::Repository { operation, .. }) => assert_eq!(operation, "save"),
@@ -1984,14 +1641,14 @@ mod tests {
         let (service, _, _) = service();
         let key = StorageKey::new("assets/image.png").unwrap();
         let data = Bytes::from_static(b"image bytes");
-        let resource = block_on(service.upload_resource_content(UploadResourceContent::new(
-            "image",
-            key,
-            data.clone(),
-        )))
+        let resource = block_on(
+            service
+                .content()
+                .upload_resource_content_stream(stream_upload_command("image", key, data.clone())),
+        )
         .unwrap();
 
-        let content = block_on(service.get_resource_content(&resource.id())).unwrap();
+        let content = block_on(service.content().get_resource_content(&resource.id())).unwrap();
 
         assert_eq!(content, Some(data));
     }
@@ -2001,14 +1658,14 @@ mod tests {
         let (service, _, _) = service();
         let key = StorageKey::new("books/book.txt").unwrap();
         let resource = block_on(
-            service.upload_resource_content(
-                UploadResourceContent::new("book", key, Bytes::from_static(b"Hello book"))
+            service.content().upload_resource_content_stream(
+                stream_upload_command("book", key, Bytes::from_static(b"Hello book"))
                     .with_kind("core:document"),
             ),
         )
         .unwrap();
 
-        let readable = block_on(service.read_resource(&resource.id()))
+        let readable = block_on(service.previews().read_resource(&resource.id()))
             .unwrap()
             .unwrap();
 
@@ -2026,8 +1683,8 @@ mod tests {
         let (service, repository, blob_storage) = service();
         let key = StorageKey::new("docs/note.md").unwrap();
         let resource = block_on(
-            service.upload_resource_content(
-                UploadResourceContent::new("note.md", key.clone(), Bytes::from_static(b"# Old"))
+            service.content().upload_resource_content_stream(
+                stream_upload_command("note.md", key.clone(), Bytes::from_static(b"# Old"))
                     .with_kind("core:document")
                     .with_mime_type("text/markdown")
                     .with_original_filename("note.md"),
@@ -2036,7 +1693,7 @@ mod tests {
         .unwrap();
 
         let output = block_on(
-            service.execute_resource_action(
+            service.actions().execute_resource_action(
                 &resource.id(),
                 ExecuteResourceAction::new("azvs.markdown.update")
                     .with_input(json!({"markdown": "# New\n\nUpdated."})),
@@ -2064,14 +1721,14 @@ mod tests {
         let (service, _, _) = service();
         let key = StorageKey::new("files/file.txt").unwrap();
         let resource = block_on(
-            service.upload_resource_content(
-                UploadResourceContent::new("file", key, Bytes::from_static(b"hello"))
+            service.content().upload_resource_content_stream(
+                stream_upload_command("file", key, Bytes::from_static(b"hello"))
                     .with_kind("asset:binary"),
             ),
         )
         .unwrap();
 
-        let error = block_on(service.read_resource(&resource.id())).unwrap_err();
+        let error = block_on(service.previews().read_resource(&resource.id())).unwrap_err();
 
         match error {
             CoreError::Configuration { message } => {
@@ -2085,8 +1742,8 @@ mod tests {
     fn describe_resource_actions_uses_declared_actions_without_format_sniffing() {
         let (service, _, _) = service();
         let pdf = block_on(
-            service.upload_resource_content(
-                UploadResourceContent::new(
+            service.content().upload_resource_content_stream(
+                stream_upload_command(
                     "book",
                     StorageKey::new("books/book.pdf").unwrap(),
                     Bytes::from_static(b"%PDF-1.4"),
@@ -2097,8 +1754,8 @@ mod tests {
         )
         .unwrap();
         let text = block_on(
-            service.upload_resource_content(
-                UploadResourceContent::new(
+            service.content().upload_resource_content_stream(
+                stream_upload_command(
                     "book",
                     StorageKey::new("books/book.txt").unwrap(),
                     Bytes::from_static(b"hello"),
@@ -2109,23 +1766,29 @@ mod tests {
         )
         .unwrap();
 
-        let pdf_actions = service.describe_resource_actions(&pdf).unwrap();
-        let text_actions = service.describe_resource_actions(&text).unwrap();
+        let pdf_actions = service.actions().describe_resource_actions(&pdf).unwrap();
+        let text_actions = service.actions().describe_resource_actions(&text).unwrap();
+        let has_action = |actions: &ResourceActions, id: &str| {
+            actions
+                .available_actions()
+                .iter()
+                .any(|action| action.id().as_str() == id)
+        };
 
-        assert!(pdf_actions.download_content());
-        assert!(pdf_actions.read());
-        assert!(!pdf_actions.view_inline());
-        assert!(text_actions.download_content());
-        assert!(text_actions.read());
-        assert!(!text_actions.view_inline());
+        assert!(has_action(&pdf_actions, "download_content"));
+        assert!(has_action(&pdf_actions, "read"));
+        assert!(!has_action(&pdf_actions, "view_inline"));
+        assert!(has_action(&text_actions, "download_content"));
+        assert!(has_action(&text_actions, "read"));
+        assert!(!has_action(&text_actions, "view_inline"));
     }
 
     #[test]
     fn describe_resource_actions_filters_extension_actions_by_content_match() {
         let (service, _, _) = service();
         let mp4 = block_on(
-            service.upload_resource_content(
-                UploadResourceContent::new(
+            service.content().upload_resource_content_stream(
+                stream_upload_command(
                     "demo.mp4",
                     StorageKey::new("videos/demo.mp4").unwrap(),
                     Bytes::from_static(b"mp4"),
@@ -2136,8 +1799,8 @@ mod tests {
         )
         .unwrap();
         let webm = block_on(
-            service.upload_resource_content(
-                UploadResourceContent::new(
+            service.content().upload_resource_content_stream(
+                stream_upload_command(
                     "demo.webm",
                     StorageKey::new("videos/demo.webm").unwrap(),
                     Bytes::from_static(b"webm"),
@@ -2148,8 +1811,8 @@ mod tests {
         )
         .unwrap();
 
-        let mp4_actions = service.describe_resource_actions(&mp4).unwrap();
-        let webm_actions = service.describe_resource_actions(&webm).unwrap();
+        let mp4_actions = service.actions().describe_resource_actions(&mp4).unwrap();
+        let webm_actions = service.actions().describe_resource_actions(&webm).unwrap();
 
         assert!(
             mp4_actions
@@ -2169,8 +1832,8 @@ mod tests {
     fn preview_resource_returns_pdf_content_for_preview_kind() {
         let (service, _, _) = service();
         let resource = block_on(
-            service.upload_resource_content(
-                UploadResourceContent::new(
+            service.content().upload_resource_content_stream(
+                stream_upload_command(
                     "book",
                     StorageKey::new("books/book.pdf").unwrap(),
                     Bytes::from_static(b"%PDF-1.4"),
@@ -2181,7 +1844,7 @@ mod tests {
         )
         .unwrap();
 
-        let preview = block_on(service.preview_resource(&resource.id()))
+        let preview = block_on(service.previews().preview_resource(&resource.id()))
             .unwrap()
             .unwrap();
 
@@ -2194,8 +1857,8 @@ mod tests {
         let (service, _, _) = service();
         let image = Bytes::from_static(b"fake-image");
         let resource = block_on(
-            service.upload_resource_content(
-                UploadResourceContent::new(
+            service.content().upload_resource_content_stream(
+                stream_upload_command(
                     "image",
                     StorageKey::new("images/pixel.png").unwrap(),
                     image.clone(),
@@ -2206,7 +1869,7 @@ mod tests {
         )
         .unwrap();
 
-        let thumbnail = block_on(service.thumbnail_resource(&resource.id()))
+        let thumbnail = block_on(service.previews().thumbnail_resource(&resource.id()))
             .unwrap()
             .unwrap();
 
@@ -2218,17 +1881,15 @@ mod tests {
     fn soft_delete_resource_keeps_blob_but_hides_content_read() {
         let (service, repository, blob_storage) = service();
         let key = StorageKey::new("assets/image.png").unwrap();
-        let resource = block_on(service.upload_resource_content(UploadResourceContent::new(
-            "image",
-            key.clone(),
-            Bytes::from_static(b"image bytes"),
-        )))
+        let resource = block_on(service.content().upload_resource_content_stream(
+            stream_upload_command("image", key.clone(), Bytes::from_static(b"image bytes")),
+        ))
         .unwrap();
 
-        let deleted = block_on(service.soft_delete_resource(&resource.id()))
+        let deleted = block_on(service.commands().soft_delete_resource(&resource.id()))
             .unwrap()
             .unwrap();
-        let content = block_on(service.get_resource_content(&resource.id())).unwrap();
+        let content = block_on(service.content().get_resource_content(&resource.id())).unwrap();
 
         assert!(deleted.is_deleted());
         assert!(repository.find_sync(&resource.id()).unwrap().is_deleted());
@@ -2240,16 +1901,14 @@ mod tests {
     fn remove_resource_deletes_blob_and_repository_record() {
         let (service, repository, blob_storage) = service();
         let key = StorageKey::new("assets/image.png").unwrap();
-        let resource = block_on(service.upload_resource_content(UploadResourceContent::new(
-            "image",
-            key.clone(),
-            Bytes::from_static(b"image bytes"),
-        )))
+        let resource = block_on(service.content().upload_resource_content_stream(
+            stream_upload_command("image", key.clone(), Bytes::from_static(b"image bytes")),
+        ))
         .unwrap();
 
-        assert!(block_on(service.remove_resource(&resource.id())).unwrap());
+        assert!(block_on(service.commands().remove_resource(&resource.id())).unwrap());
         assert!(repository.find_sync(&resource.id()).is_none());
         assert!(!blob_storage.contains(&key));
-        assert!(!block_on(service.remove_resource(&resource.id())).unwrap());
+        assert!(!block_on(service.commands().remove_resource(&resource.id())).unwrap());
     }
 }

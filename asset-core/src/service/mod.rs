@@ -15,7 +15,8 @@ pub use user_service::UserService;
 
 pub use resource_service::{
     CreateResource, ExecuteResourceAction, ImportResourceContent, ReadableResource,
-    ResourceActionService, ResourceActions, ResourceCommandService, ResourceContentService,
-    ResourcePreview, ResourcePreviewService, ResourceService, ResourceThumbnail,
-    SecuredResourceService, UpdateResource, UploadResourceContent, UploadResourceContentStream,
+    ResourceActionService, ResourceActions, ResourceCommandService, ResourceContentCommand,
+    ResourceContentService, ResourcePreview, ResourcePreviewService, ResourceService,
+    ResourceThumbnail, ScanStorage, ScanStorageError, ScanStorageResult, SecuredResourceService,
+    UpdateResource, UploadResourceContentStream,
 };

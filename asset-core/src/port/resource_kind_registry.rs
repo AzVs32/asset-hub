@@ -144,13 +144,13 @@ impl ResourceKindDefinition {
 
 /// 资源类型注册表。
 pub trait ResourceKindRegistry: Send + Sync {
-    /// 列出当前运行时支持的资源类型。
-    fn list(&self) -> Vec<ResourceKindDefinition>;
+    /// 返回当前运行时支持的资源类型，不复制整个注册表。
+    fn definitions(&self) -> &[ResourceKindDefinition];
 
     /// 按 kind 查找资源类型定义。
-    fn get(&self, kind: &ResourceKind) -> Option<ResourceKindDefinition> {
-        self.list()
-            .into_iter()
+    fn get(&self, kind: &ResourceKind) -> Option<&ResourceKindDefinition> {
+        self.definitions()
+            .iter()
             .find(|definition| definition.kind().as_str() == kind.as_str())
     }
 
@@ -161,7 +161,6 @@ pub trait ResourceKindRegistry: Send + Sync {
 
     /// 从具体 kind 开始返回完整谱系：自身、父级，直至根节点。
     fn lineage(&self, kind: &ResourceKind) -> Vec<ResourceKind> {
-        let definitions = self.list();
         let mut lineage = Vec::new();
         let mut current = Some(kind.clone());
         let mut visited = HashSet::new();
@@ -169,7 +168,7 @@ pub trait ResourceKindRegistry: Send + Sync {
             if !visited.insert(kind.as_str().to_owned()) {
                 break;
             }
-            let Some(definition) = definitions.iter().find(|item| item.kind() == &kind) else {
+            let Some(definition) = self.get(&kind) else {
                 break;
             };
             lineage.push(kind);
@@ -183,8 +182,8 @@ pub trait ResourceKindRegistry: Send + Sync {
     }
 
     fn descendants(&self, kind: &ResourceKind) -> Vec<ResourceKind> {
-        self.list()
-            .into_iter()
+        self.definitions()
+            .iter()
             .filter(|definition| self.is_a(definition.kind(), kind))
             .map(|definition| definition.kind().clone())
             .collect()
@@ -233,9 +232,9 @@ pub trait ResourceKindRegistry: Send + Sync {
         let mut best: Option<(ResourceKind, u8, usize)> = None;
 
         for definition in self
-            .list()
-            .into_iter()
-            .filter(ResourceKindDefinition::supports_content)
+            .definitions()
+            .iter()
+            .filter(|definition| definition.supports_content())
         {
             let score = content_match_score(definition.detect(), mime_type, storage_key, 100);
 
@@ -308,8 +307,8 @@ mod tests {
     }
 
     impl ResourceKindRegistry for TestRegistry {
-        fn list(&self) -> Vec<ResourceKindDefinition> {
-            self.definitions.clone()
+        fn definitions(&self) -> &[ResourceKindDefinition] {
+            &self.definitions
         }
     }
 
