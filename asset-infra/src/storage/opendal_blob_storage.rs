@@ -1,14 +1,11 @@
 use crate::config::BlobConfig;
 use asset_core::CoreError;
 use asset_core::domain::StorageKey;
-use asset_core::port::{BlobByteStream, BlobStorage, BlobWriteResult, ScannedBlob};
+use asset_core::port::{BlobByteStream, BlobStorage, BlobWriteResult};
 use bytes::Bytes;
 use futures_util::{StreamExt, TryStreamExt};
 use opendal::services::Fs;
 use opendal::{ErrorKind, Operator};
-use sha2::{Digest, Sha256};
-use std::io::Read;
-use std::path::{Component, Path, PathBuf};
 
 /// 基于 OpenDAL `Operator` 的对象存储适配器。
 ///
@@ -17,13 +14,12 @@ use std::path::{Component, Path, PathBuf};
 #[derive(Clone)]
 pub struct OpenDalBlobStorage {
     operator: Operator,
-    fs_root: PathBuf,
 }
 
 impl OpenDalBlobStorage {
     /// 使用 OpenDAL `Operator` 创建适配器。
-    pub fn new(operator: Operator, fs_root: PathBuf) -> Self {
-        Self { operator, fs_root }
+    pub fn new(operator: Operator) -> Self {
+        Self { operator }
     }
 
     /// 根据 Fs 配置创建对象存储适配器。
@@ -34,7 +30,7 @@ impl OpenDalBlobStorage {
             .map_err(|error| CoreError::storage("fs.build", error))?
             .finish();
 
-        Ok(Self::new(operator, config.fs_root.clone()))
+        Ok(Self::new(operator))
     }
 
     /// 返回内部 OpenDAL `Operator`。
@@ -45,75 +41,12 @@ impl OpenDalBlobStorage {
 
 #[async_trait::async_trait]
 impl BlobStorage for OpenDalBlobStorage {
-    async fn scan(
-        &self,
-        directory: &str,
-        include_sha256: bool,
-        max_entries: usize,
-    ) -> Result<Vec<ScannedBlob>, CoreError> {
-        let root = self.fs_root.clone();
-        let directory = directory.to_owned();
-        tokio::task::spawn_blocking(move || {
-            scan_files(&root, &directory, include_sha256, max_entries)
-        })
-        .await
-        .map_err(|error| CoreError::configuration(format!("scan task failed: {error}")))?
-    }
-
     async fn put(&self, key: &StorageKey, data: Bytes) -> Result<(), CoreError> {
         self.operator
             .write(key.as_str(), data)
             .await
             .map(|_| ())
             .map_err(|error| CoreError::storage("put", error))
-    }
-
-    async fn put_if_absent(&self, key: &StorageKey, data: Bytes) -> Result<(), CoreError> {
-        self.operator
-            .write_with(key.as_str(), data)
-            .if_not_exists(true)
-            .await
-            .map(|_| ())
-            .map_err(|error| conditional_write_error("put_if_absent", key, error))
-    }
-
-    async fn put_stream(
-        &self,
-        key: &StorageKey,
-        mut data: BlobByteStream,
-    ) -> Result<BlobWriteResult, CoreError> {
-        let mut writer = self
-            .operator
-            .writer(key.as_str())
-            .await
-            .map_err(|error| CoreError::storage("put_stream.open", error))?;
-        let mut bytes_written = 0_u64;
-
-        while let Some(chunk) = data.next().await {
-            let chunk = match chunk {
-                Ok(chunk) => chunk,
-                Err(error) => {
-                    let _ = writer.abort().await;
-                    return Err(error);
-                }
-            };
-
-            bytes_written = bytes_written
-                .checked_add(chunk.len() as u64)
-                .ok_or_else(|| CoreError::storage("put_stream.size", SizeOverflow))?;
-
-            if let Err(error) = writer.write(chunk).await {
-                let _ = writer.abort().await;
-                return Err(CoreError::storage("put_stream.write", error));
-            }
-        }
-
-        writer
-            .close()
-            .await
-            .map_err(|error| CoreError::storage("put_stream.close", error))?;
-
-        Ok(BlobWriteResult::new(bytes_written))
     }
 
     async fn put_stream_if_absent(
@@ -168,17 +101,10 @@ impl BlobStorage for OpenDalBlobStorage {
             .await
             .map_err(|error| CoreError::storage("delete", error))
     }
-
-    async fn exists(&self, key: &StorageKey) -> Result<bool, CoreError> {
-        self.operator
-            .exists(key.as_str())
-            .await
-            .map_err(|error| CoreError::storage("exists", error))
-    }
 }
 
 async fn put_stream_with_writer(
-    mut writer: opendal::Writer,
+    mut writer: impl StreamWriter,
     mut data: BlobByteStream,
 ) -> Result<BlobWriteResult, CoreError> {
     let mut bytes_written = 0_u64;
@@ -198,16 +124,60 @@ async fn put_stream_with_writer(
 
         if let Err(error) = writer.write(chunk).await {
             let _ = writer.abort().await;
-            return Err(CoreError::storage("put_stream.write", error));
+            return Err(CoreError::storage("put_stream.write", WriterFailure(error)));
         }
     }
 
-    writer
-        .close()
-        .await
-        .map_err(|error| CoreError::storage("put_stream.close", error))?;
+    if let Err(error) = writer.close().await {
+        let _ = writer.abort().await;
+        return Err(CoreError::storage("put_stream.close", WriterFailure(error)));
+    }
 
     Ok(BlobWriteResult::new(bytes_written))
+}
+
+type WriterError = Box<dyn std::error::Error + Send + Sync>;
+
+#[derive(Debug)]
+struct WriterFailure(WriterError);
+impl std::fmt::Display for WriterFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+impl std::error::Error for WriterFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.0.as_ref())
+    }
+}
+
+#[async_trait::async_trait]
+trait StreamWriter: Send {
+    async fn write(&mut self, chunk: Bytes) -> Result<(), WriterError>;
+    async fn close(&mut self) -> Result<(), WriterError>;
+    async fn abort(&mut self) -> Result<(), WriterError>;
+}
+
+#[async_trait::async_trait]
+impl StreamWriter for opendal::Writer {
+    async fn write(&mut self, chunk: Bytes) -> Result<(), WriterError> {
+        opendal::Writer::write(self, chunk)
+            .await
+            .map_err(|error| Box::new(error) as WriterError)
+    }
+
+    async fn close(&mut self) -> Result<(), WriterError> {
+        opendal::Writer::close(self)
+            .await
+            .map(|_| ())
+            .map_err(|error| Box::new(error) as WriterError)
+    }
+
+    async fn abort(&mut self) -> Result<(), WriterError> {
+        opendal::Writer::abort(self)
+            .await
+            .map_err(|error| Box::new(error) as WriterError)
+    }
 }
 
 fn conditional_write_error(
@@ -225,142 +195,12 @@ fn conditional_write_error(
     CoreError::storage(operation, error)
 }
 
-fn scan_files(
-    configured_root: &Path,
-    directory: &str,
-    include_sha256: bool,
-    max_entries: usize,
-) -> Result<Vec<ScannedBlob>, CoreError> {
-    let root = configured_root.canonicalize().map_err(|error| {
-        CoreError::configuration(format!("storage root is not readable: {error}"))
-    })?;
-    let scan_root = root
-        .join(directory)
-        .canonicalize()
-        .map_err(|error| CoreError::configuration(format!("scan path is not readable: {error}")))?;
-    if !scan_root.starts_with(&root) || !scan_root.is_dir() {
-        return Err(CoreError::configuration(
-            "scan path must be a directory inside storage root",
-        ));
-    }
-
-    let mut files = Vec::new();
-    let mut visited = 0;
-    collect_files(
-        &root,
-        &scan_root,
-        include_sha256,
-        max_entries,
-        &mut visited,
-        &mut files,
-    )?;
-    files.sort_by(|left, right| left.key.as_str().cmp(right.key.as_str()));
-    Ok(files)
-}
-
-fn collect_files(
-    root: &Path,
-    current: &Path,
-    include_sha256: bool,
-    max_entries: usize,
-    visited: &mut usize,
-    files: &mut Vec<ScannedBlob>,
-) -> Result<(), CoreError> {
-    let entries =
-        std::fs::read_dir(current).map_err(|error| CoreError::storage("scan.read_dir", error))?;
-    for entry in entries {
-        *visited += 1;
-        if *visited > max_entries {
-            return Err(CoreError::configuration(format!(
-                "storage scan exceeds the limit of {max_entries} entries"
-            )));
-        }
-        let entry = entry.map_err(|error| CoreError::storage("scan.read_dir_entry", error))?;
-        let path = entry.path();
-        let metadata = std::fs::symlink_metadata(&path)
-            .map_err(|error| CoreError::storage("scan.metadata", error))?;
-        if metadata.file_type().is_symlink() {
-            continue;
-        }
-        if metadata.is_dir() {
-            collect_files(root, &path, include_sha256, max_entries, visited, files)?;
-            continue;
-        }
-        if !metadata.is_file() {
-            continue;
-        }
-
-        let relative = path
-            .strip_prefix(root)
-            .map_err(|_| CoreError::configuration("scanned object path escaped storage root"))?;
-        let mut parts = Vec::new();
-        for component in relative.components() {
-            match component {
-                Component::Normal(part) => {
-                    parts.push(part.to_str().ok_or_else(|| {
-                        CoreError::configuration("storage path must be valid UTF-8")
-                    })?)
-                }
-                Component::CurDir => {}
-                _ => return Err(CoreError::configuration("invalid storage object path")),
-            }
-        }
-        let key = StorageKey::new(parts.join("/"))?;
-        files.push(ScannedBlob {
-            key,
-            size: metadata.len(),
-            mime_type: content_type_from_path(&path).map(str::to_owned),
-            sha256: include_sha256.then(|| sha256_file(&path)).transpose()?,
-        });
-    }
-    Ok(())
-}
-
-fn sha256_file(path: &Path) -> Result<String, CoreError> {
-    let mut file =
-        std::fs::File::open(path).map_err(|error| CoreError::storage("scan.open", error))?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let read = file
-            .read(&mut buffer)
-            .map_err(|error| CoreError::storage("scan.read", error))?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    Ok(format!("{:x}", hasher.finalize()))
-}
-
-fn content_type_from_path(path: &Path) -> Option<&'static str> {
-    match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
-        "txt" => Some("text/plain; charset=utf-8"),
-        "md" | "markdown" => Some("text/markdown; charset=utf-8"),
-        "json" => Some("application/json"),
-        "html" | "htm" => Some("text/html; charset=utf-8"),
-        "css" => Some("text/css; charset=utf-8"),
-        "js" | "mjs" => Some("text/javascript"),
-        "png" => Some("image/png"),
-        "jpg" | "jpeg" => Some("image/jpeg"),
-        "gif" => Some("image/gif"),
-        "webp" => Some("image/webp"),
-        "svg" => Some("image/svg+xml"),
-        "pdf" => Some("application/pdf"),
-        "epub" => Some("application/epub+zip"),
-        "mp3" => Some("audio/mpeg"),
-        "mp4" => Some("video/mp4"),
-        "zip" => Some("application/zip"),
-        _ => None,
-    }
-}
-
 #[derive(Debug)]
 struct SizeOverflow;
 
 impl std::fmt::Display for SizeOverflow {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("stream size exceeds u64::MAX")
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("stream size exceeds u64")
     }
 }
 
@@ -370,6 +210,97 @@ impl std::error::Error for SizeOverflow {}
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Debug)]
+    struct WriterTestError(&'static str);
+    impl std::fmt::Display for WriterTestError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(self.0)
+        }
+    }
+    impl std::error::Error for WriterTestError {}
+
+    struct FailingWriter {
+        fail_write: bool,
+        fail_close: bool,
+        fail_abort: bool,
+        aborts: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl StreamWriter for FailingWriter {
+        async fn write(&mut self, _chunk: Bytes) -> Result<(), WriterError> {
+            if self.fail_write {
+                Err(Box::new(WriterTestError("write")))
+            } else {
+                Ok(())
+            }
+        }
+        async fn close(&mut self) -> Result<(), WriterError> {
+            if self.fail_close {
+                Err(Box::new(WriterTestError("close")))
+            } else {
+                Ok(())
+            }
+        }
+        async fn abort(&mut self) -> Result<(), WriterError> {
+            self.aborts.fetch_add(1, Ordering::Relaxed);
+            if self.fail_abort {
+                Err(Box::new(WriterTestError("abort")))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    fn failing_writer(
+        fail_write: bool,
+        fail_close: bool,
+        fail_abort: bool,
+    ) -> (FailingWriter, Arc<AtomicUsize>) {
+        let aborts = Arc::new(AtomicUsize::new(0));
+        (
+            FailingWriter {
+                fail_write,
+                fail_close,
+                fail_abort,
+                aborts: aborts.clone(),
+            },
+            aborts,
+        )
+    }
+
+    #[tokio::test]
+    async fn stream_writer_aborts_after_write_or_close_failure() {
+        for (fail_write, fail_close) in [(true, false), (false, true)] {
+            let (writer, aborts) = failing_writer(fail_write, fail_close, true);
+            let stream: BlobByteStream = Box::pin(futures_util::stream::once(async {
+                Ok(Bytes::from_static(b"data"))
+            }));
+            let error = put_stream_with_writer(writer, stream).await.unwrap_err();
+            let expected_operation = if fail_write {
+                "put_stream.write"
+            } else {
+                "put_stream.close"
+            };
+            assert!(
+                matches!(error, CoreError::Storage { operation, .. } if operation == expected_operation)
+            );
+            assert_eq!(aborts.load(Ordering::Relaxed), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn stream_writer_aborts_after_input_failure() {
+        let (writer, aborts) = failing_writer(false, false, false);
+        let stream: BlobByteStream = Box::pin(futures_util::stream::once(async {
+            Err(CoreError::configuration("input failed"))
+        }));
+        assert!(put_stream_with_writer(writer, stream).await.is_err());
+        assert_eq!(aborts.load(Ordering::Relaxed), 1);
+    }
 
     #[tokio::test]
     async fn fs_storage_roundtrips_blob_content() {
@@ -379,12 +310,10 @@ mod tests {
 
         storage.put(&key, data.clone()).await.unwrap();
 
-        assert!(storage.exists(&key).await.unwrap());
         assert_eq!(storage.get(&key).await.unwrap(), Some(data));
 
         storage.delete(&key).await.unwrap();
 
-        assert!(!storage.exists(&key).await.unwrap());
         assert_eq!(storage.get(&key).await.unwrap(), None);
     }
 
@@ -398,36 +327,12 @@ mod tests {
             Ok(Bytes::from_static(b"bytes")),
         ]));
 
-        let result = storage.put_stream(&key, stream).await.unwrap();
+        let result = storage.put_stream_if_absent(&key, stream).await.unwrap();
 
         assert_eq!(result.bytes_written(), 16);
         assert_eq!(
             storage.get(&key).await.unwrap(),
             Some(Bytes::from_static(b"large file bytes"))
-        );
-    }
-
-    #[tokio::test]
-    async fn fs_storage_put_if_absent_rejects_existing_blob() {
-        let storage = storage("fs-put-if-absent");
-        let key = StorageKey::new("assets/image.png").unwrap();
-
-        storage
-            .put_if_absent(&key, Bytes::from_static(b"first"))
-            .await
-            .unwrap();
-        let error = storage
-            .put_if_absent(&key, Bytes::from_static(b"second"))
-            .await
-            .unwrap_err();
-
-        match error {
-            CoreError::Conflict { message } => assert!(message.contains("already exists")),
-            other => panic!("expected conflict, got {other:?}"),
-        }
-        assert_eq!(
-            storage.get(&key).await.unwrap(),
-            Some(Bytes::from_static(b"first"))
         );
     }
 

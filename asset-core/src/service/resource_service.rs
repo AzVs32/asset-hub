@@ -14,7 +14,7 @@ use crate::domain::{
 use crate::port::{
     BlobByteStream, BlobStorage, ListResources, ResourceActionExecutor, ResourceActionOutput,
     ResourceActionRegistry, ResourceActionRequest, ResourceDirectory, ResourceKindRegistry,
-    ResourcePage, ResourceRepository,
+    ResourcePage, ResourceRepository, StorageScanner,
 };
 use asset_plugin_api::{PluginActionEffect, PluginContentEncoding, PluginView};
 use base64::Engine;
@@ -493,6 +493,7 @@ pub struct ResourceService {
     repository: Arc<dyn ResourceRepository>,
     /// 对象存储端口。
     blob_storage: Arc<dyn BlobStorage>,
+    storage_scanner: Arc<dyn StorageScanner>,
     /// 资源类型注册表。
     kind_registry: Arc<dyn ResourceKindRegistry>,
     /// 全局资源动作注册表。
@@ -509,11 +510,13 @@ impl ResourceService {
     pub fn new(
         repository: Arc<dyn ResourceRepository>,
         blob_storage: Arc<dyn BlobStorage>,
+        storage_scanner: Arc<dyn StorageScanner>,
         kind_registry: Arc<dyn ResourceKindRegistry>,
     ) -> Self {
         Self {
             repository,
             blob_storage,
+            storage_scanner,
             kind_registry,
             action_registry: None,
             action_executor: None,
@@ -524,12 +527,14 @@ impl ResourceService {
     pub fn new_with_action_executor(
         repository: Arc<dyn ResourceRepository>,
         blob_storage: Arc<dyn BlobStorage>,
+        storage_scanner: Arc<dyn StorageScanner>,
         kind_registry: Arc<dyn ResourceKindRegistry>,
         action_executor: Arc<dyn ResourceActionExecutor>,
     ) -> Self {
         Self {
             repository,
             blob_storage,
+            storage_scanner,
             kind_registry,
             action_registry: None,
             action_executor: Some(action_executor),
@@ -540,6 +545,7 @@ impl ResourceService {
     pub fn new_with_action_registry_and_executor(
         repository: Arc<dyn ResourceRepository>,
         blob_storage: Arc<dyn BlobStorage>,
+        storage_scanner: Arc<dyn StorageScanner>,
         kind_registry: Arc<dyn ResourceKindRegistry>,
         action_registry: Arc<dyn ResourceActionRegistry>,
         action_executor: Arc<dyn ResourceActionExecutor>,
@@ -547,6 +553,7 @@ impl ResourceService {
         Self {
             repository,
             blob_storage,
+            storage_scanner,
             kind_registry,
             action_registry: Some(action_registry),
             action_executor: Some(action_executor),
@@ -642,24 +649,20 @@ impl ResourceService {
             .ok_or_else(|| CoreError::configuration(format!("unsupported resource kind `{kind}`")))
     }
 
-    fn actions_for_resource(
+    fn actions_for_resource_kind(
         &self,
-        resource: &Resource,
-        _definition: &crate::port::ResourceKindDefinition,
+        kind: &ResourceKind,
     ) -> Vec<crate::port::ResourceActionDefinition> {
-        let lineage = self.kind_registry.lineage(resource.kind());
-        let mut actions = self.kind_registry.actions_for_kind(resource.kind());
+        let lineage = self.kind_registry.lineage(kind);
+        let mut actions = self.kind_registry.actions_for_kind(kind);
         if let Some(registry) = &self.action_registry {
-            for action in registry.actions_for_resource_kinds(resource, &lineage) {
+            for action in registry.actions_for_kinds(&lineage) {
                 if !actions.iter().any(|existing| existing.id() == action.id()) {
                     actions.push(action);
                 }
             }
         }
         actions
-            .into_iter()
-            .filter(|action| self.action_matches_resource(action, resource))
-            .collect()
     }
 
     fn action_matches_resource(
@@ -681,11 +684,23 @@ impl ResourceService {
     }
 }
 
-fn should_load_action_content(action: &crate::port::ResourceActionDefinition, size: u64) -> bool {
+fn resolved_content_delivery(
+    action: &crate::port::ResourceActionDefinition,
+    size: u64,
+) -> Option<crate::port::ResourceActionContentDelivery> {
+    if !action.requirements().content {
+        return None;
+    }
     match action.requirements().content_delivery {
-        crate::port::ResourceActionContentDelivery::Inline => true,
-        crate::port::ResourceActionContentDelivery::Url => action.requirements().content,
-        crate::port::ResourceActionContentDelivery::Auto => size <= MAX_INLINE_PLUGIN_CONTENT_BYTES,
+        crate::port::ResourceActionContentDelivery::Auto
+            if size <= MAX_INLINE_PLUGIN_CONTENT_BYTES =>
+        {
+            Some(crate::port::ResourceActionContentDelivery::Inline)
+        }
+        crate::port::ResourceActionContentDelivery::Auto => {
+            Some(crate::port::ResourceActionContentDelivery::Url)
+        }
+        delivery => Some(delivery),
     }
 }
 
@@ -693,7 +708,7 @@ fn should_load_declared_action_content(
     action: &crate::port::ResourceActionDefinition,
     content: &ResourceContent,
 ) -> bool {
-    should_load_action_content(action, content.size())
+    resolved_content_delivery(action, content.size()).is_some()
 }
 
 fn decode_media_view(action: &str, view: &PluginView) -> Result<(String, Bytes), CoreError> {
@@ -1047,6 +1062,7 @@ mod tests {
     #[derive(Default)]
     struct InMemoryBlobStorage {
         objects: Mutex<HashMap<StorageKey, Bytes>>,
+        fail_next_delete: Mutex<bool>,
     }
 
     impl InMemoryBlobStorage {
@@ -1057,54 +1073,17 @@ mod tests {
         fn get_sync(&self, key: &StorageKey) -> Option<Bytes> {
             self.objects.lock().unwrap().get(key).cloned()
         }
+
+        fn fail_next_delete(&self) {
+            *self.fail_next_delete.lock().unwrap() = true;
+        }
     }
 
     #[async_trait::async_trait]
     impl BlobStorage for InMemoryBlobStorage {
-        async fn scan(
-            &self,
-            _directory: &str,
-            _include_sha256: bool,
-            _max_entries: usize,
-        ) -> Result<Vec<crate::port::ScannedBlob>, CoreError> {
-            Ok(Vec::new())
-        }
-
         async fn put(&self, key: &StorageKey, data: Bytes) -> Result<(), CoreError> {
             self.objects.lock().unwrap().insert(key.clone(), data);
             Ok(())
-        }
-
-        async fn put_if_absent(&self, key: &StorageKey, data: Bytes) -> Result<(), CoreError> {
-            let mut objects = self.objects.lock().unwrap();
-            if objects.contains_key(key) {
-                return Err(CoreError::conflict(format!(
-                    "storage key `{key}` already exists"
-                )));
-            }
-
-            objects.insert(key.clone(), data);
-            Ok(())
-        }
-
-        async fn put_stream(
-            &self,
-            key: &StorageKey,
-            mut data: BlobByteStream,
-        ) -> Result<BlobWriteResult, CoreError> {
-            let mut bytes = Vec::new();
-
-            while let Some(chunk) = data.next().await {
-                bytes.extend_from_slice(&chunk?);
-            }
-
-            let bytes_written = bytes.len() as u64;
-            self.objects
-                .lock()
-                .unwrap()
-                .insert(key.clone(), Bytes::from(bytes));
-
-            Ok(BlobWriteResult::new(bytes_written))
         }
 
         async fn put_stream_if_absent(
@@ -1142,12 +1121,23 @@ mod tests {
         }
 
         async fn delete(&self, key: &StorageKey) -> Result<(), CoreError> {
+            if std::mem::take(&mut *self.fail_next_delete.lock().unwrap()) {
+                return Err(CoreError::storage("delete", TestError("delete failed")));
+            }
             self.objects.lock().unwrap().remove(key);
             Ok(())
         }
+    }
 
-        async fn exists(&self, key: &StorageKey) -> Result<bool, CoreError> {
-            Ok(self.contains(key))
+    #[async_trait::async_trait]
+    impl StorageScanner for InMemoryBlobStorage {
+        async fn scan(
+            &self,
+            _directory: &str,
+            _include_sha256: bool,
+            _max_entries: usize,
+        ) -> Result<Vec<crate::port::ScannedBlob>, CoreError> {
+            Ok(Vec::new())
         }
     }
 
@@ -1274,7 +1264,8 @@ mod tests {
             )
             .with_actions(vec![
                 ResourceActionDefinition::new(ResourceAction::READ, "Read")
-                    .with_handler("read_markdown"),
+                    .with_handler("read_markdown")
+                    .with_requirements(content_requirements()),
             ]),
             ResourceKindDefinition::new(
                 ResourceKind::try_new("core:image").unwrap(),
@@ -1284,9 +1275,11 @@ mod tests {
             )
             .with_actions(vec![
                 ResourceActionDefinition::new(ResourceAction::PREVIEW, "Preview")
-                    .with_handler("preview_image"),
+                    .with_handler("preview_image")
+                    .with_requirements(content_requirements()),
                 ResourceActionDefinition::new(ResourceAction::THUMBNAIL, "Thumbnail")
-                    .with_handler("thumbnail_image"),
+                    .with_handler("thumbnail_image")
+                    .with_requirements(content_requirements()),
             ]),
             ResourceKindDefinition::new(
                 ResourceKind::try_new("asset:binary").unwrap(),
@@ -1302,9 +1295,11 @@ mod tests {
             )
             .with_actions(vec![
                 ResourceActionDefinition::new(ResourceAction::READ, "Read")
-                    .with_handler("read_document"),
+                    .with_handler("read_document")
+                    .with_requirements(content_requirements()),
                 ResourceActionDefinition::new("azvs.markdown.render", "Read Markdown")
                     .with_handler("render_markdown")
+                    .with_requirements(content_requirements())
                     .with_content_matcher(
                         crate::port::ResourceContentMatcher::new()
                             .with_mime_types(["text/markdown", "text/x-markdown"])
@@ -1312,6 +1307,7 @@ mod tests {
                     ),
                 ResourceActionDefinition::new("azvs.markdown.update", "Edit Markdown")
                     .with_handler("update_markdown")
+                    .with_requirements(content_requirements())
                     .with_access(crate::port::ResourceActionAccess::ReadWrite)
                     .with_content_matcher(
                         crate::port::ResourceContentMatcher::new()
@@ -1319,7 +1315,8 @@ mod tests {
                             .with_extensions([".md", ".markdown"]),
                     ),
                 ResourceActionDefinition::new(ResourceAction::PREVIEW, "Preview")
-                    .with_handler("preview_document"),
+                    .with_handler("preview_document")
+                    .with_requirements(content_requirements()),
             ]),
             ResourceKindDefinition::new(
                 ResourceKind::try_new("azvs:markdown").unwrap(),
@@ -1355,11 +1352,21 @@ mod tests {
         let service = ResourceService::new_with_action_executor(
             repository.clone(),
             blob_storage.clone(),
+            blob_storage.clone(),
             kind_registry,
             Arc::new(StaticResourceActionExecutor),
         );
 
         (service, repository, blob_storage)
+    }
+
+    fn content_requirements() -> asset_plugin_api::ResourceActionRequirements {
+        asset_plugin_api::ResourceActionRequirements {
+            resource: false,
+            metadata: false,
+            content: true,
+            content_delivery: asset_plugin_api::ResourceActionContentDelivery::Inline,
+        }
     }
 
     fn stream_upload_command(
@@ -1371,6 +1378,50 @@ mod tests {
         UploadResourceContentStream::new(name, storage_key, Box::pin(stream))
     }
 
+    #[test]
+    fn action_content_delivery_never_loads_unrequested_content() {
+        use asset_plugin_api::{ResourceActionContentDelivery, ResourceActionRequirements};
+
+        let without_content = ResourceActionDefinition::new("inspect", "Inspect");
+        assert_eq!(resolved_content_delivery(&without_content, 1), None);
+
+        let required = |delivery| {
+            ResourceActionDefinition::new("inspect", "Inspect").with_requirements(
+                ResourceActionRequirements {
+                    resource: false,
+                    metadata: false,
+                    content: true,
+                    content_delivery: delivery,
+                },
+            )
+        };
+        assert_eq!(
+            resolved_content_delivery(
+                &required(ResourceActionContentDelivery::Inline),
+                MAX_INLINE_PLUGIN_CONTENT_BYTES + 1,
+            ),
+            Some(ResourceActionContentDelivery::Inline)
+        );
+        assert_eq!(
+            resolved_content_delivery(&required(ResourceActionContentDelivery::Url), 1,),
+            Some(ResourceActionContentDelivery::Url)
+        );
+        assert_eq!(
+            resolved_content_delivery(
+                &required(ResourceActionContentDelivery::Auto),
+                MAX_INLINE_PLUGIN_CONTENT_BYTES,
+            ),
+            Some(ResourceActionContentDelivery::Inline)
+        );
+        assert_eq!(
+            resolved_content_delivery(
+                &required(ResourceActionContentDelivery::Auto),
+                MAX_INLINE_PLUGIN_CONTENT_BYTES + 1,
+            ),
+            Some(ResourceActionContentDelivery::Url)
+        );
+    }
+
     fn service_with_registry(
         kind_registry: Arc<dyn ResourceKindRegistry>,
     ) -> (
@@ -1380,7 +1431,12 @@ mod tests {
     ) {
         let repository = Arc::new(InMemoryResourceRepository::default());
         let blob_storage = Arc::new(InMemoryBlobStorage::default());
-        let service = ResourceService::new(repository.clone(), blob_storage.clone(), kind_registry);
+        let service = ResourceService::new(
+            repository.clone(),
+            blob_storage.clone(),
+            blob_storage.clone(),
+            kind_registry,
+        );
 
         (service, repository, blob_storage)
     }
@@ -1444,7 +1500,7 @@ mod tests {
         assert_eq!(content.size(), data.len() as u64);
         assert_eq!(content.mime_type(), Some("image/png"));
         assert_eq!(content.original_filename(), Some("image.png"));
-        assert_eq!(content.checksums(), &[checksum]);
+        assert_eq!(content.checksums().collect::<Vec<_>>(), vec![&checksum]);
         assert_eq!(blob_storage.get_sync(&key), Some(data));
     }
 
@@ -1637,6 +1693,28 @@ mod tests {
     }
 
     #[test]
+    fn upload_preserves_repository_error_when_compensation_delete_fails() {
+        let (service, repository, blob_storage) = service();
+        let key = StorageKey::new("assets/compensation.bin").unwrap();
+        repository.fail_next_save();
+        blob_storage.fail_next_delete();
+
+        let error = block_on(service.content().upload_resource_content_stream(
+            stream_upload_command("file", key.clone(), Bytes::from_static(b"data")),
+        ))
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            CoreError::Repository {
+                operation: "save",
+                ..
+            }
+        ));
+        assert!(blob_storage.contains(&key));
+    }
+
+    #[test]
     fn get_resource_content_reads_existing_blob() {
         let (service, _, _) = service();
         let key = StorageKey::new("assets/image.png").unwrap();
@@ -1712,8 +1790,9 @@ mod tests {
         assert_eq!(content.size(), 15);
         assert_eq!(content.mime_type(), Some("text/markdown"));
         assert_eq!(content.original_filename(), Some("note.md"));
-        assert_eq!(content.checksums().len(), 1);
-        assert_eq!(content.checksums()[0].kind(), ChecksumKind::Sha256);
+        let checksums = content.checksums().collect::<Vec<_>>();
+        assert_eq!(checksums.len(), 1);
+        assert_eq!(checksums[0].kind(), ChecksumKind::Sha256);
     }
 
     #[test]

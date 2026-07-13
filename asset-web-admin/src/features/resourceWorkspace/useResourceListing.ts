@@ -22,6 +22,8 @@ export function useResourceListing(initialDirectory: string) {
   const [resourceKinds, setResourceKinds] = React.useState(fallbackKinds);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const activeRequest = React.useRef<AbortController | null>(null);
+  const requestVersion = React.useRef(0);
 
   React.useEffect(() => {
     request<ResourceKindsResponse>("/resource-kinds")
@@ -30,6 +32,10 @@ export function useResourceListing(initialDirectory: string) {
   }, []);
 
   const reload = React.useCallback(async () => {
+    activeRequest.current?.abort();
+    const controller = new AbortController();
+    activeRequest.current = controller;
+    const version = ++requestVersion.current;
     setLoading(true);
     setError(null);
     try {
@@ -39,17 +45,26 @@ export function useResourceListing(initialDirectory: string) {
       if (filters.tag.trim()) params.set("tag", filters.tag.trim());
       if (filters.includeDeleted) params.set("include_deleted", "true");
       if (filters.kind && filters.includeDescendants) params.set("include_descendants", "true");
-      const result = await request<DirectoryListing>(`/directories?${params.toString()}`);
+      const result = await request<DirectoryListing>(`/directories?${params.toString()}`, { signal: controller.signal });
+      if (version !== requestVersion.current) return;
       setFolders(result.folders);
       setPage(result.resources);
     } catch (reason) {
+      if (controller.signal.aborted) return;
       setError(errorMessage(reason));
     } finally {
-      setLoading(false);
+      if (version === requestVersion.current) setLoading(false);
     }
   }, [currentDirectory, filters]);
 
-  React.useEffect(() => { void reload(); }, [reload]);
+  React.useEffect(() => {
+    activeRequest.current?.abort();
+    requestVersion.current += 1;
+    const timer = window.setTimeout(() => void reload(), 250);
+    return () => window.clearTimeout(timer);
+  }, [reload]);
+
+  React.useEffect(() => () => activeRequest.current?.abort(), []);
 
   function updateFilters(patch: Partial<Filters>) {
     setFilters((current) => ({ ...current, ...patch, page: patch.page ?? 1 }));

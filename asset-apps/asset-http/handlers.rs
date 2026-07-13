@@ -36,12 +36,6 @@ const DEFAULT_LIMIT: u32 = 50;
 const MAX_LIMIT: u32 = 100;
 const DEFAULT_CONTENT_TYPE: &str = "application/octet-stream";
 
-macro_rules! resource_call {
-    ($state:expr, $access:expr, $service:ident, $method:ident($($argument:expr),* $(,)?)) => {{
-        $state.secured(&$access.0).$method($($argument),*).await
-    }};
-}
-
 /// 健康检查。
 #[utoipa::path(
     get,
@@ -165,7 +159,7 @@ pub(crate) async fn create_resource(
         payload.directory,
         payload.metadata,
     )?;
-    let resource = resource_call!(state, access, commands, create_resource(command))?;
+    let resource = state.secured(&access.0).create_resource(command).await?;
 
     Ok((
         StatusCode::CREATED,
@@ -213,7 +207,7 @@ pub(crate) async fn list_resources(
         command = command.with_directory(clean_directory(Some(directory.as_str()), "")?);
     }
 
-    let page_result = resource_call!(state, access, commands, list_resources(command))?;
+    let page_result = state.secured(&access.0).list_resources(command).await?;
 
     Ok(Json(resource_page_response(
         state.service(),
@@ -261,7 +255,10 @@ pub(crate) async fn list_directory(
         resources_query = resources_query.with_q(q);
     }
 
-    let folders = resource_call!(state, access, commands, list_directories(&path))?
+    let folders = state
+        .secured(&access.0)
+        .list_directories(&path)
+        .await?
         .into_iter()
         .map(|directory| ResourceDirectoryResponse {
             path: directory.path().to_owned(),
@@ -269,7 +266,10 @@ pub(crate) async fn list_directory(
             name: directory.name().to_owned(),
         })
         .collect();
-    let resources = resource_call!(state, access, commands, list_resources(resources_query))?;
+    let resources = state
+        .secured(&access.0)
+        .list_resources(resources_query)
+        .await?;
 
     Ok(Json(DirectoryListingResponse {
         path,
@@ -297,12 +297,10 @@ pub(crate) async fn create_directory(
 ) -> Result<(StatusCode, Json<ResourceDirectoryResponse>), HttpError> {
     let payload = parse_json_payload(payload)?;
     let parent_path = clean_directory(Some(&payload.parent_path), "")?;
-    let directory = resource_call!(
-        state,
-        access,
-        commands,
-        create_directory(parent_path, payload.name)
-    )?;
+    let directory = state
+        .secured(&access.0)
+        .create_directory(parent_path, payload.name)
+        .await?;
     Ok((
         StatusCode::CREATED,
         Json(ResourceDirectoryResponse {
@@ -411,12 +409,10 @@ pub(crate) async fn upload_resource_content_stream(
         command = command.with_checksum(Checksum::sha256(sha256)?);
     }
 
-    let resource = resource_call!(
-        state,
-        access,
-        content,
-        upload_resource_content_stream(command)
-    )?;
+    let resource = state
+        .secured(&access.0)
+        .upload_resource_content_stream(command)
+        .await?;
 
     Ok((
         StatusCode::CREATED,
@@ -446,7 +442,7 @@ pub(crate) async fn find_resource(
 ) -> Result<Json<ResourceResponse>, HttpError> {
     let id = parse_resource_id(&id)?;
 
-    match resource_call!(state, access, commands, find_resource(&id))? {
+    match state.secured(&access.0).find_resource(&id).await? {
         Some(resource) => Ok(Json(resource_response(state.service(), &resource)?)),
         None => Err(HttpError::not_found(format!("resource `{id}` not found"))),
     }
@@ -502,7 +498,11 @@ pub(crate) async fn update_resource(
         command = command.with_restore(restore);
     }
 
-    match resource_call!(state, access, commands, update_resource(&id, command))? {
+    match state
+        .secured(&access.0)
+        .update_resource(&id, command)
+        .await?
+    {
         Some(resource) => Ok(Json(resource_response(state.service(), &resource)?)),
         None => Err(HttpError::not_found(format!("resource `{id}` not found"))),
     }
@@ -529,7 +529,7 @@ pub(crate) async fn get_resource_content(
     Path(id): Path<String>,
 ) -> Result<Response, HttpError> {
     let id = parse_resource_id(&id)?;
-    let Some(resource) = resource_call!(state, access, commands, find_resource(&id))? else {
+    let Some(resource) = state.secured(&access.0).find_resource(&id).await? else {
         return Err(HttpError::not_found(format!("resource `{id}` not found")));
     };
     let content_type = resource
@@ -538,7 +538,7 @@ pub(crate) async fn get_resource_content(
         .unwrap_or(DEFAULT_CONTENT_TYPE)
         .to_string();
 
-    match resource_call!(state, access, content, get_resource_content(&id))? {
+    match state.secured(&access.0).get_resource_content(&id).await? {
         Some(content) => Ok(binary_response(content_type, content)),
         None => Err(HttpError::not_found(format!(
             "resource content `{id}` not found"
@@ -567,7 +567,10 @@ pub(crate) async fn preview_resource(
     Path(id): Path<String>,
 ) -> Result<Response, HttpError> {
     let id = parse_resource_id(&id)?;
-    let Some(preview) = resource_call!(state, access, previews, preview_resource_stream(&id))?
+    let Some(preview) = state
+        .secured(&access.0)
+        .preview_resource_stream(&id)
+        .await?
     else {
         return Err(HttpError::not_found(format!("resource `{id}` not found")));
     };
@@ -600,7 +603,7 @@ pub(crate) async fn thumbnail_resource(
     Path(id): Path<String>,
 ) -> Result<Response, HttpError> {
     let id = parse_resource_id(&id)?;
-    let Some(thumbnail) = resource_call!(state, access, previews, thumbnail_resource(&id))? else {
+    let Some(thumbnail) = state.secured(&access.0).thumbnail_resource(&id).await? else {
         return Err(HttpError::not_found(format!("resource `{id}` not found")));
     };
 
@@ -633,7 +636,7 @@ pub(crate) async fn read_resource(
     Path(id): Path<String>,
 ) -> Result<Json<ResourceReadResponse>, HttpError> {
     let id = parse_resource_id(&id)?;
-    let Some(resource) = resource_call!(state, access, previews, read_resource(&id))? else {
+    let Some(resource) = state.secured(&access.0).read_resource(&id).await? else {
         return Err(HttpError::not_found(format!("resource `{id}` not found")));
     };
     Ok(Json(ResourceReadResponse::from(&resource)))
@@ -665,12 +668,10 @@ pub(crate) async fn execute_resource_action(
     let id = parse_resource_id(&id)?;
     let payload = payload.map_err(|error| HttpError::bad_request(error.to_string()))?;
     let command = ExecuteResourceAction::new(action).with_input(payload.input.clone());
-    let Some(output) = resource_call!(
-        state,
-        access,
-        actions,
-        execute_resource_action(&id, command)
-    )?
+    let Some(output) = state
+        .secured(&access.0)
+        .execute_resource_action(&id, command)
+        .await?
     else {
         return Err(HttpError::not_found(format!("resource `{id}` not found")));
     };
@@ -700,7 +701,7 @@ pub(crate) async fn soft_delete_resource(
 ) -> Result<Json<ResourceResponse>, HttpError> {
     let id = parse_resource_id(&id)?;
 
-    match resource_call!(state, access, commands, soft_delete_resource(&id))? {
+    match state.secured(&access.0).soft_delete_resource(&id).await? {
         Some(resource) => Ok(Json(resource_response(state.service(), &resource)?)),
         None => Err(HttpError::not_found(format!("resource `{id}` not found"))),
     }
@@ -728,7 +729,7 @@ pub(crate) async fn remove_resource(
 ) -> Result<StatusCode, HttpError> {
     let id = parse_resource_id(&id)?;
 
-    if resource_call!(state, access, commands, remove_resource(&id))? {
+    if state.secured(&access.0).remove_resource(&id).await? {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(HttpError::not_found(format!("resource `{id}` not found")))

@@ -74,13 +74,6 @@ pub enum ResourceActionExecutorKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ResourceActionExecutorSpec {
-    #[serde(rename = "type")]
-    kind: ResourceActionExecutorKind,
-    handler: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResourceActionRequirements {
     pub resource: bool,
     pub metadata: bool,
@@ -242,15 +235,6 @@ impl ResourceActionDefinition {
         self.executor
     }
 
-    pub fn executor_spec(&self) -> Option<ResourceActionExecutorSpec> {
-        self.handler
-            .as_ref()
-            .map(|handler| ResourceActionExecutorSpec {
-                kind: self.executor,
-                handler: handler.clone(),
-            })
-    }
-
     pub fn requirements(&self) -> &ResourceActionRequirements {
         &self.requires
     }
@@ -331,15 +315,7 @@ impl ResourceContentMatcher {
         self.mime_types.is_empty() && self.extensions.is_empty()
     }
 
-    pub fn matches(&self, mime_type: Option<&str>, storage_key: Option<&str>) -> bool {
-        self.matches_content(mime_type, storage_key)
-    }
-
     pub fn matches_content(&self, mime_type: Option<&str>, storage_key: Option<&str>) -> bool {
-        if self.mime_types.is_empty() && self.extensions.is_empty() {
-            return true;
-        }
-
         if self.is_empty() {
             return true;
         }

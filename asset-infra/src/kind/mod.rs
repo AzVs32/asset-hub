@@ -36,10 +36,10 @@ impl DefaultResourceKindRegistry {
     /// 从配置和插件 manifest 创建资源类型注册表。
     pub fn from_config(config: &KindRegistryConfig) -> Result<Self, CoreError> {
         let (definitions, _) = build_registries(config)?;
-        Self::from_definitions(definitions)
+        Ok(Self::from_definitions(definitions))
     }
 
-    fn from_definitions(definitions: Vec<ResourceKindDefinition>) -> Result<Self, CoreError> {
+    fn from_definitions(definitions: Vec<ResourceKindDefinition>) -> Self {
         let indices = definitions
             .iter()
             .enumerate()
@@ -61,7 +61,9 @@ impl DefaultResourceKindRegistry {
             .iter()
             .map(|definition| (definition.kind().clone(), Vec::new()))
             .collect::<HashMap<_, _>>();
-        for (kind, lineage) in &lineages {
+        for definition in &definitions {
+            let kind = definition.kind();
+            let lineage = &lineages[kind];
             for ancestor in lineage {
                 descendants
                     .get_mut(ancestor)
@@ -70,12 +72,12 @@ impl DefaultResourceKindRegistry {
             }
         }
 
-        Ok(Self {
+        Self {
             definitions,
             indices,
             lineages,
             descendants,
-        })
+        }
     }
 }
 
@@ -447,6 +449,19 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
+    fn descendants_follow_definition_order() {
+        let registry = DefaultResourceKindRegistry::new().unwrap();
+        let root = ResourceKind::try_new("core:file").unwrap();
+        let expected = registry
+            .definitions
+            .iter()
+            .filter(|definition| registry.lineages[definition.kind()].contains(&root))
+            .map(|definition| definition.kind().clone())
+            .collect::<Vec<_>>();
+        assert_eq!(registry.descendants(&root), expected);
+    }
+
+    #[test]
     fn registry_includes_builtin_and_configured_kinds() {
         let registry = DefaultResourceKindRegistry::from_config(&KindRegistryConfig {
             definitions: vec![ResourceKindConfig {
@@ -604,7 +619,7 @@ mod tests {
         assert!(
             image
                 .detect()
-                .matches(Some("image/png"), Some("images/pixel.png"))
+                .matches_content(Some("image/png"), Some("images/pixel.png"))
         );
         let file = registry
             .get(&ResourceKind::try_new("core:file").unwrap())
@@ -790,7 +805,7 @@ mod tests {
         assert!(epub.has_action("azvs.epub.render"));
         assert!(
             epub.detect()
-                .matches(Some("application/epub+zip"), Some("books/book.epub"))
+                .matches_content(Some("application/epub+zip"), Some("books/book.epub"))
         );
 
         let _ = std::fs::remove_dir_all(root);

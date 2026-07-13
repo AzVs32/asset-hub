@@ -331,7 +331,7 @@ fn build_payload(request: &ResourceActionRequest) -> PluginActionRequest {
             data: STANDARD.encode(content),
         })
     };
-    let content_ref_payload = if content.is_none() {
+    let content_ref_payload = if request.content().is_some() && content.is_none() {
         content_ref.map(|content| PluginContentReference {
             encoding: PluginContentEncoding::Url,
             url: content_ref_url(content.key().as_str()),
@@ -357,7 +357,6 @@ fn build_payload(request: &ResourceActionRequest) -> PluginActionRequest {
                 original_filename: content.original_filename().map(str::to_string),
                 checksum: content
                     .checksums()
-                    .iter()
                     .map(|checksum| PluginChecksum {
                         kind: checksum_kind_text(checksum.kind()).to_string(),
                         value: checksum.value().to_string(),

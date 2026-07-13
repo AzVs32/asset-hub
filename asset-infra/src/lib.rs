@@ -13,7 +13,7 @@ use action::DefaultResourceActionExecutor;
 use asset_core::service::{AuthorizationService, ResourceService, UserService};
 use asset_core::{
     CoreError, port::BlobStorage, port::ResourceActionExecutor, port::ResourceActionRegistry,
-    port::ResourceKindRegistry, port::ResourceRepository,
+    port::ResourceKindRegistry, port::ResourceRepository, port::StorageScanner,
 };
 use config::AssetInfraConfig;
 use kind::{DefaultResourceActionRegistry, DefaultResourceKindRegistry};
@@ -25,7 +25,7 @@ use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use storage::OpenDalBlobStorage;
+use storage::{FileSystemScanner, OpenDalBlobStorage};
 
 /// 基于默认本地实现组装好的基础设施对象。
 ///
@@ -38,6 +38,7 @@ pub struct AssetInfrastructure {
     identity_repository: Arc<SqliteIdentityRepository>,
     /// 对象存储适配器。
     blob_storage: Arc<OpenDalBlobStorage>,
+    storage_scanner: Arc<FileSystemScanner>,
     /// 资源类型注册表。
     resource_kind_registry: Arc<DefaultResourceKindRegistry>,
     /// 资源动作注册表。
@@ -53,6 +54,7 @@ impl AssetInfrastructure {
     pub async fn new(config: AssetInfraConfig) -> Result<Self, CoreError> {
         let config = config.normalized()?;
         let blob_storage = Arc::new(OpenDalBlobStorage::from_config(&config.blob)?);
+        let storage_scanner = Arc::new(FileSystemScanner::new(config.blob.fs_root.clone()));
         let resource_repository =
             Arc::new(SqliteResourceRepository::connect(&config.database).await?);
         let identity_repository = Arc::new(SqliteIdentityRepository::new(
@@ -74,6 +76,7 @@ impl AssetInfrastructure {
             resource_repository,
             identity_repository,
             blob_storage,
+            storage_scanner,
             resource_kind_registry,
             resource_action_registry,
             resource_action_executor,
@@ -116,6 +119,10 @@ impl AssetInfrastructure {
         self.blob_storage.clone()
     }
 
+    pub fn storage_scanner(&self) -> Arc<dyn StorageScanner> {
+        self.storage_scanner.clone()
+    }
+
     /// 返回资源类型注册表端口对象。
     pub fn resource_kind_registry(&self) -> Arc<dyn ResourceKindRegistry> {
         self.resource_kind_registry.clone()
@@ -141,6 +148,7 @@ impl AssetInfrastructure {
         ResourceService::new_with_action_registry_and_executor(
             self.resource_repository(),
             self.blob_storage(),
+            self.storage_scanner(),
             self.resource_kind_registry(),
             self.resource_action_registry(),
             self.resource_action_executor(),

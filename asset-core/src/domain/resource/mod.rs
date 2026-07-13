@@ -176,7 +176,7 @@ mod tests {
         let content = resource.content().unwrap();
         assert_eq!(content.mime_type(), Some("image/png"));
         assert_eq!(content.original_filename(), Some("image.png"));
-        assert_eq!(content.checksums(), &[checksum]);
+        assert_eq!(content.checksums().collect::<Vec<_>>(), vec![&checksum]);
         assert_eq!(resource.metadata().tags(), &["rust", "asset"]);
         assert_eq!(
             resource.metadata().kind_metadata().unwrap().data(),
@@ -258,6 +258,7 @@ mod tests {
             json!({}),
             json!({"schema_version": 1}),
             json!({"schema_version": 1, "summary": {}}),
+            json!({"schema_version": 1, "summary": {"tags": []}}),
             json!({
                 "schema_version": 1,
                 "summary": {"description": null, "tags": []},
@@ -295,5 +296,21 @@ mod tests {
         assert_eq!(checksum.kind(), ChecksumKind::Sha256);
         assert_eq!(checksum.value(), value);
         assert!(Checksum::sha256("not-sha256").is_err());
+    }
+
+    #[test]
+    fn content_rejects_duplicate_checksum_algorithms() {
+        let first = Checksum::sha256("a".repeat(64)).unwrap();
+        let second = Checksum::sha256("b".repeat(64)).unwrap();
+        let result = ResourceContent::builder(StorageKey::new("checksums/file").unwrap(), 1)
+            .with_checksums([first, second])
+            .build();
+        assert!(matches!(
+            result,
+            Err(ResourceError::InvalidFormat {
+                field: "content.checksum",
+                ..
+            })
+        ));
     }
 }

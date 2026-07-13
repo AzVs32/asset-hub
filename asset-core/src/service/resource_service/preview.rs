@@ -91,8 +91,8 @@ impl<'a> ResourcePreviewService<'a> {
         let Some(resource) = self.service.commands().find_resource(id).await? else {
             return Ok(None);
         };
-        let definition = self.service.require_kind_definition(resource.kind())?;
-        let declared_actions = self.service.actions_for_resource(&resource, definition);
+        self.service.require_kind_definition(resource.kind())?;
+        let declared_actions = self.service.actions_for_resource_kind(resource.kind());
         let Some(action) = declared_actions.iter().find(|action| {
             action.id().as_str() == crate::port::ResourceAction::PREVIEW
                 && self.service.action_matches_resource(action, &resource)

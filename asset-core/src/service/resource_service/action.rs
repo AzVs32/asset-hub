@@ -27,25 +27,20 @@ impl<'a> ResourceActionService<'a> {
         &self,
         resource: &Resource,
     ) -> Result<ResourceActions, CoreError> {
-        let definition = self.service.require_kind_definition(resource.kind())?;
-        let Some(content) = resource.content() else {
+        self.service.require_kind_definition(resource.kind())?;
+        if resource.content().is_none() {
             return Ok(ResourceActions::default());
-        };
+        }
         if resource.is_deleted() {
             return Ok(ResourceActions::default());
         }
 
-        let mime_type = content.mime_type();
-        let storage_key = Some(content.key().as_str());
-        let declared_actions = self.service.actions_for_resource(resource, definition);
-        let mut available_actions = Vec::new();
-        for action in &declared_actions {
-            if action.matches_content(mime_type, storage_key)
-                && self.service.action_matches_resource(action, resource)
-            {
-                available_actions.push(action.clone());
-            }
-        }
+        let mut available_actions = self
+            .service
+            .actions_for_resource_kind(resource.kind())
+            .into_iter()
+            .filter(|action| self.service.action_matches_resource(action, resource))
+            .collect::<Vec<_>>();
 
         if !available_actions
             .iter()
@@ -113,8 +108,8 @@ impl<'a> ResourceActionService<'a> {
         resource: &Resource,
         action_id: &crate::port::ResourceAction,
     ) -> Result<crate::port::ResourceActionDefinition, CoreError> {
-        let definition = self.service.require_kind_definition(resource.kind())?;
-        let declared_actions = self.service.actions_for_resource(resource, definition);
+        self.service.require_kind_definition(resource.kind())?;
+        let declared_actions = self.service.actions_for_resource_kind(resource.kind());
         declared_actions
             .into_iter()
             .find(|action| {
@@ -168,7 +163,10 @@ impl<'a> ResourceActionService<'a> {
             action_id,
             action.handler(),
             action.access(),
-            action.requirements().content_delivery,
+            resource
+                .content()
+                .and_then(|content| resolved_content_delivery(action, content.size()))
+                .unwrap_or(crate::port::ResourceActionContentDelivery::Auto),
             input,
             content,
         );

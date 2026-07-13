@@ -5,12 +5,14 @@ import { cx, iconButtonClass, inputClass, primaryButtonClass, secondaryButtonCla
 import type { CurrentUser } from "../../components/AuthGate";
 import type { Filters, Resource, ResourceDirectory, ResourceKindOption, ResourcePage } from "../../types";
 import { formatBytes, formatDate, hasAction, kindOptionLabel } from "../../utils/resourceDrafts";
+import { shouldCloseAfterCreate } from "./dialogBehavior.js";
 
 export function ResourceBrowser(props: {
   user: CurrentUser; page: ResourcePage; folders: ResourceDirectory[]; filters: Filters;
   updateFilters: (patch: Partial<Filters>) => void; setPage: (page: number) => void;
   currentDirectory: string; openDirectory: (path: string) => void; kinds: ResourceKindOption[];
-  selected: Resource | null; select: (resource: Resource) => void; loading: boolean; busy: boolean;
+  selected: Resource | null; select: (resource: Resource) => void; loading: boolean;
+  scanPending: boolean; folderPending: boolean;
   error: string | null; notice: string | null; clearNotice: () => void; reload: () => void;
   onScan: () => void; onUsers: () => void; onCreate: () => void; onUpload: () => void;
   onCreateFolder: (name: string) => Promise<unknown>; onLogout: () => Promise<void>;
@@ -26,7 +28,7 @@ export function ResourceBrowser(props: {
         <div><h1 className="text-lg font-bold">Asset Hub</h1><span className="text-xs text-slate-500">{props.page.total} resources</span></div></div>
       <div className="flex flex-wrap justify-end gap-2">
         <button className={iconButtonClass} onClick={props.reload}>{props.loading ? <Loader2 className="animate-spin" size={18} /> : <RefreshCcw size={18} />}</button>
-        {props.user.is_admin && <button className={secondaryButtonClass} onClick={props.onScan} disabled={props.busy}><Database size={18} />Scan</button>}
+        {props.user.is_admin && <button className={secondaryButtonClass} onClick={props.onScan} disabled={props.scanPending}><Database size={18} />Scan</button>}
         {props.user.is_admin && <button className={secondaryButtonClass} onClick={props.onUsers}><Users size={18} />Users</button>}
         <button className={secondaryButtonClass} onClick={() => { setFolderName(""); setFolderOpen(true); }}><FolderPlus size={18} />New folder</button>
         <button className={secondaryButtonClass} onClick={props.onCreate}><Plus size={18} />New</button>
@@ -55,7 +57,7 @@ export function ResourceBrowser(props: {
       {!props.loading && !props.folders.length && !props.page.items.length && <div className="grid min-h-48 place-items-center text-sm">No resources</div>}
     </div>
     <footer className="flex min-h-16 items-center justify-end gap-3 border-t px-6"><button className={iconButtonClass} disabled={props.filters.page <= 1} onClick={() => props.setPage(props.filters.page - 1)}><ChevronLeft size={18} /></button><span>{props.filters.page} / {totalPages}</span><button className={iconButtonClass} disabled={props.filters.page >= totalPages} onClick={() => props.setPage(props.filters.page + 1)}><ChevronRight size={18} /></button></footer>
-    {folderOpen && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50"><form className="grid w-full max-w-md gap-4 rounded-2xl bg-white p-6" onSubmit={(e) => { e.preventDefault(); void props.onCreateFolder(folderName).then(() => setFolderOpen(false)); }}><h2 className="text-xl font-bold">New folder</h2><input className={inputClass} value={folderName} onChange={(e) => setFolderName(e.target.value)} /><div className="flex justify-end gap-2"><button type="button" onClick={() => setFolderOpen(false)}>Cancel</button><button className={primaryButtonClass} disabled={props.busy || !folderName.trim()}>Create</button></div></form></div>}
+    {folderOpen && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50"><form className="grid w-full max-w-md gap-4 rounded-2xl bg-white p-6" onSubmit={(e) => { e.preventDefault(); void props.onCreateFolder(folderName).then((created) => { if (shouldCloseAfterCreate(created)) setFolderOpen(false); }); }}><h2 className="text-xl font-bold">New folder</h2><input className={inputClass} value={folderName} onChange={(e) => setFolderName(e.target.value)} /><div className="flex justify-end gap-2"><button type="button" onClick={() => setFolderOpen(false)}>Cancel</button><button className={primaryButtonClass} disabled={props.folderPending || !folderName.trim()}>Create</button></div></form></div>}
   </section>;
 }
 

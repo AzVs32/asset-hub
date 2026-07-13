@@ -545,7 +545,10 @@ mod tests {
         assert_eq!(restored_content.size(), 42);
         assert_eq!(restored_content.mime_type(), Some("image/png"));
         assert_eq!(restored_content.original_filename(), Some("image.png"));
-        assert_eq!(restored_content.checksums(), &[checksum]);
+        assert_eq!(
+            restored_content.checksums().collect::<Vec<_>>(),
+            vec![&checksum]
+        );
     }
 
     #[tokio::test]

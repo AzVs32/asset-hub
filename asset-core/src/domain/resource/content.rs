@@ -1,6 +1,7 @@
 use super::normalize_required_text;
 use crate::error::ResourceError;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// 内容描述类文本允许的最大字符数。
 const MAX_CONTENT_TEXT_LEN: usize = 255;
@@ -25,7 +26,7 @@ pub struct ResourceContent {
     /// 上传时的原始文件名。
     original_filename: Option<String>,
     /// 内容校验和集合。
-    checksum: Vec<Checksum>,
+    checksum: BTreeMap<ChecksumKind, Checksum>,
 }
 
 impl ResourceContent {
@@ -55,13 +56,8 @@ impl ResourceContent {
     }
 
     /// 返回内容校验和列表。
-    pub fn checksums(&self) -> &[Checksum] {
-        &self.checksum
-    }
-
-    /// 追加一个内容校验和。
-    pub fn add_checksum(&mut self, checksum: Checksum) {
-        self.checksum.push(checksum);
+    pub fn checksums(&self) -> impl Iterator<Item = &Checksum> {
+        self.checksum.values()
     }
 }
 
@@ -136,12 +132,23 @@ impl ResourceContentBuilder {
             })
             .transpose()?;
 
+        let mut checksums = BTreeMap::new();
+        for checksum in self.checksums {
+            let kind = checksum.kind();
+            if checksums.insert(kind, checksum).is_some() {
+                return Err(ResourceError::InvalidFormat {
+                    field: "content.checksum",
+                    reason: "duplicate checksum algorithm",
+                });
+            }
+        }
+
         Ok(ResourceContent {
             key: self.key,
             size: self.size,
             mime_type,
             original_filename,
-            checksum: self.checksums,
+            checksum: checksums,
         })
     }
 }
@@ -251,7 +258,7 @@ impl Checksum {
 }
 
 /// 内容校验和算法类型。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ChecksumKind {
     /// SHA-256 校验和。

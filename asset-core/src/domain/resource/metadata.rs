@@ -1,6 +1,6 @@
 use super::normalize_required_text;
 use crate::error::ResourceError;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 /// 当前资源元数据结构版本。
@@ -36,6 +36,7 @@ pub struct ResourceMetadata {
 #[serde(deny_unknown_fields)]
 pub struct ResourceSummaryMetadata {
     /// 资源描述。
+    #[serde(deserialize_with = "deserialize_required_option")]
     description: Option<String>,
     /// 资源标签。
     tags: Vec<String>,
@@ -81,43 +82,12 @@ impl ResourceMetadata {
     ///
     /// 只接受当前结构，不再兼容历史自由 JSON 格式。
     pub fn from_persisted_value(value: Value) -> Result<Self, ResourceError> {
-        match value {
-            Value::Object(mut object) => {
-                let schema_version = object
-                    .remove("schema_version")
-                    .ok_or(ResourceError::InvalidFormat {
-                        field: "metadata.schema_version",
-                        reason: "schema_version is required",
-                    })
-                    .and_then(parse_schema_version)?;
-                let summary = object
-                    .remove("summary")
-                    .ok_or(ResourceError::InvalidFormat {
-                        field: "metadata.summary",
-                        reason: "summary is required",
-                    })
-                    .and_then(parse_summary)?;
-                let kind = object.remove("kind").map(parse_kind).transpose()?.flatten();
-
-                if !object.is_empty() {
-                    return Err(ResourceError::InvalidFormat {
-                        field: "metadata",
-                        reason: "unexpected metadata fields",
-                    });
-                }
-
-                Self {
-                    schema_version,
-                    summary,
-                    kind,
-                }
-                .validate()
-            }
-            _ => Err(ResourceError::InvalidFormat {
+        serde_json::from_value::<Self>(value)
+            .map_err(|_| ResourceError::InvalidFormat {
                 field: "metadata",
-                reason: "metadata must be a JSON object",
-            }),
-        }
+                reason: "metadata does not match the current schema",
+            })
+            .and_then(Self::validate)
     }
 
     /// 返回元数据结构版本。
@@ -143,11 +113,6 @@ impl ResourceMetadata {
     /// 返回资源标签列表。
     pub fn tags(&self) -> &[String] {
         self.summary.tags()
-    }
-
-    /// 消费 `ResourceMetadata` 并返回 JSON 值。
-    pub fn into_value(self) -> Value {
-        serde_json::to_value(self).expect("resource metadata serialization should not fail")
     }
 
     /// 转换为 JSON 值。
@@ -347,12 +312,6 @@ impl ResourceMetadataBuilder {
         self
     }
 
-    /// 清空 kind/plugin 专属元数据。
-    pub fn without_kind_metadata(mut self) -> Self {
-        self.kind = None;
-        self
-    }
-
     /// 完成构建并执行元数据校验。
     pub fn build(self) -> Result<ResourceMetadata, ResourceError> {
         let summary = ResourceSummaryMetadata {
@@ -374,6 +333,14 @@ fn normalize_optional_metadata_text(
         .transpose()
 }
 
+fn deserialize_required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
+}
+
 fn normalize_tags(tags: Vec<String>) -> Result<Vec<String>, ResourceError> {
     if tags.len() > MAX_METADATA_TAGS {
         return Err(ResourceError::TooLong {
@@ -393,121 +360,4 @@ fn normalize_tags(tags: Vec<String>) -> Result<Vec<String>, ResourceError> {
     }
 
     Ok(normalized)
-}
-
-fn parse_schema_version(value: Value) -> Result<u32, ResourceError> {
-    match value {
-        Value::Number(value) => value
-            .as_u64()
-            .and_then(|value| u32::try_from(value).ok())
-            .ok_or(ResourceError::InvalidFormat {
-                field: "metadata.schema_version",
-                reason: "schema_version must be a positive integer",
-            }),
-        _ => Err(ResourceError::InvalidFormat {
-            field: "metadata.schema_version",
-            reason: "schema_version must be a number",
-        }),
-    }
-}
-
-fn parse_summary(value: Value) -> Result<ResourceSummaryMetadata, ResourceError> {
-    match value {
-        Value::Object(mut object) => {
-            let description = object
-                .remove("description")
-                .ok_or(ResourceError::InvalidFormat {
-                    field: "metadata.summary.description",
-                    reason: "description is required",
-                })
-                .and_then(parse_description)?;
-            let tags = object
-                .remove("tags")
-                .ok_or(ResourceError::InvalidFormat {
-                    field: "metadata.summary.tags",
-                    reason: "tags is required",
-                })
-                .and_then(parse_tags)?;
-
-            if !object.is_empty() {
-                return Err(ResourceError::InvalidFormat {
-                    field: "metadata.summary",
-                    reason: "unexpected summary fields",
-                });
-            }
-
-            ResourceSummaryMetadata::new(description, tags)
-        }
-        _ => Err(ResourceError::InvalidFormat {
-            field: "metadata.summary",
-            reason: "summary must be a JSON object",
-        }),
-    }
-}
-
-fn parse_kind(value: Value) -> Result<Option<KindMetadata>, ResourceError> {
-    match value {
-        Value::Null => Ok(None),
-        Value::Object(mut object) => {
-            let schema_id = object
-                .remove("schema_id")
-                .ok_or(ResourceError::InvalidFormat {
-                    field: "metadata.kind.schema_id",
-                    reason: "schema_id is required",
-                })?;
-            let data = object.remove("data").ok_or(ResourceError::InvalidFormat {
-                field: "metadata.kind.data",
-                reason: "data is required",
-            })?;
-
-            if !object.is_empty() {
-                return Err(ResourceError::InvalidFormat {
-                    field: "metadata.kind",
-                    reason: "unexpected kind metadata fields",
-                });
-            }
-
-            match schema_id {
-                Value::String(schema_id) => KindMetadata::new(schema_id, data).map(Some),
-                _ => Err(ResourceError::InvalidFormat {
-                    field: "metadata.kind.schema_id",
-                    reason: "schema_id must be a string",
-                }),
-            }
-        }
-        _ => Err(ResourceError::InvalidFormat {
-            field: "metadata.kind",
-            reason: "kind metadata must be a JSON object or null",
-        }),
-    }
-}
-
-fn parse_description(value: Value) -> Result<Option<String>, ResourceError> {
-    match value {
-        Value::Null => Ok(None),
-        Value::String(value) => Ok(Some(value)),
-        _ => Err(ResourceError::InvalidFormat {
-            field: "metadata.summary.description",
-            reason: "description must be a string or null",
-        }),
-    }
-}
-
-fn parse_tags(value: Value) -> Result<Vec<String>, ResourceError> {
-    match value {
-        Value::Array(tags) => tags
-            .into_iter()
-            .map(|value| match value {
-                Value::String(value) => Ok(value),
-                _ => Err(ResourceError::InvalidFormat {
-                    field: "metadata.summary.tags",
-                    reason: "tags must be an array of strings",
-                }),
-            })
-            .collect(),
-        _ => Err(ResourceError::InvalidFormat {
-            field: "metadata.summary.tags",
-            reason: "tags must be an array",
-        }),
-    }
 }

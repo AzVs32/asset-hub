@@ -714,11 +714,7 @@ impl From<&ResourceContent> for ResourceContentResponse {
             size: content.size(),
             mime_type: content.mime_type().map(str::to_string),
             original_filename: content.original_filename().map(str::to_string),
-            checksum: content
-                .checksums()
-                .iter()
-                .map(ChecksumResponse::from)
-                .collect(),
+            checksum: content.checksums().map(ChecksumResponse::from).collect(),
         }
     }
 }

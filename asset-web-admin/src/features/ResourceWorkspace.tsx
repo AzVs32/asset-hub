@@ -59,7 +59,8 @@ export function ResourceWorkspace({ initialDirectory = "", user, onLogout }: {
       user={user} page={listing.page} folders={listing.folders} filters={listing.filters}
       updateFilters={listing.updateFilters} setPage={(page) => listing.setFilters((current) => ({ ...current, page }))}
       currentDirectory={listing.currentDirectory} openDirectory={openDirectory} kinds={listing.resourceKinds}
-      selected={mutations.selected} select={mutations.select} loading={listing.loading} busy={mutations.busy}
+      selected={mutations.selected} select={mutations.select} loading={listing.loading}
+      scanPending={mutations.isPending("scan")} folderPending={mutations.isPending("create-folder")}
       error={listing.error} notice={mutations.notice} clearNotice={() => mutations.setNotice(null)}
       reload={() => void listing.reload()} onScan={() => void mutations.scan()} onUsers={() => setUserAdminOpen(true)}
       onCreate={() => { setCreateDraft(normalizeDraftKind({ ...emptyCreateDraft(), directory: listing.currentDirectory }, listing.resourceKinds)); setCreateOpen(true); }}
@@ -67,14 +68,14 @@ export function ResourceWorkspace({ initialDirectory = "", user, onLogout }: {
       onCreateFolder={mutations.createFolder} onLogout={onLogout}
     />
     <ResourceDetailPanel resource={mutations.selected} draft={mutations.draft} setDraft={mutations.setDraft}
-      resourceKinds={listing.resourceKinds} busy={mutations.busy} onSave={() => void mutations.save()}
+      resourceKinds={listing.resourceKinds} busy={mutations.selected ? [...mutations.pendingOperations].some((key) => key.includes(mutations.selected!.id)) : false} onSave={() => void mutations.save()}
       onRead={() => void mutations.read()} onPreview={() => mutations.setPreviewResource(mutations.selected)}
       onPluginAction={(action) => void mutations.runAction(action)} onDelete={() => void mutations.remove()}
       onRestore={() => void mutations.restore()} />
     {createOpen && <CreateResourceDialog draft={createDraft} setDraft={setCreateDraft} kinds={listing.resourceKinds}
-      busy={mutations.busy} onClose={() => setCreateOpen(false)} onSubmit={create} />}
+      busy={mutations.isPending("create")} onClose={() => setCreateOpen(false)} onSubmit={create} />}
     {uploadOpen && <UploadResourceDialog draft={uploadDraft} setDraft={setUploadDraft} kinds={listing.contentKinds}
-      directories={uploadDirectories} busy={mutations.busy} onClose={() => setUploadOpen(false)} onSubmit={upload} />}
+      directories={uploadDirectories} busy={mutations.isPending("upload")} onClose={() => setUploadOpen(false)} onSubmit={upload} />}
     <ResourcePreviewDialog reader={mutations.reader} onClose={() => mutations.setReader(null)} />
     <ResourcePreviewDialog resource={mutations.previewResource} onClose={() => mutations.setPreviewResource(null)} />
     <PluginActionPanel output={mutations.pluginOutput} onClose={() => mutations.setPluginOutput(null)} />

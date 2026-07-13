@@ -23,9 +23,8 @@ pub mod view;
 
 pub use action::{
     ResourceAction, ResourceActionAccess, ResourceActionAppliesTo, ResourceActionContentDelivery,
-    ResourceActionDefinition, ResourceActionExecutorKind, ResourceActionExecutorSpec,
-    ResourceActionOutputContract, ResourceActionRequirements, ResourceActionUi,
-    ResourceContentMatcher,
+    ResourceActionDefinition, ResourceActionExecutorKind, ResourceActionOutputContract,
+    ResourceActionRequirements, ResourceActionUi, ResourceContentMatcher,
 };
 pub use manifest::{
     ActionAppliesTo, ActionExecutor, ActionOutputContract, ActionRequirements, ActionUi,

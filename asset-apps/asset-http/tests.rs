@@ -8,6 +8,8 @@ use asset_infra::config::{
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
 use axum::{Extension, Router};
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::io::{Cursor, Write};
@@ -408,12 +410,13 @@ async fn builtin_pdf_preview_action_returns_url_media_view() {
 async fn image_resource_exposes_builtin_preview_and_thumbnail() {
     let app = test_app("image-preview-thumbnail").await;
     let png_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+yF9sAAAAASUVORK5CYII=";
+    let png_bytes = BASE64_STANDARD.decode(png_base64).unwrap();
 
     let (status, resource) = stream_upload(
         &app,
         "/resources/content/stream?name=pixel.png&kind=core%3Aimage&storage_key=images%2Fpixel.png",
         "image/png",
-        png_base64.as_bytes(),
+        &png_bytes,
     )
     .await;
 
@@ -422,6 +425,11 @@ async fn image_resource_exposes_builtin_preview_and_thumbnail() {
     assert!(has_action(&resource, "thumbnail"));
     assert!(has_action(&resource, "view_inline"));
     let id = resource["id"].as_str().unwrap();
+    let (content_status, content) =
+        empty_bytes_request(&app, Method::GET, &format!("/resources/{id}/content")).await;
+    assert_eq!(content_status, StatusCode::OK);
+    assert_eq!(content.as_ref(), png_bytes);
+    assert_eq!(&content[..8], b"\x89PNG\r\n\x1a\n");
 
     let preview = request(
         &app,
@@ -490,12 +498,13 @@ async fn builtin_large_image_preview_uses_url() {
 async fn builtin_image_thumbnail_action_stays_inline() {
     let app = test_app("image-thumbnail-inline").await;
     let png_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+yF9sAAAAASUVORK5CYII=";
+    let png_bytes = BASE64_STANDARD.decode(png_base64).unwrap();
 
     let (status, resource) = stream_upload(
         &app,
         "/resources/content/stream?name=pixel.png&kind=core%3Aimage&storage_key=images%2Fthumbnail-pixel.png",
         "image/png",
-        png_base64.as_bytes(),
+        &png_bytes,
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
@@ -696,6 +705,17 @@ async fn scan_storage_imports_existing_files_idempotently() {
     assert_eq!(scan["scanned"], 1);
     assert_eq!(scan["imported"], 0);
     assert_eq!(scan["skipped"], 1);
+
+    std::fs::remove_file(&file_path).unwrap();
+    let (status, audit) = json_request(&app, Method::POST, "/scan", json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(audit["errors"][0]["key"], "docs/readme.md");
+    assert!(
+        audit["errors"][0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("missing blob")
+    );
 }
 
 #[tokio::test]

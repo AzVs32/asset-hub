@@ -3,6 +3,7 @@
 //! 本模块负责对象内容的流式写入、导入和读取，包括校验和校验以及仓储保存失败后的对象清理补偿。
 
 use super::*;
+use std::collections::HashSet;
 
 /// 资源内容服务。
 ///
@@ -24,10 +25,14 @@ impl<'a> ResourceContentService<'a> {
         let directory = crate::domain::normalize_directory(command.directory)?;
         let files = self
             .service
-            .blob_storage
+            .storage_scanner
             .scan(&directory, command.include_sha256, MAX_SCAN_ENTRIES)
             .await?;
         let scanned = files.len() as u64;
+        let scanned_keys = files
+            .iter()
+            .map(|file| file.key.as_str().to_owned())
+            .collect::<HashSet<_>>();
         let mut resources = Vec::new();
         let mut errors = Vec::new();
         let mut skipped = 0_u64;
@@ -58,6 +63,26 @@ impl<'a> ResourceContentService<'a> {
                         error: error.to_string(),
                     });
                 }
+            }
+        }
+
+        let stored_resources = self
+            .service
+            .repository
+            .list(&ListResources::new(u32::MAX, 0).with_include_deleted(true))
+            .await?;
+        let prefix = (!directory.is_empty()).then(|| format!("{directory}/"));
+        for resource in stored_resources.items {
+            let Some(content) = resource.content() else {
+                continue;
+            };
+            let key = content.key().as_str();
+            let in_scope = prefix.as_ref().is_none_or(|prefix| key.starts_with(prefix));
+            if in_scope && !scanned_keys.contains(key) {
+                errors.push(ScanStorageError {
+                    key: key.to_owned(),
+                    error: "resource references a missing blob".to_owned(),
+                });
             }
         }
 

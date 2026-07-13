@@ -21,15 +21,6 @@ pub struct BlobWriteResult {
     bytes_written: u64,
 }
 
-/// 扫描存储时发现的对象。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ScannedBlob {
-    pub key: StorageKey,
-    pub size: u64,
-    pub mime_type: Option<String>,
-    pub sha256: Option<String>,
-}
-
 impl BlobWriteResult {
     /// 创建对象写入结果。
     pub fn new(bytes_written: u64) -> Self {
@@ -52,14 +43,6 @@ impl BlobWriteResult {
 /// 不应把具体基础设施错误类型暴露到端口签名中。
 #[async_trait::async_trait]
 pub trait BlobStorage: Send + Sync {
-    /// 枚举指定逻辑目录下的对象。实现必须阻止路径逃逸、跳过符号链接并限制遍历数量。
-    async fn scan(
-        &self,
-        directory: &str,
-        include_sha256: bool,
-        max_entries: usize,
-    ) -> Result<Vec<ScannedBlob>, CoreError>;
-
     /// 写入或覆盖指定存储键对应的对象内容。
     ///
     /// 该方法的语义是 upsert：对象不存在时创建，已存在时覆盖。是否允许覆盖由上层
@@ -69,29 +52,9 @@ pub trait BlobStorage: Send + Sync {
     /// 应返回 `CoreError::Storage`。
     async fn put(&self, key: &StorageKey, data: Bytes) -> Result<(), CoreError>;
 
-    /// 仅当对象不存在时写入内容。
-    ///
-    /// 该方法用于创建型业务流程，必须尽量使用底层存储的条件写入能力实现，避免
-    /// “先 exists 再 put” 带来的并发覆盖窗口。目标对象已经存在时应返回
-    /// `CoreError::Conflict`。
-    async fn put_if_absent(&self, key: &StorageKey, data: Bytes) -> Result<(), CoreError>;
-
-    /// 流式写入或覆盖指定存储键对应的对象内容。
-    ///
-    /// 该方法用于大文件上传，调用方不需要把完整文件一次性加载到内存中。实现方应逐块消费
-    /// `BlobByteStream`，并在 stream 或底层存储发生错误时尽量中止并清理未完成写入。
-    ///
-    /// 成功返回实际写入的字节数，上层 usecase 会把它记录到 `ResourceContent::size`。
-    async fn put_stream(
-        &self,
-        key: &StorageKey,
-        data: BlobByteStream,
-    ) -> Result<BlobWriteResult, CoreError>;
-
     /// 仅当对象不存在时流式写入内容。
     ///
-    /// 语义与 `put_if_absent` 一致，但内容以 chunk 流传入。目标对象已经存在时应返回
-    /// `CoreError::Conflict`。
+    /// 仅当目标对象不存在时写入 chunk 流；已存在时返回 `CoreError::Conflict`。
     async fn put_stream_if_absent(
         &self,
         key: &StorageKey,
@@ -114,10 +77,4 @@ pub trait BlobStorage: Send + Sync {
     /// 删除操作必须保持幂等：对象不存在时也应返回 `Ok(())`。这能让上层 usecase
     /// 在补偿删除、重复清理或任务重试时不需要额外区分对象是否已经被移除。
     async fn delete(&self, key: &StorageKey) -> Result<(), CoreError>;
-
-    /// 判断指定存储键对应的对象是否存在。
-    ///
-    /// 该方法只表达对象内容是否存在，不判断对应的 `Resource` 是否存在、是否软删除、
-    /// 或是否仍然引用该对象。
-    async fn exists(&self, key: &StorageKey) -> Result<bool, CoreError>;
 }

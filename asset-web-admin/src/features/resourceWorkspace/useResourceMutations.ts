@@ -12,7 +12,8 @@ type Dependencies = {
 export function useResourceMutations({ currentDirectory, reload, setError }: Dependencies) {
   const [selected, setSelected] = React.useState<Resource | null>(null);
   const [draft, setDraft] = React.useState<Draft | null>(null);
-  const [busy, setBusy] = React.useState(false);
+  const [pendingOperations, setPendingOperations] = React.useState<Set<string>>(() => new Set());
+  const pendingRef = React.useRef(new Set<string>());
   const [notice, setNotice] = React.useState<string | null>(null);
   const [reader, setReader] = React.useState<ResourceReadResponse | null>(null);
   const [previewResource, setPreviewResource] = React.useState<Resource | null>(null);
@@ -23,8 +24,10 @@ export function useResourceMutations({ currentDirectory, reload, setError }: Dep
     setDraft(resource ? toDraft(resource) : null);
   }
 
-  async function perform<T>(operation: () => Promise<T>, message?: string): Promise<T | undefined> {
-    setBusy(true); setError(null);
+  async function perform<T>(key: string, operation: () => Promise<T>, message?: string): Promise<T | undefined> {
+    if (pendingRef.current.has(key)) return undefined;
+    pendingRef.current.add(key);
+    setPendingOperations(new Set(pendingRef.current)); setError(null);
     try {
       const result = await operation();
       if (message) setNotice(message);
@@ -32,12 +35,13 @@ export function useResourceMutations({ currentDirectory, reload, setError }: Dep
     } catch (reason) {
       setError(errorMessage(reason));
     } finally {
-      setBusy(false);
+      pendingRef.current.delete(key);
+      setPendingOperations(new Set(pendingRef.current));
     }
   }
 
   async function create(draft: Draft) {
-    const created = await perform(() => request<Resource>("/resources", {
+    const created = await perform("create", () => request<Resource>("/resources", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: draft.name, directory: normalizeDirectoryInput(draft.directory), kind: draft.kind,
         status: draft.status, metadata: metadataFromDraft(draft) }),
@@ -47,7 +51,7 @@ export function useResourceMutations({ currentDirectory, reload, setError }: Dep
   }
 
   async function createFolder(name: string) {
-    const created = await perform(() => request<ResourceDirectory>("/directories", {
+    const created = await perform("create-folder", () => request<ResourceDirectory>("/directories", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ parent_path: currentDirectory, name }),
     }), "Folder created");
@@ -57,7 +61,7 @@ export function useResourceMutations({ currentDirectory, reload, setError }: Dep
 
   async function save() {
     if (!selected || !draft) return;
-    const updated = await perform(() => request<Resource>(`/resources/${selected.id}`, {
+    const updated = await perform(`save:${selected.id}`, () => request<Resource>(`/resources/${selected.id}`, {
       method: "PATCH", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: draft.name, directory: normalizeDirectoryInput(draft.directory), kind: draft.kind,
         status: draft.status, metadata: metadataFromDraft(draft) }),
@@ -67,13 +71,13 @@ export function useResourceMutations({ currentDirectory, reload, setError }: Dep
 
   async function remove() {
     if (!selected) return;
-    const deleted = await perform(() => request<Resource>(`/resources/${selected.id}`, { method: "DELETE" }), "Deleted");
+    const deleted = await perform(`delete:${selected.id}`, () => request<Resource>(`/resources/${selected.id}`, { method: "DELETE" }), "Deleted");
     if (deleted) { select(deleted); await reload(); }
   }
 
   async function restore() {
     if (!selected) return;
-    const restored = await perform(() => request<Resource>(`/resources/${selected.id}`, {
+    const restored = await perform(`restore:${selected.id}`, () => request<Resource>(`/resources/${selected.id}`, {
       method: "PATCH", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ restore: true, status: "active" }),
     }), "Restored");
@@ -82,13 +86,13 @@ export function useResourceMutations({ currentDirectory, reload, setError }: Dep
 
   async function read() {
     if (!selected) return;
-    const result = await perform(() => request<ResourceReadResponse>(`/resources/${selected.id}/read`));
+    const result = await perform(`read:${selected.id}`, () => request<ResourceReadResponse>(`/resources/${selected.id}/read`));
     if (result) setReader(result);
   }
 
   async function runAction(action: ResourceActionDefinition) {
     if (!selected) return;
-    const result = await perform(() => request<PluginActionOutput>(
+    const result = await perform(`action:${selected.id}:${action.id}`, () => request<PluginActionOutput>(
       `/resources/${selected.id}/actions/${encodeURIComponent(action.id)}`,
       { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ input: {} }) },
     ));
@@ -102,7 +106,7 @@ export function useResourceMutations({ currentDirectory, reload, setError }: Dep
       directory: normalizeDirectoryInput(draft.directory), metadata_json: JSON.stringify(metadataFromUpload(draft)),
       original_filename: file.name });
     if (draft.kind.trim()) params.set("kind", draft.kind.trim());
-    const uploaded = await perform(() => request<Resource>(`/resources/content/stream?${params}`, {
+    const uploaded = await perform("upload", () => request<Resource>(`/resources/content/stream?${params}`, {
       method: "PUT", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file,
     }), "Uploaded");
     if (uploaded) { select(uploaded); await reload(); }
@@ -111,7 +115,7 @@ export function useResourceMutations({ currentDirectory, reload, setError }: Dep
 
   async function scan() {
     setNotice(null);
-    const result = await perform(() => request<ScanStorageResponse>("/scan", {
+    const result = await perform("scan", () => request<ScanStorageResponse>("/scan", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path: currentDirectory, sha256: true }),
     }));
@@ -121,7 +125,8 @@ export function useResourceMutations({ currentDirectory, reload, setError }: Dep
     }
   }
 
-  return { selected, draft, setDraft, select, busy, notice, setNotice, reader, setReader,
+  const isPending = (key: string) => pendingOperations.has(key);
+  return { selected, draft, setDraft, select, pendingOperations, isPending, notice, setNotice, reader, setReader,
     previewResource, setPreviewResource, pluginOutput, setPluginOutput, create, createFolder,
     save, remove, restore, read, runAction, upload, scan };
 }
