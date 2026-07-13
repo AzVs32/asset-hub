@@ -36,7 +36,7 @@ impl Modify for CookieSecurity {
         auth::me,
         auth::create_user,
         auth::list_users,
-        auth::update_user_access,
+        auth::update_user_status,
         auth::grant_directory,
         auth::my_directory_grants,
         auth::revoke_directory,
@@ -94,7 +94,7 @@ impl Modify for CookieSecurity {
             ,auth::GrantDirectoryRequest
             ,auth::DirectoryGrantResponse
             ,auth::ManagedUserResponse
-            ,auth::UpdateUserAccessRequest
+            ,auth::UpdateUserStatusRequest
         )
     ),
     modifiers(&CookieSecurity),

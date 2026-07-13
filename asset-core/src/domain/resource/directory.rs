@@ -96,6 +96,16 @@ impl ResourceDirectory {
     pub fn is_root(&self) -> bool {
         self.path.is_empty()
     }
+
+    /// 判断当前目录是否为目标目录本身或其祖先目录。
+    pub fn contains(&self, target: &Self) -> bool {
+        self.is_root()
+            || self == target
+            || target
+                .path()
+                .strip_prefix(self.path())
+                .is_some_and(|suffix| suffix.starts_with('/'))
+    }
 }
 
 impl FromStr for ResourceDirectory {
@@ -219,6 +229,19 @@ mod tests {
             serde_json::from_str::<ResourceDirectory>(&json).unwrap(),
             directory
         );
+    }
+
+    #[test]
+    fn contains_obeys_directory_segment_boundaries() {
+        let root = ResourceDirectory::root();
+        let home = ResourceDirectory::from_path("users/alice").unwrap();
+        let child = ResourceDirectory::from_path("users/alice/photos").unwrap();
+        let sibling = ResourceDirectory::from_path("users/alice2").unwrap();
+
+        assert!(root.contains(&home));
+        assert!(home.contains(&home));
+        assert!(home.contains(&child));
+        assert!(!home.contains(&sibling));
     }
 
     #[test]

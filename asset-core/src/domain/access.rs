@@ -1,4 +1,4 @@
-use super::UserId;
+use super::{ResourceDirectory, UserId};
 use serde::{Deserialize, Serialize};
 
 /// 已通过外部入口认证的访问主体。
@@ -6,19 +6,22 @@ use serde::{Deserialize, Serialize};
 pub struct AccessContext {
     user_id: UserId,
     administrator: bool,
+    home_directory: ResourceDirectory,
 }
 
 impl AccessContext {
-    pub fn user(user_id: UserId) -> Self {
+    pub fn member(user_id: UserId, home_directory: ResourceDirectory) -> Self {
         Self {
             user_id,
             administrator: false,
+            home_directory,
         }
     }
     pub fn administrator(user_id: UserId) -> Self {
         Self {
             user_id,
             administrator: true,
+            home_directory: ResourceDirectory::root(),
         }
     }
     pub fn user_id(&self) -> UserId {
@@ -26,6 +29,9 @@ impl AccessContext {
     }
     pub fn is_administrator(&self) -> bool {
         self.administrator
+    }
+    pub fn home_directory(&self) -> &ResourceDirectory {
+        &self.home_directory
     }
 }
 
@@ -63,45 +69,29 @@ impl std::str::FromStr for DirectoryPermission {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DirectoryGrant {
     user_id: UserId,
-    directory: String,
+    directory: ResourceDirectory,
     permission: DirectoryPermission,
 }
 
 impl DirectoryGrant {
     pub fn new(
         user_id: UserId,
-        directory: impl Into<String>,
+        directory: ResourceDirectory,
         permission: DirectoryPermission,
-    ) -> Result<Self, crate::UserError> {
-        Ok(Self {
+    ) -> Self {
+        Self {
             user_id,
-            directory: normalize_directory(directory.into())?,
+            directory,
             permission,
-        })
+        }
     }
     pub fn user_id(&self) -> UserId {
         self.user_id
     }
-    pub fn directory(&self) -> &str {
+    pub fn directory(&self) -> &ResourceDirectory {
         &self.directory
     }
     pub fn permission(&self) -> DirectoryPermission {
         self.permission
     }
-}
-
-pub fn normalize_directory(value: impl Into<String>) -> Result<String, crate::UserError> {
-    let value = value.into();
-    let value = value.trim().trim_matches('/');
-    if value.is_empty() {
-        return Ok(String::new());
-    }
-    if value.len() > 1024
-        || value
-            .split('/')
-            .any(|p| p.is_empty() || p == "." || p == "..")
-    {
-        return Err(crate::UserError::InvalidDirectory);
-    }
-    Ok(value.to_owned())
 }

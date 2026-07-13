@@ -9,6 +9,7 @@ type ManagedUser = {
   username: string;
   role: "administrator" | "member";
   status: "active" | "disabled";
+  home_directory: string;
 };
 type DirectoryGrant = { directory: string; permission: "read" | "write" | "manage" };
 
@@ -17,7 +18,6 @@ export function UserAdministration({ currentUserId, onClose }: { currentUserId: 
   const [username, setUsername] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [directory, setDirectory] = React.useState("");
-  const [permission, setPermission] = React.useState("read");
   const [isAdmin, setIsAdmin] = React.useState(false);
   const [grantUser, setGrantUser] = React.useState<ManagedUser | null>(null);
   const [grants, setGrants] = React.useState<DirectoryGrant[]>([]);
@@ -69,18 +69,16 @@ export function UserAdministration({ currentUserId, onClose }: { currentUserId: 
     setBusy(true);
     setError(null);
     try {
-      const response = await request<{ user: { id: string } }>("/auth/users", {
+      await request<void>("/auth/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password, is_admin: isAdmin }),
+        body: JSON.stringify({
+          username,
+          password,
+          is_admin: isAdmin,
+          home_directory: isAdmin ? undefined : directory.trim(),
+        }),
       });
-      if (!isAdmin && directory.trim()) {
-        await request<void>("/auth/directory-grants", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ user_id: response.user.id, directory: directory.trim(), permission }),
-        });
-      }
       setUsername(""); setPassword(""); setDirectory(""); setIsAdmin(false);
       await loadUsers();
     } catch (cause) {
@@ -88,13 +86,13 @@ export function UserAdministration({ currentUserId, onClose }: { currentUserId: 
     } finally { setBusy(false); }
   }
 
-  async function updateUser(user: ManagedUser, patch: Partial<ManagedUser>) {
+  async function updateUserStatus(user: ManagedUser, status: ManagedUser["status"]) {
     setBusy(true); setError(null);
     try {
       await request<ManagedUser>(`/auth/users/${user.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role: patch.role ?? user.role, status: patch.status ?? user.status }),
+        body: JSON.stringify({ status }),
       });
       await loadUsers();
     } catch (cause) {
@@ -110,12 +108,10 @@ export function UserAdministration({ currentUserId, onClose }: { currentUserId: 
         {error && <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
         <div className="grid gap-2">
           {users.map((user) => (
-            <div className="grid items-center gap-3 rounded-xl border border-slate-200 p-3 sm:grid-cols-[minmax(140px,1fr)_10rem_9rem_auto]" key={user.id}>
-              <div><strong className="text-sm text-slate-900">{user.username}</strong>{user.id === currentUserId && <span className="ml-2 rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">You</span>}</div>
-              <select className={inputClass} value={user.role} disabled={busy || user.id === currentUserId} onChange={(event) => updateUser(user, { role: event.target.value as ManagedUser["role"] })}>
-                <option value="member">Member</option><option value="administrator">Administrator</option>
-              </select>
-              <select className={inputClass} value={user.status} disabled={busy || user.id === currentUserId} onChange={(event) => updateUser(user, { status: event.target.value as ManagedUser["status"] })}>
+            <div className="grid items-center gap-3 rounded-xl border border-slate-200 p-3 sm:grid-cols-[minmax(160px,1fr)_8rem_9rem_auto]" key={user.id}>
+              <div className="min-w-0"><strong className="text-sm text-slate-900">{user.username}</strong>{user.id === currentUserId && <span className="ml-2 rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">You</span>}<code className="mt-1 block truncate text-xs text-slate-500">{user.home_directory || "/"}</code></div>
+              <span className="text-sm capitalize text-slate-600">{user.role}</span>
+              <select className={inputClass} value={user.status} disabled={busy || user.id === currentUserId} onChange={(event) => updateUserStatus(user, event.target.value as ManagedUser["status"])}>
                 <option value="active">Active</option><option value="disabled">Disabled</option>
               </select>
               {user.role === "member" && <button className={secondaryButtonClass} type="button" onClick={() => void selectGrantUser(user)}>Access</button>}
@@ -124,6 +120,7 @@ export function UserAdministration({ currentUserId, onClose }: { currentUserId: 
         </div>
         {grantUser && <form className="grid gap-4 rounded-xl border border-slate-200 bg-slate-50 p-5" onSubmit={saveGrant}>
           <h3 className="font-semibold text-slate-900">Directory access for {grantUser.username}</h3>
+          <div className="grid grid-cols-[1fr_auto] items-center gap-3 rounded-lg border border-blue-100 bg-blue-50 p-3 text-sm"><code className="truncate text-blue-800">{grantUser.home_directory}</code><span className="rounded-full bg-blue-100 px-2 py-1 text-xs font-medium text-blue-700">Home · manage</span></div>
           {grants.map((grant) => <div className="grid grid-cols-[1fr_auto_auto] items-center gap-3 rounded-lg bg-white p-3 text-sm" key={grant.directory}><code className="truncate text-slate-700">{grant.directory || "/"}</code><span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600">{grant.permission}</span><button type="button" className={secondaryButtonClass} disabled={busy} onClick={() => void revokeGrant(grant)}>Revoke</button></div>)}
           <TextInput label="Directory" value={grantDirectory} onChange={setGrantDirectory} />
           <label className="grid gap-2"><span className="text-xs font-semibold text-slate-600">Permission</span><select className={inputClass} value={grantPermission} onChange={(event) => setGrantPermission(event.target.value as DirectoryGrant["permission"])}><option value="read">Read</option><option value="write">Write</option><option value="manage">Manage</option></select></label>
@@ -134,7 +131,7 @@ export function UserAdministration({ currentUserId, onClose }: { currentUserId: 
           <TextInput label="Username" value={username} onChange={setUsername} />
           <label className="grid gap-2"><span className="text-xs font-semibold text-slate-600">Password</span><input className={inputClass} type="password" minLength={10} value={password} onChange={(event) => setPassword(event.target.value)} /></label>
           <label className="flex items-center gap-2 text-sm font-medium text-slate-700"><input className="size-4 rounded border-slate-300 text-blue-600" type="checkbox" checked={isAdmin} onChange={(event) => setIsAdmin(event.target.checked)} />Administrator</label>
-          {!isAdmin && <><TextInput label="Initial directory" value={directory} onChange={setDirectory} /><label className="grid gap-2"><span className="text-xs font-semibold text-slate-600">Permission</span><select className={inputClass} value={permission} onChange={(event) => setPermission(event.target.value)}><option value="read">Read</option><option value="write">Write</option><option value="manage">Manage</option></select></label></>}
+          {!isAdmin && <TextInput label="Home directory" value={directory} onChange={setDirectory} />}
           <button className={primaryButtonClass} disabled={busy}>{busy && <Loader2 className="animate-spin" size={16} />}Create</button>
         </form>
         </div>

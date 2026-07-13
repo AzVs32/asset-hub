@@ -6,6 +6,7 @@ import type { CurrentUser } from "../../components/AuthGate";
 import type { Filters, Resource, ResourceDirectory, ResourceKindOption, ResourcePage } from "../../types";
 import { formatBytes, formatDate, hasAction, kindOptionLabel } from "../../utils/resourceDrafts";
 import { shouldCloseAfterCreate } from "./dialogBehavior.js";
+import { directoryBreadcrumbs, parentDirectoryWithinRoot } from "./directoryNavigation.js";
 
 export function ResourceBrowser(props: {
   user: CurrentUser; page: ResourcePage; folders: ResourceDirectory[]; filters: Filters;
@@ -20,7 +21,13 @@ export function ResourceBrowser(props: {
   const [folderOpen, setFolderOpen] = React.useState(false);
   const [folderName, setFolderName] = React.useState("");
   const totalPages = Math.max(1, Math.ceil(props.page.total / props.page.limit));
-  const breadcrumbs = directoryBreadcrumbs(props.currentDirectory);
+  const navigationRoot = props.user.is_admin ? "" : props.user.home_directory;
+  const breadcrumbs = directoryBreadcrumbs(
+    props.currentDirectory,
+    navigationRoot,
+    props.user.is_admin ? "Root" : "Home",
+  );
+  const parentDirectory = parentDirectoryWithinRoot(props.currentDirectory, navigationRoot);
 
   return <section className="flex min-w-0 flex-col border-r border-slate-200 bg-white" aria-label="Resources">
     <header className="flex min-h-20 items-center justify-between gap-4 border-b border-slate-200 px-6 py-4 max-md:flex-col max-md:items-stretch">
@@ -47,7 +54,7 @@ export function ResourceBrowser(props: {
     {props.notice && <div className="mx-4 mt-3 rounded-lg bg-emerald-50 px-4 py-3 text-sm text-emerald-700" onAnimationEnd={props.clearNotice}>{props.notice}</div>}
     <nav className="flex min-h-10 items-center gap-1 border-b px-6 text-sm">{breadcrumbs.map((crumb, index) => <React.Fragment key={crumb.path || "root"}>{index > 0 && <ChevronRight size={14} />}<button className="text-blue-600" onClick={() => props.openDirectory(crumb.path)}>{crumb.label}</button></React.Fragment>)}</nav>
     <div className="flex min-h-0 flex-1 flex-col overflow-auto">
-      {props.currentDirectory && <button className="grid min-h-11 grid-cols-[1.5rem_1fr] items-center gap-2 border-b bg-slate-50 px-6 text-left" onClick={() => props.openDirectory(parentDirectory(props.currentDirectory))}><Folder size={18} /><span>..</span></button>}
+      {parentDirectory !== null && <button className="grid min-h-11 grid-cols-[1.5rem_1fr] items-center gap-2 border-b bg-slate-50 px-6 text-left" onClick={() => props.openDirectory(parentDirectory)}><Folder size={18} /><span>..</span></button>}
       {props.folders.map((folder) => <button key={folder.path} className="grid min-h-11 grid-cols-[1.5rem_1fr] items-center gap-2 border-b bg-slate-50 px-6 text-left" onClick={() => props.openDirectory(folder.path)}><Folder size={18} /><span>{folder.name}</span></button>)}
       {props.page.items.map((resource) => <button key={resource.id} className={cx("grid min-h-20 grid-cols-[3.5rem_minmax(0,1fr)_auto] items-center gap-4 border-b px-6 py-3 text-left hover:bg-blue-50", props.selected?.id === resource.id && "bg-blue-50")} onClick={() => props.select(resource)}>
         {hasAction(resource, "thumbnail") ? <img className="size-14 rounded-lg object-cover" src={`${apiBase}/resources/${resource.id}/thumbnail`} alt="" /> : <div className="flex size-14 items-center justify-center rounded-lg border border-dashed"><FileIcon size={18} /></div>}
@@ -60,9 +67,3 @@ export function ResourceBrowser(props: {
     {folderOpen && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50"><form className="grid w-full max-w-md gap-4 rounded-2xl bg-white p-6" onSubmit={(e) => { e.preventDefault(); void props.onCreateFolder(folderName).then((created) => { if (shouldCloseAfterCreate(created)) setFolderOpen(false); }); }}><h2 className="text-xl font-bold">New folder</h2><input className={inputClass} value={folderName} onChange={(e) => setFolderName(e.target.value)} /><div className="flex justify-end gap-2"><button type="button" onClick={() => setFolderOpen(false)}>Cancel</button><button className={primaryButtonClass} disabled={props.folderPending || !folderName.trim()}>Create</button></div></form></div>}
   </section>;
 }
-
-function directoryBreadcrumbs(directory: string) {
-  const crumbs = [{ label: "Root", path: "" }]; const parts = directory.split("/").filter(Boolean);
-  parts.forEach((label, index) => crumbs.push({ label, path: parts.slice(0, index + 1).join("/") })); return crumbs;
-}
-function parentDirectory(directory: string) { const parts = directory.split("/").filter(Boolean); parts.pop(); return parts.join("/"); }

@@ -1320,7 +1320,7 @@ async fn stream_upload(
 }
 
 #[tokio::test]
-async fn authenticated_user_is_confined_to_granted_directory() {
+async fn member_starts_in_home_directory_and_uses_additional_grants() {
     let root = unique_temp_root("authenticated-directory-acl");
     let config = AssetInfraConfig {
         database: DatabaseConfig {
@@ -1378,13 +1378,18 @@ async fn authenticated_user_is_confined_to_granted_directory() {
     .await;
     assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
 
-    let (admin_cookie, _) = login_with_password(&app, "admin", "administrator-password").await;
+    let (admin_cookie, admin_login) =
+        login_with_password(&app, "admin", "administrator-password").await;
+    assert_eq!(admin_login["user"]["home_directory"], "");
     let response = request_with_cookie(
         &app,
         Method::POST,
         "/auth/users",
         json!({
-            "username": "alice", "password": "alice-secure-password", "is_admin": false
+            "username": "alice",
+            "password": "alice-secure-password",
+            "is_admin": false,
+            "home_directory": "teams/alice"
         }),
         &admin_cookie,
     )
@@ -1392,20 +1397,61 @@ async fn authenticated_user_is_confined_to_granted_directory() {
     assert_eq!(response.status(), StatusCode::CREATED);
     let alice = response_json(response).await;
     let alice_id = alice["user"]["id"].as_str().unwrap();
+    assert_eq!(alice["user"]["home_directory"], "teams/alice");
+    let teams = request_with_cookie(
+        &app,
+        Method::GET,
+        "/directories?path=teams",
+        json!({}),
+        &admin_cookie,
+    )
+    .await;
+    assert_eq!(teams.status(), StatusCode::OK);
+    let teams = response_json(teams).await;
+    assert!(
+        teams["folders"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|directory| directory["path"] == "teams/alice")
+    );
 
     let response = request_with_cookie(
         &app,
         Method::PUT,
         "/auth/directory-grants",
         json!({
-            "user_id": alice_id, "directory": "teams/alice", "permission": "write"
+            "user_id": alice_id, "directory": "shared", "permission": "write"
+        }),
+        &admin_cookie,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let response = request_with_cookie(
+        &app,
+        Method::PUT,
+        "/auth/directory-grants",
+        json!({
+            "user_id": alice_id, "directory": "shared/photos", "permission": "read"
+        }),
+        &admin_cookie,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let response = request_with_cookie(
+        &app,
+        Method::PUT,
+        "/auth/directory-grants",
+        json!({
+            "user_id": alice_id, "directory": "public", "permission": "read"
         }),
         &admin_cookie,
     )
     .await;
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
-    let (alice_cookie, _) = login_with_password(&app, "alice", "alice-secure-password").await;
+    let (alice_cookie, login) = login_with_password(&app, "alice", "alice-secure-password").await;
+    assert_eq!(login["user"]["home_directory"], "teams/alice");
     let scan = request_with_cookie(&app, Method::POST, "/scan", json!({}), &alice_cookie).await;
     assert_eq!(scan.status(), StatusCode::FORBIDDEN);
     let folder = request_with_cookie(
@@ -1453,11 +1499,44 @@ async fn authenticated_user_is_confined_to_granted_directory() {
     .await;
     assert_eq!(denied.status(), StatusCode::FORBIDDEN);
 
+    let shared_write = request_with_cookie(
+        &app,
+        Method::POST,
+        "/resources",
+        json!({ "name": "shared-write", "directory": "shared/photos" }),
+        &alice_cookie,
+    )
+    .await;
+    assert_eq!(shared_write.status(), StatusCode::CREATED);
+    let public_write = request_with_cookie(
+        &app,
+        Method::POST,
+        "/resources",
+        json!({ "name": "forbidden-public-write", "directory": "public" }),
+        &alice_cookie,
+    )
+    .await;
+    assert_eq!(public_write.status(), StatusCode::FORBIDDEN);
+
+    let delegated_grant = request_with_cookie(
+        &app,
+        Method::PUT,
+        "/auth/directory-grants",
+        json!({
+            "user_id": alice_id,
+            "directory": "teams/alice/shared",
+            "permission": "read"
+        }),
+        &alice_cookie,
+    )
+    .await;
+    assert_eq!(delegated_grant.status(), StatusCode::FORBIDDEN);
+
     let disabled = request_with_cookie(
         &app,
         Method::PATCH,
         &format!("/auth/users/{alice_id}"),
-        json!({ "role": "member", "status": "disabled" }),
+        json!({ "status": "disabled" }),
         &admin_cookie,
     )
     .await;

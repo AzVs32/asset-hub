@@ -1,7 +1,8 @@
 use asset_core::{
     CoreError,
     domain::{
-        DirectoryGrant, DirectoryPermission, User, UserId, UserRole, UserSnapshot, UserStatus,
+        DirectoryGrant, DirectoryPermission, ResourceDirectory, User, UserId, UserRole,
+        UserSnapshot, UserStatus,
     },
     port::{AccessPolicyRepository, UserRepository},
 };
@@ -22,10 +23,71 @@ impl SqliteIdentityRepository {
 
 #[async_trait::async_trait]
 impl UserRepository for SqliteIdentityRepository {
+    async fn create(&self, user: &User) -> Result<(), CoreError> {
+        let mut transaction = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| CoreError::repository("user.create.begin", error))?;
+
+        if !user.home_directory().is_root() {
+            let now = Utc::now().to_rfc3339();
+            let mut parent_path = String::new();
+            for name in user.home_directory().path().split('/') {
+                let path = if parent_path.is_empty() {
+                    name.to_owned()
+                } else {
+                    format!("{parent_path}/{name}")
+                };
+                sqlx::query(
+                    "INSERT INTO directories (path, parent_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(path) DO NOTHING",
+                )
+                .bind(&path)
+                .bind(&parent_path)
+                .bind(name)
+                .bind(&now)
+                .bind(&now)
+                .execute(&mut *transaction)
+                .await
+                .map_err(|error| CoreError::repository("user.create_home_directory", error))?;
+                parent_path = path;
+            }
+        }
+
+        sqlx::query("INSERT INTO users (id, username, password_hash, role, status, home_directory, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+            .bind(user.id().to_string())
+            .bind(user.username())
+            .bind(user.credential_hash())
+            .bind(role_to_str(user.role()))
+            .bind(status_to_str(user.status()))
+            .bind(user.home_directory().path())
+            .bind(user.created_at().to_rfc3339())
+            .bind(user.updated_at().to_rfc3339())
+            .execute(&mut *transaction)
+            .await
+            .map_err(|error| {
+                if error.to_string().contains("UNIQUE") {
+                    CoreError::conflict("username already exists")
+                } else {
+                    CoreError::repository("user.create", error)
+                }
+            })?;
+
+        transaction
+            .commit()
+            .await
+            .map_err(|error| CoreError::repository("user.create.commit", error))?;
+        Ok(())
+    }
+
     async fn save(&self, user: &User) -> Result<(), CoreError> {
-        sqlx::query("INSERT INTO users (id, username, password_hash, is_admin, role, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET username=excluded.username, password_hash=excluded.password_hash, is_admin=excluded.is_admin, role=excluded.role, status=excluded.status, updated_at=excluded.updated_at")
-            .bind(user.id().to_string()).bind(user.username()).bind(user.credential_hash()).bind(user.is_administrator()).bind(role_to_str(user.role())).bind(status_to_str(user.status()))
-            .bind(user.created_at().to_rfc3339()).bind(user.updated_at().to_rfc3339()).execute(&self.pool).await
+        sqlx::query("UPDATE users SET username = ?, password_hash = ?, status = ?, updated_at = ? WHERE id = ?")
+            .bind(user.username())
+            .bind(user.credential_hash())
+            .bind(status_to_str(user.status()))
+            .bind(user.updated_at().to_rfc3339())
+            .bind(user.id().to_string())
+            .execute(&self.pool).await
             .map_err(|error| CoreError::repository("user.save", error))?;
         Ok(())
     }
@@ -37,7 +99,7 @@ impl UserRepository for SqliteIdentityRepository {
     }
     async fn list(&self) -> Result<Vec<User>, CoreError> {
         let rows = sqlx::query(
-            "SELECT id, username, password_hash, role, status, created_at, updated_at FROM users ORDER BY username",
+            "SELECT id, username, password_hash, role, status, home_directory, created_at, updated_at FROM users ORDER BY username",
         )
         .fetch_all(&self.pool)
         .await
@@ -57,10 +119,10 @@ impl SqliteIdentityRepository {
     async fn find(&self, column: &'static str, value: String) -> Result<Option<User>, CoreError> {
         let sql = match column {
             "id" => {
-                "SELECT id, username, password_hash, role, status, created_at, updated_at FROM users WHERE id = ?"
+                "SELECT id, username, password_hash, role, status, home_directory, created_at, updated_at FROM users WHERE id = ?"
             }
             _ => {
-                "SELECT id, username, password_hash, role, status, created_at, updated_at FROM users WHERE username = ?"
+                "SELECT id, username, password_hash, role, status, home_directory, created_at, updated_at FROM users WHERE username = ?"
             }
         };
         let row = sqlx::query(sql)
@@ -76,7 +138,7 @@ impl SqliteIdentityRepository {
 impl AccessPolicyRepository for SqliteIdentityRepository {
     async fn save_grant(&self, grant: &DirectoryGrant) -> Result<(), CoreError> {
         sqlx::query("INSERT INTO directory_acl (directory_path, user_id, permission, created_at) VALUES (?, ?, ?, ?) ON CONFLICT(directory_path, user_id) DO UPDATE SET permission=excluded.permission")
-            .bind(grant.directory()).bind(grant.user_id().to_string()).bind(grant.permission().to_string()).bind(Utc::now().to_rfc3339())
+            .bind(grant.directory().path()).bind(grant.user_id().to_string()).bind(grant.permission().to_string()).bind(Utc::now().to_rfc3339())
             .execute(&self.pool).await.map_err(|e| CoreError::repository("access.save_grant", e))?;
         Ok(())
     }
@@ -87,10 +149,14 @@ impl AccessPolicyRepository for SqliteIdentityRepository {
             .map(|row| decode_grant(*user_id, row))
             .collect()
     }
-    async fn remove_grant(&self, user_id: &UserId, directory: &str) -> Result<(), CoreError> {
+    async fn remove_grant(
+        &self,
+        user_id: &UserId,
+        directory: &ResourceDirectory,
+    ) -> Result<(), CoreError> {
         sqlx::query("DELETE FROM directory_acl WHERE user_id = ? AND directory_path = ?")
             .bind(user_id.to_string())
-            .bind(directory)
+            .bind(directory.path())
             .execute(&self.pool)
             .await
             .map_err(|e| CoreError::repository("access.remove_grant", e))?;
@@ -99,26 +165,32 @@ impl AccessPolicyRepository for SqliteIdentityRepository {
     async fn effective_permission(
         &self,
         user_id: &UserId,
-        directory: &str,
+        directory: &ResourceDirectory,
     ) -> Result<Option<DirectoryPermission>, CoreError> {
-        let mut candidate = directory;
-        loop {
-            let value = sqlx::query_scalar::<_, String>(
-                "SELECT permission FROM directory_acl WHERE user_id = ? AND directory_path = ?",
-            )
-            .bind(user_id.to_string())
-            .bind(candidate)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| CoreError::repository("access.effective_permission", e))?;
-            if let Some(value) = value {
-                return Ok(Some(value.parse()?));
-            }
-            if candidate.is_empty() {
-                return Ok(None);
-            }
-            candidate = candidate.rsplit_once('/').map_or("", |(parent, _)| parent);
-        }
+        let values = sqlx::query_scalar::<_, String>(
+            r#"
+            SELECT permission
+            FROM directory_acl
+            WHERE user_id = ?
+              AND (
+                  directory_path = ''
+                  OR directory_path = ?
+                  OR substr(?, 1, length(directory_path) + 1) = directory_path || '/'
+              )
+            "#,
+        )
+        .bind(user_id.to_string())
+        .bind(directory.path())
+        .bind(directory.path())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| CoreError::repository("access.effective_permission", e))?;
+        values
+            .into_iter()
+            .map(|value| value.parse())
+            .collect::<Result<Vec<DirectoryPermission>, _>>()
+            .map(|permissions| permissions.into_iter().max())
+            .map_err(Into::into)
     }
 }
 
@@ -154,6 +226,10 @@ fn decode_user(row: sqlx::sqlite::SqliteRow) -> Result<User, CoreError> {
             row.try_get::<String, _>("status")
                 .map_err(|e| CoreError::repository("user.decode", e))?
                 .as_str(),
+        )?,
+        home_directory: ResourceDirectory::from_path(
+            row.try_get::<String, _>("home_directory")
+                .map_err(|e| CoreError::repository("user.decode", e))?,
         )?,
         created_at: timestamp("created_at")?,
         updated_at: timestamp("updated_at")?,
@@ -196,13 +272,14 @@ fn decode_grant(
     user_id: UserId,
     row: sqlx::sqlite::SqliteRow,
 ) -> Result<DirectoryGrant, CoreError> {
-    DirectoryGrant::new(
+    Ok(DirectoryGrant::new(
         user_id,
-        row.try_get::<String, _>("directory_path")
-            .map_err(|e| CoreError::repository("access.decode", e))?,
+        ResourceDirectory::from_path(
+            row.try_get::<String, _>("directory_path")
+                .map_err(|e| CoreError::repository("access.decode", e))?,
+        )?,
         row.try_get::<String, _>("permission")
             .map_err(|e| CoreError::repository("access.decode", e))?
             .parse()?,
-    )
-    .map_err(Into::into)
+    ))
 }

@@ -1,6 +1,7 @@
 use crate::error::HttpError;
 use asset_core::domain::{
-    AccessContext, DirectoryGrant, DirectoryPermission, User, UserId, UserRole, UserStatus,
+    AccessContext, DirectoryGrant, DirectoryPermission, ResourceDirectory, User, UserId, UserRole,
+    UserStatus,
 };
 use asset_core::service::{AuthorizationService, UserService};
 use axum::{
@@ -25,6 +26,8 @@ pub(crate) struct AuthenticatedUser {
     pub id: UserId,
     pub username: String,
     pub is_admin: bool,
+    #[schema(value_type = String)]
+    pub home_directory: ResourceDirectory,
     #[serde(skip)]
     credential_hash: String,
 }
@@ -35,6 +38,7 @@ impl From<User> for AuthenticatedUser {
             id: user.id(),
             username: user.username().to_owned(),
             is_admin: user.is_administrator(),
+            home_directory: user.home_directory().clone(),
             credential_hash: user.credential_hash().to_owned(),
         }
     }
@@ -45,7 +49,7 @@ impl AuthenticatedUser {
         if self.is_admin {
             AccessContext::administrator(self.id)
         } else {
-            AccessContext::user(self.id)
+            AccessContext::member(self.id, self.home_directory.clone())
         }
     }
 }
@@ -98,7 +102,12 @@ impl AuthBackend {
                 ));
             };
             self.users
-                .create(username, password, UserRole::Administrator)
+                .create(
+                    username,
+                    password,
+                    UserRole::Administrator,
+                    ResourceDirectory::root(),
+                )
                 .await?;
         }
         Ok(())
@@ -186,6 +195,8 @@ pub(crate) struct ManagedUserResponse {
     role: UserRole,
     #[schema(value_type = String)]
     status: UserStatus,
+    #[schema(value_type = String)]
+    home_directory: ResourceDirectory,
 }
 
 impl From<User> for ManagedUserResponse {
@@ -195,6 +206,7 @@ impl From<User> for ManagedUserResponse {
             username: user.username().to_owned(),
             role: user.role(),
             status: user.status(),
+            home_directory: user.home_directory().clone(),
         }
     }
 }
@@ -249,6 +261,7 @@ pub(crate) struct CreateUserRequest {
     password: String,
     #[serde(default)]
     is_admin: bool,
+    home_directory: Option<String>,
 }
 
 #[utoipa::path(
@@ -268,10 +281,18 @@ pub(crate) async fn create_user(
     } else {
         UserRole::Member
     };
+    let home_directory = if request.is_admin {
+        ResourceDirectory::root()
+    } else {
+        let path = request
+            .home_directory
+            .ok_or_else(|| HttpError::bad_request("home_directory is required for member users"))?;
+        ResourceDirectory::from_path(path).map_err(asset_core::CoreError::from)?
+    };
     let user = session
         .backend
         .users
-        .create(request.username, &request.password, role)
+        .create(request.username, &request.password, role, home_directory)
         .await?;
     Ok((StatusCode::CREATED, Json(MeResponse { user: user.into() })))
 }
@@ -299,9 +320,7 @@ pub(crate) async fn list_users(
 }
 
 #[derive(Deserialize, ToSchema)]
-pub(crate) struct UpdateUserAccessRequest {
-    #[schema(value_type = String)]
-    role: UserRole,
+pub(crate) struct UpdateUserStatusRequest {
     #[schema(value_type = String)]
     status: UserStatus,
 }
@@ -311,27 +330,25 @@ pub(crate) struct UpdateUserAccessRequest {
     path = "/auth/users/{id}",
     tag = "authentication",
     params(("id" = String, Path)),
-    request_body = UpdateUserAccessRequest,
+    request_body = UpdateUserStatusRequest,
     responses((status = 200, body = ManagedUserResponse), (status = 403), (status = 404))
 )]
-pub(crate) async fn update_user_access(
+pub(crate) async fn update_user_status(
     session: Session,
     axum::extract::Path(id): axum::extract::Path<UserId>,
-    Json(request): Json<UpdateUserAccessRequest>,
+    Json(request): Json<UpdateUserStatusRequest>,
 ) -> Result<Json<ManagedUserResponse>, HttpError> {
     let actor = require_user(&session)?;
     require_admin(&session)?;
-    if actor.id == id
-        && (request.role != UserRole::Administrator || request.status != UserStatus::Active)
-    {
+    if actor.id == id && request.status != UserStatus::Active {
         return Err(HttpError::bad_request(
-            "an administrator cannot disable or demote their own account",
+            "an administrator cannot disable their own account",
         ));
     }
     let user = session
         .backend
         .users
-        .update_access(&id, request.role, request.status)
+        .update_status(&id, request.status)
         .await?
         .ok_or_else(|| HttpError::not_found(format!("user `{id}` not found")))?;
     Ok(Json(user.into()))
@@ -358,8 +375,9 @@ pub(crate) async fn grant_directory(
     Json(request): Json<GrantDirectoryRequest>,
 ) -> Result<StatusCode, HttpError> {
     let actor = require_user(&session)?.access_context();
-    let grant = DirectoryGrant::new(request.user_id, request.directory, request.permission)
-        .map_err(asset_core::CoreError::from)?;
+    let directory =
+        ResourceDirectory::from_path(request.directory).map_err(asset_core::CoreError::from)?;
+    let grant = DirectoryGrant::new(request.user_id, directory, request.permission);
     session.backend.authorization.grant(&actor, grant).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -389,22 +407,17 @@ pub(crate) async fn my_directory_grants(
     axum::extract::Query(query): axum::extract::Query<DirectoryGrantQuery>,
 ) -> Result<Json<Vec<DirectoryGrantResponse>>, HttpError> {
     let user = require_user(&session)?;
-    if user.is_admin && query.user_id.is_none() {
-        return Ok(Json(vec![DirectoryGrantResponse {
-            directory: String::new(),
-            permission: DirectoryPermission::Manage,
-        }]));
-    }
+    let access = user.access_context();
     let grants = session
         .backend
         .authorization
-        .grants_for(&user.access_context(), query.user_id.unwrap_or(user.id))
+        .grants_for(&access, query.user_id.unwrap_or(user.id))
         .await?;
     Ok(Json(
         grants
             .into_iter()
             .map(|grant| DirectoryGrantResponse {
-                directory: grant.directory().to_owned(),
+                directory: grant.directory().path().to_owned(),
                 permission: grant.permission(),
             })
             .collect(),
@@ -430,10 +443,12 @@ pub(crate) async fn revoke_directory(
     axum::extract::Query(query): axum::extract::Query<RevokeDirectoryGrantQuery>,
 ) -> Result<StatusCode, HttpError> {
     let actor = require_user(&session)?.access_context();
+    let directory =
+        ResourceDirectory::from_path(query.directory).map_err(asset_core::CoreError::from)?;
     session
         .backend
         .authorization
-        .revoke(&actor, query.user_id, &query.directory)
+        .revoke(&actor, query.user_id, &directory)
         .await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -477,6 +492,10 @@ pub(crate) async fn authorize_request(
     let Some(directory) = directory else {
         // Resource-by-id and body-based commands are authorized inside their use case/handler.
         return next.run(request).await;
+    };
+    let directory = match ResourceDirectory::from_path(directory) {
+        Ok(directory) => directory,
+        Err(error) => return HttpError::from(asset_core::CoreError::from(error)).into_response(),
     };
     match session
         .backend

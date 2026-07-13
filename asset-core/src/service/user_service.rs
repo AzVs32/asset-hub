@@ -1,6 +1,6 @@
 use crate::{
     CoreError, UserError,
-    domain::{User, UserId, UserRole, UserStatus},
+    domain::{ResourceDirectory, User, UserId, UserRole, UserStatus},
     port::{PasswordHasher, UserRepository},
 };
 use std::sync::Arc;
@@ -26,6 +26,7 @@ impl UserService {
         username: impl Into<String>,
         password: &str,
         role: UserRole,
+        home_directory: ResourceDirectory,
     ) -> Result<User, CoreError> {
         if password.len() < 10 {
             return Err(UserError::WeakPassword.into());
@@ -39,8 +40,13 @@ impl UserService {
         {
             return Err(CoreError::conflict("username already exists"));
         }
-        let user = User::new(username, self.password_hasher.hash(password)?, role)?;
-        self.repository.save(&user).await?;
+        let user = User::new(
+            username,
+            self.password_hasher.hash(password)?,
+            role,
+            home_directory,
+        )?;
+        self.repository.create(&user).await?;
         Ok(user)
     }
     pub async fn authenticate(
@@ -66,16 +72,14 @@ impl UserService {
     pub async fn list(&self) -> Result<Vec<User>, CoreError> {
         self.repository.list().await
     }
-    pub async fn update_access(
+    pub async fn update_status(
         &self,
         id: &UserId,
-        role: UserRole,
         status: UserStatus,
     ) -> Result<Option<User>, CoreError> {
         let Some(mut user) = self.repository.find_by_id(id).await? else {
             return Ok(None);
         };
-        user.change_role(role);
         user.change_status(status);
         self.repository.save(&user).await?;
         Ok(Some(user))

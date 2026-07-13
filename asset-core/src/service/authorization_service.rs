@@ -1,6 +1,6 @@
 use crate::{
     CoreError,
-    domain::{AccessContext, DirectoryGrant, DirectoryPermission, UserId, normalize_directory},
+    domain::{AccessContext, DirectoryGrant, DirectoryPermission, ResourceDirectory, UserId},
     port::AccessPolicyRepository,
 };
 use std::sync::Arc;
@@ -17,23 +17,25 @@ impl AuthorizationService {
     pub async fn require(
         &self,
         context: &AccessContext,
-        directory: &str,
+        directory: &ResourceDirectory,
         permission: DirectoryPermission,
     ) -> Result<(), CoreError> {
-        let directory = normalize_directory(directory.to_owned())?;
         if context.is_administrator() {
+            return Ok(());
+        }
+        if context.home_directory().contains(directory) {
             return Ok(());
         }
         let effective = self
             .repository
-            .effective_permission(&context.user_id(), &directory)
+            .effective_permission(&context.user_id(), directory)
             .await?;
         if effective.is_some_and(|value| value >= permission) {
             Ok(())
         } else {
             Err(CoreError::forbidden(
                 permission_action(permission),
-                directory,
+                directory.path(),
             ))
         }
     }
@@ -43,8 +45,7 @@ impl AuthorizationService {
         grant: DirectoryGrant,
     ) -> Result<(), CoreError> {
         if !actor.is_administrator() {
-            self.require(actor, grant.directory(), DirectoryPermission::Manage)
-                .await?;
+            return Err(CoreError::forbidden("grant directory access", ""));
         }
         self.repository.save_grant(&grant).await
     }
@@ -62,14 +63,12 @@ impl AuthorizationService {
         &self,
         actor: &AccessContext,
         user_id: UserId,
-        directory: &str,
+        directory: &ResourceDirectory,
     ) -> Result<(), CoreError> {
-        let directory = normalize_directory(directory.to_owned())?;
         if !actor.is_administrator() {
-            self.require(actor, &directory, DirectoryPermission::Manage)
-                .await?;
+            return Err(CoreError::forbidden("revoke directory access", ""));
         }
-        self.repository.remove_grant(&user_id, &directory).await
+        self.repository.remove_grant(&user_id, directory).await
     }
 }
 
@@ -107,7 +106,11 @@ mod tests {
                 .cloned()
                 .collect())
         }
-        async fn remove_grant(&self, user_id: &UserId, directory: &str) -> Result<(), CoreError> {
+        async fn remove_grant(
+            &self,
+            user_id: &UserId,
+            directory: &ResourceDirectory,
+        ) -> Result<(), CoreError> {
             self.grants
                 .lock()
                 .unwrap()
@@ -117,61 +120,100 @@ mod tests {
         async fn effective_permission(
             &self,
             user_id: &UserId,
-            directory: &str,
+            directory: &ResourceDirectory,
         ) -> Result<Option<DirectoryPermission>, CoreError> {
             let grants = self.grants.lock().unwrap();
             Ok(grants
                 .iter()
-                .filter(|g| {
-                    g.user_id() == *user_id
-                        && (g.directory().is_empty()
-                            || directory == g.directory()
-                            || directory
-                                .strip_prefix(g.directory())
-                                .is_some_and(|suffix| suffix.starts_with('/')))
+                .filter(|grant| {
+                    grant.user_id() == *user_id && grant.directory().contains(directory)
                 })
-                .max_by_key(|g| g.directory().len())
-                .map(DirectoryGrant::permission))
+                .map(DirectoryGrant::permission)
+                .max())
         }
     }
 
     #[tokio::test]
-    async fn inherited_permission_obeys_rank_and_boundary() {
+    async fn home_and_additional_grants_obey_rank_and_boundary() {
         let repository = Arc::new(Policies::default());
         let service = AuthorizationService::new(repository.clone());
         let user = UserId::new();
         let admin = AccessContext::administrator(UserId::new());
+        let shared = ResourceDirectory::from_path("shared").unwrap();
         service
             .grant(
                 &admin,
-                DirectoryGrant::new(user, "teams/alice", DirectoryPermission::Write).unwrap(),
+                DirectoryGrant::new(user, shared.clone(), DirectoryPermission::Write),
             )
             .await
             .unwrap();
-        let actor = AccessContext::user(user);
+        service
+            .grant(
+                &admin,
+                DirectoryGrant::new(
+                    user,
+                    ResourceDirectory::from_path("shared/photos").unwrap(),
+                    DirectoryPermission::Read,
+                ),
+            )
+            .await
+            .unwrap();
+        let home = ResourceDirectory::from_path("users/alice").unwrap();
+        let actor = AccessContext::member(user, home.clone());
         assert!(
             service
-                .require(&actor, "teams/alice/docs", DirectoryPermission::Read)
+                .require(
+                    &actor,
+                    &ResourceDirectory::from_path("users/alice/docs").unwrap(),
+                    DirectoryPermission::Manage,
+                )
                 .await
                 .is_ok()
         );
         assert!(
             service
-                .require(&actor, "teams/alice/docs", DirectoryPermission::Write)
+                .require(
+                    &actor,
+                    &ResourceDirectory::from_path("shared/photos/raw").unwrap(),
+                    DirectoryPermission::Write,
+                )
                 .await
                 .is_ok()
         );
         assert!(
             service
-                .require(&actor, "teams/alice/docs", DirectoryPermission::Manage)
+                .require(
+                    &actor,
+                    &ResourceDirectory::from_path("shared/photos/raw").unwrap(),
+                    DirectoryPermission::Manage,
+                )
                 .await
                 .is_err()
         );
         assert!(
             service
-                .require(&actor, "teams/alice2", DirectoryPermission::Read)
+                .require(
+                    &actor,
+                    &ResourceDirectory::from_path("users/alice2").unwrap(),
+                    DirectoryPermission::Read,
+                )
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn only_administrators_can_change_grants() {
+        let service = AuthorizationService::new(Arc::new(Policies::default()));
+        let user = UserId::new();
+        let member =
+            AccessContext::member(user, ResourceDirectory::from_path("users/alice").unwrap());
+        let grant = DirectoryGrant::new(
+            UserId::new(),
+            ResourceDirectory::from_path("users/alice/shared").unwrap(),
+            DirectoryPermission::Read,
+        );
+
+        assert!(service.grant(&member, grant).await.is_err());
     }
 }

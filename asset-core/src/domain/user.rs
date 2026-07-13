@@ -1,3 +1,4 @@
+use super::ResourceDirectory;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -13,6 +14,7 @@ pub struct User {
     credential_hash: String,
     role: UserRole,
     status: UserStatus,
+    home_directory: ResourceDirectory,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -38,6 +40,7 @@ pub struct UserSnapshot {
     pub credential_hash: String,
     pub role: UserRole,
     pub status: UserStatus,
+    pub home_directory: ResourceDirectory,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -47,6 +50,7 @@ impl User {
         username: impl Into<String>,
         credential_hash: impl Into<String>,
         role: UserRole,
+        home_directory: ResourceDirectory,
     ) -> Result<Self, crate::UserError> {
         let now = Utc::now();
         Self::rehydrate(UserSnapshot {
@@ -55,6 +59,7 @@ impl User {
             credential_hash: credential_hash.into(),
             role,
             status: UserStatus::Active,
+            home_directory,
             created_at: now,
             updated_at: now,
         })
@@ -71,6 +76,7 @@ impl User {
             credential_hash: snapshot.credential_hash,
             role: snapshot.role,
             status: snapshot.status,
+            home_directory: snapshot.home_directory,
             created_at: snapshot.created_at,
             updated_at: snapshot.updated_at,
         })
@@ -91,6 +97,9 @@ impl User {
     pub fn status(&self) -> UserStatus {
         self.status
     }
+    pub fn home_directory(&self) -> &ResourceDirectory {
+        &self.home_directory
+    }
     pub fn created_at(&self) -> DateTime<Utc> {
         self.created_at
     }
@@ -102,10 +111,6 @@ impl User {
     }
     pub fn is_active(&self) -> bool {
         self.status == UserStatus::Active
-    }
-    pub fn change_role(&mut self, role: UserRole) {
-        self.role = role;
-        self.updated_at = Utc::now();
     }
     pub fn change_status(&mut self, status: UserStatus) {
         self.status = status;
@@ -132,8 +137,35 @@ mod tests {
     use super::*;
     #[test]
     fn user_normalizes_and_validates_username() {
-        let user = User::new(" alice ", "argon2-hash", UserRole::Member).unwrap();
+        let home = ResourceDirectory::from_path("users/alice").unwrap();
+        let user = User::new(" alice ", "argon2-hash", UserRole::Member, home.clone()).unwrap();
         assert_eq!(user.username(), "alice");
-        assert!(User::new("../alice", "hash", UserRole::Member).is_err());
+        assert_eq!(user.home_directory(), &home);
+        assert!(User::new("../alice", "hash", UserRole::Member, home).is_err());
+    }
+
+    #[test]
+    fn home_directory_is_independent_of_role() {
+        let shared_home = ResourceDirectory::from_path("shared").unwrap();
+        assert!(
+            User::new(
+                "admin",
+                "hash",
+                UserRole::Administrator,
+                ResourceDirectory::root()
+            )
+            .is_ok()
+        );
+        assert!(
+            User::new(
+                "admin",
+                "hash",
+                UserRole::Administrator,
+                shared_home.clone()
+            )
+            .is_ok()
+        );
+        assert!(User::new("alice", "hash", UserRole::Member, shared_home).is_ok());
+        assert!(User::new("alice", "hash", UserRole::Member, ResourceDirectory::root()).is_ok());
     }
 }

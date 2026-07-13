@@ -2,7 +2,9 @@ CREATE TABLE users (
     id TEXT PRIMARY KEY NOT NULL,
     username TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
-    is_admin INTEGER NOT NULL DEFAULT 0,
+    role TEXT NOT NULL CHECK (role IN ('administrator', 'member')),
+    status TEXT NOT NULL CHECK (status IN ('active', 'disabled')),
+    home_directory TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );

@@ -6,8 +6,6 @@ pub enum UserError {
     InvalidUsername,
     #[error("credential hash must not be empty")]
     InvalidCredentialHash,
-    #[error("invalid directory path")]
-    InvalidDirectory,
     #[error("permission must be read, write, or manage")]
     InvalidPermission,
     #[error("password must contain at least 10 characters")]

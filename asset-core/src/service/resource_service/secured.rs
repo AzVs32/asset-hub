@@ -23,7 +23,7 @@ impl<'a> SecuredResourceService<'a> {
     }
     async fn require(
         &self,
-        directory: &str,
+        directory: &ResourceDirectory,
         permission: DirectoryPermission,
     ) -> Result<(), CoreError> {
         self.authorization
@@ -46,8 +46,7 @@ impl<'a> SecuredResourceService<'a> {
     ) -> Result<Option<Resource>, CoreError> {
         let resource = self.service.commands().find_resource(id).await?;
         if let Some(resource) = &resource {
-            self.require(resource.directory().path(), permission)
-                .await?;
+            self.require(resource.directory(), permission).await?;
         }
         Ok(resource)
     }
@@ -58,13 +57,12 @@ impl<'a> SecuredResourceService<'a> {
     ) -> Result<Option<Resource>, CoreError> {
         let resource = self.service.repository.find_by_id(id).await?;
         if let Some(resource) = &resource {
-            self.require(resource.directory().path(), permission)
-                .await?;
+            self.require(resource.directory(), permission).await?;
         }
         Ok(resource)
     }
     pub async fn create_resource(&self, command: CreateResource) -> Result<Resource, CoreError> {
-        self.require(command.directory().path(), DirectoryPermission::Write)
+        self.require(command.directory(), DirectoryPermission::Write)
             .await?;
         self.service.commands().create_resource(command).await
     }
@@ -72,7 +70,7 @@ impl<'a> SecuredResourceService<'a> {
         &self,
         command: ImportResourceContent,
     ) -> Result<Option<Resource>, CoreError> {
-        self.require(command.directory().path(), DirectoryPermission::Write)
+        self.require(command.directory(), DirectoryPermission::Write)
             .await?;
         self.service
             .content()
@@ -83,7 +81,7 @@ impl<'a> SecuredResourceService<'a> {
         &self,
         command: UploadResourceContentStream,
     ) -> Result<Resource, CoreError> {
-        self.require(command.directory().path(), DirectoryPermission::Write)
+        self.require(command.directory(), DirectoryPermission::Write)
             .await?;
         self.service
             .content()
@@ -94,31 +92,31 @@ impl<'a> SecuredResourceService<'a> {
         self.resource_for(id, DirectoryPermission::Read).await
     }
     pub async fn list_resources(&self, query: ListResources) -> Result<ResourcePage, CoreError> {
-        self.require(
-            query.directory().map_or("", ResourceDirectory::path),
-            DirectoryPermission::Read,
-        )
-        .await?;
+        let directory = query.directory().cloned().unwrap_or_default();
+        self.require(&directory, DirectoryPermission::Read).await?;
         self.service.commands().list_resources(query).await
     }
     pub async fn list_directories(
         &self,
         directory: &str,
     ) -> Result<Vec<ResourceDirectory>, CoreError> {
-        self.require(directory, DirectoryPermission::Read).await?;
-        self.service.commands().list_directories(directory).await
+        let directory = ResourceDirectory::from_path(directory)?;
+        self.require(&directory, DirectoryPermission::Read).await?;
+        self.service
+            .commands()
+            .list_directories(directory.path())
+            .await
     }
     pub async fn create_directory(
         &self,
         parent_path: impl Into<String>,
         name: impl Into<String>,
     ) -> Result<ResourceDirectory, CoreError> {
-        let parent_path = crate::domain::normalize_directory(parent_path.into())?;
-        self.require(&parent_path, DirectoryPermission::Write)
-            .await?;
+        let parent = ResourceDirectory::from_path(parent_path.into())?;
+        self.require(&parent, DirectoryPermission::Write).await?;
         self.service
             .commands()
-            .create_directory(parent_path, name)
+            .create_directory(parent.path().to_owned(), name)
             .await
     }
     pub async fn update_resource(
@@ -134,8 +132,7 @@ impl<'a> SecuredResourceService<'a> {
             return Ok(None);
         }
         if let Some(directory) = command.directory() {
-            self.require(directory.path(), DirectoryPermission::Write)
-                .await?;
+            self.require(directory, DirectoryPermission::Write).await?;
         }
         self.service.commands().update_resource(id, command).await
     }
@@ -211,8 +208,7 @@ impl<'a> SecuredResourceService<'a> {
             crate::port::ResourceActionAccess::ReadOnly => DirectoryPermission::Read,
             crate::port::ResourceActionAccess::ReadWrite => DirectoryPermission::Write,
         };
-        self.require(resource.directory().path(), permission)
-            .await?;
+        self.require(resource.directory(), permission).await?;
         self.service
             .actions()
             .execute_resource_action(id, command)

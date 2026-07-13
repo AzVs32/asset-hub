@@ -4,7 +4,7 @@ import { request } from "../api";
 import { TextInput } from "./forms";
 import { inputClass, primaryButtonClass } from "./ui";
 
-export type CurrentUser = { id: string; username: string; is_admin: boolean };
+export type CurrentUser = { id: string; username: string; is_admin: boolean; home_directory: string };
 
 export function AuthGate({
   children,
@@ -12,15 +12,12 @@ export function AuthGate({
   children: (session: { user: CurrentUser; initialDirectory: string; logout: () => Promise<void> }) => React.ReactNode;
 }) {
   const [user, setUser] = React.useState<CurrentUser | null>(null);
-  const [initialDirectory, setInitialDirectory] = React.useState("");
   const [checking, setChecking] = React.useState(true);
   const [username, setUsername] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [authError, setAuthError] = React.useState<string | null>(null);
 
-  async function loadSession(currentUser: CurrentUser) {
-    const grants = await request<Array<{ directory: string; permission: string }>>("/auth/directory-grants");
-    setInitialDirectory(grants[0]?.directory ?? "");
+  function loadSession(currentUser: CurrentUser) {
     setUser(currentUser);
   }
 
@@ -41,7 +38,7 @@ export function AuthGate({
         body: JSON.stringify({ username, password }),
       });
       setPassword("");
-      await loadSession(response.user);
+      loadSession(response.user);
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "Login failed");
     }
@@ -50,7 +47,6 @@ export function AuthGate({
   async function logout() {
     await request<void>("/auth/logout", { method: "POST" });
     setUser(null);
-    setInitialDirectory("");
   }
 
   if (checking) return <main className="grid min-h-screen place-items-center bg-slate-100"><Loader2 className="animate-spin text-blue-600" aria-label="Checking session" /></main>;
@@ -71,5 +67,5 @@ export function AuthGate({
       </main>
     );
   }
-  return <>{children({ user, initialDirectory, logout })}</>;
+  return <>{children({ user, initialDirectory: user.home_directory, logout })}</>;
 }
