@@ -23,14 +23,11 @@ impl AuthorizationService {
         if context.is_administrator() {
             return Ok(());
         }
-        if context.home_directory().contains(directory) {
-            return Ok(());
-        }
         let effective = self
             .repository
             .effective_permission(&context.user_id(), directory)
             .await?;
-        if effective.is_some_and(|value| value >= permission) {
+        if effective.is_some_and(|value| value.allows(permission)) {
             Ok(())
         } else {
             Err(CoreError::forbidden(
@@ -76,7 +73,7 @@ fn permission_action(permission: DirectoryPermission) -> &'static str {
     match permission {
         DirectoryPermission::Read => "read",
         DirectoryPermission::Write => "write",
-        DirectoryPermission::Manage => "manage",
+        DirectoryPermission::Full => "full",
     }
 }
 
@@ -129,17 +126,25 @@ mod tests {
                     grant.user_id() == *user_id && grant.directory().contains(directory)
                 })
                 .map(DirectoryGrant::permission)
-                .max())
+                .reduce(DirectoryPermission::stronger))
         }
     }
 
     #[tokio::test]
-    async fn home_and_additional_grants_obey_rank_and_boundary() {
+    async fn explicit_grants_obey_capabilities_and_boundaries() {
         let repository = Arc::new(Policies::default());
         let service = AuthorizationService::new(repository.clone());
         let user = UserId::new();
         let admin = AccessContext::administrator(UserId::new());
         let shared = ResourceDirectory::from_path("shared").unwrap();
+        let workspace = ResourceDirectory::from_path("users/alice").unwrap();
+        service
+            .grant(
+                &admin,
+                DirectoryGrant::new(user, workspace.clone(), DirectoryPermission::Full),
+            )
+            .await
+            .unwrap();
         service
             .grant(
                 &admin,
@@ -158,14 +163,13 @@ mod tests {
             )
             .await
             .unwrap();
-        let home = ResourceDirectory::from_path("users/alice").unwrap();
-        let actor = AccessContext::member(user, home.clone());
+        let actor = AccessContext::member(user);
         assert!(
             service
                 .require(
                     &actor,
                     &ResourceDirectory::from_path("users/alice/docs").unwrap(),
-                    DirectoryPermission::Manage,
+                    DirectoryPermission::Full,
                 )
                 .await
                 .is_ok()
@@ -185,7 +189,7 @@ mod tests {
                 .require(
                     &actor,
                     &ResourceDirectory::from_path("shared/photos/raw").unwrap(),
-                    DirectoryPermission::Manage,
+                    DirectoryPermission::Full,
                 )
                 .await
                 .is_err()
@@ -206,8 +210,7 @@ mod tests {
     async fn only_administrators_can_change_grants() {
         let service = AuthorizationService::new(Arc::new(Policies::default()));
         let user = UserId::new();
-        let member =
-            AccessContext::member(user, ResourceDirectory::from_path("users/alice").unwrap());
+        let member = AccessContext::member(user);
         let grant = DirectoryGrant::new(
             UserId::new(),
             ResourceDirectory::from_path("users/alice/shared").unwrap(),
@@ -215,5 +218,36 @@ mod tests {
         );
 
         assert!(service.grant(&member, grant).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn member_root_access_requires_an_explicit_grant() {
+        let repository = Arc::new(Policies::default());
+        let service = AuthorizationService::new(repository.clone());
+        let user = UserId::new();
+        let member = AccessContext::member(user);
+        let root = ResourceDirectory::root();
+
+        assert!(
+            service
+                .require(&member, &root, DirectoryPermission::Read)
+                .await
+                .is_err()
+        );
+
+        repository
+            .save_grant(&DirectoryGrant::new(
+                user,
+                root.clone(),
+                DirectoryPermission::Full,
+            ))
+            .await
+            .unwrap();
+        assert!(
+            service
+                .require(&member, &root, DirectoryPermission::Full)
+                .await
+                .is_ok()
+        );
     }
 }

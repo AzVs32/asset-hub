@@ -1,6 +1,6 @@
 use asset_plugin_api::{
     MediaView, PluginActionOutput, PluginActionRequest, PluginContentEncoding, PluginResource,
-    PluginResourceContent, PluginView,
+    PluginResourceContent, PluginResourceMetadata, PluginResourceSummaryMetadata, PluginView,
 };
 use extism_pdk::{FnResult, plugin_fn};
 
@@ -51,7 +51,13 @@ mod tests {
     fn title_prefers_original_filename() {
         let resource = PluginResource {
             name: "fallback.mp4".to_string(),
-            metadata: json!({}),
+            metadata: PluginResourceMetadata {
+                schema_version: 1,
+                summary: PluginResourceSummaryMetadata {
+                    description: None,
+                    tags: Vec::new(),
+                },
+            },
             content: Some(PluginResourceContent {
                 key: "videos/file.mp4".to_string(),
                 size: 4,
@@ -82,7 +88,13 @@ mod tests {
                     "name": "demo.mp4",
                     "kind": "core:video",
                     "status": "active",
-                    "metadata": {},
+                    "metadata": {
+                        "schema_version": 1,
+                        "summary": {
+                            "description": null,
+                            "tags": []
+                        }
+                    },
                     "content": {
                         "key": "videos/demo.mp4",
                         "size": 4,

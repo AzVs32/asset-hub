@@ -23,17 +23,25 @@ impl SqliteIdentityRepository {
 
 #[async_trait::async_trait]
 impl UserRepository for SqliteIdentityRepository {
-    async fn create(&self, user: &User) -> Result<(), CoreError> {
+    async fn create(&self, user: &User, workspace_grant: &DirectoryGrant) -> Result<(), CoreError> {
+        if workspace_grant.user_id() != user.id()
+            || workspace_grant.directory() != user.workspace_directory()
+            || workspace_grant.permission() != DirectoryPermission::Full
+        {
+            return Err(CoreError::configuration(
+                "initial workspace grant must give the created user full resource permission",
+            ));
+        }
         let mut transaction = self
             .pool
             .begin()
             .await
             .map_err(|error| CoreError::repository("user.create.begin", error))?;
 
-        if !user.home_directory().is_root() {
+        if !user.workspace_directory().is_root() {
             let now = Utc::now().to_rfc3339();
             let mut parent_path = String::new();
-            for name in user.home_directory().path().split('/') {
+            for name in user.workspace_directory().path().split('/') {
                 let path = if parent_path.is_empty() {
                     name.to_owned()
                 } else {
@@ -49,18 +57,18 @@ impl UserRepository for SqliteIdentityRepository {
                 .bind(&now)
                 .execute(&mut *transaction)
                 .await
-                .map_err(|error| CoreError::repository("user.create_home_directory", error))?;
+                .map_err(|error| CoreError::repository("user.create_workspace_directory", error))?;
                 parent_path = path;
             }
         }
 
-        sqlx::query("INSERT INTO users (id, username, password_hash, role, status, home_directory, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+        sqlx::query("INSERT INTO users (id, username, password_hash, role, status, workspace_directory, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
             .bind(user.id().to_string())
             .bind(user.username())
             .bind(user.credential_hash())
             .bind(role_to_str(user.role()))
             .bind(status_to_str(user.status()))
-            .bind(user.home_directory().path())
+            .bind(user.workspace_directory().path())
             .bind(user.created_at().to_rfc3339())
             .bind(user.updated_at().to_rfc3339())
             .execute(&mut *transaction)
@@ -72,6 +80,17 @@ impl UserRepository for SqliteIdentityRepository {
                     CoreError::repository("user.create", error)
                 }
             })?;
+
+        sqlx::query(
+            "INSERT INTO directory_acl (directory_path, user_id, permission, created_at) VALUES (?, ?, ?, ?)",
+        )
+        .bind(workspace_grant.directory().path())
+        .bind(workspace_grant.user_id().to_string())
+        .bind(workspace_grant.permission().to_string())
+        .bind(Utc::now().to_rfc3339())
+        .execute(&mut *transaction)
+        .await
+        .map_err(|error| CoreError::repository("user.create_workspace_grant", error))?;
 
         transaction
             .commit()
@@ -99,7 +118,7 @@ impl UserRepository for SqliteIdentityRepository {
     }
     async fn list(&self) -> Result<Vec<User>, CoreError> {
         let rows = sqlx::query(
-            "SELECT id, username, password_hash, role, status, home_directory, created_at, updated_at FROM users ORDER BY username",
+            "SELECT id, username, password_hash, role, status, workspace_directory, created_at, updated_at FROM users ORDER BY username",
         )
         .fetch_all(&self.pool)
         .await
@@ -119,10 +138,10 @@ impl SqliteIdentityRepository {
     async fn find(&self, column: &'static str, value: String) -> Result<Option<User>, CoreError> {
         let sql = match column {
             "id" => {
-                "SELECT id, username, password_hash, role, status, home_directory, created_at, updated_at FROM users WHERE id = ?"
+                "SELECT id, username, password_hash, role, status, workspace_directory, created_at, updated_at FROM users WHERE id = ?"
             }
             _ => {
-                "SELECT id, username, password_hash, role, status, home_directory, created_at, updated_at FROM users WHERE username = ?"
+                "SELECT id, username, password_hash, role, status, workspace_directory, created_at, updated_at FROM users WHERE username = ?"
             }
         };
         let row = sqlx::query(sql)
@@ -189,7 +208,11 @@ impl AccessPolicyRepository for SqliteIdentityRepository {
             .into_iter()
             .map(|value| value.parse())
             .collect::<Result<Vec<DirectoryPermission>, _>>()
-            .map(|permissions| permissions.into_iter().max())
+            .map(|permissions| {
+                permissions
+                    .into_iter()
+                    .reduce(DirectoryPermission::stronger)
+            })
             .map_err(Into::into)
     }
 }
@@ -227,8 +250,8 @@ fn decode_user(row: sqlx::sqlite::SqliteRow) -> Result<User, CoreError> {
                 .map_err(|e| CoreError::repository("user.decode", e))?
                 .as_str(),
         )?,
-        home_directory: ResourceDirectory::from_path(
-            row.try_get::<String, _>("home_directory")
+        workspace_directory: ResourceDirectory::from_path(
+            row.try_get::<String, _>("workspace_directory")
                 .map_err(|e| CoreError::repository("user.decode", e))?,
         )?,
         created_at: timestamp("created_at")?,

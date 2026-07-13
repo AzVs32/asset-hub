@@ -4,7 +4,7 @@ import { request } from "../api";
 import { TextInput } from "./forms";
 import { inputClass, primaryButtonClass } from "./ui";
 
-export type CurrentUser = { id: string; username: string; is_admin: boolean; home_directory: string };
+export type CurrentUser = { id: string; username: string; is_admin: boolean; workspace_directory: string };
 
 export function AuthGate({
   children,
@@ -67,5 +67,5 @@ export function AuthGate({
       </main>
     );
   }
-  return <>{children({ user, initialDirectory: user.home_directory, logout })}</>;
+  return <>{children({ user, initialDirectory: user.workspace_directory, logout })}</>;
 }

@@ -816,7 +816,13 @@ mod tests {
                     "name": "book.epub",
                     "kind": "azvs:epub",
                     "status": "active",
-                    "metadata": {},
+                    "metadata": {
+                        "schema_version": 1,
+                        "summary": {
+                            "description": null,
+                            "tags": []
+                        }
+                    },
                     "content": {
                         "key": "books/book.epub",
                         "size": 1,

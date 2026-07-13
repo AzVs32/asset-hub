@@ -98,26 +98,18 @@ impl<'a> SecuredResourceService<'a> {
     }
     pub async fn list_directories(
         &self,
-        directory: &str,
+        directory: &ResourceDirectory,
     ) -> Result<Vec<ResourceDirectory>, CoreError> {
-        let directory = ResourceDirectory::from_path(directory)?;
-        self.require(&directory, DirectoryPermission::Read).await?;
-        self.service
-            .commands()
-            .list_directories(directory.path())
-            .await
+        self.require(directory, DirectoryPermission::Read).await?;
+        self.service.commands().list_directories(directory).await
     }
     pub async fn create_directory(
         &self,
-        parent_path: impl Into<String>,
+        parent: &ResourceDirectory,
         name: impl Into<String>,
     ) -> Result<ResourceDirectory, CoreError> {
-        let parent = ResourceDirectory::from_path(parent_path.into())?;
-        self.require(&parent, DirectoryPermission::Write).await?;
-        self.service
-            .commands()
-            .create_directory(parent.path().to_owned(), name)
-            .await
+        self.require(parent, DirectoryPermission::Write).await?;
+        self.service.commands().create_directory(parent, name).await
     }
     pub async fn update_resource(
         &self,
@@ -229,7 +221,7 @@ impl<'a> SecuredResourceService<'a> {
     }
     pub async fn remove_resource(&self, id: &ResourceId) -> Result<bool, CoreError> {
         if self
-            .stored_resource_for(id, DirectoryPermission::Manage)
+            .stored_resource_for(id, DirectoryPermission::Full)
             .await?
             .is_none()
         {

@@ -6,7 +6,8 @@ use asset_core::port::{
 use asset_plugin_api::{
     PluginActionOutput, PluginActionRequest, PluginChecksum, PluginContentBytes,
     PluginContentEncoding, PluginContentReference, PluginManifest, PluginPermissions,
-    PluginResource, PluginResourceContent, PluginRuntime, PluginView, ResourceActionCapability,
+    PluginResource, PluginResourceContent, PluginResourceMetadata, PluginResourceSummaryMetadata,
+    PluginRuntime, PluginView, ResourceActionCapability,
 };
 use async_trait::async_trait;
 use base64::Engine;
@@ -349,7 +350,13 @@ fn build_payload(request: &ResourceActionRequest) -> PluginActionRequest {
             name: resource.name().to_string(),
             kind: resource.kind().as_str().to_string(),
             status: status_text(resource.status()).to_string(),
-            metadata: resource.metadata().to_value(),
+            metadata: PluginResourceMetadata {
+                schema_version: resource.metadata().schema_version(),
+                summary: PluginResourceSummaryMetadata {
+                    description: resource.metadata().description().map(str::to_string),
+                    tags: resource.metadata().tags().to_vec(),
+                },
+            },
             content: content_ref.map(|content| PluginResourceContent {
                 key: content.key().as_str().to_string(),
                 size: content.size(),

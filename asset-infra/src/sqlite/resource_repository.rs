@@ -215,7 +215,7 @@ impl ResourceRepository for SqliteResourceRepository {
 
     async fn list_directories(
         &self,
-        parent_path: &str,
+        parent: &ResourceDirectory,
     ) -> Result<Vec<ResourceDirectory>, CoreError> {
         let rows = sqlx::query(
             r#"
@@ -225,7 +225,7 @@ impl ResourceRepository for SqliteResourceRepository {
             ORDER BY name ASC
             "#,
         )
-        .bind(parent_path)
+        .bind(parent.path())
         .fetch_all(&self.pool)
         .await
         .map_err(|error| CoreError::repository("list_directories", error))?;

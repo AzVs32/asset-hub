@@ -193,7 +193,13 @@ mod tests {
             "name": "demo.md",
             "kind": "core:document",
             "status": "active",
-            "metadata": {},
+            "metadata": {
+                "schema_version": 1,
+                "summary": {
+                    "description": null,
+                    "tags": []
+                }
+            },
             "content": {
                 "key": "documents/demo.md",
                 "size": 4,

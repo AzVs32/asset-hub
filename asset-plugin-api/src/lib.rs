@@ -35,7 +35,7 @@ pub use manifest::{
 };
 pub use request::{
     PluginActionRequest, PluginChecksum, PluginContentBytes, PluginContentReference,
-    PluginResource, PluginResourceContent,
+    PluginResource, PluginResourceContent, PluginResourceMetadata, PluginResourceSummaryMetadata,
 };
 pub use view::{
     BinaryUrlView, FormView, HtmlView, JsonView, MarkdownView, MediaView, PluginActionEffect,

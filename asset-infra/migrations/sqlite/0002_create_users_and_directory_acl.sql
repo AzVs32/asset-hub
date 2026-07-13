@@ -4,7 +4,7 @@ CREATE TABLE users (
     password_hash TEXT NOT NULL,
     role TEXT NOT NULL CHECK (role IN ('administrator', 'member')),
     status TEXT NOT NULL CHECK (status IN ('active', 'disabled')),
-    home_directory TEXT NOT NULL,
+    workspace_directory TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -12,7 +12,7 @@ CREATE TABLE users (
 CREATE TABLE directory_acl (
     directory_path TEXT NOT NULL,
     user_id TEXT NOT NULL,
-    permission TEXT NOT NULL CHECK (permission IN ('read', 'write', 'manage')),
+    permission TEXT NOT NULL CHECK (permission IN ('read', 'write', 'full')),
     created_at TEXT NOT NULL,
     PRIMARY KEY (directory_path, user_id),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE

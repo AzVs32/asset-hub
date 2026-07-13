@@ -73,10 +73,10 @@ pub enum ResourceActionExecutorKind {
     Plugin,
 }
 
+/// Optional object content required in addition to the resource snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ResourceActionRequirements {
-    pub resource: bool,
-    pub metadata: bool,
     pub content: bool,
     pub content_delivery: ResourceActionContentDelivery,
 }
@@ -84,8 +84,6 @@ pub struct ResourceActionRequirements {
 impl Default for ResourceActionRequirements {
     fn default() -> Self {
         Self {
-            resource: false,
-            metadata: false,
             content: false,
             content_delivery: ResourceActionContentDelivery::Auto,
         }
@@ -442,8 +440,6 @@ mod tests {
     fn action_requirements_are_the_only_content_requirement_state() {
         let action = ResourceActionDefinition::new("preview", "Preview").with_requirements(
             ResourceActionRequirements {
-                resource: true,
-                metadata: false,
                 content: true,
                 content_delivery: ResourceActionContentDelivery::Url,
             },
@@ -452,6 +448,8 @@ mod tests {
         let value = serde_json::to_value(action).unwrap();
         assert_eq!(value["requires"]["content"], true);
         assert_eq!(value["requires"]["content_delivery"], "url");
+        assert!(value["requires"].get("resource").is_none());
+        assert!(value["requires"].get("metadata").is_none());
         assert!(value.get("requires_content").is_none());
         assert!(value.get("content_delivery").is_none());
     }

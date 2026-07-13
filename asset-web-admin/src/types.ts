@@ -30,8 +30,6 @@ export type ResourceActionDefinition = {
   };
   access: "read_only" | "read_write";
   requires: {
-    resource: boolean;
-    metadata: boolean;
     content: boolean;
     content_delivery: "auto" | "inline" | "url";
   };
@@ -163,7 +161,7 @@ export type DirectoryListing = {
 };
 
 export type ScanStorageResponse = {
-  path: string;
+  scanned_directory: string;
   scanned: number;
   imported: number;
   skipped: number;

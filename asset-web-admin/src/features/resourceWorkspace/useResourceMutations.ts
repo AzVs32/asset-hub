@@ -117,7 +117,7 @@ export function useResourceMutations({ currentDirectory, reload, setError }: Dep
     setNotice(null);
     const result = await perform("scan", () => request<ScanStorageResponse>("/scan", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: currentDirectory, sha256: true }),
+      body: JSON.stringify({ directory: currentDirectory, sha256: true }),
     }));
     if (result) {
       setNotice(`Scanned ${result.scanned}, imported ${result.imported}, skipped ${result.skipped}`);

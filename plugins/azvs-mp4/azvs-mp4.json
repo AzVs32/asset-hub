@@ -30,12 +30,6 @@
           "extensions": [".mp4", ".m4v"]
         },
         "access": "read",
-        "requires": {
-          "resource": true,
-          "metadata": true,
-          "content": false,
-          "content_delivery": "url"
-        },
         "output": {
           "view": ["media", "html", "binary_url"]
         },

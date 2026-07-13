@@ -23,14 +23,29 @@ pub struct PluginResource {
     pub name: String,
     pub kind: String,
     pub status: String,
-    #[serde(default)]
-    pub metadata: Value,
+    pub metadata: PluginResourceMetadata,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content: Option<PluginResourceContent>,
     pub created_at: String,
     pub updated_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deleted_at: Option<String>,
+}
+
+/// Versioned core metadata exposed as part of a resource snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PluginResourceMetadata {
+    pub schema_version: u32,
+    pub summary: PluginResourceSummaryMetadata,
+}
+
+/// Core summary fields understood by both the host and plugins.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PluginResourceSummaryMetadata {
+    pub description: Option<String>,
+    pub tags: Vec<String>,
 }
 
 /// Resource content reference exposed to plugins.
@@ -64,4 +79,40 @@ pub struct PluginContentBytes {
 pub struct PluginContentReference {
     pub encoding: PluginContentEncoding,
     pub url: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn resource_metadata_has_an_explicit_schema() {
+        let metadata: PluginResourceMetadata = serde_json::from_value(json!({
+            "schema_version": 1,
+            "summary": {
+                "description": "Document",
+                "tags": ["docs"]
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(metadata.schema_version, 1);
+        assert_eq!(metadata.summary.description.as_deref(), Some("Document"));
+        assert_eq!(metadata.summary.tags, ["docs"]);
+    }
+
+    #[test]
+    fn resource_metadata_rejects_plugin_defined_fields() {
+        let result = serde_json::from_value::<PluginResourceMetadata>(json!({
+            "schema_version": 1,
+            "summary": {
+                "description": null,
+                "tags": []
+            },
+            "plugin_data": {}
+        }));
+
+        assert!(result.is_err());
+    }
 }

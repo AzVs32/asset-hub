@@ -57,15 +57,18 @@ Authentication endpoints:
 - `GET /auth/me`
 - `POST /auth/users` (administrator only)
 - `PUT /auth/directory-grants` (administrator only), with `user_id`,
-  `directory`, and `permission` (`read`, `write`, or `manage`)
-- `GET /auth/directory-grants` returns the current user's entry directories
+  `directory`, and resource `permission` (`read`, `write`, or `full`)
+- `GET /auth/directory-grants` returns the complete entry-directory set and
+  marks the user's shared-capable `workspace_directory`
 
 Directory grants inherit down the directory tree. Administrators bypass
-directory ACLs. Non-administrators must specify a permitted directory when
-listing resources. Direct resource reads, previews, downloads, actions, and
-updates are checked against the resource's directory. Creates, uploads, scans,
-moves, deletes, and plugin write actions are authorized inside the core use
-case after their target directory is known.
+directory ACLs. Every user is created with an explicit `full` grant for their
+workspace; the workspace itself does not imply permission. Non-administrators
+must specify a permitted directory when listing resources. Direct resource
+reads, previews, downloads, actions, and updates are checked against the
+resource's directory. Creates, uploads, scans, moves, deletes, and plugin write
+actions are authorized inside the core use case after their target directory is
+known.
 
 Storage scanning is an administrator-only maintenance operation. It skips
 symbolic links, stops after 100,000 filesystem entries, and does not calculate

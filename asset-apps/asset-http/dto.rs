@@ -1,6 +1,7 @@
 use asset_core::ResourceError;
 use asset_core::domain::{
-    Checksum, ChecksumKind, Resource, ResourceContent, ResourceMetadata, ResourceStatus,
+    Checksum, ChecksumKind, Resource, ResourceContent, ResourceDirectory, ResourceMetadata,
+    ResourceStatus,
 };
 use asset_core::port::{
     ResourceActionAccess, ResourceActionContentDelivery, ResourceActionDefinition,
@@ -39,7 +40,8 @@ pub(crate) struct CreateResourceRequest {
     /// 可选初始状态：`active` 或 `archived`。
     pub(crate) status: Option<String>,
     /// 资源所在逻辑目录；根目录为空字符串。
-    pub(crate) directory: Option<String>,
+    #[schema(value_type = Option<String>)]
+    pub(crate) directory: Option<ResourceDirectory>,
     /// 可选资源元数据。
     pub(crate) metadata: Option<ResourceMetadataRequest>,
 }
@@ -49,7 +51,8 @@ pub(crate) struct CreateResourceRequest {
 pub(crate) struct CreateDirectoryRequest {
     /// 父目录路径，根目录为空字符串。
     #[serde(default)]
-    pub(crate) parent_path: String,
+    #[schema(value_type = String)]
+    pub(crate) parent_path: ResourceDirectory,
     /// 新目录名称，只允许单个路径段。
     pub(crate) name: String,
 }
@@ -71,7 +74,8 @@ pub(crate) struct ListResourcesQuery {
     /// 可选名称模糊搜索关键字。
     pub(crate) q: Option<String>,
     /// 可选逻辑目录过滤；根目录为空字符串。
-    pub(crate) directory: Option<String>,
+    #[param(value_type = Option<String>)]
+    pub(crate) directory: Option<ResourceDirectory>,
     /// 是否包含软删除资源。
     pub(crate) include_deleted: Option<bool>,
 }
@@ -81,7 +85,8 @@ pub(crate) struct ListResourcesQuery {
 #[into_params(parameter_in = Query)]
 pub(crate) struct ListDirectoryQuery {
     /// 当前目录路径；根目录为空字符串。
-    pub(crate) path: Option<String>,
+    #[param(value_type = Option<String>)]
+    pub(crate) path: Option<ResourceDirectory>,
     /// 资源页码，从 1 开始。
     pub(crate) page: Option<u32>,
     /// 每页资源数量。
@@ -119,7 +124,8 @@ pub(crate) struct UpdateResourceRequest {
     /// 可选新状态：`active` 或 `archived`。
     pub(crate) status: Option<String>,
     /// 可选新逻辑目录；根目录为空字符串。
-    pub(crate) directory: Option<String>,
+    #[schema(value_type = Option<String>)]
+    pub(crate) directory: Option<ResourceDirectory>,
     /// 可选新资源元数据；会整体替换旧元数据。
     pub(crate) metadata: Option<ResourceMetadataRequest>,
     /// 是否恢复软删除资源。
@@ -136,7 +142,9 @@ pub(crate) struct UploadResourceContentStreamQuery {
     /// 可选对象存储键；未提供时由 `directory` 和原始文件名生成。
     pub(crate) storage_key: Option<String>,
     /// 可选上传目录；仅在未提供 `storage_key` 时使用。
-    pub(crate) directory: Option<String>,
+    #[param(value_type = Option<String>)]
+    #[schema(value_type = Option<String>)]
+    pub(crate) directory: Option<ResourceDirectory>,
     /// 可选资源类型。
     pub(crate) kind: Option<String>,
     /// 可选初始状态：`active` 或 `archived`。
@@ -152,12 +160,14 @@ pub(crate) struct UploadResourceContentStreamQuery {
 /// 扫描本地对象存储目录请求。
 #[derive(Debug, Default, Deserialize, ToSchema)]
 #[schema(example = json!({
-    "path": "uploads",
+    "directory": "uploads",
     "sha256": true
 }))]
 pub(crate) struct ScanStorageRequest {
     /// 可选扫描子目录；未提供时扫描整个对象存储根目录。
-    pub(crate) path: Option<String>,
+    #[serde(default)]
+    #[schema(value_type = String)]
+    pub(crate) directory: ResourceDirectory,
     /// 是否计算并保存 SHA-256。默认开启。
     pub(crate) sha256: Option<bool>,
 }
@@ -267,8 +277,6 @@ pub(crate) struct ResourceActionExecutorResponse {
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub(crate) struct ResourceActionRequirementsResponse {
-    pub(crate) resource: bool,
-    pub(crate) metadata: bool,
     pub(crate) content: bool,
     pub(crate) content_delivery: String,
 }
@@ -314,8 +322,6 @@ impl From<&ResourceActionDefinition> for ResourceActionDefinitionResponse {
             },
             access: action_access_text(action.access()).to_string(),
             requires: ResourceActionRequirementsResponse {
-                resource: action.requirements().resource,
-                metadata: action.requirements().metadata,
                 content: action.requirements().content,
                 content_delivery: content_delivery_text(action.requirements().content_delivery)
                     .to_string(),
@@ -456,7 +462,8 @@ pub(crate) struct ResourceResponse {
     /// 资源展示名。
     pub(crate) name: String,
     /// 资源所在逻辑目录，根目录为空字符串。
-    pub(crate) directory: String,
+    #[schema(value_type = String)]
+    pub(crate) directory: ResourceDirectory,
     /// 资源类型。
     pub(crate) kind: String,
     /// 资源生命周期状态。
@@ -510,7 +517,8 @@ pub(crate) struct ResourceDirectoryResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct DirectoryListingResponse {
     /// 当前目录路径。
-    pub(crate) path: String,
+    #[schema(value_type = String)]
+    pub(crate) path: ResourceDirectory,
     /// 直接子目录。
     pub(crate) folders: Vec<ResourceDirectoryResponse>,
     /// 当前目录下的资源分页。
@@ -520,8 +528,9 @@ pub(crate) struct DirectoryListingResponse {
 /// 扫描本地对象存储目录响应。
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct ScanStorageResponse {
-    /// 扫描的逻辑子目录。
-    pub(crate) path: String,
+    /// 本次扫描覆盖的对象存储目录。
+    #[schema(value_type = String)]
+    pub(crate) scanned_directory: ResourceDirectory,
     /// 扫描到的普通文件数量。
     pub(crate) scanned: u64,
     /// 新导入的资源数量。
@@ -608,7 +617,7 @@ impl ResourceResponse {
         Self {
             id: resource.id().to_string(),
             name: resource.name().to_string(),
-            directory: resource.directory().to_string(),
+            directory: resource.directory().clone(),
             kind: resource.kind().as_str().to_string(),
             status: status_text(resource.status()).to_string(),
             metadata: ResourceMetadataResponse::from(resource.metadata()),

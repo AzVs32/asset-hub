@@ -26,7 +26,7 @@ impl<'a> ResourceContentService<'a> {
         let files = self
             .service
             .storage_scanner
-            .scan(directory.path(), command.include_sha256, MAX_SCAN_ENTRIES)
+            .scan(&directory, command.include_sha256, MAX_SCAN_ENTRIES)
             .await?;
         let scanned = files.len() as u64;
         let scanned_keys = files
@@ -87,7 +87,7 @@ impl<'a> ResourceContentService<'a> {
         }
 
         Ok(ScanStorageResult {
-            directory: directory.to_string(),
+            scanned_directory: directory,
             scanned,
             skipped,
             errors,

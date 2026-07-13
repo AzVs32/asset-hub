@@ -1,6 +1,8 @@
 use crate::{
     CoreError, UserError,
-    domain::{ResourceDirectory, User, UserId, UserRole, UserStatus},
+    domain::{
+        DirectoryGrant, DirectoryPermission, ResourceDirectory, User, UserId, UserRole, UserStatus,
+    },
     port::{PasswordHasher, UserRepository},
 };
 use std::sync::Arc;
@@ -26,7 +28,7 @@ impl UserService {
         username: impl Into<String>,
         password: &str,
         role: UserRole,
-        home_directory: ResourceDirectory,
+        workspace_directory: ResourceDirectory,
     ) -> Result<User, CoreError> {
         if password.len() < 10 {
             return Err(UserError::WeakPassword.into());
@@ -44,9 +46,11 @@ impl UserService {
             username,
             self.password_hasher.hash(password)?,
             role,
-            home_directory,
+            workspace_directory.clone(),
         )?;
-        self.repository.create(&user).await?;
+        let workspace_grant =
+            DirectoryGrant::new(user.id(), workspace_directory, DirectoryPermission::Full);
+        self.repository.create(&user, &workspace_grant).await?;
         Ok(user)
     }
     pub async fn authenticate(

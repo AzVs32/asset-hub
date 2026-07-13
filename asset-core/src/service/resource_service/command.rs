@@ -73,18 +73,18 @@ impl<'a> ResourceCommandService<'a> {
     /// 列出指定父目录下的直接子目录。
     pub async fn list_directories(
         &self,
-        parent_path: &str,
+        parent: &ResourceDirectory,
     ) -> Result<Vec<ResourceDirectory>, CoreError> {
-        self.service.repository.list_directories(parent_path).await
+        self.service.repository.list_directories(parent).await
     }
 
     /// 在指定父目录下创建一个可独立存在的逻辑目录。
     pub async fn create_directory(
         &self,
-        parent_path: impl Into<String>,
+        parent: &ResourceDirectory,
         name: impl Into<String>,
     ) -> Result<ResourceDirectory, CoreError> {
-        let directory = ResourceDirectory::new(parent_path, name)?;
+        let directory = parent.child(name)?;
         self.service.repository.save_directory(&directory).await?;
         Ok(directory)
     }

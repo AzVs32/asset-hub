@@ -1,5 +1,5 @@
 use asset_core::CoreError;
-use asset_core::domain::StorageKey;
+use asset_core::domain::{ResourceDirectory, StorageKey};
 use asset_core::port::{ScannedBlob, StorageScanner};
 use sha2::{Digest, Sha256};
 use std::io::Read;
@@ -20,12 +20,12 @@ impl FileSystemScanner {
 impl StorageScanner for FileSystemScanner {
     async fn scan(
         &self,
-        directory: &str,
+        directory: &ResourceDirectory,
         include_sha256: bool,
         max_entries: usize,
     ) -> Result<Vec<ScannedBlob>, CoreError> {
         let root = self.root.clone();
-        let directory = directory.to_owned();
+        let directory = directory.clone();
         tokio::task::spawn_blocking(move || {
             scan_files(&root, &directory, include_sha256, max_entries)
         })
@@ -36,7 +36,7 @@ impl StorageScanner for FileSystemScanner {
 
 fn scan_files(
     root: &Path,
-    directory: &str,
+    directory: &ResourceDirectory,
     include_sha256: bool,
     max_entries: usize,
 ) -> Result<Vec<ScannedBlob>, CoreError> {
@@ -44,7 +44,7 @@ fn scan_files(
         CoreError::configuration(format!("storage root is not readable: {error}"))
     })?;
     let scan_root = root
-        .join(directory)
+        .join(directory.path())
         .canonicalize()
         .map_err(|error| CoreError::configuration(format!("scan path is not readable: {error}")))?;
     if !scan_root.starts_with(&root) || !scan_root.is_dir() {

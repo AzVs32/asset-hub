@@ -177,7 +177,7 @@ pub trait ResourceRepository: Send + Sync {
     /// 列出指定父目录下的直接子目录。
     async fn list_directories(
         &self,
-        parent_path: &str,
+        parent: &ResourceDirectory,
     ) -> Result<Vec<ResourceDirectory>, CoreError>;
 
     /// 保存一个可独立存在的逻辑目录。

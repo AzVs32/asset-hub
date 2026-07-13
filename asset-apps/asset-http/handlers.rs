@@ -205,10 +205,7 @@ pub(crate) async fn list_resources(
     }
 
     if let Some(directory) = query.directory {
-        command = command.with_directory(ResourceDirectory::from_path(clean_directory(
-            Some(directory.as_str()),
-            "",
-        )?)?);
+        command = command.with_directory(directory);
     }
 
     let page_result = state.secured(&access.0).list_resources(command).await?;
@@ -237,12 +234,12 @@ pub(crate) async fn list_directory(
     access: Extension<AccessContext>,
     Query(query): Query<ListDirectoryQuery>,
 ) -> Result<Json<DirectoryListingResponse>, HttpError> {
-    let path = clean_directory(query.path.as_deref(), "")?;
+    let directory = query.path.unwrap_or_default();
     let page = query.page.unwrap_or(DEFAULT_PAGE).max(1);
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let offset = u64::from(page - 1) * u64::from(limit);
     let mut resources_query = ListResources::new(limit, offset)
-        .with_directory(ResourceDirectory::from_path(path.clone())?)
+        .with_directory(directory.clone())
         .with_include_deleted(query.include_deleted.unwrap_or(false));
 
     if let Some(kind) = query.kind {
@@ -261,7 +258,7 @@ pub(crate) async fn list_directory(
 
     let folders = state
         .secured(&access.0)
-        .list_directories(&path)
+        .list_directories(&directory)
         .await?
         .into_iter()
         .map(|directory| ResourceDirectoryResponse {
@@ -276,7 +273,7 @@ pub(crate) async fn list_directory(
         .await?;
 
     Ok(Json(DirectoryListingResponse {
-        path,
+        path: directory,
         folders,
         resources: resource_page_response(state.service(), resources, page)?,
     }))
@@ -300,10 +297,9 @@ pub(crate) async fn create_directory(
     payload: Result<Json<CreateDirectoryRequest>, JsonRejection>,
 ) -> Result<(StatusCode, Json<ResourceDirectoryResponse>), HttpError> {
     let payload = parse_json_payload(payload)?;
-    let parent_path = clean_directory(Some(&payload.parent_path), "")?;
     let directory = state
         .secured(&access.0)
-        .create_directory(parent_path, payload.name)
+        .create_directory(&payload.parent_path, payload.name)
         .await?;
     Ok((
         StatusCode::CREATED,
@@ -333,12 +329,10 @@ pub(crate) async fn scan_storage(
     payload: Option<Json<ScanStorageRequest>>,
 ) -> Result<Json<ScanStorageResponse>, HttpError> {
     let payload = payload.map(|Json(payload)| payload).unwrap_or_default();
-    let path = clean_directory(payload.path.as_deref(), "")?;
     let result = state
         .secured(&access.0)
         .scan_storage(
-            ScanStorage::new(ResourceDirectory::from_path(path)?)
-                .with_sha256(payload.sha256.unwrap_or(false)),
+            ScanStorage::new(payload.directory).with_sha256(payload.sha256.unwrap_or(false)),
         )
         .await?;
     let imported = result
@@ -348,7 +342,7 @@ pub(crate) async fn scan_storage(
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(Json(ScanStorageResponse {
-        path: result.directory,
+        scanned_directory: result.scanned_directory,
         scanned: result.scanned,
         imported: imported.len() as u64,
         skipped: result.skipped,
@@ -391,17 +385,19 @@ pub(crate) async fn upload_resource_content_stream(
     headers: HeaderMap,
     body: Body,
 ) -> Result<(StatusCode, Json<ResourceResponse>), HttpError> {
-    let directory = clean_directory(query.directory.as_deref(), "uploads")?;
+    let directory = query
+        .directory
+        .unwrap_or(ResourceDirectory::from_path("uploads")?);
     let storage_key = storage_key_from_upload_parts(
         query.storage_key,
-        Some(directory.clone()),
+        &directory,
         query.original_filename.as_deref().unwrap_or(&query.name),
     )?;
     ensure_content_length(&headers)?;
     let data = limited_body_stream(body);
 
     let mut command = UploadResourceContentStream::new(query.name, storage_key, data);
-    command = command.with_directory(ResourceDirectory::from_path(directory)?);
+    command = command.with_directory(directory);
     command = apply_common_stream_fields(command, query.kind, query.status, query.metadata_json)?;
 
     if let Some(mime_type) = content_type(&headers)? {
@@ -494,10 +490,7 @@ pub(crate) async fn update_resource(
     }
 
     if let Some(directory) = payload.directory {
-        command = command.with_directory(ResourceDirectory::from_path(clean_directory(
-            Some(&directory),
-            "",
-        )?)?);
+        command = command.with_directory(directory);
     }
 
     if let Some(metadata) = payload.metadata {
@@ -757,7 +750,7 @@ fn apply_common_resource_fields(
     mut command: CreateResource,
     kind: Option<String>,
     status: Option<String>,
-    directory: Option<String>,
+    directory: Option<ResourceDirectory>,
     metadata: Option<ResourceMetadataRequest>,
 ) -> Result<CreateResource, HttpError> {
     if let Some(kind) = kind {
@@ -769,10 +762,7 @@ fn apply_common_resource_fields(
     }
 
     if let Some(directory) = directory {
-        command = command.with_directory(ResourceDirectory::from_path(clean_directory(
-            Some(&directory),
-            "",
-        )?)?);
+        command = command.with_directory(directory);
     }
 
     if let Some(metadata) = metadata {
@@ -807,7 +797,7 @@ fn apply_common_stream_fields(
 
 fn storage_key_from_upload_parts(
     storage_key: Option<String>,
-    directory: Option<String>,
+    directory: &ResourceDirectory,
     filename: &str,
 ) -> Result<StorageKey, HttpError> {
     if let Some(storage_key) = storage_key.filter(|value| !value.trim().is_empty()) {
@@ -815,11 +805,10 @@ fn storage_key_from_upload_parts(
     }
 
     let filename = clean_filename(filename)?;
-    let directory = clean_directory(directory.as_deref(), "uploads")?;
-    let key = if directory.is_empty() {
+    let key = if directory.is_root() {
         filename
     } else {
-        format!("{directory}/{filename}")
+        format!("{}/{filename}", directory.path())
     };
 
     StorageKey::new(key).map_err(Into::into)
@@ -837,35 +826,6 @@ fn clean_filename(value: &str) -> Result<String, HttpError> {
     }
 
     Ok(filename.to_string())
-}
-
-fn clean_directory(value: Option<&str>, default: &str) -> Result<String, HttpError> {
-    let Some(value) = value else {
-        return Ok(default.to_string());
-    };
-    let value = value.trim().replace('\\', "/");
-    if value.is_empty() {
-        return Ok(String::new());
-    }
-    if value.starts_with('/') {
-        return Err(HttpError::bad_request("directory must be a relative path"));
-    }
-
-    let mut parts = Vec::new();
-    for part in value.split('/') {
-        let part = part.trim();
-        if part.is_empty() || part == "." {
-            continue;
-        }
-        if part == ".." {
-            return Err(HttpError::bad_request(
-                "directory must not contain parent path segments",
-            ));
-        }
-        parts.push(part);
-    }
-
-    Ok(parts.join("/"))
 }
 
 fn content_type(headers: &HeaderMap) -> Result<Option<String>, HttpError> {

@@ -88,11 +88,6 @@ impl ResourceMetadata {
         self.summary.tags()
     }
 
-    /// 转换为 JSON 值。
-    pub fn to_value(&self) -> Value {
-        serde_json::to_value(self).expect("resource metadata serialization should not fail")
-    }
-
     /// 检查元数据是否为空。
     pub fn is_empty(&self) -> bool {
         self.summary.is_empty()

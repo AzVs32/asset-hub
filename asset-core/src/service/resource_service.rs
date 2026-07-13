@@ -174,7 +174,7 @@ pub struct ScanStorageError {
 
 #[derive(Debug, Clone)]
 pub struct ScanStorageResult {
-    pub directory: String,
+    pub scanned_directory: ResourceDirectory,
     pub scanned: u64,
     pub skipped: u64,
     pub errors: Vec<ScanStorageError>,
@@ -1007,14 +1007,14 @@ mod tests {
 
         async fn list_directories(
             &self,
-            parent_path: &str,
+            parent: &ResourceDirectory,
         ) -> Result<Vec<ResourceDirectory>, CoreError> {
             let mut directories = self
                 .resources
                 .lock()
                 .unwrap()
                 .values()
-                .filter_map(|resource| child_directory(resource.directory(), parent_path))
+                .filter_map(|resource| child_directory(resource.directory(), parent))
                 .collect::<Vec<_>>();
             directories.sort_by(|left, right| left.path().cmp(right.path()));
             directories.dedup_by(|left, right| left.path() == right.path());
@@ -1024,25 +1024,18 @@ mod tests {
 
     fn child_directory(
         directory: &ResourceDirectory,
-        parent_path: &str,
+        parent: &ResourceDirectory,
     ) -> Option<ResourceDirectory> {
         if directory.is_root() {
             return None;
         }
         let directory = directory.path();
-        let remainder = if parent_path.is_empty() {
+        let remainder = if parent.is_root() {
             directory
         } else {
-            directory.strip_prefix(parent_path)?.strip_prefix('/')?
+            directory.strip_prefix(parent.path())?.strip_prefix('/')?
         };
-        let name = remainder.split('/').next()?.to_string();
-        let path = if parent_path.is_empty() {
-            name.clone()
-        } else {
-            format!("{parent_path}/{name}")
-        };
-
-        ResourceDirectory::rehydrate(path, parent_path.to_string(), name).ok()
+        parent.child(remainder.split('/').next()?).ok()
     }
 
     #[derive(Default)]
@@ -1136,7 +1129,7 @@ mod tests {
     impl StorageScanner for InMemoryBlobStorage {
         async fn scan(
             &self,
-            _directory: &str,
+            _directory: &ResourceDirectory,
             _include_sha256: bool,
             _max_entries: usize,
         ) -> Result<Vec<crate::port::ScannedBlob>, CoreError> {
@@ -1354,8 +1347,6 @@ mod tests {
 
     fn content_requirements() -> asset_plugin_api::ResourceActionRequirements {
         asset_plugin_api::ResourceActionRequirements {
-            resource: false,
-            metadata: false,
             content: true,
             content_delivery: asset_plugin_api::ResourceActionContentDelivery::Inline,
         }
@@ -1380,8 +1371,6 @@ mod tests {
         let required = |delivery| {
             ResourceActionDefinition::new("inspect", "Inspect").with_requirements(
                 ResourceActionRequirements {
-                    resource: false,
-                    metadata: false,
                     content: true,
                     content_delivery: delivery,
                 },

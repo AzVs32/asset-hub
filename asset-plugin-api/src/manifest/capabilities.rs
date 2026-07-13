@@ -152,13 +152,10 @@ impl ActionAppliesTo {
     }
 }
 
-/// Data a handler needs to execute an action.
+/// Optional object content a handler needs in addition to the resource snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ActionRequirements {
-    #[serde(default)]
-    pub resource: bool,
-    #[serde(default)]
-    pub metadata: bool,
     #[serde(default)]
     pub content: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -168,8 +165,6 @@ pub struct ActionRequirements {
 impl ActionRequirements {
     pub fn to_definition(&self) -> ResourceActionRequirements {
         ResourceActionRequirements {
-            resource: self.resource,
-            metadata: self.metadata,
             content: self.content,
             content_delivery: self
                 .content_delivery
@@ -192,6 +187,23 @@ impl ContentDelivery {
             Self::Inline => ResourceActionContentDelivery::Inline,
             Self::Url => ResourceActionContentDelivery::Url,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn action_requirements_reject_removed_snapshot_flags() {
+        let result = serde_json::from_value::<ActionRequirements>(json!({
+            "resource": true,
+            "metadata": true,
+            "content": true
+        }));
+
+        assert!(result.is_err());
     }
 }
 

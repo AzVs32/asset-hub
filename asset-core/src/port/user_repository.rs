@@ -1,12 +1,12 @@
 use crate::{
     CoreError,
-    domain::{User, UserId},
+    domain::{DirectoryGrant, User, UserId},
 };
 
 #[async_trait::async_trait]
 pub trait UserRepository: Send + Sync {
-    /// 原子创建用户及其逻辑主目录。
-    async fn create(&self, user: &User) -> Result<(), CoreError>;
+    /// 原子创建用户、工作目录以及显式的初始目录授权。
+    async fn create(&self, user: &User, workspace_grant: &DirectoryGrant) -> Result<(), CoreError>;
     /// 保存既有用户的可变状态。
     async fn save(&self, user: &User) -> Result<(), CoreError>;
     async fn find_by_id(&self, id: &UserId) -> Result<Option<User>, CoreError>;

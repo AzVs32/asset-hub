@@ -21,11 +21,11 @@ export function ResourceBrowser(props: {
   const [folderOpen, setFolderOpen] = React.useState(false);
   const [folderName, setFolderName] = React.useState("");
   const totalPages = Math.max(1, Math.ceil(props.page.total / props.page.limit));
-  const navigationRoot = props.user.is_admin ? "" : props.user.home_directory;
+  const navigationRoot = props.user.is_admin ? "" : props.user.workspace_directory;
   const breadcrumbs = directoryBreadcrumbs(
     props.currentDirectory,
     navigationRoot,
-    props.user.is_admin ? "Root" : "Home",
+    props.user.is_admin ? "Root" : "Workspace",
   );
   const parentDirectory = parentDirectoryWithinRoot(props.currentDirectory, navigationRoot);
 

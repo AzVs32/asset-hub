@@ -45,8 +45,6 @@
         },
         "access": "read",
         "requires": {
-          "resource": true,
-          "metadata": true,
           "content": true,
           "content_delivery": "url"
         },
@@ -74,8 +72,6 @@
         },
         "access": "write",
         "requires": {
-          "resource": true,
-          "metadata": true,
           "content": true,
           "content_delivery": "url"
         },

@@ -1,5 +1,5 @@
 use crate::CoreError;
-use crate::domain::StorageKey;
+use crate::domain::{ResourceDirectory, StorageKey};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScannedBlob {
@@ -13,7 +13,7 @@ pub struct ScannedBlob {
 pub trait StorageScanner: Send + Sync {
     async fn scan(
         &self,
-        directory: &str,
+        directory: &ResourceDirectory,
         include_sha256: bool,
         max_entries: usize,
     ) -> Result<Vec<ScannedBlob>, CoreError>;

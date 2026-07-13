@@ -42,11 +42,7 @@ impl ResourceDirectory {
     }
 
     /// 在父目录下创建一个直接子目录。
-    pub fn new(
-        parent_path: impl Into<String>,
-        name: impl Into<String>,
-    ) -> Result<Self, ResourceError> {
-        let parent = Self::from_path(parent_path)?;
+    pub fn child(&self, name: impl Into<String>) -> Result<Self, ResourceError> {
         let name = name.into();
         let name = name.trim();
         if name == "." || name == ".." || name.contains('/') || name.contains('\\') {
@@ -56,10 +52,10 @@ impl ResourceDirectory {
             });
         }
         let name = normalize_required_text("resource.directory", name, MAX_DIRECTORY_SEGMENT_LEN)?;
-        let path = if parent.is_root() {
+        let path = if self.is_root() {
             name
         } else {
-            format!("{}/{name}", parent.path())
+            format!("{}/{name}", self.path())
         };
         Self::from_path(path)
     }
@@ -202,11 +198,12 @@ mod tests {
 
     #[test]
     fn directory_is_built_from_parent_and_single_name() {
-        let directory = ResourceDirectory::new("projects", " images ").unwrap();
+        let parent = ResourceDirectory::from_path("projects").unwrap();
+        let directory = parent.child(" images ").unwrap();
         assert_eq!(directory.path(), "projects/images");
         assert_eq!(directory.parent_path(), "projects");
         assert_eq!(directory.name(), "images");
-        assert!(ResourceDirectory::new("projects", "../secret").is_err());
+        assert!(parent.child("../secret").is_err());
     }
 
     #[test]

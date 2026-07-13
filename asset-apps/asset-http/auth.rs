@@ -27,7 +27,7 @@ pub(crate) struct AuthenticatedUser {
     pub username: String,
     pub is_admin: bool,
     #[schema(value_type = String)]
-    pub home_directory: ResourceDirectory,
+    pub workspace_directory: ResourceDirectory,
     #[serde(skip)]
     credential_hash: String,
 }
@@ -38,7 +38,7 @@ impl From<User> for AuthenticatedUser {
             id: user.id(),
             username: user.username().to_owned(),
             is_admin: user.is_administrator(),
-            home_directory: user.home_directory().clone(),
+            workspace_directory: user.workspace_directory().clone(),
             credential_hash: user.credential_hash().to_owned(),
         }
     }
@@ -49,7 +49,7 @@ impl AuthenticatedUser {
         if self.is_admin {
             AccessContext::administrator(self.id)
         } else {
-            AccessContext::member(self.id, self.home_directory.clone())
+            AccessContext::member(self.id)
         }
     }
 }
@@ -196,7 +196,7 @@ pub(crate) struct ManagedUserResponse {
     #[schema(value_type = String)]
     status: UserStatus,
     #[schema(value_type = String)]
-    home_directory: ResourceDirectory,
+    workspace_directory: ResourceDirectory,
 }
 
 impl From<User> for ManagedUserResponse {
@@ -206,7 +206,7 @@ impl From<User> for ManagedUserResponse {
             username: user.username().to_owned(),
             role: user.role(),
             status: user.status(),
-            home_directory: user.home_directory().clone(),
+            workspace_directory: user.workspace_directory().clone(),
         }
     }
 }
@@ -261,7 +261,8 @@ pub(crate) struct CreateUserRequest {
     password: String,
     #[serde(default)]
     is_admin: bool,
-    home_directory: Option<String>,
+    #[schema(value_type = Option<String>)]
+    workspace_directory: Option<ResourceDirectory>,
 }
 
 #[utoipa::path(
@@ -281,18 +282,24 @@ pub(crate) async fn create_user(
     } else {
         UserRole::Member
     };
-    let home_directory = if request.is_admin {
-        ResourceDirectory::root()
-    } else {
-        let path = request
-            .home_directory
-            .ok_or_else(|| HttpError::bad_request("home_directory is required for member users"))?;
-        ResourceDirectory::from_path(path).map_err(asset_core::CoreError::from)?
+    let workspace_directory = match request.workspace_directory {
+        Some(directory) => directory,
+        None if request.is_admin => ResourceDirectory::root(),
+        None => {
+            return Err(HttpError::bad_request(
+                "workspace_directory is required for member users",
+            ));
+        }
     };
     let user = session
         .backend
         .users
-        .create(request.username, &request.password, role, home_directory)
+        .create(
+            request.username,
+            &request.password,
+            role,
+            workspace_directory,
+        )
         .await?;
     Ok((StatusCode::CREATED, Json(MeResponse { user: user.into() })))
 }
@@ -358,7 +365,8 @@ pub(crate) async fn update_user_status(
 pub(crate) struct GrantDirectoryRequest {
     #[schema(value_type = String)]
     user_id: UserId,
-    directory: String,
+    #[schema(value_type = String)]
+    directory: ResourceDirectory,
     #[schema(value_type = String)]
     permission: DirectoryPermission,
 }
@@ -374,19 +382,33 @@ pub(crate) async fn grant_directory(
     session: Session,
     Json(request): Json<GrantDirectoryRequest>,
 ) -> Result<StatusCode, HttpError> {
+    require_admin(&session)?;
     let actor = require_user(&session)?.access_context();
-    let directory =
-        ResourceDirectory::from_path(request.directory).map_err(asset_core::CoreError::from)?;
-    let grant = DirectoryGrant::new(request.user_id, directory, request.permission);
+    let target = session
+        .backend
+        .users
+        .find_by_id(&request.user_id)
+        .await?
+        .ok_or_else(|| HttpError::not_found(format!("user `{}` not found", request.user_id)))?;
+    if request.directory == *target.workspace_directory()
+        && request.permission != DirectoryPermission::Full
+    {
+        return Err(HttpError::bad_request(
+            "workspace directory must retain full resource permission",
+        ));
+    }
+    let grant = DirectoryGrant::new(request.user_id, request.directory, request.permission);
     session.backend.authorization.grant(&actor, grant).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Serialize, ToSchema)]
 pub(crate) struct DirectoryGrantResponse {
-    directory: String,
+    #[schema(value_type = String)]
+    directory: ResourceDirectory,
     #[schema(value_type = String)]
     permission: DirectoryPermission,
+    is_workspace: bool,
 }
 
 #[derive(Deserialize, utoipa::IntoParams)]
@@ -408,17 +430,25 @@ pub(crate) async fn my_directory_grants(
 ) -> Result<Json<Vec<DirectoryGrantResponse>>, HttpError> {
     let user = require_user(&session)?;
     let access = user.access_context();
+    let target_id = query.user_id.unwrap_or(user.id);
     let grants = session
         .backend
         .authorization
-        .grants_for(&access, query.user_id.unwrap_or(user.id))
+        .grants_for(&access, target_id)
         .await?;
+    let target = session
+        .backend
+        .users
+        .find_by_id(&target_id)
+        .await?
+        .ok_or_else(|| HttpError::not_found(format!("user `{target_id}` not found")))?;
     Ok(Json(
         grants
             .into_iter()
             .map(|grant| DirectoryGrantResponse {
-                directory: grant.directory().path().to_owned(),
+                directory: grant.directory().clone(),
                 permission: grant.permission(),
+                is_workspace: grant.directory() == target.workspace_directory(),
             })
             .collect(),
     ))
@@ -428,7 +458,8 @@ pub(crate) async fn my_directory_grants(
 pub(crate) struct RevokeDirectoryGrantQuery {
     #[param(value_type = String)]
     user_id: UserId,
-    directory: String,
+    #[param(value_type = String)]
+    directory: ResourceDirectory,
 }
 
 #[utoipa::path(
@@ -442,13 +473,23 @@ pub(crate) async fn revoke_directory(
     session: Session,
     axum::extract::Query(query): axum::extract::Query<RevokeDirectoryGrantQuery>,
 ) -> Result<StatusCode, HttpError> {
+    require_admin(&session)?;
     let actor = require_user(&session)?.access_context();
-    let directory =
-        ResourceDirectory::from_path(query.directory).map_err(asset_core::CoreError::from)?;
+    let target = session
+        .backend
+        .users
+        .find_by_id(&query.user_id)
+        .await?
+        .ok_or_else(|| HttpError::not_found(format!("user `{}` not found", query.user_id)))?;
+    if query.directory == *target.workspace_directory() {
+        return Err(HttpError::bad_request(
+            "workspace directory grant cannot be revoked",
+        ));
+    }
     session
         .backend
         .authorization
-        .revoke(&actor, query.user_id, &directory)
+        .revoke(&actor, query.user_id, &query.directory)
         .await?;
     Ok(StatusCode::NO_CONTENT)
 }

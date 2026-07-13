@@ -39,8 +39,6 @@
         },
         "access": "read",
         "requires": {
-          "resource": true,
-          "metadata": true,
           "content": true,
           "content_delivery": "inline"
         },

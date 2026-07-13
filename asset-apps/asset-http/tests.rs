@@ -195,7 +195,8 @@ async fn core_document_resource_exposes_download_only() {
         .find(|action| action["id"] == "view_inline")
         .unwrap();
     assert_eq!(view_inline["executor"]["handler"], "builtin.media.view");
-    assert_eq!(view_inline["requires"]["metadata"], true);
+    assert!(view_inline["requires"].get("resource").is_none());
+    assert!(view_inline["requires"].get("metadata").is_none());
     assert_eq!(view_inline["requires"]["content_delivery"], "url");
     assert_eq!(view_inline["output"]["view"], json!(["media"]));
     assert_eq!(
@@ -682,9 +683,15 @@ async fn scan_storage_imports_existing_files_idempotently() {
         outside
     };
 
-    let (status, scan) = json_request(&app, Method::POST, "/scan", json!({ "sha256": true })).await;
+    let (status, scan) = json_request(
+        &app,
+        Method::POST,
+        "/scan",
+        json!({ "directory": "docs", "sha256": true }),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(scan["path"], "");
+    assert_eq!(scan["scanned_directory"], "docs");
     assert_eq!(scan["scanned"], 1);
     assert_eq!(scan["imported"], 1);
     assert_eq!(scan["skipped"], 0);
@@ -1320,7 +1327,7 @@ async fn stream_upload(
 }
 
 #[tokio::test]
-async fn member_starts_in_home_directory_and_uses_additional_grants() {
+async fn member_uses_explicit_workspace_and_additional_grants() {
     let root = unique_temp_root("authenticated-directory-acl");
     let config = AssetInfraConfig {
         database: DatabaseConfig {
@@ -1380,7 +1387,7 @@ async fn member_starts_in_home_directory_and_uses_additional_grants() {
 
     let (admin_cookie, admin_login) =
         login_with_password(&app, "admin", "administrator-password").await;
-    assert_eq!(admin_login["user"]["home_directory"], "");
+    assert_eq!(admin_login["user"]["workspace_directory"], "");
     let response = request_with_cookie(
         &app,
         Method::POST,
@@ -1389,7 +1396,7 @@ async fn member_starts_in_home_directory_and_uses_additional_grants() {
             "username": "alice",
             "password": "alice-secure-password",
             "is_admin": false,
-            "home_directory": "teams/alice"
+            "workspace_directory": "teams/alice"
         }),
         &admin_cookie,
     )
@@ -1397,7 +1404,75 @@ async fn member_starts_in_home_directory_and_uses_additional_grants() {
     assert_eq!(response.status(), StatusCode::CREATED);
     let alice = response_json(response).await;
     let alice_id = alice["user"]["id"].as_str().unwrap();
-    assert_eq!(alice["user"]["home_directory"], "teams/alice");
+    assert_eq!(alice["user"]["workspace_directory"], "teams/alice");
+    let workspace_grants = request_with_cookie(
+        &app,
+        Method::GET,
+        &format!("/auth/directory-grants?user_id={alice_id}"),
+        json!({}),
+        &admin_cookie,
+    )
+    .await;
+    assert_eq!(workspace_grants.status(), StatusCode::OK);
+    assert_eq!(
+        response_json(workspace_grants).await,
+        json!([{
+            "directory": "teams/alice",
+            "permission": "full",
+            "is_workspace": true
+        }])
+    );
+    let downgrade_workspace = request_with_cookie(
+        &app,
+        Method::PUT,
+        "/auth/directory-grants",
+        json!({
+            "user_id": alice_id,
+            "directory": "teams/alice",
+            "permission": "read"
+        }),
+        &admin_cookie,
+    )
+    .await;
+    assert_eq!(downgrade_workspace.status(), StatusCode::BAD_REQUEST);
+    let revoke_workspace = request_with_cookie(
+        &app,
+        Method::DELETE,
+        &format!("/auth/directory-grants?user_id={alice_id}&directory=teams%2Falice"),
+        json!({}),
+        &admin_cookie,
+    )
+    .await;
+    assert_eq!(revoke_workspace.status(), StatusCode::BAD_REQUEST);
+    let root_member = request_with_cookie(
+        &app,
+        Method::POST,
+        "/auth/users",
+        json!({
+            "username": "root-member",
+            "password": "root-member-password",
+            "is_admin": false,
+            "workspace_directory": ""
+        }),
+        &admin_cookie,
+    )
+    .await;
+    assert_eq!(root_member.status(), StatusCode::CREATED);
+    let root_member = response_json(root_member).await;
+    let root_member_id = root_member["user"]["id"].as_str().unwrap();
+    let root_entries = request_with_cookie(
+        &app,
+        Method::GET,
+        &format!("/auth/directory-grants?user_id={root_member_id}"),
+        json!({}),
+        &admin_cookie,
+    )
+    .await;
+    assert_eq!(root_entries.status(), StatusCode::OK);
+    assert_eq!(
+        response_json(root_entries).await,
+        json!([{ "directory": "", "permission": "full", "is_workspace": true }])
+    );
     let teams = request_with_cookie(
         &app,
         Method::GET,
@@ -1427,6 +1502,7 @@ async fn member_starts_in_home_directory_and_uses_additional_grants() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
     let response = request_with_cookie(
         &app,
         Method::PUT,
@@ -1450,8 +1526,27 @@ async fn member_starts_in_home_directory_and_uses_additional_grants() {
     .await;
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
+    let all_entries = request_with_cookie(
+        &app,
+        Method::GET,
+        &format!("/auth/directory-grants?user_id={alice_id}"),
+        json!({}),
+        &admin_cookie,
+    )
+    .await;
+    assert_eq!(all_entries.status(), StatusCode::OK);
+    assert_eq!(
+        response_json(all_entries).await,
+        json!([
+            { "directory": "public", "permission": "read", "is_workspace": false },
+            { "directory": "shared", "permission": "write", "is_workspace": false },
+            { "directory": "shared/photos", "permission": "read", "is_workspace": false },
+            { "directory": "teams/alice", "permission": "full", "is_workspace": true }
+        ])
+    );
+
     let (alice_cookie, login) = login_with_password(&app, "alice", "alice-secure-password").await;
-    assert_eq!(login["user"]["home_directory"], "teams/alice");
+    assert_eq!(login["user"]["workspace_directory"], "teams/alice");
     let scan = request_with_cookie(&app, Method::POST, "/scan", json!({}), &alice_cookie).await;
     assert_eq!(scan.status(), StatusCode::FORBIDDEN);
     let folder = request_with_cookie(
