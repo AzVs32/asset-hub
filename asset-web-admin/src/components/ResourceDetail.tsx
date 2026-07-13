@@ -2,9 +2,9 @@ import React from "react";
 import { BookOpen, Download, Eye, Loader2, RotateCcw, Save, Trash2 } from "lucide-react";
 import { apiBase } from "../api";
 import type { Draft, Resource, ResourceActionDefinition, ResourceKindOption, ResourceStatus } from "../types";
-import { formatBytes, formatDate, hasAction, isPluginUiAction, withKindDefaults } from "../utils/resourceDrafts";
+import { formatBytes, formatDate, hasAction, isPluginUiAction } from "../utils/resourceDrafts";
 import { Fact, SelectInput, TextInput } from "./forms";
-import { cx, dangerIconButtonClass, iconButtonClass, inputClass, primaryButtonClass, secondaryButtonClass, textareaClass } from "./ui";
+import { cx, dangerIconButtonClass, iconButtonClass, inputClass, primaryButtonClass, secondaryButtonClass } from "./ui";
 
 export function ResourceDetail({
   resource,
@@ -100,7 +100,7 @@ export function ResourceDetail({
           label="Kind"
           value={draft.kind}
           options={resourceKinds}
-          onChange={(kind) => setDraft((d) => d && withKindDefaults({ ...d, kind }, resourceKinds))}
+          onChange={(kind) => setDraft((d) => d && { ...d, kind })}
         />
         <label className="grid gap-2">
           <span className="text-xs font-semibold text-slate-600">Status</span>
@@ -120,21 +120,6 @@ export function ResourceDetail({
           onChange={(description) => setDraft((d) => d && { ...d, description })}
         />
         <TextInput label="Tags" value={draft.tags} onChange={(tags) => setDraft((d) => d && { ...d, tags })} />
-        <TextInput
-          label="Schema ID"
-          value={draft.schemaId}
-          onChange={(schemaId) => setDraft((d) => d && { ...d, schemaId })}
-        />
-        <label className="col-span-full grid gap-2">
-          <span className="text-xs font-semibold text-slate-600">Kind data JSON</span>
-          <textarea
-            className={textareaClass}
-            value={draft.kindData}
-            onChange={(event) => setDraft((d) => d && { ...d, kindData: event.target.value })}
-            rows={7}
-            disabled={Boolean(resource.deleted_at)}
-          />
-        </label>
       </div>
 
       <section className="grid grid-cols-2 gap-x-4 max-sm:grid-cols-1">
@@ -146,7 +131,6 @@ export function ResourceDetail({
         <Fact label="Size" value={formatBytes(resource.content?.size ?? 0)} />
         <Fact label="MIME" value={resource.content?.mime_type ?? "-"} />
         <Fact label="Kind source" value={kindDefinition?.source ?? "-"} />
-        <Fact label="Kind schema" value={kindDefinition?.schema_id ?? "-"} />
         <Fact label="Content kind" value={kindDefinition ? (kindDefinition.supports_content ? "yes" : "no") : "-"} />
         <Fact label="Kind actions" value={kindDefinition?.actions.map((action) => action.id).join(", ") || "-"} />
         <Fact

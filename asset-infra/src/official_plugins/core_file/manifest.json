@@ -15,14 +15,7 @@
       {
         "kind": "core:file",
         "label": "File",
-        "schema_id": "core:file@1",
-        "supports_content": true,
-        "metadata_schema": {
-          "type": "object",
-          "properties": {
-            "description": { "type": "string" }
-          }
-        }
+        "supports_content": true
       }
     ],
     "resource_actions": [

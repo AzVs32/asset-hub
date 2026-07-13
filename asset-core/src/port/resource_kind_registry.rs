@@ -8,7 +8,6 @@ pub use asset_plugin_api::{
     ResourceAction, ResourceActionAccess, ResourceActionAppliesTo, ResourceActionContentDelivery,
     ResourceActionDefinition, ResourceActionExecutorKind, ResourceContentMatcher,
 };
-use serde_json::Value;
 use std::collections::HashSet;
 
 /// 资源类型定义。
@@ -20,10 +19,6 @@ pub struct ResourceKindDefinition {
     parent: Option<ResourceKind>,
     /// 展示名称。
     label: String,
-    /// 默认 kind metadata schema id。
-    schema_id: Option<String>,
-    /// kind metadata JSON schema。
-    metadata_schema: Option<Value>,
     /// 是否支持对象内容。
     supports_content: bool,
     /// 文件自动识别规则。
@@ -36,20 +31,14 @@ pub struct ResourceKindDefinition {
 
 impl ResourceKindDefinition {
     /// 创建资源类型定义。
-    pub fn new(
-        kind: ResourceKind,
-        label: impl Into<String>,
-        schema_id: Option<String>,
-        supports_content: bool,
-    ) -> Self {
-        Self::with_source(kind, label, schema_id, supports_content, "builtin")
+    pub fn new(kind: ResourceKind, label: impl Into<String>, supports_content: bool) -> Self {
+        Self::with_source(kind, label, supports_content, "builtin")
     }
 
     /// 创建带来源的资源类型定义。
     pub fn with_source(
         kind: ResourceKind,
         label: impl Into<String>,
-        schema_id: Option<String>,
         supports_content: bool,
         source: impl Into<String>,
     ) -> Self {
@@ -57,8 +46,6 @@ impl ResourceKindDefinition {
             kind,
             parent: None,
             label: label.into(),
-            schema_id,
-            metadata_schema: None,
             supports_content,
             detect: ResourceContentMatcher::default(),
             actions: Vec::new(),
@@ -68,12 +55,6 @@ impl ResourceKindDefinition {
 
     pub fn with_parent(mut self, parent: Option<ResourceKind>) -> Self {
         self.parent = parent;
-        self
-    }
-
-    /// 设置 kind metadata JSON schema。
-    pub fn with_metadata_schema(mut self, metadata_schema: Option<Value>) -> Self {
-        self.metadata_schema = metadata_schema;
         self
     }
 
@@ -101,16 +82,6 @@ impl ResourceKindDefinition {
     /// 返回展示名称。
     pub fn label(&self) -> &str {
         &self.label
-    }
-
-    /// 返回默认 schema id。
-    pub fn schema_id(&self) -> Option<&str> {
-        self.schema_id.as_deref()
-    }
-
-    /// 返回 kind metadata JSON schema。
-    pub fn metadata_schema(&self) -> Option<&Value> {
-        self.metadata_schema.as_ref()
     }
 
     /// 返回是否支持对象内容。
@@ -206,18 +177,6 @@ pub trait ResourceKindRegistry: Send + Sync {
             }
         }
         actions
-    }
-
-    fn effective_metadata_schema(&self, kind: &ResourceKind) -> Option<Value> {
-        self.lineage(kind)
-            .into_iter()
-            .find_map(|item| self.get(&item)?.metadata_schema().cloned())
-    }
-
-    fn effective_schema_id(&self, kind: &ResourceKind) -> Option<String> {
-        self.lineage(kind)
-            .into_iter()
-            .find_map(|item| self.get(&item)?.schema_id().map(str::to_owned))
     }
 
     /// 根据内容特征推断父资源类型。
@@ -316,22 +275,17 @@ mod tests {
     fn action_rules_do_not_implicitly_define_resource_kinds() {
         let registry = TestRegistry {
             definitions: vec![
-                ResourceKindDefinition::new(ResourceKind::from("core:file"), "File", None, true),
-                ResourceKindDefinition::new(
-                    ResourceKind::from("core:document"),
-                    "Document",
-                    None,
-                    true,
-                )
-                .with_actions(vec![
-                    ResourceActionDefinition::new("azvs.markdown.render", "Read Markdown")
-                        .with_applies_to(
-                            ResourceActionAppliesTo::new()
-                                .with_kinds(["core:document"])
-                                .with_mime_types(["text/markdown"])
-                                .with_extensions([".md"]),
-                        ),
-                ]),
+                ResourceKindDefinition::new(ResourceKind::from("core:file"), "File", true),
+                ResourceKindDefinition::new(ResourceKind::from("core:document"), "Document", true)
+                    .with_actions(vec![
+                        ResourceActionDefinition::new("azvs.markdown.render", "Read Markdown")
+                            .with_applies_to(
+                                ResourceActionAppliesTo::new()
+                                    .with_kinds(["core:document"])
+                                    .with_mime_types(["text/markdown"])
+                                    .with_extensions([".md"]),
+                            ),
+                    ]),
             ],
         };
 
@@ -345,9 +299,9 @@ mod tests {
     fn kind_detect_rules_beat_action_rules() {
         let registry = TestRegistry {
             definitions: vec![
-                ResourceKindDefinition::new(ResourceKind::from("core:image"), "Image", None, true)
+                ResourceKindDefinition::new(ResourceKind::from("core:image"), "Image", true)
                     .with_detect(ResourceContentMatcher::new().with_extensions([".png"])),
-                ResourceKindDefinition::new(ResourceKind::from("core:file"), "File", None, true)
+                ResourceKindDefinition::new(ResourceKind::from("core:file"), "File", true)
                     .with_actions(vec![
                         ResourceActionDefinition::new("demo:png_action", "PNG action")
                             .with_content_matcher(
@@ -370,17 +324,11 @@ mod tests {
         let c = ResourceKind::from("code:c");
         let registry = TestRegistry {
             definitions: vec![
-                ResourceKindDefinition::new(
-                    document.clone(),
-                    "Document",
-                    Some("core:document@1".to_string()),
-                    true,
-                )
-                .with_metadata_schema(Some(serde_json::json!({"type": "object"})))
-                .with_actions(vec![ResourceActionDefinition::new("document:open", "Open")]),
-                ResourceKindDefinition::new(code.clone(), "Code", None, true)
+                ResourceKindDefinition::new(document.clone(), "Document", true)
+                    .with_actions(vec![ResourceActionDefinition::new("document:open", "Open")]),
+                ResourceKindDefinition::new(code.clone(), "Code", true)
                     .with_parent(Some(document.clone())),
-                ResourceKindDefinition::new(c.clone(), "C", None, true)
+                ResourceKindDefinition::new(c.clone(), "C", true)
                     .with_parent(Some(code.clone()))
                     .with_detect(ResourceContentMatcher::new().with_extensions([".c", ".h"])),
             ],
@@ -391,14 +339,6 @@ mod tests {
             vec![c.clone(), code.clone(), document]
         );
         assert!(registry.descendants(&code).contains(&c));
-        assert_eq!(
-            registry.effective_schema_id(&c).as_deref(),
-            Some("core:document@1")
-        );
-        assert_eq!(
-            registry.effective_metadata_schema(&c).unwrap()["type"],
-            "object"
-        );
         assert!(
             registry
                 .actions_for_kind(&c)

@@ -21,7 +21,7 @@ pub struct ListResources {
     /// 可选名称模糊搜索关键字。
     q: Option<String>,
     /// 可选逻辑目录过滤。
-    directory: Option<String>,
+    directory: Option<ResourceDirectory>,
     /// 是否包含软删除资源。
     include_deleted: bool,
 }
@@ -70,8 +70,8 @@ impl ListResources {
     }
 
     /// 设置逻辑目录过滤。
-    pub fn with_directory(mut self, directory: impl Into<String>) -> Self {
-        self.directory = Some(directory.into());
+    pub fn with_directory(mut self, directory: ResourceDirectory) -> Self {
+        self.directory = Some(directory);
         self
     }
 
@@ -115,8 +115,8 @@ impl ListResources {
     }
 
     /// 返回逻辑目录过滤。
-    pub fn directory(&self) -> Option<&str> {
-        self.directory.as_deref()
+    pub fn directory(&self) -> Option<&ResourceDirectory> {
+        self.directory.as_ref()
     }
 
     /// 返回是否包含软删除资源。

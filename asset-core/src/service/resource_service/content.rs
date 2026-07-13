@@ -22,11 +22,11 @@ impl<'a> ResourceContentService<'a> {
     pub async fn scan_storage(&self, command: ScanStorage) -> Result<ScanStorageResult, CoreError> {
         const MAX_SCAN_ENTRIES: usize = 100_000;
 
-        let directory = crate::domain::normalize_directory(command.directory)?;
+        let directory = command.directory;
         let files = self
             .service
             .storage_scanner
-            .scan(&directory, command.include_sha256, MAX_SCAN_ENTRIES)
+            .scan(directory.path(), command.include_sha256, MAX_SCAN_ENTRIES)
             .await?;
         let scanned = files.len() as u64;
         let scanned_keys = files
@@ -44,7 +44,7 @@ impl<'a> ResourceContentService<'a> {
                 .map(|(directory, name)| (directory.to_owned(), name.to_owned()))
                 .unwrap_or_else(|| (String::new(), key.clone()));
             let mut import = ImportResourceContent::new(name.clone(), file.key, file.size)
-                .with_directory(file_directory)
+                .with_directory(ResourceDirectory::from_path(file_directory)?)
                 .with_original_filename(name);
             if let Some(mime_type) = file.mime_type {
                 import = import.with_mime_type(mime_type);
@@ -71,7 +71,7 @@ impl<'a> ResourceContentService<'a> {
             .repository
             .list(&ListResources::new(u32::MAX, 0).with_include_deleted(true))
             .await?;
-        let prefix = (!directory.is_empty()).then(|| format!("{directory}/"));
+        let prefix = (!directory.is_root()).then(|| format!("{directory}/"));
         for resource in stored_resources.items {
             let Some(content) = resource.content() else {
                 continue;
@@ -87,7 +87,7 @@ impl<'a> ResourceContentService<'a> {
         }
 
         Ok(ScanStorageResult {
-            directory,
+            directory: directory.to_string(),
             scanned,
             skipped,
             errors,

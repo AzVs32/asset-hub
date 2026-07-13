@@ -10,7 +10,8 @@ use crate::error::HttpError;
 use crate::state::HttpState;
 use asset_core::CoreError;
 use asset_core::domain::{
-    AccessContext, Checksum, ResourceId, ResourceKind, ResourceStatus, StorageKey,
+    AccessContext, Checksum, ResourceDirectory, ResourceId, ResourceKind, ResourceStatus,
+    StorageKey,
 };
 use asset_core::port::BlobByteStream;
 use asset_core::port::ListResources;
@@ -204,7 +205,10 @@ pub(crate) async fn list_resources(
     }
 
     if let Some(directory) = query.directory {
-        command = command.with_directory(clean_directory(Some(directory.as_str()), "")?);
+        command = command.with_directory(ResourceDirectory::from_path(clean_directory(
+            Some(directory.as_str()),
+            "",
+        )?)?);
     }
 
     let page_result = state.secured(&access.0).list_resources(command).await?;
@@ -238,7 +242,7 @@ pub(crate) async fn list_directory(
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let offset = u64::from(page - 1) * u64::from(limit);
     let mut resources_query = ListResources::new(limit, offset)
-        .with_directory(path.clone())
+        .with_directory(ResourceDirectory::from_path(path.clone())?)
         .with_include_deleted(query.include_deleted.unwrap_or(false));
 
     if let Some(kind) = query.kind {
@@ -332,7 +336,10 @@ pub(crate) async fn scan_storage(
     let path = clean_directory(payload.path.as_deref(), "")?;
     let result = state
         .secured(&access.0)
-        .scan_storage(ScanStorage::new(path).with_sha256(payload.sha256.unwrap_or(false)))
+        .scan_storage(
+            ScanStorage::new(ResourceDirectory::from_path(path)?)
+                .with_sha256(payload.sha256.unwrap_or(false)),
+        )
         .await?;
     let imported = result
         .resources
@@ -394,7 +401,7 @@ pub(crate) async fn upload_resource_content_stream(
     let data = limited_body_stream(body);
 
     let mut command = UploadResourceContentStream::new(query.name, storage_key, data);
-    command = command.with_directory(directory);
+    command = command.with_directory(ResourceDirectory::from_path(directory)?);
     command = apply_common_stream_fields(command, query.kind, query.status, query.metadata_json)?;
 
     if let Some(mime_type) = content_type(&headers)? {
@@ -487,7 +494,10 @@ pub(crate) async fn update_resource(
     }
 
     if let Some(directory) = payload.directory {
-        command = command.with_directory(clean_directory(Some(&directory), "")?);
+        command = command.with_directory(ResourceDirectory::from_path(clean_directory(
+            Some(&directory),
+            "",
+        )?)?);
     }
 
     if let Some(metadata) = payload.metadata {
@@ -759,7 +769,10 @@ fn apply_common_resource_fields(
     }
 
     if let Some(directory) = directory {
-        command = command.with_directory(clean_directory(Some(&directory), "")?);
+        command = command.with_directory(ResourceDirectory::from_path(clean_directory(
+            Some(&directory),
+            "",
+        )?)?);
     }
 
     if let Some(metadata) = metadata {

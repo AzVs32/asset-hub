@@ -4,7 +4,6 @@ use crate::{
     ResourceActionRequirements, ResourceActionUi, ResourceContentMatcher,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 /// Capabilities contributed by a plugin.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -21,8 +20,6 @@ pub struct ResourceKindCapability {
     pub kind: String,
     pub parent: Option<String>,
     pub label: Option<String>,
-    pub schema_id: Option<String>,
-    pub metadata_schema: Option<Value>,
     pub supports_content: bool,
     pub detect: ResourceContentMatcher,
 }
@@ -33,8 +30,6 @@ impl Default for ResourceKindCapability {
             kind: String::new(),
             parent: None,
             label: None,
-            schema_id: None,
-            metadata_schema: None,
             supports_content: true,
             detect: ResourceContentMatcher::default(),
         }

@@ -11,14 +11,9 @@ const MAX_METADATA_DESCRIPTION_LEN: usize = 1024;
 const MAX_METADATA_TAGS: usize = 64;
 /// 单个元数据标签允许的最大字符数。
 const MAX_METADATA_TAG_LEN: usize = 64;
-/// kind metadata schema id 允许的最大字符数。
-const MAX_KIND_SCHEMA_ID_LEN: usize = 128;
-
 /// 资源元数据。
 ///
-/// 元数据分为核心摘要和 kind 专属扩展两层：
-/// - `summary` 由 Asset Hub 核心统一理解，用于描述、标签、查询和基础展示。
-/// - `kind` 预留给插件定义 schema 与数据，核心层只要求其是带 schema id 的 JSON object。
+/// `summary` 由 Asset Hub 核心统一理解，用于描述、标签、查询和基础展示。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResourceMetadata {
@@ -26,9 +21,7 @@ pub struct ResourceMetadata {
     schema_version: u32,
     /// 核心摘要元数据。
     summary: ResourceSummaryMetadata,
-    /// kind/plugin 专属元数据。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    kind: Option<KindMetadata>,
+    // TODO: 出现明确的 kind 专属元数据用例后，在这里重新设计扩展模型；
 }
 
 /// 资源核心摘要元数据。
@@ -40,16 +33,6 @@ pub struct ResourceSummaryMetadata {
     description: Option<String>,
     /// 资源标签。
     tags: Vec<String>,
-}
-
-/// kind/plugin 专属元数据。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct KindMetadata {
-    /// 插件 schema 标识，例如 `mindustry:mod@1`。
-    schema_id: String,
-    /// 经过该 schema 解释的 JSON object。
-    data: Value,
 }
 
 impl ResourceMetadata {
@@ -64,17 +47,12 @@ impl ResourceMetadata {
     }
 
     /// 创建并校验资源元数据。
-    pub fn new(
-        summary: ResourceSummaryMetadata,
-        kind: Option<KindMetadata>,
-    ) -> Result<Self, ResourceError> {
+    pub fn new(summary: ResourceSummaryMetadata) -> Result<Self, ResourceError> {
         let summary = summary.validate()?;
-        let kind = kind.map(KindMetadata::validate).transpose()?;
 
         Ok(Self {
             schema_version: RESOURCE_METADATA_SCHEMA_VERSION,
             summary,
-            kind,
         })
     }
 
@@ -100,11 +78,6 @@ impl ResourceMetadata {
         &self.summary
     }
 
-    /// 返回 kind/plugin 专属元数据。
-    pub fn kind_metadata(&self) -> Option<&KindMetadata> {
-        self.kind.as_ref()
-    }
-
     /// 返回资源描述。
     pub fn description(&self) -> Option<&str> {
         self.summary.description()
@@ -122,7 +95,7 @@ impl ResourceMetadata {
 
     /// 检查元数据是否为空。
     pub fn is_empty(&self) -> bool {
-        self.summary.is_empty() && self.kind.is_none()
+        self.summary.is_empty()
     }
 
     /// 替换资源描述。
@@ -143,7 +116,7 @@ impl ResourceMetadata {
             });
         }
 
-        Self::new(self.summary, self.kind)
+        Self::new(self.summary)
     }
 }
 
@@ -152,7 +125,6 @@ impl Default for ResourceMetadata {
         Self {
             schema_version: RESOURCE_METADATA_SCHEMA_VERSION,
             summary: ResourceSummaryMetadata::default(),
-            kind: None,
         }
     }
 }
@@ -219,54 +191,6 @@ impl ResourceSummaryMetadata {
     }
 }
 
-impl KindMetadata {
-    /// 创建 kind/plugin 专属元数据。
-    pub fn new(schema_id: impl Into<String>, data: Value) -> Result<Self, ResourceError> {
-        Self {
-            schema_id: schema_id.into(),
-            data,
-        }
-        .validate()
-    }
-
-    /// 返回 schema id。
-    pub fn schema_id(&self) -> &str {
-        &self.schema_id
-    }
-
-    /// 返回 kind/plugin 专属数据。
-    pub fn data(&self) -> &Value {
-        &self.data
-    }
-
-    fn validate(self) -> Result<Self, ResourceError> {
-        let schema_id = normalize_required_text(
-            "metadata.kind.schema_id",
-            &self.schema_id,
-            MAX_KIND_SCHEMA_ID_LEN,
-        )?;
-
-        if schema_id.chars().any(char::is_whitespace) {
-            return Err(ResourceError::InvalidFormat {
-                field: "metadata.kind.schema_id",
-                reason: "whitespace is not allowed",
-            });
-        }
-
-        if !self.data.is_object() {
-            return Err(ResourceError::InvalidFormat {
-                field: "metadata.kind.data",
-                reason: "kind metadata data must be a JSON object",
-            });
-        }
-
-        Ok(Self {
-            schema_id,
-            data: self.data,
-        })
-    }
-}
-
 /// 资源元数据构建器。
 #[derive(Debug, Clone, Default)]
 pub struct ResourceMetadataBuilder {
@@ -274,8 +198,6 @@ pub struct ResourceMetadataBuilder {
     description: Option<String>,
     /// 核心摘要标签。
     tags: Vec<String>,
-    /// kind/plugin 专属元数据。
-    kind: Option<KindMetadata>,
 }
 
 impl ResourceMetadataBuilder {
@@ -306,12 +228,6 @@ impl ResourceMetadataBuilder {
         self
     }
 
-    /// 设置 kind/plugin 专属元数据。
-    pub fn with_kind_metadata(mut self, kind: KindMetadata) -> Self {
-        self.kind = Some(kind);
-        self
-    }
-
     /// 完成构建并执行元数据校验。
     pub fn build(self) -> Result<ResourceMetadata, ResourceError> {
         let summary = ResourceSummaryMetadata {
@@ -319,7 +235,7 @@ impl ResourceMetadataBuilder {
             tags: self.tags,
         };
 
-        ResourceMetadata::new(summary, self.kind)
+        ResourceMetadata::new(summary)
     }
 }
 

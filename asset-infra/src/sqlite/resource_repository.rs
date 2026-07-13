@@ -72,7 +72,7 @@ impl SqliteResourceRepository {
 #[async_trait::async_trait]
 impl ResourceRepository for SqliteResourceRepository {
     async fn save(&self, resource: &Resource) -> Result<(), CoreError> {
-        ensure_directory_path(&self.pool, resource.directory()).await?;
+        ensure_directory_path(&self.pool, resource.directory().path()).await?;
 
         let metadata_json = serde_json::to_string(resource.metadata())
             .map_err(|error| CoreError::repository("resource.encode_metadata", error))?;
@@ -111,7 +111,7 @@ impl ResourceRepository for SqliteResourceRepository {
         )
         .bind(resource.id().to_string())
         .bind(resource.name())
-        .bind(resource.directory())
+        .bind(resource.directory().path())
         .bind(resource.kind().as_str())
         .bind(status_to_str(resource.status()))
         .bind(metadata_json)
@@ -332,7 +332,7 @@ fn push_list_where(builder: &mut QueryBuilder<Sqlite>, query: &ListResources) {
     if let Some(directory) = query.directory() {
         push_condition_prefix(builder, &mut has_where);
         builder.push("directory = ");
-        builder.push_bind(directory);
+        builder.push_bind(directory.path());
     }
 }
 
@@ -355,7 +355,7 @@ fn escape_like(value: &str) -> String {
 fn decode_resource(row: SqliteRow) -> Result<Resource, CoreError> {
     let id = decode_id(column(&row, "id")?)?;
     let name = column(&row, "name")?;
-    let directory = column(&row, "directory")?;
+    let directory = ResourceDirectory::from_path(column::<String>(&row, "directory")?)?;
     let kind = ResourceKind::try_new(column::<String>(&row, "kind")?)?;
     let status = status_from_str(column(&row, "status")?)?;
     let metadata = decode_metadata(column(&row, "metadata_json")?)?;
@@ -492,7 +492,6 @@ impl std::error::Error for DecodeError {}
 mod tests {
     use super::*;
     use asset_core::domain::{Checksum, ResourceContent, StorageKey};
-    use serde_json::json;
     use std::path::PathBuf;
 
     #[tokio::test]
@@ -510,13 +509,6 @@ mod tests {
             .with_metadata(
                 ResourceMetadata::builder()
                     .with_tags(["rust", "asset"])
-                    .with_kind_metadata(
-                        asset_core::domain::KindMetadata::new(
-                            "core:image@1",
-                            json!({"source": "sqlite-test"}),
-                        )
-                        .unwrap(),
-                    )
                     .build()
                     .unwrap(),
             )
@@ -537,10 +529,6 @@ mod tests {
         assert_eq!(restored.name(), "image");
         assert!(restored.kind().is("core:image"));
         assert_eq!(restored.metadata().tags(), &["rust", "asset"]);
-        assert_eq!(
-            restored.metadata().kind_metadata().unwrap().data(),
-            &json!({"source": "sqlite-test"})
-        );
         assert_eq!(restored_content.key().as_str(), "assets/image.png");
         assert_eq!(restored_content.size(), 42);
         assert_eq!(restored_content.mime_type(), Some("image/png"));

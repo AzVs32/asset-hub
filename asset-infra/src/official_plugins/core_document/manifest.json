@@ -16,18 +16,10 @@
         "kind": "core:document",
         "parent": "core:file",
         "label": "Document",
-        "schema_id": "core:document@1",
         "supports_content": true,
         "detect": {
           "mime_types": ["application/pdf"],
           "extensions": [".pdf"]
-        },
-        "metadata_schema": {
-          "type": "object",
-          "properties": {
-            "author": { "type": "string" },
-            "title": { "type": "string" }
-          }
         }
       }
     ],

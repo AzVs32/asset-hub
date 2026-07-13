@@ -10,8 +10,7 @@ const defaultFilters: Filters = {
 
 const fallbackKinds: ResourceKindOption[] = [{
   kind: "core:unknown", parent: null, ancestors: [], label: "core:unknown",
-  schema_id: null, metadata_schema: null, supports_content: true,
-  detect: undefined, actions: [], source: "builtin",
+  supports_content: true, detect: undefined, actions: [], source: "builtin",
 }];
 
 export function useResourceListing(initialDirectory: string) {

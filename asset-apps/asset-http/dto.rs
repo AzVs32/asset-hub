@@ -1,7 +1,6 @@
 use asset_core::ResourceError;
 use asset_core::domain::{
-    Checksum, ChecksumKind, KindMetadata, Resource, ResourceContent, ResourceMetadata,
-    ResourceStatus,
+    Checksum, ChecksumKind, Resource, ResourceContent, ResourceMetadata, ResourceStatus,
 };
 use asset_core::port::{
     ResourceActionAccess, ResourceActionContentDelivery, ResourceActionDefinition,
@@ -29,12 +28,6 @@ pub(crate) struct BinaryContent(Vec<u8>);
         "summary": {
             "description": "A metadata-only resource",
             "tags": ["demo", "document"]
-        },
-        "kind": {
-            "schema_id": "test:metadata@1",
-            "data": {
-                "source": "swagger"
-            }
         }
     }
 }))]
@@ -115,12 +108,6 @@ pub(crate) struct ListDirectoryQuery {
         "summary": {
             "description": "updated resource",
             "tags": ["demo", "updated"]
-        },
-        "kind": {
-            "schema_id": "test:metadata@1",
-            "data": {
-                "source": "patch"
-            }
         }
     }
 }))]
@@ -207,10 +194,6 @@ pub(crate) struct ResourceKindResponse {
     pub(crate) ancestors: Vec<String>,
     /// 展示名称。
     pub(crate) label: String,
-    /// 默认 kind metadata schema id。
-    pub(crate) schema_id: Option<String>,
-    /// kind metadata JSON schema。
-    pub(crate) metadata_schema: Option<Value>,
     /// 是否允许上传文件内容。
     pub(crate) supports_content: bool,
     /// 文件自动识别规则；为空时不会主动匹配，仅可作为手动选择或兜底。
@@ -237,8 +220,6 @@ impl ResourceKindResponse {
                 .map(|kind| kind.as_str().to_owned())
                 .collect(),
             label: definition.label().to_string(),
-            schema_id: registry.effective_schema_id(definition.kind()),
-            metadata_schema: registry.effective_metadata_schema(definition.kind()),
             supports_content: definition.supports_content(),
             detect: (!definition.detect().is_empty()).then(|| ResourceContentMatcherResponse {
                 mime_types: definition.detect().mime_types().to_vec(),
@@ -389,41 +370,26 @@ impl HealthResponse {
 
 /// 创建或上传资源时可传入的资源元数据。
 #[derive(Debug, Clone, Default, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 #[schema(example = json!({
     "summary": {
         "description": "Human readable resource description",
         "tags": ["demo", "asset"]
-    },
-    "kind": {
-        "schema_id": "test:metadata@1",
-        "data": {
-            "source": "swagger"
-        }
     }
 }))]
 pub(crate) struct ResourceMetadataRequest {
     /// 核心摘要元数据。
     pub(crate) summary: Option<ResourceSummaryMetadataRequest>,
-    /// kind/plugin 专属元数据。
-    pub(crate) kind: Option<KindMetadataRequest>,
 }
 
 /// 创建或上传资源时可传入的核心摘要元数据。
 #[derive(Debug, Clone, Default, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ResourceSummaryMetadataRequest {
     /// 资源描述。
     pub(crate) description: Option<String>,
     /// 资源标签。
     pub(crate) tags: Option<Vec<String>>,
-}
-
-/// 创建或上传资源时可传入的 kind/plugin 专属元数据。
-#[derive(Debug, Clone, Deserialize, ToSchema)]
-pub(crate) struct KindMetadataRequest {
-    /// 插件 schema 标识，例如 `mindustry:mod@1`。
-    pub(crate) schema_id: String,
-    /// kind/plugin 专属数据，必须是 JSON object。
-    pub(crate) data: Value,
 }
 
 impl ResourceMetadataRequest {
@@ -441,10 +407,6 @@ impl ResourceMetadataRequest {
             }
         }
 
-        if let Some(kind) = self.kind {
-            builder = builder.with_kind_metadata(KindMetadata::new(kind.schema_id, kind.data)?);
-        }
-
         builder.build()
     }
 }
@@ -456,12 +418,6 @@ impl ResourceMetadataRequest {
     "summary": {
         "description": "Human readable resource description",
         "tags": ["demo", "asset"]
-    },
-    "kind": {
-        "schema_id": "test:metadata@1",
-        "data": {
-            "source": "swagger"
-        }
     }
 }))]
 pub(crate) struct ResourceMetadataResponse {
@@ -469,8 +425,6 @@ pub(crate) struct ResourceMetadataResponse {
     pub(crate) schema_version: u32,
     /// 核心摘要元数据。
     pub(crate) summary: ResourceSummaryMetadataResponse,
-    /// kind/plugin 专属元数据。
-    pub(crate) kind: Option<KindMetadataResponse>,
 }
 
 /// 资源核心摘要元数据响应。
@@ -482,15 +436,6 @@ pub(crate) struct ResourceSummaryMetadataResponse {
     pub(crate) tags: Vec<String>,
 }
 
-/// kind/plugin 专属元数据响应。
-#[derive(Debug, Serialize, ToSchema)]
-pub(crate) struct KindMetadataResponse {
-    /// 插件 schema 标识。
-    pub(crate) schema_id: String,
-    /// kind/plugin 专属数据。
-    pub(crate) data: Value,
-}
-
 impl From<&ResourceMetadata> for ResourceMetadataResponse {
     fn from(metadata: &ResourceMetadata) -> Self {
         Self {
@@ -499,10 +444,6 @@ impl From<&ResourceMetadata> for ResourceMetadataResponse {
                 description: metadata.description().map(str::to_string),
                 tags: metadata.tags().to_vec(),
             },
-            kind: metadata.kind_metadata().map(|kind| KindMetadataResponse {
-                schema_id: kind.schema_id().to_string(),
-                data: kind.data().clone(),
-            }),
         }
     }
 }

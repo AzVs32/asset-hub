@@ -16,19 +16,10 @@
         "kind": "core:video",
         "parent": "core:file",
         "label": "Video",
-        "schema_id": "core:video@1",
         "supports_content": true,
         "detect": {
           "mime_types": ["video/*"],
           "extensions": [".mp4", ".webm", ".mov", ".m4v", ".ogv"]
-        },
-        "metadata_schema": {
-          "type": "object",
-          "properties": {
-            "description": { "type": "string" },
-            "duration_seconds": { "type": "number" },
-            "title": { "type": "string" }
-          }
         }
       }
     ],

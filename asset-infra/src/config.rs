@@ -2,7 +2,6 @@ use ::config::{Config, File, FileFormat};
 use asset_core::CoreError;
 use asset_core::port::{ResourceActionDefinition, ResourceContentMatcher};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 /// 默认配置文件名。
@@ -153,10 +152,6 @@ pub struct ResourceKindConfig {
     pub parent: Option<String>,
     /// 展示名称；为空时使用 `kind`。
     pub label: Option<String>,
-    /// 默认 kind metadata schema id。
-    pub schema_id: Option<String>,
-    /// kind metadata JSON schema。
-    pub metadata_schema: Option<Value>,
     /// 是否支持对象内容。
     pub supports_content: bool,
     /// 文件自动识别规则。上传时前端可用这些规则自动选择 kind。
@@ -183,8 +178,6 @@ impl Default for ResourceKindConfig {
             kind: String::new(),
             parent: None,
             label: None,
-            schema_id: None,
-            metadata_schema: None,
             supports_content: true,
             detect: ResourceContentMatcher::default(),
             actions: Vec::new(),
@@ -270,9 +263,7 @@ mod tests {
             [[kind.definitions]]
             kind = "doc:note"
             label = "Note"
-            schema_id = "doc:note@1"
             supports_content = false
-            metadata_schema = { type = "object" }
             "#,
         )
         .unwrap();
@@ -284,15 +275,7 @@ mod tests {
         assert_eq!(config.kind.definitions.len(), 1);
         assert_eq!(config.kind.definitions[0].kind, "doc:note");
         assert_eq!(config.kind.definitions[0].label.as_deref(), Some("Note"));
-        assert_eq!(
-            config.kind.definitions[0].schema_id.as_deref(),
-            Some("doc:note@1")
-        );
         assert!(!config.kind.definitions[0].supports_content);
-        assert_eq!(
-            config.kind.definitions[0].metadata_schema.as_ref().unwrap()["type"],
-            "object"
-        );
     }
 
     #[test]

@@ -22,7 +22,6 @@
         "kind": "azvs:markdown",
         "parent": "core:document",
         "label": "Markdown",
-        "schema_id": "azvs:markdown@1",
         "supports_content": true,
         "detect": {
           "mime_types": ["text/markdown", "text/x-markdown"],

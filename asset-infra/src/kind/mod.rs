@@ -112,8 +112,6 @@ fn build_registries(
                 kind,
                 kind,
                 parent,
-                None,
-                None,
                 true,
                 asset_core::port::ResourceContentMatcher::default(),
                 Vec::new(),
@@ -363,8 +361,6 @@ fn definition_from_manifest_kind(
         &config.kind,
         label,
         config.parent.as_deref(),
-        config.schema_id.clone(),
-        config.metadata_schema.clone(),
         config.supports_content,
         config.detect.clone(),
         Vec::new(),
@@ -381,8 +377,6 @@ fn definition_from_config(
         &config.kind,
         label,
         config.parent.as_deref(),
-        config.schema_id.clone(),
-        config.metadata_schema.clone(),
         config.supports_content,
         config.detect.clone(),
         config.actions.clone(),
@@ -390,13 +384,10 @@ fn definition_from_config(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn definition_from_parts(
     kind: &str,
     label: &str,
     parent: Option<&str>,
-    schema_id: Option<String>,
-    metadata_schema: Option<serde_json::Value>,
     supports_content: bool,
     detect: asset_core::port::ResourceContentMatcher,
     actions: Vec<ResourceActionDefinition>,
@@ -405,12 +396,10 @@ fn definition_from_parts(
     Ok(ResourceKindDefinition::with_source(
         ResourceKind::try_new(kind)?,
         label,
-        schema_id,
         supports_content,
         source,
     )
     .with_parent(parent.map(ResourceKind::try_new).transpose()?)
-    .with_metadata_schema(metadata_schema)
     .with_detect(detect)
     .with_actions(actions))
 }
@@ -445,7 +434,6 @@ fn load_plugin_manifest(path: PathBuf) -> Result<LoadedPluginManifest, CoreError
 mod tests {
     use super::*;
     use asset_core::port::ResourceAction;
-    use serde_json::json;
     use std::path::PathBuf;
 
     #[test]
@@ -467,8 +455,6 @@ mod tests {
             definitions: vec![ResourceKindConfig {
                 kind: "doc:note".to_string(),
                 label: Some("Note".to_string()),
-                schema_id: Some("doc:note@1".to_string()),
-                metadata_schema: Some(json!({"type": "object"})),
                 supports_content: false,
                 actions: Vec::new(),
                 ..ResourceKindConfig::default()
@@ -488,8 +474,6 @@ mod tests {
             .get(&ResourceKind::try_new("doc:note").unwrap())
             .unwrap();
         assert_eq!(note.label(), "Note");
-        assert_eq!(note.schema_id(), Some("doc:note@1"));
-        assert_eq!(note.metadata_schema().unwrap()["type"], "object");
         assert!(!note.supports_content());
         assert!(note.actions().is_empty());
         assert_eq!(note.source(), "config");
@@ -666,11 +650,7 @@ mod tests {
                   {
                     "kind": "mindustry:mod",
                     "label": "Mindustry Mod",
-                    "schema_id": "mindustry:mod@1",
-                    "supports_content": true,
-                    "metadata_schema": {
-                      "type": "object"
-                    }
+                    "supports_content": true
                   }
                 ],
                 "resource_actions": [
@@ -717,7 +697,6 @@ mod tests {
         assert_eq!(definition.label(), "Mindustry Mod");
         assert_eq!(definition.source(), "plugin:mindustry");
         assert!(definition.has_action("mindustry.preview"));
-        assert_eq!(definition.metadata_schema().unwrap()["type"], "object");
 
         let _ = std::fs::remove_dir_all(root);
     }
@@ -749,7 +728,6 @@ mod tests {
                   {
                     "kind": "azvs:epub",
                     "label": "EPUB",
-                    "schema_id": "azvs:epub@1",
                     "supports_content": true,
                     "detect": {
                       "mime_types": ["application/epub+zip"],

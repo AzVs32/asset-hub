@@ -8,17 +8,15 @@ export function toDraft(resource: Resource): Draft {
     status: resource.status,
     description: resource.metadata.summary.description ?? "",
     tags: resource.metadata.summary.tags.join(", "),
-    schemaId: resource.metadata.kind?.schema_id ?? "",
-    kindData: JSON.stringify(resource.metadata.kind?.data ?? {}, null, 2),
   };
 }
 
 export function metadataFromDraft(draft: Draft) {
-  return buildMetadata(draft.description, draft.tags, draft.schemaId, draft.kindData);
+  return buildMetadata(draft.description, draft.tags);
 }
 
 export function metadataFromUpload(draft: UploadDraft) {
-  return buildMetadata(draft.description, draft.tags, draft.schemaId, draft.kindData);
+  return buildMetadata(draft.description, draft.tags);
 }
 
 export function emptyCreateDraft(): Draft {
@@ -29,8 +27,6 @@ export function emptyCreateDraft(): Draft {
     status: "active",
     description: "",
     tags: "",
-    schemaId: "",
-    kindData: "{}",
   };
 }
 
@@ -42,33 +38,18 @@ export function emptyUploadDraft(): UploadDraft {
     directory: "uploads",
     description: "",
     tags: "",
-    schemaId: "",
-    kindData: "{}",
   };
 }
 
-export function normalizeDraftKind<T extends { kind: string; schemaId: string }>(
+export function normalizeDraftKind<T extends { kind: string }>(
   draft: T,
   options: ResourceKindOption[],
 ): T {
   if (options.some((option) => option.kind === draft.kind)) {
-    return withKindDefaults(draft, options);
+    return draft;
   }
 
-  return withKindDefaults({ ...draft, kind: options[0]?.kind ?? draft.kind }, options);
-}
-
-export function withKindDefaults<T extends { kind: string; schemaId: string }>(
-  draft: T,
-  options: ResourceKindOption[],
-): T {
-  const option = options.find((item) => item.kind === draft.kind);
-  if (!option) return draft;
-
-  return {
-    ...draft,
-    schemaId: option.schema_id ?? "",
-  };
+  return { ...draft, kind: options[0]?.kind ?? draft.kind };
 }
 
 export function kindOptionLabel(option: ResourceKindOption): string {
@@ -83,7 +64,7 @@ export function kindOptionHint(option: ResourceKindOption | undefined): string {
     ? ` / detects ${[...option.detect.mime_types, ...option.detect.extensions].join(", ")}`
     : "";
   const hierarchy = option.parent ? ` / parent ${option.parent}` : " / root kind";
-  return `${option.source}${hierarchy} / ${content}${option.schema_id ? ` / ${option.schema_id}` : ""}${detect}${actions}`;
+  return `${option.source}${hierarchy} / ${content}${detect}${actions}`;
 }
 
 export function sortKindsForHierarchy(options: ResourceKindOption[]): ResourceKindOption[] {
@@ -142,19 +123,12 @@ export function normalizeDirectoryInput(value: string): string {
     .join("/");
 }
 
-function buildMetadata(description: string, tags: string, schemaId: string, kindData: string) {
-  const trimmedSchemaId = schemaId.trim();
+function buildMetadata(description: string, tags: string) {
   return {
     summary: {
       description: description.trim() || null,
       tags: splitTags(tags),
     },
-    kind: trimmedSchemaId
-      ? {
-          schema_id: trimmedSchemaId,
-          data: parseKindData(kindData),
-        }
-      : null,
   };
 }
 
@@ -163,18 +137,6 @@ function splitTags(value: string): string[] {
     .split(",")
     .map((tag) => tag.trim())
     .filter(Boolean);
-}
-
-function parseKindData(value: string): Record<string, unknown> {
-  const trimmed = value.trim();
-  if (!trimmed) return {};
-
-  const parsed = JSON.parse(trimmed);
-  if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
-    throw new Error("Kind data must be a JSON object");
-  }
-
-  return parsed as Record<string, unknown>;
 }
 
 export function formatBytes(value: number): string {

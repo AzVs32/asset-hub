@@ -9,9 +9,7 @@ mod status;
 pub use content::{Checksum, ChecksumKind, ResourceContent, ResourceContentBuilder, StorageKey};
 pub use directory::ResourceDirectory;
 pub use kind::ResourceKind;
-pub use metadata::{
-    KindMetadata, ResourceMetadata, ResourceMetadataBuilder, ResourceSummaryMetadata,
-};
+pub use metadata::{ResourceMetadata, ResourceMetadataBuilder, ResourceSummaryMetadata};
 pub use resource::{Resource, ResourceBuilder, ResourceId, ResourceSnapshot};
 pub use status::ResourceStatus;
 
@@ -68,6 +66,7 @@ mod tests {
         assert_eq!(resource.name(), "Design Doc");
         assert_eq!(resource.kind().as_str(), "doc:markdown");
         assert_eq!(resource.status(), ResourceStatus::default());
+        assert!(resource.directory().is_root());
         assert!(resource.is_active());
         assert!(!resource.is_archived());
         assert!(!resource.is_deleted());
@@ -105,7 +104,7 @@ mod tests {
         let resource = Resource::rehydrate(ResourceSnapshot {
             id,
             name: " restored image ".to_string(),
-            directory: " images/raw ".to_string(),
+            directory: ResourceDirectory::from_path(" images/raw ").unwrap(),
             kind: ResourceKind::from("core:image"),
             status: ResourceStatus::Archived,
             metadata: ResourceMetadata::default(),
@@ -118,7 +117,7 @@ mod tests {
 
         assert_eq!(resource.id(), id);
         assert_eq!(resource.name(), "restored image");
-        assert_eq!(resource.directory(), "images/raw");
+        assert_eq!(resource.directory().path(), "images/raw");
         assert!(resource.kind().is("core:image"));
         assert_eq!(resource.status(), ResourceStatus::Archived);
         assert_eq!(resource.created_at(), created_at);
@@ -153,9 +152,6 @@ mod tests {
     fn resource_builder_accepts_metadata_and_content() {
         let metadata = ResourceMetadata::builder()
             .with_tags(["rust", "asset"])
-            .with_kind_metadata(
-                KindMetadata::new("test:resource@1", json!({"source": "test"})).unwrap(),
-            )
             .build()
             .unwrap();
         let checksum = Checksum::sha256("a".repeat(64)).unwrap();
@@ -178,10 +174,6 @@ mod tests {
         assert_eq!(content.original_filename(), Some("image.png"));
         assert_eq!(content.checksums().collect::<Vec<_>>(), vec![&checksum]);
         assert_eq!(resource.metadata().tags(), &["rust", "asset"]);
-        assert_eq!(
-            resource.metadata().kind_metadata().unwrap().data(),
-            &json!({"source": "test"})
-        );
     }
 
     #[test]
@@ -222,33 +214,18 @@ mod tests {
     }
 
     #[test]
-    fn metadata_accepts_kind_specific_object() {
+    fn metadata_accepts_summary() {
         let metadata = ResourceMetadata::from_persisted_value(json!({
             "schema_version": 1,
             "summary": {
                 "description": "A resource",
                 "tags": ["asset"]
-            },
-            "kind": {
-                "schema_id": "asset:test@1",
-                "data": {
-                    "A": "a",
-                    "B": "b"
-                }
             }
         }))
         .unwrap();
 
         assert_eq!(metadata.description(), Some("A resource"));
         assert_eq!(metadata.tags(), &["asset"]);
-        assert_eq!(
-            metadata.kind_metadata().unwrap().schema_id(),
-            "asset:test@1"
-        );
-        assert_eq!(
-            metadata.kind_metadata().unwrap().data(),
-            &json!({"A": "a", "B": "b"})
-        );
     }
 
     #[test]
@@ -263,6 +240,11 @@ mod tests {
                 "schema_version": 1,
                 "summary": {"description": null, "tags": []},
                 "legacy": true
+            }),
+            json!({
+                "schema_version": 1,
+                "summary": {"description": null, "tags": []},
+                "kind": {}
             }),
         ] {
             assert!(ResourceMetadata::from_persisted_value(value).is_err());

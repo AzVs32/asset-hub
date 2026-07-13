@@ -16,18 +16,10 @@
         "kind": "core:image",
         "parent": "core:file",
         "label": "Image",
-        "schema_id": "core:image@1",
         "supports_content": true,
         "detect": {
           "mime_types": ["image/*"],
           "extensions": [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".avif"]
-        },
-        "metadata_schema": {
-          "type": "object",
-          "properties": {
-            "alt": { "type": "string" },
-            "caption": { "type": "string" }
-          }
         }
       }
     ],

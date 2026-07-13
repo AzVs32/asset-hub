@@ -45,7 +45,6 @@ async fn resource_kinds_are_listed_and_unsupported_kind_is_rejected() {
         .find(|kind| kind["kind"] == "core:unknown")
         .unwrap();
     assert_eq!(unknown["parent"], "core:file");
-    assert_eq!(unknown["schema_id"], "core:file@1");
     for (kind, source) in [
         ("core:file", "plugin:core.file"),
         ("core:image", "plugin:core.image"),
@@ -109,13 +108,6 @@ async fn configured_resource_kind_is_listed_and_content_support_is_enforced() {
         vec![ResourceKindConfig {
             kind: "doc:note".to_string(),
             label: Some("Note".to_string()),
-            schema_id: Some("doc:note@1".to_string()),
-            metadata_schema: Some(json!({
-                "type": "object",
-                "properties": {
-                    "topic": { "type": "string" }
-                }
-            })),
             supports_content: false,
             actions: Vec::new(),
             ..ResourceKindConfig::default()
@@ -132,10 +124,8 @@ async fn configured_resource_kind_is_listed_and_content_support_is_enforced() {
         .find(|kind| kind["kind"] == "doc:note")
         .unwrap();
     assert_eq!(note_kind["label"], "Note");
-    assert_eq!(note_kind["schema_id"], "doc:note@1");
     assert_eq!(note_kind["source"], "config");
     assert_eq!(note_kind["supports_content"], false);
-    assert_eq!(note_kind["metadata_schema"]["type"], "object");
 
     let (status, resource) = json_request(
         &app,
@@ -548,13 +538,6 @@ async fn create_resource_accepts_structured_metadata_and_rejects_metadata_string
                 "summary": {
                     "description": "metadata-only resource",
                     "tags": ["demo", "document"]
-                },
-                "kind": {
-                    "schema_id": "test:metadata@1",
-                    "data": {
-                        "A": "a",
-                        "B": "b"
-                    }
                 }
             }
         }),
@@ -573,7 +556,6 @@ async fn create_resource_accepts_structured_metadata_and_rejects_metadata_string
         resource["metadata"]["summary"]["tags"],
         json!(["demo", "document"])
     );
-    assert_eq!(resource["metadata"]["kind"]["data"]["A"], "a");
 
     let id = resource["id"].as_str().unwrap();
     let (status, found) = empty_json_request(&app, Method::GET, &format!("/resources/{id}")).await;
@@ -598,6 +580,28 @@ async fn create_resource_accepts_structured_metadata_and_rejects_metadata_string
             .as_str()
             .unwrap()
             .contains("expected struct ResourceMetadataRequest")
+    );
+
+    let (status, error) = json_request(
+        &app,
+        Method::POST,
+        "/resources",
+        json!({
+            "name": "removed_kind_metadata",
+            "metadata": {
+                "summary": {"description": null, "tags": []},
+                "kind": {}
+            }
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        error["error"]
+            .as_str()
+            .unwrap()
+            .contains("unknown field `kind`")
     );
 }
 
@@ -1091,12 +1095,6 @@ async fn update_resource_changes_fields_and_restores_soft_deleted_resource() {
                 "summary": {
                     "description": "updated resource",
                     "tags": ["updated"]
-                },
-                "kind": {
-                    "schema_id": "test:metadata@1",
-                    "data": {
-                        "source": "patch"
-                    }
                 }
             }
         }),
@@ -1107,7 +1105,7 @@ async fn update_resource_changes_fields_and_restores_soft_deleted_resource() {
     assert_eq!(updated["name"], "updated.txt");
     assert_eq!(updated["kind"], "core:unknown");
     assert_eq!(updated["status"], "archived");
-    assert_eq!(updated["metadata"]["kind"]["data"]["source"], "patch");
+    assert_eq!(updated["metadata"]["summary"]["tags"], json!(["updated"]));
 
     let (status, _) = empty_json_request(&app, Method::DELETE, &format!("/resources/{id}")).await;
     assert_eq!(status, StatusCode::OK);
@@ -1140,10 +1138,13 @@ async fn openapi_documents_metadata_examples() {
 
     let metadata_example = &document["components"]["schemas"]["ResourceMetadataRequest"]["example"];
     let create_example = &document["components"]["schemas"]["CreateResourceRequest"]["example"];
-    assert_eq!(metadata_example["kind"]["data"]["source"], "swagger");
     assert_eq!(
-        create_example["metadata"]["kind"]["schema_id"],
-        "test:metadata@1"
+        metadata_example["summary"]["description"],
+        "Human readable resource description"
+    );
+    assert_eq!(
+        create_example["metadata"]["summary"]["description"],
+        "A metadata-only resource"
     );
     assert!(document["paths"].get("/resources/content").is_none());
     assert!(document["paths"].get("/resources/content/stream").is_some());

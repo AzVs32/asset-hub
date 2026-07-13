@@ -6,10 +6,6 @@ export type ResourceMetadata = {
     description: string | null;
     tags: string[];
   };
-  kind: {
-    schema_id: string;
-    data: Record<string, unknown>;
-  } | null;
 };
 
 export type ResourceContent = {
@@ -73,8 +69,6 @@ export type ResourceKindOption = {
   parent: string | null;
   ancestors: string[];
   label: string;
-  schema_id: string | null;
-  metadata_schema: Record<string, unknown> | null;
   supports_content: boolean;
   detect?: {
     mime_types: string[];
@@ -194,8 +188,6 @@ export type Draft = {
   status: ResourceStatus;
   description: string;
   tags: string;
-  schemaId: string;
-  kindData: string;
 };
 
 export type UploadDraft = {
@@ -205,6 +197,4 @@ export type UploadDraft = {
   directory: string;
   description: string;
   tags: string;
-  schemaId: string;
-  kindData: string;
 };

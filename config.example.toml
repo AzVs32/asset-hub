@@ -40,9 +40,7 @@ plugin_manifests = []
 # kind = "doc:note"
 # parent = "core:document"
 # label = "Note"
-# schema_id = "doc:note@1"
 # supports_content = false
-# metadata_schema = { type = "object" }
 
 # Arbitrarily deep hierarchy example. Actions declared for `core:document`
 # are inherited by `core:code`, `code:c`, and `code:cpp`.
@@ -90,7 +88,6 @@ plugin_manifests = []
 #       {
 #         "kind": "example:document",
 #         "label": "Document",
-#         "schema_id": "example:document@1",
 #         "supports_content": true
 #       }
 #     ],

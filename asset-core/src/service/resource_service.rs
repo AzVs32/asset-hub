@@ -8,13 +8,13 @@
 
 use crate::CoreError;
 use crate::domain::{
-    Checksum, ChecksumKind, Resource, ResourceContent, ResourceId, ResourceKind, ResourceMetadata,
-    ResourceStatus, StorageKey,
+    Checksum, ChecksumKind, Resource, ResourceContent, ResourceDirectory, ResourceId, ResourceKind,
+    ResourceMetadata, ResourceStatus, StorageKey,
 };
 use crate::port::{
     BlobByteStream, BlobStorage, ListResources, ResourceActionExecutor, ResourceActionOutput,
-    ResourceActionRegistry, ResourceActionRequest, ResourceDirectory, ResourceKindRegistry,
-    ResourcePage, ResourceRepository, StorageScanner,
+    ResourceActionRegistry, ResourceActionRequest, ResourceKindRegistry, ResourcePage,
+    ResourceRepository, StorageScanner,
 };
 use asset_plugin_api::{PluginActionEffect, PluginContentEncoding, PluginView};
 use base64::Engine;
@@ -54,7 +54,7 @@ pub struct CreateResource {
     /// 初始生命周期状态。
     status: ResourceStatus,
     /// 资源所在的逻辑目录。
-    directory: String,
+    directory: ResourceDirectory,
     /// 初始资源元数据。
     metadata: ResourceMetadata,
 }
@@ -68,7 +68,7 @@ impl CreateResource {
             name: name.into(),
             kind: None,
             status: ResourceStatus::default(),
-            directory: String::new(),
+            directory: ResourceDirectory::root(),
             metadata: ResourceMetadata::default(),
         }
     }
@@ -91,8 +91,8 @@ impl CreateResource {
     }
 
     /// 设置资源所在逻辑目录。
-    pub fn with_directory(mut self, directory: impl Into<String>) -> Self {
-        self.directory = directory.into();
+    pub fn with_directory(mut self, directory: ResourceDirectory) -> Self {
+        self.directory = directory;
         self
     }
 
@@ -104,7 +104,7 @@ impl CreateResource {
         self
     }
 
-    pub fn directory(&self) -> &str {
+    pub fn directory(&self) -> &ResourceDirectory {
         &self.directory
     }
 }
@@ -120,7 +120,7 @@ pub struct ResourceContentCommand<T> {
     /// 初始生命周期状态。
     status: ResourceStatus,
     /// 资源所在的逻辑目录。
-    directory: String,
+    directory: ResourceDirectory,
     /// 初始资源元数据。
     metadata: ResourceMetadata,
     /// 内容在对象存储中的定位键。
@@ -144,14 +144,14 @@ pub type UploadResourceContentStream = ResourceContentCommand<BlobByteStream>;
 /// 扫描对象存储并导入尚未登记资源的命令。
 #[derive(Debug, Clone, Default)]
 pub struct ScanStorage {
-    directory: String,
+    directory: ResourceDirectory,
     include_sha256: bool,
 }
 
 impl ScanStorage {
-    pub fn new(directory: impl Into<String>) -> Self {
+    pub fn new(directory: ResourceDirectory) -> Self {
         Self {
-            directory: directory.into(),
+            directory,
             include_sha256: false,
         }
     }
@@ -161,7 +161,7 @@ impl ScanStorage {
         self
     }
 
-    pub fn directory(&self) -> &str {
+    pub fn directory(&self) -> &ResourceDirectory {
         &self.directory
     }
 }
@@ -211,7 +211,7 @@ impl<T> ResourceContentCommand<T> {
             name: name.into(),
             kind: None,
             status: ResourceStatus::default(),
-            directory: String::new(),
+            directory: ResourceDirectory::root(),
             metadata: ResourceMetadata::default(),
             storage_key,
             payload,
@@ -234,8 +234,8 @@ impl<T> ResourceContentCommand<T> {
     }
 
     /// 设置资源所在逻辑目录。
-    pub fn with_directory(mut self, directory: impl Into<String>) -> Self {
-        self.directory = directory.into();
+    pub fn with_directory(mut self, directory: ResourceDirectory) -> Self {
+        self.directory = directory;
         self
     }
 
@@ -269,7 +269,7 @@ impl<T> ResourceContentCommand<T> {
         self
     }
 
-    pub fn directory(&self) -> &str {
+    pub fn directory(&self) -> &ResourceDirectory {
         &self.directory
     }
 }
@@ -280,7 +280,7 @@ pub struct UpdateResource {
     /// 新资源名称。
     name: Option<String>,
     /// 新逻辑目录。
-    directory: Option<String>,
+    directory: Option<ResourceDirectory>,
     /// 新资源类型。
     kind: Option<ResourceKind>,
     /// 新生命周期状态。
@@ -304,8 +304,8 @@ impl UpdateResource {
     }
 
     /// 设置新逻辑目录。
-    pub fn with_directory(mut self, directory: impl Into<String>) -> Self {
-        self.directory = Some(directory.into());
+    pub fn with_directory(mut self, directory: ResourceDirectory) -> Self {
+        self.directory = Some(directory);
         self
     }
 
@@ -333,8 +333,8 @@ impl UpdateResource {
         self
     }
 
-    pub fn directory(&self) -> Option<&str> {
-        self.directory.as_deref()
+    pub fn directory(&self) -> Option<&ResourceDirectory> {
+        self.directory.as_ref()
     }
 }
 
@@ -740,7 +740,7 @@ fn content_type_for_media(content: &ResourceContent) -> String {
 
 fn build_resource(
     name: String,
-    directory: String,
+    directory: ResourceDirectory,
     kind: Option<ResourceKind>,
     status: ResourceStatus,
     metadata: ResourceMetadata,
@@ -883,7 +883,6 @@ fn hex_digest(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::KindMetadata;
     use crate::port::{
         BlobWriteResult, ResourceAction, ResourceActionDefinition, ResourceKindDefinition,
         ResourceKindRegistry,
@@ -1023,10 +1022,14 @@ mod tests {
         }
     }
 
-    fn child_directory(directory: &str, parent_path: &str) -> Option<ResourceDirectory> {
-        if directory.is_empty() {
+    fn child_directory(
+        directory: &ResourceDirectory,
+        parent_path: &str,
+    ) -> Option<ResourceDirectory> {
+        if directory.is_root() {
             return None;
         }
+        let directory = directory.path();
         let remainder = if parent_path.is_empty() {
             directory
         } else {
@@ -1249,17 +1252,11 @@ mod tests {
         Arc<InMemoryBlobStorage>,
     ) {
         let kind_registry = Arc::new(InMemoryResourceKindRegistry::with_definitions(vec![
-            ResourceKindDefinition::new(ResourceKind::default(), "Unknown", None, true),
-            ResourceKindDefinition::new(
-                ResourceKind::try_new("core:file").unwrap(),
-                "File",
-                None,
-                true,
-            ),
+            ResourceKindDefinition::new(ResourceKind::default(), "Unknown", true),
+            ResourceKindDefinition::new(ResourceKind::try_new("core:file").unwrap(), "File", true),
             ResourceKindDefinition::new(
                 ResourceKind::try_new("doc:markdown").unwrap(),
                 "Markdown",
-                None,
                 false,
             )
             .with_actions(vec![
@@ -1270,7 +1267,6 @@ mod tests {
             ResourceKindDefinition::new(
                 ResourceKind::try_new("core:image").unwrap(),
                 "Image",
-                None,
                 true,
             )
             .with_actions(vec![
@@ -1284,13 +1280,11 @@ mod tests {
             ResourceKindDefinition::new(
                 ResourceKind::try_new("asset:binary").unwrap(),
                 "Binary",
-                None,
                 true,
             ),
             ResourceKindDefinition::new(
                 ResourceKind::try_new("core:document").unwrap(),
                 "Document",
-                None,
                 true,
             )
             .with_actions(vec![
@@ -1321,7 +1315,6 @@ mod tests {
             ResourceKindDefinition::new(
                 ResourceKind::try_new("azvs:markdown").unwrap(),
                 "Markdown Document",
-                None,
                 true,
             )
             .with_parent(Some(ResourceKind::try_new("core:document").unwrap()))
@@ -1333,7 +1326,6 @@ mod tests {
             ResourceKindDefinition::new(
                 ResourceKind::try_new("core:video").unwrap(),
                 "Video",
-                None,
                 true,
             )
             .with_actions(vec![
@@ -1447,9 +1439,6 @@ mod tests {
         let metadata = ResourceMetadata::builder()
             .with_description(" Design document ")
             .with_tags(["rust", "asset"])
-            .with_kind_metadata(
-                KindMetadata::new("doc:markdown@1", json!({"stage": "draft"})).unwrap(),
-            )
             .build()
             .unwrap();
 
@@ -1469,10 +1458,6 @@ mod tests {
         assert!(resource.content().is_none());
         assert_eq!(saved.metadata().description(), Some("Design document"));
         assert_eq!(saved.metadata().tags(), &["rust", "asset"]);
-        assert_eq!(
-            saved.metadata().kind_metadata().unwrap().data(),
-            &json!({"stage": "draft"})
-        );
     }
 
     #[test]
@@ -1571,7 +1556,6 @@ mod tests {
             InMemoryResourceKindRegistry::with_definitions(vec![ResourceKindDefinition::new(
                 ResourceKind::default(),
                 "Unknown",
-                None,
                 true,
             )]),
         ));

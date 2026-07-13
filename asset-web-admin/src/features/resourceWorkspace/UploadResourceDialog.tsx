@@ -1,9 +1,8 @@
 import React from "react";
 import { FileUp, Loader2, X } from "lucide-react";
 import { SelectInput, TextInput } from "../../components/forms";
-import { iconButtonClass, primaryButtonClass, secondaryButtonClass, textareaClass } from "../../components/ui";
+import { iconButtonClass, primaryButtonClass, secondaryButtonClass } from "../../components/ui";
 import type { ResourceKindOption, UploadDraft } from "../../types";
-import { withKindDefaults } from "../../utils/resourceDrafts";
 import { modalActionsClass, modalBackdropClass, modalClass, modalFormClass, modalHeaderClass } from "./dialogStyles";
 
 export function UploadResourceDialog({ draft, setDraft, kinds, directories, busy, onClose, onSubmit }: {
@@ -18,13 +17,11 @@ export function UploadResourceDialog({ draft, setDraft, kinds, directories, busy
         <FileUp size={22} /><span>{draft.file?.name ?? "Choose file"}</span>
       </label>
       <TextInput label="Name" value={draft.name} onChange={(name) => setDraft((d) => ({ ...d, name }))} />
-      <SelectInput label="Kind" value={draft.kind} options={kinds} placeholder="Automatic (server detected)" onChange={(kind) => setDraft((d) => withKindDefaults({ ...d, kind }, kinds))} />
+      <SelectInput label="Kind" value={draft.kind} options={kinds} placeholder="Automatic (server detected)" onChange={(kind) => setDraft((d) => ({ ...d, kind }))} />
       <TextInput label="Directory" value={draft.directory} list="upload-directories" onChange={(directory) => setDraft((d) => ({ ...d, directory }))} />
       <datalist id="upload-directories">{directories.map((directory) => <option key={directory} value={directory} />)}</datalist>
       <TextInput label="Description" value={draft.description} onChange={(description) => setDraft((d) => ({ ...d, description }))} />
       <TextInput label="Tags" value={draft.tags} onChange={(tags) => setDraft((d) => ({ ...d, tags }))} />
-      <TextInput label="Schema ID" value={draft.schemaId} onChange={(schemaId) => setDraft((d) => ({ ...d, schemaId }))} />
-      <label className="col-span-full grid gap-2"><span className="text-xs font-semibold">Kind data JSON</span><textarea className={textareaClass} value={draft.kindData} onChange={(e) => setDraft((d) => ({ ...d, kindData: e.target.value }))} rows={5} /></label>
       <div className={modalActionsClass}><button className={secondaryButtonClass} type="button" onClick={onClose}>Cancel</button>
         <button className={primaryButtonClass} type="submit" disabled={busy}>{busy ? <Loader2 className="animate-spin" size={18} /> : <FileUp size={18} />}Upload</button></div>
     </form>

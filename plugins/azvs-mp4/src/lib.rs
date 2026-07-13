@@ -1,9 +1,8 @@
 use asset_plugin_api::{
-    MediaView, PluginActionOutput, PluginActionRequest, PluginContentEncoding,
-    PluginResource, PluginResourceContent, PluginView,
+    MediaView, PluginActionOutput, PluginActionRequest, PluginContentEncoding, PluginResource,
+    PluginResourceContent, PluginView,
 };
-use extism_pdk::{plugin_fn, FnResult};
-use serde_json::{Value, json};
+use extism_pdk::{FnResult, plugin_fn};
 
 #[plugin_fn]
 pub fn play_mp4(input: String) -> FnResult<String> {
@@ -27,15 +26,9 @@ fn play_mp4_payload(input: String) -> FnResult<String> {
 
 fn video_title(resource: &PluginResource) -> String {
     resource
-        .metadata
-        .get("kind")
-        .and_then(|kind| kind.get("data"))
-        .and_then(|data| data.get("title"))
-        .and_then(Value::as_str)
-        .or(resource
-            .content
-            .as_ref()
-            .and_then(|content| content.original_filename.as_deref()))
+        .content
+        .as_ref()
+        .and_then(|content| content.original_filename.as_deref())
         .unwrap_or(&resource.name)
         .trim()
         .to_string()
@@ -52,18 +45,13 @@ fn video_mime_type(content: Option<&PluginResourceContent>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::{Value, json};
 
     #[test]
-    fn title_prefers_kind_metadata() {
+    fn title_prefers_original_filename() {
         let resource = PluginResource {
             name: "fallback.mp4".to_string(),
-            metadata: json!({
-                "kind": {
-                    "data": {
-                        "title": "Demo Video"
-                    }
-                }
-            }),
+            metadata: json!({}),
             content: Some(PluginResourceContent {
                 key: "videos/file.mp4".to_string(),
                 size: 4,
@@ -79,7 +67,7 @@ mod tests {
             deleted_at: None,
         };
 
-        assert_eq!(video_title(&resource), "Demo Video");
+        assert_eq!(video_title(&resource), "file.mp4");
     }
 
     #[test]
@@ -94,13 +82,7 @@ mod tests {
                     "name": "demo.mp4",
                     "kind": "core:video",
                     "status": "active",
-                    "metadata": {
-                        "kind": {
-                            "data": {
-                                "title": "Demo MP4"
-                            }
-                        }
-                    },
+                    "metadata": {},
                     "content": {
                         "key": "videos/demo.mp4",
                         "size": 4,
@@ -123,7 +105,7 @@ mod tests {
 
         assert_eq!(output["view"], "media");
         assert_eq!(output["mime_type"], "video/mp4");
-        assert_eq!(output["title"], "Demo MP4");
+        assert_eq!(output["title"], "demo.mp4");
         assert_eq!(output["encoding"], "url");
         assert_eq!(
             output["data"],

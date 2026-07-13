@@ -32,7 +32,10 @@ impl<'a> SecuredResourceService<'a> {
     }
     pub async fn scan_storage(&self, command: ScanStorage) -> Result<ScanStorageResult, CoreError> {
         if !self.context.is_administrator() {
-            return Err(CoreError::forbidden("scan_storage", command.directory()));
+            return Err(CoreError::forbidden(
+                "scan_storage",
+                command.directory().path(),
+            ));
         }
         self.service.content().scan_storage(command).await
     }
@@ -43,7 +46,8 @@ impl<'a> SecuredResourceService<'a> {
     ) -> Result<Option<Resource>, CoreError> {
         let resource = self.service.commands().find_resource(id).await?;
         if let Some(resource) = &resource {
-            self.require(resource.directory(), permission).await?;
+            self.require(resource.directory().path(), permission)
+                .await?;
         }
         Ok(resource)
     }
@@ -54,12 +58,13 @@ impl<'a> SecuredResourceService<'a> {
     ) -> Result<Option<Resource>, CoreError> {
         let resource = self.service.repository.find_by_id(id).await?;
         if let Some(resource) = &resource {
-            self.require(resource.directory(), permission).await?;
+            self.require(resource.directory().path(), permission)
+                .await?;
         }
         Ok(resource)
     }
     pub async fn create_resource(&self, command: CreateResource) -> Result<Resource, CoreError> {
-        self.require(command.directory(), DirectoryPermission::Write)
+        self.require(command.directory().path(), DirectoryPermission::Write)
             .await?;
         self.service.commands().create_resource(command).await
     }
@@ -67,7 +72,7 @@ impl<'a> SecuredResourceService<'a> {
         &self,
         command: ImportResourceContent,
     ) -> Result<Option<Resource>, CoreError> {
-        self.require(command.directory(), DirectoryPermission::Write)
+        self.require(command.directory().path(), DirectoryPermission::Write)
             .await?;
         self.service
             .content()
@@ -78,7 +83,7 @@ impl<'a> SecuredResourceService<'a> {
         &self,
         command: UploadResourceContentStream,
     ) -> Result<Resource, CoreError> {
-        self.require(command.directory(), DirectoryPermission::Write)
+        self.require(command.directory().path(), DirectoryPermission::Write)
             .await?;
         self.service
             .content()
@@ -89,8 +94,11 @@ impl<'a> SecuredResourceService<'a> {
         self.resource_for(id, DirectoryPermission::Read).await
     }
     pub async fn list_resources(&self, query: ListResources) -> Result<ResourcePage, CoreError> {
-        self.require(query.directory().unwrap_or(""), DirectoryPermission::Read)
-            .await?;
+        self.require(
+            query.directory().map_or("", ResourceDirectory::path),
+            DirectoryPermission::Read,
+        )
+        .await?;
         self.service.commands().list_resources(query).await
     }
     pub async fn list_directories(
@@ -126,7 +134,8 @@ impl<'a> SecuredResourceService<'a> {
             return Ok(None);
         }
         if let Some(directory) = command.directory() {
-            self.require(directory, DirectoryPermission::Write).await?;
+            self.require(directory.path(), DirectoryPermission::Write)
+                .await?;
         }
         self.service.commands().update_resource(id, command).await
     }
@@ -202,7 +211,8 @@ impl<'a> SecuredResourceService<'a> {
             crate::port::ResourceActionAccess::ReadOnly => DirectoryPermission::Read,
             crate::port::ResourceActionAccess::ReadWrite => DirectoryPermission::Write,
         };
-        self.require(resource.directory(), permission).await?;
+        self.require(resource.directory().path(), permission)
+            .await?;
         self.service
             .actions()
             .execute_resource_action(id, command)
