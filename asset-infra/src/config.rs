@@ -12,6 +12,12 @@ pub const DEFAULT_SQLITE_PATH: &str = "data/asset-hub.sqlite";
 pub const DEFAULT_FS_ROOT: &str = "data/blob";
 /// 默认 SQLite 连接池最大连接数。
 pub const DEFAULT_SQLITE_MAX_CONNECTIONS: u32 = 5;
+pub const DEFAULT_PLUGIN_MAX_CONTENT_BYTES: u64 = 64 * 1024 * 1024;
+pub const DEFAULT_PLUGIN_MAX_INPUT_BYTES: usize = 8 * 1024 * 1024;
+pub const DEFAULT_PLUGIN_MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
+pub const DEFAULT_PLUGIN_MAX_CONCURRENT_CALLS: usize = 8;
+pub const DEFAULT_PLUGIN_MEMORY_MAX_PAGES: u32 = 4096;
+pub const DEFAULT_PLUGIN_TIMEOUT_SECONDS: u64 = 20;
 
 /// 基础设施配置。
 ///
@@ -28,6 +34,8 @@ pub struct AssetInfraConfig {
     pub blob: BlobConfig,
     /// 资源类型注册表配置。
     pub kind: KindRegistryConfig,
+    /// 插件执行预算和宿主批准的外部权限。
+    pub plugin: PluginHostConfig,
 }
 
 impl AssetInfraConfig {
@@ -89,8 +97,80 @@ impl AssetInfraConfig {
             .iter()
             .map(|path| normalize_path(path))
             .collect::<Result<Vec<_>, _>>()?;
+        self.plugin.normalize_and_validate()?;
         Ok(self)
     }
+}
+
+/// 插件宿主策略。Manifest 只能请求权限，最终授权必须同时出现在这里。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PluginHostConfig {
+    pub max_content_bytes: u64,
+    pub max_input_bytes: usize,
+    pub max_output_bytes: usize,
+    pub max_concurrent_calls: usize,
+    pub memory_max_pages: u32,
+    pub timeout_seconds: u64,
+    pub grants: PluginPermissionGrants,
+}
+
+impl Default for PluginHostConfig {
+    fn default() -> Self {
+        Self {
+            max_content_bytes: DEFAULT_PLUGIN_MAX_CONTENT_BYTES,
+            max_input_bytes: DEFAULT_PLUGIN_MAX_INPUT_BYTES,
+            max_output_bytes: DEFAULT_PLUGIN_MAX_OUTPUT_BYTES,
+            max_concurrent_calls: DEFAULT_PLUGIN_MAX_CONCURRENT_CALLS,
+            memory_max_pages: DEFAULT_PLUGIN_MEMORY_MAX_PAGES,
+            timeout_seconds: DEFAULT_PLUGIN_TIMEOUT_SECONDS,
+            grants: PluginPermissionGrants::default(),
+        }
+    }
+}
+
+impl PluginHostConfig {
+    fn normalize_and_validate(&mut self) -> Result<(), CoreError> {
+        if self.max_content_bytes == 0
+            || self.max_input_bytes == 0
+            || self.max_output_bytes == 0
+            || self.max_concurrent_calls == 0
+            || self.memory_max_pages == 0
+            || self.timeout_seconds == 0
+        {
+            return Err(CoreError::configuration(
+                "plugin execution limits must all be greater than zero",
+            ));
+        }
+        for host in &self.grants.network_hosts {
+            if host.is_empty() || host.trim() != host || host.contains('*') {
+                return Err(CoreError::configuration(format!(
+                    "plugin.grants.network_hosts contains invalid host `{host}`"
+                )));
+            }
+        }
+        self.grants.filesystem_read = self
+            .grants
+            .filesystem_read
+            .iter()
+            .map(|path| normalize_permission_grant(path))
+            .collect::<Result<_, _>>()?;
+        self.grants.filesystem_write = self
+            .grants
+            .filesystem_write
+            .iter()
+            .map(|path| normalize_permission_grant(path))
+            .collect::<Result<_, _>>()?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PluginPermissionGrants {
+    pub network_hosts: Vec<String>,
+    pub filesystem_read: Vec<PathBuf>,
+    pub filesystem_write: Vec<PathBuf>,
 }
 
 /// 数据存储配置。
@@ -197,6 +277,22 @@ fn normalize_path(path: &Path) -> Result<PathBuf, CoreError> {
     std::env::current_dir()
         .map(|current_dir| current_dir.join(path))
         .map_err(|error| CoreError::configuration(error.to_string()))
+}
+
+fn normalize_permission_grant(path: &Path) -> Result<PathBuf, CoreError> {
+    let path = normalize_path(path)?;
+    if path.components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::ParentDir | std::path::Component::CurDir
+        )
+    }) {
+        return Err(CoreError::configuration(format!(
+            "plugin filesystem grant `{}` must be canonical",
+            path.display()
+        )));
+    }
+    Ok(path)
 }
 
 fn build_config() -> ::config::ConfigBuilder<::config::builder::DefaultState> {
@@ -314,5 +410,55 @@ mod tests {
         .unwrap();
 
         assert!(config.kind.plugin_manifests[0].is_absolute());
+    }
+
+    #[test]
+    fn plugin_host_policy_parses_budgets_and_normalizes_grants() {
+        let config = AssetInfraConfig::from_config_str(
+            r#"
+            [plugin]
+            max_content_bytes = 1024
+            max_input_bytes = 2048
+            max_output_bytes = 4096
+            max_concurrent_calls = 2
+            memory_max_pages = 128
+            timeout_seconds = 5
+
+            [plugin.grants]
+            network_hosts = ["api.example.com"]
+            filesystem_read = ["plugin-data"]
+            filesystem_write = []
+            "#,
+        )
+        .unwrap()
+        .normalized()
+        .unwrap();
+
+        assert_eq!(config.plugin.max_concurrent_calls, 2);
+        assert_eq!(config.plugin.grants.network_hosts, ["api.example.com"]);
+        assert!(config.plugin.grants.filesystem_read[0].is_absolute());
+    }
+
+    #[test]
+    fn plugin_host_policy_rejects_unbounded_or_zero_values() {
+        let wildcard = AssetInfraConfig::from_config_str(
+            r#"
+            [plugin.grants]
+            network_hosts = ["*"]
+            "#,
+        )
+        .unwrap()
+        .normalized();
+        assert!(wildcard.is_err());
+
+        let zero = AssetInfraConfig::from_config_str(
+            r#"
+            [plugin]
+            max_concurrent_calls = 0
+            "#,
+        )
+        .unwrap()
+        .normalized();
+        assert!(zero.is_err());
     }
 }

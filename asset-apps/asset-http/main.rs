@@ -33,11 +33,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!(config = ?runtime.config(), "asset-http config");
 
     let authorization = runtime.authorization_service();
-    let app = router::build_with_options_and_plugin_web_roots(
+    let app = router::build_with_options_and_plugin_web_assets(
         runtime.resource_service(),
         runtime.resource_kind_registry(),
         settings.router_options().clone(),
-        runtime.plugin_web_roots()?,
+        runtime.plugin_web_assets(),
         authorization.clone(),
     );
     let bootstrap_username = std::env::var("ASSET_HUB_BOOTSTRAP_ADMIN_USERNAME").ok();

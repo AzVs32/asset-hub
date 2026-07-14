@@ -3,7 +3,8 @@ use crate::settings::{CorsPolicy, RouterOptions, SessionOptions};
 use asset_apps::AssetRuntime;
 use asset_core::domain::{AccessContext, UserId};
 use asset_infra::config::{
-    AssetInfraConfig, BlobConfig, DatabaseConfig, KindRegistryConfig, ResourceKindConfig,
+    AssetInfraConfig, BlobConfig, DatabaseConfig, KindRegistryConfig, PluginHostConfig,
+    ResourceKindConfig,
 };
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
@@ -258,6 +259,27 @@ async fn action_endpoint_requires_plugin_handler() {
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(error["error"].as_str().unwrap().contains("action `read`"));
+}
+
+#[tokio::test]
+async fn action_endpoint_has_a_dedicated_request_body_limit() {
+    let app = test_app("action-body-limit").await;
+    let oversized = format!(
+        "{{\"input\":{{\"value\":\"{}\"}}}}",
+        "x".repeat(crate::handlers::MAX_ACTION_REQUEST_BYTES)
+    );
+    let response = request(
+        &app,
+        Request::builder()
+            .method(Method::POST)
+            .uri("/resources/01900000-0000-7000-8000-000000000000/actions/example")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(oversized))
+            .unwrap(),
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }
 
 #[tokio::test]
@@ -838,6 +860,87 @@ async fn upload_detects_most_specific_plugin_kind() {
     .await;
     assert_eq!(status, StatusCode::OK, "{rendered}");
     assert_eq!(rendered["action"], "azvs.markdown.render");
+    assert_eq!(rendered["view"]["view"], "plugin_frame");
+    assert!(
+        rendered["view"]["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("/plugins/azvs.markdown/index.html#payload=")
+    );
+}
+
+#[tokio::test]
+async fn plugin_url_content_respects_the_host_content_budget() {
+    let plugin = PluginHostConfig {
+        max_content_bytes: 4,
+        ..PluginHostConfig::default()
+    };
+    let app = test_app_with_plugin_host_config(
+        "markdown-plugin-content-budget",
+        vec![
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../plugins/azvs-markdown/azvs-markdown.json"),
+        ],
+        plugin,
+    )
+    .await;
+    let (status, resource) = stream_upload(
+        &app,
+        "/resources/content/stream?name=README.md&original_filename=README.md",
+        "text/markdown",
+        b"# README",
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{resource}");
+
+    let id = resource["id"].as_str().unwrap();
+    let (status, error) = json_request(
+        &app,
+        Method::POST,
+        &format!("/resources/{id}/actions/azvs.markdown.render"),
+        json!({"input": {}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(
+        error["error"]
+            .as_str()
+            .unwrap()
+            .contains("plugin limit is 4")
+    );
+}
+
+#[tokio::test]
+async fn plugin_output_respects_the_host_output_budget() {
+    let plugin = PluginHostConfig {
+        max_output_bytes: 16,
+        ..PluginHostConfig::default()
+    };
+    let app = test_app_with_plugin_host_config(
+        "mp4-plugin-output-budget",
+        vec![PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../plugins/azvs-mp4/azvs-mp4.json")],
+        plugin,
+    )
+    .await;
+    let (status, resource) = stream_upload(
+        &app,
+        "/resources/content/stream?name=demo.mp4&original_filename=demo.mp4",
+        "video/mp4",
+        b"video",
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{resource}");
+
+    let id = resource["id"].as_str().unwrap();
+    let (status, error) = json_request(
+        &app,
+        Method::POST,
+        &format!("/resources/{id}/actions/azvs.mp4.play"),
+        json!({"input": {}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(error["error"].as_str().unwrap().contains("limit is 16"));
 }
 
 #[tokio::test]
@@ -1164,7 +1267,7 @@ async fn openapi_documents_metadata_examples() {
 }
 
 #[tokio::test]
-async fn plugin_web_assets_are_served_from_declared_roots() {
+async fn plugin_web_assets_are_served_from_the_verified_startup_snapshot() {
     let app_root = unique_temp_root("plugin-web");
     let web_root = app_root.join("plugins/azvs-markdown/web");
     std::fs::create_dir_all(&web_root).unwrap();
@@ -1174,11 +1277,22 @@ async fn plugin_web_assets_are_served_from_declared_roots() {
     )
     .unwrap();
 
-    let app = test_app_with_plugin_web_roots(
+    let app = test_app_with_plugin_web_assets(
         app_root,
-        HashMap::from([("azvs.markdown".to_string(), web_root)]),
+        HashMap::from([(
+            "azvs.markdown".to_string(),
+            HashMap::from([(
+                PathBuf::from("index.html"),
+                std::sync::Arc::from(b"<!doctype html><title>Markdown</title>".as_slice()),
+            )]),
+        )]),
     )
     .await;
+    std::fs::write(
+        web_root.join("index.html"),
+        "<!doctype html><title>Changed after startup</title>",
+    )
+    .unwrap();
     let response = request(
         &app,
         Request::builder()
@@ -1208,12 +1322,21 @@ async fn test_app_with_router_options(name: &str, options: RouterOptions) -> Tes
 }
 
 async fn test_app_with_plugin_manifests(name: &str, plugin_manifests: Vec<PathBuf>) -> TestApp {
-    test_app_with_config(
+    test_app_with_plugin_host_config(name, plugin_manifests, PluginHostConfig::default()).await
+}
+
+async fn test_app_with_plugin_host_config(
+    name: &str,
+    plugin_manifests: Vec<PathBuf>,
+    plugin: PluginHostConfig,
+) -> TestApp {
+    test_app_with_kind_and_plugin_config(
         name,
         KindRegistryConfig {
             definitions: Vec::new(),
             plugin_manifests,
         },
+        plugin,
         RouterOptions::default(),
     )
     .await
@@ -1252,6 +1375,15 @@ async fn test_app_with_config(
     kind: KindRegistryConfig,
     options: RouterOptions,
 ) -> TestApp {
+    test_app_with_kind_and_plugin_config(name, kind, PluginHostConfig::default(), options).await
+}
+
+async fn test_app_with_kind_and_plugin_config(
+    name: &str,
+    kind: KindRegistryConfig,
+    plugin: PluginHostConfig,
+    options: RouterOptions,
+) -> TestApp {
     let root = unique_temp_root(name);
     let config = AssetInfraConfig {
         database: DatabaseConfig {
@@ -1262,10 +1394,11 @@ async fn test_app_with_config(
             fs_root: root.join("blob"),
         },
         kind,
+        plugin,
     };
     let runtime = AssetRuntime::from_config(config).await.unwrap();
     let authorization = runtime.authorization_service();
-    let router = router::build_with_options_and_plugin_web_roots(
+    let router = router::build_with_options_and_plugin_web_assets(
         runtime.resource_service(),
         runtime.resource_kind_registry(),
         options,
@@ -1277,9 +1410,9 @@ async fn test_app_with_config(
     TestApp { router, root }
 }
 
-async fn test_app_with_plugin_web_roots(
+async fn test_app_with_plugin_web_assets(
     root: PathBuf,
-    plugin_web_roots: HashMap<String, PathBuf>,
+    plugin_web_assets: asset_infra::PluginWebAssets,
 ) -> TestApp {
     let config = AssetInfraConfig {
         database: DatabaseConfig {
@@ -1290,14 +1423,15 @@ async fn test_app_with_plugin_web_roots(
             fs_root: root.join("blob"),
         },
         kind: KindRegistryConfig::default(),
+        plugin: Default::default(),
     };
     let runtime = AssetRuntime::from_config(config).await.unwrap();
     let authorization = runtime.authorization_service();
-    let router = router::build_with_options_and_plugin_web_roots(
+    let router = router::build_with_options_and_plugin_web_assets(
         runtime.resource_service(),
         runtime.resource_kind_registry(),
         RouterOptions::default(),
-        plugin_web_roots,
+        plugin_web_assets,
         authorization,
     )
     .layer(Extension(AccessContext::administrator(UserId::new())));
@@ -1351,10 +1485,11 @@ async fn member_uses_explicit_workspace_and_additional_grants() {
             fs_root: root.join("blob"),
         },
         kind: KindRegistryConfig::default(),
+        plugin: Default::default(),
     };
     let runtime = AssetRuntime::from_config(config).await.unwrap();
     let authorization = runtime.authorization_service();
-    let base = router::build_with_options_and_plugin_web_roots(
+    let base = router::build_with_options_and_plugin_web_assets(
         runtime.resource_service(),
         runtime.resource_kind_registry(),
         RouterOptions::default(),

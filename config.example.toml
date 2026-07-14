@@ -28,6 +28,23 @@ max_connections = 5
 # Relative paths are resolved from the current working directory.
 fs_root = "data/blob"
 
+[plugin]
+# Hard execution budgets applied to every plugin call.
+max_content_bytes = 67108864
+max_input_bytes = 8388608
+max_output_bytes = 8388608
+max_concurrent_calls = 8
+memory_max_pages = 4096
+timeout_seconds = 20
+
+[plugin.grants]
+# A Manifest requests external access; the host grants it independently here.
+# Requested hosts require exact matches. Wildcards are rejected.
+network_hosts = []
+# Filesystem requests must be absolute paths below one of these normalized roots.
+filesystem_read = []
+filesystem_write = []
+
 [kind]
 # Optional plugin JSON manifest files.
 # Manifest files are loaded at startup; restart the service after adding/removing plugins.

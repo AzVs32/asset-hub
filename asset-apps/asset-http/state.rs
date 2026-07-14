@@ -1,8 +1,6 @@
 use asset_core::domain::AccessContext;
 use asset_core::port::ResourceKindRegistry;
 use asset_core::service::{AuthorizationService, ResourceService, SecuredResourceService};
-use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 /// HTTP handler 共享状态。
@@ -12,21 +10,21 @@ use std::sync::Arc;
 pub(crate) struct HttpState {
     service: ResourceService,
     kind_registry: Arc<dyn ResourceKindRegistry>,
-    plugin_web_roots: Arc<HashMap<String, PathBuf>>,
+    plugin_web_assets: Arc<asset_infra::PluginWebAssets>,
     authorization: AuthorizationService,
 }
 
 impl HttpState {
-    pub(crate) fn new_with_plugin_web_roots(
+    pub(crate) fn new_with_plugin_web_assets(
         service: ResourceService,
         kind_registry: Arc<dyn ResourceKindRegistry>,
-        plugin_web_roots: HashMap<String, PathBuf>,
+        plugin_web_assets: asset_infra::PluginWebAssets,
         authorization: AuthorizationService,
     ) -> Self {
         Self {
             service,
             kind_registry,
-            plugin_web_roots: Arc::new(plugin_web_roots),
+            plugin_web_assets: Arc::new(plugin_web_assets),
             authorization,
         }
     }
@@ -45,7 +43,11 @@ impl HttpState {
         self.kind_registry.as_ref()
     }
 
-    pub(crate) fn plugin_web_root(&self, plugin_id: &str) -> Option<&PathBuf> {
-        self.plugin_web_roots.get(plugin_id)
+    pub(crate) fn plugin_web_asset(
+        &self,
+        plugin_id: &str,
+        path: &std::path::Path,
+    ) -> Option<&Arc<[u8]>> {
+        self.plugin_web_assets.get(plugin_id)?.get(path)
     }
 }

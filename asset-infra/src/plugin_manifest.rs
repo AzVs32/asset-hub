@@ -4,27 +4,20 @@ use crate::official_plugins;
 use asset_core::CoreError;
 use asset_plugin_api::{ActionExecutor, PluginManifest, PluginRuntime};
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+const MAX_PLUGIN_MANIFEST_BYTES: u64 = 1024 * 1024;
+const MAX_PLUGIN_WASM_BYTES: usize = 64 * 1024 * 1024;
+const MAX_PLUGIN_WEB_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub(crate) struct LoadedPlugin {
     pub(crate) manifest: PluginManifest,
     pub(crate) manifest_path: Option<PathBuf>,
-}
-
-impl LoadedPlugin {
-    pub(crate) fn resolve_path(&self, configured_path: &Path) -> Option<PathBuf> {
-        let manifest_path = self.manifest_path.as_ref()?;
-        Some(if configured_path.is_absolute() {
-            configured_path.to_path_buf()
-        } else {
-            manifest_path
-                .parent()
-                .unwrap_or_else(|| Path::new("."))
-                .join(configured_path)
-        })
-    }
+    pub(crate) wasm: Option<Arc<[u8]>>,
+    pub(crate) web_assets: HashMap<PathBuf, Arc<[u8]>>,
 }
 
 #[derive(Debug, Clone)]
@@ -39,18 +32,22 @@ impl PluginCatalog {
             let manifest: PluginManifest = serde_json::from_str(content).map_err(|error| {
                 CoreError::configuration(format!("parse official plugin manifest: {error}"))
             })?;
-            validate_loaded_manifest(&manifest, None)?;
+            let artifacts = validate_loaded_manifest(&manifest, None)?;
             plugins.push(LoadedPlugin {
                 manifest,
                 manifest_path: None,
+                wasm: artifacts.wasm,
+                web_assets: artifacts.web_assets,
             });
         }
         for path in &config.plugin_manifests {
             let manifest = load_plugin_manifest_file(path)?;
-            validate_loaded_manifest(&manifest, Some(path))?;
+            let artifacts = validate_loaded_manifest(&manifest, Some(path))?;
             plugins.push(LoadedPlugin {
                 manifest,
                 manifest_path: Some(path.clone()),
+                wasm: artifacts.wasm,
+                web_assets: artifacts.web_assets,
             });
         }
 
@@ -72,6 +69,18 @@ impl PluginCatalog {
 }
 
 pub(crate) fn load_plugin_manifest_file(path: &Path) -> Result<PluginManifest, CoreError> {
+    let metadata = std::fs::metadata(path).map_err(|error| {
+        CoreError::configuration(format!(
+            "inspect plugin manifest `{}`: {error}",
+            path.display()
+        ))
+    })?;
+    if metadata.len() > MAX_PLUGIN_MANIFEST_BYTES {
+        return Err(CoreError::configuration(format!(
+            "plugin manifest `{}` exceeds the {MAX_PLUGIN_MANIFEST_BYTES} byte limit",
+            path.display()
+        )));
+    }
     let content = std::fs::read_to_string(path).map_err(|error| {
         CoreError::configuration(format!(
             "read plugin manifest `{}`: {error}",
@@ -94,10 +103,16 @@ pub(crate) fn load_plugin_manifest_file(path: &Path) -> Result<PluginManifest, C
     Ok(manifest)
 }
 
+#[derive(Debug, Default)]
+struct LoadedArtifacts {
+    wasm: Option<Arc<[u8]>>,
+    web_assets: HashMap<PathBuf, Arc<[u8]>>,
+}
+
 fn validate_loaded_manifest(
     manifest: &PluginManifest,
     manifest_path: Option<&PathBuf>,
-) -> Result<(), CoreError> {
+) -> Result<LoadedArtifacts, CoreError> {
     manifest.validate().map_err(|error| {
         let source = manifest_path
             .map(|path| path.display().to_string())
@@ -117,8 +132,9 @@ fn validate_loaded_manifest(
     }
 
     let Some(manifest_path) = manifest_path else {
-        return Ok(());
+        return Ok(LoadedArtifacts::default());
     };
+    let mut artifacts = LoadedArtifacts::default();
     let resolve = |configured: &Path| {
         if configured.is_absolute() {
             configured.to_path_buf()
@@ -155,13 +171,20 @@ fn validate_loaded_manifest(
                 wasm_path.display()
             ))
         })?;
-        let actual = format!("{:x}", Sha256::digest(bytes));
+        if bytes.len() > MAX_PLUGIN_WASM_BYTES {
+            return Err(CoreError::configuration(format!(
+                "plugin `{}` Wasm exceeds the {MAX_PLUGIN_WASM_BYTES} byte limit",
+                manifest.plugin_id()
+            )));
+        }
+        let actual = format!("{:x}", Sha256::digest(&bytes));
         if &actual != wasm_sha256 {
             return Err(CoreError::configuration(format!(
                 "plugin `{}` Wasm digest mismatch: expected `{wasm_sha256}`, got `{actual}`",
                 manifest.plugin_id()
             )));
         }
+        artifacts.wasm = Some(Arc::from(bytes));
     }
     if let Some(web) = &manifest.web {
         let root = resolve(&web.root);
@@ -173,6 +196,7 @@ fn validate_loaded_manifest(
             )));
         }
         let mut actual_paths = HashSet::new();
+        let mut total_web_bytes = 0usize;
         collect_web_files(&root, &root, &mut actual_paths)?;
         for (relative_path, expected) in &web.integrity {
             let path = root.join(relative_path);
@@ -183,7 +207,19 @@ fn validate_loaded_manifest(
                     path.display()
                 ))
             })?;
-            let actual = format!("{:x}", Sha256::digest(bytes));
+            total_web_bytes = total_web_bytes.checked_add(bytes.len()).ok_or_else(|| {
+                CoreError::configuration(format!(
+                    "plugin `{}` Web assets exceed the host size limit",
+                    manifest.plugin_id()
+                ))
+            })?;
+            if total_web_bytes > MAX_PLUGIN_WEB_BYTES {
+                return Err(CoreError::configuration(format!(
+                    "plugin `{}` Web assets exceed the {MAX_PLUGIN_WEB_BYTES} byte limit",
+                    manifest.plugin_id()
+                )));
+            }
+            let actual = format!("{:x}", Sha256::digest(&bytes));
             if &actual != expected {
                 return Err(CoreError::configuration(format!(
                     "plugin `{}` Web asset `{}` digest mismatch",
@@ -191,6 +227,9 @@ fn validate_loaded_manifest(
                     relative_path.display()
                 )));
             }
+            artifacts
+                .web_assets
+                .insert(relative_path.clone(), Arc::from(bytes));
             actual_paths.remove(relative_path);
         }
         if !actual_paths.is_empty() {
@@ -200,7 +239,7 @@ fn validate_loaded_manifest(
             )));
         }
     }
-    Ok(())
+    Ok(artifacts)
 }
 
 fn collect_web_files(
@@ -325,6 +364,32 @@ mod tests {
         .unwrap_err();
 
         assert!(error.to_string().contains("Wasm digest mismatch"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn catalog_keeps_the_verified_wasm_snapshot() {
+        let root = unique_temp_path("snapshot-root");
+        std::fs::create_dir_all(&root).unwrap();
+        let original = b"verified wasm bytes";
+        std::fs::write(root.join("plugin.wasm"), original).unwrap();
+        let digest = format!("{:x}", Sha256::digest(original));
+        let path = root.join("plugin.json");
+        std::fs::write(&path, minimal_extism_manifest("snapshot.plugin", &digest)).unwrap();
+
+        let catalog = PluginCatalog::load(&KindRegistryConfig {
+            definitions: Vec::new(),
+            plugin_manifests: vec![path],
+        })
+        .unwrap();
+        std::fs::write(root.join("plugin.wasm"), b"changed after startup").unwrap();
+
+        let loaded = catalog
+            .plugins()
+            .iter()
+            .find(|plugin| plugin.manifest.plugin_id() == "snapshot.plugin")
+            .unwrap();
+        assert_eq!(loaded.wasm.as_deref(), Some(original.as_slice()));
         let _ = std::fs::remove_dir_all(root);
     }
 

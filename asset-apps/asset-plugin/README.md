@@ -3,6 +3,9 @@
 `asset-plugin` generates and verifies Manifest V2 artifact integrity. Plugin authors do not
 calculate or edit SHA-256 values.
 
+Manifest V2 parsing is strict: unknown fields at any protocol level are rejected. This includes
+misspelled optional fields, so `verify` should be part of every plugin release pipeline.
+
 Start a plugin directory with a fixed, documented Manifest V2 draft:
 
 ```bash

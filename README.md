@@ -188,7 +188,9 @@ Also add the UI origin to `ASSET_HTTP_CORS_ALLOWED_ORIGINS`. Credentialed CORS o
 ## Plugins
 
 Plugin manifest paths are configured under `[kind].plugin_manifests` in `config.toml`.
-Manifest paths are loaded at API startup; restart the service after changing plugin manifests or WASM files.
+Manifests, Wasm, and Web assets are read and integrity-checked once at API startup. Wasm is
+precompiled and every declared handler export is checked before the server starts; Web assets are
+served from the verified in-memory snapshot. Restart the service after changing any plugin file.
 
 Resource kinds form an arbitrary-depth acyclic hierarchy through the optional
 `parent` field. Child kinds inherit actions, and their own action declarations
@@ -202,9 +204,15 @@ matching kind. For example, the bundled hierarchy contains
 Kind-filtered list endpoints accept `include_descendants=true`. A query for
 `core:document` can therefore include Markdown, EPUB, source-code families, and
 any future nested document formats.
-Plugin calls are limited to 64 MiB of resource input, 256 MiB of WASM linear
-memory, and 20 seconds of execution time. Larger assets remain downloadable but
-cannot be passed to the current in-memory plugin ABI.
+By default, plugin calls are limited to 64 MiB of resource content, 8 MiB of serialized input,
+8 MiB of output, 256 MiB of Wasm linear memory, 20 seconds, and eight concurrent calls. The HTTP
+action input itself is limited to 1 MiB. These values are configured under `[plugin]`; larger
+assets remain downloadable but cannot be passed through the current in-memory plugin ABI.
+
+Network and filesystem permissions are requested by a Manifest but are not self-granting. Every
+requested host or path must also be approved under `[plugin.grants]`. Network grants are exact and
+wildcards are rejected; filesystem grants are normalized roots. The default host policy grants no
+network or filesystem access.
 
 Example:
 

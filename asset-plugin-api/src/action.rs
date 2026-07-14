@@ -104,6 +104,7 @@ pub struct ResourceActionUi {
 
 /// Content matching rules used by kind auto-detection.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct ResourceContentMatcher {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     mime_types: Vec<String>,

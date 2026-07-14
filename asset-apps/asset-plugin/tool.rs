@@ -35,6 +35,7 @@ pub fn generate_manifest(path: &Path) -> Result<PluginManifest> {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct DraftManifest {
     manifest_version: u32,
     plugin: PluginMetadata,
@@ -47,11 +48,13 @@ struct DraftManifest {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 enum DraftRuntime {
     Builtin,
     Extism {
         wasm: PathBuf,
+        #[serde(default, rename = "wasm_sha256")]
+        _wasm_sha256: Option<String>,
         #[serde(default)]
         wasi: bool,
         plugin_api: String,
@@ -59,8 +62,11 @@ enum DraftRuntime {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct DraftWeb {
     root: PathBuf,
+    #[serde(default, rename = "integrity")]
+    _integrity: BTreeMap<PathBuf, String>,
 }
 
 fn manifest_for_draft_validation(draft: DraftManifest) -> PluginManifest {
@@ -70,6 +76,7 @@ fn manifest_for_draft_validation(draft: DraftManifest) -> PluginManifest {
             wasm,
             wasi,
             plugin_api,
+            ..
         } => PluginRuntime::Extism {
             wasm,
             wasm_sha256: "0".repeat(64),
@@ -102,6 +109,7 @@ pub fn seal_manifest(path: &Path) -> Result<PluginManifest> {
             wasm,
             wasi,
             plugin_api,
+            ..
         } => {
             let wasm_sha256 = digest_file(&resolve_artifact(&base, "runtime.wasm", &wasm)?)?;
             PluginRuntime::Extism {
@@ -375,6 +383,8 @@ mod tests {
         std::fs::write(&manifest_path, draft_manifest()).unwrap();
 
         let sealed = seal_manifest(&manifest_path).unwrap();
+        verify_manifest(&manifest_path).unwrap();
+        seal_manifest(&manifest_path).unwrap();
         verify_manifest(&manifest_path).unwrap();
 
         let PluginRuntime::Extism { wasm_sha256, .. } = sealed.runtime else {

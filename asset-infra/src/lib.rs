@@ -27,6 +27,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use storage::{FileSystemScanner, OpenDalBlobStorage};
 
+pub type PluginWebAssets = HashMap<String, HashMap<PathBuf, Arc<[u8]>>>;
+
 /// 基于默认本地实现组装好的基础设施对象。
 ///
 /// 当前组合是 SQLite 作为资源数据存储，OpenDAL Fs 作为对象内容存储。
@@ -45,7 +47,7 @@ pub struct AssetInfrastructure {
     resource_action_registry: Arc<DefaultResourceActionRegistry>,
     /// 资源动作执行器。
     resource_action_executor: Arc<DefaultResourceActionExecutor>,
-    plugin_web_roots: HashMap<String, PathBuf>,
+    plugin_web_assets: PluginWebAssets,
 }
 
 impl AssetInfrastructure {
@@ -70,10 +72,11 @@ impl AssetInfrastructure {
             &plugin_catalog,
             resource_kind_registry.as_ref(),
             blob_storage.clone(),
+            &config.plugin,
         )?;
         let resource_action_executor =
             Arc::new(DefaultResourceActionExecutor::new(extism_action_executor));
-        let plugin_web_roots = plugin_web_roots_from_catalog(&plugin_catalog)?;
+        let plugin_web_assets = plugin_web_assets_from_catalog(&plugin_catalog)?;
 
         Ok(Self {
             config,
@@ -84,7 +87,7 @@ impl AssetInfrastructure {
             resource_kind_registry,
             resource_action_registry,
             resource_action_executor,
-            plugin_web_roots,
+            plugin_web_assets,
         })
     }
 
@@ -146,9 +149,9 @@ impl AssetInfrastructure {
         self.resource_action_registry.clone()
     }
 
-    /// 返回插件浏览器静态资源根目录。
-    pub fn plugin_web_roots(&self) -> Result<HashMap<String, PathBuf>, CoreError> {
-        Ok(self.plugin_web_roots.clone())
+    /// 返回启动时校验并冻结的插件浏览器静态资源。
+    pub fn plugin_web_assets(&self) -> PluginWebAssets {
+        self.plugin_web_assets.clone()
     }
 
     /// 创建资源应用服务。
@@ -164,35 +167,19 @@ impl AssetInfrastructure {
     }
 }
 
-/// 从配置的插件 manifest 中收集浏览器静态资源根目录。
-pub fn plugin_web_roots_from_config(
-    config: &AssetInfraConfig,
-) -> Result<HashMap<String, PathBuf>, CoreError> {
-    let catalog = PluginCatalog::load(&config.kind)?;
-    plugin_web_roots_from_catalog(&catalog)
-}
-
-fn plugin_web_roots_from_catalog(
-    catalog: &PluginCatalog,
-) -> Result<HashMap<String, PathBuf>, CoreError> {
-    let mut roots = HashMap::new();
+fn plugin_web_assets_from_catalog(catalog: &PluginCatalog) -> Result<PluginWebAssets, CoreError> {
+    let mut assets = HashMap::new();
     for plugin in catalog
         .plugins()
         .iter()
         .filter(|plugin| plugin.manifest_path.is_some())
     {
         let manifest = &plugin.manifest;
-        let Some(web) = &manifest.web else {
+        if manifest.web.is_none() {
             continue;
-        };
-        let root = plugin.resolve_path(&web.root).ok_or_else(|| {
-            CoreError::configuration(format!(
-                "plugin `{}` has no deployable Web root",
-                manifest.plugin_id()
-            ))
-        })?;
-        if roots
-            .insert(manifest.plugin_id().to_string(), root)
+        }
+        if assets
+            .insert(manifest.plugin_id().to_string(), plugin.web_assets.clone())
             .is_some()
         {
             return Err(CoreError::configuration(format!(
@@ -201,5 +188,5 @@ fn plugin_web_roots_from_catalog(
             )));
         }
     }
-    Ok(roots)
+    Ok(assets)
 }

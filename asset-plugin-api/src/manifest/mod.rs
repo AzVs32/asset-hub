@@ -25,6 +25,7 @@ mod web {
 
     /// Browser-facing assets contributed by a plugin.
     #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
     pub struct PluginWeb {
         pub root: PathBuf,
         pub integrity: BTreeMap<PathBuf, String>,
@@ -39,6 +40,7 @@ pub const MANIFEST_TEMPLATE: &str = include_str!("../../templates/manifest.json"
 
 /// Complete plugin manifest document.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PluginManifest {
     pub manifest_version: u32,
     pub plugin: PluginMetadata,
@@ -282,5 +284,21 @@ mod tests {
         assert_eq!(document["runtime"]["plugin_api"], PLUGIN_API_VERSION);
         assert!(document["runtime"].get("wasm_sha256").is_none());
         assert!(document.get("web").is_none());
+    }
+
+    #[test]
+    fn manifest_rejects_unknown_fields_at_every_level() {
+        let mut document: serde_json::Value = serde_json::from_str(MANIFEST_TEMPLATE).unwrap();
+        document["unexpected"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<PluginManifest>(document).is_err());
+
+        let mut document: serde_json::Value = serde_json::from_str(MANIFEST_TEMPLATE).unwrap();
+        document["capabilities"]["resource_actions"][0]["applies_to"]["typo"] =
+            serde_json::json!([]);
+        assert!(serde_json::from_value::<PluginManifest>(document).is_err());
+
+        let mut document: serde_json::Value = serde_json::from_str(MANIFEST_TEMPLATE).unwrap();
+        document["runtime"]["wais"] = serde_json::json!(false);
+        assert!(serde_json::from_value::<PluginManifest>(document).is_err());
     }
 }

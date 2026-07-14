@@ -32,6 +32,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub(crate) const MAX_UPLOAD_BYTES: usize = 4 * 1024 * 1024 * 1024;
+pub(crate) const MAX_ACTION_REQUEST_BYTES: usize = 1024 * 1024;
 const DEFAULT_PAGE: u32 = 1;
 const DEFAULT_LIMIT: u32 = 50;
 const MAX_LIMIT: u32 = 100;
@@ -55,28 +56,15 @@ pub(crate) async fn plugin_web_asset(
     State(state): State<HttpState>,
     Path((plugin_id, path)): Path<(String, String)>,
 ) -> Result<Response, HttpError> {
-    let Some(root) = state.plugin_web_root(&plugin_id) else {
-        return Err(HttpError::not_found(format!(
-            "plugin `{plugin_id}` has no web assets"
-        )));
-    };
     let Some(relative_path) = clean_plugin_asset_path(&path) else {
         return Err(HttpError::bad_request("invalid plugin asset path"));
     };
-    let file_path = root.join(relative_path);
-    let bytes = std::fs::read(&file_path).map_err(|error| {
-        if error.kind() == std::io::ErrorKind::NotFound {
-            HttpError::not_found(format!("plugin asset `{path}` not found"))
-        } else {
-            HttpError::from(CoreError::configuration(format!(
-                "read plugin asset `{}`: {error}",
-                file_path.display()
-            )))
-        }
-    })?;
-    let content_type = plugin_asset_content_type(&file_path);
+    let bytes = state
+        .plugin_web_asset(&plugin_id, &relative_path)
+        .ok_or_else(|| HttpError::not_found(format!("plugin asset `{path}` not found")))?;
+    let content_type = plugin_asset_content_type(&relative_path);
 
-    let mut response = axum::body::Body::from(bytes).into_response();
+    let mut response = axum::body::Body::from(bytes.to_vec()).into_response();
     response.headers_mut().insert(
         header::CONTENT_TYPE,
         content_type
@@ -682,7 +670,13 @@ pub(crate) async fn execute_resource_action(
     payload: Result<Json<ExecuteResourceActionRequest>, JsonRejection>,
 ) -> Result<Json<ResourceActionOutputResponse>, HttpError> {
     let id = parse_resource_id(&id)?;
-    let payload = payload.map_err(|error| HttpError::bad_request(error.to_string()))?;
+    let payload = payload.map_err(|error| {
+        if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
+            HttpError::payload_too_large(error.body_text())
+        } else {
+            HttpError::bad_request(error.body_text())
+        }
+    })?;
     let command = ExecuteResourceAction::new(action).with_input(payload.input.clone());
     let Some(output) = state
         .secured(&access.0)

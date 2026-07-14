@@ -43,6 +43,13 @@ impl HttpError {
         }
     }
 
+    pub(crate) fn payload_too_large(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::PAYLOAD_TOO_LARGE,
+            message: message.into(),
+        }
+    }
+
     /// 构造 404 Not Found。
     pub(crate) fn not_found(message: impl Into<String>) -> Self {
         Self {

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 /// Capabilities contributed by a plugin.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct PluginCapabilities {
     pub resource_kinds: Vec<ResourceKindCapability>,
     pub resource_actions: Vec<ResourceActionCapability>,
@@ -15,7 +15,7 @@ pub struct PluginCapabilities {
 
 /// Resource kind contributed by a plugin manifest.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ResourceKindCapability {
     pub kind: String,
     pub parent: Option<String>,
@@ -38,6 +38,7 @@ impl Default for ResourceKindCapability {
 
 /// Resource action contributed by a plugin manifest.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ResourceActionCapability {
     pub id: String,
     pub label: String,
@@ -110,7 +111,7 @@ impl ResourceActionCapability {
 
 /// Action executor declaration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ActionExecutor {
     Builtin { handler: String },
     Plugin { handler: String },
@@ -136,7 +137,7 @@ impl ManifestActionAccess {
 
 /// Resource/action matching declaration.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ActionAppliesTo {
     pub kinds: Vec<String>,
     pub media_types: Vec<String>,
@@ -209,14 +210,14 @@ mod tests {
 
 /// Declared output view families for an action.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ActionOutputContract {
     pub view: Vec<String>,
 }
 
 /// Optional UI placement hints for host applications.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ActionUi {
     pub group: Option<String>,
     pub order: Option<i32>,

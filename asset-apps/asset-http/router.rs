@@ -30,11 +30,11 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 /// 使用显式边界配置和插件 web 根目录构建 HTTP 路由。
-pub(crate) fn build_with_options_and_plugin_web_roots(
+pub(crate) fn build_with_options_and_plugin_web_assets(
     service: ResourceService,
     kind_registry: Arc<dyn ResourceKindRegistry>,
     options: RouterOptions,
-    plugin_web_roots: std::collections::HashMap<String, std::path::PathBuf>,
+    plugin_web_assets: asset_infra::PluginWebAssets,
     authorization: AuthorizationService,
 ) -> Router {
     let mut router = Router::new()
@@ -75,7 +75,8 @@ pub(crate) fn build_with_options_and_plugin_web_roots(
         .route("/resources/{id}/read", get(handlers::read_resource))
         .route(
             "/resources/{id}/actions/{action}",
-            post(handlers::execute_resource_action),
+            post(handlers::execute_resource_action)
+                .layer(DefaultBodyLimit::max(handlers::MAX_ACTION_REQUEST_BYTES)),
         );
 
     router = if options.enable_purge {
@@ -100,10 +101,10 @@ pub(crate) fn build_with_options_and_plugin_web_roots(
                 .layer(cors_layer(options.cors))
                 .layer(DefaultBodyLimit::max(handlers::MAX_UPLOAD_BYTES)),
         )
-        .with_state(HttpState::new_with_plugin_web_roots(
+        .with_state(HttpState::new_with_plugin_web_assets(
             service,
             kind_registry,
-            plugin_web_roots,
+            plugin_web_assets,
             authorization,
         ))
 }
