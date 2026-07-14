@@ -1434,7 +1434,7 @@ async fn member_uses_explicit_workspace_and_additional_grants() {
         &admin_cookie,
     )
     .await;
-    assert_eq!(downgrade_workspace.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(downgrade_workspace.status(), StatusCode::CONFLICT);
     let revoke_workspace = request_with_cookie(
         &app,
         Method::DELETE,
@@ -1443,7 +1443,7 @@ async fn member_uses_explicit_workspace_and_additional_grants() {
         &admin_cookie,
     )
     .await;
-    assert_eq!(revoke_workspace.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(revoke_workspace.status(), StatusCode::CONFLICT);
     let root_member = request_with_cookie(
         &app,
         Method::POST,

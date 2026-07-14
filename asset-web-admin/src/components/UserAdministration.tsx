@@ -1,6 +1,7 @@
 import React from "react";
 import { Loader2, X } from "lucide-react";
 import { request } from "../api";
+import type { DirectoryAccessEntry } from "../types";
 import { TextInput } from "./forms";
 import { iconButtonClass, inputClass, primaryButtonClass, secondaryButtonClass } from "./ui";
 
@@ -11,7 +12,7 @@ type ManagedUser = {
   status: "active" | "disabled";
   workspace_directory: string;
 };
-type DirectoryGrant = { directory: string; permission: "read" | "write" | "full"; is_workspace: boolean };
+type DirectoryGrant = DirectoryAccessEntry;
 
 export function UserAdministration({ currentUserId, onClose }: { currentUserId: string; onClose: () => void }) {
   const [users, setUsers] = React.useState<ManagedUser[]>([]);

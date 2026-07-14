@@ -3,13 +3,15 @@ import { ChevronLeft, ChevronRight, Database, File as FileIcon, FileUp, Folder, 
 import { apiBase } from "../../api";
 import { cx, iconButtonClass, inputClass, primaryButtonClass, secondaryButtonClass } from "../../components/ui";
 import type { CurrentUser } from "../../components/AuthGate";
-import type { Filters, Resource, ResourceDirectory, ResourceKindOption, ResourcePage } from "../../types";
+import type { DirectoryAccessEntry, Filters, Resource, ResourceDirectory, ResourceKindOption, ResourcePage } from "../../types";
 import { formatBytes, formatDate, hasAction, kindOptionLabel } from "../../utils/resourceDrafts";
 import { shouldCloseAfterCreate } from "./dialogBehavior.js";
 import { directoryBreadcrumbs, parentDirectoryWithinRoot } from "./directoryNavigation.js";
 
 export function ResourceBrowser(props: {
   user: CurrentUser; page: ResourcePage; folders: ResourceDirectory[]; filters: Filters;
+  directoryEntries: DirectoryAccessEntry[]; activeEntryDirectory: string;
+  onDirectoryEntryChange: (path: string) => void;
   updateFilters: (patch: Partial<Filters>) => void; setPage: (page: number) => void;
   currentDirectory: string; openDirectory: (path: string) => void; kinds: ResourceKindOption[];
   selected: Resource | null; select: (resource: Resource) => void; loading: boolean;
@@ -21,11 +23,16 @@ export function ResourceBrowser(props: {
   const [folderOpen, setFolderOpen] = React.useState(false);
   const [folderName, setFolderName] = React.useState("");
   const totalPages = Math.max(1, Math.ceil(props.page.total / props.page.limit));
-  const navigationRoot = props.user.is_admin ? "" : props.user.workspace_directory;
+  const activeEntry = props.directoryEntries.find(
+    (entry) => entry.directory === props.activeEntryDirectory,
+  );
+  const navigationRoot = props.user.is_admin ? "" : props.activeEntryDirectory;
   const breadcrumbs = directoryBreadcrumbs(
     props.currentDirectory,
     navigationRoot,
-    props.user.is_admin ? "Root" : "Workspace",
+    props.user.is_admin ? "Root" : activeEntry?.is_workspace
+      ? "Workspace"
+      : navigationRoot || "Root",
   );
   const parentDirectory = parentDirectoryWithinRoot(props.currentDirectory, navigationRoot);
 
@@ -52,7 +59,19 @@ export function ResourceBrowser(props: {
     </div>
     {props.error && <div className="mx-4 mt-3 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{props.error}</div>}
     {props.notice && <div className="mx-4 mt-3 rounded-lg bg-emerald-50 px-4 py-3 text-sm text-emerald-700" onAnimationEnd={props.clearNotice}>{props.notice}</div>}
-    <nav className="flex min-h-10 items-center gap-1 border-b px-6 text-sm">{breadcrumbs.map((crumb, index) => <React.Fragment key={crumb.path || "root"}>{index > 0 && <ChevronRight size={14} />}<button className="text-blue-600" onClick={() => props.openDirectory(crumb.path)}>{crumb.label}</button></React.Fragment>)}</nav>
+    <nav className="flex min-h-10 flex-wrap items-center gap-2 border-b px-6 py-2 text-sm">
+      {!props.user.is_admin && props.directoryEntries.length > 1 && <select
+        aria-label="Directory entry"
+        className={cx(inputClass, "h-8 min-w-0 max-w-72 py-1")}
+        value={props.activeEntryDirectory}
+        onChange={(event) => props.onDirectoryEntryChange(event.target.value)}
+      >
+        {props.directoryEntries.map((entry) => <option key={entry.directory} value={entry.directory}>
+          {entry.is_workspace ? "Workspace: " : ""}{entry.directory || "/"} ({entry.permission})
+        </option>)}
+      </select>}
+      <div className="flex min-w-0 items-center gap-1 overflow-hidden">{breadcrumbs.map((crumb, index) => <React.Fragment key={crumb.path || "root"}>{index > 0 && <ChevronRight className="shrink-0" size={14} />}<button className="truncate text-blue-600" onClick={() => props.openDirectory(crumb.path)}>{crumb.label}</button></React.Fragment>)}</div>
+    </nav>
     <div className="flex min-h-0 flex-1 flex-col overflow-auto">
       {parentDirectory !== null && <button className="grid min-h-11 grid-cols-[1.5rem_1fr] items-center gap-2 border-b bg-slate-50 px-6 text-left" onClick={() => props.openDirectory(parentDirectory)}><Folder size={18} /><span>..</span></button>}
       {props.folders.map((folder) => <button key={folder.path} className="grid min-h-11 grid-cols-[1.5rem_1fr] items-center gap-2 border-b bg-slate-50 px-6 text-left" onClick={() => props.openDirectory(folder.path)}><Folder size={18} /><span>{folder.name}</span></button>)}

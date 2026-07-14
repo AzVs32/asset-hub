@@ -160,6 +160,12 @@ export type DirectoryListing = {
   resources: ResourcePage;
 };
 
+export type DirectoryAccessEntry = {
+  directory: string;
+  permission: "read" | "write" | "full";
+  is_workspace: boolean;
+};
+
 export type ScanStorageResponse = {
   scanned_directory: string;
   scanned: number;

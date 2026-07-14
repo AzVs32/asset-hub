@@ -149,11 +149,13 @@ Plugin manifest paths are configured under `[kind].plugin_manifests` in `config.
 Manifest paths are loaded at API startup; restart the service after changing plugin manifests or WASM files.
 
 Resource kinds form an arbitrary-depth acyclic hierarchy through the optional
-`parent` field. Child kinds inherit actions and the nearest metadata schema from
-their ancestors; their own declarations override inherited values. Detection
-returns the most specific matching kind. For example, the bundled hierarchy
-contains `core:file → core:document → azvs:markdown`; `core:unknown` is another
-child of `core:file` for files whose concrete format has not been identified.
+`parent` field. Child kinds inherit actions, and their own action declarations
+override inherited actions with the same ID. Resource metadata is not defined
+by kinds: all resources currently use the strict, versioned core summary schema
+containing `description` and `tags`. Detection returns the most specific
+matching kind. For example, the bundled hierarchy contains
+`core:file → core:document → azvs:markdown`; `core:unknown` is another child of
+`core:file` for files whose concrete format has not been identified.
 
 Kind-filtered list endpoints accept `include_descendants=true`. A query for
 `core:document` can therefore include Markdown, EPUB, source-code families, and

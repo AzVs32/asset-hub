@@ -384,19 +384,6 @@ pub(crate) async fn grant_directory(
 ) -> Result<StatusCode, HttpError> {
     require_admin(&session)?;
     let actor = require_user(&session)?.access_context();
-    let target = session
-        .backend
-        .users
-        .find_by_id(&request.user_id)
-        .await?
-        .ok_or_else(|| HttpError::not_found(format!("user `{}` not found", request.user_id)))?;
-    if request.directory == *target.workspace_directory()
-        && request.permission != DirectoryPermission::Full
-    {
-        return Err(HttpError::bad_request(
-            "workspace directory must retain full resource permission",
-        ));
-    }
     let grant = DirectoryGrant::new(request.user_id, request.directory, request.permission);
     session.backend.authorization.grant(&actor, grant).await?;
     Ok(StatusCode::NO_CONTENT)
@@ -475,17 +462,6 @@ pub(crate) async fn revoke_directory(
 ) -> Result<StatusCode, HttpError> {
     require_admin(&session)?;
     let actor = require_user(&session)?.access_context();
-    let target = session
-        .backend
-        .users
-        .find_by_id(&query.user_id)
-        .await?
-        .ok_or_else(|| HttpError::not_found(format!("user `{}` not found", query.user_id)))?;
-    if query.directory == *target.workspace_directory() {
-        return Err(HttpError::bad_request(
-            "workspace directory grant cannot be revoked",
-        ));
-    }
     session
         .backend
         .authorization

@@ -5,16 +5,16 @@ import {
   parentDirectoryWithinRoot,
 } from "../src/features/resourceWorkspace/directoryNavigation.js";
 
-test("member home is the visible navigation root", () => {
-  assert.deepEqual(directoryBreadcrumbs("teams/alice", "teams/alice", "Home"), [
-    { label: "Home", path: "teams/alice" },
+test("member workspace is the visible navigation root", () => {
+  assert.deepEqual(directoryBreadcrumbs("teams/alice", "teams/alice", "Workspace"), [
+    { label: "Workspace", path: "teams/alice" },
   ]);
   assert.equal(parentDirectoryWithinRoot("teams/alice", "teams/alice"), null);
 });
 
-test("member can navigate inside home but not above it", () => {
-  assert.deepEqual(directoryBreadcrumbs("teams/alice/photos/raw", "teams/alice", "Home"), [
-    { label: "Home", path: "teams/alice" },
+test("member can navigate inside workspace but not above it", () => {
+  assert.deepEqual(directoryBreadcrumbs("teams/alice/photos/raw", "teams/alice", "Workspace"), [
+    { label: "Workspace", path: "teams/alice" },
     { label: "photos", path: "teams/alice/photos" },
     { label: "raw", path: "teams/alice/photos/raw" },
   ]);
@@ -22,6 +22,14 @@ test("member can navigate inside home but not above it", () => {
     parentDirectoryWithinRoot("teams/alice/photos", "teams/alice"),
     "teams/alice",
   );
+});
+
+test("additional grant can act as an independent navigation root", () => {
+  assert.deepEqual(directoryBreadcrumbs("shared/photos/raw", "shared/photos", "shared/photos"), [
+    { label: "shared/photos", path: "shared/photos" },
+    { label: "raw", path: "shared/photos/raw" },
+  ]);
+  assert.equal(parentDirectoryWithinRoot("shared/photos", "shared/photos"), null);
 });
 
 test("administrator navigation still reaches the system root", () => {

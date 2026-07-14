@@ -1,8 +1,9 @@
 import React from "react";
+import { request } from "../api";
 import type { CurrentUser } from "../components/AuthGate";
 import { UserAdministration } from "../components/UserAdministration";
-import type { Draft, UploadDraft } from "../types";
-import { directoriesFromResources, emptyCreateDraft, emptyUploadDraft, normalizeDraftKind } from "../utils/resourceDrafts";
+import type { DirectoryAccessEntry, Draft, UploadDraft } from "../types";
+import { directoriesFromResources, emptyCreateDraft, emptyUploadDraft, errorMessage, normalizeDraftKind } from "../utils/resourceDrafts";
 import { CreateResourceDialog } from "./resourceWorkspace/CreateResourceDialog";
 import { PluginActionPanel } from "./resourceWorkspace/PluginActionPanel";
 import { ResourceBrowser } from "./resourceWorkspace/ResourceBrowser";
@@ -26,6 +27,23 @@ export function ResourceWorkspace({ initialDirectory = "", user, onLogout }: {
   const [createOpen, setCreateOpen] = React.useState(false);
   const [uploadOpen, setUploadOpen] = React.useState(false);
   const [userAdminOpen, setUserAdminOpen] = React.useState(false);
+  const [directoryEntries, setDirectoryEntries] = React.useState<DirectoryAccessEntry[]>(() => [{
+    directory: user.is_admin ? "" : user.workspace_directory,
+    permission: "full",
+    is_workspace: !user.is_admin,
+  }]);
+  const [activeEntryDirectory, setActiveEntryDirectory] = React.useState(
+    user.is_admin ? "" : user.workspace_directory,
+  );
+
+  React.useEffect(() => {
+    if (user.is_admin) return;
+    request<DirectoryAccessEntry[]>("/auth/directory-grants")
+      .then((entries) => {
+        if (entries.length) setDirectoryEntries(entries);
+      })
+      .catch((reason) => listing.setError(errorMessage(reason)));
+  }, [listing.setError, user.is_admin]);
 
   const uploadDirectories = React.useMemo(() => Array.from(new Set([
     listing.currentDirectory || "uploads",
@@ -36,6 +54,11 @@ export function ResourceWorkspace({ initialDirectory = "", user, onLogout }: {
   function openDirectory(path: string) {
     listing.openDirectory(path);
     mutations.select(null);
+  }
+
+  function changeDirectoryEntry(path: string) {
+    setActiveEntryDirectory(path);
+    openDirectory(path);
   }
 
   async function create(draft: Draft) {
@@ -57,6 +80,8 @@ export function ResourceWorkspace({ initialDirectory = "", user, onLogout }: {
   return <main className="grid min-h-screen bg-slate-100 lg:grid-cols-[minmax(0,1fr)_28rem]">
     <ResourceBrowser
       user={user} page={listing.page} folders={listing.folders} filters={listing.filters}
+      directoryEntries={directoryEntries} activeEntryDirectory={activeEntryDirectory}
+      onDirectoryEntryChange={changeDirectoryEntry}
       updateFilters={listing.updateFilters} setPage={(page) => listing.setFilters((current) => ({ ...current, page }))}
       currentDirectory={listing.currentDirectory} openDirectory={openDirectory} kinds={listing.resourceKinds}
       selected={mutations.selected} select={mutations.select} loading={listing.loading}

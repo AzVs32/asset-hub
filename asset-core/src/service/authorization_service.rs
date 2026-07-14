@@ -1,18 +1,19 @@
 use crate::{
     CoreError,
     domain::{AccessContext, DirectoryGrant, DirectoryPermission, ResourceDirectory, UserId},
-    port::AccessPolicyRepository,
+    port::{AccessPolicyRepository, UserRepository},
 };
 use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct AuthorizationService {
-    repository: Arc<dyn AccessPolicyRepository>,
+    policies: Arc<dyn AccessPolicyRepository>,
+    users: Arc<dyn UserRepository>,
 }
 
 impl AuthorizationService {
-    pub fn new(repository: Arc<dyn AccessPolicyRepository>) -> Self {
-        Self { repository }
+    pub fn new(policies: Arc<dyn AccessPolicyRepository>, users: Arc<dyn UserRepository>) -> Self {
+        Self { policies, users }
     }
     pub async fn require(
         &self,
@@ -24,7 +25,7 @@ impl AuthorizationService {
             return Ok(());
         }
         let effective = self
-            .repository
+            .policies
             .effective_permission(&context.user_id(), directory)
             .await?;
         if effective.is_some_and(|value| value.allows(permission)) {
@@ -44,7 +45,19 @@ impl AuthorizationService {
         if !actor.is_administrator() {
             return Err(CoreError::forbidden("grant directory access", ""));
         }
-        self.repository.save_grant(&grant).await
+        let user = self
+            .users
+            .find_by_id(&grant.user_id())
+            .await?
+            .ok_or_else(|| CoreError::not_found("user", grant.user_id().to_string()))?;
+        if grant.directory() == user.workspace_directory()
+            && grant.permission() != DirectoryPermission::Full
+        {
+            return Err(CoreError::conflict(
+                "workspace directory must retain full resource permission",
+            ));
+        }
+        self.policies.save_grant(&grant).await
     }
     pub async fn grants_for(
         &self,
@@ -54,7 +67,7 @@ impl AuthorizationService {
         if actor.user_id() != user_id && !actor.is_administrator() {
             return Err(CoreError::forbidden("list grants", ""));
         }
-        self.repository.list_grants(&user_id).await
+        self.policies.list_grants(&user_id).await
     }
     pub async fn revoke(
         &self,
@@ -65,7 +78,17 @@ impl AuthorizationService {
         if !actor.is_administrator() {
             return Err(CoreError::forbidden("revoke directory access", ""));
         }
-        self.repository.remove_grant(&user_id, directory).await
+        let user = self
+            .users
+            .find_by_id(&user_id)
+            .await?
+            .ok_or_else(|| CoreError::not_found("user", user_id.to_string()))?;
+        if directory == user.workspace_directory() {
+            return Err(CoreError::conflict(
+                "workspace directory grant cannot be revoked",
+            ));
+        }
+        self.policies.remove_grant(&user_id, directory).await
     }
 }
 
@@ -80,6 +103,7 @@ fn permission_action(permission: DirectoryPermission) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::{User, UserRole};
     use async_trait::async_trait;
     use std::sync::Mutex;
 
@@ -130,14 +154,83 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct Users {
+        users: Mutex<Vec<User>>,
+    }
+
+    impl Users {
+        fn with_user(user: User) -> Self {
+            Self {
+                users: Mutex::new(vec![user]),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl UserRepository for Users {
+        async fn create(
+            &self,
+            user: &User,
+            _workspace_grant: &DirectoryGrant,
+        ) -> Result<(), CoreError> {
+            self.users.lock().unwrap().push(user.clone());
+            Ok(())
+        }
+
+        async fn save(&self, user: &User) -> Result<(), CoreError> {
+            let mut users = self.users.lock().unwrap();
+            if let Some(saved) = users.iter_mut().find(|saved| saved.id() == user.id()) {
+                *saved = user.clone();
+            }
+            Ok(())
+        }
+
+        async fn find_by_id(&self, id: &UserId) -> Result<Option<User>, CoreError> {
+            Ok(self
+                .users
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|user| user.id() == *id)
+                .cloned())
+        }
+
+        async fn find_by_username(&self, username: &str) -> Result<Option<User>, CoreError> {
+            Ok(self
+                .users
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|user| user.username() == username)
+                .cloned())
+        }
+
+        async fn list(&self) -> Result<Vec<User>, CoreError> {
+            Ok(self.users.lock().unwrap().clone())
+        }
+
+        async fn count(&self) -> Result<u64, CoreError> {
+            Ok(self.users.lock().unwrap().len() as u64)
+        }
+    }
+
     #[tokio::test]
     async fn explicit_grants_obey_capabilities_and_boundaries() {
         let repository = Arc::new(Policies::default());
-        let service = AuthorizationService::new(repository.clone());
-        let user = UserId::new();
         let admin = AccessContext::administrator(UserId::new());
         let shared = ResourceDirectory::from_path("shared").unwrap();
         let workspace = ResourceDirectory::from_path("users/alice").unwrap();
+        let target = User::new(
+            "alice",
+            "credential-hash",
+            UserRole::Member,
+            workspace.clone(),
+        )
+        .unwrap();
+        let user = target.id();
+        let service =
+            AuthorizationService::new(repository.clone(), Arc::new(Users::with_user(target)));
         service
             .grant(
                 &admin,
@@ -145,6 +238,10 @@ mod tests {
             )
             .await
             .unwrap();
+        let downgrade_workspace =
+            DirectoryGrant::new(user, workspace.clone(), DirectoryPermission::Read);
+        assert!(service.grant(&admin, downgrade_workspace).await.is_err());
+        assert!(service.revoke(&admin, user, &workspace).await.is_err());
         service
             .grant(
                 &admin,
@@ -208,7 +305,8 @@ mod tests {
 
     #[tokio::test]
     async fn only_administrators_can_change_grants() {
-        let service = AuthorizationService::new(Arc::new(Policies::default()));
+        let service =
+            AuthorizationService::new(Arc::new(Policies::default()), Arc::new(Users::default()));
         let user = UserId::new();
         let member = AccessContext::member(user);
         let grant = DirectoryGrant::new(
@@ -223,7 +321,7 @@ mod tests {
     #[tokio::test]
     async fn member_root_access_requires_an_explicit_grant() {
         let repository = Arc::new(Policies::default());
-        let service = AuthorizationService::new(repository.clone());
+        let service = AuthorizationService::new(repository.clone(), Arc::new(Users::default()));
         let user = UserId::new();
         let member = AccessContext::member(user);
         let root = ResourceDirectory::root();
