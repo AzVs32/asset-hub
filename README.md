@@ -32,7 +32,7 @@ Defaults:
 Use a config file:
 
 ```bash
-ASSET_HUB_CONFIG=config.example.toml cargo run -p asset-apps --bin asset-http
+cargo run -p asset-apps --bin asset-http -- --config config.example.toml
 ```
 
 ## Users And Directory Access
@@ -83,23 +83,32 @@ entry points can reuse the same authorization rules.
 
 ## HTTP Boundary Settings
 
-These environment variables control the HTTP shell around the API:
+`asset-http` uses Clap for command-line parsing. Run
+`cargo run -p asset-apps --bin asset-http -- --help` to see all options. Each
+HTTP option also accepts its existing environment variable for deployment
+compatibility; an explicit command-line value takes precedence over the
+environment:
 
-- `ASSET_HTTP_ADDR`: listen address, default `127.0.0.1:8080`.
-- `ASSET_HTTP_ENABLE_SWAGGER`: expose `/swagger-ui` and `/api-docs/openapi.json`, default `true`.
-- `ASSET_HTTP_ENABLE_PURGE`: expose physical delete endpoint `DELETE /resources/{id}/purge`, default `true` for local development.
-- `ASSET_HTTP_CORS_ALLOWED_ORIGINS`: comma-separated explicit origins. Wildcards are rejected because authentication uses cookies.
-- `ASSET_HTTP_REQUEST_TIMEOUT_SECS`: request timeout, default `30`.
-- `ASSET_HTTP_COOKIE_SECURE`: mark the session cookie Secure. Set this to `true` whenever the public URL uses HTTPS; default `false` for local HTTP.
-- `ASSET_HTTP_SESSION_INACTIVITY_SECS`: session inactivity lifetime, default `43200` (12 hours).
+- `--config` / `ASSET_HUB_CONFIG`: Asset Hub TOML configuration file.
+- `--addr` / `ASSET_HTTP_ADDR`: listen address, default `127.0.0.1:8080`.
+- `--enable-swagger` / `ASSET_HTTP_ENABLE_SWAGGER`: expose `/swagger-ui` and `/api-docs/openapi.json`, default `true`.
+- `--enable-purge` / `ASSET_HTTP_ENABLE_PURGE`: expose physical delete endpoint `DELETE /resources/{id}/purge`, default `true` for local development.
+- `--cors-allowed-origins` / `ASSET_HTTP_CORS_ALLOWED_ORIGINS`: comma-separated explicit origins. Wildcards are rejected because authentication uses cookies.
+- `--request-timeout-secs` / `ASSET_HTTP_REQUEST_TIMEOUT_SECS`: request timeout, default `30`.
+- `--cookie-secure` / `ASSET_HTTP_COOKIE_SECURE`: mark the session cookie Secure. Enable this whenever the public URL uses HTTPS; default `false` for local HTTP.
+- `--session-inactivity-secs` / `ASSET_HTTP_SESSION_INACTIVITY_SECS`: session inactivity lifetime, default `43200` (12 hours).
+
+Boolean options accept an omitted value as `true`, or an explicit value such
+as `--enable-swagger=false`. Bootstrap credentials remain environment-only so
+passwords are not encouraged in process arguments.
 
 Example production-leaning local run:
 
 ```bash
-ASSET_HTTP_ENABLE_SWAGGER=false \
-ASSET_HTTP_ENABLE_PURGE=false \
-ASSET_HTTP_CORS_ALLOWED_ORIGINS=http://127.0.0.1:5173 \
-cargo run -p asset-apps --bin asset-http
+cargo run -p asset-apps --bin asset-http -- \
+  --enable-swagger=false \
+  --enable-purge=false \
+  --cors-allowed-origins http://127.0.0.1:5173
 ```
 
 ## Run The Admin UI

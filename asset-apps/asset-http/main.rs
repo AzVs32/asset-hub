@@ -18,7 +18,7 @@ use tracing::info;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_tracing();
 
-    let settings = HttpSettings::from_env()?;
+    let settings = HttpSettings::from_cli();
     let runtime = AssetRuntime::from_optional_config_file(settings.config_path()).await?;
     let listener = tokio::net::TcpListener::bind(settings.addr()).await?;
 
