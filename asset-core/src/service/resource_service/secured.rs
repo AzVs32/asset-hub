@@ -186,16 +186,11 @@ impl<'a> SecuredResourceService<'a> {
         let Some(resource) = resource else {
             return Ok(None);
         };
-        let actions = self
+        let access = self
             .service
             .actions()
-            .describe_resource_actions(&resource)?;
-        let access = actions
-            .available_actions()
-            .iter()
-            .find(|a| a.id().as_str() == command.action.as_str())
-            .map(|a| a.access())
-            .unwrap_or(crate::port::ResourceActionAccess::ReadOnly);
+            .resolve_declared_resource_action(&resource, &command.action)?
+            .access();
         let permission = match access {
             crate::port::ResourceActionAccess::ReadOnly => DirectoryPermission::Read,
             crate::port::ResourceActionAccess::ReadWrite => DirectoryPermission::Write,

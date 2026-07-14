@@ -67,9 +67,12 @@ plugin_manifests = []
 # Plugin manifest example.
 # Use `capabilities.resource_kinds` for new resource types, and flat
 # `capabilities.resource_actions` with `applies_to.kinds` for actions.
+# Start with `asset-plugin gen manifest`, then edit its fixed example fields.
+# Draft manifests omit `runtime.wasm_sha256` and optional `web.integrity`; generate them with
+# `asset-plugin seal path/to/plugin.json` after building the plugin artifacts.
 #
 # {
-#   "manifest_version": 1,
+#   "manifest_version": 2,
 #   "plugin": {
 #     "id": "example.tools",
 #     "name": "Example Tools",
@@ -102,7 +105,14 @@ plugin_manifests = []
 #         "applies_to": {
 #           "kinds": ["example:document"]
 #         },
-#         "access": "read"
+#         "access": "read",
+#         "requires": {
+#           "content": true,
+#           "content_delivery": "url"
+#         },
+#         "output": {
+#           "view": ["json"]
+#         }
 #       },
 #       {
 #         "id": "example:play_mp4",
@@ -116,7 +126,10 @@ plugin_manifests = []
 #           "media_types": ["video/mp4"],
 #           "extensions": [".mp4", ".m4v"]
 #         },
-#         "access": "read"
+#         "access": "read",
+#         "output": {
+#           "view": ["media"]
+#         }
 #       }
 #     ]
 #   },

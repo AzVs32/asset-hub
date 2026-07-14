@@ -6,7 +6,9 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends clang cmake pkg-config \
     && rm -rf /var/lib/apt/lists/*
 COPY . .
-RUN cargo build --locked --release -p asset-apps --bin asset-http
+RUN rustup target add wasm32-unknown-unknown \
+    && ./scripts/verify-plugin-artifacts.sh
+RUN cargo build --locked --release -p asset-apps --bins
 
 FROM node:22-bookworm-slim AS web-builder
 WORKDIR /src/asset-web-admin
@@ -20,7 +22,11 @@ WORKDIR /src/plugins/azvs-markdown/web
 COPY plugins/azvs-markdown/web/package.json plugins/azvs-markdown/web/package-lock.json ./
 RUN npm ci
 COPY plugins/azvs-markdown/web/ ./
+COPY plugins/azvs-markdown/azvs-markdown.json /src/plugins/azvs-markdown/azvs-markdown.json
+COPY --from=api-builder /src/target/release/asset-plugin /usr/local/bin/asset-plugin
 RUN npm run build
+WORKDIR /src
+RUN asset-plugin verify-web plugins/azvs-markdown/azvs-markdown.json
 
 FROM debian:bookworm-slim AS api
 RUN apt-get update \

@@ -5,6 +5,7 @@
 
 use crate::CoreError;
 use crate::domain::{Resource, ResourceDirectory, ResourceId, ResourceKind, StorageKey};
+use chrono::{DateTime, Utc};
 
 /// 资源列表查询条件。
 #[derive(Debug, Clone)]
@@ -156,6 +157,23 @@ pub trait ResourceRepository: Send + Sync {
     /// 成功返回 `Ok(())`。唯一约束冲突、连接失败、SQL 执行失败等数据库层问题应返回
     /// `CoreError::Repository` 或更具体的 `CoreError::Conflict`。
     async fn save(&self, resource: &Resource) -> Result<(), CoreError>;
+
+    /// Replace an existing aggregate only when it still has the expected version timestamp.
+    /// Database implementations must perform the comparison and update atomically.
+    async fn save_if_unchanged(
+        &self,
+        resource: &Resource,
+        expected_updated_at: DateTime<Utc>,
+    ) -> Result<bool, CoreError> {
+        let Some(current) = self.find_by_id(&resource.id()).await? else {
+            return Ok(false);
+        };
+        if current.updated_at() != expected_updated_at {
+            return Ok(false);
+        }
+        self.save(resource).await?;
+        Ok(true)
+    }
 
     /// 按资源 ID 查找资源聚合。
     ///

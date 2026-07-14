@@ -28,6 +28,22 @@ impl PluginActionOutput {
     }
 }
 
+impl PluginView {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Text(_) => "text",
+            Self::Markdown(_) => "markdown",
+            Self::Html(_) => "html",
+            Self::PluginFrame(_) => "plugin_frame",
+            Self::Json(_) => "json",
+            Self::Media(_) => "media",
+            Self::BinaryUrl(_) => "binary_url",
+            Self::Table(_) => "table",
+            Self::Form(_) => "form",
+        }
+    }
+}
+
 /// Side effects requested by a plugin action.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]

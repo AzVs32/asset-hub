@@ -708,7 +708,10 @@ fn should_load_declared_action_content(
     action: &crate::port::ResourceActionDefinition,
     content: &ResourceContent,
 ) -> bool {
-    resolved_content_delivery(action, content.size()).is_some()
+    matches!(
+        resolved_content_delivery(action, content.size()),
+        Some(crate::port::ResourceActionContentDelivery::Inline)
+    )
 }
 
 fn decode_media_view(action: &str, view: &PluginView) -> Result<(String, Bytes), CoreError> {
@@ -1255,7 +1258,11 @@ mod tests {
             .with_actions(vec![
                 ResourceActionDefinition::new(ResourceAction::READ, "Read")
                     .with_handler("read_markdown")
-                    .with_requirements(content_requirements()),
+                    .with_requirements(content_requirements())
+                    .with_output(output_contract(["text"])),
+                ResourceActionDefinition::new("metadata.inspect", "Inspect metadata")
+                    .with_handler("inspect_metadata")
+                    .with_output(output_contract(["json"])),
             ]),
             ResourceKindDefinition::new(
                 ResourceKind::try_new("core:image").unwrap(),
@@ -1265,10 +1272,12 @@ mod tests {
             .with_actions(vec![
                 ResourceActionDefinition::new(ResourceAction::PREVIEW, "Preview")
                     .with_handler("preview_image")
-                    .with_requirements(content_requirements()),
+                    .with_requirements(content_requirements())
+                    .with_output(output_contract(["media"])),
                 ResourceActionDefinition::new(ResourceAction::THUMBNAIL, "Thumbnail")
                     .with_handler("thumbnail_image")
-                    .with_requirements(content_requirements()),
+                    .with_requirements(content_requirements())
+                    .with_output(output_contract(["media"])),
             ]),
             ResourceKindDefinition::new(
                 ResourceKind::try_new("asset:binary").unwrap(),
@@ -1283,10 +1292,12 @@ mod tests {
             .with_actions(vec![
                 ResourceActionDefinition::new(ResourceAction::READ, "Read")
                     .with_handler("read_document")
-                    .with_requirements(content_requirements()),
+                    .with_requirements(content_requirements())
+                    .with_output(output_contract(["text"])),
                 ResourceActionDefinition::new("azvs.markdown.render", "Read Markdown")
                     .with_handler("render_markdown")
                     .with_requirements(content_requirements())
+                    .with_output(output_contract(["plugin_frame"]))
                     .with_content_matcher(
                         crate::port::ResourceContentMatcher::new()
                             .with_mime_types(["text/markdown", "text/x-markdown"])
@@ -1296,6 +1307,7 @@ mod tests {
                     .with_handler("update_markdown")
                     .with_requirements(content_requirements())
                     .with_access(crate::port::ResourceActionAccess::ReadWrite)
+                    .with_output(output_contract(["text"]))
                     .with_content_matcher(
                         crate::port::ResourceContentMatcher::new()
                             .with_mime_types(["text/markdown", "text/x-markdown"])
@@ -1303,7 +1315,8 @@ mod tests {
                     ),
                 ResourceActionDefinition::new(ResourceAction::PREVIEW, "Preview")
                     .with_handler("preview_document")
-                    .with_requirements(content_requirements()),
+                    .with_requirements(content_requirements())
+                    .with_output(output_contract(["media"])),
             ]),
             ResourceKindDefinition::new(
                 ResourceKind::try_new("azvs:markdown").unwrap(),
@@ -1349,6 +1362,14 @@ mod tests {
         asset_plugin_api::ResourceActionRequirements {
             content: true,
             content_delivery: asset_plugin_api::ResourceActionContentDelivery::Inline,
+        }
+    }
+
+    fn output_contract<const N: usize>(
+        views: [&str; N],
+    ) -> asset_plugin_api::ResourceActionOutputContract {
+        asset_plugin_api::ResourceActionOutputContract {
+            view: views.into_iter().map(str::to_string).collect(),
         }
     }
 
@@ -1447,6 +1468,48 @@ mod tests {
         assert!(resource.content().is_none());
         assert_eq!(saved.metadata().description(), Some("Design document"));
         assert_eq!(saved.metadata().tags(), &["rust", "asset"]);
+    }
+
+    #[test]
+    fn metadata_only_resource_describes_only_actions_without_content_requirements() {
+        let (service, _, _) = service();
+        let resource = block_on(
+            service
+                .commands()
+                .create_resource(CreateResource::new("metadata").with_kind("doc:markdown")),
+        )
+        .unwrap();
+
+        let actions = service
+            .actions()
+            .describe_resource_actions(&resource)
+            .unwrap();
+        let ids = actions
+            .available_actions()
+            .iter()
+            .map(|action| action.id().as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, vec!["metadata.inspect"]);
+    }
+
+    #[test]
+    fn metadata_only_resource_rejects_direct_content_action_execution() {
+        let (service, _, _) = service();
+        let resource = block_on(
+            service
+                .commands()
+                .create_resource(CreateResource::new("metadata").with_kind("doc:markdown")),
+        )
+        .unwrap();
+
+        let error = block_on(service.actions().execute_resource_action(
+            &resource.id(),
+            ExecuteResourceAction::new(ResourceAction::READ),
+        ))
+        .unwrap_err();
+
+        assert!(error.to_string().contains("does not support action `read`"));
     }
 
     #[test]
@@ -1754,12 +1817,13 @@ mod tests {
         .unwrap();
 
         assert_eq!(output.action().as_str(), "azvs.markdown.update");
-        assert_eq!(
-            blob_storage.get_sync(&key).unwrap(),
-            Bytes::from_static(b"# New\n\nUpdated.")
-        );
         let updated = repository.find_sync(&resource.id()).unwrap();
         let content = updated.content().unwrap();
+        assert!(blob_storage.contains(&key));
+        assert_eq!(
+            blob_storage.get_sync(content.key()).unwrap(),
+            Bytes::from_static(b"# New\n\nUpdated.")
+        );
         assert_eq!(content.size(), 15);
         assert_eq!(content.mime_type(), Some("text/markdown"));
         assert_eq!(content.original_filename(), Some("note.md"));

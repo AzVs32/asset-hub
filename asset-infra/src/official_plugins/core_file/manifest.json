@@ -1,5 +1,5 @@
 {
-  "manifest_version": 1,
+  "manifest_version": 2,
   "plugin": {
     "id": "core.file",
     "name": "Core File",

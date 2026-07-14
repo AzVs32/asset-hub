@@ -28,9 +28,6 @@ impl<'a> ResourceActionService<'a> {
         resource: &Resource,
     ) -> Result<ResourceActions, CoreError> {
         self.service.require_kind_definition(resource.kind())?;
-        if resource.content().is_none() {
-            return Ok(ResourceActions::default());
-        }
         if resource.is_deleted() {
             return Ok(ResourceActions::default());
         }
@@ -39,12 +36,14 @@ impl<'a> ResourceActionService<'a> {
             .service
             .actions_for_resource_kind(resource.kind())
             .into_iter()
+            .filter(|action| resource.content().is_some() || !action.requirements().content)
             .filter(|action| self.service.action_matches_resource(action, resource))
             .collect::<Vec<_>>();
 
-        if !available_actions
-            .iter()
-            .any(|action| action.id().as_str() == crate::port::ResourceAction::DOWNLOAD_CONTENT)
+        if resource.content().is_some()
+            && !available_actions
+                .iter()
+                .any(|action| action.id().as_str() == crate::port::ResourceAction::DOWNLOAD_CONTENT)
         {
             available_actions.insert(
                 0,
@@ -95,6 +94,7 @@ impl<'a> ResourceActionService<'a> {
         let output = self
             .execute_resource_action_request(&resource, action_id, &action, input, content)
             .await?;
+        self.validate_action_output(&action, &output)?;
 
         // 4. Apply write effects after the executor returns, guarded by the action access boundary.
         self.apply_action_effects(&mut resource, &output, access)
@@ -103,17 +103,24 @@ impl<'a> ResourceActionService<'a> {
         Ok(Some(output))
     }
 
-    fn resolve_declared_resource_action(
+    pub(super) fn resolve_declared_resource_action(
         &self,
         resource: &Resource,
         action_id: &crate::port::ResourceAction,
     ) -> Result<crate::port::ResourceActionDefinition, CoreError> {
         self.service.require_kind_definition(resource.kind())?;
+        if resource.is_deleted() {
+            return Err(CoreError::configuration(format!(
+                "deleted resource `{}` cannot execute actions",
+                resource.id()
+            )));
+        }
         let declared_actions = self.service.actions_for_resource_kind(resource.kind());
         declared_actions
             .into_iter()
             .find(|action| {
                 action.id().as_str() == action_id.as_str()
+                    && (resource.content().is_some() || !action.requirements().content)
                     && self.service.action_matches_resource(action, resource)
             })
             .ok_or_else(|| {
@@ -123,6 +130,38 @@ impl<'a> ResourceActionService<'a> {
                     action_id
                 ))
             })
+    }
+
+    fn validate_action_output(
+        &self,
+        action: &crate::port::ResourceActionDefinition,
+        output: &ResourceActionOutput,
+    ) -> Result<(), CoreError> {
+        let actual = output.output().view.kind();
+        if !action
+            .output()
+            .view
+            .iter()
+            .any(|declared| declared == actual)
+        {
+            return Err(CoreError::configuration(format!(
+                "action `{}` returned undeclared view `{actual}`",
+                action.id()
+            )));
+        }
+        let replacements = output
+            .output()
+            .effects
+            .iter()
+            .filter(|effect| matches!(effect, PluginActionEffect::ReplaceContent(_)))
+            .count();
+        if replacements > 1 {
+            return Err(CoreError::configuration(format!(
+                "action `{}` returned more than one replace_content effect",
+                action.id()
+            )));
+        }
+        Ok(())
     }
 
     async fn load_declared_resource_action_content(
@@ -215,8 +254,13 @@ impl<'a> ResourceActionService<'a> {
                             ))
                         })?;
                     let checksums = plugin_checksums(&effect.checksum, &data)?;
+                    let replacement_key = StorageKey::new(format!(
+                        "{}.action-replacements/{}",
+                        current_content.key(),
+                        uuid::Uuid::now_v7()
+                    ))?;
                     let content = build_content(
-                        current_content.key().clone(),
+                        replacement_key.clone(),
                         data.len() as u64,
                         effect
                             .mime_type
@@ -229,12 +273,34 @@ impl<'a> ResourceActionService<'a> {
                         checksums,
                     )?;
 
+                    let expected_updated_at = resource.updated_at();
                     self.service
                         .blob_storage
-                        .put(current_content.key(), data)
+                        .put(&replacement_key, data)
                         .await?;
                     resource.attach_content(content)?;
-                    self.service.repository.save(resource).await?;
+                    let saved = self
+                        .service
+                        .repository
+                        .save_if_unchanged(resource, expected_updated_at)
+                        .await;
+                    match saved {
+                        // Old versions stay immutable and can be collected after repository-wide
+                        // reachability analysis. Deleting here could race a shared reference.
+                        Ok(true) => {}
+                        Ok(false) => {
+                            let _ = self.service.blob_storage.delete(&replacement_key).await;
+                            return Err(CoreError::conflict(format!(
+                                "resource `{}` changed while action `{}` was running",
+                                resource.id(),
+                                output.action()
+                            )));
+                        }
+                        Err(error) => {
+                            let _ = self.service.blob_storage.delete(&replacement_key).await;
+                            return Err(error);
+                        }
+                    }
                 }
             }
         }

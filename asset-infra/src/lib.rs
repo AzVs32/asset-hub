@@ -16,14 +16,14 @@ use asset_core::{
     port::ResourceKindRegistry, port::ResourceRepository, port::StorageScanner,
 };
 use config::AssetInfraConfig;
-use kind::{DefaultResourceActionRegistry, DefaultResourceKindRegistry};
+use kind::{DefaultResourceActionRegistry, DefaultResourceKindRegistry, registries_from_catalog};
 use password::Argon2PasswordHasher;
 use plugin::ExtismResourceActionExecutor;
-use plugin_manifest::load_plugin_manifest_file;
+use plugin_manifest::PluginCatalog;
 use sqlite::{SqliteIdentityRepository, SqliteResourceRepository};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use storage::{FileSystemScanner, OpenDalBlobStorage};
 
@@ -45,6 +45,7 @@ pub struct AssetInfrastructure {
     resource_action_registry: Arc<DefaultResourceActionRegistry>,
     /// 资源动作执行器。
     resource_action_executor: Arc<DefaultResourceActionExecutor>,
+    plugin_web_roots: HashMap<String, PathBuf>,
 }
 
 impl AssetInfrastructure {
@@ -60,16 +61,19 @@ impl AssetInfrastructure {
         let identity_repository = Arc::new(SqliteIdentityRepository::new(
             resource_repository.pool().clone(),
         ));
-        let resource_kind_registry =
-            Arc::new(DefaultResourceKindRegistry::from_config(&config.kind)?);
-        let resource_action_registry =
-            Arc::new(DefaultResourceActionRegistry::from_config(&config.kind)?);
-        let extism_action_executor = ExtismResourceActionExecutor::from_config(
-            &config.kind,
+        let plugin_catalog = PluginCatalog::load(&config.kind)?;
+        let (resource_kind_registry, resource_action_registry) =
+            registries_from_catalog(&config.kind, &plugin_catalog)?;
+        let resource_kind_registry = Arc::new(resource_kind_registry);
+        let resource_action_registry = Arc::new(resource_action_registry);
+        let extism_action_executor = ExtismResourceActionExecutor::from_catalog(
+            &plugin_catalog,
             resource_kind_registry.as_ref(),
+            blob_storage.clone(),
         )?;
         let resource_action_executor =
             Arc::new(DefaultResourceActionExecutor::new(extism_action_executor));
+        let plugin_web_roots = plugin_web_roots_from_catalog(&plugin_catalog)?;
 
         Ok(Self {
             config,
@@ -80,6 +84,7 @@ impl AssetInfrastructure {
             resource_kind_registry,
             resource_action_registry,
             resource_action_executor,
+            plugin_web_roots,
         })
     }
 
@@ -143,7 +148,7 @@ impl AssetInfrastructure {
 
     /// 返回插件浏览器静态资源根目录。
     pub fn plugin_web_roots(&self) -> Result<HashMap<String, PathBuf>, CoreError> {
-        plugin_web_roots_from_config(&self.config)
+        Ok(self.plugin_web_roots.clone())
     }
 
     /// 创建资源应用服务。
@@ -163,27 +168,38 @@ impl AssetInfrastructure {
 pub fn plugin_web_roots_from_config(
     config: &AssetInfraConfig,
 ) -> Result<HashMap<String, PathBuf>, CoreError> {
+    let catalog = PluginCatalog::load(&config.kind)?;
+    plugin_web_roots_from_catalog(&catalog)
+}
+
+fn plugin_web_roots_from_catalog(
+    catalog: &PluginCatalog,
+) -> Result<HashMap<String, PathBuf>, CoreError> {
     let mut roots = HashMap::new();
-    for manifest_path in &config.kind.plugin_manifests {
-        let manifest = load_plugin_manifest_file(manifest_path)?;
+    for plugin in catalog
+        .plugins()
+        .iter()
+        .filter(|plugin| plugin.manifest_path.is_some())
+    {
+        let manifest = &plugin.manifest;
         let Some(web) = &manifest.web else {
             continue;
         };
-        roots.insert(
-            manifest.plugin_id().to_string(),
-            resolve_manifest_path(manifest_path, &web.root),
-        );
+        let root = plugin.resolve_path(&web.root).ok_or_else(|| {
+            CoreError::configuration(format!(
+                "plugin `{}` has no deployable Web root",
+                manifest.plugin_id()
+            ))
+        })?;
+        if roots
+            .insert(manifest.plugin_id().to_string(), root)
+            .is_some()
+        {
+            return Err(CoreError::configuration(format!(
+                "duplicate plugin Web root `{}`",
+                manifest.plugin_id()
+            )));
+        }
     }
     Ok(roots)
-}
-
-fn resolve_manifest_path(manifest_path: &Path, configured_path: &Path) -> PathBuf {
-    if configured_path.is_absolute() {
-        return configured_path.to_path_buf();
-    }
-
-    manifest_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join(configured_path)
 }

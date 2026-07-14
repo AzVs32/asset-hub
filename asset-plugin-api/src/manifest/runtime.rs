@@ -8,9 +8,10 @@ pub enum PluginRuntime {
     Builtin,
     Extism {
         wasm: PathBuf,
+        /// Lowercase SHA-256 digest of the deployed Wasm artifact.
+        wasm_sha256: String,
         #[serde(default)]
         wasi: bool,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        plugin_api: Option<String>,
+        plugin_api: String,
     },
 }

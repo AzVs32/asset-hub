@@ -1,13 +1,14 @@
 use asset_core::CoreError;
-use asset_core::domain::{ChecksumKind, ResourceStatus};
+use asset_core::domain::{ChecksumKind, ResourceStatus, StorageKey};
 use asset_core::port::{
-    ResourceActionExecutor, ResourceActionOutput, ResourceActionRequest, ResourceKindRegistry,
+    BlobStorage, ResourceActionExecutor, ResourceActionOutput, ResourceActionRequest,
+    ResourceKindRegistry,
 };
 use asset_plugin_api::{
     PluginActionOutput, PluginActionRequest, PluginChecksum, PluginContentBytes,
-    PluginContentEncoding, PluginContentReference, PluginManifest, PluginPermissions,
-    PluginResource, PluginResourceContent, PluginResourceMetadata, PluginResourceSummaryMetadata,
-    PluginRuntime, PluginView, ResourceActionCapability,
+    PluginContentEncoding, PluginContentReference, PluginPermissions, PluginResource,
+    PluginResourceContent, PluginResourceMetadata, PluginResourceSummaryMetadata, PluginRuntime,
+    PluginView, ResourceActionCapability,
 };
 use async_trait::async_trait;
 use base64::Engine;
@@ -17,45 +18,70 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::config::KindRegistryConfig;
-use crate::plugin_manifest::load_plugin_manifest_file;
+use crate::plugin_manifest::PluginCatalog;
 
-type HostContentMap = HashMap<String, String>;
+#[derive(Clone)]
+struct HostContentResolver {
+    storage: Arc<dyn BlobStorage>,
+    keys: HashMap<String, StorageKey>,
+    runtime: tokio::runtime::Handle,
+}
 const PLUGIN_MEMORY_MAX_PAGES: u32 = 4096;
 const PLUGIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
-extism::host_fn!(asset_hub_content_read(user_data: HostContentMap; url: String) -> String {
+extism::host_fn!(asset_hub_content_read(user_data: HostContentResolver; url: String) -> String {
     let content = user_data.get()?;
     let content = content
         .lock()
         .map_err(|_| extism::Error::msg("content host data lock poisoned"))?;
-    content
-        .get(&url)
-        .cloned()
-        .ok_or_else(|| extism::Error::msg(format!("content reference `{url}` is not available")))
+    let key = content.keys.get(&url)
+        .ok_or_else(|| extism::Error::msg(format!("content reference `{url}` is not available")))?;
+    let bytes = content.runtime.block_on(content.storage.get(key))
+        .map_err(|error| extism::Error::msg(error.to_string()))?
+        .ok_or_else(|| extism::Error::msg(format!("content reference `{url}` was not found")))?;
+    Ok(STANDARD.encode(bytes))
 });
 
 /// Extism 资源动作执行器。
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ExtismResourceActionExecutor {
     bindings: Arc<Vec<ActionBinding>>,
+    blob_storage: Arc<dyn BlobStorage>,
+}
+
+impl std::fmt::Debug for ExtismResourceActionExecutor {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ExtismResourceActionExecutor")
+            .field("bindings", &self.bindings)
+            .finish_non_exhaustive()
+    }
 }
 
 impl ExtismResourceActionExecutor {
     /// 从插件 manifest 目录创建 Extism 执行器。
-    pub fn from_config(
-        config: &KindRegistryConfig,
+    pub(crate) fn from_catalog(
+        catalog: &PluginCatalog,
         kind_registry: &dyn ResourceKindRegistry,
+        blob_storage: Arc<dyn BlobStorage>,
     ) -> Result<Self, CoreError> {
         let mut bindings = Vec::new();
 
-        for manifest_path in &config.plugin_manifests {
-            let loaded_manifest = load_plugin_manifest(manifest_path.clone())?;
+        for loaded_manifest in catalog
+            .plugins()
+            .iter()
+            .filter(|plugin| plugin.manifest_path.is_some())
+        {
             let manifest = &loaded_manifest.manifest;
             let PluginRuntime::Extism { wasm, wasi, .. } = &manifest.runtime else {
                 continue;
             };
-            let wasm_path = resolve_manifest_path(&loaded_manifest.path, wasm);
+            let wasm_path = loaded_manifest.resolve_path(wasm).ok_or_else(|| {
+                CoreError::configuration(format!(
+                    "plugin `{}` has no deployable Wasm path",
+                    manifest.plugin_id()
+                ))
+            })?;
 
             for action in &manifest.capabilities.resource_actions {
                 let Some(handler) = action.plugin_handler() else {
@@ -75,6 +101,7 @@ impl ExtismResourceActionExecutor {
 
         Ok(Self {
             bindings: Arc::new(bindings),
+            blob_storage,
         })
     }
 }
@@ -164,7 +191,7 @@ impl ResourceActionExecutor for ExtismResourceActionExecutor {
 
         let binding = binding.clone();
         let payload = build_payload(&request);
-        let host_content = host_content_map(&request);
+        let host_content = host_content_resolver(&request, self.blob_storage.clone());
         let output =
             tokio::task::spawn_blocking(move || call_extism(binding, payload, host_content))
                 .await
@@ -215,7 +242,11 @@ fn verify_permissions(
             binding.plugin_id, binding.action
         )));
     }
-    if request.resource().content().is_some() && !binding.permissions.content.read {
+    if !matches!(
+        request.content_delivery(),
+        asset_plugin_api::ResourceActionContentDelivery::Auto
+    ) && !binding.permissions.content.read
+    {
         return Err(CoreError::configuration(format!(
             "plugin `{}` action `{}` lacks content.read permission",
             binding.plugin_id, binding.action
@@ -238,7 +269,7 @@ fn verify_permissions(
 fn call_extism(
     binding: ActionBinding,
     payload: PluginActionRequest,
-    host_content: HostContentMap,
+    host_content: HostContentResolver,
 ) -> Result<PluginActionOutput, CoreError> {
     let manifest = manifest_for_binding(&binding);
     let content_read = Function::new(
@@ -278,7 +309,7 @@ fn call_extism(
             format!("plugin returned invalid action output: {error}"),
         )
     })?;
-    resolve_plugin_output_urls(&mut output, &binding.plugin_id);
+    resolve_plugin_output_urls(&mut output, &binding.plugin_id)?;
 
     Ok(output)
 }
@@ -302,20 +333,26 @@ fn manifest_for_binding(binding: &ActionBinding) -> Manifest {
     manifest
 }
 
-fn host_content_map(request: &ResourceActionRequest) -> HostContentMap {
-    let mut map = HashMap::new();
-    let Some(content_ref) = request.resource().content() else {
-        return map;
-    };
-    let Some(content) = request.content() else {
-        return map;
-    };
-
-    map.insert(
-        content_ref_url(content_ref.key().as_str()),
-        STANDARD.encode(content),
-    );
-    map
+fn host_content_resolver(
+    request: &ResourceActionRequest,
+    storage: Arc<dyn BlobStorage>,
+) -> HostContentResolver {
+    let mut keys = HashMap::new();
+    if matches!(
+        request.content_delivery(),
+        asset_plugin_api::ResourceActionContentDelivery::Url
+    ) && let Some(content) = request.resource().content()
+    {
+        keys.insert(
+            content_ref_url(content.key().as_str()),
+            content.key().clone(),
+        );
+    }
+    HostContentResolver {
+        storage,
+        keys,
+        runtime: tokio::runtime::Handle::current(),
+    }
 }
 
 fn build_payload(request: &ResourceActionRequest) -> PluginActionRequest {
@@ -332,7 +369,10 @@ fn build_payload(request: &ResourceActionRequest) -> PluginActionRequest {
             data: STANDARD.encode(content),
         })
     };
-    let content_ref_payload = if request.content().is_some() && content.is_none() {
+    let content_ref_payload = if matches!(
+        request.content_delivery(),
+        asset_plugin_api::ResourceActionContentDelivery::Url
+    ) {
         content_ref.map(|content| PluginContentReference {
             encoding: PluginContentEncoding::Url,
             url: content_ref_url(content.key().as_str()),
@@ -383,16 +423,24 @@ fn content_ref_url(storage_key: &str) -> String {
     format!("asset://content/{storage_key}")
 }
 
-fn resolve_plugin_output_urls(output: &mut PluginActionOutput, plugin_id: &str) {
+fn resolve_plugin_output_urls(
+    output: &mut PluginActionOutput,
+    plugin_id: &str,
+) -> Result<(), CoreError> {
     if let PluginView::PluginFrame(frame) = &mut output.view {
-        frame.url = plugin_web_asset_url(plugin_id, &frame.url);
+        frame.url = plugin_web_asset_url(plugin_id, &frame.url)?;
     }
+    Ok(())
 }
 
-fn plugin_web_asset_url(plugin_id: &str, url: &str) -> String {
+fn plugin_web_asset_url(plugin_id: &str, url: &str) -> Result<String, CoreError> {
     let url = url.trim();
-    if is_public_or_protocol_url(url) {
-        return url.to_string();
+    if url.starts_with('/') || url.contains("://") || url.starts_with("//") {
+        return Err(CoreError::plugin(
+            plugin_id,
+            "plugin_frame",
+            "plugin_frame URL must be relative to the plugin Web root",
+        ));
     }
 
     let relative = url.trim_start_matches("./");
@@ -404,11 +452,14 @@ fn plugin_web_asset_url(plugin_id: &str, url: &str) -> String {
         relative.to_string()
     };
 
-    format!("/plugins/{plugin_id}/{relative}")
-}
-
-fn is_public_or_protocol_url(url: &str) -> bool {
-    url.starts_with('/') || url.contains("://")
+    if relative.split('/').any(|part| part == "..") {
+        return Err(CoreError::plugin(
+            plugin_id,
+            "plugin_frame",
+            "plugin_frame URL contains a parent path segment",
+        ));
+    }
+    Ok(format!("/plugins/{plugin_id}/{relative}"))
 }
 
 fn status_text(status: ResourceStatus) -> &'static str {
@@ -424,30 +475,6 @@ fn checksum_kind_text(kind: ChecksumKind) -> &'static str {
     }
 }
 
-#[derive(Debug)]
-struct LoadedPluginManifest {
-    manifest: PluginManifest,
-    path: PathBuf,
-}
-
-fn load_plugin_manifest(path: PathBuf) -> Result<LoadedPluginManifest, CoreError> {
-    Ok(LoadedPluginManifest {
-        manifest: load_plugin_manifest_file(&path)?,
-        path,
-    })
-}
-
-fn resolve_manifest_path(manifest_path: &Path, configured_path: &Path) -> PathBuf {
-    if configured_path.is_absolute() {
-        return configured_path.to_path_buf();
-    }
-
-    manifest_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join(configured_path)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -460,7 +487,7 @@ mod tests {
             url: "index.html#payload=abc".to_string(),
         }));
 
-        resolve_plugin_output_urls(&mut output, "azvs.markdown");
+        resolve_plugin_output_urls(&mut output, "azvs.markdown").unwrap();
 
         let PluginView::PluginFrame(frame) = output.view else {
             panic!("expected plugin frame");
@@ -469,25 +496,16 @@ mod tests {
     }
 
     #[test]
-    fn plugin_frame_public_or_protocol_url_is_kept() {
-        assert_eq!(
-            plugin_web_asset_url("azvs.markdown", "/plugins/custom/index.html"),
-            "/plugins/custom/index.html"
-        );
-        assert_eq!(
-            plugin_web_asset_url("azvs.markdown", "asset://content/demo.md"),
-            "asset://content/demo.md"
-        );
-        assert_eq!(
-            plugin_web_asset_url("azvs.markdown", "https://example.com/view"),
-            "https://example.com/view"
-        );
+    fn plugin_frame_public_or_protocol_url_is_rejected() {
+        assert!(plugin_web_asset_url("azvs.markdown", "/plugins/custom/index.html").is_err());
+        assert!(plugin_web_asset_url("azvs.markdown", "asset://content/demo.md").is_err());
+        assert!(plugin_web_asset_url("azvs.markdown", "https://example.com/view").is_err());
     }
 
     #[test]
     fn plugin_frame_hash_only_url_defaults_to_index_html() {
         assert_eq!(
-            plugin_web_asset_url("azvs.markdown", "#payload=abc"),
+            plugin_web_asset_url("azvs.markdown", "#payload=abc").unwrap(),
             "/plugins/azvs.markdown/index.html#payload=abc"
         );
     }

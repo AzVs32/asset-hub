@@ -1179,8 +1179,21 @@ async fn plugin_web_assets_are_served_from_declared_roots() {
         HashMap::from([("azvs.markdown".to_string(), web_root)]),
     )
     .await;
-    let (status, body) =
-        empty_bytes_request(&app, Method::GET, "/plugins/azvs.markdown/index.html").await;
+    let response = request(
+        &app,
+        Request::builder()
+            .method(Method::GET)
+            .uri("/plugins/azvs.markdown/index.html")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    let status = response.status();
+    assert_eq!(
+        response.headers()["content-security-policy"],
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'"
+    );
+    let body = to_bytes(response.into_body(), BODY_LIMIT).await.unwrap();
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, "<!doctype html><title>Markdown</title>");

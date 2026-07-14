@@ -13,17 +13,21 @@ jobs:
         with:
           components: clippy,rustfmt
       - uses: Swatinem/rust-cache@v2
+      - run: rustup target add wasm32-unknown-unknown
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       - run: cargo test --manifest-path plugins/azvs-markdown/plugin/Cargo.toml
       - run: cargo test --manifest-path plugins/azvs-epub/Cargo.toml
       - run: cargo test --manifest-path plugins/azvs-mp4/Cargo.toml
+      - run: ./scripts/verify-plugin-artifacts.sh
 
   web:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94.1
+      - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
@@ -41,3 +45,4 @@ jobs:
         run: npm ci
       - working-directory: plugins/azvs-markdown/web
         run: npm run typecheck && npm run build
+      - run: cargo run --locked --quiet -p asset-apps --bin asset-plugin -- verify-web plugins/azvs-markdown/azvs-markdown.json

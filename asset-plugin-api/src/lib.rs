@@ -28,10 +28,10 @@ pub use action::{
 };
 pub use manifest::{
     ActionAppliesTo, ActionExecutor, ActionOutputContract, ActionRequirements, ActionUi,
-    ContentDelivery, FilesystemPermission, MANIFEST_VERSION, ManifestActionAccess,
-    NetworkPermission, PLUGIN_API_VERSION, PluginCapabilities, PluginManifest, PluginMetadata,
-    PluginPermissions, PluginRuntime, PluginWeb, ReadWritePermission, ResourceActionCapability,
-    ResourceKindCapability,
+    ContentDelivery, FilesystemPermission, MANIFEST_TEMPLATE, MANIFEST_VERSION,
+    ManifestActionAccess, NetworkPermission, PLUGIN_API_VERSION, PluginCapabilities,
+    PluginManifest, PluginMetadata, PluginPermissions, PluginRuntime, PluginWeb,
+    ReadWritePermission, ResourceActionCapability, ResourceKindCapability,
 };
 pub use request::{
     PluginActionRequest, PluginChecksum, PluginContentBytes, PluginContentReference,

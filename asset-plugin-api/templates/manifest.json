@@ -1,0 +1,59 @@
+{
+  "manifest_version": 2,
+  "plugin": {
+    "id": "example.plugin",
+    "name": "Example Plugin",
+    "version": "0.1.0",
+    "publisher": "example",
+    "description": "Replace this description with the plugin purpose."
+  },
+  "runtime": {
+    "type": "extism",
+    "wasm": "dist/plugin.wasm",
+    "plugin_api": "asset-hub.plugin-api@0.1",
+    "wasi": false
+  },
+  "capabilities": {
+    "resource_kinds": [],
+    "resource_actions": [
+      {
+        "id": "example.plugin.action",
+        "label": "Example Action",
+        "description": "Replace this description with the action purpose.",
+        "executor": {
+          "type": "plugin",
+          "handler": "run"
+        },
+        "applies_to": {
+          "kinds": ["core:file"],
+          "media_types": [],
+          "extensions": []
+        },
+        "access": "read",
+        "requires": {
+          "content": false
+        },
+        "output": {
+          "view": ["json"]
+        },
+        "ui": {
+          "group": "inspect",
+          "order": 100,
+          "locations": ["resource_detail"]
+        }
+      }
+    ]
+  },
+  "permissions": {
+    "resource": {
+      "read": true,
+      "write": false
+    },
+    "content": {
+      "read": false,
+      "write": false
+    },
+    "network": false,
+    "filesystem": false
+  }
+}

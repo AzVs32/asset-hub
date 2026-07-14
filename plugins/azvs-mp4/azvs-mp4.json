@@ -1,5 +1,5 @@
 {
-  "manifest_version": 1,
+  "manifest_version": 2,
   "plugin": {
     "id": "azvs.mp4",
     "name": "AzVs MP4",
@@ -10,6 +10,7 @@
   "runtime": {
     "type": "extism",
     "wasm": "azvs-mp4.wasm",
+    "wasm_sha256": "1ee5779fd0760fb5379e4bab0994e1e9615ac05f06a9e0d54b03e75a5d14385e",
     "wasi": false,
     "plugin_api": "asset-hub.plugin-api@0.1"
   },
@@ -25,18 +26,32 @@
           "handler": "play_mp4"
         },
         "applies_to": {
-          "kinds": ["core:video"],
-          "media_types": ["video/mp4"],
-          "extensions": [".mp4", ".m4v"]
+          "kinds": [
+            "core:video"
+          ],
+          "media_types": [
+            "video/mp4"
+          ],
+          "extensions": [
+            ".mp4",
+            ".m4v"
+          ]
         },
         "access": "read",
         "output": {
-          "view": ["media", "html", "binary_url"]
+          "view": [
+            "media",
+            "html",
+            "binary_url"
+          ]
         },
         "ui": {
           "group": "open",
           "order": 80,
-          "locations": ["resource_detail", "context_menu"]
+          "locations": [
+            "resource_detail",
+            "context_menu"
+          ]
         }
       }
     ]

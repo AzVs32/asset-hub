@@ -34,7 +34,12 @@ export function ResourceDetail({
   const kindDefinition = resourceKinds.find((kind) => kind.kind === resource.kind);
   const canRead = hasAction(resource, "read");
   const canPreview = hasAction(resource, "preview") || hasAction(resource, "view_inline");
-  const pluginActions = resource.actions.available_actions.filter(isPluginUiAction);
+  const pluginActions = resource.actions.available_actions
+    .filter((action) => isPluginUiAction(action) && action.ui.locations.includes("resource_detail"))
+    .sort((left, right) =>
+      (left.ui.group ?? "").localeCompare(right.ui.group ?? "")
+      || (left.ui.order ?? 0) - (right.ui.order ?? 0)
+      || left.label.localeCompare(right.label));
 
   return (
     <div className="flex flex-col gap-6 p-6 max-sm:p-4">

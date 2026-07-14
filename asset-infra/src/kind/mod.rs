@@ -1,14 +1,12 @@
 use crate::config::{KindRegistryConfig, ResourceKindConfig, ResourceKindExtensionConfig};
-use crate::official_plugins;
-use crate::plugin_manifest::load_plugin_manifest_file;
+use crate::plugin_manifest::PluginCatalog;
 use asset_core::CoreError;
 use asset_core::domain::ResourceKind;
 use asset_core::port::{
     ResourceActionDefinition, ResourceActionRegistry, ResourceKindDefinition, ResourceKindRegistry,
 };
-use asset_plugin_api::{PluginManifest, ResourceActionCapability, ResourceKindCapability};
+use asset_plugin_api::{ResourceActionCapability, ResourceKindCapability};
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 
 /// 默认内置资源类型注册表。
 ///
@@ -94,15 +92,39 @@ impl DefaultResourceActionRegistry {
     }
 }
 
+pub(crate) fn registries_from_catalog(
+    config: &KindRegistryConfig,
+    catalog: &PluginCatalog,
+) -> Result<(DefaultResourceKindRegistry, DefaultResourceActionRegistry), CoreError> {
+    let (definitions, actions) = build_registries_with_catalog(config, catalog)?;
+    Ok((
+        DefaultResourceKindRegistry::from_definitions(definitions),
+        DefaultResourceActionRegistry { actions },
+    ))
+}
+
 fn build_registries(
     config: &KindRegistryConfig,
 ) -> Result<(Vec<ResourceKindDefinition>, Vec<ResourceActionDefinition>), CoreError> {
+    let catalog = PluginCatalog::load(config)?;
+    build_registries_with_catalog(config, &catalog)
+}
+
+fn build_registries_with_catalog(
+    config: &KindRegistryConfig,
+    catalog: &PluginCatalog,
+) -> Result<(Vec<ResourceKindDefinition>, Vec<ResourceActionDefinition>), CoreError> {
     let mut definitions = Vec::new();
-    let official_manifests = load_official_plugin_manifests()?;
-    let mut plugin_manifests = Vec::new();
-    for manifest_path in &config.plugin_manifests {
-        plugin_manifests.push(load_plugin_manifest(manifest_path.clone())?);
-    }
+    let official_manifests = catalog
+        .plugins()
+        .iter()
+        .filter(|plugin| plugin.manifest_path.is_none())
+        .collect::<Vec<_>>();
+    let plugin_manifests = catalog
+        .plugins()
+        .iter()
+        .filter(|plugin| plugin.manifest_path.is_some())
+        .collect::<Vec<_>>();
 
     for kind in ResourceKind::builtin_values() {
         let parent = (*kind == ResourceKind::UNKNOWN).then_some("core:file");
@@ -120,12 +142,12 @@ fn build_registries(
         )?;
     }
     for manifest in &official_manifests {
-        for config_definition in &manifest.capabilities.resource_kinds {
+        for config_definition in &manifest.manifest.capabilities.resource_kinds {
             push_definition(
                 &mut definitions,
                 definition_from_manifest_kind(
                     config_definition,
-                    format!("plugin:{}", manifest.plugin_id()),
+                    format!("plugin:{}", manifest.manifest.plugin_id()),
                 )?,
             )?;
         }
@@ -153,16 +175,16 @@ fn build_registries(
 
     let mut actions = Vec::new();
     for manifest in &official_manifests {
-        for action in &manifest.capabilities.resource_actions {
+        for action in &manifest.manifest.capabilities.resource_actions {
             push_action_definition(
                 &mut actions,
                 action.to_definition(),
-                format!("plugin:{}", manifest.plugin_id()),
+                format!("plugin:{}", manifest.manifest.plugin_id()),
             )?;
             extend_definitions_for_action(
                 &mut definitions,
                 action,
-                format!("plugin:{}", manifest.plugin_id()),
+                format!("plugin:{}", manifest.manifest.plugin_id()),
             )?;
         }
     }
@@ -404,32 +426,6 @@ fn definition_from_parts(
     .with_actions(actions))
 }
 
-fn load_official_plugin_manifests() -> Result<Vec<PluginManifest>, CoreError> {
-    official_plugins::MANIFESTS
-        .iter()
-        .map(|content| {
-            let manifest: PluginManifest = serde_json::from_str(content).map_err(|error| {
-                CoreError::configuration(format!("parse official plugin manifest: {error}"))
-            })?;
-            manifest.validate().map_err(|error| {
-                CoreError::configuration(format!("invalid official plugin manifest: {error}"))
-            })?;
-            Ok(manifest)
-        })
-        .collect()
-}
-
-#[derive(Debug)]
-struct LoadedPluginManifest {
-    manifest: PluginManifest,
-}
-
-fn load_plugin_manifest(path: PathBuf) -> Result<LoadedPluginManifest, CoreError> {
-    Ok(LoadedPluginManifest {
-        manifest: load_plugin_manifest_file(&path)?,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -634,7 +630,7 @@ mod tests {
             root.join("mindustry.json"),
             r#"
             {
-              "manifest_version": 1,
+              "manifest_version": 2,
               "plugin": {
                 "id": "mindustry",
                 "name": "Mindustry",
@@ -664,7 +660,8 @@ mod tests {
                     "applies_to": {
                       "kinds": ["mindustry:mod"]
                     },
-                    "access": "read"
+                    "access": "read",
+                    "output": { "view": ["media"] }
                   }
                 ]
               },
@@ -705,11 +702,12 @@ mod tests {
     fn registry_loads_format_plugin_as_independent_kind() {
         let root = unique_temp_path("plugin-kind");
         std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("epub.wasm"), []).unwrap();
         std::fs::write(
             root.join("epub.json"),
             r#"
             {
-              "manifest_version": 1,
+              "manifest_version": 2,
               "plugin": {
                 "id": "epub",
                 "name": "EPUB",
@@ -720,6 +718,7 @@ mod tests {
               "runtime": {
                 "type": "extism",
                 "wasm": "epub.wasm",
+                "wasm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
                 "wasi": false,
                 "plugin_api": "asset-hub.plugin-api@0.1"
               },
@@ -748,7 +747,8 @@ mod tests {
                       "media_types": ["application/epub+zip"],
                       "extensions": [".epub"]
                     },
-                    "access": "read"
+                    "access": "read",
+                    "output": { "view": ["html"] }
                   }
                 ]
               },
@@ -793,11 +793,12 @@ mod tests {
     fn registry_loads_plugin_manifest_kind_extensions() {
         let root = unique_temp_path("plugin-extension");
         std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("mp4-tools.wasm"), []).unwrap();
         std::fs::write(
             root.join("mp4-tools.json"),
             r#"
             {
-              "manifest_version": 1,
+              "manifest_version": 2,
               "plugin": {
                 "id": "mp4-tools",
                 "name": "MP4 Tools",
@@ -808,6 +809,7 @@ mod tests {
               "runtime": {
                 "type": "extism",
                 "wasm": "mp4-tools.wasm",
+                "wasm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
                 "wasi": false,
                 "plugin_api": "asset-hub.plugin-api@0.1"
               },
@@ -826,7 +828,8 @@ mod tests {
                       "media_types": ["video/mp4"],
                       "extensions": [".mp4"]
                     },
-                    "access": "read"
+                    "access": "read",
+                    "output": { "view": ["json"] }
                   }
                 ]
               },
@@ -890,7 +893,7 @@ mod tests {
             root.join("duplicate-preview.json"),
             r#"
             {
-              "manifest_version": 1,
+              "manifest_version": 2,
               "plugin": {
                 "id": "duplicate-preview",
                 "name": "Duplicate Preview",
@@ -914,7 +917,8 @@ mod tests {
                     "applies_to": {
                       "kinds": ["core:image"]
                     },
-                    "access": "read"
+                    "access": "read",
+                    "output": { "view": ["media"] }
                   }
                 ]
               },

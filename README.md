@@ -4,7 +4,7 @@ Asset Hub is a local-first asset management service. The current workspace conta
 
 - `asset-core`: resource domain model, repository/storage/action ports, and resource service.
 - `asset-infra`: SQLite repository, OpenDAL Fs blob storage, built-in kinds, plugin manifest loading, and Extism action execution.
-- `asset-apps`: reusable runtime assembly plus the `asset-http` Axum API.
+- `asset-apps`: reusable runtime assembly plus the `asset-http` API and `asset-plugin` packaging CLI.
 - `asset-plugin-api`: shared manifest, action, request, and view contracts for plugins.
 - `asset-web-admin`: Vite/React admin UI.
 - `plugins`: sample Markdown, EPUB, and MP4 plugins.
@@ -116,6 +116,39 @@ Vite serves `http://127.0.0.1:5173` and proxies `/api` to `http://127.0.0.1:8080
 
 Uploads use the raw-body streaming endpoint, which supports files up to 4 GiB
 without encoding them as base64 or buffering the complete file in application memory.
+
+## Package A Plugin
+
+Generate a fixed Manifest V2 starter in a new plugin directory:
+
+```bash
+asset-plugin gen manifest
+```
+
+This creates `manifest.json` without overwriting an existing file. Replace the `example.plugin`
+metadata, action, handler, matching rules, requirements, output, and permissions, then build the
+Wasm and optional Web bundle. The source template is
+`asset-plugin-api/templates/manifest.json`, so protocol template changes require no CLI code
+changes. Integrity fields are generated data; seal the finished artifacts:
+
+```bash
+cargo run -p asset-apps --bin asset-plugin -- \
+  seal path/to/plugin.json
+```
+
+The command calculates `runtime.wasm_sha256`, replaces the complete `web.integrity` file map, runs
+the Manifest V2 contract validation, and atomically updates the JSON file. A draft manifest may omit
+both generated fields. Do not run `seal` during application startup: release or CI should instead
+verify the previously sealed package without modifying it:
+
+```bash
+cargo run -p asset-apps --bin asset-plugin -- \
+  verify path/to/plugin.json
+```
+
+The standalone binary can also be installed with
+`cargo install --path asset-apps --bin asset-plugin`, after which the equivalent commands are
+`asset-plugin gen manifest`, `asset-plugin seal ...`, and `asset-plugin verify ...`.
 
 ## Docker
 

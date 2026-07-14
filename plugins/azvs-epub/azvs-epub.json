@@ -1,5 +1,5 @@
 {
-  "manifest_version": 1,
+  "manifest_version": 2,
   "plugin": {
     "id": "azvs.epub",
     "name": "AzVs EPUB",
@@ -10,6 +10,7 @@
   "runtime": {
     "type": "extism",
     "wasm": "azvs-epub.wasm",
+    "wasm_sha256": "f46df6e12f5da7a1ae08498ebbfea3d124e7fc3d9ecfd7c3a62458732665c557",
     "wasi": false,
     "plugin_api": "asset-hub.plugin-api@0.1"
   },
@@ -21,8 +22,12 @@
         "label": "EPUB",
         "supports_content": true,
         "detect": {
-          "mime_types": ["application/epub+zip"],
-          "extensions": [".epub"]
+          "mime_types": [
+            "application/epub+zip"
+          ],
+          "extensions": [
+            ".epub"
+          ]
         }
       }
     ],
@@ -36,9 +41,15 @@
           "handler": "render_epub"
         },
         "applies_to": {
-          "kinds": ["azvs:epub"],
-          "media_types": ["application/epub+zip"],
-          "extensions": [".epub"]
+          "kinds": [
+            "azvs:epub"
+          ],
+          "media_types": [
+            "application/epub+zip"
+          ],
+          "extensions": [
+            ".epub"
+          ]
         },
         "access": "read",
         "requires": {
@@ -46,12 +57,17 @@
           "content_delivery": "url"
         },
         "output": {
-          "view": ["html"]
+          "view": [
+            "html"
+          ]
         },
         "ui": {
           "group": "open",
           "order": 70,
-          "locations": ["resource_detail", "context_menu"]
+          "locations": [
+            "resource_detail",
+            "context_menu"
+          ]
         }
       }
     ]

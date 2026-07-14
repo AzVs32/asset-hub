@@ -126,6 +126,46 @@ impl ResourceRepository for SqliteResourceRepository {
         Ok(())
     }
 
+    async fn save_if_unchanged(
+        &self,
+        resource: &Resource,
+        expected_updated_at: DateTime<Utc>,
+    ) -> Result<bool, CoreError> {
+        ensure_directory_path(&self.pool, resource.directory().path()).await?;
+        let metadata_json = serde_json::to_string(resource.metadata())
+            .map_err(|error| CoreError::repository("resource.encode_metadata", error))?;
+        let content_json = resource
+            .content()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|error| CoreError::repository("resource.encode_content", error))?;
+
+        let result = sqlx::query(
+            r#"
+            UPDATE resources SET
+                name = ?, directory = ?, kind = ?, status = ?, metadata_json = ?,
+                content_json = ?, created_at = ?, updated_at = ?, deleted_at = ?
+            WHERE id = ? AND updated_at = ?
+            "#,
+        )
+        .bind(resource.name())
+        .bind(resource.directory().path())
+        .bind(resource.kind().as_str())
+        .bind(status_to_str(resource.status()))
+        .bind(metadata_json)
+        .bind(content_json)
+        .bind(encode_timestamp(resource.created_at()))
+        .bind(encode_timestamp(resource.updated_at()))
+        .bind(resource.deleted_at().map(encode_timestamp))
+        .bind(resource.id().to_string())
+        .bind(encode_timestamp(expected_updated_at))
+        .execute(&self.pool)
+        .await
+        .map_err(|error| CoreError::repository("save_if_unchanged", error))?;
+
+        Ok(result.rows_affected() == 1)
+    }
+
     async fn find_by_id(&self, id: &ResourceId) -> Result<Option<Resource>, CoreError> {
         let row = sqlx::query(
             r#"
@@ -567,6 +607,36 @@ mod tests {
                 .await
                 .unwrap()
                 .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn conditional_save_rejects_a_stale_resource_snapshot() {
+        let repository = repository("conditional-save").await;
+        let resource = Resource::builder("original").build().unwrap();
+        repository.save(&resource).await.unwrap();
+
+        let expected = resource.updated_at();
+        let mut concurrent = resource.clone();
+        concurrent.rename("concurrent").unwrap();
+        repository.save(&concurrent).await.unwrap();
+
+        let mut stale = resource.clone();
+        stale.rename("stale").unwrap();
+        assert!(
+            !repository
+                .save_if_unchanged(&stale, expected)
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            repository
+                .find_by_id(&resource.id())
+                .await
+                .unwrap()
+                .unwrap()
+                .name(),
+            "concurrent"
         );
     }
 

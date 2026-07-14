@@ -1,6 +1,6 @@
 use asset_plugin_api::{
     MediaView, PluginActionOutput, PluginActionRequest, PluginContentEncoding, PluginResource,
-    PluginResourceContent, PluginResourceMetadata, PluginResourceSummaryMetadata, PluginView,
+    PluginResourceContent, PluginView,
 };
 use extism_pdk::{FnResult, plugin_fn};
 
@@ -45,6 +45,7 @@ fn video_mime_type(content: Option<&PluginResourceContent>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use asset_plugin_api::{PluginResourceMetadata, PluginResourceSummaryMetadata};
     use serde_json::{Value, json};
 
     #[test]

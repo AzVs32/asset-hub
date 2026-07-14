@@ -148,9 +148,9 @@ plugin_manifests = [
 ]
 ```
 
-Markdown 的浏览器资源会在 Docker 构建期间通过 `npm ci && npm run build` 生成。现有
-WASM 文件直接打包进镜像；修改插件 Rust 源码后，应先重新生成对应 `.wasm`，再重建 API
-镜像。
+Markdown 的浏览器资源会在 Docker 构建期间通过 `npm ci && npm run build` 生成。三个
+Wasm 插件也会从源码重新构建，并通过 `asset-plugin verify-wasm` 与已封装的 Manifest
+比对；开发者使用 `asset-plugin seal` 自动生成完整性字段，任一产物漂移都会中止镜像构建。
 
 ## 单独构建镜像
 

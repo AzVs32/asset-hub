@@ -76,11 +76,24 @@ pub(crate) async fn plugin_web_asset(
     })?;
     let content_type = plugin_asset_content_type(&file_path);
 
-    Ok((
-        [(header::CONTENT_TYPE, content_type)],
-        axum::body::Body::from(bytes),
-    )
-        .into_response())
+    let mut response = axum::body::Body::from(bytes).into_response();
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        content_type
+            .parse()
+            .expect("static plugin content type is valid"),
+    );
+    response.headers_mut().insert(
+        header::CONTENT_SECURITY_POLICY,
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'"
+            .parse()
+            .expect("static plugin CSP is valid"),
+    );
+    response.headers_mut().insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        "nosniff".parse().expect("static header is valid"),
+    );
+    Ok(response)
 }
 
 fn clean_plugin_asset_path(path: &str) -> Option<std::path::PathBuf> {
