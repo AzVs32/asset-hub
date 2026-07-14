@@ -15,5 +15,6 @@ config.toml
 **/node_modules
 asset-web-admin/dist
 plugins/*/web/dist
+plugins/*/dist
 **/*.rs.bk
 **/*.log

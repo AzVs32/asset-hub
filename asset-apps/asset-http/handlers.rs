@@ -81,6 +81,10 @@ pub(crate) async fn plugin_web_asset(
         header::X_CONTENT_TYPE_OPTIONS,
         "nosniff".parse().expect("static header is valid"),
     );
+    response.headers_mut().insert(
+        header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        "*".parse().expect("static header is valid"),
+    );
     Ok(response)
 }
 

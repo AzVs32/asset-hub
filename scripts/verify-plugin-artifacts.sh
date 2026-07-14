@@ -24,9 +24,9 @@ build_and_verify \
   "plugins/azvs-markdown/plugin/target/$target/release/azvs_markdown_plugin.wasm" \
   "plugins/azvs-markdown/azvs-markdown.wasm"
 build_and_verify \
-  "plugins/azvs-epub/azvs-epub.json" \
-  "plugins/azvs-epub/Cargo.toml" \
-  "plugins/azvs-epub/target/$target/release/azvs_epub_plugin.wasm" \
+  "plugins/azvs-epub/manifest.json" \
+  "plugins/azvs-epub/runtime/Cargo.toml" \
+  "plugins/azvs-epub/runtime/target/$target/release/azvs_epub_plugin.wasm" \
   "plugins/azvs-epub/azvs-epub.wasm"
 build_and_verify \
   "plugins/azvs-mp4/azvs-mp4.json" \

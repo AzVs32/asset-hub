@@ -475,7 +475,11 @@ pub(crate) async fn authorize_request(
     mut request: Request<axum::body::Body>,
     next: Next,
 ) -> Response {
-    if request.uri().path() == "/health" {
+    let path = request.uri().path();
+    // Plugin frames use an opaque sandbox origin; only immutable, verified Web snapshots are public.
+    let public_plugin_asset =
+        path.starts_with("/plugins/") && matches!(request.method(), &Method::GET | &Method::HEAD);
+    if path == "/health" || public_plugin_asset {
         return next.run(request).await;
     }
     let user = match require_user(&session) {

@@ -18,7 +18,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       - run: cargo test --manifest-path plugins/azvs-markdown/plugin/Cargo.toml
-      - run: cargo test --manifest-path plugins/azvs-epub/Cargo.toml
+      - run: cargo test --manifest-path plugins/azvs-epub/runtime/Cargo.toml
       - run: cargo test --manifest-path plugins/azvs-mp4/Cargo.toml
       - run: ./scripts/verify-plugin-artifacts.sh
 
@@ -35,6 +35,7 @@ jobs:
           cache-dependency-path: |
             asset-web-admin/package-lock.json
             plugins/azvs-markdown/web/package-lock.json
+            plugins/azvs-epub/web/package-lock.json
       - working-directory: asset-web-admin
         run: npm ci
       - working-directory: asset-web-admin
@@ -46,3 +47,8 @@ jobs:
       - working-directory: plugins/azvs-markdown/web
         run: npm run typecheck && npm run build
       - run: cargo run --locked --quiet -p asset-apps --bin asset-plugin -- verify-web plugins/azvs-markdown/azvs-markdown.json
+      - working-directory: plugins/azvs-epub/web
+        run: npm ci
+      - working-directory: plugins/azvs-epub/web
+        run: npm run typecheck && npm run build
+      - run: cargo run --locked --quiet -p asset-apps --bin asset-plugin -- verify-web plugins/azvs-epub/manifest.json

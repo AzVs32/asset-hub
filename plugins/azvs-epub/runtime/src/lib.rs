@@ -1,12 +1,15 @@
 use asset_plugin_api::{
-    HtmlView, PluginActionOutput, PluginActionRequest, PluginContentEncoding, PluginView,
+    JsonView, MediaView, PluginActionOutput, PluginActionRequest, PluginContentEncoding,
+    PluginFrameView, PluginView,
 };
 use base64::Engine;
-use base64::engine::general_purpose::STANDARD;
+use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 #[cfg(target_arch = "wasm32")]
 use extism_pdk::host_fn;
-use extism_pdk::{plugin_fn, Error, FnResult};
+use extism_pdk::{Error, FnResult, plugin_fn};
 use roxmltree::{Document, Node};
+use serde::Serialize;
+use serde_json::json;
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
 use zip::ZipArchive;
@@ -24,7 +27,7 @@ struct ManifestItem {
     properties: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 struct Chapter {
     title: String,
     html: String,
@@ -35,17 +38,49 @@ pub fn render_epub(input: String) -> FnResult<String> {
     render_epub_payload(input)
 }
 
-fn render_epub_payload(input: String) -> FnResult<String> {
-    let input: PluginActionRequest = serde_json::from_str(&input)?;
-    let epub = STANDARD.decode(epub_content_base64(&input)?)?;
-    let rendered = render_epub_bytes(&epub)?;
+#[plugin_fn]
+pub fn render_epub_cover(input: String) -> FnResult<String> {
+    render_epub_cover_payload(input)
+}
 
-    Ok(serde_json::to_string(&PluginActionOutput::new(PluginView::Html(
-        HtmlView {
-            title: Some(rendered.title),
-            html: rendered.html,
-        },
-    )))?)
+fn render_epub_payload(input: String) -> FnResult<String> {
+    let request: PluginActionRequest = serde_json::from_str(&input)?;
+    let output = if request
+        .input
+        .get("operation")
+        .and_then(|value| value.as_str())
+        == Some("load")
+    {
+        let epub = STANDARD.decode(epub_content_base64(&request)?)?;
+        let book = render_epub_bytes(&epub)?;
+        PluginActionOutput::new(PluginView::Json(JsonView {
+            data: serde_json::to_value(book)?,
+        }))
+    } else {
+        let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&json!({
+            "resource_id": &request.resource.id,
+            "resource_name": &request.resource.name,
+            "action": &request.action,
+        }))?);
+        PluginActionOutput::new(PluginView::PluginFrame(PluginFrameView {
+            title: Some(request.resource.name.clone()),
+            url: format!("index.html#payload={payload}"),
+        }))
+    };
+
+    Ok(serde_json::to_string(&output)?)
+}
+
+fn render_epub_cover_payload(input: String) -> FnResult<String> {
+    let request: PluginActionRequest = serde_json::from_str(&input)?;
+    let epub = STANDARD.decode(epub_content_base64(&request)?)?;
+    let view = match render_epub_cover_bytes(&epub)? {
+        Some(cover) => PluginView::Media(cover_media_view(&request.resource.name, &cover)?),
+        None => PluginView::Json(JsonView {
+            data: serde_json::Value::Null,
+        }),
+    };
+    Ok(serde_json::to_string(&PluginActionOutput::new(view))?)
 }
 
 fn epub_content_base64(input: &PluginActionRequest) -> FnResult<String> {
@@ -77,9 +112,12 @@ fn read_content_ref_base64(_url: &str) -> FnResult<String> {
     Err(Error::msg("content references are only available in the wasm host").into())
 }
 
+#[derive(Debug, Serialize)]
 struct RenderedBook {
     title: String,
-    html: String,
+    author: Option<String>,
+    cover: Option<String>,
+    chapters: Vec<Chapter>,
 }
 
 fn render_epub_bytes(epub: &[u8]) -> FnResult<RenderedBook> {
@@ -89,16 +127,32 @@ fn render_epub_bytes(epub: &[u8]) -> FnResult<RenderedBook> {
     let package = parse_package(&opf, &opf_path)?;
     let cover = find_cover_data_url(&mut archive, &package, &opf_path);
     let chapters = read_chapters(&mut archive, &package, &opf_path);
-    let html = book_html(
-        &package.title,
-        package.author.as_deref(),
-        cover.as_deref(),
-        &chapters,
-    );
-
     Ok(RenderedBook {
         title: package.title,
-        html,
+        author: package.author,
+        cover,
+        chapters,
+    })
+}
+
+fn render_epub_cover_bytes(epub: &[u8]) -> FnResult<Option<String>> {
+    let mut archive = ZipArchive::new(Cursor::new(epub))?;
+    let opf_path = find_opf_path(&mut archive)?;
+    let opf = read_zip_text(&mut archive, &opf_path)?;
+    let package = parse_package(&opf, &opf_path)?;
+    Ok(find_cover_data_url(&mut archive, &package, &opf_path))
+}
+
+fn cover_media_view(title: &str, data_url: &str) -> FnResult<MediaView> {
+    let (mime_type, data) = data_url
+        .strip_prefix("data:")
+        .and_then(|value| value.split_once(";base64,"))
+        .ok_or_else(|| Error::msg("invalid EPUB cover data URL"))?;
+    Ok(MediaView {
+        mime_type: mime_type.to_string(),
+        title: Some(title.to_string()),
+        encoding: PluginContentEncoding::Base64,
+        data: data.to_string(),
     })
 }
 
@@ -201,26 +255,24 @@ fn find_cover_data_url(
         item.properties
             .split_whitespace()
             .any(|value| value == "cover-image")
-    }) {
-        if let Some(data_url) = image_item_data_url(archive, opf_path, item) {
-            return Some(data_url);
-        }
+    }) && let Some(data_url) = image_item_data_url(archive, opf_path, item)
+    {
+        return Some(data_url);
     }
 
     if let Some(item) = package
         .cover_item_id
         .as_ref()
         .and_then(|id| package.manifest.get(id))
+        && let Some(data_url) = image_item_data_url(archive, opf_path, item)
     {
-        if let Some(data_url) = image_item_data_url(archive, opf_path, item) {
-            return Some(data_url);
-        }
+        return Some(data_url);
     }
 
-    if let Some(href) = &package.guide_cover_href {
-        if let Some(data_url) = cover_from_guide_href(archive, opf_path, href, package) {
-            return Some(data_url);
-        }
+    if let Some(href) = &package.guide_cover_href
+        && let Some(data_url) = cover_from_guide_href(archive, opf_path, href, package)
+    {
+        return Some(data_url);
     }
 
     let item = package.manifest.values().find(|item| {
@@ -529,186 +581,6 @@ fn strip_tag_blocks(value: &str, tag: &str) -> String {
     output
 }
 
-fn book_html(
-    title: &str,
-    author: Option<&str>,
-    cover: Option<&str>,
-    chapters: &[Chapter],
-) -> String {
-    let nav = chapters
-        .iter()
-        .enumerate()
-        .map(|(index, chapter)| {
-            format!(
-                r#"<button class="chapter-link{}" type="button" data-chapter="{index}">{}</button>"#,
-                if index == 0 { " active" } else { "" },
-                escape_html(&chapter.title)
-            )
-        })
-        .collect::<String>();
-    let sections = chapters
-        .iter()
-        .enumerate()
-        .map(|(index, chapter)| {
-            format!(
-                r#"<section class="chapter{}" data-chapter="{index}"><h2>{}</h2>{}</section>"#,
-                if index == 0 { " active" } else { "" },
-                escape_html(&chapter.title),
-                chapter.html
-            )
-        })
-        .collect::<String>();
-    let cover_html = cover
-        .map(|cover| format!(r#"<img class="cover" src="{cover}" alt="Book cover">"#))
-        .unwrap_or_else(|| r#"<div class="cover placeholder">No Cover</div>"#.to_string());
-    let author_html = author
-        .map(|author| format!(r#"<p class="author">{}</p>"#, escape_html(author)))
-        .unwrap_or_default();
-
-    format!(
-        r#"<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<style>
-:root {{
-  color-scheme: light;
-  --paper: #fffdf8;
-  --ink: #222831;
-  --muted: #6b7280;
-  --line: #ded8cc;
-  --accent: #2f6f6d;
-}}
-* {{ box-sizing: border-box; }}
-body {{
-  margin: 0;
-  background: #ebe6dc;
-  color: var(--ink);
-  font-family: ui-serif, Georgia, "Times New Roman", serif;
-}}
-.layout {{
-  display: grid;
-  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
-  min-height: 100vh;
-}}
-.sidebar {{
-  position: sticky;
-  top: 0;
-  height: 100vh;
-  overflow: auto;
-  padding: 22px;
-  border-right: 1px solid var(--line);
-  background: #f7f2e8;
-}}
-.cover {{
-  display: block;
-  width: 100%;
-  max-height: 320px;
-  object-fit: contain;
-  margin-bottom: 18px;
-  border-radius: 6px;
-  background: #ddd4c3;
-}}
-.cover.placeholder {{
-  display: grid;
-  place-items: center;
-  aspect-ratio: 2 / 3;
-  color: var(--muted);
-  font: 600 14px ui-sans-serif, system-ui;
-}}
-h1 {{
-  margin: 0;
-  font-size: 24px;
-  line-height: 1.2;
-}}
-.author {{
-  margin: 8px 0 20px;
-  color: var(--muted);
-  font: 14px/1.4 ui-sans-serif, system-ui;
-}}
-.chapter-list {{
-  display: grid;
-  gap: 6px;
-}}
-.chapter-link {{
-  width: 100%;
-  min-height: 34px;
-  padding: 8px 10px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  color: #374151;
-  text-align: left;
-  font: 13px/1.35 ui-sans-serif, system-ui;
-  cursor: pointer;
-}}
-.chapter-link:hover,
-.chapter-link.active {{
-  border-color: #b9cabf;
-  background: #ffffff;
-  color: var(--accent);
-}}
-.reader {{
-  max-width: 860px;
-  width: 100%;
-  margin: 0 auto;
-  padding: 52px 58px 80px;
-  background: var(--paper);
-  box-shadow: 0 0 0 1px rgba(31, 41, 55, .05);
-}}
-.chapter {{ display: none; }}
-.chapter.active {{ display: block; }}
-.chapter h2 {{
-  margin: 0 0 24px;
-  color: #111827;
-  font-size: 28px;
-  line-height: 1.2;
-}}
-.chapter p {{
-  margin: 0 0 1.05em;
-  font-size: 19px;
-  line-height: 1.9;
-}}
-.chapter img {{
-  max-width: 100%;
-  height: auto;
-}}
-@media (max-width: 760px) {{
-  .layout {{ grid-template-columns: 1fr; }}
-  .sidebar {{ position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); }}
-  .reader {{ padding: 32px 22px 56px; }}
-}}
-</style>
-</head>
-<body>
-<main class="layout">
-  <aside class="sidebar">
-    {cover_html}
-    <h1>{}</h1>
-    {author_html}
-    <nav class="chapter-list" aria-label="Chapters">{nav}</nav>
-  </aside>
-  <article class="reader">{sections}</article>
-</main>
-<script>
-const buttons = Array.from(document.querySelectorAll('.chapter-link'));
-const chapters = Array.from(document.querySelectorAll('.chapter'));
-buttons.forEach((button) => {{
-  button.addEventListener('click', () => {{
-    const id = button.dataset.chapter;
-    buttons.forEach((item) => item.classList.toggle('active', item === button));
-    chapters.forEach((chapter) => chapter.classList.toggle('active', chapter.dataset.chapter === id));
-    window.scrollTo({{ top: 0, behavior: 'smooth' }});
-  }});
-}});
-</script>
-</body>
-</html>"#,
-        escape_html(title)
-    )
-}
-
 fn split_once_case_insensitive<'a>(value: &'a str, needle: &str) -> Option<(&'a str, &'a str)> {
     let index = find_case_insensitive(value, needle)?;
     Some((&value[..index], &value[index + needle.len()..]))
@@ -727,6 +599,7 @@ fn clean_text(value: &str) -> String {
 fn node_text(node: Node<'_, '_>) -> Option<String> {
     let text = node
         .descendants()
+        .filter(Node::is_text)
         .filter_map(|node| node.text())
         .collect::<Vec<_>>()
         .join(" ");
@@ -764,15 +637,6 @@ fn file_stem(path: &str) -> Option<&str> {
     file.rsplit_once('.').map(|(stem, _)| stem).or(Some(file))
 }
 
-fn escape_html(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -786,10 +650,15 @@ mod tests {
         let rendered = render_epub_bytes(&epub).unwrap();
 
         assert_eq!(rendered.title, "Sample Book");
-        assert!(rendered.html.contains("data:image/png;base64,"));
-        assert!(rendered.html.contains("Chapter One"));
-        assert!(rendered.html.contains("chapter-link active"));
-        assert!(rendered.html.contains("Hello EPUB"));
+        assert_eq!(rendered.author.as_deref(), Some("A. Writer"));
+        assert!(
+            rendered
+                .cover
+                .unwrap()
+                .starts_with("data:image/png;base64,")
+        );
+        assert_eq!(rendered.chapters[0].title, "Chapter One");
+        assert!(rendered.chapters[0].html.contains("Hello EPUB"));
     }
 
     #[test]
@@ -798,14 +667,30 @@ mod tests {
         let rendered = render_epub_bytes(&epub).unwrap();
 
         assert_eq!(rendered.title, "EPUB2 Book");
-        assert!(rendered.html.contains("data:image/jpeg;base64,"));
-        assert!(rendered.html.contains("NCX Chapter One"));
-        assert!(rendered.html.contains("NCX Chapter Two"));
-        assert!(rendered.html.contains("Body without heading"));
+        assert!(
+            rendered
+                .cover
+                .unwrap()
+                .starts_with("data:image/jpeg;base64,")
+        );
+        assert_eq!(rendered.chapters[0].title, "NCX Chapter One");
+        assert_eq!(rendered.chapters[1].title, "NCX Chapter Two");
+        assert!(rendered.chapters[0].html.contains("Body without heading"));
     }
 
     #[test]
-    fn render_epub_returns_html_reader() {
+    fn renders_cover_as_media_view() {
+        let cover = render_epub_cover_bytes(&minimal_epub()).unwrap().unwrap();
+        let media = cover_media_view("Sample Book", &cover).unwrap();
+
+        assert_eq!(media.mime_type, "image/png");
+        assert_eq!(media.title.as_deref(), Some("Sample Book"));
+        assert_eq!(media.encoding, PluginContentEncoding::Base64);
+        assert_eq!(media.data, STANDARD.encode("fakepng"));
+    }
+
+    #[test]
+    fn render_epub_returns_plugin_frame() {
         let output = render_epub_payload(
             json!({
                 "action": "azvs.epub.render",
@@ -843,10 +728,62 @@ mod tests {
         .unwrap();
         let output: Value = serde_json::from_str(&output).unwrap();
 
-        assert_eq!(output["view"], "html");
-        assert_eq!(output["title"], "Sample Book");
-        assert!(output["html"].as_str().unwrap().contains("Chapter One"));
-        assert!(output["html"].as_str().unwrap().contains("Hello EPUB"));
+        assert_eq!(output["view"], "plugin_frame");
+        assert_eq!(output["title"], "book.epub");
+        assert!(
+            output["url"]
+                .as_str()
+                .unwrap()
+                .starts_with("index.html#payload=")
+        );
+    }
+
+    #[test]
+    fn load_operation_returns_structured_book_data() {
+        let output = render_epub_payload(
+            json!({
+                "action": "azvs.epub.render",
+                "access": "read_only",
+                "input": {"operation": "load"},
+                "resource": {
+                    "id": "01900000-0000-7000-8000-000000000000",
+                    "name": "book.epub",
+                    "kind": "azvs:epub",
+                    "status": "active",
+                    "metadata": {
+                        "schema_version": 1,
+                        "summary": {"description": null, "tags": []}
+                    },
+                    "content": {
+                        "key": "books/book.epub",
+                        "size": 1,
+                        "mime_type": "application/epub+zip",
+                        "original_filename": "book.epub",
+                        "checksum": []
+                    },
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "updated_at": "2026-01-01T00:00:00Z"
+                },
+                "content": {
+                    "encoding": "base64",
+                    "data": STANDARD.encode(minimal_epub())
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let output: Value = serde_json::from_str(&output).unwrap();
+
+        assert_eq!(output["view"], "json");
+        assert_eq!(output["data"]["title"], "Sample Book");
+        assert_eq!(output["data"]["author"], "A. Writer");
+        assert_eq!(output["data"]["chapters"][0]["title"], "Chapter One");
+        assert!(
+            output["data"]["chapters"][0]["html"]
+                .as_str()
+                .unwrap()
+                .contains("Hello EPUB")
+        );
     }
 
     fn minimal_epub() -> Vec<u8> {

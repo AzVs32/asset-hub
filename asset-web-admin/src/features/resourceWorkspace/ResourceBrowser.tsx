@@ -1,9 +1,9 @@
 import React from "react";
 import { ChevronLeft, ChevronRight, Database, File as FileIcon, FileUp, Folder, FolderPlus, Loader2, LogOut, Plus, RefreshCcw, Search, SlidersHorizontal, Users } from "lucide-react";
-import { apiBase } from "../../api";
+import { apiBase, request } from "../../api";
 import { cx, iconButtonClass, inputClass, primaryButtonClass, secondaryButtonClass } from "../../components/ui";
 import type { CurrentUser } from "../../components/AuthGate";
-import type { DirectoryAccessEntry, Filters, Resource, ResourceDirectory, ResourceKindOption, ResourcePage } from "../../types";
+import type { DirectoryAccessEntry, Filters, PluginActionOutput, Resource, ResourceDirectory, ResourceKindOption, ResourcePage } from "../../types";
 import { formatBytes, formatDate, hasAction, kindOptionLabel } from "../../utils/resourceDrafts";
 import { shouldCloseAfterCreate } from "./dialogBehavior.js";
 import { directoryBreadcrumbs, parentDirectoryWithinRoot } from "./directoryNavigation.js";
@@ -76,7 +76,7 @@ export function ResourceBrowser(props: {
       {parentDirectory !== null && <button className="grid min-h-11 grid-cols-[1.5rem_1fr] items-center gap-2 border-b bg-slate-50 px-6 text-left" onClick={() => props.openDirectory(parentDirectory)}><Folder size={18} /><span>..</span></button>}
       {props.folders.map((folder) => <button key={folder.path} className="grid min-h-11 grid-cols-[1.5rem_1fr] items-center gap-2 border-b bg-slate-50 px-6 text-left" onClick={() => props.openDirectory(folder.path)}><Folder size={18} /><span>{folder.name}</span></button>)}
       {props.page.items.map((resource) => <button key={resource.id} className={cx("grid min-h-20 grid-cols-[3.5rem_minmax(0,1fr)_auto] items-center gap-4 border-b px-6 py-3 text-left hover:bg-blue-50", props.selected?.id === resource.id && "bg-blue-50")} onClick={() => props.select(resource)}>
-        {hasAction(resource, "thumbnail") ? <img className="size-14 rounded-lg object-cover" src={`${apiBase}/resources/${resource.id}/thumbnail`} alt="" /> : <div className="flex size-14 items-center justify-center rounded-lg border border-dashed"><FileIcon size={18} /></div>}
+        <ResourceThumbnail resource={resource} />
         <div className="min-w-0"><div className="truncate font-semibold">{resource.name}</div><div className="flex gap-3 text-xs text-slate-500"><span>{resource.kind}</span><span>{formatBytes(resource.content?.size ?? 0)}</span><span>{formatDate(resource.updated_at)}</span></div></div>
         <span className="text-xs">{resource.status}</span>
       </button>)}
@@ -85,4 +85,52 @@ export function ResourceBrowser(props: {
     <footer className="flex min-h-16 items-center justify-end gap-3 border-t px-6"><button className={iconButtonClass} disabled={props.filters.page <= 1} onClick={() => props.setPage(props.filters.page - 1)}><ChevronLeft size={18} /></button><span>{props.filters.page} / {totalPages}</span><button className={iconButtonClass} disabled={props.filters.page >= totalPages} onClick={() => props.setPage(props.filters.page + 1)}><ChevronRight size={18} /></button></footer>
     {folderOpen && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50"><form className="grid w-full max-w-md gap-4 rounded-2xl bg-white p-6" onSubmit={(e) => { e.preventDefault(); void props.onCreateFolder(folderName).then((created) => { if (shouldCloseAfterCreate(created)) setFolderOpen(false); }); }}><h2 className="text-xl font-bold">New folder</h2><input className={inputClass} value={folderName} onChange={(e) => setFolderName(e.target.value)} /><div className="flex justify-end gap-2"><button type="button" onClick={() => setFolderOpen(false)}>Cancel</button><button className={primaryButtonClass} disabled={props.folderPending || !folderName.trim()}>Create</button></div></form></div>}
   </section>;
+}
+
+function ResourceThumbnail({ resource }: { resource: Resource }) {
+  const pluginAction = resource.actions.available_actions.find((action) => (
+    action.executor.type === "plugin"
+    && action.access === "read_only"
+    && action.output.view.includes("media")
+    && action.ui.locations.includes("resource_list_thumbnail")
+  ));
+  const [pluginSource, setPluginSource] = React.useState<string | null>(null);
+  const [loading, setLoading] = React.useState(Boolean(pluginAction));
+
+  React.useEffect(() => {
+    setPluginSource(null);
+    setLoading(Boolean(pluginAction));
+    if (!pluginAction) return;
+
+    let active = true;
+    void request<PluginActionOutput>(
+      `/resources/${resource.id}/actions/${encodeURIComponent(pluginAction.id)}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ input: {} }),
+      },
+    ).then((output) => {
+      if (!active || output.view.view !== "media" || output.view.encoding !== "base64") return;
+      if (output.view.mime_type.startsWith("image/")) {
+        setPluginSource(`data:${output.view.mime_type};base64,${output.view.data}`);
+      }
+    }).catch(() => {}).finally(() => {
+      if (active) setLoading(false);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [pluginAction?.id, resource.id, resource.updated_at]);
+
+  if (hasAction(resource, "thumbnail")) {
+    return <img className="size-14 rounded-lg object-cover" src={`${apiBase}/resources/${resource.id}/thumbnail`} alt="" />;
+  }
+  if (pluginSource) {
+    return <img className="size-14 rounded-lg object-cover" src={pluginSource} alt={`${resource.name} cover`} onError={() => setPluginSource(null)} />;
+  }
+  return <div className="flex size-14 items-center justify-center rounded-lg border border-dashed">
+    {loading ? <Loader2 className="animate-spin text-slate-400" size={18} /> : <FileIcon size={18} />}
+  </div>;
 }

@@ -1493,7 +1493,13 @@ async fn member_uses_explicit_workspace_and_additional_grants() {
         runtime.resource_service(),
         runtime.resource_kind_registry(),
         RouterOptions::default(),
-        HashMap::new(),
+        HashMap::from([(
+            "azvs.markdown".to_string(),
+            HashMap::from([(
+                PathBuf::from("viewer.js"),
+                std::sync::Arc::from(b"document.body.textContent = 'loaded'".as_slice()),
+            )]),
+        )]),
         authorization.clone(),
     );
     let router = router::with_authentication(
@@ -1521,6 +1527,21 @@ async fn member_uses_explicit_workspace_and_additional_grants() {
     )
     .await;
     assert_eq!(health.status(), StatusCode::OK);
+
+    let plugin_asset = request(
+        &app,
+        Request::builder()
+            .method(Method::GET)
+            .uri("/plugins/azvs.markdown/viewer.js")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(plugin_asset.status(), StatusCode::OK);
+    assert_eq!(
+        plugin_asset.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN],
+        "*"
+    );
 
     let unauthenticated = request(
         &app,
