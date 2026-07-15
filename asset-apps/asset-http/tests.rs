@@ -376,6 +376,10 @@ async fn core_document_pdf_resource_supports_builtin_preview() {
         response.headers().get(header::CONTENT_DISPOSITION).unwrap(),
         "inline"
     );
+    assert_eq!(
+        response.headers().get(header::ACCEPT_RANGES).unwrap(),
+        "bytes"
+    );
     let content = to_bytes(response.into_body(), BODY_LIMIT).await.unwrap();
     assert_eq!(content.as_ref(), pdf);
 
@@ -691,6 +695,99 @@ async fn stream_upload_roundtrips_small_blob_and_creates_directories() {
 }
 
 #[tokio::test]
+async fn resource_content_supports_single_byte_ranges_for_video_seek() {
+    let app = test_app("content-range").await;
+    let data = b"0123456789";
+    let (status, resource) = stream_upload(
+        &app,
+        "/resources/content/stream?name=clip.mp4&original_filename=clip.mp4",
+        "video/mp4",
+        data,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{resource}");
+
+    let id = resource["id"].as_str().unwrap();
+    let ranged = request(
+        &app,
+        Request::builder()
+            .method(Method::GET)
+            .uri(format!("/resources/{id}/content"))
+            .header(header::RANGE, "bytes=2-5")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(ranged.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(
+        ranged.headers().get(header::ACCEPT_RANGES).unwrap(),
+        "bytes"
+    );
+    assert_eq!(
+        ranged.headers().get(header::CONTENT_RANGE).unwrap(),
+        "bytes 2-5/10"
+    );
+    assert_eq!(
+        ranged.headers().get(header::CONTENT_TYPE).unwrap(),
+        "video/mp4"
+    );
+    let body = to_bytes(ranged.into_body(), BODY_LIMIT).await.unwrap();
+    assert_eq!(body.as_ref(), b"2345");
+
+    let open_ended = request(
+        &app,
+        Request::builder()
+            .method(Method::GET)
+            .uri(format!("/resources/{id}/content"))
+            .header(header::RANGE, "bytes=6-")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(open_ended.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(
+        open_ended.headers().get(header::CONTENT_RANGE).unwrap(),
+        "bytes 6-9/10"
+    );
+    let body = to_bytes(open_ended.into_body(), BODY_LIMIT).await.unwrap();
+    assert_eq!(body.as_ref(), b"6789");
+
+    let suffix = request(
+        &app,
+        Request::builder()
+            .method(Method::GET)
+            .uri(format!("/resources/{id}/content"))
+            .header(header::RANGE, "bytes=-4")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(suffix.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(
+        suffix.headers().get(header::CONTENT_RANGE).unwrap(),
+        "bytes 6-9/10"
+    );
+    let body = to_bytes(suffix.into_body(), BODY_LIMIT).await.unwrap();
+    assert_eq!(body.as_ref(), b"6789");
+
+    let unsatisfiable = request(
+        &app,
+        Request::builder()
+            .method(Method::GET)
+            .uri(format!("/resources/{id}/content"))
+            .header(header::RANGE, "bytes=10-20")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(unsatisfiable.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+    assert_eq!(
+        unsatisfiable.headers().get(header::CONTENT_RANGE).unwrap(),
+        "bytes */10"
+    );
+}
+
+#[tokio::test]
 async fn scan_storage_imports_existing_files_idempotently() {
     let app = test_app("scan-storage").await;
     let file_path = app.root.join("blob").join("docs").join("readme.md");
@@ -908,39 +1005,6 @@ async fn plugin_url_content_respects_the_host_content_budget() {
             .unwrap()
             .contains("plugin limit is 4")
     );
-}
-
-#[tokio::test]
-async fn plugin_output_respects_the_host_output_budget() {
-    let plugin = PluginHostConfig {
-        max_output_bytes: 16,
-        ..PluginHostConfig::default()
-    };
-    let app = test_app_with_plugin_host_config(
-        "mp4-plugin-output-budget",
-        vec![PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../plugins/azvs-mp4/azvs-mp4.json")],
-        plugin,
-    )
-    .await;
-    let (status, resource) = stream_upload(
-        &app,
-        "/resources/content/stream?name=demo.mp4&original_filename=demo.mp4",
-        "video/mp4",
-        b"video",
-    )
-    .await;
-    assert_eq!(status, StatusCode::CREATED, "{resource}");
-
-    let id = resource["id"].as_str().unwrap();
-    let (status, error) = json_request(
-        &app,
-        Method::POST,
-        &format!("/resources/{id}/actions/azvs.mp4.play"),
-        json!({"input": {}}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(error["error"].as_str().unwrap().contains("limit is 16"));
 }
 
 #[tokio::test]

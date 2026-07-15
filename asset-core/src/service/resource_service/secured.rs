@@ -138,6 +138,24 @@ impl<'a> SecuredResourceService<'a> {
         }
         self.service.content().get_resource_content(id).await
     }
+
+    pub async fn get_resource_content_stream(
+        &self,
+        id: &ResourceId,
+        range: Option<(u64, u64)>,
+    ) -> Result<Option<ResourceContentStream>, CoreError> {
+        if self
+            .resource_for(id, DirectoryPermission::Read)
+            .await?
+            .is_none()
+        {
+            return Ok(None);
+        }
+        self.service
+            .content()
+            .get_resource_content_stream(id, range)
+            .await
+    }
     pub async fn read_resource(
         &self,
         id: &ResourceId,

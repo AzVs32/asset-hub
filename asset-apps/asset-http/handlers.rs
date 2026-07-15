@@ -534,6 +534,7 @@ pub(crate) async fn update_resource(
 pub(crate) async fn get_resource_content(
     State(state): State<HttpState>,
     access: Extension<AccessContext>,
+    headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Response, HttpError> {
     let id = parse_resource_id(&id)?;
@@ -545,12 +546,45 @@ pub(crate) async fn get_resource_content(
         .and_then(|content| content.mime_type())
         .unwrap_or(DEFAULT_CONTENT_TYPE)
         .to_string();
-
-    match state.secured(&access.0).get_resource_content(&id).await? {
-        Some(content) => Ok(binary_response(content_type, content)),
-        None => Err(HttpError::not_found(format!(
+    let Some(content_ref) = resource.content() else {
+        return Err(HttpError::not_found(format!(
             "resource content `{id}` not found"
-        ))),
+        )));
+    };
+    let range = requested_byte_range(&headers, content_ref.size());
+
+    match range {
+        ByteRangeRequest::Unsatisfiable => Ok(range_not_satisfiable_response(content_ref.size())),
+        ByteRangeRequest::None => match state
+            .secured(&access.0)
+            .get_resource_content_stream(&id, None)
+            .await?
+        {
+            Some(content) => Ok(binary_stream_response(
+                content_type,
+                Some(content.content_length()),
+                content.into_content(),
+            )),
+            None => Err(HttpError::not_found(format!(
+                "resource content `{id}` not found"
+            ))),
+        },
+        ByteRangeRequest::Range { start, end } => match state
+            .secured(&access.0)
+            .get_resource_content_stream(&id, Some((start, end)))
+            .await?
+        {
+            Some(content) => Ok(range_stream_response(
+                content_type,
+                start,
+                end,
+                content.content_length(),
+                content.into_content(),
+            )),
+            None => Err(HttpError::not_found(format!(
+                "resource content `{id}` not found"
+            ))),
+        },
     }
 }
 
@@ -615,9 +649,11 @@ pub(crate) async fn thumbnail_resource(
         return Err(HttpError::not_found(format!("resource `{id}` not found")));
     };
 
-    Ok(binary_response(
+    Ok(bytes_response(
+        StatusCode::OK,
         thumbnail.content_type().to_string(),
         thumbnail.content().clone(),
+        None,
     ))
 }
 
@@ -910,18 +946,6 @@ fn parse_kind(value: impl Into<String>) -> Result<ResourceKind, HttpError> {
     ResourceKind::try_new(value.into()).map_err(Into::into)
 }
 
-fn binary_response(content_type: String, content: Bytes) -> Response {
-    (
-        StatusCode::OK,
-        [
-            (header::CONTENT_TYPE, content_type),
-            (header::CONTENT_DISPOSITION, "inline".to_string()),
-        ],
-        content,
-    )
-        .into_response()
-}
-
 fn binary_stream_response(
     content_type: String,
     content_length: Option<u64>,
@@ -941,6 +965,10 @@ fn binary_stream_response(
             .parse()
             .expect("content disposition should be a valid header value"),
     );
+    headers.insert(
+        header::ACCEPT_RANGES,
+        "bytes".parse().expect("static header value is valid"),
+    );
     if let Some(content_length) = content_length {
         headers.insert(
             header::CONTENT_LENGTH,
@@ -951,6 +979,131 @@ fn binary_stream_response(
         );
     }
     response
+}
+
+fn range_stream_response(
+    content_type: String,
+    start: u64,
+    end: u64,
+    total_len: u64,
+    content: BlobByteStream,
+) -> Response {
+    let content_length = end - start + 1;
+    let mut response = binary_stream_response(content_type, Some(content_length), content);
+    *response.status_mut() = StatusCode::PARTIAL_CONTENT;
+    response.headers_mut().insert(
+        header::CONTENT_RANGE,
+        format!("bytes {start}-{end}/{total_len}")
+            .parse()
+            .expect("content range should be a valid header value"),
+    );
+    response
+}
+
+fn range_not_satisfiable_response(total_len: u64) -> Response {
+    let mut response = StatusCode::RANGE_NOT_SATISFIABLE.into_response();
+    response.headers_mut().insert(
+        header::ACCEPT_RANGES,
+        "bytes".parse().expect("static header value is valid"),
+    );
+    response.headers_mut().insert(
+        header::CONTENT_RANGE,
+        format!("bytes */{total_len}")
+            .parse()
+            .expect("content range should be a valid header value"),
+    );
+    response
+}
+
+fn bytes_response(
+    status: StatusCode,
+    content_type: String,
+    content: Bytes,
+    content_range: Option<String>,
+) -> Response {
+    let mut response = (status, content).into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        content_type
+            .parse()
+            .expect("content type should be a valid header value"),
+    );
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        "inline"
+            .parse()
+            .expect("content disposition should be a valid header value"),
+    );
+    headers.insert(
+        header::ACCEPT_RANGES,
+        "bytes".parse().expect("static header value is valid"),
+    );
+    if let Some(content_range) = content_range {
+        headers.insert(
+            header::CONTENT_RANGE,
+            content_range
+                .parse()
+                .expect("content range should be a valid header value"),
+        );
+    }
+    response
+}
+
+enum ByteRangeRequest {
+    None,
+    Range { start: u64, end: u64 },
+    Unsatisfiable,
+}
+
+fn requested_byte_range(headers: &HeaderMap, content_len: u64) -> ByteRangeRequest {
+    let Some(range) = headers
+        .get(header::RANGE)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return ByteRangeRequest::None;
+    };
+    let Some(spec) = range.trim().strip_prefix("bytes=") else {
+        return ByteRangeRequest::Unsatisfiable;
+    };
+    if spec.contains(',') || content_len == 0 {
+        return ByteRangeRequest::Unsatisfiable;
+    }
+    let Some((start, end)) = spec.split_once('-') else {
+        return ByteRangeRequest::Unsatisfiable;
+    };
+    if start.is_empty() {
+        let Ok(suffix_len) = end.parse::<u64>() else {
+            return ByteRangeRequest::Unsatisfiable;
+        };
+        if suffix_len == 0 {
+            return ByteRangeRequest::Unsatisfiable;
+        }
+        let start = content_len.saturating_sub(suffix_len);
+        return ByteRangeRequest::Range {
+            start,
+            end: content_len - 1,
+        };
+    }
+
+    let Ok(start) = start.parse::<u64>() else {
+        return ByteRangeRequest::Unsatisfiable;
+    };
+    if start >= content_len {
+        return ByteRangeRequest::Unsatisfiable;
+    }
+    let end = if end.is_empty() {
+        content_len - 1
+    } else {
+        let Ok(end) = end.parse::<u64>() else {
+            return ByteRangeRequest::Unsatisfiable;
+        };
+        end.min(content_len - 1)
+    };
+    if end < start {
+        return ByteRangeRequest::Unsatisfiable;
+    }
+    ByteRangeRequest::Range { start, end }
 }
 
 fn resource_response(

@@ -244,4 +244,39 @@ impl<'a> ResourceContentService<'a> {
 
         self.service.blob_storage.get(content.key()).await
     }
+
+    pub async fn get_resource_content_stream(
+        &self,
+        id: &ResourceId,
+        range: Option<(u64, u64)>,
+    ) -> Result<Option<ResourceContentStream>, CoreError> {
+        let Some(resource) = self.service.repository.find_by_id(id).await? else {
+            return Ok(None);
+        };
+
+        if resource.is_deleted() {
+            return Ok(None);
+        }
+
+        let Some(content) = resource.content() else {
+            return Ok(None);
+        };
+
+        let stream = if let Some((start, end)) = range {
+            self.service
+                .blob_storage
+                .get_range_stream(content.key(), start, end)
+                .await?
+        } else {
+            self.service.blob_storage.get_stream(content.key()).await?
+        };
+
+        Ok(stream.map(|content_stream| {
+            ResourceContentStream::new(
+                content_type_for_media(content),
+                content.size(),
+                content_stream,
+            )
+        }))
+    }
 }

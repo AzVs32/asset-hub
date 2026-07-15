@@ -72,6 +72,17 @@ pub trait BlobStorage: Send + Sync {
     /// 用于预览、下载等大对象读取场景，避免把完整对象一次性加载到内存中。
     async fn get_stream(&self, key: &StorageKey) -> Result<Option<BlobByteStream>, CoreError>;
 
+    /// 流式读取指定存储键的一段字节范围，范围是闭区间 `[start, end]`。
+    ///
+    /// 调用方负责保证 `start <= end` 且范围不超过对象大小。实现只负责从底层存储
+    /// 请求对应范围并以流返回，避免为了 HTTP Range 响应加载完整对象。
+    async fn get_range_stream(
+        &self,
+        key: &StorageKey,
+        start: u64,
+        end: u64,
+    ) -> Result<Option<BlobByteStream>, CoreError>;
+
     /// 删除指定存储键对应的对象。
     ///
     /// 删除操作必须保持幂等：对象不存在时也应返回 `Ok(())`。这能让上层 usecase

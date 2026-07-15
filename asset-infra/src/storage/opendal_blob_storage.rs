@@ -95,6 +95,31 @@ impl BlobStorage for OpenDalBlobStorage {
         Ok(Some(Box::pin(stream)))
     }
 
+    async fn get_range_stream(
+        &self,
+        key: &StorageKey,
+        start: u64,
+        end: u64,
+    ) -> Result<Option<BlobByteStream>, CoreError> {
+        let reader = match self
+            .operator
+            .reader_with(key.as_str())
+            .chunk(256 * 1024)
+            .await
+        {
+            Ok(reader) => reader,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(CoreError::storage("get_range_stream.open", error)),
+        };
+        let stream = reader
+            .into_bytes_stream(start..end + 1)
+            .await
+            .map_err(|error| CoreError::storage("get_range_stream.open", error))?
+            .map_err(|error| CoreError::storage("get_range_stream.read", error));
+
+        Ok(Some(Box::pin(stream)))
+    }
+
     async fn delete(&self, key: &StorageKey) -> Result<(), CoreError> {
         self.operator
             .delete(key.as_str())
@@ -334,6 +359,25 @@ mod tests {
             storage.get(&key).await.unwrap(),
             Some(Bytes::from_static(b"large file bytes"))
         );
+    }
+
+    #[tokio::test]
+    async fn fs_storage_streams_blob_byte_range() {
+        let storage = storage("fs-range-stream");
+        let key = StorageKey::new("assets/video.mp4").unwrap();
+        storage
+            .put(&key, Bytes::from_static(b"0123456789"))
+            .await
+            .unwrap();
+
+        let stream = storage.get_range_stream(&key, 2, 5).await.unwrap().unwrap();
+        let chunks = stream.try_collect::<Vec<_>>().await.unwrap();
+        let bytes = chunks.into_iter().fold(Vec::new(), |mut bytes, chunk| {
+            bytes.extend_from_slice(&chunk);
+            bytes
+        });
+
+        assert_eq!(bytes, b"2345");
     }
 
     #[tokio::test]

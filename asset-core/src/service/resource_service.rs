@@ -428,6 +428,35 @@ pub struct ResourcePreviewStream {
     content: BlobByteStream,
 }
 
+/// 流式读取资源内容结果。
+pub struct ResourceContentStream {
+    content_type: String,
+    content_length: u64,
+    content: BlobByteStream,
+}
+
+impl ResourceContentStream {
+    fn new(content_type: String, content_length: u64, content: BlobByteStream) -> Self {
+        Self {
+            content_type,
+            content_length,
+            content,
+        }
+    }
+
+    pub fn content_type(&self) -> &str {
+        &self.content_type
+    }
+
+    pub fn content_length(&self) -> u64 {
+        self.content_length
+    }
+
+    pub fn into_content(self) -> BlobByteStream {
+        self.content
+    }
+}
+
 impl ResourcePreviewStream {
     fn new(content_type: String, content_length: Option<u64>, content: BlobByteStream) -> Self {
         Self {
@@ -1127,6 +1156,18 @@ mod tests {
             }))
         }
 
+        async fn get_range_stream(
+            &self,
+            key: &StorageKey,
+            start: u64,
+            end: u64,
+        ) -> Result<Option<BlobByteStream>, CoreError> {
+            Ok(self.get_sync(key).map(|content| {
+                let content = content.slice(start as usize..end as usize + 1);
+                Box::pin(futures_util::stream::once(async move { Ok(content) })) as BlobByteStream
+            }))
+        }
+
         async fn delete(&self, key: &StorageKey) -> Result<(), CoreError> {
             if std::mem::take(&mut *self.fail_next_delete.lock().unwrap()) {
                 return Err(CoreError::storage("delete", TestError("delete failed")));
@@ -1342,16 +1383,10 @@ mod tests {
                 "Video",
                 true,
             )
-            .with_actions(vec![
-                ResourceActionDefinition::new(ResourceAction::PREVIEW, "Preview"),
-                ResourceActionDefinition::new("azvs.mp4.play", "Play MP4")
-                    .with_handler("play_mp4")
-                    .with_content_matcher(
-                        crate::port::ResourceContentMatcher::new()
-                            .with_mime_types(["video/mp4"])
-                            .with_extensions([".mp4"]),
-                    ),
-            ]),
+            .with_actions(vec![ResourceActionDefinition::new(
+                ResourceAction::PREVIEW,
+                "Preview",
+            )]),
         ]));
         let repository = Arc::new(InMemoryResourceRepository::default());
         let blob_storage = Arc::new(InMemoryBlobStorage::default());
@@ -1911,7 +1946,7 @@ mod tests {
     }
 
     #[test]
-    fn describe_resource_actions_filters_extension_actions_by_content_match() {
+    fn core_video_resources_use_builtin_preview_for_common_video_formats() {
         let (service, _, _) = service();
         let mp4 = block_on(
             service.content().upload_resource_content_stream(
@@ -1945,13 +1980,13 @@ mod tests {
             mp4_actions
                 .available_actions()
                 .iter()
-                .any(|action| action.id().as_str() == "azvs.mp4.play")
+                .any(|action| action.id().as_str() == ResourceAction::PREVIEW)
         );
         assert!(
-            !webm_actions
+            webm_actions
                 .available_actions()
                 .iter()
-                .any(|action| action.id().as_str() == "azvs.mp4.play")
+                .any(|action| action.id().as_str() == ResourceAction::PREVIEW)
         );
     }
 

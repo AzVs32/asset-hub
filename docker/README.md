@@ -135,7 +135,6 @@ docker compose down -v
 
 - `azvs-markdown`
 - `azvs-epub`
-- `azvs-mp4`
 
 Manifest 和 WASM 位于容器 `/app/plugins`。配置文件中的绝对路径为：
 
@@ -144,11 +143,10 @@ Manifest 和 WASM 位于容器 `/app/plugins`。配置文件中的绝对路径�
 plugin_manifests = [
   "/app/plugins/azvs-markdown/manifest.json",
   "/app/plugins/azvs-epub/manifest.json",
-  "/app/plugins/azvs-mp4/azvs-mp4.json",
 ]
 ```
 
-Markdown 和 EPUB 的浏览器资源会在 Docker 构建期间通过 `npm ci && npm run build` 生成。三个
+Markdown 和 EPUB 的浏览器资源会在 Docker 构建期间通过 `npm ci && npm run build` 生成。两个
 Wasm 插件也会从源码重新构建，并通过 `asset-plugin verify-wasm` 与已封装的 Manifest
 比对；开发者使用 `asset-plugin seal` 自动生成完整性字段，任一产物漂移都会中止镜像构建。
 

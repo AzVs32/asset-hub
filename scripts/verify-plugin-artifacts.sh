@@ -28,8 +28,3 @@ build_and_verify \
   "plugins/azvs-epub/runtime/Cargo.toml" \
   "plugins/azvs-epub/runtime/target/$target/release/azvs_epub_plugin.wasm" \
   "plugins/azvs-epub/azvs-epub.wasm"
-build_and_verify \
-  "plugins/azvs-mp4/azvs-mp4.json" \
-  "plugins/azvs-mp4/Cargo.toml" \
-  "plugins/azvs-mp4/target/$target/release/azvs_mp4_plugin.wasm" \
-  "plugins/azvs-mp4/azvs-mp4.wasm"

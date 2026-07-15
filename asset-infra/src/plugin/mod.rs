@@ -840,25 +840,4 @@ mod tests {
         };
         validate_external_permissions("example.plugin", &permissions, &grants).unwrap();
     }
-
-    #[test]
-    fn preflight_rejects_missing_wasm_handler_exports() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let wasm = std::fs::read(root.join("../plugins/azvs-mp4/azvs-mp4.wasm")).unwrap();
-        let compiled = PluginBuilder::new(wasm).compile().unwrap();
-        let manifest: asset_plugin_api::PluginManifest = serde_json::from_str(
-            &std::fs::read_to_string(root.join("../plugins/azvs-mp4/azvs-mp4.json")).unwrap(),
-        )
-        .unwrap();
-        let mut actions = manifest.capabilities.resource_actions;
-
-        preflight_handlers("azvs.mp4", &compiled, &actions).unwrap();
-        actions[0].handler = "missing_export".to_string();
-        let error = preflight_handlers("azvs.mp4", &compiled, &actions).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("missing Wasm export `missing_export`")
-        );
-    }
 }

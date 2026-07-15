@@ -1,7 +1,0 @@
-{
-  "manifest_version": 2,
-  "plugin_id": "azvs.mp4",
-  "runtime": {
-    "wasm_sha256": "1ee5779fd0760fb5379e4bab0994e1e9615ac05f06a9e0d54b03e75a5d14385e"
-  }
-}
