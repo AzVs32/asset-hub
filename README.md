@@ -70,9 +70,24 @@ resource's directory. Creates, uploads, scans, moves, deletes, and plugin write
 actions are authorized inside the core use case after their target directory is
 known.
 
-Storage scanning is an administrator-only maintenance operation. It skips
-symbolic links, stops after 100,000 filesystem entries, and does not calculate
-SHA-256 unless the request explicitly sets `sha256: true`.
+Storage scanning and auditing are administrator-only maintenance operations.
+`POST /scan` imports previously unknown files from the configured storage root.
+`POST /audit` is read-only: it compares resource content rows with objects under
+the storage root and reports missing blobs, size/checksum mismatches, and orphan
+objects. Both operations skip symbolic links, stop after 100,000 filesystem
+entries, and are limited to administrators. Scan does not calculate SHA-256
+unless the request explicitly sets `sha256: true`; audit calculates SHA-256 by
+default and accepts `sha256: false` when only existence and size checks are
+needed.
+
+Plugin write actions can update object bytes through `replace_content`. Runtime
+errors are compensated, but the current OpenDAL-backed replacement flow is not a
+crash-safe transaction across SQLite and object storage: if the process or
+machine stops after the object bytes are replaced but before the database row is
+updated, the database can temporarily or permanently record stale size/checksum
+metadata for that storage key. Use `POST /audit` to detect that condition. Audit
+does not repair data; any repair flow should be introduced as a separate,
+explicit maintenance operation.
 
 The identity and authorization model lives in `asset-core`: `User`,
 `AccessContext`, `DirectoryGrant`, and `DirectoryPermission` are domain types;

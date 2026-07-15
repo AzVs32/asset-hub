@@ -1,12 +1,13 @@
 use crate::dto::{
-    BinaryContent, ChecksumResponse, CreateDirectoryRequest, CreateResourceRequest,
-    DirectoryListingResponse, ErrorResponse, ExecuteResourceActionRequest, HealthResponse,
-    ResourceActionDefinitionResponse, ResourceActionOutputResponse, ResourceActionsResponse,
-    ResourceContentResponse, ResourceDirectoryResponse, ResourceKindResponse,
-    ResourceKindsResponse, ResourceMetadataRequest, ResourceMetadataResponse, ResourcePageResponse,
-    ResourceReadResponse, ResourceResponse, ResourceSummaryMetadataRequest,
-    ResourceSummaryMetadataResponse, ScanStorageErrorResponse, ScanStorageRequest,
-    ScanStorageResponse, UpdateResourceRequest, UploadResourceContentStreamQuery,
+    AuditStorageIssueResponse, AuditStorageRequest, AuditStorageResponse, BinaryContent,
+    ChecksumResponse, CreateDirectoryRequest, CreateResourceRequest, DirectoryListingResponse,
+    ErrorResponse, ExecuteResourceActionRequest, HealthResponse, ResourceActionDefinitionResponse,
+    ResourceActionOutputResponse, ResourceActionsResponse, ResourceContentResponse,
+    ResourceDirectoryResponse, ResourceKindResponse, ResourceKindsResponse,
+    ResourceMetadataRequest, ResourceMetadataResponse, ResourcePageResponse, ResourceReadResponse,
+    ResourceResponse, ResourceSummaryMetadataRequest, ResourceSummaryMetadataResponse,
+    ScanStorageErrorResponse, ScanStorageRequest, ScanStorageResponse, UpdateResourceRequest,
+    UploadResourceContentStreamQuery,
 };
 use crate::{auth, handlers};
 use utoipa::{
@@ -46,6 +47,7 @@ impl Modify for CookieSecurity {
         handlers::list_directory,
         handlers::create_directory,
         handlers::scan_storage,
+        handlers::audit_storage,
         handlers::create_resource,
         handlers::upload_resource_content_stream,
         handlers::find_resource,
@@ -62,6 +64,9 @@ impl Modify for CookieSecurity {
         schemas(
             ChecksumResponse,
             BinaryContent,
+            AuditStorageIssueResponse,
+            AuditStorageRequest,
+            AuditStorageResponse,
             CreateResourceRequest,
             CreateDirectoryRequest,
             DirectoryListingResponse,

@@ -181,6 +181,78 @@ pub struct ScanStorageResult {
     pub resources: Vec<Resource>,
 }
 
+/// 审计对象存储与资源数据库一致性的命令。
+#[derive(Debug, Clone)]
+pub struct AuditStorage {
+    directory: ResourceDirectory,
+    include_sha256: bool,
+}
+
+impl Default for AuditStorage {
+    fn default() -> Self {
+        Self::new(ResourceDirectory::root())
+    }
+}
+
+impl AuditStorage {
+    pub fn new(directory: ResourceDirectory) -> Self {
+        Self {
+            directory,
+            include_sha256: true,
+        }
+    }
+
+    pub fn with_sha256(mut self, include_sha256: bool) -> Self {
+        self.include_sha256 = include_sha256;
+        self
+    }
+
+    pub fn directory(&self) -> &ResourceDirectory {
+        &self.directory
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuditStorageIssueKind {
+    MissingBlob,
+    SizeMismatch,
+    ChecksumMismatch,
+    OrphanBlob,
+}
+
+impl AuditStorageIssueKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::MissingBlob => "missing_blob",
+            Self::SizeMismatch => "size_mismatch",
+            Self::ChecksumMismatch => "checksum_mismatch",
+            Self::OrphanBlob => "orphan_blob",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AuditStorageIssue {
+    pub kind: AuditStorageIssueKind,
+    pub key: String,
+    pub resource_id: Option<ResourceId>,
+    pub expected_size: Option<u64>,
+    pub actual_size: Option<u64>,
+    pub expected_sha256: Option<String>,
+    pub actual_sha256: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AuditStorageResult {
+    pub audited_directory: ResourceDirectory,
+    pub scanned: u64,
+    pub checked_resources: u64,
+    pub missing: u64,
+    pub mismatched: u64,
+    pub orphaned: u64,
+    pub issues: Vec<AuditStorageIssue>,
+}
+
 /// 执行资源动作的用例命令。
 #[derive(Debug, Clone)]
 pub struct ExecuteResourceAction {
@@ -1181,11 +1253,45 @@ mod tests {
     impl StorageScanner for InMemoryBlobStorage {
         async fn scan(
             &self,
-            _directory: &ResourceDirectory,
-            _include_sha256: bool,
+            directory: &ResourceDirectory,
+            include_sha256: bool,
             _max_entries: usize,
         ) -> Result<Vec<crate::port::ScannedBlob>, CoreError> {
-            Ok(Vec::new())
+            if directory.path() == crate::port::RESERVED_BLOB_STORAGE_PREFIX
+                || directory
+                    .path()
+                    .starts_with(&format!("{}/", crate::port::RESERVED_BLOB_STORAGE_PREFIX))
+            {
+                return Ok(Vec::new());
+            }
+
+            let prefix = (!directory.is_root()).then(|| format!("{directory}/"));
+            let mut files = self
+                .objects
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(key, _)| {
+                    if key.as_str() == crate::port::RESERVED_BLOB_STORAGE_PREFIX
+                        || key
+                            .as_str()
+                            .starts_with(&format!("{}/", crate::port::RESERVED_BLOB_STORAGE_PREFIX))
+                    {
+                        return false;
+                    }
+                    prefix
+                        .as_ref()
+                        .is_none_or(|prefix| key.as_str().starts_with(prefix))
+                })
+                .map(|(key, content)| crate::port::ScannedBlob {
+                    key: key.clone(),
+                    size: content.len() as u64,
+                    mime_type: None,
+                    sha256: include_sha256.then(|| hex_sha256(content)),
+                })
+                .collect::<Vec<_>>();
+            files.sort_by(|left, right| left.key.as_str().cmp(right.key.as_str()));
+            Ok(files)
         }
     }
 
@@ -1582,6 +1688,68 @@ mod tests {
         assert_eq!(content.original_filename(), Some("image.png"));
         assert_eq!(content.checksums().collect::<Vec<_>>(), vec![&checksum]);
         assert_eq!(blob_storage.get_sync(&key), Some(data));
+    }
+
+    #[test]
+    fn audit_storage_reports_missing_mismatched_and_orphaned_blobs() {
+        let (service, _, blob_storage) = service();
+        let missing_key = StorageKey::new("docs/missing.md").unwrap();
+        let mismatch_key = StorageKey::new("docs/mismatch.md").unwrap();
+        let orphan_key = StorageKey::new("docs/orphan.md").unwrap();
+        block_on(
+            service.content().upload_resource_content_stream(
+                stream_upload_command(
+                    "missing.md",
+                    missing_key.clone(),
+                    Bytes::from_static(b"# Missing"),
+                )
+                .with_mime_type("text/markdown"),
+            ),
+        )
+        .unwrap();
+        block_on(
+            service.content().upload_resource_content_stream(
+                stream_upload_command(
+                    "mismatch.md",
+                    mismatch_key.clone(),
+                    Bytes::from_static(b"# Original"),
+                )
+                .with_mime_type("text/markdown"),
+            ),
+        )
+        .unwrap();
+        blob_storage.objects.lock().unwrap().remove(&missing_key);
+        blob_storage
+            .objects
+            .lock()
+            .unwrap()
+            .insert(mismatch_key, Bytes::from_static(b"# Changed"));
+        blob_storage
+            .objects
+            .lock()
+            .unwrap()
+            .insert(orphan_key, Bytes::from_static(b"# Orphan"));
+
+        let result = block_on(
+            service
+                .content()
+                .audit_storage(AuditStorage::new(ResourceDirectory::root()).with_sha256(true)),
+        )
+        .unwrap();
+
+        assert_eq!(result.checked_resources, 2);
+        assert_eq!(result.missing, 1);
+        assert_eq!(result.orphaned, 1);
+        assert!(result.mismatched >= 1);
+        assert!(result.issues.iter().any(|issue| {
+            issue.kind == AuditStorageIssueKind::MissingBlob && issue.key == "docs/missing.md"
+        }));
+        assert!(result.issues.iter().any(|issue| {
+            issue.kind == AuditStorageIssueKind::ChecksumMismatch && issue.key == "docs/mismatch.md"
+        }));
+        assert!(result.issues.iter().any(|issue| {
+            issue.kind == AuditStorageIssueKind::OrphanBlob && issue.key == "docs/orphan.md"
+        }));
     }
 
     #[test]

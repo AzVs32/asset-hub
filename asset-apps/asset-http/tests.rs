@@ -849,6 +849,63 @@ async fn scan_storage_imports_existing_files_idempotently() {
 }
 
 #[tokio::test]
+async fn audit_storage_reports_content_inconsistencies() {
+    let app = test_app("audit-storage").await;
+    let missing_path = app.root.join("blob").join("docs").join("missing.txt");
+    let mismatch_path = app.root.join("blob").join("docs").join("mismatch.txt");
+    let orphan_path = app.root.join("blob").join("docs").join("orphan.txt");
+    stream_upload(
+        &app,
+        "/resources/content/stream?name=missing.txt&storage_key=docs%2Fmissing.txt",
+        "text/plain",
+        b"missing",
+    )
+    .await;
+    stream_upload(
+        &app,
+        "/resources/content/stream?name=mismatch.txt&storage_key=docs%2Fmismatch.txt",
+        "text/plain",
+        b"original",
+    )
+    .await;
+    std::fs::remove_file(missing_path).unwrap();
+    std::fs::write(mismatch_path, b"changed").unwrap();
+    std::fs::write(orphan_path, b"orphan").unwrap();
+
+    let (status, audit) = json_request(
+        &app,
+        Method::POST,
+        "/audit",
+        json!({ "directory": "docs", "sha256": true }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(audit["audited_directory"], "docs");
+    assert_eq!(audit["checked_resources"], 2);
+    assert_eq!(audit["missing"], 1);
+    assert_eq!(audit["orphaned"], 1);
+    assert!(audit["mismatched"].as_u64().unwrap() >= 1);
+    assert!(
+        audit["issues"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|issue| { issue["kind"] == "missing_blob" && issue["key"] == "docs/missing.txt" })
+    );
+    assert!(audit["issues"].as_array().unwrap().iter().any(|issue| {
+        issue["kind"] == "checksum_mismatch" && issue["key"] == "docs/mismatch.txt"
+    }));
+    assert!(
+        audit["issues"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|issue| { issue["kind"] == "orphan_blob" && issue["key"] == "docs/orphan.txt" })
+    );
+}
+
+#[tokio::test]
 async fn upload_rejects_checksum_mismatch_and_existing_storage_key() {
     let app = test_app("upload-security").await;
 

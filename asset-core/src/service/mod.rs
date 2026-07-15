@@ -14,9 +14,10 @@ pub use authorization_service::AuthorizationService;
 pub use user_service::UserService;
 
 pub use resource_service::{
-    CreateResource, ExecuteResourceAction, ImportResourceContent, ReadableResource,
-    ResourceActionService, ResourceActions, ResourceCommandService, ResourceContentCommand,
-    ResourceContentService, ResourcePreview, ResourcePreviewService, ResourceService,
-    ResourceThumbnail, ScanStorage, ScanStorageError, ScanStorageResult, SecuredResourceService,
-    UpdateResource, UploadResourceContentStream,
+    AuditStorage, AuditStorageIssue, AuditStorageIssueKind, AuditStorageResult, CreateResource,
+    ExecuteResourceAction, ImportResourceContent, ReadableResource, ResourceActionService,
+    ResourceActions, ResourceCommandService, ResourceContentCommand, ResourceContentService,
+    ResourcePreview, ResourcePreviewService, ResourceService, ResourceThumbnail, ScanStorage,
+    ScanStorageError, ScanStorageResult, SecuredResourceService, UpdateResource,
+    UploadResourceContentStream,
 };
