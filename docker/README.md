@@ -142,7 +142,7 @@ Manifest 和 WASM 位于容器 `/app/plugins`。配置文件中的绝对路径�
 ```toml
 [kind]
 plugin_manifests = [
-  "/app/plugins/azvs-markdown/azvs-markdown.json",
+  "/app/plugins/azvs-markdown/manifest.json",
   "/app/plugins/azvs-epub/manifest.json",
   "/app/plugins/azvs-mp4/azvs-mp4.json",
 ]

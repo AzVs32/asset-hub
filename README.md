@@ -219,7 +219,7 @@ Example:
 ```toml
 [kind]
 plugin_manifests = [
-  "plugins/azvs-markdown/azvs-markdown.json",
+  "plugins/azvs-markdown/manifest.json",
   "plugins/azvs-epub/manifest.json",
   "plugins/azvs-mp4/azvs-mp4.json",
 ]
@@ -230,12 +230,12 @@ plugin_manifests = [
 Run the local checks:
 
 - `cargo test --workspace`
+- `cargo test --manifest-path plugins/azvs-markdown/runtime/Cargo.toml`
 - `cargo test --manifest-path plugins/azvs-epub/runtime/Cargo.toml`
 - `cargo test --manifest-path plugins/azvs-mp4/Cargo.toml`
 - `npm run lint` and `npm run build` in `asset-web-admin`
 - `npm run typecheck` and `npm run build` in `plugins/azvs-markdown/web`
 - `npm run typecheck` and `npm run build` in `plugins/azvs-epub/web`
-- `cargo test --manifest-path plugins/azvs-markdown/plugin/Cargo.toml`
 
 Individual checks:
 
@@ -243,7 +243,7 @@ Individual checks:
 cargo test --workspace
 (cd asset-web-admin && npm run lint && npm run build && npm test)
 (cd plugins/azvs-markdown/web && npm run typecheck && npm run build)
-cargo test --manifest-path plugins/azvs-markdown/plugin/Cargo.toml
+cargo test --manifest-path plugins/azvs-markdown/runtime/Cargo.toml
 cargo test --manifest-path plugins/azvs-epub/runtime/Cargo.toml
 (cd plugins/azvs-epub/web && npm run typecheck && npm run build)
 ```

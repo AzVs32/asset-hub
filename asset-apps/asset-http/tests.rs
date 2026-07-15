@@ -819,7 +819,7 @@ async fn upload_detects_most_specific_plugin_kind() {
         "markdown-plugin-detect",
         vec![
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../plugins/azvs-markdown/azvs-markdown.json"),
+                .join("../plugins/azvs-markdown/manifest.json"),
         ],
     )
     .await;
@@ -879,7 +879,7 @@ async fn plugin_url_content_respects_the_host_content_budget() {
         "markdown-plugin-content-budget",
         vec![
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../plugins/azvs-markdown/azvs-markdown.json"),
+                .join("../plugins/azvs-markdown/manifest.json"),
         ],
         plugin,
     )
@@ -1269,7 +1269,7 @@ async fn openapi_documents_metadata_examples() {
 #[tokio::test]
 async fn plugin_web_assets_are_served_from_the_verified_startup_snapshot() {
     let app_root = unique_temp_root("plugin-web");
-    let web_root = app_root.join("plugins/azvs-markdown/web");
+    let web_root = app_root.join("plugins/azvs-markdown/dist");
     std::fs::create_dir_all(&web_root).unwrap();
     std::fs::write(
         web_root.join("index.html"),

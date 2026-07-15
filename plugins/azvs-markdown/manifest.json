@@ -14,7 +14,7 @@
     "plugin_api": "asset-hub.plugin-api@0.1"
   },
   "web": {
-    "root": "web/dist"
+    "root": "dist"
   },
   "capabilities": {
     "resource_kinds": [

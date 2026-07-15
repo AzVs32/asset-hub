@@ -358,7 +358,9 @@ fn extend_definitions_for_action(
 ) -> Result<(), CoreError> {
     let source = source.into();
     for kind in &action.applies_to.kinds {
-        let content = if action.applies_to.to_definition().content().is_empty() {
+        let content = if should_inherit_detect_for_action(action)
+            && action.applies_to.to_definition().content().is_empty()
+        {
             detect_for_kind(definitions, kind)?
         } else {
             ResourceContentMatcher::default()
@@ -379,10 +381,14 @@ fn action_definition_with_inherited_content(
     runtime: &PluginRuntime,
 ) -> Result<ResourceActionDefinition, CoreError> {
     let definition = action.to_definition(runtime);
-    if !definition.content_matcher().is_empty() || action.applies_to.kinds.is_empty() {
+    if !should_inherit_detect_for_action(action) || !definition.content_matcher().is_empty() {
         return Ok(definition);
     }
     Ok(definition.with_content_matcher(detect_for_kinds(definitions, &action.applies_to.kinds)?))
+}
+
+fn should_inherit_detect_for_action(action: &ResourceActionCapability) -> bool {
+    action.applies_to.kinds.len() > 1
 }
 
 fn detect_for_kinds(
@@ -927,8 +933,13 @@ mod tests {
             .unwrap();
 
         assert_eq!(action.handler(), Some("inspect_mp4"));
-        assert!(action.matches_content(Some("video/mp4"), Some("videos/demo.mp4")));
-        assert!(!action.matches_content(Some("video/webm"), Some("videos/demo.webm")));
+        assert!(action.content_matcher().is_empty());
+        assert!(action.matches_resource(
+            "test:mp4",
+            Some("video/webm"),
+            Some("videos/internal-object-key")
+        ));
+        assert!(!action.matches_resource("core:video", Some("video/mp4"), Some("videos/demo.mp4")));
 
         let _ = std::fs::remove_dir_all(root);
     }

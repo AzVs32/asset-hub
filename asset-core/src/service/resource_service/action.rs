@@ -254,13 +254,11 @@ impl<'a> ResourceActionService<'a> {
                             ))
                         })?;
                     let checksums = plugin_checksums(&effect.checksum, &data)?;
-                    let replacement_key = StorageKey::new(format!(
-                        "{}.action-replacements/{}",
-                        current_content.key(),
-                        uuid::Uuid::now_v7()
-                    ))?;
+                    let target_key = current_content.key();
+                    let replacement_key = sidecar_content_key(target_key, "action-replacements")?;
+                    let backup_key = sidecar_content_key(target_key, "action-backups")?;
                     let content = build_content(
-                        replacement_key.clone(),
+                        target_key.clone(),
                         data.len() as u64,
                         effect
                             .mime_type
@@ -274,10 +272,15 @@ impl<'a> ResourceActionService<'a> {
                     )?;
 
                     let expected_updated_at = resource.updated_at();
+                    let previous = self.service.blob_storage.get(target_key).await?;
                     self.service
                         .blob_storage
-                        .put(&replacement_key, data)
+                        .put(&replacement_key, data.clone())
                         .await?;
+                    if let Some(previous) = previous.clone() {
+                        self.service.blob_storage.put(&backup_key, previous).await?;
+                    }
+                    self.service.blob_storage.put(target_key, data).await?;
                     resource.attach_content(content)?;
                     let saved = self
                         .service
@@ -287,9 +290,20 @@ impl<'a> ResourceActionService<'a> {
                     match saved {
                         // Old versions stay immutable and can be collected after repository-wide
                         // reachability analysis. Deleting here could race a shared reference.
-                        Ok(true) => {}
-                        Ok(false) => {
+                        Ok(true) => {
                             let _ = self.service.blob_storage.delete(&replacement_key).await;
+                            let _ = self.service.blob_storage.delete(&backup_key).await;
+                        }
+                        Ok(false) => {
+                            restore_replaced_content(
+                                self.service.blob_storage.as_ref(),
+                                target_key,
+                                &backup_key,
+                                previous,
+                            )
+                            .await;
+                            let _ = self.service.blob_storage.delete(&replacement_key).await;
+                            let _ = self.service.blob_storage.delete(&backup_key).await;
                             return Err(CoreError::conflict(format!(
                                 "resource `{}` changed while action `{}` was running",
                                 resource.id(),
@@ -297,7 +311,15 @@ impl<'a> ResourceActionService<'a> {
                             )));
                         }
                         Err(error) => {
+                            restore_replaced_content(
+                                self.service.blob_storage.as_ref(),
+                                target_key,
+                                &backup_key,
+                                previous,
+                            )
+                            .await;
                             let _ = self.service.blob_storage.delete(&replacement_key).await;
+                            let _ = self.service.blob_storage.delete(&backup_key).await;
                             return Err(error);
                         }
                     }
@@ -307,4 +329,26 @@ impl<'a> ResourceActionService<'a> {
 
         Ok(())
     }
+}
+
+fn sidecar_content_key(current: &StorageKey, suffix: &str) -> Result<StorageKey, CoreError> {
+    Ok(StorageKey::new(format!(
+        "{}.{suffix}/{}",
+        current,
+        uuid::Uuid::now_v7()
+    ))?)
+}
+
+async fn restore_replaced_content(
+    blob_storage: &dyn crate::port::BlobStorage,
+    current_key: &StorageKey,
+    backup_key: &StorageKey,
+    previous: Option<Bytes>,
+) {
+    if let Some(previous) = previous {
+        let _ = blob_storage.put(current_key, previous).await;
+    } else {
+        let _ = blob_storage.delete(current_key).await;
+    }
+    let _ = blob_storage.delete(backup_key).await;
 }

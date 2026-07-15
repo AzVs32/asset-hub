@@ -6,10 +6,10 @@
   },
   "web": {
     "integrity": {
-      "index.html": "28b258989a1c4208889c572ccfa0f17765054531a93f0b3b3bed66498c88fe8a",
-      "viewer.css": "3f10616a22fd9612d21c6b4bdc9c7a693294a8adc7ee2697bd90d54138cd35e1",
-      "viewer.js": "59e9d931f6b4b19ad9bb5da50fade364f1c929cd336c951643eec59ff0329547",
-      "viewer.js.map": "d32ff96b605e67134ed032c3d3df48b565be5a63aa3485cfae6cacbff9459fdf"
+      "assets/index-C-Kv7DQr.css": "2cc5b43f450555fa3e1edda66509eb7ce800c1945127e202d17562a1c4d0d203",
+      "assets/index-CTMnqPYq.js": "cf1106c29c12a10aa0fbfbf1143a5fd9b573159718efbc8337054329ee20bf05",
+      "assets/index-CTMnqPYq.js.map": "a7ff662151303c4a5c48c3263f13d5f748ffdc29faf11c43021e048f74adfe7f",
+      "index.html": "4c22dccf4f5a4b1d738f53f44e1e59f2bc400f9a3a65dbf272109c9ee63f4208"
     }
   }
 }

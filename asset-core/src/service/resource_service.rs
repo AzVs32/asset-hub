@@ -1073,6 +1073,14 @@ mod tests {
             self.objects.lock().unwrap().get(key).cloned()
         }
 
+        fn contains_fragment(&self, fragment: &str) -> bool {
+            self.objects
+                .lock()
+                .unwrap()
+                .keys()
+                .any(|key| key.as_str().contains(fragment))
+        }
+
         fn fail_next_delete(&self) {
             *self.fail_next_delete.lock().unwrap() = true;
         }
@@ -1820,6 +1828,9 @@ mod tests {
         let updated = repository.find_sync(&resource.id()).unwrap();
         let content = updated.content().unwrap();
         assert!(blob_storage.contains(&key));
+        assert_eq!(content.key(), &key);
+        assert!(!blob_storage.contains_fragment(".action-replacements/"));
+        assert!(!blob_storage.contains_fragment(".action-backups/"));
         assert_eq!(
             blob_storage.get_sync(content.key()).unwrap(),
             Bytes::from_static(b"# New\n\nUpdated.")

@@ -1,3 +1,4 @@
-/plugin/target/
+/target/
+/runtime/target/
 /web/node_modules/
-/web/dist/
+/dist/

@@ -19,9 +19,9 @@ build_and_verify() {
 }
 
 build_and_verify \
-  "plugins/azvs-markdown/azvs-markdown.json" \
-  "plugins/azvs-markdown/plugin/Cargo.toml" \
-  "plugins/azvs-markdown/plugin/target/$target/release/azvs_markdown_plugin.wasm" \
+  "plugins/azvs-markdown/manifest.json" \
+  "plugins/azvs-markdown/runtime/Cargo.toml" \
+  "plugins/azvs-markdown/runtime/target/$target/release/azvs_markdown_plugin.wasm" \
   "plugins/azvs-markdown/azvs-markdown.wasm"
 build_and_verify \
   "plugins/azvs-epub/manifest.json" \

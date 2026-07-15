@@ -22,11 +22,11 @@ WORKDIR /src/plugins/azvs-markdown/web
 COPY plugins/azvs-markdown/web/package.json plugins/azvs-markdown/web/package-lock.json ./
 RUN npm ci
 COPY plugins/azvs-markdown/web/ ./
-COPY plugins/azvs-markdown/azvs-markdown.json /src/plugins/azvs-markdown/azvs-markdown.json
+COPY plugins/azvs-markdown/manifest.json /src/plugins/azvs-markdown/manifest.json
 COPY --from=api-builder /src/target/release/asset-plugin /usr/local/bin/asset-plugin
 RUN npm run build
 WORKDIR /src
-RUN asset-plugin verify-web plugins/azvs-markdown/azvs-markdown.json
+RUN asset-plugin verify-web plugins/azvs-markdown/manifest.json
 
 FROM node:22-bookworm-slim AS epub-web-builder
 WORKDIR /src/plugins/azvs-epub/web
@@ -44,12 +44,12 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --home-dir /app asset-hub \
-    && mkdir -p /app/plugins/azvs-markdown/web /app/plugins/azvs-epub/dist /data/blob \
+    && mkdir -p /app/plugins/azvs-markdown/dist /app/plugins/azvs-epub/dist /data/blob \
     && chown -R asset-hub:asset-hub /app /data
 WORKDIR /app
 COPY --from=api-builder /src/target/release/asset-http /usr/local/bin/asset-http
 COPY --from=api-builder /src/plugins /app/plugins
-COPY --from=markdown-web-builder /src/plugins/azvs-markdown/web/dist /app/plugins/azvs-markdown/web/dist
+COPY --from=markdown-web-builder /src/plugins/azvs-markdown/dist /app/plugins/azvs-markdown/dist
 COPY --from=epub-web-builder /src/plugins/azvs-epub/dist /app/plugins/azvs-epub/dist
 COPY docker/config.toml /app/config.toml
 USER asset-hub
