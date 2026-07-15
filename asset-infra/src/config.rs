@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 /// 默认配置文件名。
 pub const DEFAULT_CONFIG_FILE: &str = "config.toml";
 /// 默认 SQLite 数据库文件路径。
-pub const DEFAULT_SQLITE_PATH: &str = "data/asset-hub.sqlite";
+pub const DEFAULT_SQLITE_PATH: &str = "data/.asset-hub/asset-hub.sqlite";
 /// 默认 Fs 对象存储根目录。
-pub const DEFAULT_FS_ROOT: &str = "data/blob";
+pub const DEFAULT_FS_ROOT: &str = "data";
 /// 默认 SQLite 连接池最大连接数。
 pub const DEFAULT_SQLITE_MAX_CONNECTIONS: u32 = 5;
 pub const DEFAULT_PLUGIN_MAX_CONTENT_BYTES: u64 = 64 * 1024 * 1024;
@@ -22,8 +22,8 @@ pub const DEFAULT_PLUGIN_TIMEOUT_SECONDS: u64 = 20;
 /// 基础设施配置。
 ///
 /// 该配置由 `config` crate 加载，并允许配置文件为空。空文件或缺失字段都会使用默认值：
-/// - SQLite 数据库文件：`data/asset-hub.sqlite`
-/// - Fs 对象存储根目录：`data/blob`
+/// - SQLite 数据库文件：`data/.asset-hub/asset-hub.sqlite`
+/// - Fs 对象存储根目录：`data`
 /// - SQLite 最大连接数：`5`
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]

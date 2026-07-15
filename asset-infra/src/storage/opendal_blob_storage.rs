@@ -6,6 +6,7 @@ use bytes::Bytes;
 use futures_util::{StreamExt, TryStreamExt};
 use opendal::services::Fs;
 use opendal::{ErrorKind, Operator};
+use std::path::{Path, PathBuf};
 
 /// 基于 OpenDAL `Operator` 的对象存储适配器。
 ///
@@ -14,12 +15,16 @@ use opendal::{ErrorKind, Operator};
 #[derive(Clone)]
 pub struct OpenDalBlobStorage {
     operator: Operator,
+    fs_root: Option<PathBuf>,
 }
 
 impl OpenDalBlobStorage {
     /// 使用 OpenDAL `Operator` 创建适配器。
     pub fn new(operator: Operator) -> Self {
-        Self { operator }
+        Self {
+            operator,
+            fs_root: None,
+        }
     }
 
     /// 根据 Fs 配置创建对象存储适配器。
@@ -30,7 +35,10 @@ impl OpenDalBlobStorage {
             .map_err(|error| CoreError::storage("fs.build", error))?
             .finish();
 
-        Ok(Self::new(operator))
+        Ok(Self {
+            operator,
+            fs_root: Some(config.fs_root.clone()),
+        })
     }
 
     /// 返回内部 OpenDAL `Operator`。
@@ -124,7 +132,43 @@ impl BlobStorage for OpenDalBlobStorage {
         self.operator
             .delete(key.as_str())
             .await
-            .map_err(|error| CoreError::storage("delete", error))
+            .map_err(|error| CoreError::storage("delete", error))?;
+        if let Some(root) = &self.fs_root {
+            cleanup_empty_fs_parent_dirs(root, key);
+        }
+        Ok(())
+    }
+}
+
+fn cleanup_empty_fs_parent_dirs(root: &Path, key: &StorageKey) {
+    let mut parts = key.as_str().split('/').collect::<Vec<_>>();
+    if parts.len() < 2 || parts.iter().any(|part| part.is_empty() || *part == ".") {
+        return;
+    }
+    parts.pop();
+
+    let mut current = root.to_path_buf();
+    for part in parts {
+        current.push(part);
+    }
+
+    while current != root {
+        match std::fs::remove_dir(&current) {
+            Ok(()) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
+                ) =>
+            {
+                break;
+            }
+            Err(_) => break,
+        }
+
+        if !current.pop() {
+            break;
+        }
     }
 }
 
@@ -343,6 +387,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fs_storage_delete_removes_empty_sidecar_directories() {
+        let (storage, root) = storage_with_root("fs-clean-sidecar");
+        let key = StorageKey::new(format!(
+            ".asset-hub/action-effects/action-replacements/{}",
+            uuid::Uuid::now_v7()
+        ))
+        .unwrap();
+
+        storage
+            .put(&key, Bytes::from_static(b"temporary"))
+            .await
+            .unwrap();
+        storage.delete(&key).await.unwrap();
+
+        assert!(!root.join(".asset-hub").exists());
+    }
+
+    #[tokio::test]
     async fn fs_storage_writes_streaming_blob_content() {
         let storage = storage("fs-stream");
         let key = StorageKey::new("assets/large.bin").unwrap();
@@ -408,10 +470,18 @@ mod tests {
     }
 
     fn storage(name: &str) -> OpenDalBlobStorage {
+        storage_with_root(name).0
+    }
+
+    fn storage_with_root(name: &str) -> (OpenDalBlobStorage, PathBuf) {
         let root = unique_temp_path(name);
         std::fs::create_dir_all(&root).unwrap();
+        let storage = OpenDalBlobStorage::from_config(&BlobConfig {
+            fs_root: root.clone(),
+        })
+        .unwrap();
 
-        OpenDalBlobStorage::from_config(&BlobConfig { fs_root: root }).unwrap()
+        (storage, root)
     }
 
     fn unique_temp_path(name: &str) -> PathBuf {

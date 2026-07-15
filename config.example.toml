@@ -18,7 +18,7 @@
 [database]
 # SQLite database file path.
 # Relative paths are resolved from the current working directory.
-sqlite_path = "data/asset-hub.sqlite"
+sqlite_path = "data/.asset-hub/asset-hub.sqlite"
 
 # SQLite connection pool size.
 max_connections = 5
@@ -26,7 +26,7 @@ max_connections = 5
 [blob]
 # OpenDAL Fs backend root directory.
 # Relative paths are resolved from the current working directory.
-fs_root = "data/blob"
+fs_root = "data"
 
 [plugin]
 # Hard execution budgets applied to every plugin call.

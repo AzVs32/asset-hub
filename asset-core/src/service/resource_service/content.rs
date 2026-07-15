@@ -116,6 +116,8 @@ impl<'a> ResourceContentService<'a> {
             checksums,
         } = command;
 
+        reject_reserved_storage_key(&storage_key)?;
+
         if self
             .service
             .repository
@@ -167,6 +169,9 @@ impl<'a> ResourceContentService<'a> {
             original_filename,
             mut checksums,
         } = command;
+
+        reject_reserved_storage_key(&storage_key)?;
+
         let kind = self.service.resolve_content_kind(
             kind,
             mime_type.as_deref(),
@@ -279,4 +284,18 @@ impl<'a> ResourceContentService<'a> {
             )
         }))
     }
+}
+
+fn reject_reserved_storage_key(key: &StorageKey) -> Result<(), CoreError> {
+    if key.as_str() == crate::port::RESERVED_BLOB_STORAGE_PREFIX
+        || key
+            .as_str()
+            .starts_with(&format!("{}/", crate::port::RESERVED_BLOB_STORAGE_PREFIX))
+    {
+        return Err(CoreError::configuration(format!(
+            "storage key `{key}` uses reserved Asset Hub namespace"
+        )));
+    }
+
+    Ok(())
 }

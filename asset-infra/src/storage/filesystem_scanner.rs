@@ -1,6 +1,6 @@
 use asset_core::CoreError;
 use asset_core::domain::{ResourceDirectory, StorageKey};
-use asset_core::port::{ScannedBlob, StorageScanner};
+use asset_core::port::{RESERVED_BLOB_STORAGE_PREFIX, ScannedBlob, StorageScanner};
 use sha2::{Digest, Sha256};
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
@@ -40,6 +40,10 @@ fn scan_files(
     include_sha256: bool,
     max_entries: usize,
 ) -> Result<Vec<ScannedBlob>, CoreError> {
+    if directory_in_reserved_namespace(directory) {
+        return Ok(Vec::new());
+    }
+
     let root = root.canonicalize().map_err(|error| {
         CoreError::configuration(format!("storage root is not readable: {error}"))
     })?;
@@ -84,6 +88,9 @@ fn collect_files(
             )));
         }
         let entry = entry.map_err(|error| CoreError::storage("scan.read_dir_entry", error))?;
+        if current == root && entry.file_name().to_str() == Some(RESERVED_BLOB_STORAGE_PREFIX) {
+            continue;
+        }
         let path = entry.path();
         let metadata = std::fs::symlink_metadata(&path)
             .map_err(|error| CoreError::storage("scan.metadata", error))?;
@@ -122,6 +129,13 @@ fn collect_files(
     Ok(())
 }
 
+fn directory_in_reserved_namespace(directory: &ResourceDirectory) -> bool {
+    directory.path() == RESERVED_BLOB_STORAGE_PREFIX
+        || directory
+            .path()
+            .starts_with(&format!("{RESERVED_BLOB_STORAGE_PREFIX}/"))
+}
+
 fn sha256_file(path: &Path) -> Result<String, CoreError> {
     let mut file =
         std::fs::File::open(path).map_err(|error| CoreError::storage("scan.open", error))?;
@@ -158,5 +172,63 @@ fn content_type_from_path(path: &Path) -> Option<&'static str> {
         "mp4" => Some("video/mp4"),
         "zip" => Some("application/zip"),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scan_skips_reserved_asset_hub_directory() {
+        let root = unique_temp_path("scanner-reserved");
+        std::fs::create_dir_all(root.join("docs")).unwrap();
+        std::fs::create_dir_all(
+            root.join(RESERVED_BLOB_STORAGE_PREFIX)
+                .join("action-effects/action-replacements"),
+        )
+        .unwrap();
+        std::fs::write(root.join("docs/readme.md"), b"# Readme").unwrap();
+        std::fs::write(
+            root.join(RESERVED_BLOB_STORAGE_PREFIX)
+                .join("action-effects/action-replacements/temp"),
+            b"scratch",
+        )
+        .unwrap();
+
+        let files = scan_files(&root, &ResourceDirectory::root(), false, 100).unwrap();
+
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].key.as_str(), "docs/readme.md");
+    }
+
+    #[test]
+    fn scan_reserved_directory_returns_no_files() {
+        let root = unique_temp_path("scanner-reserved-direct");
+        std::fs::create_dir_all(
+            root.join(RESERVED_BLOB_STORAGE_PREFIX)
+                .join("action-effects/action-replacements"),
+        )
+        .unwrap();
+        std::fs::write(
+            root.join(RESERVED_BLOB_STORAGE_PREFIX)
+                .join("action-effects/action-replacements/temp"),
+            b"scratch",
+        )
+        .unwrap();
+
+        let files = scan_files(
+            &root,
+            &ResourceDirectory::from_path(RESERVED_BLOB_STORAGE_PREFIX).unwrap(),
+            false,
+            100,
+        )
+        .unwrap();
+
+        assert!(files.is_empty());
+    }
+
+    fn unique_temp_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("asset-hub-{name}-{}", uuid::Uuid::now_v7()))
     }
 }

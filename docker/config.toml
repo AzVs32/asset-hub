@@ -1,0 +1,13 @@
+# Container paths. Configuration lives under /conf; runtime state and file content live under /data.
+[database]
+sqlite_path = "/data/.asset-hub/asset-hub.sqlite"
+max_connections = 5
+
+[blob]
+fs_root = "/data"
+
+[kind]
+plugin_manifests = [
+  "/app/plugins/azvs-markdown/manifest.json",
+  "/app/plugins/azvs-epub/manifest.json",
+]

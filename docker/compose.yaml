@@ -16,8 +16,10 @@ services:
       ASSET_HTTP_REQUEST_TIMEOUT_SECS: ${ASSET_HTTP_REQUEST_TIMEOUT_SECS:-30}
       ASSET_HTTP_COOKIE_SECURE: ${ASSET_HTTP_COOKIE_SECURE:-false}
       ASSET_HTTP_SESSION_INACTIVITY_SECS: ${ASSET_HTTP_SESSION_INACTIVITY_SECS:-43200}
+      ASSET_HUB_CONFIG: /conf/config.toml
       RUST_LOG: ${RUST_LOG:-asset_http=info,tower_http=info}
     volumes:
+      - asset-hub-conf:/conf
       - asset-hub-data:/data
     expose:
       - "8080"
@@ -42,5 +44,7 @@ services:
       - "${ASSET_HUB_PORT:-8080}:80"
 
 volumes:
+  asset-hub-conf:
+    name: asset-hub-conf
   asset-hub-data:
     name: asset-hub-data

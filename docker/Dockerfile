@@ -44,23 +44,23 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --home-dir /app asset-hub \
-    && mkdir -p /app/plugins/azvs-markdown/dist /app/plugins/azvs-epub/dist /data/blob \
-    && chown -R asset-hub:asset-hub /app /data
+    && mkdir -p /app/plugins/azvs-markdown/dist /app/plugins/azvs-epub/dist /conf /data \
+    && chown -R asset-hub:asset-hub /app /conf /data
 WORKDIR /app
 COPY --from=api-builder /src/target/release/asset-http /usr/local/bin/asset-http
 COPY --from=api-builder /src/plugins /app/plugins
 COPY --from=markdown-web-builder /src/plugins/azvs-markdown/dist /app/plugins/azvs-markdown/dist
 COPY --from=epub-web-builder /src/plugins/azvs-epub/dist /app/plugins/azvs-epub/dist
-COPY docker/config.toml /app/config.toml
+COPY --chown=asset-hub:asset-hub docker/config.toml /conf/config.toml
 USER asset-hub
-ENV ASSET_HUB_CONFIG=/app/config.toml \
+ENV ASSET_HUB_CONFIG=/conf/config.toml \
     ASSET_HTTP_ADDR=0.0.0.0:8080 \
     ASSET_HTTP_ENABLE_SWAGGER=false \
     ASSET_HTTP_ENABLE_PURGE=false \
     ASSET_HTTP_REQUEST_TIMEOUT_SECS=30 \
     RUST_LOG=asset_http=info,tower_http=info
 EXPOSE 8080
-VOLUME ["/data"]
+VOLUME ["/conf", "/data"]
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=5 \
     CMD curl --fail --silent --show-error http://127.0.0.1:8080/health
 ENTRYPOINT ["asset-http"]

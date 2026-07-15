@@ -91,33 +91,37 @@ docker compose down
 | 配置 | 容器值 | 说明 |
 | --- | --- | --- |
 | `ASSET_HTTP_ADDR` | `0.0.0.0:8080` | API 容器监听地址 |
-| `ASSET_HUB_CONFIG` | `/app/config.toml` | 容器配置文件路径 |
+| `ASSET_HUB_CONFIG` | `/conf/config.toml` | 容器配置文件路径 |
 
 ## 数据和配置文件
 
-Compose 创建命名卷 `asset-hub-data`，挂载到 API 容器的 `/data`：
+Compose 创建两个命名卷：
 
 ```text
-/data/asset-hub.sqlite  SQLite 元数据、用户、ACL、Session
-/data/blob/             上传的原始文件内容
+asset-hub-conf  -> /conf  配置文件
+asset-hub-data  -> /data  SQLite、系统内部数据和上传文件内容
 ```
 
-容器配置位于 [config.toml](config.toml)：
+默认容器配置位于 [config.toml](config.toml)，首次创建 `asset-hub-conf` 卷时会复制到
+`/conf/config.toml`：
 
 ```toml
 [database]
-sqlite_path = "/data/asset-hub.sqlite"
+sqlite_path = "/data/.asset-hub/asset-hub.sqlite"
 max_connections = 5
 
 [blob]
-fs_root = "/data/blob"
+fs_root = "/data"
 ```
 
-不要把 SQLite 与 blob 目录拆开备份，两者共同组成一次完整的 Asset Hub 状态。
+`/data` 是用户文件根目录；`.asset-hub` 是系统保留目录，保存 SQLite 和 action 临时区，
+扫描导入会跳过它。不要把 `/data/.asset-hub` 与 `/data` 里的用户文件拆开备份，两者共同
+组成一次完整的 Asset Hub 状态。
 
 查看卷位置：
 
 ```bash
+docker volume inspect asset-hub-conf
 docker volume inspect asset-hub-data
 ```
 
@@ -162,10 +166,12 @@ docker build -f docker/Dockerfile --target web -t asset-hub-web:local .
 API 单容器运行示例：
 
 ```bash
+docker volume create asset-hub-conf
 docker volume create asset-hub-data
 docker run --rm \
   --name asset-hub-api \
   -p 8080:8080 \
+  -v asset-hub-conf:/conf \
   -v asset-hub-data:/data \
   -e ASSET_HUB_BOOTSTRAP_ADMIN_USERNAME=admin \
   -e ASSET_HUB_BOOTSTRAP_ADMIN_PASSWORD='替换为强密码' \
@@ -197,10 +203,11 @@ docker compose logs -f api
 cd docker
 docker compose stop api
 docker run --rm \
+  -v asset-hub-conf:/conf:ro \
   -v asset-hub-data:/data:ro \
   -v "$PWD/backup:/backup" \
   alpine:3.21 \
-  tar czf /backup/asset-hub-$(date +%Y%m%d-%H%M%S).tar.gz -C /data .
+  tar czf /backup/asset-hub-$(date +%Y%m%d-%H%M%S).tar.gz -C / conf data
 docker compose start api
 ```
 
@@ -208,13 +215,16 @@ docker compose start api
 
 ```bash
 docker compose down
+docker volume rm asset-hub-conf
 docker volume rm asset-hub-data
+docker volume create asset-hub-conf
 docker volume create asset-hub-data
 docker run --rm \
+  -v asset-hub-conf:/conf \
   -v asset-hub-data:/data \
   -v "$PWD/backup:/backup:ro" \
   alpine:3.21 \
-  tar xzf /backup/你的备份文件.tar.gz -C /data
+  tar xzf /backup/你的备份文件.tar.gz -C /
 docker compose up -d
 ```
 
@@ -225,7 +235,7 @@ docker compose up -d
 - 在 Nginx、Caddy、Traefik 或云负载均衡器上配置 HTTPS。
 - 不要把 API 容器的 `8080` 端口直接发布到公网；Compose 默认只对 Web 容器暴露端口。
 - 使用防火墙限制管理端来源。
-- 定期同时备份 SQLite 和 `/data/blob`。
+- 定期同时备份 `/conf` 和 `/data`。
 - 生产编排平台应通过 Secret 注入管理员初始密码，避免写入镜像或 Compose 文件。
 - 设置日志收集和磁盘/卷容量监控。
 

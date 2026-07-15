@@ -15,6 +15,12 @@ use std::pin::Pin;
 /// stream 中的错误会中止写入，并由具体存储适配器负责清理未完成写入。
 pub type BlobByteStream = Pin<Box<dyn Stream<Item = Result<Bytes, CoreError>> + Send + 'static>>;
 
+/// Blob storage namespace reserved for Asset Hub internals.
+///
+/// User-managed resources must not use this prefix. Infrastructure adapters and scanners use the
+/// same value to keep internal action scratch objects out of user-visible imports.
+pub const RESERVED_BLOB_STORAGE_PREFIX: &str = ".asset-hub";
+
 /// 对象写入结果。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BlobWriteResult {

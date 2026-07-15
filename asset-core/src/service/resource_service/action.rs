@@ -255,8 +255,8 @@ impl<'a> ResourceActionService<'a> {
                         })?;
                     let checksums = plugin_checksums(&effect.checksum, &data)?;
                     let target_key = current_content.key();
-                    let replacement_key = sidecar_content_key(target_key, "action-replacements")?;
-                    let backup_key = sidecar_content_key(target_key, "action-backups")?;
+                    let replacement_key = action_scratch_content_key("action-replacements")?;
+                    let backup_key = action_scratch_content_key("action-backups")?;
                     let content = build_content(
                         target_key.clone(),
                         data.len() as u64,
@@ -331,10 +331,10 @@ impl<'a> ResourceActionService<'a> {
     }
 }
 
-fn sidecar_content_key(current: &StorageKey, suffix: &str) -> Result<StorageKey, CoreError> {
+fn action_scratch_content_key(suffix: &str) -> Result<StorageKey, CoreError> {
     Ok(StorageKey::new(format!(
-        "{}.{suffix}/{}",
-        current,
+        "{}/action-effects/{suffix}/{}",
+        crate::port::RESERVED_BLOB_STORAGE_PREFIX,
         uuid::Uuid::now_v7()
     ))?)
 }

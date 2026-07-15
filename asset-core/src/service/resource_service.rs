@@ -1646,6 +1646,43 @@ mod tests {
     }
 
     #[test]
+    fn stream_upload_resource_content_rejects_reserved_storage_key() {
+        let (service, repository, blob_storage) = service();
+        let key = StorageKey::new(".asset-hub/action-effects/user-file.txt").unwrap();
+
+        let error = block_on(service.content().upload_resource_content_stream(
+            stream_upload_command("file", key.clone(), Bytes::from_static(b"data")),
+        ))
+        .unwrap_err();
+
+        match error {
+            CoreError::Configuration { message } => assert!(message.contains("reserved")),
+            other => panic!("expected reserved key configuration error, got {other:?}"),
+        }
+        assert!(repository.is_empty());
+        assert!(!blob_storage.contains(&key));
+    }
+
+    #[test]
+    fn import_resource_content_rejects_reserved_storage_key() {
+        let (service, repository, _) = service();
+        let key = StorageKey::new(".asset-hub/action-effects/imported.txt").unwrap();
+
+        let error = block_on(
+            service
+                .content()
+                .import_resource_content(ImportResourceContent::new("file", key, 4)),
+        )
+        .unwrap_err();
+
+        match error {
+            CoreError::Configuration { message } => assert!(message.contains("reserved")),
+            other => panic!("expected reserved key configuration error, got {other:?}"),
+        }
+        assert!(repository.is_empty());
+    }
+
+    #[test]
     fn create_resource_rejects_unsupported_kind() {
         let (service, repository, _) = service_with_registry(Arc::new(
             InMemoryResourceKindRegistry::with_definitions(vec![ResourceKindDefinition::new(
@@ -1864,6 +1901,7 @@ mod tests {
         let content = updated.content().unwrap();
         assert!(blob_storage.contains(&key));
         assert_eq!(content.key(), &key);
+        assert!(!blob_storage.contains_fragment(".asset-hub/"));
         assert!(!blob_storage.contains_fragment(".action-replacements/"));
         assert!(!blob_storage.contains_fragment(".action-backups/"));
         assert_eq!(
@@ -1876,6 +1914,36 @@ mod tests {
         let checksums = content.checksums().collect::<Vec<_>>();
         assert_eq!(checksums.len(), 1);
         assert_eq!(checksums[0].kind(), ChecksumKind::Sha256);
+    }
+
+    #[test]
+    fn write_action_scratch_content_uses_reserved_namespace() {
+        let (service, _, blob_storage) = service();
+        let key = StorageKey::new("docs/note.md").unwrap();
+        let resource = block_on(
+            service.content().upload_resource_content_stream(
+                stream_upload_command("note.md", key, Bytes::from_static(b"# Old"))
+                    .with_kind("core:document")
+                    .with_mime_type("text/markdown")
+                    .with_original_filename("note.md"),
+            ),
+        )
+        .unwrap();
+        blob_storage.fail_next_delete();
+
+        block_on(
+            service.actions().execute_resource_action(
+                &resource.id(),
+                ExecuteResourceAction::new("azvs.markdown.update")
+                    .with_input(json!({"markdown": "# New"})),
+            ),
+        )
+        .unwrap()
+        .unwrap();
+
+        assert!(blob_storage.contains_fragment(".asset-hub/action-effects/action-replacements/"));
+        assert!(!blob_storage.contains_fragment("docs/note.md.action-replacements/"));
+        assert!(!blob_storage.contains_fragment("docs/note.md.action-backups/"));
     }
 
     #[test]

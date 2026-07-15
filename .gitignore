@@ -19,6 +19,7 @@ asset-web-admin/vite.config.d.ts
 
 # Local runtime data
 /data/
+/conf/
 
 # Environment and local secrets
 .env
@@ -26,6 +27,7 @@ asset-web-admin/vite.config.d.ts
 !.env.example
 !.env.*.example
 config.toml
+!docker/config.toml
 
 # RustRover / JetBrains IDEs
 .idea/

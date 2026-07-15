@@ -25,8 +25,8 @@ cargo run -p asset-apps --bin asset-http
 Defaults:
 
 - API listens on `127.0.0.1:8080`.
-- SQLite database is `data/asset-hub.sqlite`.
-- Blob storage root is `data/blob`.
+- SQLite database is `data/.asset-hub/asset-hub.sqlite`.
+- File storage root is `data`.
 - If `config.toml` exists, it is loaded. Otherwise built-in defaults are used.
 
 Use a config file:
@@ -171,8 +171,9 @@ cd docker
 docker compose up -d --build
 ```
 
-Open `http://127.0.0.1:8080`. SQLite data, sessions, ACLs, and uploaded blobs
-are persisted in the `asset-hub-data` Docker volume. See
+Open `http://127.0.0.1:8080`. Runtime data and uploaded files are persisted in
+the `asset-hub-data` Docker volume; container configuration is persisted in the
+`asset-hub-conf` Docker volume. See
 [`docker/README.md`](docker/README.md) for all required settings, image-only
 commands, plugin configuration, upgrades, backups, restores, and production
 hardening.
