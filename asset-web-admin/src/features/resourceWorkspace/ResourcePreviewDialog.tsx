@@ -1,9 +1,10 @@
 import { ExternalLink, X } from "lucide-react";
 import { apiBase } from "../../api";
-import { PluginViewResult, pluginFrameUrl } from "../../components/PluginViewResult";
 import { cx, iconButtonClass } from "../../components/ui";
+import { CoreVideoView } from "../../plugins/core";
+import { PluginViewResult, pluginFrameUrl } from "../../plugins/views";
 import type { Resource, ResourceReadResponse } from "../../types";
-import { isImageResource } from "../../utils/resourceDrafts";
+import { isImageResource, isVideoResource } from "../../utils/resourceDrafts";
 import { modalBackdropClass, modalClass, modalHeaderClass } from "./dialogStyles";
 
 export function ResourcePreviewDialog({ reader, resource, onClose }: {
@@ -22,6 +23,8 @@ export function ResourcePreviewDialog({ reader, resource, onClose }: {
       </div></header>
     {reader ? <PluginViewResult view={reader.view} title={reader.name} large={large} /> : resource && (isImageResource(resource)
       ? <div className="flex min-h-105 items-center justify-center bg-slate-50 p-6"><img className="max-h-[72vh] max-w-full rounded-lg object-contain" alt={resource.name} src={`${apiBase}/resources/${resource.id}/preview`} /></div>
-      : <iframe className="block h-[72vh] w-full border-0 bg-slate-50" title={resource.name} src={`${apiBase}/resources/${resource.id}/preview`} />)}
+      : isVideoResource(resource)
+        ? <CoreVideoView src={`${apiBase}/resources/${resource.id}/preview`} title={resource.name} />
+        : <iframe className="block h-[72vh] w-full border-0 bg-slate-50" title={resource.name} src={`${apiBase}/resources/${resource.id}/preview`} />)}
   </section></div>;
 }

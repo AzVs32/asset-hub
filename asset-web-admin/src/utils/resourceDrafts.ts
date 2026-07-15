@@ -93,6 +93,11 @@ export function isImageResource(resource: Resource): boolean {
   return Boolean(mimeType && mimeType.startsWith("image/"));
 }
 
+export function isVideoResource(resource: Resource): boolean {
+  const mimeType = resource.content?.mime_type;
+  return resource.kind === "core:video" || Boolean(mimeType && mimeType.startsWith("video/"));
+}
+
 export function isPluginUiAction(action: ResourceActionDefinition): boolean {
   return action.executor.type === "plugin";
 }

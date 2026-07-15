@@ -1,6 +1,6 @@
 import { ExternalLink, X } from "lucide-react";
-import { PluginActionResult, pluginFrameUrl, pluginViewTitle } from "../../components/PluginViewResult";
 import { cx, iconButtonClass } from "../../components/ui";
+import { PluginActionResult, pluginFrameUrl, pluginViewTitle } from "../../plugins/views";
 import type { PluginActionOutput } from "../../types";
 import { modalBackdropClass, modalClass, modalHeaderClass } from "./dialogStyles";
 
