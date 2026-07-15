@@ -13,10 +13,10 @@ asset-plugin gen manifest
 ```
 
 The command creates `manifest.json` in the current directory and refuses to overwrite an existing
-file. Edit the `example.plugin` metadata, action ID, handler, matching rules, requirements, output,
+file. Edit the `example.plugin` metadata, action ID, handler, matching rules, requirements, views,
 and permissions for the plugin. It copies the canonical draft from
-`asset-plugin-api/templates/manifest.json` byte for byte; the generated draft intentionally omits
-integrity hashes.
+`asset-plugin-api/templates/manifest.json` byte for byte. Integrity hashes belong to the generated
+lock file, not the editable manifest.
 
 After building and copying the Wasm and optional Web bundle, run:
 
@@ -24,9 +24,9 @@ After building and copying the Wasm and optional Web bundle, run:
 asset-plugin seal path/to/plugin.json
 ```
 
-Draft manifests may omit `runtime.wasm_sha256` and `web.integrity`. `seal` calculates both,
-validates the resulting Manifest V2 contract, preserves the developer-authored semantic fields,
-and atomically replaces the JSON file using canonical pretty formatting.
+`seal` calculates the Wasm digest and optional Web asset integrity map, validates the Manifest V2
+contract, preserves the developer-authored manifest, and atomically writes a sibling
+`manifest.lock.json`.
 
 Release and CI environments must not reseal changed artifacts. They verify the previously sealed
 package instead:
@@ -44,6 +44,6 @@ From an Asset Hub checkout, install the command with:
 cargo install --path asset-apps --bin asset-plugin
 ```
 
-The integrity values detect artifact drift and changes to only one part of a package. They do not
-replace package signatures: an attacker able to replace both a plugin and its sealed Manifest can
-generate matching hashes. Publisher signatures require a separate trust-store design.
+The lock values detect artifact drift and changes to only one part of a package. They do not
+replace package signatures: an attacker able to replace a plugin and its lock file can generate
+matching hashes. Publisher signatures require a separate trust-store design.

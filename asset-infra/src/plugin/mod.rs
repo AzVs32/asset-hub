@@ -2,7 +2,7 @@ use asset_core::CoreError;
 use asset_core::domain::{ChecksumKind, ResourceStatus, StorageKey};
 use asset_core::port::{
     BlobStorage, ResourceActionExecutor, ResourceActionOutput, ResourceActionRequest,
-    ResourceKindRegistry,
+    ResourceContentMatcher, ResourceKindDefinition, ResourceKindRegistry,
 };
 use asset_plugin_api::{
     PluginActionOutput, PluginActionRequest, PluginChecksum, PluginContentBytes,
@@ -123,14 +123,11 @@ impl ExtismResourceActionExecutor {
             )?;
 
             for action in &manifest.capabilities.resource_actions {
-                let Some(handler) = action.plugin_handler() else {
-                    continue;
-                };
                 bindings.push(bind_action(
                     manifest.plugin_id(),
                     &manifest.permissions,
                     action,
-                    handler,
+                    action.handler(),
                     compiled.clone(),
                     host_content.clone(),
                     kind_registry,
@@ -242,9 +239,8 @@ fn preflight_handlers(
         CoreError::configuration(format!("instantiate plugin `{plugin_id}`: {error}"))
     })?;
     for action in actions {
-        if let Some(handler) = action.plugin_handler()
-            && !plugin.function_exists(handler)
-        {
+        let handler = action.handler();
+        if !plugin.function_exists(handler) {
             return Err(CoreError::configuration(format!(
                 "plugin `{plugin_id}` action `{}` references missing Wasm export `{handler}`",
                 action.id
@@ -296,10 +292,16 @@ fn bind_action(
             .map(|definition| definition.kind().as_str().to_owned())
             .collect()
     };
-    let applies_to = action
+    let mut applies_to = action
         .applies_to
         .to_definition()
         .with_kinds(applicable_kinds);
+    if applies_to.content().is_empty() && !action.applies_to.kinds.is_empty() {
+        applies_to = applies_to.with_content_matcher(detect_for_action_kinds(
+            kind_registry.definitions(),
+            &action.applies_to.kinds,
+        )?);
+    }
 
     Ok(ActionBinding {
         plugin_id: plugin_id.to_string(),
@@ -310,6 +312,33 @@ fn bind_action(
         compiled,
         host_content,
     })
+}
+
+fn detect_for_action_kinds(
+    definitions: &[ResourceKindDefinition],
+    kinds: &[String],
+) -> Result<ResourceContentMatcher, CoreError> {
+    let mut mime_types = Vec::new();
+    let mut extensions = Vec::new();
+    for kind in kinds {
+        let definition = definitions
+            .iter()
+            .find(|definition| definition.kind().as_str().eq_ignore_ascii_case(kind))
+            .ok_or_else(|| {
+                CoreError::configuration(format!(
+                    "resource action references unknown kind `{kind}`"
+                ))
+            })?;
+        mime_types.extend(definition.detect().mime_types().iter().cloned());
+        extensions.extend(definition.detect().extensions().iter().cloned());
+    }
+    mime_types.sort();
+    mime_types.dedup();
+    extensions.sort();
+    extensions.dedup();
+    Ok(ResourceContentMatcher::new()
+        .with_mime_types(mime_types)
+        .with_extensions(extensions))
 }
 
 #[async_trait]
@@ -754,7 +783,7 @@ fn checksum_kind_text(kind: ChecksumKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use asset_plugin_api::{ActionExecutor, PluginFrameView};
+    use asset_plugin_api::PluginFrameView;
 
     #[test]
     fn plugin_frame_relative_url_is_resolved_to_plugin_web_route() {
@@ -824,9 +853,7 @@ mod tests {
         let mut actions = manifest.capabilities.resource_actions;
 
         preflight_handlers("azvs.mp4", &compiled, &actions).unwrap();
-        actions[0].executor = Some(ActionExecutor::Plugin {
-            handler: "missing_export".to_string(),
-        });
+        actions[0].handler = "missing_export".to_string();
         let error = preflight_handlers("azvs.mp4", &compiled, &actions).unwrap_err();
         assert!(
             error

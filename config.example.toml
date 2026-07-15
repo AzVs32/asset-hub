@@ -85,7 +85,7 @@ plugin_manifests = []
 # Use `capabilities.resource_kinds` for new resource types, and flat
 # `capabilities.resource_actions` with `applies_to.kinds` for actions.
 # Start with `asset-plugin gen manifest`, then edit its fixed example fields.
-# Draft manifests omit `runtime.wasm_sha256` and optional `web.integrity`; generate them with
+# Artifact hashes belong to the generated sibling `manifest.lock.json`; generate it with
 # `asset-plugin seal path/to/plugin.json` after building the plugin artifacts.
 #
 # {
@@ -109,16 +109,23 @@ plugin_manifests = []
 #         "kind": "example:document",
 #         "label": "Document",
 #         "supports_content": true
+#       },
+#       {
+#         "kind": "example:mp4",
+#         "parent": "core:video",
+#         "label": "MP4",
+#         "supports_content": true,
+#         "detect": {
+#           "mime_types": ["video/mp4"],
+#           "extensions": [".mp4", ".m4v"]
+#         }
 #       }
 #     ],
 #     "resource_actions": [
 #       {
 #         "id": "example:summarize",
 #         "label": "Summarize",
-#         "executor": {
-#           "type": "plugin",
-#           "handler": "summarize"
-#         },
+#         "handler": "summarize",
 #         "applies_to": {
 #           "kinds": ["example:document"]
 #         },
@@ -127,26 +134,17 @@ plugin_manifests = []
 #           "content": true,
 #           "content_delivery": "url"
 #         },
-#         "output": {
-#           "view": ["json"]
-#         }
+#         "views": ["json"]
 #       },
 #       {
 #         "id": "example:play_mp4",
 #         "label": "Play MP4",
-#         "executor": {
-#           "type": "plugin",
-#           "handler": "play_mp4"
-#         },
+#         "handler": "play_mp4",
 #         "applies_to": {
-#           "kinds": ["core:video"],
-#           "media_types": ["video/mp4"],
-#           "extensions": [".mp4", ".m4v"]
+#           "kinds": ["example:mp4"]
 #         },
 #         "access": "read",
-#         "output": {
-#           "view": ["media"]
-#         }
+#         "views": ["media"]
 #       }
 #     ]
 #   },

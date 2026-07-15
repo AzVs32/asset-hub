@@ -10,41 +10,43 @@
   "runtime": {
     "type": "extism",
     "wasm": "azvs-mp4.wasm",
-    "wasm_sha256": "1ee5779fd0760fb5379e4bab0994e1e9615ac05f06a9e0d54b03e75a5d14385e",
     "wasi": false,
     "plugin_api": "asset-hub.plugin-api@0.1"
   },
   "capabilities": {
-    "resource_kinds": [],
-    "resource_actions": [
+    "resource_kinds": [
       {
-        "id": "azvs.mp4.play",
-        "label": "Play with AzVs MP4",
-        "description": "Play MP4 with AzVs plugin.",
-        "executor": {
-          "type": "plugin",
-          "handler": "play_mp4"
-        },
-        "applies_to": {
-          "kinds": [
-            "core:video"
-          ],
-          "media_types": [
+        "kind": "azvs:mp4",
+        "parent": "core:video",
+        "label": "MP4",
+        "supports_content": true,
+        "detect": {
+          "mime_types": [
             "video/mp4"
           ],
           "extensions": [
             ".mp4",
             ".m4v"
           ]
-        },
-        "access": "read",
-        "output": {
-          "view": [
-            "media",
-            "html",
-            "binary_url"
+        }
+      }
+    ],
+    "resource_actions": [
+      {
+        "id": "azvs.mp4.play",
+        "label": "Play with AzVs MP4",
+        "handler": "play_mp4",
+        "applies_to": {
+          "kinds": [
+            "azvs:mp4"
           ]
         },
+        "access": "read",
+        "views": [
+          "media",
+          "html",
+          "binary_url"
+        ],
         "ui": {
           "group": "open",
           "order": 80,

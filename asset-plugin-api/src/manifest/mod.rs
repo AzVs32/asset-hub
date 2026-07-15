@@ -4,10 +4,10 @@ mod plugin;
 mod runtime;
 
 pub use capabilities::{
-    ActionAppliesTo, ActionExecutor, ActionOutputContract, ActionRequirements, ActionUi,
-    ContentDelivery, ManifestActionAccess, PluginCapabilities, ResourceActionCapability,
-    ResourceKindCapability,
+    ActionAppliesTo, ActionRequirements, ActionUi, ContentDelivery, ManifestActionAccess,
+    PluginCapabilities, ResourceActionCapability, ResourceKindCapability,
 };
+pub use lock::{PluginManifestLock, PluginRuntimeLock, PluginWebLock};
 pub use permissions::{
     FilesystemPermission, NetworkPermission, PluginPermissions, ReadWritePermission,
 };
@@ -20,7 +20,6 @@ use std::collections::HashSet;
 
 mod web {
     use serde::{Deserialize, Serialize};
-    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
     /// Browser-facing assets contributed by a plugin.
@@ -28,6 +27,35 @@ mod web {
     #[serde(deny_unknown_fields)]
     pub struct PluginWeb {
         pub root: PathBuf,
+    }
+}
+
+mod lock {
+    use serde::{Deserialize, Serialize};
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    /// Generated integrity data for a plugin package.
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub struct PluginManifestLock {
+        pub manifest_version: u32,
+        pub plugin_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub runtime: Option<PluginRuntimeLock>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub web: Option<PluginWebLock>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub struct PluginRuntimeLock {
+        pub wasm_sha256: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub struct PluginWebLock {
         pub integrity: BTreeMap<PathBuf, String>,
     }
 }
@@ -71,24 +99,12 @@ impl PluginManifest {
         match &self.runtime {
             PluginRuntime::Builtin => {}
             PluginRuntime::Extism {
-                wasm,
-                wasm_sha256,
-                plugin_api,
-                ..
+                wasm, plugin_api, ..
             } => {
                 if wasm.as_os_str().is_empty() {
                     return Err("runtime.wasm must not be empty".to_string());
                 }
                 validate_relative_path("runtime.wasm", wasm)?;
-                if wasm_sha256.len() != 64
-                    || !wasm_sha256
-                        .bytes()
-                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-                {
-                    return Err(
-                        "runtime.wasm_sha256 must be a lowercase SHA-256 digest".to_string()
-                    );
-                }
                 if plugin_api != PLUGIN_API_VERSION {
                     return Err(format!(
                         "unsupported runtime.plugin_api `{plugin_api}`, expected `{PLUGIN_API_VERSION}`"
@@ -98,22 +114,6 @@ impl PluginManifest {
         }
         if let Some(web) = &self.web {
             validate_relative_path("web.root", &web.root)?;
-            if web.integrity.is_empty() {
-                return Err("web.integrity must not be empty".to_string());
-            }
-            for (path, digest) in &web.integrity {
-                validate_relative_path("web.integrity path", path)?;
-                if digest.len() != 64
-                    || !digest
-                        .bytes()
-                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-                {
-                    return Err(format!(
-                        "web.integrity[`{}`] must be a lowercase SHA-256 digest",
-                        path.display()
-                    ));
-                }
-            }
         }
         if self.permissions.network.enabled() && !self.permissions.network.has_scope() {
             return Err("permissions.network must declare an explicit host scope".to_string());
@@ -122,6 +122,65 @@ impl PluginManifest {
             return Err("permissions.filesystem must declare explicit path scopes".to_string());
         }
         validate_capabilities(self)?;
+        Ok(())
+    }
+}
+
+impl PluginManifestLock {
+    pub fn validate_for(&self, manifest: &PluginManifest) -> Result<(), String> {
+        if self.manifest_version != manifest.manifest_version {
+            return Err(format!(
+                "manifest.lock.json manifest_version `{}` does not match manifest `{}`",
+                self.manifest_version, manifest.manifest_version
+            ));
+        }
+        if self.plugin_id != manifest.plugin.id {
+            return Err(format!(
+                "manifest.lock.json plugin_id `{}` does not match manifest plugin.id `{}`",
+                self.plugin_id, manifest.plugin.id
+            ));
+        }
+        match &manifest.runtime {
+            PluginRuntime::Builtin => {
+                if self.runtime.is_some() {
+                    return Err(
+                        "manifest.lock.json runtime is only valid for extism plugins".to_string(),
+                    );
+                }
+            }
+            PluginRuntime::Extism { .. } => {
+                let Some(runtime) = &self.runtime else {
+                    return Err("manifest.lock.json runtime.wasm_sha256 is required".to_string());
+                };
+                validate_digest(
+                    "manifest.lock.json runtime.wasm_sha256",
+                    &runtime.wasm_sha256,
+                )?;
+            }
+        }
+        match (&manifest.web, &self.web) {
+            (None, Some(_)) => {
+                return Err(
+                    "manifest.lock.json web is only valid when manifest.web is present".to_string(),
+                );
+            }
+            (Some(_), None) => {
+                return Err("manifest.lock.json web.integrity is required".to_string());
+            }
+            (Some(_), Some(web)) => {
+                if web.integrity.is_empty() {
+                    return Err("manifest.lock.json web.integrity must not be empty".to_string());
+                }
+                for (path, digest) in &web.integrity {
+                    validate_relative_path("manifest.lock.json web.integrity path", path)?;
+                    validate_digest(
+                        &format!("manifest.lock.json web.integrity[`{}`]", path.display()),
+                        digest,
+                    )?;
+                }
+            }
+            (None, None) => {}
+        }
         Ok(())
     }
 }
@@ -176,40 +235,14 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
                 action.id
             ));
         }
-        let Some(executor) = &action.executor else {
+        validate_id("handler", &action.handler, &['.', '-', '_'])?;
+        if action.views.is_empty() {
             return Err(format!(
-                "capabilities.resource_actions[`{}`].executor is required",
-                action.id
-            ));
-        };
-        let handler = match executor {
-            ActionExecutor::Builtin { handler } | ActionExecutor::Plugin { handler } => handler,
-        };
-        validate_id("executor.handler", handler, &['.', '-', '_'])?;
-        let runtime_matches = matches!(
-            (&manifest.runtime, executor),
-            (PluginRuntime::Builtin, ActionExecutor::Builtin { .. })
-                | (PluginRuntime::Extism { .. }, ActionExecutor::Plugin { .. })
-        );
-        if !runtime_matches {
-            return Err(format!(
-                "capabilities.resource_actions[`{}`].executor does not match runtime.type",
+                "capabilities.resource_actions[`{}`].views must not be empty",
                 action.id
             ));
         }
-        let output = action.output.as_ref().ok_or_else(|| {
-            format!(
-                "capabilities.resource_actions[`{}`].output is required",
-                action.id
-            )
-        })?;
-        if output.view.is_empty() {
-            return Err(format!(
-                "capabilities.resource_actions[`{}`].output.view must not be empty",
-                action.id
-            ));
-        }
-        for view in &output.view {
+        for view in &action.views {
             if !SUPPORTED_VIEWS.contains(&view.as_str()) {
                 return Err(format!(
                     "capabilities.resource_actions[`{}`] declares unsupported view `{view}`",
@@ -217,7 +250,7 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
                 ));
             }
         }
-        if output.view.iter().any(|view| view == "plugin_frame") && manifest.web.is_none() {
+        if action.views.iter().any(|view| view == "plugin_frame") && manifest.web.is_none() {
             return Err(format!(
                 "capabilities.resource_actions[`{}`] returns plugin_frame but plugin.web is missing",
                 action.id
@@ -254,6 +287,17 @@ fn validate_relative_path(field: &str, path: &std::path::Path) -> Result<(), Str
             .any(|component| matches!(component, std::path::Component::ParentDir))
     {
         return Err(format!("{field} must be a safe relative path"));
+    }
+    Ok(())
+}
+
+fn validate_digest(field: &str, value: &str) -> Result<(), String> {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(format!("{field} must be a lowercase SHA-256 digest"));
     }
     Ok(())
 }

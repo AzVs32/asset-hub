@@ -135,20 +135,20 @@ asset-plugin gen manifest
 ```
 
 This creates `manifest.json` without overwriting an existing file. Replace the `example.plugin`
-metadata, action, handler, matching rules, requirements, output, and permissions, then build the
+metadata, action, handler, matching rules, requirements, views, and permissions, then build the
 Wasm and optional Web bundle. The source template is
 `asset-plugin-api/templates/manifest.json`, so protocol template changes require no CLI code
-changes. Integrity fields are generated data; seal the finished artifacts:
+changes. Integrity data is generated; seal the finished artifacts:
 
 ```bash
 cargo run -p asset-apps --bin asset-plugin -- \
   seal path/to/plugin.json
 ```
 
-The command calculates `runtime.wasm_sha256`, replaces the complete `web.integrity` file map, runs
-the Manifest V2 contract validation, and atomically updates the JSON file. A draft manifest may omit
-both generated fields. Do not run `seal` during application startup: release or CI should instead
-verify the previously sealed package without modifying it:
+The command calculates the Wasm digest and complete Web asset map into a sibling
+`manifest.lock.json`, then runs Manifest V2 contract validation. Do not run `seal` during
+application startup: release or CI should instead verify the previously sealed package without
+modifying it:
 
 ```bash
 cargo run -p asset-apps --bin asset-plugin -- \

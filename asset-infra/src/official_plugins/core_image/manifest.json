@@ -27,24 +27,16 @@
       {
         "id": "thumbnail",
         "label": "Thumbnail",
-        "description": "Generate an image thumbnail.",
-        "executor": {
-          "type": "builtin",
-          "handler": "builtin.media.thumbnail"
-        },
+        "handler": "builtin.media.thumbnail",
         "applies_to": {
-          "kinds": ["core:image"],
-          "media_types": ["image/*"],
-          "extensions": [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".avif"]
+          "kinds": ["core:image"]
         },
         "access": "read",
         "requires": {
           "content": true,
           "content_delivery": "inline"
         },
-        "output": {
-          "view": ["media"]
-        },
+        "views": ["media"],
         "ui": {
           "group": "preview",
           "order": 40,

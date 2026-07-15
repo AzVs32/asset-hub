@@ -19,23 +19,15 @@
       {
         "id": "example.plugin.action",
         "label": "Example Action",
-        "description": "Replace this description with the action purpose.",
-        "executor": {
-          "type": "plugin",
-          "handler": "run"
-        },
+        "handler": "run",
         "applies_to": {
-          "kinds": ["core:file"],
-          "media_types": [],
-          "extensions": []
+          "kinds": ["core:file"]
         },
         "access": "read",
         "requires": {
           "content": false
         },
-        "output": {
-          "view": ["json"]
-        },
+        "views": ["json"],
         "ui": {
           "group": "inspect",
           "order": 100,

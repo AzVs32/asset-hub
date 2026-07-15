@@ -3,9 +3,10 @@ use crate::plugin_manifest::PluginCatalog;
 use asset_core::CoreError;
 use asset_core::domain::ResourceKind;
 use asset_core::port::{
-    ResourceActionDefinition, ResourceActionRegistry, ResourceKindDefinition, ResourceKindRegistry,
+    ResourceActionDefinition, ResourceActionRegistry, ResourceContentMatcher,
+    ResourceKindDefinition, ResourceKindRegistry,
 };
-use asset_plugin_api::{ResourceActionCapability, ResourceKindCapability};
+use asset_plugin_api::{PluginRuntime, ResourceActionCapability, ResourceKindCapability};
 use std::collections::{HashMap, HashSet};
 
 /// 默认内置资源类型注册表。
@@ -176,28 +177,40 @@ fn build_registries_with_catalog(
     let mut actions = Vec::new();
     for manifest in &official_manifests {
         for action in &manifest.manifest.capabilities.resource_actions {
+            let action_definition = action_definition_with_inherited_content(
+                &definitions,
+                action,
+                &manifest.manifest.runtime,
+            )?;
             push_action_definition(
                 &mut actions,
-                action.to_definition(),
+                action_definition,
                 format!("plugin:{}", manifest.manifest.plugin_id()),
             )?;
             extend_definitions_for_action(
                 &mut definitions,
                 action,
+                &manifest.manifest.runtime,
                 format!("plugin:{}", manifest.manifest.plugin_id()),
             )?;
         }
     }
     for manifest in &plugin_manifests {
         for action in &manifest.manifest.capabilities.resource_actions {
+            let action_definition = action_definition_with_inherited_content(
+                &definitions,
+                action,
+                &manifest.manifest.runtime,
+            )?;
             push_action_definition(
                 &mut actions,
-                action.to_definition(),
+                action_definition,
                 format!("plugin:{}", manifest.manifest.plugin_id()),
             )?;
             extend_definitions_for_action(
                 &mut definitions,
                 action,
+                &manifest.manifest.runtime,
                 format!("plugin:{}", manifest.manifest.plugin_id()),
             )?;
         }
@@ -340,18 +353,69 @@ fn extend_definition(
 fn extend_definitions_for_action(
     definitions: &mut [ResourceKindDefinition],
     action: &ResourceActionCapability,
+    runtime: &PluginRuntime,
     source: impl Into<String>,
 ) -> Result<(), CoreError> {
     let source = source.into();
     for kind in &action.applies_to.kinds {
+        let content = if action.applies_to.to_definition().content().is_empty() {
+            detect_for_kind(definitions, kind)?
+        } else {
+            ResourceContentMatcher::default()
+        };
         let extension = ResourceKindExtensionConfig {
             kind: kind.clone(),
-            content: asset_core::port::ResourceContentMatcher::default(),
-            actions: vec![action.to_definition()],
+            content,
+            actions: vec![action.to_definition(runtime)],
         };
         extend_definition(definitions, &extension, source.clone())?;
     }
     Ok(())
+}
+
+fn action_definition_with_inherited_content(
+    definitions: &[ResourceKindDefinition],
+    action: &ResourceActionCapability,
+    runtime: &PluginRuntime,
+) -> Result<ResourceActionDefinition, CoreError> {
+    let definition = action.to_definition(runtime);
+    if !definition.content_matcher().is_empty() || action.applies_to.kinds.is_empty() {
+        return Ok(definition);
+    }
+    Ok(definition.with_content_matcher(detect_for_kinds(definitions, &action.applies_to.kinds)?))
+}
+
+fn detect_for_kinds(
+    definitions: &[ResourceKindDefinition],
+    kinds: &[String],
+) -> Result<ResourceContentMatcher, CoreError> {
+    let mut mime_types = Vec::new();
+    let mut extensions = Vec::new();
+    for kind in kinds {
+        let detect = detect_for_kind(definitions, kind)?;
+        mime_types.extend(detect.mime_types().iter().cloned());
+        extensions.extend(detect.extensions().iter().cloned());
+    }
+    mime_types.sort();
+    mime_types.dedup();
+    extensions.sort();
+    extensions.dedup();
+    Ok(ResourceContentMatcher::new()
+        .with_mime_types(mime_types)
+        .with_extensions(extensions))
+}
+
+fn detect_for_kind(
+    definitions: &[ResourceKindDefinition],
+    kind: &str,
+) -> Result<ResourceContentMatcher, CoreError> {
+    definitions
+        .iter()
+        .find(|definition| definition.kind().as_str().eq_ignore_ascii_case(kind))
+        .map(|definition| definition.detect().clone())
+        .ok_or_else(|| {
+            CoreError::configuration(format!("resource action references unknown kind `{kind}`"))
+        })
 }
 
 fn push_action_definition(
@@ -653,15 +717,12 @@ mod tests {
                   {
                     "id": "mindustry.preview",
                     "label": "Preview",
-                    "executor": {
-                      "type": "builtin",
-                      "handler": "builtin.media.preview"
-                    },
+                    "handler": "builtin.media.preview",
                     "applies_to": {
                       "kinds": ["mindustry:mod"]
                     },
                     "access": "read",
-                    "output": { "view": ["media"] }
+                    "views": ["media"]
                   }
                 ]
               },
@@ -718,7 +779,6 @@ mod tests {
               "runtime": {
                 "type": "extism",
                 "wasm": "epub.wasm",
-                "wasm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
                 "wasi": false,
                 "plugin_api": "asset-hub.plugin-api@0.1"
               },
@@ -738,17 +798,12 @@ mod tests {
                   {
                     "id": "azvs.epub.render",
                     "label": "Read EPUB",
-                    "executor": {
-                      "type": "plugin",
-                      "handler": "render_epub"
-                    },
+                    "handler": "render_epub",
                     "applies_to": {
-                      "kinds": ["azvs:epub"],
-                      "media_types": ["application/epub+zip"],
-                      "extensions": [".epub"]
+                      "kinds": ["azvs:epub"]
                     },
                     "access": "read",
-                    "output": { "view": ["html"] }
+                    "views": ["html"]
                   }
                 ]
               },
@@ -768,6 +823,7 @@ mod tests {
             "#,
         )
         .unwrap();
+        write_empty_wasm_lock(&root, "epub");
 
         let registry = DefaultResourceKindRegistry::from_config(&KindRegistryConfig {
             definitions: Vec::new(),
@@ -809,27 +865,32 @@ mod tests {
               "runtime": {
                 "type": "extism",
                 "wasm": "mp4-tools.wasm",
-                "wasm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
                 "wasi": false,
                 "plugin_api": "asset-hub.plugin-api@0.1"
               },
               "capabilities": {
-                "resource_kinds": [],
+                "resource_kinds": [
+                  {
+                    "kind": "test:mp4",
+                    "parent": "core:video",
+                    "label": "MP4",
+                    "supports_content": true,
+                    "detect": {
+                      "mime_types": ["video/mp4"],
+                      "extensions": [".mp4"]
+                    }
+                  }
+                ],
                 "resource_actions": [
                   {
                     "id": "mp4-tools:inspect",
                     "label": "Inspect MP4",
-                    "executor": {
-                      "type": "plugin",
-                      "handler": "inspect_mp4"
-                    },
+                    "handler": "inspect_mp4",
                     "applies_to": {
-                      "kinds": ["core:video"],
-                      "media_types": ["video/mp4"],
-                      "extensions": [".mp4"]
+                      "kinds": ["test:mp4"]
                     },
                     "access": "read",
-                    "output": { "view": ["json"] }
+                    "views": ["json"]
                   }
                 ]
               },
@@ -849,6 +910,7 @@ mod tests {
             "#,
         )
         .unwrap();
+        write_empty_wasm_lock(&root, "mp4-tools");
 
         let registry = DefaultResourceKindRegistry::from_config(&KindRegistryConfig {
             definitions: Vec::new(),
@@ -856,7 +918,7 @@ mod tests {
         })
         .unwrap();
         let video = registry
-            .get(&ResourceKind::try_new("core:video").unwrap())
+            .get(&ResourceKind::try_new("test:mp4").unwrap())
             .unwrap();
         let action = video
             .actions()
@@ -910,15 +972,12 @@ mod tests {
                   {
                     "id": "preview",
                     "label": "Preview",
-                    "executor": {
-                      "type": "builtin",
-                      "handler": "builtin.media.preview"
-                    },
+                    "handler": "builtin.media.preview",
                     "applies_to": {
                       "kinds": ["core:image"]
                     },
                     "access": "read",
-                    "output": { "view": ["media"] }
+                    "views": ["media"]
                   }
                 ]
               },
@@ -952,6 +1011,22 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn write_empty_wasm_lock(root: &std::path::Path, plugin_id: &str) {
+        std::fs::write(
+            root.join("manifest.lock.json"),
+            format!(
+                r#"{{
+                  "manifest_version": 2,
+                  "plugin_id": "{plugin_id}",
+                  "runtime": {{
+                    "wasm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                  }}
+                }}"#
+            ),
+        )
+        .unwrap();
     }
 
     fn unique_temp_path(name: &str) -> PathBuf {

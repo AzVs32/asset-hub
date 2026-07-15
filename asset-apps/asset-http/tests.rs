@@ -204,8 +204,8 @@ async fn core_document_resource_exposes_download_only() {
         view_inline["applies_to"],
         json!({
             "kinds": ["core:image", "core:document", "core:video"],
-            "mime_types": ["image/*", "application/pdf", "video/*"],
-            "extensions": [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".avif", ".pdf", ".mp4", ".webm", ".mov", ".m4v", ".ogv"]
+            "mime_types": ["application/pdf"],
+            "extensions": [".pdf"]
         })
     );
 

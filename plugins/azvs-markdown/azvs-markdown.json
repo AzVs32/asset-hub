@@ -10,18 +10,11 @@
   "runtime": {
     "type": "extism",
     "wasm": "azvs-markdown.wasm",
-    "wasm_sha256": "3292ec387db8bca94773fa01fa66713f4be202ed77037d76fe395809236e6a4b",
     "wasi": true,
     "plugin_api": "asset-hub.plugin-api@0.1"
   },
   "web": {
-    "root": "web/dist",
-    "integrity": {
-      "index.html": "28b258989a1c4208889c572ccfa0f17765054531a93f0b3b3bed66498c88fe8a",
-      "viewer.css": "3f10616a22fd9612d21c6b4bdc9c7a693294a8adc7ee2697bd90d54138cd35e1",
-      "viewer.js": "59e9d931f6b4b19ad9bb5da50fade364f1c929cd336c951643eec59ff0329547",
-      "viewer.js.map": "d32ff96b605e67134ed032c3d3df48b565be5a63aa3485cfae6cacbff9459fdf"
-    }
+    "root": "web/dist"
   },
   "capabilities": {
     "resource_kinds": [
@@ -48,24 +41,10 @@
       {
         "id": "azvs.markdown.render",
         "label": "Read Markdown",
-        "description": "Parse Markdown into a platform-neutral document view.",
-        "executor": {
-          "type": "plugin",
-          "handler": "render_markdown"
-        },
+        "handler": "render_markdown",
         "applies_to": {
           "kinds": [
             "azvs:markdown"
-          ],
-          "media_types": [
-            "text/markdown",
-            "text/x-markdown"
-          ],
-          "extensions": [
-            ".md",
-            ".markdown",
-            ".mdown",
-            ".mkd"
           ]
         },
         "access": "read",
@@ -73,11 +52,9 @@
           "content": true,
           "content_delivery": "url"
         },
-        "output": {
-          "view": [
-            "plugin_frame"
-          ]
-        },
+        "views": [
+          "plugin_frame"
+        ],
         "ui": {
           "group": "open",
           "order": 60,
@@ -90,24 +67,10 @@
       {
         "id": "azvs.markdown.update",
         "label": "Edit Markdown",
-        "description": "Edit Markdown content and write it back to the resource.",
-        "executor": {
-          "type": "plugin",
-          "handler": "update_markdown"
-        },
+        "handler": "update_markdown",
         "applies_to": {
           "kinds": [
             "azvs:markdown"
-          ],
-          "media_types": [
-            "text/markdown",
-            "text/x-markdown"
-          ],
-          "extensions": [
-            ".md",
-            ".markdown",
-            ".mdown",
-            ".mkd"
           ]
         },
         "access": "write",
@@ -115,12 +78,10 @@
           "content": true,
           "content_delivery": "url"
         },
-        "output": {
-          "view": [
-            "plugin_frame",
-            "text"
-          ]
-        },
+        "views": [
+          "plugin_frame",
+          "text"
+        ],
         "ui": {
           "group": "edit",
           "order": 70,

@@ -10,18 +10,11 @@
   "runtime": {
     "type": "extism",
     "wasm": "azvs-epub.wasm",
-    "wasm_sha256": "45190c2b2c5efa874b43d8914dc90de1303188a14c1fc99004ea41ccb25fb327",
     "wasi": false,
     "plugin_api": "asset-hub.plugin-api@0.1"
   },
   "web": {
-    "root": "dist",
-    "integrity": {
-      "assets/index-CnXE-Ehn.css": "629a04b00783d5b7c5c0425bcbed6ab8995f44a20a5214080069290b90d766b3",
-      "assets/index-DbHrrkvn.js": "e558dc05813804701440abdc507db46c6a4a112cbee43c27751d4e04d07a9e15",
-      "assets/index-DbHrrkvn.js.map": "9f3119618c131240d2ca67ffbfff6760fcaddb8d2e95daf26b1b7ecdeb7c9edc",
-      "index.html": "24d9febe2a5b17d4da6ab2e96db78090214660e45a63acb59a5330274f4a4bae"
-    }
+    "root": "dist"
   },
   "capabilities": {
     "resource_kinds": [
@@ -44,20 +37,10 @@
       {
         "id": "azvs.epub.render",
         "label": "Read EPUB",
-        "description": "Render EPUB content with AzVs plugin.",
-        "executor": {
-          "type": "plugin",
-          "handler": "render_epub"
-        },
+        "handler": "render_epub",
         "applies_to": {
           "kinds": [
             "azvs:epub"
-          ],
-          "media_types": [
-            "application/epub+zip"
-          ],
-          "extensions": [
-            ".epub"
           ]
         },
         "access": "read",
@@ -65,12 +48,10 @@
           "content": true,
           "content_delivery": "url"
         },
-        "output": {
-          "view": [
-            "plugin_frame",
-            "json"
-          ]
-        },
+        "views": [
+          "plugin_frame",
+          "json"
+        ],
         "ui": {
           "group": "open",
           "order": 70,
@@ -83,20 +64,10 @@
       {
         "id": "azvs.epub.cover",
         "label": "EPUB Cover",
-        "description": "Extract the EPUB cover for resource list previews.",
-        "executor": {
-          "type": "plugin",
-          "handler": "render_epub_cover"
-        },
+        "handler": "render_epub_cover",
         "applies_to": {
           "kinds": [
             "azvs:epub"
-          ],
-          "media_types": [
-            "application/epub+zip"
-          ],
-          "extensions": [
-            ".epub"
           ]
         },
         "access": "read",
@@ -104,12 +75,10 @@
           "content": true,
           "content_delivery": "url"
         },
-        "output": {
-          "view": [
-            "media",
-            "json"
-          ]
-        },
+        "views": [
+          "media",
+          "json"
+        ],
         "ui": {
           "group": "preview",
           "order": 10,

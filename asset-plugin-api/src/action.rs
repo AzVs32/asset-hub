@@ -369,6 +369,11 @@ impl ResourceActionAppliesTo {
         self
     }
 
+    pub fn with_content_matcher(mut self, content: ResourceContentMatcher) -> Self {
+        self.content = content;
+        self
+    }
+
     pub fn kinds(&self) -> &[String] {
         &self.kinds
     }

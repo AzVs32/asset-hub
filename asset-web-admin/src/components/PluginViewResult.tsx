@@ -3,17 +3,17 @@ import { apiBase } from "../api";
 import type { PluginActionOutput, PluginView } from "../types";
 import { primaryButtonClass } from "./ui";
 
-export function PluginActionResult({ output }: { output: PluginActionOutput }) {
-  return <PluginViewResult view={output.view} title={output.action} resourceId={output.resource_id} action={output.action} />;
+export function PluginActionResult({ output, large = false }: { output: PluginActionOutput; large?: boolean }) {
+  return <PluginViewResult view={output.view} title={output.action} resourceId={output.resource_id} action={output.action} large={large} />;
 }
 
-export function PluginViewResult({ view, title, resourceId, action }: { view: PluginView; title: string; resourceId?: string; action?: string }) {
+export function PluginViewResult({ view, title, resourceId, action, large = false }: { view: PluginView; title: string; resourceId?: string; action?: string; large?: boolean }) {
   if (view.view === "html") {
     return <iframe className="block h-[72vh] max-h-180 w-full border-0 bg-white" sandbox="" title={title} srcDoc={htmlWithoutNetwork(view.html)} />;
   }
 
   if (view.view === "plugin_frame") {
-    return <PluginFrame view={view} title={title} resourceId={resourceId} action={action} />;
+    return <PluginFrame view={view} title={title} resourceId={resourceId} action={action} large={large} />;
   }
 
   if (view.view === "media") {
@@ -104,11 +104,13 @@ function PluginFrame({
   title,
   resourceId,
   action,
+  large = false,
 }: {
   view: Extract<PluginView, { view: "plugin_frame" }>;
   title: string;
   resourceId?: string;
   action?: string;
+  large?: boolean;
 }) {
   const ref = React.useRef<HTMLIFrameElement | null>(null);
   const source = pluginFrameUrl(view.url);
@@ -173,7 +175,7 @@ function PluginFrame({
   return (
     <iframe
       ref={ref}
-      className="block h-[72vh] max-h-180 w-full border-0 bg-white"
+      className={large ? "block h-[calc(100vh-8.5rem)] min-h-120 w-full border-0 bg-white" : "block h-[72vh] max-h-180 w-full border-0 bg-white"}
       sandbox="allow-scripts"
       title={view.title || title}
       src={source}
@@ -181,7 +183,7 @@ function PluginFrame({
   );
 }
 
-function pluginFrameUrl(value: string): string | null {
+export function pluginFrameUrl(value: string): string | null {
   if (!/^\/plugins\/[a-z0-9._-]+\/(?!.*(?:^|\/)\.\.(?:\/|$))/.test(value)) return null;
   return `${apiBase}${value}`;
 }

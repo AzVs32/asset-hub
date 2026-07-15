@@ -2,13 +2,14 @@ use crate::action::builtin;
 use crate::config::KindRegistryConfig;
 use crate::official_plugins;
 use asset_core::CoreError;
-use asset_plugin_api::{ActionExecutor, PluginManifest, PluginRuntime};
+use asset_plugin_api::{PluginManifest, PluginManifestLock, PluginRuntime};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 const MAX_PLUGIN_MANIFEST_BYTES: u64 = 1024 * 1024;
+const MAX_PLUGIN_LOCK_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_PLUGIN_WASM_BYTES: usize = 64 * 1024 * 1024;
 const MAX_PLUGIN_WEB_BYTES: usize = 64 * 1024 * 1024;
 
@@ -103,6 +104,54 @@ pub(crate) fn load_plugin_manifest_file(path: &Path) -> Result<PluginManifest, C
     Ok(manifest)
 }
 
+fn load_plugin_manifest_lock_file(
+    manifest_path: &Path,
+    manifest: &PluginManifest,
+) -> Result<PluginManifestLock, CoreError> {
+    let path = manifest_lock_path(manifest_path);
+    let metadata = std::fs::metadata(&path).map_err(|error| {
+        CoreError::configuration(format!(
+            "inspect plugin manifest lock `{}`: {error}",
+            path.display()
+        ))
+    })?;
+    if metadata.len() > MAX_PLUGIN_LOCK_BYTES {
+        return Err(CoreError::configuration(format!(
+            "plugin manifest lock `{}` exceeds the {MAX_PLUGIN_LOCK_BYTES} byte limit",
+            path.display()
+        )));
+    }
+    let content = std::fs::read_to_string(&path).map_err(|error| {
+        CoreError::configuration(format!(
+            "read plugin manifest lock `{}`: {error}",
+            path.display()
+        ))
+    })?;
+    let lock: PluginManifestLock = serde_json::from_str(&content).map_err(|error| {
+        CoreError::configuration(format!(
+            "parse plugin manifest lock `{}`: {error}",
+            path.display()
+        ))
+    })?;
+    lock.validate_for(manifest).map_err(|error| {
+        CoreError::configuration(format!(
+            "invalid plugin manifest lock `{}`: {error}",
+            path.display()
+        ))
+    })?;
+    Ok(lock)
+}
+
+fn manifest_lock_path(path: &Path) -> PathBuf {
+    path.parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("manifest.lock.json")
+}
+
+fn manifest_requires_lock(manifest: &PluginManifest) -> bool {
+    matches!(manifest.runtime, PluginRuntime::Extism { .. }) || manifest.web.is_some()
+}
+
 #[derive(Debug, Default)]
 struct LoadedArtifacts {
     wasm: Option<Arc<[u8]>>,
@@ -120,19 +169,25 @@ fn validate_loaded_manifest(
         CoreError::configuration(format!("invalid plugin manifest `{source}`: {error}"))
     })?;
 
-    for action in &manifest.capabilities.resource_actions {
-        if let Some(ActionExecutor::Builtin { handler }) = &action.executor
-            && !builtin::is_builtin_handler(Some(handler))
-        {
-            return Err(CoreError::configuration(format!(
-                "plugin `{}` declares unknown builtin handler `{handler}`",
-                manifest.plugin_id()
-            )));
+    if matches!(manifest.runtime, PluginRuntime::Builtin) {
+        for action in &manifest.capabilities.resource_actions {
+            let handler = action.handler();
+            if !builtin::is_builtin_handler(Some(handler)) {
+                return Err(CoreError::configuration(format!(
+                    "plugin `{}` declares unknown builtin handler `{handler}`",
+                    manifest.plugin_id()
+                )));
+            }
         }
     }
 
     let Some(manifest_path) = manifest_path else {
         return Ok(LoadedArtifacts::default());
+    };
+    let lock = if manifest_requires_lock(manifest) {
+        Some(load_plugin_manifest_lock_file(manifest_path, manifest)?)
+    } else {
+        None
     };
     let mut artifacts = LoadedArtifacts::default();
     let resolve = |configured: &Path| {
@@ -145,10 +200,18 @@ fn validate_loaded_manifest(
                 .join(configured)
         }
     };
-    if let PluginRuntime::Extism {
-        wasm, wasm_sha256, ..
-    } = &manifest.runtime
-    {
+    if let PluginRuntime::Extism { wasm, .. } = &manifest.runtime {
+        let wasm_sha256 = lock
+            .as_ref()
+            .and_then(|lock| lock.runtime.as_ref())
+            .ok_or_else(|| {
+                CoreError::configuration(format!(
+                    "plugin `{}` manifest.lock.json missing runtime.wasm_sha256",
+                    manifest.plugin_id()
+                ))
+            })?
+            .wasm_sha256
+            .as_str();
         let wasm_path = resolve(wasm);
         let metadata = std::fs::symlink_metadata(&wasm_path).map_err(|error| {
             CoreError::configuration(format!(
@@ -178,7 +241,7 @@ fn validate_loaded_manifest(
             )));
         }
         let actual = format!("{:x}", Sha256::digest(&bytes));
-        if &actual != wasm_sha256 {
+        if actual != wasm_sha256 {
             return Err(CoreError::configuration(format!(
                 "plugin `{}` Wasm digest mismatch: expected `{wasm_sha256}`, got `{actual}`",
                 manifest.plugin_id()
@@ -187,6 +250,16 @@ fn validate_loaded_manifest(
         artifacts.wasm = Some(Arc::from(bytes));
     }
     if let Some(web) = &manifest.web {
+        let integrity = &lock
+            .as_ref()
+            .and_then(|lock| lock.web.as_ref())
+            .ok_or_else(|| {
+                CoreError::configuration(format!(
+                    "plugin `{}` manifest.lock.json missing web.integrity",
+                    manifest.plugin_id()
+                ))
+            })?
+            .integrity;
         let root = resolve(&web.root);
         if !root.is_dir() {
             return Err(CoreError::configuration(format!(
@@ -198,7 +271,7 @@ fn validate_loaded_manifest(
         let mut actual_paths = HashSet::new();
         let mut total_web_bytes = 0usize;
         collect_web_files(&root, &root, &mut actual_paths)?;
-        for (relative_path, expected) in &web.integrity {
+        for (relative_path, expected) in integrity {
             let path = root.join(relative_path);
             let bytes = std::fs::read(&path).map_err(|error| {
                 CoreError::configuration(format!(
@@ -348,14 +421,12 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("plugin.wasm"), b"actual").unwrap();
         let path = root.join("plugin.json");
-        std::fs::write(
-            &path,
-            minimal_extism_manifest(
-                "digest.plugin",
-                "0000000000000000000000000000000000000000000000000000000000000000",
-            ),
-        )
-        .unwrap();
+        std::fs::write(&path, minimal_extism_manifest("digest.plugin")).unwrap();
+        write_wasm_lock(
+            &root,
+            "digest.plugin",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        );
 
         let error = PluginCatalog::load(&KindRegistryConfig {
             definitions: Vec::new(),
@@ -375,7 +446,8 @@ mod tests {
         std::fs::write(root.join("plugin.wasm"), original).unwrap();
         let digest = format!("{:x}", Sha256::digest(original));
         let path = root.join("plugin.json");
-        std::fs::write(&path, minimal_extism_manifest("snapshot.plugin", &digest)).unwrap();
+        std::fs::write(&path, minimal_extism_manifest("snapshot.plugin")).unwrap();
+        write_wasm_lock(&root, "snapshot.plugin", &digest);
 
         let catalog = PluginCatalog::load(&KindRegistryConfig {
             definitions: Vec::new(),
@@ -410,13 +482,13 @@ mod tests {
         )
     }
 
-    fn minimal_extism_manifest(id: &str, digest: &str) -> String {
+    fn minimal_extism_manifest(id: &str) -> String {
         format!(
             r#"{{
               "manifest_version": 2,
               "plugin": {{"id": "{id}", "name": "Test", "version": "0.1.0", "publisher": "test"}},
               "runtime": {{
-                "type": "extism", "wasm": "plugin.wasm", "wasm_sha256": "{digest}",
+                "type": "extism", "wasm": "plugin.wasm",
                 "wasi": false, "plugin_api": "asset-hub.plugin-api@0.1"
               }},
               "capabilities": {{"resource_kinds": [], "resource_actions": []}},
@@ -428,6 +500,22 @@ mod tests {
               }}
             }}"#
         )
+    }
+
+    fn write_wasm_lock(root: &Path, plugin_id: &str, digest: &str) {
+        std::fs::write(
+            root.join("manifest.lock.json"),
+            format!(
+                r#"{{
+                  "manifest_version": 2,
+                  "plugin_id": "{plugin_id}",
+                  "runtime": {{
+                    "wasm_sha256": "{digest}"
+                  }}
+                }}"#
+            ),
+        )
+        .unwrap();
     }
 
     fn unique_temp_path(name: &str) -> std::path::PathBuf {

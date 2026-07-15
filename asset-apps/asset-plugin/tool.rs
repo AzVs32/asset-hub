@@ -1,6 +1,6 @@
 use asset_plugin_api::{
-    MANIFEST_TEMPLATE, PluginCapabilities, PluginManifest, PluginMetadata, PluginPermissions,
-    PluginRuntime, PluginWeb,
+    MANIFEST_TEMPLATE, PluginCapabilities, PluginManifest, PluginManifestLock, PluginMetadata,
+    PluginPermissions, PluginRuntime, PluginRuntimeLock, PluginWeb, PluginWebLock,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -53,8 +53,6 @@ enum DraftRuntime {
     Builtin,
     Extism {
         wasm: PathBuf,
-        #[serde(default, rename = "wasm_sha256")]
-        _wasm_sha256: Option<String>,
         #[serde(default)]
         wasi: bool,
         plugin_api: String,
@@ -65,8 +63,6 @@ enum DraftRuntime {
 #[serde(deny_unknown_fields)]
 struct DraftWeb {
     root: PathBuf,
-    #[serde(default, rename = "integrity")]
-    _integrity: BTreeMap<PathBuf, String>,
 }
 
 fn manifest_for_draft_validation(draft: DraftManifest) -> PluginManifest {
@@ -79,15 +75,11 @@ fn manifest_for_draft_validation(draft: DraftManifest) -> PluginManifest {
             ..
         } => PluginRuntime::Extism {
             wasm,
-            wasm_sha256: "0".repeat(64),
             wasi,
             plugin_api,
         },
     };
-    let web = draft.web.map(|web| PluginWeb {
-        root: web.root,
-        integrity: BTreeMap::from([(PathBuf::from("index.html"), "0".repeat(64))]),
-    });
+    let web = draft.web.map(|web| PluginWeb { root: web.root });
     PluginManifest {
         manifest_version: draft.manifest_version,
         plugin: draft.plugin,
@@ -99,105 +91,126 @@ fn manifest_for_draft_validation(draft: DraftManifest) -> PluginManifest {
 }
 
 pub fn seal_manifest(path: &Path) -> Result<PluginManifest> {
-    let mut document: serde_json::Value = read_json(path)?;
-    let draft: DraftManifest = serde_json::from_value(document.clone())
-        .map_err(|error| ToolError(format!("parse `{}`: {error}", path.display())))?;
-    let base = manifest_base(path);
-    let runtime = match draft.runtime {
-        DraftRuntime::Builtin => PluginRuntime::Builtin,
-        DraftRuntime::Extism {
-            wasm,
-            wasi,
-            plugin_api,
-            ..
-        } => {
-            let wasm_sha256 = digest_file(&resolve_artifact(&base, "runtime.wasm", &wasm)?)?;
-            PluginRuntime::Extism {
-                wasm,
-                wasm_sha256,
-                wasi,
-                plugin_api,
-            }
-        }
-    };
-    let web = draft
-        .web
-        .map(|web| {
-            let root = resolve_artifact(&base, "web.root", &web.root)?;
-            let integrity = web_integrity(&root)?;
-            Ok(PluginWeb {
-                root: web.root,
-                integrity,
-            })
-        })
-        .transpose()?;
-    let manifest = PluginManifest {
-        manifest_version: draft.manifest_version,
-        plugin: draft.plugin,
-        runtime,
-        web,
-        capabilities: draft.capabilities,
-        permissions: draft.permissions,
-    };
+    let manifest: PluginManifest = read_json(path)?;
     validate_contract(&manifest)?;
-    if let PluginRuntime::Extism { wasm_sha256, .. } = &manifest.runtime {
-        document["runtime"]["wasm_sha256"] = serde_json::Value::String(wasm_sha256.clone());
-    }
-    if let Some(web) = &manifest.web {
-        document["web"]["integrity"] = serde_json::to_value(&web.integrity)
-            .map_err(|error| ToolError(format!("encode Web integrity: {error}")))?;
-    }
-    write_json_atomically(path, &document)?;
+    let lock = lock_for_manifest(&manifest, path)?;
+    validate_lock(&manifest, &lock)?;
+    write_json_atomically(&manifest_lock_path(path), &lock)?;
     Ok(manifest)
 }
 
 pub fn verify_manifest(path: &Path) -> Result<PluginManifest> {
     let manifest: PluginManifest = read_json(path)?;
     validate_contract(&manifest)?;
-    verify_wasm(&manifest, path)?;
-    verify_web(&manifest, path)?;
+    let lock = read_required_lock(&manifest, path)?;
+    verify_wasm(&manifest, lock.as_ref(), path)?;
+    verify_web(&manifest, lock.as_ref(), path)?;
     Ok(manifest)
 }
 
 pub fn verify_wasm_manifest(path: &Path) -> Result<PluginManifest> {
     let manifest: PluginManifest = read_json(path)?;
     validate_contract(&manifest)?;
-    verify_wasm(&manifest, path)?;
+    let lock = read_required_lock(&manifest, path)?;
+    verify_wasm(&manifest, lock.as_ref(), path)?;
     Ok(manifest)
 }
 
 pub fn verify_web_manifest(path: &Path) -> Result<PluginManifest> {
     let manifest: PluginManifest = read_json(path)?;
     validate_contract(&manifest)?;
-    verify_web(&manifest, path)?;
+    let lock = read_required_lock(&manifest, path)?;
+    verify_web(&manifest, lock.as_ref(), path)?;
     Ok(manifest)
 }
 
-fn verify_wasm(manifest: &PluginManifest, path: &Path) -> Result<()> {
+fn lock_for_manifest(manifest: &PluginManifest, path: &Path) -> Result<PluginManifestLock> {
     let base = manifest_base(path);
-    if let PluginRuntime::Extism {
-        wasm, wasm_sha256, ..
-    } = &manifest.runtime
-    {
+    let runtime = match &manifest.runtime {
+        PluginRuntime::Builtin => None,
+        PluginRuntime::Extism { wasm, .. } => Some(PluginRuntimeLock {
+            wasm_sha256: digest_file(&resolve_artifact(&base, "runtime.wasm", wasm)?)?,
+        }),
+    };
+    let web = manifest
+        .web
+        .as_ref()
+        .map(|web| {
+            let root = resolve_artifact(&base, "web.root", &web.root)?;
+            Ok(PluginWebLock {
+                integrity: web_integrity(&root)?,
+            })
+        })
+        .transpose()?;
+    Ok(PluginManifestLock {
+        manifest_version: manifest.manifest_version,
+        plugin_id: manifest.plugin_id().to_string(),
+        runtime,
+        web,
+    })
+}
+
+fn verify_wasm(
+    manifest: &PluginManifest,
+    lock: Option<&PluginManifestLock>,
+    path: &Path,
+) -> Result<()> {
+    let base = manifest_base(path);
+    if let PluginRuntime::Extism { wasm, .. } = &manifest.runtime {
+        let expected = lock
+            .and_then(|lock| lock.runtime.as_ref())
+            .ok_or_else(|| ToolError("manifest.lock.json runtime.wasm_sha256 is required".into()))?
+            .wasm_sha256
+            .as_str();
         let actual = digest_file(&resolve_artifact(&base, "runtime.wasm", wasm)?)?;
-        if &actual != wasm_sha256 {
+        if actual != expected {
             return Err(ToolError(format!(
-                "Wasm digest mismatch: manifest={wasm_sha256} actual={actual}"
+                "Wasm digest mismatch: manifest.lock.json={expected} actual={actual}"
             )));
         }
     }
     Ok(())
 }
 
-fn verify_web(manifest: &PluginManifest, path: &Path) -> Result<()> {
+fn verify_web(
+    manifest: &PluginManifest,
+    lock: Option<&PluginManifestLock>,
+    path: &Path,
+) -> Result<()> {
     let base = manifest_base(path);
     if let Some(web) = &manifest.web {
+        let expected = &lock
+            .and_then(|lock| lock.web.as_ref())
+            .ok_or_else(|| ToolError("manifest.lock.json web.integrity is required".into()))?
+            .integrity;
         let actual = web_integrity(&resolve_artifact(&base, "web.root", &web.root)?)?;
-        if actual != web.integrity {
-            return Err(ToolError(web_integrity_difference(&web.integrity, &actual)));
+        if &actual != expected {
+            return Err(ToolError(web_integrity_difference(expected, &actual)));
         }
     }
     Ok(())
+}
+
+fn read_required_lock(
+    manifest: &PluginManifest,
+    path: &Path,
+) -> Result<Option<PluginManifestLock>> {
+    if !manifest_requires_lock(manifest) {
+        return Ok(None);
+    }
+    let lock_path = manifest_lock_path(path);
+    let lock: PluginManifestLock = read_json(&lock_path)?;
+    validate_lock(manifest, &lock)?;
+    Ok(Some(lock))
+}
+
+fn validate_lock(manifest: &PluginManifest, lock: &PluginManifestLock) -> Result<()> {
+    lock.validate_for(manifest)
+        .map_err(|error| ToolError(format!("invalid manifest.lock.json: {error}")))
+}
+
+fn manifest_requires_lock(manifest: &PluginManifest) -> bool {
+    matches!(manifest.runtime, PluginRuntime::Extism { .. }) || manifest.web.is_some()
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
@@ -217,6 +230,10 @@ fn manifest_base(path: &Path) -> PathBuf {
     path.parent()
         .unwrap_or_else(|| Path::new("."))
         .to_path_buf()
+}
+
+fn manifest_lock_path(path: &Path) -> PathBuf {
+    manifest_base(path).join("manifest.lock.json")
 }
 
 fn resolve_artifact(base: &Path, field: &str, path: &Path) -> Result<PathBuf> {
@@ -321,20 +338,22 @@ fn write_json_atomically(path: &Path, value: &impl Serialize) -> Result<()> {
         .ok_or_else(|| ToolError(format!("invalid manifest path `{}`", path.display())))?;
     let temporary = path.with_file_name(format!(".{file_name}.{}.tmp", std::process::id()));
     let permissions = std::fs::metadata(path)
-        .map_err(|error| ToolError(format!("inspect `{}`: {error}", path.display())))?
-        .permissions();
+        .map(|metadata| metadata.permissions())
+        .ok();
     let write_result = (|| -> Result<()> {
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&temporary)
             .map_err(|error| ToolError(format!("create `{}`: {error}", temporary.display())))?;
-        file.set_permissions(permissions).map_err(|error| {
-            ToolError(format!(
-                "set permissions on `{}`: {error}",
-                temporary.display()
-            ))
-        })?;
+        if let Some(permissions) = permissions {
+            file.set_permissions(permissions).map_err(|error| {
+                ToolError(format!(
+                    "set permissions on `{}`: {error}",
+                    temporary.display()
+                ))
+            })?;
+        }
         file.write_all(&bytes)
             .and_then(|_| file.sync_all())
             .map_err(|error| ToolError(format!("write `{}`: {error}", temporary.display())))?;
@@ -387,13 +406,19 @@ mod tests {
         seal_manifest(&manifest_path).unwrap();
         verify_manifest(&manifest_path).unwrap();
 
-        let PluginRuntime::Extism { wasm_sha256, .. } = sealed.runtime else {
+        let PluginRuntime::Extism { .. } = sealed.runtime else {
             panic!("expected Extism runtime");
         };
-        assert_eq!(wasm_sha256, digest_file(&root.join("plugin.wasm")).unwrap());
-        assert_eq!(sealed.web.unwrap().integrity.len(), 2);
+        assert!(sealed.web.is_some());
         let document: serde_json::Value = read_json(&manifest_path).unwrap();
-        assert!(document["runtime"].get("wasm_sha256").is_some());
+        let lock: PluginManifestLock = read_json(&manifest_lock_path(&manifest_path)).unwrap();
+        assert_eq!(
+            lock.runtime.unwrap().wasm_sha256,
+            digest_file(&root.join("plugin.wasm")).unwrap()
+        );
+        assert_eq!(lock.web.unwrap().integrity.len(), 2);
+        assert!(document["runtime"].get("wasm_sha256").is_none());
+        assert!(document["web"].get("integrity").is_none());
         assert!(document["runtime"].get("wasi").is_none());
         assert!(document["plugin"].get("description").is_none());
         let _ = std::fs::remove_dir_all(root);
@@ -417,7 +442,7 @@ mod tests {
         assert_eq!(document["runtime"]["wasm"], "dist/plugin.wasm");
         assert!(document["runtime"].get("wasm_sha256").is_none());
         assert_eq!(
-            document["capabilities"]["resource_actions"][0]["executor"]["handler"],
+            document["capabilities"]["resource_actions"][0]["handler"],
             "run"
         );
         assert!(generate_manifest(&path).is_err());

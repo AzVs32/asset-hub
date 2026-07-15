@@ -1,3 +1,4 @@
+use crate::PluginRuntime;
 use crate::{
     ResourceActionAccess, ResourceActionAppliesTo, ResourceActionContentDelivery,
     ResourceActionDefinition, ResourceActionExecutorKind, ResourceActionOutputContract,
@@ -42,35 +43,30 @@ impl Default for ResourceKindCapability {
 pub struct ResourceActionCapability {
     pub id: String,
     pub label: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub executor: Option<ActionExecutor>,
+    pub handler: String,
     #[serde(default)]
     pub applies_to: ActionAppliesTo,
     #[serde(default)]
     pub access: ManifestActionAccess,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requires: Option<ActionRequirements>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output: Option<ActionOutputContract>,
+    pub views: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ui: Option<ActionUi>,
 }
 
 impl ResourceActionCapability {
-    pub fn to_definition(&self) -> ResourceActionDefinition {
+    pub fn to_definition(&self, runtime: &PluginRuntime) -> ResourceActionDefinition {
         let mut definition = ResourceActionDefinition::new(self.id.clone(), self.label.clone())
-            .with_description(self.description.clone())
+            .with_handler(self.handler.clone())
+            .with_executor(self.executor_kind(runtime))
             .with_access(self.access.to_resource_action_access())
-            .with_applies_to(self.applies_to.to_definition());
+            .with_applies_to(self.applies_to.to_definition())
+            .with_output(ResourceActionOutputContract {
+                view: self.views.clone(),
+            });
         if let Some(requires) = &self.requires {
             definition = definition.with_requirements(requires.to_definition());
-        }
-        if let Some(output) = &self.output {
-            definition = definition.with_output(ResourceActionOutputContract {
-                view: output.view.clone(),
-            });
         }
         if let Some(ui) = &self.ui {
             definition = definition.with_ui(ResourceActionUi {
@@ -79,42 +75,19 @@ impl ResourceActionCapability {
                 locations: ui.locations.clone(),
             });
         }
-        if let Some(handler) = self.handler() {
-            definition = definition.with_handler(handler);
-        }
-        definition = definition.with_executor(self.executor_kind());
         definition
     }
 
-    pub fn executor_kind(&self) -> ResourceActionExecutorKind {
-        match &self.executor {
-            Some(ActionExecutor::Plugin { .. }) => ResourceActionExecutorKind::Plugin,
-            _ => ResourceActionExecutorKind::Builtin,
+    pub fn executor_kind(&self, runtime: &PluginRuntime) -> ResourceActionExecutorKind {
+        match runtime {
+            PluginRuntime::Builtin => ResourceActionExecutorKind::Builtin,
+            PluginRuntime::Extism { .. } => ResourceActionExecutorKind::Plugin,
         }
     }
 
-    pub fn handler(&self) -> Option<&str> {
-        match &self.executor {
-            Some(ActionExecutor::Builtin { handler })
-            | Some(ActionExecutor::Plugin { handler }) => Some(handler.as_str()),
-            _ => None,
-        }
+    pub fn handler(&self) -> &str {
+        self.handler.as_str()
     }
-
-    pub fn plugin_handler(&self) -> Option<&str> {
-        match &self.executor {
-            Some(ActionExecutor::Plugin { handler }) => Some(handler.as_str()),
-            _ => None,
-        }
-    }
-}
-
-/// Action executor declaration.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-pub enum ActionExecutor {
-    Builtin { handler: String },
-    Plugin { handler: String },
 }
 
 /// Manifest-level action access declaration.
@@ -206,13 +179,6 @@ mod tests {
 
         assert!(result.is_err());
     }
-}
-
-/// Declared output view families for an action.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct ActionOutputContract {
-    pub view: Vec<String>,
 }
 
 /// Optional UI placement hints for host applications.
