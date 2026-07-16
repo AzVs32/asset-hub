@@ -73,7 +73,7 @@ impl<'a> ResourceCommandService<'a> {
             query = query.with_kinds(self.service.kind_registry.descendants(&kind));
         }
 
-        self.service.repository.list(&query).await
+        self.service.query.list(&query).await
     }
 
     /// 列出指定父目录下的直接子目录。
@@ -81,7 +81,7 @@ impl<'a> ResourceCommandService<'a> {
         &self,
         parent: &ResourceDirectory,
     ) -> Result<Vec<ResourceDirectory>, CoreError> {
-        self.service.repository.list_directories(parent).await
+        self.service.query.list_directories(parent).await
     }
 
     /// 在指定父目录下创建一个可独立存在的逻辑目录。

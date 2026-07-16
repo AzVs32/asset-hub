@@ -3,7 +3,7 @@ use asset_core::domain::{
     Checksum, ChecksumKind, Resource, ResourceContent, ResourceDirectory, ResourceMetadata,
     ResourceStatus,
 };
-use asset_core::port::{ResourceActionOutput, ResourceKindDefinition};
+use asset_core::port::{ResourceActionOutput, ResourceKindDefinition, StoragePrefix};
 use asset_core::service::{ReadableResource, ResourceActions};
 use asset_plugin_api::{
     ResourceActionAccess, ResourceActionContentDelivery, ResourceActionDefinition,
@@ -158,17 +158,18 @@ pub(crate) struct UploadResourceContentStreamQuery {
     pub(crate) sha256: Option<String>,
 }
 
-/// 扫描本地对象存储目录请求。
+/// 扫描对象存储前缀请求。
 #[derive(Debug, Default, Deserialize, ToSchema)]
 #[schema(example = json!({
-    "directory": "uploads",
+    "prefix": "uploads",
     "sha256": true
 }))]
 pub(crate) struct ScanStorageRequest {
-    /// 可选扫描子目录；未提供时扫描整个对象存储根目录。
+    /// 可选对象键前缀；未提供时扫描整个对象存储根命名空间。
     #[serde(default)]
     #[schema(value_type = String)]
-    pub(crate) directory: ResourceDirectory,
+    #[serde(alias = "directory")]
+    pub(crate) prefix: StoragePrefix,
     /// 是否计算并保存 SHA-256。默认开启。
     pub(crate) sha256: Option<bool>,
 }
@@ -176,14 +177,15 @@ pub(crate) struct ScanStorageRequest {
 /// 审计对象存储与资源数据库一致性的请求。
 #[derive(Debug, Default, Deserialize, ToSchema)]
 #[schema(example = json!({
-    "directory": "",
+    "prefix": "",
     "sha256": true
 }))]
 pub(crate) struct AuditStorageRequest {
-    /// 可选审计子目录；未提供时审计整个对象存储根目录。
+    /// 可选对象键前缀；未提供时审计整个对象存储根命名空间。
     #[serde(default)]
     #[schema(value_type = String)]
-    pub(crate) directory: ResourceDirectory,
+    #[serde(alias = "directory")]
+    pub(crate) prefix: StoragePrefix,
     /// 是否计算并对比 SHA-256。默认开启。
     pub(crate) sha256: Option<bool>,
 }
@@ -244,6 +246,7 @@ impl ResourceKindResponse {
     pub(crate) fn from_definition(
         definition: &ResourceKindDefinition,
         registry: &dyn asset_core::port::ResourceKindRegistry,
+        service: &asset_core::service::ResourceService,
     ) -> Self {
         Self {
             kind: definition.kind().as_str().to_string(),
@@ -260,8 +263,8 @@ impl ResourceKindResponse {
                 mime_types: definition.detect().mime_types().to_vec(),
                 extensions: definition.detect().extensions().to_vec(),
             }),
-            actions: registry
-                .actions_for_kind(definition.kind())
+            actions: service
+                .describe_kind_actions(definition.kind())
                 .iter()
                 .map(ResourceActionDefinitionResponse::from)
                 .collect(),
@@ -553,9 +556,9 @@ pub(crate) struct DirectoryListingResponse {
 /// 扫描本地对象存储目录响应。
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct ScanStorageResponse {
-    /// 本次扫描覆盖的对象存储目录。
+    /// 本次扫描覆盖的对象存储前缀。字段名为兼容旧客户端而保留。
     #[schema(value_type = String)]
-    pub(crate) scanned_directory: ResourceDirectory,
+    pub(crate) scanned_directory: StoragePrefix,
     /// 扫描到的普通文件数量。
     pub(crate) scanned: u64,
     /// 新导入的资源数量。
@@ -580,9 +583,9 @@ pub(crate) struct ScanStorageErrorResponse {
 /// 对象存储一致性审计响应。
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct AuditStorageResponse {
-    /// 本次审计覆盖的对象存储目录。
+    /// 本次审计覆盖的对象存储前缀。字段名为兼容旧客户端而保留。
     #[schema(value_type = String)]
-    pub(crate) audited_directory: ResourceDirectory,
+    pub(crate) audited_directory: StoragePrefix,
     /// 扫描到的普通文件数量。
     pub(crate) scanned: u64,
     /// 检查的资源内容引用数量。

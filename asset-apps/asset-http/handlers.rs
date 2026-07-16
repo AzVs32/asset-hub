@@ -136,7 +136,11 @@ pub(crate) async fn list_resource_kinds(
             .definitions()
             .iter()
             .map(|definition| {
-                ResourceKindResponse::from_definition(definition, state.kind_registry())
+                ResourceKindResponse::from_definition(
+                    definition,
+                    state.kind_registry(),
+                    state.service(),
+                )
             })
             .collect(),
     })
@@ -338,9 +342,7 @@ pub(crate) async fn scan_storage(
     let payload = payload.map(|Json(payload)| payload).unwrap_or_default();
     let result = state
         .secured(&access.0)
-        .scan_storage(
-            ScanStorage::new(payload.directory).with_sha256(payload.sha256.unwrap_or(false)),
-        )
+        .scan_storage(ScanStorage::new(payload.prefix).with_sha256(payload.sha256.unwrap_or(false)))
         .await?;
     let imported = result
         .resources
@@ -349,7 +351,7 @@ pub(crate) async fn scan_storage(
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(Json(ScanStorageResponse {
-        scanned_directory: result.scanned_directory,
+        scanned_directory: result.scanned_prefix,
         scanned: result.scanned,
         imported: imported.len() as u64,
         skipped: result.skipped,
@@ -386,12 +388,12 @@ pub(crate) async fn audit_storage(
     let result = state
         .secured(&access.0)
         .audit_storage(
-            AuditStorage::new(payload.directory).with_sha256(payload.sha256.unwrap_or(true)),
+            AuditStorage::new(payload.prefix).with_sha256(payload.sha256.unwrap_or(true)),
         )
         .await?;
 
     Ok(Json(AuditStorageResponse {
-        audited_directory: result.audited_directory,
+        audited_directory: result.audited_prefix,
         scanned: result.scanned,
         checked_resources: result.checked_resources,
         missing: result.missing,

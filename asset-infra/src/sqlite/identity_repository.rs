@@ -181,14 +181,14 @@ impl AccessPolicyRepository for SqliteIdentityRepository {
             .map_err(|e| CoreError::repository("access.remove_grant", e))?;
         Ok(())
     }
-    async fn effective_permission(
+    async fn list_applicable_grants(
         &self,
         user_id: &UserId,
         directory: &ResourceDirectory,
-    ) -> Result<Option<DirectoryPermission>, CoreError> {
-        let values = sqlx::query_scalar::<_, String>(
+    ) -> Result<Vec<DirectoryGrant>, CoreError> {
+        let rows = sqlx::query(
             r#"
-            SELECT permission
+            SELECT directory_path, permission
             FROM directory_acl
             WHERE user_id = ?
               AND (
@@ -203,17 +203,10 @@ impl AccessPolicyRepository for SqliteIdentityRepository {
         .bind(directory.path())
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| CoreError::repository("access.effective_permission", e))?;
-        values
-            .into_iter()
-            .map(|value| value.parse())
-            .collect::<Result<Vec<DirectoryPermission>, _>>()
-            .map(|permissions| {
-                permissions
-                    .into_iter()
-                    .reduce(DirectoryPermission::stronger)
-            })
-            .map_err(Into::into)
+        .map_err(|e| CoreError::repository("access.list_applicable_grants", e))?;
+        rows.into_iter()
+            .map(|row| decode_grant(*user_id, row))
+            .collect()
     }
 }
 

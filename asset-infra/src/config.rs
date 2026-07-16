@@ -246,19 +246,7 @@ pub struct ResourceKindConfig {
     pub supports_content: bool,
     /// 文件自动识别规则。上传时前端可用这些规则自动选择 kind。
     pub detect: ResourceContentMatcher,
-    /// kind 支持的动作，例如 `read`、`thumbnail`。
-    pub actions: Vec<ResourceActionDefinition>,
-}
-
-/// 插件对已有资源类型的动作扩展。
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct ResourceKindExtensionConfig {
-    /// 被扩展的资源类型。
-    pub kind: String,
-    /// 扩展级匹配条件，会作为默认条件应用到未声明内容匹配条件的 action 上。
-    pub content: ResourceContentMatcher,
-    /// 追加到目标 kind 的动作。
+    /// 以该 kind 为作用域声明的动作；启动时会统一注册到 `ResourceActionRegistry`。
     pub actions: Vec<ResourceActionDefinition>,
 }
 

@@ -25,11 +25,11 @@ impl<'a> ResourceContentService<'a> {
     ) -> Result<ScanStorageResult, CoreError> {
         const MAX_SCAN_ENTRIES: usize = 100_000;
 
-        let directory = command.directory;
+        let prefix = command.prefix;
         let files = self
             .service
             .storage_scanner
-            .scan(&directory, command.include_sha256, MAX_SCAN_ENTRIES)
+            .scan(&prefix, command.include_sha256, MAX_SCAN_ENTRIES)
             .await?;
         let scanned = files.len() as u64;
         let scanned_keys = files
@@ -71,26 +71,24 @@ impl<'a> ResourceContentService<'a> {
 
         let stored_resources = self
             .service
-            .repository
+            .query
             .list(&ListResources::new(u32::MAX, 0).with_include_deleted(true))
             .await?;
-        let prefix = (!directory.is_root()).then(|| format!("{directory}/"));
         for resource in stored_resources.items {
             let Some(content) = resource.content() else {
                 continue;
             };
-            let key = content.key().as_str();
-            let in_scope = prefix.as_ref().is_none_or(|prefix| key.starts_with(prefix));
-            if in_scope && !scanned_keys.contains(key) {
+            let key = content.key();
+            if prefix.contains(key) && !scanned_keys.contains(key.as_str()) {
                 errors.push(ScanStorageError {
-                    key: key.to_owned(),
+                    key: key.as_str().to_owned(),
                     error: "resource references a missing blob".to_owned(),
                 });
             }
         }
 
         Ok(ScanStorageResult {
-            scanned_directory: directory,
+            scanned_prefix: prefix,
             scanned,
             skipped,
             errors,
@@ -123,7 +121,7 @@ impl<'a> ResourceContentService<'a> {
 
         if self
             .service
-            .repository
+            .query
             .find_by_content_key(&storage_key)
             .await?
             .is_some()
@@ -300,11 +298,11 @@ impl<'a> ResourceContentService<'a> {
     ) -> Result<AuditStorageResult, CoreError> {
         const MAX_AUDIT_ENTRIES: usize = 100_000;
 
-        let directory = command.directory;
+        let prefix = command.prefix;
         let files = self
             .service
             .storage_scanner
-            .scan(&directory, command.include_sha256, MAX_AUDIT_ENTRIES)
+            .scan(&prefix, command.include_sha256, MAX_AUDIT_ENTRIES)
             .await?;
         let scanned = files.len() as u64;
         let scanned_by_key = files
@@ -313,10 +311,9 @@ impl<'a> ResourceContentService<'a> {
             .collect::<HashMap<_, _>>();
         let stored_resources = self
             .service
-            .repository
+            .query
             .list(&ListResources::new(u32::MAX, 0).with_include_deleted(true))
             .await?;
-        let prefix = (!directory.is_root()).then(|| format!("{directory}/"));
         let mut referenced_keys = HashSet::new();
         let mut checked_resources = 0_u64;
         let mut missing = 0_u64;
@@ -329,8 +326,7 @@ impl<'a> ResourceContentService<'a> {
                 continue;
             };
             let key = content.key().as_str();
-            let in_scope = prefix.as_ref().is_none_or(|prefix| key.starts_with(prefix));
-            if !in_scope {
+            if !prefix.contains(content.key()) {
                 continue;
             }
 
@@ -398,7 +394,7 @@ impl<'a> ResourceContentService<'a> {
         }
 
         Ok(AuditStorageResult {
-            audited_directory: directory,
+            audited_prefix: prefix,
             scanned,
             checked_resources,
             missing,

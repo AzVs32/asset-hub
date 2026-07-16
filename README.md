@@ -96,7 +96,9 @@ objects. Both operations skip symbolic links, stop after 100,000 filesystem
 entries, and are limited to administrators. Scan does not calculate SHA-256
 unless the request explicitly sets `sha256: true`; audit calculates SHA-256 by
 default and accepts `sha256: false` when only existence and size checks are
-needed.
+needed. Their request scope is the object-key `prefix`; the legacy `directory`
+request field remains accepted as an alias but does not represent a logical
+resource directory.
 
 Plugin write actions can update object bytes through `replace_content`. Runtime
 errors are compensated, but the current OpenDAL-backed replacement flow is not a

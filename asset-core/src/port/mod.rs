@@ -8,6 +8,7 @@ mod password_hasher;
 mod resource_action_executor;
 mod resource_action_registry;
 mod resource_kind_registry;
+mod resource_query;
 mod resource_repository;
 mod storage_scanner;
 mod user_repository;
@@ -22,6 +23,7 @@ pub use resource_action_executor::{
 };
 pub use resource_action_registry::ResourceActionRegistry;
 pub use resource_kind_registry::{ResourceKindDefinition, ResourceKindRegistry};
-pub use resource_repository::{ListResources, ResourcePage, ResourceRepository};
-pub use storage_scanner::{ScannedBlob, StorageScanner};
+pub use resource_query::{ListResources, ResourcePage, ResourceQuery};
+pub use resource_repository::ResourceRepository;
+pub use storage_scanner::{ScannedBlob, StoragePrefix, StorageScanner};
 pub use user_repository::UserRepository;

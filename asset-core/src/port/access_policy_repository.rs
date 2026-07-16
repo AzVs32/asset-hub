@@ -1,6 +1,6 @@
 use crate::{
     CoreError,
-    domain::{DirectoryGrant, DirectoryPermission, ResourceDirectory, UserId},
+    domain::{DirectoryGrant, ResourceDirectory, UserId},
 };
 
 #[async_trait::async_trait]
@@ -12,9 +12,10 @@ pub trait AccessPolicyRepository: Send + Sync {
         directory: &ResourceDirectory,
     ) -> Result<(), CoreError>;
     async fn list_grants(&self, user_id: &UserId) -> Result<Vec<DirectoryGrant>, CoreError>;
-    async fn effective_permission(
+    /// 返回目标目录及其祖先目录上适用于用户的授权。
+    async fn list_applicable_grants(
         &self,
         user_id: &UserId,
         directory: &ResourceDirectory,
-    ) -> Result<Option<DirectoryPermission>, CoreError>;
+    ) -> Result<Vec<DirectoryGrant>, CoreError>;
 }

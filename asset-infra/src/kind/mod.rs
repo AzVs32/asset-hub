@@ -1,4 +1,4 @@
-use crate::config::{KindRegistryConfig, ResourceKindConfig, ResourceKindExtensionConfig};
+use crate::config::{KindRegistryConfig, ResourceKindConfig};
 use crate::plugin_manifest::PluginCatalog;
 use asset_core::CoreError;
 use asset_core::domain::ResourceKind;
@@ -137,7 +137,6 @@ fn build_registries_with_catalog(
                 parent,
                 true,
                 ResourceContentMatcher::default(),
-                Vec::new(),
                 "builtin",
             )?,
         )?;
@@ -175,44 +174,45 @@ fn build_registries_with_catalog(
     validate_kind_hierarchy(&definitions)?;
 
     let mut actions = Vec::new();
+    for definition in &config.definitions {
+        for action in &definition.actions {
+            push_action_definition(
+                &mut actions,
+                action.clone().with_kinds([definition.kind.clone()]),
+                format!("config kind `{}`", definition.kind),
+            )?;
+        }
+    }
     for manifest in &official_manifests {
         for action in &manifest.manifest.capabilities.resource_actions {
-            let action_definition = action_definition_with_inherited_content(
+            let action_definitions = action_definitions_with_inherited_content(
                 &definitions,
                 action,
                 &manifest.manifest.runtime,
             )?;
-            push_action_definition(
-                &mut actions,
-                action_definition,
-                format!("plugin:{}", manifest.manifest.plugin_id()),
-            )?;
-            extend_definitions_for_action(
-                &mut definitions,
-                action,
-                &manifest.manifest.runtime,
-                format!("plugin:{}", manifest.manifest.plugin_id()),
-            )?;
+            for action_definition in action_definitions {
+                push_action_definition(
+                    &mut actions,
+                    action_definition,
+                    format!("plugin:{}", manifest.manifest.plugin_id()),
+                )?;
+            }
         }
     }
     for manifest in &plugin_manifests {
         for action in &manifest.manifest.capabilities.resource_actions {
-            let action_definition = action_definition_with_inherited_content(
+            let action_definitions = action_definitions_with_inherited_content(
                 &definitions,
                 action,
                 &manifest.manifest.runtime,
             )?;
-            push_action_definition(
-                &mut actions,
-                action_definition,
-                format!("plugin:{}", manifest.manifest.plugin_id()),
-            )?;
-            extend_definitions_for_action(
-                &mut definitions,
-                action,
-                &manifest.manifest.runtime,
-                format!("plugin:{}", manifest.manifest.plugin_id()),
-            )?;
+            for action_definition in action_definitions {
+                push_action_definition(
+                    &mut actions,
+                    action_definition,
+                    format!("plugin:{}", manifest.manifest.plugin_id()),
+                )?;
+            }
         }
     }
 
@@ -307,108 +307,30 @@ fn push_definition(
     Ok(())
 }
 
-fn extend_definition(
-    definitions: &mut [ResourceKindDefinition],
-    extension: &ResourceKindExtensionConfig,
-    source: impl Into<String>,
-) -> Result<(), CoreError> {
-    let Some(definition) = definitions
-        .iter_mut()
-        .find(|definition| definition.kind().as_str() == extension.kind)
-    else {
-        return Err(CoreError::configuration(format!(
-            "cannot extend unknown resource kind `{}`",
-            extension.kind
-        )));
-    };
-    let source = source.into();
-    let mut actions = definition.actions().to_vec();
-
-    for action in &extension.actions {
-        if actions
-            .iter()
-            .any(|existing| existing.id().as_str() == action.id().as_str())
-        {
-            return Err(CoreError::configuration(format!(
-                "duplicate resource action `{}` on kind `{}` from {source}",
-                action.id(),
-                extension.kind
-            )));
-        }
-
-        let action = if action.content_matcher().is_empty() && !extension.content.is_empty() {
-            action
-                .clone()
-                .with_content_matcher(extension.content.clone())
-        } else {
-            action.clone()
-        };
-        actions.push(action);
-    }
-
-    *definition = definition.clone().with_actions(actions);
-    Ok(())
-}
-
-fn extend_definitions_for_action(
-    definitions: &mut [ResourceKindDefinition],
-    action: &ResourceActionCapability,
-    runtime: &PluginRuntime,
-    source: impl Into<String>,
-) -> Result<(), CoreError> {
-    let source = source.into();
-    for kind in &action.applies_to.kinds {
-        let content = if should_inherit_detect_for_action(action)
-            && action.applies_to.to_definition().content().is_empty()
-        {
-            detect_for_kind(definitions, kind)?
-        } else {
-            ResourceContentMatcher::default()
-        };
-        let extension = ResourceKindExtensionConfig {
-            kind: kind.clone(),
-            content,
-            actions: vec![action.to_definition(runtime)],
-        };
-        extend_definition(definitions, &extension, source.clone())?;
-    }
-    Ok(())
-}
-
-fn action_definition_with_inherited_content(
+fn action_definitions_with_inherited_content(
     definitions: &[ResourceKindDefinition],
     action: &ResourceActionCapability,
     runtime: &PluginRuntime,
-) -> Result<ResourceActionDefinition, CoreError> {
+) -> Result<Vec<ResourceActionDefinition>, CoreError> {
     let definition = action.to_definition(runtime);
     if !should_inherit_detect_for_action(action) || !definition.content_matcher().is_empty() {
-        return Ok(definition);
+        return Ok(vec![definition]);
     }
-    Ok(definition.with_content_matcher(detect_for_kinds(definitions, &action.applies_to.kinds)?))
+    action
+        .applies_to
+        .kinds
+        .iter()
+        .map(|kind| {
+            Ok(definition
+                .clone()
+                .with_kinds([kind.clone()])
+                .with_content_matcher(detect_for_kind(definitions, kind)?))
+        })
+        .collect()
 }
 
 fn should_inherit_detect_for_action(action: &ResourceActionCapability) -> bool {
     action.applies_to.kinds.len() > 1
-}
-
-fn detect_for_kinds(
-    definitions: &[ResourceKindDefinition],
-    kinds: &[String],
-) -> Result<ResourceContentMatcher, CoreError> {
-    let mut mime_types = Vec::new();
-    let mut extensions = Vec::new();
-    for kind in kinds {
-        let detect = detect_for_kind(definitions, kind)?;
-        mime_types.extend(detect.mime_types().iter().cloned());
-        extensions.extend(detect.extensions().iter().cloned());
-    }
-    mime_types.sort();
-    mime_types.dedup();
-    extensions.sort();
-    extensions.dedup();
-    Ok(ResourceContentMatcher::new()
-        .with_mime_types(mime_types)
-        .with_extensions(extensions))
 }
 
 fn detect_for_kind(
@@ -430,10 +352,17 @@ fn push_action_definition(
     source: impl Into<String>,
 ) -> Result<(), CoreError> {
     let source = source.into();
-    if actions
-        .iter()
-        .any(|existing| existing.id().as_str() == action.id().as_str())
-    {
+    if actions.iter().any(|existing| {
+        existing.id().as_str() == action.id().as_str()
+            && (existing.kinds().is_empty()
+                || action.kinds().is_empty()
+                || existing.kinds().iter().any(|kind| {
+                    action
+                        .kinds()
+                        .iter()
+                        .any(|candidate| candidate.eq_ignore_ascii_case(kind))
+                }))
+    }) {
         return Err(CoreError::configuration(format!(
             "duplicate global resource action `{}` from {source}",
             action.id()
@@ -455,7 +384,6 @@ fn definition_from_manifest_kind(
         config.parent.as_deref(),
         config.supports_content,
         config.detect.clone(),
-        Vec::new(),
         source,
     )
 }
@@ -471,7 +399,6 @@ fn definition_from_config(
         config.parent.as_deref(),
         config.supports_content,
         config.detect.clone(),
-        config.actions.clone(),
         source,
     )
 }
@@ -482,7 +409,6 @@ fn definition_from_parts(
     parent: Option<&str>,
     supports_content: bool,
     detect: ResourceContentMatcher,
-    actions: Vec<ResourceActionDefinition>,
     source: impl Into<String>,
 ) -> Result<ResourceKindDefinition, CoreError> {
     Ok(ResourceKindDefinition::with_source(
@@ -492,8 +418,7 @@ fn definition_from_parts(
         source,
     )
     .with_parent(parent.map(ResourceKind::try_new).transpose()?)
-    .with_detect(detect)
-    .with_actions(actions))
+    .with_detect(detect))
 }
 
 #[cfg(test)]
@@ -541,7 +466,6 @@ mod tests {
             .unwrap();
         assert_eq!(note.label(), "Note");
         assert!(!note.supports_content());
-        assert!(note.actions().is_empty());
         assert_eq!(note.source(), "config");
     }
 
@@ -588,6 +512,7 @@ mod tests {
     #[test]
     fn registry_includes_official_core_plugin_fallback_kinds() {
         let registry = DefaultResourceKindRegistry::new().unwrap();
+        let action_registry = DefaultResourceActionRegistry::new().unwrap();
 
         let file = registry
             .get(&ResourceKind::try_new("core:file").unwrap())
@@ -598,8 +523,7 @@ mod tests {
         assert!(file.parent().is_none());
         assert_eq!(unknown.parent(), Some(file.kind()));
         assert!(
-            registry
-                .actions_for_kind(unknown.kind())
+            actions_for_kind(&registry, &action_registry, unknown.kind())
                 .iter()
                 .any(|action| action.id().as_str() == ResourceAction::DOWNLOAD_CONTENT)
         );
@@ -648,7 +572,8 @@ mod tests {
             assert_eq!(definition.label(), label);
             assert_eq!(definition.source(), source);
             assert!(definition.supports_content());
-            let inherited_actions = registry.actions_for_kind(definition.kind());
+            let inherited_actions =
+                actions_for_kind(&registry, &action_registry, definition.kind());
             for action in expected_actions {
                 assert!(
                     inherited_actions
@@ -749,18 +674,23 @@ mod tests {
         )
         .unwrap();
 
-        let registry = DefaultResourceKindRegistry::from_config(&KindRegistryConfig {
+        let config = KindRegistryConfig {
             definitions: Vec::new(),
             plugin_manifests: vec![root.join("mindustry.json")],
-        })
-        .unwrap();
+        };
+        let registry = DefaultResourceKindRegistry::from_config(&config).unwrap();
+        let action_registry = DefaultResourceActionRegistry::from_config(&config).unwrap();
         let definition = registry
             .get(&ResourceKind::try_new("mindustry:mod").unwrap())
             .unwrap();
 
         assert_eq!(definition.label(), "Mindustry Mod");
         assert_eq!(definition.source(), "plugin:mindustry");
-        assert!(definition.has_action("mindustry.preview"));
+        assert!(
+            actions_for_kind(&registry, &action_registry, definition.kind())
+                .iter()
+                .any(|action| action.id().as_str() == "mindustry.preview")
+        );
 
         let _ = std::fs::remove_dir_all(root);
     }
@@ -831,18 +761,23 @@ mod tests {
         .unwrap();
         write_empty_wasm_lock(&root, "epub");
 
-        let registry = DefaultResourceKindRegistry::from_config(&KindRegistryConfig {
+        let config = KindRegistryConfig {
             definitions: Vec::new(),
             plugin_manifests: vec![root.join("epub.json")],
-        })
-        .unwrap();
+        };
+        let registry = DefaultResourceKindRegistry::from_config(&config).unwrap();
+        let action_registry = DefaultResourceActionRegistry::from_config(&config).unwrap();
         let epub = registry
             .get(&ResourceKind::try_new("azvs:epub").unwrap())
             .unwrap();
 
         assert_eq!(epub.label(), "EPUB");
         assert_eq!(epub.source(), "plugin:epub");
-        assert!(epub.has_action("azvs.epub.render"));
+        assert!(
+            actions_for_kind(&registry, &action_registry, epub.kind())
+                .iter()
+                .any(|action| action.id().as_str() == "azvs.epub.render")
+        );
         assert!(
             epub.detect()
                 .matches_content(Some("application/epub+zip"), Some("books/book.epub"))
@@ -918,17 +853,17 @@ mod tests {
         .unwrap();
         write_empty_wasm_lock(&root, "mp4-tools");
 
-        let registry = DefaultResourceKindRegistry::from_config(&KindRegistryConfig {
+        let config = KindRegistryConfig {
             definitions: Vec::new(),
             plugin_manifests: vec![root.join("mp4-tools.json")],
-        })
-        .unwrap();
+        };
+        let registry = DefaultResourceKindRegistry::from_config(&config).unwrap();
+        let action_registry = DefaultResourceActionRegistry::from_config(&config).unwrap();
         let video = registry
             .get(&ResourceKind::try_new("test:mp4").unwrap())
             .unwrap();
-        let action = video
-            .actions()
-            .iter()
+        let action = actions_for_kind(&registry, &action_registry, video.kind())
+            .into_iter()
             .find(|action| action.id().as_str() == "mp4-tools:inspect")
             .unwrap();
 
@@ -942,6 +877,14 @@ mod tests {
         assert!(!action.matches_resource("core:video", Some("video/mp4"), Some("videos/demo.mp4")));
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn actions_for_kind(
+        kinds: &dyn ResourceKindRegistry,
+        actions: &dyn ResourceActionRegistry,
+        kind: &ResourceKind,
+    ) -> Vec<ResourceActionDefinition> {
+        actions.actions_for_kinds(&kinds.lineage(kind))
     }
 
     #[test]

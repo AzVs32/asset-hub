@@ -4,140 +4,8 @@
 //! sqlx 的 SQLite、Postgres 等实现应适配该 trait，而不是让应用层直接依赖数据库 API。
 
 use crate::CoreError;
-use crate::domain::{Resource, ResourceDirectory, ResourceId, ResourceKind, StorageKey};
+use crate::domain::{Resource, ResourceDirectory, ResourceId};
 use chrono::{DateTime, Utc};
-
-/// 资源列表查询条件。
-#[derive(Debug, Clone)]
-pub struct ListResources {
-    /// 返回数量上限。
-    limit: u32,
-    /// 跳过的记录数量。
-    offset: u64,
-    /// 可选资源类型过滤。
-    kinds: Vec<ResourceKind>,
-    include_descendants: bool,
-    /// 可选标签过滤。
-    tag: Option<String>,
-    /// 可选名称模糊搜索关键字。
-    q: Option<String>,
-    /// 可选逻辑目录过滤。
-    directory: Option<ResourceDirectory>,
-    /// 是否包含软删除资源。
-    include_deleted: bool,
-}
-
-impl ListResources {
-    /// 创建列表查询。
-    pub fn new(limit: u32, offset: u64) -> Self {
-        Self {
-            limit,
-            offset,
-            kinds: Vec::new(),
-            include_descendants: false,
-            tag: None,
-            q: None,
-            directory: None,
-            include_deleted: false,
-        }
-    }
-
-    /// 设置资源类型过滤。
-    pub fn with_kind(mut self, kind: ResourceKind) -> Self {
-        self.kinds = vec![kind];
-        self
-    }
-
-    pub fn with_kinds(mut self, kinds: Vec<ResourceKind>) -> Self {
-        self.kinds = kinds;
-        self
-    }
-
-    pub fn with_include_descendants(mut self, include_descendants: bool) -> Self {
-        self.include_descendants = include_descendants;
-        self
-    }
-
-    /// 设置标签过滤。
-    pub fn with_tag(mut self, tag: impl Into<String>) -> Self {
-        self.tag = Some(tag.into());
-        self
-    }
-
-    /// 设置名称模糊搜索。
-    pub fn with_q(mut self, q: impl Into<String>) -> Self {
-        self.q = Some(q.into());
-        self
-    }
-
-    /// 设置逻辑目录过滤。
-    pub fn with_directory(mut self, directory: ResourceDirectory) -> Self {
-        self.directory = Some(directory);
-        self
-    }
-
-    /// 设置是否包含软删除资源。
-    pub fn with_include_deleted(mut self, include_deleted: bool) -> Self {
-        self.include_deleted = include_deleted;
-        self
-    }
-
-    /// 返回数量上限。
-    pub fn limit(&self) -> u32 {
-        self.limit
-    }
-
-    /// 返回跳过记录数。
-    pub fn offset(&self) -> u64 {
-        self.offset
-    }
-
-    /// 返回资源类型过滤。
-    pub fn kind(&self) -> Option<&ResourceKind> {
-        self.kinds.first()
-    }
-
-    pub fn kinds(&self) -> &[ResourceKind] {
-        &self.kinds
-    }
-
-    pub fn include_descendants(&self) -> bool {
-        self.include_descendants
-    }
-
-    /// 返回标签过滤。
-    pub fn tag(&self) -> Option<&str> {
-        self.tag.as_deref()
-    }
-
-    /// 返回名称搜索关键字。
-    pub fn q(&self) -> Option<&str> {
-        self.q.as_deref()
-    }
-
-    /// 返回逻辑目录过滤。
-    pub fn directory(&self) -> Option<&ResourceDirectory> {
-        self.directory.as_ref()
-    }
-
-    /// 返回是否包含软删除资源。
-    pub fn include_deleted(&self) -> bool {
-        self.include_deleted
-    }
-}
-
-/// 资源分页查询结果。
-#[derive(Debug, Clone)]
-pub struct ResourcePage {
-    /// 当前页资源。
-    pub items: Vec<Resource>,
-    /// 符合条件的总记录数。
-    pub total: u64,
-    /// 返回数量上限。
-    pub limit: u32,
-    /// 跳过的记录数量。
-    pub offset: u64,
-}
 
 /// 资源聚合仓储端口。
 ///
@@ -164,39 +32,16 @@ pub trait ResourceRepository: Send + Sync {
         &self,
         resource: &Resource,
         expected_updated_at: DateTime<Utc>,
-    ) -> Result<bool, CoreError> {
-        let Some(current) = self.find_by_id(&resource.id()).await? else {
-            return Ok(false);
-        };
-        if current.updated_at() != expected_updated_at {
-            return Ok(false);
-        }
-        self.save(resource).await?;
-        Ok(true)
-    }
+    ) -> Result<bool, CoreError>;
 
     /// 按资源 ID 查找资源聚合。
     ///
     /// 找不到记录时返回 `Ok(None)`。该方法不主动过滤软删除资源；调用方可通过
     /// `Resource::is_deleted()` 判断资源是否处于软删除状态。
     ///
-    /// 该方法面向聚合还原，不承担复杂检索、分页或条件查询职责。后续若需要列表查询，
-    /// 应单独增加查询端口，避免把聚合仓储扩成通用查询服务。
+    /// 该方法面向聚合还原，不承担复杂检索、分页或条件查询职责；只读查询统一通过
+    /// `ResourceQuery` 完成。
     async fn find_by_id(&self, id: &ResourceId) -> Result<Option<Resource>, CoreError>;
-
-    /// 按内容存储键查找资源聚合。
-    ///
-    /// 该方法用于维护导入和扫描任务做幂等去重。找不到记录时返回 `Ok(None)`。
-    async fn find_by_content_key(&self, key: &StorageKey) -> Result<Option<Resource>, CoreError>;
-
-    /// 按条件分页列出资源。
-    async fn list(&self, query: &ListResources) -> Result<ResourcePage, CoreError>;
-
-    /// 列出指定父目录下的直接子目录。
-    async fn list_directories(
-        &self,
-        parent: &ResourceDirectory,
-    ) -> Result<Vec<ResourceDirectory>, CoreError>;
 
     /// 保存一个可独立存在的逻辑目录。
     async fn save_directory(&self, _directory: &ResourceDirectory) -> Result<(), CoreError> {

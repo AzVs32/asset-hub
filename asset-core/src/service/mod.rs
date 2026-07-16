@@ -17,6 +17,6 @@ pub use resource_service::{
     AuditStorage, AuditStorageIssue, AuditStorageIssueKind, AuditStorageResult, CreateResource,
     ExecuteResourceAction, ImportResourceContent, ReadableResource, ResourceActions,
     ResourceContentCommand, ResourceContentStream, ResourcePreviewStream, ResourceService,
-    ResourceThumbnail, ScanStorage, ScanStorageError, ScanStorageResult, SecuredResourceService,
-    UpdateResource, UploadResourceContentStream,
+    ResourceServicePorts, ResourceThumbnail, ScanStorage, ScanStorageError, ScanStorageResult,
+    SecuredResourceService, UpdateResource, UploadResourceContentStream,
 };

@@ -203,7 +203,7 @@ async fn core_document_resource_exposes_download_only() {
     assert_eq!(
         view_inline["applies_to"],
         json!({
-            "kinds": ["core:image", "core:document", "core:video"],
+            "kinds": ["core:document"],
             "mime_types": ["application/pdf"],
             "extensions": [".pdf"]
         })

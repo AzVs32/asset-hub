@@ -4,7 +4,7 @@
 //! 后续插件系统可以通过同一端口注册和暴露更多 kind。
 
 use crate::domain::ResourceKind;
-use asset_plugin_api::{ResourceActionDefinition, ResourceContentMatcher};
+use asset_plugin_api::ResourceContentMatcher;
 use std::collections::HashSet;
 
 /// 资源类型定义。
@@ -20,8 +20,6 @@ pub struct ResourceKindDefinition {
     supports_content: bool,
     /// 文件自动识别规则。
     detect: ResourceContentMatcher,
-    /// kind 支持的动作，例如 `read`、`thumbnail`、`plugin:sync`。
-    actions: Vec<ResourceActionDefinition>,
     /// 定义来源，例如 `builtin`、`config` 或 `plugin:<id>`。
     source: String,
 }
@@ -45,7 +43,6 @@ impl ResourceKindDefinition {
             label: label.into(),
             supports_content,
             detect: ResourceContentMatcher::default(),
-            actions: Vec::new(),
             source: source.into(),
         }
     }
@@ -58,12 +55,6 @@ impl ResourceKindDefinition {
     /// 设置文件自动识别规则。
     pub fn with_detect(mut self, detect: ResourceContentMatcher) -> Self {
         self.detect = detect;
-        self
-    }
-
-    /// 设置 kind 支持的动作。
-    pub fn with_actions(mut self, actions: Vec<ResourceActionDefinition>) -> Self {
-        self.actions = actions;
         self
     }
 
@@ -89,19 +80,6 @@ impl ResourceKindDefinition {
     /// 返回文件自动识别规则。
     pub fn detect(&self) -> &ResourceContentMatcher {
         &self.detect
-    }
-
-    /// 返回 kind 支持的动作。
-    pub fn actions(&self) -> &[ResourceActionDefinition] {
-        &self.actions
-    }
-
-    /// 判断 kind 是否支持指定动作。
-    pub fn has_action(&self, action: impl AsRef<str>) -> bool {
-        let action = action.as_ref();
-        self.actions
-            .iter()
-            .any(|definition| definition.id().as_str() == action)
     }
 
     /// 返回定义来源。
@@ -155,25 +133,6 @@ pub trait ResourceKindRegistry: Send + Sync {
             .filter(|definition| self.is_a(definition.kind(), kind))
             .map(|definition| definition.kind().clone())
             .collect()
-    }
-
-    /// 返回包含祖先继承结果的 action；更具体 kind 上的同 ID action 优先。
-    fn actions_for_kind(&self, kind: &ResourceKind) -> Vec<ResourceActionDefinition> {
-        let mut actions = Vec::new();
-        for lineage_kind in self.lineage(kind) {
-            let Some(definition) = self.get(&lineage_kind) else {
-                continue;
-            };
-            for action in definition.actions() {
-                if !actions
-                    .iter()
-                    .any(|existing: &ResourceActionDefinition| existing.id() == action.id())
-                {
-                    actions.push(action.clone());
-                }
-            }
-        }
-        actions
     }
 
     /// 根据内容特征推断父资源类型。
@@ -256,7 +215,6 @@ fn mime_matches(expected: &str, actual: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use asset_plugin_api::ResourceActionAppliesTo;
 
     #[derive(Default)]
     struct TestRegistry {
@@ -270,42 +228,12 @@ mod tests {
     }
 
     #[test]
-    fn action_rules_do_not_implicitly_define_resource_kinds() {
-        let registry = TestRegistry {
-            definitions: vec![
-                ResourceKindDefinition::new(ResourceKind::from("core:file"), "File", true),
-                ResourceKindDefinition::new(ResourceKind::from("core:document"), "Document", true)
-                    .with_actions(vec![
-                        ResourceActionDefinition::new("azvs.markdown.render", "Read Markdown")
-                            .with_applies_to(
-                                ResourceActionAppliesTo::new()
-                                    .with_kinds(["core:document"])
-                                    .with_mime_types(["text/markdown"])
-                                    .with_extensions([".md"]),
-                            ),
-                    ]),
-            ],
-        };
-
-        assert_eq!(
-            registry.detect_content_kind(Some("text/plain"), Some("notes/readme.md")),
-            None
-        );
-    }
-
-    #[test]
-    fn kind_detect_rules_beat_action_rules() {
+    fn kind_detection_uses_only_kind_matchers() {
         let registry = TestRegistry {
             definitions: vec![
                 ResourceKindDefinition::new(ResourceKind::from("core:image"), "Image", true)
                     .with_detect(ResourceContentMatcher::new().with_extensions([".png"])),
-                ResourceKindDefinition::new(ResourceKind::from("core:file"), "File", true)
-                    .with_actions(vec![
-                        ResourceActionDefinition::new("demo:png_action", "PNG action")
-                            .with_content_matcher(
-                                ResourceContentMatcher::new().with_extensions([".png"]),
-                            ),
-                    ]),
+                ResourceKindDefinition::new(ResourceKind::from("core:file"), "File", true),
             ],
         };
 
@@ -322,8 +250,7 @@ mod tests {
         let c = ResourceKind::from("code:c");
         let registry = TestRegistry {
             definitions: vec![
-                ResourceKindDefinition::new(document.clone(), "Document", true)
-                    .with_actions(vec![ResourceActionDefinition::new("document:open", "Open")]),
+                ResourceKindDefinition::new(document.clone(), "Document", true),
                 ResourceKindDefinition::new(code.clone(), "Code", true)
                     .with_parent(Some(document.clone())),
                 ResourceKindDefinition::new(c.clone(), "C", true)
@@ -337,12 +264,6 @@ mod tests {
             vec![c.clone(), code.clone(), document]
         );
         assert!(registry.descendants(&code).contains(&c));
-        assert!(
-            registry
-                .actions_for_kind(&c)
-                .iter()
-                .any(|action| action.id().as_str() == "document:open")
-        );
         assert_eq!(
             registry.detect_content_kind(Some("text/plain"), Some("src/main.c")),
             Some(c)

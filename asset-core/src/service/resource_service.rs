@@ -14,7 +14,7 @@ use crate::domain::{
 use crate::port::{
     BlobByteStream, BlobStorage, ListResources, ResourceActionExecutor, ResourceActionOutput,
     ResourceActionRegistry, ResourceActionRequest, ResourceKindRegistry, ResourcePage,
-    ResourceRepository, StorageScanner,
+    ResourceQuery, ResourceRepository, StoragePrefix, StorageScanner,
 };
 use asset_plugin_api::{
     PluginActionEffect, PluginContentEncoding, PluginExecutionPolicy, PluginView, ResourceAction,
@@ -146,14 +146,14 @@ pub type UploadResourceContentStream = ResourceContentCommand<BlobByteStream>;
 /// 扫描对象存储并导入尚未登记资源的命令。
 #[derive(Debug, Clone, Default)]
 pub struct ScanStorage {
-    directory: ResourceDirectory,
+    prefix: StoragePrefix,
     include_sha256: bool,
 }
 
 impl ScanStorage {
-    pub fn new(directory: ResourceDirectory) -> Self {
+    pub fn new(prefix: StoragePrefix) -> Self {
         Self {
-            directory,
+            prefix,
             include_sha256: false,
         }
     }
@@ -163,8 +163,8 @@ impl ScanStorage {
         self
     }
 
-    pub fn directory(&self) -> &ResourceDirectory {
-        &self.directory
+    pub fn prefix(&self) -> &StoragePrefix {
+        &self.prefix
     }
 }
 
@@ -176,7 +176,7 @@ pub struct ScanStorageError {
 
 #[derive(Debug, Clone)]
 pub struct ScanStorageResult {
-    pub scanned_directory: ResourceDirectory,
+    pub scanned_prefix: StoragePrefix,
     pub scanned: u64,
     pub skipped: u64,
     pub errors: Vec<ScanStorageError>,
@@ -186,20 +186,20 @@ pub struct ScanStorageResult {
 /// 审计对象存储与资源数据库一致性的命令。
 #[derive(Debug, Clone)]
 pub struct AuditStorage {
-    directory: ResourceDirectory,
+    prefix: StoragePrefix,
     include_sha256: bool,
 }
 
 impl Default for AuditStorage {
     fn default() -> Self {
-        Self::new(ResourceDirectory::root())
+        Self::new(StoragePrefix::root())
     }
 }
 
 impl AuditStorage {
-    pub fn new(directory: ResourceDirectory) -> Self {
+    pub fn new(prefix: StoragePrefix) -> Self {
         Self {
-            directory,
+            prefix,
             include_sha256: true,
         }
     }
@@ -209,8 +209,8 @@ impl AuditStorage {
         self
     }
 
-    pub fn directory(&self) -> &ResourceDirectory {
-        &self.directory
+    pub fn prefix(&self) -> &StoragePrefix {
+        &self.prefix
     }
 }
 
@@ -246,7 +246,7 @@ pub struct AuditStorageIssue {
 
 #[derive(Debug, Clone)]
 pub struct AuditStorageResult {
-    pub audited_directory: ResourceDirectory,
+    pub audited_prefix: StoragePrefix,
     pub scanned: u64,
     pub checked_resources: u64,
     pub missing: u64,
@@ -597,6 +597,8 @@ impl ResourceThumbnail {
 pub struct ResourceService {
     /// 资源聚合仓储端口。
     repository: Arc<dyn ResourceRepository>,
+    /// 资源只读查询端口。
+    query: Arc<dyn ResourceQuery>,
     /// 对象存储端口。
     blob_storage: Arc<dyn BlobStorage>,
     storage_scanner: Arc<dyn StorageScanner>,
@@ -610,66 +612,73 @@ pub struct ResourceService {
     plugin_execution_policy: Arc<PluginExecutionPolicy>,
 }
 
-impl ResourceService {
-    /// 创建资源应用服务。
-    ///
-    /// `repository` 和 `blob_storage` 通常由应用启动层根据配置创建，例如 SQLite + Fs、
-    /// Postgres + S3 等组合。这里使用 trait object 是为了让应用层可以替换具体实现。
+/// `ResourceService` 所需的 Host Port 装配。
+pub struct ResourceServicePorts {
+    repository: Arc<dyn ResourceRepository>,
+    query: Arc<dyn ResourceQuery>,
+    blob_storage: Arc<dyn BlobStorage>,
+    storage_scanner: Arc<dyn StorageScanner>,
+    kind_registry: Arc<dyn ResourceKindRegistry>,
+    action_registry: Option<Arc<dyn ResourceActionRegistry>>,
+    action_executor: Option<Arc<dyn ResourceActionExecutor>>,
+}
+
+impl ResourceServicePorts {
     pub fn new(
         repository: Arc<dyn ResourceRepository>,
+        query: Arc<dyn ResourceQuery>,
         blob_storage: Arc<dyn BlobStorage>,
         storage_scanner: Arc<dyn StorageScanner>,
         kind_registry: Arc<dyn ResourceKindRegistry>,
-        plugin_execution_policy: Arc<PluginExecutionPolicy>,
     ) -> Self {
         Self {
             repository,
+            query,
             blob_storage,
             storage_scanner,
             kind_registry,
             action_registry: None,
             action_executor: None,
-            plugin_execution_policy,
         }
     }
 
-    /// 创建带资源动作执行器的资源应用服务。
-    pub fn new_with_action_executor(
-        repository: Arc<dyn ResourceRepository>,
-        blob_storage: Arc<dyn BlobStorage>,
-        storage_scanner: Arc<dyn StorageScanner>,
-        kind_registry: Arc<dyn ResourceKindRegistry>,
-        action_executor: Arc<dyn ResourceActionExecutor>,
-        plugin_execution_policy: Arc<PluginExecutionPolicy>,
+    pub fn with_actions(
+        mut self,
+        registry: Arc<dyn ResourceActionRegistry>,
+        executor: Arc<dyn ResourceActionExecutor>,
     ) -> Self {
-        Self {
-            repository,
-            blob_storage,
-            storage_scanner,
-            kind_registry,
-            action_registry: None,
-            action_executor: Some(action_executor),
-            plugin_execution_policy,
-        }
+        self.action_registry = Some(registry);
+        self.action_executor = Some(executor);
+        self
     }
+}
 
-    /// 创建带全局资源动作注册表和动作执行器的资源应用服务。
-    pub fn new_with_action_registry_and_executor(
-        repository: Arc<dyn ResourceRepository>,
-        blob_storage: Arc<dyn BlobStorage>,
-        storage_scanner: Arc<dyn StorageScanner>,
-        kind_registry: Arc<dyn ResourceKindRegistry>,
-        action_registry: Arc<dyn ResourceActionRegistry>,
-        action_executor: Arc<dyn ResourceActionExecutor>,
+impl ResourceService {
+    /// 创建资源应用服务。
+    ///
+    /// `ports` 通常由应用启动层根据配置装配，例如 SQLite + Fs、Postgres + S3 等组合。
+    /// Port 使用 trait object，使应用层可以替换具体实现而不改变 Core 用例。
+    pub fn new(
+        ports: ResourceServicePorts,
         plugin_execution_policy: Arc<PluginExecutionPolicy>,
     ) -> Self {
-        Self {
+        let ResourceServicePorts {
             repository,
+            query,
             blob_storage,
             storage_scanner,
             kind_registry,
-            action_registry: Some(action_registry),
-            action_executor: Some(action_executor),
+            action_registry,
+            action_executor,
+        } = ports;
+        Self {
+            repository,
+            query,
+            blob_storage,
+            storage_scanner,
+            kind_registry,
+            action_registry,
+            action_executor,
             plugin_execution_policy,
         }
     }
@@ -776,15 +785,15 @@ impl ResourceService {
 
     fn actions_for_resource_kind(&self, kind: &ResourceKind) -> Vec<ResourceActionDefinition> {
         let lineage = self.kind_registry.lineage(kind);
-        let mut actions = self.kind_registry.actions_for_kind(kind);
-        if let Some(registry) = &self.action_registry {
-            for action in registry.actions_for_kinds(&lineage) {
-                if !actions.iter().any(|existing| existing.id() == action.id()) {
-                    actions.push(action);
-                }
-            }
-        }
-        actions
+        self.action_registry
+            .as_ref()
+            .map(|registry| registry.actions_for_kinds(&lineage))
+            .unwrap_or_default()
+    }
+
+    /// 返回指定 kind 及其祖先谱系适用的动作定义。
+    pub fn describe_kind_actions(&self, kind: &ResourceKind) -> Vec<ResourceActionDefinition> {
+        self.actions_for_resource_kind(kind)
     }
 
     fn action_matches_resource(
@@ -1058,10 +1067,34 @@ mod tests {
             Ok(())
         }
 
+        async fn save_if_unchanged(
+            &self,
+            resource: &Resource,
+            expected_updated_at: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, CoreError> {
+            let mut resources = self.resources.lock().unwrap();
+            let Some(current) = resources.get(&resource.id()) else {
+                return Ok(false);
+            };
+            if current.updated_at() != expected_updated_at {
+                return Ok(false);
+            }
+            resources.insert(resource.id(), resource.clone());
+            Ok(true)
+        }
+
         async fn find_by_id(&self, id: &ResourceId) -> Result<Option<Resource>, CoreError> {
             Ok(self.find_sync(id))
         }
 
+        async fn remove(&self, id: &ResourceId) -> Result<(), CoreError> {
+            self.resources.lock().unwrap().remove(id);
+            Ok(())
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ResourceQuery for InMemoryResourceRepository {
         async fn find_by_content_key(
             &self,
             key: &StorageKey,
@@ -1121,11 +1154,6 @@ mod tests {
             })
         }
 
-        async fn remove(&self, id: &ResourceId) -> Result<(), CoreError> {
-            self.resources.lock().unwrap().remove(id);
-            Ok(())
-        }
-
         async fn list_directories(
             &self,
             parent: &ResourceDirectory,
@@ -1173,6 +1201,16 @@ mod tests {
     impl ResourceKindRegistry for InMemoryResourceKindRegistry {
         fn definitions(&self) -> &[ResourceKindDefinition] {
             &self.definitions
+        }
+    }
+
+    struct InMemoryResourceActionRegistry {
+        actions: Vec<ResourceActionDefinition>,
+    }
+
+    impl ResourceActionRegistry for InMemoryResourceActionRegistry {
+        fn actions(&self) -> &[ResourceActionDefinition] {
+            &self.actions
         }
     }
 
@@ -1270,19 +1308,18 @@ mod tests {
     impl StorageScanner for InMemoryBlobStorage {
         async fn scan(
             &self,
-            directory: &ResourceDirectory,
+            prefix: &StoragePrefix,
             include_sha256: bool,
             _max_entries: usize,
         ) -> Result<Vec<crate::port::ScannedBlob>, CoreError> {
-            if directory.path() == crate::port::RESERVED_BLOB_STORAGE_PREFIX
-                || directory
-                    .path()
+            if prefix.as_str() == crate::port::RESERVED_BLOB_STORAGE_PREFIX
+                || prefix
+                    .as_str()
                     .starts_with(&format!("{}/", crate::port::RESERVED_BLOB_STORAGE_PREFIX))
             {
                 return Ok(Vec::new());
             }
 
-            let prefix = (!directory.is_root()).then(|| format!("{directory}/"));
             let mut files = self
                 .objects
                 .lock()
@@ -1296,9 +1333,7 @@ mod tests {
                     {
                         return false;
                     }
-                    prefix
-                        .as_ref()
-                        .is_none_or(|prefix| key.as_str().starts_with(prefix))
+                    prefix.contains(key)
                 })
                 .map(|(key, content)| crate::port::ScannedBlob {
                     key: key.clone(),
@@ -1426,31 +1461,12 @@ mod tests {
                 ResourceKind::try_new("doc:markdown").unwrap(),
                 "Markdown",
                 false,
-            )
-            .with_actions(vec![
-                ResourceActionDefinition::new(ResourceAction::READ, "Read")
-                    .with_handler("read_markdown")
-                    .with_requirements(content_requirements())
-                    .with_output(output_contract(["text"])),
-                ResourceActionDefinition::new("metadata.inspect", "Inspect metadata")
-                    .with_handler("inspect_metadata")
-                    .with_output(output_contract(["json"])),
-            ]),
+            ),
             ResourceKindDefinition::new(
                 ResourceKind::try_new("core:image").unwrap(),
                 "Image",
                 true,
-            )
-            .with_actions(vec![
-                ResourceActionDefinition::new(ResourceAction::PREVIEW, "Preview")
-                    .with_handler("preview_image")
-                    .with_requirements(content_requirements())
-                    .with_output(output_contract(["media"])),
-                ResourceActionDefinition::new(ResourceAction::THUMBNAIL, "Thumbnail")
-                    .with_handler("thumbnail_image")
-                    .with_requirements(content_requirements())
-                    .with_output(output_contract(["media"])),
-            ]),
+            ),
             ResourceKindDefinition::new(
                 ResourceKind::try_new("asset:binary").unwrap(),
                 "Binary",
@@ -1460,36 +1476,7 @@ mod tests {
                 ResourceKind::try_new("core:document").unwrap(),
                 "Document",
                 true,
-            )
-            .with_actions(vec![
-                ResourceActionDefinition::new(ResourceAction::READ, "Read")
-                    .with_handler("read_document")
-                    .with_requirements(content_requirements())
-                    .with_output(output_contract(["text"])),
-                ResourceActionDefinition::new("azvs.markdown.render", "Read Markdown")
-                    .with_handler("render_markdown")
-                    .with_requirements(content_requirements())
-                    .with_output(output_contract(["plugin_frame"]))
-                    .with_content_matcher(
-                        ResourceContentMatcher::new()
-                            .with_mime_types(["text/markdown", "text/x-markdown"])
-                            .with_extensions([".md", ".markdown"]),
-                    ),
-                ResourceActionDefinition::new("azvs.markdown.update", "Edit Markdown")
-                    .with_handler("update_markdown")
-                    .with_requirements(content_requirements())
-                    .with_access(ResourceActionAccess::ReadWrite)
-                    .with_output(output_contract(["text"]))
-                    .with_content_matcher(
-                        ResourceContentMatcher::new()
-                            .with_mime_types(["text/markdown", "text/x-markdown"])
-                            .with_extensions([".md", ".markdown"]),
-                    ),
-                ResourceActionDefinition::new(ResourceAction::PREVIEW, "Preview")
-                    .with_handler("preview_document")
-                    .with_requirements(content_requirements())
-                    .with_output(output_contract(["media"])),
-            ]),
+            ),
             ResourceKindDefinition::new(
                 ResourceKind::try_new("azvs:markdown").unwrap(),
                 "Markdown Document",
@@ -1505,20 +1492,63 @@ mod tests {
                 ResourceKind::try_new("core:video").unwrap(),
                 "Video",
                 true,
-            )
-            .with_actions(vec![ResourceActionDefinition::new(
-                ResourceAction::PREVIEW,
-                "Preview",
-            )]),
+            ),
         ]));
+        let action_registry = Arc::new(InMemoryResourceActionRegistry {
+            actions: vec![
+                ResourceActionDefinition::new(ResourceAction::READ, "Read")
+                    .with_kinds(["doc:markdown", "core:document"])
+                    .with_handler("read_document")
+                    .with_requirements(content_requirements())
+                    .with_output(output_contract(["text"])),
+                ResourceActionDefinition::new("metadata.inspect", "Inspect metadata")
+                    .with_kinds(["doc:markdown"])
+                    .with_handler("inspect_metadata")
+                    .with_output(output_contract(["json"])),
+                ResourceActionDefinition::new(ResourceAction::PREVIEW, "Preview")
+                    .with_kinds(["core:image", "core:document", "core:video"])
+                    .with_handler("preview_document")
+                    .with_requirements(content_requirements())
+                    .with_output(output_contract(["media"])),
+                ResourceActionDefinition::new(ResourceAction::THUMBNAIL, "Thumbnail")
+                    .with_kinds(["core:image"])
+                    .with_handler("thumbnail_image")
+                    .with_requirements(content_requirements())
+                    .with_output(output_contract(["media"])),
+                ResourceActionDefinition::new("azvs.markdown.render", "Read Markdown")
+                    .with_kinds(["core:document"])
+                    .with_handler("render_markdown")
+                    .with_requirements(content_requirements())
+                    .with_output(output_contract(["plugin_frame"]))
+                    .with_content_matcher(
+                        ResourceContentMatcher::new()
+                            .with_mime_types(["text/markdown", "text/x-markdown"])
+                            .with_extensions([".md", ".markdown"]),
+                    ),
+                ResourceActionDefinition::new("azvs.markdown.update", "Edit Markdown")
+                    .with_kinds(["core:document"])
+                    .with_handler("update_markdown")
+                    .with_requirements(content_requirements())
+                    .with_access(ResourceActionAccess::ReadWrite)
+                    .with_output(output_contract(["text"]))
+                    .with_content_matcher(
+                        ResourceContentMatcher::new()
+                            .with_mime_types(["text/markdown", "text/x-markdown"])
+                            .with_extensions([".md", ".markdown"]),
+                    ),
+            ],
+        });
         let repository = Arc::new(InMemoryResourceRepository::default());
         let blob_storage = Arc::new(InMemoryBlobStorage::default());
-        let service = ResourceService::new_with_action_executor(
-            repository.clone(),
-            blob_storage.clone(),
-            blob_storage.clone(),
-            kind_registry,
-            Arc::new(StaticResourceActionExecutor),
+        let service = ResourceService::new(
+            ResourceServicePorts::new(
+                repository.clone(),
+                repository.clone(),
+                blob_storage.clone(),
+                blob_storage.clone(),
+                kind_registry,
+            )
+            .with_actions(action_registry, Arc::new(StaticResourceActionExecutor)),
             Arc::new(test_plugin_execution_policy()),
         );
 
@@ -1626,10 +1656,13 @@ mod tests {
         let repository = Arc::new(InMemoryResourceRepository::default());
         let blob_storage = Arc::new(InMemoryBlobStorage::default());
         let service = ResourceService::new(
-            repository.clone(),
-            blob_storage.clone(),
-            blob_storage.clone(),
-            kind_registry,
+            ResourceServicePorts::new(
+                repository.clone(),
+                repository.clone(),
+                blob_storage.clone(),
+                blob_storage.clone(),
+                kind_registry,
+            ),
             Arc::new(test_plugin_execution_policy()),
         );
 
@@ -1777,7 +1810,7 @@ mod tests {
         let result = block_on(
             service
                 .content()
-                .audit_storage(AuditStorage::new(ResourceDirectory::root()).with_sha256(true)),
+                .audit_storage(AuditStorage::new(StoragePrefix::root()).with_sha256(true)),
         )
         .unwrap();
 

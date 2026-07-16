@@ -34,7 +34,7 @@ impl<'a> SecuredResourceService<'a> {
         if !self.context.is_administrator() {
             return Err(CoreError::forbidden(
                 "scan_storage",
-                command.directory().path(),
+                command.prefix().as_str(),
             ));
         }
         self.service.content().scan_storage(command).await
@@ -47,7 +47,7 @@ impl<'a> SecuredResourceService<'a> {
         if !self.context.is_administrator() {
             return Err(CoreError::forbidden(
                 "audit_storage",
-                command.directory().path(),
+                command.prefix().as_str(),
             ));
         }
         self.service.content().audit_storage(command).await

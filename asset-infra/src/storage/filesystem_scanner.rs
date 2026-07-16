@@ -1,6 +1,6 @@
 use asset_core::CoreError;
-use asset_core::domain::{ResourceDirectory, StorageKey};
-use asset_core::port::{RESERVED_BLOB_STORAGE_PREFIX, ScannedBlob, StorageScanner};
+use asset_core::domain::StorageKey;
+use asset_core::port::{RESERVED_BLOB_STORAGE_PREFIX, ScannedBlob, StoragePrefix, StorageScanner};
 use sha2::{Digest, Sha256};
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
@@ -20,27 +20,25 @@ impl FileSystemScanner {
 impl StorageScanner for FileSystemScanner {
     async fn scan(
         &self,
-        directory: &ResourceDirectory,
+        prefix: &StoragePrefix,
         include_sha256: bool,
         max_entries: usize,
     ) -> Result<Vec<ScannedBlob>, CoreError> {
         let root = self.root.clone();
-        let directory = directory.clone();
-        tokio::task::spawn_blocking(move || {
-            scan_files(&root, &directory, include_sha256, max_entries)
-        })
-        .await
-        .map_err(|error| CoreError::configuration(format!("scan task failed: {error}")))?
+        let prefix = prefix.clone();
+        tokio::task::spawn_blocking(move || scan_files(&root, &prefix, include_sha256, max_entries))
+            .await
+            .map_err(|error| CoreError::configuration(format!("scan task failed: {error}")))?
     }
 }
 
 fn scan_files(
     root: &Path,
-    directory: &ResourceDirectory,
+    prefix: &StoragePrefix,
     include_sha256: bool,
     max_entries: usize,
 ) -> Result<Vec<ScannedBlob>, CoreError> {
-    if directory_in_reserved_namespace(directory) {
+    if prefix_in_reserved_namespace(prefix) {
         return Ok(Vec::new());
     }
 
@@ -48,7 +46,7 @@ fn scan_files(
         CoreError::configuration(format!("storage root is not readable: {error}"))
     })?;
     let scan_root = root
-        .join(directory.path())
+        .join(prefix.as_str())
         .canonicalize()
         .map_err(|error| CoreError::configuration(format!("scan path is not readable: {error}")))?;
     if !scan_root.starts_with(&root) || !scan_root.is_dir() {
@@ -129,10 +127,10 @@ fn collect_files(
     Ok(())
 }
 
-fn directory_in_reserved_namespace(directory: &ResourceDirectory) -> bool {
-    directory.path() == RESERVED_BLOB_STORAGE_PREFIX
-        || directory
-            .path()
+fn prefix_in_reserved_namespace(prefix: &StoragePrefix) -> bool {
+    prefix.as_str() == RESERVED_BLOB_STORAGE_PREFIX
+        || prefix
+            .as_str()
             .starts_with(&format!("{RESERVED_BLOB_STORAGE_PREFIX}/"))
 }
 
@@ -196,7 +194,7 @@ mod tests {
         )
         .unwrap();
 
-        let files = scan_files(&root, &ResourceDirectory::root(), false, 100).unwrap();
+        let files = scan_files(&root, &StoragePrefix::root(), false, 100).unwrap();
 
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].key.as_str(), "docs/readme.md");
@@ -219,7 +217,7 @@ mod tests {
 
         let files = scan_files(
             &root,
-            &ResourceDirectory::from_path(RESERVED_BLOB_STORAGE_PREFIX).unwrap(),
+            &StoragePrefix::new(RESERVED_BLOB_STORAGE_PREFIX).unwrap(),
             false,
             100,
         )

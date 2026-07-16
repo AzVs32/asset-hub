@@ -10,10 +10,13 @@ pub mod sqlite;
 pub mod storage;
 
 use action::DefaultResourceActionExecutor;
-use asset_core::service::{AuthorizationService, ResourceService, UserService};
+use asset_core::service::{
+    AuthorizationService, ResourceService, ResourceServicePorts, UserService,
+};
 use asset_core::{
     CoreError, port::BlobStorage, port::ResourceActionExecutor, port::ResourceActionRegistry,
-    port::ResourceKindRegistry, port::ResourceRepository, port::StorageScanner,
+    port::ResourceKindRegistry, port::ResourceQuery, port::ResourceRepository,
+    port::StorageScanner,
 };
 use asset_plugin_api::PluginExecutionPolicy;
 use config::AssetInfraConfig;
@@ -111,6 +114,10 @@ impl AssetInfrastructure {
         self.resource_repository.clone()
     }
 
+    pub fn resource_query(&self) -> Arc<dyn ResourceQuery> {
+        self.resource_repository.clone()
+    }
+
     /// 返回共享数据库连接池，供会话、用户与授权适配器复用。
     pub fn database_pool(&self) -> SqlitePool {
         self.resource_repository.pool().clone()
@@ -161,13 +168,18 @@ impl AssetInfrastructure {
 
     /// 创建资源应用服务。
     pub fn resource_service(&self) -> ResourceService {
-        ResourceService::new_with_action_registry_and_executor(
-            self.resource_repository(),
-            self.blob_storage(),
-            self.storage_scanner(),
-            self.resource_kind_registry(),
-            self.resource_action_registry(),
-            self.resource_action_executor(),
+        ResourceService::new(
+            ResourceServicePorts::new(
+                self.resource_repository(),
+                self.resource_query(),
+                self.blob_storage(),
+                self.storage_scanner(),
+                self.resource_kind_registry(),
+            )
+            .with_actions(
+                self.resource_action_registry(),
+                self.resource_action_executor(),
+            ),
             self.plugin_execution_policy.clone(),
         )
     }

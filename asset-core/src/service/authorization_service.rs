@@ -24,10 +24,14 @@ impl AuthorizationService {
         if context.is_administrator() {
             return Ok(());
         }
-        let effective = self
+        let grants = self
             .policies
-            .effective_permission(&context.user_id(), directory)
+            .list_applicable_grants(&context.user_id(), directory)
             .await?;
+        let effective = grants
+            .iter()
+            .map(DirectoryGrant::permission)
+            .reduce(DirectoryPermission::stronger);
         if effective.is_some_and(|value| value.allows(permission)) {
             Ok(())
         } else {
@@ -138,19 +142,19 @@ mod tests {
                 .retain(|grant| grant.user_id() != *user_id || grant.directory() != directory);
             Ok(())
         }
-        async fn effective_permission(
+        async fn list_applicable_grants(
             &self,
             user_id: &UserId,
             directory: &ResourceDirectory,
-        ) -> Result<Option<DirectoryPermission>, CoreError> {
+        ) -> Result<Vec<DirectoryGrant>, CoreError> {
             let grants = self.grants.lock().unwrap();
             Ok(grants
                 .iter()
                 .filter(|grant| {
                     grant.user_id() == *user_id && grant.directory().contains(directory)
                 })
-                .map(DirectoryGrant::permission)
-                .reduce(DirectoryPermission::stronger))
+                .cloned()
+                .collect())
         }
     }
 

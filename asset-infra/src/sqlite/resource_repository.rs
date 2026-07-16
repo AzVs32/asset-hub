@@ -4,7 +4,7 @@ use asset_core::domain::{
     Resource, ResourceContent, ResourceDirectory, ResourceId, ResourceKind, ResourceMetadata,
     ResourceSnapshot, ResourceStatus, StorageKey,
 };
-use asset_core::port::{ListResources, ResourcePage, ResourceRepository};
+use asset_core::port::{ListResources, ResourcePage, ResourceQuery, ResourceRepository};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow};
@@ -192,20 +192,46 @@ impl ResourceRepository for SqliteResourceRepository {
         row.map(decode_resource).transpose()
     }
 
+    async fn remove(&self, id: &ResourceId) -> Result<(), CoreError> {
+        sqlx::query("DELETE FROM resources WHERE id = ?")
+            .bind(id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|error| CoreError::repository("remove", error))?;
+
+        Ok(())
+    }
+
+    async fn save_directory(&self, directory: &ResourceDirectory) -> Result<(), CoreError> {
+        ensure_directory_path(&self.pool, directory.parent_path()).await?;
+        let now = encode_timestamp(Utc::now());
+        sqlx::query("INSERT INTO directories (path, parent_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
+            .bind(directory.path())
+            .bind(directory.parent_path())
+            .bind(directory.name())
+            .bind(&now)
+            .bind(&now)
+            .execute(&self.pool)
+            .await
+            .map_err(|error| {
+                if error.to_string().contains("UNIQUE") {
+                    CoreError::conflict(format!("directory `{}` already exists", directory.path()))
+                } else {
+                    CoreError::repository("directory.create", error)
+                }
+            })?;
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl ResourceQuery for SqliteResourceRepository {
     async fn find_by_content_key(&self, key: &StorageKey) -> Result<Option<Resource>, CoreError> {
         let row = sqlx::query(
             r#"
             SELECT
-                id,
-                name,
-                directory,
-                kind,
-                status,
-                metadata_json,
-                content_json,
-                created_at,
-                updated_at,
-                deleted_at
+                id, name, directory, kind, status, metadata_json, content_json,
+                created_at, updated_at, deleted_at
             FROM resources
             WHERE json_extract(content_json, '$.key') = ?
             "#,
@@ -224,7 +250,6 @@ impl ResourceRepository for SqliteResourceRepository {
             .fetch_one(&self.pool)
             .await
             .map_err(|error| CoreError::repository("list.count", error))?;
-
         let rows = build_list_select_query(query)
             .build()
             .fetch_all(&self.pool)
@@ -241,16 +266,6 @@ impl ResourceRepository for SqliteResourceRepository {
             limit: query.limit(),
             offset: query.offset(),
         })
-    }
-
-    async fn remove(&self, id: &ResourceId) -> Result<(), CoreError> {
-        sqlx::query("DELETE FROM resources WHERE id = ?")
-            .bind(id.to_string())
-            .execute(&self.pool)
-            .await
-            .map_err(|error| CoreError::repository("remove", error))?;
-
-        Ok(())
     }
 
     async fn list_directories(
@@ -280,27 +295,6 @@ impl ResourceRepository for SqliteResourceRepository {
                 .map_err(CoreError::from)
             })
             .collect()
-    }
-
-    async fn save_directory(&self, directory: &ResourceDirectory) -> Result<(), CoreError> {
-        ensure_directory_path(&self.pool, directory.parent_path()).await?;
-        let now = encode_timestamp(Utc::now());
-        sqlx::query("INSERT INTO directories (path, parent_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
-            .bind(directory.path())
-            .bind(directory.parent_path())
-            .bind(directory.name())
-            .bind(&now)
-            .bind(&now)
-            .execute(&self.pool)
-            .await
-            .map_err(|error| {
-                if error.to_string().contains("UNIQUE") {
-                    CoreError::conflict(format!("directory `{}` already exists", directory.path()))
-                } else {
-                    CoreError::repository("directory.create", error)
-                }
-            })?;
-        Ok(())
     }
 }
 
