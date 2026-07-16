@@ -65,7 +65,6 @@ mod lock {
 pub const MANIFEST_VERSION: u32 = 3;
 pub const MIN_MANIFEST_VERSION: u32 = 2;
 pub const PLUGIN_API_VERSION: &str = "asset-hub.plugin-api@0.2";
-pub const MIN_PLUGIN_API_VERSION: &str = "asset-hub.plugin-api@0.1";
 /// Editable Manifest V3 draft copied by `asset-plugin gen manifest`.
 pub const MANIFEST_TEMPLATE: &str = include_str!("../../templates/manifest.json");
 pub const MANIFEST_SCHEMA: &str = include_str!("../../schema/plugin-manifest-v3.schema.json");
@@ -99,8 +98,13 @@ impl PluginManifest {
             ));
         }
         validate_id("plugin.id", &self.plugin.id, &['.', '-', '_'])?;
-        if self.plugin.name.trim().is_empty() || self.plugin.version.trim().is_empty() {
-            return Err("plugin.name and plugin.version must not be empty".to_string());
+        if self.plugin.name.trim().is_empty()
+            || self.plugin.version.trim().is_empty()
+            || self.plugin.publisher.trim().is_empty()
+        {
+            return Err(
+                "plugin.name, plugin.version and plugin.publisher must not be empty".to_string(),
+            );
         }
         match &self.runtime {
             PluginRuntime::Builtin => {}
@@ -128,10 +132,9 @@ impl PluginManifest {
     }
 }
 
-/// Returns whether a guest ABI is supported by this host. Pre-1.0 minor versions are treated as
-/// explicit protocol levels, so compatibility is an allow-list rather than a loose semver match.
+/// Returns whether a guest JSON API is supported by this host.
 pub fn is_plugin_api_compatible(value: &str) -> bool {
-    matches!(value, MIN_PLUGIN_API_VERSION | PLUGIN_API_VERSION)
+    value == PLUGIN_API_VERSION
 }
 
 fn validate_plugin_api_version(value: &str) -> Result<(), String> {
@@ -139,7 +142,7 @@ fn validate_plugin_api_version(value: &str) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "unsupported runtime.plugin_api `{value}`; supported versions are `{MIN_PLUGIN_API_VERSION}` and `{PLUGIN_API_VERSION}`"
+            "unsupported runtime.plugin_api `{value}`; supported version is `{PLUGIN_API_VERSION}`"
         ))
     }
 }
@@ -256,6 +259,13 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
                 action.id
             ));
         }
+        let unique_views = action.views.iter().collect::<HashSet<_>>();
+        if unique_views.len() != action.views.len() {
+            return Err(format!(
+                "capabilities.actions[`{}`].views must not contain duplicates",
+                action.id
+            ));
+        }
         for view in &action.views {
             if !SUPPORTED_VIEWS.contains(&view.as_str()) {
                 return Err(format!(
@@ -360,11 +370,11 @@ mod tests {
     }
 
     #[test]
-    fn compatibility_window_accepts_v2_api_01_and_rejects_unknown_versions() {
+    fn compatibility_window_accepts_v2_with_current_api_and_rejects_unknown_versions() {
         let mut document: serde_json::Value = serde_json::from_str(MANIFEST_TEMPLATE).unwrap();
         document.as_object_mut().unwrap().remove("$schema");
         document["manifest_version"] = serde_json::json!(2);
-        document["runtime"]["plugin_api"] = serde_json::json!(MIN_PLUGIN_API_VERSION);
+        document["runtime"]["plugin_api"] = serde_json::json!(PLUGIN_API_VERSION);
         let capabilities = document["capabilities"].as_object_mut().unwrap();
         let actions = capabilities.remove("actions").unwrap();
         capabilities.insert("resource_actions".to_string(), actions);
@@ -385,7 +395,7 @@ mod tests {
                 .is_err()
         );
         document["manifest_version"] = serde_json::json!(2);
-        document["runtime"]["plugin_api"] = serde_json::json!("asset-hub.plugin-api@0.3");
+        document["runtime"]["plugin_api"] = serde_json::json!("asset-hub.plugin-api@0.1");
         assert!(
             serde_json::from_value::<PluginManifest>(document)
                 .unwrap()

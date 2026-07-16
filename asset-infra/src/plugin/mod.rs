@@ -6,11 +6,11 @@ use asset_core::port::{
 };
 use asset_plugin_api::{
     PluginActionFailure, PluginActionOutput, PluginActionRequest, PluginChecksum,
-    PluginContentBytes, PluginContentEncoding, PluginContentRange, PluginContentReference,
-    PluginDiagnostic, PluginDiagnosticSeverity, PluginExecutionPolicy, PluginPermission,
-    PluginPermissions, PluginResource, PluginResourceContent, PluginResourceMetadata,
-    PluginResourceSummaryMetadata, PluginRuntime, PluginView, ResourceActionCapability,
-    ResourceContentMatcher,
+    PluginContentBytes, PluginContentRange, PluginContentReference, PluginContentReferenceEncoding,
+    PluginDiagnostic, PluginDiagnosticSeverity, PluginExecutionPolicy, PluginInlineContentEncoding,
+    PluginPermission, PluginPermissions, PluginResource, PluginResourceContent,
+    PluginResourceMetadata, PluginResourceSummaryMetadata, PluginRuntime, PluginView,
+    ResourceActionCapability, ResourceContentMatcher,
 };
 use async_trait::async_trait;
 use base64::Engine;
@@ -645,10 +645,10 @@ fn call_extism(
                 ),
             )
         })?;
-        return Err(CoreError::plugin_diagnostic(
+        return Err(CoreError::plugin_failure(
             &binding.plugin_id,
             &binding.action,
-            failure.error,
+            failure,
         ));
     }
     let mut output: PluginActionOutput = serde_json::from_value(value).map_err(|error| {
@@ -788,11 +788,11 @@ impl HostContentResolver {
         let range = PluginContentRange::new(offset, length)
             .and_then(|range| range.bounded(content.size, self.policy.max_content_read_bytes()))
             .map_err(|error| CoreError::configuration(error.to_string()))?;
-        if range.length == 0 {
+        if range.length() == 0 {
             return Ok(Vec::new());
         }
-        let offset = range.offset;
-        let length = range.length;
+        let offset = range.offset();
+        let length = range.length();
         let end = range.end() - 1;
         self.runtime.block_on(async {
             let Some(mut stream) = self
@@ -881,7 +881,7 @@ fn build_payload(
         None
     } else {
         request.content().map(|content| PluginContentBytes {
-            encoding: PluginContentEncoding::Base64,
+            encoding: PluginInlineContentEncoding::Base64,
             data: STANDARD.encode(content),
         })
     };
@@ -891,7 +891,7 @@ fn build_payload(
     ) {
         content_ref.map(|_| PluginContentReference {
             abi_version: asset_plugin_api::CONTENT_ABI_VERSION,
-            encoding: PluginContentEncoding::Handle,
+            encoding: PluginContentReferenceEncoding::Handle,
             reference: content_reference
                 .expect("reference content delivery must hold a content lease")
                 .to_string(),

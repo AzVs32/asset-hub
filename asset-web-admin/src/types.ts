@@ -87,6 +87,15 @@ export type PluginActionOutput = {
   resource_id: string;
   action: string;
   view: PluginView;
+  diagnostics?: PluginDiagnostic[];
+};
+
+export type PluginDiagnostic = {
+  code: string;
+  message: string;
+  severity: "info" | "warning" | "error";
+  retryable: boolean;
+  details?: unknown;
 };
 
 export type PluginView =

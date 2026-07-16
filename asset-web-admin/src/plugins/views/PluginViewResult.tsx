@@ -1,11 +1,21 @@
 import React from "react";
 import { apiBase } from "../../api";
-import type { PluginActionOutput, PluginView } from "../../types";
+import type { PluginActionOutput, PluginDiagnostic, PluginView } from "../../types";
 import { primaryButtonClass } from "../../components/ui";
 import { CoreBinaryUrlView, CoreMediaView } from "../core/CoreMediaView";
 
 export function PluginActionResult({ output, large = false }: { output: PluginActionOutput; large?: boolean }) {
-  return <PluginViewResult view={output.view} title={output.action} resourceId={output.resource_id} action={output.action} large={large} />;
+  return <><PluginDiagnostics diagnostics={output.diagnostics ?? []} /><PluginViewResult view={output.view} title={output.action} resourceId={output.resource_id} action={output.action} large={large} /></>;
+}
+
+function PluginDiagnostics({ diagnostics }: { diagnostics: PluginDiagnostic[] }) {
+  if (!diagnostics.length) return null;
+  return <section className="grid gap-2 border-b border-slate-200 bg-amber-50 px-5 py-3" aria-label="Plugin diagnostics">
+    {diagnostics.map((diagnostic, index) => <div className="text-sm text-slate-800" key={`${diagnostic.code}:${index}`}>
+      <span className="mr-2 rounded bg-white px-1.5 py-0.5 text-[11px] font-bold uppercase text-slate-600">{diagnostic.severity}</span>
+      <strong>{diagnostic.code}</strong>: {diagnostic.message}{diagnostic.retryable ? " (retryable)" : ""}
+    </div>)}
+  </section>;
 }
 
 export function PluginViewResult({ view, title, resourceId, action, large = false }: { view: PluginView; title: string; resourceId?: string; action?: string; large?: boolean }) {

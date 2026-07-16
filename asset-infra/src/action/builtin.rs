@@ -2,7 +2,7 @@ use asset_core::CoreError;
 use asset_core::domain::{Resource, ResourceContent};
 use asset_core::port::{ResourceActionExecutor, ResourceActionOutput, ResourceActionRequest};
 use asset_plugin_api::{
-    BinaryUrlView, MediaView, PluginActionOutput, PluginContentEncoding, PluginView, ResourceAction,
+    BinaryUrlView, MediaView, PluginActionOutput, PluginMediaEncoding, PluginView, ResourceAction,
 };
 use async_trait::async_trait;
 use base64::Engine;
@@ -98,10 +98,10 @@ fn media_output(
         ));
     };
     let (encoding, data) = if let Some(content) = content {
-        (PluginContentEncoding::Base64, STANDARD.encode(content))
+        (PluginMediaEncoding::Base64, STANDARD.encode(content))
     } else {
         (
-            PluginContentEncoding::Url,
+            PluginMediaEncoding::Url,
             format!("/resources/{}/content", resource.id()),
         )
     };
@@ -136,7 +136,7 @@ fn thumbnail_output(
     let view = PluginView::Media(MediaView {
         mime_type: content_type_for_media(content_ref),
         title: Some(resource.name().to_string()),
-        encoding: PluginContentEncoding::Base64,
+        encoding: PluginMediaEncoding::Base64,
         data: STANDARD.encode(content),
     });
 

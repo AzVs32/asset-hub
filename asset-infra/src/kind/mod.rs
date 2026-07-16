@@ -716,7 +716,7 @@ mod tests {
                 "type": "extism",
                 "wasm": "epub.wasm",
                 "wasi": false,
-                "plugin_api": "asset-hub.plugin-api@0.1"
+                "plugin_api": "asset-hub.plugin-api@0.2"
               },
               "capabilities": {
                 "resource_kinds": [
@@ -807,7 +807,7 @@ mod tests {
                 "type": "extism",
                 "wasm": "mp4-tools.wasm",
                 "wasi": false,
-                "plugin_api": "asset-hub.plugin-api@0.1"
+                "plugin_api": "asset-hub.plugin-api@0.2"
               },
               "capabilities": {
                 "resource_kinds": [

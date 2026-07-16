@@ -1,4 +1,4 @@
-use crate::dto::ErrorResponse;
+use crate::dto::{ErrorResponse, PluginDiagnosticResponse};
 use asset_core::CoreError;
 use axum::Json;
 use axum::http::StatusCode;
@@ -12,6 +12,7 @@ pub(crate) struct HttpError {
     status: StatusCode,
     message: String,
     diagnostic: Option<Box<HttpDiagnostic>>,
+    diagnostics: Vec<asset_plugin_api::PluginDiagnostic>,
 }
 
 #[derive(Debug)]
@@ -35,6 +36,7 @@ impl HttpError {
             status: StatusCode::UNAUTHORIZED,
             message: message.into(),
             diagnostic: None,
+            diagnostics: Vec::new(),
         }
     }
 
@@ -43,6 +45,7 @@ impl HttpError {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             message: message.into(),
             diagnostic: None,
+            diagnostics: Vec::new(),
         }
     }
     /// 构造 400 Bad Request。
@@ -51,6 +54,7 @@ impl HttpError {
             status: StatusCode::BAD_REQUEST,
             message: message.into(),
             diagnostic: None,
+            diagnostics: Vec::new(),
         }
     }
 
@@ -59,6 +63,7 @@ impl HttpError {
             status: StatusCode::PAYLOAD_TOO_LARGE,
             message: message.into(),
             diagnostic: None,
+            diagnostics: Vec::new(),
         }
     }
 
@@ -68,6 +73,7 @@ impl HttpError {
             status: StatusCode::NOT_FOUND,
             message: message.into(),
             diagnostic: None,
+            diagnostics: Vec::new(),
         }
     }
 
@@ -77,6 +83,7 @@ impl HttpError {
             status: StatusCode::FORBIDDEN,
             message: message.into(),
             diagnostic: None,
+            diagnostics: Vec::new(),
         }
     }
 
@@ -85,6 +92,7 @@ impl HttpError {
             status: StatusCode::TOO_MANY_REQUESTS,
             message: message.into(),
             diagnostic: None,
+            diagnostics: Vec::new(),
         }
     }
 }
@@ -113,10 +121,15 @@ impl From<CoreError> for HttpError {
             })),
             _ => None,
         };
+        let diagnostics = match &error {
+            CoreError::Plugin { diagnostics, .. } => diagnostics.clone(),
+            _ => Vec::new(),
+        };
         Self {
             status,
             message: error.to_string(),
             diagnostic,
+            diagnostics,
         }
     }
 }
@@ -140,6 +153,7 @@ impl From<asset_core::ResourceError> for HttpError {
             status: StatusCode::BAD_REQUEST,
             message: error.to_string(),
             diagnostic: None,
+            diagnostics: Vec::new(),
         }
     }
 }
@@ -156,6 +170,11 @@ impl IntoResponse for HttpError {
                 code,
                 retryable,
                 details,
+                diagnostics: self
+                    .diagnostics
+                    .iter()
+                    .map(PluginDiagnosticResponse::from)
+                    .collect(),
             }),
         )
             .into_response()
@@ -165,6 +184,9 @@ impl IntoResponse for HttpError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use asset_plugin_api::{
+        PluginActionFailure, PluginDiagnostic, PluginDiagnosticSeverity, diagnostic::codes,
+    };
 
     #[test]
     fn plugin_diagnostic_codes_map_to_stable_http_statuses() {
@@ -184,5 +206,27 @@ mod tests {
             plugin_status(asset_plugin_api::diagnostic::codes::TIMEOUT),
             StatusCode::GATEWAY_TIMEOUT
         );
+    }
+
+    #[test]
+    fn plugin_failure_preserves_additional_diagnostics() {
+        let mut failure =
+            PluginActionFailure::new(PluginDiagnostic::error(codes::INVALID_INPUT, "invalid"));
+        failure.diagnostics.push(PluginDiagnostic {
+            code: "plugin.input_hint".to_string(),
+            message: "Provide a value".to_string(),
+            severity: PluginDiagnosticSeverity::Info,
+            retryable: false,
+            details: None,
+        });
+
+        let error = HttpError::from(CoreError::plugin_failure(
+            "example.plugin",
+            "example.action",
+            failure,
+        ));
+        assert_eq!(error.status, StatusCode::BAD_REQUEST);
+        assert_eq!(error.diagnostics.len(), 1);
+        assert_eq!(error.diagnostics[0].code, "plugin.input_hint");
     }
 }

@@ -15,6 +15,12 @@
 //!   可选的 inline content，以及 host 可读取的 content reference。
 //! - [`view`] 定义插件 action handler 返回给 host 的 JSON 输出协议，用于表达文本、
 //!   HTML、媒体、表格、表单、二进制 URL 等可由 host 渲染的视图。
+//!
+//! Cargo crate、Manifest、JSON plugin API 和 Wasm content ABI 独立版本化；升级规则见
+//! `asset-plugin-api/README.md`。
+
+/// Cargo package version of the Rust authoring library. This is not a wire protocol version.
+pub const CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub mod action;
 pub mod content;
@@ -37,19 +43,19 @@ pub use diagnostic::{PluginActionFailure, PluginDiagnostic, PluginDiagnosticSeve
 pub use manifest::{
     ActionAppliesTo, ActionRequirements, ActionUi, ContentDelivery, FilesystemPermission,
     MANIFEST_SCHEMA, MANIFEST_TEMPLATE, MANIFEST_VERSION, MIN_MANIFEST_VERSION,
-    MIN_PLUGIN_API_VERSION, ManifestActionAccess, NetworkPermission, PLUGIN_API_VERSION,
-    PluginCapabilities, PluginManifest, PluginManifestLock, PluginMetadata, PluginPermission,
-    PluginPermissions, PluginRuntime, PluginRuntimeLock, PluginWeb, PluginWebLock,
-    ReadWritePermission, ResourceActionCapability, ResourceKindCapability,
-    is_plugin_api_compatible,
+    ManifestActionAccess, NetworkPermission, PLUGIN_API_VERSION, PluginCapabilities,
+    PluginManifest, PluginManifestLock, PluginMetadata, PluginPermission, PluginPermissions,
+    PluginRuntime, PluginRuntimeLock, PluginWeb, PluginWebLock, ReadWritePermission,
+    ResourceActionCapability, ResourceKindCapability, is_plugin_api_compatible,
 };
 pub use policy::{InvalidPluginExecutionPolicy, PluginExecutionPolicy};
 pub use request::{
     PluginActionRequest, PluginChecksum, PluginContentBytes, PluginContentReference,
-    PluginResource, PluginResourceContent, PluginResourceMetadata, PluginResourceSummaryMetadata,
+    PluginContentReferenceEncoding, PluginInlineContentEncoding, PluginResource,
+    PluginResourceContent, PluginResourceMetadata, PluginResourceSummaryMetadata,
 };
 pub use view::{
     BinaryUrlView, FormView, HtmlView, JsonView, MarkdownView, MediaView, PluginActionEffect,
-    PluginActionOutput, PluginContentEncoding, PluginFrameView, PluginView, ReplaceContentEffect,
-    TableColumn, TableView, TextView,
+    PluginActionOutput, PluginFrameView, PluginMediaEncoding, PluginReplacementEncoding,
+    PluginView, ReplaceContentEffect, TableColumn, TableView, TextView,
 };

@@ -165,8 +165,8 @@ impl<'a> ResourcePreviewService<'a> {
         };
 
         match media.encoding {
-            PluginContentEncoding::Base64 => decode_media_view(action, view),
-            PluginContentEncoding::Url => {
+            PluginMediaEncoding::Base64 => decode_media_view(action, view),
+            PluginMediaEncoding::Url => {
                 let Some(resource) = self.service.commands().find_resource(id).await? else {
                     return Err(CoreError::not_found("resource", id.to_string()));
                 };
@@ -183,9 +183,6 @@ impl<'a> ResourcePreviewService<'a> {
                 };
                 Ok((content_type, content))
             }
-            PluginContentEncoding::Handle => Err(CoreError::configuration(format!(
-                "resource action `{action}` returned a host-only content handle"
-            ))),
         }
     }
 }

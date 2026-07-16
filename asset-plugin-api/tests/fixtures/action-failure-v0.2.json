@@ -1,0 +1,19 @@
+{
+  "error": {
+    "code": "plugin.invalid_input",
+    "message": "missing field",
+    "severity": "error",
+    "retryable": false,
+    "details": {
+      "field": "markdown"
+    }
+  },
+  "diagnostics": [
+    {
+      "code": "plugin.input_hint",
+      "message": "Provide a markdown string",
+      "severity": "info",
+      "retryable": false
+    }
+  ]
+}

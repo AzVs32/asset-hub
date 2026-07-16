@@ -1,7 +1,8 @@
 use ammonia::Builder;
 use asset_plugin_api::{
     JsonView, MediaView, PluginActionFailure, PluginActionOutput, PluginActionRequest,
-    PluginContentEncoding, PluginDiagnostic, PluginFrameView, PluginView,
+    PluginContentReferenceEncoding, PluginDiagnostic, PluginFrameView, PluginInlineContentEncoding,
+    PluginMediaEncoding, PluginView,
 };
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
@@ -272,7 +273,7 @@ fn store_cover(key: String, cover: Option<String>) {
 
 fn epub_content_bytes(input: &PluginActionRequest) -> FnResult<Vec<u8>> {
     if let Some(content) = &input.content {
-        if content.encoding != PluginContentEncoding::Base64 {
+        if content.encoding != PluginInlineContentEncoding::Base64 {
             return Err(Error::msg("unsupported content encoding").into());
         }
         let bytes = STANDARD.decode(&content.data)?;
@@ -286,7 +287,7 @@ fn epub_content_bytes(input: &PluginActionRequest) -> FnResult<Vec<u8>> {
         .content_ref
         .as_ref()
         .ok_or_else(|| Error::msg("missing EPUB content payload"))?;
-    if content_ref.encoding != PluginContentEncoding::Handle {
+    if content_ref.encoding != PluginContentReferenceEncoding::Handle {
         return Err(Error::msg("unsupported content reference encoding").into());
     }
     if content_ref.abi_version != asset_plugin_api::CONTENT_ABI_VERSION {
@@ -361,7 +362,7 @@ fn cover_media_view(title: &str, data_url: &str) -> FnResult<MediaView> {
     Ok(MediaView {
         mime_type: mime_type.to_string(),
         title: Some(title.to_string()),
-        encoding: PluginContentEncoding::Base64,
+        encoding: PluginMediaEncoding::Base64,
         data: data.to_string(),
     })
 }

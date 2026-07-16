@@ -1,7 +1,7 @@
 use asset_plugin_api::{
     JsonView, PluginActionEffect, PluginActionFailure, PluginActionOutput, PluginActionRequest,
-    PluginContentEncoding, PluginDiagnostic, PluginFrameView, PluginView, ReplaceContentEffect,
-    TextView,
+    PluginContentReferenceEncoding, PluginDiagnostic, PluginFrameView, PluginInlineContentEncoding,
+    PluginReplacementEncoding, PluginView, ReplaceContentEffect, TextView,
 };
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
@@ -135,7 +135,7 @@ fn save_response(request: &PluginActionRequest, markdown: &str) -> FnResult<Stri
     output
         .effects
         .push(PluginActionEffect::ReplaceContent(ReplaceContentEffect {
-            encoding: PluginContentEncoding::Base64,
+            encoding: PluginReplacementEncoding::Base64,
             data: STANDARD.encode(markdown.as_bytes()),
             mime_type: request
                 .resource
@@ -163,7 +163,7 @@ fn input_markdown(input: &Value) -> Option<&str> {
 
 fn markdown_content_size(input: &PluginActionRequest) -> FnResult<u64> {
     if let Some(content) = &input.content {
-        if content.encoding != PluginContentEncoding::Base64 {
+        if content.encoding != PluginInlineContentEncoding::Base64 {
             return Err(Error::msg("unsupported content encoding").into());
         }
         return Ok(STANDARD.decode(&content.data)?.len() as u64);
@@ -172,7 +172,7 @@ fn markdown_content_size(input: &PluginActionRequest) -> FnResult<u64> {
         .content_ref
         .as_ref()
         .ok_or_else(|| Error::msg("missing Markdown content payload"))?;
-    if content_ref.encoding != PluginContentEncoding::Handle {
+    if content_ref.encoding != PluginContentReferenceEncoding::Handle {
         return Err(Error::msg("unsupported content reference encoding").into());
     }
     if content_ref.abi_version != asset_plugin_api::CONTENT_ABI_VERSION {

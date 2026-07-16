@@ -1,5 +1,5 @@
 use super::{ResourceError, UserError};
-use asset_plugin_api::PluginDiagnostic;
+use asset_plugin_api::{PluginActionFailure, PluginDiagnostic};
 use thiserror::Error;
 
 /// 核心层对外暴露的统一错误类型。
@@ -76,6 +76,8 @@ pub enum CoreError {
         action: String,
         /// Stable code, message, retry hint and optional machine-readable details.
         diagnostic: Box<PluginDiagnostic>,
+        /// Additional diagnostics emitted while producing the primary failure.
+        diagnostics: Vec<PluginDiagnostic>,
     },
 }
 
@@ -158,6 +160,20 @@ impl CoreError {
             plugin: plugin.into(),
             action: action.into(),
             diagnostic: Box::new(diagnostic),
+            diagnostics: Vec::new(),
+        }
+    }
+
+    pub fn plugin_failure(
+        plugin: impl Into<String>,
+        action: impl Into<String>,
+        failure: PluginActionFailure,
+    ) -> Self {
+        Self::Plugin {
+            plugin: plugin.into(),
+            action: action.into(),
+            diagnostic: Box::new(failure.error),
+            diagnostics: failure.diagnostics,
         }
     }
 }

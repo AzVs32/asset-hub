@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Version of the host content functions exposed to Wasm plugins.
 pub const CONTENT_ABI_VERSION: u32 = 1;
@@ -8,11 +8,11 @@ pub const CONTENT_READ_RANGE_FN: &str = "asset_hub_content_read";
 pub const CONTENT_CLOSE_FN: &str = "asset_hub_content_close";
 
 /// A validated half-open byte range `[offset, offset + length)`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PluginContentRange {
-    pub offset: u64,
-    pub length: u64,
+    offset: u64,
+    length: u64,
 }
 
 impl PluginContentRange {
@@ -24,7 +24,17 @@ impl PluginContentRange {
     }
 
     pub fn end(self) -> u64 {
-        self.offset + self.length
+        self.offset
+            .checked_add(self.length)
+            .expect("PluginContentRange construction validates its end")
+    }
+
+    pub fn offset(self) -> u64 {
+        self.offset
+    }
+
+    pub fn length(self) -> u64 {
+        self.length
     }
 
     pub fn bounded(self, size: u64, max_length: u64) -> Result<Self, ContentRangeError> {
@@ -35,6 +45,23 @@ impl PluginContentRange {
             self.offset,
             self.length.min(max_length).min(size - self.offset),
         )
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PluginContentRangeDocument {
+    offset: u64,
+    length: u64,
+}
+
+impl<'de> Deserialize<'de> for PluginContentRange {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let document = PluginContentRangeDocument::deserialize(deserializer)?;
+        Self::new(document.offset, document.length).map_err(serde::de::Error::custom)
     }
 }
 
@@ -130,10 +157,10 @@ pub mod guest {
         range: PluginContentRange,
         chunk_size: u64,
     ) -> FnResult<Vec<u8>> {
-        let capacity = usize::try_from(range.length)
+        let capacity = usize::try_from(range.length())
             .map_err(|_| Error::msg("content ABI range does not fit guest memory"))?;
         let mut bytes = Vec::with_capacity(capacity);
-        let mut offset = range.offset;
+        let mut offset = range.offset();
         while offset < range.end() {
             let requested = (range.end() - offset).min(chunk_size);
             let chunk = unsafe { asset_hub_content_read(handle.to_string(), offset, requested) }?;
@@ -169,6 +196,13 @@ mod tests {
                 .unwrap()
                 .bounded(10, 3)
                 .is_err()
+        );
+        assert!(
+            serde_json::from_value::<PluginContentRange>(serde_json::json!({
+                "offset": u64::MAX,
+                "length": 1
+            }))
+            .is_err()
         );
     }
 }

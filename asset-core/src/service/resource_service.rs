@@ -17,7 +17,7 @@ use crate::port::{
     ResourceQuery, ResourceRepository, StoragePrefix, StorageScanner,
 };
 use asset_plugin_api::{
-    PluginActionEffect, PluginContentEncoding, PluginExecutionPolicy, PluginView, ResourceAction,
+    PluginActionEffect, PluginExecutionPolicy, PluginMediaEncoding, PluginView, ResourceAction,
     ResourceActionAccess, ResourceActionContentDelivery, ResourceActionDefinition,
     ResourceActionExecutorKind,
 };
@@ -849,9 +849,9 @@ fn decode_media_view(action: &str, view: &PluginView) -> Result<(String, Bytes),
             "resource action `{action}` must return a media view"
         )));
     };
-    if media.encoding != PluginContentEncoding::Base64 {
+    if media.encoding != PluginMediaEncoding::Base64 {
         return Err(CoreError::configuration(format!(
-            "resource action `{action}` returned unsupported media encoding"
+            "resource action `{action}` returned URL media where inline media was required"
         )));
     }
     let content = BASE64_STANDARD.decode(&media.data).map_err(|error| {
@@ -1017,9 +1017,9 @@ mod tests {
     use super::*;
     use crate::port::{BlobWriteResult, ResourceKindDefinition, ResourceKindRegistry};
     use asset_plugin_api::{
-        MediaView, PluginActionEffect, PluginActionOutput, PluginContentEncoding, PluginView,
-        ReplaceContentEffect, ResourceAction, ResourceActionAccess, ResourceActionDefinition,
-        ResourceContentMatcher, TextView,
+        MediaView, PluginActionEffect, PluginActionOutput, PluginMediaEncoding,
+        PluginReplacementEncoding, PluginView, ReplaceContentEffect, ResourceAction,
+        ResourceActionAccess, ResourceActionDefinition, ResourceContentMatcher, TextView,
     };
     use async_trait::async_trait;
     use base64::Engine;
@@ -1387,7 +1387,7 @@ mod tests {
                             .unwrap_or("application/octet-stream")
                             .to_string(),
                         title: Some(request.resource().name().to_string()),
-                        encoding: PluginContentEncoding::Base64,
+                        encoding: PluginMediaEncoding::Base64,
                         data: STANDARD.encode(content),
                     })
                 }
@@ -1404,7 +1404,7 @@ mod tests {
                     output
                         .effects
                         .push(PluginActionEffect::ReplaceContent(ReplaceContentEffect {
-                            encoding: PluginContentEncoding::Base64,
+                            encoding: PluginReplacementEncoding::Base64,
                             data: STANDARD.encode(markdown),
                             mime_type: Some("text/markdown".to_string()),
                             original_filename: Some("note.md".to_string()),

@@ -6,8 +6,8 @@ use asset_core::domain::{
 use asset_core::port::{ResourceActionOutput, ResourceKindDefinition, StoragePrefix};
 use asset_core::service::{ReadableResource, ResourceActions};
 use asset_plugin_api::{
-    ResourceActionAccess, ResourceActionContentDelivery, ResourceActionDefinition,
-    ResourceActionExecutorKind,
+    PluginDiagnostic, PluginDiagnosticSeverity, ResourceActionAccess,
+    ResourceActionContentDelivery, ResourceActionDefinition, ResourceActionExecutorKind,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -204,6 +204,9 @@ pub(crate) struct ErrorResponse {
     /// Optional structured diagnostic context.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) details: Option<serde_json::Value>,
+    /// Additional structured diagnostics associated with the failure.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) diagnostics: Vec<PluginDiagnosticResponse>,
 }
 
 /// 健康检查响应。
@@ -654,6 +657,36 @@ pub(crate) struct ResourceActionOutputResponse {
     pub(crate) action: String,
     /// 插件返回的 View。
     pub(crate) view: Value,
+    /// 插件返回的非致命诊断信息。
+    pub(crate) diagnostics: Vec<PluginDiagnosticResponse>,
+}
+
+/// 插件或宿主产生的结构化诊断信息。
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct PluginDiagnosticResponse {
+    pub(crate) code: String,
+    pub(crate) message: String,
+    pub(crate) severity: String,
+    pub(crate) retryable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) details: Option<Value>,
+}
+
+impl From<&PluginDiagnostic> for PluginDiagnosticResponse {
+    fn from(diagnostic: &PluginDiagnostic) -> Self {
+        Self {
+            code: diagnostic.code.clone(),
+            message: diagnostic.message.clone(),
+            severity: match diagnostic.severity {
+                PluginDiagnosticSeverity::Info => "info",
+                PluginDiagnosticSeverity::Warning => "warning",
+                PluginDiagnosticSeverity::Error => "error",
+            }
+            .to_string(),
+            retryable: diagnostic.retryable,
+            details: diagnostic.details.clone(),
+        }
+    }
 }
 
 impl From<&ResourceActionOutput> for ResourceActionOutputResponse {
@@ -663,6 +696,12 @@ impl From<&ResourceActionOutput> for ResourceActionOutputResponse {
             action: output.action().as_str().to_string(),
             view: serde_json::to_value(&output.output().view)
                 .expect("plugin view should serialize to JSON"),
+            diagnostics: output
+                .output()
+                .diagnostics
+                .iter()
+                .map(PluginDiagnosticResponse::from)
+                .collect(),
         }
     }
 }
@@ -764,5 +803,41 @@ fn status_text(status: ResourceStatus) -> &'static str {
 fn checksum_kind_text(kind: ChecksumKind) -> &'static str {
     match kind {
         ChecksumKind::Sha256 => "sha256",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use asset_core::domain::ResourceId;
+    use asset_core::port::ResourceActionOutput;
+    use asset_plugin_api::{
+        PluginActionOutput, PluginDiagnostic, PluginDiagnosticSeverity, PluginView, ResourceAction,
+        TextView,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn action_output_response_preserves_plugin_diagnostics() {
+        let mut plugin_output = PluginActionOutput::new(PluginView::Text(TextView {
+            text: "done".to_string(),
+        }));
+        plugin_output.diagnostics.push(PluginDiagnostic {
+            code: "plugin.normalized_input".to_string(),
+            message: "Input was normalized".to_string(),
+            severity: PluginDiagnosticSeverity::Warning,
+            retryable: false,
+            details: Some(json!({"field": "title"})),
+        });
+        let output = ResourceActionOutput::new(
+            ResourceId::new(),
+            ResourceAction::from("example.inspect"),
+            plugin_output,
+        );
+
+        let value = serde_json::to_value(ResourceActionOutputResponse::from(&output)).unwrap();
+        assert_eq!(value["diagnostics"][0]["code"], "plugin.normalized_input");
+        assert_eq!(value["diagnostics"][0]["severity"], "warning");
+        assert_eq!(value["diagnostics"][0]["details"]["field"], "title");
     }
 }

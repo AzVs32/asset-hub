@@ -489,7 +489,7 @@ mod tests {
               "plugin": {{"id": "{id}", "name": "Test", "version": "0.1.0", "publisher": "test"}},
               "runtime": {{
                 "type": "extism", "wasm": "plugin.wasm",
-                "wasi": false, "plugin_api": "asset-hub.plugin-api@0.1"
+                "wasi": false, "plugin_api": "asset-hub.plugin-api@0.2"
               }},
               "capabilities": {{"resource_kinds": [], "resource_actions": []}},
               "permissions": {{

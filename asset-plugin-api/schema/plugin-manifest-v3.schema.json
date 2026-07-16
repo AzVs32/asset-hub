@@ -20,15 +20,25 @@
       "minLength": 1,
       "pattern": "^[a-z0-9._:-]+$"
     },
+    "pluginId": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9._-]+$"
+    },
+    "nonBlankString": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
     "plugin": {
       "type": "object",
       "additionalProperties": false,
       "required": ["id", "name", "version", "publisher"],
       "properties": {
-        "id": { "$ref": "#/$defs/canonicalId" },
-        "name": { "type": "string", "minLength": 1 },
-        "version": { "type": "string", "minLength": 1 },
-        "publisher": { "type": "string", "minLength": 1 },
+        "id": { "$ref": "#/$defs/pluginId" },
+        "name": { "$ref": "#/$defs/nonBlankString" },
+        "version": { "$ref": "#/$defs/nonBlankString" },
+        "publisher": { "$ref": "#/$defs/nonBlankString" },
         "description": { "type": "string" }
       }
     },
@@ -46,11 +56,11 @@
           "required": ["type", "wasm"],
           "properties": {
             "type": { "const": "extism" },
-            "wasm": { "type": "string", "minLength": 1 },
+            "wasm": { "$ref": "#/$defs/nonBlankString" },
             "wasi": { "type": "boolean", "default": false },
             "plugin_api": {
               "type": "string",
-              "enum": ["asset-hub.plugin-api@0.1", "asset-hub.plugin-api@0.2"],
+              "const": "asset-hub.plugin-api@0.2",
               "default": "asset-hub.plugin-api@0.2"
             }
           }
@@ -61,7 +71,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["root"],
-      "properties": { "root": { "type": "string", "minLength": 1 } }
+      "properties": { "root": { "$ref": "#/$defs/nonBlankString" } }
     },
     "capabilities": {
       "type": "object",
@@ -78,7 +88,7 @@
       "properties": {
         "kind": { "$ref": "#/$defs/canonicalId" },
         "parent": { "$ref": "#/$defs/canonicalId" },
-        "label": { "type": "string", "minLength": 1 },
+        "label": { "$ref": "#/$defs/nonBlankString" },
         "supports_content": { "type": "boolean", "default": true },
         "detect": { "$ref": "#/$defs/contentMatcher" }
       }
@@ -87,8 +97,8 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "mime_types": { "type": "array", "items": { "type": "string", "minLength": 1 } },
-        "extensions": { "type": "array", "items": { "type": "string", "pattern": "^\\." } }
+        "mime_types": { "type": "array", "items": { "$ref": "#/$defs/nonBlankString" } },
+        "extensions": { "type": "array", "items": { "$ref": "#/$defs/nonBlankString" } }
       }
     },
     "action": {
@@ -97,7 +107,7 @@
       "required": ["id", "label", "handler", "views"],
       "properties": {
         "id": { "$ref": "#/$defs/canonicalId" },
-        "label": { "type": "string", "minLength": 1 },
+        "label": { "$ref": "#/$defs/nonBlankString" },
         "handler": { "$ref": "#/$defs/canonicalId" },
         "applies_to": {
           "type": "object",
@@ -150,7 +160,7 @@
               "type": "object",
               "additionalProperties": false,
               "required": ["hosts"],
-              "properties": { "hosts": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } } }
+              "properties": { "hosts": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/nonBlankString" } } }
             }
           ]
         },
@@ -162,8 +172,8 @@
               "additionalProperties": false,
               "required": ["read", "write"],
               "properties": {
-                "read": { "type": "array", "items": { "type": "string", "minLength": 1 } },
-                "write": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+                "read": { "type": "array", "items": { "$ref": "#/$defs/nonBlankString" } },
+                "write": { "type": "array", "items": { "$ref": "#/$defs/nonBlankString" } }
               }
             }
           ]

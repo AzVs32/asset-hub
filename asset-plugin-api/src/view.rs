@@ -3,14 +3,6 @@ use serde_json::Value;
 
 use crate::{PluginChecksum, PluginDiagnostic};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PluginContentEncoding {
-    Base64,
-    Handle,
-    Url,
-}
-
 /// Standard action output.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PluginActionOutput {
@@ -57,7 +49,7 @@ pub enum PluginActionEffect {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReplaceContentEffect {
-    pub encoding: PluginContentEncoding,
+    pub encoding: PluginReplacementEncoding,
     pub data: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
@@ -65,6 +57,13 @@ pub struct ReplaceContentEffect {
     pub original_filename: Option<String>,
     #[serde(default)]
     pub checksum: Vec<PluginChecksum>,
+}
+
+/// Encoding accepted for bytes returned by a content replacement effect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginReplacementEncoding {
+    Base64,
 }
 
 /// Shared view protocol returned by plugin actions.
@@ -116,8 +115,16 @@ pub struct MediaView {
     pub mime_type: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
-    pub encoding: PluginContentEncoding,
+    pub encoding: PluginMediaEncoding,
     pub data: String,
+}
+
+/// Encodings renderable by a media view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginMediaEncoding {
+    Base64,
+    Url,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

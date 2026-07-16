@@ -244,12 +244,6 @@ impl<'a> ResourceActionService<'a> {
                             output.action()
                         )));
                     };
-                    if !matches!(effect.encoding, PluginContentEncoding::Base64) {
-                        return Err(CoreError::configuration(format!(
-                            "action `{}` returned unsupported replace_content encoding",
-                            output.action()
-                        )));
-                    }
                     let data = BASE64_STANDARD
                         .decode(effect.data.as_bytes())
                         .map(Bytes::from)

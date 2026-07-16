@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Resource action identifier.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -103,13 +103,44 @@ pub struct ResourceActionUi {
 }
 
 /// Content matching rules used by kind auto-detection.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ResourceContentMatcher {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     mime_types: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     extensions: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResourceContentMatcherDocument {
+    #[serde(default)]
+    mime_types: Vec<String>,
+    #[serde(default)]
+    extensions: Vec<String>,
+}
+
+impl<'de> Deserialize<'de> for ResourceContentMatcher {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let document = ResourceContentMatcherDocument::deserialize(deserializer)?;
+        if document
+            .mime_types
+            .iter()
+            .chain(&document.extensions)
+            .any(|value| value.trim().is_empty())
+        {
+            return Err(serde::de::Error::custom(
+                "content matcher values must not be empty",
+            ));
+        }
+        Ok(Self::new()
+            .with_mime_types(document.mime_types)
+            .with_extensions(document.extensions))
+    }
 }
 
 /// Resource/action matching rules used by action availability.
@@ -475,5 +506,25 @@ mod tests {
             Some("application/pdf"),
             Some("demo.pdf")
         ));
+    }
+
+    #[test]
+    fn matcher_deserialization_preserves_normalized_invariants() {
+        let matcher: ResourceContentMatcher = serde_json::from_value(serde_json::json!({
+            "mime_types": [" Text/Markdown "],
+            "extensions": ["MD"]
+        }))
+        .unwrap();
+
+        assert_eq!(matcher.mime_types(), ["text/markdown"]);
+        assert_eq!(matcher.extensions(), [".md"]);
+        assert!(matcher.matches_content(Some("TEXT/MARKDOWN"), None));
+        assert!(matcher.matches_content(None, Some("README.MD")));
+        assert!(
+            serde_json::from_value::<ResourceContentMatcher>(serde_json::json!({
+                "mime_types": ["  "]
+            }))
+            .is_err()
+        );
     }
 }

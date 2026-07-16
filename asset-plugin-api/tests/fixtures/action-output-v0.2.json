@@ -1,0 +1,24 @@
+{
+  "view": "text",
+  "text": "saved",
+  "effects": [
+    {
+      "type": "replace_content",
+      "encoding": "base64",
+      "data": "aGVsbG8=",
+      "mime_type": "text/plain",
+      "checksum": []
+    }
+  ],
+  "diagnostics": [
+    {
+      "code": "plugin.normalized_input",
+      "message": "Input whitespace was normalized",
+      "severity": "warning",
+      "retryable": false,
+      "details": {
+        "field": "text"
+      }
+    }
+  ]
+}

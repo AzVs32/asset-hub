@@ -1,13 +1,13 @@
 use crate::dto::{
     AuditStorageIssueResponse, AuditStorageRequest, AuditStorageResponse, BinaryContent,
     ChecksumResponse, CreateDirectoryRequest, CreateResourceRequest, DirectoryListingResponse,
-    ErrorResponse, ExecuteResourceActionRequest, HealthResponse, ResourceActionDefinitionResponse,
-    ResourceActionOutputResponse, ResourceActionsResponse, ResourceContentResponse,
-    ResourceDirectoryResponse, ResourceKindResponse, ResourceKindsResponse,
-    ResourceMetadataRequest, ResourceMetadataResponse, ResourcePageResponse, ResourceReadResponse,
-    ResourceResponse, ResourceSummaryMetadataRequest, ResourceSummaryMetadataResponse,
-    ScanStorageErrorResponse, ScanStorageRequest, ScanStorageResponse, UpdateResourceRequest,
-    UploadResourceContentStreamQuery,
+    ErrorResponse, ExecuteResourceActionRequest, HealthResponse, PluginDiagnosticResponse,
+    ResourceActionDefinitionResponse, ResourceActionOutputResponse, ResourceActionsResponse,
+    ResourceContentResponse, ResourceDirectoryResponse, ResourceKindResponse,
+    ResourceKindsResponse, ResourceMetadataRequest, ResourceMetadataResponse, ResourcePageResponse,
+    ResourceReadResponse, ResourceResponse, ResourceSummaryMetadataRequest,
+    ResourceSummaryMetadataResponse, ScanStorageErrorResponse, ScanStorageRequest,
+    ScanStorageResponse, UpdateResourceRequest, UploadResourceContentStreamQuery,
 };
 use crate::{auth, handlers};
 use utoipa::{
@@ -72,6 +72,7 @@ impl Modify for CookieSecurity {
             DirectoryListingResponse,
             ErrorResponse,
             ExecuteResourceActionRequest,
+            PluginDiagnosticResponse,
             HealthResponse,
             ResourceKindResponse,
             ResourceKindsResponse,

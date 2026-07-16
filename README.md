@@ -26,6 +26,9 @@ Inside the host workspace, `asset-core` exposes three deliberately separate surf
 
 Manifest, action, request, view, diagnostic, and content ABI types belong to `asset-plugin-api` and
 are imported from that crate directly rather than re-exported through `asset-core`.
+The Rust crate, Manifest document, plugin JSON API, and content ABI are versioned independently;
+their compatibility and release rules are documented in
+[`asset-plugin-api/README.md`](asset-plugin-api/README.md).
 
 ## Requirements
 
@@ -278,10 +281,10 @@ wildcards are rejected; filesystem grants are normalized roots. The default host
 network or filesystem access.
 
 The current authoring target is Manifest V3 with plugin API `0.2`; omitting `runtime.plugin_api`
-selects it. The host continues to accept Manifest V2 and plugin API `0.1`. Other manifest or ABI
-versions are rejected at startup. Plugin failures may return a structured `error` diagnostic with
-a stable `code`, message, retry hint, and optional JSON details; successful outputs may also carry
-non-fatal diagnostics.
+selects it. The host continues to accept Manifest V2, but plugin JSON API `0.2` is the only
+supported protocol level. Other manifest or ABI versions are rejected at startup. Plugin failures
+may return a structured `error` diagnostic with a stable `code`, message, retry hint, and optional
+JSON details; successful outputs may also carry non-fatal diagnostics.
 
 Example:
 

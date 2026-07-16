@@ -1,4 +1,4 @@
-use crate::{PluginContentEncoding, ResourceActionAccess};
+use crate::ResourceActionAccess;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -70,8 +70,15 @@ pub struct PluginChecksum {
 /// Inline object content supplied to a plugin.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PluginContentBytes {
-    pub encoding: PluginContentEncoding,
+    pub encoding: PluginInlineContentEncoding,
     pub data: String,
+}
+
+/// Encoding accepted for content embedded directly in an action request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginInlineContentEncoding {
+    Base64,
 }
 
 /// Non-inline object content supplied to a plugin.
@@ -79,8 +86,15 @@ pub struct PluginContentBytes {
 pub struct PluginContentReference {
     #[serde(default = "content_abi_version")]
     pub abi_version: u32,
-    pub encoding: PluginContentEncoding,
+    pub encoding: PluginContentReferenceEncoding,
     pub reference: String,
+}
+
+/// Encoding used by an opaque, call-scoped host content reference.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginContentReferenceEncoding {
+    Handle,
 }
 
 fn content_abi_version() -> u32 {
