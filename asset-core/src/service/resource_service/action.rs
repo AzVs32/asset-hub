@@ -17,6 +17,20 @@ impl<'a> ResourceActionService<'a> {
         Self { service }
     }
 
+    #[cfg(test)]
+    pub(super) async fn execute_resource_action(
+        &self,
+        id: &ResourceId,
+        command: ExecuteResourceAction,
+    ) -> Result<Option<ResourceActionOutput>, CoreError> {
+        let Some(resource) = self.service.commands().find_resource(id).await? else {
+            return Ok(None);
+        };
+        self.execute_resource_action_snapshot(resource, command)
+            .await
+            .map(Some)
+    }
+
     /// 计算资源当前可执行动作。
     ///
     /// 该方法统一封装资源内容状态和注册 kind 能力，供不同应用入口复用，
@@ -56,25 +70,21 @@ impl<'a> ResourceActionService<'a> {
     ///
     /// 核心负责资源存在性、删除状态、kind/action 声明、访问边界和对象内容加载；具体 wasm
     /// 运行时由 `ResourceActionExecutor` 端口承接。
-    pub(super) async fn execute_resource_action(
+    pub(super) async fn execute_resource_action_snapshot(
         &self,
-        id: &ResourceId,
+        resource: Resource,
         command: ExecuteResourceAction,
-    ) -> Result<Option<ResourceActionOutput>, CoreError> {
-        self.execute_declared_resource_action(id, command.action, command.input)
+    ) -> Result<ResourceActionOutput, CoreError> {
+        self.execute_declared_resource_action_snapshot(resource, command.action, command.input)
             .await
     }
 
-    pub(super) async fn execute_declared_resource_action(
+    pub(super) async fn execute_declared_resource_action_snapshot(
         &self,
-        id: &ResourceId,
+        mut resource: Resource,
         action_id: ResourceAction,
         input: serde_json::Value,
-    ) -> Result<Option<ResourceActionOutput>, CoreError> {
-        let Some(mut resource) = self.service.commands().find_resource(id).await? else {
-            return Ok(None);
-        };
-
+    ) -> Result<ResourceActionOutput, CoreError> {
         // 1. Resolve the action from the resource kind/global action registry before touching
         //    content or plugin runtime state.
         let action = self.resolve_declared_resource_action(&resource, &action_id)?;
@@ -95,7 +105,7 @@ impl<'a> ResourceActionService<'a> {
         self.apply_action_effects(&mut resource, &output, access)
             .await?;
 
-        Ok(Some(output))
+        Ok(output)
     }
 
     pub(super) fn resolve_declared_resource_action(

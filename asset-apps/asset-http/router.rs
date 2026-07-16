@@ -55,10 +55,6 @@ pub(crate) fn build_with_options_and_plugin_web_assets(
             get(handlers::list_resources).post(handlers::create_resource),
         )
         .route(
-            "/resources/content/stream",
-            put(handlers::upload_resource_content_stream),
-        )
-        .route(
             "/resources/{id}",
             get(handlers::find_resource)
                 .patch(handlers::update_resource)
@@ -91,6 +87,18 @@ pub(crate) fn build_with_options_and_plugin_web_assets(
             .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()));
     }
 
+    let upload_router = Router::new()
+        .route(
+            "/resources/content/stream",
+            put(handlers::upload_resource_content_stream),
+        )
+        .layer(
+            ServiceBuilder::new()
+                .layer(TraceLayer::new_for_http())
+                .layer(cors_layer(options.cors.clone()))
+                .layer(DefaultBodyLimit::max(handlers::MAX_UPLOAD_BYTES)),
+        );
+
     router
         .layer(
             ServiceBuilder::new()
@@ -102,6 +110,7 @@ pub(crate) fn build_with_options_and_plugin_web_assets(
                 .layer(cors_layer(options.cors))
                 .layer(DefaultBodyLimit::max(handlers::MAX_UPLOAD_BYTES)),
         )
+        .merge(upload_router)
         .with_state(HttpState::new_with_plugin_web_assets(
             service,
             kind_registry,

@@ -57,7 +57,7 @@ struct HttpCli {
     #[arg(long, env = CORS_ALLOWED_ORIGINS_ENV, value_parser = parse_cors_policy)]
     cors_allowed_origins: Option<CorsPolicy>,
 
-    /// HTTP request timeout in seconds.
+    /// HTTP request timeout in seconds. Streaming uploads are exempt from the total timeout.
     #[arg(long, env = REQUEST_TIMEOUT_SECS_ENV, default_value_t = DEFAULT_REQUEST_TIMEOUT_SECS)]
     request_timeout_secs: u64,
 
@@ -138,7 +138,7 @@ impl HttpSettings {
     /// - `ASSET_HTTP_ENABLE_SWAGGER`：是否暴露 Swagger UI，默认 `true`。
     /// - `ASSET_HTTP_ENABLE_PURGE`：是否开放物理删除接口，默认 `true`。
     /// - `ASSET_HTTP_CORS_ALLOWED_ORIGINS`：逗号分隔的显式 origin，不允许 `*`。
-    /// - `ASSET_HTTP_REQUEST_TIMEOUT_SECS`：请求超时秒数，默认 `30`。
+    /// - `ASSET_HTTP_REQUEST_TIMEOUT_SECS`：普通请求总超时秒数，默认 `30`；不限制流式上传总时长。
     /// - `ASSET_HTTP_COOKIE_SECURE`：是否为会话 Cookie 添加 Secure，默认 `false`。
     /// - `ASSET_HTTP_SESSION_INACTIVITY_SECS`：会话空闲超时秒数，默认 `43200`。
     pub(crate) fn from_cli() -> Self {

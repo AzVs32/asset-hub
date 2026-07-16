@@ -34,6 +34,14 @@ pub trait ResourceRepository: Send + Sync {
         expected_updated_at: DateTime<Utc>,
     ) -> Result<bool, CoreError>;
 
+    /// Remove an existing aggregate only when it still has the expected version timestamp.
+    /// Database implementations must perform the comparison and delete atomically.
+    async fn remove_if_unchanged(
+        &self,
+        id: &ResourceId,
+        expected_updated_at: DateTime<Utc>,
+    ) -> Result<bool, CoreError>;
+
     /// 按资源 ID 查找资源聚合。
     ///
     /// 找不到记录时返回 `Ok(None)`。该方法不主动过滤软删除资源；调用方可通过

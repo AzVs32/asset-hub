@@ -192,6 +192,21 @@ impl ResourceRepository for SqliteResourceRepository {
         row.map(decode_resource).transpose()
     }
 
+    async fn remove_if_unchanged(
+        &self,
+        id: &ResourceId,
+        expected_updated_at: DateTime<Utc>,
+    ) -> Result<bool, CoreError> {
+        let result = sqlx::query("DELETE FROM resources WHERE id = ? AND updated_at = ?")
+            .bind(id.to_string())
+            .bind(encode_timestamp(expected_updated_at))
+            .execute(&self.pool)
+            .await
+            .map_err(|error| CoreError::repository("remove_if_unchanged", error))?;
+
+        Ok(result.rows_affected() == 1)
+    }
+
     async fn remove(&self, id: &ResourceId) -> Result<(), CoreError> {
         sqlx::query("DELETE FROM resources WHERE id = ?")
             .bind(id.to_string())
@@ -631,6 +646,38 @@ mod tests {
                 .unwrap()
                 .name(),
             "concurrent"
+        );
+    }
+
+    #[tokio::test]
+    async fn conditional_remove_rejects_a_stale_resource_snapshot() {
+        let repository = repository("conditional-remove").await;
+        let resource = Resource::builder("original").build().unwrap();
+        repository.save(&resource).await.unwrap();
+
+        let expected = resource.updated_at();
+        let mut concurrent = resource.clone();
+        concurrent.rename("concurrent").unwrap();
+        repository.save(&concurrent).await.unwrap();
+
+        assert!(
+            !repository
+                .remove_if_unchanged(&resource.id(), expected)
+                .await
+                .unwrap()
+        );
+        assert!(
+            repository
+                .remove_if_unchanged(&resource.id(), concurrent.updated_at())
+                .await
+                .unwrap()
+        );
+        assert!(
+            repository
+                .find_by_id(&resource.id())
+                .await
+                .unwrap()
+                .is_none()
         );
     }
 

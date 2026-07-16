@@ -1083,6 +1083,22 @@ mod tests {
             Ok(true)
         }
 
+        async fn remove_if_unchanged(
+            &self,
+            id: &ResourceId,
+            expected_updated_at: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, CoreError> {
+            let mut resources = self.resources.lock().unwrap();
+            let Some(current) = resources.get(id) else {
+                return Ok(false);
+            };
+            if current.updated_at() != expected_updated_at {
+                return Ok(false);
+            }
+            resources.remove(id);
+            Ok(true)
+        }
+
         async fn find_by_id(&self, id: &ResourceId) -> Result<Option<Resource>, CoreError> {
             Ok(self.find_sync(id))
         }
@@ -1694,6 +1710,34 @@ mod tests {
         assert!(resource.content().is_none());
         assert_eq!(saved.metadata().description(), Some("Design document"));
         assert_eq!(saved.metadata().tags(), &["rust", "asset"]);
+    }
+
+    #[test]
+    fn update_resource_rejects_a_stale_authorized_snapshot() {
+        let (service, repository, _) = service();
+        let resource = block_on(
+            service
+                .commands()
+                .create_resource(CreateResource::new("original").with_kind("doc:markdown")),
+        )
+        .unwrap();
+        let stale = resource.clone();
+        let mut concurrent = resource;
+        concurrent.rename("concurrent").unwrap();
+        block_on(repository.save(&concurrent)).unwrap();
+
+        let error = block_on(
+            service
+                .commands()
+                .update_resource_snapshot(stale, UpdateResource::new().with_name("stale")),
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, CoreError::Conflict { .. }));
+        assert_eq!(
+            repository.find_sync(&concurrent.id()).unwrap().name(),
+            "concurrent"
+        );
     }
 
     #[test]
@@ -2385,5 +2429,25 @@ mod tests {
         assert!(repository.find_sync(&resource.id()).is_none());
         assert!(!blob_storage.contains(&key));
         assert!(!block_on(service.commands().remove_resource(&resource.id())).unwrap());
+    }
+
+    #[test]
+    fn remove_resource_rejects_a_stale_authorized_snapshot_without_deleting_content() {
+        let (service, repository, blob_storage) = service();
+        let key = StorageKey::new("assets/concurrent.png").unwrap();
+        let resource = block_on(service.content().upload_resource_content_stream(
+            stream_upload_command("image", key.clone(), Bytes::from_static(b"image bytes")),
+        ))
+        .unwrap();
+        let stale = resource.clone();
+        let mut concurrent = resource;
+        concurrent.rename("moved by another request").unwrap();
+        block_on(repository.save(&concurrent)).unwrap();
+
+        let error = block_on(service.commands().remove_resource_snapshot(stale)).unwrap_err();
+
+        assert!(matches!(error, CoreError::Conflict { .. }));
+        assert!(repository.find_sync(&concurrent.id()).is_some());
+        assert!(blob_storage.contains(&key));
     }
 }

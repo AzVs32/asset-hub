@@ -96,14 +96,12 @@ impl<'a> ResourceCommandService<'a> {
     }
 
     /// 更新资源基础信息、元数据、状态，或恢复软删除资源。
-    pub(crate) async fn update_resource(
+    pub(crate) async fn update_resource_snapshot(
         &self,
-        id: &ResourceId,
+        mut resource: Resource,
         command: UpdateResource,
-    ) -> Result<Option<Resource>, CoreError> {
-        let Some(mut resource) = self.service.repository.find_by_id(id).await? else {
-            return Ok(None);
-        };
+    ) -> Result<Resource, CoreError> {
+        let expected_updated_at = resource.updated_at();
 
         if command.restore {
             resource.restore();
@@ -132,9 +130,19 @@ impl<'a> ResourceCommandService<'a> {
             resource.set_metadata(metadata)?;
         }
 
-        self.service.repository.save(&resource).await?;
+        if !self
+            .service
+            .repository
+            .save_if_unchanged(&resource, expected_updated_at)
+            .await?
+        {
+            return Err(CoreError::conflict(format!(
+                "resource `{}` changed while it was being updated",
+                resource.id()
+            )));
+        }
 
-        Ok(Some(resource))
+        Ok(resource)
     }
 
     /// 软删除资源。
@@ -144,40 +152,79 @@ impl<'a> ResourceCommandService<'a> {
     ///
     /// 找不到资源时返回 `Ok(None)`；找到资源时返回保存后的资源状态。重复软删除同一资源是
     /// 幂等的，领域模型不会反复刷新删除时间。
+    #[cfg(test)]
     pub(crate) async fn soft_delete_resource(
         &self,
         id: &ResourceId,
     ) -> Result<Option<Resource>, CoreError> {
-        let Some(mut resource) = self.service.repository.find_by_id(id).await? else {
+        let Some(resource) = self.service.repository.find_by_id(id).await? else {
             return Ok(None);
         };
 
-        resource.soft_delete();
-        self.service.repository.save(&resource).await?;
+        self.soft_delete_resource_snapshot(resource).await.map(Some)
+    }
 
-        Ok(Some(resource))
+    pub(crate) async fn soft_delete_resource_snapshot(
+        &self,
+        mut resource: Resource,
+    ) -> Result<Resource, CoreError> {
+        let expected_updated_at = resource.updated_at();
+
+        resource.soft_delete();
+        if !self
+            .service
+            .repository
+            .save_if_unchanged(&resource, expected_updated_at)
+            .await?
+        {
+            return Err(CoreError::conflict(format!(
+                "resource `{}` changed while it was being deleted",
+                resource.id()
+            )));
+        }
+
+        Ok(resource)
     }
 
     /// 物理移除资源及其对象内容。
     ///
     /// 该 usecase 用于维护任务或明确需要硬删除的场景，不是默认业务删除入口。
     ///
-    /// 执行顺序是先删除对象内容，再物理移除资源记录。这样即使仓储移除失败，调用方也可以
-    /// 安全重试，因为 `BlobStorage::delete` 被定义为幂等操作。
+    /// 执行顺序是先按版本原子移除资源记录，再删除对象内容。这样并发更新不会导致新版本
+    /// 引用的对象被误删；对象删除失败时，审计任务可发现并清理孤立对象。
     ///
     /// 返回值表示是否找到并尝试移除了资源：资源不存在时返回 `Ok(false)`，找到并完成移除时
     /// 返回 `Ok(true)`。
+    #[cfg(test)]
     pub(crate) async fn remove_resource(&self, id: &ResourceId) -> Result<bool, CoreError> {
         let Some(resource) = self.service.repository.find_by_id(id).await? else {
             return Ok(false);
         };
 
+        self.remove_resource_snapshot(resource).await?;
+        Ok(true)
+    }
+
+    pub(crate) async fn remove_resource_snapshot(
+        &self,
+        resource: Resource,
+    ) -> Result<(), CoreError> {
+        if !self
+            .service
+            .repository
+            .remove_if_unchanged(&resource.id(), resource.updated_at())
+            .await?
+        {
+            return Err(CoreError::conflict(format!(
+                "resource `{}` changed while it was being removed",
+                resource.id()
+            )));
+        }
+
         if let Some(content) = resource.content() {
             self.service.blob_storage.delete(content.key()).await?;
         }
 
-        self.service.repository.remove(id).await?;
-
-        Ok(true)
+        Ok(())
     }
 }

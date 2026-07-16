@@ -132,7 +132,7 @@ environment:
 - `--enable-swagger` / `ASSET_HTTP_ENABLE_SWAGGER`: expose `/swagger-ui` and `/api-docs/openapi.json`, default `true`.
 - `--enable-purge` / `ASSET_HTTP_ENABLE_PURGE`: expose physical delete endpoint `DELETE /resources/{id}/purge`, default `true` for local development.
 - `--cors-allowed-origins` / `ASSET_HTTP_CORS_ALLOWED_ORIGINS`: comma-separated explicit origins. Wildcards are rejected because authentication uses cookies.
-- `--request-timeout-secs` / `ASSET_HTTP_REQUEST_TIMEOUT_SECS`: request timeout, default `30`.
+- `--request-timeout-secs` / `ASSET_HTTP_REQUEST_TIMEOUT_SECS`: total timeout for regular requests, default `30`; streaming uploads are exempt.
 - `--cookie-secure` / `ASSET_HTTP_COOKIE_SECURE`: mark the session cookie Secure. Enable this whenever the public URL uses HTTPS; default `false` for local HTTP.
 - `--session-inactivity-secs` / `ASSET_HTTP_SESSION_INACTIVITY_SECS`: session inactivity lifetime, default `43200` (12 hours).
 
@@ -162,7 +162,9 @@ npm run dev
 Vite serves `http://127.0.0.1:5173` and proxies `/api` to `http://127.0.0.1:8080`.
 
 Uploads use the raw-body streaming endpoint, which supports files up to 4 GiB
-without encoding them as base64 or buffering the complete file in application memory.
+without encoding them as base64 or buffering the complete file in application memory. The regular
+request timeout does not cap total upload duration; deployments should use proxy-level connection
+and idle timeouts to reject stalled clients without terminating healthy long-running uploads.
 
 ## Package A Plugin
 

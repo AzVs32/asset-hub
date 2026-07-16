@@ -235,6 +235,7 @@ impl<'a> ResourceContentService<'a> {
     /// - 内容引用存在，但对象存储中没有对应对象。
     ///
     /// 对象存储自身故障会返回 `Err(CoreError::Storage { .. })`。
+    #[cfg(test)]
     pub(crate) async fn get_resource_content(
         &self,
         id: &ResourceId,
@@ -243,6 +244,13 @@ impl<'a> ResourceContentService<'a> {
             return Ok(None);
         };
 
+        self.get_resource_content_snapshot(&resource).await
+    }
+
+    pub(crate) async fn get_resource_content_snapshot(
+        &self,
+        resource: &Resource,
+    ) -> Result<Option<Bytes>, CoreError> {
         if resource.is_deleted() {
             return Ok(None);
         }
@@ -254,15 +262,11 @@ impl<'a> ResourceContentService<'a> {
         self.service.blob_storage.get(content.key()).await
     }
 
-    pub(crate) async fn get_resource_content_stream(
+    pub(crate) async fn get_resource_content_stream_snapshot(
         &self,
-        id: &ResourceId,
+        resource: &Resource,
         range: Option<(u64, u64)>,
     ) -> Result<Option<ResourceContentStream>, CoreError> {
-        let Some(resource) = self.service.repository.find_by_id(id).await? else {
-            return Ok(None);
-        };
-
         if resource.is_deleted() {
             return Ok(None);
         }

@@ -11,6 +11,8 @@ use axum::http::{Method, Request, StatusCode, header};
 use axum::{Extension, Router};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use bytes::Bytes;
+use futures_util::stream;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::io::{Cursor, Write};
@@ -965,6 +967,48 @@ async fn stream_upload_roundtrips_large_blob_without_buffered_request_dto() {
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(content.as_ref(), data);
+}
+
+#[tokio::test]
+async fn stream_upload_is_not_limited_by_the_regular_request_timeout() {
+    let app = test_app_with_router_options(
+        "stream-upload-timeout",
+        RouterOptions {
+            cors: CorsPolicy::Origins(vec![header::HeaderValue::from_static(
+                "http://127.0.0.1:5173",
+            )]),
+            request_timeout: Duration::from_millis(1),
+            ..RouterOptions::default()
+        },
+    )
+    .await;
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(25));
+        let _ = sender.send(Ok::<Bytes, std::io::Error>(Bytes::from_static(
+            b"slow upload",
+        )));
+    });
+    let body = Body::from_stream(stream::once(async move {
+        receiver.await.expect("slow upload sender should complete")
+    }));
+    let response = request(
+        &app,
+        Request::builder()
+            .method(Method::PUT)
+            .uri("/resources/content/stream?name=slow.txt&directory=uploads&original_filename=slow.txt")
+            .header(header::CONTENT_TYPE, "text/plain")
+            .header(header::ORIGIN, "http://127.0.0.1:5173")
+            .body(body)
+            .unwrap(),
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(
+        response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN),
+        Some(&header::HeaderValue::from_static("http://127.0.0.1:5173"))
+    );
 }
 
 #[tokio::test]

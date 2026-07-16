@@ -29,31 +29,37 @@ impl<'a> ResourcePreviewService<'a> {
     ///
     /// 找不到资源、资源已删除或没有内容时返回 `Ok(None)`。资源类型不支持阅读，或内容格式
     /// 没有插件 handler 时返回 `Err(CoreError::Configuration { .. })`。
+    #[cfg(test)]
     pub(crate) async fn read_resource(
         &self,
         id: &ResourceId,
     ) -> Result<Option<ReadableResource>, CoreError> {
-        let Some(output) = self
-            .actions()
-            .execute_declared_resource_action(
-                id,
-                ResourceAction::READ.into(),
-                serde_json::Value::Null,
-            )
-            .await?
-        else {
-            return Ok(None);
-        };
         let Some(resource) = self.service.commands().find_resource(id).await? else {
             return Ok(None);
         };
 
-        Ok(Some(ReadableResource::new(
+        self.read_resource_snapshot(resource).await.map(Some)
+    }
+
+    pub(crate) async fn read_resource_snapshot(
+        &self,
+        resource: Resource,
+    ) -> Result<ReadableResource, CoreError> {
+        let output = self
+            .actions()
+            .execute_declared_resource_action_snapshot(
+                resource.clone(),
+                ResourceAction::READ.into(),
+                serde_json::Value::Null,
+            )
+            .await?;
+
+        Ok(ReadableResource::new(
             resource.id(),
             resource.name().to_string(),
             resource.kind().clone(),
             output.output().view.clone(),
-        )))
+        ))
     }
 
     /// 读取资源预览内容。
@@ -62,37 +68,43 @@ impl<'a> ResourcePreviewService<'a> {
         &self,
         id: &ResourceId,
     ) -> Result<Option<ResourcePreview>, CoreError> {
-        let Some(output) = self
-            .actions()
-            .execute_declared_resource_action(
-                id,
-                ResourceAction::PREVIEW.into(),
-                serde_json::Value::Null,
-            )
-            .await?
-        else {
-            return Ok(None);
-        };
-        let (content_type, content) = self
-            .media_view_content(id, ResourceAction::PREVIEW, &output.output().view)
-            .await?;
-
-        Ok(Some(ResourcePreview::new(content_type, content)))
-    }
-
-    /// 返回资源预览内容流。
-    pub(crate) async fn preview_resource_stream(
-        &self,
-        id: &ResourceId,
-    ) -> Result<Option<ResourcePreviewStream>, CoreError> {
         let Some(resource) = self.service.commands().find_resource(id).await? else {
             return Ok(None);
         };
+
+        self.preview_resource_snapshot(resource).await.map(Some)
+    }
+
+    #[cfg(test)]
+    async fn preview_resource_snapshot(
+        &self,
+        resource: Resource,
+    ) -> Result<ResourcePreview, CoreError> {
+        let output = self
+            .actions()
+            .execute_declared_resource_action_snapshot(
+                resource.clone(),
+                ResourceAction::PREVIEW.into(),
+                serde_json::Value::Null,
+            )
+            .await?;
+        let (content_type, content) = self
+            .media_view_content(&resource, ResourceAction::PREVIEW, &output.output().view)
+            .await?;
+
+        Ok(ResourcePreview::new(content_type, content))
+    }
+
+    /// 返回资源预览内容流。
+    pub(crate) async fn preview_resource_stream_snapshot(
+        &self,
+        resource: &Resource,
+    ) -> Result<ResourcePreviewStream, CoreError> {
         self.service.require_kind_definition(resource.kind())?;
         let declared_actions = self.service.actions_for_resource_kind(resource.kind());
         let Some(action) = declared_actions.iter().find(|action| {
             action.id().as_str() == ResourceAction::PREVIEW
-                && self.service.action_matches_resource(action, &resource)
+                && self.service.action_matches_resource(action, resource)
         }) else {
             return Err(CoreError::configuration(format!(
                 "resource kind `{}` does not support action `preview`",
@@ -122,39 +134,48 @@ impl<'a> ResourcePreviewService<'a> {
             ));
         };
 
-        Ok(Some(ResourcePreviewStream::new(
+        Ok(ResourcePreviewStream::new(
             content_type_for_media(content_ref),
             Some(content_ref.size()),
             content,
-        )))
+        ))
     }
 
     /// 读取资源缩略图内容。
+    #[cfg(test)]
     pub(crate) async fn thumbnail_resource(
         &self,
         id: &ResourceId,
     ) -> Result<Option<ResourceThumbnail>, CoreError> {
-        let Some(output) = self
+        let Some(resource) = self.service.commands().find_resource(id).await? else {
+            return Ok(None);
+        };
+
+        self.thumbnail_resource_snapshot(resource).await.map(Some)
+    }
+
+    pub(crate) async fn thumbnail_resource_snapshot(
+        &self,
+        resource: Resource,
+    ) -> Result<ResourceThumbnail, CoreError> {
+        let output = self
             .actions()
-            .execute_declared_resource_action(
-                id,
+            .execute_declared_resource_action_snapshot(
+                resource.clone(),
                 ResourceAction::THUMBNAIL.into(),
                 serde_json::Value::Null,
             )
-            .await?
-        else {
-            return Ok(None);
-        };
+            .await?;
         let (content_type, content) = self
-            .media_view_content(id, ResourceAction::THUMBNAIL, &output.output().view)
+            .media_view_content(&resource, ResourceAction::THUMBNAIL, &output.output().view)
             .await?;
 
-        Ok(Some(ResourceThumbnail::new(content_type, content)))
+        Ok(ResourceThumbnail::new(content_type, content))
     }
 
     async fn media_view_content(
         &self,
-        id: &ResourceId,
+        resource: &Resource,
         action: &str,
         view: &PluginView,
     ) -> Result<(String, Bytes), CoreError> {
@@ -167,14 +188,17 @@ impl<'a> ResourcePreviewService<'a> {
         match media.encoding {
             PluginMediaEncoding::Base64 => decode_media_view(action, view),
             PluginMediaEncoding::Url => {
-                let Some(resource) = self.service.commands().find_resource(id).await? else {
-                    return Err(CoreError::not_found("resource", id.to_string()));
-                };
                 let Some(content_ref) = resource.content() else {
-                    return Err(CoreError::not_found("resource content", id.to_string()));
+                    return Err(CoreError::not_found(
+                        "resource content",
+                        resource.id().to_string(),
+                    ));
                 };
                 let Some(content) = self.service.blob_storage.get(content_ref.key()).await? else {
-                    return Err(CoreError::not_found("resource content", id.to_string()));
+                    return Err(CoreError::not_found(
+                        "resource content",
+                        resource.id().to_string(),
+                    ));
                 };
                 let content_type = if media.mime_type.trim().is_empty() {
                     content_type_for_media(content_ref)

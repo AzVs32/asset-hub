@@ -81,7 +81,7 @@ docker compose down
 | `ASSET_HUB_IMAGE_TAG` | `local` | Compose 生成镜像的标签 |
 | `ASSET_HTTP_ENABLE_SWAGGER` | `false` | 是否开放 Swagger/OpenAPI |
 | `ASSET_HTTP_ENABLE_PURGE` | `false` | 是否允许物理删除资源及文件 |
-| `ASSET_HTTP_REQUEST_TIMEOUT_SECS` | `30` | API 请求超时秒数；大文件或慢插件可适当提高 |
+| `ASSET_HTTP_REQUEST_TIMEOUT_SECS` | `30` | 普通 API 请求总超时秒数；流式上传不受该总时长限制 |
 | `ASSET_HTTP_COOKIE_SECURE` | `false` | 公网入口为 HTTPS 时必须设为 `true` |
 | `ASSET_HTTP_SESSION_INACTIVITY_SECS` | `43200` | Session 非活动过期秒数 |
 | `RUST_LOG` | `asset_http=info,tower_http=info` | Rust 日志过滤规则 |
