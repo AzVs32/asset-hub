@@ -1,3 +1,4 @@
+mod audit;
 mod auth;
 mod dto;
 mod error;

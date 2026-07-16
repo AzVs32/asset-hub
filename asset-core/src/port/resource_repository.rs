@@ -17,6 +17,9 @@ use chrono::{DateTime, Utc};
 /// 经过领域模型校验。底层数据库错误应转换为 `CoreError::Repository`。
 #[async_trait::async_trait]
 pub trait ResourceRepository: Send + Sync {
+    /// Verify that the repository can execute a minimal query.
+    async fn health_check(&self) -> Result<(), CoreError>;
+
     /// 保存资源聚合的当前状态。
     ///
     /// 实现方应按 `ResourceId` 做 upsert：记录不存在时插入，已存在时更新。

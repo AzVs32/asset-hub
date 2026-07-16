@@ -128,9 +128,6 @@ pub(crate) async fn with_authentication(
     bootstrap_admin: Option<(&str, &str)>,
     session_options: &SessionOptions,
 ) -> Result<Router, Box<dyn std::error::Error>> {
-    let backend = AuthBackend::new(users, authorization);
-    backend.initialize(bootstrap_admin).await?;
-
     let session_connect_options = SessionConnectOptions::new()
         .filename(sqlite_path)
         .create_if_missing(true);
@@ -138,6 +135,9 @@ pub(crate) async fn with_authentication(
         .max_connections(2)
         .connect_with(session_connect_options)
         .await?;
+    let audit = crate::audit::SecurityAuditLog::new(session_pool.clone());
+    let backend = AuthBackend::new(users, authorization, audit);
+    backend.initialize(bootstrap_admin).await?;
     let session_store = SqliteStore::new(session_pool);
     session_store.migrate().await?;
     let _session_cleanup = tokio::spawn(
@@ -158,9 +158,13 @@ pub(crate) async fn with_authentication(
 
     let protected = router.route_layer(middleware::from_fn(auth::authorize_request));
     let public = Router::new()
-        .route("/auth/login", post(auth::login))
+        .route(
+            "/auth/login",
+            post(auth::login).layer(DefaultBodyLimit::max(auth::MAX_LOGIN_REQUEST_BYTES)),
+        )
         .route("/auth/logout", post(auth::logout))
         .route("/auth/me", get(auth::me))
+        .route("/auth/audit-events", get(auth::list_security_audit_events))
         .route("/auth/users", get(auth::list_users).post(auth::create_user))
         .route(
             "/auth/users/{id}",
@@ -173,7 +177,10 @@ pub(crate) async fn with_authentication(
                 .delete(auth::revoke_directory),
         );
 
-    Ok(protected.merge(public).layer(auth_layer))
+    Ok(protected
+        .merge(public)
+        .layer(middleware::from_fn(auth::audit_request))
+        .layer(auth_layer))
 }
 
 fn cors_layer(policy: CorsPolicy) -> CorsLayer {

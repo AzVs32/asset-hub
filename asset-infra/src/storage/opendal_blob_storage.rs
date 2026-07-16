@@ -49,6 +49,14 @@ impl OpenDalBlobStorage {
 
 #[async_trait::async_trait]
 impl BlobStorage for OpenDalBlobStorage {
+    async fn health_check(&self) -> Result<(), CoreError> {
+        self.operator
+            .stat("")
+            .await
+            .map(|_| ())
+            .map_err(|error| CoreError::storage("health_check", error))
+    }
+
     async fn put(&self, key: &StorageKey, data: Bytes) -> Result<(), CoreError> {
         self.operator
             .write(key.as_str(), data)

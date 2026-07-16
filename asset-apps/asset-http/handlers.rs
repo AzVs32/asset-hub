@@ -47,11 +47,30 @@ const DEFAULT_CONTENT_TYPE: &str = "application/octet-stream";
     tag = "system",
     security(()),
     responses(
-        (status = 200, description = "服务正常", body = HealthResponse)
+        (status = 200, description = "服务就绪", body = HealthResponse),
+        (status = 503, description = "数据库或对象存储不可用", body = HealthResponse)
     )
 )]
-pub(crate) async fn health() -> Json<HealthResponse> {
-    Json(HealthResponse::ok())
+pub(crate) async fn health(State(state): State<HttpState>) -> (StatusCode, Json<HealthResponse>) {
+    let (database, blob_storage) = tokio::join!(
+        state.service().check_repository_health(),
+        state.service().check_blob_storage_health()
+    );
+    if let Err(error) = &database {
+        tracing::error!(error = %error, "database readiness check failed");
+    }
+    if let Err(error) = &blob_storage {
+        tracing::error!(error = %error, "blob storage readiness check failed");
+    }
+    let ready = database.is_ok() && blob_storage.is_ok();
+    (
+        if ready {
+            StatusCode::OK
+        } else {
+            StatusCode::SERVICE_UNAVAILABLE
+        },
+        Json(HealthResponse::new(database.is_ok(), blob_storage.is_ok())),
+    )
 }
 
 pub(crate) async fn plugin_web_asset(

@@ -49,6 +49,9 @@ impl BlobWriteResult {
 /// 不应把具体基础设施错误类型暴露到端口签名中。
 #[async_trait::async_trait]
 pub trait BlobStorage: Send + Sync {
+    /// Verify that the configured storage namespace is reachable.
+    async fn health_check(&self) -> Result<(), CoreError>;
+
     /// 写入或覆盖指定存储键对应的对象内容。
     ///
     /// 该方法的语义是 upsert：对象不存在时创建，已存在时覆盖。是否允许覆盖由上层

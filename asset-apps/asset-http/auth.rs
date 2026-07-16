@@ -1,3 +1,4 @@
+use crate::audit::{NewSecurityAuditEvent, SecurityAuditEventResponse, SecurityAuditLog};
 use crate::error::HttpError;
 use asset_core::domain::{
     AccessContext, DirectoryGrant, DirectoryPermission, ResourceDirectory, User, UserId, UserRole,
@@ -12,13 +13,17 @@ use axum::{
 };
 use axum_login::{AuthSession, AuthUser, AuthnBackend};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use sha2::{Digest, Sha256};
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use utoipa::ToSchema;
 
 const MAX_LOGIN_FAILURES: u8 = 5;
 const LOGIN_FAILURE_WINDOW: Duration = Duration::from_secs(60);
+const MAX_LOGIN_FAILURE_ENTRIES: usize = 10_000;
+pub(crate) const MAX_LOGIN_REQUEST_BYTES: usize = 16 * 1024;
+type LoginFailureKey = [u8; 32];
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub(crate) struct AuthenticatedUser {
@@ -74,7 +79,8 @@ pub(crate) struct Credentials {
 pub(crate) struct AuthBackend {
     users: UserService,
     authorization: AuthorizationService,
-    login_failures: Arc<Mutex<HashMap<String, LoginFailureState>>>,
+    audit: SecurityAuditLog,
+    login_failures: Arc<Mutex<LoginFailureCache>>,
 }
 
 #[derive(Debug)]
@@ -83,12 +89,96 @@ struct LoginFailureState {
     started_at: Instant,
 }
 
+#[derive(Debug, Default)]
+struct LoginFailureCache {
+    entries: HashMap<LoginFailureKey, LoginFailureState>,
+    order: VecDeque<(LoginFailureKey, Instant)>,
+}
+
+impl LoginFailureCache {
+    fn prune_expired(&mut self, now: Instant) {
+        loop {
+            let Some((key, started_at)) = self.order.front() else {
+                break;
+            };
+            let current = self.entries.get(key);
+            let stale = current.is_none_or(|state| state.started_at != *started_at);
+            if !stale && now.duration_since(*started_at) < LOGIN_FAILURE_WINDOW {
+                break;
+            }
+            let (key, started_at) = self.order.pop_front().expect("front entry should exist");
+            if self
+                .entries
+                .get(&key)
+                .is_some_and(|state| state.started_at == started_at)
+            {
+                self.entries.remove(&key);
+            }
+        }
+    }
+
+    fn evict_oldest(&mut self) {
+        while let Some((key, started_at)) = self.order.pop_front() {
+            if self
+                .entries
+                .get(&key)
+                .is_some_and(|state| state.started_at == started_at)
+            {
+                self.entries.remove(&key);
+                break;
+            }
+        }
+    }
+
+    fn check_allowed(&mut self, key: &LoginFailureKey) -> bool {
+        self.prune_expired(Instant::now());
+        self.entries
+            .get(key)
+            .is_none_or(|state| state.failures < MAX_LOGIN_FAILURES)
+    }
+
+    fn record(&mut self, key: LoginFailureKey, succeeded: bool) {
+        let now = Instant::now();
+        self.prune_expired(now);
+        if succeeded {
+            self.entries.remove(&key);
+            return;
+        }
+        if let Some(state) = self.entries.get_mut(&key) {
+            state.failures = state.failures.saturating_add(1);
+            return;
+        }
+        while self.entries.len() >= MAX_LOGIN_FAILURE_ENTRIES
+            || self.order.len() >= MAX_LOGIN_FAILURE_ENTRIES
+        {
+            self.evict_oldest();
+        }
+        self.entries.insert(
+            key,
+            LoginFailureState {
+                failures: 1,
+                started_at: now,
+            },
+        );
+        self.order.push_back((key, now));
+    }
+}
+
+fn login_failure_key(username: &str) -> LoginFailureKey {
+    Sha256::digest(username.trim().to_ascii_lowercase().as_bytes()).into()
+}
+
 impl AuthBackend {
-    pub(crate) fn new(users: UserService, authorization: AuthorizationService) -> Self {
+    pub(crate) fn new(
+        users: UserService,
+        authorization: AuthorizationService,
+        audit: SecurityAuditLog,
+    ) -> Self {
         Self {
             users,
             authorization,
-            login_failures: Arc::new(Mutex::new(HashMap::new())),
+            audit,
+            login_failures: Arc::new(Mutex::new(LoginFailureCache::default())),
         }
     }
     pub(crate) async fn initialize(
@@ -114,21 +204,12 @@ impl AuthBackend {
     }
 
     fn check_login_allowed(&self, username: &str) -> Result<(), HttpError> {
-        let key = username.trim().to_ascii_lowercase();
+        let key = login_failure_key(username);
         let mut failures = self
             .login_failures
             .lock()
             .map_err(|_| HttpError::internal("login rate limiter is unavailable"))?;
-        if failures
-            .get(&key)
-            .is_some_and(|state| state.started_at.elapsed() >= LOGIN_FAILURE_WINDOW)
-        {
-            failures.remove(&key);
-        }
-        if failures
-            .get(&key)
-            .is_some_and(|state| state.failures >= MAX_LOGIN_FAILURES)
-        {
+        if !failures.check_allowed(&key) {
             return Err(HttpError::too_many_requests(
                 "too many failed login attempts; try again later",
             ));
@@ -137,21 +218,19 @@ impl AuthBackend {
     }
 
     fn record_login_result(&self, username: &str, succeeded: bool) -> Result<(), HttpError> {
-        let key = username.trim().to_ascii_lowercase();
+        let key = login_failure_key(username);
         let mut failures = self
             .login_failures
             .lock()
             .map_err(|_| HttpError::internal("login rate limiter is unavailable"))?;
-        if succeeded {
-            failures.remove(&key);
-        } else {
-            let state = failures.entry(key).or_insert(LoginFailureState {
-                failures: 0,
-                started_at: Instant::now(),
-            });
-            state.failures = state.failures.saturating_add(1);
-        }
+        failures.record(key, succeeded);
         Ok(())
+    }
+
+    async fn record_audit(&self, event: NewSecurityAuditEvent<'_>) {
+        if let Err(error) = self.audit.record(event).await {
+            tracing::error!(error = %error, "write security audit event");
+        }
     }
 }
 
@@ -227,18 +306,84 @@ pub(crate) async fn login(
     mut session: Session,
     Json(credentials): Json<Credentials>,
 ) -> Result<Json<MeResponse>, HttpError> {
-    session.backend.check_login_allowed(&credentials.username)?;
     let username = credentials.username.clone();
-    let user = session
-        .authenticate(credentials)
-        .await
-        .map_err(internal)?
-        .ok_or(CoreErrorMarker::Unauthenticated);
+    if let Err(error) = session.backend.check_login_allowed(&username) {
+        session
+            .backend
+            .record_audit(NewSecurityAuditEvent {
+                actor_user_id: None,
+                actor_username: None,
+                event_type: "auth.login",
+                method: "POST",
+                path: "/auth/login",
+                status_code: StatusCode::TOO_MANY_REQUESTS.as_u16(),
+                target: Some(&username),
+            })
+            .await;
+        return Err(error);
+    }
+    let user = match session.authenticate(credentials).await {
+        Ok(Some(user)) => user,
+        Ok(None) => {
+            session.backend.record_login_result(&username, false)?;
+            session
+                .backend
+                .record_audit(NewSecurityAuditEvent {
+                    actor_user_id: None,
+                    actor_username: None,
+                    event_type: "auth.login",
+                    method: "POST",
+                    path: "/auth/login",
+                    status_code: StatusCode::UNAUTHORIZED.as_u16(),
+                    target: Some(&username),
+                })
+                .await;
+            return Err(CoreErrorMarker::Unauthenticated.into());
+        }
+        Err(error) => {
+            session
+                .backend
+                .record_audit(NewSecurityAuditEvent {
+                    actor_user_id: None,
+                    actor_username: None,
+                    event_type: "auth.login",
+                    method: "POST",
+                    path: "/auth/login",
+                    status_code: StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                    target: Some(&username),
+                })
+                .await;
+            return Err(internal(error));
+        }
+    };
+    session.backend.record_login_result(&username, true)?;
+    if let Err(error) = session.login(&user).await {
+        session
+            .backend
+            .record_audit(NewSecurityAuditEvent {
+                actor_user_id: Some(user.id.to_string()),
+                actor_username: Some(user.username.clone()),
+                event_type: "auth.login",
+                method: "POST",
+                path: "/auth/login",
+                status_code: StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                target: Some(&username),
+            })
+            .await;
+        return Err(internal(error));
+    }
     session
         .backend
-        .record_login_result(&username, user.is_ok())?;
-    let user = user?;
-    session.login(&user).await.map_err(internal)?;
+        .record_audit(NewSecurityAuditEvent {
+            actor_user_id: Some(user.id.to_string()),
+            actor_username: Some(user.username.clone()),
+            event_type: "auth.login",
+            method: "POST",
+            path: "/auth/login",
+            status_code: StatusCode::OK.as_u16(),
+            target: Some(&username),
+        })
+        .await;
     Ok(Json(MeResponse { user }))
 }
 
@@ -470,6 +615,87 @@ pub(crate) async fn revoke_directory(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[derive(Deserialize, utoipa::IntoParams)]
+pub(crate) struct SecurityAuditQuery {
+    page: Option<u32>,
+    limit: Option<u32>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/auth/audit-events",
+    tag = "authentication",
+    params(SecurityAuditQuery),
+    responses((status = 200, body = [SecurityAuditEventResponse]), (status = 403))
+)]
+pub(crate) async fn list_security_audit_events(
+    session: Session,
+    axum::extract::Query(query): axum::extract::Query<SecurityAuditQuery>,
+) -> Result<Json<Vec<SecurityAuditEventResponse>>, HttpError> {
+    require_admin(&session)?;
+    let page = query.page.unwrap_or(1).max(1);
+    let limit = query.limit.unwrap_or(100).clamp(1, 500);
+    let offset = u64::from(page - 1) * u64::from(limit);
+    let events = session
+        .backend
+        .audit
+        .list(limit, offset)
+        .await
+        .map_err(|error| HttpError::internal(format!("list security audit events: {error}")))?;
+    Ok(Json(events))
+}
+
+pub(crate) async fn audit_request(
+    session: Session,
+    request: Request<axum::body::Body>,
+    next: Next,
+) -> Response {
+    let method = request.method().clone();
+    let path = request.uri().path().to_string();
+    if matches!(method, Method::GET | Method::HEAD | Method::OPTIONS)
+        || request.uri().path() == "/auth/login"
+    {
+        return next.run(request).await;
+    }
+    let event_type = security_event_type(&method, request.uri().path());
+    let actor_user_id = session.user.as_ref().map(|user| user.id.to_string());
+    let actor_username = session.user.as_ref().map(|user| user.username.clone());
+    let response = next.run(request).await;
+    session
+        .backend
+        .record_audit(NewSecurityAuditEvent {
+            actor_user_id,
+            actor_username,
+            event_type,
+            method: method.as_str(),
+            path: &path,
+            status_code: response.status().as_u16(),
+            target: None,
+        })
+        .await;
+    response
+}
+
+fn security_event_type(method: &Method, path: &str) -> &'static str {
+    match (method, path) {
+        (&Method::POST, "/auth/logout") => "auth.logout",
+        (&Method::POST, "/auth/users") => "auth.user.create",
+        (&Method::PATCH, path) if path.starts_with("/auth/users/") => "auth.user.status",
+        (&Method::PUT, "/auth/directory-grants") => "auth.directory_grant.update",
+        (&Method::DELETE, "/auth/directory-grants") => "auth.directory_grant.revoke",
+        (&Method::POST, "/scan") => "maintenance.storage_scan",
+        (&Method::POST, "/audit") => "maintenance.storage_audit",
+        (&Method::DELETE, path) if path.ends_with("/purge") => "resource.purge",
+        (&Method::DELETE, path) if path.starts_with("/resources/") => "resource.soft_delete",
+        (&Method::POST, path) if path.contains("/actions/") => "resource.action",
+        (&Method::PUT, "/resources/content/stream") => "resource.upload",
+        (&Method::POST, "/resources") => "resource.create",
+        (&Method::PATCH, path) if path.starts_with("/resources/") => "resource.update",
+        (&Method::POST, "/directories") => "directory.create",
+        _ => "http.write",
+    }
+}
+
 pub(crate) async fn authorize_request(
     session: Session,
     mut request: Request<axum::body::Body>,
@@ -479,7 +705,11 @@ pub(crate) async fn authorize_request(
     // Plugin frames use an opaque sandbox origin; only immutable, verified Web snapshots are public.
     let public_plugin_asset =
         path.starts_with("/plugins/") && matches!(request.method(), &Method::GET | &Method::HEAD);
-    if path == "/health" || public_plugin_asset {
+    let public_api_documentation = matches!(request.method(), &Method::GET | &Method::HEAD)
+        && (path == "/api-docs/openapi.json"
+            || path == "/swagger-ui"
+            || path.starts_with("/swagger-ui/"));
+    if path == "/health" || public_plugin_asset || public_api_documentation {
         return next.run(request).await;
     }
     let user = match require_user(&session) {
@@ -555,8 +785,38 @@ fn internal(error: impl std::fmt::Display) -> HttpError {
 enum CoreErrorMarker {
     Unauthenticated,
 }
+
 impl From<CoreErrorMarker> for HttpError {
     fn from(_: CoreErrorMarker) -> Self {
         HttpError::unauthorized("invalid username or password")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn login_failure_cache_is_bounded_and_evicts_oldest_entries() {
+        let mut cache = LoginFailureCache::default();
+        for index in 0..(MAX_LOGIN_FAILURE_ENTRIES + 100) {
+            cache.record(login_failure_key(&format!("user-{index}")), false);
+        }
+
+        assert_eq!(cache.entries.len(), MAX_LOGIN_FAILURE_ENTRIES);
+        assert_eq!(cache.order.len(), MAX_LOGIN_FAILURE_ENTRIES);
+        assert!(!cache.entries.contains_key(&login_failure_key("user-0")));
+        assert!(cache.entries.contains_key(&login_failure_key("user-10099")));
+    }
+
+    #[test]
+    fn successful_login_removes_failure_state() {
+        let mut cache = LoginFailureCache::default();
+        let key = login_failure_key("alice");
+        cache.record(key, false);
+        cache.record(key, true);
+
+        assert!(cache.check_allowed(&key));
+        assert!(!cache.entries.contains_key(&key));
     }
 }

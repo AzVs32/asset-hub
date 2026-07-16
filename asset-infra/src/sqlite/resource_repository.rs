@@ -71,6 +71,14 @@ impl SqliteResourceRepository {
 
 #[async_trait::async_trait]
 impl ResourceRepository for SqliteResourceRepository {
+    async fn health_check(&self) -> Result<(), CoreError> {
+        sqlx::query_scalar::<_, i64>("SELECT 1")
+            .fetch_one(&self.pool)
+            .await
+            .map(|_| ())
+            .map_err(|error| CoreError::repository("health_check", error))
+    }
+
     async fn save(&self, resource: &Resource) -> Result<(), CoreError> {
         ensure_directory_path(&self.pool, resource.directory().path()).await?;
 

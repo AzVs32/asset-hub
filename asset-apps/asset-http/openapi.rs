@@ -1,11 +1,11 @@
 use crate::dto::{
     AuditStorageIssueResponse, AuditStorageRequest, AuditStorageResponse, BinaryContent,
     ChecksumResponse, CreateDirectoryRequest, CreateResourceRequest, DirectoryListingResponse,
-    ErrorResponse, ExecuteResourceActionRequest, HealthResponse, PluginDiagnosticResponse,
-    ResourceActionDefinitionResponse, ResourceActionOutputResponse, ResourceActionsResponse,
-    ResourceContentResponse, ResourceDirectoryResponse, ResourceKindResponse,
-    ResourceKindsResponse, ResourceMetadataRequest, ResourceMetadataResponse, ResourcePageResponse,
-    ResourceReadResponse, ResourceResponse, ResourceSummaryMetadataRequest,
+    ErrorResponse, ExecuteResourceActionRequest, HealthComponentResponse, HealthResponse,
+    PluginDiagnosticResponse, ResourceActionDefinitionResponse, ResourceActionOutputResponse,
+    ResourceActionsResponse, ResourceContentResponse, ResourceDirectoryResponse,
+    ResourceKindResponse, ResourceKindsResponse, ResourceMetadataRequest, ResourceMetadataResponse,
+    ResourcePageResponse, ResourceReadResponse, ResourceResponse, ResourceSummaryMetadataRequest,
     ResourceSummaryMetadataResponse, ScanStorageErrorResponse, ScanStorageRequest,
     ScanStorageResponse, UpdateResourceRequest, UploadResourceContentStreamQuery,
 };
@@ -41,6 +41,7 @@ impl Modify for CookieSecurity {
         auth::grant_directory,
         auth::my_directory_grants,
         auth::revoke_directory,
+        auth::list_security_audit_events,
         handlers::health,
         handlers::list_resource_kinds,
         handlers::list_resources,
@@ -74,6 +75,7 @@ impl Modify for CookieSecurity {
             ExecuteResourceActionRequest,
             PluginDiagnosticResponse,
             HealthResponse,
+            HealthComponentResponse,
             ResourceKindResponse,
             ResourceKindsResponse,
             ResourceActionDefinitionResponse,
@@ -98,6 +100,7 @@ impl Modify for CookieSecurity {
             ,auth::MeResponse
             ,auth::CreateUserRequest
             ,auth::GrantDirectoryRequest
+            ,crate::audit::SecurityAuditEventResponse
             ,auth::DirectoryGrantResponse
             ,auth::ManagedUserResponse
             ,auth::UpdateUserStatusRequest

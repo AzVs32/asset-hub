@@ -719,6 +719,14 @@ impl ResourceService {
         SecuredResourceService::new(self, authorization, context)
     }
 
+    pub async fn check_repository_health(&self) -> Result<(), CoreError> {
+        self.repository.health_check().await
+    }
+
+    pub async fn check_blob_storage_health(&self) -> Result<(), CoreError> {
+        self.blob_storage.health_check().await
+    }
+
     /// 计算已授权资源当前可展示的动作。
     ///
     /// 本方法只描述能力，不执行插件或产生写副作用。调用者应先通过
@@ -1054,6 +1062,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl ResourceRepository for InMemoryResourceRepository {
+        async fn health_check(&self) -> Result<(), CoreError> {
+            Ok(())
+        }
+
         async fn save(&self, resource: &Resource) -> Result<(), CoreError> {
             if std::mem::take(&mut *self.fail_next_save.lock().unwrap()) {
                 return Err(CoreError::repository("save", TestError("save failed")));
@@ -1260,6 +1272,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl BlobStorage for InMemoryBlobStorage {
+        async fn health_check(&self) -> Result<(), CoreError> {
+            Ok(())
+        }
+
         async fn put(&self, key: &StorageKey, data: Bytes) -> Result<(), CoreError> {
             self.objects.lock().unwrap().insert(key.clone(), data);
             Ok(())

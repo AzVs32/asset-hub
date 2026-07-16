@@ -214,6 +214,13 @@ pub(crate) struct ErrorResponse {
 pub(crate) struct HealthResponse {
     /// 服务状态。
     pub(crate) status: String,
+    pub(crate) database: HealthComponentResponse,
+    pub(crate) blob_storage: HealthComponentResponse,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct HealthComponentResponse {
+    pub(crate) status: String,
 }
 
 /// 资源类型列表响应。
@@ -397,12 +404,26 @@ fn content_delivery_text(delivery: ResourceActionContentDelivery) -> &'static st
 }
 
 impl HealthResponse {
-    /// 构造正常服务状态响应。
-    pub(crate) fn ok() -> Self {
+    pub(crate) fn new(database_ready: bool, blob_storage_ready: bool) -> Self {
         Self {
-            status: "ok".to_string(),
+            status: if database_ready && blob_storage_ready {
+                "ready"
+            } else {
+                "unavailable"
+            }
+            .to_string(),
+            database: HealthComponentResponse {
+                status: component_status(database_ready),
+            },
+            blob_storage: HealthComponentResponse {
+                status: component_status(blob_storage_ready),
+            },
         }
     }
+}
+
+fn component_status(ready: bool) -> String {
+    if ready { "ready" } else { "unavailable" }.to_string()
 }
 
 /// 创建或上传资源时可传入的资源元数据。

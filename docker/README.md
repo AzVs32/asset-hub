@@ -236,8 +236,15 @@ docker compose up -d
 - 不要把 API 容器的 `8080` 端口直接发布到公网；Compose 默认只对 Web 容器暴露端口。
 - 使用防火墙限制管理端来源。
 - 定期同时备份 `/conf` 和 `/data`。
+- `/conf/asset-hub.db` 中包含 `security_audit_events` 安全审计表，备份与恢复时必须与业务
+  数据一并处理。
 - 生产编排平台应通过 Secret 注入管理员初始密码，避免写入镜像或 Compose 文件。
-- 设置日志收集和磁盘/卷容量监控。
+- 设置日志收集和磁盘/卷容量监控。安全审计事件当前不会自动清理，应按合规要求定期归档
+  或删除历史记录，并监控 SQLite 文件增长。
+- 使用 `GET /auth/audit-events?page=1&limit=100`（仅管理员）接入安全事件巡检；重点告警连续
+  登录失败、登录限流、权限拒绝及管理操作。
+- 将 `GET /health` 用作 readiness 探针。该接口同时检查 SQLite 和对象存储，任一依赖异常
+  都会返回 HTTP 503；它不等同于只判断进程存活的 liveness 探针。
 
 ## 常见问题
 
@@ -248,7 +255,8 @@ docker compose logs --tail=200 api
 ```
 
 常见原因包括：初始管理员变量缺失、数据卷不可写、配置路径错误、SQLite migration
-失败或插件 Manifest/WASM 不匹配。
+失败、对象存储不可访问或插件 Manifest/WASM 不匹配。`GET /health` 的响应会分别给出
+`database` 和 `blob_storage` 状态。
 
 ### 登录后接口返回 403
 

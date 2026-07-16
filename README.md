@@ -71,11 +71,19 @@ cargo run -p asset-apps --bin asset-http
 The bootstrap values are only used when the `users` table is empty. Later
 starts do not require them.
 
+Failed logins are limited to five attempts per username in a 60-second window.
+The in-memory limiter uses fixed-size username digests, expires inactive entries,
+and keeps at most 10,000 entries, so arbitrary unauthenticated usernames cannot
+grow the table without bound. Login JSON bodies are capped at 16 KiB. A
+successful login clears that username's failure state.
+
 Authentication endpoints:
 
 - `POST /auth/login` with `{ "username": "...", "password": "..." }`
 - `POST /auth/logout`
 - `GET /auth/me`
+- `GET /auth/audit-events?page=1&limit=100` (administrator only, limit is
+  clamped to 1-500)
 - `POST /auth/users` (administrator only)
 - `PUT /auth/directory-grants` (administrator only), with `user_id`,
   `directory`, and resource `permission` (`read`, `write`, or `full`)
@@ -90,6 +98,13 @@ reads, previews, downloads, actions, and updates are checked against the
 resource's directory. Creates, uploads, scans, moves, deletes, and plugin write
 actions are authorized inside the core use case after their target directory is
 known.
+
+Security events are stored in SQLite's `security_audit_events` table. Login
+successes, login failures, rate-limit rejections, and all authenticated
+state-changing HTTP requests are recorded with the actor, event type, method,
+path, status, outcome, and target when available. Request bodies and passwords
+are never stored. Audit persistence is fail-open: a temporary audit write error
+is logged without replacing the business response.
 
 Storage scanning and auditing are administrator-only maintenance operations.
 `POST /scan` imports previously unknown files from the configured storage root.
@@ -139,6 +154,11 @@ environment:
 Boolean options accept an omitted value as `true`, or an explicit value such
 as `--enable-swagger=false`. Bootstrap credentials remain environment-only so
 passwords are not encouraged in process arguments.
+
+`GET /health` is an unauthenticated readiness endpoint. It checks both SQLite
+and the configured blob-storage namespace, reports each component as `ready` or
+`unavailable`, and returns `503 Service Unavailable` if either dependency is
+not ready.
 
 Example production-leaning local run:
 

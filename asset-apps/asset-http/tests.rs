@@ -1694,6 +1694,10 @@ async fn member_uses_explicit_workspace_and_additional_grants() {
     )
     .await;
     assert_eq!(health.status(), StatusCode::OK);
+    let health = response_json(health).await;
+    assert_eq!(health["status"], "ready");
+    assert_eq!(health["database"]["status"], "ready");
+    assert_eq!(health["blob_storage"]["status"], "ready");
 
     let plugin_asset = request(
         &app,
@@ -1710,6 +1714,28 @@ async fn member_uses_explicit_workspace_and_additional_grants() {
         "*"
     );
 
+    let openapi = request(
+        &app,
+        Request::builder()
+            .method(Method::GET)
+            .uri("/api-docs/openapi.json")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(openapi.status(), StatusCode::OK);
+
+    let swagger = request(
+        &app,
+        Request::builder()
+            .method(Method::GET)
+            .uri("/swagger-ui/")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(swagger.status(), StatusCode::OK);
+
     let unauthenticated = request(
         &app,
         Request::builder()
@@ -1720,6 +1746,26 @@ async fn member_uses_explicit_workspace_and_additional_grants() {
     )
     .await;
     assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+
+    let oversized_login = request_with_cookie(
+        &app,
+        Method::POST,
+        "/auth/login",
+        json!({ "username": "admin", "password": "x".repeat(crate::auth::MAX_LOGIN_REQUEST_BYTES) }),
+        "",
+    )
+    .await;
+    assert_eq!(oversized_login.status(), StatusCode::PAYLOAD_TOO_LARGE);
+
+    let failed_login = request_with_cookie(
+        &app,
+        Method::POST,
+        "/auth/login",
+        json!({ "username": "admin", "password": "incorrect-password" }),
+        "",
+    )
+    .await;
+    assert_eq!(failed_login.status(), StatusCode::UNAUTHORIZED);
 
     let (admin_cookie, admin_login) =
         login_with_password(&app, "admin", "administrator-password").await;
@@ -1975,6 +2021,33 @@ async fn member_uses_explicit_workspace_and_additional_grants() {
     let stale_session =
         request_with_cookie(&app, Method::GET, "/auth/me", json!({}), &alice_cookie).await;
     assert_eq!(stale_session.status(), StatusCode::UNAUTHORIZED);
+
+    let audit_events = request_with_cookie(
+        &app,
+        Method::GET,
+        "/auth/audit-events?limit=500",
+        json!({}),
+        &admin_cookie,
+    )
+    .await;
+    assert_eq!(audit_events.status(), StatusCode::OK);
+    let audit_events = response_json(audit_events).await;
+    let events = audit_events.as_array().unwrap();
+    assert!(events.iter().any(|event| {
+        event["event_type"] == "auth.login"
+            && event["outcome"] == "failure"
+            && event["target"] == "admin"
+    }));
+    assert!(events.iter().any(|event| {
+        event["event_type"] == "auth.directory_grant.update"
+            && event["actor_username"] == "admin"
+            && event["outcome"] == "success"
+    }));
+    assert!(events.iter().any(|event| {
+        event["event_type"] == "auth.user.status"
+            && event["actor_username"] == "admin"
+            && event["status_code"] == 200
+    }));
 }
 
 async fn login_with_password(app: &TestApp, username: &str, password: &str) -> (String, Value) {
