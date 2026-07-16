@@ -1,6 +1,7 @@
 use ::config::{Config, File, FileFormat};
 use asset_core::CoreError;
 use asset_core::port::{ResourceActionDefinition, ResourceContentMatcher};
+use asset_core::service::PluginExecutionPolicy;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -13,6 +14,8 @@ pub const DEFAULT_FS_ROOT: &str = "data";
 /// 默认 SQLite 连接池最大连接数。
 pub const DEFAULT_SQLITE_MAX_CONNECTIONS: u32 = 5;
 pub const DEFAULT_PLUGIN_MAX_CONTENT_BYTES: u64 = 64 * 1024 * 1024;
+pub const DEFAULT_PLUGIN_MAX_INLINE_CONTENT_BYTES: u64 = 4 * 1024 * 1024;
+pub const DEFAULT_PLUGIN_MAX_CONTENT_READ_BYTES: u64 = 4 * 1024 * 1024;
 pub const DEFAULT_PLUGIN_MAX_INPUT_BYTES: usize = 8 * 1024 * 1024;
 pub const DEFAULT_PLUGIN_MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 pub const DEFAULT_PLUGIN_MAX_CONCURRENT_CALLS: usize = 8;
@@ -107,6 +110,8 @@ impl AssetInfraConfig {
 #[serde(default, deny_unknown_fields)]
 pub struct PluginHostConfig {
     pub max_content_bytes: u64,
+    pub max_inline_content_bytes: u64,
+    pub max_content_read_bytes: u64,
     pub max_input_bytes: usize,
     pub max_output_bytes: usize,
     pub max_concurrent_calls: usize,
@@ -119,6 +124,8 @@ impl Default for PluginHostConfig {
     fn default() -> Self {
         Self {
             max_content_bytes: DEFAULT_PLUGIN_MAX_CONTENT_BYTES,
+            max_inline_content_bytes: DEFAULT_PLUGIN_MAX_INLINE_CONTENT_BYTES,
+            max_content_read_bytes: DEFAULT_PLUGIN_MAX_CONTENT_READ_BYTES,
             max_input_bytes: DEFAULT_PLUGIN_MAX_INPUT_BYTES,
             max_output_bytes: DEFAULT_PLUGIN_MAX_OUTPUT_BYTES,
             max_concurrent_calls: DEFAULT_PLUGIN_MAX_CONCURRENT_CALLS,
@@ -130,18 +137,21 @@ impl Default for PluginHostConfig {
 }
 
 impl PluginHostConfig {
+    pub fn execution_policy(&self) -> Result<PluginExecutionPolicy, CoreError> {
+        PluginExecutionPolicy::new(
+            self.max_content_bytes,
+            self.max_inline_content_bytes,
+            self.max_content_read_bytes,
+            self.max_input_bytes,
+            self.max_output_bytes,
+            self.max_concurrent_calls,
+            self.memory_max_pages,
+            self.timeout_seconds,
+        )
+    }
+
     fn normalize_and_validate(&mut self) -> Result<(), CoreError> {
-        if self.max_content_bytes == 0
-            || self.max_input_bytes == 0
-            || self.max_output_bytes == 0
-            || self.max_concurrent_calls == 0
-            || self.memory_max_pages == 0
-            || self.timeout_seconds == 0
-        {
-            return Err(CoreError::configuration(
-                "plugin execution limits must all be greater than zero",
-            ));
-        }
+        self.execution_policy()?;
         for host in &self.grants.network_hosts {
             if host.is_empty() || host.trim() != host || host.contains('*') {
                 return Err(CoreError::configuration(format!(
@@ -418,6 +428,8 @@ mod tests {
             r#"
             [plugin]
             max_content_bytes = 1024
+            max_inline_content_bytes = 512
+            max_content_read_bytes = 256
             max_input_bytes = 2048
             max_output_bytes = 4096
             max_concurrent_calls = 2
@@ -435,6 +447,14 @@ mod tests {
         .unwrap();
 
         assert_eq!(config.plugin.max_concurrent_calls, 2);
+        assert_eq!(
+            config
+                .plugin
+                .execution_policy()
+                .unwrap()
+                .max_content_bytes(),
+            1024
+        );
         assert_eq!(config.plugin.grants.network_hosts, ["api.example.com"]);
         assert!(config.plugin.grants.filesystem_read[0].is_absolute());
     }
@@ -460,5 +480,25 @@ mod tests {
         .unwrap()
         .normalized();
         assert!(zero.is_err());
+    }
+
+    #[test]
+    fn configured_content_limit_is_the_runtime_policy_limit() {
+        let config = AssetInfraConfig::from_config_str(
+            r#"
+            [plugin]
+            max_content_bytes = 134217728
+            "#,
+        )
+        .unwrap()
+        .normalized()
+        .unwrap();
+
+        let policy = config.plugin.execution_policy().unwrap();
+        assert_eq!(policy.max_content_bytes(), 128 * 1024 * 1024);
+        assert_eq!(
+            policy.max_inline_content_bytes(),
+            DEFAULT_PLUGIN_MAX_INLINE_CONTENT_BYTES
+        );
     }
 }

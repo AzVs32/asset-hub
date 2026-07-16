@@ -152,14 +152,14 @@ impl ActionRequirements {
 #[serde(rename_all = "snake_case")]
 pub enum ContentDelivery {
     Inline,
-    Url,
+    Reference,
 }
 
 impl ContentDelivery {
     pub fn to_resource_delivery(self) -> ResourceActionContentDelivery {
         match self {
             Self::Inline => ResourceActionContentDelivery::Inline,
-            Self::Url => ResourceActionContentDelivery::Url,
+            Self::Reference => ResourceActionContentDelivery::Reference,
         }
     }
 }

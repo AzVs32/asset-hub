@@ -190,6 +190,9 @@ impl<'a> ResourcePreviewService<'a> {
                 };
                 Ok((content_type, content))
             }
+            PluginContentEncoding::Handle => Err(CoreError::configuration(format!(
+                "resource action `{action}` returned a host-only content handle"
+            ))),
         }
     }
 }

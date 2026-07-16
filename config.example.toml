@@ -31,6 +31,10 @@ fs_root = "data"
 [plugin]
 # Hard execution budgets applied to every plugin call.
 max_content_bytes = 67108864
+# Content at or below this threshold may be embedded in the action JSON payload.
+max_inline_content_bytes = 4194304
+# Maximum raw byte chunk returned by one Wasm content_read call.
+max_content_read_bytes = 4194304
 max_input_bytes = 8388608
 max_output_bytes = 8388608
 max_concurrent_calls = 8
@@ -132,7 +136,7 @@ plugin_manifests = []
 #         "access": "read",
 #         "requires": {
 #           "content": true,
-#           "content_delivery": "url"
+#           "content_delivery": "reference"
 #         },
 #         "views": ["json"]
 #       },

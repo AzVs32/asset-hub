@@ -11,7 +11,6 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use bytes::Bytes;
 
-const MAX_INLINE_BUILTIN_MEDIA_BYTES: u64 = 4 * 1024 * 1024;
 const DOWNLOAD_CONTENT_HANDLER: &str = "builtin.content.download";
 const MEDIA_VIEW_HANDLER: &str = "builtin.media.view";
 const MEDIA_PREVIEW_HANDLER: &str = "builtin.media.preview";
@@ -100,9 +99,7 @@ fn media_output(
             resource.id().to_string(),
         ));
     };
-    let (encoding, data) = if should_inline_media_for_action(&action, content_ref) {
-        let content = content
-            .ok_or_else(|| CoreError::not_found("resource content", resource.id().to_string()))?;
+    let (encoding, data) = if let Some(content) = content {
         (PluginContentEncoding::Base64, STANDARD.encode(content))
     } else {
         (
@@ -150,34 +147,6 @@ fn thumbnail_output(
         action,
         PluginActionOutput::new(view),
     ))
-}
-
-fn should_inline_media_for_action(action: &ResourceAction, content: &ResourceContent) -> bool {
-    action.as_str() != ResourceAction::DOWNLOAD_CONTENT && should_inline_media(content)
-}
-
-fn should_inline_media(content: &ResourceContent) -> bool {
-    let Some(mime_type) = content.mime_type().map(|value| value.to_ascii_lowercase()) else {
-        return content.size() <= MAX_INLINE_BUILTIN_MEDIA_BYTES;
-    };
-
-    if mime_type == "application/pdf" || mime_type.starts_with("video/") {
-        return false;
-    }
-    if mime_type.starts_with("image/") {
-        return content.size() <= MAX_INLINE_BUILTIN_MEDIA_BYTES;
-    }
-
-    mime_type.starts_with("text/")
-        || matches!(
-            mime_type.as_str(),
-            "application/json"
-                | "application/xml"
-                | "application/javascript"
-                | "application/x-javascript"
-                | "application/yaml"
-                | "application/x-yaml"
-        )
 }
 
 fn content_type_for_media(content: &ResourceContent) -> String {

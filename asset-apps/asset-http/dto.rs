@@ -376,7 +376,7 @@ fn content_delivery_text(delivery: ResourceActionContentDelivery) -> &'static st
     match delivery {
         ResourceActionContentDelivery::Auto => "auto",
         ResourceActionContentDelivery::Inline => "inline",
-        ResourceActionContentDelivery::Url => "url",
+        ResourceActionContentDelivery::Reference => "reference",
     }
 }
 

@@ -7,6 +7,7 @@ use crate::PluginChecksum;
 #[serde(rename_all = "snake_case")]
 pub enum PluginContentEncoding {
     Base64,
+    Handle,
     Url,
 }
 

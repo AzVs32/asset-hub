@@ -17,7 +17,10 @@ use zip::ZipArchive;
 #[cfg(target_arch = "wasm32")]
 #[host_fn]
 extern "ExtismHost" {
-    fn asset_hub_content_read(url: String) -> String;
+    fn asset_hub_content_open(reference: String) -> String;
+    fn asset_hub_content_size(handle: String) -> u64;
+    fn asset_hub_content_read(handle: String, offset: u64, length: u64) -> Vec<u8>;
+    fn asset_hub_content_close(handle: String);
 }
 
 #[derive(Debug, Clone)]
@@ -51,7 +54,7 @@ fn render_epub_payload(input: String) -> FnResult<String> {
         .and_then(|value| value.as_str())
         == Some("load")
     {
-        let epub = STANDARD.decode(epub_content_base64(&request)?)?;
+        let epub = epub_content_bytes(&request)?;
         let book = render_epub_bytes(&epub)?;
         PluginActionOutput::new(PluginView::Json(JsonView {
             data: serde_json::to_value(book)?,
@@ -73,7 +76,7 @@ fn render_epub_payload(input: String) -> FnResult<String> {
 
 fn render_epub_cover_payload(input: String) -> FnResult<String> {
     let request: PluginActionRequest = serde_json::from_str(&input)?;
-    let epub = STANDARD.decode(epub_content_base64(&request)?)?;
+    let epub = epub_content_bytes(&request)?;
     let view = match render_epub_cover_bytes(&epub)? {
         Some(cover) => PluginView::Media(cover_media_view(&request.resource.name, &cover)?),
         None => PluginView::Json(JsonView {
@@ -83,32 +86,47 @@ fn render_epub_cover_payload(input: String) -> FnResult<String> {
     Ok(serde_json::to_string(&PluginActionOutput::new(view))?)
 }
 
-fn epub_content_base64(input: &PluginActionRequest) -> FnResult<String> {
+fn epub_content_bytes(input: &PluginActionRequest) -> FnResult<Vec<u8>> {
     if let Some(content) = &input.content {
         if content.encoding != PluginContentEncoding::Base64 {
             return Err(Error::msg("unsupported content encoding").into());
         }
-        return Ok(content.data.clone());
+        return Ok(STANDARD.decode(&content.data)?);
     }
 
     let content_ref = input
         .content_ref
         .as_ref()
         .ok_or_else(|| Error::msg("missing EPUB content payload"))?;
-    if content_ref.encoding != PluginContentEncoding::Url {
+    if content_ref.encoding != PluginContentEncoding::Handle {
         return Err(Error::msg("unsupported content reference encoding").into());
     }
 
-    read_content_ref_base64(&content_ref.url)
+    read_content_reference(&content_ref.reference)
 }
 
 #[cfg(target_arch = "wasm32")]
-fn read_content_ref_base64(url: &str) -> FnResult<String> {
-    unsafe { asset_hub_content_read(url.to_string()) }.map_err(Into::into)
+fn read_content_reference(reference: &str) -> FnResult<Vec<u8>> {
+    let handle = unsafe { asset_hub_content_open(reference.to_string()) }?;
+    let size = unsafe { asset_hub_content_size(handle.clone()) }?;
+    let mut bytes = Vec::new();
+    let mut offset = 0;
+    while offset < size {
+        let chunk = unsafe { asset_hub_content_read(handle.clone(), offset, size - offset) }?;
+        if chunk.is_empty() {
+            return Err(Error::msg("content read ended before the declared size").into());
+        }
+        offset = offset
+            .checked_add(chunk.len() as u64)
+            .ok_or_else(|| Error::msg("content read offset overflow"))?;
+        bytes.extend_from_slice(&chunk);
+    }
+    unsafe { asset_hub_content_close(handle) }?;
+    Ok(bytes)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn read_content_ref_base64(_url: &str) -> FnResult<String> {
+fn read_content_reference(_reference: &str) -> FnResult<Vec<u8>> {
     Err(Error::msg("content references are only available in the wasm host").into())
 }
 

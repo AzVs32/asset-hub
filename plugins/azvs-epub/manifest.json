@@ -46,7 +46,7 @@
         "access": "read",
         "requires": {
           "content": true,
-          "content_delivery": "url"
+          "content_delivery": "reference"
         },
         "views": [
           "plugin_frame",
@@ -73,7 +73,7 @@
         "access": "read",
         "requires": {
           "content": true,
-          "content_delivery": "url"
+          "content_delivery": "reference"
         },
         "views": [
           "media",

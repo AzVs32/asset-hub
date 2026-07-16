@@ -50,7 +50,7 @@
         "access": "read",
         "requires": {
           "content": true,
-          "content_delivery": "url"
+          "content_delivery": "reference"
         },
         "views": [
           "plugin_frame"
@@ -76,7 +76,7 @@
         "access": "write",
         "requires": {
           "content": true,
-          "content_delivery": "url"
+          "content_delivery": "reference"
         },
         "views": [
           "plugin_frame",

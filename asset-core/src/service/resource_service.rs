@@ -6,6 +6,7 @@
 //! 该层只定义业务流程，不绑定具体基础设施。OpenDAL、sqlx 等实现应通过 `port`
 //! 模块中的 trait 注入进来。
 
+use super::PluginExecutionPolicy;
 use crate::CoreError;
 use crate::domain::{
     Checksum, ChecksumKind, Resource, ResourceContent, ResourceDirectory, ResourceId, ResourceKind,
@@ -23,8 +24,6 @@ use bytes::Bytes;
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
-
-const MAX_INLINE_PLUGIN_CONTENT_BYTES: u64 = 4 * 1024 * 1024;
 
 mod action;
 mod command;
@@ -601,6 +600,8 @@ pub struct ResourceService {
     action_registry: Option<Arc<dyn ResourceActionRegistry>>,
     /// 插件资源动作执行器。
     action_executor: Option<Arc<dyn ResourceActionExecutor>>,
+    /// 核心动作编排和插件宿主共同使用的执行限制。
+    plugin_execution_policy: Arc<PluginExecutionPolicy>,
 }
 
 impl ResourceService {
@@ -613,6 +614,7 @@ impl ResourceService {
         blob_storage: Arc<dyn BlobStorage>,
         storage_scanner: Arc<dyn StorageScanner>,
         kind_registry: Arc<dyn ResourceKindRegistry>,
+        plugin_execution_policy: Arc<PluginExecutionPolicy>,
     ) -> Self {
         Self {
             repository,
@@ -621,6 +623,7 @@ impl ResourceService {
             kind_registry,
             action_registry: None,
             action_executor: None,
+            plugin_execution_policy,
         }
     }
 
@@ -631,6 +634,7 @@ impl ResourceService {
         storage_scanner: Arc<dyn StorageScanner>,
         kind_registry: Arc<dyn ResourceKindRegistry>,
         action_executor: Arc<dyn ResourceActionExecutor>,
+        plugin_execution_policy: Arc<PluginExecutionPolicy>,
     ) -> Self {
         Self {
             repository,
@@ -639,6 +643,7 @@ impl ResourceService {
             kind_registry,
             action_registry: None,
             action_executor: Some(action_executor),
+            plugin_execution_policy,
         }
     }
 
@@ -650,6 +655,7 @@ impl ResourceService {
         kind_registry: Arc<dyn ResourceKindRegistry>,
         action_registry: Arc<dyn ResourceActionRegistry>,
         action_executor: Arc<dyn ResourceActionExecutor>,
+        plugin_execution_policy: Arc<PluginExecutionPolicy>,
     ) -> Self {
         Self {
             repository,
@@ -658,6 +664,7 @@ impl ResourceService {
             kind_registry,
             action_registry: Some(action_registry),
             action_executor: Some(action_executor),
+            plugin_execution_policy,
         }
     }
     /// 返回资源命令服务。
@@ -788,18 +795,19 @@ impl ResourceService {
 fn resolved_content_delivery(
     action: &crate::port::ResourceActionDefinition,
     size: u64,
+    policy: &PluginExecutionPolicy,
 ) -> Option<crate::port::ResourceActionContentDelivery> {
     if !action.requirements().content {
         return None;
     }
     match action.requirements().content_delivery {
         crate::port::ResourceActionContentDelivery::Auto
-            if size <= MAX_INLINE_PLUGIN_CONTENT_BYTES =>
+            if size <= policy.max_inline_content_bytes() =>
         {
             Some(crate::port::ResourceActionContentDelivery::Inline)
         }
         crate::port::ResourceActionContentDelivery::Auto => {
-            Some(crate::port::ResourceActionContentDelivery::Url)
+            Some(crate::port::ResourceActionContentDelivery::Reference)
         }
         delivery => Some(delivery),
     }
@@ -808,9 +816,10 @@ fn resolved_content_delivery(
 fn should_load_declared_action_content(
     action: &crate::port::ResourceActionDefinition,
     content: &ResourceContent,
+    policy: &PluginExecutionPolicy,
 ) -> bool {
     matches!(
-        resolved_content_delivery(action, content.size()),
+        resolved_content_delivery(action, content.size(), policy),
         Some(crate::port::ResourceActionContentDelivery::Inline)
     )
 }
@@ -1502,6 +1511,7 @@ mod tests {
             blob_storage.clone(),
             kind_registry,
             Arc::new(StaticResourceActionExecutor),
+            Arc::new(test_plugin_execution_policy()),
         );
 
         (service, repository, blob_storage)
@@ -1512,6 +1522,20 @@ mod tests {
             content: true,
             content_delivery: asset_plugin_api::ResourceActionContentDelivery::Inline,
         }
+    }
+
+    fn test_plugin_execution_policy() -> PluginExecutionPolicy {
+        PluginExecutionPolicy::new(
+            64 * 1024 * 1024,
+            4 * 1024 * 1024,
+            4 * 1024 * 1024,
+            8 * 1024 * 1024,
+            8 * 1024 * 1024,
+            8,
+            4096,
+            20,
+        )
+        .unwrap()
     }
 
     fn output_contract<const N: usize>(
@@ -1534,9 +1558,13 @@ mod tests {
     #[test]
     fn action_content_delivery_never_loads_unrequested_content() {
         use asset_plugin_api::{ResourceActionContentDelivery, ResourceActionRequirements};
+        let policy = test_plugin_execution_policy();
 
         let without_content = ResourceActionDefinition::new("inspect", "Inspect");
-        assert_eq!(resolved_content_delivery(&without_content, 1), None);
+        assert_eq!(
+            resolved_content_delivery(&without_content, 1, &policy),
+            None
+        );
 
         let required = |delivery| {
             ResourceActionDefinition::new("inspect", "Inspect").with_requirements(
@@ -1549,27 +1577,34 @@ mod tests {
         assert_eq!(
             resolved_content_delivery(
                 &required(ResourceActionContentDelivery::Inline),
-                MAX_INLINE_PLUGIN_CONTENT_BYTES + 1,
-            ),
-            Some(ResourceActionContentDelivery::Inline)
-        );
-        assert_eq!(
-            resolved_content_delivery(&required(ResourceActionContentDelivery::Url), 1,),
-            Some(ResourceActionContentDelivery::Url)
-        );
-        assert_eq!(
-            resolved_content_delivery(
-                &required(ResourceActionContentDelivery::Auto),
-                MAX_INLINE_PLUGIN_CONTENT_BYTES,
+                policy.max_inline_content_bytes() + 1,
+                &policy,
             ),
             Some(ResourceActionContentDelivery::Inline)
         );
         assert_eq!(
             resolved_content_delivery(
-                &required(ResourceActionContentDelivery::Auto),
-                MAX_INLINE_PLUGIN_CONTENT_BYTES + 1,
+                &required(ResourceActionContentDelivery::Reference),
+                1,
+                &policy,
             ),
-            Some(ResourceActionContentDelivery::Url)
+            Some(ResourceActionContentDelivery::Reference)
+        );
+        assert_eq!(
+            resolved_content_delivery(
+                &required(ResourceActionContentDelivery::Auto),
+                policy.max_inline_content_bytes(),
+                &policy,
+            ),
+            Some(ResourceActionContentDelivery::Inline)
+        );
+        assert_eq!(
+            resolved_content_delivery(
+                &required(ResourceActionContentDelivery::Auto),
+                policy.max_inline_content_bytes() + 1,
+                &policy,
+            ),
+            Some(ResourceActionContentDelivery::Reference)
         );
     }
 
@@ -1587,6 +1622,7 @@ mod tests {
             blob_storage.clone(),
             blob_storage.clone(),
             kind_registry,
+            Arc::new(test_plugin_execution_policy()),
         );
 
         (service, repository, blob_storage)

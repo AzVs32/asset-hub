@@ -7,10 +7,12 @@
 //! `ResourceRepository` 和 `BlobStorage` 的具体适配器。
 
 mod authorization_service;
+mod plugin_execution_policy;
 mod resource_service;
 mod user_service;
 
 pub use authorization_service::AuthorizationService;
+pub use plugin_execution_policy::PluginExecutionPolicy;
 pub use user_service::UserService;
 
 pub use resource_service::{

@@ -15,7 +15,10 @@ const SAVE_ACTION: &str = "azvs.markdown.update";
 #[cfg(target_arch = "wasm32")]
 #[host_fn]
 extern "ExtismHost" {
-    fn asset_hub_content_read(url: String) -> String;
+    fn asset_hub_content_open(reference: String) -> String;
+    fn asset_hub_content_size(handle: String) -> u64;
+    fn asset_hub_content_read(handle: String, offset: u64, length: u64) -> Vec<u8>;
+    fn asset_hub_content_close(handle: String);
 }
 
 #[plugin_fn]
@@ -96,33 +99,47 @@ fn input_markdown(input: &Value) -> Option<&str> {
 }
 
 fn markdown_content(input: &PluginActionRequest) -> FnResult<String> {
-    let base64 = if let Some(content) = &input.content {
+    let bytes = if let Some(content) = &input.content {
         if content.encoding != PluginContentEncoding::Base64 {
             return Err(Error::msg("unsupported content encoding").into());
         }
-        content.data.clone()
+        STANDARD.decode(&content.data)?
     } else {
         let content_ref = input
             .content_ref
             .as_ref()
             .ok_or_else(|| Error::msg("missing Markdown content payload"))?;
-        if content_ref.encoding != PluginContentEncoding::Url {
+        if content_ref.encoding != PluginContentEncoding::Handle {
             return Err(Error::msg("unsupported content reference encoding").into());
         }
-        read_content_ref_base64(&content_ref.url)?
+        read_content_reference(&content_ref.reference)?
     };
 
-    let bytes = STANDARD.decode(base64)?;
     Ok(String::from_utf8(bytes)?)
 }
 
 #[cfg(target_arch = "wasm32")]
-fn read_content_ref_base64(url: &str) -> FnResult<String> {
-    unsafe { asset_hub_content_read(url.to_string()) }.map_err(Into::into)
+fn read_content_reference(reference: &str) -> FnResult<Vec<u8>> {
+    let handle = unsafe { asset_hub_content_open(reference.to_string()) }?;
+    let size = unsafe { asset_hub_content_size(handle.clone()) }?;
+    let mut bytes = Vec::new();
+    let mut offset = 0;
+    while offset < size {
+        let chunk = unsafe { asset_hub_content_read(handle.clone(), offset, size - offset) }?;
+        if chunk.is_empty() {
+            return Err(Error::msg("content read ended before the declared size").into());
+        }
+        offset = offset
+            .checked_add(chunk.len() as u64)
+            .ok_or_else(|| Error::msg("content read offset overflow"))?;
+        bytes.extend_from_slice(&chunk);
+    }
+    unsafe { asset_hub_content_close(handle) }?;
+    Ok(bytes)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn read_content_ref_base64(_url: &str) -> FnResult<String> {
+fn read_content_reference(_reference: &str) -> FnResult<Vec<u8>> {
     Err(Error::msg("content references are only available in the wasm host").into())
 }
 

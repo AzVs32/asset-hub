@@ -10,7 +10,9 @@ pub mod sqlite;
 pub mod storage;
 
 use action::DefaultResourceActionExecutor;
-use asset_core::service::{AuthorizationService, ResourceService, UserService};
+use asset_core::service::{
+    AuthorizationService, PluginExecutionPolicy, ResourceService, UserService,
+};
 use asset_core::{
     CoreError, port::BlobStorage, port::ResourceActionExecutor, port::ResourceActionRegistry,
     port::ResourceKindRegistry, port::ResourceRepository, port::StorageScanner,
@@ -47,6 +49,7 @@ pub struct AssetInfrastructure {
     resource_action_registry: Arc<DefaultResourceActionRegistry>,
     /// 资源动作执行器。
     resource_action_executor: Arc<DefaultResourceActionExecutor>,
+    plugin_execution_policy: Arc<PluginExecutionPolicy>,
     plugin_web_assets: PluginWebAssets,
 }
 
@@ -68,11 +71,13 @@ impl AssetInfrastructure {
             registries_from_catalog(&config.kind, &plugin_catalog)?;
         let resource_kind_registry = Arc::new(resource_kind_registry);
         let resource_action_registry = Arc::new(resource_action_registry);
+        let plugin_execution_policy = Arc::new(config.plugin.execution_policy()?);
         let extism_action_executor = ExtismResourceActionExecutor::from_catalog(
             &plugin_catalog,
             resource_kind_registry.as_ref(),
             blob_storage.clone(),
-            &config.plugin,
+            plugin_execution_policy.clone(),
+            &config.plugin.grants,
         )?;
         let resource_action_executor =
             Arc::new(DefaultResourceActionExecutor::new(extism_action_executor));
@@ -87,6 +92,7 @@ impl AssetInfrastructure {
             resource_kind_registry,
             resource_action_registry,
             resource_action_executor,
+            plugin_execution_policy,
             plugin_web_assets,
         })
     }
@@ -163,6 +169,7 @@ impl AssetInfrastructure {
             self.resource_kind_registry(),
             self.resource_action_registry(),
             self.resource_action_executor(),
+            self.plugin_execution_policy.clone(),
         )
     }
 }

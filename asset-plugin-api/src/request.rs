@@ -78,7 +78,7 @@ pub struct PluginContentBytes {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PluginContentReference {
     pub encoding: PluginContentEncoding,
-    pub url: String,
+    pub reference: String,
 }
 
 #[cfg(test)]

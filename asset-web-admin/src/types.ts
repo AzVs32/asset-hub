@@ -31,7 +31,7 @@ export type ResourceActionDefinition = {
   access: "read_only" | "read_write";
   requires: {
     content: boolean;
-    content_delivery: "auto" | "inline" | "url";
+    content_delivery: "auto" | "inline" | "reference";
   };
   output: {
     view: string[];

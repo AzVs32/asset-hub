@@ -4,8 +4,6 @@
 
 use super::*;
 
-const MAX_PLUGIN_ACTION_CONTENT_BYTES: u64 = 64 * 1024 * 1024;
-
 /// 资源动作服务。
 ///
 /// 动作服务不决定 HTTP 表达形式，只返回核心层的动作输出和资源能力描述。
@@ -172,12 +170,17 @@ impl<'a> ResourceActionService<'a> {
         let Some(content_ref) = resource.content() else {
             return Ok(None);
         };
-        if !should_load_declared_action_content(action, content_ref) {
+        if !should_load_declared_action_content(
+            action,
+            content_ref,
+            &self.service.plugin_execution_policy,
+        ) {
             return Ok(None);
         }
-        if content_ref.size() > MAX_PLUGIN_ACTION_CONTENT_BYTES {
+        let max_content_bytes = self.service.plugin_execution_policy.max_content_bytes();
+        if content_ref.size() > max_content_bytes {
             return Err(CoreError::configuration(format!(
-                "plugin actions are limited to {MAX_PLUGIN_ACTION_CONTENT_BYTES} bytes of resource content"
+                "plugin actions are limited to {max_content_bytes} bytes of resource content"
             )));
         }
 
@@ -204,7 +207,13 @@ impl<'a> ResourceActionService<'a> {
             action.access(),
             resource
                 .content()
-                .and_then(|content| resolved_content_delivery(action, content.size()))
+                .and_then(|content| {
+                    resolved_content_delivery(
+                        action,
+                        content.size(),
+                        &self.service.plugin_execution_policy,
+                    )
+                })
                 .unwrap_or(crate::port::ResourceActionContentDelivery::Auto),
             input,
             content,

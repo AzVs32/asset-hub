@@ -61,7 +61,7 @@ pub enum ResourceActionContentDelivery {
     #[default]
     Auto,
     Inline,
-    Url,
+    Reference,
 }
 
 /// Resource action executor family after manifest capabilities are resolved.
@@ -447,13 +447,13 @@ mod tests {
         let action = ResourceActionDefinition::new("preview", "Preview").with_requirements(
             ResourceActionRequirements {
                 content: true,
-                content_delivery: ResourceActionContentDelivery::Url,
+                content_delivery: ResourceActionContentDelivery::Reference,
             },
         );
 
         let value = serde_json::to_value(action).unwrap();
         assert_eq!(value["requires"]["content"], true);
-        assert_eq!(value["requires"]["content_delivery"], "url");
+        assert_eq!(value["requires"]["content_delivery"], "reference");
         assert!(value["requires"].get("resource").is_none());
         assert!(value["requires"].get("metadata").is_none());
         assert!(value.get("requires_content").is_none());

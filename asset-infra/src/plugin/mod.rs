@@ -4,6 +4,7 @@ use asset_core::port::{
     BlobStorage, ResourceActionExecutor, ResourceActionOutput, ResourceActionRequest,
     ResourceContentMatcher, ResourceKindDefinition, ResourceKindRegistry,
 };
+use asset_core::service::PluginExecutionPolicy;
 use asset_plugin_api::{
     PluginActionOutput, PluginActionRequest, PluginChecksum, PluginContentBytes,
     PluginContentEncoding, PluginContentReference, PluginPermissions, PluginResource,
@@ -14,43 +15,79 @@ use async_trait::async_trait;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use extism::{CompiledPlugin, Function, Manifest, PTR, Plugin, PluginBuilder, UserData, Wasm};
+use futures_util::StreamExt;
 use std::collections::HashMap;
 use std::path::{Component, Path};
 use std::sync::{Arc, Mutex};
 use tokio::sync::Semaphore;
 
-use crate::config::{PluginHostConfig, PluginPermissionGrants};
+use crate::config::PluginPermissionGrants;
 use crate::plugin_manifest::PluginCatalog;
 
 #[derive(Clone)]
 struct HostContentResolver {
     storage: Arc<dyn BlobStorage>,
-    keys: Arc<Mutex<HashMap<String, StorageKey>>>,
+    state: Arc<Mutex<HostContentState>>,
     runtime: tokio::runtime::Handle,
-    max_content_bytes: u64,
+    policy: Arc<PluginExecutionPolicy>,
 }
 
-extism::host_fn!(asset_hub_content_read(user_data: HostContentResolver; url: String) -> String {
+#[derive(Default)]
+struct HostContentState {
+    references: HashMap<String, AvailableContent>,
+    handles: HashMap<String, OpenContent>,
+}
+
+#[derive(Clone)]
+struct AvailableContent {
+    key: StorageKey,
+    size: u64,
+}
+
+#[derive(Clone)]
+struct OpenContent {
+    reference: String,
+    key: StorageKey,
+    size: u64,
+}
+
+extism::host_fn!(asset_hub_content_open(user_data: HostContentResolver; reference: String) -> String {
     let content = user_data.get()?;
     let content = content
         .lock()
-        .map_err(|_| extism::Error::msg("content host data lock poisoned"))?;
-    let key = content.keys
+        .map_err(|_| extism::Error::msg("content host data lock poisoned"))?
+        .clone();
+    content.open(&reference).map_err(|error| extism::Error::msg(error.to_string()))
+});
+
+extism::host_fn!(asset_hub_content_size(user_data: HostContentResolver; handle: String) -> u64 {
+    let content = user_data.get()?;
+    let content = content
         .lock()
-        .map_err(|_| extism::Error::msg("content reference map lock poisoned"))?
-        .get(&url)
-        .cloned()
-        .ok_or_else(|| extism::Error::msg(format!("content reference `{url}` is not available")))?;
-    let bytes = content.runtime.block_on(content.storage.get(&key))
-        .map_err(|error| extism::Error::msg(error.to_string()))?
-        .ok_or_else(|| extism::Error::msg(format!("content reference `{url}` was not found")))?;
-    if bytes.len() as u64 > content.max_content_bytes {
-        return Err(extism::Error::msg(format!(
-            "content reference exceeds the {} byte plugin limit",
-            content.max_content_bytes
-        )));
-    }
-    Ok(STANDARD.encode(bytes))
+        .map_err(|_| extism::Error::msg("content host data lock poisoned"))?
+        .clone();
+    content.size(&handle).map_err(|error| extism::Error::msg(error.to_string()))
+});
+
+extism::host_fn!(asset_hub_content_read(user_data: HostContentResolver; handle: String, offset: u64, length: u64) -> Vec<u8> {
+    let content = user_data.get()?;
+    let content = content
+        .lock()
+        .map_err(|_| extism::Error::msg("content host data lock poisoned"))?
+        .clone();
+    content
+        .read(&handle, offset, length)
+        .map_err(|error| extism::Error::msg(error.to_string()))
+});
+
+extism::host_fn!(asset_hub_content_close(user_data: HostContentResolver; handle: String) {
+    let content = user_data.get()?;
+    let content = content
+        .lock()
+        .map_err(|_| extism::Error::msg("content host data lock poisoned"))?
+        .clone();
+    content.close(&handle).map_err(|error| extism::Error::msg(error.to_string()))?;
+    Ok(())
 });
 
 /// Extism 资源动作执行器。
@@ -58,9 +95,7 @@ extism::host_fn!(asset_hub_content_read(user_data: HostContentResolver; url: Str
 pub struct ExtismResourceActionExecutor {
     bindings: Arc<Vec<ActionBinding>>,
     call_slots: Arc<Semaphore>,
-    max_content_bytes: u64,
-    max_input_bytes: usize,
-    max_output_bytes: usize,
+    policy: Arc<PluginExecutionPolicy>,
 }
 
 impl std::fmt::Debug for ExtismResourceActionExecutor {
@@ -78,7 +113,8 @@ impl ExtismResourceActionExecutor {
         catalog: &PluginCatalog,
         kind_registry: &dyn ResourceKindRegistry,
         blob_storage: Arc<dyn BlobStorage>,
-        config: &PluginHostConfig,
+        policy: Arc<PluginExecutionPolicy>,
+        grants: &PluginPermissionGrants,
     ) -> Result<Self, CoreError> {
         let mut bindings = Vec::new();
 
@@ -97,16 +133,12 @@ impl ExtismResourceActionExecutor {
                     manifest.plugin_id()
                 ))
             })?;
-            validate_external_permissions(
-                manifest.plugin_id(),
-                &manifest.permissions,
-                &config.grants,
-            )?;
+            validate_external_permissions(manifest.plugin_id(), &manifest.permissions, grants)?;
             let host_content = HostContentResolver {
                 storage: blob_storage.clone(),
-                keys: Arc::new(Mutex::new(HashMap::new())),
+                state: Arc::new(Mutex::new(HostContentState::default())),
                 runtime: tokio::runtime::Handle::current(),
-                max_content_bytes: config.max_content_bytes,
+                policy: policy.clone(),
             };
             let compiled = compile_plugin(
                 manifest.plugin_id(),
@@ -114,7 +146,7 @@ impl ExtismResourceActionExecutor {
                 *wasi,
                 &manifest.permissions,
                 &host_content,
-                config,
+                &policy,
             )?;
             preflight_handlers(
                 manifest.plugin_id(),
@@ -137,10 +169,8 @@ impl ExtismResourceActionExecutor {
 
         Ok(Self {
             bindings: Arc::new(bindings),
-            call_slots: Arc::new(Semaphore::new(config.max_concurrent_calls)),
-            max_content_bytes: config.max_content_bytes,
-            max_input_bytes: config.max_input_bytes,
-            max_output_bytes: config.max_output_bytes,
+            call_slots: Arc::new(Semaphore::new(policy.max_concurrent_calls())),
+            policy,
         })
     }
 }
@@ -209,18 +239,39 @@ fn compile_plugin(
     wasi: bool,
     permissions: &PluginPermissions,
     host_content: &HostContentResolver,
-    config: &PluginHostConfig,
+    policy: &PluginExecutionPolicy,
 ) -> Result<Arc<CompiledPlugin>, CoreError> {
+    let content_open = Function::new(
+        "asset_hub_content_open",
+        [PTR],
+        [PTR],
+        UserData::new(host_content.clone()),
+        asset_hub_content_open,
+    );
+    let content_size = Function::new(
+        "asset_hub_content_size",
+        [PTR],
+        [PTR],
+        UserData::new(host_content.clone()),
+        asset_hub_content_size,
+    );
     let content_read = Function::new(
         "asset_hub_content_read",
-        [PTR],
+        [PTR, PTR, PTR],
         [PTR],
         UserData::new(host_content.clone()),
         asset_hub_content_read,
     );
-    PluginBuilder::new(manifest_for_plugin(wasm, permissions, config))
+    let content_close = Function::new(
+        "asset_hub_content_close",
+        [PTR],
+        [],
+        UserData::new(host_content.clone()),
+        asset_hub_content_close,
+    );
+    PluginBuilder::new(manifest_for_plugin(wasm, permissions, policy))
         .with_wasi(wasi)
-        .with_functions([content_read])
+        .with_functions([content_open, content_size, content_read, content_close])
         .compile()
         .map(Arc::new)
         .map_err(|error| {
@@ -365,7 +416,7 @@ impl ResourceActionExecutor for ExtismResourceActionExecutor {
         };
 
         verify_permissions(binding, &request)?;
-        verify_content_budget(binding, &request, self.max_content_bytes)?;
+        verify_content_budget(binding, &request, &self.policy)?;
 
         let queued_at = std::time::Instant::now();
         let permit = self
@@ -382,14 +433,16 @@ impl ResourceActionExecutor for ExtismResourceActionExecutor {
         let content_lease = binding
             .host_content
             .register(&binding.plugin_id, &request)?;
-        let payload = build_payload(&request, content_lease.as_ref().map(ContentLease::url));
-        let max_input_bytes = self.max_input_bytes;
-        let max_output_bytes = self.max_output_bytes;
+        let payload = build_payload(
+            &request,
+            content_lease.as_ref().map(ContentLease::reference),
+        );
+        let policy = self.policy.clone();
         let started_at = std::time::Instant::now();
         let output = tokio::task::spawn_blocking(move || {
             let _permit = permit;
             let _content_lease = content_lease;
-            call_extism(binding, payload, max_input_bytes, max_output_bytes)
+            call_extism(binding, payload, &policy)
         })
         .await
         .map_err(|error| {
@@ -493,7 +546,7 @@ fn verify_permissions(
 fn verify_content_budget(
     binding: &ActionBinding,
     request: &ResourceActionRequest,
-    max_content_bytes: u64,
+    policy: &PluginExecutionPolicy,
 ) -> Result<(), CoreError> {
     if matches!(
         request.content_delivery(),
@@ -511,11 +564,14 @@ fn verify_content_budget(
         .map(|content| content.len() as u64)
         .unwrap_or_default();
     let size = declared_size.max(loaded_size);
-    if size > max_content_bytes {
+    if size > policy.max_content_bytes() {
         return Err(CoreError::plugin(
             &binding.plugin_id,
             &binding.action,
-            format!("resource content is {size} bytes, plugin limit is {max_content_bytes}"),
+            format!(
+                "resource content is {size} bytes, plugin limit is {}",
+                policy.max_content_bytes()
+            ),
         ));
     }
     Ok(())
@@ -524,8 +580,7 @@ fn verify_content_budget(
 fn call_extism(
     binding: ActionBinding,
     payload: PluginActionRequest,
-    max_input_bytes: usize,
-    max_output_bytes: usize,
+    policy: &PluginExecutionPolicy,
 ) -> Result<PluginActionOutput, CoreError> {
     let mut plugin = Plugin::new_from_compiled(&binding.compiled).map_err(|error| {
         CoreError::plugin(
@@ -537,13 +592,14 @@ fn call_extism(
     let input = serde_json::to_string(&payload).map_err(|error| {
         CoreError::plugin(&binding.plugin_id, &binding.action, error.to_string())
     })?;
-    if input.len() > max_input_bytes {
+    if input.len() > policy.max_input_bytes() {
         return Err(CoreError::plugin(
             &binding.plugin_id,
             &binding.action,
             format!(
-                "serialized input is {} bytes, limit is {max_input_bytes}",
-                input.len()
+                "serialized input is {} bytes, limit is {}",
+                input.len(),
+                policy.max_input_bytes()
             ),
         ));
     }
@@ -552,13 +608,14 @@ fn call_extism(
         .map_err(|error| {
             CoreError::plugin(&binding.plugin_id, &binding.action, error.to_string())
         })?;
-    if output.len() > max_output_bytes {
+    if output.len() > policy.max_output_bytes() {
         return Err(CoreError::plugin(
             &binding.plugin_id,
             &binding.action,
             format!(
-                "plugin output is {} bytes, limit is {max_output_bytes}",
-                output.len()
+                "plugin output is {} bytes, limit is {}",
+                output.len(),
+                policy.max_output_bytes()
             ),
         ));
     }
@@ -578,11 +635,11 @@ fn call_extism(
 fn manifest_for_plugin(
     wasm: &[u8],
     permissions: &PluginPermissions,
-    config: &PluginHostConfig,
+    policy: &PluginExecutionPolicy,
 ) -> Manifest {
     let mut manifest = Manifest::new([Wasm::data(wasm.to_vec())])
-        .with_memory_max(config.memory_max_pages)
-        .with_timeout(std::time::Duration::from_secs(config.timeout_seconds));
+        .with_memory_max(policy.memory_max_pages())
+        .with_timeout(std::time::Duration::from_secs(policy.timeout_seconds()));
 
     if permissions.network.enabled() {
         manifest = manifest.with_allowed_hosts(permissions.network.hosts().iter().cloned());
@@ -606,64 +663,165 @@ impl HostContentResolver {
     ) -> Result<Option<ContentLease>, CoreError> {
         if !matches!(
             request.content_delivery(),
-            asset_plugin_api::ResourceActionContentDelivery::Url
+            asset_plugin_api::ResourceActionContentDelivery::Reference
         ) {
             return Ok(None);
         }
         let Some(content) = request.resource().content() else {
             return Ok(None);
         };
-        if content.size() > self.max_content_bytes {
+        if content.size() > self.policy.max_content_bytes() {
             return Err(CoreError::plugin(
                 plugin_id,
                 request.action().as_str(),
                 format!(
                     "resource content is {} bytes, plugin limit is {}",
                     content.size(),
-                    self.max_content_bytes
+                    self.policy.max_content_bytes()
                 ),
             ));
         }
-        let url = content_ref_url();
-        self.keys
+        let reference = content_reference();
+        self.state
             .lock()
             .map_err(|_| CoreError::configuration("content reference map lock poisoned"))?
-            .insert(url.clone(), content.key().clone());
+            .references
+            .insert(
+                reference.clone(),
+                AvailableContent {
+                    key: content.key().clone(),
+                    size: content.size(),
+                },
+            );
         Ok(Some(ContentLease {
-            keys: self.keys.clone(),
-            url,
+            state: self.state.clone(),
+            reference,
         }))
+    }
+
+    fn open(&self, reference: &str) -> Result<String, CoreError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| CoreError::configuration("content host state lock poisoned"))?;
+        let content = state.references.get(reference).cloned().ok_or_else(|| {
+            CoreError::configuration(format!("content reference `{reference}` is not available"))
+        })?;
+        let handle = format!("content:handle:{}", uuid::Uuid::now_v7());
+        state.handles.insert(
+            handle.clone(),
+            OpenContent {
+                reference: reference.to_string(),
+                key: content.key,
+                size: content.size,
+            },
+        );
+        Ok(handle)
+    }
+
+    fn size(&self, handle: &str) -> Result<u64, CoreError> {
+        self.open_content(handle).map(|content| content.size)
+    }
+
+    fn read(&self, handle: &str, offset: u64, length: u64) -> Result<Vec<u8>, CoreError> {
+        let content = self.open_content(handle)?;
+        if offset > content.size {
+            return Err(CoreError::configuration(format!(
+                "content offset {offset} exceeds object size {}",
+                content.size
+            )));
+        }
+        if length == 0 || offset == content.size {
+            return Ok(Vec::new());
+        }
+
+        let length = length
+            .min(self.policy.max_content_read_bytes())
+            .min(content.size - offset);
+        let end = offset + length - 1;
+        self.runtime.block_on(async {
+            let Some(mut stream) = self
+                .storage
+                .get_range_stream(&content.key, offset, end)
+                .await?
+            else {
+                return Err(CoreError::not_found(
+                    "plugin content",
+                    content.key.to_string(),
+                ));
+            };
+            let mut bytes = Vec::new();
+            while let Some(chunk) = stream.next().await {
+                bytes.extend_from_slice(&chunk?);
+                if bytes.len() as u64 > length {
+                    return Err(CoreError::configuration(
+                        "content storage returned more bytes than requested",
+                    ));
+                }
+            }
+            Ok(bytes)
+        })
+    }
+
+    fn close(&self, handle: &str) -> Result<(), CoreError> {
+        let removed = self
+            .state
+            .lock()
+            .map_err(|_| CoreError::configuration("content host state lock poisoned"))?
+            .handles
+            .remove(handle);
+        if removed.is_none() {
+            return Err(CoreError::configuration(format!(
+                "content handle `{handle}` is not open"
+            )));
+        }
+        Ok(())
+    }
+
+    fn open_content(&self, handle: &str) -> Result<OpenContent, CoreError> {
+        self.state
+            .lock()
+            .map_err(|_| CoreError::configuration("content host state lock poisoned"))?
+            .handles
+            .get(handle)
+            .cloned()
+            .ok_or_else(|| {
+                CoreError::configuration(format!("content handle `{handle}` is not open"))
+            })
     }
 }
 
 struct ContentLease {
-    keys: Arc<Mutex<HashMap<String, StorageKey>>>,
-    url: String,
+    state: Arc<Mutex<HostContentState>>,
+    reference: String,
 }
 
 impl ContentLease {
-    fn url(&self) -> &str {
-        &self.url
+    fn reference(&self) -> &str {
+        &self.reference
     }
 }
 
 impl Drop for ContentLease {
     fn drop(&mut self) {
-        if let Ok(mut keys) = self.keys.lock() {
-            keys.remove(&self.url);
+        if let Ok(mut state) = self.state.lock() {
+            state.references.remove(&self.reference);
+            state
+                .handles
+                .retain(|_, handle| handle.reference != self.reference);
         }
     }
 }
 
 fn build_payload(
     request: &ResourceActionRequest,
-    content_url: Option<&str>,
+    content_reference: Option<&str>,
 ) -> PluginActionRequest {
     let resource = request.resource();
     let content_ref = resource.content();
     let content = if matches!(
         request.content_delivery(),
-        asset_plugin_api::ResourceActionContentDelivery::Url
+        asset_plugin_api::ResourceActionContentDelivery::Reference
     ) {
         None
     } else {
@@ -674,12 +832,12 @@ fn build_payload(
     };
     let content_ref_payload = if matches!(
         request.content_delivery(),
-        asset_plugin_api::ResourceActionContentDelivery::Url
+        asset_plugin_api::ResourceActionContentDelivery::Reference
     ) {
         content_ref.map(|_| PluginContentReference {
-            encoding: PluginContentEncoding::Url,
-            url: content_url
-                .expect("URL content delivery must hold a content lease")
+            encoding: PluginContentEncoding::Handle,
+            reference: content_reference
+                .expect("reference content delivery must hold a content lease")
                 .to_string(),
         })
     } else {
@@ -724,7 +882,7 @@ fn build_payload(
     }
 }
 
-fn content_ref_url() -> String {
+fn content_reference() -> String {
     format!("asset://content/{}", uuid::Uuid::now_v7())
 }
 
@@ -839,5 +997,48 @@ mod tests {
             filesystem_write: Vec::new(),
         };
         validate_external_permissions("example.plugin", &permissions, &grants).unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn content_handles_read_raw_bounded_ranges_and_close() {
+        let root = std::env::temp_dir().join(format!(
+            "asset-hub-content-handle-test-{}",
+            uuid::Uuid::now_v7()
+        ));
+        let storage = Arc::new(
+            crate::storage::OpenDalBlobStorage::from_config(&crate::config::BlobConfig {
+                fs_root: root.clone(),
+            })
+            .unwrap(),
+        );
+        let key = StorageKey::new("docs/demo.bin").unwrap();
+        storage
+            .put(&key, bytes::Bytes::from_static(b"abcdefgh"))
+            .await
+            .unwrap();
+        let reference = "asset://content/test".to_string();
+        let mut state = HostContentState::default();
+        state
+            .references
+            .insert(reference.clone(), AvailableContent { key, size: 8 });
+        let resolver = HostContentResolver {
+            storage,
+            state: Arc::new(Mutex::new(state)),
+            runtime: tokio::runtime::Handle::current(),
+            policy: Arc::new(PluginExecutionPolicy::new(128, 16, 3, 1024, 1024, 1, 32, 5).unwrap()),
+        };
+
+        tokio::task::spawn_blocking(move || {
+            let handle = resolver.open(&reference).unwrap();
+            assert_eq!(resolver.size(&handle).unwrap(), 8);
+            assert_eq!(resolver.read(&handle, 2, 100).unwrap(), b"cde");
+            assert_eq!(resolver.read(&handle, 5, 3).unwrap(), b"fgh");
+            resolver.close(&handle).unwrap();
+            assert!(resolver.size(&handle).is_err());
+        })
+        .await
+        .unwrap();
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }

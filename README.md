@@ -208,6 +208,26 @@ Manifests, Wasm, and Web assets are read and integrity-checked once at API start
 precompiled and every declared handler export is checked before the server starts; Web assets are
 served from the verified in-memory snapshot. Restart the service after changing any plugin file.
 
+All plugin execution limits are assembled once from `[plugin]` into a shared
+`PluginExecutionPolicy` and injected into both the core action service and the Wasm host. The
+policy covers total content size, inline content size, per-read chunk size, serialized input and
+output size, concurrency, Wasm memory, and execution timeout. A configured
+`plugin.max_content_bytes` is therefore the effective limit in both layers; there is no separate
+core content ceiling.
+
+Non-inline Wasm content is passed as an opaque, call-scoped reference rather than file bytes. A
+plugin reads it through the `asset_hub_content_open`, `asset_hub_content_size`,
+`asset_hub_content_read`, and `asset_hub_content_close` host functions. `content_read` returns raw
+bytes for the requested offset and may return a smaller chunk according to
+`plugin.max_content_read_bytes`, so plugins must continue reading until `content_size` is reached.
+Handles cannot be reused by another plugin call and are reclaimed automatically when a call ends.
+This keeps large input content out of JSON and avoids Base64 expansion; inline content remains
+available for small payloads controlled by `plugin.max_inline_content_bytes`.
+This host ABI replaces the former single-argument, Base64-returning `asset_hub_content_read`.
+External Wasm plugins must declare `content_delivery` as `reference`, migrate to the handle
+functions, rebuild their Wasm, and reseal the package; startup preflight rejects the old import
+signature.
+
 Resource kinds form an arbitrary-depth acyclic hierarchy through the optional
 `parent` field. Child kinds inherit actions, and their own action declarations
 override inherited actions with the same ID. Resource metadata is not defined
@@ -220,10 +240,11 @@ matching kind. For example, the bundled hierarchy contains
 Kind-filtered list endpoints accept `include_descendants=true`. A query for
 `core:document` can therefore include Markdown, EPUB, source-code families, and
 any future nested document formats.
-By default, plugin calls are limited to 64 MiB of resource content, 8 MiB of serialized input,
-8 MiB of output, 256 MiB of Wasm linear memory, 20 seconds, and eight concurrent calls. The HTTP
-action input itself is limited to 1 MiB. These values are configured under `[plugin]`; larger
-assets remain downloadable but cannot be passed through the current in-memory plugin ABI.
+By default, plugin calls are limited to 64 MiB of resource content, 4 MiB inline content and read
+chunks, 8 MiB of serialized input, 8 MiB of output, 256 MiB of Wasm linear memory, 20 seconds, and
+eight concurrent calls. The HTTP action input itself is limited to 1 MiB. These values are
+configured under `[plugin]`; non-inline content up to the configured total limit is available
+through the Range-based handle API.
 
 Network and filesystem permissions are requested by a Manifest but are not self-granting. Every
 requested host or path must also be approved under `[plugin.grants]`. Network grants are exact and

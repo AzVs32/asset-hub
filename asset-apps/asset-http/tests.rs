@@ -184,7 +184,7 @@ async fn core_document_resource_exposes_download_only() {
     assert_eq!(download["access"], "read_only");
     assert_eq!(download["executor"]["type"], "builtin");
     assert_eq!(download["executor"]["handler"], "builtin.content.download");
-    assert_eq!(download["requires"]["content_delivery"], "url");
+    assert_eq!(download["requires"]["content_delivery"], "reference");
     assert_eq!(download["output"]["view"], json!(["binary_url"]));
     assert_eq!(
         download["ui"]["locations"],
@@ -198,7 +198,7 @@ async fn core_document_resource_exposes_download_only() {
     assert_eq!(view_inline["executor"]["handler"], "builtin.media.view");
     assert!(view_inline["requires"].get("resource").is_none());
     assert!(view_inline["requires"].get("metadata").is_none());
-    assert_eq!(view_inline["requires"]["content_delivery"], "url");
+    assert_eq!(view_inline["requires"]["content_delivery"], "reference");
     assert_eq!(view_inline["output"]["view"], json!(["media"]));
     assert_eq!(
         view_inline["applies_to"],
@@ -1024,7 +1024,7 @@ async fn upload_detects_most_specific_plugin_kind() {
 }
 
 #[tokio::test]
-async fn plugin_url_content_respects_the_host_content_budget() {
+async fn plugin_reference_content_respects_the_host_content_budget() {
     let plugin = PluginHostConfig {
         max_content_bytes: 4,
         ..PluginHostConfig::default()
