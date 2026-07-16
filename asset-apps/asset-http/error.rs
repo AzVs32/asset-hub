@@ -11,6 +11,14 @@ use axum::response::{IntoResponse, Response};
 pub(crate) struct HttpError {
     status: StatusCode,
     message: String,
+    diagnostic: Option<Box<HttpDiagnostic>>,
+}
+
+#[derive(Debug)]
+struct HttpDiagnostic {
+    code: String,
+    retryable: bool,
+    details: Option<serde_json::Value>,
 }
 
 impl std::fmt::Display for HttpError {
@@ -26,6 +34,7 @@ impl HttpError {
         Self {
             status: StatusCode::UNAUTHORIZED,
             message: message.into(),
+            diagnostic: None,
         }
     }
 
@@ -33,6 +42,7 @@ impl HttpError {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             message: message.into(),
+            diagnostic: None,
         }
     }
     /// 构造 400 Bad Request。
@@ -40,6 +50,7 @@ impl HttpError {
         Self {
             status: StatusCode::BAD_REQUEST,
             message: message.into(),
+            diagnostic: None,
         }
     }
 
@@ -47,6 +58,7 @@ impl HttpError {
         Self {
             status: StatusCode::PAYLOAD_TOO_LARGE,
             message: message.into(),
+            diagnostic: None,
         }
     }
 
@@ -55,6 +67,7 @@ impl HttpError {
         Self {
             status: StatusCode::NOT_FOUND,
             message: message.into(),
+            diagnostic: None,
         }
     }
 
@@ -63,6 +76,7 @@ impl HttpError {
         Self {
             status: StatusCode::FORBIDDEN,
             message: message.into(),
+            diagnostic: None,
         }
     }
 
@@ -70,6 +84,7 @@ impl HttpError {
         Self {
             status: StatusCode::TOO_MANY_REQUESTS,
             message: message.into(),
+            diagnostic: None,
         }
     }
 }
@@ -84,15 +99,38 @@ impl From<CoreError> for HttpError {
             CoreError::Forbidden { .. } => StatusCode::FORBIDDEN,
             CoreError::NotFound { .. } => StatusCode::NOT_FOUND,
             CoreError::Conflict { .. } => StatusCode::CONFLICT,
-            CoreError::Storage { .. } | CoreError::Repository { .. } | CoreError::Plugin { .. } => {
+            CoreError::Plugin { diagnostic, .. } => plugin_status(&diagnostic.code),
+            CoreError::Storage { .. } | CoreError::Repository { .. } => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
         };
 
+        let diagnostic = match &error {
+            CoreError::Plugin { diagnostic, .. } => Some(Box::new(HttpDiagnostic {
+                code: diagnostic.code.clone(),
+                retryable: diagnostic.retryable,
+                details: diagnostic.details.clone(),
+            })),
+            _ => None,
+        };
         Self {
             status,
             message: error.to_string(),
+            diagnostic,
         }
+    }
+}
+
+fn plugin_status(code: &str) -> StatusCode {
+    use asset_plugin_api::diagnostic::codes;
+    match code {
+        codes::INVALID_INPUT | codes::CONTENT_RANGE_INVALID => StatusCode::BAD_REQUEST,
+        codes::PERMISSION_DENIED => StatusCode::FORBIDDEN,
+        codes::CONTENT_LIMIT_EXCEEDED
+        | codes::INPUT_LIMIT_EXCEEDED
+        | codes::OUTPUT_LIMIT_EXCEEDED => StatusCode::PAYLOAD_TOO_LARGE,
+        codes::TIMEOUT => StatusCode::GATEWAY_TIMEOUT,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
 
@@ -101,18 +139,50 @@ impl From<asset_core::ResourceError> for HttpError {
         Self {
             status: StatusCode::BAD_REQUEST,
             message: error.to_string(),
+            diagnostic: None,
         }
     }
 }
 
 impl IntoResponse for HttpError {
     fn into_response(self) -> Response {
+        let (code, retryable, details) = self.diagnostic.map_or((None, None, None), |value| {
+            (Some(value.code), Some(value.retryable), value.details)
+        });
         (
             self.status,
             Json(ErrorResponse {
                 error: self.message,
+                code,
+                retryable,
+                details,
             }),
         )
             .into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plugin_diagnostic_codes_map_to_stable_http_statuses() {
+        assert_eq!(
+            plugin_status(asset_plugin_api::diagnostic::codes::INVALID_INPUT),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            plugin_status(asset_plugin_api::diagnostic::codes::PERMISSION_DENIED),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            plugin_status(asset_plugin_api::diagnostic::codes::CONTENT_LIMIT_EXCEEDED),
+            StatusCode::PAYLOAD_TOO_LARGE
+        );
+        assert_eq!(
+            plugin_status(asset_plugin_api::diagnostic::codes::TIMEOUT),
+            StatusCode::GATEWAY_TIMEOUT
+        );
     }
 }

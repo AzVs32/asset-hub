@@ -45,6 +45,7 @@ dependencies = [
 name = "asset-plugin-api"
 version = "0.1.0"
 dependencies = [
+ "extism-pdk",
  "serde",
  "serde_json",
 ]

@@ -1,12 +1,12 @@
 # Asset Plugin Tool
 
-`asset-plugin` generates and verifies Manifest V2 artifact integrity. Plugin authors do not
+`asset-plugin` generates and verifies Manifest V3 artifact integrity. Plugin authors do not
 calculate or edit SHA-256 values.
 
-Manifest V2 parsing is strict: unknown fields at any protocol level are rejected. This includes
+Manifest parsing is strict: unknown fields at any protocol level are rejected. This includes
 misspelled optional fields, so `verify` should be part of every plugin release pipeline.
 
-Start a plugin directory with a fixed, documented Manifest V2 draft:
+Start a plugin directory with a documented Manifest V3 draft:
 
 ```bash
 asset-plugin gen manifest
@@ -18,13 +18,16 @@ and permissions for the plugin. It copies the canonical draft from
 `asset-plugin-api/templates/manifest.json` byte for byte. Integrity hashes belong to the generated
 lock file, not the editable manifest.
 
+`asset-plugin gen schema` writes the matching Draft 2020-12 schema to `manifest.schema.json` for
+editor completion and independent CI validation.
+
 After building and copying the Wasm and optional Web bundle, run:
 
 ```bash
 asset-plugin seal path/to/plugin.json
 ```
 
-`seal` calculates the Wasm digest and optional Web asset integrity map, validates the Manifest V2
+`seal` calculates the Wasm digest and optional Web asset integrity map, validates the manifest
 contract, preserves the developer-authored manifest, and atomically writes a sibling
 `manifest.lock.json`.
 

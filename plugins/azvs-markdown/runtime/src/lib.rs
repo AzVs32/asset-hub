@@ -1,11 +1,10 @@
 use asset_plugin_api::{
-    JsonView, PluginActionEffect, PluginActionOutput, PluginActionRequest, PluginContentEncoding,
-    PluginFrameView, PluginView, ReplaceContentEffect, TextView,
+    JsonView, PluginActionEffect, PluginActionFailure, PluginActionOutput, PluginActionRequest,
+    PluginContentEncoding, PluginDiagnostic, PluginFrameView, PluginView, ReplaceContentEffect,
+    TextView,
 };
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
-#[cfg(target_arch = "wasm32")]
-use extism_pdk::host_fn;
 use extism_pdk::{Error, FnResult, plugin_fn};
 use serde_json::{Value, json};
 
@@ -14,23 +13,26 @@ const SMALL_TEXT_BYTES: u64 = 512 * 1024;
 const CONTENT_CHUNK_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_MARKDOWN_BYTES: u64 = 128 * 1024 * 1024;
 
-#[cfg(target_arch = "wasm32")]
-#[host_fn]
-extern "ExtismHost" {
-    fn asset_hub_content_open(reference: String) -> String;
-    fn asset_hub_content_size(handle: String) -> u64;
-    fn asset_hub_content_read(handle: String, offset: u64, length: u64) -> Vec<u8>;
-    fn asset_hub_content_close(handle: String);
-}
-
 #[plugin_fn]
 pub fn render_markdown(input: String) -> FnResult<String> {
-    render_markdown_payload(input)
+    structured_action_result(render_markdown_payload(input))
 }
 
 #[plugin_fn]
 pub fn update_markdown(input: String) -> FnResult<String> {
-    update_markdown_payload(input)
+    structured_action_result(update_markdown_payload(input))
+}
+
+fn structured_action_result(result: FnResult<String>) -> FnResult<String> {
+    match result {
+        Ok(output) => Ok(output),
+        Err(error) => Ok(serde_json::to_string(&PluginActionFailure::new(
+            PluginDiagnostic::error(
+                asset_plugin_api::diagnostic::codes::ACTION_FAILED,
+                error.0.to_string(),
+            ),
+        ))?),
+    }
 }
 
 fn render_markdown_payload(input: String) -> FnResult<String> {
@@ -173,6 +175,9 @@ fn markdown_content_size(input: &PluginActionRequest) -> FnResult<u64> {
     if content_ref.encoding != PluginContentEncoding::Handle {
         return Err(Error::msg("unsupported content reference encoding").into());
     }
+    if content_ref.abi_version != asset_plugin_api::CONTENT_ABI_VERSION {
+        return Err(Error::msg("unsupported content ABI version").into());
+    }
     input
         .resource
         .content
@@ -205,6 +210,9 @@ fn markdown_content_range(
         .content_ref
         .as_ref()
         .ok_or_else(|| Error::msg("missing Markdown content payload"))?;
+    if content_ref.abi_version != asset_plugin_api::CONTENT_ABI_VERSION {
+        return Err(Error::msg("unsupported content ABI version").into());
+    }
     read_content_reference_range(&content_ref.reference, offset, length)
 }
 
@@ -217,30 +225,13 @@ fn ensure_content_size(size: u64) -> FnResult<()> {
 
 #[cfg(target_arch = "wasm32")]
 fn read_content_reference_range(reference: &str, offset: u64, length: u64) -> FnResult<Vec<u8>> {
-    let handle = unsafe { asset_hub_content_open(reference.to_string()) }?;
-    let result = (|| {
-        let size = unsafe { asset_hub_content_size(handle.clone()) }?;
-        ensure_content_size(size)?;
-        let end = offset
-            .checked_add(length)
-            .filter(|end| *end <= size)
-            .ok_or_else(|| Error::msg("Markdown content range is out of bounds"))?;
-        let mut bytes = Vec::with_capacity(length as usize);
-        let mut cursor = offset;
-        while cursor < end {
-            let chunk = unsafe {
-                asset_hub_content_read(handle.clone(), cursor, end.saturating_sub(cursor))
-            }?;
-            if chunk.is_empty() || chunk.len() as u64 > end - cursor {
-                return Err(Error::msg("invalid Markdown content chunk returned by host").into());
-            }
-            cursor += chunk.len() as u64;
-            bytes.extend_from_slice(&chunk);
-        }
-        Ok(bytes)
-    })();
-    unsafe { asset_hub_content_close(handle) }?;
-    result
+    let range = asset_plugin_api::PluginContentRange::new(offset, length)?;
+    asset_plugin_api::content::guest::read_range(
+        reference,
+        range,
+        MAX_MARKDOWN_BYTES,
+        CONTENT_CHUNK_BYTES,
+    )
 }
 
 #[cfg(not(target_arch = "wasm32"))]

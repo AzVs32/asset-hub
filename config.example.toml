@@ -86,14 +86,14 @@ plugin_manifests = []
 # detect = { mime_types = ["text/x-c++"], extensions = [".cc", ".cpp", ".cxx", ".hpp"] }
 
 # Plugin manifest example.
-# Use `capabilities.resource_kinds` for new resource types, and flat
-# `capabilities.resource_actions` with `applies_to.kinds` for actions.
+# Use `capabilities.kinds` for new resource types and `capabilities.actions` for actions.
 # Start with `asset-plugin gen manifest`, then edit its fixed example fields.
 # Artifact hashes belong to the generated sibling `manifest.lock.json`; generate it with
 # `asset-plugin seal path/to/plugin.json` after building the plugin artifacts.
 #
 # {
-#   "manifest_version": 2,
+#   "$schema": "https://asset-hub.local/schemas/plugin-manifest-v3.json",
+#   "manifest_version": 3,
 #   "plugin": {
 #     "id": "example.tools",
 #     "name": "Example Tools",
@@ -103,19 +103,17 @@ plugin_manifests = []
 #   },
 #   "runtime": {
 #     "type": "extism",
-#     "wasm": "example-tools.wasm",
-#     "wasi": false,
-#     "plugin_api": "asset-hub.plugin-api@0.1"
+#     "wasm": "example-tools.wasm"
 #   },
 #   "capabilities": {
-#     "resource_kinds": [
+#     "kinds": [
 #       {
 #         "kind": "example:document",
 #         "label": "Document",
 #         "supports_content": true
 #       }
 #     ],
-#     "resource_actions": [
+#     "actions": [
 #       {
 #         "id": "example:summarize",
 #         "label": "Summarize",
@@ -133,15 +131,6 @@ plugin_manifests = []
 #     ]
 #   },
 #   "permissions": {
-#     "resource": {
-#       "read": true,
-#       "write": false
-#     },
-#     "content": {
-#       "read": true,
-#       "write": false
-#     },
-#     "network": false,
-#     "filesystem": false
+#     "allow": ["resource.metadata.read", "content.read"]
 #   }
 # }

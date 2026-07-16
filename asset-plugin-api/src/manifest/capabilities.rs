@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PluginCapabilities {
+    #[serde(rename = "kinds", alias = "resource_kinds")]
     pub resource_kinds: Vec<ResourceKindCapability>,
+    #[serde(rename = "actions", alias = "resource_actions")]
     pub resource_actions: Vec<ResourceActionCapability>,
 }
 

@@ -1055,7 +1055,9 @@ async fn plugin_reference_content_respects_the_host_content_budget() {
         json!({"input": {}}),
     )
     .await;
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(error["code"], "plugin.content_limit_exceeded");
+    assert_eq!(error["retryable"], false);
     assert!(
         error["error"]
             .as_str()

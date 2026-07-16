@@ -77,8 +77,14 @@ pub struct PluginContentBytes {
 /// Non-inline object content supplied to a plugin.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PluginContentReference {
+    #[serde(default = "content_abi_version")]
+    pub abi_version: u32,
     pub encoding: PluginContentEncoding,
     pub reference: String,
+}
+
+fn content_abi_version() -> u32 {
+    crate::CONTENT_ABI_VERSION
 }
 
 #[cfg(test)]

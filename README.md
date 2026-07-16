@@ -143,11 +143,14 @@ without encoding them as base64 or buffering the complete file in application me
 
 ## Package A Plugin
 
-Generate a fixed Manifest V2 starter in a new plugin directory:
+Generate a Manifest V3 starter in a new plugin directory:
 
 ```bash
 asset-plugin gen manifest
 ```
+
+Generate the matching Draft 2020-12 JSON Schema for editor or CI integration with
+`asset-plugin gen schema`.
 
 This creates `manifest.json` without overwriting an existing file. Replace the `example.plugin`
 metadata, action, handler, matching rules, requirements, views, and permissions, then build the
@@ -161,7 +164,7 @@ cargo run -p asset-apps --bin asset-plugin -- \
 ```
 
 The command calculates the Wasm digest and complete Web asset map into a sibling
-`manifest.lock.json`, then runs Manifest V2 contract validation. Do not run `seal` during
+`manifest.lock.json`, then runs plugin contract validation. Do not run `seal` during
 application startup: release or CI should instead verify the previously sealed package without
 modifying it:
 
@@ -208,25 +211,25 @@ Manifests, Wasm, and Web assets are read and integrity-checked once at API start
 precompiled and every declared handler export is checked before the server starts; Web assets are
 served from the verified in-memory snapshot. Restart the service after changing any plugin file.
 
-All plugin execution limits are assembled once from `[plugin]` into a shared
-`PluginExecutionPolicy` and injected into both the core action service and the Wasm host. The
+All plugin execution limits are assembled once from `[plugin]` into the
+`asset-plugin-api::PluginExecutionPolicy` shared by the core action service and Wasm host. The
 policy covers total content size, inline content size, per-read chunk size, serialized input and
 output size, concurrency, Wasm memory, and execution timeout. A configured
 `plugin.max_content_bytes` is therefore the effective limit in both layers; there is no separate
 core content ceiling.
 
-Non-inline Wasm content is passed as an opaque, call-scoped reference rather than file bytes. A
-plugin reads it through the `asset_hub_content_open`, `asset_hub_content_size`,
-`asset_hub_content_read`, and `asset_hub_content_close` host functions. `content_read` returns raw
+Non-inline Wasm content is passed as an opaque, call-scoped reference rather than file bytes. The
+versioned content ABI exposes `asset_hub_content_open`, `asset_hub_content_size`,
+`asset_hub_content_read`, and `asset_hub_content_close`. The `extism-guest` feature of
+`asset-plugin-api` provides the safe client used by bundled plugins. `content_read` returns raw
 bytes for the requested offset and may return a smaller chunk according to
 `plugin.max_content_read_bytes`, so plugins must continue reading until `content_size` is reached.
 Handles cannot be reused by another plugin call and are reclaimed automatically when a call ends.
 This keeps large input content out of JSON and avoids Base64 expansion; inline content remains
 available for small payloads controlled by `plugin.max_inline_content_bytes`.
 This host ABI replaces the former single-argument, Base64-returning `asset_hub_content_read`.
-External Wasm plugins must declare `content_delivery` as `reference`, migrate to the handle
-functions, rebuild their Wasm, and reseal the package; startup preflight rejects the old import
-signature.
+External Wasm plugins declare `content_delivery` as `reference`, read bounded ranges, rebuild their
+Wasm, and reseal the package.
 
 Resource kinds form an arbitrary-depth acyclic hierarchy through the optional
 `parent` field. Child kinds inherit actions, and their own action declarations
@@ -246,10 +249,19 @@ eight concurrent calls. The HTTP action input itself is limited to 1 MiB. These 
 configured under `[plugin]`; non-inline content up to the configured total limit is available
 through the Range-based handle API.
 
-Network and filesystem permissions are requested by a Manifest but are not self-granting. Every
+Manifest V3 uses a fine-grained `permissions.allow` list containing
+`resource.metadata.read`, `resource.metadata.write`, `content.read`, `content.replace`, and
+`derived_asset.write`. Effects are checked against their specific permission. Network and
+filesystem permissions are requested by a Manifest but are not self-granting. Every
 requested host or path must also be approved under `[plugin.grants]`. Network grants are exact and
 wildcards are rejected; filesystem grants are normalized roots. The default host policy grants no
 network or filesystem access.
+
+The current authoring target is Manifest V3 with plugin API `0.2`; omitting `runtime.plugin_api`
+selects it. The host continues to accept Manifest V2 and plugin API `0.1`. Other manifest or ABI
+versions are rejected at startup. Plugin failures may return a structured `error` diagnostic with
+a stable `code`, message, retry hint, and optional JSON details; successful outputs may also carry
+non-fatal diagnostics.
 
 Example:
 

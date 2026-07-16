@@ -1,5 +1,6 @@
 {
-  "manifest_version": 2,
+  "$schema": "https://asset-hub.local/schemas/plugin-manifest-v3.json",
+  "manifest_version": 3,
   "plugin": {
     "id": "core.video",
     "name": "Core Video",
@@ -11,7 +12,7 @@
     "type": "builtin"
   },
   "capabilities": {
-    "resource_kinds": [
+    "kinds": [
       {
         "kind": "core:video",
         "parent": "core:file",
@@ -23,18 +24,9 @@
         }
       }
     ],
-    "resource_actions": []
+    "actions": []
   },
   "permissions": {
-    "resource": {
-      "read": true,
-      "write": false
-    },
-    "content": {
-      "read": true,
-      "write": false
-    },
-    "network": false,
-    "filesystem": false
+    "allow": ["resource.metadata.read", "content.read"]
   }
 }

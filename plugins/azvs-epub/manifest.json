@@ -1,5 +1,6 @@
 {
-  "manifest_version": 2,
+  "$schema": "https://asset-hub.local/schemas/plugin-manifest-v3.json",
+  "manifest_version": 3,
   "plugin": {
     "id": "azvs.epub",
     "name": "AzVs EPUB",
@@ -10,14 +11,13 @@
   "runtime": {
     "type": "extism",
     "wasm": "azvs-epub.wasm",
-    "wasi": false,
-    "plugin_api": "asset-hub.plugin-api@0.1"
+    "wasi": false
   },
   "web": {
     "root": "dist"
   },
   "capabilities": {
-    "resource_kinds": [
+    "kinds": [
       {
         "kind": "azvs:epub",
         "parent": "core:document",
@@ -33,7 +33,7 @@
         }
       }
     ],
-    "resource_actions": [
+    "actions": [
       {
         "id": "azvs.epub.render",
         "label": "Read EPUB",
@@ -90,15 +90,9 @@
     ]
   },
   "permissions": {
-    "resource": {
-      "read": true,
-      "write": false
-    },
-    "content": {
-      "read": true,
-      "write": false
-    },
-    "network": false,
-    "filesystem": false
+    "allow": [
+      "resource.metadata.read",
+      "content.read"
+    ]
   }
 }

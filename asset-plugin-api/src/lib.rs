@@ -17,7 +17,10 @@
 //!   HTML、媒体、表格、表单、二进制 URL 等可由 host 渲染的视图。
 
 pub mod action;
+pub mod content;
+pub mod diagnostic;
 pub mod manifest;
+pub mod policy;
 pub mod request;
 pub mod view;
 
@@ -26,13 +29,21 @@ pub use action::{
     ResourceActionDefinition, ResourceActionExecutorKind, ResourceActionOutputContract,
     ResourceActionRequirements, ResourceActionUi, ResourceContentMatcher,
 };
+pub use content::{
+    CONTENT_ABI_VERSION, CONTENT_CLOSE_FN, CONTENT_OPEN_FN, CONTENT_READ_RANGE_FN, CONTENT_SIZE_FN,
+    ContentRangeError, PluginContentRange,
+};
+pub use diagnostic::{PluginActionFailure, PluginDiagnostic, PluginDiagnosticSeverity};
 pub use manifest::{
     ActionAppliesTo, ActionRequirements, ActionUi, ContentDelivery, FilesystemPermission,
-    MANIFEST_TEMPLATE, MANIFEST_VERSION, ManifestActionAccess, NetworkPermission,
-    PLUGIN_API_VERSION, PluginCapabilities, PluginManifest, PluginManifestLock, PluginMetadata,
+    MANIFEST_SCHEMA, MANIFEST_TEMPLATE, MANIFEST_VERSION, MIN_MANIFEST_VERSION,
+    MIN_PLUGIN_API_VERSION, ManifestActionAccess, NetworkPermission, PLUGIN_API_VERSION,
+    PluginCapabilities, PluginManifest, PluginManifestLock, PluginMetadata, PluginPermission,
     PluginPermissions, PluginRuntime, PluginRuntimeLock, PluginWeb, PluginWebLock,
     ReadWritePermission, ResourceActionCapability, ResourceKindCapability,
+    is_plugin_api_compatible,
 };
+pub use policy::{InvalidPluginExecutionPolicy, PluginExecutionPolicy};
 pub use request::{
     PluginActionRequest, PluginChecksum, PluginContentBytes, PluginContentReference,
     PluginResource, PluginResourceContent, PluginResourceMetadata, PluginResourceSummaryMetadata,

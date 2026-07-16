@@ -1,12 +1,10 @@
 use ammonia::Builder;
 use asset_plugin_api::{
-    JsonView, MediaView, PluginActionOutput, PluginActionRequest, PluginContentEncoding,
-    PluginFrameView, PluginView,
+    JsonView, MediaView, PluginActionFailure, PluginActionOutput, PluginActionRequest,
+    PluginContentEncoding, PluginDiagnostic, PluginFrameView, PluginView,
 };
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
-#[cfg(target_arch = "wasm32")]
-use extism_pdk::host_fn;
 use extism_pdk::{Error, FnResult, plugin_fn};
 use lol_html::{RewriteStrSettings, element, rewrite_str};
 use roxmltree::{Document, Node};
@@ -35,15 +33,6 @@ const MAX_BOOK_CACHE_BYTES: usize = 96 * 1024 * 1024;
 const MAX_COVER_CACHE_BYTES: usize = 48 * 1024 * 1024;
 const BOOK_CACHE_CAPACITY: usize = 3;
 const COVER_CACHE_CAPACITY: usize = 64;
-
-#[cfg(target_arch = "wasm32")]
-#[host_fn]
-extern "ExtismHost" {
-    fn asset_hub_content_open(reference: String) -> String;
-    fn asset_hub_content_size(handle: String) -> u64;
-    fn asset_hub_content_read(handle: String, offset: u64, length: u64) -> Vec<u8>;
-    fn asset_hub_content_close(handle: String);
-}
 
 #[derive(Debug, Clone)]
 struct ManifestItem {
@@ -107,12 +96,24 @@ static COVER_CACHE: OnceLock<Mutex<VecDeque<CachedCover>>> = OnceLock::new();
 
 #[plugin_fn]
 pub fn render_epub(input: String) -> FnResult<String> {
-    render_epub_payload(input)
+    structured_action_result(render_epub_payload(input))
 }
 
 #[plugin_fn]
 pub fn render_epub_cover(input: String) -> FnResult<String> {
-    render_epub_cover_payload(input)
+    structured_action_result(render_epub_cover_payload(input))
+}
+
+fn structured_action_result(result: FnResult<String>) -> FnResult<String> {
+    match result {
+        Ok(output) => Ok(output),
+        Err(error) => Ok(serde_json::to_string(&PluginActionFailure::new(
+            PluginDiagnostic::error(
+                asset_plugin_api::diagnostic::codes::ACTION_FAILED,
+                error.0.to_string(),
+            ),
+        ))?),
+    }
 }
 
 fn render_epub_payload(input: String) -> FnResult<String> {
@@ -288,32 +289,15 @@ fn epub_content_bytes(input: &PluginActionRequest) -> FnResult<Vec<u8>> {
     if content_ref.encoding != PluginContentEncoding::Handle {
         return Err(Error::msg("unsupported content reference encoding").into());
     }
+    if content_ref.abi_version != asset_plugin_api::CONTENT_ABI_VERSION {
+        return Err(Error::msg("unsupported content ABI version").into());
+    }
     read_content_reference(&content_ref.reference)
 }
 
 #[cfg(target_arch = "wasm32")]
 fn read_content_reference(reference: &str) -> FnResult<Vec<u8>> {
-    let handle = unsafe { asset_hub_content_open(reference.to_string()) }?;
-    let result = (|| {
-        let size = unsafe { asset_hub_content_size(handle.clone()) }?;
-        if size > MAX_EPUB_BYTES {
-            return Err(Error::msg("EPUB exceeds the 128 MiB plugin limit").into());
-        }
-        let mut bytes = Vec::with_capacity(size as usize);
-        let mut offset = 0;
-        while offset < size {
-            let length = (size - offset).min(READ_CHUNK_BYTES);
-            let chunk = unsafe { asset_hub_content_read(handle.clone(), offset, length) }?;
-            if chunk.is_empty() || chunk.len() as u64 > length {
-                return Err(Error::msg("invalid content chunk returned by host").into());
-            }
-            offset += chunk.len() as u64;
-            bytes.extend_from_slice(&chunk);
-        }
-        Ok(bytes)
-    })();
-    unsafe { asset_hub_content_close(handle) }?;
-    result
+    asset_plugin_api::content::guest::read_all(reference, MAX_EPUB_BYTES, READ_CHUNK_BYTES)
 }
 
 #[cfg(not(target_arch = "wasm32"))]

@@ -9,7 +9,8 @@ pub use capabilities::{
 };
 pub use lock::{PluginManifestLock, PluginRuntimeLock, PluginWebLock};
 pub use permissions::{
-    FilesystemPermission, NetworkPermission, PluginPermissions, ReadWritePermission,
+    FilesystemPermission, NetworkPermission, PluginPermission, PluginPermissions,
+    ReadWritePermission,
 };
 pub use plugin::PluginMetadata;
 pub use runtime::PluginRuntime;
@@ -60,16 +61,21 @@ mod lock {
     }
 }
 
-/// Current manifest schema version.
-pub const MANIFEST_VERSION: u32 = 2;
-pub const PLUGIN_API_VERSION: &str = "asset-hub.plugin-api@0.1";
-/// Editable Manifest V2 draft copied by `asset-plugin gen manifest`.
+/// Current manifest schema version. V2 remains loadable during the V3 compatibility window.
+pub const MANIFEST_VERSION: u32 = 3;
+pub const MIN_MANIFEST_VERSION: u32 = 2;
+pub const PLUGIN_API_VERSION: &str = "asset-hub.plugin-api@0.2";
+pub const MIN_PLUGIN_API_VERSION: &str = "asset-hub.plugin-api@0.1";
+/// Editable Manifest V3 draft copied by `asset-plugin gen manifest`.
 pub const MANIFEST_TEMPLATE: &str = include_str!("../../templates/manifest.json");
+pub const MANIFEST_SCHEMA: &str = include_str!("../../schema/plugin-manifest-v3.schema.json");
 
 /// Complete plugin manifest document.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PluginManifest {
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "$schema")]
+    pub schema: Option<String>,
     pub manifest_version: u32,
     pub plugin: PluginMetadata,
     pub runtime: PluginRuntime,
@@ -86,9 +92,9 @@ impl PluginManifest {
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        if self.manifest_version != MANIFEST_VERSION {
+        if !(MIN_MANIFEST_VERSION..=MANIFEST_VERSION).contains(&self.manifest_version) {
             return Err(format!(
-                "unsupported manifest_version `{}`",
+                "unsupported manifest_version `{}`; supported range is {MIN_MANIFEST_VERSION}..={MANIFEST_VERSION}",
                 self.manifest_version
             ));
         }
@@ -105,11 +111,7 @@ impl PluginManifest {
                     return Err("runtime.wasm must not be empty".to_string());
                 }
                 validate_relative_path("runtime.wasm", wasm)?;
-                if plugin_api != PLUGIN_API_VERSION {
-                    return Err(format!(
-                        "unsupported runtime.plugin_api `{plugin_api}`, expected `{PLUGIN_API_VERSION}`"
-                    ));
-                }
+                validate_plugin_api_version(plugin_api)?;
             }
         }
         if let Some(web) = &self.web {
@@ -123,6 +125,22 @@ impl PluginManifest {
         }
         validate_capabilities(self)?;
         Ok(())
+    }
+}
+
+/// Returns whether a guest ABI is supported by this host. Pre-1.0 minor versions are treated as
+/// explicit protocol levels, so compatibility is an allow-list rather than a loose semver match.
+pub fn is_plugin_api_compatible(value: &str) -> bool {
+    matches!(value, MIN_PLUGIN_API_VERSION | PLUGIN_API_VERSION)
+}
+
+fn validate_plugin_api_version(value: &str) -> Result<(), String> {
+    if is_plugin_api_compatible(value) {
+        Ok(())
+    } else {
+        Err(format!(
+            "unsupported runtime.plugin_api `{value}`; supported versions are `{MIN_PLUGIN_API_VERSION}` and `{PLUGIN_API_VERSION}`"
+        ))
     }
 }
 
@@ -201,22 +219,18 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
     let capabilities = &manifest.capabilities;
     let mut action_ids = HashSet::new();
     for kind in &capabilities.resource_kinds {
-        validate_id(
-            "capabilities.resource_kinds[].kind",
-            &kind.kind,
-            &[':', '-', '_'],
-        )?;
+        validate_id("capabilities.kinds[].kind", &kind.kind, &[':', '-', '_'])?;
         if kind
             .parent
             .as_ref()
             .is_some_and(|parent| parent.trim().is_empty())
         {
-            return Err("capabilities.resource_kinds[].parent must not be empty".to_string());
+            return Err("capabilities.kinds[].parent must not be empty".to_string());
         }
     }
     for action in &capabilities.resource_actions {
         validate_id(
-            "capabilities.resource_actions[].id",
+            "capabilities.actions[].id",
             &action.id,
             &['.', ':', '-', '_'],
         )?;
@@ -225,34 +239,34 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
         }
         if action.label.trim().is_empty() {
             return Err(format!(
-                "capabilities.resource_actions[`{}`].label must not be empty",
+                "capabilities.actions[`{}`].label must not be empty",
                 action.id
             ));
         }
-        if !manifest.permissions.resource.read {
+        if !manifest.permissions.resource_metadata_read() {
             return Err(format!(
-                "capabilities.resource_actions[`{}`] lacks resource.read permission",
+                "capabilities.actions[`{}`] lacks resource.metadata.read permission",
                 action.id
             ));
         }
         validate_id("handler", &action.handler, &['.', '-', '_'])?;
         if action.views.is_empty() {
             return Err(format!(
-                "capabilities.resource_actions[`{}`].views must not be empty",
+                "capabilities.actions[`{}`].views must not be empty",
                 action.id
             ));
         }
         for view in &action.views {
             if !SUPPORTED_VIEWS.contains(&view.as_str()) {
                 return Err(format!(
-                    "capabilities.resource_actions[`{}`] declares unsupported view `{view}`",
+                    "capabilities.actions[`{}`] declares unsupported view `{view}`",
                     action.id
                 ));
             }
         }
         if action.views.iter().any(|view| view == "plugin_frame") && manifest.web.is_none() {
             return Err(format!(
-                "capabilities.resource_actions[`{}`] returns plugin_frame but plugin.web is missing",
+                "capabilities.actions[`{}`] returns plugin_frame but plugin.web is missing",
                 action.id
             ));
         }
@@ -260,18 +274,20 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
             .requires
             .as_ref()
             .is_some_and(|requires| requires.content)
-            && !manifest.permissions.content.read
+            && !manifest.permissions.content_read()
         {
             return Err(format!(
-                "capabilities.resource_actions[`{}`] requires content without content.read permission",
+                "capabilities.actions[`{}`] requires content without content.read permission",
                 action.id
             ));
         }
         if matches!(action.access, ManifestActionAccess::Write)
-            && (!manifest.permissions.resource.write || !manifest.permissions.content.write)
+            && !manifest.permissions.resource_metadata_write()
+            && !manifest.permissions.content_replace()
+            && !manifest.permissions.derived_asset_write()
         {
             return Err(format!(
-                "capabilities.resource_actions[`{}`] is writable without resource.write and content.write permissions",
+                "capabilities.actions[`{}`] is writable without a write permission",
                 action.id
             ));
         }
@@ -321,13 +337,61 @@ mod tests {
     use super::*;
 
     #[test]
-    fn embedded_manifest_template_is_a_v2_draft_without_generated_integrity() {
+    fn embedded_manifest_template_is_a_v3_draft_without_generated_integrity() {
         let document: serde_json::Value = serde_json::from_str(MANIFEST_TEMPLATE).unwrap();
 
         assert_eq!(document["manifest_version"], MANIFEST_VERSION);
-        assert_eq!(document["runtime"]["plugin_api"], PLUGIN_API_VERSION);
+        assert!(document["runtime"].get("plugin_api").is_none());
         assert!(document["runtime"].get("wasm_sha256").is_none());
         assert!(document.get("web").is_none());
+    }
+
+    #[test]
+    fn embedded_json_schema_is_draft_2020_12() {
+        let schema: serde_json::Value = serde_json::from_str(MANIFEST_SCHEMA).unwrap();
+        assert_eq!(
+            schema["$schema"],
+            "https://json-schema.org/draft/2020-12/schema"
+        );
+        assert_eq!(
+            schema["properties"]["manifest_version"]["const"],
+            MANIFEST_VERSION
+        );
+    }
+
+    #[test]
+    fn compatibility_window_accepts_v2_api_01_and_rejects_unknown_versions() {
+        let mut document: serde_json::Value = serde_json::from_str(MANIFEST_TEMPLATE).unwrap();
+        document.as_object_mut().unwrap().remove("$schema");
+        document["manifest_version"] = serde_json::json!(2);
+        document["runtime"]["plugin_api"] = serde_json::json!(MIN_PLUGIN_API_VERSION);
+        let capabilities = document["capabilities"].as_object_mut().unwrap();
+        let actions = capabilities.remove("actions").unwrap();
+        capabilities.insert("resource_actions".to_string(), actions);
+        document["permissions"] = serde_json::json!({
+            "resource": {"read": true, "write": false},
+            "content": {"read": false, "write": false},
+            "network": false,
+            "filesystem": false
+        });
+        let manifest: PluginManifest = serde_json::from_value(document.clone()).unwrap();
+        manifest.validate().unwrap();
+
+        document["manifest_version"] = serde_json::json!(1);
+        assert!(
+            serde_json::from_value::<PluginManifest>(document.clone())
+                .unwrap()
+                .validate()
+                .is_err()
+        );
+        document["manifest_version"] = serde_json::json!(2);
+        document["runtime"]["plugin_api"] = serde_json::json!("asset-hub.plugin-api@0.3");
+        assert!(
+            serde_json::from_value::<PluginManifest>(document)
+                .unwrap()
+                .validate()
+                .is_err()
+        );
     }
 
     #[test]
@@ -337,8 +401,7 @@ mod tests {
         assert!(serde_json::from_value::<PluginManifest>(document).is_err());
 
         let mut document: serde_json::Value = serde_json::from_str(MANIFEST_TEMPLATE).unwrap();
-        document["capabilities"]["resource_actions"][0]["applies_to"]["typo"] =
-            serde_json::json!([]);
+        document["capabilities"]["actions"][0]["applies_to"]["typo"] = serde_json::json!([]);
         assert!(serde_json::from_value::<PluginManifest>(document).is_err());
 
         let mut document: serde_json::Value = serde_json::from_str(MANIFEST_TEMPLATE).unwrap();

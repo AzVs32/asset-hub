@@ -6,10 +6,11 @@ use asset_core::port::{
 };
 use asset_core::service::PluginExecutionPolicy;
 use asset_plugin_api::{
-    PluginActionOutput, PluginActionRequest, PluginChecksum, PluginContentBytes,
-    PluginContentEncoding, PluginContentReference, PluginPermissions, PluginResource,
-    PluginResourceContent, PluginResourceMetadata, PluginResourceSummaryMetadata, PluginRuntime,
-    PluginView, ResourceActionCapability,
+    PluginActionFailure, PluginActionOutput, PluginActionRequest, PluginChecksum,
+    PluginContentBytes, PluginContentEncoding, PluginContentRange, PluginContentReference,
+    PluginDiagnostic, PluginDiagnosticSeverity, PluginPermission, PluginPermissions,
+    PluginResource, PluginResourceContent, PluginResourceMetadata, PluginResourceSummaryMetadata,
+    PluginRuntime, PluginView, ResourceActionCapability,
 };
 use async_trait::async_trait;
 use base64::Engine;
@@ -503,43 +504,37 @@ fn verify_permissions(
     binding: &ActionBinding,
     request: &ResourceActionRequest,
 ) -> Result<(), CoreError> {
-    if !binding.permissions.resource.read {
+    if !binding
+        .permissions
+        .allows(PluginPermission::ResourceMetadataRead)
+    {
         return Err(CoreError::configuration(format!(
-            "plugin `{}` action `{}` lacks resource.read permission",
+            "plugin `{}` action `{}` lacks resource.metadata.read permission",
             binding.plugin_id, binding.action
         )));
     }
     if matches!(
         request.access(),
         asset_plugin_api::ResourceActionAccess::ReadWrite
-    ) && !binding.permissions.resource.write
+    ) && !binding.permissions.resource_metadata_write()
+        && !binding.permissions.content_replace()
+        && !binding.permissions.derived_asset_write()
     {
         return Err(CoreError::configuration(format!(
-            "plugin `{}` action `{}` lacks resource.write permission",
+            "plugin `{}` action `{}` lacks a write permission",
             binding.plugin_id, binding.action
         )));
     }
     if !matches!(
         request.content_delivery(),
         asset_plugin_api::ResourceActionContentDelivery::Auto
-    ) && !binding.permissions.content.read
+    ) && !binding.permissions.allows(PluginPermission::ContentRead)
     {
         return Err(CoreError::configuration(format!(
             "plugin `{}` action `{}` lacks content.read permission",
             binding.plugin_id, binding.action
         )));
     }
-    if matches!(
-        request.access(),
-        asset_plugin_api::ResourceActionAccess::ReadWrite
-    ) && !binding.permissions.content.write
-    {
-        return Err(CoreError::configuration(format!(
-            "plugin `{}` action `{}` lacks content.write permission",
-            binding.plugin_id, binding.action
-        )));
-    }
-
     Ok(())
 }
 
@@ -565,12 +560,15 @@ fn verify_content_budget(
         .unwrap_or_default();
     let size = declared_size.max(loaded_size);
     if size > policy.max_content_bytes() {
-        return Err(CoreError::plugin(
+        return Err(CoreError::plugin_diagnostic(
             &binding.plugin_id,
             &binding.action,
-            format!(
-                "resource content is {size} bytes, plugin limit is {}",
-                policy.max_content_bytes()
+            host_diagnostic(
+                asset_plugin_api::diagnostic::codes::CONTENT_LIMIT_EXCEEDED,
+                format!(
+                    "resource content is {size} bytes, plugin limit is {}",
+                    policy.max_content_bytes()
+                ),
             ),
         ));
     }
@@ -593,13 +591,16 @@ fn call_extism(
         CoreError::plugin(&binding.plugin_id, &binding.action, error.to_string())
     })?;
     if input.len() > policy.max_input_bytes() {
-        return Err(CoreError::plugin(
+        return Err(CoreError::plugin_diagnostic(
             &binding.plugin_id,
             &binding.action,
-            format!(
-                "serialized input is {} bytes, limit is {}",
-                input.len(),
-                policy.max_input_bytes()
+            host_diagnostic(
+                asset_plugin_api::diagnostic::codes::INPUT_LIMIT_EXCEEDED,
+                format!(
+                    "serialized input is {} bytes, limit is {}",
+                    input.len(),
+                    policy.max_input_bytes()
+                ),
             ),
         ));
     }
@@ -609,27 +610,86 @@ fn call_extism(
             CoreError::plugin(&binding.plugin_id, &binding.action, error.to_string())
         })?;
     if output.len() > policy.max_output_bytes() {
-        return Err(CoreError::plugin(
+        return Err(CoreError::plugin_diagnostic(
             &binding.plugin_id,
             &binding.action,
-            format!(
-                "plugin output is {} bytes, limit is {}",
-                output.len(),
-                policy.max_output_bytes()
+            host_diagnostic(
+                asset_plugin_api::diagnostic::codes::OUTPUT_LIMIT_EXCEEDED,
+                format!(
+                    "plugin output is {} bytes, limit is {}",
+                    output.len(),
+                    policy.max_output_bytes()
+                ),
             ),
         ));
     }
 
-    let mut output: PluginActionOutput = serde_json::from_str(&output).map_err(|error| {
-        CoreError::plugin(
+    let value: serde_json::Value = serde_json::from_str(&output).map_err(|error| {
+        CoreError::plugin_diagnostic(
             &binding.plugin_id,
             &binding.action,
-            format!("plugin returned invalid action output: {error}"),
+            host_diagnostic(
+                asset_plugin_api::diagnostic::codes::INVALID_OUTPUT,
+                format!("plugin returned invalid JSON: {error}"),
+            ),
         )
     })?;
+    if value.get("error").is_some() {
+        let failure: PluginActionFailure = serde_json::from_value(value).map_err(|error| {
+            CoreError::plugin_diagnostic(
+                &binding.plugin_id,
+                &binding.action,
+                host_diagnostic(
+                    asset_plugin_api::diagnostic::codes::INVALID_OUTPUT,
+                    format!("plugin returned an invalid failure diagnostic: {error}"),
+                ),
+            )
+        })?;
+        return Err(CoreError::plugin_diagnostic(
+            &binding.plugin_id,
+            &binding.action,
+            failure.error,
+        ));
+    }
+    let mut output: PluginActionOutput = serde_json::from_value(value).map_err(|error| {
+        CoreError::plugin_diagnostic(
+            &binding.plugin_id,
+            &binding.action,
+            host_diagnostic(
+                asset_plugin_api::diagnostic::codes::INVALID_OUTPUT,
+                format!("plugin returned invalid action output: {error}"),
+            ),
+        )
+    })?;
+    if output.effects.iter().any(|effect| {
+        matches!(
+            effect,
+            asset_plugin_api::PluginActionEffect::ReplaceContent(_)
+        )
+    }) && !binding.permissions.content_replace()
+    {
+        return Err(CoreError::plugin_diagnostic(
+            &binding.plugin_id,
+            &binding.action,
+            host_diagnostic(
+                asset_plugin_api::diagnostic::codes::PERMISSION_DENIED,
+                "plugin returned replace_content without content.replace permission",
+            ),
+        ));
+    }
     resolve_plugin_output_urls(&mut output, &binding.plugin_id)?;
 
     Ok(output)
+}
+
+fn host_diagnostic(code: &str, message: impl Into<String>) -> PluginDiagnostic {
+    PluginDiagnostic {
+        code: code.to_string(),
+        message: message.into(),
+        severity: PluginDiagnosticSeverity::Error,
+        retryable: false,
+        details: None,
+    }
 }
 
 fn manifest_for_plugin(
@@ -725,20 +785,15 @@ impl HostContentResolver {
 
     fn read(&self, handle: &str, offset: u64, length: u64) -> Result<Vec<u8>, CoreError> {
         let content = self.open_content(handle)?;
-        if offset > content.size {
-            return Err(CoreError::configuration(format!(
-                "content offset {offset} exceeds object size {}",
-                content.size
-            )));
-        }
-        if length == 0 || offset == content.size {
+        let range = PluginContentRange::new(offset, length)
+            .and_then(|range| range.bounded(content.size, self.policy.max_content_read_bytes()))
+            .map_err(|error| CoreError::configuration(error.to_string()))?;
+        if range.length == 0 {
             return Ok(Vec::new());
         }
-
-        let length = length
-            .min(self.policy.max_content_read_bytes())
-            .min(content.size - offset);
-        let end = offset + length - 1;
+        let offset = range.offset;
+        let length = range.length;
+        let end = range.end() - 1;
         self.runtime.block_on(async {
             let Some(mut stream) = self
                 .storage
@@ -835,6 +890,7 @@ fn build_payload(
         asset_plugin_api::ResourceActionContentDelivery::Reference
     ) {
         content_ref.map(|_| PluginContentReference {
+            abi_version: asset_plugin_api::CONTENT_ABI_VERSION,
             encoding: PluginContentEncoding::Handle,
             reference: content_reference
                 .expect("reference content delivery must hold a content lease")

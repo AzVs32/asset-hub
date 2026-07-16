@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::PluginChecksum;
+use crate::{PluginChecksum, PluginDiagnostic};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -18,6 +18,8 @@ pub struct PluginActionOutput {
     pub view: PluginView,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<PluginActionEffect>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub diagnostics: Vec<PluginDiagnostic>,
 }
 
 impl PluginActionOutput {
@@ -25,6 +27,7 @@ impl PluginActionOutput {
         Self {
             view,
             effects: Vec::new(),
+            diagnostics: Vec::new(),
         }
     }
 }

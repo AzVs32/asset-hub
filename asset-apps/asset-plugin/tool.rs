@@ -1,6 +1,6 @@
 use asset_plugin_api::{
-    MANIFEST_TEMPLATE, PluginCapabilities, PluginManifest, PluginManifestLock, PluginMetadata,
-    PluginPermissions, PluginRuntime, PluginRuntimeLock, PluginWeb, PluginWebLock,
+    MANIFEST_SCHEMA, MANIFEST_TEMPLATE, PluginCapabilities, PluginManifest, PluginManifestLock,
+    PluginMetadata, PluginPermissions, PluginRuntime, PluginRuntimeLock, PluginWeb, PluginWebLock,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -34,9 +34,15 @@ pub fn generate_manifest(path: &Path) -> Result<PluginManifest> {
     Ok(manifest)
 }
 
+pub fn generate_schema(path: &Path) -> Result<()> {
+    write_new_file(path, MANIFEST_SCHEMA.as_bytes())
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DraftManifest {
+    #[serde(default, rename = "$schema")]
+    schema: Option<String>,
     manifest_version: u32,
     plugin: PluginMetadata,
     runtime: DraftRuntime,
@@ -55,8 +61,13 @@ enum DraftRuntime {
         wasm: PathBuf,
         #[serde(default)]
         wasi: bool,
+        #[serde(default = "default_plugin_api_version")]
         plugin_api: String,
     },
+}
+
+fn default_plugin_api_version() -> String {
+    asset_plugin_api::PLUGIN_API_VERSION.to_string()
 }
 
 #[derive(Debug, Deserialize)]
@@ -81,6 +92,7 @@ fn manifest_for_draft_validation(draft: DraftManifest) -> PluginManifest {
     };
     let web = draft.web.map(|web| PluginWeb { root: web.root });
     PluginManifest {
+        schema: draft.schema,
         manifest_version: draft.manifest_version,
         plugin: draft.plugin,
         runtime,
@@ -223,7 +235,7 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
 fn validate_contract(manifest: &PluginManifest) -> Result<()> {
     manifest
         .validate()
-        .map_err(|error| ToolError(format!("invalid Manifest V2: {error}")))
+        .map_err(|error| ToolError(format!("invalid plugin manifest: {error}")))
 }
 
 fn manifest_base(path: &Path) -> PathBuf {
@@ -441,15 +453,23 @@ mod tests {
         );
         assert_eq!(document["runtime"]["wasm"], "dist/plugin.wasm");
         assert!(document["runtime"].get("wasm_sha256").is_none());
-        assert_eq!(
-            document["capabilities"]["resource_actions"][0]["handler"],
-            "run"
-        );
+        assert_eq!(document["capabilities"]["actions"][0]["handler"], "run");
         assert!(generate_manifest(&path).is_err());
         std::fs::create_dir_all(root.join("dist")).unwrap();
         std::fs::write(root.join("dist/plugin.wasm"), b"wasm").unwrap();
         seal_manifest(&path).unwrap();
         verify_manifest(&path).unwrap();
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn generate_schema_writes_the_embedded_schema_without_overwriting() {
+        let root = test_root("schema");
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("manifest.schema.json");
+        generate_schema(&path).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), MANIFEST_SCHEMA);
+        assert!(generate_schema(&path).is_err());
         let _ = std::fs::remove_dir_all(root);
     }
 

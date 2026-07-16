@@ -8,3 +8,8 @@ authors.workspace = true
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+extism-pdk = { version = "1.4.1", optional = true }
+
+[features]
+default = []
+extism-guest = ["dep:extism-pdk"]

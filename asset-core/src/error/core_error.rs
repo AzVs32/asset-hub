@@ -1,4 +1,5 @@
 use super::{ResourceError, UserError};
+use asset_plugin_api::PluginDiagnostic;
 use thiserror::Error;
 
 /// 核心层对外暴露的统一错误类型。
@@ -67,14 +68,14 @@ pub enum CoreError {
     },
 
     /// 插件动作执行失败。
-    #[error("plugin `{plugin}` action `{action}` failed: {message}")]
+    #[error("plugin `{plugin}` action `{action}` failed: {diagnostic}")]
     Plugin {
         /// 插件标识。
         plugin: String,
         /// 动作标识。
         action: String,
-        /// 错误说明。
-        message: String,
+        /// Stable code, message, retry hint and optional machine-readable details.
+        diagnostic: Box<PluginDiagnostic>,
     },
 }
 
@@ -135,10 +136,28 @@ impl CoreError {
         action: impl Into<String>,
         message: impl Into<String>,
     ) -> Self {
+        Self::plugin_diagnostic(
+            plugin,
+            action,
+            PluginDiagnostic {
+                code: asset_plugin_api::diagnostic::codes::RUNTIME_FAILURE.to_string(),
+                message: message.into(),
+                severity: asset_plugin_api::PluginDiagnosticSeverity::Error,
+                retryable: false,
+                details: None,
+            },
+        )
+    }
+
+    pub fn plugin_diagnostic(
+        plugin: impl Into<String>,
+        action: impl Into<String>,
+        diagnostic: PluginDiagnostic,
+    ) -> Self {
         Self::Plugin {
             plugin: plugin.into(),
             action: action.into(),
-            message: message.into(),
+            diagnostic: Box::new(diagnostic),
         }
     }
 }

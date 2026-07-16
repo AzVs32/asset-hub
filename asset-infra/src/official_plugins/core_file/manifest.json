@@ -1,5 +1,6 @@
 {
-  "manifest_version": 2,
+  "$schema": "https://asset-hub.local/schemas/plugin-manifest-v3.json",
+  "manifest_version": 3,
   "plugin": {
     "id": "core.file",
     "name": "Core File",
@@ -11,14 +12,14 @@
     "type": "builtin"
   },
   "capabilities": {
-    "resource_kinds": [
+    "kinds": [
       {
         "kind": "core:file",
         "label": "File",
         "supports_content": true
       }
     ],
-    "resource_actions": [
+    "actions": [
       {
         "id": "download_content",
         "label": "Download",
@@ -79,15 +80,6 @@
     ]
   },
   "permissions": {
-    "resource": {
-      "read": true,
-      "write": false
-    },
-    "content": {
-      "read": true,
-      "write": false
-    },
-    "network": false,
-    "filesystem": false
+    "allow": ["resource.metadata.read", "content.read"]
   }
 }

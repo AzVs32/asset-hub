@@ -1,5 +1,6 @@
 {
-  "manifest_version": 2,
+  "$schema": "https://asset-hub.local/schemas/plugin-manifest-v3.json",
+  "manifest_version": 3,
   "plugin": {
     "id": "azvs.markdown",
     "name": "AzVs Markdown",
@@ -10,14 +11,13 @@
   "runtime": {
     "type": "extism",
     "wasm": "azvs-markdown.wasm",
-    "wasi": true,
-    "plugin_api": "asset-hub.plugin-api@0.1"
+    "wasi": true
   },
   "web": {
     "root": "dist"
   },
   "capabilities": {
-    "resource_kinds": [
+    "kinds": [
       {
         "kind": "azvs:markdown",
         "parent": "core:document",
@@ -37,7 +37,7 @@
         }
       }
     ],
-    "resource_actions": [
+    "actions": [
       {
         "id": "azvs.markdown.render",
         "label": "Read Markdown",
@@ -96,15 +96,11 @@
     ]
   },
   "permissions": {
-    "resource": {
-      "read": true,
-      "write": true
-    },
-    "content": {
-      "read": true,
-      "write": true
-    },
-    "network": false,
-    "filesystem": false
+    "allow": [
+      "resource.metadata.read",
+      "resource.metadata.write",
+      "content.read",
+      "content.replace"
+    ]
   }
 }

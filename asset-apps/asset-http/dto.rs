@@ -192,6 +192,15 @@ pub(crate) struct AuditStorageRequest {
 pub(crate) struct ErrorResponse {
     /// 错误说明。
     pub(crate) error: String,
+    /// Stable machine-readable error code when available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) code: Option<String>,
+    /// Whether retrying the same operation may succeed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) retryable: Option<bool>,
+    /// Optional structured diagnostic context.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) details: Option<serde_json::Value>,
 }
 
 /// 健康检查响应。

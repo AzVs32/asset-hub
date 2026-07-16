@@ -148,6 +148,7 @@ impl PluginHostConfig {
             self.memory_max_pages,
             self.timeout_seconds,
         )
+        .map_err(|error| CoreError::configuration(error.to_string()))
     }
 
     fn normalize_and_validate(&mut self) -> Result<(), CoreError> {

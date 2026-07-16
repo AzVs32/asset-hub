@@ -1,5 +1,6 @@
 {
-  "manifest_version": 2,
+  "$schema": "https://asset-hub.local/schemas/plugin-manifest-v3.json",
+  "manifest_version": 3,
   "plugin": {
     "id": "example.plugin",
     "name": "Example Plugin",
@@ -9,23 +10,16 @@
   },
   "runtime": {
     "type": "extism",
-    "wasm": "dist/plugin.wasm",
-    "plugin_api": "asset-hub.plugin-api@0.1",
-    "wasi": false
+    "wasm": "dist/plugin.wasm"
   },
   "capabilities": {
-    "resource_kinds": [],
-    "resource_actions": [
+    "actions": [
       {
         "id": "example.plugin.action",
         "label": "Example Action",
         "handler": "run",
         "applies_to": {
           "kinds": ["core:file"]
-        },
-        "access": "read",
-        "requires": {
-          "content": false
         },
         "views": ["json"],
         "ui": {
@@ -37,15 +31,6 @@
     ]
   },
   "permissions": {
-    "resource": {
-      "read": true,
-      "write": false
-    },
-    "content": {
-      "read": false,
-      "write": false
-    },
-    "network": false,
-    "filesystem": false
+    "allow": ["resource.metadata.read"]
   }
 }
