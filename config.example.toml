@@ -113,16 +113,6 @@ plugin_manifests = []
 #         "kind": "example:document",
 #         "label": "Document",
 #         "supports_content": true
-#       },
-#       {
-#         "kind": "example:mp4",
-#         "parent": "core:video",
-#         "label": "MP4",
-#         "supports_content": true,
-#         "detect": {
-#           "mime_types": ["video/mp4"],
-#           "extensions": [".mp4", ".m4v"]
-#         }
 #       }
 #     ],
 #     "resource_actions": [
@@ -139,16 +129,6 @@ plugin_manifests = []
 #           "content_delivery": "reference"
 #         },
 #         "views": ["json"]
-#       },
-#       {
-#         "id": "example:play_mp4",
-#         "label": "Play MP4",
-#         "handler": "play_mp4",
-#         "applies_to": {
-#           "kinds": ["example:mp4"]
-#         },
-#         "access": "read",
-#         "views": ["media"]
 #       }
 #     ]
 #   },

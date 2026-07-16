@@ -7,7 +7,7 @@ Asset Hub is a local-first asset management service. The current workspace conta
 - `asset-apps`: reusable runtime assembly plus the `asset-http` API and `asset-plugin` packaging CLI.
 - `asset-plugin-api`: shared manifest, action, request, and view contracts for plugins.
 - `asset-web-admin`: Vite/React admin UI.
-- `plugins`: sample Markdown, EPUB, and MP4 plugins.
+- `plugins`: sample Markdown and EPUB plugins.
 
 ## Requirements
 
