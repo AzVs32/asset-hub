@@ -12,14 +12,27 @@ import {
 } from "lucide-react";
 import "./styles.css";
 
-type Payload = {
-  mode?: "read" | "edit";
-  resource?: {
-    id?: string;
-    name?: string;
-  };
-  save_action?: string;
+type FramePayload = {
+  resource_id: string;
+  mode: "read" | "edit";
+  action: string;
+};
+
+type LoadResponse = {
+  protocol: 1;
+  transfer: "complete" | "chunked";
+  resource_name: string;
+  byte_length: number;
   markdown?: string;
+  chunk_size?: number;
+};
+
+type ChunkResponse = {
+  protocol: 1;
+  offset: number;
+  byte_length: number;
+  data: string;
+  done: boolean;
 };
 
 type Heading = {
@@ -44,6 +57,12 @@ type ActionResultMessage = {
   type: "asset-hub:execute-resource-action-result";
   request_id: string;
   ok: boolean;
+  data?: {
+    view?: {
+      view?: string;
+      data?: unknown;
+    };
+  };
   error?: string | null;
 };
 
@@ -62,26 +81,48 @@ const renderer = new MarkdownIt({
 });
 
 const initialPayload = readPayload();
+const maxMarkdownBytes = 128 * 1024 * 1024;
+const maxChunkBytes = 4 * 1024 * 1024;
 
 function App() {
-  const [payload] = React.useState<Payload>(initialPayload);
-  const [source, setSource] = React.useState(payload.markdown ?? "");
+  const payload = initialPayload;
+  const [source, setSource] = React.useState<string | null>(null);
+  const [resourceName, setResourceName] = React.useState("Markdown");
+  const [loadError, setLoadError] = React.useState<string | null>(
+    payload ? null : "Invalid Markdown frame payload",
+  );
   const [activeId, setActiveId] = React.useState("all");
-  const [sidebarOpen, setSidebarOpen] = React.useState(payload.mode !== "edit");
+  const [sidebarOpen, setSidebarOpen] = React.useState(payload?.mode !== "edit");
   const [saveState, setSaveState] = React.useState<SaveState>({ status: "idle", label: "" });
   const contentRef = React.useRef<HTMLElement | null>(null);
-  const mode = payload.mode === "edit" ? "edit" : "read";
-  const title = payload.resource?.name || "Markdown";
-  const sections = React.useMemo(() => splitSections(source), [source]);
+  const mode = payload?.mode === "edit" ? "edit" : "read";
+  const sections = React.useMemo(() => splitSections(source ?? ""), [source]);
   const activeSection = sections.find((section) => section.id === activeId) ?? sections[0];
   const renderedHtml = React.useMemo(
-    () => renderer.render(mode === "edit" ? source : activeSection?.markdown ?? source),
+    () => renderer.render(mode === "edit" ? source ?? "" : activeSection?.markdown ?? source ?? ""),
     [activeSection, mode, source],
   );
 
   React.useEffect(() => {
-    document.title = title;
-  }, [title]);
+    if (!payload) return;
+    let active = true;
+    loadMarkdown(payload)
+      .then((loaded) => {
+        if (!active) return;
+        setResourceName(loaded.resourceName);
+        setSource(loaded.markdown);
+      })
+      .catch((reason: unknown) => {
+        if (active) setLoadError(reason instanceof Error ? reason.message : "Unable to load Markdown");
+      });
+    return () => {
+      active = false;
+    };
+  }, [payload]);
+
+  React.useEffect(() => {
+    document.title = resourceName;
+  }, [resourceName]);
 
   React.useEffect(() => {
     if (!sections.some((section) => section.id === activeId)) {
@@ -96,16 +137,14 @@ function App() {
   }
 
   async function saveMarkdown() {
-    const resourceId = payload.resource?.id;
-    const action = payload.save_action;
-    if (!resourceId || !action) {
+    if (!payload || source === null) {
       setSaveState({ status: "error", label: "Missing save target" });
       return;
     }
 
     setSaveState({ status: "saving", label: "Saving" });
     try {
-      const result = await executeResourceAction(resourceId, action, { markdown: source });
+      const result = await executeResourceAction(payload.resource_id, payload.action, { markdown: source });
       if (!result.ok) {
         throw new Error(result.error || "Save failed");
       }
@@ -116,6 +155,14 @@ function App() {
         label: error instanceof Error ? error.message : "Save failed",
       });
     }
+  }
+
+  if (loadError) {
+    return <StatusScreen tone="error" title="Unable to open Markdown" detail={loadError} />;
+  }
+
+  if (source === null) {
+    return <StatusScreen tone="loading" title="Opening Markdown" detail="Loading document content" />;
   }
 
   return (
@@ -138,7 +185,7 @@ function App() {
         )}
         <div className="toolbar-title">
           <FileText size={18} />
-          <span>{title}</span>
+          <span>{resourceName}</span>
         </div>
         {mode === "edit" ? (
           <div className="save-controls">
@@ -206,17 +253,129 @@ function App() {
   );
 }
 
-function readPayload(): Payload {
+function StatusScreen({ tone, title, detail }: {
+  tone: "loading" | "error";
+  title: string;
+  detail: string;
+}) {
+  return (
+    <main className={`status-screen ${tone}`}>
+      <FileText size={32} />
+      <h1>{title}</h1>
+      <p>{detail}</p>
+    </main>
+  );
+}
+
+function readPayload(): FramePayload | null {
   try {
     const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
     const encoded = params.get("payload");
-    if (!encoded) return {};
+    if (!encoded) return null;
     const base64 = encoded.replace(/-/g, "+").replace(/_/g, "/");
     const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
     const bytes = Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
-    return JSON.parse(new TextDecoder().decode(bytes)) as Payload;
+    const value = JSON.parse(new TextDecoder().decode(bytes)) as Partial<FramePayload>;
+    if (
+      typeof value.resource_id !== "string"
+      || (value.mode !== "read" && value.mode !== "edit")
+      || typeof value.action !== "string"
+    ) return null;
+    return value as FramePayload;
   } catch {
-    return {};
+    return null;
+  }
+}
+
+async function loadMarkdown(payload: FramePayload): Promise<{ resourceName: string; markdown: string }> {
+  const load = await executeResourceAction(payload.resource_id, payload.action, { operation: "load" });
+  const description = jsonViewData(load, isLoadResponse, "Markdown plugin returned an invalid load response");
+  if (description.transfer === "complete") {
+    return {
+      resourceName: description.resource_name,
+      markdown: description.markdown!.replace(/^\uFEFF/, ""),
+    };
+  }
+
+  const bytes = new Uint8Array(description.byte_length);
+  let offset = 0;
+  while (offset < description.byte_length) {
+    const result = await executeResourceAction(payload.resource_id, payload.action, {
+      operation: "chunk",
+      offset,
+    });
+    const chunk = jsonViewData(result, isChunkResponse, "Markdown plugin returned an invalid chunk");
+    if (chunk.offset !== offset || chunk.byte_length !== description.byte_length) {
+      throw new Error("Markdown chunk sequence does not match the document");
+    }
+    const chunkBytes = decodeBase64(chunk.data);
+    const expectedLength = Math.min(description.chunk_size!, description.byte_length - offset);
+    if (chunkBytes.length !== expectedLength || chunk.done !== (offset + expectedLength === description.byte_length)) {
+      throw new Error("Markdown chunk has an invalid length");
+    }
+    bytes.set(chunkBytes, offset);
+    offset += chunkBytes.length;
+  }
+
+  let markdown: string;
+  try {
+    markdown = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error("Markdown content is not valid UTF-8");
+  }
+  return {
+    resourceName: description.resource_name,
+    markdown: markdown.replace(/^\uFEFF/, ""),
+  };
+}
+
+function jsonViewData<T>(
+  result: ExecuteActionResult,
+  validate: (value: unknown) => value is T,
+  invalidMessage: string,
+): T {
+  if (!result.ok) throw new Error(result.error || "Markdown action failed");
+  if (result.view?.view !== "json" || !validate(result.view.data)) {
+    throw new Error(invalidMessage);
+  }
+  return result.view.data;
+}
+
+function isLoadResponse(value: unknown): value is LoadResponse {
+  if (!value || typeof value !== "object") return false;
+  const response = value as Partial<LoadResponse>;
+  if (
+    response.protocol !== 1
+    || typeof response.resource_name !== "string"
+    || !isByteLength(response.byte_length)
+  ) return false;
+  if (response.transfer === "complete") return typeof response.markdown === "string";
+  return response.transfer === "chunked"
+    && Number.isSafeInteger(response.chunk_size)
+    && response.chunk_size! > 0
+    && response.chunk_size! <= maxChunkBytes;
+}
+
+function isChunkResponse(value: unknown): value is ChunkResponse {
+  if (!value || typeof value !== "object") return false;
+  const response = value as Partial<ChunkResponse>;
+  return response.protocol === 1
+    && Number.isSafeInteger(response.offset)
+    && response.offset! >= 0
+    && isByteLength(response.byte_length)
+    && typeof response.data === "string"
+    && typeof response.done === "boolean";
+}
+
+function isByteLength(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0 && (value as number) <= maxMarkdownBytes;
+}
+
+function decodeBase64(value: string): Uint8Array {
+  try {
+    return Uint8Array.from(atob(value), (character) => character.charCodeAt(0));
+  } catch {
+    throw new Error("Markdown chunk is not valid Base64");
   }
 }
 
@@ -302,12 +461,12 @@ function executeResourceAction(
   resourceId: string,
   action: string,
   input: Record<string, unknown>,
-): Promise<{ ok: boolean; error?: string | null }> {
+): Promise<ExecuteActionResult> {
   const requestId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
   return new Promise((resolve) => {
     const timeout = window.setTimeout(() => {
       window.removeEventListener("message", onMessage);
-      resolve({ ok: false, error: "Save timed out" });
+      resolve({ ok: false, error: "Markdown request timed out" });
     }, 30000);
 
     function onMessage(event: MessageEvent<ActionResultMessage>) {
@@ -322,7 +481,11 @@ function executeResourceAction(
       }
       window.clearTimeout(timeout);
       window.removeEventListener("message", onMessage);
-      resolve({ ok: Boolean(message.ok), error: message.error });
+      resolve({
+        ok: Boolean(message.ok),
+        view: message.data?.view,
+        error: message.error,
+      });
     }
 
     window.addEventListener("message", onMessage);
@@ -338,5 +501,14 @@ function executeResourceAction(
     );
   });
 }
+
+type ExecuteActionResult = {
+  ok: boolean;
+  view?: {
+    view?: string;
+    data?: unknown;
+  };
+  error?: string | null;
+};
 
 createRoot(document.getElementById("root")!).render(<App />);

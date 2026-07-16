@@ -1,5 +1,5 @@
 use asset_plugin_api::{
-    PluginActionEffect, PluginActionOutput, PluginActionRequest, PluginContentEncoding,
+    JsonView, PluginActionEffect, PluginActionOutput, PluginActionRequest, PluginContentEncoding,
     PluginFrameView, PluginView, ReplaceContentEffect, TextView,
 };
 use base64::Engine;
@@ -10,7 +10,9 @@ use extism_pdk::{Error, FnResult, plugin_fn};
 use serde_json::{Value, json};
 
 const VIEWER_ENTRYPOINT: &str = "index.html";
-const SAVE_ACTION: &str = "azvs.markdown.update";
+const SMALL_TEXT_BYTES: u64 = 512 * 1024;
+const CONTENT_CHUNK_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_MARKDOWN_BYTES: u64 = 128 * 1024 * 1024;
 
 #[cfg(target_arch = "wasm32")]
 #[host_fn]
@@ -33,169 +35,302 @@ pub fn update_markdown(input: String) -> FnResult<String> {
 
 fn render_markdown_payload(input: String) -> FnResult<String> {
     let request: PluginActionRequest = serde_json::from_str(&input)?;
-    let markdown = markdown_content(&request)?
-        .trim_start_matches('\u{feff}')
-        .to_string();
-    frame_response(&request, markdown, "read")
+    if input_operation(&request.input).is_some() {
+        return content_operation_response(&request);
+    }
+    frame_response(&request, "read")
 }
 
 fn update_markdown_payload(input: String) -> FnResult<String> {
     let request: PluginActionRequest = serde_json::from_str(&input)?;
     if let Some(markdown) = input_markdown(&request.input) {
-        let mut output = PluginActionOutput::new(PluginView::Text(TextView {
-            text: "Markdown saved".to_string(),
-        }));
-        output
-            .effects
-            .push(PluginActionEffect::ReplaceContent(ReplaceContentEffect {
-                encoding: PluginContentEncoding::Base64,
-                data: STANDARD.encode(markdown.as_bytes()),
-                mime_type: request
-                    .resource
-                    .content
-                    .as_ref()
-                    .and_then(|content| content.mime_type.clone())
-                    .or_else(|| Some("text/markdown".to_string())),
-                original_filename: request
-                    .resource
-                    .content
-                    .as_ref()
-                    .and_then(|content| content.original_filename.clone()),
-                checksum: Vec::new(),
-            }));
-        return Ok(serde_json::to_string(&output)?);
+        return save_response(&request, markdown);
     }
-
-    let markdown = markdown_content(&request)?
-        .trim_start_matches('\u{feff}')
-        .to_string();
-    frame_response(&request, markdown, "edit")
+    if input_operation(&request.input).is_some() {
+        return content_operation_response(&request);
+    }
+    frame_response(&request, "edit")
 }
 
-fn frame_response(request: &PluginActionRequest, markdown: String, mode: &str) -> FnResult<String> {
-    let payload = json!({
+fn frame_response(request: &PluginActionRequest, mode: &str) -> FnResult<String> {
+    let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&json!({
+        "resource_id": request.resource.id,
         "mode": mode,
-        "resource": {
-            "id": request.resource.id,
-            "name": request.resource.name,
-        },
-        "save_action": SAVE_ACTION,
-        "markdown": markdown,
-    });
-    let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload)?);
+        "action": request.action,
+    }))?);
     let output = PluginActionOutput::new(PluginView::PluginFrame(PluginFrameView {
         title: Some(request.resource.name.clone()),
         url: format!("{VIEWER_ENTRYPOINT}#payload={payload}"),
     }));
-
     Ok(serde_json::to_string(&output)?)
 }
 
-fn input_markdown(input: &Value) -> Option<&str> {
-    input
-        .as_object()
-        .and_then(|input| input.get("markdown"))
-        .and_then(Value::as_str)
+fn content_operation_response(request: &PluginActionRequest) -> FnResult<String> {
+    let data = match input_operation(&request.input) {
+        Some("load") => load_content(request)?,
+        Some("chunk") => load_content_chunk(request)?,
+        Some(_) => return Err(Error::msg("unsupported Markdown content operation").into()),
+        None => return Err(Error::msg("missing Markdown content operation").into()),
+    };
+    let output = PluginActionOutput::new(PluginView::Json(JsonView { data }));
+    Ok(serde_json::to_string(&output)?)
 }
 
-fn markdown_content(input: &PluginActionRequest) -> FnResult<String> {
-    let bytes = if let Some(content) = &input.content {
+fn load_content(request: &PluginActionRequest) -> FnResult<Value> {
+    let byte_length = markdown_content_size(request)?;
+    ensure_content_size(byte_length)?;
+    if byte_length <= SMALL_TEXT_BYTES {
+        let bytes = markdown_content_bytes(request)?;
+        let markdown = String::from_utf8(bytes)?
+            .trim_start_matches('\u{feff}')
+            .to_string();
+        return Ok(json!({
+            "protocol": 1,
+            "transfer": "complete",
+            "resource_name": request.resource.name,
+            "byte_length": byte_length,
+            "markdown": markdown,
+        }));
+    }
+    Ok(json!({
+        "protocol": 1,
+        "transfer": "chunked",
+        "resource_name": request.resource.name,
+        "byte_length": byte_length,
+        "chunk_size": CONTENT_CHUNK_BYTES,
+    }))
+}
+
+fn load_content_chunk(request: &PluginActionRequest) -> FnResult<Value> {
+    let offset = request
+        .input
+        .get("offset")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| Error::msg("missing or invalid Markdown chunk offset"))?;
+    let byte_length = markdown_content_size(request)?;
+    ensure_content_size(byte_length)?;
+    if offset >= byte_length {
+        return Err(Error::msg("Markdown chunk offset is out of range").into());
+    }
+    let length = CONTENT_CHUNK_BYTES.min(byte_length - offset);
+    let bytes = markdown_content_range(request, offset, length)?;
+    if bytes.len() as u64 != length {
+        return Err(Error::msg("Markdown chunk length does not match the requested range").into());
+    }
+    Ok(json!({
+        "protocol": 1,
+        "offset": offset,
+        "byte_length": byte_length,
+        "data": STANDARD.encode(bytes),
+        "done": offset + length == byte_length,
+    }))
+}
+
+fn save_response(request: &PluginActionRequest, markdown: &str) -> FnResult<String> {
+    let mut output = PluginActionOutput::new(PluginView::Text(TextView {
+        text: "Markdown saved".to_string(),
+    }));
+    output
+        .effects
+        .push(PluginActionEffect::ReplaceContent(ReplaceContentEffect {
+            encoding: PluginContentEncoding::Base64,
+            data: STANDARD.encode(markdown.as_bytes()),
+            mime_type: request
+                .resource
+                .content
+                .as_ref()
+                .and_then(|content| content.mime_type.clone())
+                .or_else(|| Some("text/markdown".to_string())),
+            original_filename: request
+                .resource
+                .content
+                .as_ref()
+                .and_then(|content| content.original_filename.clone()),
+            checksum: Vec::new(),
+        }));
+    Ok(serde_json::to_string(&output)?)
+}
+
+fn input_operation(input: &Value) -> Option<&str> {
+    input.get("operation").and_then(Value::as_str)
+}
+
+fn input_markdown(input: &Value) -> Option<&str> {
+    input.get("markdown").and_then(Value::as_str)
+}
+
+fn markdown_content_size(input: &PluginActionRequest) -> FnResult<u64> {
+    if let Some(content) = &input.content {
         if content.encoding != PluginContentEncoding::Base64 {
             return Err(Error::msg("unsupported content encoding").into());
         }
-        STANDARD.decode(&content.data)?
-    } else {
-        let content_ref = input
-            .content_ref
-            .as_ref()
-            .ok_or_else(|| Error::msg("missing Markdown content payload"))?;
-        if content_ref.encoding != PluginContentEncoding::Handle {
-            return Err(Error::msg("unsupported content reference encoding").into());
-        }
-        read_content_reference(&content_ref.reference)?
-    };
+        return Ok(STANDARD.decode(&content.data)?.len() as u64);
+    }
+    let content_ref = input
+        .content_ref
+        .as_ref()
+        .ok_or_else(|| Error::msg("missing Markdown content payload"))?;
+    if content_ref.encoding != PluginContentEncoding::Handle {
+        return Err(Error::msg("unsupported content reference encoding").into());
+    }
+    input
+        .resource
+        .content
+        .as_ref()
+        .map(|content| content.size)
+        .ok_or_else(|| Error::msg("missing Markdown content metadata").into())
+}
 
-    Ok(String::from_utf8(bytes)?)
+fn markdown_content_bytes(input: &PluginActionRequest) -> FnResult<Vec<u8>> {
+    let size = markdown_content_size(input)?;
+    markdown_content_range(input, 0, size)
+}
+
+fn markdown_content_range(
+    input: &PluginActionRequest,
+    offset: u64,
+    length: u64,
+) -> FnResult<Vec<u8>> {
+    if let Some(content) = &input.content {
+        let bytes = STANDARD.decode(&content.data)?;
+        let start = usize::try_from(offset).map_err(|_| Error::msg("Markdown offset overflow"))?;
+        let length = usize::try_from(length).map_err(|_| Error::msg("Markdown length overflow"))?;
+        let end = start
+            .checked_add(length)
+            .filter(|end| *end <= bytes.len())
+            .ok_or_else(|| Error::msg("Markdown content range is out of bounds"))?;
+        return Ok(bytes[start..end].to_vec());
+    }
+    let content_ref = input
+        .content_ref
+        .as_ref()
+        .ok_or_else(|| Error::msg("missing Markdown content payload"))?;
+    read_content_reference_range(&content_ref.reference, offset, length)
+}
+
+fn ensure_content_size(size: u64) -> FnResult<()> {
+    if size > MAX_MARKDOWN_BYTES {
+        return Err(Error::msg("Markdown exceeds the 128 MiB plugin limit").into());
+    }
+    Ok(())
 }
 
 #[cfg(target_arch = "wasm32")]
-fn read_content_reference(reference: &str) -> FnResult<Vec<u8>> {
+fn read_content_reference_range(reference: &str, offset: u64, length: u64) -> FnResult<Vec<u8>> {
     let handle = unsafe { asset_hub_content_open(reference.to_string()) }?;
-    let size = unsafe { asset_hub_content_size(handle.clone()) }?;
-    let mut bytes = Vec::new();
-    let mut offset = 0;
-    while offset < size {
-        let chunk = unsafe { asset_hub_content_read(handle.clone(), offset, size - offset) }?;
-        if chunk.is_empty() {
-            return Err(Error::msg("content read ended before the declared size").into());
+    let result = (|| {
+        let size = unsafe { asset_hub_content_size(handle.clone()) }?;
+        ensure_content_size(size)?;
+        let end = offset
+            .checked_add(length)
+            .filter(|end| *end <= size)
+            .ok_or_else(|| Error::msg("Markdown content range is out of bounds"))?;
+        let mut bytes = Vec::with_capacity(length as usize);
+        let mut cursor = offset;
+        while cursor < end {
+            let chunk = unsafe {
+                asset_hub_content_read(handle.clone(), cursor, end.saturating_sub(cursor))
+            }?;
+            if chunk.is_empty() || chunk.len() as u64 > end - cursor {
+                return Err(Error::msg("invalid Markdown content chunk returned by host").into());
+            }
+            cursor += chunk.len() as u64;
+            bytes.extend_from_slice(&chunk);
         }
-        offset = offset
-            .checked_add(chunk.len() as u64)
-            .ok_or_else(|| Error::msg("content read offset overflow"))?;
-        bytes.extend_from_slice(&chunk);
-    }
+        Ok(bytes)
+    })();
     unsafe { asset_hub_content_close(handle) }?;
-    Ok(bytes)
+    result
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn read_content_reference(_reference: &str) -> FnResult<Vec<u8>> {
+fn read_content_reference_range(_reference: &str, _offset: u64, _length: u64) -> FnResult<Vec<u8>> {
     Err(Error::msg("content references are only available in the wasm host").into())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     #[test]
-    fn render_markdown_returns_plugin_frame() {
-        let output = render_markdown_payload(
-            json!({
-                "action": "azvs.markdown.render",
-                "access": "read_only",
-                "input": {},
-                "resource": resource_json(),
-                "content": {
-                    "encoding": "base64",
-                    "data": STANDARD.encode("# Title\n\nBody")
-                }
-            })
-            .to_string(),
-        )
+    fn initial_frame_contains_only_small_routing_payload() {
+        let output =
+            render_markdown_payload(request_json("azvs.markdown.render", json!({}), None)).unwrap();
+        let output: Value = serde_json::from_str(&output).unwrap();
+        let payload = decode_frame_payload(&output);
+
+        assert_eq!(payload["resource_id"], resource_json()["id"]);
+        assert_eq!(payload["mode"], "read");
+        assert_eq!(payload["action"], "azvs.markdown.render");
+        assert!(payload.get("markdown").is_none());
+        assert!(output["url"].as_str().unwrap().len() < 300);
+    }
+
+    #[test]
+    fn edit_frame_does_not_require_content() {
+        let output =
+            update_markdown_payload(request_json("azvs.markdown.update", json!({}), None)).unwrap();
+        let output: Value = serde_json::from_str(&output).unwrap();
+        let payload = decode_frame_payload(&output);
+        assert_eq!(payload["mode"], "edit");
+        assert!(payload.get("markdown").is_none());
+    }
+
+    #[test]
+    fn small_markdown_is_returned_directly() {
+        let output = render_markdown_payload(request_json(
+            "azvs.markdown.render",
+            json!({"operation": "load"}),
+            Some(b"\xef\xbb\xbf# Title\n\nBody"),
+        ))
         .unwrap();
         let output: Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(output["view"], "json");
+        assert_eq!(output["data"]["transfer"], "complete");
+        assert_eq!(output["data"]["markdown"], "# Title\n\nBody");
+    }
 
-        assert_eq!(output["view"], "plugin_frame");
-        assert_eq!(output["title"], "demo.md");
-        assert!(
-            output["url"]
-                .as_str()
-                .unwrap()
-                .starts_with("index.html#payload=")
+    #[test]
+    fn large_markdown_uses_bounded_chunks() {
+        let markdown = vec![b'a'; CONTENT_CHUNK_BYTES as usize + 17];
+        let load = render_markdown_payload(request_json(
+            "azvs.markdown.render",
+            json!({"operation": "load"}),
+            Some(&markdown),
+        ))
+        .unwrap();
+        let load: Value = serde_json::from_str(&load).unwrap();
+        assert_eq!(load["data"]["transfer"], "chunked");
+        assert_eq!(load["data"]["chunk_size"], CONTENT_CHUNK_BYTES);
+
+        let chunk = render_markdown_payload(request_json(
+            "azvs.markdown.render",
+            json!({"operation": "chunk", "offset": CONTENT_CHUNK_BYTES}),
+            Some(&markdown),
+        ))
+        .unwrap();
+        let chunk: Value = serde_json::from_str(&chunk).unwrap();
+        assert_eq!(chunk["data"]["offset"], CONTENT_CHUNK_BYTES);
+        assert_eq!(chunk["data"]["done"], true);
+        assert_eq!(
+            STANDARD
+                .decode(chunk["data"]["data"].as_str().unwrap())
+                .unwrap(),
+            vec![b'a'; 17]
         );
     }
 
     #[test]
     fn update_markdown_returns_replace_content_effect() {
-        let output = update_markdown_payload(
-            json!({
-                "action": "azvs.markdown.update",
-                "access": "read_write",
-                "input": {
-                    "markdown": "# Updated"
-                },
-                "resource": resource_json()
-            })
-            .to_string(),
-        )
+        let output = update_markdown_payload(request_json(
+            "azvs.markdown.update",
+            json!({"markdown": "# Updated"}),
+            None,
+        ))
         .unwrap();
         let output: Value = serde_json::from_str(&output).unwrap();
-
         assert_eq!(output["view"], "text");
-        assert_eq!(output["text"], "Markdown saved");
         assert_eq!(output["effects"][0]["type"], "replace_content");
-        assert_eq!(output["effects"][0]["encoding"], "base64");
         assert_eq!(
             STANDARD
                 .decode(output["effects"][0]["data"].as_str().unwrap())
@@ -204,18 +339,41 @@ mod tests {
         );
     }
 
+    fn decode_frame_payload(output: &Value) -> Value {
+        let encoded = output["url"]
+            .as_str()
+            .unwrap()
+            .split_once("#payload=")
+            .unwrap()
+            .1;
+        serde_json::from_slice(&URL_SAFE_NO_PAD.decode(encoded).unwrap()).unwrap()
+    }
+
+    fn request_json(action: &str, input: Value, content: Option<&[u8]>) -> String {
+        let mut request = json!({
+            "action": action,
+            "access": if action == "azvs.markdown.update" { "read_write" } else { "read_only" },
+            "input": input,
+            "resource": resource_json(),
+        });
+        if let Some(content) = content {
+            request["content"] = json!({
+                "encoding": "base64",
+                "data": STANDARD.encode(content),
+            });
+        }
+        request.to_string()
+    }
+
     fn resource_json() -> Value {
         json!({
             "id": "01900000-0000-7000-8000-000000000000",
             "name": "demo.md",
-            "kind": "core:document",
+            "kind": "azvs:markdown",
             "status": "active",
             "metadata": {
                 "schema_version": 1,
-                "summary": {
-                    "description": null,
-                    "tags": []
-                }
+                "summary": {"description": null, "tags": []}
             },
             "content": {
                 "key": "documents/demo.md",

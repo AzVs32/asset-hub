@@ -3,9 +3,9 @@
   "plugin": {
     "id": "azvs.markdown",
     "name": "AzVs Markdown",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "publisher": "azvs",
-    "description": "Markdown document processing plugin."
+    "description": "Markdown reader and editor with bounded postMessage content transfer."
   },
   "runtime": {
     "type": "extism",
@@ -53,7 +53,8 @@
           "content_delivery": "reference"
         },
         "views": [
-          "plugin_frame"
+          "plugin_frame",
+          "json"
         ],
         "ui": {
           "group": "open",
@@ -80,6 +81,7 @@
         },
         "views": [
           "plugin_frame",
+          "json",
           "text"
         ],
         "ui": {

@@ -2,14 +2,14 @@
   "manifest_version": 2,
   "plugin_id": "azvs.markdown",
   "runtime": {
-    "wasm_sha256": "83274b5f489a342f159f6f40a5d3ac9e5bbb26dfaf9d20e93b65d2b4a8adf119"
+    "wasm_sha256": "e5295dcd36202f4509835ff1e449d2c45e82c04a315c32fdeb948a59f9794379"
   },
   "web": {
     "integrity": {
-      "assets/index-C-Kv7DQr.css": "2cc5b43f450555fa3e1edda66509eb7ce800c1945127e202d17562a1c4d0d203",
-      "assets/index-CTMnqPYq.js": "cf1106c29c12a10aa0fbfbf1143a5fd9b573159718efbc8337054329ee20bf05",
-      "assets/index-CTMnqPYq.js.map": "a7ff662151303c4a5c48c3263f13d5f748ffdc29faf11c43021e048f74adfe7f",
-      "index.html": "4c22dccf4f5a4b1d738f53f44e1e59f2bc400f9a3a65dbf272109c9ee63f4208"
+      "assets/index-BLTxERHS.js": "3cf755c1d2d3eaa10b32b679e23cddde835bb68351fd552f8002bda2f1206e4c",
+      "assets/index-BLTxERHS.js.map": "e47695c4f2d2bac1111f0a9b1d9e01732bfae87e6fa90ec033bafffaf2aa94d5",
+      "assets/index-BdOy_sm1.css": "7055fe710b52bc7b44fa10182efbc1eb95cd1378932e6aa4f750235db2184555",
+      "index.html": "7ddb31285b71776e2296a77b376adc1a3223a5037ef9e4b0b48ef1147b164f90"
     }
   }
 }

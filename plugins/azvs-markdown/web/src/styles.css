@@ -22,6 +22,35 @@ textarea {
   font: inherit;
 }
 
+.status-screen {
+  display: grid;
+  min-height: 100vh;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  padding: 28px;
+  background: #f4f6f6;
+  color: #526064;
+  text-align: center;
+}
+
+.status-screen h1 {
+  margin: 8px 0 0;
+  color: #263034;
+  font-size: 18px;
+}
+
+.status-screen p {
+  max-width: 520px;
+  margin: 0;
+  color: #768084;
+  font-size: 13px;
+}
+
+.status-screen.error {
+  color: #a23d3d;
+}
+
 .app {
   display: grid;
   grid-template-areas:

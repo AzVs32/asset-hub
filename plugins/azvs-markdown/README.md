@@ -18,20 +18,33 @@ Extism + React plugin for Asset Hub Markdown document reading and editing.
 - Edit action: `azvs.markdown.update` (`update_markdown`)
 - Output view: `plugin_frame`
 
-The action returns an Asset Hub `PluginView` frame payload:
+The initial action returns an Asset Hub `PluginView` frame with a small routing payload:
 
 ```json
 {
   "view": "plugin_frame",
   "title": "note.md",
-  "url": "index.html#payload=..."
+  "url": "index.html#payload=<resource-id-mode-action>"
 }
 ```
 
-The Rust plugin reads Markdown content, returns a `plugin_frame` view, and handles writeback
-through a `replace_content` effect. The frame URL is relative to the plugin web root; Asset Hub
-resolves it to the public plugin asset route. The React UI uses `markdown-it` to render Markdown,
-shows a title tree in read mode, and provides source editing with live preview in edit mode.
+The URL payload contains only `resource_id`, `mode`, and `action`; document content is never copied
+into the iframe URL. After loading, the frame requests content through Asset Hub's validated
+`postMessage` action bridge:
+
+- `{"operation":"load"}` returns UTF-8 Markdown directly up to 512 KiB.
+- Larger documents return transfer metadata and are fetched with sequential
+  `{"operation":"chunk","offset":N}` requests using bounded 2 MiB Base64 byte chunks.
+- The browser validates protocol version, total length, offsets, chunk sizes, completion state,
+  Base64, and final UTF-8 before rendering.
+
+The runtime rejects documents larger than 128 MiB. The effective maximum can be lower when the
+host's `plugin.max_content_bytes` policy is lower.
+
+The Rust plugin handles writeback through the existing controlled `replace_content` effect. Saving
+does not write storage directly and remains subject to the host's action-input and plugin-output
+limits. The React UI uses `markdown-it` to render Markdown, shows a title tree in read mode, and
+provides source editing with live preview in edit mode.
 
 ## Build
 
