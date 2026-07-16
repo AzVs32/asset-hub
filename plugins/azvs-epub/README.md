@@ -1,6 +1,22 @@
 # AzVs EPUB Plugin
 
-Extism + React plugin for Asset Hub EPUB reading.
+Extism + React plugin for reading EPUB 2 and EPUB 3 books in Asset Hub.
+
+## Reader capabilities
+
+- EPUB container, OPF spine, EPUB 2 NCX, and EPUB 3 navigation documents.
+- EPUB 2/3 cover discovery, including guide cover pages.
+- Lazy chapter loading with an in-process, version-keyed LRU cache.
+- Chapter images, SVG images, audio, video, CSS, and embedded fonts rewritten to data URLs.
+- Same-chapter anchors, cross-chapter links, and footnote navigation.
+- Book CSS isolated in a Shadow DOM so it cannot restyle the reader interface.
+- HTML parsed and rewritten by `lol_html`, then sanitized with the Ammonia allowlist sanitizer.
+- Bounded archive, entry, chapter, and expanded-resource sizes to limit malformed ZIP impact.
+
+The plugin intentionally does not execute book scripts or load remote resources. It does not support
+DRM, EPUB media-overlay timing, or full fixed-layout pagination. Unsupported resources degrade to
+their fallback text or are omitted. The cache is bounded and process-local; it avoids repeated work
+during normal browsing but is cleared when Asset Hub restarts.
 
 ## Files
 
@@ -27,9 +43,14 @@ Asset Hub loads plugin manifests listed in `kind.plugin_manifests`. To use this 
 
 Upload an EPUB as kind `azvs:epub`. The resource detail panel will show a `Read EPUB` action.
 
-The first action call returns a `plugin_frame`. The React reader then requests structured book data
-through the Asset Hub frame bridge and renders the cover, author, chapter navigation, and chapter
-content without direct network access.
+The first action call returns a `plugin_frame`. The React reader requests a book index and the first
+chapter through the Asset Hub frame bridge. Additional chapters are fetched on demand and cached by
+the reader and Wasm runtime. Book content has no direct network access.
+
+The plugin runtime accepts two private bridge operations on `azvs.epub.render`:
+
+- `{"operation":"load"}` returns metadata, chapter summaries, cover, and the first chapter.
+- `{"operation":"chapter","index":N}` returns one sanitized chapter and its isolated styles.
 
 ## Build
 

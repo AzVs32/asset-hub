@@ -1426,7 +1426,7 @@ async fn plugin_web_assets_are_served_from_the_verified_startup_snapshot() {
     let status = response.status();
     assert_eq!(
         response.headers()["content-security-policy"],
-        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'"
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' data:; font-src 'self' data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'"
     );
     let body = to_bytes(response.into_body(), BODY_LIMIT).await.unwrap();
 

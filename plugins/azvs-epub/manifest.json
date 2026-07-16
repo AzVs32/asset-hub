@@ -3,9 +3,9 @@
   "plugin": {
     "id": "azvs.epub",
     "name": "AzVs EPUB",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "publisher": "azvs",
-    "description": "EPUB reading plugin."
+    "description": "Secure EPUB 2 and EPUB 3 reader with lazy chapters and embedded book resources."
   },
   "runtime": {
     "type": "extism",

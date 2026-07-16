@@ -17,16 +17,22 @@ type FramePayload = {
   action: string;
 };
 
-type Chapter = {
+type ChapterSummary = {
+  index: number;
   title: string;
+};
+
+type ChapterContent = ChapterSummary & {
   html: string;
+  styles: string[];
 };
 
 type Book = {
   title: string;
   author: string | null;
   cover: string | null;
-  chapters: Chapter[];
+  chapters: ChapterSummary[];
+  initial_chapter: ChapterContent | null;
 };
 
 type ActionResultMessage = {
@@ -47,10 +53,15 @@ const payload = readPayload();
 function App() {
   const [book, setBook] = React.useState<Book | null>(null);
   const [activeChapter, setActiveChapter] = React.useState(0);
-  const [fontSize, setFontSize] = React.useState(16);
+  const [chapter, setChapter] = React.useState<ChapterContent | null>(null);
+  const [chapterLoading, setChapterLoading] = React.useState(false);
+  const [fontSize, setFontSize] = React.useState(18);
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  const [pendingAnchor, setPendingAnchor] = React.useState<string | null>(null);
   const readerRef = React.useRef<HTMLElement | null>(null);
+  const chapterCache = React.useRef(new Map<number, ChapterContent>());
+  const selectionVersion = React.useRef(0);
 
   React.useEffect(() => {
     if (!payload) {
@@ -58,21 +69,76 @@ function App() {
       return;
     }
     document.title = payload.resource_name || "EPUB Reader";
-    loadBook(payload).then(setBook).catch((reason: unknown) => {
-      setError(reason instanceof Error ? reason.message : "Unable to load EPUB");
-    });
+    executeEpubAction(payload, { operation: "load" }, isBook)
+      .then((loaded) => {
+        setBook(loaded);
+        if (loaded.initial_chapter) {
+          chapterCache.current.set(loaded.initial_chapter.index, loaded.initial_chapter);
+          setChapter(loaded.initial_chapter);
+        } else if (loaded.chapters.length > 0) {
+          void selectChapter(0, null, loaded);
+        }
+      })
+      .catch((reason: unknown) => {
+        setError(reason instanceof Error ? reason.message : "Unable to load EPUB");
+      });
   }, []);
 
-  const chapters = book?.chapters ?? [];
-  const chapter = chapters[activeChapter];
+  React.useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.matches("input, textarea, select, [contenteditable=true]")) return;
+      if (event.key === "ArrowLeft" && activeChapter > 0) {
+        void selectChapter(activeChapter - 1);
+      } else if (event.key === "ArrowRight" && book && activeChapter < book.chapters.length - 1) {
+        void selectChapter(activeChapter + 1);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [activeChapter, book]);
 
-  function selectChapter(index: number) {
+  async function selectChapter(index: number, anchor: string | null = null, sourceBook = book) {
+    if (!sourceBook || index < 0 || index >= sourceBook.chapters.length || !payload) return;
+    const version = ++selectionVersion.current;
     setActiveChapter(index);
-    setSidebarOpen(false);
-    readerRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    setError(null);
+    setPendingAnchor(anchor);
+    const cached = chapterCache.current.get(index);
+    if (cached) {
+      setChapter(cached);
+      scrollReader(anchor);
+      return;
+    }
+
+    setChapter(null);
+    setChapterLoading(true);
+    readerRef.current?.scrollTo({ top: 0 });
+    try {
+      const loaded = await executeEpubAction(
+        payload,
+        { operation: "chapter", index },
+        isChapterContent,
+      );
+      chapterCache.current.set(index, loaded);
+      if (selectionVersion.current === version) {
+        setChapter(loaded);
+      }
+    } catch (reason) {
+      if (selectionVersion.current === version) {
+        setError(reason instanceof Error ? reason.message : "Unable to load chapter");
+      }
+    } finally {
+      if (selectionVersion.current === version) setChapterLoading(false);
+    }
   }
 
-  if (error) {
+  function scrollReader(anchor: string | null) {
+    if (!anchor) readerRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  if (error && !book) {
     return <StatusScreen tone="error" title="Unable to open this book" detail={error} />;
   }
 
@@ -132,14 +198,14 @@ function App() {
           {book.author && <p>{book.author}</p>}
         </div>
         <nav className="chapter-list">
-          {chapters.map((item, index) => (
+          {book.chapters.map((item) => (
             <button
-              className={index === activeChapter ? "chapter-link active" : "chapter-link"}
+              className={item.index === activeChapter ? "chapter-link active" : "chapter-link"}
               type="button"
-              key={`${index}-${item.title}`}
-              onClick={() => selectChapter(index)}
+              key={item.index}
+              onClick={() => void selectChapter(item.index)}
             >
-              <span>{String(index + 1).padStart(2, "0")}</span>
+              <span>{String(item.index + 1).padStart(2, "0")}</span>
               {item.title}
             </button>
           ))}
@@ -147,36 +213,147 @@ function App() {
       </aside>
 
       <main className="reader-scroll" ref={readerRef}>
-        {chapter ? (
-          <article className="reader" style={{ "--reader-font-size": `${fontSize}px` } as React.CSSProperties}>
+        {book.chapters.length === 0 ? (
+          <StatusScreen tone="error" title="This EPUB has no readable chapters" detail={book.title} />
+        ) : (
+          <article className="reader">
             <div className="chapter-heading">
-              <span>Chapter {activeChapter + 1} of {chapters.length}</span>
-              <h2>{chapter.title}</h2>
+              <span>Chapter {activeChapter + 1} of {book.chapters.length}</span>
+              <h2>{book.chapters[activeChapter]?.title}</h2>
             </div>
-            <div className="chapter-content" dangerouslySetInnerHTML={{ __html: chapter.html }} />
+            {error ? (
+              <div className="chapter-error" role="alert">
+                <p>{error}</p>
+                <button type="button" onClick={() => void selectChapter(activeChapter)}>Retry</button>
+              </div>
+            ) : chapterLoading || !chapter ? (
+              <div className="chapter-loading" aria-live="polite">Loading chapter</div>
+            ) : (
+              <ChapterDocument
+                chapter={chapter}
+                fontSize={fontSize}
+                anchor={pendingAnchor}
+                onNavigate={(index, anchor) => void selectChapter(index, anchor)}
+              />
+            )}
             <footer className="chapter-navigation">
               <button
                 type="button"
-                disabled={activeChapter === 0}
-                onClick={() => selectChapter(activeChapter - 1)}
+                disabled={activeChapter === 0 || chapterLoading}
+                onClick={() => void selectChapter(activeChapter - 1)}
               >
                 <ChevronLeft size={18} /> Previous
               </button>
               <button
                 type="button"
-                disabled={activeChapter >= chapters.length - 1}
-                onClick={() => selectChapter(activeChapter + 1)}
+                disabled={activeChapter >= book.chapters.length - 1 || chapterLoading}
+                onClick={() => void selectChapter(activeChapter + 1)}
               >
                 Next <ChevronRight size={18} />
               </button>
             </footer>
           </article>
-        ) : (
-          <StatusScreen tone="error" title="This EPUB has no readable chapters" detail={book.title} />
         )}
       </main>
     </div>
   );
+}
+
+const chapterBaseStyles = `
+  :host {
+    display: block;
+    contain: layout paint style;
+    color: #2a3033;
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: var(--epub-font-size, 18px);
+    line-height: 1.85;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  .epub-document { min-width: 0; overflow-wrap: anywhere; }
+  p { margin: 0 0 1.05em; }
+  h1, h2, h3, h4, h5, h6 { color: #1f282b; line-height: 1.3; }
+  img, svg, video { max-width: 100%; height: auto; }
+  audio { width: min(100%, 36rem); }
+  table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
+  td, th { padding: 6px 8px; border: 1px solid #d9dedf; }
+  a { color: #246a64; text-decoration-thickness: 1px; text-underline-offset: 0.15em; }
+  pre { max-width: 100%; overflow-x: auto; white-space: pre-wrap; }
+`;
+
+function ChapterDocument({
+  chapter,
+  fontSize,
+  anchor,
+  onNavigate,
+}: {
+  chapter: ChapterContent;
+  fontSize: number;
+  anchor: string | null;
+  onNavigate: (index: number, anchor: string | null) => void;
+}) {
+  const hostRef = React.useRef<HTMLDivElement | null>(null);
+  const navigateRef = React.useRef(onNavigate);
+  navigateRef.current = onNavigate;
+
+  React.useLayoutEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const root = host.shadowRoot ?? host.attachShadow({ mode: "open" });
+    root.replaceChildren();
+
+    const style = document.createElement("style");
+    style.textContent = `${chapterBaseStyles}\n${chapter.styles.join("\n")}`;
+    const content = document.createElement("div");
+    content.className = "epub-document";
+    content.innerHTML = chapter.html;
+    root.append(style, content);
+
+    function onClick(event: Event) {
+      const target = event.target as Element | null;
+      const link = target?.closest("a[href]") as HTMLAnchorElement | null;
+      if (!link) return;
+      const href = link.getAttribute("href") ?? "";
+      if (href.startsWith("#")) {
+        event.preventDefault();
+        scrollToAnchor(root, href.slice(1));
+        return;
+      }
+      if (href.startsWith("epub://chapter/")) {
+        event.preventDefault();
+        try {
+          const url = new URL(href);
+          const index = Number.parseInt(url.pathname.replace(/^\//, ""), 10);
+          if (Number.isSafeInteger(index) && index >= 0) {
+            navigateRef.current(index, url.hash ? decodeURIComponent(url.hash.slice(1)) : null);
+          }
+        } catch {
+          // Invalid links were already removed by the runtime sanitizer.
+        }
+        return;
+      }
+      if (/^(?:https?:|mailto:|tel:)/i.test(href)) {
+        event.preventDefault();
+      }
+    }
+
+    root.addEventListener("click", onClick);
+    if (anchor) requestAnimationFrame(() => scrollToAnchor(root, anchor));
+    return () => root.removeEventListener("click", onClick);
+  }, [chapter, anchor]);
+
+  return (
+    <div
+      ref={hostRef}
+      className="chapter-document"
+      style={{ "--epub-font-size": `${fontSize}px` } as React.CSSProperties}
+    />
+  );
+}
+
+function scrollToAnchor(root: ShadowRoot, anchor: string) {
+  const target = Array.from(root.querySelectorAll<HTMLElement>("[id], [name]"))
+    .find((element) => element.id === anchor || element.getAttribute("name") === anchor);
+  target?.scrollIntoView({ block: "start", behavior: "smooth" });
 }
 
 function StatusScreen({ tone, title, detail }: { tone: "loading" | "error"; title: string; detail: string }) {
@@ -205,12 +382,16 @@ function readPayload(): FramePayload | null {
   }
 }
 
-function loadBook(frame: FramePayload): Promise<Book> {
+function executeEpubAction<T>(
+  frame: FramePayload,
+  input: Record<string, unknown>,
+  validate: (value: unknown) => value is T,
+): Promise<T> {
   const requestId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
   return new Promise((resolve, reject) => {
     const timeout = window.setTimeout(() => {
       window.removeEventListener("message", onMessage);
-      reject(new Error("EPUB loading timed out"));
+      reject(new Error("EPUB request timed out"));
     }, 30000);
 
     function onMessage(event: MessageEvent<ActionResultMessage>) {
@@ -220,9 +401,7 @@ function loadBook(frame: FramePayload): Promise<Book> {
         !message ||
         message.type !== "asset-hub:execute-resource-action-result" ||
         message.request_id !== requestId
-      ) {
-        return;
-      }
+      ) return;
       window.clearTimeout(timeout);
       window.removeEventListener("message", onMessage);
       if (!message.ok) {
@@ -230,8 +409,8 @@ function loadBook(frame: FramePayload): Promise<Book> {
         return;
       }
       const view = message.data?.view;
-      if (view?.view !== "json" || !isBook(view.data)) {
-        reject(new Error("EPUB plugin returned an invalid book payload"));
+      if (view?.view !== "json" || !validate(view.data)) {
+        reject(new Error("EPUB plugin returned an invalid payload"));
         return;
       }
       resolve(view.data);
@@ -244,25 +423,36 @@ function loadBook(frame: FramePayload): Promise<Book> {
         request_id: requestId,
         resource_id: frame.resource_id,
         action: frame.action,
-        input: { operation: "load" },
+        input,
       },
       "*",
     );
   });
 }
 
+function isChapterSummary(value: unknown): value is ChapterSummary {
+  if (!value || typeof value !== "object") return false;
+  const chapter = value as Partial<ChapterSummary>;
+  return Number.isSafeInteger(chapter.index) && typeof chapter.title === "string";
+}
+
+function isChapterContent(value: unknown): value is ChapterContent {
+  if (!isChapterSummary(value)) return false;
+  const chapter = value as Partial<ChapterContent>;
+  return typeof chapter.html === "string"
+    && Array.isArray(chapter.styles)
+    && chapter.styles.every((style) => typeof style === "string");
+}
+
 function isBook(value: unknown): value is Book {
   if (!value || typeof value !== "object") return false;
   const book = value as Partial<Book>;
-  return (
-    typeof book.title === "string" &&
-    (book.author === null || typeof book.author === "string") &&
-    (book.cover === null || typeof book.cover === "string") &&
-    Array.isArray(book.chapters) &&
-    book.chapters.every((chapter) => (
-      chapter && typeof chapter.title === "string" && typeof chapter.html === "string"
-    ))
-  );
+  return typeof book.title === "string"
+    && (book.author === null || typeof book.author === "string")
+    && (book.cover === null || typeof book.cover === "string")
+    && Array.isArray(book.chapters)
+    && book.chapters.every(isChapterSummary)
+    && (book.initial_chapter === null || isChapterContent(book.initial_chapter));
 }
 
 createRoot(document.getElementById("root")!).render(<App />);

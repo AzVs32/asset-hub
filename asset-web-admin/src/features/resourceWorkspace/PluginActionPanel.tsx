@@ -1,12 +1,13 @@
 import { ExternalLink, X } from "lucide-react";
 import { cx, iconButtonClass } from "../../components/ui";
-import { PluginActionResult, pluginFrameUrl, pluginViewTitle } from "../../plugins/views";
+import { PluginActionResult, pluginViewTitle } from "../../plugins/views";
 import type { PluginActionOutput } from "../../types";
+import { pluginStandaloneUrl } from "../StandalonePluginView";
 import { modalBackdropClass, modalClass, modalHeaderClass } from "./dialogStyles";
 
 export function PluginActionPanel({ output, onClose }: { output: PluginActionOutput | null; onClose: () => void }) {
   if (!output) return null;
-  const frameUrl = output.view.view === "plugin_frame" ? pluginFrameUrl(output.view.url) : null;
+  const frameUrl = output.view.view === "plugin_frame" ? pluginStandaloneUrl(output.resource_id, output.action) : null;
   const large = output.view.view === "plugin_frame";
   return <div className={modalBackdropClass}><section className={cx(modalClass, large && "h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)] overflow-hidden xl:max-w-7xl")} aria-label="Action result">
     <header className={modalHeaderClass}><div><h2 className="text-xl font-bold">{pluginViewTitle(output.view) || output.action}</h2>

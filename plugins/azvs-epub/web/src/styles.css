@@ -227,41 +227,38 @@ button {
   line-height: 1.25;
 }
 
-.chapter-content {
-  color: #2a3033;
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: var(--reader-font-size, 19px);
-  line-height: 1.85;
-}
-
-.chapter-content p {
-  margin: 0 0 1.05em;
-}
-
-.chapter-content h1,
-.chapter-content h2,
-.chapter-content h3 {
-  color: #1f282b;
-  line-height: 1.3;
-}
-
-.chapter-content img,
-.chapter-content svg {
-  max-width: 100%;
-  height: auto;
-}
-
-.chapter-content table {
+.chapter-document {
   display: block;
-  max-width: 100%;
-  overflow-x: auto;
-  border-collapse: collapse;
+  min-width: 0;
 }
 
-.chapter-content td,
-.chapter-content th {
-  padding: 6px 8px;
-  border: 1px solid #d9dedf;
+.chapter-loading {
+  min-height: 240px;
+  padding-top: 80px;
+  color: #6f7a7e;
+  text-align: center;
+  font-size: 13px;
+}
+
+.chapter-error {
+  min-height: 220px;
+  padding-top: 54px;
+  color: #943d3d;
+  text-align: center;
+}
+
+.chapter-error p {
+  margin: 0 0 14px;
+}
+
+.chapter-error button {
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 1px solid #c9d1d2;
+  border-radius: 5px;
+  background: #ffffff;
+  color: #315c59;
+  cursor: pointer;
 }
 
 .chapter-navigation {
