@@ -1,10 +1,8 @@
 use asset_core::CoreError;
 use asset_core::domain::{Resource, ResourceContent};
-use asset_core::port::{
-    ResourceAction, ResourceActionExecutor, ResourceActionOutput, ResourceActionRequest,
-};
+use asset_core::port::{ResourceActionExecutor, ResourceActionOutput, ResourceActionRequest};
 use asset_plugin_api::{
-    BinaryUrlView, MediaView, PluginActionOutput, PluginContentEncoding, PluginView,
+    BinaryUrlView, MediaView, PluginActionOutput, PluginContentEncoding, PluginView, ResourceAction,
 };
 use async_trait::async_trait;
 use base64::Engine;

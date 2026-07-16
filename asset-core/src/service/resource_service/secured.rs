@@ -10,7 +10,7 @@ pub struct SecuredResourceService<'a> {
 }
 
 impl<'a> SecuredResourceService<'a> {
-    pub fn new(
+    pub(super) fn new(
         service: &'a ResourceService,
         authorization: &'a AuthorizationService,
         context: &'a AccessContext,
@@ -224,8 +224,8 @@ impl<'a> SecuredResourceService<'a> {
             .resolve_declared_resource_action(&resource, &command.action)?
             .access();
         let permission = match access {
-            crate::port::ResourceActionAccess::ReadOnly => DirectoryPermission::Read,
-            crate::port::ResourceActionAccess::ReadWrite => DirectoryPermission::Write,
+            ResourceActionAccess::ReadOnly => DirectoryPermission::Read,
+            ResourceActionAccess::ReadWrite => DirectoryPermission::Write,
         };
         self.require(resource.directory(), permission).await?;
         self.service

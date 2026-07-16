@@ -2,12 +2,30 @@
 
 Asset Hub is a local-first asset management service. The current workspace contains:
 
-- `asset-core`: resource domain model, repository/storage/action ports, and resource service.
+- `asset-core`: workspace-internal resource domain model, adapter ports, and secured resource use cases.
 - `asset-infra`: SQLite repository, OpenDAL Fs blob storage, built-in kinds, plugin manifest loading, and Extism action execution.
 - `asset-apps`: reusable runtime assembly plus the `asset-http` API and `asset-plugin` packaging CLI.
 - `asset-plugin-api`: shared manifest, action, request, and view contracts for plugins.
 - `asset-web-admin`: Vite/React admin UI.
 - `plugins`: sample Markdown and EPUB plugins.
+
+## API Boundaries
+
+`asset-plugin-api` is the only extension contract for plugin authors. Plugin runtimes must not
+depend on `asset-core`, `asset-infra`, or `asset-apps`; those crates are host implementation details
+and do not carry a compatibility promise for external consumers.
+
+Inside the host workspace, `asset-core` exposes three deliberately separate surfaces:
+
+- `domain` contains validated business values and aggregates shared with applications and adapters.
+- `port` contains the curated SPI implemented by repositories, object storage, scanners, and the
+  plugin host. Port implementation modules are private, so every SPI type has one import path.
+- `service` contains application commands and results. Untrusted HTTP, CLI, and TUI entry points
+  bind an `AccessContext` through `ResourceService::secured`; unbound command, content, action, and
+  preview services are Core implementation details.
+
+Manifest, action, request, view, diagnostic, and content ABI types belong to `asset-plugin-api` and
+are imported from that crate directly rather than re-exported through `asset-core`.
 
 ## Requirements
 

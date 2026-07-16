@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 /// 资源内容服务。
 ///
 /// 内容服务只处理资源内容引用与对象存储之间的编排，资源基础字段变更由命令服务负责。
-pub struct ResourceContentService<'a> {
+pub(super) struct ResourceContentService<'a> {
     service: &'a ResourceService,
 }
 
@@ -19,7 +19,10 @@ impl<'a> ResourceContentService<'a> {
     }
 
     /// 扫描对象存储并为尚未登记的对象创建资源记录。
-    pub async fn scan_storage(&self, command: ScanStorage) -> Result<ScanStorageResult, CoreError> {
+    pub(crate) async fn scan_storage(
+        &self,
+        command: ScanStorage,
+    ) -> Result<ScanStorageResult, CoreError> {
         const MAX_SCAN_ENTRIES: usize = 100_000;
 
         let directory = command.directory;
@@ -99,7 +102,7 @@ impl<'a> ResourceContentService<'a> {
     ///
     /// 该 usecase 不写入对象存储，只保存指向现有对象的内容引用。若相同 storage key 已有
     /// 资源记录，则返回 `Ok(None)`，用于支持扫描任务幂等执行。
-    pub async fn import_resource_content(
+    pub(crate) async fn import_resource_content(
         &self,
         command: ImportResourceContent,
     ) -> Result<Option<Resource>, CoreError> {
@@ -153,7 +156,7 @@ impl<'a> ResourceContentService<'a> {
     ///
     /// 如果资源保存失败，本方法会尝试删除刚写入的对象内容。该补偿删除是 best-effort，
     /// 不会覆盖原始仓储错误。
-    pub async fn upload_resource_content_stream(
+    pub(crate) async fn upload_resource_content_stream(
         &self,
         command: UploadResourceContentStream,
     ) -> Result<Resource, CoreError> {
@@ -234,7 +237,10 @@ impl<'a> ResourceContentService<'a> {
     /// - 内容引用存在，但对象存储中没有对应对象。
     ///
     /// 对象存储自身故障会返回 `Err(CoreError::Storage { .. })`。
-    pub async fn get_resource_content(&self, id: &ResourceId) -> Result<Option<Bytes>, CoreError> {
+    pub(crate) async fn get_resource_content(
+        &self,
+        id: &ResourceId,
+    ) -> Result<Option<Bytes>, CoreError> {
         let Some(resource) = self.service.repository.find_by_id(id).await? else {
             return Ok(None);
         };
@@ -250,7 +256,7 @@ impl<'a> ResourceContentService<'a> {
         self.service.blob_storage.get(content.key()).await
     }
 
-    pub async fn get_resource_content_stream(
+    pub(crate) async fn get_resource_content_stream(
         &self,
         id: &ResourceId,
         range: Option<(u64, u64)>,
@@ -288,7 +294,7 @@ impl<'a> ResourceContentService<'a> {
     /// 审计对象存储与资源数据库的一致性。
     ///
     /// 该 usecase 只读，不会导入、删除或修复任何对象。
-    pub async fn audit_storage(
+    pub(crate) async fn audit_storage(
         &self,
         command: AuditStorage,
     ) -> Result<AuditStorageResult, CoreError> {
@@ -336,7 +342,7 @@ impl<'a> ResourceContentService<'a> {
                 issues.push(AuditStorageIssue {
                     kind: AuditStorageIssueKind::MissingBlob,
                     key: key.to_owned(),
-                    resource_id: Some(resource.id().clone()),
+                    resource_id: Some(resource.id()),
                     expected_size: Some(content.size()),
                     actual_size: None,
                     expected_sha256,
@@ -350,7 +356,7 @@ impl<'a> ResourceContentService<'a> {
                 issues.push(AuditStorageIssue {
                     kind: AuditStorageIssueKind::SizeMismatch,
                     key: key.to_owned(),
-                    resource_id: Some(resource.id().clone()),
+                    resource_id: Some(resource.id()),
                     expected_size: Some(content.size()),
                     actual_size: Some(actual.size),
                     expected_sha256: expected_sha256.clone(),
@@ -366,7 +372,7 @@ impl<'a> ResourceContentService<'a> {
                 issues.push(AuditStorageIssue {
                     kind: AuditStorageIssueKind::ChecksumMismatch,
                     key: key.to_owned(),
-                    resource_id: Some(resource.id().clone()),
+                    resource_id: Some(resource.id()),
                     expected_size: Some(content.size()),
                     actual_size: Some(actual.size),
                     expected_sha256,

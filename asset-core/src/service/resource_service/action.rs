@@ -7,7 +7,7 @@ use super::*;
 /// 资源动作服务。
 ///
 /// 动作服务不决定 HTTP 表达形式，只返回核心层的动作输出和资源能力描述。
-pub struct ResourceActionService<'a> {
+pub(super) struct ResourceActionService<'a> {
     service: &'a ResourceService,
 }
 
@@ -21,7 +21,7 @@ impl<'a> ResourceActionService<'a> {
     ///
     /// 该方法统一封装资源内容状态和注册 kind 能力，供不同应用入口复用，
     /// 避免在 HTTP、CLI、TUI 中重复拼装判断逻辑。
-    pub fn describe_resource_actions(
+    pub(super) fn describe_resource_actions(
         &self,
         resource: &Resource,
     ) -> Result<ResourceActions, CoreError> {
@@ -41,14 +41,11 @@ impl<'a> ResourceActionService<'a> {
         if resource.content().is_some()
             && !available_actions
                 .iter()
-                .any(|action| action.id().as_str() == crate::port::ResourceAction::DOWNLOAD_CONTENT)
+                .any(|action| action.id().as_str() == ResourceAction::DOWNLOAD_CONTENT)
         {
             available_actions.insert(
                 0,
-                crate::port::ResourceActionDefinition::new(
-                    crate::port::ResourceAction::DOWNLOAD_CONTENT,
-                    "Download",
-                ),
+                ResourceActionDefinition::new(ResourceAction::DOWNLOAD_CONTENT, "Download"),
             );
         }
 
@@ -59,7 +56,7 @@ impl<'a> ResourceActionService<'a> {
     ///
     /// 核心负责资源存在性、删除状态、kind/action 声明、访问边界和对象内容加载；具体 wasm
     /// 运行时由 `ResourceActionExecutor` 端口承接。
-    pub async fn execute_resource_action(
+    pub(super) async fn execute_resource_action(
         &self,
         id: &ResourceId,
         command: ExecuteResourceAction,
@@ -71,7 +68,7 @@ impl<'a> ResourceActionService<'a> {
     pub(super) async fn execute_declared_resource_action(
         &self,
         id: &ResourceId,
-        action_id: crate::port::ResourceAction,
+        action_id: ResourceAction,
         input: serde_json::Value,
     ) -> Result<Option<ResourceActionOutput>, CoreError> {
         let Some(mut resource) = self.service.commands().find_resource(id).await? else {
@@ -104,8 +101,8 @@ impl<'a> ResourceActionService<'a> {
     pub(super) fn resolve_declared_resource_action(
         &self,
         resource: &Resource,
-        action_id: &crate::port::ResourceAction,
-    ) -> Result<crate::port::ResourceActionDefinition, CoreError> {
+        action_id: &ResourceAction,
+    ) -> Result<ResourceActionDefinition, CoreError> {
         self.service.require_kind_definition(resource.kind())?;
         if resource.is_deleted() {
             return Err(CoreError::configuration(format!(
@@ -132,7 +129,7 @@ impl<'a> ResourceActionService<'a> {
 
     fn validate_action_output(
         &self,
-        action: &crate::port::ResourceActionDefinition,
+        action: &ResourceActionDefinition,
         output: &ResourceActionOutput,
     ) -> Result<(), CoreError> {
         let actual = output.output().view.kind();
@@ -165,7 +162,7 @@ impl<'a> ResourceActionService<'a> {
     async fn load_declared_resource_action_content(
         &self,
         resource: &Resource,
-        action: &crate::port::ResourceActionDefinition,
+        action: &ResourceActionDefinition,
     ) -> Result<Option<Bytes>, CoreError> {
         let Some(content_ref) = resource.content() else {
             return Ok(None);
@@ -190,8 +187,8 @@ impl<'a> ResourceActionService<'a> {
     async fn execute_resource_action_request(
         &self,
         resource: &Resource,
-        action_id: crate::port::ResourceAction,
-        action: &crate::port::ResourceActionDefinition,
+        action_id: ResourceAction,
+        action: &ResourceActionDefinition,
         input: serde_json::Value,
         content: Option<Bytes>,
     ) -> Result<ResourceActionOutput, CoreError> {
@@ -214,7 +211,7 @@ impl<'a> ResourceActionService<'a> {
                         &self.service.plugin_execution_policy,
                     )
                 })
-                .unwrap_or(crate::port::ResourceActionContentDelivery::Auto),
+                .unwrap_or(ResourceActionContentDelivery::Auto),
             input,
             content,
         );
@@ -226,12 +223,12 @@ impl<'a> ResourceActionService<'a> {
         &self,
         resource: &mut Resource,
         output: &ResourceActionOutput,
-        access: crate::port::ResourceActionAccess,
+        access: ResourceActionAccess,
     ) -> Result<(), CoreError> {
         if output.output().effects.is_empty() {
             return Ok(());
         }
-        if !matches!(access, crate::port::ResourceActionAccess::ReadWrite) {
+        if !matches!(access, ResourceActionAccess::ReadWrite) {
             return Err(CoreError::configuration(format!(
                 "action `{}` returned effects without write access",
                 output.action()

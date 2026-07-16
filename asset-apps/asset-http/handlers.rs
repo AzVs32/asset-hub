@@ -1160,7 +1160,7 @@ fn resource_response(
     service: &asset_core::service::ResourceService,
     resource: &asset_core::domain::Resource,
 ) -> Result<ResourceResponse, CoreError> {
-    let actions = service.actions().describe_resource_actions(resource)?;
+    let actions = service.describe_resource_actions(resource)?;
     Ok(ResourceResponse::new(resource, actions))
 }
 

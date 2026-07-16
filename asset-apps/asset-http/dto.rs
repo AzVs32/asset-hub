@@ -3,11 +3,12 @@ use asset_core::domain::{
     Checksum, ChecksumKind, Resource, ResourceContent, ResourceDirectory, ResourceMetadata,
     ResourceStatus,
 };
-use asset_core::port::{
-    ResourceActionAccess, ResourceActionContentDelivery, ResourceActionDefinition,
-    ResourceActionExecutorKind, ResourceActionOutput, ResourceKindDefinition,
-};
+use asset_core::port::{ResourceActionOutput, ResourceKindDefinition};
 use asset_core::service::{ReadableResource, ResourceActions};
+use asset_plugin_api::{
+    ResourceActionAccess, ResourceActionContentDelivery, ResourceActionDefinition,
+    ResourceActionExecutorKind,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 #[allow(unused_imports)]

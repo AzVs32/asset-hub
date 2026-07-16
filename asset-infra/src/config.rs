@@ -1,7 +1,6 @@
 use ::config::{Config, File, FileFormat};
 use asset_core::CoreError;
-use asset_core::port::{ResourceActionDefinition, ResourceContentMatcher};
-use asset_core::service::PluginExecutionPolicy;
+use asset_plugin_api::{PluginExecutionPolicy, ResourceActionDefinition, ResourceContentMatcher};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 

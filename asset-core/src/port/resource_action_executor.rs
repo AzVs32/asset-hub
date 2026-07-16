@@ -5,8 +5,9 @@
 
 use crate::CoreError;
 use crate::domain::{Resource, ResourceId};
-use crate::port::{ResourceAction, ResourceActionAccess, ResourceActionContentDelivery};
-use asset_plugin_api::PluginActionOutput;
+use asset_plugin_api::{
+    PluginActionOutput, ResourceAction, ResourceActionAccess, ResourceActionContentDelivery,
+};
 use async_trait::async_trait;
 use bytes::Bytes;
 use serde_json::Value;

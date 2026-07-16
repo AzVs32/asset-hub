@@ -4,10 +4,7 @@
 //! 后续插件系统可以通过同一端口注册和暴露更多 kind。
 
 use crate::domain::ResourceKind;
-pub use asset_plugin_api::{
-    ResourceAction, ResourceActionAccess, ResourceActionAppliesTo, ResourceActionContentDelivery,
-    ResourceActionDefinition, ResourceActionExecutorKind, ResourceContentMatcher,
-};
+use asset_plugin_api::{ResourceActionDefinition, ResourceContentMatcher};
 use std::collections::HashSet;
 
 /// 资源类型定义。
@@ -259,6 +256,7 @@ fn mime_matches(expected: &str, actual: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use asset_plugin_api::ResourceActionAppliesTo;
 
     #[derive(Default)]
     struct TestRegistry {

@@ -1,14 +1,17 @@
-pub mod access_policy_repository;
-pub mod blob_storage;
-pub mod password_hasher;
-pub mod resource_action_executor;
-pub mod resource_action_registry;
-pub mod resource_kind_registry;
-pub mod resource_repository;
-pub mod storage_scanner;
-pub mod user_repository;
+//! 基础设施适配器需要实现的端口。
+//!
+//! 端口只通过本模块的精选 re-export 暴露，具体实现文件不是独立 API 路径。
 
-pub use crate::domain::ResourceDirectory;
+mod access_policy_repository;
+mod blob_storage;
+mod password_hasher;
+mod resource_action_executor;
+mod resource_action_registry;
+mod resource_kind_registry;
+mod resource_repository;
+mod storage_scanner;
+mod user_repository;
+
 pub use access_policy_repository::AccessPolicyRepository;
 pub use blob_storage::{
     BlobByteStream, BlobStorage, BlobWriteResult, RESERVED_BLOB_STORAGE_PREFIX,
@@ -18,11 +21,7 @@ pub use resource_action_executor::{
     ResourceActionExecutor, ResourceActionOutput, ResourceActionRequest,
 };
 pub use resource_action_registry::ResourceActionRegistry;
-pub use resource_kind_registry::{
-    ResourceAction, ResourceActionAccess, ResourceActionAppliesTo, ResourceActionContentDelivery,
-    ResourceActionDefinition, ResourceActionExecutorKind, ResourceContentMatcher,
-    ResourceKindDefinition, ResourceKindRegistry,
-};
+pub use resource_kind_registry::{ResourceKindDefinition, ResourceKindRegistry};
 pub use resource_repository::{ListResources, ResourcePage, ResourceRepository};
 pub use storage_scanner::{ScannedBlob, StorageScanner};
 pub use user_repository::UserRepository;

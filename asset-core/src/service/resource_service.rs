@@ -6,7 +6,6 @@
 //! 该层只定义业务流程，不绑定具体基础设施。OpenDAL、sqlx 等实现应通过 `port`
 //! 模块中的 trait 注入进来。
 
-use super::PluginExecutionPolicy;
 use crate::CoreError;
 use crate::domain::{
     Checksum, ChecksumKind, Resource, ResourceContent, ResourceDirectory, ResourceId, ResourceKind,
@@ -17,7 +16,11 @@ use crate::port::{
     ResourceActionRegistry, ResourceActionRequest, ResourceKindRegistry, ResourcePage,
     ResourceRepository, StorageScanner,
 };
-use asset_plugin_api::{PluginActionEffect, PluginContentEncoding, PluginView};
+use asset_plugin_api::{
+    PluginActionEffect, PluginContentEncoding, PluginExecutionPolicy, PluginView, ResourceAction,
+    ResourceActionAccess, ResourceActionContentDelivery, ResourceActionDefinition,
+    ResourceActionExecutorKind,
+};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use bytes::Bytes;
@@ -31,10 +34,10 @@ mod content;
 mod preview;
 mod secured;
 
-pub use action::ResourceActionService;
-pub use command::ResourceCommandService;
-pub use content::ResourceContentService;
-pub use preview::ResourcePreviewService;
+use action::ResourceActionService;
+use command::ResourceCommandService;
+use content::ResourceContentService;
+use preview::ResourcePreviewService;
 pub use secured::SecuredResourceService;
 
 /// 创建纯元数据资源的用例命令。
@@ -255,13 +258,13 @@ pub struct AuditStorageResult {
 /// 执行资源动作的用例命令。
 #[derive(Debug, Clone)]
 pub struct ExecuteResourceAction {
-    action: crate::port::ResourceAction,
+    action: ResourceAction,
     input: serde_json::Value,
 }
 
 impl ExecuteResourceAction {
     /// 创建资源动作执行命令。
-    pub fn new(action: impl Into<crate::port::ResourceAction>) -> Self {
+    pub fn new(action: impl Into<ResourceAction>) -> Self {
         Self {
             action: action.into(),
             input: serde_json::Value::Object(Default::default()),
@@ -452,27 +455,29 @@ impl ReadableResource {
 /// 资源当前可执行动作。
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ResourceActions {
-    available_actions: Vec<crate::port::ResourceActionDefinition>,
+    available_actions: Vec<ResourceActionDefinition>,
 }
 
 impl ResourceActions {
-    fn new(available_actions: Vec<crate::port::ResourceActionDefinition>) -> Self {
+    fn new(available_actions: Vec<ResourceActionDefinition>) -> Self {
         Self { available_actions }
     }
 
     /// 返回当前资源可执行的全部动作。
-    pub fn available_actions(&self) -> &[crate::port::ResourceActionDefinition] {
+    pub fn available_actions(&self) -> &[ResourceActionDefinition] {
         &self.available_actions
     }
 }
 
-/// 预览资源结果。
+/// Core 内部使用的缓冲预览结果。
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResourcePreview {
+struct ResourcePreview {
     content_type: String,
     content: Bytes,
 }
 
+#[cfg(test)]
 impl ResourcePreview {
     fn new(content_type: String, content: Bytes) -> Self {
         Self {
@@ -482,12 +487,12 @@ impl ResourcePreview {
     }
 
     /// 返回内容类型。
-    pub fn content_type(&self) -> &str {
+    fn content_type(&self) -> &str {
         &self.content_type
     }
 
     /// 返回预览内容。
-    pub fn content(&self) -> &Bytes {
+    fn content(&self) -> &Bytes {
         &self.content
     }
 }
@@ -583,7 +588,8 @@ impl ResourceThumbnail {
 ///
 /// 该服务是外部调用资源核心能力的主要入口。它负责协调 `Resource` 聚合、
 /// `ResourceRepository` 和 `BlobStorage`，但不拥有具体数据库或对象存储实现。
-/// 具体用例按职责拆分到命令、内容、动作和预览服务中，调用方通过对应的子服务访问能力。
+/// 具体用例按职责拆分到内部命令、内容、动作和预览服务；非可信调用方只能通过
+/// [`ResourceService::secured`] 获得绑定授权上下文的公开用例门面。
 ///
 /// 对象存储和数据库之间没有分布式事务。本服务会在关键流程中做必要的顺序控制和
 /// 最小补偿，但调用方仍应根据业务需要在更外层增加重试、任务补偿或审计机制。
@@ -670,28 +676,28 @@ impl ResourceService {
     /// 返回资源命令服务。
     ///
     /// 命令服务负责资源聚合本身的生命周期变化，例如创建、更新、软删除和物理移除。
-    pub fn commands(&self) -> ResourceCommandService<'_> {
+    fn commands(&self) -> ResourceCommandService<'_> {
         ResourceCommandService::new(self)
     }
 
     /// 返回资源内容服务。
     ///
     /// 内容服务负责对象内容的上传、流式上传和下载，并处理对象存储与资源仓储之间的补偿。
-    pub fn content(&self) -> ResourceContentService<'_> {
+    fn content(&self) -> ResourceContentService<'_> {
         ResourceContentService::new(self)
     }
 
     /// 返回资源动作服务。
     ///
     /// 动作服务负责解析 kind/action 声明、执行动作和应用动作返回的写入效果。
-    pub fn actions(&self) -> ResourceActionService<'_> {
+    fn actions(&self) -> ResourceActionService<'_> {
         ResourceActionService::new(self)
     }
 
     /// 返回资源预览服务。
     ///
     /// 预览服务负责 read、preview、thumbnail 等面向展示的读取流程。
-    pub fn previews(&self) -> ResourcePreviewService<'_> {
+    fn previews(&self) -> ResourcePreviewService<'_> {
         ResourcePreviewService::new(self)
     }
 
@@ -702,6 +708,17 @@ impl ResourceService {
         context: &'a crate::domain::AccessContext,
     ) -> SecuredResourceService<'a> {
         SecuredResourceService::new(self, authorization, context)
+    }
+
+    /// 计算已授权资源当前可展示的动作。
+    ///
+    /// 本方法只描述能力，不执行插件或产生写副作用。调用者应先通过
+    /// [`SecuredResourceService`] 获取资源，再将结果用于响应映射或 UI 展示。
+    pub fn describe_resource_actions(
+        &self,
+        resource: &Resource,
+    ) -> Result<ResourceActions, CoreError> {
+        self.actions().describe_resource_actions(resource)
     }
 
     fn validate_registered_kind(
@@ -757,10 +774,7 @@ impl ResourceService {
             .ok_or_else(|| CoreError::configuration(format!("unsupported resource kind `{kind}`")))
     }
 
-    fn actions_for_resource_kind(
-        &self,
-        kind: &ResourceKind,
-    ) -> Vec<crate::port::ResourceActionDefinition> {
+    fn actions_for_resource_kind(&self, kind: &ResourceKind) -> Vec<ResourceActionDefinition> {
         let lineage = self.kind_registry.lineage(kind);
         let mut actions = self.kind_registry.actions_for_kind(kind);
         if let Some(registry) = &self.action_registry {
@@ -775,7 +789,7 @@ impl ResourceService {
 
     fn action_matches_resource(
         &self,
-        action: &crate::port::ResourceActionDefinition,
+        action: &ResourceActionDefinition,
         resource: &Resource,
     ) -> bool {
         let content = resource.content();
@@ -793,34 +807,30 @@ impl ResourceService {
 }
 
 fn resolved_content_delivery(
-    action: &crate::port::ResourceActionDefinition,
+    action: &ResourceActionDefinition,
     size: u64,
     policy: &PluginExecutionPolicy,
-) -> Option<crate::port::ResourceActionContentDelivery> {
+) -> Option<ResourceActionContentDelivery> {
     if !action.requirements().content {
         return None;
     }
     match action.requirements().content_delivery {
-        crate::port::ResourceActionContentDelivery::Auto
-            if size <= policy.max_inline_content_bytes() =>
-        {
-            Some(crate::port::ResourceActionContentDelivery::Inline)
+        ResourceActionContentDelivery::Auto if size <= policy.max_inline_content_bytes() => {
+            Some(ResourceActionContentDelivery::Inline)
         }
-        crate::port::ResourceActionContentDelivery::Auto => {
-            Some(crate::port::ResourceActionContentDelivery::Reference)
-        }
+        ResourceActionContentDelivery::Auto => Some(ResourceActionContentDelivery::Reference),
         delivery => Some(delivery),
     }
 }
 
 fn should_load_declared_action_content(
-    action: &crate::port::ResourceActionDefinition,
+    action: &ResourceActionDefinition,
     content: &ResourceContent,
     policy: &PluginExecutionPolicy,
 ) -> bool {
     matches!(
         resolved_content_delivery(action, content.size(), policy),
-        Some(crate::port::ResourceActionContentDelivery::Inline)
+        Some(ResourceActionContentDelivery::Inline)
     )
 }
 
@@ -996,13 +1006,11 @@ fn hex_digest(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::port::{
-        BlobWriteResult, ResourceAction, ResourceActionDefinition, ResourceKindDefinition,
-        ResourceKindRegistry,
-    };
+    use crate::port::{BlobWriteResult, ResourceKindDefinition, ResourceKindRegistry};
     use asset_plugin_api::{
         MediaView, PluginActionEffect, PluginActionOutput, PluginContentEncoding, PluginView,
-        ReplaceContentEffect, TextView,
+        ReplaceContentEffect, ResourceAction, ResourceActionAccess, ResourceActionDefinition,
+        ResourceContentMatcher, TextView,
     };
     use async_trait::async_trait;
     use base64::Engine;
@@ -1463,17 +1471,17 @@ mod tests {
                     .with_requirements(content_requirements())
                     .with_output(output_contract(["plugin_frame"]))
                     .with_content_matcher(
-                        crate::port::ResourceContentMatcher::new()
+                        ResourceContentMatcher::new()
                             .with_mime_types(["text/markdown", "text/x-markdown"])
                             .with_extensions([".md", ".markdown"]),
                     ),
                 ResourceActionDefinition::new("azvs.markdown.update", "Edit Markdown")
                     .with_handler("update_markdown")
                     .with_requirements(content_requirements())
-                    .with_access(crate::port::ResourceActionAccess::ReadWrite)
+                    .with_access(ResourceActionAccess::ReadWrite)
                     .with_output(output_contract(["text"]))
                     .with_content_matcher(
-                        crate::port::ResourceContentMatcher::new()
+                        ResourceContentMatcher::new()
                             .with_mime_types(["text/markdown", "text/x-markdown"])
                             .with_extensions([".md", ".markdown"]),
                     ),
@@ -1489,7 +1497,7 @@ mod tests {
             )
             .with_parent(Some(ResourceKind::try_new("core:document").unwrap()))
             .with_detect(
-                crate::port::ResourceContentMatcher::new()
+                ResourceContentMatcher::new()
                     .with_mime_types(["text/markdown", "text/x-markdown"])
                     .with_extensions([".md", ".markdown"]),
             ),

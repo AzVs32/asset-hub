@@ -1,7 +1,7 @@
 //! Resource action registry port.
 
 use crate::domain::ResourceKind;
-pub use asset_plugin_api::{ResourceAction, ResourceActionDefinition};
+use asset_plugin_api::{ResourceAction, ResourceActionDefinition};
 
 /// Registry for globally contributed resource actions.
 pub trait ResourceActionRegistry: Send + Sync {

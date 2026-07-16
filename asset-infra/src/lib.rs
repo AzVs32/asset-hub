@@ -10,13 +10,12 @@ pub mod sqlite;
 pub mod storage;
 
 use action::DefaultResourceActionExecutor;
-use asset_core::service::{
-    AuthorizationService, PluginExecutionPolicy, ResourceService, UserService,
-};
+use asset_core::service::{AuthorizationService, ResourceService, UserService};
 use asset_core::{
     CoreError, port::BlobStorage, port::ResourceActionExecutor, port::ResourceActionRegistry,
     port::ResourceKindRegistry, port::ResourceRepository, port::StorageScanner,
 };
+use asset_plugin_api::PluginExecutionPolicy;
 use config::AssetInfraConfig;
 use kind::{DefaultResourceActionRegistry, DefaultResourceKindRegistry, registries_from_catalog};
 use password::Argon2PasswordHasher;

@@ -7,7 +7,7 @@ use super::*;
 /// 资源预览服务。
 ///
 /// 预览服务依赖动作服务执行 read/preview/thumbnail 声明动作，再把插件 view 转换为调用方需要的内容结构。
-pub struct ResourcePreviewService<'a> {
+pub(super) struct ResourcePreviewService<'a> {
     service: &'a ResourceService,
 }
 
@@ -29,7 +29,7 @@ impl<'a> ResourcePreviewService<'a> {
     ///
     /// 找不到资源、资源已删除或没有内容时返回 `Ok(None)`。资源类型不支持阅读，或内容格式
     /// 没有插件 handler 时返回 `Err(CoreError::Configuration { .. })`。
-    pub async fn read_resource(
+    pub(crate) async fn read_resource(
         &self,
         id: &ResourceId,
     ) -> Result<Option<ReadableResource>, CoreError> {
@@ -37,7 +37,7 @@ impl<'a> ResourcePreviewService<'a> {
             .actions()
             .execute_declared_resource_action(
                 id,
-                crate::port::ResourceAction::READ.into(),
+                ResourceAction::READ.into(),
                 serde_json::Value::Null,
             )
             .await?
@@ -57,7 +57,8 @@ impl<'a> ResourcePreviewService<'a> {
     }
 
     /// 读取资源预览内容。
-    pub async fn preview_resource(
+    #[cfg(test)]
+    pub(super) async fn preview_resource(
         &self,
         id: &ResourceId,
     ) -> Result<Option<ResourcePreview>, CoreError> {
@@ -65,7 +66,7 @@ impl<'a> ResourcePreviewService<'a> {
             .actions()
             .execute_declared_resource_action(
                 id,
-                crate::port::ResourceAction::PREVIEW.into(),
+                ResourceAction::PREVIEW.into(),
                 serde_json::Value::Null,
             )
             .await?
@@ -73,18 +74,14 @@ impl<'a> ResourcePreviewService<'a> {
             return Ok(None);
         };
         let (content_type, content) = self
-            .media_view_content(
-                id,
-                crate::port::ResourceAction::PREVIEW,
-                &output.output().view,
-            )
+            .media_view_content(id, ResourceAction::PREVIEW, &output.output().view)
             .await?;
 
         Ok(Some(ResourcePreview::new(content_type, content)))
     }
 
     /// 返回资源预览内容流。
-    pub async fn preview_resource_stream(
+    pub(crate) async fn preview_resource_stream(
         &self,
         id: &ResourceId,
     ) -> Result<Option<ResourcePreviewStream>, CoreError> {
@@ -94,7 +91,7 @@ impl<'a> ResourcePreviewService<'a> {
         self.service.require_kind_definition(resource.kind())?;
         let declared_actions = self.service.actions_for_resource_kind(resource.kind());
         let Some(action) = declared_actions.iter().find(|action| {
-            action.id().as_str() == crate::port::ResourceAction::PREVIEW
+            action.id().as_str() == ResourceAction::PREVIEW
                 && self.service.action_matches_resource(action, &resource)
         }) else {
             return Err(CoreError::configuration(format!(
@@ -102,7 +99,7 @@ impl<'a> ResourcePreviewService<'a> {
                 resource.kind()
             )));
         };
-        if action.executor() != crate::port::ResourceActionExecutorKind::Builtin {
+        if action.executor() != ResourceActionExecutorKind::Builtin {
             return Err(CoreError::configuration(
                 "plugin preview actions must be executed through the action endpoint",
             ));
@@ -133,7 +130,7 @@ impl<'a> ResourcePreviewService<'a> {
     }
 
     /// 读取资源缩略图内容。
-    pub async fn thumbnail_resource(
+    pub(crate) async fn thumbnail_resource(
         &self,
         id: &ResourceId,
     ) -> Result<Option<ResourceThumbnail>, CoreError> {
@@ -141,7 +138,7 @@ impl<'a> ResourcePreviewService<'a> {
             .actions()
             .execute_declared_resource_action(
                 id,
-                crate::port::ResourceAction::THUMBNAIL.into(),
+                ResourceAction::THUMBNAIL.into(),
                 serde_json::Value::Null,
             )
             .await?
@@ -149,11 +146,7 @@ impl<'a> ResourcePreviewService<'a> {
             return Ok(None);
         };
         let (content_type, content) = self
-            .media_view_content(
-                id,
-                crate::port::ResourceAction::THUMBNAIL,
-                &output.output().view,
-            )
+            .media_view_content(id, ResourceAction::THUMBNAIL, &output.output().view)
             .await?;
 
         Ok(Some(ResourceThumbnail::new(content_type, content)))

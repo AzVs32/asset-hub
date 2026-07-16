@@ -2,11 +2,11 @@ use crate::config::{KindRegistryConfig, ResourceKindConfig, ResourceKindExtensio
 use crate::plugin_manifest::PluginCatalog;
 use asset_core::CoreError;
 use asset_core::domain::ResourceKind;
-use asset_core::port::{
-    ResourceActionDefinition, ResourceActionRegistry, ResourceContentMatcher,
-    ResourceKindDefinition, ResourceKindRegistry,
+use asset_core::port::{ResourceActionRegistry, ResourceKindDefinition, ResourceKindRegistry};
+use asset_plugin_api::{
+    PluginRuntime, ResourceActionCapability, ResourceActionDefinition, ResourceContentMatcher,
+    ResourceKindCapability,
 };
-use asset_plugin_api::{PluginRuntime, ResourceActionCapability, ResourceKindCapability};
 use std::collections::{HashMap, HashSet};
 
 /// 默认内置资源类型注册表。
@@ -136,7 +136,7 @@ fn build_registries_with_catalog(
                 kind,
                 parent,
                 true,
-                asset_core::port::ResourceContentMatcher::default(),
+                ResourceContentMatcher::default(),
                 Vec::new(),
                 "builtin",
             )?,
@@ -481,7 +481,7 @@ fn definition_from_parts(
     label: &str,
     parent: Option<&str>,
     supports_content: bool,
-    detect: asset_core::port::ResourceContentMatcher,
+    detect: ResourceContentMatcher,
     actions: Vec<ResourceActionDefinition>,
     source: impl Into<String>,
 ) -> Result<ResourceKindDefinition, CoreError> {
@@ -499,7 +499,7 @@ fn definition_from_parts(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use asset_core::port::ResourceAction;
+    use asset_plugin_api::ResourceAction;
     use std::path::PathBuf;
 
     #[test]

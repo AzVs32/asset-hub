@@ -1,10 +1,10 @@
 use crate::{config::DatabaseConfig, migration};
 use asset_core::CoreError;
 use asset_core::domain::{
-    Resource, ResourceContent, ResourceId, ResourceKind, ResourceMetadata, ResourceSnapshot,
-    ResourceStatus, StorageKey,
+    Resource, ResourceContent, ResourceDirectory, ResourceId, ResourceKind, ResourceMetadata,
+    ResourceSnapshot, ResourceStatus, StorageKey,
 };
-use asset_core::port::{ListResources, ResourceDirectory, ResourcePage, ResourceRepository};
+use asset_core::port::{ListResources, ResourcePage, ResourceRepository};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow};

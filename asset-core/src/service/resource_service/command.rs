@@ -8,7 +8,7 @@ use super::*;
 /// 资源命令服务。
 ///
 /// 该服务以 `ResourceService` 门面作为上下文，复用其中注入的仓储、对象存储和 kind registry。
-pub struct ResourceCommandService<'a> {
+pub(super) struct ResourceCommandService<'a> {
     service: &'a ResourceService,
 }
 
@@ -24,7 +24,10 @@ impl<'a> ResourceCommandService<'a> {
     /// 其中包含新生成的 `ResourceId`、创建时间和更新时间。
     ///
     /// 可能返回的错误包括领域校验错误和仓储保存错误。
-    pub async fn create_resource(&self, command: CreateResource) -> Result<Resource, CoreError> {
+    pub(crate) async fn create_resource(
+        &self,
+        command: CreateResource,
+    ) -> Result<Resource, CoreError> {
         let kind = self.service.validate_registered_kind(command.kind)?;
         let resource = build_resource(
             command.name,
@@ -44,7 +47,10 @@ impl<'a> ResourceCommandService<'a> {
     ///
     /// 找不到资源或资源已经软删除时返回 `Ok(None)`。维护类操作需要读取软删除资源时，
     /// 应使用专门的恢复或物理删除用例。
-    pub async fn find_resource(&self, id: &ResourceId) -> Result<Option<Resource>, CoreError> {
+    pub(crate) async fn find_resource(
+        &self,
+        id: &ResourceId,
+    ) -> Result<Option<Resource>, CoreError> {
         Ok(self
             .service
             .repository
@@ -54,7 +60,7 @@ impl<'a> ResourceCommandService<'a> {
     }
 
     /// 分页列出资源。
-    pub async fn list_resources(
+    pub(crate) async fn list_resources(
         &self,
         mut query: ListResources,
     ) -> Result<ResourcePage, CoreError> {
@@ -71,7 +77,7 @@ impl<'a> ResourceCommandService<'a> {
     }
 
     /// 列出指定父目录下的直接子目录。
-    pub async fn list_directories(
+    pub(crate) async fn list_directories(
         &self,
         parent: &ResourceDirectory,
     ) -> Result<Vec<ResourceDirectory>, CoreError> {
@@ -79,7 +85,7 @@ impl<'a> ResourceCommandService<'a> {
     }
 
     /// 在指定父目录下创建一个可独立存在的逻辑目录。
-    pub async fn create_directory(
+    pub(crate) async fn create_directory(
         &self,
         parent: &ResourceDirectory,
         name: impl Into<String>,
@@ -90,7 +96,7 @@ impl<'a> ResourceCommandService<'a> {
     }
 
     /// 更新资源基础信息、元数据、状态，或恢复软删除资源。
-    pub async fn update_resource(
+    pub(crate) async fn update_resource(
         &self,
         id: &ResourceId,
         command: UpdateResource,
@@ -138,7 +144,7 @@ impl<'a> ResourceCommandService<'a> {
     ///
     /// 找不到资源时返回 `Ok(None)`；找到资源时返回保存后的资源状态。重复软删除同一资源是
     /// 幂等的，领域模型不会反复刷新删除时间。
-    pub async fn soft_delete_resource(
+    pub(crate) async fn soft_delete_resource(
         &self,
         id: &ResourceId,
     ) -> Result<Option<Resource>, CoreError> {
@@ -161,7 +167,7 @@ impl<'a> ResourceCommandService<'a> {
     ///
     /// 返回值表示是否找到并尝试移除了资源：资源不存在时返回 `Ok(false)`，找到并完成移除时
     /// 返回 `Ok(true)`。
-    pub async fn remove_resource(&self, id: &ResourceId) -> Result<bool, CoreError> {
+    pub(crate) async fn remove_resource(&self, id: &ResourceId) -> Result<bool, CoreError> {
         let Some(resource) = self.service.repository.find_by_id(id).await? else {
             return Ok(false);
         };
