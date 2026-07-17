@@ -278,12 +278,28 @@ Wasm, and reseal the package.
 
 Resource kinds form an arbitrary-depth acyclic hierarchy through the optional
 `parent` field. Child kinds inherit actions, and their own action declarations
-override inherited actions with the same ID. Resource metadata is not defined
-by kinds: all resources currently use the strict, versioned core summary schema
-containing `description` and `tags`. Detection returns the most specific
-matching kind. For example, the bundled hierarchy contains
+override inherited actions with the same ID. Each kind may also declare one
+versioned Draft 2020-12 JSON Schema for the metadata fields it owns. A resource
+stores those values as independent `{ kind, schema_version, data }` layers for
+every applicable kind in its lineage, while the strict core summary keeps the
+common `description` and `tags` fields. Updating one layer does not replace its
+parents, and changing kind keeps only layers shared with the new lineage. New
+writes must use the owner kind's current schema version; older stored layers are
+kept readable while awaiting explicit migration and do not block unrelated
+resource updates.
+Detection returns the most specific matching kind. For example, the bundled hierarchy contains
 `core:file → core:document → azvs:markdown`; `core:unknown` is another child of
 `core:file` for files whose concrete format has not been identified.
+
+Bundled schemas currently define image dimensions and animation facts, video
+dimensions/duration/codecs/bitrate, document title/authors/language/page count,
+Markdown structure counts, and EPUB version/chapter/cover facts. These intrinsic
+schemas are `readOnly`: clients cannot forge content-derived values. The host
+currently derives `core:image.width` and `core:image.height` from bounded headers
+for PNG, GIF, JPEG, WebP, BMP, and AVIF content. Replacing content invalidates all
+read-only layers in the resource lineage before supported facts are recomputed.
+File size, MIME type, original filename, and checksums remain in `ResourceContent`
+and are deliberately not duplicated into `core:file` metadata.
 
 Kind-filtered list endpoints accept `include_descendants=true`. A query for
 `core:document` can therefore include Markdown, EPUB, source-code families, and

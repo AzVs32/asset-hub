@@ -17,6 +17,8 @@ import type {
   ResourceDraft,
   ResourceFilters,
   ResourceKind,
+  ResourceKindMetadataLayer,
+  ResourceKindMetadataPatch,
   UploadDraft,
 } from "@/domain/resource";
 import type { components, paths } from "./generated";
@@ -99,14 +101,29 @@ export class OpenApiAssetGateway implements AssetGateway {
   }
 
   async createResource(draft: ResourceDraft): Promise<Resource> {
-    const result = await this.#client.POST("/resources", { body: resourceBody(draft) });
+    const result = await this.#client.POST("/resources", { body: createResourceBody(draft) });
     return mapResource(expectData(result));
   }
 
   async updateResource(id: string, draft: ResourceDraft): Promise<Resource> {
     const result = await this.#client.PATCH("/resources/{id}", {
       params: { path: { id } },
-      body: resourceBody(draft),
+      body: updateResourceBody(draft),
+    });
+    return mapResource(expectData(result));
+  }
+
+  async patchKindMetadata(id: string, patch: ResourceKindMetadataPatch): Promise<Resource> {
+    const result = await this.#client.PATCH("/resources/{id}", {
+      params: { path: { id } },
+      body: {
+        metadata: {
+          kind_metadata: {
+            upsert: patch.upsert.map(kindMetadataLayerBody),
+            clear: patch.clear,
+          },
+        },
+      },
     });
     return mapResource(expectData(result));
   }
@@ -130,7 +147,7 @@ export class OpenApiAssetGateway implements AssetGateway {
     const params = new URLSearchParams({
       name: draft.name.trim() || draft.file.name,
       directory: normalizeDirectory(draft.directory),
-      metadata_json: JSON.stringify(metadataBody(draft.description, draft.tags)),
+      metadata_json: JSON.stringify(createMetadataBody(draft.description, draft.tags)),
       original_filename: draft.file.name,
     });
     if (draft.kind.trim()) params.set("kind", draft.kind.trim());
@@ -339,6 +356,12 @@ function mapKind(value: ApiKind): ResourceKind {
     detect: value.detect
       ? { mimeTypes: value.detect.mime_types, extensions: value.detect.extensions }
       : null,
+    metadata: value.metadata
+      ? {
+          schemaVersion: value.metadata.schema_version,
+          schema: objectValue(value.metadata.schema),
+        }
+      : null,
   };
 }
 
@@ -354,13 +377,13 @@ function mapResource(value: ApiResource): Resource {
         description: value.metadata.summary.description ?? null,
         tags: value.metadata.summary.tags,
       },
-      kindMetadata: value.metadata.kind_metadata
-        ? {
-            kind: value.metadata.kind_metadata.kind,
-            schemaVersion: value.metadata.kind_metadata.schema_version,
-            data: objectValue(value.metadata.kind_metadata.data),
-          }
-        : null,
+      kindMetadata: {
+        layers: value.metadata.kind_metadata.layers.map((layer) => ({
+          kind: layer.kind,
+          schemaVersion: layer.schema_version,
+          data: objectValue(layer.data),
+        })),
+      },
     },
     content: value.content
       ? {
@@ -416,22 +439,57 @@ function mapDiagnostic(value: Schemas["PluginDiagnosticResponse"]): PluginDiagno
   };
 }
 
-function resourceBody(draft: ResourceDraft): Schemas["CreateResourceRequest"] {
+function createResourceBody(draft: ResourceDraft): Schemas["CreateResourceRequest"] {
   return {
     name: draft.name,
     directory: normalizeDirectory(draft.directory),
     kind: draft.kind,
     status: draft.status,
-    metadata: metadataBody(draft.description, draft.tags),
+    metadata: createMetadataBody(draft.description, draft.tags),
   };
 }
 
-function metadataBody(description: string, tags: string): Schemas["ResourceMetadataRequest"] {
+function updateResourceBody(draft: ResourceDraft): Schemas["UpdateResourceRequest"] {
   return {
-    summary: {
-      description: description.trim() || null,
-      tags: splitTags(tags),
-    },
+    name: draft.name,
+    directory: normalizeDirectory(draft.directory),
+    kind: draft.kind,
+    status: draft.status,
+    metadata: patchMetadataBody(draft.description, draft.tags),
+  };
+}
+
+function createMetadataBody(
+  description: string,
+  tags: string,
+): Schemas["ResourceMetadataCreateRequest"] {
+  return {
+    summary: summaryMetadataBody(description, tags),
+    kind_metadata: { layers: [] },
+  };
+}
+
+function patchMetadataBody(
+  description: string,
+  tags: string,
+): Schemas["ResourceMetadataPatchRequest"] {
+  return { summary: summaryMetadataBody(description, tags) };
+}
+
+function summaryMetadataBody(description: string, tags: string) {
+  return {
+    description: description.trim() || null,
+    tags: splitTags(tags),
+  };
+}
+
+function kindMetadataLayerBody(
+  layer: ResourceKindMetadataLayer,
+): Schemas["ResourceKindMetadataLayerRequest"] {
+  return {
+    kind: layer.kind,
+    schema_version: layer.schemaVersion,
+    data: layer.data,
   };
 }
 

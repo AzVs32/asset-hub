@@ -9,7 +9,7 @@
 use crate::CoreError;
 use crate::domain::{
     Checksum, ChecksumKind, Resource, ResourceContent, ResourceDirectory, ResourceId, ResourceKind,
-    ResourceMetadata, ResourceMetadataPatch, ResourceStatus, StorageKey,
+    ResourceKindMetadata, ResourceMetadata, ResourceMetadataPatch, ResourceStatus, StorageKey,
 };
 use crate::port::{
     BlobByteStream, BlobStorage, ListResources, ResourceActionExecutor, ResourceActionOutput,
@@ -31,6 +31,7 @@ use std::sync::Arc;
 mod action;
 mod command;
 mod content;
+mod image_metadata;
 mod preview;
 mod secured;
 
@@ -791,6 +792,226 @@ impl ResourceService {
             .ok_or_else(|| CoreError::configuration(format!("unsupported resource kind `{kind}`")))
     }
 
+    /// 校验资源 metadata 的 owner lineage、schema 版本和每层 JSON Schema。
+    ///
+    /// `allow_read_only` 只应在宿主派生数据、持久化快照复核等可信路径使用。HTTP 创建和
+    /// 更新必须传 false，避免客户端伪造 width、duration 等内容内生事实。
+    fn validate_metadata_for_kind(
+        &self,
+        kind: &ResourceKind,
+        metadata: &ResourceMetadata,
+        allow_read_only: bool,
+    ) -> Result<(), CoreError> {
+        let lineage = self.kind_registry.lineage(kind);
+        metadata.validate_for_lineage(&lineage)?;
+        self.validate_kind_metadata_layers(
+            kind,
+            metadata.kind_metadata().layers(),
+            allow_read_only,
+            false,
+        )
+    }
+
+    /// 复核已经持久化的 metadata，同时容忍等待迁移的旧 schema 版本。
+    ///
+    /// 新建和 upsert 始终要求当前版本；这里只用于资源的无关字段更新、内容替换等读取旧
+    /// 快照的路径，避免一次 kind schema 升级冻结整个资源。当前版本的 layer 仍会完整校验。
+    fn validate_persisted_metadata_for_kind(
+        &self,
+        kind: &ResourceKind,
+        metadata: &ResourceMetadata,
+    ) -> Result<(), CoreError> {
+        let lineage = self.kind_registry.lineage(kind);
+        metadata.validate_for_lineage(&lineage)?;
+        self.validate_kind_metadata_layers(kind, metadata.kind_metadata().layers(), true, true)
+    }
+
+    fn validate_metadata_patch_for_kind(
+        &self,
+        kind: &ResourceKind,
+        patch: &ResourceMetadataPatch,
+    ) -> Result<(), CoreError> {
+        self.validate_kind_metadata_layers(
+            kind,
+            patch.kind_metadata_patch().upserts(),
+            false,
+            false,
+        )?;
+        let lineage = self.kind_registry.lineage(kind);
+        for cleared in patch.kind_metadata_patch().cleared_kinds() {
+            if !lineage.iter().any(|candidate| candidate == cleared) {
+                return Err(crate::ResourceError::InvalidKindMetadata {
+                    kind: cleared.as_str().to_owned(),
+                    reason: format!("owner kind is not in the lineage of `{kind}`"),
+                }
+                .into());
+            }
+            let definition = self.require_kind_definition(cleared)?;
+            let Some(metadata) = definition.metadata() else {
+                return Err(crate::ResourceError::InvalidKindMetadata {
+                    kind: cleared.as_str().to_owned(),
+                    reason: "owner kind does not declare a metadata schema".to_owned(),
+                }
+                .into());
+            };
+            if metadata.is_read_only() {
+                return Err(crate::ResourceError::InvalidKindMetadata {
+                    kind: cleared.as_str().to_owned(),
+                    reason: "this metadata layer is derived from content and is read-only"
+                        .to_owned(),
+                }
+                .into());
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_kind_metadata_layers(
+        &self,
+        resource_kind: &ResourceKind,
+        layers: &[ResourceKindMetadata],
+        allow_read_only: bool,
+        allow_stale_versions: bool,
+    ) -> Result<(), CoreError> {
+        let lineage = self.kind_registry.lineage(resource_kind);
+        for layer in layers {
+            if !lineage.iter().any(|kind| kind == layer.kind()) {
+                return Err(crate::ResourceError::InvalidKindMetadata {
+                    kind: layer.kind().as_str().to_owned(),
+                    reason: format!("owner kind is not in the lineage of `{resource_kind}`"),
+                }
+                .into());
+            }
+            let definition = self.require_kind_definition(layer.kind())?;
+            let Some(metadata) = definition.metadata() else {
+                if allow_stale_versions {
+                    continue;
+                }
+                return Err(crate::ResourceError::InvalidKindMetadata {
+                    kind: layer.kind().as_str().to_owned(),
+                    reason: "owner kind does not declare a metadata schema".to_owned(),
+                }
+                .into());
+            };
+            if layer.schema_version() != metadata.schema_version() {
+                if allow_stale_versions {
+                    continue;
+                }
+                return Err(CoreError::conflict(format!(
+                    "kind metadata `{}` uses schema version {}, current version is {}",
+                    layer.kind(),
+                    layer.schema_version(),
+                    metadata.schema_version()
+                )));
+            }
+            if metadata.is_read_only() && !allow_read_only {
+                return Err(crate::ResourceError::InvalidKindMetadata {
+                    kind: layer.kind().as_str().to_owned(),
+                    reason: "this metadata layer is derived from content and is read-only"
+                        .to_owned(),
+                }
+                .into());
+            }
+            let instance = serde_json::Value::Object(layer.data().clone());
+            jsonschema::draft202012::validate(metadata.schema(), &instance).map_err(|error| {
+                crate::ResourceError::InvalidKindMetadata {
+                    kind: layer.kind().as_str().to_owned(),
+                    reason: error.to_string(),
+                }
+            })?;
+        }
+        Ok(())
+    }
+
+    /// 返回 lineage 中所有由内容派生、在内容替换时必须失效的 metadata owner。
+    fn read_only_metadata_kinds(&self, kind: &ResourceKind) -> Vec<ResourceKind> {
+        self.kind_registry
+            .lineage(kind)
+            .into_iter()
+            .filter(|kind| {
+                self.kind_registry
+                    .get(kind)
+                    .and_then(|definition| definition.metadata())
+                    .is_some_and(|metadata| metadata.is_read_only())
+            })
+            .collect()
+    }
+
+    /// 清除所有内容派生层，并从给定内容前缀重建宿主当前支持的属性。
+    fn derive_metadata_from_bytes(
+        &self,
+        kind: &ResourceKind,
+        metadata: &ResourceMetadata,
+        bytes: &[u8],
+    ) -> Result<ResourceMetadata, CoreError> {
+        let lineage = self.kind_registry.lineage(kind);
+        let mut clear_patch = ResourceMetadataPatch::new();
+        for owner in self.read_only_metadata_kinds(kind) {
+            clear_patch = clear_patch.clear_kind_metadata_for(owner);
+        }
+        let mut metadata = metadata.clone();
+        metadata.apply_patch(clear_patch, &lineage)?;
+
+        if lineage.iter().any(|candidate| candidate.is("core:image"))
+            && let Some((width, height)) = image_metadata::dimensions(bytes)
+        {
+            let owner = ResourceKind::from("core:image");
+            let definition = self.require_kind_definition(&owner)?;
+            let schema = definition.metadata().ok_or_else(|| {
+                CoreError::configuration("core:image must declare a metadata schema")
+            })?;
+            let data = serde_json::Map::from_iter([
+                ("width".to_owned(), serde_json::Value::from(width)),
+                ("height".to_owned(), serde_json::Value::from(height)),
+            ]);
+            metadata.apply_patch(
+                ResourceMetadataPatch::new().with_kind_metadata(ResourceKindMetadata::new(
+                    owner,
+                    schema.schema_version(),
+                    data,
+                )?),
+                &lineage,
+            )?;
+        }
+
+        self.validate_persisted_metadata_for_kind(kind, &metadata)?;
+        Ok(metadata)
+    }
+
+    async fn derive_metadata_from_content(
+        &self,
+        kind: &ResourceKind,
+        metadata: &ResourceMetadata,
+        content: &ResourceContent,
+    ) -> Result<ResourceMetadata, CoreError> {
+        const MAX_METADATA_PROBE_BYTES: u64 = 4 * 1024 * 1024;
+
+        if content.size() == 0 {
+            return self.derive_metadata_from_bytes(kind, metadata, &[]);
+        }
+        let end = content
+            .size()
+            .min(MAX_METADATA_PROBE_BYTES)
+            .saturating_sub(1);
+        let Some(mut stream) = self
+            .blob_storage
+            .get_range_stream(content.key(), 0, end)
+            .await?
+        else {
+            return self.derive_metadata_from_bytes(kind, metadata, &[]);
+        };
+        let mut bytes = Vec::with_capacity((end + 1) as usize);
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            let remaining = (MAX_METADATA_PROBE_BYTES as usize).saturating_sub(bytes.len());
+            if remaining == 0 {
+                break;
+            }
+            bytes.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
+        }
+        self.derive_metadata_from_bytes(kind, metadata, &bytes)
+    }
+
     fn actions_for_resource_kind(&self, kind: &ResourceKind) -> Vec<ResourceActionDefinition> {
         let lineage = self.kind_registry.lineage(kind);
         self.action_registry
@@ -802,6 +1023,11 @@ impl ResourceService {
     /// 返回指定 kind 及其祖先谱系适用的动作定义。
     pub fn describe_kind_actions(&self, kind: &ResourceKind) -> Vec<ResourceActionDefinition> {
         self.actions_for_resource_kind(kind)
+    }
+
+    /// 返回指定 kind 的谱系，顺序与 registry 一致：leaf -> root。
+    pub fn describe_kind_lineage(&self, kind: &ResourceKind) -> Vec<ResourceKind> {
+        self.kind_registry.lineage(kind)
     }
 
     fn action_matches_resource(

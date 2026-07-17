@@ -21,6 +21,7 @@ futures-util.workspace = true
 opendal.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+jsonschema.workspace = true
 sha2.workspace = true
 sqlx.workspace = true
 tokio.workspace = true

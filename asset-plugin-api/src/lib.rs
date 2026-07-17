@@ -46,7 +46,8 @@ pub use manifest::{
     ManifestActionAccess, NetworkPermission, PLUGIN_API_VERSION, PluginCapabilities,
     PluginManifest, PluginManifestLock, PluginMetadata, PluginPermission, PluginPermissions,
     PluginRuntime, PluginRuntimeLock, PluginWeb, PluginWebLock, ReadWritePermission,
-    ResourceActionCapability, ResourceKindCapability, is_plugin_api_compatible,
+    ResourceActionCapability, ResourceKindCapability, ResourceKindMetadataCapability,
+    is_plugin_api_compatible,
 };
 pub use policy::{InvalidPluginExecutionPolicy, PluginExecutionPolicy};
 pub use request::{

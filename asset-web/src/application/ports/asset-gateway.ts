@@ -13,6 +13,7 @@ import type {
   ResourceDraft,
   ResourceFilters,
   ResourceKind,
+  ResourceKindMetadataPatch,
   UploadDraft,
 } from "@/domain/resource";
 
@@ -32,6 +33,7 @@ export interface AssetGateway {
   findResource(id: string): Promise<Resource>;
   createResource(draft: ResourceDraft): Promise<Resource>;
   updateResource(id: string, draft: ResourceDraft): Promise<Resource>;
+  patchKindMetadata(id: string, patch: ResourceKindMetadataPatch): Promise<Resource>;
   restoreResource(id: string): Promise<Resource>;
   deleteResource(id: string): Promise<Resource>;
   uploadResource(draft: UploadDraft): Promise<Resource>;

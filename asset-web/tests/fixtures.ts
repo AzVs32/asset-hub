@@ -23,7 +23,7 @@ export function resource(actions: ResourceAction[] = []): Resource {
     directory: "library",
     kind: "core:video",
     status: "active",
-    metadata: { summary: { description: null, tags: [] }, kindMetadata: null },
+    metadata: { summary: { description: null, tags: [] }, kindMetadata: { layers: [] } },
     content: {
       key: "library/example.mp4",
       size: 128,

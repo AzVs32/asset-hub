@@ -179,7 +179,7 @@ fn metadata_accepts_summary() {
             "description": "A resource",
             "tags": ["asset"]
         },
-        "kind_metadata": null
+        "kind_metadata": {"layers": []}
     }))
     .unwrap();
 
@@ -209,54 +209,97 @@ fn metadata_deserialization_rejects_missing_or_unknown_fields() {
 }
 
 #[test]
-fn kind_metadata_must_match_resource_kind() {
-    let kind_metadata = ResourceKindMetadata::new(
+fn kind_metadata_accepts_ancestors_and_rejects_siblings() {
+    let file_metadata =
+        ResourceKindMetadata::new(ResourceKind::from("core:file"), 1, serde_json::Map::new())
+            .unwrap();
+    let image_metadata = ResourceKindMetadata::new(
         ResourceKind::from("core:image"),
         1,
         serde_json::Map::from_iter([("width".to_owned(), json!(1200))]),
     )
     .unwrap();
     let metadata = ResourceMetadata::builder()
-        .with_kind_metadata(kind_metadata)
+        .with_kind_metadata(file_metadata)
+        .with_kind_metadata(image_metadata)
         .build()
         .unwrap();
 
     assert!(
-        Resource::builder("image")
-            .with_kind("core:image")
-            .with_metadata(metadata.clone())
-            .build()
+        metadata
+            .validate_for_lineage(&[
+                ResourceKind::from("core:image"),
+                ResourceKind::from("core:file"),
+            ])
             .is_ok()
     );
     assert!(
-        Resource::builder("document")
-            .with_kind("core:document")
-            .with_metadata(metadata)
-            .build()
+        metadata
+            .validate_for_lineage(&[
+                ResourceKind::from("core:document"),
+                ResourceKind::from("core:file"),
+            ])
             .is_err()
     );
 }
 
 #[test]
-fn changing_kind_clears_kind_metadata_but_preserves_summary() {
-    let kind_metadata =
-        ResourceKindMetadata::new(ResourceKind::from("core:image"), 1, serde_json::Map::new())
+fn changing_kind_preserves_common_ancestor_metadata_and_summary() {
+    let file_metadata =
+        ResourceKindMetadata::new(ResourceKind::from("core:file"), 1, serde_json::Map::new())
             .unwrap();
+    let document_metadata = ResourceKindMetadata::new(
+        ResourceKind::from("core:document"),
+        1,
+        serde_json::Map::new(),
+    )
+    .unwrap();
+    let markdown_metadata = ResourceKindMetadata::new(
+        ResourceKind::from("azvs:markdown"),
+        1,
+        serde_json::Map::new(),
+    )
+    .unwrap();
     let metadata = ResourceMetadata::builder()
         .with_description("cover")
-        .with_kind_metadata(kind_metadata)
+        .with_kind_metadata(file_metadata.clone())
+        .with_kind_metadata(document_metadata.clone())
+        .with_kind_metadata(markdown_metadata)
         .build()
         .unwrap();
-    let mut resource = Resource::builder("image")
-        .with_kind("core:image")
+    let mut resource = Resource::builder("book")
+        .with_kind("azvs:markdown")
         .with_metadata(metadata)
         .build()
         .unwrap();
+    let epub_lineage = [
+        ResourceKind::from("azvs:epub"),
+        ResourceKind::from("core:document"),
+        ResourceKind::from("core:file"),
+    ];
 
-    resource.change_kind("core:document").unwrap();
+    resource.change_kind("azvs:epub", &epub_lineage).unwrap();
 
     assert_eq!(resource.metadata().description(), Some("cover"));
-    assert!(resource.metadata().kind_metadata().is_none());
+    assert_eq!(resource.metadata().kind_metadata().layers().len(), 2);
+    assert_eq!(
+        resource
+            .metadata()
+            .kind_metadata_for(&ResourceKind::from("core:file")),
+        Some(&file_metadata)
+    );
+    assert_eq!(
+        resource
+            .metadata()
+            .kind_metadata_for(&ResourceKind::from("core:document")),
+        Some(&document_metadata)
+    );
+    assert!(
+        resource
+            .metadata()
+            .kind_metadata_for(&ResourceKind::from("azvs:markdown"))
+            .is_none()
+    );
 }
 
 #[test]
@@ -276,11 +319,71 @@ fn summary_patch_preserves_kind_metadata() {
     let summary = ResourceSummaryMetadata::new(Some("cover".to_owned()), vec![]).unwrap();
 
     resource
-        .patch_metadata(ResourceMetadataPatch::new().with_summary(summary))
+        .patch_metadata(
+            ResourceMetadataPatch::new().with_summary(summary),
+            &[
+                ResourceKind::from("core:image"),
+                ResourceKind::from("core:file"),
+            ],
+        )
         .unwrap();
 
     assert_eq!(resource.metadata().description(), Some("cover"));
-    assert_eq!(resource.metadata().kind_metadata(), Some(&kind_metadata));
+    assert_eq!(
+        resource
+            .metadata()
+            .kind_metadata_for(&ResourceKind::from("core:image")),
+        Some(&kind_metadata)
+    );
+}
+
+#[test]
+fn kind_metadata_rejects_duplicate_owners_and_supports_per_layer_patch() {
+    let first =
+        ResourceKindMetadata::new(ResourceKind::from("core:image"), 1, serde_json::Map::new())
+            .unwrap();
+    assert!(
+        ResourceMetadata::builder()
+            .with_kind_metadata(first.clone())
+            .with_kind_metadata(first.clone())
+            .build()
+            .is_err()
+    );
+
+    let mut metadata = ResourceMetadata::builder()
+        .with_kind_metadata(first)
+        .build()
+        .unwrap();
+    let replacement = ResourceKindMetadata::new(
+        ResourceKind::from("core:image"),
+        1,
+        serde_json::Map::from_iter([("width".to_owned(), json!(640))]),
+    )
+    .unwrap();
+    metadata
+        .apply_patch(
+            ResourceMetadataPatch::new().with_kind_metadata(replacement.clone()),
+            &[
+                ResourceKind::from("core:image"),
+                ResourceKind::from("core:file"),
+            ],
+        )
+        .unwrap();
+    assert_eq!(
+        metadata.kind_metadata_for(&ResourceKind::from("core:image")),
+        Some(&replacement)
+    );
+
+    metadata
+        .apply_patch(
+            ResourceMetadataPatch::new().clear_kind_metadata_for("core:image"),
+            &[
+                ResourceKind::from("core:image"),
+                ResourceKind::from("core:file"),
+            ],
+        )
+        .unwrap();
+    assert!(metadata.kind_metadata().is_empty());
 }
 
 #[test]

@@ -29,6 +29,8 @@ impl<'a> ResourceCommandService<'a> {
         command: CreateResource,
     ) -> Result<Resource, CoreError> {
         let kind = self.service.validate_registered_kind(command.kind)?;
+        self.service
+            .validate_metadata_for_kind(&kind, &command.metadata, false)?;
         let resource = build_resource(
             command.name,
             command.directory,
@@ -115,8 +117,18 @@ impl<'a> ResourceCommandService<'a> {
             resource.move_to_directory(directory)?;
         }
 
-        if let Some(kind) = command.kind {
-            resource.change_kind(self.service.validate_registered_kind(Some(kind))?)?;
+        let target_kind = command
+            .kind
+            .map(|kind| self.service.validate_registered_kind(Some(kind)))
+            .transpose()?;
+        let effective_kind = target_kind
+            .as_ref()
+            .unwrap_or_else(|| resource.kind())
+            .clone();
+        let lineage = self.service.kind_registry.lineage(&effective_kind);
+
+        if let Some(kind) = target_kind {
+            resource.change_kind(kind, &lineage)?;
         }
 
         if let Some(status) = command.status {
@@ -127,8 +139,13 @@ impl<'a> ResourceCommandService<'a> {
         }
 
         if let Some(metadata) = command.metadata {
-            resource.patch_metadata(metadata)?;
+            self.service
+                .validate_metadata_patch_for_kind(&effective_kind, &metadata)?;
+            resource.patch_metadata(metadata, &lineage)?;
         }
+
+        self.service
+            .validate_persisted_metadata_for_kind(&effective_kind, resource.metadata())?;
 
         if !self
             .service

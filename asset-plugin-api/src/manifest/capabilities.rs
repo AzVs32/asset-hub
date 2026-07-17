@@ -5,6 +5,7 @@ use crate::{
     ResourceActionRequirements, ResourceActionUi, ResourceContentMatcher,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Capabilities contributed by a plugin.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -25,6 +26,8 @@ pub struct ResourceKindCapability {
     pub label: Option<String>,
     pub supports_content: bool,
     pub detect: ResourceContentMatcher,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<ResourceKindMetadataCapability>,
 }
 
 impl Default for ResourceKindCapability {
@@ -35,8 +38,17 @@ impl Default for ResourceKindCapability {
             label: None,
             supports_content: true,
             detect: ResourceContentMatcher::default(),
+            metadata: None,
         }
     }
+}
+
+/// Versioned JSON Schema describing intrinsic metadata owned by a resource kind.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResourceKindMetadataCapability {
+    pub schema_version: u32,
+    pub schema: Value,
 }
 
 /// Resource action contributed by a plugin manifest.

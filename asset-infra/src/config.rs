@@ -1,6 +1,9 @@
 use ::config::{Config, File, FileFormat};
 use asset_core::CoreError;
-use asset_plugin_api::{PluginExecutionPolicy, ResourceActionDefinition, ResourceContentMatcher};
+use asset_plugin_api::{
+    PluginExecutionPolicy, ResourceActionDefinition, ResourceContentMatcher,
+    ResourceKindMetadataCapability,
+};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -246,6 +249,8 @@ pub struct ResourceKindConfig {
     pub supports_content: bool,
     /// 文件自动识别规则。上传时前端可用这些规则自动选择 kind。
     pub detect: ResourceContentMatcher,
+    /// 该 kind 独立拥有的内生 metadata schema。
+    pub metadata: Option<ResourceKindMetadataCapability>,
     /// 以该 kind 为作用域声明的动作；启动时会统一注册到 `ResourceActionRegistry`。
     pub actions: Vec<ResourceActionDefinition>,
 }
@@ -258,6 +263,7 @@ impl Default for ResourceKindConfig {
             label: None,
             supports_content: true,
             detect: ResourceContentMatcher::default(),
+            metadata: None,
             actions: Vec::new(),
         }
     }

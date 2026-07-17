@@ -21,6 +21,41 @@
         "detect": {
           "mime_types": ["application/pdf"],
           "extensions": [".pdf"]
+        },
+        "metadata": {
+          "schema_version": 1,
+          "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "readOnly": true,
+            "additionalProperties": false,
+            "properties": {
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              },
+              "authors": {
+                "type": "array",
+                "maxItems": 64,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "language": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "description": "BCP 47 language tag when known."
+              },
+              "page_count": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
         }
       }
     ],

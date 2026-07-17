@@ -3,7 +3,13 @@ import React from "react";
 import { toast } from "sonner";
 import { useGateway } from "@/application/ports/gateway-context";
 import { queryKeys } from "@/application/queries/keys";
-import type { Resource, ResourceAction, ResourceDraft, UploadDraft } from "@/domain/resource";
+import type {
+  Resource,
+  ResourceAction,
+  ResourceDraft,
+  ResourceKindMetadataPatch,
+  UploadDraft,
+} from "@/domain/resource";
 import type { ActionResult } from "@/plugins/plugin-action-dialog";
 
 export function useResourceCommands() {
@@ -36,6 +42,16 @@ export function useResourceCommands() {
       gateway.updateResource(id, draft),
     onSuccess: async (resource) => {
       toast.success("Resource saved");
+      queryClient.setQueryData(queryKeys.resource(resource.id), resource);
+      await refresh(resource.id);
+    },
+    onError: notifyError,
+  });
+  const patchKindMetadata = useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: ResourceKindMetadataPatch }) =>
+      gateway.patchKindMetadata(id, patch),
+    onSuccess: async (resource) => {
+      toast.success("Kind metadata saved");
       queryClient.setQueryData(queryKeys.resource(resource.id), resource);
       await refresh(resource.id);
     },
@@ -98,6 +114,7 @@ export function useResourceCommands() {
   return {
     create,
     update,
+    patchKindMetadata,
     upload,
     remove,
     restore,

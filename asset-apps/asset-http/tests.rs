@@ -6,6 +6,7 @@ use asset_infra::config::{
     AssetInfraConfig, BlobConfig, DatabaseConfig, KindRegistryConfig, PluginHostConfig,
     ResourceKindConfig,
 };
+use asset_plugin_api::ResourceKindMetadataCapability;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
 use axum::{Extension, Router};
@@ -75,6 +76,11 @@ async fn resource_kinds_are_listed_and_unsupported_kind_is_rejected() {
             .as_array()
             .unwrap()
             .contains(&json!(".png"))
+    );
+    assert_eq!(image_kind["metadata"]["schema_version"], 1);
+    assert_eq!(
+        image_kind["metadata"]["schema"]["properties"]["width"]["type"],
+        "integer"
     );
     let file_kind = kinds["items"]
         .as_array()
@@ -162,6 +168,140 @@ async fn configured_resource_kind_is_listed_and_content_support_is_enforced() {
             .unwrap()
             .contains("does not support content upload")
     );
+}
+
+#[tokio::test]
+async fn nested_kind_metadata_layers_are_validated_and_patched_independently() {
+    fn metadata_schema(properties: Value) -> ResourceKindMetadataCapability {
+        ResourceKindMetadataCapability {
+            schema_version: 1,
+            schema: json!({
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": properties
+            }),
+        }
+    }
+
+    let app = test_app_with_kind_definitions(
+        "nested-kind-metadata",
+        vec![
+            ResourceKindConfig {
+                kind: "custom:asset".to_owned(),
+                parent: Some("core:file".to_owned()),
+                label: Some("Custom asset".to_owned()),
+                supports_content: false,
+                metadata: Some(metadata_schema(json!({
+                    "source": {"type": "string", "minLength": 1}
+                }))),
+                ..ResourceKindConfig::default()
+            },
+            ResourceKindConfig {
+                kind: "custom:item".to_owned(),
+                parent: Some("custom:asset".to_owned()),
+                label: Some("Custom item".to_owned()),
+                supports_content: false,
+                metadata: Some(metadata_schema(json!({
+                    "score": {"type": "integer", "minimum": 0}
+                }))),
+                ..ResourceKindConfig::default()
+            },
+        ],
+    )
+    .await;
+
+    let (status, resource) = json_request(
+        &app,
+        Method::POST,
+        "/resources",
+        json!({
+            "name": "layered metadata",
+            "kind": "custom:item",
+            "metadata": {
+                "kind_metadata": {
+                    "layers": [
+                        {"kind": "custom:item", "schema_version": 1, "data": {"score": 7}},
+                        {"kind": "custom:asset", "schema_version": 1, "data": {"source": "import"}}
+                    ]
+                }
+            }
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::CREATED, "{resource}");
+    assert_eq!(
+        resource["metadata"]["kind_metadata"]["layers"],
+        json!([
+            {"kind": "custom:asset", "schema_version": 1, "data": {"source": "import"}},
+            {"kind": "custom:item", "schema_version": 1, "data": {"score": 7}}
+        ])
+    );
+
+    let id = resource["id"].as_str().unwrap();
+    let (status, resource) = json_request(
+        &app,
+        Method::PATCH,
+        &format!("/resources/{id}"),
+        json!({
+            "metadata": {
+                "kind_metadata": {
+                    "upsert": [
+                        {"kind": "custom:item", "schema_version": 1, "data": {"score": 9}}
+                    ],
+                    "clear": ["custom:asset"]
+                }
+            }
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{resource}");
+    assert_eq!(
+        resource["metadata"]["kind_metadata"]["layers"],
+        json!([
+            {"kind": "custom:item", "schema_version": 1, "data": {"score": 9}}
+        ])
+    );
+
+    let (status, error) = json_request(
+        &app,
+        Method::PATCH,
+        &format!("/resources/{id}"),
+        json!({
+            "metadata": {
+                "kind_metadata": {
+                    "upsert": [
+                        {"kind": "custom:item", "schema_version": 1, "data": {"score": "invalid"}}
+                    ]
+                }
+            }
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(error["error"].as_str().unwrap().contains("custom:item"));
+
+    let (status, error) = json_request(
+        &app,
+        Method::POST,
+        "/resources",
+        json!({
+            "name": "forged image facts",
+            "kind": "core:image",
+            "metadata": {
+                "kind_metadata": {
+                    "layers": [
+                        {"kind": "core:image", "schema_version": 1, "data": {"width": 10, "height": 10}}
+                    ]
+                }
+            }
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(error["error"].as_str().unwrap().contains("read-only"));
 }
 
 #[tokio::test]
@@ -440,6 +580,14 @@ async fn image_resource_exposes_builtin_preview_and_thumbnail() {
     .await;
 
     assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(
+        resource["metadata"]["kind_metadata"]["layers"],
+        json!([{
+            "kind": "core:image",
+            "schema_version": 1,
+            "data": {"height": 1, "width": 1}
+        }])
+    );
     assert!(has_action(&resource, "preview"));
     assert!(has_action(&resource, "thumbnail"));
     assert!(has_action(&resource, "view_inline"));
@@ -577,7 +725,7 @@ async fn create_resource_accepts_structured_metadata_and_rejects_metadata_string
     assert_eq!(resource["name"], "resources_not_blob");
     assert_eq!(resource["kind"], "core:unknown");
     assert!(resource["metadata"].get("schema_version").is_none());
-    assert!(resource["metadata"]["kind_metadata"].is_null());
+    assert_eq!(resource["metadata"]["kind_metadata"]["layers"], json!([]));
     assert_eq!(
         resource["metadata"]["summary"]["description"],
         "metadata-only resource"
@@ -609,7 +757,7 @@ async fn create_resource_accepts_structured_metadata_and_rejects_metadata_string
         error["error"]
             .as_str()
             .unwrap()
-            .contains("expected struct ResourceMetadataRequest")
+            .contains("expected struct ResourceMetadataCreateRequest")
     );
 
     let (status, error) = json_request(
@@ -1414,7 +1562,8 @@ async fn openapi_documents_metadata_examples() {
 
     assert_eq!(status, StatusCode::OK);
 
-    let metadata_example = &document["components"]["schemas"]["ResourceMetadataRequest"]["example"];
+    let metadata_example =
+        &document["components"]["schemas"]["ResourceMetadataCreateRequest"]["example"];
     let create_example = &document["components"]["schemas"]["CreateResourceRequest"]["example"];
     assert_eq!(
         metadata_example["summary"]["description"],
@@ -1424,6 +1573,10 @@ async fn openapi_documents_metadata_examples() {
         create_example["metadata"]["summary"]["description"],
         "A metadata-only resource"
     );
+    let layer_data_schema = &document["components"]["schemas"]["ResourceKindMetadataLayerRequest"]
+        ["properties"]["data"];
+    assert_eq!(layer_data_schema["type"], "object");
+    assert_eq!(layer_data_schema["additionalProperties"], true);
     assert!(document["paths"].get("/resources/content").is_none());
     assert!(document["paths"].get("/resources/content/stream").is_some());
     assert!(document["paths"].get("/auth/login").is_some());

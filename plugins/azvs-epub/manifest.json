@@ -30,6 +30,28 @@
           "extensions": [
             ".epub"
           ]
+        },
+        "metadata": {
+          "schema_version": 1,
+          "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "readOnly": true,
+            "additionalProperties": false,
+            "properties": {
+              "epub_version": {
+                "type": "string",
+                "enum": ["2", "3"]
+              },
+              "chapter_count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "has_cover": {
+                "type": "boolean"
+              }
+            }
+          }
         }
       }
     ],

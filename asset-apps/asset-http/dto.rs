@@ -1,7 +1,7 @@
 use asset_core::ResourceError;
 use asset_core::domain::{
-    Checksum, Resource, ResourceContent, ResourceDirectory, ResourceMetadata,
-    ResourceMetadataPatch, ResourceSummaryMetadata,
+    Checksum, Resource, ResourceContent, ResourceDirectory, ResourceKind, ResourceKindMetadata,
+    ResourceMetadata, ResourceMetadataPatch, ResourceSummaryMetadata,
 };
 use asset_core::port::{ResourceActionOutput, ResourceKindDefinition, StoragePrefix};
 use asset_core::service::{ReadableResource, ResourceActions};
@@ -44,7 +44,7 @@ pub(crate) struct CreateResourceRequest {
     #[schema(value_type = Option<String>)]
     pub(crate) directory: Option<ResourceDirectory>,
     /// 可选资源元数据。
-    pub(crate) metadata: Option<ResourceMetadataRequest>,
+    pub(crate) metadata: Option<ResourceMetadataCreateRequest>,
 }
 
 /// 创建逻辑目录请求。
@@ -127,8 +127,8 @@ pub(crate) struct UpdateResourceRequest {
     /// 可选新逻辑目录；根目录为空字符串。
     #[schema(value_type = Option<String>)]
     pub(crate) directory: Option<ResourceDirectory>,
-    /// 可选资源元数据补丁；当前只允许替换 summary，kind metadata 保持不变。
-    pub(crate) metadata: Option<ResourceMetadataRequest>,
+    /// 可选资源元数据补丁；kind metadata 按 owner kind 逐层 upsert/clear。
+    pub(crate) metadata: Option<ResourceMetadataPatchRequest>,
     /// 是否恢复软删除资源。
     pub(crate) restore: Option<bool>,
 }
@@ -150,7 +150,7 @@ pub(crate) struct UploadResourceContentStreamQuery {
     pub(crate) kind: Option<String>,
     /// 可选初始状态：`active` 或 `archived`。
     pub(crate) status: Option<String>,
-    /// 可选 JSON 字符串形式的资源元数据，结构与 `ResourceMetadataRequest` 一致。
+    /// 可选 JSON 字符串形式的资源元数据，结构与 `ResourceMetadataCreateRequest` 一致。
     pub(crate) metadata_json: Option<String>,
     /// 可选原始文件名。
     pub(crate) original_filename: Option<String>,
@@ -246,10 +246,18 @@ pub(crate) struct ResourceKindResponse {
     /// 文件自动识别规则；为空时不会主动匹配，仅可作为手动选择或兜底。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) detect: Option<ResourceContentMatcherResponse>,
+    /// 该 kind 自己拥有的 metadata schema；父级 schema 通过 ancestors 分层继承。
+    pub(crate) metadata: Option<ResourceKindMetadataDefinitionResponse>,
     /// kind 支持的动作。
     pub(crate) actions: Vec<ResourceActionDefinitionResponse>,
     /// 定义来源：`builtin`、`config` 或 `plugin:<id>`。
     pub(crate) source: String,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub(crate) struct ResourceKindMetadataDefinitionResponse {
+    pub(crate) schema_version: u32,
+    pub(crate) schema: Value,
 }
 
 impl ResourceKindResponse {
@@ -272,6 +280,12 @@ impl ResourceKindResponse {
             detect: (!definition.detect().is_empty()).then(|| ResourceContentMatcherResponse {
                 mime_types: definition.detect().mime_types().to_vec(),
                 extensions: definition.detect().extensions().to_vec(),
+            }),
+            metadata: definition.metadata().map(|metadata| {
+                ResourceKindMetadataDefinitionResponse {
+                    schema_version: metadata.schema_version(),
+                    schema: metadata.schema().clone(),
+                }
             }),
             actions: service
                 .describe_kind_actions(definition.kind())
@@ -426,18 +440,63 @@ fn component_status(ready: bool) -> String {
     if ready { "ready" } else { "unavailable" }.to_string()
 }
 
-/// 创建或上传资源时可传入的资源元数据。
+/// 创建或上传资源时可传入的完整资源元数据。
 #[derive(Debug, Clone, Default, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 #[schema(example = json!({
     "summary": {
         "description": "Human readable resource description",
         "tags": ["demo", "asset"]
-    }
+    },
+    "kind_metadata": {"layers": []}
 }))]
-pub(crate) struct ResourceMetadataRequest {
+pub(crate) struct ResourceMetadataCreateRequest {
     /// 核心摘要元数据。
     pub(crate) summary: Option<ResourceSummaryMetadataRequest>,
+    /// 创建时提供的完整 kind metadata layer 集合。
+    pub(crate) kind_metadata: Option<ResourceKindMetadataCreateRequest>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ResourceKindMetadataCreateRequest {
+    #[serde(default)]
+    pub(crate) layers: Vec<ResourceKindMetadataLayerRequest>,
+}
+
+/// 更新资源时使用的 metadata 补丁。
+#[derive(Debug, Clone, Default, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ResourceMetadataPatchRequest {
+    pub(crate) summary: Option<ResourceSummaryMetadataRequest>,
+    pub(crate) kind_metadata: Option<ResourceKindMetadataPatchRequest>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ResourceKindMetadataPatchRequest {
+    #[serde(default)]
+    pub(crate) upsert: Vec<ResourceKindMetadataLayerRequest>,
+    #[serde(default)]
+    pub(crate) clear: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ResourceKindMetadataLayerRequest {
+    pub(crate) kind: String,
+    pub(crate) schema_version: u32,
+    #[schema(schema_with = free_form_object_schema)]
+    pub(crate) data: Value,
+}
+
+fn free_form_object_schema() -> utoipa::openapi::schema::Object {
+    utoipa::openapi::schema::ObjectBuilder::new()
+        .schema_type(utoipa::openapi::schema::Type::Object)
+        .additional_properties(Some(
+            utoipa::openapi::schema::AdditionalProperties::FreeForm(true),
+        ))
+        .build()
 }
 
 /// 创建或上传资源时可传入的核心摘要元数据。
@@ -450,7 +509,7 @@ pub(crate) struct ResourceSummaryMetadataRequest {
     pub(crate) tags: Option<Vec<String>>,
 }
 
-impl ResourceMetadataRequest {
+impl ResourceMetadataCreateRequest {
     /// 转换为领域元数据并执行领域校验。
     pub(crate) fn into_domain(self) -> Result<ResourceMetadata, ResourceError> {
         let mut builder = ResourceMetadata::builder();
@@ -465,17 +524,48 @@ impl ResourceMetadataRequest {
             }
         }
 
+        if let Some(kind_metadata) = self.kind_metadata {
+            for layer in kind_metadata.layers {
+                builder = builder.with_kind_metadata(layer.into_domain()?);
+            }
+        }
+
         builder.build()
     }
+}
 
-    /// 转换为只修改核心摘要的补丁；预留的 kind metadata 保持不变。
+impl ResourceMetadataPatchRequest {
+    /// 转换为逐分区 metadata 补丁；未出现的层保持不变。
     pub(crate) fn into_patch(self) -> Result<ResourceMetadataPatch, ResourceError> {
-        let Some(summary) = self.summary else {
-            return Ok(ResourceMetadataPatch::new());
+        let mut patch = ResourceMetadataPatch::new();
+        if let Some(summary) = self.summary {
+            let summary = ResourceSummaryMetadata::new(
+                summary.description,
+                summary.tags.unwrap_or_default(),
+            )?;
+            patch = patch.with_summary(summary);
+        }
+        if let Some(kind_metadata) = self.kind_metadata {
+            for layer in kind_metadata.upsert {
+                patch = patch.with_kind_metadata(layer.into_domain()?);
+            }
+            for kind in kind_metadata.clear {
+                patch = patch.clear_kind_metadata_for(ResourceKind::try_new(kind)?);
+            }
+        }
+        Ok(patch)
+    }
+}
+
+impl ResourceKindMetadataLayerRequest {
+    fn into_domain(self) -> Result<ResourceKindMetadata, ResourceError> {
+        let Value::Object(data) = self.data else {
+            return Err(ResourceError::InvalidKindMetadata {
+                kind: self.kind,
+                reason: "data must be a JSON object".to_owned(),
+            });
         };
-        let summary =
-            ResourceSummaryMetadata::new(summary.description, summary.tags.unwrap_or_default())?;
-        Ok(ResourceMetadataPatch::new().with_summary(summary))
+        ResourceKindMetadata::new(ResourceKind::try_new(self.kind)?, self.schema_version, data)
     }
 }
 
@@ -486,20 +576,26 @@ impl ResourceMetadataRequest {
         "description": "Human readable resource description",
         "tags": ["demo", "asset"]
     },
-    "kind_metadata": null
+    "kind_metadata": {"layers": []}
 }))]
 pub(crate) struct ResourceMetadataResponse {
     /// 核心摘要元数据。
     pub(crate) summary: ResourceSummaryMetadataResponse,
-    /// 当前 kind 的扩展元数据；尚未定义时为 null。
-    pub(crate) kind_metadata: Option<ResourceKindMetadataResponse>,
+    /// 当前 kind 谱系上各 owner kind 独立拥有的扩展元数据。
+    pub(crate) kind_metadata: ResourceKindMetadataResponse,
 }
 
-/// 资源类型专属元数据响应。
+/// 资源类型专属元数据集合响应。
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct ResourceKindMetadataResponse {
+    pub(crate) layers: Vec<ResourceKindMetadataLayerResponse>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct ResourceKindMetadataLayerResponse {
     pub(crate) kind: String,
     pub(crate) schema_version: u32,
+    #[schema(schema_with = free_form_object_schema)]
     pub(crate) data: Value,
 }
 
@@ -512,8 +608,19 @@ pub(crate) struct ResourceSummaryMetadataResponse {
     pub(crate) tags: Vec<String>,
 }
 
-impl From<&ResourceMetadata> for ResourceMetadataResponse {
-    fn from(metadata: &ResourceMetadata) -> Self {
+impl ResourceMetadataResponse {
+    fn new(metadata: &ResourceMetadata, lineage: &[ResourceKind]) -> Self {
+        let mut layers = Vec::new();
+        for kind in lineage.iter().rev() {
+            if let Some(layer) = metadata.kind_metadata_for(kind) {
+                layers.push(ResourceKindMetadataLayerResponse::from(layer));
+            }
+        }
+        for layer in metadata.kind_metadata().layers() {
+            if !lineage.iter().any(|kind| kind == layer.kind()) {
+                layers.push(ResourceKindMetadataLayerResponse::from(layer));
+            }
+        }
         Self {
             summary: ResourceSummaryMetadataResponse {
                 description: metadata.description().map(str::to_string),
@@ -523,13 +630,17 @@ impl From<&ResourceMetadata> for ResourceMetadataResponse {
                     .map(|tag| tag.as_str().to_owned())
                     .collect(),
             },
-            kind_metadata: metadata.kind_metadata().map(|kind_metadata| {
-                ResourceKindMetadataResponse {
-                    kind: kind_metadata.kind().as_str().to_owned(),
-                    schema_version: kind_metadata.schema_version(),
-                    data: Value::Object(kind_metadata.data().clone()),
-                }
-            }),
+            kind_metadata: ResourceKindMetadataResponse { layers },
+        }
+    }
+}
+
+impl From<&ResourceKindMetadata> for ResourceKindMetadataLayerResponse {
+    fn from(metadata: &ResourceKindMetadata) -> Self {
+        Self {
+            kind: metadata.kind().as_str().to_owned(),
+            schema_version: metadata.schema_version(),
+            data: Value::Object(metadata.data().clone()),
         }
     }
 }
@@ -768,14 +879,18 @@ impl From<&ReadableResource> for ResourceReadResponse {
 }
 
 impl ResourceResponse {
-    pub(crate) fn new(resource: &Resource, actions: ResourceActions) -> Self {
+    pub(crate) fn new(
+        resource: &Resource,
+        actions: ResourceActions,
+        lineage: &[ResourceKind],
+    ) -> Self {
         Self {
             id: resource.id().to_string(),
             name: resource.name().to_string(),
             directory: resource.directory().clone(),
             kind: resource.kind().as_str().to_string(),
             status: resource.status().as_str().to_string(),
-            metadata: ResourceMetadataResponse::from(resource.metadata()),
+            metadata: ResourceMetadataResponse::new(resource.metadata(), lineage),
             content: resource.content().map(ResourceContentResponse::from),
             actions: ResourceActionsResponse::from(actions),
             created_at: resource.created_at().to_rfc3339(),

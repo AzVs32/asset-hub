@@ -41,6 +41,7 @@ export function ResourceWorkspace() {
   const kinds = browser.kinds.data ?? [];
   const busy =
     commands.update.isPending ||
+    commands.patchKindMetadata.isPending ||
     commands.remove.isPending ||
     commands.restore.isPending ||
     commands.execute.isPending;
@@ -101,6 +102,9 @@ export function ResourceWorkspace() {
         onRestore={() => {
           if (resource) commands.restore.mutate(resource);
         }}
+        onKindMetadataPatch={(patch) =>
+          commands.patchKindMetadata.mutateAsync({ id: resource?.id ?? "", patch })
+        }
         onResourceChanged={() => commands.refresh(resource?.id)}
       />
 

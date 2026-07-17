@@ -72,3 +72,63 @@ fn manifest_rejects_unknown_fields_at_every_level() {
     document["runtime"]["wais"] = serde_json::json!(false);
     assert!(serde_json::from_value::<PluginManifest>(document).is_err());
 }
+
+#[test]
+fn manifest_rejects_invalid_kind_metadata_envelopes_and_schema_roots() {
+    let valid_metadata = serde_json::json!({
+        "schema_version": 1,
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "readOnly": true,
+            "additionalProperties": false,
+            "properties": {}
+        }
+    });
+
+    let invalid_metadata = [
+        {
+            let mut value = valid_metadata.clone();
+            value["schema_version"] = serde_json::json!(0);
+            value
+        },
+        {
+            let mut value = valid_metadata.clone();
+            value["schema"]["$schema"] =
+                serde_json::json!("http://json-schema.org/draft-07/schema#");
+            value
+        },
+        {
+            let mut value = valid_metadata.clone();
+            value["schema"]["type"] = serde_json::json!("array");
+            value
+        },
+        {
+            let mut value = valid_metadata.clone();
+            value["schema"]["readOnly"] = serde_json::json!("yes");
+            value
+        },
+        {
+            let mut value = valid_metadata.clone();
+            value["schema"]["additionalProperties"] = serde_json::json!(true);
+            value
+        },
+        {
+            let mut value = valid_metadata;
+            value["schema"]["properties"] = serde_json::json!({
+                "unsafe": {"$ref": "https://example.com/remote-schema.json"}
+            });
+            value
+        },
+    ];
+
+    for metadata in invalid_metadata {
+        let mut document: serde_json::Value = serde_json::from_str(MANIFEST_TEMPLATE).unwrap();
+        document["capabilities"]["kinds"] = serde_json::json!([{
+            "kind": "example:document",
+            "metadata": metadata
+        }]);
+        let manifest: PluginManifest = serde_json::from_value(document).unwrap();
+        assert!(manifest.validate().is_err());
+    }
+}

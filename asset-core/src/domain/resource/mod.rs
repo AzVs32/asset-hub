@@ -10,8 +10,8 @@ pub use content::{Checksum, ChecksumKind, ResourceContent, ResourceContentBuilde
 pub use directory::ResourceDirectory;
 pub use kind::ResourceKind;
 pub use metadata::{
-    ResourceKindMetadata, ResourceKindMetadataPatch, ResourceMetadata, ResourceMetadataBuilder,
-    ResourceMetadataPatch, ResourceSummaryMetadata, ResourceTag,
+    ResourceKindMetadata, ResourceKindMetadataPatch, ResourceKindMetadataSet, ResourceMetadata,
+    ResourceMetadataBuilder, ResourceMetadataPatch, ResourceSummaryMetadata, ResourceTag,
 };
 pub use resource::{Resource, ResourceBuilder, ResourceId, ResourceSnapshot};
 pub use status::ResourceStatus;

@@ -28,6 +28,15 @@ pub enum ResourceError {
         reason: &'static str,
     },
 
+    /// Kind 专属元数据没有满足所属 Kind、版本或 schema 约束。
+    #[error("metadata.kind_metadata layer `{kind}` is invalid: {reason}")]
+    InvalidKindMetadata {
+        /// 声明该层数据所有权的资源类型。
+        kind: String,
+        /// 可以安全返回给调用方的具体失败原因。
+        reason: String,
+    },
+
     /// 已软删除的资源不允许继续修改。
     #[error("deleted resource cannot be modified")]
     DeletedResource,

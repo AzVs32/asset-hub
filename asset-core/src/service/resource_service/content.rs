@@ -136,7 +136,13 @@ impl<'a> ResourceContentService<'a> {
                 .as_deref()
                 .or_else(|| Some(storage_key.as_str())),
         )?;
+        self.service
+            .validate_metadata_for_kind(&kind, &metadata, false)?;
         let content = build_content(storage_key, size, mime_type, original_filename, checksums)?;
+        let metadata = self
+            .service
+            .derive_metadata_from_content(&kind, &metadata, &content)
+            .await?;
         let resource = build_resource(name, directory, Some(kind), status, metadata)
             .with_content(content)
             .build()?;
@@ -180,9 +186,17 @@ impl<'a> ResourceContentService<'a> {
                 .as_deref()
                 .or_else(|| Some(storage_key.as_str())),
         )?;
+        self.service
+            .validate_metadata_for_kind(&kind, &metadata, false)?;
 
-        let resource_builder = build_resource(name, directory, Some(kind), status, metadata);
-        resource_builder.clone().build()?;
+        build_resource(
+            name.clone(),
+            directory.clone(),
+            Some(kind.clone()),
+            status,
+            metadata.clone(),
+        )
+        .build()?;
         build_content(
             storage_key.clone(),
             0,
@@ -214,7 +228,20 @@ impl<'a> ResourceContentService<'a> {
             original_filename,
             checksums,
         )?;
-        let resource = resource_builder.with_content(content).build()?;
+        let metadata = match self
+            .service
+            .derive_metadata_from_content(&kind, &metadata, &content)
+            .await
+        {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                let _ = self.service.blob_storage.delete(&storage_key).await;
+                return Err(error);
+            }
+        };
+        let resource = build_resource(name, directory, Some(kind), status, metadata)
+            .with_content(content)
+            .build()?;
 
         if let Err(error) = self.service.repository.save(&resource).await {
             let _ = self.service.blob_storage.delete(&storage_key).await;

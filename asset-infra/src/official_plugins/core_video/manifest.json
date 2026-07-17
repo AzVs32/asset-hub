@@ -21,6 +21,47 @@
         "detect": {
           "mime_types": ["video/*"],
           "extensions": [".mp4", ".webm", ".mov", ".m4v", ".ogv"]
+        },
+        "metadata": {
+          "schema_version": 1,
+          "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "readOnly": true,
+            "additionalProperties": false,
+            "properties": {
+              "width": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "height": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "duration_ms": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "frame_rate": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "video_codec": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "audio_codec": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "bit_rate_bps": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
         }
       }
     ],

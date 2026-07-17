@@ -53,3 +53,37 @@ fn supports_arbitrary_depth_lineage_inheritance_and_leaf_detection() {
         Some(c)
     );
 }
+
+#[test]
+fn kind_metadata_definition_requires_a_bounded_local_object_schema() {
+    let valid = serde_json::json!({
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {"width": {"type": "integer", "minimum": 1}}
+    });
+    assert!(ResourceKindMetadataDefinition::try_new(1, valid.clone()).is_ok());
+
+    for invalid in [
+        serde_json::json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "array",
+            "additionalProperties": false
+        }),
+        serde_json::json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": true
+        }),
+        serde_json::json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {"nested": {"$ref": "https://example.invalid/schema.json"}}
+        }),
+    ] {
+        assert!(ResourceKindMetadataDefinition::try_new(1, invalid).is_err());
+    }
+
+    assert!(ResourceKindMetadataDefinition::try_new(0, valid).is_err());
+}

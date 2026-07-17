@@ -13,13 +13,20 @@ import {
 import React from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import type { Resource, ResourceAction, ResourceDraft, ResourceKind } from "@/domain/resource";
+import type {
+  Resource,
+  ResourceAction,
+  ResourceDraft,
+  ResourceKind,
+  ResourceKindMetadataPatch,
+} from "@/domain/resource";
 import { draftFromResource, formatBytes, formatDate } from "@/domain/resource-draft";
 import { usePluginKernel } from "@/kernel/plugin-kernel";
 import { hostSlots } from "@/kernel/slots";
 import { AutomaticSlot } from "@/plugins/automatic-slot";
 import { Button } from "@/shared/ui/button";
 import { controlClass, Field, Input, Textarea } from "@/shared/ui/field";
+import { KindMetadataPanel } from "./kind-metadata";
 
 const draftSchema = z.object({
   name: z.string().trim().min(1, "Name is required"),
@@ -38,6 +45,7 @@ export function ResourceDetail({
   onAction,
   onDelete,
   onRestore,
+  onKindMetadataPatch,
   onResourceChanged,
 }: {
   resource: Resource | null;
@@ -47,6 +55,7 @@ export function ResourceDetail({
   onAction: (action: ResourceAction) => void;
   onDelete: () => void;
   onRestore: () => void;
+  onKindMetadataPatch: (patch: ResourceKindMetadataPatch) => Promise<unknown>;
   onResourceChanged: () => void | Promise<void>;
 }) {
   if (!resource) {
@@ -68,6 +77,7 @@ export function ResourceDetail({
       onAction={onAction}
       onDelete={onDelete}
       onRestore={onRestore}
+      onKindMetadataPatch={onKindMetadataPatch}
       onResourceChanged={onResourceChanged}
     />
   );
@@ -81,6 +91,7 @@ function Detail({
   onAction,
   onDelete,
   onRestore,
+  onKindMetadataPatch,
   onResourceChanged,
 }: {
   resource: Resource;
@@ -90,6 +101,7 @@ function Detail({
   onAction: (action: ResourceAction) => void;
   onDelete: () => void;
   onRestore: () => void;
+  onKindMetadataPatch: (patch: ResourceKindMetadataPatch) => Promise<unknown>;
   onResourceChanged: () => void | Promise<void>;
 }) {
   const kernel = usePluginKernel();
@@ -231,17 +243,12 @@ function Detail({
           />
         </section>
 
-        {resource.metadata.kindMetadata ? (
-          <details className="rounded-2xl border border-slate-200 bg-white p-4">
-            <summary className="cursor-pointer text-sm font-semibold text-slate-800">
-              Kind metadata · {resource.metadata.kindMetadata.kind} v
-              {resource.metadata.kindMetadata.schemaVersion}
-            </summary>
-            <pre className="mt-3 max-h-64 overflow-auto rounded-xl bg-slate-950 p-4 text-xs text-slate-100">
-              {JSON.stringify(resource.metadata.kindMetadata.data, null, 2)}
-            </pre>
-          </details>
-        ) : null}
+        <KindMetadataPanel
+          resource={resource}
+          kinds={kinds}
+          disabled={pending || Boolean(resource.deletedAt)}
+          onPatch={onKindMetadataPatch}
+        />
 
         <AutomaticSlot
           slot={hostSlots.resourceDetailPanel}

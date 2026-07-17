@@ -1,5 +1,7 @@
 use super::*;
-use crate::port::{BlobWriteResult, ResourceKindDefinition, ResourceKindRegistry};
+use crate::port::{
+    BlobWriteResult, ResourceKindDefinition, ResourceKindMetadataDefinition, ResourceKindRegistry,
+};
 use asset_plugin_api::{
     MediaView, PluginActionEffect, PluginActionOutput, PluginMediaEncoding,
     PluginReplacementEncoding, PluginView, ReplaceContentEffect, ResourceAction,
@@ -1000,6 +1002,112 @@ fn create_resource_rejects_unsupported_kind() {
         other => panic!("expected configuration error, got {other:?}"),
     }
     assert!(repository.is_empty());
+}
+
+#[test]
+fn unrelated_updates_tolerate_kind_metadata_waiting_for_schema_migration() {
+    let kind = ResourceKind::try_new("custom:book").unwrap();
+    let current_schema = ResourceKindMetadataDefinition::try_new(
+        2,
+        json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {"isbn": {"type": "string"}}
+        }),
+    )
+    .unwrap();
+    let (service, repository, _) = service_with_registry(Arc::new(
+        InMemoryResourceKindRegistry::with_definitions(vec![
+            ResourceKindDefinition::new(kind.clone(), "Book", false)
+                .with_metadata(Some(current_schema)),
+        ]),
+    ));
+    let metadata = ResourceMetadata::builder()
+        .with_kind_metadata(
+            ResourceKindMetadata::new(
+                kind.clone(),
+                1,
+                json!({"legacy_isbn": "old"}).as_object().unwrap().clone(),
+            )
+            .unwrap(),
+        )
+        .build()
+        .unwrap();
+    let resource = Resource::builder("Old book")
+        .with_kind(kind)
+        .with_metadata(metadata)
+        .build()
+        .unwrap();
+    block_on(repository.save(&resource)).unwrap();
+
+    let updated = block_on(
+        service
+            .commands()
+            .update_resource_snapshot(resource, UpdateResource::new().with_name("Renamed book")),
+    )
+    .unwrap();
+
+    assert_eq!(updated.name(), "Renamed book");
+    assert_eq!(
+        updated.metadata().kind_metadata().layers()[0].schema_version(),
+        1
+    );
+}
+
+#[test]
+fn content_derivation_replaces_stale_read_only_image_metadata() {
+    let kind = ResourceKind::try_new("core:image").unwrap();
+    let schema = ResourceKindMetadataDefinition::try_new(
+        1,
+        json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "readOnly": true,
+            "additionalProperties": false,
+            "properties": {
+                "width": {"type": "integer", "minimum": 1},
+                "height": {"type": "integer", "minimum": 1}
+            }
+        }),
+    )
+    .unwrap();
+    let (service, _, _) = service_with_registry(Arc::new(
+        InMemoryResourceKindRegistry::with_definitions(vec![
+            ResourceKindDefinition::new(kind.clone(), "Image", true).with_metadata(Some(schema)),
+        ]),
+    ));
+    let old_metadata = ResourceMetadata::builder()
+        .with_kind_metadata(
+            ResourceKindMetadata::new(
+                kind.clone(),
+                1,
+                json!({"width": 640, "height": 480})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            )
+            .unwrap(),
+        )
+        .build()
+        .unwrap();
+
+    let cleared = service
+        .derive_metadata_from_bytes(&kind, &old_metadata, b"not an image")
+        .unwrap();
+    assert!(cleared.kind_metadata().is_empty());
+
+    let mut png = vec![0; 24];
+    png[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+    png[12..16].copy_from_slice(b"IHDR");
+    png[16..20].copy_from_slice(&1920_u32.to_be_bytes());
+    png[20..24].copy_from_slice(&1080_u32.to_be_bytes());
+    let derived = service
+        .derive_metadata_from_bytes(&kind, &old_metadata, &png)
+        .unwrap();
+    let layer = derived.kind_metadata_for(&kind).unwrap();
+    assert_eq!(layer.data()["width"], 1920);
+    assert_eq!(layer.data()["height"], 1080);
 }
 
 #[test]

@@ -5,16 +5,34 @@ export type ActionAccess = "read_only" | "read_write";
 export type ActionExecutor = "builtin" | "plugin";
 export type ContentDelivery = "auto" | "inline" | "reference";
 
+export type JsonSchema = Record<string, unknown>;
+
+export interface ResourceKindMetadataLayer {
+  kind: string;
+  schemaVersion: number;
+  data: Record<string, unknown>;
+}
+
+export interface ResourceKindMetadataSet {
+  layers: ResourceKindMetadataLayer[];
+}
+
+export interface ResourceKindMetadataDefinition {
+  schemaVersion: number;
+  schema: JsonSchema;
+}
+
+export interface ResourceKindMetadataPatch {
+  upsert: ResourceKindMetadataLayer[];
+  clear: string[];
+}
+
 export interface ResourceMetadata {
   summary: {
     description: string | null;
     tags: string[];
   };
-  kindMetadata: {
-    kind: string;
-    schemaVersion: number;
-    data: Record<string, unknown>;
-  } | null;
+  kindMetadata: ResourceKindMetadataSet;
 }
 
 export interface ResourceContent {
@@ -60,6 +78,7 @@ export interface ResourceKind {
   source: string;
   actions: ResourceAction[];
   detect: { mimeTypes: string[]; extensions: string[] } | null;
+  metadata: ResourceKindMetadataDefinition | null;
 }
 
 export interface ResourcePage {

@@ -84,8 +84,6 @@ impl Resource {
     pub fn rehydrate(snapshot: ResourceSnapshot) -> Result<Self, ResourceError> {
         let name = normalize_resource_name(snapshot.name)?;
         snapshot.kind.validate()?;
-        snapshot.metadata.validate_for_kind(&snapshot.kind)?;
-
         Ok(Self {
             id: snapshot.id,
             name,
@@ -197,14 +195,24 @@ impl Resource {
     /// 修改资源类型。
     ///
     /// 已删除资源不能修改类型，新类型必须满足 `ResourceKind` 校验规则。
-    pub fn change_kind(&mut self, kind: impl Into<ResourceKind>) -> Result<(), ResourceError> {
+    pub fn change_kind(
+        &mut self,
+        kind: impl Into<ResourceKind>,
+        lineage: &[ResourceKind],
+    ) -> Result<(), ResourceError> {
         self.ensure_not_deleted()?;
         let kind = kind.into();
         kind.validate()?;
+        if !lineage.iter().any(|candidate| candidate == &kind) {
+            return Err(ResourceError::InvalidKindMetadata {
+                kind: kind.as_str().to_owned(),
+                reason: "target kind is missing from its lineage".to_owned(),
+            });
+        }
 
         if self.kind != kind {
             self.kind = kind;
-            self.metadata.clear_kind_metadata();
+            self.metadata.retain_kind_metadata_for_lineage(lineage);
             self.touch();
         }
 
@@ -256,9 +264,13 @@ impl Resource {
     }
 
     /// 替换资源元数据。
-    pub fn set_metadata(&mut self, metadata: ResourceMetadata) -> Result<(), ResourceError> {
+    pub fn set_metadata(
+        &mut self,
+        metadata: ResourceMetadata,
+        lineage: &[ResourceKind],
+    ) -> Result<(), ResourceError> {
         self.ensure_not_deleted()?;
-        metadata.validate_for_kind(&self.kind)?;
+        metadata.validate_for_lineage(lineage)?;
         if self.metadata != metadata {
             self.metadata = metadata;
             self.touch();
@@ -267,9 +279,13 @@ impl Resource {
     }
 
     /// 部分更新资源元数据，未出现在补丁中的分区保持不变。
-    pub fn patch_metadata(&mut self, patch: ResourceMetadataPatch) -> Result<(), ResourceError> {
+    pub fn patch_metadata(
+        &mut self,
+        patch: ResourceMetadataPatch,
+        lineage: &[ResourceKind],
+    ) -> Result<(), ResourceError> {
         self.ensure_not_deleted()?;
-        if self.metadata.apply_patch(patch, &self.kind)? {
+        if self.metadata.apply_patch(patch, lineage)? {
             self.touch();
         }
         Ok(())
@@ -381,7 +397,6 @@ impl ResourceBuilder {
     pub fn build(self) -> Result<Resource, ResourceError> {
         let name = normalize_resource_name(self.name)?;
         self.kind.validate()?;
-        self.metadata.validate_for_kind(&self.kind)?;
         let now = Utc::now();
 
         Ok(Resource {

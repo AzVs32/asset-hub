@@ -3,8 +3,11 @@ use crate::config::{KindRegistryConfig, ResourceKindConfig};
 use crate::plugin_manifest::PluginCatalog;
 use asset_core::CoreError;
 use asset_core::domain::ResourceKind;
-use asset_core::port::ResourceKindDefinition;
-use asset_plugin_api::{ResourceActionDefinition, ResourceContentMatcher, ResourceKindCapability};
+use asset_core::port::{ResourceKindDefinition, ResourceKindMetadataDefinition};
+use asset_plugin_api::{
+    ResourceActionDefinition, ResourceContentMatcher, ResourceKindCapability,
+    ResourceKindMetadataCapability,
+};
 
 pub(crate) fn registries_from_catalog(
     config: &KindRegistryConfig,
@@ -43,6 +46,7 @@ pub(super) fn build_registries_with_catalog(
                 parent,
                 true,
                 ResourceContentMatcher::default(),
+                None,
                 "builtin",
             )?,
         )?;
@@ -154,6 +158,7 @@ pub(super) fn definition_from_manifest_kind(
         config.parent.as_deref(),
         config.supports_content,
         config.detect.clone(),
+        config.metadata.as_ref(),
         source,
     )
 }
@@ -169,6 +174,7 @@ pub(super) fn definition_from_config(
         config.parent.as_deref(),
         config.supports_content,
         config.detect.clone(),
+        config.metadata.as_ref(),
         source,
     )
 }
@@ -179,8 +185,12 @@ pub(super) fn definition_from_parts(
     parent: Option<&str>,
     supports_content: bool,
     detect: ResourceContentMatcher,
+    metadata: Option<&ResourceKindMetadataCapability>,
     source: impl Into<String>,
 ) -> Result<ResourceKindDefinition, CoreError> {
+    let metadata = metadata
+        .map(|metadata| metadata_definition(kind, metadata))
+        .transpose()?;
     Ok(ResourceKindDefinition::with_source(
         ResourceKind::try_new(kind)?,
         label,
@@ -188,5 +198,19 @@ pub(super) fn definition_from_parts(
         source,
     )
     .with_parent(parent.map(ResourceKind::try_new).transpose()?)
-    .with_detect(detect))
+    .with_detect(detect)
+    .with_metadata(metadata))
+}
+
+fn metadata_definition(
+    kind: &str,
+    metadata: &ResourceKindMetadataCapability,
+) -> Result<ResourceKindMetadataDefinition, CoreError> {
+    jsonschema::draft202012::meta::validate(&metadata.schema).map_err(|error| {
+        CoreError::configuration(format!(
+            "resource kind `{kind}` declares an invalid metadata JSON Schema: {error}"
+        ))
+    })?;
+    ResourceKindMetadataDefinition::try_new(metadata.schema_version, metadata.schema.clone())
+        .map_err(Into::into)
 }

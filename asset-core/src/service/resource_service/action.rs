@@ -280,6 +280,12 @@ impl<'a> ResourceActionService<'a> {
                             .or_else(|| current_content.original_filename().map(str::to_string)),
                         checksums,
                     )?;
+                    let lineage = self.service.kind_registry.lineage(resource.kind());
+                    let metadata = self.service.derive_metadata_from_bytes(
+                        resource.kind(),
+                        resource.metadata(),
+                        &data,
+                    )?;
 
                     let expected_updated_at = resource.updated_at();
                     let previous = self.service.blob_storage.get(target_key).await?;
@@ -292,6 +298,7 @@ impl<'a> ResourceActionService<'a> {
                     }
                     self.service.blob_storage.put(target_key, data).await?;
                     resource.attach_content(content)?;
+                    resource.set_metadata(metadata, &lineage)?;
                     let saved = self
                         .service
                         .repository

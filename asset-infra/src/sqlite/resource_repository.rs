@@ -2,11 +2,11 @@ use crate::{config::DatabaseConfig, migration};
 use asset_core::CoreError;
 use asset_core::domain::{
     Resource, ResourceContent, ResourceDirectory, ResourceId, ResourceKind, ResourceKindMetadata,
-    ResourceMetadata, ResourceSnapshot, ResourceStatus, ResourceSummaryMetadata, StorageKey,
+    ResourceKindMetadataSet, ResourceMetadata, ResourceSnapshot, ResourceStatus,
+    ResourceSummaryMetadata, StorageKey,
 };
 use asset_core::port::{ListResources, ResourcePage, ResourceQuery, ResourceRepository};
 use chrono::{DateTime, Utc};
-use serde_json::{Map, Value};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow};
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool, Transaction};
 
@@ -30,9 +30,24 @@ const RESOURCE_SELECT: &str = r#"
             ),
             '[]'
         ) AS metadata_tags_json,
-        kind_metadata.kind AS metadata_kind,
-        kind_metadata.schema_version AS metadata_kind_schema_version,
-        kind_metadata.payload_json AS metadata_kind_payload_json,
+        COALESCE(
+            (
+                SELECT json_group_array(
+                    json_object(
+                        'kind', metadata_layers.kind,
+                        'schema_version', metadata_layers.schema_version,
+                        'data', json(metadata_layers.payload_json)
+                    )
+                )
+                FROM (
+                    SELECT kind, schema_version, payload_json
+                    FROM resource_kind_metadata
+                    WHERE resource_id = resources.id
+                    ORDER BY kind
+                ) AS metadata_layers
+            ),
+            '[]'
+        ) AS metadata_kind_layers_json,
         resources.content_json,
         resources.created_at,
         resources.updated_at,
@@ -40,8 +55,6 @@ const RESOURCE_SELECT: &str = r#"
     FROM resources
     INNER JOIN resource_metadata_summaries AS summaries
         ON summaries.resource_id = resources.id
-    LEFT JOIN resource_kind_metadata AS kind_metadata
-        ON kind_metadata.resource_id = resources.id
 "#;
 
 /// SQLite 版本的资源聚合仓储。
@@ -490,7 +503,13 @@ async fn sync_metadata(
         .map_err(|error| CoreError::repository("resource.save_metadata_tag", error))?;
     }
 
-    if let Some(metadata) = resource.metadata().kind_metadata() {
+    sqlx::query("DELETE FROM resource_kind_metadata WHERE resource_id = ?")
+        .bind(&resource_id)
+        .execute(&mut **transaction)
+        .await
+        .map_err(|error| CoreError::repository("resource.clear_kind_metadata", error))?;
+
+    for metadata in resource.metadata().kind_metadata().layers() {
         let payload_json = serde_json::to_string(metadata.data())
             .map_err(|error| CoreError::repository("resource.encode_kind_metadata", error))?;
         sqlx::query(
@@ -498,10 +517,6 @@ async fn sync_metadata(
             INSERT INTO resource_kind_metadata (
                 resource_id, kind, schema_version, payload_json
             ) VALUES (?, ?, ?, ?)
-            ON CONFLICT(resource_id) DO UPDATE SET
-                kind = excluded.kind,
-                schema_version = excluded.schema_version,
-                payload_json = excluded.payload_json
             "#,
         )
         .bind(&resource_id)
@@ -511,12 +526,6 @@ async fn sync_metadata(
         .execute(&mut **transaction)
         .await
         .map_err(|error| CoreError::repository("resource.save_kind_metadata", error))?;
-    } else {
-        sqlx::query("DELETE FROM resource_kind_metadata WHERE resource_id = ?")
-            .bind(&resource_id)
-            .execute(&mut **transaction)
-            .await
-            .map_err(|error| CoreError::repository("resource.clear_kind_metadata", error))?;
     }
 
     Ok(())
@@ -582,33 +591,10 @@ fn decode_metadata(row: &SqliteRow) -> Result<ResourceMetadata, CoreError> {
         .map_err(|error| CoreError::repository("resource.decode_metadata_tags", error))?;
     let summary = ResourceSummaryMetadata::new(description, tags)?;
 
-    let kind = column::<Option<String>>(row, "metadata_kind")?;
-    let schema_version = column::<Option<i64>>(row, "metadata_kind_schema_version")?;
-    let payload_json = column::<Option<String>>(row, "metadata_kind_payload_json")?;
-    let kind_metadata = match (kind, schema_version, payload_json) {
-        (None, None, None) => None,
-        (Some(kind), Some(schema_version), Some(payload_json)) => {
-            let schema_version = u32::try_from(schema_version).map_err(|error| {
-                CoreError::repository("resource.decode_kind_metadata_version", error)
-            })?;
-            let data = serde_json::from_str::<Map<String, Value>>(&payload_json)
-                .map_err(|error| CoreError::repository("resource.decode_kind_metadata", error))?;
-            Some(ResourceKindMetadata::new(
-                ResourceKind::try_new(kind)?,
-                schema_version,
-                data,
-            )?)
-        }
-        _ => {
-            return Err(CoreError::repository(
-                "resource.decode_kind_metadata",
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "kind metadata columns are incomplete",
-                ),
-            ));
-        }
-    };
+    let layers_json: String = column(row, "metadata_kind_layers_json")?;
+    let layers = serde_json::from_str::<Vec<ResourceKindMetadata>>(&layers_json)
+        .map_err(|error| CoreError::repository("resource.decode_kind_metadata", error))?;
+    let kind_metadata = ResourceKindMetadataSet::new(layers)?;
 
     Ok(ResourceMetadata::from_parts(summary, kind_metadata))
 }

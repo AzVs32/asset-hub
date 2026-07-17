@@ -21,6 +21,34 @@
         "detect": {
           "mime_types": ["image/*"],
           "extensions": [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".avif"]
+        },
+        "metadata": {
+          "schema_version": 1,
+          "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "readOnly": true,
+            "additionalProperties": false,
+            "properties": {
+              "width": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Display width in pixels when defined."
+              },
+              "height": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Display height in pixels when defined."
+              },
+              "frame_count": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "animated": {
+                "type": "boolean"
+              }
+            }
+          }
         }
       }
     ],

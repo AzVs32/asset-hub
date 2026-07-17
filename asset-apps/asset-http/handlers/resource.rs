@@ -42,6 +42,7 @@ pub(crate) async fn list_resource_kinds(
     responses(
         (status = 201, description = "资源已创建", body = ResourceResponse),
         (status = 400, description = "请求参数无效", body = crate::dto::ErrorResponse),
+        (status = 409, description = "kind metadata schema 版本冲突", body = crate::dto::ErrorResponse),
         (status = 500, description = "服务端错误", body = crate::dto::ErrorResponse)
     )
 )]
@@ -250,6 +251,7 @@ pub(crate) async fn find_resource(
         (status = 200, description = "资源已更新", body = ResourceResponse),
         (status = 400, description = "请求参数无效", body = crate::dto::ErrorResponse),
         (status = 404, description = "资源不存在", body = crate::dto::ErrorResponse),
+        (status = 409, description = "并发更新或 kind metadata schema 版本冲突", body = crate::dto::ErrorResponse),
         (status = 500, description = "服务端错误", body = crate::dto::ErrorResponse)
     )
 )]
@@ -402,7 +404,7 @@ pub(super) fn apply_common_resource_fields(
     kind: Option<String>,
     status: Option<String>,
     directory: Option<ResourceDirectory>,
-    metadata: Option<ResourceMetadataRequest>,
+    metadata: Option<ResourceMetadataCreateRequest>,
 ) -> Result<CreateResource, HttpError> {
     if let Some(kind) = kind {
         command = command.with_kind(parse_kind(kind)?);
@@ -438,7 +440,7 @@ pub(super) fn apply_common_stream_fields(
     }
 
     if let Some(metadata_json) = metadata_json {
-        let metadata = serde_json::from_str::<ResourceMetadataRequest>(&metadata_json)
+        let metadata = serde_json::from_str::<ResourceMetadataCreateRequest>(&metadata_json)
             .map_err(|error| HttpError::bad_request(format!("invalid metadata_json: {error}")))?;
         command = command.with_metadata(metadata.into_domain()?);
     }
@@ -482,7 +484,8 @@ pub(super) fn resource_response(
     resource: &asset_core::domain::Resource,
 ) -> Result<ResourceResponse, CoreError> {
     let actions = service.describe_resource_actions(resource)?;
-    Ok(ResourceResponse::new(resource, actions))
+    let lineage = service.describe_kind_lineage(resource.kind());
+    Ok(ResourceResponse::new(resource, actions, &lineage))
 }
 
 pub(super) fn resource_page_response(

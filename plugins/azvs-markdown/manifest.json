@@ -34,6 +34,32 @@
             ".mdown",
             ".mkd"
           ]
+        },
+        "metadata": {
+          "schema_version": 1,
+          "schema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "readOnly": true,
+            "additionalProperties": false,
+            "properties": {
+              "line_count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "word_count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "heading_count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "has_front_matter": {
+                "type": "boolean"
+              }
+            }
+          }
         }
       }
     ],

@@ -4,7 +4,9 @@
 //! 后续插件系统可以通过同一端口注册和暴露更多 kind。
 
 use crate::domain::ResourceKind;
+use crate::error::ResourceError;
 use asset_plugin_api::ResourceContentMatcher;
+use serde_json::Value;
 use std::collections::HashSet;
 
 /// 资源类型定义。
@@ -20,8 +22,108 @@ pub struct ResourceKindDefinition {
     supports_content: bool,
     /// 文件自动识别规则。
     detect: ResourceContentMatcher,
+    /// 该 kind 独立拥有的 metadata schema；父级 schema 由 lineage 分层继承。
+    metadata: Option<ResourceKindMetadataDefinition>,
     /// 定义来源，例如 `builtin`、`config` 或 `plugin:<id>`。
     source: String,
+}
+
+/// 单个 Kind 所拥有的 metadata schema 定义。
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResourceKindMetadataDefinition {
+    schema_version: u32,
+    schema: Value,
+}
+
+impl ResourceKindMetadataDefinition {
+    pub fn try_new(schema_version: u32, schema: Value) -> Result<Self, ResourceError> {
+        const DRAFT_2020_12: &str = "https://json-schema.org/draft/2020-12/schema";
+
+        if schema_version == 0 {
+            return Err(ResourceError::InvalidFormat {
+                field: "resource_kind.metadata.schema_version",
+                reason: "schema version must be greater than zero",
+            });
+        }
+        let Some(object) = schema.as_object() else {
+            return Err(ResourceError::InvalidFormat {
+                field: "resource_kind.metadata.schema",
+                reason: "JSON Schema must be an object",
+            });
+        };
+        if jsonschema::draft202012::meta::validate(&schema).is_err() {
+            return Err(ResourceError::InvalidFormat {
+                field: "resource_kind.metadata.schema",
+                reason: "JSON Schema must be valid Draft 2020-12",
+            });
+        }
+        if object.get("$schema").and_then(Value::as_str) != Some(DRAFT_2020_12) {
+            return Err(ResourceError::InvalidFormat {
+                field: "resource_kind.metadata.schema",
+                reason: "JSON Schema must explicitly use Draft 2020-12",
+            });
+        }
+        if object.get("type").and_then(Value::as_str) != Some("object") {
+            return Err(ResourceError::InvalidFormat {
+                field: "resource_kind.metadata.schema",
+                reason: "JSON Schema root type must be object",
+            });
+        }
+        if object.get("additionalProperties").and_then(Value::as_bool) != Some(false) {
+            return Err(ResourceError::InvalidFormat {
+                field: "resource_kind.metadata.schema",
+                reason: "JSON Schema must set additionalProperties to false",
+            });
+        }
+        if object.contains_key("readOnly")
+            && object.get("readOnly").and_then(Value::as_bool).is_none()
+        {
+            return Err(ResourceError::InvalidFormat {
+                field: "resource_kind.metadata.schema",
+                reason: "JSON Schema readOnly annotation must be a boolean",
+            });
+        }
+        if contains_non_local_reference(&schema) {
+            return Err(ResourceError::InvalidFormat {
+                field: "resource_kind.metadata.schema",
+                reason: "JSON Schema references must be local fragments",
+            });
+        }
+        Ok(Self {
+            schema_version,
+            schema,
+        })
+    }
+
+    pub fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+
+    pub fn schema(&self) -> &Value {
+        &self.schema
+    }
+
+    /// 根 schema 为 readOnly 时，该层只能由宿主或可信提取器写入。
+    pub fn is_read_only(&self) -> bool {
+        self.schema
+            .get("readOnly")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    }
+}
+
+fn contains_non_local_reference(value: &Value) -> bool {
+    match value {
+        Value::Object(object) => {
+            object
+                .get("$ref")
+                .and_then(Value::as_str)
+                .is_some_and(|reference| !reference.starts_with('#'))
+                || object.values().any(contains_non_local_reference)
+        }
+        Value::Array(values) => values.iter().any(contains_non_local_reference),
+        _ => false,
+    }
 }
 
 impl ResourceKindDefinition {
@@ -43,6 +145,7 @@ impl ResourceKindDefinition {
             label: label.into(),
             supports_content,
             detect: ResourceContentMatcher::default(),
+            metadata: None,
             source: source.into(),
         }
     }
@@ -55,6 +158,12 @@ impl ResourceKindDefinition {
     /// 设置文件自动识别规则。
     pub fn with_detect(mut self, detect: ResourceContentMatcher) -> Self {
         self.detect = detect;
+        self
+    }
+
+    /// 设置该 Kind 自己拥有的 metadata schema。
+    pub fn with_metadata(mut self, metadata: Option<ResourceKindMetadataDefinition>) -> Self {
+        self.metadata = metadata;
         self
     }
 
@@ -80,6 +189,10 @@ impl ResourceKindDefinition {
     /// 返回文件自动识别规则。
     pub fn detect(&self) -> &ResourceContentMatcher {
         &self.detect
+    }
+
+    pub fn metadata(&self) -> Option<&ResourceKindMetadataDefinition> {
+        self.metadata.as_ref()
     }
 
     /// 返回定义来源。

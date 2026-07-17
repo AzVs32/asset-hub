@@ -38,6 +38,16 @@ JSON Schema and starter template. The runtime currently accepts V2 as a migratio
 normalizes its aliases and permissions to the V3 Rust representation. Compatibility-only V2
 syntax is intentionally not valid against the V3 schema.
 
+### Kind metadata declaration
+
+A Manifest V3 kind may declare an optional `metadata` capability containing a positive
+`schema_version` and a Draft 2020-12 JSON Schema. The schema root must be an object, set
+`additionalProperties` to `false`, and use only local `$ref` fragments. Each kind owns only its
+own metadata layer; a child does not copy its parent schema or fields. Mark intrinsic,
+content-derived schemas with root-level `readOnly: true`; the host rejects ordinary client writes
+to those layers and invalidates them when content changes. Omit `metadata` entirely when the kind
+has no facts beyond `ResourceContent` fields such as size, MIME type, filename, and checksums.
+
 Additive optional fields may remain in the current Manifest version. Removing or renaming fields,
 adding required fields, or changing declaration semantics requires a new Manifest version and a
 new schema document. The host must validate the declared version before registering capabilities.

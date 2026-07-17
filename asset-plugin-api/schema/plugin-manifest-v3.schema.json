@@ -90,7 +90,27 @@
         "parent": { "$ref": "#/$defs/canonicalId" },
         "label": { "$ref": "#/$defs/nonBlankString" },
         "supports_content": { "type": "boolean", "default": true },
-        "detect": { "$ref": "#/$defs/contentMatcher" }
+        "detect": { "$ref": "#/$defs/contentMatcher" },
+        "metadata": { "$ref": "#/$defs/kindMetadata" }
+      }
+    },
+    "kindMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "schema"],
+      "properties": {
+        "schema_version": { "type": "integer", "minimum": 1 },
+        "schema": { "$ref": "#/$defs/kindMetadataSchema" }
+      }
+    },
+    "kindMetadataSchema": {
+      "type": "object",
+      "required": ["$schema", "type", "additionalProperties"],
+      "properties": {
+        "$schema": { "const": "https://json-schema.org/draft/2020-12/schema" },
+        "type": { "const": "object" },
+        "readOnly": { "type": "boolean" },
+        "additionalProperties": { "const": false }
       }
     },
     "contentMatcher": {

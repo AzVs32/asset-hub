@@ -3,9 +3,9 @@ use crate::dto::{
     CreateDirectoryRequest, CreateResourceRequest, DirectoryListingResponse,
     ExecuteResourceActionRequest, HealthResponse, ListDirectoryQuery, ListResourcesQuery,
     ResourceActionOutputResponse, ResourceDirectoryResponse, ResourceKindResponse,
-    ResourceKindsResponse, ResourceMetadataRequest, ResourcePageResponse, ResourceReadResponse,
-    ResourceResponse, ScanStorageErrorResponse, ScanStorageRequest, ScanStorageResponse,
-    UpdateResourceRequest, UploadResourceContentStreamQuery,
+    ResourceKindsResponse, ResourceMetadataCreateRequest, ResourcePageResponse,
+    ResourceReadResponse, ResourceResponse, ScanStorageErrorResponse, ScanStorageRequest,
+    ScanStorageResponse, UpdateResourceRequest, UploadResourceContentStreamQuery,
 };
 use crate::error::HttpError;
 use crate::state::HttpState;

@@ -20,6 +20,7 @@ pub(super) const DEFAULT_CONTENT_TYPE: &str = "application/octet-stream";
     responses(
         (status = 201, description = "资源内容已流式上传并创建资源", body = ResourceResponse),
         (status = 400, description = "请求参数无效", body = crate::dto::ErrorResponse),
+        (status = 409, description = "kind metadata schema 版本冲突", body = crate::dto::ErrorResponse),
         (status = 500, description = "服务端错误", body = crate::dto::ErrorResponse)
     )
 )]

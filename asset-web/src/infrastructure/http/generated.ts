@@ -483,7 +483,7 @@ export interface components {
             directory?: string | null;
             /** @description 可选资源类型。 */
             kind?: string | null;
-            metadata?: null | components["schemas"]["ResourceMetadataRequest"];
+            metadata?: null | components["schemas"]["ResourceMetadataCreateRequest"];
             /** @description 资源展示名。 */
             name: string;
             /** @description 可选初始状态：`active` 或 `archived`。 */
@@ -663,12 +663,37 @@ export interface components {
             /** @description 目录完整路径。 */
             path: string;
         };
-        /** @description 资源类型专属元数据响应。 */
-        ResourceKindMetadataResponse: {
-            data: unknown;
+        ResourceKindMetadataCreateRequest: {
+            layers?: components["schemas"]["ResourceKindMetadataLayerRequest"][];
+        };
+        ResourceKindMetadataDefinitionResponse: {
+            schema: unknown;
+            /** Format: int32 */
+            schema_version: number;
+        };
+        ResourceKindMetadataLayerRequest: {
+            data: {
+                [key: string]: unknown;
+            };
             kind: string;
             /** Format: int32 */
             schema_version: number;
+        };
+        ResourceKindMetadataLayerResponse: {
+            data: {
+                [key: string]: unknown;
+            };
+            kind: string;
+            /** Format: int32 */
+            schema_version: number;
+        };
+        ResourceKindMetadataPatchRequest: {
+            clear?: string[];
+            upsert?: components["schemas"]["ResourceKindMetadataLayerRequest"][];
+        };
+        /** @description 资源类型专属元数据集合响应。 */
+        ResourceKindMetadataResponse: {
+            layers: components["schemas"]["ResourceKindMetadataLayerResponse"][];
         };
         /** @description 资源类型响应。 */
         ResourceKindResponse: {
@@ -681,6 +706,7 @@ export interface components {
             kind: string;
             /** @description 展示名称。 */
             label: string;
+            metadata?: null | components["schemas"]["ResourceKindMetadataDefinitionResponse"];
             /** @description 直接父类型；根类型为 null。 */
             parent?: string | null;
             /** @description 定义来源：`builtin`、`config` 或 `plugin:<id>`。 */
@@ -694,7 +720,7 @@ export interface components {
             items: components["schemas"]["ResourceKindResponse"][];
         };
         /**
-         * @description 创建或上传资源时可传入的资源元数据。
+         * @description 创建或上传资源时可传入的完整资源元数据。
          * @example {
          *       "summary": {
          *         "description": "Human readable resource description",
@@ -702,10 +728,19 @@ export interface components {
          *           "demo",
          *           "asset"
          *         ]
+         *       },
+         *       "kind_metadata": {
+         *         "layers": []
          *       }
          *     }
          */
-        ResourceMetadataRequest: {
+        ResourceMetadataCreateRequest: {
+            kind_metadata?: null | components["schemas"]["ResourceKindMetadataCreateRequest"];
+            summary?: null | components["schemas"]["ResourceSummaryMetadataRequest"];
+        };
+        /** @description 更新资源时使用的 metadata 补丁。 */
+        ResourceMetadataPatchRequest: {
+            kind_metadata?: null | components["schemas"]["ResourceKindMetadataPatchRequest"];
             summary?: null | components["schemas"]["ResourceSummaryMetadataRequest"];
         };
         /**
@@ -718,12 +753,14 @@ export interface components {
          *           "asset"
          *         ]
          *       },
-         *       "kind_metadata": null
+         *       "kind_metadata": {
+         *         "layers": []
+         *       }
          *     }
          */
         ResourceMetadataResponse: {
-            /** @description 当前 kind 的扩展元数据；尚未定义时为 null。 */
-            kind_metadata?: null | components["schemas"]["ResourceKindMetadataResponse"];
+            /** @description 当前 kind 谱系上各 owner kind 独立拥有的扩展元数据。 */
+            kind_metadata: components["schemas"]["ResourceKindMetadataResponse"];
             /** @description 核心摘要元数据。 */
             summary: components["schemas"]["ResourceSummaryMetadataResponse"];
         };
@@ -876,7 +913,7 @@ export interface components {
             directory?: string | null;
             /** @description 可选新资源类型。 */
             kind?: string | null;
-            metadata?: null | components["schemas"]["ResourceMetadataRequest"];
+            metadata?: null | components["schemas"]["ResourceMetadataPatchRequest"];
             /** @description 可选新资源展示名。 */
             name?: string | null;
             /** @description 是否恢复软删除资源。 */
@@ -896,7 +933,7 @@ export interface components {
             directory?: string | null;
             /** @description 可选资源类型。 */
             kind?: string | null;
-            /** @description 可选 JSON 字符串形式的资源元数据，结构与 `ResourceMetadataRequest` 一致。 */
+            /** @description 可选 JSON 字符串形式的资源元数据，结构与 `ResourceMetadataCreateRequest` 一致。 */
             metadata_json?: string | null;
             /** @description 资源展示名。 */
             name: string;
@@ -1458,6 +1495,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description kind metadata schema 版本冲突 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description 服务端错误 */
             500: {
                 headers: {
@@ -1482,7 +1528,7 @@ export interface operations {
                 kind?: string;
                 /** @description 可选初始状态：`active` 或 `archived`。 */
                 status?: string;
-                /** @description 可选 JSON 字符串形式的资源元数据，结构与 `ResourceMetadataRequest` 一致。 */
+                /** @description 可选 JSON 字符串形式的资源元数据，结构与 `ResourceMetadataCreateRequest` 一致。 */
                 metadata_json?: string;
                 /** @description 可选原始文件名。 */
                 original_filename?: string;
@@ -1511,6 +1557,15 @@ export interface operations {
             };
             /** @description 请求参数无效 */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description kind metadata schema 版本冲突 */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1665,6 +1720,15 @@ export interface operations {
             };
             /** @description 资源不存在 */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 并发更新或 kind metadata schema 版本冲突 */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

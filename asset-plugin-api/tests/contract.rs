@@ -84,6 +84,58 @@ fn manifest_matchers_are_schema_valid_and_normalized_by_serde() {
 }
 
 #[test]
+fn kind_metadata_capability_passes_manifest_and_json_schema_contracts() {
+    let mut value: Value = serde_json::from_str(MANIFEST_TEMPLATE).unwrap();
+    value["capabilities"]["kinds"] = json!([{
+        "kind": "example:image",
+        "parent": "core:image",
+        "metadata": {
+            "schema_version": 1,
+            "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "readOnly": true,
+                "additionalProperties": false,
+                "properties": {
+                    "quality": {"type": "integer", "minimum": 0, "maximum": 100}
+                }
+            }
+        }
+    }]);
+
+    let manifest = canonical_manifest(&value).unwrap();
+    let metadata = manifest.capabilities.resource_kinds[0]
+        .metadata
+        .as_ref()
+        .unwrap();
+    assert_eq!(metadata.schema_version, 1);
+    jsonschema::draft202012::meta::validate(&metadata.schema).unwrap();
+}
+
+#[test]
+fn bundled_kind_metadata_schemas_are_valid_read_only_draft_2020_12_objects() {
+    let manifests = [
+        include_str!("../../asset-infra/src/official_plugins/core_image/manifest.json"),
+        include_str!("../../asset-infra/src/official_plugins/core_document/manifest.json"),
+        include_str!("../../asset-infra/src/official_plugins/core_video/manifest.json"),
+        include_str!("../../plugins/azvs-markdown/manifest.json"),
+        include_str!("../../plugins/azvs-epub/manifest.json"),
+    ];
+
+    for source in manifests {
+        let value: Value = serde_json::from_str(source).unwrap();
+        let manifest = canonical_manifest(&value).unwrap();
+        for kind in manifest.capabilities.resource_kinds {
+            let metadata = kind.metadata.expect("bundled kind must declare metadata");
+            jsonschema::draft202012::meta::validate(&metadata.schema).unwrap();
+            assert_eq!(metadata.schema["readOnly"], true);
+            assert_eq!(metadata.schema["additionalProperties"], false);
+            assert!(metadata.schema.get("required").is_none());
+        }
+    }
+}
+
+#[test]
 fn v2_compatibility_is_runtime_only_and_serializes_to_the_canonical_shape() {
     let mut value: Value = serde_json::from_str(MANIFEST_TEMPLATE).unwrap();
     value.as_object_mut().unwrap().remove("$schema");

@@ -6,6 +6,7 @@ mod runtime;
 pub use capabilities::{
     ActionAppliesTo, ActionRequirements, ActionUi, ContentDelivery, ManifestActionAccess,
     PluginCapabilities, ResourceActionCapability, ResourceKindCapability,
+    ResourceKindMetadataCapability,
 };
 pub use lock::{PluginManifestLock, PluginRuntimeLock, PluginWebLock};
 pub use permissions::{
@@ -17,6 +18,7 @@ pub use runtime::PluginRuntime;
 pub use web::PluginWeb;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashSet;
 
 mod web {
@@ -218,6 +220,8 @@ const SUPPORTED_VIEWS: &[&str] = &[
     "form",
 ];
 
+const JSON_SCHEMA_DRAFT_2020_12: &str = "https://json-schema.org/draft/2020-12/schema";
+
 fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
     let capabilities = &manifest.capabilities;
     let mut action_ids = HashSet::new();
@@ -229,6 +233,9 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
             .is_some_and(|parent| parent.trim().is_empty())
         {
             return Err("capabilities.kinds[].parent must not be empty".to_string());
+        }
+        if let Some(metadata) = &kind.metadata {
+            validate_kind_metadata(&kind.kind, metadata)?;
         }
     }
     for action in &capabilities.resource_actions {
@@ -303,6 +310,58 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn validate_kind_metadata(
+    kind: &str,
+    metadata: &ResourceKindMetadataCapability,
+) -> Result<(), String> {
+    let field = format!("capabilities.kinds[`{kind}`].metadata");
+    if metadata.schema_version == 0 {
+        return Err(format!("{field}.schema_version must be greater than zero"));
+    }
+
+    let schema = metadata
+        .schema
+        .as_object()
+        .ok_or_else(|| format!("{field}.schema must be a JSON object"))?;
+    if schema.get("$schema").and_then(Value::as_str) != Some(JSON_SCHEMA_DRAFT_2020_12) {
+        return Err(format!(
+            "{field}.schema.$schema must be `{JSON_SCHEMA_DRAFT_2020_12}`"
+        ));
+    }
+    if schema.get("type").and_then(Value::as_str) != Some("object") {
+        return Err(format!("{field}.schema must describe an object"));
+    }
+    if schema.contains_key("readOnly") && schema.get("readOnly").and_then(Value::as_bool).is_none()
+    {
+        return Err(format!("{field}.schema.readOnly must be a boolean"));
+    }
+    if schema.get("additionalProperties").and_then(Value::as_bool) != Some(false) {
+        return Err(format!("{field}.schema.additionalProperties must be false"));
+    }
+    if let Some(reference) = find_non_local_schema_reference(&metadata.schema) {
+        return Err(format!(
+            "{field}.schema contains non-local $ref `{reference}`"
+        ));
+    }
+
+    Ok(())
+}
+
+fn find_non_local_schema_reference(value: &Value) -> Option<&str> {
+    match value {
+        Value::Object(object) => {
+            if let Some(reference) = object.get("$ref").and_then(Value::as_str)
+                && !reference.starts_with('#')
+            {
+                return Some(reference);
+            }
+            object.values().find_map(find_non_local_schema_reference)
+        }
+        Value::Array(values) => values.iter().find_map(find_non_local_schema_reference),
+        _ => None,
+    }
 }
 
 fn validate_relative_path(field: &str, path: &std::path::Path) -> Result<(), String> {
