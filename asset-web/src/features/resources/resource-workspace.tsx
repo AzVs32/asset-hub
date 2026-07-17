@@ -72,10 +72,7 @@ export function ResourceWorkspace() {
         loading={browser.listing.isFetching}
         error={browser.listing.error}
         onFilters={browser.updateFilters}
-        onOpenDirectory={(path) => {
-          browser.openDirectory(path);
-          browser.selectResource(null);
-        }}
+        onOpenDirectory={browser.openDirectory}
         onSelect={selectResource}
         onAction={(item, action) => commands.execute.mutate({ resource: item, action })}
         onRefresh={() => void browser.listing.refetch()}

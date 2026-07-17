@@ -76,10 +76,26 @@ export function useResourceListing() {
     [setSearchParams],
   );
 
+  const openDirectory = useCallback(
+    (directory: string) => {
+      setSearchParams(
+        (current) => {
+          const next = new URLSearchParams(current);
+          setOrDelete(next, "directory", directory);
+          next.delete("page");
+          next.delete("resource");
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
   return {
     filters,
     updateFilters,
-    openDirectory: (directory: string) => updateFilters({ directory, page: 1 }),
+    openDirectory,
     selectResource,
     selectedId: searchParams.get("resource"),
     listing,
