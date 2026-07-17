@@ -127,7 +127,7 @@ impl<'a> ResourceCommandService<'a> {
         }
 
         if let Some(metadata) = command.metadata {
-            resource.set_metadata(metadata)?;
+            resource.patch_metadata(metadata)?;
         }
 
         if !self

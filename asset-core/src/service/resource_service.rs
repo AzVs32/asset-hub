@@ -9,7 +9,7 @@
 use crate::CoreError;
 use crate::domain::{
     Checksum, ChecksumKind, Resource, ResourceContent, ResourceDirectory, ResourceId, ResourceKind,
-    ResourceMetadata, ResourceStatus, StorageKey,
+    ResourceMetadata, ResourceMetadataPatch, ResourceStatus, StorageKey,
 };
 use crate::port::{
     BlobByteStream, BlobStorage, ListResources, ResourceActionExecutor, ResourceActionOutput,
@@ -359,8 +359,8 @@ pub struct UpdateResource {
     kind: Option<ResourceKind>,
     /// 新生命周期状态。
     status: Option<ResourceStatus>,
-    /// 新资源元数据。
-    metadata: Option<ResourceMetadata>,
+    /// 资源元数据部分更新。
+    metadata: Option<ResourceMetadataPatch>,
     /// 是否从软删除状态恢复。
     restore: bool,
 }
@@ -395,9 +395,9 @@ impl UpdateResource {
         self
     }
 
-    /// 设置资源元数据。
-    pub fn with_metadata(mut self, metadata: impl Into<ResourceMetadata>) -> Self {
-        self.metadata = Some(metadata.into());
+    /// 设置资源元数据补丁。
+    pub fn with_metadata(mut self, metadata: ResourceMetadataPatch) -> Self {
+        self.metadata = Some(metadata);
         self
     }
 

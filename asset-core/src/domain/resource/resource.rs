@@ -1,6 +1,6 @@
 use super::{
-    ResourceContent, ResourceDirectory, ResourceKind, ResourceMetadata, ResourceStatus,
-    normalize_required_text,
+    ResourceContent, ResourceDirectory, ResourceKind, ResourceMetadata, ResourceMetadataPatch,
+    ResourceStatus, normalize_required_text,
 };
 use crate::error::ResourceError;
 use chrono::{DateTime, Utc};
@@ -84,6 +84,7 @@ impl Resource {
     pub fn rehydrate(snapshot: ResourceSnapshot) -> Result<Self, ResourceError> {
         let name = normalize_resource_name(snapshot.name)?;
         snapshot.kind.validate()?;
+        snapshot.metadata.validate_for_kind(&snapshot.kind)?;
 
         Ok(Self {
             id: snapshot.id,
@@ -203,6 +204,7 @@ impl Resource {
 
         if self.kind != kind {
             self.kind = kind;
+            self.metadata.clear_kind_metadata();
             self.touch();
         }
 
@@ -256,8 +258,20 @@ impl Resource {
     /// 替换资源元数据。
     pub fn set_metadata(&mut self, metadata: ResourceMetadata) -> Result<(), ResourceError> {
         self.ensure_not_deleted()?;
-        self.metadata = metadata;
-        self.touch();
+        metadata.validate_for_kind(&self.kind)?;
+        if self.metadata != metadata {
+            self.metadata = metadata;
+            self.touch();
+        }
+        Ok(())
+    }
+
+    /// 部分更新资源元数据，未出现在补丁中的分区保持不变。
+    pub fn patch_metadata(&mut self, patch: ResourceMetadataPatch) -> Result<(), ResourceError> {
+        self.ensure_not_deleted()?;
+        if self.metadata.apply_patch(patch, &self.kind)? {
+            self.touch();
+        }
         Ok(())
     }
 
@@ -367,6 +381,7 @@ impl ResourceBuilder {
     pub fn build(self) -> Result<Resource, ResourceError> {
         let name = normalize_resource_name(self.name)?;
         self.kind.validate()?;
+        self.metadata.validate_for_kind(&self.kind)?;
         let now = Utc::now();
 
         Ok(Resource {

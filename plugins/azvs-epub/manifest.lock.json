@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "plugin_id": "azvs.epub",
   "runtime": {
-    "wasm_sha256": "8e2ec1dcf125661c768ccaff51ead68a525aab2004886280fc8064b36f3be2c1"
+    "wasm_sha256": "103bb62de85f6804e8444e80d95f5d28fdd9f688803a374841554103f911adbe"
   },
   "web": {
     "integrity": {

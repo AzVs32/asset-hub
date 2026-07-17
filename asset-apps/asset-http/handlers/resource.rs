@@ -280,7 +280,7 @@ pub(crate) async fn update_resource(
     }
 
     if let Some(metadata) = payload.metadata {
-        command = command.with_metadata(metadata.into_domain()?);
+        command = command.with_metadata(metadata.into_patch()?);
     }
 
     if let Some(restore) = payload.restore {

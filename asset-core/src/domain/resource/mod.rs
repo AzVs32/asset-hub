@@ -9,7 +9,10 @@ mod status;
 pub use content::{Checksum, ChecksumKind, ResourceContent, ResourceContentBuilder, StorageKey};
 pub use directory::ResourceDirectory;
 pub use kind::ResourceKind;
-pub use metadata::{ResourceMetadata, ResourceMetadataBuilder, ResourceSummaryMetadata};
+pub use metadata::{
+    ResourceKindMetadata, ResourceKindMetadataPatch, ResourceMetadata, ResourceMetadataBuilder,
+    ResourceMetadataPatch, ResourceSummaryMetadata, ResourceTag,
+};
 pub use resource::{Resource, ResourceBuilder, ResourceId, ResourceSnapshot};
 pub use status::ResourceStatus;
 

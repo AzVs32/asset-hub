@@ -576,7 +576,8 @@ async fn create_resource_accepts_structured_metadata_and_rejects_metadata_string
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(resource["name"], "resources_not_blob");
     assert_eq!(resource["kind"], "core:unknown");
-    assert_eq!(resource["metadata"]["schema_version"], 1);
+    assert!(resource["metadata"].get("schema_version").is_none());
+    assert!(resource["metadata"]["kind_metadata"].is_null());
     assert_eq!(
         resource["metadata"]["summary"]["description"],
         "metadata-only resource"

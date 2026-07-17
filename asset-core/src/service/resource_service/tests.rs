@@ -126,9 +126,13 @@ impl ResourceQuery for InMemoryResourceRepository {
                     .is_none_or(|kind| resource.kind().as_str() == kind.as_str())
             })
             .filter(|resource| {
-                query
-                    .tag()
-                    .is_none_or(|tag| resource.metadata().tags().iter().any(|value| value == tag))
+                query.tag().is_none_or(|tag| {
+                    resource
+                        .metadata()
+                        .tags()
+                        .iter()
+                        .any(|value| value.as_str() == tag)
+                })
             })
             .filter(|resource| query.q().is_none_or(|q| resource.name().contains(q)))
             .filter(|resource| {
@@ -690,7 +694,15 @@ fn create_resource_saves_metadata_only_resource() {
     assert!(resource.kind().is("doc:markdown"));
     assert!(resource.content().is_none());
     assert_eq!(saved.metadata().description(), Some("Design document"));
-    assert_eq!(saved.metadata().tags(), &["rust", "asset"]);
+    assert_eq!(
+        saved
+            .metadata()
+            .tags()
+            .iter()
+            .map(|tag| tag.as_str())
+            .collect::<Vec<_>>(),
+        vec!["rust", "asset"]
+    );
 }
 
 #[test]

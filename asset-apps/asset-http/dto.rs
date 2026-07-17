@@ -1,6 +1,7 @@
 use asset_core::ResourceError;
 use asset_core::domain::{
     Checksum, Resource, ResourceContent, ResourceDirectory, ResourceMetadata,
+    ResourceMetadataPatch, ResourceSummaryMetadata,
 };
 use asset_core::port::{ResourceActionOutput, ResourceKindDefinition, StoragePrefix};
 use asset_core::service::{ReadableResource, ResourceActions};
@@ -126,7 +127,7 @@ pub(crate) struct UpdateResourceRequest {
     /// 可选新逻辑目录；根目录为空字符串。
     #[schema(value_type = Option<String>)]
     pub(crate) directory: Option<ResourceDirectory>,
-    /// 可选新资源元数据；会整体替换旧元数据。
+    /// 可选资源元数据补丁；当前只允许替换 summary，kind metadata 保持不变。
     pub(crate) metadata: Option<ResourceMetadataRequest>,
     /// 是否恢复软删除资源。
     pub(crate) restore: Option<bool>,
@@ -466,22 +467,40 @@ impl ResourceMetadataRequest {
 
         builder.build()
     }
+
+    /// 转换为只修改核心摘要的补丁；预留的 kind metadata 保持不变。
+    pub(crate) fn into_patch(self) -> Result<ResourceMetadataPatch, ResourceError> {
+        let Some(summary) = self.summary else {
+            return Ok(ResourceMetadataPatch::new());
+        };
+        let summary =
+            ResourceSummaryMetadata::new(summary.description, summary.tags.unwrap_or_default())?;
+        Ok(ResourceMetadataPatch::new().with_summary(summary))
+    }
 }
 
 /// 资源元数据响应。
 #[derive(Debug, Serialize, ToSchema)]
 #[schema(example = json!({
-    "schema_version": 1,
     "summary": {
         "description": "Human readable resource description",
         "tags": ["demo", "asset"]
-    }
+    },
+    "kind_metadata": null
 }))]
 pub(crate) struct ResourceMetadataResponse {
-    /// 元数据结构版本，由服务端维护。
-    pub(crate) schema_version: u32,
     /// 核心摘要元数据。
     pub(crate) summary: ResourceSummaryMetadataResponse,
+    /// 当前 kind 的扩展元数据；尚未定义时为 null。
+    pub(crate) kind_metadata: Option<ResourceKindMetadataResponse>,
+}
+
+/// 资源类型专属元数据响应。
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct ResourceKindMetadataResponse {
+    pub(crate) kind: String,
+    pub(crate) schema_version: u32,
+    pub(crate) data: Value,
 }
 
 /// 资源核心摘要元数据响应。
@@ -496,11 +515,21 @@ pub(crate) struct ResourceSummaryMetadataResponse {
 impl From<&ResourceMetadata> for ResourceMetadataResponse {
     fn from(metadata: &ResourceMetadata) -> Self {
         Self {
-            schema_version: metadata.schema_version(),
             summary: ResourceSummaryMetadataResponse {
                 description: metadata.description().map(str::to_string),
-                tags: metadata.tags().to_vec(),
+                tags: metadata
+                    .tags()
+                    .iter()
+                    .map(|tag| tag.as_str().to_owned())
+                    .collect(),
             },
+            kind_metadata: metadata.kind_metadata().map(|kind_metadata| {
+                ResourceKindMetadataResponse {
+                    kind: kind_metadata.kind().as_str().to_owned(),
+                    schema_version: kind_metadata.schema_version(),
+                    data: Value::Object(kind_metadata.data().clone()),
+                }
+            }),
         }
     }
 }

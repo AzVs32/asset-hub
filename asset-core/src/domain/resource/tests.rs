@@ -128,7 +128,15 @@ fn resource_builder_accepts_metadata_and_content() {
     assert_eq!(content.mime_type(), Some("image/png"));
     assert_eq!(content.original_filename(), Some("image.png"));
     assert_eq!(content.checksums().collect::<Vec<_>>(), vec![&checksum]);
-    assert_eq!(resource.metadata().tags(), &["rust", "asset"]);
+    assert_eq!(
+        resource
+            .metadata()
+            .tags()
+            .iter()
+            .map(ResourceTag::as_str)
+            .collect::<Vec<_>>(),
+        vec!["rust", "asset"]
+    );
 }
 
 #[test]
@@ -160,50 +168,119 @@ fn metadata_supports_object_access() {
 
     metadata.add_tag(" rust ").unwrap();
 
-    assert_eq!(
-        metadata.schema_version(),
-        ResourceMetadata::current_schema_version()
-    );
-    assert_eq!(metadata.tags(), &["rust"]);
+    assert_eq!(metadata.tags()[0].as_str(), "rust");
     assert!(!metadata.is_empty());
 }
 
 #[test]
 fn metadata_accepts_summary() {
-    let metadata = ResourceMetadata::from_persisted_value(json!({
-        "schema_version": 1,
+    let metadata = serde_json::from_value::<ResourceMetadata>(json!({
         "summary": {
             "description": "A resource",
             "tags": ["asset"]
-        }
+        },
+        "kind_metadata": null
     }))
     .unwrap();
 
     assert_eq!(metadata.description(), Some("A resource"));
-    assert_eq!(metadata.tags(), &["asset"]);
+    assert_eq!(metadata.tags()[0].as_str(), "asset");
 }
 
 #[test]
-fn persisted_metadata_rejects_missing_or_legacy_fields() {
+fn metadata_deserialization_rejects_missing_or_unknown_fields() {
     for value in [
         json!(null),
         json!({}),
-        json!({"schema_version": 1}),
-        json!({"schema_version": 1, "summary": {}}),
-        json!({"schema_version": 1, "summary": {"tags": []}}),
+        json!({"summary": {}}),
+        json!({"summary": {"tags": []}}),
+        json!({"summary": {"description": null, "tags": []}}),
         json!({
-            "schema_version": 1,
             "summary": {"description": null, "tags": []},
             "legacy": true
         }),
         json!({
-            "schema_version": 1,
             "summary": {"description": null, "tags": []},
             "kind": {}
         }),
     ] {
-        assert!(ResourceMetadata::from_persisted_value(value).is_err());
+        assert!(serde_json::from_value::<ResourceMetadata>(value).is_err());
     }
+}
+
+#[test]
+fn kind_metadata_must_match_resource_kind() {
+    let kind_metadata = ResourceKindMetadata::new(
+        ResourceKind::from("core:image"),
+        1,
+        serde_json::Map::from_iter([("width".to_owned(), json!(1200))]),
+    )
+    .unwrap();
+    let metadata = ResourceMetadata::builder()
+        .with_kind_metadata(kind_metadata)
+        .build()
+        .unwrap();
+
+    assert!(
+        Resource::builder("image")
+            .with_kind("core:image")
+            .with_metadata(metadata.clone())
+            .build()
+            .is_ok()
+    );
+    assert!(
+        Resource::builder("document")
+            .with_kind("core:document")
+            .with_metadata(metadata)
+            .build()
+            .is_err()
+    );
+}
+
+#[test]
+fn changing_kind_clears_kind_metadata_but_preserves_summary() {
+    let kind_metadata =
+        ResourceKindMetadata::new(ResourceKind::from("core:image"), 1, serde_json::Map::new())
+            .unwrap();
+    let metadata = ResourceMetadata::builder()
+        .with_description("cover")
+        .with_kind_metadata(kind_metadata)
+        .build()
+        .unwrap();
+    let mut resource = Resource::builder("image")
+        .with_kind("core:image")
+        .with_metadata(metadata)
+        .build()
+        .unwrap();
+
+    resource.change_kind("core:document").unwrap();
+
+    assert_eq!(resource.metadata().description(), Some("cover"));
+    assert!(resource.metadata().kind_metadata().is_none());
+}
+
+#[test]
+fn summary_patch_preserves_kind_metadata() {
+    let kind_metadata =
+        ResourceKindMetadata::new(ResourceKind::from("core:image"), 1, serde_json::Map::new())
+            .unwrap();
+    let metadata = ResourceMetadata::builder()
+        .with_kind_metadata(kind_metadata.clone())
+        .build()
+        .unwrap();
+    let mut resource = Resource::builder("image")
+        .with_kind("core:image")
+        .with_metadata(metadata)
+        .build()
+        .unwrap();
+    let summary = ResourceSummaryMetadata::new(Some("cover".to_owned()), vec![]).unwrap();
+
+    resource
+        .patch_metadata(ResourceMetadataPatch::new().with_summary(summary))
+        .unwrap();
+
+    assert_eq!(resource.metadata().description(), Some("cover"));
+    assert_eq!(resource.metadata().kind_metadata(), Some(&kind_metadata));
 }
 
 #[test]

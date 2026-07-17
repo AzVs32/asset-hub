@@ -16,6 +16,9 @@ use std::sync::{Arc, Mutex};
 
 use super::permissions::manifest_for_plugin;
 
+/// 插件 action request 中 metadata 信封的 ABI 版本，与领域存储模型独立。
+const PLUGIN_RESOURCE_METADATA_SCHEMA_VERSION: u32 = 1;
+
 #[derive(Clone)]
 pub(super) struct HostContentResolver {
     pub(super) storage: Arc<dyn BlobStorage>,
@@ -330,10 +333,16 @@ pub(super) fn build_payload(
             kind: resource.kind().as_str().to_string(),
             status: resource.status().as_str().to_string(),
             metadata: PluginResourceMetadata {
-                schema_version: resource.metadata().schema_version(),
+                // 这是 plugin action request 的边界版本，不是领域 metadata 的存储版本。
+                schema_version: PLUGIN_RESOURCE_METADATA_SCHEMA_VERSION,
                 summary: PluginResourceSummaryMetadata {
                     description: resource.metadata().description().map(str::to_string),
-                    tags: resource.metadata().tags().to_vec(),
+                    tags: resource
+                        .metadata()
+                        .tags()
+                        .iter()
+                        .map(|tag| tag.as_str().to_owned())
+                        .collect(),
                 },
             },
             content: content_ref.map(|content| PluginResourceContent {
