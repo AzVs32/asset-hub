@@ -13,7 +13,7 @@ use std::collections::{HashMap, HashSet};
 ///
 /// 当前用于 MVP 阶段。后续插件系统接入后，可以替换为聚合插件定义的 registry 实现。
 #[derive(Debug, Clone)]
-pub struct DefaultResourceKindRegistry {
+pub(crate) struct DefaultResourceKindRegistry {
     definitions: Vec<ResourceKindDefinition>,
     indices: HashMap<ResourceKind, usize>,
     lineages: HashMap<ResourceKind, Vec<ResourceKind>>,
@@ -22,22 +22,11 @@ pub struct DefaultResourceKindRegistry {
 
 /// 默认资源动作注册表。
 #[derive(Debug, Clone)]
-pub struct DefaultResourceActionRegistry {
+pub(crate) struct DefaultResourceActionRegistry {
     actions: Vec<ResourceActionDefinition>,
 }
 
 impl DefaultResourceKindRegistry {
-    /// 创建默认内置注册表。
-    pub fn new() -> Result<Self, CoreError> {
-        Self::from_config(&KindRegistryConfig::default())
-    }
-
-    /// 从配置和插件 manifest 创建资源类型注册表。
-    pub fn from_config(config: &KindRegistryConfig) -> Result<Self, CoreError> {
-        let (definitions, _) = build_registries(config)?;
-        Ok(Self::from_definitions(definitions))
-    }
-
     fn from_definitions(definitions: Vec<ResourceKindDefinition>) -> Self {
         let indices = definitions
             .iter()
@@ -80,19 +69,6 @@ impl DefaultResourceKindRegistry {
     }
 }
 
-impl DefaultResourceActionRegistry {
-    /// 创建默认资源动作注册表。
-    pub fn new() -> Result<Self, CoreError> {
-        Self::from_config(&KindRegistryConfig::default())
-    }
-
-    /// 从配置和插件 manifest 创建资源动作注册表。
-    pub fn from_config(config: &KindRegistryConfig) -> Result<Self, CoreError> {
-        let (_, actions) = build_registries(config)?;
-        Ok(Self { actions })
-    }
-}
-
 pub(crate) fn registries_from_catalog(
     config: &KindRegistryConfig,
     catalog: &PluginCatalog,
@@ -102,13 +78,6 @@ pub(crate) fn registries_from_catalog(
         DefaultResourceKindRegistry::from_definitions(definitions),
         DefaultResourceActionRegistry { actions },
     ))
-}
-
-fn build_registries(
-    config: &KindRegistryConfig,
-) -> Result<(Vec<ResourceKindDefinition>, Vec<ResourceActionDefinition>), CoreError> {
-    let catalog = PluginCatalog::load(config)?;
-    build_registries_with_catalog(config, &catalog)
 }
 
 fn build_registries_with_catalog(
@@ -249,18 +218,6 @@ fn validate_kind_hierarchy(definitions: &[ResourceKindDefinition]) -> Result<(),
         }
     }
     Ok(())
-}
-
-impl Default for DefaultResourceKindRegistry {
-    fn default() -> Self {
-        Self::new().expect("default resource kind definitions should be valid")
-    }
-}
-
-impl Default for DefaultResourceActionRegistry {
-    fn default() -> Self {
-        Self::new().expect("default resource action definitions should be valid")
-    }
 }
 
 impl ResourceKindRegistry for DefaultResourceKindRegistry {

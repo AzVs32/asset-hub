@@ -33,6 +33,15 @@ fn resource_builder_accepts_initial_status() {
 }
 
 #[test]
+fn resource_status_uses_canonical_boundary_text() {
+    assert_eq!(ResourceStatus::Active.as_str(), "active");
+    assert_eq!(ResourceStatus::Archived.to_string(), "archived");
+    assert_eq!("active".parse(), Ok(ResourceStatus::Active));
+    assert_eq!("archived".parse(), Ok(ResourceStatus::Archived));
+    assert!("deleted".parse::<ResourceStatus>().is_err());
+}
+
+#[test]
 fn resource_builder_uses_default_kind() {
     let resource = Resource::builder("unknown resource").build().unwrap();
 
@@ -224,6 +233,14 @@ fn checksum_validates_sha256_format() {
     assert_eq!(checksum.kind(), ChecksumKind::Sha256);
     assert_eq!(checksum.value(), value);
     assert!(Checksum::sha256("not-sha256").is_err());
+}
+
+#[test]
+fn checksum_kind_uses_canonical_boundary_text() {
+    assert_eq!(ChecksumKind::Sha256.as_str(), "sha256");
+    assert_eq!(ChecksumKind::Sha256.to_string(), "sha256");
+    assert_eq!("sha256".parse(), Ok(ChecksumKind::Sha256));
+    assert!("md5".parse::<ChecksumKind>().is_err());
 }
 
 #[test]

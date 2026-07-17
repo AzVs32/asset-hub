@@ -943,14 +943,13 @@ fn plugin_checksums(
 
     let mut converted = Vec::with_capacity(checksums.len());
     for checksum in checksums {
-        match checksum.kind.as_str() {
-            "sha256" => converted.push(Checksum::sha256(checksum.value.clone())?),
-            other => {
-                return Err(CoreError::configuration(format!(
-                    "unsupported plugin checksum kind `{other}`"
-                )));
-            }
-        }
+        let kind = checksum.kind.parse::<ChecksumKind>().map_err(|_| {
+            CoreError::configuration(format!(
+                "unsupported plugin checksum kind `{}`",
+                checksum.kind
+            ))
+        })?;
+        converted.push(Checksum::new(kind, checksum.value.clone())?);
     }
     verify_bytes_checksums(data, &converted)?;
     Ok(converted)

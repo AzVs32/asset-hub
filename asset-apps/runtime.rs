@@ -16,11 +16,6 @@ pub struct AssetRuntime {
 }
 
 impl AssetRuntime {
-    /// 使用默认配置创建应用运行时。
-    pub async fn with_defaults() -> Result<Self, CoreError> {
-        Self::from_config(AssetInfraConfig::default()).await
-    }
-
     /// 使用默认配置文件创建应用运行时。
     ///
     /// 当前默认配置文件名是 `config.toml`。文件不存在时使用默认配置。

@@ -1,7 +1,6 @@
 use asset_core::ResourceError;
 use asset_core::domain::{
-    Checksum, ChecksumKind, Resource, ResourceContent, ResourceDirectory, ResourceMetadata,
-    ResourceStatus,
+    Checksum, Resource, ResourceContent, ResourceDirectory, ResourceMetadata,
 };
 use asset_core::port::{ResourceActionOutput, ResourceKindDefinition, StoragePrefix};
 use asset_core::service::{ReadableResource, ResourceActions};
@@ -746,7 +745,7 @@ impl ResourceResponse {
             name: resource.name().to_string(),
             directory: resource.directory().clone(),
             kind: resource.kind().as_str().to_string(),
-            status: status_text(resource.status()).to_string(),
+            status: resource.status().as_str().to_string(),
             metadata: ResourceMetadataResponse::from(resource.metadata()),
             content: resource.content().map(ResourceContentResponse::from),
             actions: ResourceActionsResponse::from(actions),
@@ -808,22 +807,9 @@ pub(crate) struct ChecksumResponse {
 impl From<&Checksum> for ChecksumResponse {
     fn from(checksum: &Checksum) -> Self {
         Self {
-            kind: checksum_kind_text(checksum.kind()).to_string(),
+            kind: checksum.kind().as_str().to_string(),
             value: checksum.value().to_string(),
         }
-    }
-}
-
-fn status_text(status: ResourceStatus) -> &'static str {
-    match status {
-        ResourceStatus::Active => "active",
-        ResourceStatus::Archived => "archived",
-    }
-}
-
-fn checksum_kind_text(kind: ChecksumKind) -> &'static str {
-    match kind {
-        ChecksumKind::Sha256 => "sha256",
     }
 }
 

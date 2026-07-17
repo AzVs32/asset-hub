@@ -1004,13 +1004,11 @@ fn limited_body_stream(body: Body) -> BlobByteStream {
 }
 
 fn parse_status(value: &str) -> Result<ResourceStatus, HttpError> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "active" => Ok(ResourceStatus::Active),
-        "archived" => Ok(ResourceStatus::Archived),
-        _ => Err(HttpError::bad_request(format!(
-            "invalid resource status `{value}`"
-        ))),
-    }
+    value
+        .trim()
+        .to_ascii_lowercase()
+        .parse()
+        .map_err(|_| HttpError::bad_request(format!("invalid resource status `{value}`")))
 }
 
 fn parse_kind(value: impl Into<String>) -> Result<ResourceKind, HttpError> {

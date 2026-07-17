@@ -2,9 +2,26 @@ use super::*;
 use asset_plugin_api::ResourceAction;
 use std::path::PathBuf;
 
+fn registries(
+    config: &KindRegistryConfig,
+) -> Result<(DefaultResourceKindRegistry, DefaultResourceActionRegistry), CoreError> {
+    let catalog = PluginCatalog::load(config)?;
+    registries_from_catalog(config, &catalog)
+}
+
+fn kind_registry(config: &KindRegistryConfig) -> Result<DefaultResourceKindRegistry, CoreError> {
+    registries(config).map(|(kinds, _)| kinds)
+}
+
+fn action_registry(
+    config: &KindRegistryConfig,
+) -> Result<DefaultResourceActionRegistry, CoreError> {
+    registries(config).map(|(_, actions)| actions)
+}
+
 #[test]
 fn descendants_follow_definition_order() {
-    let registry = DefaultResourceKindRegistry::new().unwrap();
+    let registry = kind_registry(&KindRegistryConfig::default()).unwrap();
     let root = ResourceKind::try_new("core:file").unwrap();
     let expected = registry
         .definitions
@@ -17,7 +34,7 @@ fn descendants_follow_definition_order() {
 
 #[test]
 fn registry_includes_builtin_and_configured_kinds() {
-    let registry = DefaultResourceKindRegistry::from_config(&KindRegistryConfig {
+    let registry = kind_registry(&KindRegistryConfig {
         definitions: vec![ResourceKindConfig {
             kind: "doc:note".to_string(),
             label: Some("Note".to_string()),
@@ -55,7 +72,7 @@ fn registry_rejects_unknown_parents_and_cycles() {
         plugin_manifests: Vec::new(),
     };
     assert!(
-        DefaultResourceKindRegistry::from_config(&unknown_parent)
+        kind_registry(&unknown_parent)
             .unwrap_err()
             .to_string()
             .contains("unknown parent")
@@ -77,7 +94,7 @@ fn registry_rejects_unknown_parents_and_cycles() {
         plugin_manifests: Vec::new(),
     };
     assert!(
-        DefaultResourceKindRegistry::from_config(&cycle)
+        kind_registry(&cycle)
             .unwrap_err()
             .to_string()
             .contains("cycle")
@@ -86,8 +103,7 @@ fn registry_rejects_unknown_parents_and_cycles() {
 
 #[test]
 fn registry_includes_official_core_plugin_fallback_kinds() {
-    let registry = DefaultResourceKindRegistry::new().unwrap();
-    let action_registry = DefaultResourceActionRegistry::new().unwrap();
+    let (registry, action_registry) = registries(&KindRegistryConfig::default()).unwrap();
 
     let file = registry
         .get(&ResourceKind::try_new("core:file").unwrap())
@@ -178,7 +194,7 @@ fn registry_includes_official_core_plugin_fallback_kinds() {
 
 #[test]
 fn registry_exposes_actions_as_global_capabilities() {
-    let registry = DefaultResourceActionRegistry::new().unwrap();
+    let registry = action_registry(&KindRegistryConfig::default()).unwrap();
     let actions = registry.actions();
 
     assert!(actions.iter().any(|action| {
@@ -252,8 +268,7 @@ fn registry_loads_plugin_manifest_kinds() {
         definitions: Vec::new(),
         plugin_manifests: vec![root.join("mindustry.json")],
     };
-    let registry = DefaultResourceKindRegistry::from_config(&config).unwrap();
-    let action_registry = DefaultResourceActionRegistry::from_config(&config).unwrap();
+    let (registry, action_registry) = registries(&config).unwrap();
     let definition = registry
         .get(&ResourceKind::try_new("mindustry:mod").unwrap())
         .unwrap();
@@ -339,8 +354,7 @@ fn registry_loads_format_plugin_as_independent_kind() {
         definitions: Vec::new(),
         plugin_manifests: vec![root.join("epub.json")],
     };
-    let registry = DefaultResourceKindRegistry::from_config(&config).unwrap();
-    let action_registry = DefaultResourceActionRegistry::from_config(&config).unwrap();
+    let (registry, action_registry) = registries(&config).unwrap();
     let epub = registry
         .get(&ResourceKind::try_new("azvs:epub").unwrap())
         .unwrap();
@@ -431,8 +445,7 @@ fn registry_loads_plugin_manifest_kind_extensions() {
         definitions: Vec::new(),
         plugin_manifests: vec![root.join("mp4-tools.json")],
     };
-    let registry = DefaultResourceKindRegistry::from_config(&config).unwrap();
-    let action_registry = DefaultResourceActionRegistry::from_config(&config).unwrap();
+    let (registry, action_registry) = registries(&config).unwrap();
     let video = registry
         .get(&ResourceKind::try_new("test:mp4").unwrap())
         .unwrap();
@@ -463,7 +476,7 @@ fn actions_for_kind(
 
 #[test]
 fn registry_rejects_duplicate_kinds() {
-    let error = DefaultResourceKindRegistry::from_config(&KindRegistryConfig {
+    let error = kind_registry(&KindRegistryConfig {
         definitions: vec![ResourceKindConfig {
             kind: ResourceKind::UNKNOWN.to_string(),
             ..ResourceKindConfig::default()
@@ -526,7 +539,7 @@ fn registry_rejects_duplicate_global_action_ids() {
     )
     .unwrap();
 
-    let error = DefaultResourceActionRegistry::from_config(&KindRegistryConfig {
+    let error = action_registry(&KindRegistryConfig {
         definitions: Vec::new(),
         plugin_manifests: vec![root.join("duplicate-preview.json")],
     })

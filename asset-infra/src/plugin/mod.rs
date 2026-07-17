@@ -1,5 +1,5 @@
 use asset_core::CoreError;
-use asset_core::domain::{ChecksumKind, ResourceStatus, StorageKey};
+use asset_core::domain::StorageKey;
 use asset_core::port::{
     BlobStorage, ResourceActionExecutor, ResourceActionOutput, ResourceActionRequest,
     ResourceKindDefinition, ResourceKindRegistry,
@@ -908,7 +908,7 @@ fn build_payload(
             id: resource.id().to_string(),
             name: resource.name().to_string(),
             kind: resource.kind().as_str().to_string(),
-            status: status_text(resource.status()).to_string(),
+            status: resource.status().as_str().to_string(),
             metadata: PluginResourceMetadata {
                 schema_version: resource.metadata().schema_version(),
                 summary: PluginResourceSummaryMetadata {
@@ -924,7 +924,7 @@ fn build_payload(
                 checksum: content
                     .checksums()
                     .map(|checksum| PluginChecksum {
-                        kind: checksum_kind_text(checksum.kind()).to_string(),
+                        kind: checksum.kind().as_str().to_string(),
                         value: checksum.value().to_string(),
                     })
                     .collect(),
@@ -979,19 +979,6 @@ fn plugin_web_asset_url(plugin_id: &str, url: &str) -> Result<String, CoreError>
         ));
     }
     Ok(format!("/plugins/{plugin_id}/{relative}"))
-}
-
-fn status_text(status: ResourceStatus) -> &'static str {
-    match status {
-        ResourceStatus::Active => "active",
-        ResourceStatus::Archived => "archived",
-    }
-}
-
-fn checksum_kind_text(kind: ChecksumKind) -> &'static str {
-    match kind {
-        ChecksumKind::Sha256 => "sha256",
-    }
 }
 
 #[cfg(test)]

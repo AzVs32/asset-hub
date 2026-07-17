@@ -9,7 +9,6 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow};
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
-use std::fmt;
 
 /// SQLite 版本的资源聚合仓储。
 ///
@@ -121,7 +120,7 @@ impl ResourceRepository for SqliteResourceRepository {
         .bind(resource.name())
         .bind(resource.directory().path())
         .bind(resource.kind().as_str())
-        .bind(status_to_str(resource.status()))
+        .bind(resource.status().as_str())
         .bind(metadata_json)
         .bind(content_json)
         .bind(encode_timestamp(resource.created_at()))
@@ -159,7 +158,7 @@ impl ResourceRepository for SqliteResourceRepository {
         .bind(resource.name())
         .bind(resource.directory().path())
         .bind(resource.kind().as_str())
-        .bind(status_to_str(resource.status()))
+        .bind(resource.status().as_str())
         .bind(metadata_json)
         .bind(content_json)
         .bind(encode_timestamp(resource.created_at()))
@@ -516,34 +515,11 @@ fn decode_timestamp(value: String) -> Result<DateTime<Utc>, CoreError> {
         .map_err(|error| CoreError::repository("resource.decode_timestamp", error))
 }
 
-fn status_to_str(status: ResourceStatus) -> &'static str {
-    match status {
-        ResourceStatus::Active => "active",
-        ResourceStatus::Archived => "archived",
-    }
-}
-
 fn status_from_str(value: String) -> Result<ResourceStatus, CoreError> {
-    match value.as_str() {
-        "active" => Ok(ResourceStatus::Active),
-        "archived" => Ok(ResourceStatus::Archived),
-        other => Err(CoreError::repository(
-            "resource.decode_status",
-            DecodeError(format!("unknown resource status `{other}`")),
-        )),
-    }
+    value
+        .parse()
+        .map_err(|error| CoreError::repository("resource.decode_status", error))
 }
-
-#[derive(Debug)]
-struct DecodeError(String);
-
-impl fmt::Display for DecodeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl std::error::Error for DecodeError {}
 
 #[cfg(test)]
 mod tests;

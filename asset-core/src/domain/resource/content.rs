@@ -2,6 +2,8 @@ use super::normalize_required_text;
 use crate::error::ResourceError;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::fmt;
+use std::str::FromStr;
 
 /// 内容描述类文本允许的最大字符数。
 const MAX_CONTENT_TEXT_LEN: usize = 255;
@@ -263,6 +265,35 @@ impl Checksum {
 pub enum ChecksumKind {
     /// SHA-256 校验和。
     Sha256,
+}
+
+impl ChecksumKind {
+    /// 返回跨 HTTP、持久化和插件边界使用的规范文本值。
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Sha256 => "sha256",
+        }
+    }
+}
+
+impl fmt::Display for ChecksumKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for ChecksumKind {
+    type Err = ResourceError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "sha256" => Ok(Self::Sha256),
+            _ => Err(ResourceError::InvalidFormat {
+                field: "checksum.kind",
+                reason: "unsupported checksum algorithm",
+            }),
+        }
+    }
 }
 
 /// 校验 SHA-256 字符串格式。

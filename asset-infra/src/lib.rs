@@ -99,11 +99,6 @@ impl AssetInfrastructure {
         })
     }
 
-    /// 使用默认配置创建 SQLite + Fs 基础设施组合。
-    pub async fn with_defaults() -> Result<Self, CoreError> {
-        Self::new(AssetInfraConfig::default()).await
-    }
-
     /// 返回实际生效的基础设施配置。
     pub fn config(&self) -> &AssetInfraConfig {
         &self.config
