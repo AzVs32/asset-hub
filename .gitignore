@@ -2,11 +2,10 @@
 /target/
 
 # Frontend build output
-asset-web-admin/node_modules/
-asset-web-admin/dist/
-asset-web-admin/*.tsbuildinfo
-asset-web-admin/vite.config.js
-asset-web-admin/vite.config.d.ts
+asset-web/node_modules/
+asset-web/dist/
+asset-web/coverage/
+asset-web/*.tsbuildinfo
 
 # Rust compiler and profiling artifacts
 **/*.rs.bk

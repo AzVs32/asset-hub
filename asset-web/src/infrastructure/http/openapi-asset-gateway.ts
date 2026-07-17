@@ -1,0 +1,479 @@
+import createClient from "openapi-fetch";
+import { AuthenticationRequiredError } from "@/application/errors";
+import type { AssetGateway, ScanResult } from "@/application/ports/asset-gateway";
+import type {
+  CurrentUser,
+  DirectoryGrant,
+  DirectoryPermission,
+  ManagedUser,
+  UserStatus,
+} from "@/domain/auth";
+import type { JsonObject, PluginActionOutput, PluginDiagnostic } from "@/domain/plugin";
+import type {
+  Directory,
+  DirectoryListing,
+  Resource,
+  ResourceAction,
+  ResourceDraft,
+  ResourceFilters,
+  ResourceKind,
+  UploadDraft,
+} from "@/domain/resource";
+import type { components, paths } from "./generated";
+import { HttpError, httpError } from "./http-error";
+import { isPluginViewKind, parsePluginView } from "./plugin-view-schema";
+
+type Schemas = components["schemas"];
+type ApiResource = Schemas["ResourceResponse"];
+type ApiAction = Schemas["ResourceActionDefinitionResponse"];
+type ApiKind = Schemas["ResourceKindResponse"];
+
+export class OpenApiAssetGateway implements AssetGateway {
+  readonly #baseUrl: string;
+  readonly #client;
+
+  constructor(baseUrl = import.meta.env.VITE_API_BASE_URL || "/api") {
+    this.#baseUrl = baseUrl.replace(/\/$/, "");
+    this.#client = createClient<paths>({ baseUrl: this.#baseUrl, credentials: "include" });
+  }
+
+  async currentUser(): Promise<CurrentUser> {
+    try {
+      const result = await this.#client.GET("/auth/me");
+      return mapCurrentUser(expectData(result).user);
+    } catch (error) {
+      if (error instanceof HttpError && error.status === 401) {
+        throw new AuthenticationRequiredError();
+      }
+      throw error;
+    }
+  }
+
+  async login(username: string, password: string): Promise<CurrentUser> {
+    const result = await this.#client.POST("/auth/login", {
+      body: { username, password },
+    });
+    return mapCurrentUser(expectData(result).user);
+  }
+
+  async logout(): Promise<void> {
+    expectSuccess(await this.#client.POST("/auth/logout"));
+  }
+
+  async listResourceKinds(): Promise<ResourceKind[]> {
+    const result = await this.#client.GET("/resource-kinds");
+    return expectData(result).items.map(mapKind);
+  }
+
+  async listDirectory(filters: ResourceFilters, signal?: AbortSignal): Promise<DirectoryListing> {
+    const query = {
+      path: filters.directory,
+      page: filters.page,
+      limit: filters.limit,
+      ...(filters.kind ? { kind: filters.kind } : {}),
+      ...(filters.kind && filters.includeDescendants ? { include_descendants: true } : {}),
+      ...(filters.tag.trim() ? { tag: filters.tag.trim() } : {}),
+      ...(filters.query.trim() ? { q: filters.query.trim() } : {}),
+      ...(filters.includeDeleted ? { include_deleted: true } : {}),
+    };
+    const result = await this.#client.GET("/directories", {
+      params: { query },
+      ...(signal ? { signal } : {}),
+    });
+    const data = expectData(result);
+    return {
+      path: data.path,
+      folders: data.folders.map(mapDirectory),
+      resources: {
+        items: data.resources.items.map(mapResource),
+        total: data.resources.total,
+        page: data.resources.page,
+        limit: data.resources.limit,
+      },
+    };
+  }
+
+  async findResource(id: string): Promise<Resource> {
+    const result = await this.#client.GET("/resources/{id}", { params: { path: { id } } });
+    return mapResource(expectData(result));
+  }
+
+  async createResource(draft: ResourceDraft): Promise<Resource> {
+    const result = await this.#client.POST("/resources", { body: resourceBody(draft) });
+    return mapResource(expectData(result));
+  }
+
+  async updateResource(id: string, draft: ResourceDraft): Promise<Resource> {
+    const result = await this.#client.PATCH("/resources/{id}", {
+      params: { path: { id } },
+      body: resourceBody(draft),
+    });
+    return mapResource(expectData(result));
+  }
+
+  async restoreResource(id: string): Promise<Resource> {
+    const result = await this.#client.PATCH("/resources/{id}", {
+      params: { path: { id } },
+      body: { restore: true, status: "active" },
+    });
+    return mapResource(expectData(result));
+  }
+
+  async deleteResource(id: string): Promise<Resource> {
+    const result = await this.#client.DELETE("/resources/{id}", {
+      params: { path: { id } },
+    });
+    return mapResource(expectData(result));
+  }
+
+  async uploadResource(draft: UploadDraft): Promise<Resource> {
+    const params = new URLSearchParams({
+      name: draft.name.trim() || draft.file.name,
+      directory: normalizeDirectory(draft.directory),
+      metadata_json: JSON.stringify(metadataBody(draft.description, draft.tags)),
+      original_filename: draft.file.name,
+    });
+    if (draft.kind.trim()) params.set("kind", draft.kind.trim());
+    const response = await fetch(`${this.#baseUrl}/resources/content/stream?${params}`, {
+      method: "PUT",
+      credentials: "include",
+      headers: { "Content-Type": draft.file.type || "application/octet-stream" },
+      body: draft.file,
+    });
+    if (!response.ok) throw await httpError(response);
+    return mapResource((await response.json()) as ApiResource);
+  }
+
+  async createDirectory(parentPath: string, name: string): Promise<Directory> {
+    const result = await this.#client.POST("/directories", {
+      body: { parent_path: parentPath, name },
+    });
+    return mapDirectory(expectData(result));
+  }
+
+  async scan(directory: string): Promise<ScanResult> {
+    const result = await this.#client.POST("/scan", {
+      body: { prefix: directory, sha256: true },
+    });
+    const data = expectData(result);
+    return { scanned: data.scanned, imported: data.imported, skipped: data.skipped };
+  }
+
+  async executeAction(
+    resource: Resource,
+    actionId: string,
+    input: JsonObject = {},
+  ): Promise<PluginActionOutput> {
+    const action = resource.actions.find((candidate) => candidate.id === actionId);
+    if (!action) throw new Error(`Action ${actionId} is not available for resource ${resource.id}`);
+    if (isContentFallbackAction(resource, action)) {
+      return {
+        resourceId: resource.id,
+        action: action.id,
+        diagnostics: [],
+        view: {
+          view: "binary_url",
+          url: `/resources/${encodeURIComponent(resource.id)}/content`,
+          ...(resource.content?.mimeType ? { mime_type: resource.content.mimeType } : {}),
+          filename: resource.content?.originalFilename ?? resource.name,
+        },
+      };
+    }
+    const result = await this.#client.POST("/resources/{id}/actions/{action}", {
+      params: { path: { id: resource.id, action: actionId } },
+      body: { input },
+    });
+    const data = expectData(result);
+    return {
+      resourceId: data.resource_id,
+      action: data.action,
+      diagnostics: data.diagnostics.map(mapDiagnostic),
+      view: parsePluginView(data.view),
+    };
+  }
+
+  resourceContentUrl(resourceId: string): string {
+    return `${this.#baseUrl}/resources/${encodeURIComponent(resourceId)}/content`;
+  }
+
+  assetUrl(path: string): string | null {
+    if (!path.startsWith("/") || path.startsWith("//")) return null;
+    return `${this.#baseUrl}${path}`;
+  }
+
+  async listUsers(): Promise<ManagedUser[]> {
+    const result = await this.#client.GET("/auth/users");
+    return expectData(result).map(mapManagedUser);
+  }
+
+  async createUser(input: {
+    username: string;
+    password: string;
+    isAdmin: boolean;
+    workspaceDirectory: string;
+  }): Promise<void> {
+    expectSuccess(
+      await this.#client.POST("/auth/users", {
+        body: {
+          username: input.username,
+          password: input.password,
+          is_admin: input.isAdmin,
+          ...(!input.isAdmin ? { workspace_directory: input.workspaceDirectory } : {}),
+        },
+      }),
+    );
+  }
+
+  async updateUserStatus(id: string, status: UserStatus): Promise<ManagedUser> {
+    const result = await this.#client.PATCH("/auth/users/{id}", {
+      params: { path: { id } },
+      body: { status },
+    });
+    return mapManagedUser(expectData(result));
+  }
+
+  async listDirectoryGrants(userId?: string): Promise<DirectoryGrant[]> {
+    const query = userId ? `?user_id=${encodeURIComponent(userId)}` : "";
+    return (
+      await this.#rawJson<Schemas["DirectoryGrantResponse"][]>(`/auth/directory-grants${query}`)
+    ).map(mapGrant);
+  }
+
+  async grantDirectory(
+    userId: string,
+    directory: string,
+    permission: DirectoryPermission,
+  ): Promise<void> {
+    const result = await this.#client.PUT("/auth/directory-grants", {
+      body: { user_id: userId, directory, permission },
+    });
+    expectSuccess(result);
+  }
+
+  async revokeDirectory(userId: string, directory: string): Promise<void> {
+    const query = new URLSearchParams({ user_id: userId, directory });
+    const response = await fetch(`${this.#baseUrl}/auth/directory-grants?${query}`, {
+      method: "DELETE",
+      credentials: "include",
+    });
+    if (!response.ok) throw await httpError(response);
+  }
+
+  async #rawJson<T>(path: string): Promise<T> {
+    const response = await fetch(`${this.#baseUrl}${path}`, { credentials: "include" });
+    if (!response.ok) throw await httpError(response);
+    return (await response.json()) as T;
+  }
+}
+
+type FetchResult<T> = { data?: T; error?: unknown; response: Response };
+
+function expectData<T>(result: FetchResult<T>): T {
+  if (result.data !== undefined) return result.data;
+  throw apiResultError(result);
+}
+
+function expectSuccess(result: FetchResult<unknown>): void {
+  if (result.response.ok) return;
+  throw apiResultError(result);
+}
+
+function apiResultError(result: FetchResult<unknown>): HttpError {
+  const error = result.error;
+  if (error && typeof error === "object" && "error" in error) {
+    const document = error as { error?: unknown; code?: unknown; details?: unknown };
+    return new HttpError(
+      typeof document.error === "string" ? document.error : result.response.statusText,
+      result.response.status,
+      typeof document.code === "string" ? document.code : null,
+      document.details,
+    );
+  }
+  return new HttpError(
+    result.response.statusText || `HTTP ${result.response.status}`,
+    result.response.status,
+  );
+}
+
+function mapCurrentUser(value: Schemas["AuthenticatedUser"]): CurrentUser {
+  return {
+    id: value.id,
+    username: value.username,
+    role: value.is_admin ? "administrator" : "member",
+    workspaceDirectory: value.workspace_directory,
+    isAdmin: value.is_admin,
+  };
+}
+
+function mapManagedUser(value: Schemas["ManagedUserResponse"]): ManagedUser {
+  return {
+    id: value.id,
+    username: value.username,
+    role: enumValue(value.role, ["administrator", "member"]),
+    status: enumValue(value.status, ["active", "disabled"]),
+    workspaceDirectory: value.workspace_directory,
+  };
+}
+
+function mapGrant(value: Schemas["DirectoryGrantResponse"]): DirectoryGrant {
+  return {
+    directory: value.directory,
+    permission: enumValue(value.permission, ["read", "write", "full"]),
+    isWorkspace: value.is_workspace,
+  };
+}
+
+function mapDirectory(value: Schemas["ResourceDirectoryResponse"]): Directory {
+  return { path: value.path, parentPath: value.parent_path, name: value.name };
+}
+
+function mapKind(value: ApiKind): ResourceKind {
+  return {
+    kind: value.kind,
+    parent: value.parent ?? null,
+    ancestors: value.ancestors,
+    label: value.label,
+    supportsContent: value.supports_content,
+    source: value.source,
+    actions: value.actions.map(mapAction),
+    detect: value.detect
+      ? { mimeTypes: value.detect.mime_types, extensions: value.detect.extensions }
+      : null,
+  };
+}
+
+function mapResource(value: ApiResource): Resource {
+  return {
+    id: value.id,
+    name: value.name,
+    directory: value.directory,
+    kind: value.kind,
+    status: enumValue(value.status, ["active", "archived"]),
+    metadata: {
+      summary: {
+        description: value.metadata.summary.description ?? null,
+        tags: value.metadata.summary.tags,
+      },
+      kindMetadata: value.metadata.kind_metadata
+        ? {
+            kind: value.metadata.kind_metadata.kind,
+            schemaVersion: value.metadata.kind_metadata.schema_version,
+            data: objectValue(value.metadata.kind_metadata.data),
+          }
+        : null,
+    },
+    content: value.content
+      ? {
+          key: value.content.key,
+          size: value.content.size,
+          mimeType: value.content.mime_type ?? null,
+          originalFilename: value.content.original_filename ?? null,
+          checksums: value.content.checksum,
+        }
+      : null,
+    actions: value.actions.available_actions.map(mapAction),
+    createdAt: value.created_at,
+    updatedAt: value.updated_at,
+    deletedAt: value.deleted_at ?? null,
+  };
+}
+
+function mapAction(value: ApiAction): ResourceAction {
+  return {
+    id: value.id,
+    label: value.label,
+    description: value.description ?? null,
+    access: enumValue(value.access, ["read_only", "read_write"]),
+    executor: {
+      type: enumValue(value.executor.type, ["builtin", "plugin"]),
+      handler: value.executor.handler ?? null,
+    },
+    requires: {
+      content: value.requires.content,
+      contentDelivery: enumValue(value.requires.content_delivery, ["auto", "inline", "reference"]),
+    },
+    output: { views: value.output.view.filter(isPluginViewKind) },
+    ui: {
+      group: value.ui.group ?? null,
+      order: value.ui.order ?? null,
+      locations: value.ui.locations,
+    },
+    appliesTo: {
+      kinds: value.applies_to.kinds,
+      mimeTypes: value.applies_to.mime_types,
+      extensions: value.applies_to.extensions,
+    },
+  };
+}
+
+function mapDiagnostic(value: Schemas["PluginDiagnosticResponse"]): PluginDiagnostic {
+  return {
+    code: value.code,
+    message: value.message,
+    severity: enumValue(value.severity, ["info", "warning", "error"]),
+    retryable: value.retryable,
+    ...(value.details !== undefined ? { details: value.details } : {}),
+  };
+}
+
+function resourceBody(draft: ResourceDraft): Schemas["CreateResourceRequest"] {
+  return {
+    name: draft.name,
+    directory: normalizeDirectory(draft.directory),
+    kind: draft.kind,
+    status: draft.status,
+    metadata: metadataBody(draft.description, draft.tags),
+  };
+}
+
+function metadataBody(description: string, tags: string): Schemas["ResourceMetadataRequest"] {
+  return {
+    summary: {
+      description: description.trim() || null,
+      tags: splitTags(tags),
+    },
+  };
+}
+
+function normalizeDirectory(value: string): string {
+  return value
+    .trim()
+    .replace(/\\/g, "/")
+    .split("/")
+    .map((part) => part.trim())
+    .filter((part) => part && part !== ".")
+    .join("/");
+}
+
+function splitTags(value: string): string[] {
+  return [
+    ...new Set(
+      value
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function enumValue<const T extends string>(value: string, values: readonly T[]): T {
+  const match = values.find((candidate) => candidate === value);
+  if (!match) throw new Error(`Unexpected API enum value: ${value}`);
+  return match;
+}
+
+function isContentFallbackAction(resource: Resource, action: ResourceAction): boolean {
+  return Boolean(
+    resource.content &&
+      action.executor.type === "builtin" &&
+      !action.executor.handler &&
+      action.access === "read_only" &&
+      action.output.views.length === 0,
+  );
+}

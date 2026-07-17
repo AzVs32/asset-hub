@@ -11,10 +11,10 @@ RUN rustup target add wasm32-unknown-unknown \
 RUN cargo build --locked --release -p asset-apps --bins
 
 FROM node:22-bookworm-slim AS web-builder
-WORKDIR /src/asset-web-admin
-COPY asset-web-admin/package.json asset-web-admin/package-lock.json ./
+WORKDIR /src/asset-web
+COPY asset-web/package.json asset-web/package-lock.json ./
 RUN npm ci
-COPY asset-web-admin/ ./
+COPY asset-web/ ./
 RUN npm run build
 
 FROM node:22-bookworm-slim AS markdown-web-builder
@@ -66,7 +66,7 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=5 \
 ENTRYPOINT ["asset-http"]
 
 FROM nginx:1.27-alpine AS web
-COPY --from=web-builder /src/asset-web-admin/dist /usr/share/nginx/html
+COPY --from=web-builder /src/asset-web/dist /usr/share/nginx/html
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80
 HEALTHCHECK --interval=15s --timeout=3s --start-period=5s --retries=5 \

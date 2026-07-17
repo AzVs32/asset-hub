@@ -6,7 +6,7 @@ Asset Hub is a local-first asset management service. The current workspace conta
 - `asset-infra`: SQLite repository, OpenDAL Fs blob storage, built-in kinds, plugin manifest loading, and Extism action execution.
 - `asset-apps`: reusable runtime assembly plus the `asset-http` API and `asset-plugin` packaging CLI.
 - `asset-plugin-api`: shared manifest, action, request, and view contracts for plugins.
-- `asset-web-admin`: Vite/React admin UI.
+- `asset-web`: React host with domain/application/adapter boundaries and a slot-based plugin kernel.
 - `plugins`: sample Markdown and EPUB plugins.
 
 ## API Boundaries
@@ -169,12 +169,12 @@ cargo run -p asset-apps --bin asset-http -- \
   --cors-allowed-origins http://127.0.0.1:5173
 ```
 
-## Run The Admin UI
+## Run The Web UI
 
 In one terminal, start the API. In another:
 
 ```bash
-cd asset-web-admin
+cd asset-web
 npm install
 npm run dev
 ```
@@ -325,7 +325,7 @@ Run the local checks:
 - `cargo test --workspace`
 - `cargo test --manifest-path plugins/azvs-markdown/runtime/Cargo.toml`
 - `cargo test --manifest-path plugins/azvs-epub/runtime/Cargo.toml`
-- `npm run lint` and `npm run build` in `asset-web-admin`
+- `npm run check`, `npm test`, and `npm run build` in `asset-web`
 - `npm run typecheck` and `npm run build` in `plugins/azvs-markdown/web`
 - `npm run typecheck` and `npm run build` in `plugins/azvs-epub/web`
 
@@ -333,7 +333,7 @@ Individual checks:
 
 ```bash
 cargo test --workspace
-(cd asset-web-admin && npm run lint && npm run build && npm test)
+(cd asset-web && npm run check && npm test && npm run build)
 (cd plugins/azvs-markdown/web && npm run typecheck && npm run build)
 cargo test --manifest-path plugins/azvs-markdown/runtime/Cargo.toml
 cargo test --manifest-path plugins/azvs-epub/runtime/Cargo.toml

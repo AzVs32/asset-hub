@@ -13,7 +13,7 @@ config.toml
 !.env.example
 !.env.*.example
 **/node_modules
-asset-web-admin/dist
+asset-web/dist
 plugins/*/web/dist
 plugins/*/dist
 **/*.rs.bk
