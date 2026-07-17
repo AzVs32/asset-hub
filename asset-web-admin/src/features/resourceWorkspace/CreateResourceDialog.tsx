@@ -1,9 +1,10 @@
 import React from "react";
 import { Loader2, Plus, X } from "lucide-react";
+import type { ResourceKindOption, ResourceStatus } from "../../api/contracts";
 import { SelectInput, TextInput } from "../../components/forms";
 import { iconButtonClass, inputClass, primaryButtonClass, secondaryButtonClass } from "../../components/ui";
-import type { Draft, ResourceKindOption, ResourceStatus } from "../../types";
 import { modalActionsClass, modalBackdropClass, modalClass, modalFormClass, modalHeaderClass } from "./dialogStyles";
+import type { Draft } from "./models";
 
 export function CreateResourceDialog({ draft, setDraft, kinds, busy, onClose, onSubmit }: {
   draft: Draft; setDraft: React.Dispatch<React.SetStateAction<Draft>>; kinds: ResourceKindOption[];

@@ -1,12 +1,18 @@
-function normalize(path) {
+export type DirectoryBreadcrumb = { label: string; path: string };
+
+function normalize(path: string): string {
   return path.split("/").filter(Boolean).join("/");
 }
 
-function contains(root, directory) {
+function contains(root: string, directory: string): boolean {
   return root === "" || directory === root || directory.startsWith(`${root}/`);
 }
 
-export function directoryBreadcrumbs(directory, rootDirectory, rootLabel) {
+export function directoryBreadcrumbs(
+  directory: string,
+  rootDirectory: string,
+  rootLabel: string,
+): DirectoryBreadcrumb[] {
   const current = normalize(directory);
   const root = normalize(rootDirectory);
   if (!contains(root, current)) {
@@ -24,13 +30,16 @@ export function directoryBreadcrumbs(directory, rootDirectory, rootLabel) {
   return crumbs;
 }
 
-export function parentDirectoryWithinRoot(directory, rootDirectory) {
+export function parentDirectoryWithinRoot(
+  directory: string,
+  rootDirectory: string,
+): string | null {
   const current = normalize(directory);
   const root = normalize(rootDirectory);
   if (current === root || !contains(root, current)) return null;
-
   const parts = current.split("/");
   parts.pop();
   const parent = parts.join("/");
   return contains(root, parent) ? parent : null;
 }
+

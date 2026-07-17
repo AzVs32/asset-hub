@@ -1,9 +1,10 @@
 import React from "react";
 import { ArrowLeft, Loader2, TriangleAlert } from "lucide-react";
 import { request } from "../api";
+import type { PluginActionOutput, Resource } from "../api/contracts";
 import { iconButtonClass } from "../components/ui";
+import { executeResourceAction } from "../plugins/host/actions";
 import { PluginActionResult, pluginViewTitle } from "../plugins/views";
-import type { PluginActionOutput, Resource } from "../types";
 
 export type StandalonePluginTarget = {
   resourceId: string;
@@ -36,6 +37,7 @@ export function readStandalonePluginTarget(): StandalonePluginTarget | null {
 
 export function StandalonePluginView({ target }: { target: StandalonePluginTarget }) {
   const [output, setOutput] = React.useState<PluginActionOutput | null>(null);
+  const [resource, setResource] = React.useState<Resource | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const homeUrl = React.useMemo(() => {
     const url = new URL(window.location.href);
@@ -51,18 +53,11 @@ export function StandalonePluginView({ target }: { target: StandalonePluginTarge
     request<Resource>(`/resources/${encodeURIComponent(target.resourceId)}`).then((resource) => {
       const action = resource.actions.available_actions.find((candidate) => (
         candidate.id === target.action
-        && candidate.access === "read_only"
         && candidate.output.view.includes("plugin_frame")
       ));
       if (!action) throw new Error("Plugin view action is unavailable");
-      return request<PluginActionOutput>(
-        `/resources/${encodeURIComponent(target.resourceId)}/actions/${encodeURIComponent(target.action)}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ input: {} }),
-        },
-      );
+      setResource(resource);
+      return executeResourceAction(resource, target.action);
     }).then((result) => {
       if (!active) return;
       if (result.resource_id !== target.resourceId || result.action !== target.action) {
@@ -76,6 +71,10 @@ export function StandalonePluginView({ target }: { target: StandalonePluginTarge
       active = false;
     };
   }, [target.action, target.resourceId]);
+
+  const refreshResource = React.useCallback(async () => {
+    setResource(await request<Resource>(`/resources/${encodeURIComponent(target.resourceId)}`));
+  }, [target.resourceId]);
 
   React.useEffect(() => {
     document.title = output ? pluginViewTitle(output.view) || output.action : "Asset Hub";
@@ -94,8 +93,13 @@ export function StandalonePluginView({ target }: { target: StandalonePluginTarge
           <p className="truncate text-xs text-slate-500">{target.action}</p>
         </div>
       </header>
-      {output ? (
-        <PluginActionResult output={output} large />
+      {output && resource ? (
+        <PluginActionResult
+          output={output}
+          resource={resource}
+          onResourceChanged={refreshResource}
+          large
+        />
       ) : error ? (
         <div className="grid min-h-[calc(100vh-4rem)] place-content-center justify-items-center gap-3 p-6 text-center text-red-700">
           <TriangleAlert size={28} />

@@ -1,8 +1,9 @@
 import React from "react";
-import { BookOpen, Download, Eye, Loader2, RotateCcw, Save, Trash2 } from "lucide-react";
-import { apiBase } from "../api";
-import type { Draft, Resource, ResourceActionDefinition, ResourceKindOption, ResourceStatus } from "../types";
-import { formatBytes, formatDate, hasAction, isPluginUiAction } from "../utils/resourceDrafts";
+import { Download, Eye, FileJson, Loader2, Pencil, Play, RotateCcw, Save, Trash2 } from "lucide-react";
+import type { Resource, ResourceActionDefinition, ResourceKindOption, ResourceStatus } from "../api/contracts";
+import type { Draft } from "../features/resourceWorkspace/models";
+import { actionLocations, actionsAt, isContentFallbackAction } from "../plugins/host/actions";
+import { formatBytes, formatDate } from "../utils/resourceDrafts";
 import { Fact, SelectInput, TextInput } from "./forms";
 import { cx, dangerIconButtonClass, iconButtonClass, inputClass, primaryButtonClass, secondaryButtonClass } from "./ui";
 
@@ -13,9 +14,7 @@ export function ResourceDetail({
   resourceKinds,
   busy,
   onSave,
-  onRead,
-  onPreview,
-  onPluginAction,
+  onAction,
   onDelete,
   onRestore,
 }: {
@@ -25,21 +24,12 @@ export function ResourceDetail({
   resourceKinds: ResourceKindOption[];
   busy: boolean;
   onSave: () => void;
-  onRead: () => void;
-  onPreview: () => void;
-  onPluginAction: (action: ResourceActionDefinition) => void;
+  onAction: (action: ResourceActionDefinition) => void;
   onDelete: () => void;
   onRestore: () => void;
 }) {
   const kindDefinition = resourceKinds.find((kind) => kind.kind === resource.kind);
-  const canRead = hasAction(resource, "read");
-  const canPreview = hasAction(resource, "preview") || hasAction(resource, "view_inline");
-  const pluginActions = resource.actions.available_actions
-    .filter((action) => isPluginUiAction(action) && action.ui.locations.includes("resource_detail"))
-    .sort((left, right) =>
-      (left.ui.group ?? "").localeCompare(right.ui.group ?? "")
-      || (left.ui.order ?? 0) - (right.ui.order ?? 0)
-      || left.label.localeCompare(right.label));
+  const actions = actionsAt(resource, actionLocations.resourceDetail, true);
 
   return (
     <div className="flex flex-col gap-6 p-6 max-sm:p-4">
@@ -56,30 +46,16 @@ export function ResourceDetail({
           {busy ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />}
           Save
         </button>
-        {hasAction(resource, "download_content") && (
-          <a className={iconButtonClass} href={`${apiBase}/resources/${resource.id}/content`} title="Download">
-            <Download size={18} />
-          </a>
-        )}
-        {canRead && (
-          <button className={iconButtonClass} type="button" onClick={onRead} disabled={busy} title="Read">
-            <BookOpen size={18} />
-          </button>
-        )}
-        {canPreview && (
-          <button className={iconButtonClass} type="button" onClick={onPreview} disabled={busy} title="Preview">
-            <Eye size={18} />
-          </button>
-        )}
-        {pluginActions.map((action) => (
+        {actions.map((action) => (
           <button
             key={action.id}
             className={secondaryButtonClass}
             type="button"
-            onClick={() => onPluginAction(action)}
+            onClick={() => onAction(action)}
             disabled={busy}
-            title={`${action.label} (${action.access})`}
+            title={action.description || `${action.label} (${action.access})`}
           >
+            <ActionIcon resource={resource} action={action} />
             {action.label}
           </button>
         ))}
@@ -145,4 +121,17 @@ export function ResourceDetail({
       </section>
     </div>
   );
+}
+
+function ActionIcon({ resource, action }: { resource: Resource; action: ResourceActionDefinition }) {
+  if (action.access === "read_write") return <Pencil size={17} />;
+  if (isContentFallbackAction(resource, action)) return <Download size={17} />;
+  if (action.output.view.includes("binary_url")) return <Download size={17} />;
+  if (action.output.view.includes("media") || action.output.view.includes("plugin_frame")) {
+    return <Eye size={17} />;
+  }
+  if (action.output.view.includes("json") || action.output.view.includes("table")) {
+    return <FileJson size={17} />;
+  }
+  return <Play size={17} />;
 }

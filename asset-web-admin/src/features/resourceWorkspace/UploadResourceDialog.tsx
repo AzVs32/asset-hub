@@ -1,9 +1,10 @@
 import React from "react";
 import { FileUp, Loader2, X } from "lucide-react";
+import type { ResourceKindOption } from "../../api/contracts";
 import { SelectInput, TextInput } from "../../components/forms";
 import { iconButtonClass, primaryButtonClass, secondaryButtonClass } from "../../components/ui";
-import type { ResourceKindOption, UploadDraft } from "../../types";
 import { modalActionsClass, modalBackdropClass, modalClass, modalFormClass, modalHeaderClass } from "./dialogStyles";
+import type { UploadDraft } from "./models";
 
 export function UploadResourceDialog({ draft, setDraft, kinds, directories, busy, onClose, onSubmit }: {
   draft: UploadDraft; setDraft: React.Dispatch<React.SetStateAction<UploadDraft>>; kinds: ResourceKindOption[];

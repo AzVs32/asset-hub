@@ -1,17 +1,10 @@
 import React from "react";
 import { Loader2, X } from "lucide-react";
 import { request } from "../api";
-import type { DirectoryAccessEntry } from "../types";
+import type { DirectoryAccessEntry, ManagedUser } from "../api/contracts";
 import { TextInput } from "./forms";
 import { iconButtonClass, inputClass, primaryButtonClass, secondaryButtonClass } from "./ui";
 
-type ManagedUser = {
-  id: string;
-  username: string;
-  role: "administrator" | "member";
-  status: "active" | "disabled";
-  workspace_directory: string;
-};
 type DirectoryGrant = DirectoryAccessEntry;
 
 export function UserAdministration({ currentUserId, onClose }: { currentUserId: string; onClose: () => void }) {

@@ -1,4 +1,5 @@
-import type { Draft, Resource, ResourceActionDefinition, ResourceKindOption, UploadDraft } from "../types";
+import type { Resource, ResourceKindOption } from "../api/contracts";
+import type { Draft, UploadDraft } from "../features/resourceWorkspace/models";
 
 export function toDraft(resource: Resource): Draft {
   return {
@@ -70,9 +71,10 @@ export function kindOptionHint(option: ResourceKindOption | undefined): string {
 export function sortKindsForHierarchy(options: ResourceKindOption[]): ResourceKindOption[] {
   const children = new Map<string | null, ResourceKindOption[]>();
   for (const option of options) {
-    const siblings = children.get(option.parent) ?? [];
+    const parent = option.parent ?? null;
+    const siblings = children.get(parent) ?? [];
     siblings.push(option);
-    children.set(option.parent, siblings);
+    children.set(parent, siblings);
   }
   for (const siblings of children.values()) {
     siblings.sort((left, right) => left.label.localeCompare(right.label));
@@ -86,24 +88,6 @@ export function sortKindsForHierarchy(options: ResourceKindOption[]): ResourceKi
   };
   visit(null);
   return sorted;
-}
-
-export function isImageResource(resource: Resource): boolean {
-  const mimeType = resource.content?.mime_type;
-  return Boolean(mimeType && mimeType.startsWith("image/"));
-}
-
-export function isVideoResource(resource: Resource): boolean {
-  const mimeType = resource.content?.mime_type;
-  return resource.kind === "core:video" || Boolean(mimeType && mimeType.startsWith("video/"));
-}
-
-export function isPluginUiAction(action: ResourceActionDefinition): boolean {
-  return action.executor.type === "plugin";
-}
-
-export function hasAction(resource: Resource, actionId: string): boolean {
-  return resource.actions.available_actions.some((action) => action.id === actionId);
 }
 
 export function directoriesFromResources(resources: Resource[]): string[] {

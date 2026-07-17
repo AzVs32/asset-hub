@@ -14,7 +14,7 @@ import {
   MediaVolumeRange,
 } from "media-chrome/react";
 
-export function CoreVideoView({ src, title }: { src: string; title: string }) {
+export function VideoView({ src, title }: { src: string; title: string }) {
   return (
     <div className="flex min-h-105 items-center justify-center bg-slate-950 p-4">
       <MediaController className="block w-full max-w-5xl overflow-hidden rounded-lg bg-black shadow-2xl">
@@ -42,3 +42,4 @@ export function CoreVideoView({ src, title }: { src: string; title: string }) {
     </div>
   );
 }
+

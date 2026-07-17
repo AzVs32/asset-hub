@@ -1,10 +1,9 @@
 import React from "react";
 import { Database, Loader2 } from "lucide-react";
 import { request } from "../api";
+import type { CurrentUser } from "../api/contracts";
 import { TextInput } from "./forms";
 import { inputClass, primaryButtonClass } from "./ui";
-
-export type CurrentUser = { id: string; username: string; is_admin: boolean; workspace_directory: string };
 
 export function AuthGate({
   children,

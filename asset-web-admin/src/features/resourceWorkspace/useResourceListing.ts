@@ -1,7 +1,8 @@
 import React from "react";
 import { request } from "../../api";
-import type { DirectoryListing, Filters, Resource, ResourceDirectory, ResourceKindOption, ResourceKindsResponse, ResourcePage } from "../../types";
+import type { DirectoryListing, Resource, ResourceDirectory, ResourceKindOption, ResourceKindsResponse, ResourcePage } from "../../api/contracts";
 import { errorMessage, sortKindsForHierarchy } from "../../utils/resourceDrafts";
+import type { Filters } from "./models";
 
 const defaultFilters: Filters = {
   q: "", kind: "", tag: "", includeDeleted: false,

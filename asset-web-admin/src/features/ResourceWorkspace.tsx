@@ -1,17 +1,16 @@
 import React from "react";
 import { request } from "../api";
-import type { CurrentUser } from "../components/AuthGate";
+import type { CurrentUser, DirectoryAccessEntry } from "../api/contracts";
 import { UserAdministration } from "../components/UserAdministration";
-import type { DirectoryAccessEntry, Draft, UploadDraft } from "../types";
 import { directoriesFromResources, emptyCreateDraft, emptyUploadDraft, errorMessage, normalizeDraftKind } from "../utils/resourceDrafts";
 import { CreateResourceDialog } from "./resourceWorkspace/CreateResourceDialog";
 import { PluginActionPanel } from "./resourceWorkspace/PluginActionPanel";
 import { ResourceBrowser } from "./resourceWorkspace/ResourceBrowser";
 import { ResourceDetailPanel } from "./resourceWorkspace/ResourceDetailPanel";
-import { ResourcePreviewDialog } from "./resourceWorkspace/ResourcePreviewDialog";
 import { UploadResourceDialog } from "./resourceWorkspace/UploadResourceDialog";
 import { useResourceListing } from "./resourceWorkspace/useResourceListing";
 import { useResourceMutations } from "./resourceWorkspace/useResourceMutations";
+import type { Draft, UploadDraft } from "./resourceWorkspace/models";
 
 export function ResourceWorkspace({ initialDirectory = "", user, onLogout }: {
   initialDirectory?: string; user: CurrentUser; onLogout: () => Promise<void>;
@@ -88,22 +87,24 @@ export function ResourceWorkspace({ initialDirectory = "", user, onLogout }: {
       scanPending={mutations.isPending("scan")} folderPending={mutations.isPending("create-folder")}
       error={listing.error} notice={mutations.notice} clearNotice={() => mutations.setNotice(null)}
       reload={() => void listing.reload()} onScan={() => void mutations.scan()} onUsers={() => setUserAdminOpen(true)}
+      onAction={(resource, action) => void mutations.runAction(resource, action)}
       onCreate={() => { setCreateDraft(normalizeDraftKind({ ...emptyCreateDraft(), directory: listing.currentDirectory }, listing.resourceKinds)); setCreateOpen(true); }}
       onUpload={() => { setUploadDraft({ ...emptyUploadDraft(), directory: listing.currentDirectory || "uploads" }); setUploadOpen(true); }}
       onCreateFolder={mutations.createFolder} onLogout={onLogout}
     />
     <ResourceDetailPanel resource={mutations.selected} draft={mutations.draft} setDraft={mutations.setDraft}
       resourceKinds={listing.resourceKinds} busy={mutations.selected ? [...mutations.pendingOperations].some((key) => key.includes(mutations.selected!.id)) : false} onSave={() => void mutations.save()}
-      onRead={() => void mutations.read()} onPreview={() => mutations.setPreviewResource(mutations.selected)}
-      onPluginAction={(action) => void mutations.runAction(action)} onDelete={() => void mutations.remove()}
+      onAction={(action) => mutations.selected && void mutations.runAction(mutations.selected, action)} onDelete={() => void mutations.remove()}
       onRestore={() => void mutations.restore()} />
     {createOpen && <CreateResourceDialog draft={createDraft} setDraft={setCreateDraft} kinds={listing.resourceKinds}
       busy={mutations.isPending("create")} onClose={() => setCreateOpen(false)} onSubmit={create} />}
     {uploadOpen && <UploadResourceDialog draft={uploadDraft} setDraft={setUploadDraft} kinds={listing.contentKinds}
       directories={uploadDirectories} busy={mutations.isPending("upload")} onClose={() => setUploadOpen(false)} onSubmit={upload} />}
-    <ResourcePreviewDialog reader={mutations.reader} onClose={() => mutations.setReader(null)} />
-    <ResourcePreviewDialog resource={mutations.previewResource} onClose={() => mutations.setPreviewResource(null)} />
-    <PluginActionPanel output={mutations.pluginOutput} onClose={() => mutations.setPluginOutput(null)} />
+    <PluginActionPanel
+      result={mutations.actionResult}
+      onClose={() => mutations.setActionResult(null)}
+      onResourceChanged={mutations.refreshResource}
+    />
     {userAdminOpen && <UserAdministration currentUserId={user.id} onClose={() => setUserAdminOpen(false)} />}
   </main>;
 }

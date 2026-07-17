@@ -10,11 +10,14 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -p tsconfig.json && vite build",
+    "generate:api": "openapi-typescript http://127.0.0.1:8080/api-docs/openapi.json -o src/api/generated.ts",
     "preview": "vite preview --host 127.0.0.1",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test tests/*.test.mjs"
+    "test": "vitest run"
   },
   "dependencies": {
+    "@rjsf/core": "^6.6.2",
+    "@rjsf/validator-ajv8": "^6.6.2",
     "lucide-react": "^0.468.0",
     "media-chrome": "^4.19.2",
     "react": "^19.0.0",
@@ -25,8 +28,10 @@
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
     "@vitejs/plugin-react": "^4.3.4",
+    "openapi-typescript": "^7.13.0",
     "tailwindcss": "^4.3.2",
     "typescript": "^5.7.2",
-    "vite": "^6.0.7"
+    "vite": "^6.0.7",
+    "vitest": "^3.2.7"
   }
 }

@@ -1,7 +1,14 @@
 import React from "react";
 import { request } from "../../api";
-import type { Draft, PluginActionOutput, Resource, ResourceActionDefinition, ResourceDirectory, ResourceReadResponse, ScanStorageResponse, UploadDraft } from "../../types";
+import type { PluginActionOutput, Resource, ResourceActionDefinition, ResourceDirectory, ScanStorageResponse } from "../../api/contracts";
+import { executeResourceAction } from "../../plugins/host/actions";
 import { errorMessage, metadataFromDraft, metadataFromUpload, normalizeDirectoryInput, toDraft } from "../../utils/resourceDrafts";
+import type { Draft, UploadDraft } from "./models";
+
+export type ActionResult = {
+  resource: Resource;
+  output: PluginActionOutput;
+};
 
 type Dependencies = {
   currentDirectory: string;
@@ -15,9 +22,7 @@ export function useResourceMutations({ currentDirectory, reload, setError }: Dep
   const [pendingOperations, setPendingOperations] = React.useState<Set<string>>(() => new Set());
   const pendingRef = React.useRef(new Set<string>());
   const [notice, setNotice] = React.useState<string | null>(null);
-  const [reader, setReader] = React.useState<ResourceReadResponse | null>(null);
-  const [previewResource, setPreviewResource] = React.useState<Resource | null>(null);
-  const [pluginOutput, setPluginOutput] = React.useState<PluginActionOutput | null>(null);
+  const [actionResult, setActionResult] = React.useState<ActionResult | null>(null);
 
   function select(resource: Resource | null) {
     setSelected(resource);
@@ -84,19 +89,23 @@ export function useResourceMutations({ currentDirectory, reload, setError }: Dep
     if (restored) { select(restored); await reload(); }
   }
 
-  async function read() {
-    if (!selected) return;
-    const result = await perform(`read:${selected.id}`, () => request<ResourceReadResponse>(`/resources/${selected.id}/read`));
-    if (result) setReader(result);
+  async function refreshResource(resourceId: string) {
+    const refreshed = await request<Resource>(`/resources/${encodeURIComponent(resourceId)}`);
+    if (selected?.id === resourceId) select(refreshed);
+    setActionResult((current) => current?.resource.id === resourceId
+      ? { ...current, resource: refreshed }
+      : current);
+    await reload();
   }
 
-  async function runAction(action: ResourceActionDefinition) {
-    if (!selected) return;
-    const result = await perform(`action:${selected.id}:${action.id}`, () => request<PluginActionOutput>(
-      `/resources/${selected.id}/actions/${encodeURIComponent(action.id)}`,
-      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ input: {} }) },
-    ));
-    if (result) setPluginOutput(result);
+  async function runAction(resource: Resource, action: ResourceActionDefinition) {
+    const result = await perform(
+      `action:${resource.id}:${action.id}`,
+      () => executeResourceAction(resource, action.id),
+    );
+    if (!result) return;
+    setActionResult({ resource, output: result });
+    if (action.access === "read_write") await refreshResource(resource.id);
   }
 
   async function upload(draft: UploadDraft) {
@@ -126,7 +135,7 @@ export function useResourceMutations({ currentDirectory, reload, setError }: Dep
   }
 
   const isPending = (key: string) => pendingOperations.has(key);
-  return { selected, draft, setDraft, select, pendingOperations, isPending, notice, setNotice, reader, setReader,
-    previewResource, setPreviewResource, pluginOutput, setPluginOutput, create, createFolder,
-    save, remove, restore, read, runAction, upload, scan };
+  return { selected, draft, setDraft, select, pendingOperations, isPending, notice, setNotice,
+    actionResult, setActionResult, create, createFolder, save, remove, restore, runAction,
+    refreshResource, upload, scan };
 }

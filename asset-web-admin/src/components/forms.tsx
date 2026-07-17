@@ -1,4 +1,4 @@
-import type { ResourceKindOption } from "../types";
+import type { ResourceKindOption } from "../api/contracts";
 import { kindOptionHint, kindOptionLabel } from "../utils/resourceDrafts";
 import { inputClass } from "./ui";
 
