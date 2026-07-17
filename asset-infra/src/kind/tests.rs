@@ -1,5 +1,10 @@
 use super::*;
-use asset_plugin_api::ResourceAction;
+use crate::config::{KindRegistryConfig, ResourceKindConfig};
+use crate::plugin_manifest::PluginCatalog;
+use asset_core::CoreError;
+use asset_core::domain::ResourceKind;
+use asset_core::port::{ResourceActionRegistry, ResourceKindRegistry};
+use asset_plugin_api::{ResourceAction, ResourceActionDefinition};
 use std::path::PathBuf;
 
 fn registries(

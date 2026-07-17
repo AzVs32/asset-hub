@@ -1,6 +1,9 @@
 use super::*;
+use crate::handler::render_epub_payload;
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use serde_json::{Value, json};
-use std::io::Write;
+use std::io::{Cursor, Write};
 use zip::write::SimpleFileOptions;
 
 #[test]
