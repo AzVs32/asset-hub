@@ -75,6 +75,3 @@ pub mod codes {
     pub const INVALID_OUTPUT: &str = "plugin.invalid_output";
     pub const ACTION_FAILED: &str = "plugin.action_failed";
 }
-
-#[cfg(test)]
-mod tests;

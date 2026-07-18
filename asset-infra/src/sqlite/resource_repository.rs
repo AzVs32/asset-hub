@@ -313,8 +313,10 @@ impl ResourceQuery for SqliteResourceRepository {
         directory: &ResourceDirectory,
         name: &str,
     ) -> Result<Option<Resource>, CoreError> {
-        let statement =
-            format!("{RESOURCE_SELECT} WHERE resources.directory = ? AND resources.name = ?");
+        let statement = format!(
+            "{RESOURCE_SELECT} WHERE resources.directory = ? AND resources.name = ? \
+             AND resources.deleted_at IS NULL"
+        );
         let row = sqlx::query(&statement)
             .bind(directory.path())
             .bind(name)

@@ -12,9 +12,10 @@ use crate::domain::{
     ResourceStatus, StorageKey,
 };
 use crate::port::{
-    BlobByteStream, BlobStorage, ListResources, ResourceActionExecutor, ResourceActionOutput,
-    ResourceActionRegistry, ResourceActionRequest, ResourceKindRegistry, ResourcePage,
-    ResourceQuery, ResourceRepository, StoragePrefix, StorageScanner,
+    BlobByteStream, BlobStorage, ListResources, RESERVED_BLOB_STORAGE_PREFIX,
+    ResourceActionExecutor, ResourceActionOutput, ResourceActionRegistry, ResourceActionRequest,
+    ResourceKindRegistry, ResourcePage, ResourceQuery, ResourceRepository, StoragePrefix,
+    StorageScanner,
 };
 use asset_plugin_api::{
     PluginActionEffect, PluginExecutionPolicy, PluginMediaEncoding, PluginView, ResourceAction,

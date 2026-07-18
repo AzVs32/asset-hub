@@ -68,7 +68,7 @@ impl<'a> ResourceContentService<'a> {
         let stored_resources = self
             .service
             .query
-            .list(&ListResources::new(u32::MAX, 0).with_include_deleted(true))
+            .list(&ListResources::new(u32::MAX, 0))
             .await?;
         for resource in stored_resources.items {
             if resource.content().is_none() {
@@ -328,7 +328,7 @@ impl<'a> ResourceContentService<'a> {
         let stored_resources = self
             .service
             .query
-            .list(&ListResources::new(u32::MAX, 0).with_include_deleted(true))
+            .list(&ListResources::new(u32::MAX, 0))
             .await?;
         let mut referenced_keys = HashSet::new();
         let mut checked_resources = 0_u64;

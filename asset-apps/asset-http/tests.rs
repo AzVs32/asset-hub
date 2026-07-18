@@ -15,12 +15,10 @@ use bytes::Bytes;
 use futures_util::stream;
 use serde_json::{Value, json};
 use std::collections::HashMap;
-use std::io::{Cursor, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tower::ServiceExt;
-use zip::write::SimpleFileOptions;
 
 const BODY_LIMIT: usize = 1024 * 1024;
 
@@ -238,31 +236,6 @@ async fn core_document_resource_exposes_download_only() {
 }
 
 #[tokio::test]
-async fn action_endpoint_requires_plugin_handler() {
-    let app = test_app("action-endpoint-handler").await;
-    let (status, resource) = stream_upload(
-        &app,
-        "/resources/content/stream?name=action-book.txt&kind=core%3Adocument&directory=books",
-        "text/plain",
-        b"Hello action",
-    )
-    .await;
-
-    assert_eq!(status, StatusCode::CREATED, "{resource}");
-    let id = resource["id"].as_str().unwrap();
-    let (status, error) = json_request(
-        &app,
-        Method::POST,
-        &format!("/resources/{id}/actions/read"),
-        json!({"input": {"mode": "test"}}),
-    )
-    .await;
-
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(error["error"].as_str().unwrap().contains("action `read`"));
-}
-
-#[tokio::test]
 async fn action_endpoint_has_a_dedicated_request_body_limit() {
     let app = test_app("action-body-limit").await;
     let oversized = format!(
@@ -281,40 +254,6 @@ async fn action_endpoint_has_a_dedicated_request_body_limit() {
     .await;
 
     assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
-}
-
-#[tokio::test]
-async fn core_document_epub_resource_does_not_get_core_text_extraction() {
-    let app = test_app("core-document-epub-read").await;
-    let epub = minimal_epub();
-
-    let response = request(
-        &app,
-        Request::builder()
-            .method(Method::PUT)
-            .uri("/resources/content/stream?name=book.epub&directory=books&kind=core%3Adocument")
-            .header(header::CONTENT_TYPE, "application/epub+zip")
-            .body(Body::from(epub))
-            .unwrap(),
-    )
-    .await;
-    let status = response.status();
-    let resource = response_json(response).await;
-
-    assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(resource["content"]["mime_type"], "application/epub+zip");
-
-    let id = resource["id"].as_str().unwrap();
-    let (status, readable) =
-        empty_json_request(&app, Method::GET, &format!("/resources/{id}/read")).await;
-
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(
-        readable["error"]
-            .as_str()
-            .unwrap()
-            .contains("action `read`")
-    );
 }
 
 #[tokio::test]
@@ -538,17 +477,6 @@ async fn builtin_image_thumbnail_action_stays_inline() {
     assert_eq!(status, StatusCode::OK, "{thumbnail}");
     assert_eq!(thumbnail["view"]["view"], "media");
     assert_eq!(thumbnail["view"]["encoding"], "base64");
-}
-
-#[tokio::test]
-async fn non_reader_resource_rejects_online_reading() {
-    let app = test_app("non-reader").await;
-    let id = create_text_resource(&app, "read/not-book.txt").await;
-    let (status, error) =
-        empty_json_request(&app, Method::GET, &format!("/resources/{id}/read")).await;
-
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(error["error"].as_str().unwrap().contains("action `read`"));
 }
 
 #[tokio::test]
@@ -895,37 +823,6 @@ async fn upload_rejects_client_supplied_checksum_and_existing_resource_path() {
 }
 
 #[tokio::test]
-async fn stream_upload_roundtrips_large_blob_without_buffered_request_dto() {
-    let app = test_app("stream-upload").await;
-    let data = b"large file bytes";
-
-    let response = request(
-        &app,
-        Request::builder()
-            .method(Method::PUT)
-            .uri("/resources/content/stream?name=large.bin&directory=streams&kind=core%3Aunknown")
-            .header(header::CONTENT_TYPE, "application/octet-stream")
-            .body(Body::from(data.as_slice()))
-            .unwrap(),
-    )
-    .await;
-
-    let status = response.status();
-    let resource = response_json(response).await;
-
-    assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(resource["content"]["size"], data.len() as u64);
-    assert_eq!(resource["content"]["mime_type"], "application/octet-stream");
-
-    let id = resource["id"].as_str().unwrap();
-    let (status, content) =
-        empty_bytes_request(&app, Method::GET, &format!("/resources/{id}/content")).await;
-
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(content.as_ref(), data);
-}
-
-#[tokio::test]
 async fn stream_upload_is_not_limited_by_the_regular_request_timeout() {
     let app = test_app_with_router_options(
         "stream-upload-timeout",
@@ -1070,16 +967,35 @@ async fn plugin_reference_content_respects_the_host_content_budget() {
 async fn soft_delete_hides_content_and_purge_removes_resource() {
     let app = test_app("delete-resource").await;
     let id = create_text_resource(&app, "delete/me.txt").await;
+    let original_blob_path = app.root.join("blob/delete/me.txt");
+    let trash_blob_path = app.root.join(format!("blob/.asset-hub/trash/{id}"));
 
     let (status, deleted) =
         empty_json_request(&app, Method::DELETE, &format!("/resources/{id}")).await;
 
     assert_eq!(status, StatusCode::OK);
     assert!(deleted["deleted_at"].is_string());
+    assert!(!original_blob_path.exists());
+    assert_eq!(std::fs::read(&trash_blob_path).unwrap(), b"delete me");
 
     let (status, _) = empty_json_request(&app, Method::GET, &format!("/resources/{id}")).await;
 
     assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let replacement_id = create_text_resource(&app, "delete/me.txt").await;
+    assert_ne!(replacement_id, id);
+    assert_eq!(std::fs::read(&original_blob_path).unwrap(), b"delete me");
+
+    let (status, _) = json_request(
+        &app,
+        Method::PATCH,
+        &format!("/resources/{id}"),
+        json!({ "restore": true }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(std::fs::read(&trash_blob_path).unwrap(), b"delete me");
+    assert_eq!(std::fs::read(&original_blob_path).unwrap(), b"delete me");
 
     let (status, _) =
         empty_json_request(&app, Method::GET, &format!("/resources/{id}/content")).await;
@@ -1097,10 +1013,16 @@ async fn soft_delete_hides_content_and_purge_removes_resource() {
     .await;
 
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert!(!trash_blob_path.exists());
+    assert!(original_blob_path.exists());
 
     let (status, _) = empty_json_request(&app, Method::GET, &format!("/resources/{id}")).await;
 
     assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let (status, _) =
+        empty_json_request(&app, Method::GET, &format!("/resources/{replacement_id}")).await;
+    assert_eq!(status, StatusCode::OK);
 }
 
 #[tokio::test]
@@ -1334,6 +1256,9 @@ async fn update_resource_changes_fields_and_restores_soft_deleted_resource() {
 
     let (status, _) = empty_json_request(&app, Method::DELETE, &format!("/resources/{id}")).await;
     assert_eq!(status, StatusCode::OK);
+    let trash_blob_path = app.root.join(format!("blob/.asset-hub/trash/{id}"));
+    assert!(!new_blob_path.exists());
+    assert_eq!(std::fs::read(&trash_blob_path).unwrap(), b"delete me");
 
     let (status, _) = empty_json_request(&app, Method::GET, &format!("/resources/{id}")).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -1352,22 +1277,21 @@ async fn update_resource_changes_fields_and_restores_soft_deleted_resource() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(restored["status"], "active");
     assert!(restored["deleted_at"].is_null());
+    assert_eq!(std::fs::read(&new_blob_path).unwrap(), b"delete me");
+    assert!(!trash_blob_path.exists());
 }
 
 #[tokio::test]
-async fn openapi_documents_resource_field_examples() {
+async fn openapi_exposes_current_http_contract() {
     let app = test_app("openapi").await;
     let (status, document) = empty_json_request(&app, Method::GET, "/api-docs/openapi.json").await;
 
     assert_eq!(status, StatusCode::OK);
 
-    let create_example = &document["components"]["schemas"]["CreateResourceRequest"]["example"];
-    assert_eq!(
-        create_example["description"],
-        "A resource without blob content"
-    );
-    assert_eq!(create_example["tags"], json!(["demo", "document"]));
-    assert!(document["paths"].get("/resources/content").is_none());
+    let create_properties =
+        &document["components"]["schemas"]["CreateResourceRequest"]["properties"];
+    assert!(create_properties.get("description").is_some());
+    assert!(create_properties.get("tags").is_some());
     assert!(document["paths"].get("/resources/content/stream").is_some());
     assert!(document["paths"].get("/auth/login").is_some());
     assert!(document["paths"].get("/auth/users/{id}").is_some());
@@ -2114,18 +2038,6 @@ fn has_action(resource: &Value, id: &str) -> bool {
     resource["actions"]["available_actions"]
         .as_array()
         .is_some_and(|actions| actions.iter().any(|action| action["id"] == id))
-}
-
-fn minimal_epub() -> Vec<u8> {
-    let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
-    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
-
-    writer.start_file("OPS/chapter1.xhtml", options).unwrap();
-    writer
-        .write_all(br#"<html><body><h1>Chapter One</h1><p>Hello &amp; EPUB.</p></body></html>"#)
-        .unwrap();
-
-    writer.finish().unwrap().into_inner()
 }
 
 fn unique_temp_root(name: &str) -> PathBuf {

@@ -87,6 +87,41 @@ async fn sqlite_repository_updates_description_and_tags() {
 }
 
 #[tokio::test]
+async fn sqlite_path_lookup_ignores_soft_deleted_resource_and_finds_replacement() {
+    let repository = repository("replace-soft-deleted-path").await;
+    let mut deleted = Resource::builder("same-name.txt")
+        .with_directory(ResourceDirectory::from_path("docs").unwrap())
+        .build()
+        .unwrap();
+    repository.save(&deleted).await.unwrap();
+    deleted.soft_delete();
+    repository.save(&deleted).await.unwrap();
+
+    assert!(
+        repository
+            .find_by_path(deleted.directory(), deleted.name())
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    let replacement = Resource::builder("same-name.txt")
+        .with_directory(ResourceDirectory::from_path("docs").unwrap())
+        .build()
+        .unwrap();
+    repository.save(&replacement).await.unwrap();
+
+    assert_eq!(
+        repository
+            .find_by_path(replacement.directory(), replacement.name())
+            .await
+            .unwrap()
+            .map(|resource| resource.id()),
+        Some(replacement.id())
+    );
+}
+
+#[tokio::test]
 async fn sqlite_repository_filters_tags_through_relational_index() {
     let repository = repository("tag-filter").await;
     let rust = Resource::builder("rust")

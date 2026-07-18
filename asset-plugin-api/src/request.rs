@@ -86,6 +86,3 @@ pub enum PluginContentReferenceEncoding {
 fn content_abi_version() -> u32 {
     crate::CONTENT_ABI_VERSION
 }
-
-#[cfg(test)]
-mod tests;

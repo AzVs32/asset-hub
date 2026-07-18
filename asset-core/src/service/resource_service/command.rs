@@ -103,7 +103,8 @@ impl<'a> ResourceCommandService<'a> {
         command: UpdateResource,
     ) -> Result<Resource, CoreError> {
         let expected_updated_at = resource.updated_at();
-        let old_storage_key = resource.content().map(|_| resource.storage_key());
+        let old_storage_key = persisted_content_key(&resource)?;
+        let restoring = resource.is_deleted() && command.restore;
 
         if command.restore {
             resource.restore();
@@ -136,7 +137,21 @@ impl<'a> ResourceCommandService<'a> {
             resource.replace_tags(tags)?;
         }
 
-        let new_storage_key = resource.content().map(|_| resource.storage_key());
+        if restoring
+            && self
+                .service
+                .query
+                .find_by_path(resource.directory(), resource.name())
+                .await?
+                .is_some()
+        {
+            return Err(CoreError::conflict(format!(
+                "resource path `{}` is already occupied",
+                resource.storage_key()
+            )));
+        }
+
+        let new_storage_key = persisted_content_key(&resource)?;
         let moved_content = match (&old_storage_key, &new_storage_key) {
             (Some(from), Some(to)) if from != to => {
                 self.service.blob_storage.move_if_absent(from, to).await?;
@@ -175,8 +190,8 @@ impl<'a> ResourceCommandService<'a> {
 
     /// 软删除资源。
     ///
-    /// 软删除只更新资源聚合状态并保存到仓储，不删除对象存储中的内容。这样可以保留恢复、
-    /// 审计或异步清理的空间。
+    /// 软删除会将对象内容移动到 Asset Hub 内部回收站，再更新资源聚合状态。原逻辑路径
+    /// 会被释放，因此可以创建同目录、同名的新资源；恢复时内容会从回收站移回逻辑路径。
     ///
     /// 找不到资源时返回 `Ok(None)`；找到资源时返回保存后的资源状态。重复软删除同一资源是
     /// 幂等的，领域模型不会反复刷新删除时间。
@@ -197,21 +212,43 @@ impl<'a> ResourceCommandService<'a> {
         mut resource: Resource,
     ) -> Result<Resource, CoreError> {
         let expected_updated_at = resource.updated_at();
+        let old_storage_key = persisted_content_key(&resource)?;
 
         resource.soft_delete();
-        if !self
+        let new_storage_key = persisted_content_key(&resource)?;
+        let moved_content = match (&old_storage_key, &new_storage_key) {
+            (Some(from), Some(to)) if from != to => {
+                self.service.blob_storage.move_if_absent(from, to).await?;
+                true
+            }
+            _ => false,
+        };
+
+        let saved = self
             .service
             .repository
             .save_if_unchanged(&resource, expected_updated_at)
-            .await?
-        {
-            return Err(CoreError::conflict(format!(
+            .await;
+        let error = match saved {
+            Ok(true) => return Ok(resource),
+            Ok(false) => CoreError::conflict(format!(
                 "resource `{}` changed while it was being deleted",
                 resource.id()
-            )));
+            )),
+            Err(error) => error,
+        };
+
+        if moved_content
+            && let (Some(from), Some(to)) = (&old_storage_key, &new_storage_key)
+            && let Err(rollback_error) = self.service.blob_storage.move_if_absent(to, from).await
+        {
+            return Err(CoreError::storage(
+                "resource_soft_delete.rollback",
+                rollback_error,
+            ));
         }
 
-        Ok(resource)
+        Err(error)
     }
 
     /// 物理移除资源及其对象内容。
@@ -237,6 +274,7 @@ impl<'a> ResourceCommandService<'a> {
         &self,
         resource: Resource,
     ) -> Result<(), CoreError> {
+        let storage_key = persisted_content_key(&resource)?;
         if !self
             .service
             .repository
@@ -249,13 +287,30 @@ impl<'a> ResourceCommandService<'a> {
             )));
         }
 
-        if resource.content().is_some() {
-            self.service
-                .blob_storage
-                .delete(&resource.storage_key())
-                .await?;
+        if let Some(storage_key) = storage_key {
+            self.service.blob_storage.delete(&storage_key).await?;
         }
 
         Ok(())
     }
+}
+
+/// 返回资源内容当前实际占用的对象键。
+///
+/// 活动资源使用其逻辑路径；软删除资源使用按资源 ID 隔离的内部回收站路径。
+fn persisted_content_key(resource: &Resource) -> Result<Option<StorageKey>, CoreError> {
+    if resource.content().is_none() {
+        return Ok(None);
+    }
+
+    if resource.is_deleted() {
+        return StorageKey::new(format!(
+            "{RESERVED_BLOB_STORAGE_PREFIX}/trash/{}",
+            resource.id()
+        ))
+        .map(Some)
+        .map_err(CoreError::from);
+    }
+
+    Ok(Some(resource.storage_key()))
 }
