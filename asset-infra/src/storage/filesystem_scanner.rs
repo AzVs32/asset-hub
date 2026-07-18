@@ -1,8 +1,6 @@
 use asset_core::CoreError;
 use asset_core::domain::{ResourceDirectory, StorageKey};
 use asset_core::port::{RESERVED_BLOB_STORAGE_PREFIX, ScannedBlob, StoragePrefix, StorageScanner};
-use sha2::{Digest, Sha256};
-use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug, Clone)]
@@ -33,12 +31,11 @@ impl StorageScanner for FileSystemScanner {
     async fn scan(
         &self,
         prefix: &StoragePrefix,
-        include_sha256: bool,
         max_entries: usize,
     ) -> Result<Vec<ScannedBlob>, CoreError> {
         let root = self.root.clone();
         let prefix = prefix.clone();
-        tokio::task::spawn_blocking(move || scan_files(&root, &prefix, include_sha256, max_entries))
+        tokio::task::spawn_blocking(move || scan_files(&root, &prefix, max_entries))
             .await
             .map_err(|error| CoreError::configuration(format!("scan task failed: {error}")))?
     }
@@ -130,7 +127,6 @@ fn collect_directories(
 fn scan_files(
     root: &Path,
     prefix: &StoragePrefix,
-    include_sha256: bool,
     max_entries: usize,
 ) -> Result<Vec<ScannedBlob>, CoreError> {
     if prefix_in_reserved_namespace(prefix) {
@@ -151,14 +147,7 @@ fn scan_files(
     }
     let mut files = Vec::new();
     let mut visited = 0;
-    collect_files(
-        &root,
-        &scan_root,
-        include_sha256,
-        max_entries,
-        &mut visited,
-        &mut files,
-    )?;
+    collect_files(&root, &scan_root, max_entries, &mut visited, &mut files)?;
     files.sort_by(|left, right| left.key.as_str().cmp(right.key.as_str()));
     Ok(files)
 }
@@ -166,7 +155,6 @@ fn scan_files(
 fn collect_files(
     root: &Path,
     current: &Path,
-    include_sha256: bool,
     max_entries: usize,
     visited: &mut usize,
     files: &mut Vec<ScannedBlob>,
@@ -191,7 +179,7 @@ fn collect_files(
             continue;
         }
         if metadata.is_dir() {
-            collect_files(root, &path, include_sha256, max_entries, visited, files)?;
+            collect_files(root, &path, max_entries, visited, files)?;
             continue;
         }
         if !metadata.is_file() {
@@ -216,7 +204,6 @@ fn collect_files(
             key: StorageKey::new(parts.join("/"))?,
             size: metadata.len(),
             mime_type: content_type_from_path(&path).map(str::to_owned),
-            sha256: include_sha256.then(|| sha256_file(&path)).transpose()?,
         });
     }
     Ok(())
@@ -227,23 +214,6 @@ fn prefix_in_reserved_namespace(prefix: &StoragePrefix) -> bool {
         || prefix
             .as_str()
             .starts_with(&format!("{RESERVED_BLOB_STORAGE_PREFIX}/"))
-}
-
-fn sha256_file(path: &Path) -> Result<String, CoreError> {
-    let mut file =
-        std::fs::File::open(path).map_err(|error| CoreError::storage("scan.open", error))?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let read = file
-            .read(&mut buffer)
-            .map_err(|error| CoreError::storage("scan.read", error))?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    Ok(format!("{:x}", hasher.finalize()))
 }
 
 fn content_type_from_path(path: &Path) -> Option<&'static str> {

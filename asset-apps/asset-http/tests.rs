@@ -742,74 +742,6 @@ async fn scan_storage_imports_existing_files_idempotently() {
     let (status, listing) = empty_json_request(&app, Method::GET, "/directories?path=manual").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(listing["folders"][0]["path"], "manual/empty");
-
-    std::fs::remove_file(&file_path).unwrap();
-    let (status, audit) = json_request(&app, Method::POST, "/scan", json!({})).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(audit["errors"][0]["key"], "docs/readme.md");
-    assert!(
-        audit["errors"][0]["error"]
-            .as_str()
-            .unwrap()
-            .contains("missing blob")
-    );
-}
-
-#[tokio::test]
-async fn audit_storage_reports_content_inconsistencies() {
-    let app = test_app("audit-storage").await;
-    let missing_path = app.root.join("blob").join("docs").join("missing.txt");
-    let mismatch_path = app.root.join("blob").join("docs").join("mismatch.txt");
-    let orphan_path = app.root.join("blob").join("docs").join("orphan.txt");
-    stream_upload(
-        &app,
-        "/resources/content/stream?name=missing.txt&directory=docs",
-        "text/plain",
-        b"missing",
-    )
-    .await;
-    stream_upload(
-        &app,
-        "/resources/content/stream?name=mismatch.txt&directory=docs",
-        "text/plain",
-        b"original",
-    )
-    .await;
-    std::fs::remove_file(missing_path).unwrap();
-    std::fs::write(mismatch_path, b"changed").unwrap();
-    std::fs::write(orphan_path, b"orphan").unwrap();
-
-    let (status, audit) = json_request(
-        &app,
-        Method::POST,
-        "/audit",
-        json!({ "directory": "docs", "sha256": true }),
-    )
-    .await;
-
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(audit["audited_directory"], "docs");
-    assert_eq!(audit["checked_resources"], 2);
-    assert_eq!(audit["missing"], 1);
-    assert_eq!(audit["orphaned"], 1);
-    assert!(audit["mismatched"].as_u64().unwrap() >= 1);
-    assert!(
-        audit["issues"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|issue| { issue["kind"] == "missing_blob" && issue["key"] == "docs/missing.txt" })
-    );
-    assert!(audit["issues"].as_array().unwrap().iter().any(|issue| {
-        issue["kind"] == "checksum_mismatch" && issue["key"] == "docs/mismatch.txt"
-    }));
-    assert!(
-        audit["issues"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|issue| { issue["kind"] == "orphan_blob" && issue["key"] == "docs/orphan.txt" })
-    );
 }
 
 #[tokio::test]
@@ -1336,6 +1268,7 @@ async fn openapi_exposes_current_http_contract() {
     assert!(document["paths"].get("/resources/content/stream").is_some());
     assert!(document["paths"].get("/auth/login").is_some());
     assert!(document["paths"].get("/auth/users/{id}").is_some());
+    assert!(document["paths"].get("/audit").is_none());
     assert!(document["paths"].get("/auth/directory-grants").is_none());
     assert_eq!(
         document["components"]["securitySchemes"]["cookie_auth"]["in"],

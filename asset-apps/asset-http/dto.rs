@@ -164,22 +164,6 @@ pub(crate) struct ScanStorageRequest {
     pub(crate) prefix: StoragePrefix,
 }
 
-/// 审计对象存储与资源数据库一致性的请求。
-#[derive(Debug, Default, Deserialize, ToSchema)]
-#[schema(example = json!({
-    "prefix": "",
-    "sha256": true
-}))]
-pub(crate) struct AuditStorageRequest {
-    /// 可选对象键前缀；未提供时审计整个对象存储根命名空间。
-    #[serde(default)]
-    #[schema(value_type = String)]
-    #[serde(alias = "directory")]
-    pub(crate) prefix: StoragePrefix,
-    /// 是否计算并对比 SHA-256。默认开启。
-    pub(crate) sha256: Option<bool>,
-}
-
 /// 统一 HTTP 错误响应。
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct ErrorResponse {
@@ -514,45 +498,6 @@ pub(crate) struct ScanStorageErrorResponse {
     pub(crate) key: String,
     /// 失败原因。
     pub(crate) error: String,
-}
-
-/// 对象存储一致性审计响应。
-#[derive(Debug, Serialize, ToSchema)]
-pub(crate) struct AuditStorageResponse {
-    /// 本次审计覆盖的对象存储前缀。字段名为兼容旧客户端而保留。
-    #[schema(value_type = String)]
-    pub(crate) audited_directory: StoragePrefix,
-    /// 扫描到的普通文件数量。
-    pub(crate) scanned: u64,
-    /// 检查的资源内容引用数量。
-    pub(crate) checked_resources: u64,
-    /// 数据库引用但对象不存在的数量。
-    pub(crate) missing: u64,
-    /// size 或 checksum 不一致的问题数量。
-    pub(crate) mismatched: u64,
-    /// 对象存在但未被任何资源引用的数量。
-    pub(crate) orphaned: u64,
-    /// 审计问题明细。
-    pub(crate) issues: Vec<AuditStorageIssueResponse>,
-}
-
-/// 单个对象存储审计问题。
-#[derive(Debug, Serialize, ToSchema)]
-pub(crate) struct AuditStorageIssueResponse {
-    /// 问题类型：missing_blob、size_mismatch、checksum_mismatch、orphan_blob。
-    pub(crate) kind: String,
-    /// 内容存储键。
-    pub(crate) key: String,
-    /// 关联资源 ID；孤儿对象为空。
-    pub(crate) resource_id: Option<String>,
-    /// 数据库记录的大小。
-    pub(crate) expected_size: Option<u64>,
-    /// 对象存储中的实际大小。
-    pub(crate) actual_size: Option<u64>,
-    /// 数据库记录的 SHA-256。
-    pub(crate) expected_sha256: Option<String>,
-    /// 对象存储中的实际 SHA-256。
-    pub(crate) actual_sha256: Option<String>,
 }
 
 /// 在线阅读响应。

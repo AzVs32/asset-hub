@@ -40,19 +40,6 @@ impl<'a> SecuredResourceService<'a> {
         self.service.content().scan_storage(command).await
     }
 
-    pub async fn audit_storage(
-        &self,
-        command: AuditStorage,
-    ) -> Result<AuditStorageResult, CoreError> {
-        if !self.context.is_administrator() {
-            return Err(CoreError::forbidden(
-                "audit_storage",
-                command.prefix().as_str(),
-            ));
-        }
-        self.service.content().audit_storage(command).await
-    }
-
     async fn resource_for(
         &self,
         id: &ResourceId,

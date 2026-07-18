@@ -101,26 +101,20 @@ path, status, outcome, and target when available. Request bodies and passwords
 are never stored. Audit persistence is fail-open: a temporary audit write error
 is logged without replacing the business response.
 
-Storage scanning and auditing are administrator-only maintenance operations.
-`POST /scan` imports previously unknown files from the configured storage root.
-`POST /audit` is read-only: it compares resource content rows with objects under
-the storage root and reports missing blobs, size/checksum mismatches, and orphan
-objects. Both operations skip symbolic links, stop after 100,000 filesystem
-entries, and are limited to administrators. Scan does not calculate SHA-256
-unless the request explicitly sets `sha256: true`; audit calculates SHA-256 by
-default and accepts `sha256: false` when only existence and size checks are
-needed. Their request scope is the object-key `prefix`; the legacy `directory`
-request field remains accepted as an alias but does not represent a logical
-resource directory.
+Storage scanning is an administrator-only maintenance operation. `POST /scan`
+imports previously unknown files and empty directories from the configured
+storage root. It skips symbolic links, stops after 100,000 filesystem entries,
+and does not calculate file checksums. Its request scope is the object-key
+`prefix`; the legacy `directory` request field remains accepted as an alias but
+does not represent a logical resource directory.
 
 Plugin write actions can update object bytes through `replace_content`. Runtime
 errors are compensated, but the current OpenDAL-backed replacement flow is not a
 crash-safe transaction across SQLite and object storage: if the process or
 machine stops after the object bytes are replaced but before the database row is
 updated, the database can temporarily or permanently record stale size/checksum
-values for that storage key. Use `POST /audit` to detect that condition. Audit
-does not repair data; any repair flow should be introduced as a separate,
-explicit maintenance operation.
+values for that storage key. Detection and repair for this condition are deferred
+to a future explicit maintenance design.
 
 The identity and authorization model lives in `asset-core`: `User`,
 `AccessContext`, and `DirectoryPermission` are domain types; user and password

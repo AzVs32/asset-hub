@@ -3,7 +3,6 @@
 //! 本模块负责对象内容的流式写入、导入和读取，包括校验和校验以及仓储保存失败后的对象清理补偿。
 
 use super::*;
-use std::collections::{HashMap, HashSet};
 
 /// 资源内容服务。
 ///
@@ -38,13 +37,9 @@ impl<'a> ResourceContentService<'a> {
         let files = self
             .service
             .storage_scanner
-            .scan(&prefix, false, MAX_SCAN_ENTRIES)
+            .scan(&prefix, MAX_SCAN_ENTRIES)
             .await?;
         let scanned = files.len() as u64;
-        let scanned_keys = files
-            .iter()
-            .map(|file| file.key.as_str().to_owned())
-            .collect::<HashSet<_>>();
         let mut resources = Vec::new();
         let mut errors = Vec::new();
         let mut skipped = 0_u64;
@@ -71,24 +66,6 @@ impl<'a> ResourceContentService<'a> {
                         error: error.to_string(),
                     });
                 }
-            }
-        }
-
-        let stored_resources = self
-            .service
-            .query
-            .list(&ListResources::new(u32::MAX, 0))
-            .await?;
-        for resource in stored_resources.items {
-            if resource.content().is_none() {
-                continue;
-            }
-            let key = resource.storage_key();
-            if prefix.contains(&key) && !scanned_keys.contains(key.as_str()) {
-                errors.push(ScanStorageError {
-                    key: key.as_str().to_owned(),
-                    error: "resource references a missing blob".to_owned(),
-                });
             }
         }
 
@@ -330,122 +307,6 @@ impl<'a> ResourceContentService<'a> {
             )
         }))
     }
-
-    /// 审计对象存储与资源数据库的一致性。
-    ///
-    /// 该 usecase 只读，不会导入、删除或修复任何对象。
-    pub(crate) async fn audit_storage(
-        &self,
-        command: AuditStorage,
-    ) -> Result<AuditStorageResult, CoreError> {
-        const MAX_AUDIT_ENTRIES: usize = 100_000;
-
-        let prefix = command.prefix;
-        let files = self
-            .service
-            .storage_scanner
-            .scan(&prefix, command.include_sha256, MAX_AUDIT_ENTRIES)
-            .await?;
-        let scanned = files.len() as u64;
-        let scanned_by_key = files
-            .into_iter()
-            .map(|file| (file.key.as_str().to_owned(), file))
-            .collect::<HashMap<_, _>>();
-        let stored_resources = self
-            .service
-            .query
-            .list(&ListResources::new(u32::MAX, 0))
-            .await?;
-        let mut referenced_keys = HashSet::new();
-        let mut checked_resources = 0_u64;
-        let mut missing = 0_u64;
-        let mut mismatched = 0_u64;
-        let mut orphaned = 0_u64;
-        let mut issues = Vec::new();
-
-        for resource in stored_resources.items {
-            let Some(content) = resource.content() else {
-                continue;
-            };
-            let key = resource.storage_key();
-            if !prefix.contains(&key) {
-                continue;
-            }
-            let key = key.as_str();
-
-            checked_resources += 1;
-            referenced_keys.insert(key.to_owned());
-            let expected_sha256 = content_sha256(content);
-            let Some(actual) = scanned_by_key.get(key) else {
-                missing += 1;
-                issues.push(AuditStorageIssue {
-                    kind: AuditStorageIssueKind::MissingBlob,
-                    key: key.to_owned(),
-                    resource_id: Some(resource.id()),
-                    expected_size: Some(content.size()),
-                    actual_size: None,
-                    expected_sha256,
-                    actual_sha256: None,
-                });
-                continue;
-            };
-
-            if actual.size != content.size() {
-                mismatched += 1;
-                issues.push(AuditStorageIssue {
-                    kind: AuditStorageIssueKind::SizeMismatch,
-                    key: key.to_owned(),
-                    resource_id: Some(resource.id()),
-                    expected_size: Some(content.size()),
-                    actual_size: Some(actual.size),
-                    expected_sha256: expected_sha256.clone(),
-                    actual_sha256: actual.sha256.clone(),
-                });
-            }
-
-            if command.include_sha256
-                && let (Some(expected), Some(actual_sha256)) = (&expected_sha256, &actual.sha256)
-                && !actual_sha256.eq_ignore_ascii_case(expected)
-            {
-                mismatched += 1;
-                issues.push(AuditStorageIssue {
-                    kind: AuditStorageIssueKind::ChecksumMismatch,
-                    key: key.to_owned(),
-                    resource_id: Some(resource.id()),
-                    expected_size: Some(content.size()),
-                    actual_size: Some(actual.size),
-                    expected_sha256,
-                    actual_sha256: Some(actual_sha256.clone()),
-                });
-            }
-        }
-
-        for (key, actual) in &scanned_by_key {
-            if referenced_keys.contains(key) {
-                continue;
-            }
-            orphaned += 1;
-            issues.push(AuditStorageIssue {
-                kind: AuditStorageIssueKind::OrphanBlob,
-                key: key.clone(),
-                resource_id: None,
-                expected_size: None,
-                actual_size: Some(actual.size),
-                expected_sha256: None,
-                actual_sha256: actual.sha256.clone(),
-            });
-        }
-
-        Ok(AuditStorageResult {
-            audited_prefix: prefix,
-            scanned,
-            checked_resources,
-            missing,
-            mismatched,
-            orphaned,
-            issues,
-        })
-    }
 }
 
 fn reject_reserved_storage_key(key: &StorageKey) -> Result<(), CoreError> {
@@ -460,9 +321,4 @@ fn reject_reserved_storage_key(key: &StorageKey) -> Result<(), CoreError> {
     }
 
     Ok(())
-}
-
-fn content_sha256(content: &ResourceContent) -> Option<String> {
-    (content.checksum().kind() == ChecksumKind::Sha256)
-        .then(|| content.checksum().value().to_owned())
 }

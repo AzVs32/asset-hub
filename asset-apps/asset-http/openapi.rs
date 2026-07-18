@@ -1,12 +1,11 @@
 use crate::dto::{
-    AuditStorageIssueResponse, AuditStorageRequest, AuditStorageResponse, BinaryContent,
-    ChecksumResponse, CreateDirectoryRequest, CreateResourceRequest, DirectoryListingResponse,
-    ErrorResponse, ExecuteResourceActionRequest, HealthComponentResponse, HealthResponse,
-    PluginDiagnosticResponse, ResourceActionDefinitionResponse, ResourceActionOutputResponse,
-    ResourceActionsResponse, ResourceContentResponse, ResourceDirectoryResponse,
-    ResourceKindResponse, ResourceKindsResponse, ResourcePageResponse, ResourceReadResponse,
-    ResourceResponse, ScanStorageErrorResponse, ScanStorageRequest, ScanStorageResponse,
-    UpdateResourceRequest, UploadResourceContentStreamQuery,
+    BinaryContent, ChecksumResponse, CreateDirectoryRequest, CreateResourceRequest,
+    DirectoryListingResponse, ErrorResponse, ExecuteResourceActionRequest, HealthComponentResponse,
+    HealthResponse, PluginDiagnosticResponse, ResourceActionDefinitionResponse,
+    ResourceActionOutputResponse, ResourceActionsResponse, ResourceContentResponse,
+    ResourceDirectoryResponse, ResourceKindResponse, ResourceKindsResponse, ResourcePageResponse,
+    ResourceReadResponse, ResourceResponse, ScanStorageErrorResponse, ScanStorageRequest,
+    ScanStorageResponse, UpdateResourceRequest, UploadResourceContentStreamQuery,
 };
 use crate::{auth, handlers};
 use utoipa::{
@@ -44,7 +43,6 @@ impl Modify for CookieSecurity {
         handlers::resource::list_directory,
         handlers::resource::create_directory,
         handlers::maintenance::scan_storage,
-        handlers::maintenance::audit_storage,
         handlers::resource::create_resource,
         handlers::content::upload_resource_content_stream,
         handlers::resource::find_resource,
@@ -61,9 +59,6 @@ impl Modify for CookieSecurity {
         schemas(
             ChecksumResponse,
             BinaryContent,
-            AuditStorageIssueResponse,
-            AuditStorageRequest,
-            AuditStorageResponse,
             CreateResourceRequest,
             CreateDirectoryRequest,
             DirectoryListingResponse,

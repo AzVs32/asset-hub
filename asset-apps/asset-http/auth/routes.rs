@@ -261,7 +261,6 @@ fn security_event_type(method: &Method, path: &str) -> &'static str {
         (&Method::POST, "/auth/users") => "auth.user.create",
         (&Method::PATCH, path) if path.starts_with("/auth/users/") => "auth.user.status",
         (&Method::POST, "/scan") => "maintenance.storage_scan",
-        (&Method::POST, "/audit") => "maintenance.storage_audit",
         (&Method::DELETE, path) if path.ends_with("/purge") => "resource.purge",
         (&Method::DELETE, path) if path.starts_with("/resources/") => "resource.soft_delete",
         (&Method::POST, path) if path.contains("/actions/") => "resource.action",

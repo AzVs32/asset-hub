@@ -389,7 +389,6 @@ impl StorageScanner for InMemoryBlobStorage {
     async fn scan(
         &self,
         prefix: &StoragePrefix,
-        include_sha256: bool,
         _max_entries: usize,
     ) -> Result<Vec<crate::port::ScannedBlob>, CoreError> {
         if prefix.as_str() == crate::port::RESERVED_BLOB_STORAGE_PREFIX
@@ -419,7 +418,6 @@ impl StorageScanner for InMemoryBlobStorage {
                 key: key.clone(),
                 size: content.len() as u64,
                 mime_type: None,
-                sha256: include_sha256.then(|| hex_sha256(content)),
             })
             .collect::<Vec<_>>();
         files.sort_by(|left, right| left.key.as_str().cmp(right.key.as_str()));
@@ -871,97 +869,6 @@ fn stream_upload_resource_content_writes_blob_then_saves_resource() {
     assert_eq!(content.mime_type(), Some("image/png"));
     assert_eq!(content.checksum(), &checksum);
     assert_eq!(blob_storage.get_sync(&key), Some(data));
-}
-
-#[test]
-fn audit_storage_reports_missing_mismatched_and_orphaned_blobs() {
-    let (service, _, blob_storage) = service();
-    let missing_key = StorageKey::new("docs/missing.md").unwrap();
-    let mismatch_key = StorageKey::new("docs/mismatch.md").unwrap();
-    let orphan_key = StorageKey::new("docs/orphan.md").unwrap();
-    block_on(
-        service.content().upload_resource_content_stream(
-            stream_upload_command(
-                "missing.md",
-                missing_key.clone(),
-                Bytes::from_static(b"# Missing"),
-            )
-            .with_mime_type("text/markdown"),
-        ),
-    )
-    .unwrap();
-    block_on(
-        service.content().upload_resource_content_stream(
-            stream_upload_command(
-                "mismatch.md",
-                mismatch_key.clone(),
-                Bytes::from_static(b"# Original"),
-            )
-            .with_mime_type("text/markdown"),
-        ),
-    )
-    .unwrap();
-    blob_storage.objects.lock().unwrap().remove(&missing_key);
-    blob_storage
-        .objects
-        .lock()
-        .unwrap()
-        .insert(mismatch_key, Bytes::from_static(b"# Changed"));
-    blob_storage
-        .objects
-        .lock()
-        .unwrap()
-        .insert(orphan_key, Bytes::from_static(b"# Orphan"));
-
-    let result = block_on(
-        service
-            .content()
-            .audit_storage(AuditStorage::new(StoragePrefix::root()).with_sha256(true)),
-    )
-    .unwrap();
-
-    assert_eq!(result.checked_resources, 2);
-    assert_eq!(result.missing, 1);
-    assert_eq!(result.orphaned, 1);
-    assert!(result.mismatched >= 1);
-    assert!(result.issues.iter().any(|issue| {
-        issue.kind == AuditStorageIssueKind::MissingBlob && issue.key == "docs/missing.md"
-    }));
-    assert!(result.issues.iter().any(|issue| {
-        issue.kind == AuditStorageIssueKind::ChecksumMismatch && issue.key == "docs/mismatch.md"
-    }));
-    assert!(result.issues.iter().any(|issue| {
-        issue.kind == AuditStorageIssueKind::OrphanBlob && issue.key == "docs/orphan.md"
-    }));
-}
-
-#[test]
-fn audit_storage_ignores_soft_deleted_content_in_internal_trash() {
-    let (service, _, _) = service();
-    let resource = block_on(service.content().upload_resource_content_stream(
-        stream_upload_command(
-            "deleted",
-            StorageKey::new("docs/deleted.md").unwrap(),
-            Bytes::from_static(b"deleted"),
-        ),
-    ))
-    .unwrap();
-    block_on(service.commands().soft_delete_resource(&resource.id()))
-        .unwrap()
-        .unwrap();
-
-    let result = block_on(
-        service
-            .content()
-            .audit_storage(AuditStorage::new(StoragePrefix::root()).with_sha256(true)),
-    )
-    .unwrap();
-
-    assert_eq!(result.scanned, 0);
-    assert_eq!(result.checked_resources, 0);
-    assert_eq!(result.missing, 0);
-    assert_eq!(result.orphaned, 0);
-    assert!(result.issues.is_empty());
 }
 
 #[test]

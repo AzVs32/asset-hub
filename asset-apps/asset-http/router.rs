@@ -49,7 +49,6 @@ pub(crate) fn build_with_options_and_plugin_web_assets(
             get(handlers::list_directory).post(handlers::create_directory),
         )
         .route("/scan", post(handlers::scan_storage))
-        .route("/audit", post(handlers::audit_storage))
         .route(
             "/resources",
             get(handlers::list_resources).post(handlers::create_resource),

@@ -4,23 +4,6 @@
  */
 
 export interface paths {
-    "/audit": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** 审计对象存储与资源数据库的一致性。 */
-        post: operations["audit_storage"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/auth/audit-events": {
         parameters: {
             query?: never;
@@ -353,74 +336,6 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** @description 单个对象存储审计问题。 */
-        AuditStorageIssueResponse: {
-            /** @description 对象存储中的实际 SHA-256。 */
-            actual_sha256?: string | null;
-            /**
-             * Format: int64
-             * @description 对象存储中的实际大小。
-             */
-            actual_size?: number | null;
-            /** @description 数据库记录的 SHA-256。 */
-            expected_sha256?: string | null;
-            /**
-             * Format: int64
-             * @description 数据库记录的大小。
-             */
-            expected_size?: number | null;
-            /** @description 内容存储键。 */
-            key: string;
-            /** @description 问题类型：missing_blob、size_mismatch、checksum_mismatch、orphan_blob。 */
-            kind: string;
-            /** @description 关联资源 ID；孤儿对象为空。 */
-            resource_id?: string | null;
-        };
-        /**
-         * @description 审计对象存储与资源数据库一致性的请求。
-         * @example {
-         *       "prefix": "",
-         *       "sha256": true
-         *     }
-         */
-        AuditStorageRequest: {
-            /** @description 可选对象键前缀；未提供时审计整个对象存储根命名空间。 */
-            prefix?: string;
-            /** @description 是否计算并对比 SHA-256。默认开启。 */
-            sha256?: boolean | null;
-        };
-        /** @description 对象存储一致性审计响应。 */
-        AuditStorageResponse: {
-            /** @description 本次审计覆盖的对象存储前缀。字段名为兼容旧客户端而保留。 */
-            audited_directory: string;
-            /**
-             * Format: int64
-             * @description 检查的资源内容引用数量。
-             */
-            checked_resources: number;
-            /** @description 审计问题明细。 */
-            issues: components["schemas"]["AuditStorageIssueResponse"][];
-            /**
-             * Format: int64
-             * @description size 或 checksum 不一致的问题数量。
-             */
-            mismatched: number;
-            /**
-             * Format: int64
-             * @description 数据库引用但对象不存在的数量。
-             */
-            missing: number;
-            /**
-             * Format: int64
-             * @description 对象存在但未被任何资源引用的数量。
-             */
-            orphaned: number;
-            /**
-             * Format: int64
-             * @description 扫描到的普通文件数量。
-             */
-            scanned: number;
-        };
         AuthenticatedUser: {
             id: string;
             is_admin: boolean;
@@ -826,48 +741,6 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    audit_storage: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AuditStorageRequest"];
-            };
-        };
-        responses: {
-            /** @description 审计结果 */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AuditStorageResponse"];
-                };
-            };
-            /** @description 请求参数无效 */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description 服务端错误 */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
     list_security_audit_events: {
         parameters: {
             query?: never;
