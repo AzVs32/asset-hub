@@ -49,9 +49,10 @@ CREATE TABLE IF NOT EXISTS resource_tags (
 -- 对于“多对多中间表”，使用 `WITHOUT ROWID` 可节省存储空间、避免回表。
 ) WITHOUT ROWID;
 
--- 资源目录表：保存可独立存在的规范化目录及其直接父子关系。
+-- 用户可见资源目录表：每条记录都必须对应存储侧的真实目录或目录标记。
+-- 根目录使用空路径隐式表示，不写入本表；内部 `.asset-hub` 命名空间也不写入本表。
 CREATE TABLE IF NOT EXISTS directories (
-    -- 完整规范化目录路径；空字符串可表示根目录。
+    -- 完整规范化目录路径；仅保存非根、非内部目录。
     path TEXT PRIMARY KEY NOT NULL,
     -- 直接父目录的规范化路径。
     parent_path TEXT NOT NULL,

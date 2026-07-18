@@ -7,7 +7,7 @@ use asset_core::domain::{
 use asset_core::port::{ListResources, ResourcePage, ResourceQuery, ResourceRepository};
 use chrono::{DateTime, Utc};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow};
-use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool, Transaction};
+use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection, SqlitePool, Transaction};
 
 const RESOURCE_SELECT: &str = r#"
     SELECT
@@ -107,7 +107,6 @@ impl ResourceRepository for SqliteResourceRepository {
     }
 
     async fn save(&self, resource: &Resource) -> Result<(), CoreError> {
-        ensure_directory_path(&self.pool, resource.directory().path()).await?;
         let content_json = resource
             .content()
             .map(serde_json::to_string)
@@ -119,6 +118,7 @@ impl ResourceRepository for SqliteResourceRepository {
             .begin()
             .await
             .map_err(|error| CoreError::repository("save.begin", error))?;
+        ensure_directory_path(&mut transaction, resource.directory().path()).await?;
         sqlx::query(
             r#"
             INSERT INTO resources (
@@ -174,7 +174,6 @@ impl ResourceRepository for SqliteResourceRepository {
         resource: &Resource,
         expected_updated_at: DateTime<Utc>,
     ) -> Result<bool, CoreError> {
-        ensure_directory_path(&self.pool, resource.directory().path()).await?;
         let content_json = resource
             .content()
             .map(serde_json::to_string)
@@ -186,6 +185,7 @@ impl ResourceRepository for SqliteResourceRepository {
             .begin()
             .await
             .map_err(|error| CoreError::repository("save_if_unchanged.begin", error))?;
+        ensure_directory_path(&mut transaction, resource.directory().path()).await?;
         let result = sqlx::query(
             r#"
             UPDATE resources SET
@@ -285,7 +285,12 @@ impl ResourceRepository for SqliteResourceRepository {
     }
 
     async fn save_directory(&self, directory: &ResourceDirectory) -> Result<(), CoreError> {
-        ensure_directory_path(&self.pool, directory.parent_path()).await?;
+        let mut transaction = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| CoreError::repository("directory.create.begin", error))?;
+        ensure_directory_path(&mut transaction, directory.parent_path()).await?;
         let now = encode_timestamp(Utc::now());
         sqlx::query("INSERT INTO directories (path, parent_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
             .bind(directory.path())
@@ -293,7 +298,7 @@ impl ResourceRepository for SqliteResourceRepository {
             .bind(directory.name())
             .bind(&now)
             .bind(&now)
-            .execute(&self.pool)
+            .execute(&mut *transaction)
             .await
             .map_err(|error| {
                 if error.to_string().contains("UNIQUE") {
@@ -302,6 +307,24 @@ impl ResourceRepository for SqliteResourceRepository {
                     CoreError::repository("directory.create", error)
                 }
             })?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| CoreError::repository("directory.create.commit", error))?;
+        Ok(())
+    }
+
+    async fn ensure_directory(&self, directory: &ResourceDirectory) -> Result<(), CoreError> {
+        let mut transaction = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| CoreError::repository("directory.ensure.begin", error))?;
+        ensure_directory_path(&mut transaction, directory.path()).await?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| CoreError::repository("directory.ensure.commit", error))?;
         Ok(())
     }
 }
@@ -539,7 +562,10 @@ async fn delete_orphan_tags(transaction: &mut Transaction<'_, Sqlite>) -> Result
     Ok(())
 }
 
-async fn ensure_directory_path(pool: &SqlitePool, directory: &str) -> Result<(), CoreError> {
+async fn ensure_directory_path(
+    connection: &mut SqliteConnection,
+    directory: &str,
+) -> Result<(), CoreError> {
     if directory.is_empty() {
         return Ok(());
     }
@@ -568,7 +594,7 @@ async fn ensure_directory_path(pool: &SqlitePool, directory: &str) -> Result<(),
         .bind(name)
         .bind(&now)
         .bind(&now)
-        .execute(pool)
+        .execute(&mut *connection)
         .await
         .map_err(|error| CoreError::repository("directory.save", error))?;
 

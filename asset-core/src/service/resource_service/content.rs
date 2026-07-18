@@ -26,6 +26,15 @@ impl<'a> ResourceContentService<'a> {
         const MAX_SCAN_ENTRIES: usize = 100_000;
 
         let prefix = command.prefix;
+        let directories = self
+            .service
+            .storage_scanner
+            .scan_directories(&prefix, MAX_SCAN_ENTRIES)
+            .await?;
+        for directory in directories {
+            self.service.repository.ensure_directory(&directory).await?;
+        }
+
         let files = self
             .service
             .storage_scanner
@@ -137,6 +146,7 @@ impl<'a> ResourceContentService<'a> {
             .with_content(content)
             .build()?;
 
+        self.ensure_directory(resource.directory()).await?;
         self.service.repository.save(&resource).await?;
 
         Ok(Some(resource))
@@ -204,11 +214,18 @@ impl<'a> ResourceContentService<'a> {
             Some(storage_key.as_str()),
         )?;
 
-        let resource_builder =
-            build_resource(name, directory, Some(kind), status, description, tags);
+        let resource_builder = build_resource(
+            name,
+            directory.clone(),
+            Some(kind),
+            status,
+            description,
+            tags,
+        );
         resource_builder.clone().build()?;
         build_content(0, mime_type.clone(), placeholder_checksum()?)?;
 
+        self.ensure_directory(&directory).await?;
         let (data, checksum_state) = stream_with_checksum_tracking(data);
         let write_result = self
             .service
@@ -231,6 +248,15 @@ impl<'a> ResourceContentService<'a> {
         }
 
         Ok(resource)
+    }
+
+    /// 确保内容写入前，其用户可见父目录同时存在于存储端和目录仓储。
+    async fn ensure_directory(&self, directory: &ResourceDirectory) -> Result<(), CoreError> {
+        self.service
+            .directory_storage
+            .ensure_directory(directory)
+            .await?;
+        self.service.repository.ensure_directory(directory).await
     }
 
     /// 读取资源对应的对象内容。

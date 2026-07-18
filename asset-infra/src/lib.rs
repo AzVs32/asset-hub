@@ -14,9 +14,9 @@ use asset_core::service::{
     AuthorizationService, ResourceService, ResourceServicePorts, UserService,
 };
 use asset_core::{
-    CoreError, port::BlobStorage, port::ResourceActionExecutor, port::ResourceActionRegistry,
-    port::ResourceKindRegistry, port::ResourceQuery, port::ResourceRepository,
-    port::StorageScanner,
+    CoreError, port::BlobStorage, port::DirectoryStorage, port::ResourceActionExecutor,
+    port::ResourceActionRegistry, port::ResourceKindRegistry, port::ResourceQuery,
+    port::ResourceRepository, port::StorageScanner,
 };
 use asset_plugin_api::PluginExecutionPolicy;
 use config::AssetInfraConfig;
@@ -122,6 +122,7 @@ impl AssetInfrastructure {
         UserService::new(
             self.identity_repository.clone(),
             Arc::new(Argon2PasswordHasher),
+            self.directory_storage(),
         )
     }
 
@@ -134,6 +135,10 @@ impl AssetInfrastructure {
 
     /// 返回对象存储端口对象。
     pub fn blob_storage(&self) -> Arc<dyn BlobStorage> {
+        self.blob_storage.clone()
+    }
+
+    pub fn directory_storage(&self) -> Arc<dyn DirectoryStorage> {
         self.blob_storage.clone()
     }
 
@@ -168,6 +173,7 @@ impl AssetInfrastructure {
                 self.resource_repository(),
                 self.resource_query(),
                 self.blob_storage(),
+                self.directory_storage(),
                 self.storage_scanner(),
                 self.resource_kind_registry(),
             )

@@ -7,7 +7,7 @@ mod status;
 mod tag;
 
 pub use content::{Checksum, ChecksumKind, ResourceContent, ResourceContentBuilder, StorageKey};
-pub use directory::ResourceDirectory;
+pub use directory::{INTERNAL_STORAGE_DIRECTORY_NAME, ResourceDirectory};
 pub use kind::ResourceKind;
 pub use resource::{Resource, ResourceBuilder, ResourceId, ResourceSnapshot};
 pub use status::ResourceStatus;

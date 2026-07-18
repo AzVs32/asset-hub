@@ -18,9 +18,33 @@ fn scan_skips_reserved_asset_hub_directory() {
     .unwrap();
 
     let files = scan_files(&root, &StoragePrefix::root(), false, 100).unwrap();
+    let directories = scan_directory_paths(&root, &StoragePrefix::root(), 100).unwrap();
 
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].key.as_str(), "docs/readme.md");
+    assert_eq!(
+        directories
+            .iter()
+            .map(ResourceDirectory::path)
+            .collect::<Vec<_>>(),
+        vec!["docs"]
+    );
+}
+
+#[test]
+fn scan_includes_manually_created_empty_directories() {
+    let root = unique_temp_path("scanner-empty-directories");
+    std::fs::create_dir_all(root.join("manual/empty/nested")).unwrap();
+
+    let directories = scan_directory_paths(&root, &StoragePrefix::root(), 100).unwrap();
+
+    assert_eq!(
+        directories
+            .iter()
+            .map(ResourceDirectory::path)
+            .collect::<Vec<_>>(),
+        vec!["manual", "manual/empty", "manual/empty/nested"]
+    );
 }
 
 #[test]

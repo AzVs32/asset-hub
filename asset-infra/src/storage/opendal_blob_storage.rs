@@ -1,12 +1,14 @@
 use crate::config::BlobConfig;
 use asset_core::CoreError;
-use asset_core::domain::StorageKey;
-use asset_core::port::{BlobByteStream, BlobStorage, BlobWriteResult};
+use asset_core::domain::{ResourceDirectory, StorageKey};
+use asset_core::port::{
+    BlobByteStream, BlobStorage, BlobWriteResult, DirectoryStorage, RESERVED_BLOB_STORAGE_PREFIX,
+};
 use bytes::Bytes;
 use futures_util::{StreamExt, TryStreamExt};
 use opendal::services::Fs;
 use opendal::{ErrorKind, Operator};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// 基于 OpenDAL `Operator` 的对象存储适配器。
 ///
@@ -155,7 +157,9 @@ impl BlobStorage for OpenDalBlobStorage {
                 let _ = std::fs::remove_file(&target);
                 return Err(CoreError::storage("move_if_absent.remove_source", error));
             }
-            cleanup_empty_fs_parent_dirs(root, from);
+            if is_internal_key(from) {
+                cleanup_internal_fs_parents(root, &source)?;
+            }
             return Ok(());
         }
 
@@ -186,43 +190,97 @@ impl BlobStorage for OpenDalBlobStorage {
             .delete(key.as_str())
             .await
             .map_err(|error| CoreError::storage("delete", error))?;
-        if let Some(root) = &self.fs_root {
-            cleanup_empty_fs_parent_dirs(root, key);
+        if let Some(root) = &self.fs_root
+            && is_internal_key(key)
+        {
+            cleanup_internal_fs_parents(root, &root.join(key.as_str()))?;
         }
         Ok(())
     }
 }
 
-fn cleanup_empty_fs_parent_dirs(root: &Path, key: &StorageKey) {
-    let mut parts = key.as_str().split('/').collect::<Vec<_>>();
-    if parts.len() < 2 || parts.iter().any(|part| part.is_empty() || *part == ".") {
-        return;
-    }
-    parts.pop();
+#[async_trait::async_trait]
+impl DirectoryStorage for OpenDalBlobStorage {
+    async fn ensure_directory(&self, directory: &ResourceDirectory) -> Result<(), CoreError> {
+        let mut path = String::new();
 
-    let mut current = root.to_path_buf();
-    for part in parts {
-        current.push(part);
-    }
-
-    while current != root {
-        match std::fs::remove_dir(&current) {
-            Ok(()) => {}
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
-                ) =>
-            {
-                break;
+        for name in directory.path().split('/').filter(|name| !name.is_empty()) {
+            if !path.is_empty() {
+                path.push('/');
             }
-            Err(_) => break,
+            path.push_str(name);
+            let current = ResourceDirectory::from_path(path.clone())?;
+
+            if let Some(root) = &self.fs_root {
+                let physical = root.join(current.path());
+                match std::fs::metadata(&physical) {
+                    Ok(metadata) if metadata.is_dir() => continue,
+                    Ok(_) => {
+                        return Err(CoreError::conflict(format!(
+                            "storage directory `{current}` is occupied by a file"
+                        )));
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        std::fs::create_dir(&physical)
+                            .map_err(|error| CoreError::storage("directory.create", error))?;
+                    }
+                    Err(error) => return Err(CoreError::storage("directory.metadata", error)),
+                }
+                continue;
+            }
+
+            let marker = format!("{}/", current.path());
+            match self.operator.stat(&marker).await {
+                Ok(metadata) if metadata.is_dir() => {}
+                Ok(_) => {
+                    return Err(CoreError::conflict(format!(
+                        "storage directory `{current}` is occupied by an object"
+                    )));
+                }
+                Err(error) if error.kind() == ErrorKind::NotFound => {
+                    self.operator
+                        .create_dir(&marker)
+                        .await
+                        .map_err(|error| CoreError::storage("directory.create", error))?;
+                }
+                Err(error) => return Err(CoreError::storage("directory.stat", error)),
+            }
         }
 
-        if !current.pop() {
+        Ok(())
+    }
+}
+
+fn is_internal_key(key: &StorageKey) -> bool {
+    key.as_str() == RESERVED_BLOB_STORAGE_PREFIX
+        || key
+            .as_str()
+            .strip_prefix(RESERVED_BLOB_STORAGE_PREFIX)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+/// `.asset-hub` 不属于用户目录模型，可以在内部对象删除后清理其空目录。
+/// 用户可见目录绝不在 Blob 操作中隐式删除。
+fn cleanup_internal_fs_parents(
+    root: &std::path::Path,
+    blob: &std::path::Path,
+) -> Result<(), CoreError> {
+    let internal_root = root.join(RESERVED_BLOB_STORAGE_PREFIX);
+    let mut current = blob.parent();
+    while let Some(directory) = current {
+        if !directory.starts_with(&internal_root) {
             break;
         }
+        match std::fs::remove_dir(directory) {
+            Ok(()) => current = directory.parent(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                current = directory.parent();
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::DirectoryNotEmpty => break,
+            Err(error) => return Err(CoreError::storage("internal_directory.cleanup", error)),
+        }
     }
+    Ok(())
 }
 
 async fn put_stream_with_writer(

@@ -1,4 +1,4 @@
-use crate::domain::StorageKey;
+use crate::domain::{ResourceDirectory, StorageKey};
 use crate::{CoreError, ResourceError};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -80,6 +80,13 @@ pub struct ScannedBlob {
 
 #[async_trait::async_trait]
 pub trait StorageScanner: Send + Sync {
+    /// 扫描用户可见目录；内部 `.asset-hub` 命名空间必须排除。
+    async fn scan_directories(
+        &self,
+        prefix: &StoragePrefix,
+        max_entries: usize,
+    ) -> Result<Vec<ResourceDirectory>, CoreError>;
+
     async fn scan(
         &self,
         prefix: &StoragePrefix,

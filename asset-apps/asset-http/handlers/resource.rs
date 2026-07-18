@@ -178,7 +178,7 @@ pub(crate) async fn list_directory(
     }))
 }
 
-/// 创建一个空逻辑目录。
+/// 创建一个与存储侧实体对应的空目录。
 #[utoipa::path(
     post,
     path = "/directories",

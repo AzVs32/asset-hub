@@ -4,6 +4,7 @@
 
 mod access_policy_repository;
 mod blob_storage;
+mod directory_storage;
 mod password_hasher;
 mod resource_action_executor;
 mod resource_action_registry;
@@ -17,6 +18,7 @@ pub use access_policy_repository::AccessPolicyRepository;
 pub use blob_storage::{
     BlobByteStream, BlobStorage, BlobWriteResult, RESERVED_BLOB_STORAGE_PREFIX,
 };
+pub use directory_storage::DirectoryStorage;
 pub use password_hasher::PasswordHasher;
 pub use resource_action_executor::{
     ResourceActionExecutor, ResourceActionOutput, ResourceActionRequest,

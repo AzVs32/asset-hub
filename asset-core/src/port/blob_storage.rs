@@ -19,7 +19,7 @@ pub type BlobByteStream = Pin<Box<dyn Stream<Item = Result<Bytes, CoreError>> + 
 ///
 /// User-managed resources must not use this prefix. Infrastructure adapters and scanners use the
 /// same value to keep internal action scratch objects out of user-visible imports.
-pub const RESERVED_BLOB_STORAGE_PREFIX: &str = ".asset-hub";
+pub const RESERVED_BLOB_STORAGE_PREFIX: &str = crate::domain::INTERNAL_STORAGE_DIRECTORY_NAME;
 
 /// 对象写入结果。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

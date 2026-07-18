@@ -567,6 +567,42 @@ async fn stream_upload_roundtrips_small_blob_and_creates_directories() {
 }
 
 #[tokio::test]
+async fn empty_directories_and_contentless_resources_create_physical_directories() {
+    let app = test_app("physical-directories").await;
+
+    let (status, directory) = json_request(
+        &app,
+        Method::POST,
+        "/directories",
+        json!({ "parent_path": "projects", "name": "empty" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(directory["path"], "projects/empty");
+    assert!(app.root.join("blob/projects/empty").is_dir());
+
+    let (status, resource) = json_request(
+        &app,
+        Method::POST,
+        "/resources",
+        json!({ "name": "placeholder", "directory": "projects/contentless" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert!(resource["content"].is_null());
+    assert!(app.root.join("blob/projects/contentless").is_dir());
+
+    let (status, _) = json_request(
+        &app,
+        Method::POST,
+        "/directories",
+        json!({ "parent_path": "", "name": ".asset-hub" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn resource_content_supports_single_byte_ranges_for_video_seek() {
     let app = test_app("content-range").await;
     let data = b"0123456789";
@@ -696,11 +732,16 @@ async fn scan_storage_imports_existing_files_idempotently() {
     assert_eq!(listing["resources"]["total"], 1);
     assert_eq!(listing["resources"]["items"][0]["name"], "readme.md");
 
+    std::fs::create_dir_all(app.root.join("blob/manual/empty")).unwrap();
     let (status, scan) = json_request(&app, Method::POST, "/scan", json!({})).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(scan["scanned"], 1);
     assert_eq!(scan["imported"], 0);
     assert_eq!(scan["skipped"], 1);
+
+    let (status, listing) = empty_json_request(&app, Method::GET, "/directories?path=manual").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(listing["folders"][0]["path"], "manual/empty");
 
     std::fs::remove_file(&file_path).unwrap();
     let (status, audit) = json_request(&app, Method::POST, "/scan", json!({})).await;
@@ -1800,6 +1841,7 @@ async fn member_uses_explicit_workspace_and_additional_grants() {
 
     let (alice_cookie, login) = login_with_password(&app, "alice", "alice-secure-password").await;
     assert_eq!(login["user"]["workspace_directory"], "teams/alice");
+    assert!(app.root.join("blob/teams/alice").is_dir());
     let scan = request_with_cookie(&app, Method::POST, "/scan", json!({}), &alice_cookie).await;
     assert_eq!(scan.status(), StatusCode::FORBIDDEN);
     let folder = request_with_cookie(
@@ -1813,6 +1855,7 @@ async fn member_uses_explicit_workspace_and_additional_grants() {
     assert_eq!(folder.status(), StatusCode::CREATED);
     let folder = response_json(folder).await;
     assert_eq!(folder["path"], "teams/alice/empty-folder");
+    assert!(app.root.join("blob/teams/alice/empty-folder").is_dir());
 
     let denied_folder = request_with_cookie(
         &app,

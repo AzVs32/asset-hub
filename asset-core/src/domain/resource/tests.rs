@@ -284,6 +284,19 @@ fn path_constructor_supports_root_and_normalizes_segments() {
 }
 
 #[test]
+fn directory_rejects_internal_asset_hub_namespace() {
+    for path in [".asset-hub", ".asset-hub/trash"] {
+        assert!(matches!(
+            ResourceDirectory::from_path(path),
+            Err(ResourceError::InvalidFormat {
+                field: "resource.directory",
+                ..
+            })
+        ));
+    }
+}
+
+#[test]
 fn serde_uses_the_path_representation() {
     let directory = ResourceDirectory::from_path("projects/images").unwrap();
     let json = serde_json::to_string(&directory).unwrap();

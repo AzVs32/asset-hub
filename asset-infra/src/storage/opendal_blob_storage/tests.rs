@@ -126,6 +126,33 @@ async fn fs_storage_delete_removes_empty_sidecar_directories() {
 }
 
 #[tokio::test]
+async fn fs_storage_ensures_each_user_directory_segment() {
+    let (storage, root) = storage_with_root("fs-ensure-directory");
+    let directory = ResourceDirectory::from_path("projects/design/assets").unwrap();
+
+    storage.ensure_directory(&directory).await.unwrap();
+
+    assert!(root.join("projects").is_dir());
+    assert!(root.join("projects/design").is_dir());
+    assert!(root.join("projects/design/assets").is_dir());
+    storage.ensure_directory(&directory).await.unwrap();
+}
+
+#[tokio::test]
+async fn fs_blob_delete_preserves_empty_user_directories() {
+    let (storage, root) = storage_with_root("fs-preserve-user-directory");
+    let key = StorageKey::new("drafts/readme.md").unwrap();
+    storage
+        .put(&key, Bytes::from_static(b"draft"))
+        .await
+        .unwrap();
+
+    storage.delete(&key).await.unwrap();
+
+    assert!(root.join("drafts").is_dir());
+}
+
+#[tokio::test]
 async fn fs_storage_writes_streaming_blob_content() {
     let storage = storage("fs-stream");
     let key = StorageKey::new("assets/large.bin").unwrap();
@@ -207,7 +234,7 @@ async fn fs_storage_moves_blob_without_overwriting_target() {
         storage.get(&target).await.unwrap(),
         Some(Bytes::from_static(b"source"))
     );
-    assert!(!root.join("drafts").exists());
+    assert!(root.join("drafts").is_dir());
 
     let another = StorageKey::new("incoming/readme.md").unwrap();
     storage

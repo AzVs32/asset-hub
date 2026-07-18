@@ -5,10 +5,13 @@ use std::{fmt, str::FromStr};
 
 const MAX_RESOURCE_DIRECTORY_LEN: usize = 1024;
 const MAX_DIRECTORY_SEGMENT_LEN: usize = 255;
+/// Asset Hub 内部存储目录名，不属于用户可见资源目录空间。
+pub const INTERNAL_STORAGE_DIRECTORY_NAME: &str = ".asset-hub";
 
-/// 资源所在逻辑目录的规范化路径值对象。
+/// 用户可见资源目录的规范化路径值对象。
 ///
-/// 根目录由空路径表示。目录不需要预先持久化；基础设施可以根据 `path` 自动创建目录记录。
+/// 根目录由空路径隐式表示；其余目录必须同时存在于目录仓储与实际存储中。
+/// Asset Hub 内部使用的 `.asset-hub` 命名空间不属于本模型。
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ResourceDirectory {
     path: String,
@@ -183,6 +186,15 @@ fn normalize_path(value: String) -> Result<String, ResourceError> {
     }
 
     let path = parts.join("/");
+    if parts
+        .first()
+        .is_some_and(|part| part == INTERNAL_STORAGE_DIRECTORY_NAME)
+    {
+        return Err(ResourceError::InvalidFormat {
+            field: "resource.directory",
+            reason: "the .asset-hub directory is reserved for internal storage",
+        });
+    }
     if path.chars().count() > MAX_RESOURCE_DIRECTORY_LEN {
         return Err(ResourceError::TooLong {
             field: "resource.directory",

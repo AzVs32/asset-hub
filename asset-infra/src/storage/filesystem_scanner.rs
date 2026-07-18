@@ -1,5 +1,5 @@
 use asset_core::CoreError;
-use asset_core::domain::StorageKey;
+use asset_core::domain::{ResourceDirectory, StorageKey};
 use asset_core::port::{RESERVED_BLOB_STORAGE_PREFIX, ScannedBlob, StoragePrefix, StorageScanner};
 use sha2::{Digest, Sha256};
 use std::io::Read;
@@ -18,6 +18,18 @@ impl FileSystemScanner {
 
 #[async_trait::async_trait]
 impl StorageScanner for FileSystemScanner {
+    async fn scan_directories(
+        &self,
+        prefix: &StoragePrefix,
+        max_entries: usize,
+    ) -> Result<Vec<ResourceDirectory>, CoreError> {
+        let root = self.root.clone();
+        let prefix = prefix.clone();
+        tokio::task::spawn_blocking(move || scan_directory_paths(&root, &prefix, max_entries))
+            .await
+            .map_err(|error| CoreError::configuration(format!("scan task failed: {error}")))?
+    }
+
     async fn scan(
         &self,
         prefix: &StoragePrefix,
@@ -30,6 +42,89 @@ impl StorageScanner for FileSystemScanner {
             .await
             .map_err(|error| CoreError::configuration(format!("scan task failed: {error}")))?
     }
+}
+
+fn scan_directory_paths(
+    root: &Path,
+    prefix: &StoragePrefix,
+    max_entries: usize,
+) -> Result<Vec<ResourceDirectory>, CoreError> {
+    if prefix_in_reserved_namespace(prefix) {
+        return Ok(Vec::new());
+    }
+    let root = root.canonicalize().map_err(|error| {
+        CoreError::configuration(format!("storage root is not readable: {error}"))
+    })?;
+    let scan_root = root
+        .join(prefix.as_str())
+        .canonicalize()
+        .map_err(|error| CoreError::configuration(format!("scan path is not readable: {error}")))?;
+    if !scan_root.starts_with(&root) || !scan_root.is_dir() {
+        return Err(CoreError::configuration(
+            "scan path must be a directory inside storage root",
+        ));
+    }
+
+    let mut directories = Vec::new();
+    if !prefix.is_root() {
+        directories.push(ResourceDirectory::from_path(prefix.as_str())?);
+    }
+    let mut visited = 0;
+    collect_directories(
+        &root,
+        &scan_root,
+        max_entries,
+        &mut visited,
+        &mut directories,
+    )?;
+    directories.sort();
+    directories.dedup();
+    Ok(directories)
+}
+
+fn collect_directories(
+    root: &Path,
+    current: &Path,
+    max_entries: usize,
+    visited: &mut usize,
+    directories: &mut Vec<ResourceDirectory>,
+) -> Result<(), CoreError> {
+    for entry in
+        std::fs::read_dir(current).map_err(|error| CoreError::storage("scan.read_dir", error))?
+    {
+        *visited += 1;
+        if *visited > max_entries {
+            return Err(CoreError::configuration(format!(
+                "storage scan exceeds the limit of {max_entries} entries"
+            )));
+        }
+        let entry = entry.map_err(|error| CoreError::storage("scan.read_dir_entry", error))?;
+        if current == root && entry.file_name().to_str() == Some(RESERVED_BLOB_STORAGE_PREFIX) {
+            continue;
+        }
+        let path = entry.path();
+        let metadata = std::fs::symlink_metadata(&path)
+            .map_err(|error| CoreError::storage("scan.metadata", error))?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            continue;
+        }
+        let relative = path
+            .strip_prefix(root)
+            .map_err(|_| CoreError::configuration("scanned directory escaped storage root"))?;
+        let value = relative
+            .components()
+            .map(|component| match component {
+                Component::Normal(part) => part
+                    .to_str()
+                    .ok_or_else(|| CoreError::configuration("storage path must be valid UTF-8")),
+                _ => Err(CoreError::configuration("invalid storage directory path")),
+            })
+            .collect::<Result<Vec<_>, _>>()?
+            .join("/");
+        directories.push(ResourceDirectory::from_path(value)?);
+        collect_directories(root, &path, max_entries, visited, directories)?;
+    }
+    Ok(())
 }
 
 fn scan_files(

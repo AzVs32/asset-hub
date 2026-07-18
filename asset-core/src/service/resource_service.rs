@@ -12,7 +12,7 @@ use crate::domain::{
     ResourceStatus, StorageKey,
 };
 use crate::port::{
-    BlobByteStream, BlobStorage, ListResources, RESERVED_BLOB_STORAGE_PREFIX,
+    BlobByteStream, BlobStorage, DirectoryStorage, ListResources, RESERVED_BLOB_STORAGE_PREFIX,
     ResourceActionExecutor, ResourceActionOutput, ResourceActionRegistry, ResourceActionRequest,
     ResourceKindRegistry, ResourcePage, ResourceQuery, ResourceRepository, StoragePrefix,
     StorageScanner,
@@ -607,6 +607,7 @@ pub struct ResourceService {
     query: Arc<dyn ResourceQuery>,
     /// 对象存储端口。
     blob_storage: Arc<dyn BlobStorage>,
+    directory_storage: Arc<dyn DirectoryStorage>,
     storage_scanner: Arc<dyn StorageScanner>,
     /// 资源类型注册表。
     kind_registry: Arc<dyn ResourceKindRegistry>,
@@ -623,6 +624,7 @@ pub struct ResourceServicePorts {
     repository: Arc<dyn ResourceRepository>,
     query: Arc<dyn ResourceQuery>,
     blob_storage: Arc<dyn BlobStorage>,
+    directory_storage: Arc<dyn DirectoryStorage>,
     storage_scanner: Arc<dyn StorageScanner>,
     kind_registry: Arc<dyn ResourceKindRegistry>,
     action_registry: Option<Arc<dyn ResourceActionRegistry>>,
@@ -634,6 +636,7 @@ impl ResourceServicePorts {
         repository: Arc<dyn ResourceRepository>,
         query: Arc<dyn ResourceQuery>,
         blob_storage: Arc<dyn BlobStorage>,
+        directory_storage: Arc<dyn DirectoryStorage>,
         storage_scanner: Arc<dyn StorageScanner>,
         kind_registry: Arc<dyn ResourceKindRegistry>,
     ) -> Self {
@@ -641,6 +644,7 @@ impl ResourceServicePorts {
             repository,
             query,
             blob_storage,
+            directory_storage,
             storage_scanner,
             kind_registry,
             action_registry: None,
@@ -672,6 +676,7 @@ impl ResourceService {
             repository,
             query,
             blob_storage,
+            directory_storage,
             storage_scanner,
             kind_registry,
             action_registry,
@@ -681,6 +686,7 @@ impl ResourceService {
             repository,
             query,
             blob_storage,
+            directory_storage,
             storage_scanner,
             kind_registry,
             action_registry,

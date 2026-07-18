@@ -10,7 +10,7 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use futures_util::StreamExt;
 use serde_json::json;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
@@ -19,6 +19,7 @@ use std::task::{Context, Poll, Wake, Waker};
 #[derive(Default)]
 struct InMemoryResourceRepository {
     resources: Mutex<HashMap<ResourceId, Resource>>,
+    directories: Mutex<HashSet<ResourceDirectory>>,
     fail_next_save: Mutex<bool>,
 }
 
@@ -47,6 +48,7 @@ impl ResourceRepository for InMemoryResourceRepository {
             return Err(CoreError::repository("save", TestError("save failed")));
         }
 
+        self.ensure_directory(resource.directory()).await?;
         self.resources
             .lock()
             .unwrap()
@@ -60,13 +62,17 @@ impl ResourceRepository for InMemoryResourceRepository {
         resource: &Resource,
         expected_updated_at: chrono::DateTime<chrono::Utc>,
     ) -> Result<bool, CoreError> {
-        let mut resources = self.resources.lock().unwrap();
-        let Some(current) = resources.get(&resource.id()) else {
-            return Ok(false);
-        };
-        if current.updated_at() != expected_updated_at {
-            return Ok(false);
+        {
+            let resources = self.resources.lock().unwrap();
+            let Some(current) = resources.get(&resource.id()) else {
+                return Ok(false);
+            };
+            if current.updated_at() != expected_updated_at {
+                return Ok(false);
+            }
         }
+        self.ensure_directory(resource.directory()).await?;
+        let mut resources = self.resources.lock().unwrap();
         resources.insert(resource.id(), resource.clone());
         Ok(true)
     }
@@ -93,6 +99,30 @@ impl ResourceRepository for InMemoryResourceRepository {
 
     async fn remove(&self, id: &ResourceId) -> Result<(), CoreError> {
         self.resources.lock().unwrap().remove(id);
+        Ok(())
+    }
+
+    async fn save_directory(&self, directory: &ResourceDirectory) -> Result<(), CoreError> {
+        self.ensure_directory(&ResourceDirectory::from_path(directory.parent_path())?)
+            .await?;
+        if !self.directories.lock().unwrap().insert(directory.clone()) {
+            return Err(CoreError::conflict(format!(
+                "directory `{directory}` already exists"
+            )));
+        }
+        Ok(())
+    }
+
+    async fn ensure_directory(&self, directory: &ResourceDirectory) -> Result<(), CoreError> {
+        let mut directories = self.directories.lock().unwrap();
+        let mut path = String::new();
+        for name in directory.path().split('/').filter(|name| !name.is_empty()) {
+            if !path.is_empty() {
+                path.push('/');
+            }
+            path.push_str(name);
+            directories.insert(ResourceDirectory::from_path(path.clone())?);
+        }
         Ok(())
     }
 }
@@ -164,32 +194,17 @@ impl ResourceQuery for InMemoryResourceRepository {
         parent: &ResourceDirectory,
     ) -> Result<Vec<ResourceDirectory>, CoreError> {
         let mut directories = self
-            .resources
+            .directories
             .lock()
             .unwrap()
-            .values()
-            .filter_map(|resource| child_directory(resource.directory(), parent))
+            .iter()
+            .filter(|directory| directory.parent_path() == parent.path())
+            .cloned()
             .collect::<Vec<_>>();
         directories.sort_by(|left, right| left.path().cmp(right.path()));
         directories.dedup_by(|left, right| left.path() == right.path());
         Ok(directories)
     }
-}
-
-fn child_directory(
-    directory: &ResourceDirectory,
-    parent: &ResourceDirectory,
-) -> Option<ResourceDirectory> {
-    if directory.is_root() {
-        return None;
-    }
-    let directory = directory.path();
-    let remainder = if parent.is_root() {
-        directory
-    } else {
-        directory.strip_prefix(parent.path())?.strip_prefix('/')?
-    };
-    parent.child(remainder.split('/').next()?).ok()
 }
 
 #[derive(Default)]
@@ -222,6 +237,7 @@ impl ResourceActionRegistry for InMemoryResourceActionRegistry {
 #[derive(Default)]
 struct InMemoryBlobStorage {
     objects: Mutex<HashMap<StorageKey, Bytes>>,
+    directories: Mutex<HashSet<ResourceDirectory>>,
     fail_next_delete: Mutex<bool>,
 }
 
@@ -244,6 +260,23 @@ impl InMemoryBlobStorage {
 
     fn fail_next_delete(&self) {
         *self.fail_next_delete.lock().unwrap() = true;
+    }
+}
+
+#[async_trait::async_trait]
+impl DirectoryStorage for InMemoryBlobStorage {
+    async fn ensure_directory(&self, directory: &ResourceDirectory) -> Result<(), CoreError> {
+        let mut directories = self.directories.lock().unwrap();
+        let mut path = String::new();
+        for name in directory.path().split('/').filter(|name| !name.is_empty()) {
+            if !path.is_empty() {
+                path.push('/');
+            }
+            path.push_str(name);
+            let directory = ResourceDirectory::from_path(path.clone())?;
+            directories.insert(directory);
+        }
+        Ok(())
     }
 }
 
@@ -329,6 +362,30 @@ impl BlobStorage for InMemoryBlobStorage {
 
 #[async_trait::async_trait]
 impl StorageScanner for InMemoryBlobStorage {
+    async fn scan_directories(
+        &self,
+        prefix: &StoragePrefix,
+        _max_entries: usize,
+    ) -> Result<Vec<ResourceDirectory>, CoreError> {
+        let mut directories = self
+            .directories
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|directory| {
+                prefix.is_root()
+                    || directory.path() == prefix.as_str()
+                    || directory
+                        .path()
+                        .strip_prefix(prefix.as_str())
+                        .is_some_and(|suffix| suffix.starts_with('/'))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        directories.sort();
+        Ok(directories)
+    }
+
     async fn scan(
         &self,
         prefix: &StoragePrefix,
@@ -559,6 +616,7 @@ fn service() -> (
             repository.clone(),
             blob_storage.clone(),
             blob_storage.clone(),
+            blob_storage.clone(),
             kind_registry,
         )
         .with_actions(action_registry, Arc::new(StaticResourceActionExecutor)),
@@ -678,6 +736,7 @@ fn service_with_registry(
         ResourceServicePorts::new(
             repository.clone(),
             repository.clone(),
+            blob_storage.clone(),
             blob_storage.clone(),
             blob_storage.clone(),
             kind_registry,
@@ -947,49 +1006,6 @@ fn stream_upload_resource_content_rejects_existing_storage_key() {
     match error {
         CoreError::Conflict { message } => assert!(message.contains("already exists")),
         other => panic!("expected storage key conflict, got {other:?}"),
-    }
-    assert!(repository.is_empty());
-}
-
-#[test]
-fn stream_upload_resource_content_rejects_reserved_storage_key() {
-    let (service, repository, blob_storage) = service();
-    let key = StorageKey::new(".asset-hub/action-effects/user-file.txt").unwrap();
-
-    let error = block_on(
-        service
-            .content()
-            .upload_resource_content_stream(stream_upload_command(
-                "file",
-                key.clone(),
-                Bytes::from_static(b"data"),
-            )),
-    )
-    .unwrap_err();
-
-    match error {
-        CoreError::Configuration { message } => assert!(message.contains("reserved")),
-        other => panic!("expected reserved key configuration error, got {other:?}"),
-    }
-    assert!(repository.is_empty());
-    assert!(!blob_storage.contains(&key));
-}
-
-#[test]
-fn import_resource_content_rejects_reserved_storage_key() {
-    let (service, repository, _) = service();
-
-    let error = block_on(
-        service.content().import_resource_content(
-            ImportResourceContent::new("user-file.txt", 4)
-                .with_directory(ResourceDirectory::from_path(".asset-hub/action-effects").unwrap()),
-        ),
-    )
-    .unwrap_err();
-
-    match error {
-        CoreError::Configuration { message } => assert!(message.contains("reserved")),
-        other => panic!("expected reserved key configuration error, got {other:?}"),
     }
     assert!(repository.is_empty());
 }

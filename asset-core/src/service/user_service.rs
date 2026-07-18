@@ -3,7 +3,7 @@ use crate::{
     domain::{
         DirectoryGrant, DirectoryPermission, ResourceDirectory, User, UserId, UserRole, UserStatus,
     },
-    port::{PasswordHasher, UserRepository},
+    port::{DirectoryStorage, PasswordHasher, UserRepository},
 };
 use std::sync::Arc;
 
@@ -11,16 +11,19 @@ use std::sync::Arc;
 pub struct UserService {
     repository: Arc<dyn UserRepository>,
     password_hasher: Arc<dyn PasswordHasher>,
+    directory_storage: Arc<dyn DirectoryStorage>,
 }
 
 impl UserService {
     pub fn new(
         repository: Arc<dyn UserRepository>,
         password_hasher: Arc<dyn PasswordHasher>,
+        directory_storage: Arc<dyn DirectoryStorage>,
     ) -> Self {
         Self {
             repository,
             password_hasher,
+            directory_storage,
         }
     }
     pub async fn create(
@@ -50,6 +53,9 @@ impl UserService {
         )?;
         let workspace_grant =
             DirectoryGrant::new(user.id(), workspace_directory, DirectoryPermission::Full);
+        self.directory_storage
+            .ensure_directory(user.workspace_directory())
+            .await?;
         self.repository.create(&user, &workspace_grant).await?;
         Ok(user)
     }

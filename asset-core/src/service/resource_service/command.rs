@@ -20,7 +20,8 @@ impl<'a> ResourceCommandService<'a> {
 
     /// 创建不包含对象内容的资源。
     ///
-    /// 该 usecase 只保存资源聚合，不写入对象存储。成功时返回已经保存的 `Resource`，
+    /// 该 usecase 不写入对象内容，但会确保资源所在目录已经在存储端和目录仓储中存在。
+    /// 成功时返回已经保存的 `Resource`，
     /// 其中包含新生成的 `ResourceId`、创建时间和更新时间。
     ///
     /// 可能返回的错误包括领域校验错误和仓储保存错误。
@@ -39,6 +40,7 @@ impl<'a> ResourceCommandService<'a> {
         )
         .build()?;
 
+        self.ensure_directory(resource.directory()).await?;
         self.service.repository.save(&resource).await?;
 
         Ok(resource)
@@ -85,13 +87,17 @@ impl<'a> ResourceCommandService<'a> {
         self.service.query.list_directories(parent).await
     }
 
-    /// 在指定父目录下创建一个可独立存在的逻辑目录。
+    /// 在指定父目录下创建一个与存储端实体一一对应的独立目录。
     pub(crate) async fn create_directory(
         &self,
         parent: &ResourceDirectory,
         name: impl Into<String>,
     ) -> Result<ResourceDirectory, CoreError> {
         let directory = parent.child(name)?;
+        self.service
+            .directory_storage
+            .ensure_directory(&directory)
+            .await?;
         self.service.repository.save_directory(&directory).await?;
         Ok(directory)
     }
@@ -151,6 +157,7 @@ impl<'a> ResourceCommandService<'a> {
             )));
         }
 
+        self.ensure_directory(resource.directory()).await?;
         let new_storage_key = persisted_content_key(&resource)?;
         let moved_content = match (&old_storage_key, &new_storage_key) {
             (Some(from), Some(to)) if from != to => {
@@ -186,6 +193,17 @@ impl<'a> ResourceCommandService<'a> {
         }
 
         Err(error)
+    }
+
+    /// 先在存储端创建目录（文件系统目录或对象存储目录标记），再幂等登记目录链。
+    ///
+    /// 目录本身允许独立存在，因此后续资源保存失败时不回滚已经创建的目录。
+    async fn ensure_directory(&self, directory: &ResourceDirectory) -> Result<(), CoreError> {
+        self.service
+            .directory_storage
+            .ensure_directory(directory)
+            .await?;
+        self.service.repository.ensure_directory(directory).await
     }
 
     /// 软删除资源。
