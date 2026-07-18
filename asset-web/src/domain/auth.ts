@@ -1,6 +1,5 @@
 export type UserRole = "administrator" | "member";
 export type UserStatus = "active" | "disabled";
-export type DirectoryPermission = "read" | "write" | "full";
 
 export interface CurrentUser {
   id: string;
@@ -16,10 +15,4 @@ export interface ManagedUser {
   role: UserRole;
   status: UserStatus;
   workspaceDirectory: string;
-}
-
-export interface DirectoryGrant {
-  directory: string;
-  permission: DirectoryPermission;
-  isWorkspace: boolean;
 }

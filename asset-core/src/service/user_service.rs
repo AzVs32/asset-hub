@@ -1,8 +1,6 @@
 use crate::{
     CoreError, UserError,
-    domain::{
-        DirectoryGrant, DirectoryPermission, ResourceDirectory, User, UserId, UserRole, UserStatus,
-    },
+    domain::{ResourceDirectory, User, UserId, UserRole, UserStatus},
     port::{DirectoryStorage, PasswordHasher, UserRepository},
 };
 use std::sync::Arc;
@@ -49,14 +47,12 @@ impl UserService {
             username,
             self.password_hasher.hash(password)?,
             role,
-            workspace_directory.clone(),
+            workspace_directory,
         )?;
-        let workspace_grant =
-            DirectoryGrant::new(user.id(), workspace_directory, DirectoryPermission::Full);
         self.directory_storage
             .ensure_directory(user.workspace_directory())
             .await?;
-        self.repository.create(&user, &workspace_grant).await?;
+        self.repository.create(&user).await?;
         Ok(user)
     }
     pub async fn authenticate(

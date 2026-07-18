@@ -47,39 +47,6 @@ pub(crate) struct UpdateUserStatusRequest {
     pub(super) status: UserStatus,
 }
 
-#[derive(Deserialize, ToSchema)]
-pub(crate) struct GrantDirectoryRequest {
-    #[schema(value_type = String)]
-    pub(super) user_id: UserId,
-    #[schema(value_type = String)]
-    pub(super) directory: ResourceDirectory,
-    #[schema(value_type = String)]
-    pub(super) permission: DirectoryPermission,
-}
-
-#[derive(Serialize, ToSchema)]
-pub(crate) struct DirectoryGrantResponse {
-    #[schema(value_type = String)]
-    pub(super) directory: ResourceDirectory,
-    #[schema(value_type = String)]
-    pub(super) permission: DirectoryPermission,
-    pub(super) is_workspace: bool,
-}
-
-#[derive(Deserialize, utoipa::IntoParams)]
-pub(crate) struct DirectoryGrantQuery {
-    #[param(value_type = Option<String>)]
-    pub(super) user_id: Option<UserId>,
-}
-
-#[derive(Deserialize, utoipa::IntoParams)]
-pub(crate) struct RevokeDirectoryGrantQuery {
-    #[param(value_type = String)]
-    pub(super) user_id: UserId,
-    #[param(value_type = String)]
-    pub(super) directory: ResourceDirectory,
-}
-
 #[derive(Deserialize, utoipa::IntoParams)]
 pub(crate) struct SecurityAuditQuery {
     pub(super) page: Option<u32>,

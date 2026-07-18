@@ -1,52 +1,7 @@
 use super::*;
-use crate::domain::{User, UserRole};
+use crate::domain::{User, UserId, UserRole};
 use async_trait::async_trait;
 use std::sync::Mutex;
-
-#[derive(Default)]
-struct Policies {
-    grants: Mutex<Vec<DirectoryGrant>>,
-}
-#[async_trait]
-impl AccessPolicyRepository for Policies {
-    async fn save_grant(&self, grant: &DirectoryGrant) -> Result<(), CoreError> {
-        self.grants.lock().unwrap().push(grant.clone());
-        Ok(())
-    }
-    async fn list_grants(&self, user_id: &UserId) -> Result<Vec<DirectoryGrant>, CoreError> {
-        Ok(self
-            .grants
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|g| g.user_id() == *user_id)
-            .cloned()
-            .collect())
-    }
-    async fn remove_grant(
-        &self,
-        user_id: &UserId,
-        directory: &ResourceDirectory,
-    ) -> Result<(), CoreError> {
-        self.grants
-            .lock()
-            .unwrap()
-            .retain(|grant| grant.user_id() != *user_id || grant.directory() != directory);
-        Ok(())
-    }
-    async fn list_applicable_grants(
-        &self,
-        user_id: &UserId,
-        directory: &ResourceDirectory,
-    ) -> Result<Vec<DirectoryGrant>, CoreError> {
-        let grants = self.grants.lock().unwrap();
-        Ok(grants
-            .iter()
-            .filter(|grant| grant.user_id() == *user_id && grant.directory().contains(directory))
-            .cloned()
-            .collect())
-    }
-}
 
 #[derive(Default)]
 struct Users {
@@ -63,11 +18,7 @@ impl Users {
 
 #[async_trait]
 impl UserRepository for Users {
-    async fn create(
-        &self,
-        user: &User,
-        _workspace_grant: &DirectoryGrant,
-    ) -> Result<(), CoreError> {
+    async fn create(&self, user: &User) -> Result<(), CoreError> {
         self.users.lock().unwrap().push(user.clone());
         Ok(())
     }
@@ -110,133 +61,91 @@ impl UserRepository for Users {
 }
 
 #[tokio::test]
-async fn explicit_grants_obey_capabilities_and_boundaries() {
-    let repository = Arc::new(Policies::default());
-    let admin = AccessContext::administrator(UserId::new());
-    let shared = ResourceDirectory::from_path("shared").unwrap();
+async fn member_has_full_access_only_inside_workspace_subtree() {
     let workspace = ResourceDirectory::from_path("users/alice").unwrap();
-    let target = User::new(
+    let user = User::new(
         "alice",
         "credential-hash",
         UserRole::Member,
         workspace.clone(),
     )
     .unwrap();
-    let user = target.id();
-    let service = AuthorizationService::new(repository.clone(), Arc::new(Users::with_user(target)));
-    service
-        .grant(
-            &admin,
-            DirectoryGrant::new(user, workspace.clone(), DirectoryPermission::Full),
-        )
-        .await
-        .unwrap();
-    let downgrade_workspace =
-        DirectoryGrant::new(user, workspace.clone(), DirectoryPermission::Read);
-    assert!(service.grant(&admin, downgrade_workspace).await.is_err());
-    assert!(service.revoke(&admin, user, &workspace).await.is_err());
-    service
-        .grant(
-            &admin,
-            DirectoryGrant::new(user, shared.clone(), DirectoryPermission::Write),
-        )
-        .await
-        .unwrap();
-    service
-        .grant(
-            &admin,
-            DirectoryGrant::new(
-                user,
-                ResourceDirectory::from_path("shared/photos").unwrap(),
-                DirectoryPermission::Read,
-            ),
-        )
-        .await
-        .unwrap();
-    let actor = AccessContext::member(user);
-    assert!(
-        service
-            .require(
-                &actor,
-                &ResourceDirectory::from_path("users/alice/docs").unwrap(),
-                DirectoryPermission::Full,
-            )
-            .await
-            .is_ok()
-    );
-    assert!(
-        service
-            .require(
-                &actor,
-                &ResourceDirectory::from_path("shared/photos/raw").unwrap(),
-                DirectoryPermission::Write,
-            )
-            .await
-            .is_ok()
-    );
-    assert!(
-        service
-            .require(
-                &actor,
-                &ResourceDirectory::from_path("shared/photos/raw").unwrap(),
-                DirectoryPermission::Full,
-            )
-            .await
-            .is_err()
-    );
-    assert!(
-        service
-            .require(
-                &actor,
-                &ResourceDirectory::from_path("users/alice2").unwrap(),
-                DirectoryPermission::Read,
-            )
-            .await
-            .is_err()
-    );
-}
+    let actor = AccessContext::member(user.id());
+    let service = AuthorizationService::new(Arc::new(Users::with_user(user)));
 
-#[tokio::test]
-async fn only_administrators_can_change_grants() {
-    let service =
-        AuthorizationService::new(Arc::new(Policies::default()), Arc::new(Users::default()));
-    let user = UserId::new();
-    let member = AccessContext::member(user);
-    let grant = DirectoryGrant::new(
-        UserId::new(),
-        ResourceDirectory::from_path("users/alice/shared").unwrap(),
+    for permission in [
         DirectoryPermission::Read,
-    );
+        DirectoryPermission::Write,
+        DirectoryPermission::Full,
+    ] {
+        assert!(
+            service
+                .require(&actor, &workspace, permission)
+                .await
+                .is_ok()
+        );
+        assert!(
+            service
+                .require(
+                    &actor,
+                    &ResourceDirectory::from_path("users/alice/docs").unwrap(),
+                    permission,
+                )
+                .await
+                .is_ok()
+        );
+    }
 
-    assert!(service.grant(&member, grant).await.is_err());
+    for outside in ["", "users", "users/alice2", "shared"] {
+        assert!(
+            service
+                .require(
+                    &actor,
+                    &ResourceDirectory::from_path(outside).unwrap(),
+                    DirectoryPermission::Read,
+                )
+                .await
+                .is_err()
+        );
+    }
 }
 
 #[tokio::test]
-async fn member_root_access_requires_an_explicit_grant() {
-    let repository = Arc::new(Policies::default());
-    let service = AuthorizationService::new(repository.clone(), Arc::new(Users::default()));
-    let user = UserId::new();
-    let member = AccessContext::member(user);
-    let root = ResourceDirectory::root();
+async fn root_workspace_contains_every_user_directory() {
+    let user = User::new(
+        "root-member",
+        "credential-hash",
+        UserRole::Member,
+        ResourceDirectory::root(),
+    )
+    .unwrap();
+    let actor = AccessContext::member(user.id());
+    let service = AuthorizationService::new(Arc::new(Users::with_user(user)));
 
     assert!(
         service
-            .require(&member, &root, DirectoryPermission::Read)
+            .require(
+                &actor,
+                &ResourceDirectory::from_path("any/directory").unwrap(),
+                DirectoryPermission::Full,
+            )
             .await
-            .is_err()
+            .is_ok()
     );
+}
 
-    repository
-        .save_grant(&DirectoryGrant::new(
-            user,
-            root.clone(),
-            DirectoryPermission::Full,
-        ))
-        .await
-        .unwrap();
+#[tokio::test]
+async fn administrator_access_does_not_depend_on_a_workspace() {
+    let service = AuthorizationService::new(Arc::new(Users::default()));
+    let actor = AccessContext::administrator(UserId::new());
+
     assert!(
         service
-            .require(&member, &root, DirectoryPermission::Full)
+            .require(
+                &actor,
+                &ResourceDirectory::from_path("any/directory").unwrap(),
+                DirectoryPermission::Full,
+            )
             .await
             .is_ok()
     );

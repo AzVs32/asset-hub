@@ -1336,6 +1336,7 @@ async fn openapi_exposes_current_http_contract() {
     assert!(document["paths"].get("/resources/content/stream").is_some());
     assert!(document["paths"].get("/auth/login").is_some());
     assert!(document["paths"].get("/auth/users/{id}").is_some());
+    assert!(document["paths"].get("/auth/directory-grants").is_none());
     assert_eq!(
         document["components"]["securitySchemes"]["cookie_auth"]["in"],
         "cookie"
@@ -1553,8 +1554,8 @@ async fn stream_upload(
 }
 
 #[tokio::test]
-async fn member_uses_explicit_workspace_and_additional_grants() {
-    let root = unique_temp_root("authenticated-directory-acl");
+async fn member_access_is_limited_to_the_workspace_subtree() {
+    let root = unique_temp_root("authenticated-workspace");
     let config = AssetInfraConfig {
         database: DatabaseConfig {
             sqlite_path: root.join("asset-hub.sqlite"),
@@ -1699,45 +1700,6 @@ async fn member_uses_explicit_workspace_and_additional_grants() {
     let alice = response_json(response).await;
     let alice_id = alice["user"]["id"].as_str().unwrap();
     assert_eq!(alice["user"]["workspace_directory"], "teams/alice");
-    let workspace_grants = request_with_cookie(
-        &app,
-        Method::GET,
-        &format!("/auth/directory-grants?user_id={alice_id}"),
-        json!({}),
-        &admin_cookie,
-    )
-    .await;
-    assert_eq!(workspace_grants.status(), StatusCode::OK);
-    assert_eq!(
-        response_json(workspace_grants).await,
-        json!([{
-            "directory": "teams/alice",
-            "permission": "full",
-            "is_workspace": true
-        }])
-    );
-    let downgrade_workspace = request_with_cookie(
-        &app,
-        Method::PUT,
-        "/auth/directory-grants",
-        json!({
-            "user_id": alice_id,
-            "directory": "teams/alice",
-            "permission": "read"
-        }),
-        &admin_cookie,
-    )
-    .await;
-    assert_eq!(downgrade_workspace.status(), StatusCode::CONFLICT);
-    let revoke_workspace = request_with_cookie(
-        &app,
-        Method::DELETE,
-        &format!("/auth/directory-grants?user_id={alice_id}&directory=teams%2Falice"),
-        json!({}),
-        &admin_cookie,
-    )
-    .await;
-    assert_eq!(revoke_workspace.status(), StatusCode::CONFLICT);
     let root_member = request_with_cookie(
         &app,
         Method::POST,
@@ -1753,20 +1715,7 @@ async fn member_uses_explicit_workspace_and_additional_grants() {
     .await;
     assert_eq!(root_member.status(), StatusCode::CREATED);
     let root_member = response_json(root_member).await;
-    let root_member_id = root_member["user"]["id"].as_str().unwrap();
-    let root_entries = request_with_cookie(
-        &app,
-        Method::GET,
-        &format!("/auth/directory-grants?user_id={root_member_id}"),
-        json!({}),
-        &admin_cookie,
-    )
-    .await;
-    assert_eq!(root_entries.status(), StatusCode::OK);
-    assert_eq!(
-        response_json(root_entries).await,
-        json!([{ "directory": "", "permission": "full", "is_workspace": true }])
-    );
+    assert_eq!(root_member["user"]["workspace_directory"], "");
     let teams = request_with_cookie(
         &app,
         Method::GET,
@@ -1783,60 +1732,6 @@ async fn member_uses_explicit_workspace_and_additional_grants() {
             .unwrap()
             .iter()
             .any(|directory| directory["path"] == "teams/alice")
-    );
-
-    let response = request_with_cookie(
-        &app,
-        Method::PUT,
-        "/auth/directory-grants",
-        json!({
-            "user_id": alice_id, "directory": "shared", "permission": "write"
-        }),
-        &admin_cookie,
-    )
-    .await;
-    assert_eq!(response.status(), StatusCode::NO_CONTENT);
-
-    let response = request_with_cookie(
-        &app,
-        Method::PUT,
-        "/auth/directory-grants",
-        json!({
-            "user_id": alice_id, "directory": "shared/photos", "permission": "read"
-        }),
-        &admin_cookie,
-    )
-    .await;
-    assert_eq!(response.status(), StatusCode::NO_CONTENT);
-    let response = request_with_cookie(
-        &app,
-        Method::PUT,
-        "/auth/directory-grants",
-        json!({
-            "user_id": alice_id, "directory": "public", "permission": "read"
-        }),
-        &admin_cookie,
-    )
-    .await;
-    assert_eq!(response.status(), StatusCode::NO_CONTENT);
-
-    let all_entries = request_with_cookie(
-        &app,
-        Method::GET,
-        &format!("/auth/directory-grants?user_id={alice_id}"),
-        json!({}),
-        &admin_cookie,
-    )
-    .await;
-    assert_eq!(all_entries.status(), StatusCode::OK);
-    assert_eq!(
-        response_json(all_entries).await,
-        json!([
-            { "directory": "public", "permission": "read", "is_workspace": false },
-            { "directory": "shared", "permission": "write", "is_workspace": false },
-            { "directory": "shared/photos", "permission": "read", "is_workspace": false },
-            { "directory": "teams/alice", "permission": "full", "is_workspace": true }
-        ])
     );
 
     let (alice_cookie, login) = login_with_password(&app, "alice", "alice-secure-password").await;
@@ -1898,7 +1793,7 @@ async fn member_uses_explicit_workspace_and_additional_grants() {
         &alice_cookie,
     )
     .await;
-    assert_eq!(shared_write.status(), StatusCode::CREATED);
+    assert_eq!(shared_write.status(), StatusCode::FORBIDDEN);
     let public_write = request_with_cookie(
         &app,
         Method::POST,
@@ -1908,20 +1803,6 @@ async fn member_uses_explicit_workspace_and_additional_grants() {
     )
     .await;
     assert_eq!(public_write.status(), StatusCode::FORBIDDEN);
-
-    let delegated_grant = request_with_cookie(
-        &app,
-        Method::PUT,
-        "/auth/directory-grants",
-        json!({
-            "user_id": alice_id,
-            "directory": "teams/alice/shared",
-            "permission": "read"
-        }),
-        &alice_cookie,
-    )
-    .await;
-    assert_eq!(delegated_grant.status(), StatusCode::FORBIDDEN);
 
     let disabled = request_with_cookie(
         &app,
@@ -1951,11 +1832,6 @@ async fn member_uses_explicit_workspace_and_additional_grants() {
         event["event_type"] == "auth.login"
             && event["outcome"] == "failure"
             && event["target"] == "admin"
-    }));
-    assert!(events.iter().any(|event| {
-        event["event_type"] == "auth.directory_grant.update"
-            && event["actor_username"] == "admin"
-            && event["outcome"] == "success"
     }));
     assert!(events.iter().any(|event| {
         event["event_type"] == "auth.user.status"

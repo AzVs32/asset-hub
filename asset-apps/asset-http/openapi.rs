@@ -37,9 +37,6 @@ impl Modify for CookieSecurity {
         auth::routes::create_user,
         auth::routes::list_users,
         auth::routes::update_user_status,
-        auth::routes::grant_directory,
-        auth::routes::my_directory_grants,
-        auth::routes::revoke_directory,
         auth::routes::list_security_audit_events,
         handlers::maintenance::health,
         handlers::resource::list_resource_kinds,
@@ -94,9 +91,7 @@ impl Modify for CookieSecurity {
             ,auth::Credentials
             ,auth::MeResponse
             ,auth::CreateUserRequest
-            ,auth::GrantDirectoryRequest
             ,crate::audit::SecurityAuditEventResponse
-            ,auth::DirectoryGrantResponse
             ,auth::ManagedUserResponse
             ,auth::UpdateUserStatusRequest
         )
@@ -106,7 +101,7 @@ impl Modify for CookieSecurity {
     tags(
         (name = "system", description = "系统状态接口"),
         (name = "resources", description = "资源管理接口")
-        ,(name = "authentication", description = "登录、用户和目录授权接口")
+        ,(name = "authentication", description = "登录和用户管理接口")
     )
 )]
 pub(crate) struct ApiDoc;

@@ -66,7 +66,6 @@ export function ResourceWorkspace() {
         user={user}
         listing={browser.listing.data}
         kinds={kinds}
-        grants={browser.grants.data ?? []}
         filters={browser.filters}
         selectedId={browser.selectedId}
         loading={browser.listing.isFetching}

@@ -201,82 +201,6 @@ pub(crate) async fn update_user_status(
 }
 
 #[utoipa::path(
-    put,
-    path = "/auth/directory-grants",
-    tag = "authentication",
-    request_body = GrantDirectoryRequest,
-    responses((status = 204), (status = 403))
-)]
-pub(crate) async fn grant_directory(
-    session: Session,
-    Json(request): Json<GrantDirectoryRequest>,
-) -> Result<StatusCode, HttpError> {
-    require_admin(&session)?;
-    let actor = require_user(&session)?.access_context();
-    let grant = DirectoryGrant::new(request.user_id, request.directory, request.permission);
-    session.backend.authorization.grant(&actor, grant).await?;
-    Ok(StatusCode::NO_CONTENT)
-}
-
-#[utoipa::path(
-    get,
-    path = "/auth/directory-grants",
-    tag = "authentication",
-    params(DirectoryGrantQuery),
-    responses((status = 200, body = [DirectoryGrantResponse]))
-)]
-pub(crate) async fn my_directory_grants(
-    session: Session,
-    axum::extract::Query(query): axum::extract::Query<DirectoryGrantQuery>,
-) -> Result<Json<Vec<DirectoryGrantResponse>>, HttpError> {
-    let user = require_user(&session)?;
-    let access = user.access_context();
-    let target_id = query.user_id.unwrap_or(user.id);
-    let grants = session
-        .backend
-        .authorization
-        .grants_for(&access, target_id)
-        .await?;
-    let target = session
-        .backend
-        .users
-        .find_by_id(&target_id)
-        .await?
-        .ok_or_else(|| HttpError::not_found(format!("user `{target_id}` not found")))?;
-    Ok(Json(
-        grants
-            .into_iter()
-            .map(|grant| DirectoryGrantResponse {
-                directory: grant.directory().clone(),
-                permission: grant.permission(),
-                is_workspace: grant.directory() == target.workspace_directory(),
-            })
-            .collect(),
-    ))
-}
-
-#[utoipa::path(
-    delete,
-    path = "/auth/directory-grants",
-    tag = "authentication",
-    params(RevokeDirectoryGrantQuery),
-    responses((status = 204), (status = 403))
-)]
-pub(crate) async fn revoke_directory(
-    session: Session,
-    axum::extract::Query(query): axum::extract::Query<RevokeDirectoryGrantQuery>,
-) -> Result<StatusCode, HttpError> {
-    require_admin(&session)?;
-    let actor = require_user(&session)?.access_context();
-    session
-        .backend
-        .authorization
-        .revoke(&actor, query.user_id, &query.directory)
-        .await?;
-    Ok(StatusCode::NO_CONTENT)
-}
-
-#[utoipa::path(
     get,
     path = "/auth/audit-events",
     tag = "authentication",
@@ -336,8 +260,6 @@ fn security_event_type(method: &Method, path: &str) -> &'static str {
         (&Method::POST, "/auth/logout") => "auth.logout",
         (&Method::POST, "/auth/users") => "auth.user.create",
         (&Method::PATCH, path) if path.starts_with("/auth/users/") => "auth.user.status",
-        (&Method::PUT, "/auth/directory-grants") => "auth.directory_grant.update",
-        (&Method::DELETE, "/auth/directory-grants") => "auth.directory_grant.revoke",
         (&Method::POST, "/scan") => "maintenance.storage_scan",
         (&Method::POST, "/audit") => "maintenance.storage_audit",
         (&Method::DELETE, path) if path.ends_with("/purge") => "resource.purge",

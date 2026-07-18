@@ -169,12 +169,6 @@ pub(crate) async fn with_authentication(
         .route(
             "/auth/users/{id}",
             axum::routing::patch(auth::update_user_status),
-        )
-        .route(
-            "/auth/directory-grants",
-            get(auth::my_directory_grants)
-                .put(auth::grant_directory)
-                .delete(auth::revoke_directory),
         );
 
     Ok(protected

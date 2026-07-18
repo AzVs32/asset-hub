@@ -127,10 +127,7 @@ impl AssetInfrastructure {
     }
 
     pub fn authorization_service(&self) -> AuthorizationService {
-        AuthorizationService::new(
-            self.identity_repository.clone(),
-            self.identity_repository.clone(),
-        )
+        AuthorizationService::new(self.identity_repository.clone())
     }
 
     /// 返回对象存储端口对象。

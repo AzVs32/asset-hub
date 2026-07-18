@@ -18,7 +18,6 @@ describe("resource listing navigation", () => {
         folders: [],
         resources: { items: [], total: 0, page: filters.page, limit: filters.limit },
       }),
-      listDirectoryGrants: async () => [],
     } as unknown as AssetGateway;
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },

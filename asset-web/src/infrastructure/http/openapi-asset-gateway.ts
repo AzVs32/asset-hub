@@ -1,13 +1,7 @@
 import createClient from "openapi-fetch";
 import { AuthenticationRequiredError } from "@/application/errors";
 import type { AssetGateway, ScanResult } from "@/application/ports/asset-gateway";
-import type {
-  CurrentUser,
-  DirectoryGrant,
-  DirectoryPermission,
-  ManagedUser,
-  UserStatus,
-} from "@/domain/auth";
+import type { CurrentUser, ManagedUser, UserStatus } from "@/domain/auth";
 import type { JsonObject, PluginActionOutput, PluginDiagnostic } from "@/domain/plugin";
 import type {
   Directory,
@@ -231,39 +225,6 @@ export class OpenApiAssetGateway implements AssetGateway {
     });
     return mapManagedUser(expectData(result));
   }
-
-  async listDirectoryGrants(userId?: string): Promise<DirectoryGrant[]> {
-    const query = userId ? `?user_id=${encodeURIComponent(userId)}` : "";
-    return (
-      await this.#rawJson<Schemas["DirectoryGrantResponse"][]>(`/auth/directory-grants${query}`)
-    ).map(mapGrant);
-  }
-
-  async grantDirectory(
-    userId: string,
-    directory: string,
-    permission: DirectoryPermission,
-  ): Promise<void> {
-    const result = await this.#client.PUT("/auth/directory-grants", {
-      body: { user_id: userId, directory, permission },
-    });
-    expectSuccess(result);
-  }
-
-  async revokeDirectory(userId: string, directory: string): Promise<void> {
-    const query = new URLSearchParams({ user_id: userId, directory });
-    const response = await fetch(`${this.#baseUrl}/auth/directory-grants?${query}`, {
-      method: "DELETE",
-      credentials: "include",
-    });
-    if (!response.ok) throw await httpError(response);
-  }
-
-  async #rawJson<T>(path: string): Promise<T> {
-    const response = await fetch(`${this.#baseUrl}${path}`, { credentials: "include" });
-    if (!response.ok) throw await httpError(response);
-    return (await response.json()) as T;
-  }
 }
 
 type FetchResult<T> = { data?: T; error?: unknown; response: Response };
@@ -312,14 +273,6 @@ function mapManagedUser(value: Schemas["ManagedUserResponse"]): ManagedUser {
     role: enumValue(value.role, ["administrator", "member"]),
     status: enumValue(value.status, ["active", "disabled"]),
     workspaceDirectory: value.workspace_directory,
-  };
-}
-
-function mapGrant(value: Schemas["DirectoryGrantResponse"]): DirectoryGrant {
-  return {
-    directory: value.directory,
-    permission: enumValue(value.permission, ["read", "write", "full"]),
-    isWorkspace: value.is_workspace,
   };
 }
 

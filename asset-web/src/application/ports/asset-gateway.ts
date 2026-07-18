@@ -1,10 +1,4 @@
-import type {
-  CurrentUser,
-  DirectoryGrant,
-  DirectoryPermission,
-  ManagedUser,
-  UserStatus,
-} from "@/domain/auth";
+import type { CurrentUser, ManagedUser, UserStatus } from "@/domain/auth";
 import type { JsonObject, PluginActionOutput } from "@/domain/plugin";
 import type {
   Directory,
@@ -54,7 +48,4 @@ export interface AssetGateway {
     workspaceDirectory: string;
   }): Promise<void>;
   updateUserStatus(id: string, status: UserStatus): Promise<ManagedUser>;
-  listDirectoryGrants(userId?: string): Promise<DirectoryGrant[]>;
-  grantDirectory(userId: string, directory: string, permission: DirectoryPermission): Promise<void>;
-  revokeDirectory(userId: string, directory: string): Promise<void>;
 }

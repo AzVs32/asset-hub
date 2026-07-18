@@ -34,13 +34,6 @@ export function useResourceListing() {
     queryFn: ({ signal }) => gateway.listDirectory(filters, signal),
     placeholderData: (previous) => previous,
   });
-  const grants = useQuery({
-    queryKey: queryKeys.grants(),
-    queryFn: () => gateway.listDirectoryGrants(),
-    enabled: !user.isAdmin,
-    staleTime: 60_000,
-  });
-
   const updateFilters = useCallback(
     (patch: Partial<ResourceFilters>) => {
       setSearchParams(
@@ -100,7 +93,6 @@ export function useResourceListing() {
     selectedId: searchParams.get("resource"),
     listing,
     kinds,
-    grants,
   };
 }
 

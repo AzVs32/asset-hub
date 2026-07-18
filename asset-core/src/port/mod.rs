@@ -2,7 +2,6 @@
 //!
 //! 端口只通过本模块的精选 re-export 暴露，具体实现文件不是独立 API 路径。
 
-mod access_policy_repository;
 mod blob_storage;
 mod directory_storage;
 mod password_hasher;
@@ -14,7 +13,6 @@ mod resource_repository;
 mod storage_scanner;
 mod user_repository;
 
-pub use access_policy_repository::AccessPolicyRepository;
 pub use blob_storage::{
     BlobByteStream, BlobStorage, BlobWriteResult, RESERVED_BLOB_STORAGE_PREFIX,
 };

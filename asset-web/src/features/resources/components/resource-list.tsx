@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import React from "react";
 import { useGateway } from "@/application/ports/gateway-context";
-import type { CurrentUser, DirectoryGrant } from "@/domain/auth";
+import type { CurrentUser } from "@/domain/auth";
 import type {
   DirectoryListing,
   Resource,
@@ -35,7 +35,6 @@ export function ResourceList({
   user,
   listing,
   kinds,
-  grants,
   filters,
   selectedId,
   loading,
@@ -55,7 +54,6 @@ export function ResourceList({
   user: CurrentUser;
   listing: DirectoryListing | undefined;
   kinds: ResourceKind[];
-  grants: DirectoryGrant[];
   filters: ResourceFilters;
   selectedId: string | null;
   loading: boolean;
@@ -74,7 +72,7 @@ export function ResourceList({
 }) {
   const total = listing?.resources.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / filters.limit));
-  const root = navigationRoot(filters.directory, grants, user);
+  const root = user.isAdmin ? "" : user.workspaceDirectory;
   const crumbs = breadcrumbs(filters.directory, root);
   const parent = parentDirectory(filters.directory, root);
 
@@ -170,20 +168,6 @@ export function ResourceList({
       </div>
 
       <nav className="flex min-h-12 flex-wrap items-center gap-3 border-b border-slate-200 px-5 py-2 text-sm xl:px-7">
-        {!user.isAdmin && grants.length > 1 ? (
-          <select
-            aria-label="Directory access root"
-            className={`${controlClass} h-8 min-h-8 max-w-64 py-1`}
-            value={root}
-            onChange={(event) => onOpenDirectory(event.target.value)}
-          >
-            {grants.map((grant) => (
-              <option key={grant.directory} value={grant.directory}>
-                {grant.isWorkspace ? "Workspace · " : ""}/{grant.directory} ({grant.permission})
-              </option>
-            ))}
-          </select>
-        ) : null}
         <div className="flex min-w-0 items-center gap-1 overflow-hidden">
           {crumbs.map((crumb, index) => (
             <React.Fragment key={crumb.path || "root"}>
@@ -416,15 +400,5 @@ function Toggle({
       />
       {label}
     </label>
-  );
-}
-
-function navigationRoot(directory: string, grants: DirectoryGrant[], user: CurrentUser): string {
-  if (user.isAdmin) return "";
-  return (
-    [...grants]
-      .sort((left, right) => right.directory.length - left.directory.length)
-      .find((grant) => directory === grant.directory || directory.startsWith(`${grant.directory}/`))
-      ?.directory ?? user.workspaceDirectory
   );
 }

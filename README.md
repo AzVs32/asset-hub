@@ -85,15 +85,10 @@ Authentication endpoints:
 - `GET /auth/audit-events?page=1&limit=100` (administrator only, limit is
   clamped to 1-500)
 - `POST /auth/users` (administrator only)
-- `PUT /auth/directory-grants` (administrator only), with `user_id`,
-  `directory`, and resource `permission` (`read`, `write`, or `full`)
-- `GET /auth/directory-grants` returns the complete entry-directory set and
-  marks the user's shared-capable `workspace_directory`
 
-Directory grants inherit down the directory tree. Administrators bypass
-directory ACLs. Every user is created with an explicit `full` grant for their
-workspace; the workspace itself does not imply permission. Non-administrators
-must specify a permitted directory when listing resources. Direct resource
+Administrators can access all user-visible directories. A non-administrator's
+`workspace_directory` is their only authorization boundary: they have complete
+access to that directory and its descendants, and no access outside it. Direct resource
 reads, previews, downloads, actions, and updates are checked against the
 resource's directory. Creates, uploads, scans, moves, deletes, and plugin write
 actions are authorized inside the core use case after their target directory is
@@ -128,9 +123,9 @@ does not repair data; any repair flow should be introduced as a separate,
 explicit maintenance operation.
 
 The identity and authorization model lives in `asset-core`: `User`,
-`AccessContext`, `DirectoryGrant`, and `DirectoryPermission` are domain types;
-user, password, and access-policy persistence are ports. `asset-infra` supplies
-the SQLite and Argon2 adapters. HTTP only maps the authenticated session into an
+`AccessContext`, and `DirectoryPermission` are domain types; user and password
+persistence are ports. `asset-infra` supplies the SQLite and Argon2 adapters.
+HTTP only maps the authenticated session into an
 `AccessContext` and calls the secured resource service, so future CLI and TUI
 entry points can reuse the same authorization rules.
 

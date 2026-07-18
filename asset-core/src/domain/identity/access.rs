@@ -1,6 +1,4 @@
 use super::UserId;
-use crate::domain::ResourceDirectory;
-use serde::{Deserialize, Serialize};
 
 /// 已通过外部入口认证的访问主体。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,79 +28,12 @@ impl AccessContext {
     }
 }
 
-/// 目录中的资源访问权限。授权管理始终由管理员角色控制，不属于该枚举。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+/// 资源用例要求的访问级别，用于生成一致的拒绝信息。
+///
+/// 普通用户在自己的工作区子树内满足全部级别；该枚举不再表示可配置的目录授权。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DirectoryPermission {
     Read,
     Write,
     Full,
-}
-
-impl DirectoryPermission {
-    /// 显式判断当前权限是否包含所需能力，避免依赖枚举声明顺序。
-    pub const fn allows(self, required: Self) -> bool {
-        match self {
-            Self::Read => matches!(required, Self::Read),
-            Self::Write => matches!(required, Self::Read | Self::Write),
-            Self::Full => true,
-        }
-    }
-
-    /// 返回两项权限中能力更强的一项。
-    pub const fn stronger(self, other: Self) -> Self {
-        if self.allows(other) { self } else { other }
-    }
-}
-
-impl std::fmt::Display for DirectoryPermission {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Read => "read",
-            Self::Write => "write",
-            Self::Full => "full",
-        })
-    }
-}
-
-impl std::str::FromStr for DirectoryPermission {
-    type Err = crate::UserError;
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "read" => Ok(Self::Read),
-            "write" => Ok(Self::Write),
-            "full" => Ok(Self::Full),
-            _ => Err(crate::UserError::InvalidPermission),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DirectoryGrant {
-    user_id: UserId,
-    directory: ResourceDirectory,
-    permission: DirectoryPermission,
-}
-
-impl DirectoryGrant {
-    pub fn new(
-        user_id: UserId,
-        directory: ResourceDirectory,
-        permission: DirectoryPermission,
-    ) -> Self {
-        Self {
-            user_id,
-            directory,
-            permission,
-        }
-    }
-    pub fn user_id(&self) -> UserId {
-        self.user_id
-    }
-    pub fn directory(&self) -> &ResourceDirectory {
-        &self.directory
-    }
-    pub fn permission(&self) -> DirectoryPermission {
-        self.permission
-    }
 }

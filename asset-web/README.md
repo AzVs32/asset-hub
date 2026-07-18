@@ -17,7 +17,7 @@ src/
 ├── infrastructure/http/    OpenAPI transport and DTO ↔ domain mapping
 ├── kernel/                 host slots and plugin view renderer registry
 ├── plugins/                generic action, slot, iframe, form, and view hosting
-├── features/               resource workspace, authentication, user access
+├── features/               resource workspace, authentication, user management
 ├── shared/ui/              small Radix-backed host design system
 └── app/                    composition root and routing
 ```

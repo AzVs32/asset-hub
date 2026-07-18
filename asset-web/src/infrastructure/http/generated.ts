@@ -37,22 +37,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/auth/directory-grants": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["my_directory_grants"];
-        put: operations["grant_directory"];
-        post?: never;
-        delete: operations["revoke_directory"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/auth/login": {
         parameters: {
             query?: never;
@@ -498,11 +482,6 @@ export interface components {
             password: string;
             username: string;
         };
-        DirectoryGrantResponse: {
-            directory: string;
-            is_workspace: boolean;
-            permission: string;
-        };
         /** @description 目录浏览响应。 */
         DirectoryListingResponse: {
             /** @description 直接子目录。 */
@@ -536,11 +515,6 @@ export interface components {
         ExecuteResourceActionRequest: {
             /** @description 传递给插件 action handler 的 JSON 输入。 */
             input?: unknown;
-        };
-        GrantDirectoryRequest: {
-            directory: string;
-            permission: string;
-            user_id: string;
         };
         HealthComponentResponse: {
             status: string;
@@ -913,80 +887,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SecurityAuditEventResponse"][];
                 };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    my_directory_grants: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                user_id: string | null;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DirectoryGrantResponse"][];
-                };
-            };
-        };
-    };
-    grant_directory: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["GrantDirectoryRequest"];
-            };
-        };
-        responses: {
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    revoke_directory: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                user_id: string;
-                directory: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             403: {
                 headers: {
