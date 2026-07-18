@@ -131,7 +131,7 @@ fn resource_builder_accepts_description_tags_and_content() {
             .iter()
             .map(ResourceTag::as_str)
             .collect::<Vec<_>>(),
-        vec!["rust", "asset"]
+        vec!["asset", "rust"]
     );
     assert_eq!(resource.description(), Some("cover image"));
 }
@@ -197,11 +197,21 @@ fn description_and_tags_can_be_replaced_or_cleared() {
         .unwrap();
 
     assert_eq!(resource.tags().len(), 2);
+    assert_eq!(resource.tags()[0].as_str(), "cover");
+    assert_eq!(resource.tags()[1].as_str(), "image");
     resource.set_description(None).unwrap();
     resource.replace_tags(vec!["document".to_owned()]).unwrap();
 
     assert!(resource.description().is_none());
     assert_eq!(resource.tags()[0].as_str(), "document");
+}
+
+#[test]
+fn resource_tags_do_not_have_a_count_limit() {
+    let tags = (0..100).map(|index| format!("tag-{index}"));
+    let resource = Resource::builder("tagged").with_tags(tags).build().unwrap();
+
+    assert_eq!(resource.tags().len(), 100);
 }
 
 #[test]

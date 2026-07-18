@@ -710,7 +710,7 @@ fn create_resource_saves_resource_without_content() {
             .iter()
             .map(|tag| tag.as_str())
             .collect::<Vec<_>>(),
-        vec!["rust", "asset"]
+        vec!["asset", "rust"]
     );
 }
 

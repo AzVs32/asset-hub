@@ -10,8 +10,6 @@ use serde::{Deserialize, Serialize};
 const MAX_RESOURCE_NAME_LEN: usize = 255;
 /// 资源描述允许的最大字符数。
 const MAX_RESOURCE_DESCRIPTION_LEN: usize = 1024;
-/// 资源标签允许的最大数量。
-const MAX_RESOURCE_TAGS: usize = 64;
 
 // ==================================================
 // 核心聚合根
@@ -37,7 +35,7 @@ pub struct Resource {
     status: ResourceStatus,
     /// 可选资源描述。
     description: Option<String>,
-    /// 有序且去重的资源标签。
+    /// 去重并按稳定字典序排列的资源标签集合。
     tags: Vec<ResourceTag>,
     /// 资源内容引用；资源可以不包含对象内容。
     content: Option<ResourceContent>,
@@ -289,7 +287,7 @@ impl Resource {
         Ok(())
     }
 
-    /// 替换全部资源标签；标签会被归一化、去重并保留首次出现的顺序。
+    /// 替换全部资源标签；标签会被归一化、去重并按稳定字典序排列。
     pub fn replace_tags(&mut self, tags: Vec<String>) -> Result<(), ResourceError> {
         self.ensure_not_deleted()?;
         let tags = normalize_tags(tags)?;
@@ -363,13 +361,8 @@ fn normalize_tags(tags: Vec<String>) -> Result<Vec<ResourceTag>, ResourceError> 
             normalized.push(tag);
         }
     }
+    normalized.sort_unstable_by(|left, right| left.as_str().cmp(right.as_str()));
 
-    if normalized.len() > MAX_RESOURCE_TAGS {
-        return Err(ResourceError::TooLong {
-            field: "resource.tags",
-            max: MAX_RESOURCE_TAGS,
-        });
-    }
     Ok(normalized)
 }
 

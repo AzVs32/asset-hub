@@ -21,10 +21,11 @@ const RESOURCE_SELECT: &str = r#"
             (
                 SELECT json_group_array(tag)
                 FROM (
-                    SELECT tag
+                    SELECT tags.name AS tag
                     FROM resource_tags
-                    WHERE resource_id = resources.id
-                    ORDER BY position
+                    JOIN tags ON tags.id = resource_tags.tag_id
+                    WHERE resource_tags.resource_id = resources.id
+                    ORDER BY tags.name COLLATE BINARY
                 )
             ),
             '[]'
@@ -240,22 +241,45 @@ impl ResourceRepository for SqliteResourceRepository {
         id: &ResourceId,
         expected_updated_at: DateTime<Utc>,
     ) -> Result<bool, CoreError> {
+        let mut transaction = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| CoreError::repository("remove_if_unchanged.begin", error))?;
         let result = sqlx::query("DELETE FROM resources WHERE id = ? AND updated_at = ?")
             .bind(id.to_string())
             .bind(encode_timestamp(expected_updated_at))
-            .execute(&self.pool)
+            .execute(&mut *transaction)
             .await
             .map_err(|error| CoreError::repository("remove_if_unchanged", error))?;
+
+        if result.rows_affected() == 1 {
+            delete_orphan_tags(&mut transaction).await?;
+        }
+        transaction
+            .commit()
+            .await
+            .map_err(|error| CoreError::repository("remove_if_unchanged.commit", error))?;
 
         Ok(result.rows_affected() == 1)
     }
 
     async fn remove(&self, id: &ResourceId) -> Result<(), CoreError> {
+        let mut transaction = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| CoreError::repository("remove.begin", error))?;
         sqlx::query("DELETE FROM resources WHERE id = ?")
             .bind(id.to_string())
-            .execute(&self.pool)
+            .execute(&mut *transaction)
             .await
             .map_err(|error| CoreError::repository("remove", error))?;
+        delete_orphan_tags(&mut transaction).await?;
+        transaction
+            .commit()
+            .await
+            .map_err(|error| CoreError::repository("remove.commit", error))?;
 
         Ok(())
     }
@@ -392,7 +416,8 @@ fn push_list_where<'a>(builder: &mut QueryBuilder<'a, Sqlite>, query: &'a ListRe
     if let Some(tag) = query.tag() {
         push_condition_prefix(builder, &mut has_where);
         builder.push(
-            "EXISTS (SELECT 1 FROM resource_tags WHERE resource_id = resources.id AND tag = ",
+            "EXISTS (SELECT 1 FROM resource_tags JOIN tags ON tags.id = resource_tags.tag_id \
+             WHERE resource_tags.resource_id = resources.id AND tags.name = ",
         );
         builder.push_bind(tag);
         builder.push(")");
@@ -470,15 +495,44 @@ async fn sync_tags(
         .await
         .map_err(|error| CoreError::repository("resource.clear_tags", error))?;
 
-    for (position, tag) in resource.tags().iter().enumerate() {
-        sqlx::query("INSERT INTO resource_tags (resource_id, position, tag) VALUES (?, ?, ?)")
-            .bind(&resource_id)
-            .bind(position as i64)
+    for tag in resource.tags() {
+        sqlx::query("INSERT INTO tags (name) VALUES (?) ON CONFLICT(name) DO NOTHING")
             .bind(tag.as_str())
             .execute(&mut **transaction)
             .await
-            .map_err(|error| CoreError::repository("resource.save_tag", error))?;
+            .map_err(|error| CoreError::repository("resource.ensure_tag", error))?;
+        sqlx::query(
+            r#"
+            INSERT INTO resource_tags (resource_id, tag_id)
+            SELECT ?, id FROM tags WHERE name = ?
+            "#,
+        )
+        .bind(&resource_id)
+        .bind(tag.as_str())
+        .execute(&mut **transaction)
+        .await
+        .map_err(|error| CoreError::repository("resource.save_tag", error))?;
     }
+
+    delete_orphan_tags(transaction).await?;
+
+    Ok(())
+}
+
+async fn delete_orphan_tags(transaction: &mut Transaction<'_, Sqlite>) -> Result<(), CoreError> {
+    sqlx::query(
+        r#"
+        DELETE FROM tags
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM resource_tags
+            WHERE resource_tags.tag_id = tags.id
+        )
+        "#,
+    )
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| CoreError::repository("resource.delete_orphan_tags", error))?;
 
     Ok(())
 }
