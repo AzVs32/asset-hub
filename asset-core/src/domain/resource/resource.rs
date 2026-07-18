@@ -1,6 +1,6 @@
 use super::{
-    ResourceContent, ResourceDirectory, ResourceKind, ResourceMetadata, ResourceMetadataPatch,
-    ResourceStatus, StorageKey, normalize_required_text,
+    ResourceContent, ResourceDirectory, ResourceKind, ResourceStatus, ResourceTag, StorageKey,
+    normalize_required_text,
 };
 use crate::error::ResourceError;
 use chrono::{DateTime, Utc};
@@ -8,6 +8,10 @@ use serde::{Deserialize, Serialize};
 
 /// 资源名称允许的最大字符数。
 const MAX_RESOURCE_NAME_LEN: usize = 255;
+/// 资源描述允许的最大字符数。
+const MAX_RESOURCE_DESCRIPTION_LEN: usize = 1024;
+/// 资源标签允许的最大数量。
+const MAX_RESOURCE_TAGS: usize = 64;
 
 // ==================================================
 // 核心聚合根
@@ -17,7 +21,7 @@ crate::gen_id_uuid_v7!(ResourceId);
 
 /// 资源聚合根。
 ///
-/// `Resource` 负责维护资源基础信息、元数据、内容引用和生命周期状态。
+/// `Resource` 负责维护资源基础信息、描述、标签、内容引用和生命周期状态。
 /// 外部代码应通过构建器和行为方法修改资源，避免绕过领域规则直接写字段。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Resource {
@@ -31,9 +35,11 @@ pub struct Resource {
     kind: ResourceKind,
     /// 资源生命周期状态，不包含软删除状态。
     status: ResourceStatus,
-    /// 资源动态元数据，承载业务扩展字段。
-    metadata: ResourceMetadata,
-    /// 资源内容引用；纯元数据资源可以没有内容。
+    /// 可选资源描述。
+    description: Option<String>,
+    /// 有序且去重的资源标签。
+    tags: Vec<ResourceTag>,
+    /// 资源内容引用；资源可以不包含对象内容。
     content: Option<ResourceContent>,
     /// 资源创建时间。
     created_at: DateTime<Utc>,
@@ -59,8 +65,10 @@ pub struct ResourceSnapshot {
     pub kind: ResourceKind,
     /// 资源生命周期状态。
     pub status: ResourceStatus,
-    /// 资源动态元数据。
-    pub metadata: ResourceMetadata,
+    /// 可选资源描述。
+    pub description: Option<String>,
+    /// 资源标签；从持久化边界进入时会重新归一化和校验。
+    pub tags: Vec<String>,
     /// 资源内容引用。
     pub content: Option<ResourceContent>,
     /// 资源创建时间。
@@ -85,7 +93,8 @@ impl Resource {
         let name = normalize_resource_name(snapshot.name)?;
         StorageKey::from_resource_path(&snapshot.directory, &name)?;
         snapshot.kind.validate()?;
-        snapshot.metadata.validate_for_kind(&snapshot.kind)?;
+        let description = normalize_optional_description(snapshot.description)?;
+        let tags = normalize_tags(snapshot.tags)?;
 
         Ok(Self {
             id: snapshot.id,
@@ -93,7 +102,8 @@ impl Resource {
             directory: snapshot.directory,
             kind: snapshot.kind,
             status: snapshot.status,
-            metadata: snapshot.metadata,
+            description,
+            tags,
             content: snapshot.content,
             created_at: snapshot.created_at,
             updated_at: snapshot.updated_at,
@@ -132,9 +142,14 @@ impl Resource {
         self.status
     }
 
-    /// 返回资源元数据。
-    pub fn metadata(&self) -> &ResourceMetadata {
-        &self.metadata
+    /// 返回资源描述。
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+
+    /// 返回资源标签。
+    pub fn tags(&self) -> &[ResourceTag] {
+        &self.tags
     }
 
     /// 返回资源内容引用。
@@ -213,7 +228,6 @@ impl Resource {
 
         if self.kind != kind {
             self.kind = kind;
-            self.metadata.clear_kind_metadata();
             self.touch();
         }
 
@@ -248,7 +262,7 @@ impl Resource {
 
     /// 软删除资源。
     ///
-    /// 软删除会记录 `deleted_at` 并刷新 `updated_at`，不会清除内容引用和元数据。
+    /// 软删除会记录 `deleted_at` 并刷新 `updated_at`，不会清除内容引用、描述或标签。
     pub fn soft_delete(&mut self) {
         if self.deleted_at.is_none() {
             let now = Utc::now();
@@ -264,21 +278,23 @@ impl Resource {
         }
     }
 
-    /// 替换资源元数据。
-    pub fn set_metadata(&mut self, metadata: ResourceMetadata) -> Result<(), ResourceError> {
+    /// 替换资源描述；`None` 表示清空描述。
+    pub fn set_description(&mut self, description: Option<String>) -> Result<(), ResourceError> {
         self.ensure_not_deleted()?;
-        metadata.validate_for_kind(&self.kind)?;
-        if self.metadata != metadata {
-            self.metadata = metadata;
+        let description = normalize_optional_description(description)?;
+        if self.description != description {
+            self.description = description;
             self.touch();
         }
         Ok(())
     }
 
-    /// 部分更新资源元数据，未出现在补丁中的分区保持不变。
-    pub fn patch_metadata(&mut self, patch: ResourceMetadataPatch) -> Result<(), ResourceError> {
+    /// 替换全部资源标签；标签会被归一化、去重并保留首次出现的顺序。
+    pub fn replace_tags(&mut self, tags: Vec<String>) -> Result<(), ResourceError> {
         self.ensure_not_deleted()?;
-        if self.metadata.apply_patch(patch, &self.kind)? {
+        let tags = normalize_tags(tags)?;
+        if self.tags != tags {
+            self.tags = tags;
             self.touch();
         }
         Ok(())
@@ -331,9 +347,35 @@ fn normalize_resource_name(value: String) -> Result<String, ResourceError> {
     Ok(name)
 }
 
+fn normalize_optional_description(value: Option<String>) -> Result<Option<String>, ResourceError> {
+    value
+        .map(|value| {
+            normalize_required_text("resource.description", &value, MAX_RESOURCE_DESCRIPTION_LEN)
+        })
+        .transpose()
+}
+
+fn normalize_tags(tags: Vec<String>) -> Result<Vec<ResourceTag>, ResourceError> {
+    let mut normalized = Vec::with_capacity(tags.len());
+    for tag in tags {
+        let tag = ResourceTag::try_new(tag)?;
+        if !normalized.contains(&tag) {
+            normalized.push(tag);
+        }
+    }
+
+    if normalized.len() > MAX_RESOURCE_TAGS {
+        return Err(ResourceError::TooLong {
+            field: "resource.tags",
+            max: MAX_RESOURCE_TAGS,
+        });
+    }
+    Ok(normalized)
+}
+
 /// 资源构建器。
 ///
-/// 用于统一创建包含可选元数据和可选内容引用的 `Resource`。
+/// 用于统一创建包含可选描述、标签和内容引用的 `Resource`。
 #[derive(Debug, Clone)]
 pub struct ResourceBuilder {
     /// 资源展示名。
@@ -344,8 +386,10 @@ pub struct ResourceBuilder {
     status: ResourceStatus,
     /// 初始逻辑目录。
     directory: ResourceDirectory,
-    /// 初始元数据。
-    metadata: ResourceMetadata,
+    /// 初始资源描述。
+    description: Option<String>,
+    /// 初始资源标签。
+    tags: Vec<String>,
     /// 初始内容引用。
     content: Option<ResourceContent>,
 }
@@ -358,7 +402,8 @@ impl ResourceBuilder {
             kind: ResourceKind::default(),
             status: ResourceStatus::default(),
             directory: ResourceDirectory::root(),
-            metadata: ResourceMetadata::default(),
+            description: None,
+            tags: Vec::new(),
             content: None,
         }
     }
@@ -381,9 +426,19 @@ impl ResourceBuilder {
         self
     }
 
-    /// 设置初始元数据。
-    pub fn with_metadata(mut self, metadata: impl Into<ResourceMetadata>) -> Self {
-        self.metadata = metadata.into();
+    /// 设置初始资源描述。
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    /// 设置初始资源标签。
+    pub fn with_tags<T, I>(mut self, tags: I) -> Self
+    where
+        T: Into<String>,
+        I: IntoIterator<Item = T>,
+    {
+        self.tags = tags.into_iter().map(Into::into).collect();
         self
     }
 
@@ -398,7 +453,8 @@ impl ResourceBuilder {
         let name = normalize_resource_name(self.name)?;
         StorageKey::from_resource_path(&self.directory, &name)?;
         self.kind.validate()?;
-        self.metadata.validate_for_kind(&self.kind)?;
+        let description = normalize_optional_description(self.description)?;
+        let tags = normalize_tags(self.tags)?;
         let now = Utc::now();
 
         Ok(Resource {
@@ -407,7 +463,8 @@ impl ResourceBuilder {
             directory: self.directory,
             kind: self.kind,
             status: self.status,
-            metadata: self.metadata,
+            description,
+            tags,
             content: self.content,
             created_at: now,
             updated_at: now,

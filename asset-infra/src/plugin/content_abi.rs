@@ -5,7 +5,6 @@ use asset_plugin_api::{
     PluginActionRequest, PluginChecksum, PluginContentBytes, PluginContentRange,
     PluginContentReference, PluginContentReferenceEncoding, PluginExecutionPolicy,
     PluginInlineContentEncoding, PluginPermissions, PluginResource, PluginResourceContent,
-    PluginResourceMetadata, PluginResourceSummaryMetadata,
 };
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
@@ -15,9 +14,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use super::permissions::manifest_for_plugin;
-
-/// 插件 action request 中 metadata 信封的 ABI 版本，与领域存储模型独立。
-const PLUGIN_RESOURCE_METADATA_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Clone)]
 pub(super) struct HostContentResolver {
@@ -333,19 +329,12 @@ pub(super) fn build_payload(
             name: resource.name().to_string(),
             kind: resource.kind().as_str().to_string(),
             status: resource.status().as_str().to_string(),
-            metadata: PluginResourceMetadata {
-                // 这是 plugin action request 的边界版本，不是领域 metadata 的存储版本。
-                schema_version: PLUGIN_RESOURCE_METADATA_SCHEMA_VERSION,
-                summary: PluginResourceSummaryMetadata {
-                    description: resource.metadata().description().map(str::to_string),
-                    tags: resource
-                        .metadata()
-                        .tags()
-                        .iter()
-                        .map(|tag| tag.as_str().to_owned())
-                        .collect(),
-                },
-            },
+            description: resource.description().map(str::to_string),
+            tags: resource
+                .tags()
+                .iter()
+                .map(|tag| tag.as_str().to_owned())
+                .collect(),
             content: content_ref.map(|content| PluginResourceContent {
                 size: content.size(),
                 mime_type: content.mime_type().map(str::to_string),

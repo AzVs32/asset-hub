@@ -120,10 +120,7 @@ fn resource_json() -> Value {
         "name": "demo.md",
         "kind": "azvs:markdown",
         "status": "active",
-        "metadata": {
-            "schema_version": 1,
-            "summary": {"description": null, "tags": []}
-        },
+        "tags": [],
         "content": {
             "size": 4,
             "mime_type": "text/markdown",

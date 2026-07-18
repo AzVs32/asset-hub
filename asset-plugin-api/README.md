@@ -5,7 +5,7 @@ version from another.
 
 | Surface | Current | Carried by | Changes when |
 | --- | --- | --- | --- |
-| Rust crate | `0.3.0` | Cargo package metadata and `CRATE_VERSION` | The Rust source API changes |
+| Rust crate | `0.3.0` | Cargo package declaration and `CRATE_VERSION` | The Rust source API changes |
 | Manifest | `3` | `manifest_version` | The authoring document structure or declaration semantics break |
 | Plugin JSON API | `asset-hub.plugin-api@0.3` | `runtime.plugin_api` | Handler request, success output, or failure wire contracts break |
 | Content ABI | `1` | `content_ref.abi_version` | A host function signature, handle lifecycle, or range-read contract breaks |

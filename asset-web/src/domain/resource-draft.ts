@@ -6,8 +6,8 @@ export function draftFromResource(resource: Resource): ResourceDraft {
     directory: resource.directory,
     kind: resource.kind,
     status: resource.status,
-    description: resource.metadata.summary.description ?? "",
-    tags: resource.metadata.summary.tags.join(", "),
+    description: resource.description ?? "",
+    tags: resource.tags.join(", "),
   };
 }
 

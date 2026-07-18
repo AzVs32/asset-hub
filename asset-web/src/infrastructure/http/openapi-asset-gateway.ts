@@ -130,8 +130,9 @@ export class OpenApiAssetGateway implements AssetGateway {
     const params = new URLSearchParams({
       name: draft.name.trim() || draft.file.name,
       directory: normalizeDirectory(draft.directory),
-      metadata_json: JSON.stringify(metadataBody(draft.description, draft.tags)),
+      tags_json: JSON.stringify(splitTags(draft.tags)),
     });
+    if (draft.description.trim()) params.set("description", draft.description.trim());
     if (draft.kind.trim()) params.set("kind", draft.kind.trim());
     const response = await fetch(`${this.#baseUrl}/resources/content/stream?${params}`, {
       method: "PUT",
@@ -348,19 +349,8 @@ function mapResource(value: ApiResource): Resource {
     directory: value.directory,
     kind: value.kind,
     status: enumValue(value.status, ["active", "archived"]),
-    metadata: {
-      summary: {
-        description: value.metadata.summary.description ?? null,
-        tags: value.metadata.summary.tags,
-      },
-      kindMetadata: value.metadata.kind_metadata
-        ? {
-            kind: value.metadata.kind_metadata.kind,
-            schemaVersion: value.metadata.kind_metadata.schema_version,
-            data: objectValue(value.metadata.kind_metadata.data),
-          }
-        : null,
-    },
+    description: value.description ?? null,
+    tags: value.tags,
     content: value.content
       ? {
           size: value.content.size,
@@ -419,16 +409,8 @@ function resourceBody(draft: ResourceDraft): Schemas["CreateResourceRequest"] {
     directory: normalizeDirectory(draft.directory),
     kind: draft.kind,
     status: draft.status,
-    metadata: metadataBody(draft.description, draft.tags),
-  };
-}
-
-function metadataBody(description: string, tags: string): Schemas["ResourceMetadataRequest"] {
-  return {
-    summary: {
-      description: description.trim() || null,
-      tags: splitTags(tags),
-    },
+    description: draft.description.trim() || null,
+    tags: splitTags(draft.tags),
   };
 }
 
@@ -451,12 +433,6 @@ function splitTags(value: string): string[] {
         .filter(Boolean),
     ),
   ];
-}
-
-function objectValue(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
 }
 
 function enumValue<const T extends string>(value: string, values: readonly T[]): T {

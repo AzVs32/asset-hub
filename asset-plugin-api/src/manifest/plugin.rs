@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-/// Human and registry metadata for a plugin.
+/// Stable identity and registry description for a plugin.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct PluginMetadata {
+pub struct PluginDescriptor {
     pub id: String,
     pub name: String,
     pub version: String,

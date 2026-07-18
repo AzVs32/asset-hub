@@ -135,7 +135,7 @@ async fn configured_resource_kind_is_listed_and_content_support_is_enforced() {
         Method::POST,
         "/resources",
         json!({
-            "name": "metadata note",
+            "name": "contentless note",
             "kind": "doc:note"
         }),
     )
@@ -199,7 +199,6 @@ async fn core_document_resource_exposes_download_only() {
         .unwrap();
     assert_eq!(view_inline["executor"]["handler"], "builtin.media.view");
     assert!(view_inline["requires"].get("resource").is_none());
-    assert!(view_inline["requires"].get("metadata").is_none());
     assert_eq!(view_inline["requires"]["content_delivery"], "reference");
     assert_eq!(view_inline["output"]["view"], json!(["media"]));
     assert_eq!(
@@ -553,7 +552,7 @@ async fn non_reader_resource_rejects_online_reading() {
 }
 
 #[tokio::test]
-async fn create_resource_accepts_structured_metadata_and_rejects_metadata_string() {
+async fn create_resource_accepts_description_and_tags() {
     let app = test_app("create-resource").await;
 
     let (status, resource) = json_request(
@@ -563,12 +562,8 @@ async fn create_resource_accepts_structured_metadata_and_rejects_metadata_string
         json!({
             "name": "resources_not_blob",
             "kind": "core:unknown",
-            "metadata": {
-                "summary": {
-                    "description": "metadata-only resource",
-                    "tags": ["demo", "document"]
-                }
-            }
+            "description": "resource without content",
+            "tags": ["demo", "document"]
         }),
     )
     .await;
@@ -576,63 +571,14 @@ async fn create_resource_accepts_structured_metadata_and_rejects_metadata_string
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(resource["name"], "resources_not_blob");
     assert_eq!(resource["kind"], "core:unknown");
-    assert!(resource["metadata"].get("schema_version").is_none());
-    assert!(resource["metadata"]["kind_metadata"].is_null());
-    assert_eq!(
-        resource["metadata"]["summary"]["description"],
-        "metadata-only resource"
-    );
-    assert_eq!(
-        resource["metadata"]["summary"]["tags"],
-        json!(["demo", "document"])
-    );
+    assert_eq!(resource["description"], "resource without content");
+    assert_eq!(resource["tags"], json!(["demo", "document"]));
 
     let id = resource["id"].as_str().unwrap();
     let (status, found) = empty_json_request(&app, Method::GET, &format!("/resources/{id}")).await;
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(found["id"], id);
-
-    let (status, error) = json_request(
-        &app,
-        Method::POST,
-        "/resources",
-        json!({
-            "name": "invalid_metadata",
-            "metadata": "{\"A\":\"a\",\"B\":\"b\"}"
-        }),
-    )
-    .await;
-
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(
-        error["error"]
-            .as_str()
-            .unwrap()
-            .contains("expected struct ResourceMetadataRequest")
-    );
-
-    let (status, error) = json_request(
-        &app,
-        Method::POST,
-        "/resources",
-        json!({
-            "name": "removed_kind_metadata",
-            "metadata": {
-                "summary": {"description": null, "tags": []},
-                "kind": {}
-            }
-        }),
-    )
-    .await;
-
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(
-        error["error"]
-            .as_str()
-            .unwrap()
-            .contains("unknown field `kind`")
-    );
 }
 
 #[tokio::test]
@@ -1229,11 +1175,7 @@ async fn list_resources_filters_by_kind_tag_and_query() {
         json!({
             "name": "alpha document",
             "kind": "core:unknown",
-            "metadata": {
-                "summary": {
-                    "tags": ["alpha", "docs"]
-                }
-            }
+            "tags": ["alpha", "docs"]
         }),
     )
     .await;
@@ -1244,11 +1186,7 @@ async fn list_resources_filters_by_kind_tag_and_query() {
         json!({
             "name": "beta image",
             "kind": "core:unknown",
-            "metadata": {
-                "summary": {
-                    "tags": ["beta", "media"]
-                }
-            }
+            "tags": ["beta", "media"]
         }),
     )
     .await;
@@ -1259,11 +1197,7 @@ async fn list_resources_filters_by_kind_tag_and_query() {
         json!({
             "name": "alpha image",
             "kind": "core:unknown",
-            "metadata": {
-                "summary": {
-                    "tags": ["alpha", "media"]
-                }
-            }
+            "tags": ["alpha", "media"]
         }),
     )
     .await;
@@ -1382,12 +1316,8 @@ async fn update_resource_changes_fields_and_restores_soft_deleted_resource() {
             "directory": "archive",
             "kind": "core:unknown",
             "status": "archived",
-            "metadata": {
-                "summary": {
-                    "description": "updated resource",
-                    "tags": ["updated"]
-                }
-            }
+            "description": "updated resource",
+            "tags": ["updated"]
         }),
     )
     .await;
@@ -1397,7 +1327,8 @@ async fn update_resource_changes_fields_and_restores_soft_deleted_resource() {
     assert_eq!(updated["directory"], "archive");
     assert_eq!(updated["kind"], "core:unknown");
     assert_eq!(updated["status"], "archived");
-    assert_eq!(updated["metadata"]["summary"]["tags"], json!(["updated"]));
+    assert_eq!(updated["description"], "updated resource");
+    assert_eq!(updated["tags"], json!(["updated"]));
     assert!(!old_blob_path.exists());
     assert_eq!(std::fs::read(&new_blob_path).unwrap(), b"delete me");
 
@@ -1424,22 +1355,18 @@ async fn update_resource_changes_fields_and_restores_soft_deleted_resource() {
 }
 
 #[tokio::test]
-async fn openapi_documents_metadata_examples() {
+async fn openapi_documents_resource_field_examples() {
     let app = test_app("openapi").await;
     let (status, document) = empty_json_request(&app, Method::GET, "/api-docs/openapi.json").await;
 
     assert_eq!(status, StatusCode::OK);
 
-    let metadata_example = &document["components"]["schemas"]["ResourceMetadataRequest"]["example"];
     let create_example = &document["components"]["schemas"]["CreateResourceRequest"]["example"];
     assert_eq!(
-        metadata_example["summary"]["description"],
-        "Human readable resource description"
+        create_example["description"],
+        "A resource without blob content"
     );
-    assert_eq!(
-        create_example["metadata"]["summary"]["description"],
-        "A metadata-only resource"
-    );
+    assert_eq!(create_example["tags"], json!(["demo", "document"]));
     assert!(document["paths"].get("/resources/content").is_none());
     assert!(document["paths"].get("/resources/content/stream").is_some());
     assert!(document["paths"].get("/auth/login").is_some());

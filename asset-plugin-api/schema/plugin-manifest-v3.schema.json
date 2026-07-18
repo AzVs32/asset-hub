@@ -151,7 +151,7 @@
         "allow": {
           "type": "array",
           "uniqueItems": true,
-          "items": { "enum": ["resource.metadata.read", "resource.metadata.write", "content.read", "content.replace", "derived_asset.write"] }
+          "items": { "enum": ["resource.read", "resource.write", "content.read", "content.replace", "derived_asset.write"] }
         },
         "network": {
           "oneOf": [

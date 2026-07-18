@@ -123,7 +123,7 @@ errors are compensated, but the current OpenDAL-backed replacement flow is not a
 crash-safe transaction across SQLite and object storage: if the process or
 machine stops after the object bytes are replaced but before the database row is
 updated, the database can temporarily or permanently record stale size/checksum
-metadata for that storage key. Use `POST /audit` to detect that condition. Audit
+values for that storage key. Use `POST /audit` to detect that condition. Audit
 does not repair data; any repair flow should be introduced as a separate,
 explicit maintenance operation.
 
@@ -198,7 +198,7 @@ Generate the matching Draft 2020-12 JSON Schema for editor or CI integration wit
 `asset-plugin gen schema`.
 
 This creates `manifest.json` without overwriting an existing file. Replace the `example.plugin`
-metadata, action, handler, matching rules, requirements, views, and permissions, then build the
+identity, action, handler, matching rules, requirements, views, and permissions, then build the
 Wasm and optional Web bundle. The source template is
 `asset-plugin-api/templates/manifest.json`, so protocol template changes require no CLI code
 changes. Integrity data is generated; seal the finished artifacts:
@@ -278,9 +278,8 @@ Wasm, and reseal the package.
 
 Resource kinds form an arbitrary-depth acyclic hierarchy through the optional
 `parent` field. Child kinds inherit actions, and their own action declarations
-override inherited actions with the same ID. Resource metadata is not defined
-by kinds: all resources currently use the strict, versioned core summary schema
-containing `description` and `tags`. Detection returns the most specific
+override inherited actions with the same ID. `description` and `tags` are direct
+fields of every Resource. Detection returns the most specific
 matching kind. For example, the bundled hierarchy contains
 `core:file → core:document → azvs:markdown`; `core:unknown` is another child of
 `core:file` for files whose concrete format has not been identified.
@@ -295,14 +294,14 @@ configured under `[plugin]`; non-inline content up to the configured total limit
 through the Range-based handle API.
 
 Manifest V3 uses a fine-grained `permissions.allow` list containing
-`resource.metadata.read`, `resource.metadata.write`, `content.read`, `content.replace`, and
+`resource.read`, `resource.write`, `content.read`, `content.replace`, and
 `derived_asset.write`. Effects are checked against their specific permission. Network and
 filesystem permissions are requested by a Manifest but are not self-granting. Every
 requested host or path must also be approved under `[plugin.grants]`. Network grants are exact and
 wildcards are rejected; filesystem grants are normalized roots. The default host policy grants no
 network or filesystem access.
 
-The current authoring target is Manifest V3 with plugin API `0.2`; omitting `runtime.plugin_api`
+The current authoring target is Manifest V3 with plugin API `0.3`; omitting `runtime.plugin_api`
 selects it. The host continues to accept Manifest V2, but plugin JSON API `0.2` is the only
 supported protocol level. Other manifest or ABI versions are rejected at startup. Plugin failures
 may return a structured `error` diagnostic with a stable `code`, message, retry hint, and optional

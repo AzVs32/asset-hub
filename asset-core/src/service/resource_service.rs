@@ -9,7 +9,7 @@
 use crate::CoreError;
 use crate::domain::{
     Checksum, ChecksumKind, Resource, ResourceContent, ResourceDirectory, ResourceId, ResourceKind,
-    ResourceMetadata, ResourceMetadataPatch, ResourceStatus, StorageKey,
+    ResourceStatus, StorageKey,
 };
 use crate::port::{
     BlobByteStream, BlobStorage, ListResources, ResourceActionExecutor, ResourceActionOutput,
@@ -45,7 +45,7 @@ pub use secured::SecuredResourceService;
 /// 这是服务端实现策略，不暴露给调用方。未来替换算法时在这里切换，并为旧算法保留读取支持。
 const CONTENT_CHECKSUM_KIND: ChecksumKind = ChecksumKind::Sha256;
 
-/// 创建纯元数据资源的用例命令。
+/// 创建不包含对象内容的资源用例命令。
 ///
 /// 该命令描述“创建一条没有对象内容的资源”的输入参数。它只收集调用方传入的数据，
 /// 不直接访问数据库或对象存储。
@@ -62,12 +62,14 @@ pub struct CreateResource {
     status: ResourceStatus,
     /// 资源所在的逻辑目录。
     directory: ResourceDirectory,
-    /// 初始资源元数据。
-    metadata: ResourceMetadata,
+    /// 初始资源描述。
+    description: Option<String>,
+    /// 初始资源标签。
+    tags: Vec<String>,
 }
 
 impl CreateResource {
-    /// 创建命令，默认自动推断资源类型、使用活跃状态和空元数据。
+    /// 创建命令，默认自动推断资源类型、使用活跃状态、空描述和空标签。
     ///
     /// `name` 会在 usecase 执行时去除首尾空白并校验，不会在命令构造阶段提前校验。
     pub fn new(name: impl Into<String>) -> Self {
@@ -76,7 +78,8 @@ impl CreateResource {
             kind: None,
             status: ResourceStatus::default(),
             directory: ResourceDirectory::root(),
-            metadata: ResourceMetadata::default(),
+            description: None,
+            tags: Vec::new(),
         }
     }
 
@@ -103,11 +106,19 @@ impl CreateResource {
         self
     }
 
-    /// 设置初始资源元数据。
-    ///
-    /// 未调用该方法时，资源元数据默认为服务端定义的空元数据结构。
-    pub fn with_metadata(mut self, metadata: impl Into<ResourceMetadata>) -> Self {
-        self.metadata = metadata.into();
+    /// 设置初始资源描述。
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    /// 设置初始资源标签。
+    pub fn with_tags<T, I>(mut self, tags: I) -> Self
+    where
+        T: Into<String>,
+        I: IntoIterator<Item = T>,
+    {
+        self.tags = tags.into_iter().map(Into::into).collect();
         self
     }
 
@@ -128,8 +139,10 @@ pub struct ResourceContentCommand<T> {
     status: ResourceStatus,
     /// 资源所在的逻辑目录。
     directory: ResourceDirectory,
-    /// 初始资源元数据。
-    metadata: ResourceMetadata,
+    /// 初始资源描述。
+    description: Option<String>,
+    /// 初始资源标签。
+    tags: Vec<String>,
     /// 用例特有的内容输入。
     payload: T,
     /// 内容 MIME 类型。
@@ -269,14 +282,15 @@ impl ExecuteResourceAction {
 }
 
 impl<T> ResourceContentCommand<T> {
-    /// 创建命令，默认自动推断资源类型、使用活跃状态和空元数据。
+    /// 创建命令，默认自动推断资源类型、使用活跃状态、空描述和空标签。
     pub fn new(name: impl Into<String>, payload: T) -> Self {
         Self {
             name: name.into(),
             kind: None,
             status: ResourceStatus::default(),
             directory: ResourceDirectory::root(),
-            metadata: ResourceMetadata::default(),
+            description: None,
+            tags: Vec::new(),
             payload,
             mime_type: None,
         }
@@ -300,9 +314,19 @@ impl<T> ResourceContentCommand<T> {
         self
     }
 
-    /// 设置初始资源元数据。
-    pub fn with_metadata(mut self, metadata: impl Into<ResourceMetadata>) -> Self {
-        self.metadata = metadata.into();
+    /// 设置初始资源描述。
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    /// 设置初始资源标签。
+    pub fn with_tags<U, I>(mut self, tags: I) -> Self
+    where
+        U: Into<String>,
+        I: IntoIterator<Item = U>,
+    {
+        self.tags = tags.into_iter().map(Into::into).collect();
         self
     }
 
@@ -328,8 +352,10 @@ pub struct UpdateResource {
     kind: Option<ResourceKind>,
     /// 新生命周期状态。
     status: Option<ResourceStatus>,
-    /// 资源元数据部分更新。
-    metadata: Option<ResourceMetadataPatch>,
+    /// 资源描述更新；外层 `None` 表示不修改，内层 `None` 表示清空。
+    description: Option<Option<String>>,
+    /// 资源标签更新；`None` 表示不修改。
+    tags: Option<Vec<String>>,
     /// 是否从软删除状态恢复。
     restore: bool,
 }
@@ -364,9 +390,19 @@ impl UpdateResource {
         self
     }
 
-    /// 设置资源元数据补丁。
-    pub fn with_metadata(mut self, metadata: ResourceMetadataPatch) -> Self {
-        self.metadata = Some(metadata);
+    /// 设置或清空资源描述。
+    pub fn with_description(mut self, description: Option<String>) -> Self {
+        self.description = Some(description);
+        self
+    }
+
+    /// 替换全部资源标签。
+    pub fn with_tags<T, I>(mut self, tags: I) -> Self
+    where
+        T: Into<String>,
+        I: IntoIterator<Item = T>,
+    {
+        self.tags = Some(tags.into_iter().map(Into::into).collect());
         self
     }
 
@@ -855,12 +891,17 @@ fn build_resource(
     directory: ResourceDirectory,
     kind: Option<ResourceKind>,
     status: ResourceStatus,
-    metadata: ResourceMetadata,
+    description: Option<String>,
+    tags: Vec<String>,
 ) -> crate::domain::ResourceBuilder {
     let mut builder = Resource::builder(name)
         .with_directory(directory)
         .with_status(status)
-        .with_metadata(metadata);
+        .with_tags(tags);
+
+    if let Some(description) = description {
+        builder = builder.with_description(description);
+    }
 
     if let Some(kind) = kind {
         builder = builder.with_kind(kind);

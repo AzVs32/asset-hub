@@ -72,19 +72,16 @@ pub(super) fn verify_permissions(
     binding: &ActionBinding,
     request: &ResourceActionRequest,
 ) -> Result<(), CoreError> {
-    if !binding
-        .permissions
-        .allows(PluginPermission::ResourceMetadataRead)
-    {
+    if !binding.permissions.allows(PluginPermission::ResourceRead) {
         return Err(CoreError::configuration(format!(
-            "plugin `{}` action `{}` lacks resource.metadata.read permission",
+            "plugin `{}` action `{}` lacks resource.read permission",
             binding.plugin_id, binding.action
         )));
     }
     if matches!(
         request.access(),
         asset_plugin_api::ResourceActionAccess::ReadWrite
-    ) && !binding.permissions.resource_metadata_write()
+    ) && !binding.permissions.resource_write()
         && !binding.permissions.content_replace()
         && !binding.permissions.derived_asset_write()
     {

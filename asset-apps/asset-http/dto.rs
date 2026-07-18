@@ -1,8 +1,4 @@
-use asset_core::ResourceError;
-use asset_core::domain::{
-    Checksum, Resource, ResourceContent, ResourceDirectory, ResourceMetadata,
-    ResourceMetadataPatch, ResourceSummaryMetadata,
-};
+use asset_core::domain::{Checksum, Resource, ResourceContent, ResourceDirectory};
 use asset_core::port::{ResourceActionOutput, ResourceKindDefinition, StoragePrefix};
 use asset_core::service::{ReadableResource, ResourceActions};
 use asset_plugin_api::{
@@ -21,17 +17,14 @@ use utoipa::{IntoParams, ToSchema};
 #[allow(dead_code)]
 pub(crate) struct BinaryContent(Vec<u8>);
 
-/// 创建纯元数据资源请求。
+/// 创建不包含对象内容的资源请求。
 #[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 #[schema(example = json!({
     "name": "resources_not_blob",
     "kind": "core:unknown",
-    "metadata": {
-        "summary": {
-            "description": "A metadata-only resource",
-            "tags": ["demo", "document"]
-        }
-    }
+    "description": "A resource without blob content",
+    "tags": ["demo", "document"]
 }))]
 pub(crate) struct CreateResourceRequest {
     /// 资源展示名。
@@ -43,8 +36,10 @@ pub(crate) struct CreateResourceRequest {
     /// 资源所在逻辑目录；根目录为空字符串。
     #[schema(value_type = Option<String>)]
     pub(crate) directory: Option<ResourceDirectory>,
-    /// 可选资源元数据。
-    pub(crate) metadata: Option<ResourceMetadataRequest>,
+    /// 可选资源描述。
+    pub(crate) description: Option<String>,
+    /// 可选资源标签。
+    pub(crate) tags: Option<Vec<String>>,
 }
 
 /// 创建逻辑目录请求。
@@ -106,16 +101,13 @@ pub(crate) struct ListDirectoryQuery {
 
 /// 更新资源请求。
 #[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 #[schema(example = json!({
     "name": "renamed.txt",
     "kind": "core:unknown",
     "status": "archived",
-    "metadata": {
-        "summary": {
-            "description": "updated resource",
-            "tags": ["demo", "updated"]
-        }
-    }
+    "description": "updated resource",
+    "tags": ["demo", "updated"]
 }))]
 pub(crate) struct UpdateResourceRequest {
     /// 可选新资源展示名。
@@ -127,8 +119,11 @@ pub(crate) struct UpdateResourceRequest {
     /// 可选新逻辑目录；根目录为空字符串。
     #[schema(value_type = Option<String>)]
     pub(crate) directory: Option<ResourceDirectory>,
-    /// 可选资源元数据补丁；当前只允许替换 summary，kind metadata 保持不变。
-    pub(crate) metadata: Option<ResourceMetadataRequest>,
+    /// 资源描述补丁：缺省表示不修改，`null` 表示清空。
+    #[serde(default, deserialize_with = "deserialize_optional_field")]
+    pub(crate) description: Option<Option<String>>,
+    /// 可选资源标签；提供时替换全部标签，空数组表示清空。
+    pub(crate) tags: Option<Vec<String>>,
     /// 是否恢复软删除资源。
     pub(crate) restore: Option<bool>,
 }
@@ -149,8 +144,10 @@ pub(crate) struct UploadResourceContentStreamQuery {
     pub(crate) kind: Option<String>,
     /// 可选初始状态：`active` 或 `archived`。
     pub(crate) status: Option<String>,
-    /// 可选 JSON 字符串形式的资源元数据，结构与 `ResourceMetadataRequest` 一致。
-    pub(crate) metadata_json: Option<String>,
+    /// 可选资源描述。
+    pub(crate) description: Option<String>,
+    /// 可选 JSON 字符串形式的资源标签数组。
+    pub(crate) tags_json: Option<String>,
 }
 
 /// 扫描对象存储前缀请求。
@@ -419,114 +416,6 @@ fn component_status(ready: bool) -> String {
     if ready { "ready" } else { "unavailable" }.to_string()
 }
 
-/// 创建或上传资源时可传入的资源元数据。
-#[derive(Debug, Clone, Default, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-#[schema(example = json!({
-    "summary": {
-        "description": "Human readable resource description",
-        "tags": ["demo", "asset"]
-    }
-}))]
-pub(crate) struct ResourceMetadataRequest {
-    /// 核心摘要元数据。
-    pub(crate) summary: Option<ResourceSummaryMetadataRequest>,
-}
-
-/// 创建或上传资源时可传入的核心摘要元数据。
-#[derive(Debug, Clone, Default, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ResourceSummaryMetadataRequest {
-    /// 资源描述。
-    pub(crate) description: Option<String>,
-    /// 资源标签。
-    pub(crate) tags: Option<Vec<String>>,
-}
-
-impl ResourceMetadataRequest {
-    /// 转换为领域元数据并执行领域校验。
-    pub(crate) fn into_domain(self) -> Result<ResourceMetadata, ResourceError> {
-        let mut builder = ResourceMetadata::builder();
-
-        if let Some(summary) = self.summary {
-            if let Some(description) = summary.description {
-                builder = builder.with_description(description);
-            }
-
-            if let Some(tags) = summary.tags {
-                builder = builder.with_tags(tags);
-            }
-        }
-
-        builder.build()
-    }
-
-    /// 转换为只修改核心摘要的补丁；预留的 kind metadata 保持不变。
-    pub(crate) fn into_patch(self) -> Result<ResourceMetadataPatch, ResourceError> {
-        let Some(summary) = self.summary else {
-            return Ok(ResourceMetadataPatch::new());
-        };
-        let summary =
-            ResourceSummaryMetadata::new(summary.description, summary.tags.unwrap_or_default())?;
-        Ok(ResourceMetadataPatch::new().with_summary(summary))
-    }
-}
-
-/// 资源元数据响应。
-#[derive(Debug, Serialize, ToSchema)]
-#[schema(example = json!({
-    "summary": {
-        "description": "Human readable resource description",
-        "tags": ["demo", "asset"]
-    },
-    "kind_metadata": null
-}))]
-pub(crate) struct ResourceMetadataResponse {
-    /// 核心摘要元数据。
-    pub(crate) summary: ResourceSummaryMetadataResponse,
-    /// 当前 kind 的扩展元数据；尚未定义时为 null。
-    pub(crate) kind_metadata: Option<ResourceKindMetadataResponse>,
-}
-
-/// 资源类型专属元数据响应。
-#[derive(Debug, Serialize, ToSchema)]
-pub(crate) struct ResourceKindMetadataResponse {
-    pub(crate) kind: String,
-    pub(crate) schema_version: u32,
-    pub(crate) data: Value,
-}
-
-/// 资源核心摘要元数据响应。
-#[derive(Debug, Serialize, ToSchema)]
-pub(crate) struct ResourceSummaryMetadataResponse {
-    /// 资源描述。
-    pub(crate) description: Option<String>,
-    /// 资源标签。
-    pub(crate) tags: Vec<String>,
-}
-
-impl From<&ResourceMetadata> for ResourceMetadataResponse {
-    fn from(metadata: &ResourceMetadata) -> Self {
-        Self {
-            summary: ResourceSummaryMetadataResponse {
-                description: metadata.description().map(str::to_string),
-                tags: metadata
-                    .tags()
-                    .iter()
-                    .map(|tag| tag.as_str().to_owned())
-                    .collect(),
-            },
-            kind_metadata: metadata.kind_metadata().map(|kind_metadata| {
-                ResourceKindMetadataResponse {
-                    kind: kind_metadata.kind().as_str().to_owned(),
-                    schema_version: kind_metadata.schema_version(),
-                    data: Value::Object(kind_metadata.data().clone()),
-                }
-            }),
-        }
-    }
-}
-
 /// 资源响应。
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct ResourceResponse {
@@ -541,8 +430,10 @@ pub(crate) struct ResourceResponse {
     pub(crate) kind: String,
     /// 资源生命周期状态。
     pub(crate) status: String,
-    /// 资源元数据。
-    pub(crate) metadata: ResourceMetadataResponse,
+    /// 可选资源描述。
+    pub(crate) description: Option<String>,
+    /// 资源标签。
+    pub(crate) tags: Vec<String>,
     /// 资源内容引用。
     pub(crate) content: Option<ResourceContentResponse>,
     /// 当前资源允许的操作。
@@ -768,7 +659,12 @@ impl ResourceResponse {
             directory: resource.directory().clone(),
             kind: resource.kind().as_str().to_string(),
             status: resource.status().as_str().to_string(),
-            metadata: ResourceMetadataResponse::from(resource.metadata()),
+            description: resource.description().map(str::to_string),
+            tags: resource
+                .tags()
+                .iter()
+                .map(|tag| tag.as_str().to_owned())
+                .collect(),
             content: resource.content().map(ResourceContentResponse::from),
             actions: ResourceActionsResponse::from(actions),
             created_at: resource.created_at().to_rfc3339(),
@@ -776,6 +672,14 @@ impl ResourceResponse {
             deleted_at: resource.deleted_at().map(|value| value.to_rfc3339()),
         }
     }
+}
+
+fn deserialize_optional_field<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
 }
 
 impl From<ResourceActions> for ResourceActionsResponse {

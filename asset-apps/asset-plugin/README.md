@@ -13,7 +13,7 @@ asset-plugin gen manifest
 ```
 
 The command creates `manifest.json` in the current directory and refuses to overwrite an existing
-file. Edit the `example.plugin` metadata, action ID, handler, matching rules, requirements, views,
+file. Edit the `example.plugin` identity, action ID, handler, matching rules, requirements, views,
 and permissions for the plugin. It copies the canonical draft from
 `asset-plugin-api/templates/manifest.json` byte for byte. Integrity hashes belong to the generated
 lock file, not the editable manifest.

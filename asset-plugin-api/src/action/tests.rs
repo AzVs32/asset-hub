@@ -13,7 +13,6 @@ fn action_requirements_are_the_only_content_requirement_state() {
     assert_eq!(value["requires"]["content"], true);
     assert_eq!(value["requires"]["content_delivery"], "reference");
     assert!(value["requires"].get("resource").is_none());
-    assert!(value["requires"].get("metadata").is_none());
     assert!(value.get("requires_content").is_none());
     assert!(value.get("content_delivery").is_none());
 }

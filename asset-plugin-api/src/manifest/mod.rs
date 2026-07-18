@@ -12,7 +12,7 @@ pub use permissions::{
     FilesystemPermission, NetworkPermission, PluginPermission, PluginPermissions,
     ReadWritePermission,
 };
-pub use plugin::PluginMetadata;
+pub use plugin::PluginDescriptor;
 pub use runtime::PluginRuntime;
 pub use web::PluginWeb;
 
@@ -76,7 +76,7 @@ pub struct PluginManifest {
     #[serde(default, skip_serializing_if = "Option::is_none", rename = "$schema")]
     pub schema: Option<String>,
     pub manifest_version: u32,
-    pub plugin: PluginMetadata,
+    pub plugin: PluginDescriptor,
     pub runtime: PluginRuntime,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub web: Option<PluginWeb>,
@@ -246,9 +246,9 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
                 action.id
             ));
         }
-        if !manifest.permissions.resource_metadata_read() {
+        if !manifest.permissions.resource_read() {
             return Err(format!(
-                "capabilities.actions[`{}`] lacks resource.metadata.read permission",
+                "capabilities.actions[`{}`] lacks resource.read permission",
                 action.id
             ));
         }
@@ -292,7 +292,7 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
             ));
         }
         if matches!(action.access, ManifestActionAccess::Write)
-            && !manifest.permissions.resource_metadata_write()
+            && !manifest.permissions.resource_write()
             && !manifest.permissions.content_replace()
             && !manifest.permissions.derived_asset_write()
         {

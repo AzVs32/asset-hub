@@ -1,6 +1,7 @@
 use asset_plugin_api::{
-    MANIFEST_SCHEMA, MANIFEST_TEMPLATE, PluginCapabilities, PluginManifest, PluginManifestLock,
-    PluginMetadata, PluginPermissions, PluginRuntime, PluginRuntimeLock, PluginWeb, PluginWebLock,
+    MANIFEST_SCHEMA, MANIFEST_TEMPLATE, PluginCapabilities, PluginDescriptor, PluginManifest,
+    PluginManifestLock, PluginPermissions, PluginRuntime, PluginRuntimeLock, PluginWeb,
+    PluginWebLock,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -44,7 +45,7 @@ struct DraftManifest {
     #[serde(default, rename = "$schema")]
     schema: Option<String>,
     manifest_version: u32,
-    plugin: PluginMetadata,
+    plugin: PluginDescriptor,
     runtime: DraftRuntime,
     #[serde(default)]
     web: Option<DraftWeb>,

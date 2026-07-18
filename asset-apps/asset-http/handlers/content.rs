@@ -38,7 +38,13 @@ pub(crate) async fn upload_resource_content_stream(
 
     let mut command = UploadResourceContentStream::new(query.name, data);
     command = command.with_directory(directory);
-    command = apply_common_stream_fields(command, query.kind, query.status, query.metadata_json)?;
+    command = apply_common_stream_fields(
+        command,
+        query.kind,
+        query.status,
+        query.description,
+        query.tags_json,
+    )?;
 
     if let Some(mime_type) = content_type(&headers)? {
         command = command.with_mime_type(mime_type);

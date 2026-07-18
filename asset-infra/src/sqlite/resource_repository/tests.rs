@@ -1,7 +1,6 @@
 use super::*;
-use asset_core::domain::{Checksum, ResourceContent, ResourceKind, ResourceKindMetadata};
+use asset_core::domain::{Checksum, ResourceContent};
 use asset_core::port::ListResources;
-use serde_json::json;
 use std::path::PathBuf;
 
 #[tokio::test]
@@ -15,12 +14,8 @@ async fn sqlite_repository_roundtrips_resource() {
     let resource = Resource::builder("image.png")
         .with_directory(ResourceDirectory::from_path("assets").unwrap())
         .with_kind("core:image")
-        .with_metadata(
-            ResourceMetadata::builder()
-                .with_tags(["rust", "asset"])
-                .build()
-                .unwrap(),
-        )
+        .with_description("cover")
+        .with_tags(["rust", "asset"])
         .with_content(content)
         .build()
         .unwrap();
@@ -39,7 +34,6 @@ async fn sqlite_repository_roundtrips_resource() {
     assert!(restored.kind().is("core:image"));
     assert_eq!(
         restored
-            .metadata()
             .tags()
             .iter()
             .map(|tag| tag.as_str())
@@ -51,43 +45,23 @@ async fn sqlite_repository_roundtrips_resource() {
     assert_eq!(restored_content.mime_type(), Some("image/png"));
     assert_eq!(restored_content.checksum(), &checksum);
 
-    let summary_rows: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM resource_metadata_summaries WHERE resource_id = ?",
-    )
-    .bind(resource.id().to_string())
-    .fetch_one(repository.pool())
-    .await
-    .unwrap();
     let tag_rows: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM resource_metadata_tags WHERE resource_id = ?")
+        sqlx::query_scalar("SELECT COUNT(*) FROM resource_tags WHERE resource_id = ?")
             .bind(resource.id().to_string())
             .fetch_one(repository.pool())
             .await
             .unwrap();
-    assert_eq!(summary_rows, 1);
+    assert_eq!(restored.description(), Some("cover"));
     assert_eq!(tag_rows, 2);
 }
 
 #[tokio::test]
-async fn sqlite_repository_roundtrips_and_clears_kind_metadata() {
-    let repository = repository("kind-metadata").await;
-    let kind_metadata = ResourceKindMetadata::new(
-        ResourceKind::from("core:image"),
-        2,
-        serde_json::Map::from_iter([
-            ("width".to_owned(), json!(1200)),
-            ("height".to_owned(), json!(800)),
-        ]),
-    )
-    .unwrap();
-    let metadata = ResourceMetadata::builder()
-        .with_description("cover")
-        .with_kind_metadata(kind_metadata.clone())
-        .build()
-        .unwrap();
+async fn sqlite_repository_updates_description_and_tags() {
+    let repository = repository("description-tags").await;
     let mut resource = Resource::builder("image")
         .with_kind("core:image")
-        .with_metadata(metadata)
+        .with_description("cover")
+        .with_tags(["image", "cover"])
         .build()
         .unwrap();
 
@@ -100,41 +74,23 @@ async fn sqlite_repository_roundtrips_and_clears_kind_metadata() {
             .map(|found| found.id()),
         Some(resource.id())
     );
-    let restored = repository
-        .find_by_id(&resource.id())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(restored.metadata().kind_metadata(), Some(&kind_metadata));
-
-    resource.change_kind("core:document").unwrap();
+    resource.set_description(None).unwrap();
+    resource.replace_tags(vec!["document".to_owned()]).unwrap();
     repository.save(&resource).await.unwrap();
     let restored = repository
         .find_by_id(&resource.id())
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(restored.metadata().description(), Some("cover"));
-    assert!(restored.metadata().kind_metadata().is_none());
-    let kind_rows: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM resource_kind_metadata WHERE resource_id = ?")
-            .bind(resource.id().to_string())
-            .fetch_one(repository.pool())
-            .await
-            .unwrap();
-    assert_eq!(kind_rows, 0);
+    assert!(restored.description().is_none());
+    assert_eq!(restored.tags()[0].as_str(), "document");
 }
 
 #[tokio::test]
 async fn sqlite_repository_filters_tags_through_relational_index() {
     let repository = repository("tag-filter").await;
     let rust = Resource::builder("rust")
-        .with_metadata(
-            ResourceMetadata::builder()
-                .with_tags(["rust", "asset"])
-                .build()
-                .unwrap(),
-        )
+        .with_tags(["rust", "asset"])
         .build()
         .unwrap();
     let other = Resource::builder("other").build().unwrap();

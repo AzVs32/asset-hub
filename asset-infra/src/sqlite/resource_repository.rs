@@ -1,12 +1,11 @@
 use crate::{config::DatabaseConfig, migration};
 use asset_core::CoreError;
 use asset_core::domain::{
-    Resource, ResourceContent, ResourceDirectory, ResourceId, ResourceKind, ResourceKindMetadata,
-    ResourceMetadata, ResourceSnapshot, ResourceStatus, ResourceSummaryMetadata,
+    Resource, ResourceContent, ResourceDirectory, ResourceId, ResourceKind, ResourceSnapshot,
+    ResourceStatus,
 };
 use asset_core::port::{ListResources, ResourcePage, ResourceQuery, ResourceRepository};
 use chrono::{DateTime, Utc};
-use serde_json::{Map, Value};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow};
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool, Transaction};
 
@@ -17,31 +16,24 @@ const RESOURCE_SELECT: &str = r#"
         resources.directory,
         resources.kind,
         resources.status,
-        summaries.description AS metadata_description,
+        resources.description,
         COALESCE(
             (
                 SELECT json_group_array(tag)
                 FROM (
                     SELECT tag
-                    FROM resource_metadata_tags
+                    FROM resource_tags
                     WHERE resource_id = resources.id
                     ORDER BY position
                 )
             ),
             '[]'
-        ) AS metadata_tags_json,
-        kind_metadata.kind AS metadata_kind,
-        kind_metadata.schema_version AS metadata_kind_schema_version,
-        kind_metadata.payload_json AS metadata_kind_payload_json,
+        ) AS tags_json,
         resources.content_json,
         resources.created_at,
         resources.updated_at,
         resources.deleted_at
     FROM resources
-    INNER JOIN resource_metadata_summaries AS summaries
-        ON summaries.resource_id = resources.id
-    LEFT JOIN resource_kind_metadata AS kind_metadata
-        ON kind_metadata.resource_id = resources.id
 "#;
 
 /// SQLite 版本的资源聚合仓储。
@@ -134,17 +126,19 @@ impl ResourceRepository for SqliteResourceRepository {
                 directory,
                 kind,
                 status,
+                description,
                 content_json,
                 created_at,
                 updated_at,
                 deleted_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 directory = excluded.directory,
                 kind = excluded.kind,
                 status = excluded.status,
+                description = excluded.description,
                 content_json = excluded.content_json,
                 created_at = excluded.created_at,
                 updated_at = excluded.updated_at,
@@ -156,6 +150,7 @@ impl ResourceRepository for SqliteResourceRepository {
         .bind(resource.directory().path())
         .bind(resource.kind().as_str())
         .bind(resource.status().as_str())
+        .bind(resource.description())
         .bind(content_json)
         .bind(encode_timestamp(resource.created_at()))
         .bind(encode_timestamp(resource.updated_at()))
@@ -164,7 +159,7 @@ impl ResourceRepository for SqliteResourceRepository {
         .await
         .map_err(|error| CoreError::repository("save", error))?;
 
-        sync_metadata(&mut transaction, resource).await?;
+        sync_tags(&mut transaction, resource).await?;
         transaction
             .commit()
             .await
@@ -193,7 +188,7 @@ impl ResourceRepository for SqliteResourceRepository {
         let result = sqlx::query(
             r#"
             UPDATE resources SET
-                name = ?, directory = ?, kind = ?, status = ?, content_json = ?,
+                name = ?, directory = ?, kind = ?, status = ?, description = ?, content_json = ?,
                 created_at = ?, updated_at = ?, deleted_at = ?
             WHERE id = ? AND updated_at = ?
             "#,
@@ -202,6 +197,7 @@ impl ResourceRepository for SqliteResourceRepository {
         .bind(resource.directory().path())
         .bind(resource.kind().as_str())
         .bind(resource.status().as_str())
+        .bind(resource.description())
         .bind(content_json)
         .bind(encode_timestamp(resource.created_at()))
         .bind(encode_timestamp(resource.updated_at()))
@@ -220,7 +216,7 @@ impl ResourceRepository for SqliteResourceRepository {
             return Ok(false);
         }
 
-        sync_metadata(&mut transaction, resource).await?;
+        sync_tags(&mut transaction, resource).await?;
         transaction
             .commit()
             .await
@@ -395,7 +391,9 @@ fn push_list_where<'a>(builder: &mut QueryBuilder<'a, Sqlite>, query: &'a ListRe
 
     if let Some(tag) = query.tag() {
         push_condition_prefix(builder, &mut has_where);
-        builder.push("EXISTS (SELECT 1 FROM resource_metadata_tags WHERE resource_id = resources.id AND tag = ");
+        builder.push(
+            "EXISTS (SELECT 1 FROM resource_tags WHERE resource_id = resources.id AND tag = ",
+        );
         builder.push_bind(tag);
         builder.push(")");
     }
@@ -436,7 +434,8 @@ fn decode_resource(row: SqliteRow) -> Result<Resource, CoreError> {
     let directory = ResourceDirectory::from_path(column::<String>(&row, "directory")?)?;
     let kind = ResourceKind::try_new(column::<String>(&row, "kind")?)?;
     let status = status_from_str(column(&row, "status")?)?;
-    let metadata = decode_metadata(&row)?;
+    let description = column(&row, "description")?;
+    let tags = decode_tags(&row)?;
     let content = decode_content(column(&row, "content_json")?)?;
     let created_at = decode_timestamp(column(&row, "created_at")?)?;
     let updated_at = decode_timestamp(column(&row, "updated_at")?)?;
@@ -450,7 +449,8 @@ fn decode_resource(row: SqliteRow) -> Result<Resource, CoreError> {
         directory,
         kind,
         status,
-        metadata,
+        description,
+        tags,
         content,
         created_at,
         updated_at,
@@ -459,69 +459,25 @@ fn decode_resource(row: SqliteRow) -> Result<Resource, CoreError> {
     .map_err(CoreError::from)
 }
 
-async fn sync_metadata(
+async fn sync_tags(
     transaction: &mut Transaction<'_, Sqlite>,
     resource: &Resource,
 ) -> Result<(), CoreError> {
     let resource_id = resource.id().to_string();
-    sqlx::query(
-        r#"
-        INSERT INTO resource_metadata_summaries (resource_id, description)
-        VALUES (?, ?)
-        ON CONFLICT(resource_id) DO UPDATE SET description = excluded.description
-        "#,
-    )
-    .bind(&resource_id)
-    .bind(resource.metadata().description())
-    .execute(&mut **transaction)
-    .await
-    .map_err(|error| CoreError::repository("resource.save_metadata_summary", error))?;
-
-    sqlx::query("DELETE FROM resource_metadata_tags WHERE resource_id = ?")
+    sqlx::query("DELETE FROM resource_tags WHERE resource_id = ?")
         .bind(&resource_id)
         .execute(&mut **transaction)
         .await
-        .map_err(|error| CoreError::repository("resource.clear_metadata_tags", error))?;
+        .map_err(|error| CoreError::repository("resource.clear_tags", error))?;
 
-    for (position, tag) in resource.metadata().tags().iter().enumerate() {
-        sqlx::query(
-            "INSERT INTO resource_metadata_tags (resource_id, position, tag) VALUES (?, ?, ?)",
-        )
-        .bind(&resource_id)
-        .bind(position as i64)
-        .bind(tag.as_str())
-        .execute(&mut **transaction)
-        .await
-        .map_err(|error| CoreError::repository("resource.save_metadata_tag", error))?;
-    }
-
-    if let Some(metadata) = resource.metadata().kind_metadata() {
-        let payload_json = serde_json::to_string(metadata.data())
-            .map_err(|error| CoreError::repository("resource.encode_kind_metadata", error))?;
-        sqlx::query(
-            r#"
-            INSERT INTO resource_kind_metadata (
-                resource_id, kind, schema_version, payload_json
-            ) VALUES (?, ?, ?, ?)
-            ON CONFLICT(resource_id) DO UPDATE SET
-                kind = excluded.kind,
-                schema_version = excluded.schema_version,
-                payload_json = excluded.payload_json
-            "#,
-        )
-        .bind(&resource_id)
-        .bind(metadata.kind().as_str())
-        .bind(i64::from(metadata.schema_version()))
-        .bind(payload_json)
-        .execute(&mut **transaction)
-        .await
-        .map_err(|error| CoreError::repository("resource.save_kind_metadata", error))?;
-    } else {
-        sqlx::query("DELETE FROM resource_kind_metadata WHERE resource_id = ?")
+    for (position, tag) in resource.tags().iter().enumerate() {
+        sqlx::query("INSERT INTO resource_tags (resource_id, position, tag) VALUES (?, ?, ?)")
             .bind(&resource_id)
+            .bind(position as i64)
+            .bind(tag.as_str())
             .execute(&mut **transaction)
             .await
-            .map_err(|error| CoreError::repository("resource.clear_kind_metadata", error))?;
+            .map_err(|error| CoreError::repository("resource.save_tag", error))?;
     }
 
     Ok(())
@@ -580,42 +536,10 @@ fn decode_id(value: String) -> Result<ResourceId, CoreError> {
         .map_err(|error| CoreError::repository("resource.decode_id", error))
 }
 
-fn decode_metadata(row: &SqliteRow) -> Result<ResourceMetadata, CoreError> {
-    let description = column(row, "metadata_description")?;
-    let tags_json: String = column(row, "metadata_tags_json")?;
-    let tags = serde_json::from_str::<Vec<String>>(&tags_json)
-        .map_err(|error| CoreError::repository("resource.decode_metadata_tags", error))?;
-    let summary = ResourceSummaryMetadata::new(description, tags)?;
-
-    let kind = column::<Option<String>>(row, "metadata_kind")?;
-    let schema_version = column::<Option<i64>>(row, "metadata_kind_schema_version")?;
-    let payload_json = column::<Option<String>>(row, "metadata_kind_payload_json")?;
-    let kind_metadata = match (kind, schema_version, payload_json) {
-        (None, None, None) => None,
-        (Some(kind), Some(schema_version), Some(payload_json)) => {
-            let schema_version = u32::try_from(schema_version).map_err(|error| {
-                CoreError::repository("resource.decode_kind_metadata_version", error)
-            })?;
-            let data = serde_json::from_str::<Map<String, Value>>(&payload_json)
-                .map_err(|error| CoreError::repository("resource.decode_kind_metadata", error))?;
-            Some(ResourceKindMetadata::new(
-                ResourceKind::try_new(kind)?,
-                schema_version,
-                data,
-            )?)
-        }
-        _ => {
-            return Err(CoreError::repository(
-                "resource.decode_kind_metadata",
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "kind metadata columns are incomplete",
-                ),
-            ));
-        }
-    };
-
-    Ok(ResourceMetadata::from_parts(summary, kind_metadata))
+fn decode_tags(row: &SqliteRow) -> Result<Vec<String>, CoreError> {
+    let tags_json: String = column(row, "tags_json")?;
+    serde_json::from_str::<Vec<String>>(&tags_json)
+        .map_err(|error| CoreError::repository("resource.decode_tags", error))
 }
 
 fn decode_content(value: Option<String>) -> Result<Option<ResourceContent>, CoreError> {

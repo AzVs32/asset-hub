@@ -33,7 +33,7 @@ into the iframe URL. After loading, the frame requests content through Asset Hub
 `postMessage` action bridge:
 
 - `{"operation":"load"}` returns UTF-8 Markdown directly up to 512 KiB.
-- Larger documents return transfer metadata and are fetched with sequential
+- Larger documents return transfer details and are fetched with sequential
   `{"operation":"chunk","offset":N}` requests using bounded 2 MiB Base64 byte chunks.
 - The browser validates protocol version, total length, offsets, chunk sizes, completion state,
   Base64, and final UTF-8 before rendering.

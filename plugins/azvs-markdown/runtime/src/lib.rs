@@ -177,7 +177,7 @@ fn markdown_content_size(input: &PluginActionRequest) -> FnResult<u64> {
         .content
         .as_ref()
         .map(|content| content.size)
-        .ok_or_else(|| Error::msg("missing Markdown content metadata").into())
+        .ok_or_else(|| Error::msg("missing Markdown content description").into())
 }
 
 fn markdown_content_bytes(input: &PluginActionRequest) -> FnResult<Vec<u8>> {

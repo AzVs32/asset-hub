@@ -195,7 +195,7 @@ export interface paths {
         /** 分页列出资源。 */
         get: operations["list_resources"];
         put?: never;
-        /** 创建纯元数据资源。 */
+        /** 创建不包含对象内容的资源。 */
         post: operations["create_resource"];
         delete?: never;
         options?: never;
@@ -213,7 +213,7 @@ export interface paths {
         get?: never;
         /**
          * 流式上传内容并创建资源。
-         * @description 请求体必须是原始二进制流。资源名称、存储键等元信息从 query 参数读取，MIME 类型
+         * @description 请求体必须是原始二进制流。资源名称、目录等元信息从 query 参数读取，MIME 类型
          *     优先使用请求的 `Content-Type` header。
          */
         put: operations["upload_resource_content_stream"];
@@ -463,31 +463,30 @@ export interface components {
             parent_path?: string;
         };
         /**
-         * @description 创建纯元数据资源请求。
+         * @description 创建不包含对象内容的资源请求。
          * @example {
          *       "name": "resources_not_blob",
          *       "kind": "core:unknown",
-         *       "metadata": {
-         *         "summary": {
-         *           "description": "A metadata-only resource",
-         *           "tags": [
-         *             "demo",
-         *             "document"
-         *           ]
-         *         }
-         *       }
+         *       "description": "A resource without blob content",
+         *       "tags": [
+         *         "demo",
+         *         "document"
+         *       ]
          *     }
          */
         CreateResourceRequest: {
+            /** @description 可选资源描述。 */
+            description?: string | null;
             /** @description 资源所在逻辑目录；根目录为空字符串。 */
             directory?: string | null;
             /** @description 可选资源类型。 */
             kind?: string | null;
-            metadata?: null | components["schemas"]["ResourceMetadataRequest"];
             /** @description 资源展示名。 */
             name: string;
             /** @description 可选初始状态：`active` 或 `archived`。 */
             status?: string | null;
+            /** @description 可选资源标签。 */
+            tags?: string[] | null;
         };
         CreateUserRequest: {
             is_admin?: boolean;
@@ -640,7 +639,7 @@ export interface components {
         };
         /** @description 资源内容引用响应。 */
         ResourceContentResponse: {
-            /** @description 内容校验和集合。 */
+            /** @description 服务端根据内容本体计算得到的校验和。 */
             checksum: components["schemas"]["ChecksumResponse"];
             /** @description 内容 MIME 类型。 */
             mime_type?: string | null;
@@ -658,13 +657,6 @@ export interface components {
             parent_path: string;
             /** @description 目录完整路径。 */
             path: string;
-        };
-        /** @description 资源类型专属元数据响应。 */
-        ResourceKindMetadataResponse: {
-            data: unknown;
-            kind: string;
-            /** Format: int32 */
-            schema_version: number;
         };
         /** @description 资源类型响应。 */
         ResourceKindResponse: {
@@ -688,40 +680,6 @@ export interface components {
         ResourceKindsResponse: {
             /** @description 当前后端支持的资源类型。 */
             items: components["schemas"]["ResourceKindResponse"][];
-        };
-        /**
-         * @description 创建或上传资源时可传入的资源元数据。
-         * @example {
-         *       "summary": {
-         *         "description": "Human readable resource description",
-         *         "tags": [
-         *           "demo",
-         *           "asset"
-         *         ]
-         *       }
-         *     }
-         */
-        ResourceMetadataRequest: {
-            summary?: null | components["schemas"]["ResourceSummaryMetadataRequest"];
-        };
-        /**
-         * @description 资源元数据响应。
-         * @example {
-         *       "summary": {
-         *         "description": "Human readable resource description",
-         *         "tags": [
-         *           "demo",
-         *           "asset"
-         *         ]
-         *       },
-         *       "kind_metadata": null
-         *     }
-         */
-        ResourceMetadataResponse: {
-            /** @description 当前 kind 的扩展元数据；尚未定义时为 null。 */
-            kind_metadata?: null | components["schemas"]["ResourceKindMetadataResponse"];
-            /** @description 核心摘要元数据。 */
-            summary: components["schemas"]["ResourceSummaryMetadataResponse"];
         };
         /** @description 资源分页响应。 */
         ResourcePageResponse: {
@@ -763,34 +721,22 @@ export interface components {
             created_at: string;
             /** @description 软删除时间，RFC3339 格式；为空表示未删除。 */
             deleted_at?: string | null;
+            /** @description 可选资源描述。 */
+            description?: string | null;
             /** @description 资源所在逻辑目录，根目录为空字符串。 */
             directory: string;
             /** @description 资源唯一标识。 */
             id: string;
             /** @description 资源类型。 */
             kind: string;
-            /** @description 资源元数据。 */
-            metadata: components["schemas"]["ResourceMetadataResponse"];
             /** @description 资源展示名。 */
             name: string;
             /** @description 资源生命周期状态。 */
             status: string;
-            /** @description 资源最后更新时间，RFC3339 格式。 */
-            updated_at: string;
-        };
-        /** @description 创建或上传资源时可传入的核心摘要元数据。 */
-        ResourceSummaryMetadataRequest: {
-            /** @description 资源描述。 */
-            description?: string | null;
-            /** @description 资源标签。 */
-            tags?: string[] | null;
-        };
-        /** @description 资源核心摘要元数据响应。 */
-        ResourceSummaryMetadataResponse: {
-            /** @description 资源描述。 */
-            description?: string | null;
             /** @description 资源标签。 */
             tags: string[];
+            /** @description 资源最后更新时间，RFC3339 格式。 */
+            updated_at: string;
         };
         /** @description 单文件扫描失败响应。 */
         ScanStorageErrorResponse: {
@@ -853,29 +799,28 @@ export interface components {
          *       "name": "renamed.txt",
          *       "kind": "core:unknown",
          *       "status": "archived",
-         *       "metadata": {
-         *         "summary": {
-         *           "description": "updated resource",
-         *           "tags": [
-         *             "demo",
-         *             "updated"
-         *           ]
-         *         }
-         *       }
+         *       "description": "updated resource",
+         *       "tags": [
+         *         "demo",
+         *         "updated"
+         *       ]
          *     }
          */
         UpdateResourceRequest: {
+            /** @description 资源描述补丁：缺省表示不修改，`null` 表示清空。 */
+            description?: string | null;
             /** @description 可选新逻辑目录；根目录为空字符串。 */
             directory?: string | null;
             /** @description 可选新资源类型。 */
             kind?: string | null;
-            metadata?: null | components["schemas"]["ResourceMetadataRequest"];
             /** @description 可选新资源展示名。 */
             name?: string | null;
             /** @description 是否恢复软删除资源。 */
             restore?: boolean | null;
             /** @description 可选新状态：`active` 或 `archived`。 */
             status?: string | null;
+            /** @description 可选资源标签；提供时替换全部标签，空数组表示清空。 */
+            tags?: string[] | null;
         };
         UpdateUserStatusRequest: {
             status: string;
@@ -885,16 +830,18 @@ export interface components {
          *     流式上传内容并创建资源的 query 参数。
          */
         UploadResourceContentStreamQuery: {
+            /** @description 可选资源描述。 */
+            description?: string | null;
             /** @description 可选上传目录。 */
             directory?: string | null;
             /** @description 可选资源类型。 */
             kind?: string | null;
-            /** @description 可选 JSON 字符串形式的资源元数据，结构与 `ResourceMetadataRequest` 一致。 */
-            metadata_json?: string | null;
             /** @description 资源文件名；与目录共同决定对象存储路径。 */
             name: string;
             /** @description 可选初始状态：`active` 或 `archived`。 */
             status?: string | null;
+            /** @description 可选 JSON 字符串形式的资源标签数组。 */
+            tags_json?: string | null;
         };
     };
     responses: never;
@@ -1467,8 +1414,10 @@ export interface operations {
                 kind?: string;
                 /** @description 可选初始状态：`active` 或 `archived`。 */
                 status?: string;
-                /** @description 可选 JSON 字符串形式的资源元数据，结构与 `ResourceMetadataRequest` 一致。 */
-                metadata_json?: string;
+                /** @description 可选资源描述。 */
+                description?: string;
+                /** @description 可选 JSON 字符串形式的资源标签数组。 */
+                tags_json?: string;
             };
             header?: never;
             path?: never;

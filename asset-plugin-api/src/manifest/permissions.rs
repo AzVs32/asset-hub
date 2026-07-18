@@ -4,10 +4,10 @@ use std::collections::BTreeSet;
 /// Fine-grained host capabilities requested by a plugin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum PluginPermission {
-    #[serde(rename = "resource.metadata.read")]
-    ResourceMetadataRead,
-    #[serde(rename = "resource.metadata.write")]
-    ResourceMetadataWrite,
+    #[serde(rename = "resource.read")]
+    ResourceRead,
+    #[serde(rename = "resource.write")]
+    ResourceWrite,
     #[serde(rename = "content.read")]
     ContentRead,
     #[serde(rename = "content.replace")]
@@ -34,12 +34,12 @@ impl PluginPermissions {
         self.allow.contains(&permission)
     }
 
-    pub fn resource_metadata_read(&self) -> bool {
-        self.allows(PluginPermission::ResourceMetadataRead)
+    pub fn resource_read(&self) -> bool {
+        self.allows(PluginPermission::ResourceRead)
     }
 
-    pub fn resource_metadata_write(&self) -> bool {
-        self.allows(PluginPermission::ResourceMetadataWrite)
+    pub fn resource_write(&self) -> bool {
+        self.allows(PluginPermission::ResourceWrite)
     }
 
     pub fn content_read(&self) -> bool {
@@ -99,10 +99,10 @@ impl<'de> Deserialize<'de> for PluginPermissions {
             PermissionsDocument::V2(value) => {
                 let mut allow = BTreeSet::new();
                 if value.resource.read {
-                    allow.insert(PluginPermission::ResourceMetadataRead);
+                    allow.insert(PluginPermission::ResourceRead);
                 }
                 if value.resource.write {
-                    allow.insert(PluginPermission::ResourceMetadataWrite);
+                    allow.insert(PluginPermission::ResourceWrite);
                 }
                 if value.content.read {
                     allow.insert(PluginPermission::ContentRead);

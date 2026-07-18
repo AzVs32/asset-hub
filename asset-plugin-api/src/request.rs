@@ -24,29 +24,16 @@ pub struct PluginResource {
     pub name: String,
     pub kind: String,
     pub status: String,
-    pub metadata: PluginResourceMetadata,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content: Option<PluginResourceContent>,
     pub created_at: String,
     pub updated_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deleted_at: Option<String>,
-}
-
-/// Versioned core metadata exposed as part of a resource snapshot.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PluginResourceMetadata {
-    pub schema_version: u32,
-    pub summary: PluginResourceSummaryMetadata,
-}
-
-/// Core summary fields understood by both the host and plugins.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PluginResourceSummaryMetadata {
-    pub description: Option<String>,
-    pub tags: Vec<String>,
 }
 
 /// Resource content reference exposed to plugins.

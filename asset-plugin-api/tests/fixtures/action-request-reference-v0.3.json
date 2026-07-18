@@ -8,13 +8,7 @@
     "name": "notes.md",
     "kind": "core:document",
     "status": "active",
-    "metadata": {
-      "schema_version": 1,
-      "summary": {
-        "description": null,
-        "tags": []
-      }
-    },
+    "tags": [],
     "content": {
       "size": 5,
       "mime_type": "text/markdown",

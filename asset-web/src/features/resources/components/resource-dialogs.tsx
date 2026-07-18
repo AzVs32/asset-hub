@@ -46,7 +46,7 @@ export function CreateResourceDialog({
       open={open}
       onOpenChange={onOpenChange}
       title="New resource"
-      description="Create a metadata-first resource without uploading content."
+      description="Create a resource without uploading content."
     >
       <form
         className="grid gap-4 p-6 sm:grid-cols-2"

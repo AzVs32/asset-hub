@@ -10,7 +10,7 @@ behavior crosses one small kernel boundary.
 
 ```text
 src/
-├── domain/                 resource, metadata, authentication, plugin view contracts
+├── domain/                 resource, authentication, plugin view contracts
 ├── application/
 │   ├── ports/              AssetGateway and React composition boundary
 │   └── queries/            stable cache keys

@@ -1,20 +1,17 @@
 mod content;
 mod directory;
 mod kind;
-mod metadata;
 #[allow(clippy::module_inception)]
 mod resource;
 mod status;
+mod tag;
 
 pub use content::{Checksum, ChecksumKind, ResourceContent, ResourceContentBuilder, StorageKey};
 pub use directory::ResourceDirectory;
 pub use kind::ResourceKind;
-pub use metadata::{
-    ResourceKindMetadata, ResourceKindMetadataPatch, ResourceMetadata, ResourceMetadataBuilder,
-    ResourceMetadataPatch, ResourceSummaryMetadata, ResourceTag,
-};
 pub use resource::{Resource, ResourceBuilder, ResourceId, ResourceSnapshot};
 pub use status::ResourceStatus;
+pub use tag::ResourceTag;
 
 use crate::error::ResourceError;
 

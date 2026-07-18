@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "plugin_id": "azvs.markdown",
   "runtime": {
-    "wasm_sha256": "c4282581d3f93d3bd6b982aff0d854b446d6ce0608828c67ea3a6261e0304632"
+    "wasm_sha256": "44d16679e4615afa972d336a5cf2efa31676d330cc071627f799f1844e83d363"
   },
   "web": {
     "integrity": {

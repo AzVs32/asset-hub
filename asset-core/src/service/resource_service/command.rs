@@ -18,7 +18,7 @@ impl<'a> ResourceCommandService<'a> {
         Self { service }
     }
 
-    /// 创建纯元数据资源。
+    /// 创建不包含对象内容的资源。
     ///
     /// 该 usecase 只保存资源聚合，不写入对象存储。成功时返回已经保存的 `Resource`，
     /// 其中包含新生成的 `ResourceId`、创建时间和更新时间。
@@ -34,7 +34,8 @@ impl<'a> ResourceCommandService<'a> {
             command.directory,
             Some(kind),
             command.status,
-            command.metadata,
+            command.description,
+            command.tags,
         )
         .build()?;
 
@@ -127,8 +128,12 @@ impl<'a> ResourceCommandService<'a> {
             }
         }
 
-        if let Some(metadata) = command.metadata {
-            resource.patch_metadata(metadata)?;
+        if let Some(description) = command.description {
+            resource.set_description(description)?;
+        }
+
+        if let Some(tags) = command.tags {
+            resource.replace_tags(tags)?;
         }
 
         let new_storage_key = resource.content().map(|_| resource.storage_key());

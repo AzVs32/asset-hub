@@ -91,7 +91,7 @@
   },
   "permissions": {
     "allow": [
-      "resource.metadata.read",
+      "resource.read",
       "content.read"
     ]
   }

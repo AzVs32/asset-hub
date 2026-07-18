@@ -126,13 +126,9 @@ impl ResourceQuery for InMemoryResourceRepository {
                     .is_none_or(|kind| resource.kind().as_str() == kind.as_str())
             })
             .filter(|resource| {
-                query.tag().is_none_or(|tag| {
-                    resource
-                        .metadata()
-                        .tags()
-                        .iter()
-                        .any(|value| value.as_str() == tag)
-                })
+                query
+                    .tag()
+                    .is_none_or(|tag| resource.tags().iter().any(|value| value.as_str() == tag))
             })
             .filter(|resource| query.q().is_none_or(|q| resource.name().contains(q)))
             .filter(|resource| {
@@ -514,9 +510,9 @@ fn service() -> (
                 .with_handler("read_document")
                 .with_requirements(content_requirements())
                 .with_output(output_contract(["text"])),
-            ResourceActionDefinition::new("metadata.inspect", "Inspect metadata")
+            ResourceActionDefinition::new("resource.inspect", "Inspect resource")
                 .with_kinds(["doc:markdown"])
-                .with_handler("inspect_metadata")
+                .with_handler("inspect_resource")
                 .with_output(output_contract(["json"])),
             ResourceActionDefinition::new(ResourceAction::PREVIEW, "Preview")
                 .with_kinds(["core:image", "core:document", "core:video"])
@@ -689,19 +685,15 @@ fn service_with_registry(
 }
 
 #[test]
-fn create_resource_saves_metadata_only_resource() {
+fn create_resource_saves_resource_without_content() {
     let (service, repository, _) = service();
-    let metadata = ResourceMetadata::builder()
-        .with_description(" Design document ")
-        .with_tags(["rust", "asset"])
-        .build()
-        .unwrap();
 
     let resource = block_on(
         service.commands().create_resource(
             CreateResource::new(" Design Doc ")
                 .with_kind("doc:markdown")
-                .with_metadata(metadata.clone()),
+                .with_description(" Design document ")
+                .with_tags(["rust", "asset"]),
         ),
     )
     .unwrap();
@@ -711,10 +703,9 @@ fn create_resource_saves_metadata_only_resource() {
     assert_eq!(resource.name(), "Design Doc");
     assert!(resource.kind().is("doc:markdown"));
     assert!(resource.content().is_none());
-    assert_eq!(saved.metadata().description(), Some("Design document"));
+    assert_eq!(saved.description(), Some("Design document"));
     assert_eq!(
         saved
-            .metadata()
             .tags()
             .iter()
             .map(|tag| tag.as_str())
@@ -752,12 +743,12 @@ fn update_resource_rejects_a_stale_authorized_snapshot() {
 }
 
 #[test]
-fn metadata_only_resource_describes_only_actions_without_content_requirements() {
+fn resource_without_content_describes_only_actions_without_content_requirements() {
     let (service, _, _) = service();
     let resource = block_on(
         service
             .commands()
-            .create_resource(CreateResource::new("metadata").with_kind("doc:markdown")),
+            .create_resource(CreateResource::new("contentless").with_kind("doc:markdown")),
     )
     .unwrap();
 
@@ -771,16 +762,16 @@ fn metadata_only_resource_describes_only_actions_without_content_requirements() 
         .map(|action| action.id().as_str())
         .collect::<Vec<_>>();
 
-    assert_eq!(ids, vec!["metadata.inspect"]);
+    assert_eq!(ids, vec!["resource.inspect"]);
 }
 
 #[test]
-fn metadata_only_resource_rejects_direct_content_action_execution() {
+fn resource_without_content_rejects_direct_content_action_execution() {
     let (service, _, _) = service();
     let resource = block_on(
         service
             .commands()
-            .create_resource(CreateResource::new("metadata").with_kind("doc:markdown")),
+            .create_resource(CreateResource::new("contentless").with_kind("doc:markdown")),
     )
     .unwrap();
 

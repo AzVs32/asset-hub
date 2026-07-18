@@ -10,13 +10,13 @@ fn accepts_v2_and_serializes_canonical_v3_permissions() {
         "filesystem": false
     }))
     .unwrap();
-    assert!(permissions.resource_metadata_read());
+    assert!(permissions.resource_read());
     assert!(permissions.content_read());
     assert!(permissions.content_replace());
     let value = serde_json::to_value(permissions).unwrap();
     assert_eq!(
         value["allow"],
-        json!(["resource.metadata.read", "content.read", "content.replace"])
+        json!(["resource.read", "content.read", "content.replace"])
     );
     assert!(value.get("resource").is_none());
 }

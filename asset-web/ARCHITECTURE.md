@@ -34,7 +34,7 @@ app/main 负责创建并连接以上所有外层实现。
 
 定义前端内部稳定的业务语言：
 
-- `Resource`、`ResourceMetadata`、`ResourceAction`、`ResourceKind`。
+- `Resource`、`ResourceAction`、`ResourceKind`；`description` 与 `tags` 是 Resource 的直接字段。
 - 登录用户、受管用户和目录授权。
 - 插件 view 与 action output 的联合类型。
 - 资源草稿、目录规范化、面包屑等无副作用规则。
@@ -149,8 +149,8 @@ ResourceWorkspace
   → React 重新渲染
 ```
 
-编辑 summary 时只发送 `metadata.summary`。后端 patch 语义负责保留未修改的
-`kind_metadata`；kind metadata 当前在详情中只读展示，等待每个 kind 的独立 schema 和编辑器。
+编辑资源时直接发送 `description` 与 `tags`。`description: null` 表示清空描述，
+缺省该字段表示不修改；提供 `tags` 时会替换完整标签列表。
 
 ## 5. 插件执行链路
 

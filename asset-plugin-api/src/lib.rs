@@ -44,7 +44,7 @@ pub use manifest::{
     ActionAppliesTo, ActionRequirements, ActionUi, ContentDelivery, FilesystemPermission,
     MANIFEST_SCHEMA, MANIFEST_TEMPLATE, MANIFEST_VERSION, MIN_MANIFEST_VERSION,
     ManifestActionAccess, NetworkPermission, PLUGIN_API_VERSION, PluginCapabilities,
-    PluginManifest, PluginManifestLock, PluginMetadata, PluginPermission, PluginPermissions,
+    PluginDescriptor, PluginManifest, PluginManifestLock, PluginPermission, PluginPermissions,
     PluginRuntime, PluginRuntimeLock, PluginWeb, PluginWebLock, ReadWritePermission,
     ResourceActionCapability, ResourceKindCapability, is_plugin_api_compatible,
 };
@@ -52,7 +52,7 @@ pub use policy::{InvalidPluginExecutionPolicy, PluginExecutionPolicy};
 pub use request::{
     PluginActionRequest, PluginChecksum, PluginContentBytes, PluginContentReference,
     PluginContentReferenceEncoding, PluginInlineContentEncoding, PluginResource,
-    PluginResourceContent, PluginResourceMetadata, PluginResourceSummaryMetadata,
+    PluginResourceContent,
 };
 pub use view::{
     BinaryUrlView, FormView, HtmlView, JsonView, MarkdownView, MediaView, PluginActionEffect,

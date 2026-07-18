@@ -2,31 +2,20 @@ use super::*;
 use serde_json::json;
 
 #[test]
-fn resource_metadata_has_an_explicit_schema() {
-    let metadata: PluginResourceMetadata = serde_json::from_value(json!({
-        "schema_version": 1,
-        "summary": {
-            "description": "Document",
-            "tags": ["docs"]
-        }
+fn resource_exposes_description_and_tags_directly() {
+    let resource: PluginResource = serde_json::from_value(json!({
+        "id": "0198a123-4567-7000-8000-000000000001",
+        "directory": "documents",
+        "name": "notes.md",
+        "kind": "core:document",
+        "status": "active",
+        "description": "Document",
+        "tags": ["docs"],
+        "created_at": "2026-07-16T10:00:00Z",
+        "updated_at": "2026-07-16T10:05:00Z"
     }))
     .unwrap();
 
-    assert_eq!(metadata.schema_version, 1);
-    assert_eq!(metadata.summary.description.as_deref(), Some("Document"));
-    assert_eq!(metadata.summary.tags, ["docs"]);
-}
-
-#[test]
-fn resource_metadata_rejects_plugin_defined_fields() {
-    let result = serde_json::from_value::<PluginResourceMetadata>(json!({
-        "schema_version": 1,
-        "summary": {
-            "description": null,
-            "tags": []
-        },
-        "plugin_data": {}
-    }));
-
-    assert!(result.is_err());
+    assert_eq!(resource.description.as_deref(), Some("Document"));
+    assert_eq!(resource.tags, ["docs"]);
 }

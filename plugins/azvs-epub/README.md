@@ -49,7 +49,7 @@ the reader and Wasm runtime. Book content has no direct network access.
 
 The plugin runtime accepts two private bridge operations on `azvs.epub.render`:
 
-- `{"operation":"load"}` returns metadata, chapter summaries, cover, and the first chapter.
+- `{"operation":"load"}` returns book information, chapter summaries, cover, and the first chapter.
 - `{"operation":"chapter","index":N}` returns one sanitized chapter and its isolated styles.
 
 ## Build

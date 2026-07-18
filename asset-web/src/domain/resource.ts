@@ -5,18 +5,6 @@ export type ActionAccess = "read_only" | "read_write";
 export type ActionExecutor = "builtin" | "plugin";
 export type ContentDelivery = "auto" | "inline" | "reference";
 
-export interface ResourceMetadata {
-  summary: {
-    description: string | null;
-    tags: string[];
-  };
-  kindMetadata: {
-    kind: string;
-    schemaVersion: number;
-    data: Record<string, unknown>;
-  } | null;
-}
-
 export interface ResourceContent {
   size: number;
   mimeType: string | null;
@@ -41,7 +29,8 @@ export interface Resource {
   directory: string;
   kind: string;
   status: ResourceStatus;
-  metadata: ResourceMetadata;
+  description: string | null;
+  tags: string[];
   content: ResourceContent | null;
   actions: ResourceAction[];
   createdAt: string;

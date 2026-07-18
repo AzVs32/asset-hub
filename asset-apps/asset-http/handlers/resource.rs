@@ -33,7 +33,7 @@ pub(crate) async fn list_resource_kinds(
     })
 }
 
-/// 创建纯元数据资源。
+/// 创建不包含对象内容的资源。
 #[utoipa::path(
     post,
     path = "/resources",
@@ -56,7 +56,8 @@ pub(crate) async fn create_resource(
         payload.kind,
         payload.status,
         payload.directory,
-        payload.metadata,
+        payload.description,
+        payload.tags,
     )?;
     let resource = state.secured(&access.0).create_resource(command).await?;
 
@@ -279,8 +280,12 @@ pub(crate) async fn update_resource(
         command = command.with_directory(directory);
     }
 
-    if let Some(metadata) = payload.metadata {
-        command = command.with_metadata(metadata.into_patch()?);
+    if let Some(description) = payload.description {
+        command = command.with_description(description);
+    }
+
+    if let Some(tags) = payload.tags {
+        command = command.with_tags(tags);
     }
 
     if let Some(restore) = payload.restore {
@@ -402,7 +407,8 @@ pub(super) fn apply_common_resource_fields(
     kind: Option<String>,
     status: Option<String>,
     directory: Option<ResourceDirectory>,
-    metadata: Option<ResourceMetadataRequest>,
+    description: Option<String>,
+    tags: Option<Vec<String>>,
 ) -> Result<CreateResource, HttpError> {
     if let Some(kind) = kind {
         command = command.with_kind(parse_kind(kind)?);
@@ -416,8 +422,12 @@ pub(super) fn apply_common_resource_fields(
         command = command.with_directory(directory);
     }
 
-    if let Some(metadata) = metadata {
-        command = command.with_metadata(metadata.into_domain()?);
+    if let Some(description) = description {
+        command = command.with_description(description);
+    }
+
+    if let Some(tags) = tags {
+        command = command.with_tags(tags);
     }
 
     Ok(command)
@@ -427,7 +437,8 @@ pub(super) fn apply_common_stream_fields(
     mut command: UploadResourceContentStream,
     kind: Option<String>,
     status: Option<String>,
-    metadata_json: Option<String>,
+    description: Option<String>,
+    tags_json: Option<String>,
 ) -> Result<UploadResourceContentStream, HttpError> {
     if let Some(kind) = kind {
         command = command.with_kind(parse_kind(kind)?);
@@ -437,10 +448,14 @@ pub(super) fn apply_common_stream_fields(
         command = command.with_status(parse_status(&status)?);
     }
 
-    if let Some(metadata_json) = metadata_json {
-        let metadata = serde_json::from_str::<ResourceMetadataRequest>(&metadata_json)
-            .map_err(|error| HttpError::bad_request(format!("invalid metadata_json: {error}")))?;
-        command = command.with_metadata(metadata.into_domain()?);
+    if let Some(description) = description {
+        command = command.with_description(description);
+    }
+
+    if let Some(tags_json) = tags_json {
+        let tags = serde_json::from_str::<Vec<String>>(&tags_json)
+            .map_err(|error| HttpError::bad_request(format!("invalid tags_json: {error}")))?;
+        command = command.with_tags(tags);
     }
 
     Ok(command)

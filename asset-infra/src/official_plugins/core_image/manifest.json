@@ -47,6 +47,6 @@
     ]
   },
   "permissions": {
-    "allow": ["resource.metadata.read", "content.read"]
+    "allow": ["resource.read", "content.read"]
   }
 }

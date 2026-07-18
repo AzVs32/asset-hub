@@ -97,8 +97,8 @@
   },
   "permissions": {
     "allow": [
-      "resource.metadata.read",
-      "resource.metadata.write",
+      "resource.read",
+      "resource.write",
       "content.read",
       "content.replace"
     ]

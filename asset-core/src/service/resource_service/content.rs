@@ -105,7 +105,8 @@ impl<'a> ResourceContentService<'a> {
             kind,
             status,
             directory,
-            metadata,
+            description,
+            tags,
             payload: size,
             mime_type,
         } = command;
@@ -132,7 +133,7 @@ impl<'a> ResourceContentService<'a> {
             .calculate_stored_blob_checksum(&storage_key, size)
             .await?;
         let content = build_content(size, mime_type, checksum)?;
-        let resource = build_resource(name, directory, Some(kind), status, metadata)
+        let resource = build_resource(name, directory, Some(kind), status, description, tags)
             .with_content(content)
             .build()?;
 
@@ -188,7 +189,8 @@ impl<'a> ResourceContentService<'a> {
             kind,
             status,
             directory,
-            metadata,
+            description,
+            tags,
             payload: data,
             mime_type,
         } = command;
@@ -202,7 +204,8 @@ impl<'a> ResourceContentService<'a> {
             Some(storage_key.as_str()),
         )?;
 
-        let resource_builder = build_resource(name, directory, Some(kind), status, metadata);
+        let resource_builder =
+            build_resource(name, directory, Some(kind), status, description, tags);
         resource_builder.clone().build()?;
         build_content(0, mime_type.clone(), placeholder_checksum()?)?;
 

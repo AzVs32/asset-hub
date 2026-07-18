@@ -237,18 +237,6 @@ function Detail({
           />
         </section>
 
-        {resource.metadata.kindMetadata ? (
-          <details className="rounded-2xl border border-slate-200 bg-white p-4">
-            <summary className="cursor-pointer text-sm font-semibold text-slate-800">
-              Kind metadata · {resource.metadata.kindMetadata.kind} v
-              {resource.metadata.kindMetadata.schemaVersion}
-            </summary>
-            <pre className="mt-3 max-h-64 overflow-auto rounded-xl bg-slate-950 p-4 text-xs text-slate-100">
-              {JSON.stringify(resource.metadata.kindMetadata.data, null, 2)}
-            </pre>
-          </details>
-        ) : null}
-
         <AutomaticSlot
           slot={hostSlots.resourceDetailPanel}
           resource={resource}
