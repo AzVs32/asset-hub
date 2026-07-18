@@ -25,11 +25,12 @@ export function resource(actions: ResourceAction[] = []): Resource {
     status: "active",
     metadata: { summary: { description: null, tags: [] }, kindMetadata: null },
     content: {
-      key: "library/example.mp4",
       size: 128,
       mimeType: "video/mp4",
-      originalFilename: "example.mp4",
-      checksums: [],
+      checksum: {
+        kind: "sha256",
+        value: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+      },
     },
     actions,
     createdAt: "2026-01-01T00:00:00Z",

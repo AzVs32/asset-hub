@@ -53,7 +53,7 @@ pub(crate) async fn scan_storage(
     let payload = payload.map(|Json(payload)| payload).unwrap_or_default();
     let result = state
         .secured(&access.0)
-        .scan_storage(ScanStorage::new(payload.prefix).with_sha256(payload.sha256.unwrap_or(false)))
+        .scan_storage(ScanStorage::new(payload.prefix))
         .await?;
     let imported = result
         .resources

@@ -60,8 +60,8 @@
             "wasi": { "type": "boolean", "default": false },
             "plugin_api": {
               "type": "string",
-              "const": "asset-hub.plugin-api@0.2",
-              "default": "asset-hub.plugin-api@0.2"
+              "const": "asset-hub.plugin-api@0.3",
+              "default": "asset-hub.plugin-api@0.3"
             }
           }
         }

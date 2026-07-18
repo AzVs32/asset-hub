@@ -136,6 +136,51 @@ impl BlobStorage for OpenDalBlobStorage {
         Ok(Some(Box::pin(stream)))
     }
 
+    async fn move_if_absent(&self, from: &StorageKey, to: &StorageKey) -> Result<(), CoreError> {
+        if let Some(root) = &self.fs_root {
+            let source = root.join(from.as_str());
+            let target = root.join(to.as_str());
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|error| CoreError::storage("move_if_absent.create_parent", error))?;
+            }
+            std::fs::hard_link(&source, &target).map_err(|error| {
+                if error.kind() == std::io::ErrorKind::AlreadyExists {
+                    CoreError::conflict(format!("storage key `{to}` already exists"))
+                } else {
+                    CoreError::storage("move_if_absent.link", error)
+                }
+            })?;
+            if let Err(error) = std::fs::remove_file(&source) {
+                let _ = std::fs::remove_file(&target);
+                return Err(CoreError::storage("move_if_absent.remove_source", error));
+            }
+            cleanup_empty_fs_parent_dirs(root, from);
+            return Ok(());
+        }
+
+        self.operator
+            .stat(to.as_str())
+            .await
+            .map(|_| ())
+            .or_else(|error| {
+                if error.kind() == ErrorKind::NotFound {
+                    Ok(())
+                } else {
+                    Err(CoreError::storage("move_if_absent.stat_target", error))
+                }
+            })?;
+        if self.operator.exists(to.as_str()).await.unwrap_or(false) {
+            return Err(CoreError::conflict(format!(
+                "storage key `{to}` already exists"
+            )));
+        }
+        self.operator
+            .rename(from.as_str(), to.as_str())
+            .await
+            .map_err(|error| CoreError::storage("move_if_absent.rename", error))
+    }
+
     async fn delete(&self, key: &StorageKey) -> Result<(), CoreError> {
         self.operator
             .delete(key.as_str())

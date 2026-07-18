@@ -310,7 +310,7 @@ fn registry_loads_format_plugin_as_independent_kind() {
             "type": "extism",
             "wasm": "epub.wasm",
             "wasi": false,
-            "plugin_api": "asset-hub.plugin-api@0.2"
+            "plugin_api": "asset-hub.plugin-api@0.3"
           },
           "capabilities": {
             "resource_kinds": [
@@ -400,7 +400,7 @@ fn registry_loads_plugin_manifest_kind_extensions() {
             "type": "extism",
             "wasm": "mp4-tools.wasm",
             "wasi": false,
-            "plugin_api": "asset-hub.plugin-api@0.2"
+            "plugin_api": "asset-hub.plugin-api@0.3"
           },
           "capabilities": {
             "resource_kinds": [

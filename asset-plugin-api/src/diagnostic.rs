@@ -33,7 +33,7 @@ fn error_severity() -> PluginDiagnosticSeverity {
     PluginDiagnosticSeverity::Error
 }
 
-/// Error response that API 0.2 plugins may return instead of an action view.
+/// Error response that API 0.3 plugins may return instead of an action view.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PluginActionFailure {

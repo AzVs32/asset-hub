@@ -149,7 +149,7 @@ async fn configured_resource_kind_is_listed_and_content_support_is_enforced() {
 
     let (status, error) = stream_upload(
         &app,
-        "/resources/content/stream?name=note.txt&kind=doc%3Anote&storage_key=notes%2Fnote.txt",
+        "/resources/content/stream?name=note.txt&kind=doc%3Anote&directory=notes",
         "text/plain",
         b"note",
     )
@@ -220,7 +220,7 @@ async fn core_document_resource_exposes_download_only() {
 
     let (status, resource) = stream_upload(
         &app,
-        "/resources/content/stream?name=book.txt&kind=core%3Adocument&storage_key=books%2Fbook.txt",
+        "/resources/content/stream?name=book.txt&kind=core%3Adocument&directory=books",
         "text/plain",
         b"Hello book",
     )
@@ -243,7 +243,7 @@ async fn action_endpoint_requires_plugin_handler() {
     let app = test_app("action-endpoint-handler").await;
     let (status, resource) = stream_upload(
         &app,
-        "/resources/content/stream?name=book.txt&kind=core%3Adocument&storage_key=books%2Faction-book.txt",
+        "/resources/content/stream?name=action-book.txt&kind=core%3Adocument&directory=books",
         "text/plain",
         b"Hello action",
     )
@@ -293,7 +293,7 @@ async fn core_document_epub_resource_does_not_get_core_text_extraction() {
         &app,
         Request::builder()
             .method(Method::PUT)
-            .uri("/resources/content/stream?name=book.epub&storage_key=books/book.epub&kind=core%3Adocument")
+            .uri("/resources/content/stream?name=book.epub&directory=books&kind=core%3Adocument")
             .header(header::CONTENT_TYPE, "application/epub+zip")
             .body(Body::from(epub))
             .unwrap(),
@@ -327,7 +327,7 @@ async fn core_document_pdf_resource_supports_builtin_preview() {
         &app,
         Request::builder()
             .method(Method::PUT)
-            .uri("/resources/content/stream?name=book.pdf&storage_key=books/book.pdf&kind=core%3Adocument")
+            .uri("/resources/content/stream?name=book.pdf&directory=books&kind=core%3Adocument")
             .header(header::CONTENT_TYPE, "application/pdf")
             .body(Body::from(pdf.as_slice()))
             .unwrap(),
@@ -401,7 +401,7 @@ async fn builtin_pdf_preview_action_returns_url_media_view() {
         &app,
         Request::builder()
             .method(Method::PUT)
-            .uri("/resources/content/stream?name=book.pdf&storage_key=books/url-book.pdf&kind=core%3Adocument")
+            .uri("/resources/content/stream?name=url-book.pdf&directory=books&kind=core%3Adocument")
             .header(header::CONTENT_TYPE, "application/pdf")
             .body(Body::from(pdf.as_slice()))
             .unwrap(),
@@ -433,7 +433,7 @@ async fn image_resource_exposes_builtin_preview_and_thumbnail() {
 
     let (status, resource) = stream_upload(
         &app,
-        "/resources/content/stream?name=pixel.png&kind=core%3Aimage&storage_key=images%2Fpixel.png",
+        "/resources/content/stream?name=pixel.png&kind=core%3Aimage&directory=images",
         "image/png",
         &png_bytes,
     )
@@ -490,7 +490,7 @@ async fn builtin_large_image_preview_uses_url() {
         &app,
         Request::builder()
             .method(Method::PUT)
-            .uri("/resources/content/stream?name=large.png&storage_key=images/large.png&kind=core%3Aimage")
+            .uri("/resources/content/stream?name=large.png&directory=images&kind=core%3Aimage")
             .header(header::CONTENT_TYPE, "image/png")
             .body(Body::from(large_image))
             .unwrap(),
@@ -521,7 +521,7 @@ async fn builtin_image_thumbnail_action_stays_inline() {
 
     let (status, resource) = stream_upload(
         &app,
-        "/resources/content/stream?name=pixel.png&kind=core%3Aimage&storage_key=images%2Fthumbnail-pixel.png",
+        "/resources/content/stream?name=thumbnail-pixel.png&kind=core%3Aimage&directory=images",
         "image/png",
         &png_bytes,
     )
@@ -642,19 +642,18 @@ async fn stream_upload_roundtrips_small_blob_and_creates_directories() {
 
     let (status, resource) = stream_upload(
         &app,
-        "/resources/content/stream?name=hello.txt&kind=core%3Aunknown&directory=examples&storage_key=examples%2Fhello.txt&original_filename=hello.txt&sha256=ee6d5b2c127b5113e886343345d8f11810024201f0c46f54b76d8cc2908c538c",
+        "/resources/content/stream?name=hello.txt&kind=core%3Aunknown&directory=examples",
         "text/plain",
         data,
     )
     .await;
 
     assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(resource["content"]["key"], "examples/hello.txt");
     assert_eq!(resource["content"]["size"], data.len() as u64);
     assert_eq!(resource["content"]["mime_type"], "text/plain");
-    assert_eq!(resource["content"]["checksum"][0]["kind"], "sha256");
+    assert_eq!(resource["content"]["checksum"]["kind"], "sha256");
     assert_eq!(
-        resource["content"]["checksum"][0]["value"],
+        resource["content"]["checksum"]["value"],
         "ee6d5b2c127b5113e886343345d8f11810024201f0c46f54b76d8cc2908c538c"
     );
 
@@ -667,7 +666,7 @@ async fn stream_upload_roundtrips_small_blob_and_creates_directories() {
 
     let (status, directory_resource) = stream_upload(
         &app,
-        "/resources/content/stream?name=nested.txt&kind=core%3Afile&directory=examples%2Fnested&original_filename=nested.txt",
+        "/resources/content/stream?name=nested.txt&kind=core%3Afile&directory=examples%2Fnested",
         "text/plain",
         b"nested",
     )
@@ -675,10 +674,6 @@ async fn stream_upload_roundtrips_small_blob_and_creates_directories() {
 
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(directory_resource["directory"], "examples/nested");
-    assert_eq!(
-        directory_resource["content"]["key"],
-        "examples/nested/nested.txt"
-    );
 
     let (status, root_listing) = empty_json_request(&app, Method::GET, "/directories").await;
     assert_eq!(status, StatusCode::OK);
@@ -703,7 +698,7 @@ async fn resource_content_supports_single_byte_ranges_for_video_seek() {
     let data = b"0123456789";
     let (status, resource) = stream_upload(
         &app,
-        "/resources/content/stream?name=clip.mp4&original_filename=clip.mp4",
+        "/resources/content/stream?name=clip.mp4",
         "video/mp4",
         data,
     )
@@ -805,13 +800,8 @@ async fn scan_storage_imports_existing_files_idempotently() {
         outside
     };
 
-    let (status, scan) = json_request(
-        &app,
-        Method::POST,
-        "/scan",
-        json!({ "directory": "docs", "sha256": true }),
-    )
-    .await;
+    let (status, scan) =
+        json_request(&app, Method::POST, "/scan", json!({ "directory": "docs" })).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(scan["scanned_directory"], "docs");
     assert_eq!(scan["scanned"], 1);
@@ -819,10 +809,9 @@ async fn scan_storage_imports_existing_files_idempotently() {
     assert_eq!(scan["skipped"], 0);
     assert_eq!(scan["resources"][0]["name"], "readme.md");
     assert_eq!(scan["resources"][0]["directory"], "docs");
-    assert_eq!(scan["resources"][0]["content"]["key"], "docs/readme.md");
     assert_eq!(scan["resources"][0]["content"]["size"], 16);
     assert_eq!(
-        scan["resources"][0]["content"]["checksum"][0]["kind"],
+        scan["resources"][0]["content"]["checksum"]["kind"],
         "sha256"
     );
     #[cfg(unix)]
@@ -859,14 +848,14 @@ async fn audit_storage_reports_content_inconsistencies() {
     let orphan_path = app.root.join("blob").join("docs").join("orphan.txt");
     stream_upload(
         &app,
-        "/resources/content/stream?name=missing.txt&storage_key=docs%2Fmissing.txt",
+        "/resources/content/stream?name=missing.txt&directory=docs",
         "text/plain",
         b"missing",
     )
     .await;
     stream_upload(
         &app,
-        "/resources/content/stream?name=mismatch.txt&storage_key=docs%2Fmismatch.txt",
+        "/resources/content/stream?name=mismatch.txt&directory=docs",
         "text/plain",
         b"original",
     )
@@ -909,26 +898,47 @@ async fn audit_storage_reports_content_inconsistencies() {
 }
 
 #[tokio::test]
-async fn upload_rejects_checksum_mismatch_and_existing_storage_key() {
+async fn upload_rejects_client_supplied_checksum_and_existing_resource_path() {
     let app = test_app("upload-security").await;
 
-    let (status, error) = stream_upload(
+    let response = request(
         &app,
-        "/resources/content/stream?name=bad.txt&storage_key=secure%2Fbad.txt&sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "text/plain",
-        b"hello, asset-hub!",
+        Request::builder()
+            .method(Method::PUT)
+            .uri("/resources/content/stream?name=bad.txt&directory=secure&sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+            .header(header::CONTENT_TYPE, "text/plain")
+            .body(Body::from("hello, asset-hub!"))
+            .unwrap(),
     )
     .await;
+    let status = response.status();
+    let body = to_bytes(response.into_body(), BODY_LIMIT).await.unwrap();
 
-    assert_eq!(status, StatusCode::CONFLICT);
-    assert!(error["error"].as_str().unwrap().contains("sha256"));
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(String::from_utf8_lossy(&body).contains("sha256"));
+
+    let response = request(
+        &app,
+        Request::builder()
+            .method(Method::PUT)
+            .uri("/resources/content/stream?name=unsupported.txt&directory=secure&checksum_kind=sha256")
+            .header(header::CONTENT_TYPE, "text/plain")
+            .body(Body::from("hello, asset-hub!"))
+            .unwrap(),
+    )
+    .await;
+    let status = response.status();
+    let body = to_bytes(response.into_body(), BODY_LIMIT).await.unwrap();
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(String::from_utf8_lossy(&body).contains("checksum_kind"));
 
     let id = create_text_resource(&app, "secure/existing.txt").await;
     assert!(!id.is_empty());
 
     let (status, error) = stream_upload(
         &app,
-        "/resources/content/stream?name=duplicate.txt&storage_key=secure%2Fexisting.txt",
+        "/resources/content/stream?name=existing.txt&directory=secure",
         "text/plain",
         b"hello, asset-hub!",
     )
@@ -947,7 +957,7 @@ async fn stream_upload_roundtrips_large_blob_without_buffered_request_dto() {
         &app,
         Request::builder()
             .method(Method::PUT)
-            .uri("/resources/content/stream?name=large-file&directory=streams&original_filename=large.bin&kind=core%3Aunknown&sha256=6d9019b5e7c1d286c231d7f998166f6c036e3f01b972fa46e958e1a5c3750241")
+            .uri("/resources/content/stream?name=large.bin&directory=streams&kind=core%3Aunknown")
             .header(header::CONTENT_TYPE, "application/octet-stream")
             .body(Body::from(data.as_slice()))
             .unwrap(),
@@ -958,7 +968,6 @@ async fn stream_upload_roundtrips_large_blob_without_buffered_request_dto() {
     let resource = response_json(response).await;
 
     assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(resource["content"]["key"], "streams/large.bin");
     assert_eq!(resource["content"]["size"], data.len() as u64);
     assert_eq!(resource["content"]["mime_type"], "application/octet-stream");
 
@@ -997,7 +1006,7 @@ async fn stream_upload_is_not_limited_by_the_regular_request_timeout() {
         &app,
         Request::builder()
             .method(Method::PUT)
-            .uri("/resources/content/stream?name=slow.txt&directory=uploads&original_filename=slow.txt")
+            .uri("/resources/content/stream?name=slow.txt&directory=uploads")
             .header(header::CONTENT_TYPE, "text/plain")
             .header(header::ORIGIN, "http://127.0.0.1:5173")
             .body(body)
@@ -1026,7 +1035,7 @@ async fn upload_detects_most_specific_plugin_kind() {
         &app,
         Request::builder()
             .method(Method::PUT)
-            .uri("/resources/content/stream?name=README.md&original_filename=README.md")
+            .uri("/resources/content/stream?name=README.md")
             .header(header::CONTENT_TYPE, "text/plain")
             .body(Body::from("# README"))
             .unwrap(),
@@ -1085,7 +1094,7 @@ async fn plugin_reference_content_respects_the_host_content_budget() {
     .await;
     let (status, resource) = stream_upload(
         &app,
-        "/resources/content/stream?name=README.md&original_filename=README.md",
+        "/resources/content/stream?name=README.md",
         "text/markdown",
         b"# README",
     )
@@ -1360,6 +1369,9 @@ async fn kind_filter_can_include_all_descendants() {
 async fn update_resource_changes_fields_and_restores_soft_deleted_resource() {
     let app = test_app("update-resource").await;
     let id = create_text_resource(&app, "update/me.txt").await;
+    let old_blob_path = app.root.join("blob/update/me.txt");
+    let new_blob_path = app.root.join("blob/archive/updated.txt");
+    assert_eq!(std::fs::read(&old_blob_path).unwrap(), b"delete me");
 
     let (status, updated) = json_request(
         &app,
@@ -1367,6 +1379,7 @@ async fn update_resource_changes_fields_and_restores_soft_deleted_resource() {
         &format!("/resources/{id}"),
         json!({
             "name": "updated.txt",
+            "directory": "archive",
             "kind": "core:unknown",
             "status": "archived",
             "metadata": {
@@ -1381,9 +1394,12 @@ async fn update_resource_changes_fields_and_restores_soft_deleted_resource() {
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(updated["name"], "updated.txt");
+    assert_eq!(updated["directory"], "archive");
     assert_eq!(updated["kind"], "core:unknown");
     assert_eq!(updated["status"], "archived");
     assert_eq!(updated["metadata"]["summary"]["tags"], json!(["updated"]));
+    assert!(!old_blob_path.exists());
+    assert_eq!(std::fs::read(&new_blob_path).unwrap(), b"delete me");
 
     let (status, _) = empty_json_request(&app, Method::DELETE, &format!("/resources/{id}")).await;
     assert_eq!(status, StatusCode::OK);
@@ -1607,10 +1623,13 @@ async fn test_app_with_plugin_web_assets(
     TestApp { router, root }
 }
 
-async fn create_text_resource(app: &TestApp, storage_key: &str) -> String {
+async fn create_text_resource(app: &TestApp, path: &str) -> String {
+    let (directory, name) = path
+        .rsplit_once('/')
+        .map_or(("", path), |(directory, name)| (directory, name));
     let uri = format!(
-        "/resources/content/stream?name=delete-me.txt&storage_key={}",
-        storage_key.replace('/', "%2F")
+        "/resources/content/stream?name={name}&directory={}",
+        directory.replace('/', "%2F")
     );
     let (status, resource) = stream_upload(app, &uri, "text/plain", b"delete me").await;
 

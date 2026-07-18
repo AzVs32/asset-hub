@@ -1,6 +1,6 @@
 use super::{
     ResourceContent, ResourceDirectory, ResourceKind, ResourceMetadata, ResourceMetadataPatch,
-    ResourceStatus, normalize_required_text,
+    ResourceStatus, StorageKey, normalize_required_text,
 };
 use crate::error::ResourceError;
 use chrono::{DateTime, Utc};
@@ -23,9 +23,9 @@ crate::gen_id_uuid_v7!(ResourceId);
 pub struct Resource {
     /// 资源唯一标识。
     id: ResourceId,
-    /// 资源展示名，用于检索、展示和人工识别。
+    /// 资源文件名；与目录共同构成资源及其 Blob 的唯一规范路径。
     name: String,
-    /// 资源所在的规范化逻辑目录。
+    /// 资源所在的规范化目录，与 Blob 存储目录保持一致。
     directory: ResourceDirectory,
     /// 资源类型，用于区分图片、文档、音频等不同业务资源。
     kind: ResourceKind,
@@ -83,6 +83,7 @@ impl Resource {
     /// Repository 实现应通过它还原数据库记录，避免绕过领域约束直接构造 `Resource`。
     pub fn rehydrate(snapshot: ResourceSnapshot) -> Result<Self, ResourceError> {
         let name = normalize_resource_name(snapshot.name)?;
+        StorageKey::from_resource_path(&snapshot.directory, &name)?;
         snapshot.kind.validate()?;
         snapshot.metadata.validate_for_kind(&snapshot.kind)?;
 
@@ -105,14 +106,20 @@ impl Resource {
         self.id
     }
 
-    /// 返回资源展示名。
+    /// 返回资源文件名。
     pub fn name(&self) -> &str {
         &self.name
     }
 
-    /// 返回资源所在逻辑目录。
+    /// 返回资源所在目录。
     pub fn directory(&self) -> &ResourceDirectory {
         &self.directory
+    }
+
+    /// 返回由逻辑目录和资源名称唯一派生的对象存储键。
+    pub fn storage_key(&self) -> StorageKey {
+        StorageKey::from_resource_path(&self.directory, &self.name)
+            .expect("resource path is validated when the aggregate changes")
     }
 
     /// 返回资源类型。
@@ -173,6 +180,7 @@ impl Resource {
     pub fn rename(&mut self, name: impl Into<String>) -> Result<(), ResourceError> {
         self.ensure_not_deleted()?;
         let name = normalize_resource_name(name.into())?;
+        StorageKey::from_resource_path(&self.directory, &name)?;
 
         if self.name != name {
             self.name = name;
@@ -185,6 +193,7 @@ impl Resource {
     /// 移动资源到新的逻辑目录。
     pub fn move_to_directory(&mut self, directory: ResourceDirectory) -> Result<(), ResourceError> {
         self.ensure_not_deleted()?;
+        StorageKey::from_resource_path(&directory, &self.name)?;
 
         if self.directory != directory {
             self.directory = directory;
@@ -312,7 +321,14 @@ impl Resource {
 
 /// 归一化并校验资源名称。
 fn normalize_resource_name(value: String) -> Result<String, ResourceError> {
-    normalize_required_text("resource.name", &value, MAX_RESOURCE_NAME_LEN)
+    let name = normalize_required_text("resource.name", &value, MAX_RESOURCE_NAME_LEN)?;
+    if name == "." || name == ".." || name.contains('/') || name.contains('\\') {
+        return Err(ResourceError::InvalidFormat {
+            field: "resource.name",
+            reason: "resource name must be a single file name",
+        });
+    }
+    Ok(name)
 }
 
 /// 资源构建器。
@@ -380,6 +396,7 @@ impl ResourceBuilder {
     /// 完成构建并执行领域校验。
     pub fn build(self) -> Result<Resource, ResourceError> {
         let name = normalize_resource_name(self.name)?;
+        StorageKey::from_resource_path(&self.directory, &name)?;
         self.kind.validate()?;
         self.metadata.validate_for_kind(&self.kind)?;
         let now = Utc::now();

@@ -138,7 +138,7 @@ fn minimal_extism_manifest(id: &str) -> String {
           "plugin": {{"id": "{id}", "name": "Test", "version": "0.1.0", "publisher": "test"}},
           "runtime": {{
             "type": "extism", "wasm": "plugin.wasm",
-            "wasi": false, "plugin_api": "asset-hub.plugin-api@0.2"
+            "wasi": false, "plugin_api": "asset-hub.plugin-api@0.3"
           }},
           "capabilities": {{"resource_kinds": [], "resource_actions": []}},
           "permissions": {{

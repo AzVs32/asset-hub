@@ -11,8 +11,7 @@ use crate::error::HttpError;
 use crate::state::HttpState;
 use asset_core::CoreError;
 use asset_core::domain::{
-    AccessContext, Checksum, ResourceDirectory, ResourceId, ResourceKind, ResourceStatus,
-    StorageKey,
+    AccessContext, ResourceDirectory, ResourceId, ResourceKind, ResourceStatus,
 };
 use asset_core::port::BlobByteStream;
 use asset_core::port::ListResources;

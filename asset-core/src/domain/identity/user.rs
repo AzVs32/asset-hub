@@ -1,4 +1,4 @@
-use super::ResourceDirectory;
+use crate::domain::ResourceDirectory;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -132,6 +132,3 @@ fn normalize_username(value: String) -> Result<String, crate::UserError> {
     }
     Ok(value.to_owned())
 }
-
-#[cfg(test)]
-mod tests;

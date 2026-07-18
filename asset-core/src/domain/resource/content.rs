@@ -1,7 +1,6 @@
-use super::normalize_required_text;
+use super::{ResourceDirectory, normalize_required_text};
 use crate::error::ResourceError;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 
@@ -16,30 +15,21 @@ const MAX_STORAGE_KEY_LEN: usize = 1024;
 
 /// 资源内容引用。
 ///
-/// 内容本体由外部存储系统管理，本结构只保存定位和校验所需的信息。
+/// 内容本体由外部存储系统管理，本结构只保存内容自身的不可变属性。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResourceContent {
-    /// 内容在存储系统中的定位键。
-    key: StorageKey,
     /// 内容字节大小。
     size: u64,
     /// 内容 MIME 类型。
     mime_type: Option<String>,
-    /// 上传时的原始文件名。
-    original_filename: Option<String>,
-    /// 内容校验和集合。
-    checksum: BTreeMap<ChecksumKind, Checksum>,
+    /// 根据内容本体计算得到的唯一校验和。
+    checksum: Checksum,
 }
 
 impl ResourceContent {
     /// 创建内容引用构建器。
-    pub fn builder(key: StorageKey, size: u64) -> ResourceContentBuilder {
-        ResourceContentBuilder::new(key, size)
-    }
-
-    /// 返回内容存储键。
-    pub fn key(&self) -> &StorageKey {
-        &self.key
+    pub fn builder(size: u64, checksum: Checksum) -> ResourceContentBuilder {
+        ResourceContentBuilder::new(size, checksum)
     }
 
     /// 返回内容字节大小。
@@ -52,65 +42,36 @@ impl ResourceContent {
         self.mime_type.as_deref()
     }
 
-    /// 返回上传时的原始文件名。
-    pub fn original_filename(&self) -> Option<&str> {
-        self.original_filename.as_deref()
-    }
-
-    /// 返回内容校验和列表。
-    pub fn checksums(&self) -> impl Iterator<Item = &Checksum> {
-        self.checksum.values()
+    /// 返回根据内容本体计算得到的校验和。
+    pub fn checksum(&self) -> &Checksum {
+        &self.checksum
     }
 }
 
 /// 资源内容引用构建器。
 #[derive(Debug, Clone)]
 pub struct ResourceContentBuilder {
-    /// 内容在存储系统中的定位键。
-    key: StorageKey,
     /// 内容字节大小。
     size: u64,
     /// 内容 MIME 类型。
     mime_type: Option<String>,
-    /// 上传时的原始文件名。
-    original_filename: Option<String>,
-    /// 内容校验和集合。
-    checksums: Vec<Checksum>,
+    /// 根据内容本体计算得到的唯一校验和。
+    checksum: Checksum,
 }
 
 impl ResourceContentBuilder {
     /// 创建资源内容引用构建器。
-    pub fn new(key: StorageKey, size: u64) -> Self {
+    pub fn new(size: u64, checksum: Checksum) -> Self {
         Self {
-            key,
             size,
             mime_type: None,
-            original_filename: None,
-            checksums: Vec::new(),
+            checksum,
         }
     }
 
     /// 设置内容 MIME 类型。
     pub fn with_mime_type(mut self, mime_type: impl Into<String>) -> Self {
         self.mime_type = Some(mime_type.into());
-        self
-    }
-
-    /// 设置上传时的原始文件名。
-    pub fn with_original_filename(mut self, original_filename: impl Into<String>) -> Self {
-        self.original_filename = Some(original_filename.into());
-        self
-    }
-
-    /// 追加一个内容校验和。
-    pub fn with_checksum(mut self, checksum: Checksum) -> Self {
-        self.checksums.push(checksum);
-        self
-    }
-
-    /// 批量追加内容校验和。
-    pub fn with_checksums(mut self, checksums: impl IntoIterator<Item = Checksum>) -> Self {
-        self.checksums.extend(checksums);
         self
     }
 
@@ -123,34 +84,10 @@ impl ResourceContentBuilder {
             })
             .transpose()?;
 
-        let original_filename = self
-            .original_filename
-            .map(|original_filename| {
-                normalize_required_text(
-                    "content.original_filename",
-                    &original_filename,
-                    MAX_CONTENT_TEXT_LEN,
-                )
-            })
-            .transpose()?;
-
-        let mut checksums = BTreeMap::new();
-        for checksum in self.checksums {
-            let kind = checksum.kind();
-            if checksums.insert(kind, checksum).is_some() {
-                return Err(ResourceError::InvalidFormat {
-                    field: "content.checksum",
-                    reason: "duplicate checksum algorithm",
-                });
-            }
-        }
-
         Ok(ResourceContent {
-            key: self.key,
             size: self.size,
             mime_type,
-            original_filename,
-            checksum: checksums,
+            checksum: self.checksum,
         })
     }
 }
@@ -162,6 +99,19 @@ impl ResourceContentBuilder {
 pub struct StorageKey(String);
 
 impl StorageKey {
+    /// 从资源逻辑目录和文件名生成唯一的对象存储键。
+    pub fn from_resource_path(
+        directory: &ResourceDirectory,
+        name: &str,
+    ) -> Result<Self, ResourceError> {
+        let value = if directory.is_root() {
+            name.to_owned()
+        } else {
+            format!("{}/{name}", directory.path())
+        };
+        Self::new(value)
+    }
+
     /// 创建并校验存储键。
     pub fn new(value: impl Into<String>) -> Result<Self, ResourceError> {
         let value = normalize_required_text("storage.key", &value.into(), MAX_STORAGE_KEY_LEN)?;

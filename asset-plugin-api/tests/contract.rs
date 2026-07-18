@@ -109,30 +109,38 @@ fn v2_compatibility_is_runtime_only_and_serializes_to_the_canonical_shape() {
 }
 
 #[test]
-fn request_and_output_wire_shapes_match_the_v02_goldens() {
+fn request_and_output_wire_shapes_match_the_v03_goldens() {
     assert_golden_round_trip::<PluginActionRequest>(include_str!(
-        "fixtures/action-request-inline-v0.2.json"
+        "fixtures/action-request-inline-v0.3.json"
     ));
     assert_golden_round_trip::<PluginActionRequest>(include_str!(
-        "fixtures/action-request-reference-v0.2.json"
+        "fixtures/action-request-reference-v0.3.json"
     ));
     assert_golden_round_trip::<PluginActionOutput>(include_str!(
-        "fixtures/action-output-v0.2.json"
+        "fixtures/action-output-v0.3.json"
     ));
     assert_golden_round_trip::<PluginActionFailure>(include_str!(
-        "fixtures/action-failure-v0.2.json"
+        "fixtures/action-failure-v0.3.json"
     ));
 }
 
 #[test]
 fn context_specific_encodings_reject_invalid_wire_combinations() {
     let mut request: Value =
-        serde_json::from_str(include_str!("fixtures/action-request-inline-v0.2.json")).unwrap();
+        serde_json::from_str(include_str!("fixtures/action-request-inline-v0.3.json")).unwrap();
     request["content"]["encoding"] = json!("handle");
     assert!(serde_json::from_value::<PluginActionRequest>(request).is_err());
 
     let mut output: Value =
-        serde_json::from_str(include_str!("fixtures/action-output-v0.2.json")).unwrap();
+        serde_json::from_str(include_str!("fixtures/action-output-v0.3.json")).unwrap();
     output["effects"][0]["encoding"] = json!("url");
+    assert!(serde_json::from_value::<PluginActionOutput>(output).is_err());
+
+    let mut output: Value =
+        serde_json::from_str(include_str!("fixtures/action-output-v0.3.json")).unwrap();
+    output["effects"][0]["checksum"] = json!({
+        "kind": "sha256",
+        "value": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    });
     assert!(serde_json::from_value::<PluginActionOutput>(output).is_err());
 }

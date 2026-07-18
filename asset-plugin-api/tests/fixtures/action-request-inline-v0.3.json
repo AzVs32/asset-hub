@@ -1,31 +1,37 @@
 {
   "action": "example.plugin.inspect",
   "access": "read_only",
-  "input": {},
+  "input": {
+    "mode": "summary"
+  },
   "resource": {
     "id": "0198a123-4567-7000-8000-000000000001",
+    "directory": "documents",
     "name": "notes.md",
     "kind": "core:document",
     "status": "active",
     "metadata": {
       "schema_version": 1,
       "summary": {
-        "description": null,
-        "tags": []
+        "description": "Release notes",
+        "tags": [
+          "docs"
+        ]
       }
     },
     "content": {
-      "key": "documents/notes.md",
       "size": 5,
       "mime_type": "text/markdown",
-      "checksum": []
+      "checksum": {
+        "kind": "sha256",
+        "value": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+      }
     },
     "created_at": "2026-07-16T10:00:00Z",
     "updated_at": "2026-07-16T10:05:00Z"
   },
-  "content_ref": {
-    "abi_version": 1,
-    "encoding": "handle",
-    "reference": "asset://content/0198a123-4567-7000-8000-000000000002"
+  "content": {
+    "encoding": "base64",
+    "data": "aGVsbG8="
   }
 }

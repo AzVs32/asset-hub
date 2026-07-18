@@ -2,7 +2,7 @@ use crate::{config::DatabaseConfig, migration};
 use asset_core::CoreError;
 use asset_core::domain::{
     Resource, ResourceContent, ResourceDirectory, ResourceId, ResourceKind, ResourceKindMetadata,
-    ResourceMetadata, ResourceSnapshot, ResourceStatus, ResourceSummaryMetadata, StorageKey,
+    ResourceMetadata, ResourceSnapshot, ResourceStatus, ResourceSummaryMetadata,
 };
 use asset_core::port::{ListResources, ResourcePage, ResourceQuery, ResourceRepository};
 use chrono::{DateTime, Utc};
@@ -288,14 +288,19 @@ impl ResourceRepository for SqliteResourceRepository {
 
 #[async_trait::async_trait]
 impl ResourceQuery for SqliteResourceRepository {
-    async fn find_by_content_key(&self, key: &StorageKey) -> Result<Option<Resource>, CoreError> {
+    async fn find_by_path(
+        &self,
+        directory: &ResourceDirectory,
+        name: &str,
+    ) -> Result<Option<Resource>, CoreError> {
         let statement =
-            format!("{RESOURCE_SELECT} WHERE json_extract(resources.content_json, '$.key') = ?");
+            format!("{RESOURCE_SELECT} WHERE resources.directory = ? AND resources.name = ?");
         let row = sqlx::query(&statement)
-            .bind(key.as_str())
+            .bind(directory.path())
+            .bind(name)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|error| CoreError::repository("find_by_content_key", error))?;
+            .map_err(|error| CoreError::repository("find_by_path", error))?;
 
         row.map(decode_resource).transpose()
     }

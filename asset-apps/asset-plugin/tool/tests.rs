@@ -100,7 +100,7 @@ fn draft_manifest_with_web(web: &str) -> String {
         r#"{{
           "manifest_version": 2,
           "plugin": {{"id": "test.plugin", "name": "Test", "version": "0.1.0", "publisher": "test"}},
-          "runtime": {{"type": "extism", "wasm": "plugin.wasm", "plugin_api": "asset-hub.plugin-api@0.2"}},
+          "runtime": {{"type": "extism", "wasm": "plugin.wasm", "plugin_api": "asset-hub.plugin-api@0.3"}},
           "capabilities": {{"resource_kinds": [], "resource_actions": []}},
           "permissions": {{
             "resource": {{"read": true, "write": false}},

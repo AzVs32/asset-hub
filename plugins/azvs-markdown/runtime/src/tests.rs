@@ -116,6 +116,7 @@ fn request_json(action: &str, input: Value, content: Option<&[u8]>) -> String {
 fn resource_json() -> Value {
     json!({
         "id": "01900000-0000-7000-8000-000000000000",
+        "directory": "documents",
         "name": "demo.md",
         "kind": "azvs:markdown",
         "status": "active",
@@ -124,11 +125,12 @@ fn resource_json() -> Value {
             "summary": {"description": null, "tags": []}
         },
         "content": {
-            "key": "documents/demo.md",
             "size": 4,
             "mime_type": "text/markdown",
-            "original_filename": "demo.md",
-            "checksum": []
+            "checksum": {
+                "kind": "sha256",
+                "value": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+            }
         },
         "created_at": "2026-01-01T00:00:00Z",
         "updated_at": "2026-01-01T00:00:00Z"

@@ -102,6 +102,7 @@ impl<'a> ResourceCommandService<'a> {
         command: UpdateResource,
     ) -> Result<Resource, CoreError> {
         let expected_updated_at = resource.updated_at();
+        let old_storage_key = resource.content().map(|_| resource.storage_key());
 
         if command.restore {
             resource.restore();
@@ -130,19 +131,41 @@ impl<'a> ResourceCommandService<'a> {
             resource.patch_metadata(metadata)?;
         }
 
-        if !self
+        let new_storage_key = resource.content().map(|_| resource.storage_key());
+        let moved_content = match (&old_storage_key, &new_storage_key) {
+            (Some(from), Some(to)) if from != to => {
+                self.service.blob_storage.move_if_absent(from, to).await?;
+                true
+            }
+            _ => false,
+        };
+
+        let saved = self
             .service
             .repository
             .save_if_unchanged(&resource, expected_updated_at)
-            .await?
-        {
-            return Err(CoreError::conflict(format!(
+            .await;
+
+        let error = match saved {
+            Ok(true) => return Ok(resource),
+            Ok(false) => CoreError::conflict(format!(
                 "resource `{}` changed while it was being updated",
                 resource.id()
-            )));
+            )),
+            Err(error) => error,
+        };
+
+        if moved_content
+            && let (Some(from), Some(to)) = (&old_storage_key, &new_storage_key)
+            && let Err(rollback_error) = self.service.blob_storage.move_if_absent(to, from).await
+        {
+            return Err(CoreError::storage(
+                "resource_path_update.rollback",
+                rollback_error,
+            ));
         }
 
-        Ok(resource)
+        Err(error)
     }
 
     /// 软删除资源。
@@ -221,8 +244,11 @@ impl<'a> ResourceCommandService<'a> {
             )));
         }
 
-        if let Some(content) = resource.content() {
-            self.service.blob_storage.delete(content.key()).await?;
+        if resource.content().is_some() {
+            self.service
+                .blob_storage
+                .delete(&resource.storage_key())
+                .await?;
         }
 
         Ok(())

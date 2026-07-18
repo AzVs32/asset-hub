@@ -3,7 +3,7 @@
 //! 该端口承接分页、检索和目录浏览，不参与资源聚合的保存事务。
 
 use crate::CoreError;
-use crate::domain::{Resource, ResourceDirectory, ResourceKind, StorageKey};
+use crate::domain::{Resource, ResourceDirectory, ResourceKind};
 
 /// 资源列表查询条件。
 #[derive(Debug, Clone)]
@@ -115,8 +115,12 @@ pub struct ResourcePage {
 
 #[async_trait::async_trait]
 pub trait ResourceQuery: Send + Sync {
-    /// 按内容存储键查找资源，用于导入和扫描任务的幂等去重。
-    async fn find_by_content_key(&self, key: &StorageKey) -> Result<Option<Resource>, CoreError>;
+    /// 按逻辑目录和名称查找资源，用于导入和扫描任务的幂等去重。
+    async fn find_by_path(
+        &self,
+        directory: &ResourceDirectory,
+        name: &str,
+    ) -> Result<Option<Resource>, CoreError>;
 
     /// 按条件分页列出资源。
     async fn list(&self, query: &ListResources) -> Result<ResourcePage, CoreError>;

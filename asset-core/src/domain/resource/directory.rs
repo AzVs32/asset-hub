@@ -191,6 +191,3 @@ fn normalize_path(value: String) -> Result<String, ResourceError> {
     }
     Ok(path)
 }
-
-#[cfg(test)]
-mod tests;

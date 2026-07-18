@@ -6,8 +6,7 @@
       "type": "replace_content",
       "encoding": "base64",
       "data": "aGVsbG8=",
-      "mime_type": "text/plain",
-      "checksum": []
+      "mime_type": "text/plain"
     }
   ],
   "diagnostics": [

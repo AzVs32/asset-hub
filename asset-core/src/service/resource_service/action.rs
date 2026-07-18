@@ -191,7 +191,7 @@ impl<'a> ResourceActionService<'a> {
             )));
         }
 
-        self.service.blob_storage.get(content_ref.key()).await
+        self.service.blob_storage.get(&resource.storage_key()).await
     }
 
     async fn execute_resource_action_request(
@@ -263,26 +263,21 @@ impl<'a> ResourceActionService<'a> {
                                 output.action()
                             ))
                         })?;
-                    let checksums = plugin_checksums(&effect.checksum, &data)?;
-                    let target_key = current_content.key();
+                    let checksum = calculate_checksum(data.as_ref())?;
+                    let target_key = resource.storage_key();
                     let replacement_key = action_scratch_content_key("action-replacements")?;
                     let backup_key = action_scratch_content_key("action-backups")?;
                     let content = build_content(
-                        target_key.clone(),
                         data.len() as u64,
                         effect
                             .mime_type
                             .clone()
                             .or_else(|| current_content.mime_type().map(str::to_string)),
-                        effect
-                            .original_filename
-                            .clone()
-                            .or_else(|| current_content.original_filename().map(str::to_string)),
-                        checksums,
+                        checksum,
                     )?;
 
                     let expected_updated_at = resource.updated_at();
-                    let previous = self.service.blob_storage.get(target_key).await?;
+                    let previous = self.service.blob_storage.get(&target_key).await?;
                     self.service
                         .blob_storage
                         .put(&replacement_key, data.clone())
@@ -290,7 +285,7 @@ impl<'a> ResourceActionService<'a> {
                     if let Some(previous) = previous.clone() {
                         self.service.blob_storage.put(&backup_key, previous).await?;
                     }
-                    self.service.blob_storage.put(target_key, data).await?;
+                    self.service.blob_storage.put(&target_key, data).await?;
                     resource.attach_content(content)?;
                     let saved = self
                         .service
@@ -307,7 +302,7 @@ impl<'a> ResourceActionService<'a> {
                         Ok(false) => {
                             restore_replaced_content(
                                 self.service.blob_storage.as_ref(),
-                                target_key,
+                                &target_key,
                                 &backup_key,
                                 previous,
                             )
@@ -323,7 +318,7 @@ impl<'a> ResourceActionService<'a> {
                         Err(error) => {
                             restore_replaced_content(
                                 self.service.blob_storage.as_ref(),
-                                target_key,
+                                &target_key,
                                 &backup_key,
                                 previous,
                             )

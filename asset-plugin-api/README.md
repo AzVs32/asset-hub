@@ -5,9 +5,9 @@ version from another.
 
 | Surface | Current | Carried by | Changes when |
 | --- | --- | --- | --- |
-| Rust crate | `0.2.0` | Cargo package metadata and `CRATE_VERSION` | The Rust source API changes |
+| Rust crate | `0.3.0` | Cargo package metadata and `CRATE_VERSION` | The Rust source API changes |
 | Manifest | `3` | `manifest_version` | The authoring document structure or declaration semantics break |
-| Plugin JSON API | `asset-hub.plugin-api@0.2` | `runtime.plugin_api` | Handler request, success output, or failure wire contracts break |
+| Plugin JSON API | `asset-hub.plugin-api@0.3` | `runtime.plugin_api` | Handler request, success output, or failure wire contracts break |
 | Content ABI | `1` | `content_ref.abi_version` | A host function signature, handle lifecycle, or range-read contract breaks |
 
 ## Rust crate version
@@ -31,6 +31,15 @@ existing JSON strings:
 `PluginContentRange` fields are now private so overflow validation cannot be bypassed. Construct a
 range with `PluginContentRange::new` and read it through `offset()`, `length()`, and `end()`.
 
+### Rust crate 0.3 migration
+
+Resource paths now have one source of truth. `PluginResource.directory` and
+`PluginResource.name` identify the object path; `PluginResourceContent` no longer repeats `key` or
+`original_filename`. Content replacement effects preserve the resource path and therefore no
+longer accept `original_filename`. `PluginResourceContent.checksum` contains the single checksum
+calculated by the host. Replacement effects cannot submit checksum values; the host calculates a
+new checksum from the returned content bytes.
+
 ## Manifest version
 
 Manifest V3 is the canonical authoring format and is the only format described by the embedded
@@ -46,7 +55,7 @@ new schema document. The host must validate the declared version before register
 
 The plugin API versions the JSON passed to and returned from action handlers. Pre-1.0 minor
 versions are explicit protocol levels, not a loose SemVer range. The host currently supports only
-`asset-hub.plugin-api@0.2`; omitted `runtime.plugin_api` values default to that level.
+`asset-hub.plugin-api@0.3`; omitted `runtime.plugin_api` values default to that level.
 
 Adding an omitted-by-default optional field may remain compatible. Renaming fields, changing enum
 strings, changing defaults, or making data required requires a new plugin API level. Every level

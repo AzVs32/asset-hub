@@ -1,7 +1,5 @@
 use super::*;
-use asset_core::domain::{
-    Checksum, ResourceContent, ResourceKind, ResourceKindMetadata, StorageKey,
-};
+use asset_core::domain::{Checksum, ResourceContent, ResourceKind, ResourceKindMetadata};
 use asset_core::port::ListResources;
 use serde_json::json;
 use std::path::PathBuf;
@@ -10,13 +8,12 @@ use std::path::PathBuf;
 async fn sqlite_repository_roundtrips_resource() {
     let repository = repository("roundtrip").await;
     let checksum = Checksum::sha256("a".repeat(64)).unwrap();
-    let content = ResourceContent::builder(StorageKey::new("assets/image.png").unwrap(), 42)
+    let content = ResourceContent::builder(42, checksum.clone())
         .with_mime_type("image/png")
-        .with_original_filename("image.png")
-        .with_checksum(checksum.clone())
         .build()
         .unwrap();
-    let resource = Resource::builder("image")
+    let resource = Resource::builder("image.png")
+        .with_directory(ResourceDirectory::from_path("assets").unwrap())
         .with_kind("core:image")
         .with_metadata(
             ResourceMetadata::builder()
@@ -38,7 +35,7 @@ async fn sqlite_repository_roundtrips_resource() {
     let restored_content = restored.content().unwrap();
 
     assert_eq!(restored.id(), resource.id());
-    assert_eq!(restored.name(), "image");
+    assert_eq!(restored.name(), "image.png");
     assert!(restored.kind().is("core:image"));
     assert_eq!(
         restored
@@ -49,14 +46,10 @@ async fn sqlite_repository_roundtrips_resource() {
             .collect::<Vec<_>>(),
         vec!["rust", "asset"]
     );
-    assert_eq!(restored_content.key().as_str(), "assets/image.png");
+    assert_eq!(restored.storage_key().as_str(), "assets/image.png");
     assert_eq!(restored_content.size(), 42);
     assert_eq!(restored_content.mime_type(), Some("image/png"));
-    assert_eq!(restored_content.original_filename(), Some("image.png"));
-    assert_eq!(
-        restored_content.checksums().collect::<Vec<_>>(),
-        vec![&checksum]
-    );
+    assert_eq!(restored_content.checksum(), &checksum);
 
     let summary_rows: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM resource_metadata_summaries WHERE resource_id = ?",
@@ -99,6 +92,14 @@ async fn sqlite_repository_roundtrips_and_clears_kind_metadata() {
         .unwrap();
 
     repository.save(&resource).await.unwrap();
+    assert_eq!(
+        repository
+            .find_by_path(resource.directory(), resource.name())
+            .await
+            .unwrap()
+            .map(|found| found.id()),
+        Some(resource.id())
+    );
     let restored = repository
         .find_by_id(&resource.id())
         .await

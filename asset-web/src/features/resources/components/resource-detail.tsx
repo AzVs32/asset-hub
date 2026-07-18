@@ -223,7 +223,13 @@ function Detail({
           <Fact label="Size" value={formatBytes(resource.content?.size ?? 0)} />
           <Fact label="MIME" value={resource.content?.mimeType ?? "—"} />
           <Fact label="Kind source" value={kind?.source ?? "—"} />
-          <Fact label="Content" value={resource.content?.key ?? "—"} wide />
+          <Fact
+            label="Content"
+            value={
+              resource.content ? [resource.directory, resource.name].filter(Boolean).join("/") : "—"
+            }
+            wide
+          />
           <Fact
             label="Actions"
             value={resource.actions.map((action) => action.id).join(", ") || "—"}

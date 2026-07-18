@@ -5,7 +5,7 @@ pub(super) const DEFAULT_CONTENT_TYPE: &str = "application/octet-stream";
 
 /// 流式上传内容并创建资源。
 ///
-/// 请求体必须是原始二进制流。资源名称、存储键等元信息从 query 参数读取，MIME 类型
+/// 请求体必须是原始二进制流。资源名称、目录等元信息从 query 参数读取，MIME 类型
 /// 优先使用请求的 `Content-Type` header。
 #[utoipa::path(
     put,
@@ -33,28 +33,15 @@ pub(crate) async fn upload_resource_content_stream(
     let directory = query
         .directory
         .unwrap_or(ResourceDirectory::from_path("uploads")?);
-    let storage_key = storage_key_from_upload_parts(
-        query.storage_key,
-        &directory,
-        query.original_filename.as_deref().unwrap_or(&query.name),
-    )?;
     ensure_content_length(&headers)?;
     let data = limited_body_stream(body);
 
-    let mut command = UploadResourceContentStream::new(query.name, storage_key, data);
+    let mut command = UploadResourceContentStream::new(query.name, data);
     command = command.with_directory(directory);
     command = apply_common_stream_fields(command, query.kind, query.status, query.metadata_json)?;
 
     if let Some(mime_type) = content_type(&headers)? {
         command = command.with_mime_type(mime_type);
-    }
-
-    if let Some(original_filename) = query.original_filename {
-        command = command.with_original_filename(original_filename);
-    }
-
-    if let Some(sha256) = query.sha256 {
-        command = command.with_checksum(Checksum::sha256(sha256)?);
     }
 
     let resource = state
@@ -236,20 +223,6 @@ pub(crate) async fn read_resource(
         return Err(HttpError::not_found(format!("resource `{id}` not found")));
     };
     Ok(Json(ResourceReadResponse::from(&resource)))
-}
-
-pub(super) fn clean_filename(value: &str) -> Result<String, HttpError> {
-    let filename = value
-        .trim()
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or_default()
-        .trim();
-    if filename.is_empty() || filename == "." || filename == ".." {
-        return Err(HttpError::bad_request("filename must not be empty"));
-    }
-
-    Ok(filename.to_string())
 }
 
 pub(super) fn content_type(headers: &HeaderMap) -> Result<Option<String>, HttpError> {

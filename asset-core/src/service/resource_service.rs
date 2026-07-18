@@ -40,6 +40,11 @@ use content::ResourceContentService;
 use preview::ResourcePreviewService;
 pub use secured::SecuredResourceService;
 
+/// 新内容使用的校验算法。
+///
+/// 这是服务端实现策略，不暴露给调用方。未来替换算法时在这里切换，并为旧算法保留读取支持。
+const CONTENT_CHECKSUM_KIND: ChecksumKind = ChecksumKind::Sha256;
+
 /// 创建纯元数据资源的用例命令。
 ///
 /// 该命令描述“创建一条没有对象内容的资源”的输入参数。它只收集调用方传入的数据，
@@ -125,16 +130,10 @@ pub struct ResourceContentCommand<T> {
     directory: ResourceDirectory,
     /// 初始资源元数据。
     metadata: ResourceMetadata,
-    /// 内容在对象存储中的定位键。
-    storage_key: StorageKey,
     /// 用例特有的内容输入。
     payload: T,
     /// 内容 MIME 类型。
     mime_type: Option<String>,
-    /// 原始文件名。
-    original_filename: Option<String>,
-    /// 内容校验和集合。
-    checksums: Vec<Checksum>,
 }
 
 /// 导入已存在对象内容并创建资源；payload 是对象字节大小。
@@ -147,20 +146,11 @@ pub type UploadResourceContentStream = ResourceContentCommand<BlobByteStream>;
 #[derive(Debug, Clone, Default)]
 pub struct ScanStorage {
     prefix: StoragePrefix,
-    include_sha256: bool,
 }
 
 impl ScanStorage {
     pub fn new(prefix: StoragePrefix) -> Self {
-        Self {
-            prefix,
-            include_sha256: false,
-        }
-    }
-
-    pub fn with_sha256(mut self, include_sha256: bool) -> Self {
-        self.include_sha256 = include_sha256;
-        self
+        Self { prefix }
     }
 
     pub fn prefix(&self) -> &StoragePrefix {
@@ -280,18 +270,15 @@ impl ExecuteResourceAction {
 
 impl<T> ResourceContentCommand<T> {
     /// 创建命令，默认自动推断资源类型、使用活跃状态和空元数据。
-    pub fn new(name: impl Into<String>, storage_key: StorageKey, payload: T) -> Self {
+    pub fn new(name: impl Into<String>, payload: T) -> Self {
         Self {
             name: name.into(),
             kind: None,
             status: ResourceStatus::default(),
             directory: ResourceDirectory::root(),
             metadata: ResourceMetadata::default(),
-            storage_key,
             payload,
             mime_type: None,
-            original_filename: None,
-            checksums: Vec::new(),
         }
     }
 
@@ -322,24 +309,6 @@ impl<T> ResourceContentCommand<T> {
     /// 设置内容 MIME 类型。
     pub fn with_mime_type(mut self, mime_type: impl Into<String>) -> Self {
         self.mime_type = Some(mime_type.into());
-        self
-    }
-
-    /// 设置原始文件名。
-    pub fn with_original_filename(mut self, original_filename: impl Into<String>) -> Self {
-        self.original_filename = Some(original_filename.into());
-        self
-    }
-
-    /// 追加一个内容校验和。
-    pub fn with_checksum(mut self, checksum: Checksum) -> Self {
-        self.checksums.push(checksum);
-        self
-    }
-
-    /// 批量追加内容校验和。
-    pub fn with_checksums(mut self, checksums: impl IntoIterator<Item = Checksum>) -> Self {
-        self.checksums.extend(checksums);
         self
     }
 
@@ -817,7 +786,10 @@ impl ResourceService {
                 action.matches_resource(
                     kind.as_str(),
                     content.and_then(|content| content.mime_type()),
-                    content.map(|content| content.key().as_str()),
+                    content
+                        .map(|_| resource.storage_key())
+                        .as_ref()
+                        .map(StorageKey::as_str),
                 )
             })
     }
@@ -902,69 +874,41 @@ fn fallback_resource_kind() -> ResourceKind {
 }
 
 fn build_content(
-    storage_key: StorageKey,
     size: u64,
     mime_type: Option<String>,
-    original_filename: Option<String>,
-    checksums: Vec<Checksum>,
+    checksum: Checksum,
 ) -> Result<ResourceContent, CoreError> {
-    let mut content = ResourceContent::builder(storage_key, size);
+    let mut content = ResourceContent::builder(size, checksum);
 
     if let Some(mime_type) = mime_type {
         content = content.with_mime_type(mime_type);
     }
 
-    if let Some(original_filename) = original_filename {
-        content = content.with_original_filename(original_filename);
-    }
-
-    Ok(content.with_checksums(checksums).build()?)
+    Ok(content.build()?)
 }
 
-fn verify_bytes_checksums(data: &Bytes, checksums: &[Checksum]) -> Result<(), CoreError> {
-    if let Some(expected) = sha256_checksum(checksums) {
-        let actual = hex_sha256(data);
-
-        if !actual.eq_ignore_ascii_case(expected.value()) {
-            return Err(CoreError::conflict("sha256 checksum mismatch"));
-        }
-    }
-
-    Ok(())
+fn calculate_checksum(data: &[u8]) -> Result<Checksum, CoreError> {
+    let mut state = ChecksumState::new(CONTENT_CHECKSUM_KIND);
+    state.update(data);
+    state.finish()
 }
 
-fn plugin_checksums(
-    checksums: &[asset_plugin_api::PluginChecksum],
-    data: &Bytes,
-) -> Result<Vec<Checksum>, CoreError> {
-    if checksums.is_empty() {
-        return Ok(vec![Checksum::sha256(hex_sha256(data))?]);
-    }
-
-    let mut converted = Vec::with_capacity(checksums.len());
-    for checksum in checksums {
-        let kind = checksum.kind.parse::<ChecksumKind>().map_err(|_| {
-            CoreError::configuration(format!(
-                "unsupported plugin checksum kind `{}`",
-                checksum.kind
-            ))
-        })?;
-        converted.push(Checksum::new(kind, checksum.value.clone())?);
-    }
-    verify_bytes_checksums(data, &converted)?;
-    Ok(converted)
+fn placeholder_checksum() -> Result<Checksum, CoreError> {
+    calculate_checksum(&[])
 }
 
 fn stream_with_checksum_tracking(
     data: BlobByteStream,
-) -> (BlobByteStream, Arc<std::sync::Mutex<Sha256>>) {
-    let state = Arc::new(std::sync::Mutex::new(Sha256::new()));
+) -> (BlobByteStream, Arc<std::sync::Mutex<ChecksumState>>) {
+    let state = Arc::new(std::sync::Mutex::new(ChecksumState::new(
+        CONTENT_CHECKSUM_KIND,
+    )));
     let stream_state = state.clone();
     let stream = data.map(move |chunk| {
         if let Ok(chunk) = &chunk {
             stream_state
                 .lock()
-                .expect("sha256 mutex should not be poisoned")
+                .expect("checksum mutex should not be poisoned")
                 .update(chunk);
         }
 
@@ -975,31 +919,41 @@ fn stream_with_checksum_tracking(
 }
 
 fn finalize_tracked_checksum(
-    sha256_state: Arc<std::sync::Mutex<Sha256>>,
-    checksums: &[Checksum],
+    state: Arc<std::sync::Mutex<ChecksumState>>,
 ) -> Result<Checksum, CoreError> {
-    let digest = sha256_state
+    state
         .lock()
-        .expect("sha256 mutex should not be poisoned")
-        .clone()
-        .finalize();
-    let actual = hex_digest(&digest);
+        .expect("checksum mutex should not be poisoned")
+        .finish()
+}
 
-    if let Some(expected) = sha256_checksum(checksums)
-        && !actual.eq_ignore_ascii_case(expected.value())
-    {
-        return Err(CoreError::conflict("sha256 checksum mismatch"));
+enum ChecksumState {
+    Sha256(Sha256),
+}
+
+impl ChecksumState {
+    fn new(kind: ChecksumKind) -> Self {
+        match kind {
+            ChecksumKind::Sha256 => Self::Sha256(Sha256::new()),
+        }
     }
 
-    Checksum::sha256(actual).map_err(Into::into)
+    fn update(&mut self, bytes: &[u8]) {
+        match self {
+            Self::Sha256(state) => state.update(bytes),
+        }
+    }
+
+    fn finish(&self) -> Result<Checksum, CoreError> {
+        match self {
+            Self::Sha256(state) => {
+                Checksum::sha256(hex_digest(&state.clone().finalize())).map_err(Into::into)
+            }
+        }
+    }
 }
 
-fn sha256_checksum(checksums: &[Checksum]) -> Option<&Checksum> {
-    checksums
-        .iter()
-        .find(|checksum| checksum.kind() == ChecksumKind::Sha256)
-}
-
+#[cfg(test)]
 fn hex_sha256(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data);

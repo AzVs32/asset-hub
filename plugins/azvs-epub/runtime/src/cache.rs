@@ -22,7 +22,7 @@ pub(super) fn resource_cache_key(request: &PluginActionRequest) -> String {
         .resource
         .content
         .as_ref()
-        .and_then(|content| content.checksum.first())
+        .map(|content| &content.checksum)
     {
         key.push(':');
         key.push_str(&checksum.kind);

@@ -131,7 +131,6 @@ export class OpenApiAssetGateway implements AssetGateway {
       name: draft.name.trim() || draft.file.name,
       directory: normalizeDirectory(draft.directory),
       metadata_json: JSON.stringify(metadataBody(draft.description, draft.tags)),
-      original_filename: draft.file.name,
     });
     if (draft.kind.trim()) params.set("kind", draft.kind.trim());
     const response = await fetch(`${this.#baseUrl}/resources/content/stream?${params}`, {
@@ -153,7 +152,7 @@ export class OpenApiAssetGateway implements AssetGateway {
 
   async scan(directory: string): Promise<ScanResult> {
     const result = await this.#client.POST("/scan", {
-      body: { prefix: directory, sha256: true },
+      body: { prefix: directory },
     });
     const data = expectData(result);
     return { scanned: data.scanned, imported: data.imported, skipped: data.skipped };
@@ -175,7 +174,7 @@ export class OpenApiAssetGateway implements AssetGateway {
           view: "binary_url",
           url: `/resources/${encodeURIComponent(resource.id)}/content`,
           ...(resource.content?.mimeType ? { mime_type: resource.content.mimeType } : {}),
-          filename: resource.content?.originalFilename ?? resource.name,
+          filename: resource.name,
         },
       };
     }
@@ -364,11 +363,9 @@ function mapResource(value: ApiResource): Resource {
     },
     content: value.content
       ? {
-          key: value.content.key,
           size: value.content.size,
           mimeType: value.content.mime_type ?? null,
-          originalFilename: value.content.original_filename ?? null,
-          checksums: value.content.checksum,
+          checksum: value.content.checksum,
         }
       : null,
     actions: value.actions.available_actions.map(mapAction),

@@ -137,12 +137,11 @@ pub(crate) struct UpdateResourceRequest {
 /// 流式上传内容并创建资源的 query 参数。
 #[derive(Debug, Deserialize, IntoParams, ToSchema)]
 #[into_params(parameter_in = Query)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct UploadResourceContentStreamQuery {
-    /// 资源展示名。
+    /// 资源文件名；与目录共同决定对象存储路径。
     pub(crate) name: String,
-    /// 可选对象存储键；未提供时由 `directory` 和原始文件名生成。
-    pub(crate) storage_key: Option<String>,
-    /// 可选上传目录；仅在未提供 `storage_key` 时使用。
+    /// 可选上传目录。
     #[param(value_type = Option<String>)]
     #[schema(value_type = Option<String>)]
     pub(crate) directory: Option<ResourceDirectory>,
@@ -152,17 +151,13 @@ pub(crate) struct UploadResourceContentStreamQuery {
     pub(crate) status: Option<String>,
     /// 可选 JSON 字符串形式的资源元数据，结构与 `ResourceMetadataRequest` 一致。
     pub(crate) metadata_json: Option<String>,
-    /// 可选原始文件名。
-    pub(crate) original_filename: Option<String>,
-    /// 可选 SHA-256 校验和。
-    pub(crate) sha256: Option<String>,
 }
 
 /// 扫描对象存储前缀请求。
 #[derive(Debug, Default, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 #[schema(example = json!({
-    "prefix": "uploads",
-    "sha256": true
+    "prefix": "uploads"
 }))]
 pub(crate) struct ScanStorageRequest {
     /// 可选对象键前缀；未提供时扫描整个对象存储根命名空间。
@@ -170,8 +165,6 @@ pub(crate) struct ScanStorageRequest {
     #[schema(value_type = String)]
     #[serde(alias = "directory")]
     pub(crate) prefix: StoragePrefix,
-    /// 是否计算并保存 SHA-256。默认开启。
-    pub(crate) sha256: Option<bool>,
 }
 
 /// 审计对象存储与资源数据库一致性的请求。
@@ -800,26 +793,20 @@ impl From<ResourceActions> for ResourceActionsResponse {
 /// 资源内容引用响应。
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct ResourceContentResponse {
-    /// 内容在存储系统中的定位键。
-    pub(crate) key: String,
     /// 内容字节大小。
     pub(crate) size: u64,
     /// 内容 MIME 类型。
     pub(crate) mime_type: Option<String>,
-    /// 上传时的原始文件名。
-    pub(crate) original_filename: Option<String>,
-    /// 内容校验和集合。
-    pub(crate) checksum: Vec<ChecksumResponse>,
+    /// 服务端根据内容本体计算得到的校验和。
+    pub(crate) checksum: ChecksumResponse,
 }
 
 impl From<&ResourceContent> for ResourceContentResponse {
     fn from(content: &ResourceContent) -> Self {
         Self {
-            key: content.key().as_str().to_string(),
             size: content.size(),
             mime_type: content.mime_type().map(str::to_string),
-            original_filename: content.original_filename().map(str::to_string),
-            checksum: content.checksums().map(ChecksumResponse::from).collect(),
+            checksum: ChecksumResponse::from(content.checksum()),
         }
     }
 }

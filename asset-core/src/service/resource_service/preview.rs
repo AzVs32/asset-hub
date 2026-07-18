@@ -125,7 +125,7 @@ impl<'a> ResourcePreviewService<'a> {
         let Some(content) = self
             .service
             .blob_storage
-            .get_stream(content_ref.key())
+            .get_stream(&resource.storage_key())
             .await?
         else {
             return Err(CoreError::not_found(
@@ -194,7 +194,12 @@ impl<'a> ResourcePreviewService<'a> {
                         resource.id().to_string(),
                     ));
                 };
-                let Some(content) = self.service.blob_storage.get(content_ref.key()).await? else {
+                let Some(content) = self
+                    .service
+                    .blob_storage
+                    .get(&resource.storage_key())
+                    .await?
+                else {
                     return Err(CoreError::not_found(
                         "resource content",
                         resource.id().to_string(),

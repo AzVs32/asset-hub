@@ -1,4 +1,5 @@
-use super::{ResourceDirectory, UserId};
+use super::UserId;
+use crate::domain::ResourceDirectory;
 use serde::{Deserialize, Serialize};
 
 /// 已通过外部入口认证的访问主体。
@@ -75,9 +76,6 @@ impl std::str::FromStr for DirectoryPermission {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DirectoryGrant {

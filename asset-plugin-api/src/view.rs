@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{PluginChecksum, PluginDiagnostic};
+use crate::PluginDiagnostic;
 
 /// Standard action output.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -48,15 +48,12 @@ pub enum PluginActionEffect {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReplaceContentEffect {
     pub encoding: PluginReplacementEncoding,
     pub data: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub original_filename: Option<String>,
-    #[serde(default)]
-    pub checksum: Vec<PluginChecksum>,
 }
 
 /// Encoding accepted for bytes returned by a content replacement effect.

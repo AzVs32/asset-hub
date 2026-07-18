@@ -641,13 +641,9 @@ export interface components {
         /** @description 资源内容引用响应。 */
         ResourceContentResponse: {
             /** @description 内容校验和集合。 */
-            checksum: components["schemas"]["ChecksumResponse"][];
-            /** @description 内容在存储系统中的定位键。 */
-            key: string;
+            checksum: components["schemas"]["ChecksumResponse"];
             /** @description 内容 MIME 类型。 */
             mime_type?: string | null;
-            /** @description 上传时的原始文件名。 */
-            original_filename?: string | null;
             /**
              * Format: int64
              * @description 内容字节大小。
@@ -806,15 +802,12 @@ export interface components {
         /**
          * @description 扫描对象存储前缀请求。
          * @example {
-         *       "prefix": "uploads",
-         *       "sha256": true
+         *       "prefix": "uploads"
          *     }
          */
         ScanStorageRequest: {
             /** @description 可选对象键前缀；未提供时扫描整个对象存储根命名空间。 */
             prefix?: string;
-            /** @description 是否计算并保存 SHA-256。默认开启。 */
-            sha256?: boolean | null;
         };
         /** @description 扫描本地对象存储目录响应。 */
         ScanStorageResponse: {
@@ -892,22 +885,16 @@ export interface components {
          *     流式上传内容并创建资源的 query 参数。
          */
         UploadResourceContentStreamQuery: {
-            /** @description 可选上传目录；仅在未提供 `storage_key` 时使用。 */
+            /** @description 可选上传目录。 */
             directory?: string | null;
             /** @description 可选资源类型。 */
             kind?: string | null;
             /** @description 可选 JSON 字符串形式的资源元数据，结构与 `ResourceMetadataRequest` 一致。 */
             metadata_json?: string | null;
-            /** @description 资源展示名。 */
+            /** @description 资源文件名；与目录共同决定对象存储路径。 */
             name: string;
-            /** @description 可选原始文件名。 */
-            original_filename?: string | null;
-            /** @description 可选 SHA-256 校验和。 */
-            sha256?: string | null;
             /** @description 可选初始状态：`active` 或 `archived`。 */
             status?: string | null;
-            /** @description 可选对象存储键；未提供时由 `directory` 和原始文件名生成。 */
-            storage_key?: string | null;
         };
     };
     responses: never;
@@ -1472,11 +1459,9 @@ export interface operations {
     upload_resource_content_stream: {
         parameters: {
             query: {
-                /** @description 资源展示名。 */
+                /** @description 资源文件名；与目录共同决定对象存储路径。 */
                 name: string;
-                /** @description 可选对象存储键；未提供时由 `directory` 和原始文件名生成。 */
-                storage_key?: string;
-                /** @description 可选上传目录；仅在未提供 `storage_key` 时使用。 */
+                /** @description 可选上传目录。 */
                 directory?: string;
                 /** @description 可选资源类型。 */
                 kind?: string;
@@ -1484,10 +1469,6 @@ export interface operations {
                 status?: string;
                 /** @description 可选 JSON 字符串形式的资源元数据，结构与 `ResourceMetadataRequest` 一致。 */
                 metadata_json?: string;
-                /** @description 可选原始文件名。 */
-                original_filename?: string;
-                /** @description 可选 SHA-256 校验和。 */
-                sha256?: string;
             };
             header?: never;
             path?: never;

@@ -224,6 +224,7 @@ impl ResourceActionExecutor for ExtismResourceActionExecutor {
         &self,
         request: ResourceActionRequest,
     ) -> Result<ResourceActionOutput, CoreError> {
+        let storage_key = request.resource().storage_key();
         let Some(binding) = self.bindings.iter().find(|binding| {
             let content = request.resource().content();
             binding.action == request.action().as_str()
@@ -231,7 +232,7 @@ impl ResourceActionExecutor for ExtismResourceActionExecutor {
                 && binding.applies_to.matches_resource(
                     request.resource().kind().as_str(),
                     content.and_then(|content| content.mime_type()),
-                    content.map(|content| content.key().as_str()),
+                    content.map(|_| storage_key.as_str()),
                 )
         }) else {
             return Err(CoreError::configuration(format!(

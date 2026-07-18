@@ -110,10 +110,8 @@ fn resource_builder_accepts_metadata_and_content() {
         .build()
         .unwrap();
     let checksum = Checksum::sha256("a".repeat(64)).unwrap();
-    let content = ResourceContent::builder(StorageKey::new("assets/image.png").unwrap(), 42)
+    let content = ResourceContent::builder(42, checksum.clone())
         .with_mime_type(" image/png ")
-        .with_original_filename(" image.png ")
-        .with_checksum(checksum.clone())
         .build()
         .unwrap();
 
@@ -126,8 +124,7 @@ fn resource_builder_accepts_metadata_and_content() {
 
     let content = resource.content().unwrap();
     assert_eq!(content.mime_type(), Some("image/png"));
-    assert_eq!(content.original_filename(), Some("image.png"));
-    assert_eq!(content.checksums().collect::<Vec<_>>(), vec![&checksum]);
+    assert_eq!(content.checksum(), &checksum);
     assert_eq!(
         resource
             .metadata()
@@ -137,6 +134,34 @@ fn resource_builder_accepts_metadata_and_content() {
             .collect::<Vec<_>>(),
         vec!["rust", "asset"]
     );
+}
+
+#[test]
+fn resource_path_uniquely_derives_storage_key() {
+    let resource = Resource::builder("readme.md")
+        .with_directory(ResourceDirectory::from_path("docs/guides").unwrap())
+        .with_content(
+            ResourceContent::builder(42, Checksum::sha256("a".repeat(64)).unwrap())
+                .build()
+                .unwrap(),
+        )
+        .build()
+        .unwrap();
+
+    assert_eq!(resource.storage_key().as_str(), "docs/guides/readme.md");
+}
+
+#[test]
+fn resource_name_must_be_a_single_file_name() {
+    for name in [".", "..", "docs/readme.md", "docs\\readme.md"] {
+        assert!(matches!(
+            Resource::builder(name).build(),
+            Err(ResourceError::InvalidFormat {
+                field: "resource.name",
+                reason: "resource name must be a single file name",
+            })
+        ));
+    }
 }
 
 #[test]
@@ -154,9 +179,9 @@ fn deleted_resource_rejects_mutations() {
     assert_eq!(resource.archive(), Err(ResourceError::DeletedResource));
     assert_eq!(
         resource.attach_content(
-            ResourceContent::builder(StorageKey::new("a/b").unwrap(), 1)
+            ResourceContent::builder(1, Checksum::sha256("a".repeat(64)).unwrap())
                 .build()
-                .unwrap()
+                .unwrap(),
         ),
         Err(ResourceError::DeletedResource)
     );
@@ -321,17 +346,77 @@ fn checksum_kind_uses_canonical_boundary_text() {
 }
 
 #[test]
-fn content_rejects_duplicate_checksum_algorithms() {
-    let first = Checksum::sha256("a".repeat(64)).unwrap();
-    let second = Checksum::sha256("b".repeat(64)).unwrap();
-    let result = ResourceContent::builder(StorageKey::new("checksums/file").unwrap(), 1)
-        .with_checksums([first, second])
-        .build();
-    assert!(matches!(
-        result,
-        Err(ResourceError::InvalidFormat {
-            field: "content.checksum",
-            ..
-        })
-    ));
+fn content_stores_one_typed_checksum() {
+    let checksum = Checksum::sha256("a".repeat(64)).unwrap();
+    let content = ResourceContent::builder(1, checksum.clone())
+        .build()
+        .unwrap();
+
+    assert_eq!(content.checksum(), &checksum);
+    assert_eq!(content.checksum().kind(), ChecksumKind::Sha256);
+}
+
+#[test]
+fn directory_is_built_from_parent_and_single_name() {
+    let parent = ResourceDirectory::from_path("projects").unwrap();
+    let directory = parent.child(" images ").unwrap();
+    assert_eq!(directory.path(), "projects/images");
+    assert_eq!(directory.parent_path(), "projects");
+    assert_eq!(directory.name(), "images");
+    assert!(parent.child("../secret").is_err());
+}
+
+#[test]
+fn path_constructor_supports_root_and_normalizes_segments() {
+    assert!(ResourceDirectory::from_path("  ").unwrap().is_root());
+    assert_eq!(
+        ResourceDirectory::from_path(" projects\\images/./raw ")
+            .unwrap()
+            .path(),
+        "projects/images/raw"
+    );
+}
+
+#[test]
+fn serde_uses_the_path_representation() {
+    let directory = ResourceDirectory::from_path("projects/images").unwrap();
+    let json = serde_json::to_string(&directory).unwrap();
+    assert_eq!(json, "\"projects/images\"");
+    assert_eq!(
+        serde_json::from_str::<ResourceDirectory>(&json).unwrap(),
+        directory
+    );
+}
+
+#[test]
+fn contains_obeys_directory_segment_boundaries() {
+    let root = ResourceDirectory::root();
+    let home = ResourceDirectory::from_path("users/alice").unwrap();
+    let child = ResourceDirectory::from_path("users/alice/photos").unwrap();
+    let sibling = ResourceDirectory::from_path("users/alice2").unwrap();
+
+    assert!(root.contains(&home));
+    assert!(home.contains(&home));
+    assert!(home.contains(&child));
+    assert!(!home.contains(&sibling));
+}
+
+#[test]
+fn rehydrate_rejects_noncanonical_or_inconsistent_fields() {
+    assert!(
+        ResourceDirectory::rehydrate(
+            " projects/images ".to_owned(),
+            "projects".to_owned(),
+            "images".to_owned(),
+        )
+        .is_err()
+    );
+    assert!(
+        ResourceDirectory::rehydrate(
+            "projects/images".to_owned(),
+            "other".to_owned(),
+            "images".to_owned(),
+        )
+        .is_err()
+    );
 }

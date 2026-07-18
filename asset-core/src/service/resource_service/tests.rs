@@ -99,17 +99,17 @@ impl ResourceRepository for InMemoryResourceRepository {
 
 #[async_trait::async_trait]
 impl ResourceQuery for InMemoryResourceRepository {
-    async fn find_by_content_key(&self, key: &StorageKey) -> Result<Option<Resource>, CoreError> {
+    async fn find_by_path(
+        &self,
+        directory: &ResourceDirectory,
+        name: &str,
+    ) -> Result<Option<Resource>, CoreError> {
         Ok(self
             .resources
             .lock()
             .unwrap()
             .values()
-            .find(|resource| {
-                resource
-                    .content()
-                    .is_some_and(|content| content.key().as_str() == key.as_str())
-            })
+            .find(|resource| resource.directory() == directory && resource.name() == name)
             .cloned())
     }
 
@@ -304,6 +304,20 @@ impl BlobStorage for InMemoryBlobStorage {
         }))
     }
 
+    async fn move_if_absent(&self, from: &StorageKey, to: &StorageKey) -> Result<(), CoreError> {
+        let mut objects = self.objects.lock().unwrap();
+        if objects.contains_key(to) {
+            return Err(CoreError::conflict(format!(
+                "storage key `{to}` already exists"
+            )));
+        }
+        let content = objects
+            .remove(from)
+            .ok_or_else(|| CoreError::not_found("blob", from.to_string()))?;
+        objects.insert(to.clone(), content);
+        Ok(())
+    }
+
     async fn delete(&self, key: &StorageKey) -> Result<(), CoreError> {
         if std::mem::take(&mut *self.fail_next_delete.lock().unwrap()) {
             return Err(CoreError::storage("delete", TestError("delete failed")));
@@ -416,8 +430,6 @@ impl ResourceActionExecutor for StaticResourceActionExecutor {
                         encoding: PluginReplacementEncoding::Base64,
                         data: STANDARD.encode(markdown),
                         mime_type: Some("text/markdown".to_string()),
-                        original_filename: Some("note.md".to_string()),
-                        checksum: Vec::new(),
                     }));
 
                 return Ok(ResourceActionOutput::new(
@@ -586,12 +598,18 @@ fn output_contract<const N: usize>(
 }
 
 fn stream_upload_command(
-    name: impl Into<String>,
+    _name: impl Into<String>,
     storage_key: StorageKey,
     data: Bytes,
 ) -> UploadResourceContentStream {
+    let (directory, name) = storage_key
+        .as_str()
+        .rsplit_once('/')
+        .map(|(directory, name)| (directory, name))
+        .unwrap_or(("", storage_key.as_str()));
     let stream = futures_util::stream::once(async move { Ok(data) });
-    UploadResourceContentStream::new(name, storage_key, Box::pin(stream))
+    UploadResourceContentStream::new(name, Box::pin(stream))
+        .with_directory(ResourceDirectory::from_path(directory).unwrap())
 }
 
 #[test]
@@ -786,9 +804,7 @@ fn stream_upload_resource_content_writes_blob_then_saves_resource() {
         service.content().upload_resource_content_stream(
             stream_upload_command("image", key.clone(), data.clone())
                 .with_kind("core:image")
-                .with_mime_type(" image/png ")
-                .with_original_filename(" image.png ")
-                .with_checksum(checksum.clone()),
+                .with_mime_type(" image/png "),
         ),
     )
     .unwrap();
@@ -796,11 +812,10 @@ fn stream_upload_resource_content_writes_blob_then_saves_resource() {
     let saved = repository.find_sync(&resource.id()).unwrap();
     let content = saved.content().unwrap();
 
-    assert_eq!(content.key(), &key);
+    assert_eq!(saved.storage_key(), key);
     assert_eq!(content.size(), data.len() as u64);
     assert_eq!(content.mime_type(), Some("image/png"));
-    assert_eq!(content.original_filename(), Some("image.png"));
-    assert_eq!(content.checksums().collect::<Vec<_>>(), vec![&checksum]);
+    assert_eq!(content.checksum(), &checksum);
     assert_eq!(blob_storage.get_sync(&key), Some(data));
 }
 
@@ -874,8 +889,7 @@ fn stream_upload_resource_content_detects_most_specific_kind() {
     let resource = block_on(
         service.content().upload_resource_content_stream(
             stream_upload_command("readme", key, Bytes::from_static(b"# Readme"))
-                .with_mime_type("text/plain")
-                .with_original_filename("README.md"),
+                .with_mime_type("text/plain"),
         ),
     )
     .unwrap();
@@ -883,26 +897,6 @@ fn stream_upload_resource_content_detects_most_specific_kind() {
     let saved = repository.find_sync(&resource.id()).unwrap();
 
     assert!(saved.kind().is("azvs:markdown"));
-}
-
-#[test]
-fn stream_upload_resource_content_rejects_checksum_mismatch() {
-    let (service, repository, blob_storage) = service();
-    let key = StorageKey::new("assets/image.png").unwrap();
-    let data = Bytes::from_static(b"image bytes");
-    let checksum = Checksum::sha256("a".repeat(64)).unwrap();
-
-    let error = block_on(service.content().upload_resource_content_stream(
-        stream_upload_command("image", key.clone(), data).with_checksum(checksum),
-    ))
-    .unwrap_err();
-
-    match error {
-        CoreError::Conflict { message } => assert!(message.contains("sha256")),
-        other => panic!("expected checksum conflict, got {other:?}"),
-    }
-    assert!(repository.is_empty());
-    assert_eq!(blob_storage.get_sync(&key), None);
 }
 
 #[test]
@@ -960,12 +954,12 @@ fn stream_upload_resource_content_rejects_reserved_storage_key() {
 #[test]
 fn import_resource_content_rejects_reserved_storage_key() {
     let (service, repository, _) = service();
-    let key = StorageKey::new(".asset-hub/action-effects/imported.txt").unwrap();
 
     let error = block_on(
-        service
-            .content()
-            .import_resource_content(ImportResourceContent::new("file", key, 4)),
+        service.content().import_resource_content(
+            ImportResourceContent::new("user-file.txt", 4)
+                .with_directory(ResourceDirectory::from_path(".asset-hub/action-effects").unwrap()),
+        ),
     )
     .unwrap_err();
 
@@ -1014,7 +1008,8 @@ fn stream_upload_resource_content_stream_writes_chunks_and_records_size() {
 
     let resource = block_on(
         service.content().upload_resource_content_stream(
-            UploadResourceContentStream::new("large file", key.clone(), data)
+            UploadResourceContentStream::new("large.bin", data)
+                .with_directory(ResourceDirectory::from_path("assets").unwrap())
                 .with_kind("asset:binary")
                 .with_mime_type("application/octet-stream"),
         ),
@@ -1024,7 +1019,7 @@ fn stream_upload_resource_content_stream_writes_chunks_and_records_size() {
     let saved = repository.find_sync(&resource.id()).unwrap();
     let content = saved.content().unwrap();
 
-    assert_eq!(content.key(), &key);
+    assert_eq!(saved.storage_key(), key);
     assert_eq!(content.size(), 16);
     assert_eq!(content.mime_type(), Some("application/octet-stream"));
     assert_eq!(
@@ -1051,30 +1046,6 @@ fn stream_upload_resource_content_rejects_kind_without_content_support() {
             assert!(message.contains("does not support content upload"))
         }
         other => panic!("expected configuration error, got {other:?}"),
-    }
-    assert!(repository.is_empty());
-    assert!(!blob_storage.contains(&key));
-}
-
-#[test]
-fn stream_upload_resource_content_stream_removes_blob_on_checksum_mismatch() {
-    let (service, repository, blob_storage) = service();
-    let key = StorageKey::new("assets/large.bin").unwrap();
-    let data: BlobByteStream = Box::pin(futures_util::stream::iter([
-        Ok(Bytes::from_static(b"large ")),
-        Ok(Bytes::from_static(b"file ")),
-        Ok(Bytes::from_static(b"bytes")),
-    ]));
-    let checksum = Checksum::sha256("a".repeat(64)).unwrap();
-
-    let error = block_on(service.content().upload_resource_content_stream(
-        UploadResourceContentStream::new("large file", key.clone(), data).with_checksum(checksum),
-    ))
-    .unwrap_err();
-
-    match error {
-        CoreError::Conflict { message } => assert!(message.contains("sha256")),
-        other => panic!("expected checksum conflict, got {other:?}"),
     }
     assert!(repository.is_empty());
     assert!(!blob_storage.contains(&key));
@@ -1183,8 +1154,7 @@ fn execute_write_action_replaces_resource_content() {
         service.content().upload_resource_content_stream(
             stream_upload_command("note.md", key.clone(), Bytes::from_static(b"# Old"))
                 .with_kind("core:document")
-                .with_mime_type("text/markdown")
-                .with_original_filename("note.md"),
+                .with_mime_type("text/markdown"),
         ),
     )
     .unwrap();
@@ -1203,20 +1173,18 @@ fn execute_write_action_replaces_resource_content() {
     let updated = repository.find_sync(&resource.id()).unwrap();
     let content = updated.content().unwrap();
     assert!(blob_storage.contains(&key));
-    assert_eq!(content.key(), &key);
+    assert_eq!(updated.storage_key(), key);
     assert!(!blob_storage.contains_fragment(".asset-hub/"));
     assert!(!blob_storage.contains_fragment(".action-replacements/"));
     assert!(!blob_storage.contains_fragment(".action-backups/"));
     assert_eq!(
-        blob_storage.get_sync(content.key()).unwrap(),
+        blob_storage.get_sync(&updated.storage_key()).unwrap(),
         Bytes::from_static(b"# New\n\nUpdated.")
     );
     assert_eq!(content.size(), 15);
     assert_eq!(content.mime_type(), Some("text/markdown"));
-    assert_eq!(content.original_filename(), Some("note.md"));
-    let checksums = content.checksums().collect::<Vec<_>>();
-    assert_eq!(checksums.len(), 1);
-    assert_eq!(checksums[0].kind(), ChecksumKind::Sha256);
+    assert_eq!(content.checksum().kind(), ChecksumKind::Sha256);
+    assert_eq!(content.checksum().value(), hex_sha256(b"# New\n\nUpdated."));
 }
 
 #[test]
@@ -1227,8 +1195,7 @@ fn write_action_scratch_content_uses_reserved_namespace() {
         service.content().upload_resource_content_stream(
             stream_upload_command("note.md", key, Bytes::from_static(b"# Old"))
                 .with_kind("core:document")
-                .with_mime_type("text/markdown")
-                .with_original_filename("note.md"),
+                .with_mime_type("text/markdown"),
         ),
     )
     .unwrap();

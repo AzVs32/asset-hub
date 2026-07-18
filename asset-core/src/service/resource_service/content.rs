@@ -29,7 +29,7 @@ impl<'a> ResourceContentService<'a> {
         let files = self
             .service
             .storage_scanner
-            .scan(&prefix, command.include_sha256, MAX_SCAN_ENTRIES)
+            .scan(&prefix, false, MAX_SCAN_ENTRIES)
             .await?;
         let scanned = files.len() as u64;
         let scanned_keys = files
@@ -46,14 +46,10 @@ impl<'a> ResourceContentService<'a> {
                 .rsplit_once('/')
                 .map(|(directory, name)| (directory.to_owned(), name.to_owned()))
                 .unwrap_or_else(|| (String::new(), key.clone()));
-            let mut import = ImportResourceContent::new(name.clone(), file.key, file.size)
-                .with_directory(ResourceDirectory::from_path(file_directory)?)
-                .with_original_filename(name);
+            let mut import = ImportResourceContent::new(name, file.size)
+                .with_directory(ResourceDirectory::from_path(file_directory)?);
             if let Some(mime_type) = file.mime_type {
                 import = import.with_mime_type(mime_type);
-            }
-            if let Some(sha256) = file.sha256 {
-                import = import.with_checksum(Checksum::sha256(sha256)?);
             }
 
             match self.import_resource_content(import).await {
@@ -75,11 +71,11 @@ impl<'a> ResourceContentService<'a> {
             .list(&ListResources::new(u32::MAX, 0).with_include_deleted(true))
             .await?;
         for resource in stored_resources.items {
-            let Some(content) = resource.content() else {
+            if resource.content().is_none() {
                 continue;
-            };
-            let key = content.key();
-            if prefix.contains(key) && !scanned_keys.contains(key.as_str()) {
+            }
+            let key = resource.storage_key();
+            if prefix.contains(&key) && !scanned_keys.contains(key.as_str()) {
                 errors.push(ScanStorageError {
                     key: key.as_str().to_owned(),
                     error: "resource references a missing blob".to_owned(),
@@ -98,7 +94,7 @@ impl<'a> ResourceContentService<'a> {
 
     /// 导入已存在对象内容并创建资源。
     ///
-    /// 该 usecase 不写入对象存储，只保存指向现有对象的内容引用。若相同 storage key 已有
+    /// 该 usecase 不写入对象存储，只保存指向现有对象的内容引用。若相同资源路径已有
     /// 资源记录，则返回 `Ok(None)`，用于支持扫描任务幂等执行。
     pub(crate) async fn import_resource_content(
         &self,
@@ -110,19 +106,17 @@ impl<'a> ResourceContentService<'a> {
             status,
             directory,
             metadata,
-            storage_key,
             payload: size,
             mime_type,
-            original_filename,
-            checksums,
         } = command;
 
+        let storage_key = StorageKey::from_resource_path(&directory, &name)?;
         reject_reserved_storage_key(&storage_key)?;
 
         if self
             .service
             .query
-            .find_by_content_key(&storage_key)
+            .find_by_path(&directory, &name)
             .await?
             .is_some()
         {
@@ -132,11 +126,12 @@ impl<'a> ResourceContentService<'a> {
         let kind = self.service.resolve_content_kind(
             kind,
             mime_type.as_deref(),
-            original_filename
-                .as_deref()
-                .or_else(|| Some(storage_key.as_str())),
+            Some(storage_key.as_str()),
         )?;
-        let content = build_content(storage_key, size, mime_type, original_filename, checksums)?;
+        let checksum = self
+            .calculate_stored_blob_checksum(&storage_key, size)
+            .await?;
+        let content = build_content(size, mime_type, checksum)?;
         let resource = build_resource(name, directory, Some(kind), status, metadata)
             .with_content(content)
             .build()?;
@@ -144,6 +139,36 @@ impl<'a> ResourceContentService<'a> {
         self.service.repository.save(&resource).await?;
 
         Ok(Some(resource))
+    }
+
+    async fn calculate_stored_blob_checksum(
+        &self,
+        key: &StorageKey,
+        expected_size: u64,
+    ) -> Result<Checksum, CoreError> {
+        let stream = self
+            .service
+            .blob_storage
+            .get_stream(key)
+            .await?
+            .ok_or_else(|| CoreError::conflict(format!("blob `{key}` no longer exists")))?;
+        let (mut stream, state) = stream_with_checksum_tracking(stream);
+        let mut actual_size = 0_u64;
+
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            actual_size = actual_size
+                .checked_add(chunk.len() as u64)
+                .ok_or_else(|| CoreError::configuration("blob size exceeds u64"))?;
+        }
+
+        if actual_size != expected_size {
+            return Err(CoreError::conflict(format!(
+                "blob `{key}` changed while its checksum was being calculated"
+            )));
+        }
+
+        finalize_tracked_checksum(state)
     }
 
     /// 流式上传对象内容并创建资源。
@@ -164,56 +189,37 @@ impl<'a> ResourceContentService<'a> {
             status,
             directory,
             metadata,
-            storage_key,
             payload: data,
             mime_type,
-            original_filename,
-            mut checksums,
         } = command;
 
+        let storage_key = StorageKey::from_resource_path(&directory, &name)?;
         reject_reserved_storage_key(&storage_key)?;
 
         let kind = self.service.resolve_content_kind(
             kind,
             mime_type.as_deref(),
-            original_filename
-                .as_deref()
-                .or_else(|| Some(storage_key.as_str())),
+            Some(storage_key.as_str()),
         )?;
 
         let resource_builder = build_resource(name, directory, Some(kind), status, metadata);
         resource_builder.clone().build()?;
-        build_content(
-            storage_key.clone(),
-            0,
-            mime_type.clone(),
-            original_filename.clone(),
-            checksums.clone(),
-        )?;
+        build_content(0, mime_type.clone(), placeholder_checksum()?)?;
 
-        let (data, sha256_state) = stream_with_checksum_tracking(data);
+        let (data, checksum_state) = stream_with_checksum_tracking(data);
         let write_result = self
             .service
             .blob_storage
             .put_stream_if_absent(&storage_key, data)
             .await?;
-        let actual_sha256 = match finalize_tracked_checksum(sha256_state, &checksums) {
+        let checksum = match finalize_tracked_checksum(checksum_state) {
             Ok(checksum) => checksum,
             Err(error) => {
                 let _ = self.service.blob_storage.delete(&storage_key).await;
                 return Err(error);
             }
         };
-        if sha256_checksum(&checksums).is_none() {
-            checksums.push(actual_sha256);
-        }
-        let content = build_content(
-            storage_key.clone(),
-            write_result.bytes_written(),
-            mime_type,
-            original_filename,
-            checksums,
-        )?;
+        let content = build_content(write_result.bytes_written(), mime_type, checksum)?;
         let resource = resource_builder.with_content(content).build()?;
 
         if let Err(error) = self.service.repository.save(&resource).await {
@@ -255,11 +261,11 @@ impl<'a> ResourceContentService<'a> {
             return Ok(None);
         }
 
-        let Some(content) = resource.content() else {
+        if resource.content().is_none() {
             return Ok(None);
-        };
+        }
 
-        self.service.blob_storage.get(content.key()).await
+        self.service.blob_storage.get(&resource.storage_key()).await
     }
 
     pub(crate) async fn get_resource_content_stream_snapshot(
@@ -278,10 +284,13 @@ impl<'a> ResourceContentService<'a> {
         let stream = if let Some((start, end)) = range {
             self.service
                 .blob_storage
-                .get_range_stream(content.key(), start, end)
+                .get_range_stream(&resource.storage_key(), start, end)
                 .await?
         } else {
-            self.service.blob_storage.get_stream(content.key()).await?
+            self.service
+                .blob_storage
+                .get_stream(&resource.storage_key())
+                .await?
         };
 
         Ok(stream.map(|content_stream| {
@@ -329,10 +338,11 @@ impl<'a> ResourceContentService<'a> {
             let Some(content) = resource.content() else {
                 continue;
             };
-            let key = content.key().as_str();
-            if !prefix.contains(content.key()) {
+            let key = resource.storage_key();
+            if !prefix.contains(&key) {
                 continue;
             }
+            let key = key.as_str();
 
             checked_resources += 1;
             referenced_keys.insert(key.to_owned());
@@ -424,8 +434,6 @@ fn reject_reserved_storage_key(key: &StorageKey) -> Result<(), CoreError> {
 }
 
 fn content_sha256(content: &ResourceContent) -> Option<String> {
-    content
-        .checksums()
-        .find(|checksum| checksum.kind() == ChecksumKind::Sha256)
-        .map(|checksum| checksum.value().to_owned())
+    (content.checksum().kind() == ChecksumKind::Sha256)
+        .then(|| content.checksum().value().to_owned())
 }

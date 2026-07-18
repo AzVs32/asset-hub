@@ -446,25 +446,6 @@ pub(super) fn apply_common_stream_fields(
     Ok(command)
 }
 
-pub(super) fn storage_key_from_upload_parts(
-    storage_key: Option<String>,
-    directory: &ResourceDirectory,
-    filename: &str,
-) -> Result<StorageKey, HttpError> {
-    if let Some(storage_key) = storage_key.filter(|value| !value.trim().is_empty()) {
-        return StorageKey::new(storage_key).map_err(Into::into);
-    }
-
-    let filename = clean_filename(filename)?;
-    let key = if directory.is_root() {
-        filename
-    } else {
-        format!("{}/{filename}", directory.path())
-    };
-
-    StorageKey::new(key).map_err(Into::into)
-}
-
 pub(super) fn parse_status(value: &str) -> Result<ResourceStatus, HttpError> {
     value
         .trim()

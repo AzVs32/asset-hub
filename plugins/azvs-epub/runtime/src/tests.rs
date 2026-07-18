@@ -126,11 +126,19 @@ fn request_json(input: Value) -> String {
         "input": input,
         "resource": {
             "id": "01900000-0000-7000-8000-000000000000",
+            "directory": "books",
             "name": "book.epub",
             "kind": "azvs:epub",
             "status": "active",
             "metadata": {"schema_version": 1, "summary": {"description": null, "tags": []}},
-            "content": {"key": "books/book.epub", "size": 1, "mime_type": "application/epub+zip", "original_filename": "book.epub", "checksum": []},
+            "content": {
+                "size": 1,
+                "mime_type": "application/epub+zip",
+                "checksum": {
+                    "kind": "sha256",
+                    "value": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+                }
+            },
             "created_at": "2026-01-01T00:00:00Z",
             "updated_at": "2026-01-01T00:00:00Z"
         },

@@ -92,6 +92,11 @@ pub trait BlobStorage: Send + Sync {
         end: u64,
     ) -> Result<Option<BlobByteStream>, CoreError>;
 
+    /// 仅当目标键不存在时移动对象。
+    ///
+    /// 成功后源键不再存在；目标键已经存在时返回 `CoreError::Conflict`，不得覆盖。
+    async fn move_if_absent(&self, from: &StorageKey, to: &StorageKey) -> Result<(), CoreError>;
+
     /// 删除指定存储键对应的对象。
     ///
     /// 删除操作必须保持幂等：对象不存在时也应返回 `Ok(())`。这能让上层 usecase

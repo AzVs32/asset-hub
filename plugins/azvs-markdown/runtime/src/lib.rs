@@ -143,12 +143,6 @@ fn save_response(request: &PluginActionRequest, markdown: &str) -> FnResult<Stri
                 .as_ref()
                 .and_then(|content| content.mime_type.clone())
                 .or_else(|| Some("text/markdown".to_string())),
-            original_filename: request
-                .resource
-                .content
-                .as_ref()
-                .and_then(|content| content.original_filename.clone()),
-            checksum: Vec::new(),
         }));
     Ok(serde_json::to_string(&output)?)
 }

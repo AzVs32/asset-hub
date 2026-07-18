@@ -20,6 +20,7 @@ pub struct PluginActionRequest {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PluginResource {
     pub id: String,
+    pub directory: String,
     pub name: String,
     pub kind: String,
     pub status: String,
@@ -50,18 +51,16 @@ pub struct PluginResourceSummaryMetadata {
 
 /// Resource content reference exposed to plugins.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PluginResourceContent {
-    pub key: String,
     pub size: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub original_filename: Option<String>,
-    #[serde(default)]
-    pub checksum: Vec<PluginChecksum>,
+    pub checksum: PluginChecksum,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PluginChecksum {
     pub kind: String,
     pub value: String,

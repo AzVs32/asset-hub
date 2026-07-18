@@ -64,7 +64,7 @@ mod lock {
 /// Current manifest schema version. V2 remains loadable during the V3 compatibility window.
 pub const MANIFEST_VERSION: u32 = 3;
 pub const MIN_MANIFEST_VERSION: u32 = 2;
-pub const PLUGIN_API_VERSION: &str = "asset-hub.plugin-api@0.2";
+pub const PLUGIN_API_VERSION: &str = "asset-hub.plugin-api@0.3";
 /// Editable Manifest V3 draft copied by `asset-plugin gen manifest`.
 pub const MANIFEST_TEMPLATE: &str = include_str!("../../templates/manifest.json");
 pub const MANIFEST_SCHEMA: &str = include_str!("../../schema/plugin-manifest-v3.schema.json");

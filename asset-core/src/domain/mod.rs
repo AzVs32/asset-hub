@@ -1,7 +1,5 @@
-mod access;
+mod identity;
 mod resource;
-mod user;
 
-pub use access::*;
+pub use identity::*;
 pub use resource::*;
-pub use user::*;

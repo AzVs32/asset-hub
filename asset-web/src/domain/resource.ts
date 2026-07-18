@@ -18,11 +18,9 @@ export interface ResourceMetadata {
 }
 
 export interface ResourceContent {
-  key: string;
   size: number;
   mimeType: string | null;
-  originalFilename: string | null;
-  checksums: Array<{ kind: string; value: string }>;
+  checksum: { kind: string; value: string };
 }
 
 export interface ResourceAction {

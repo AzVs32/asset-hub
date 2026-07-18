@@ -167,7 +167,7 @@ impl HostContentResolver {
             .insert(
                 reference.clone(),
                 AvailableContent {
-                    key: content.key().clone(),
+                    key: request.resource().storage_key(),
                     size: content.size(),
                 },
             );
@@ -329,6 +329,7 @@ pub(super) fn build_payload(
         input: request.input().clone(),
         resource: PluginResource {
             id: resource.id().to_string(),
+            directory: resource.directory().path().to_string(),
             name: resource.name().to_string(),
             kind: resource.kind().as_str().to_string(),
             status: resource.status().as_str().to_string(),
@@ -346,17 +347,12 @@ pub(super) fn build_payload(
                 },
             },
             content: content_ref.map(|content| PluginResourceContent {
-                key: content.key().as_str().to_string(),
                 size: content.size(),
                 mime_type: content.mime_type().map(str::to_string),
-                original_filename: content.original_filename().map(str::to_string),
-                checksum: content
-                    .checksums()
-                    .map(|checksum| PluginChecksum {
-                        kind: checksum.kind().as_str().to_string(),
-                        value: checksum.value().to_string(),
-                    })
-                    .collect(),
+                checksum: PluginChecksum {
+                    kind: content.checksum().kind().as_str().to_string(),
+                    value: content.checksum().value().to_string(),
+                },
             }),
             created_at: resource.created_at().to_rfc3339(),
             updated_at: resource.updated_at().to_rfc3339(),

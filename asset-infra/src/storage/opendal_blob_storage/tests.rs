@@ -190,6 +190,43 @@ async fn fs_storage_put_stream_if_absent_rejects_existing_blob() {
     );
 }
 
+#[tokio::test]
+async fn fs_storage_moves_blob_without_overwriting_target() {
+    let (storage, root) = storage_with_root("fs-move-if-absent");
+    let source = StorageKey::new("drafts/readme.md").unwrap();
+    let target = StorageKey::new("docs/readme.md").unwrap();
+    storage
+        .put(&source, Bytes::from_static(b"source"))
+        .await
+        .unwrap();
+
+    storage.move_if_absent(&source, &target).await.unwrap();
+
+    assert_eq!(storage.get(&source).await.unwrap(), None);
+    assert_eq!(
+        storage.get(&target).await.unwrap(),
+        Some(Bytes::from_static(b"source"))
+    );
+    assert!(!root.join("drafts").exists());
+
+    let another = StorageKey::new("incoming/readme.md").unwrap();
+    storage
+        .put(&another, Bytes::from_static(b"another"))
+        .await
+        .unwrap();
+    let error = storage.move_if_absent(&another, &target).await.unwrap_err();
+
+    assert!(matches!(error, CoreError::Conflict { .. }));
+    assert_eq!(
+        storage.get(&another).await.unwrap(),
+        Some(Bytes::from_static(b"another"))
+    );
+    assert_eq!(
+        storage.get(&target).await.unwrap(),
+        Some(Bytes::from_static(b"source"))
+    );
+}
+
 fn storage(name: &str) -> OpenDalBlobStorage {
     storage_with_root(name).0
 }
