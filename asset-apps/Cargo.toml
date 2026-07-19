@@ -17,6 +17,10 @@ path = "asset-http/main.rs"
 name = "asset-plugin"
 path = "asset-plugin/main.rs"
 
+[[bin]]
+name = "asset"
+path = "asset-cli/main.rs"
+
 [dependencies]
 asset-core.workspace = true
 asset-infra.workspace = true
@@ -30,6 +34,7 @@ clap.workspace = true
 futures-util.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["preserve_order"] }
+toml.workspace = true
 sha2.workspace = true
 tokio.workspace = true
 time.workspace = true

@@ -72,8 +72,8 @@ async fn content_handles_read_raw_bounded_ranges_and_close() {
         uuid::Uuid::now_v7()
     ));
     let storage = Arc::new(
-        crate::storage::OpenDalBlobStorage::from_config(&crate::config::BlobConfig {
-            fs_root: root.clone(),
+        crate::storage::OpenDalBlobStorage::from_local_config(&crate::config::LocalBlobConfig {
+            root: root.clone(),
         })
         .unwrap(),
     );

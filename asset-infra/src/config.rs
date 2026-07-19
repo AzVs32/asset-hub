@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 
 /// 默认配置文件名。
 pub const DEFAULT_CONFIG_FILE: &str = "config.toml";
-/// 默认 SQLite 数据库文件路径。
-pub const DEFAULT_SQLITE_PATH: &str = "data/.asset-hub/asset-hub.sqlite";
-/// 默认 Fs 对象存储根目录。
-pub const DEFAULT_FS_ROOT: &str = "data";
+/// 默认本地 Blob 存储根目录。
+pub const DEFAULT_LOCAL_BLOB_ROOT: &str = "data";
+/// SQLite 数据库在本地 Blob 存储根目录中的固定相对路径。
+const SQLITE_DATABASE_RELATIVE_PATH: &str = ".asset-hub/asset-hub.sqlite";
 /// 默认 SQLite 连接池最大连接数。
 pub const DEFAULT_SQLITE_MAX_CONNECTIONS: u32 = 5;
 pub const DEFAULT_PLUGIN_MAX_CONTENT_BYTES: u64 = 64 * 1024 * 1024;
@@ -24,8 +24,10 @@ pub const DEFAULT_PLUGIN_TIMEOUT_SECONDS: u64 = 20;
 /// 基础设施配置。
 ///
 /// 该配置由 `config` crate 加载，并允许配置文件为空。空文件或缺失字段都会使用默认值：
-/// - SQLite 数据库文件：`data/.asset-hub/asset-hub.sqlite`
-/// - Fs 对象存储根目录：`data`
+/// - 数据库后端：`sqlite`
+/// - Blob 存储后端：`local`
+/// - 本地 Blob 存储根目录：`data`
+/// - SQLite 数据库文件：`<blob.local.root>/.asset-hub/asset-hub.sqlite`
 /// - SQLite 最大连接数：`5`
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -88,11 +90,23 @@ impl AssetInfraConfig {
 
     /// 归一化配置。
     ///
-    /// 当前主要处理路径：SQLite 文件路径和 Fs root 可以在配置中写相对路径，归一化后会
-    /// 基于当前工作目录转换成绝对路径。
+    /// 当前主要处理路径：本地 Blob 根目录可以在配置中写相对路径，归一化后会基于当前
+    /// 工作目录转换成绝对路径。SQLite 文件始终位于该根目录下的固定内部路径。
     pub fn normalized(mut self) -> Result<Self, CoreError> {
-        self.database.sqlite_path = normalize_path(&self.database.sqlite_path)?;
-        self.blob.fs_root = normalize_path(&self.blob.fs_root)?;
+        match self.database.backend {
+            DatabaseBackend::Sqlite => {
+                if self.database.sqlite.max_connections == 0 {
+                    return Err(CoreError::configuration(
+                        "database.sqlite.max_connections must be greater than 0",
+                    ));
+                }
+            }
+        }
+        match self.blob.backend {
+            BlobBackend::Local => {
+                self.blob.local.root = normalize_path(&self.blob.local.root)?;
+            }
+        }
         self.kind.plugin_manifests = self
             .kind
             .plugin_manifests
@@ -101,6 +115,13 @@ impl AssetInfraConfig {
             .collect::<Result<Vec<_>, _>>()?;
         self.plugin.normalize_and_validate()?;
         Ok(self)
+    }
+
+    /// 返回由本地 Blob 存储根目录派生的固定 SQLite 数据库文件路径。
+    pub fn sqlite_path(&self) -> PathBuf {
+        match self.blob.backend {
+            BlobBackend::Local => self.blob.local.root.join(SQLITE_DATABASE_RELATIVE_PATH),
+        }
     }
 }
 
@@ -185,20 +206,42 @@ pub struct PluginPermissionGrants {
 
 /// 数据存储配置。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct DatabaseConfig {
-    /// SQLite 数据库文件路径。
-    ///
-    /// 可以是相对路径或绝对路径。相对路径会在初始化时按当前工作目录转换为绝对路径。
-    pub sqlite_path: PathBuf,
-    /// SQLite 连接池最大连接数。
-    pub max_connections: u32,
+    /// 当前启用的数据库后端。
+    pub backend: DatabaseBackend,
+    /// SQLite 后端专属配置。
+    pub sqlite: SqliteDatabaseConfig,
 }
 
 impl Default for DatabaseConfig {
     fn default() -> Self {
         Self {
-            sqlite_path: PathBuf::from(DEFAULT_SQLITE_PATH),
+            backend: DatabaseBackend::default(),
+            sqlite: SqliteDatabaseConfig::default(),
+        }
+    }
+}
+
+/// 可用的数据库后端。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DatabaseBackend {
+    #[default]
+    Sqlite,
+}
+
+/// SQLite 后端专属配置。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SqliteDatabaseConfig {
+    /// SQLite 连接池最大连接数。
+    pub max_connections: u32,
+}
+
+impl Default for SqliteDatabaseConfig {
+    fn default() -> Self {
+        Self {
             max_connections: DEFAULT_SQLITE_MAX_CONNECTIONS,
         }
     }
@@ -206,18 +249,43 @@ impl Default for DatabaseConfig {
 
 /// 对象存储配置。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct BlobConfig {
-    /// OpenDAL Fs backend 根目录。
-    ///
-    /// 可以是相对路径或绝对路径。相对路径会在初始化时按当前工作目录转换为绝对路径。
-    pub fs_root: PathBuf,
+    /// 当前启用的 Blob 存储后端。
+    pub backend: BlobBackend,
+    /// 本地文件系统后端专属配置。
+    pub local: LocalBlobConfig,
 }
 
 impl Default for BlobConfig {
     fn default() -> Self {
         Self {
-            fs_root: PathBuf::from(DEFAULT_FS_ROOT),
+            backend: BlobBackend::default(),
+            local: LocalBlobConfig::default(),
+        }
+    }
+}
+
+/// 可用的 Blob 存储后端。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BlobBackend {
+    #[default]
+    Local,
+}
+
+/// 本地文件系统 Blob 后端专属配置。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct LocalBlobConfig {
+    /// 本地存储根目录。相对路径会在初始化时按当前工作目录转换为绝对路径。
+    pub root: PathBuf,
+}
+
+impl Default for LocalBlobConfig {
+    fn default() -> Self {
+        Self {
+            root: PathBuf::from(DEFAULT_LOCAL_BLOB_ROOT),
         }
     }
 }
@@ -295,15 +363,17 @@ fn normalize_permission_grant(path: &Path) -> Result<PathBuf, CoreError> {
 
 fn build_config() -> ::config::ConfigBuilder<::config::builder::DefaultState> {
     Config::builder()
-        .set_default("database.sqlite_path", DEFAULT_SQLITE_PATH)
-        .expect("default sqlite path should be a valid config value")
+        .set_default("database.backend", "sqlite")
+        .expect("default database backend should be a valid config value")
         .set_default(
-            "database.max_connections",
+            "database.sqlite.max_connections",
             i64::from(DEFAULT_SQLITE_MAX_CONNECTIONS),
         )
         .expect("default sqlite max connections should be a valid config value")
-        .set_default("blob.fs_root", DEFAULT_FS_ROOT)
-        .expect("default blob root should be a valid config value")
+        .set_default("blob.backend", "local")
+        .expect("default blob backend should be a valid config value")
+        .set_default("blob.local.root", DEFAULT_LOCAL_BLOB_ROOT)
+        .expect("default local blob root should be a valid config value")
 }
 
 fn config_error(error: ::config::ConfigError) -> CoreError {

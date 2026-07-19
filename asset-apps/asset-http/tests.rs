@@ -3,8 +3,8 @@ use crate::settings::{CorsPolicy, RouterOptions, SessionOptions};
 use asset_apps::AssetRuntime;
 use asset_core::domain::{AccessContext, UserId};
 use asset_infra::config::{
-    AssetInfraConfig, BlobConfig, DatabaseConfig, KindRegistryConfig, PluginHostConfig,
-    ResourceKindConfig,
+    AssetInfraConfig, BlobConfig, DatabaseConfig, KindRegistryConfig, LocalBlobConfig,
+    PluginHostConfig, ResourceKindConfig, SqliteDatabaseConfig,
 };
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
@@ -1397,11 +1397,14 @@ async fn test_app_with_kind_and_plugin_config(
     let root = unique_temp_root(name);
     let config = AssetInfraConfig {
         database: DatabaseConfig {
-            sqlite_path: root.join("asset-hub.sqlite"),
-            max_connections: 1,
+            sqlite: SqliteDatabaseConfig { max_connections: 1 },
+            ..DatabaseConfig::default()
         },
         blob: BlobConfig {
-            fs_root: root.join("blob"),
+            local: LocalBlobConfig {
+                root: root.join("blob"),
+            },
+            ..BlobConfig::default()
         },
         kind,
         plugin,
@@ -1426,11 +1429,14 @@ async fn test_app_with_plugin_web_assets(
 ) -> TestApp {
     let config = AssetInfraConfig {
         database: DatabaseConfig {
-            sqlite_path: root.join("asset-hub.sqlite"),
-            max_connections: 1,
+            sqlite: SqliteDatabaseConfig { max_connections: 1 },
+            ..DatabaseConfig::default()
         },
         blob: BlobConfig {
-            fs_root: root.join("blob"),
+            local: LocalBlobConfig {
+                root: root.join("blob"),
+            },
+            ..BlobConfig::default()
         },
         kind: KindRegistryConfig::default(),
         plugin: Default::default(),
@@ -1491,11 +1497,14 @@ async fn member_access_is_limited_to_the_workspace_subtree() {
     let root = unique_temp_root("authenticated-workspace");
     let config = AssetInfraConfig {
         database: DatabaseConfig {
-            sqlite_path: root.join("asset-hub.sqlite"),
-            max_connections: 2,
+            sqlite: SqliteDatabaseConfig { max_connections: 2 },
+            ..DatabaseConfig::default()
         },
         blob: BlobConfig {
-            fs_root: root.join("blob"),
+            local: LocalBlobConfig {
+                root: root.join("blob"),
+            },
+            ..BlobConfig::default()
         },
         kind: KindRegistryConfig::default(),
         plugin: Default::default(),
@@ -1515,12 +1524,13 @@ async fn member_access_is_limited_to_the_workspace_subtree() {
         )]),
         authorization.clone(),
     );
+    let sqlite_path = runtime.config().sqlite_path();
     let router = router::with_authentication(
         base,
         runtime.user_service(),
         authorization,
         runtime.security_audit_repository(),
-        &runtime.config().database.sqlite_path,
+        &sqlite_path,
         Some(("admin", "administrator-password")),
         &SessionOptions {
             cookie_secure: false,

@@ -1,10 +1,16 @@
 # Container paths. Configuration lives under /conf; runtime state and file content live under /data.
+# SQLite is fixed at <blob.local.root>/.asset-hub/asset-hub.sqlite.
 [database]
-sqlite_path = "/data/.asset-hub/asset-hub.sqlite"
+backend = "sqlite"
+
+[database.sqlite]
 max_connections = 5
 
 [blob]
-fs_root = "/data"
+backend = "local"
+
+[blob.local]
+root = "/data"
 
 [kind]
 plugin_manifests = [

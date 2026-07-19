@@ -332,12 +332,9 @@ async fn conditional_remove_rejects_a_stale_resource_snapshot() {
 }
 
 async fn repository(name: &str) -> SqliteResourceRepository {
-    SqliteResourceRepository::connect(&DatabaseConfig {
-        sqlite_path: unique_temp_path(name).join("asset-hub.sqlite"),
-        max_connections: 1,
-    })
-    .await
-    .unwrap()
+    SqliteResourceRepository::connect(&unique_temp_path(name).join("asset-hub.sqlite"), 1)
+        .await
+        .unwrap()
 }
 
 fn unique_temp_path(name: &str) -> PathBuf {

@@ -4,15 +4,16 @@ use super::*;
 fn empty_config_uses_defaults() {
     let config = AssetInfraConfig::from_config_str("").unwrap();
 
+    assert_eq!(config.database.backend, DatabaseBackend::Sqlite);
     assert_eq!(
-        config.database.sqlite_path,
-        PathBuf::from(DEFAULT_SQLITE_PATH)
-    );
-    assert_eq!(
-        config.database.max_connections,
+        config.database.sqlite.max_connections,
         DEFAULT_SQLITE_MAX_CONNECTIONS
     );
-    assert_eq!(config.blob.fs_root, PathBuf::from(DEFAULT_FS_ROOT));
+    assert_eq!(config.blob.backend, BlobBackend::Local);
+    assert_eq!(
+        config.blob.local.root,
+        PathBuf::from(DEFAULT_LOCAL_BLOB_ROOT)
+    );
     assert!(config.kind.plugin_manifests.is_empty());
 }
 
@@ -20,17 +21,17 @@ fn empty_config_uses_defaults() {
 fn partial_config_keeps_missing_defaults() {
     let config = AssetInfraConfig::from_config_str(
         r#"
-        [blob]
-        fs_root = "tmp/blob"
+        [blob.local]
+        root = "tmp/blob"
         "#,
     )
     .unwrap();
 
+    assert_eq!(config.blob.local.root, PathBuf::from("tmp/blob"));
     assert_eq!(
-        config.database.sqlite_path,
-        PathBuf::from(DEFAULT_SQLITE_PATH)
+        config.sqlite_path(),
+        PathBuf::from("tmp/blob/.asset-hub/asset-hub.sqlite")
     );
-    assert_eq!(config.blob.fs_root, PathBuf::from("tmp/blob"));
 }
 
 #[test]
@@ -66,19 +67,56 @@ fn optional_missing_config_file_uses_defaults() {
     .unwrap();
 
     assert_eq!(
-        config.database.sqlite_path,
-        PathBuf::from(DEFAULT_SQLITE_PATH)
+        config.blob.local.root,
+        PathBuf::from(DEFAULT_LOCAL_BLOB_ROOT)
     );
-    assert_eq!(config.blob.fs_root, PathBuf::from(DEFAULT_FS_ROOT));
 }
 
 #[test]
 fn normalized_config_turns_relative_paths_into_absolute_paths() {
     let config = AssetInfraConfig::default().normalized().unwrap();
 
-    assert!(config.database.sqlite_path.is_absolute());
-    assert!(config.blob.fs_root.is_absolute());
+    assert!(config.blob.local.root.is_absolute());
+    assert!(config.sqlite_path().is_absolute());
+    assert_eq!(
+        config.sqlite_path(),
+        config.blob.local.root.join(SQLITE_DATABASE_RELATIVE_PATH)
+    );
     assert!(config.kind.plugin_manifests.is_empty());
+}
+
+#[test]
+fn config_rejects_manually_configured_sqlite_path() {
+    let error = AssetInfraConfig::from_config_str(
+        r#"
+        [database]
+        sqlite_path = "custom.sqlite"
+        "#,
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("sqlite_path"));
+}
+
+#[test]
+fn config_rejects_unsupported_backends() {
+    let database_error = AssetInfraConfig::from_config_str(
+        r#"
+        [database]
+        backend = "postgresql"
+        "#,
+    )
+    .unwrap_err();
+    assert!(database_error.to_string().contains("postgresql"));
+
+    let blob_error = AssetInfraConfig::from_config_str(
+        r#"
+        [blob]
+        backend = "s3"
+        "#,
+    )
+    .unwrap_err();
+    assert!(blob_error.to_string().contains("s3"));
 }
 
 #[test]
@@ -94,6 +132,19 @@ fn normalized_config_turns_plugin_manifests_into_absolute_paths() {
     .unwrap();
 
     assert!(config.kind.plugin_manifests[0].is_absolute());
+}
+
+#[test]
+fn normalized_config_rejects_zero_database_connections() {
+    let config = AssetInfraConfig {
+        database: DatabaseConfig {
+            sqlite: SqliteDatabaseConfig { max_connections: 0 },
+            ..DatabaseConfig::default()
+        },
+        ..AssetInfraConfig::default()
+    };
+
+    assert!(config.normalized().is_err());
 }
 
 #[test]

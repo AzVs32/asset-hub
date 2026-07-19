@@ -19,7 +19,7 @@ use asset_core::{
     port::ResourceRepository, port::SecurityAuditRepository, port::StorageScanner,
 };
 use asset_plugin_api::PluginExecutionPolicy;
-use config::AssetInfraConfig;
+use config::{AssetInfraConfig, BlobBackend, DatabaseBackend};
 use kind::{DefaultResourceActionRegistry, DefaultResourceKindRegistry, registries_from_catalog};
 use password::Argon2PasswordHasher;
 use plugin::ExtismResourceActionExecutor;
@@ -33,9 +33,9 @@ use storage::{FileSystemScanner, OpenDalBlobStorage};
 
 pub type PluginWebAssets = HashMap<String, HashMap<PathBuf, Arc<[u8]>>>;
 
-/// 基于默认本地实现组装好的基础设施对象。
+/// 根据配置的后端选型组装基础设施对象。
 ///
-/// 当前组合是 SQLite 作为资源数据存储，OpenDAL Fs 作为对象内容存储。
+/// 当前支持 SQLite 数据库和本地 Blob 存储。
 pub struct AssetInfrastructure {
     /// 实际生效的基础设施配置。
     config: AssetInfraConfig,
@@ -57,15 +57,29 @@ pub struct AssetInfrastructure {
 }
 
 impl AssetInfrastructure {
-    /// 使用给定配置创建 SQLite + Fs 基础设施组合。
+    /// 使用给定配置创建基础设施组合。
     ///
     /// 调用方可以传入 `AssetInfraConfig::default()` 使用默认本地配置。
     pub async fn new(config: AssetInfraConfig) -> Result<Self, CoreError> {
         let config = config.normalized()?;
-        let blob_storage = Arc::new(OpenDalBlobStorage::from_config(&config.blob)?);
-        let storage_scanner = Arc::new(FileSystemScanner::new(config.blob.fs_root.clone()));
-        let resource_repository =
-            Arc::new(SqliteResourceRepository::connect(&config.database).await?);
+        let (blob_storage, storage_scanner) = match config.blob.backend {
+            BlobBackend::Local => (
+                Arc::new(OpenDalBlobStorage::from_local_config(&config.blob.local)?),
+                Arc::new(FileSystemScanner::new(config.blob.local.root.clone())),
+            ),
+        };
+        let resource_repository = match config.database.backend {
+            DatabaseBackend::Sqlite => {
+                let sqlite_path = config.sqlite_path();
+                Arc::new(
+                    SqliteResourceRepository::connect(
+                        &sqlite_path,
+                        config.database.sqlite.max_connections,
+                    )
+                    .await?,
+                )
+            }
+        };
         let identity_repository = Arc::new(SqliteIdentityRepository::new(
             resource_repository.pool().clone(),
         ));

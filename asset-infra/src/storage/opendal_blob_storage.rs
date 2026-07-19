@@ -1,4 +1,4 @@
-use crate::config::BlobConfig;
+use crate::config::LocalBlobConfig;
 use asset_core::CoreError;
 use asset_core::domain::{ResourceDirectory, StorageKey};
 use asset_core::port::{
@@ -17,7 +17,7 @@ use std::path::PathBuf;
 #[derive(Clone)]
 pub struct OpenDalBlobStorage {
     operator: Operator,
-    fs_root: Option<PathBuf>,
+    local_root: Option<PathBuf>,
 }
 
 impl OpenDalBlobStorage {
@@ -25,13 +25,13 @@ impl OpenDalBlobStorage {
     pub fn new(operator: Operator) -> Self {
         Self {
             operator,
-            fs_root: None,
+            local_root: None,
         }
     }
 
-    /// 根据 Fs 配置创建对象存储适配器。
-    pub fn from_config(config: &BlobConfig) -> Result<Self, CoreError> {
-        let root = config.fs_root.to_string_lossy();
+    /// 根据本地 Blob 后端配置创建对象存储适配器。
+    pub fn from_local_config(config: &LocalBlobConfig) -> Result<Self, CoreError> {
+        let root = config.root.to_string_lossy();
         let builder = Fs::default().root(root.as_ref());
         let operator = Operator::new(builder)
             .map_err(|error| CoreError::storage("fs.build", error))?
@@ -39,7 +39,7 @@ impl OpenDalBlobStorage {
 
         Ok(Self {
             operator,
-            fs_root: Some(config.fs_root.clone()),
+            local_root: Some(config.root.clone()),
         })
     }
 
@@ -139,7 +139,7 @@ impl BlobStorage for OpenDalBlobStorage {
     }
 
     async fn move_if_absent(&self, from: &StorageKey, to: &StorageKey) -> Result<(), CoreError> {
-        if let Some(root) = &self.fs_root {
+        if let Some(root) = &self.local_root {
             let source = root.join(from.as_str());
             let target = root.join(to.as_str());
             if let Some(parent) = target.parent() {
@@ -190,7 +190,7 @@ impl BlobStorage for OpenDalBlobStorage {
             .delete(key.as_str())
             .await
             .map_err(|error| CoreError::storage("delete", error))?;
-        if let Some(root) = &self.fs_root
+        if let Some(root) = &self.local_root
             && is_internal_key(key)
         {
             cleanup_internal_fs_parents(root, &root.join(key.as_str()))?;
@@ -211,7 +211,7 @@ impl DirectoryStorage for OpenDalBlobStorage {
             path.push_str(name);
             let current = ResourceDirectory::from_path(path.clone())?;
 
-            if let Some(root) = &self.fs_root {
+            if let Some(root) = &self.local_root {
                 let physical = root.join(current.path());
                 match std::fs::metadata(&physical) {
                     Ok(metadata) if metadata.is_dir() => continue,

@@ -1,4 +1,4 @@
-use crate::{config::DatabaseConfig, migration};
+use crate::migration;
 use asset_core::CoreError;
 use asset_core::domain::{
     Resource, ResourceContent, ResourceDirectory, ResourceId, ResourceKind, ResourceSnapshot,
@@ -8,6 +8,7 @@ use asset_core::port::{ListResources, ResourcePage, ResourceQuery, ResourceRepos
 use chrono::{DateTime, Utc};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow};
 use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection, SqlitePool, Transaction};
+use std::path::Path;
 
 const RESOURCE_SELECT: &str = r#"
     SELECT
@@ -48,26 +49,26 @@ pub struct SqliteResourceRepository {
 
 impl SqliteResourceRepository {
     /// 连接 SQLite，并执行尚未应用的数据库迁移。
-    pub async fn connect(config: &DatabaseConfig) -> Result<Self, CoreError> {
-        if config.max_connections == 0 {
+    pub async fn connect(sqlite_path: &Path, max_connections: u32) -> Result<Self, CoreError> {
+        if max_connections == 0 {
             return Err(CoreError::configuration(
-                "database.max_connections must be greater than 0",
+                "database.sqlite.max_connections must be greater than 0",
             ));
         }
 
-        if let Some(parent) = config.sqlite_path.parent() {
+        if let Some(parent) = sqlite_path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|error| CoreError::repository("sqlite.create_dir", error))?;
         }
 
         let options = SqliteConnectOptions::new()
-            .filename(&config.sqlite_path)
+            .filename(sqlite_path)
             .create_if_missing(true)
             .foreign_keys(true)
             .journal_mode(SqliteJournalMode::Wal);
 
         let pool = SqlitePoolOptions::new()
-            .max_connections(config.max_connections)
+            .max_connections(max_connections)
             .connect_with(options)
             .await
             .map_err(|error| CoreError::repository("sqlite.connect", error))?;

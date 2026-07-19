@@ -107,14 +107,21 @@ asset-hub-data  -> /data  SQLite、系统内部数据和上传文件内容
 
 ```toml
 [database]
-sqlite_path = "/data/.asset-hub/asset-hub.sqlite"
+backend = "sqlite"
+
+[database.sqlite]
 max_connections = 5
 
 [blob]
-fs_root = "/data"
+backend = "local"
+
+[blob.local]
+root = "/data"
 ```
 
-`/data` 是用户文件根目录；`.asset-hub` 是系统保留目录，保存 SQLite 和 action 临时区，
+SQLite 路径不能单独配置，使用本地 Blob 后端时始终为
+`<blob.local.root>/.asset-hub/asset-hub.sqlite`。`/data` 是用户文件根目录；`.asset-hub`
+是系统保留目录，保存 SQLite 和 action 临时区，
 扫描导入会跳过它。不要把 `/data/.asset-hub` 与 `/data` 里的用户文件拆开备份，两者共同
 组成一次完整的 Asset Hub 状态。
 

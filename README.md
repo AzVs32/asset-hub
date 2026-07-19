@@ -4,7 +4,8 @@ Asset Hub is a local-first asset management service. The current workspace conta
 
 - `asset-core`: workspace-internal resource domain model, adapter ports, and secured resource use cases.
 - `asset-infra`: SQLite repository, OpenDAL Fs blob storage, built-in kinds, plugin manifest loading, and Extism action execution.
-- `asset-apps`: reusable runtime assembly plus the `asset-http` API and `asset-plugin` packaging CLI.
+- `asset-apps`: reusable runtime assembly plus the `asset-http` API, `asset` administration CLI,
+  and the existing `asset-plugin` packaging CLI.
 - `asset-plugin-api`: shared manifest, action, request, and view contracts for plugins.
 - `asset-web`: React host with domain/application/adapter boundaries and a slot-based plugin kernel.
 - `plugins`: sample Markdown and EPUB plugins.
@@ -54,6 +55,13 @@ Use a config file:
 
 ```bash
 cargo run -p asset-apps --bin asset-http -- --config config.example.toml
+```
+
+The administration CLI currently exposes empty `config`, `system`, `user`, and `plugin` command
+groups as extension points:
+
+```bash
+cargo run -p asset-apps --bin asset -- --help
 ```
 
 ## Users And Directory Access

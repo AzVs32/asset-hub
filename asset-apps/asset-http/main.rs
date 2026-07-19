@@ -46,12 +46,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bootstrap_admin = bootstrap_username
         .as_deref()
         .zip(bootstrap_password.as_deref());
+    let sqlite_path = runtime.config().sqlite_path();
     let app = router::with_authentication(
         app,
         runtime.user_service(),
         authorization,
         runtime.security_audit_repository(),
-        &runtime.config().database.sqlite_path,
+        &sqlite_path,
         bootstrap_admin,
         settings.session_options(),
     )
