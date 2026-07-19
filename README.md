@@ -33,7 +33,7 @@ their compatibility and release rules are documented in
 
 ## Requirements
 
-- Rust 1.94.1 (pinned by `rust-toolchain.toml`).
+- Rust 1.97.1 (pinned by `rust-toolchain.toml`).
 - Node.js 22.22.2 (pinned by `.node-version`; compatible with fnm) and npm 10.
 
 ## Run The API

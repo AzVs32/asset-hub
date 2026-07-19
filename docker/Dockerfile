@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM rust:1.94-bookworm AS api-builder
+FROM rust:1.97.1-trixie AS api-builder
 WORKDIR /src
 RUN apt-get update \
     && apt-get install -y --no-install-recommends clang cmake pkg-config \
@@ -10,14 +10,14 @@ RUN rustup target add wasm32-unknown-unknown \
     && ./scripts/verify-plugin-artifacts.sh
 RUN cargo build --locked --release -p asset-apps --bins
 
-FROM node:22-bookworm-slim AS web-builder
+FROM node:22-trixie-slim AS web-builder
 WORKDIR /src/asset-web
 COPY asset-web/package.json asset-web/package-lock.json ./
 RUN npm ci
 COPY asset-web/ ./
 RUN npm run build
 
-FROM node:22-bookworm-slim AS markdown-web-builder
+FROM node:22-trixie-slim AS markdown-web-builder
 WORKDIR /src/plugins/azvs-markdown/web
 COPY plugins/azvs-markdown/web/package.json plugins/azvs-markdown/web/package-lock.json ./
 RUN npm ci
@@ -28,7 +28,7 @@ RUN npm run build
 WORKDIR /src
 RUN asset-plugin verify-web plugins/azvs-markdown/manifest.json
 
-FROM node:22-bookworm-slim AS epub-web-builder
+FROM node:22-trixie-slim AS epub-web-builder
 WORKDIR /src/plugins/azvs-epub/web
 COPY plugins/azvs-epub/web/package.json plugins/azvs-epub/web/package-lock.json ./
 RUN npm ci
@@ -39,7 +39,7 @@ RUN npm run build
 WORKDIR /src
 RUN asset-plugin verify-web plugins/azvs-epub/manifest.json
 
-FROM debian:bookworm-slim AS api
+FROM debian:trixie-slim AS api
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
