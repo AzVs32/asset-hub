@@ -115,7 +115,7 @@ pub struct ResourcePage {
 
 #[async_trait::async_trait]
 pub trait ResourceQuery: Send + Sync {
-    /// 按逻辑目录和名称查找未软删除资源，用于导入和扫描任务的幂等去重。
+    /// 按逻辑目录和名称查找未软删除资源，用于导入和自动协调的幂等去重。
     ///
     /// 软删除资源的 Blob 已移入内部回收站，不再占用原逻辑路径，因此不应参与查找。
     async fn find_by_path(

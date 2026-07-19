@@ -261,8 +261,11 @@ fn storage(name: &str) -> OpenDalBlobStorage {
 fn storage_with_root(name: &str) -> (OpenDalBlobStorage, PathBuf) {
     let root = unique_temp_path(name);
     std::fs::create_dir_all(&root).unwrap();
-    let storage =
-        OpenDalBlobStorage::from_local_config(&LocalBlobConfig { root: root.clone() }).unwrap();
+    let storage = OpenDalBlobStorage::from_local_config(&LocalBlobConfig {
+        root: root.clone(),
+        ..LocalBlobConfig::default()
+    })
+    .unwrap();
 
     (storage, root)
 }

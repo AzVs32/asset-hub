@@ -1,6 +1,8 @@
 use crate::domain::{ResourceDirectory, StorageKey};
 use crate::{CoreError, ResourceError};
+use futures_core::Stream;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::pin::Pin;
 
 /// 对象存储中的扫描前缀。空字符串表示存储根命名空间。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
@@ -77,20 +79,27 @@ pub struct ScannedBlob {
     pub mime_type: Option<String>,
 }
 
+/// 存储扫描过程中逐项产生的条目。
+///
+/// 存储适配器负责把本地目录遍历、S3 分页等后端细节转换为统一的条目流，核心层
+/// 不感知分页游标或具体文件系统 API。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScannedStorageEntry {
+    Directory(ResourceDirectory),
+    Blob(ScannedBlob),
+}
+
+/// 存储扫描流。错误作为流条目返回，以便消费方只在完整扫描成功后执行删除协调。
+pub type StorageScanStream =
+    Pin<Box<dyn Stream<Item = Result<ScannedStorageEntry, CoreError>> + Send + 'static>>;
+
 #[async_trait::async_trait]
 pub trait StorageScanner: Send + Sync {
-    /// 扫描用户可见目录；内部 `.asset-hub` 命名空间必须排除。
-    async fn scan_directories(
-        &self,
-        prefix: &StoragePrefix,
-        max_entries: usize,
-    ) -> Result<Vec<ResourceDirectory>, CoreError>;
+    /// 流式扫描用户可见的目录和普通文件；内部 `.asset-hub` 命名空间必须排除。
+    fn scan(&self, prefix: &StoragePrefix) -> StorageScanStream;
 
-    async fn scan(
-        &self,
-        prefix: &StoragePrefix,
-        max_entries: usize,
-    ) -> Result<Vec<ScannedBlob>, CoreError>;
+    /// 读取单个对象的当前状态；路径不存在或不是普通文件时返回 `None`。
+    async fn inspect(&self, key: &StorageKey) -> Result<Option<ScannedBlob>, CoreError>;
 }
 
 #[cfg(test)]

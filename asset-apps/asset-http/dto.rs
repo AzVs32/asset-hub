@@ -1,5 +1,5 @@
 use asset_core::domain::{Checksum, Resource, ResourceContent, ResourceDirectory};
-use asset_core::port::{ResourceActionOutput, ResourceKindDefinition, StoragePrefix};
+use asset_core::port::{ResourceActionOutput, ResourceKindDefinition};
 use asset_core::service::{ReadableResource, ResourceActions};
 use asset_plugin_api::{
     PluginDiagnostic, PluginDiagnosticSeverity, ResourceActionAccess,
@@ -148,20 +148,6 @@ pub(crate) struct UploadResourceContentStreamQuery {
     pub(crate) description: Option<String>,
     /// 可选 JSON 字符串形式的资源标签数组。
     pub(crate) tags_json: Option<String>,
-}
-
-/// 扫描对象存储前缀请求。
-#[derive(Debug, Default, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-#[schema(example = json!({
-    "prefix": "uploads"
-}))]
-pub(crate) struct ScanStorageRequest {
-    /// 可选对象键前缀；未提供时扫描整个对象存储根命名空间。
-    #[serde(default)]
-    #[schema(value_type = String)]
-    #[serde(alias = "directory")]
-    pub(crate) prefix: StoragePrefix,
 }
 
 /// 统一 HTTP 错误响应。
@@ -471,33 +457,6 @@ pub(crate) struct DirectoryListingResponse {
     pub(crate) folders: Vec<ResourceDirectoryResponse>,
     /// 当前目录下的资源分页。
     pub(crate) resources: ResourcePageResponse,
-}
-
-/// 扫描本地对象存储目录响应。
-#[derive(Debug, Serialize, ToSchema)]
-pub(crate) struct ScanStorageResponse {
-    /// 本次扫描覆盖的对象存储前缀。字段名为兼容旧客户端而保留。
-    #[schema(value_type = String)]
-    pub(crate) scanned_directory: StoragePrefix,
-    /// 扫描到的普通文件数量。
-    pub(crate) scanned: u64,
-    /// 新导入的资源数量。
-    pub(crate) imported: u64,
-    /// 因已存在或导入失败而跳过的数量。
-    pub(crate) skipped: u64,
-    /// 单文件失败信息。
-    pub(crate) errors: Vec<ScanStorageErrorResponse>,
-    /// 本次新导入的资源。
-    pub(crate) resources: Vec<ResourceResponse>,
-}
-
-/// 单文件扫描失败响应。
-#[derive(Debug, Serialize, ToSchema)]
-pub(crate) struct ScanStorageErrorResponse {
-    /// 内容存储键。
-    pub(crate) key: String,
-    /// 失败原因。
-    pub(crate) error: String,
 }
 
 /// 在线阅读响应。

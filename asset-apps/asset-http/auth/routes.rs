@@ -266,7 +266,6 @@ fn security_event_type(method: &Method, path: &str) -> Option<SecurityAuditEvent
         (&Method::PATCH, path) if path.starts_with("/auth/users/") => {
             Some(SecurityAuditEventType::AuthUserStatus)
         }
-        (&Method::POST, "/scan") => Some(SecurityAuditEventType::MaintenanceStorageScan),
         (&Method::DELETE, path) if path.ends_with("/purge") => {
             Some(SecurityAuditEventType::ResourcePurge)
         }

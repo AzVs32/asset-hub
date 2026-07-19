@@ -29,7 +29,7 @@ use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use storage::{FileSystemScanner, OpenDalBlobStorage};
+use storage::{FileSystemScanner, LocalStorageSync, OpenDalBlobStorage};
 
 pub type PluginWebAssets = HashMap<String, HashMap<PathBuf, Arc<[u8]>>>;
 
@@ -164,6 +164,24 @@ impl AssetInfrastructure {
 
     pub fn storage_scanner(&self) -> Arc<dyn StorageScanner> {
         self.storage_scanner.clone()
+    }
+
+    /// 启动当前 Blob 后端对应的自动存储同步任务。
+    pub async fn start_storage_sync(
+        &self,
+        service: ResourceService,
+    ) -> Result<Option<LocalStorageSync>, CoreError> {
+        match self.config.blob.backend {
+            BlobBackend::Local if self.config.blob.local.sync.enabled => LocalStorageSync::start(
+                self.config.blob.local.root.clone(),
+                &self.config.blob.local.sync,
+                self.storage_scanner.clone(),
+                service,
+            )
+            .await
+            .map(Some),
+            BlobBackend::Local => Ok(None),
+        }
     }
 
     /// 返回资源类型注册表端口对象。

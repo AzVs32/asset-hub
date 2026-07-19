@@ -1,6 +1,6 @@
 import createClient from "openapi-fetch";
 import { AuthenticationRequiredError } from "@/application/errors";
-import type { AssetGateway, ScanResult } from "@/application/ports/asset-gateway";
+import type { AssetGateway } from "@/application/ports/asset-gateway";
 import type { CurrentUser, ManagedUser, UserStatus } from "@/domain/auth";
 import type { JsonObject, PluginActionOutput, PluginDiagnostic } from "@/domain/plugin";
 import type {
@@ -143,14 +143,6 @@ export class OpenApiAssetGateway implements AssetGateway {
       body: { parent_path: parentPath, name },
     });
     return mapDirectory(expectData(result));
-  }
-
-  async scan(directory: string): Promise<ScanResult> {
-    const result = await this.#client.POST("/scan", {
-      body: { prefix: directory },
-    });
-    const data = expectData(result);
-    return { scanned: data.scanned, imported: data.imported, skipped: data.skipped };
   }
 
   async executeAction(

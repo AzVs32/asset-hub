@@ -12,6 +12,11 @@ backend = "local"
 [blob.local]
 root = "/data"
 
+[blob.local.sync]
+enabled = true
+debounce_milliseconds = 1000
+reconcile_interval_seconds = 1800
+
 [kind]
 plugin_manifests = [
   "/app/plugins/azvs-markdown/manifest.json",

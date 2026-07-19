@@ -315,23 +315,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/scan": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** 扫描本地对象存储目录并补齐资源数据库。 */
-        post: operations["scan_storage"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -626,47 +609,6 @@ export interface components {
             tags: string[];
             /** @description 资源最后更新时间，RFC3339 格式。 */
             updated_at: string;
-        };
-        /** @description 单文件扫描失败响应。 */
-        ScanStorageErrorResponse: {
-            /** @description 失败原因。 */
-            error: string;
-            /** @description 内容存储键。 */
-            key: string;
-        };
-        /**
-         * @description 扫描对象存储前缀请求。
-         * @example {
-         *       "prefix": "uploads"
-         *     }
-         */
-        ScanStorageRequest: {
-            /** @description 可选对象键前缀；未提供时扫描整个对象存储根命名空间。 */
-            prefix?: string;
-        };
-        /** @description 扫描本地对象存储目录响应。 */
-        ScanStorageResponse: {
-            /** @description 单文件失败信息。 */
-            errors: components["schemas"]["ScanStorageErrorResponse"][];
-            /**
-             * Format: int64
-             * @description 新导入的资源数量。
-             */
-            imported: number;
-            /** @description 本次新导入的资源。 */
-            resources: components["schemas"]["ResourceResponse"][];
-            /**
-             * Format: int64
-             * @description 扫描到的普通文件数量。
-             */
-            scanned: number;
-            /** @description 本次扫描覆盖的对象存储前缀。字段名为兼容旧客户端而保留。 */
-            scanned_directory: string;
-            /**
-             * Format: int64
-             * @description 因已存在或导入失败而跳过的数量。
-             */
-            skipped: number;
         };
         SecurityAuditEventResponse: {
             actor_user_id?: string | null;
@@ -1668,48 +1610,6 @@ export interface operations {
             };
             /** @description 资源或内容不存在 */
             404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description 服务端错误 */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    scan_storage: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ScanStorageRequest"];
-            };
-        };
-        responses: {
-            /** @description 扫描结果 */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ScanStorageResponse"];
-                };
-            };
-            /** @description 请求参数无效 */
-            400: {
                 headers: {
                     [name: string]: unknown;
                 };

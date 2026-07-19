@@ -57,8 +57,11 @@ pub trait ResourceRepository: Send + Sync {
     /// 保存一个可独立存在、且已在存储侧创建的用户目录。
     async fn save_directory(&self, directory: &ResourceDirectory) -> Result<(), CoreError>;
 
-    /// 幂等保存目录及其完整祖先链，用于存储扫描同步。
+    /// 幂等保存目录及其完整祖先链，用于自动存储协调。
     async fn ensure_directory(&self, directory: &ResourceDirectory) -> Result<(), CoreError>;
+
+    /// 删除已经不再存在于对象存储中的空目录记录。
+    async fn remove_directory(&self, directory: &ResourceDirectory) -> Result<(), CoreError>;
 
     /// 从持久化存储中物理移除资源记录。
     ///

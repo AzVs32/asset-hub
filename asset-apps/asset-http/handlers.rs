@@ -3,8 +3,7 @@ use crate::dto::{
     ExecuteResourceActionRequest, HealthResponse, ListDirectoryQuery, ListResourcesQuery,
     ResourceActionOutputResponse, ResourceDirectoryResponse, ResourceKindResponse,
     ResourceKindsResponse, ResourcePageResponse, ResourceReadResponse, ResourceResponse,
-    ScanStorageErrorResponse, ScanStorageRequest, ScanStorageResponse, UpdateResourceRequest,
-    UploadResourceContentStreamQuery,
+    UpdateResourceRequest, UploadResourceContentStreamQuery,
 };
 use crate::error::HttpError;
 use crate::state::HttpState;
@@ -15,7 +14,7 @@ use asset_core::domain::{
 use asset_core::port::BlobByteStream;
 use asset_core::port::ListResources;
 use asset_core::service::{
-    CreateResource, ExecuteResourceAction, ScanStorage, UpdateResource, UploadResourceContentStream,
+    CreateResource, ExecuteResourceAction, UpdateResource, UploadResourceContentStream,
 };
 use axum::Json;
 use axum::body::Body;
@@ -39,7 +38,7 @@ pub(crate) use content::{
     MAX_UPLOAD_BYTES, get_resource_content, preview_resource, read_resource, thumbnail_resource,
     upload_resource_content_stream,
 };
-pub(crate) use maintenance::{health, purge_disabled, scan_storage};
+pub(crate) use maintenance::{health, purge_disabled};
 pub(crate) use plugin::plugin_web_asset;
 pub(crate) use resource::{
     MAX_ACTION_REQUEST_BYTES, create_directory, create_resource, execute_resource_action,

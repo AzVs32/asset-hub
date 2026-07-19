@@ -98,7 +98,7 @@ Administrators can access all user-visible directories. A non-administrator's
 `workspace_directory` is their only authorization boundary: they have complete
 access to that directory and its descendants, and no access outside it. Direct resource
 reads, previews, downloads, actions, and updates are checked against the
-resource's directory. Creates, uploads, scans, moves, deletes, and plugin write
+resource's directory. Creates, uploads, moves, deletes, and plugin write
 actions are authorized inside the core use case after their target directory is
 known.
 
@@ -112,12 +112,12 @@ passwords, tokens, and other secret CLI arguments are never stored. Audit
 persistence is fail-open: a temporary audit write error is logged without
 replacing the business response.
 
-Storage scanning is an administrator-only maintenance operation. `POST /scan`
-imports previously unknown files and empty directories from the configured
-storage root. It skips symbolic links, stops after 100,000 filesystem entries,
-and does not calculate file checksums. Its request scope is the object-key
-`prefix`; the legacy `directory` request field remains accepted as an alias but
-does not represent a logical resource directory.
+Local Blob storage is synchronized automatically. Native file-system events are
+debounced for near-real-time updates, while startup and periodic reconciliation
+repair changes missed while the process was stopped. New and modified files
+update Resource content and checksums, external deletes remove the corresponding
+database record, directory changes synchronize the directory table, and the
+reserved `.asset-hub` namespace is always ignored. There is no manual scan API.
 
 Plugin write actions can update object bytes through `replace_content`. Runtime
 errors are compensated, but the current OpenDAL-backed replacement flow is not a

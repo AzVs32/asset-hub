@@ -39,7 +39,8 @@ extism = { version = "1.30.0", default-features = false, features = ["register-f
 opendal = { version = "0.57.0", default-features = false, features = ["services-fs"] }
 # 关注 tower-sessions-sqlx-store 什么时候支持 sqlx 0.9版本，共同升级
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "sqlite", "chrono", "uuid", "json", "macros", "migrate"] }
-tokio = { version = "1.48.0", features = ["macros", "net", "rt-multi-thread", "sync"] }
+tokio = { version = "1.48.0", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+notify = "8.2.0"
 time = "0.3.53"
 tower = { version = "0.5.2", features = ["util"] }
 tower-sessions = "0.14.0"

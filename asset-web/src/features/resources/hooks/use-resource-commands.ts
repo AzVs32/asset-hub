@@ -74,14 +74,6 @@ export function useResourceCommands() {
     },
     onError: notifyError,
   });
-  const scan = useMutation({
-    mutationFn: (directory: string) => gateway.scan(directory),
-    onSuccess: async (result) => {
-      toast.success(`Scan complete: ${result.imported} imported, ${result.skipped} skipped`);
-      await refresh();
-    },
-    onError: notifyError,
-  });
   const execute = useMutation({
     mutationFn: async ({ resource, action }: { resource: Resource; action: ResourceAction }) => ({
       resource,
@@ -102,7 +94,6 @@ export function useResourceCommands() {
     remove,
     restore,
     createFolder,
-    scan,
     execute,
     actionResult,
     setActionResult,

@@ -10,12 +10,6 @@ import type {
   UploadDraft,
 } from "@/domain/resource";
 
-export interface ScanResult {
-  scanned: number;
-  imported: number;
-  skipped: number;
-}
-
 export interface AssetGateway {
   currentUser(): Promise<CurrentUser>;
   login(username: string, password: string): Promise<CurrentUser>;
@@ -30,7 +24,6 @@ export interface AssetGateway {
   deleteResource(id: string): Promise<Resource>;
   uploadResource(draft: UploadDraft): Promise<Resource>;
   createDirectory(parentPath: string, name: string): Promise<Directory>;
-  scan(directory: string): Promise<ScanResult>;
 
   executeAction(
     resource: Resource,

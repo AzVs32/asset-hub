@@ -14,6 +14,15 @@ fn empty_config_uses_defaults() {
         config.blob.local.root,
         PathBuf::from(DEFAULT_LOCAL_BLOB_ROOT)
     );
+    assert!(config.blob.local.sync.enabled);
+    assert_eq!(
+        config.blob.local.sync.debounce_milliseconds,
+        DEFAULT_LOCAL_SYNC_DEBOUNCE_MILLISECONDS
+    );
+    assert_eq!(
+        config.blob.local.sync.reconcile_interval_seconds,
+        DEFAULT_LOCAL_SYNC_INTERVAL_SECONDS
+    );
     assert!(config.kind.plugin_manifests.is_empty());
 }
 
@@ -145,6 +154,32 @@ fn normalized_config_rejects_zero_database_connections() {
     };
 
     assert!(config.normalized().is_err());
+}
+
+#[test]
+fn normalized_config_rejects_zero_enabled_local_sync_intervals() {
+    for sync in [
+        LocalBlobSyncConfig {
+            debounce_milliseconds: 0,
+            ..LocalBlobSyncConfig::default()
+        },
+        LocalBlobSyncConfig {
+            reconcile_interval_seconds: 0,
+            ..LocalBlobSyncConfig::default()
+        },
+    ] {
+        let config = AssetInfraConfig {
+            blob: BlobConfig {
+                local: LocalBlobConfig {
+                    sync,
+                    ..LocalBlobConfig::default()
+                },
+                ..BlobConfig::default()
+            },
+            ..AssetInfraConfig::default()
+        };
+        assert!(config.normalized().is_err());
+    }
 }
 
 #[test]

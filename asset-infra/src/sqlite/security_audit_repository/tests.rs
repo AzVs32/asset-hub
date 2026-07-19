@@ -25,7 +25,7 @@ async fn repository_roundtrips_http_and_cli_events_without_fabricating_an_actor(
         .record(&NewSecurityAuditEvent {
             actor: SecurityAuditActor::unauthenticated(),
             source: SecurityAuditSource::Cli,
-            event_type: SecurityAuditEventType::MaintenanceStorageScan,
+            event_type: SecurityAuditEventType::DirectoryCreate,
             outcome: SecurityAuditOutcome::Success,
             target: None,
         })
@@ -42,7 +42,7 @@ async fn repository_roundtrips_http_and_cli_events_without_fabricating_an_actor(
             && event.target.as_deref() == Some("attempted-user")
     }));
     assert!(events.iter().any(|event| {
-        event.event_type == SecurityAuditEventType::MaintenanceStorageScan
+        event.event_type == SecurityAuditEventType::DirectoryCreate
             && event.actor == SecurityAuditActor::Unauthenticated
             && event.source == SecurityAuditSource::Cli
             && event.outcome == SecurityAuditOutcome::Success

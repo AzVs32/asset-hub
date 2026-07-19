@@ -14,7 +14,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll, Wake, Waker};
+use std::task::{Context, Poll, Waker};
 
 #[derive(Default)]
 struct InMemoryResourceRepository {
@@ -123,6 +123,11 @@ impl ResourceRepository for InMemoryResourceRepository {
             path.push_str(name);
             directories.insert(ResourceDirectory::from_path(path.clone())?);
         }
+        Ok(())
+    }
+
+    async fn remove_directory(&self, directory: &ResourceDirectory) -> Result<(), CoreError> {
+        self.directories.lock().unwrap().remove(directory);
         Ok(())
     }
 }
@@ -239,6 +244,7 @@ struct InMemoryBlobStorage {
     objects: Mutex<HashMap<StorageKey, Bytes>>,
     directories: Mutex<HashSet<ResourceDirectory>>,
     fail_next_delete: Mutex<bool>,
+    fail_scan_after_entries: Mutex<Option<usize>>,
 }
 
 impl InMemoryBlobStorage {
@@ -260,6 +266,10 @@ impl InMemoryBlobStorage {
 
     fn fail_next_delete(&self) {
         *self.fail_next_delete.lock().unwrap() = true;
+    }
+
+    fn fail_scan_after_entries(&self, entries: usize) {
+        *self.fail_scan_after_entries.lock().unwrap() = Some(entries);
     }
 }
 
@@ -362,11 +372,7 @@ impl BlobStorage for InMemoryBlobStorage {
 
 #[async_trait::async_trait]
 impl StorageScanner for InMemoryBlobStorage {
-    async fn scan_directories(
-        &self,
-        prefix: &StoragePrefix,
-        _max_entries: usize,
-    ) -> Result<Vec<ResourceDirectory>, CoreError> {
+    fn scan(&self, prefix: &StoragePrefix) -> crate::port::StorageScanStream {
         let mut directories = self
             .directories
             .lock()
@@ -383,20 +389,16 @@ impl StorageScanner for InMemoryBlobStorage {
             .cloned()
             .collect::<Vec<_>>();
         directories.sort();
-        Ok(directories)
-    }
-
-    async fn scan(
-        &self,
-        prefix: &StoragePrefix,
-        _max_entries: usize,
-    ) -> Result<Vec<crate::port::ScannedBlob>, CoreError> {
+        let mut entries = directories
+            .into_iter()
+            .map(ScannedStorageEntry::Directory)
+            .collect::<Vec<_>>();
         if prefix.as_str() == crate::port::RESERVED_BLOB_STORAGE_PREFIX
             || prefix
                 .as_str()
                 .starts_with(&format!("{}/", crate::port::RESERVED_BLOB_STORAGE_PREFIX))
         {
-            return Ok(Vec::new());
+            return Box::pin(futures_util::stream::empty());
         }
 
         let mut files = self
@@ -421,7 +423,30 @@ impl StorageScanner for InMemoryBlobStorage {
             })
             .collect::<Vec<_>>();
         files.sort_by(|left, right| left.key.as_str().cmp(right.key.as_str()));
-        Ok(files)
+        entries.extend(files.into_iter().map(ScannedStorageEntry::Blob));
+        let failure_after = self.fail_scan_after_entries.lock().unwrap().take();
+        let mut results = entries.into_iter().map(Ok).collect::<Vec<_>>();
+        if let Some(failure_after) = failure_after {
+            results.truncate(failure_after);
+            results.push(Err(CoreError::storage("scan", TestError("scan failed"))));
+        }
+        Box::pin(futures_util::stream::iter(results))
+    }
+
+    async fn inspect(
+        &self,
+        key: &StorageKey,
+    ) -> Result<Option<crate::port::ScannedBlob>, CoreError> {
+        Ok(self
+            .objects
+            .lock()
+            .unwrap()
+            .get(key)
+            .map(|content| crate::port::ScannedBlob {
+                key: key.clone(),
+                size: content.len() as u64,
+                mime_type: None,
+            }))
     }
 }
 
@@ -508,15 +533,8 @@ impl ResourceActionExecutor for StaticResourceActionExecutor {
     }
 }
 
-struct NoopWaker;
-
-impl Wake for NoopWaker {
-    fn wake(self: Arc<Self>) {}
-}
-
 fn block_on<F: Future>(future: F) -> F::Output {
-    let waker = Waker::from(Arc::new(NoopWaker));
-    let mut context = Context::from_waker(&waker);
+    let mut context = Context::from_waker(Waker::noop());
     let mut future = std::pin::pin!(future);
 
     match future.as_mut().poll(&mut context) {
@@ -624,6 +642,92 @@ fn service() -> (
     (service, repository, blob_storage)
 }
 
+#[test]
+fn storage_reconciliation_creates_updates_and_removes_resources() {
+    let (service, repository, blob_storage) = service();
+    let directory = ResourceDirectory::from_path("external").unwrap();
+    let key = StorageKey::new("external/note.txt").unwrap();
+    block_on(blob_storage.ensure_directory(&directory)).unwrap();
+    block_on(blob_storage.put(&key, Bytes::from_static(b"first"))).unwrap();
+
+    block_on(service.reconcile_storage()).unwrap();
+    let first = block_on(repository.find_by_path(&directory, "note.txt"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(first.content().unwrap().size(), 5);
+
+    block_on(blob_storage.put(&key, Bytes::from_static(b"second version"))).unwrap();
+    block_on(service.reconcile_storage_keys(std::slice::from_ref(&key))).unwrap();
+    let updated = block_on(repository.find_by_path(&directory, "note.txt"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(updated.id(), first.id());
+    assert_eq!(updated.content().unwrap().size(), 14);
+    assert_ne!(
+        updated.content().unwrap().checksum(),
+        first.content().unwrap().checksum()
+    );
+
+    block_on(blob_storage.delete(&key)).unwrap();
+    block_on(service.reconcile_storage_keys(std::slice::from_ref(&key))).unwrap();
+    assert!(
+        block_on(repository.find_by_path(&directory, "note.txt"))
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn storage_reconciliation_preserves_resource_id_on_file_rename() {
+    let (service, repository, blob_storage) = service();
+    let from_directory = ResourceDirectory::from_path("incoming").unwrap();
+    let to_directory = ResourceDirectory::from_path("library").unwrap();
+    let from = StorageKey::new("incoming/book.txt").unwrap();
+    let to = StorageKey::new("library/renamed.txt").unwrap();
+    block_on(blob_storage.ensure_directory(&from_directory)).unwrap();
+    block_on(blob_storage.ensure_directory(&to_directory)).unwrap();
+    block_on(blob_storage.put(&from, Bytes::from_static(b"content"))).unwrap();
+    block_on(service.reconcile_storage()).unwrap();
+    let original = block_on(repository.find_by_path(&from_directory, "book.txt"))
+        .unwrap()
+        .unwrap();
+
+    block_on(blob_storage.move_if_absent(&from, &to)).unwrap();
+    block_on(service.reconcile_storage_rename(&from, &to)).unwrap();
+    let renamed = block_on(repository.find_by_path(&to_directory, "renamed.txt"))
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(renamed.id(), original.id());
+    assert_eq!(renamed.description(), original.description());
+    assert!(
+        block_on(repository.find_by_path(&from_directory, "book.txt"))
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn storage_reconciliation_does_not_delete_resources_after_stream_failure() {
+    let (service, repository, blob_storage) = service();
+    let directory = ResourceDirectory::root();
+    let retained = StorageKey::new("a.txt").unwrap();
+    let externally_deleted = StorageKey::new("b.txt").unwrap();
+    block_on(blob_storage.put(&retained, Bytes::from_static(b"a"))).unwrap();
+    block_on(blob_storage.put(&externally_deleted, Bytes::from_static(b"b"))).unwrap();
+    block_on(service.reconcile_storage()).unwrap();
+
+    block_on(blob_storage.delete(&externally_deleted)).unwrap();
+    blob_storage.fail_scan_after_entries(1);
+    assert!(block_on(service.reconcile_storage()).is_err());
+
+    assert!(
+        block_on(repository.find_by_path(&directory, "b.txt"))
+            .unwrap()
+            .is_some()
+    );
+}
+
 fn content_requirements() -> asset_plugin_api::ResourceActionRequirements {
     asset_plugin_api::ResourceActionRequirements {
         content: true,
@@ -661,7 +765,6 @@ fn stream_upload_command(
     let (directory, name) = storage_key
         .as_str()
         .rsplit_once('/')
-        .map(|(directory, name)| (directory, name))
         .unwrap_or(("", storage_key.as_str()));
     let stream = futures_util::stream::once(async move { Ok(data) });
     UploadResourceContentStream::new(name, Box::pin(stream))

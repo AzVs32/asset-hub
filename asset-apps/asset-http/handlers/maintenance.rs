@@ -33,51 +33,6 @@ pub(crate) async fn health(State(state): State<HttpState>) -> (StatusCode, Json<
     )
 }
 
-/// 扫描本地对象存储目录并补齐资源数据库。
-#[utoipa::path(
-    post,
-    path = "/scan",
-    tag = "resources",
-    request_body = ScanStorageRequest,
-    responses(
-        (status = 200, description = "扫描结果", body = ScanStorageResponse),
-        (status = 400, description = "请求参数无效", body = crate::dto::ErrorResponse),
-        (status = 500, description = "服务端错误", body = crate::dto::ErrorResponse)
-    )
-)]
-pub(crate) async fn scan_storage(
-    State(state): State<HttpState>,
-    access: Extension<AccessContext>,
-    payload: Option<Json<ScanStorageRequest>>,
-) -> Result<Json<ScanStorageResponse>, HttpError> {
-    let payload = payload.map(|Json(payload)| payload).unwrap_or_default();
-    let result = state
-        .secured(&access.0)
-        .scan_storage(ScanStorage::new(payload.prefix))
-        .await?;
-    let imported = result
-        .resources
-        .iter()
-        .map(|resource| resource_response(state.service(), resource))
-        .collect::<Result<Vec<_>, _>>()?;
-
-    Ok(Json(ScanStorageResponse {
-        scanned_directory: result.scanned_prefix,
-        scanned: result.scanned,
-        imported: imported.len() as u64,
-        skipped: result.skipped,
-        errors: result
-            .errors
-            .into_iter()
-            .map(|error| ScanStorageErrorResponse {
-                key: error.key,
-                error: error.error,
-            })
-            .collect(),
-        resources: imported,
-    }))
-}
-
 /// 物理删除接口已被启动配置禁用。
 pub(crate) async fn purge_disabled() -> Result<StatusCode, HttpError> {
     Err(HttpError::forbidden(

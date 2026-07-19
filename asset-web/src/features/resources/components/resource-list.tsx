@@ -47,7 +47,6 @@ export function ResourceList({
   onCreate,
   onUpload,
   onCreateFolder,
-  onScan,
   onUsers,
   onLogout,
 }: {
@@ -66,7 +65,6 @@ export function ResourceList({
   onCreate: () => void;
   onUpload: () => void;
   onCreateFolder: () => void;
-  onScan: () => void;
   onUsers: () => void;
   onLogout: () => void;
 }) {
@@ -94,12 +92,6 @@ export function ResourceList({
           <Button variant="ghost" size="icon" aria-label="Refresh" onClick={onRefresh}>
             <RefreshCw className={loading ? "animate-spin" : ""} size={18} />
           </Button>
-          {user.isAdmin ? (
-            <Button variant="secondary" size="small" onClick={onScan}>
-              <Database size={16} />
-              Scan
-            </Button>
-          ) : null}
           {user.isAdmin ? (
             <Button variant="secondary" size="small" onClick={onUsers}>
               <Users size={16} />

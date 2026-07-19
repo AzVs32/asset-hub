@@ -4,7 +4,7 @@ use asset_apps::AssetRuntime;
 use asset_core::domain::{AccessContext, UserId};
 use asset_infra::config::{
     AssetInfraConfig, BlobConfig, DatabaseConfig, KindRegistryConfig, LocalBlobConfig,
-    PluginHostConfig, ResourceKindConfig, SqliteDatabaseConfig,
+    LocalBlobSyncConfig, PluginHostConfig, ResourceKindConfig, SqliteDatabaseConfig,
 };
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
@@ -696,55 +696,6 @@ async fn resource_content_supports_single_byte_ranges_for_video_seek() {
 }
 
 #[tokio::test]
-async fn scan_storage_imports_existing_files_idempotently() {
-    let app = test_app("scan-storage").await;
-    let file_path = app.root.join("blob").join("docs").join("readme.md");
-    std::fs::create_dir_all(file_path.parent().unwrap()).unwrap();
-    std::fs::write(&file_path, b"# Existing file\n").unwrap();
-    #[cfg(unix)]
-    let outside = {
-        let outside = unique_temp_root("scan-outside");
-        std::fs::create_dir_all(&outside).unwrap();
-        std::fs::write(outside.join("secret.txt"), b"must not be scanned").unwrap();
-        std::os::unix::fs::symlink(&outside, app.root.join("blob").join("outside-link")).unwrap();
-        outside
-    };
-
-    let (status, scan) =
-        json_request(&app, Method::POST, "/scan", json!({ "directory": "docs" })).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(scan["scanned_directory"], "docs");
-    assert_eq!(scan["scanned"], 1);
-    assert_eq!(scan["imported"], 1);
-    assert_eq!(scan["skipped"], 0);
-    assert_eq!(scan["resources"][0]["name"], "readme.md");
-    assert_eq!(scan["resources"][0]["directory"], "docs");
-    assert_eq!(scan["resources"][0]["content"]["size"], 16);
-    assert_eq!(
-        scan["resources"][0]["content"]["checksum"]["kind"],
-        "sha256"
-    );
-    #[cfg(unix)]
-    std::fs::remove_dir_all(outside).unwrap();
-
-    let (status, listing) = empty_json_request(&app, Method::GET, "/directories?path=docs").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(listing["resources"]["total"], 1);
-    assert_eq!(listing["resources"]["items"][0]["name"], "readme.md");
-
-    std::fs::create_dir_all(app.root.join("blob/manual/empty")).unwrap();
-    let (status, scan) = json_request(&app, Method::POST, "/scan", json!({})).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(scan["scanned"], 1);
-    assert_eq!(scan["imported"], 0);
-    assert_eq!(scan["skipped"], 1);
-
-    let (status, listing) = empty_json_request(&app, Method::GET, "/directories?path=manual").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(listing["folders"][0]["path"], "manual/empty");
-}
-
-#[tokio::test]
 async fn upload_rejects_client_supplied_checksum_and_existing_resource_path() {
     let app = test_app("upload-security").await;
 
@@ -1268,6 +1219,7 @@ async fn openapi_exposes_current_http_contract() {
     assert!(document["paths"].get("/resources/content/stream").is_some());
     assert!(document["paths"].get("/auth/login").is_some());
     assert!(document["paths"].get("/auth/users/{id}").is_some());
+    assert!(document["paths"].get("/scan").is_none());
     assert!(document["paths"].get("/audit").is_none());
     assert!(document["paths"].get("/auth/directory-grants").is_none());
     assert_eq!(
@@ -1403,6 +1355,10 @@ async fn test_app_with_kind_and_plugin_config(
         blob: BlobConfig {
             local: LocalBlobConfig {
                 root: root.join("blob"),
+                sync: LocalBlobSyncConfig {
+                    enabled: false,
+                    ..LocalBlobSyncConfig::default()
+                },
             },
             ..BlobConfig::default()
         },
@@ -1435,6 +1391,10 @@ async fn test_app_with_plugin_web_assets(
         blob: BlobConfig {
             local: LocalBlobConfig {
                 root: root.join("blob"),
+                sync: LocalBlobSyncConfig {
+                    enabled: false,
+                    ..LocalBlobSyncConfig::default()
+                },
             },
             ..BlobConfig::default()
         },
@@ -1503,6 +1463,10 @@ async fn member_access_is_limited_to_the_workspace_subtree() {
         blob: BlobConfig {
             local: LocalBlobConfig {
                 root: root.join("blob"),
+                sync: LocalBlobSyncConfig {
+                    enabled: false,
+                    ..LocalBlobSyncConfig::default()
+                },
             },
             ..BlobConfig::default()
         },
@@ -1681,8 +1645,6 @@ async fn member_access_is_limited_to_the_workspace_subtree() {
     let (alice_cookie, login) = login_with_password(&app, "alice", "alice-secure-password").await;
     assert_eq!(login["user"]["workspace_directory"], "teams/alice");
     assert!(app.root.join("blob/teams/alice").is_dir());
-    let scan = request_with_cookie(&app, Method::POST, "/scan", json!({}), &alice_cookie).await;
-    assert_eq!(scan.status(), StatusCode::FORBIDDEN);
     let folder = request_with_cookie(
         &app,
         Method::POST,

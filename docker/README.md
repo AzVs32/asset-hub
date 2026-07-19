@@ -117,6 +117,11 @@ backend = "local"
 
 [blob.local]
 root = "/data"
+
+[blob.local.sync]
+enabled = true
+debounce_milliseconds = 1000
+reconcile_interval_seconds = 1800
 ```
 
 SQLite 路径不能单独配置，使用本地 Blob 后端时始终为

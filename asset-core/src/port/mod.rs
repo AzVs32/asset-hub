@@ -27,5 +27,7 @@ pub use resource_kind_registry::{ResourceKindDefinition, ResourceKindRegistry};
 pub use resource_query::{ListResources, ResourcePage, ResourceQuery};
 pub use resource_repository::ResourceRepository;
 pub use security_audit_repository::SecurityAuditRepository;
-pub use storage_scanner::{ScannedBlob, StoragePrefix, StorageScanner};
+pub use storage_scanner::{
+    ScannedBlob, ScannedStorageEntry, StoragePrefix, StorageScanStream, StorageScanner,
+};
 pub use user_repository::UserRepository;

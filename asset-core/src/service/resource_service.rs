@@ -14,8 +14,8 @@ use crate::domain::{
 use crate::port::{
     BlobByteStream, BlobStorage, DirectoryStorage, ListResources, RESERVED_BLOB_STORAGE_PREFIX,
     ResourceActionExecutor, ResourceActionOutput, ResourceActionRegistry, ResourceActionRequest,
-    ResourceKindRegistry, ResourcePage, ResourceQuery, ResourceRepository, StoragePrefix,
-    StorageScanner,
+    ResourceKindRegistry, ResourcePage, ResourceQuery, ResourceRepository, ScannedBlob,
+    ScannedStorageEntry, StoragePrefix, StorageScanner,
 };
 use asset_plugin_api::{
     PluginActionEffect, PluginExecutionPolicy, PluginMediaEncoding, PluginView, ResourceAction,
@@ -150,42 +150,8 @@ pub struct ResourceContentCommand<T> {
     mime_type: Option<String>,
 }
 
-/// 导入已存在对象内容并创建资源；payload 是对象字节大小。
-pub type ImportResourceContent = ResourceContentCommand<u64>;
-
 /// 流式上传内容并创建资源；payload 是待写入对象存储的字节流。
 pub type UploadResourceContentStream = ResourceContentCommand<BlobByteStream>;
-
-/// 扫描对象存储并导入尚未登记资源的命令。
-#[derive(Debug, Clone, Default)]
-pub struct ScanStorage {
-    prefix: StoragePrefix,
-}
-
-impl ScanStorage {
-    pub fn new(prefix: StoragePrefix) -> Self {
-        Self { prefix }
-    }
-
-    pub fn prefix(&self) -> &StoragePrefix {
-        &self.prefix
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ScanStorageError {
-    pub key: String,
-    pub error: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct ScanStorageResult {
-    pub scanned_prefix: StoragePrefix,
-    pub scanned: u64,
-    pub skipped: u64,
-    pub errors: Vec<ScanStorageError>,
-    pub resources: Vec<Resource>,
-}
 
 /// 执行资源动作的用例命令。
 #[derive(Debug, Clone)]
@@ -665,6 +631,27 @@ impl ResourceService {
 
     pub async fn check_blob_storage_health(&self) -> Result<(), CoreError> {
         self.blob_storage.health_check().await
+    }
+
+    /// 将对象存储的完整最终状态协调到 Resource 与目录仓储。
+    ///
+    /// 该入口仅供受信任的后台同步任务调用，不向 HTTP、CLI 等用户入口暴露。
+    pub async fn reconcile_storage(&self) -> Result<(), CoreError> {
+        self.content().reconcile_storage().await
+    }
+
+    /// 协调一组发生变化的对象路径。
+    pub async fn reconcile_storage_keys(&self, keys: &[StorageKey]) -> Result<(), CoreError> {
+        self.content().reconcile_storage_keys(keys).await
+    }
+
+    /// 协调文件系统确认的单文件重命名，成功时保留原 Resource ID 和元数据。
+    pub async fn reconcile_storage_rename(
+        &self,
+        from: &StorageKey,
+        to: &StorageKey,
+    ) -> Result<(), CoreError> {
+        self.content().reconcile_storage_rename(from, to).await
     }
 
     /// 计算已授权资源当前可展示的动作。

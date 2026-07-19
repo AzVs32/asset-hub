@@ -74,6 +74,7 @@ async fn content_handles_read_raw_bounded_ranges_and_close() {
     let storage = Arc::new(
         crate::storage::OpenDalBlobStorage::from_local_config(&crate::config::LocalBlobConfig {
             root: root.clone(),
+            ..crate::config::LocalBlobConfig::default()
         })
         .unwrap(),
     );

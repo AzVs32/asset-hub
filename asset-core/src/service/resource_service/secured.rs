@@ -30,16 +30,6 @@ impl<'a> SecuredResourceService<'a> {
             .require(self.context, directory, permission)
             .await
     }
-    pub async fn scan_storage(&self, command: ScanStorage) -> Result<ScanStorageResult, CoreError> {
-        if !self.context.is_administrator() {
-            return Err(CoreError::forbidden(
-                "scan_storage",
-                command.prefix().as_str(),
-            ));
-        }
-        self.service.content().scan_storage(command).await
-    }
-
     async fn resource_for(
         &self,
         id: &ResourceId,
@@ -66,17 +56,6 @@ impl<'a> SecuredResourceService<'a> {
         self.require(command.directory(), DirectoryPermission::Write)
             .await?;
         self.service.commands().create_resource(command).await
-    }
-    pub async fn import_resource_content(
-        &self,
-        command: ImportResourceContent,
-    ) -> Result<Option<Resource>, CoreError> {
-        self.require(command.directory(), DirectoryPermission::Write)
-            .await?;
-        self.service
-            .content()
-            .import_resource_content(command)
-            .await
     }
     pub async fn upload_resource_content_stream(
         &self,

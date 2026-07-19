@@ -1,7 +1,13 @@
 use asset_core::CoreError;
 use asset_core::domain::{ResourceDirectory, StorageKey};
-use asset_core::port::{RESERVED_BLOB_STORAGE_PREFIX, ScannedBlob, StoragePrefix, StorageScanner};
+use asset_core::port::{
+    RESERVED_BLOB_STORAGE_PREFIX, ScannedBlob, ScannedStorageEntry, StoragePrefix,
+    StorageScanStream, StorageScanner,
+};
 use std::path::{Component, Path, PathBuf};
+use tokio::sync::mpsc;
+
+const SCAN_STREAM_BUFFER_CAPACITY: usize = 256;
 
 #[derive(Debug, Clone)]
 pub struct FileSystemScanner {
@@ -16,39 +22,83 @@ impl FileSystemScanner {
 
 #[async_trait::async_trait]
 impl StorageScanner for FileSystemScanner {
-    async fn scan_directories(
-        &self,
-        prefix: &StoragePrefix,
-        max_entries: usize,
-    ) -> Result<Vec<ResourceDirectory>, CoreError> {
+    fn scan(&self, prefix: &StoragePrefix) -> StorageScanStream {
         let root = self.root.clone();
         let prefix = prefix.clone();
-        tokio::task::spawn_blocking(move || scan_directory_paths(&root, &prefix, max_entries))
-            .await
-            .map_err(|error| CoreError::configuration(format!("scan task failed: {error}")))?
+        let (sender, receiver) = mpsc::channel(SCAN_STREAM_BUFFER_CAPACITY);
+        let failure_sender = sender.clone();
+        let producer =
+            tokio::task::spawn_blocking(move || produce_storage_entries(&root, &prefix, sender));
+        tokio::spawn(async move {
+            if let Err(error) = producer.await {
+                let _ = failure_sender
+                    .send(Err(CoreError::configuration(format!(
+                        "scan task failed: {error}"
+                    ))))
+                    .await;
+            }
+        });
+        Box::pin(futures_util::stream::unfold(
+            receiver,
+            |mut receiver| async move { receiver.recv().await.map(|entry| (entry, receiver)) },
+        ))
     }
 
-    async fn scan(
-        &self,
-        prefix: &StoragePrefix,
-        max_entries: usize,
-    ) -> Result<Vec<ScannedBlob>, CoreError> {
+    async fn inspect(&self, key: &StorageKey) -> Result<Option<ScannedBlob>, CoreError> {
         let root = self.root.clone();
-        let prefix = prefix.clone();
-        tokio::task::spawn_blocking(move || scan_files(&root, &prefix, max_entries))
+        let key = key.clone();
+        tokio::task::spawn_blocking(move || inspect_file(&root, &key))
             .await
-            .map_err(|error| CoreError::configuration(format!("scan task failed: {error}")))?
+            .map_err(|error| CoreError::configuration(format!("inspect task failed: {error}")))?
     }
 }
 
-fn scan_directory_paths(
+fn inspect_file(root: &Path, key: &StorageKey) -> Result<Option<ScannedBlob>, CoreError> {
+    if key.as_str() == RESERVED_BLOB_STORAGE_PREFIX
+        || key
+            .as_str()
+            .starts_with(&format!("{RESERVED_BLOB_STORAGE_PREFIX}/"))
+    {
+        return Ok(None);
+    }
+
+    let path = root.join(key.as_str());
+    let metadata = match std::fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(CoreError::storage("inspect.metadata", error)),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Ok(None);
+    }
+
+    Ok(Some(ScannedBlob {
+        key: key.clone(),
+        size: metadata.len(),
+        mime_type: content_type_from_path(&path).map(str::to_owned),
+    }))
+}
+
+fn produce_storage_entries(
     root: &Path,
     prefix: &StoragePrefix,
-    max_entries: usize,
-) -> Result<Vec<ResourceDirectory>, CoreError> {
-    if prefix_in_reserved_namespace(prefix) {
-        return Ok(Vec::new());
+    sender: mpsc::Sender<Result<ScannedStorageEntry, CoreError>>,
+) {
+    let mut emit = |entry| sender.blocking_send(Ok(entry)).is_ok();
+    if let Err(error) = visit_storage_entries(root, prefix, &mut emit) {
+        let _ = sender.blocking_send(Err(error));
     }
+}
+
+fn visit_storage_entries(
+    root: &Path,
+    prefix: &StoragePrefix,
+    emit: &mut impl FnMut(ScannedStorageEntry) -> bool,
+) -> Result<(), CoreError> {
+    if prefix_in_reserved_namespace(prefix) {
+        return Ok(());
+    }
+
     let root = root.canonicalize().map_err(|error| {
         CoreError::configuration(format!("storage root is not readable: {error}"))
     })?;
@@ -62,112 +112,25 @@ fn scan_directory_paths(
         ));
     }
 
-    let mut directories = Vec::new();
-    if !prefix.is_root() {
-        directories.push(ResourceDirectory::from_path(prefix.as_str())?);
-    }
-    let mut visited = 0;
-    collect_directories(
-        &root,
-        &scan_root,
-        max_entries,
-        &mut visited,
-        &mut directories,
-    )?;
-    directories.sort();
-    directories.dedup();
-    Ok(directories)
-}
-
-fn collect_directories(
-    root: &Path,
-    current: &Path,
-    max_entries: usize,
-    visited: &mut usize,
-    directories: &mut Vec<ResourceDirectory>,
-) -> Result<(), CoreError> {
-    for entry in
-        std::fs::read_dir(current).map_err(|error| CoreError::storage("scan.read_dir", error))?
+    if !prefix.is_root()
+        && !emit(ScannedStorageEntry::Directory(
+            ResourceDirectory::from_path(prefix.as_str())?,
+        ))
     {
-        *visited += 1;
-        if *visited > max_entries {
-            return Err(CoreError::configuration(format!(
-                "storage scan exceeds the limit of {max_entries} entries"
-            )));
-        }
-        let entry = entry.map_err(|error| CoreError::storage("scan.read_dir_entry", error))?;
-        if current == root && entry.file_name().to_str() == Some(RESERVED_BLOB_STORAGE_PREFIX) {
-            continue;
-        }
-        let path = entry.path();
-        let metadata = std::fs::symlink_metadata(&path)
-            .map_err(|error| CoreError::storage("scan.metadata", error))?;
-        if metadata.file_type().is_symlink() || !metadata.is_dir() {
-            continue;
-        }
-        let relative = path
-            .strip_prefix(root)
-            .map_err(|_| CoreError::configuration("scanned directory escaped storage root"))?;
-        let value = relative
-            .components()
-            .map(|component| match component {
-                Component::Normal(part) => part
-                    .to_str()
-                    .ok_or_else(|| CoreError::configuration("storage path must be valid UTF-8")),
-                _ => Err(CoreError::configuration("invalid storage directory path")),
-            })
-            .collect::<Result<Vec<_>, _>>()?
-            .join("/");
-        directories.push(ResourceDirectory::from_path(value)?);
-        collect_directories(root, &path, max_entries, visited, directories)?;
+        return Ok(());
     }
+    visit_directory(&root, &scan_root, emit)?;
     Ok(())
 }
 
-fn scan_files(
-    root: &Path,
-    prefix: &StoragePrefix,
-    max_entries: usize,
-) -> Result<Vec<ScannedBlob>, CoreError> {
-    if prefix_in_reserved_namespace(prefix) {
-        return Ok(Vec::new());
-    }
-
-    let root = root.canonicalize().map_err(|error| {
-        CoreError::configuration(format!("storage root is not readable: {error}"))
-    })?;
-    let scan_root = root
-        .join(prefix.as_str())
-        .canonicalize()
-        .map_err(|error| CoreError::configuration(format!("scan path is not readable: {error}")))?;
-    if !scan_root.starts_with(&root) || !scan_root.is_dir() {
-        return Err(CoreError::configuration(
-            "scan path must be a directory inside storage root",
-        ));
-    }
-    let mut files = Vec::new();
-    let mut visited = 0;
-    collect_files(&root, &scan_root, max_entries, &mut visited, &mut files)?;
-    files.sort_by(|left, right| left.key.as_str().cmp(right.key.as_str()));
-    Ok(files)
-}
-
-fn collect_files(
+fn visit_directory(
     root: &Path,
     current: &Path,
-    max_entries: usize,
-    visited: &mut usize,
-    files: &mut Vec<ScannedBlob>,
-) -> Result<(), CoreError> {
+    emit: &mut impl FnMut(ScannedStorageEntry) -> bool,
+) -> Result<bool, CoreError> {
     for entry in
         std::fs::read_dir(current).map_err(|error| CoreError::storage("scan.read_dir", error))?
     {
-        *visited += 1;
-        if *visited > max_entries {
-            return Err(CoreError::configuration(format!(
-                "storage scan exceeds the limit of {max_entries} entries"
-            )));
-        }
         let entry = entry.map_err(|error| CoreError::storage("scan.read_dir_entry", error))?;
         if current == root && entry.file_name().to_str() == Some(RESERVED_BLOB_STORAGE_PREFIX) {
             continue;
@@ -179,34 +142,46 @@ fn collect_files(
             continue;
         }
         if metadata.is_dir() {
-            collect_files(root, &path, max_entries, visited, files)?;
+            let directory = ResourceDirectory::from_path(relative_storage_path(root, &path)?)?;
+            if !emit(ScannedStorageEntry::Directory(directory)) {
+                return Ok(false);
+            }
+            if !visit_directory(root, &path, emit)? {
+                return Ok(false);
+            }
             continue;
         }
         if !metadata.is_file() {
             continue;
         }
-        let relative = path
-            .strip_prefix(root)
-            .map_err(|_| CoreError::configuration("scanned object path escaped storage root"))?;
-        let mut parts = Vec::new();
-        for component in relative.components() {
-            match component {
-                Component::Normal(part) => {
-                    parts.push(part.to_str().ok_or_else(|| {
-                        CoreError::configuration("storage path must be valid UTF-8")
-                    })?)
-                }
-                Component::CurDir => {}
-                _ => return Err(CoreError::configuration("invalid storage object path")),
-            }
-        }
-        files.push(ScannedBlob {
-            key: StorageKey::new(parts.join("/"))?,
+        let blob = ScannedBlob {
+            key: StorageKey::new(relative_storage_path(root, &path)?)?,
             size: metadata.len(),
             mime_type: content_type_from_path(&path).map(str::to_owned),
-        });
+        };
+        if !emit(ScannedStorageEntry::Blob(blob)) {
+            return Ok(false);
+        }
     }
-    Ok(())
+    Ok(true)
+}
+
+fn relative_storage_path(root: &Path, path: &Path) -> Result<String, CoreError> {
+    let relative = path
+        .strip_prefix(root)
+        .map_err(|_| CoreError::configuration("scanned path escaped storage root"))?;
+    relative
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(part) => Some(
+                part.to_str()
+                    .ok_or_else(|| CoreError::configuration("storage path must be valid UTF-8")),
+            ),
+            Component::CurDir => None,
+            _ => Some(Err(CoreError::configuration("invalid storage path"))),
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(|parts| parts.join("/"))
 }
 
 fn prefix_in_reserved_namespace(prefix: &StoragePrefix) -> bool {

@@ -31,6 +31,14 @@ backend = "local"
 # SQLite is always stored at <root>/.asset-hub/asset-hub.sqlite.
 root = "data"
 
+[blob.local.sync]
+# Keep the Resource database synchronized with changes made through the operating system.
+enabled = true
+# Coalesce bursts produced by editors and file managers before recalculating checksums.
+debounce_milliseconds = 1000
+# Periodically reconcile the complete tree to recover changes missed while the app was stopped.
+reconcile_interval_seconds = 1800
+
 [plugin]
 # Hard execution budgets applied to every plugin call.
 max_content_bytes = 67108864

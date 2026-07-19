@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 pub const DEFAULT_CONFIG_FILE: &str = "config.toml";
 /// 默认本地 Blob 存储根目录。
 pub const DEFAULT_LOCAL_BLOB_ROOT: &str = "data";
+pub const DEFAULT_LOCAL_SYNC_DEBOUNCE_MILLISECONDS: u64 = 1_000;
+pub const DEFAULT_LOCAL_SYNC_INTERVAL_SECONDS: u64 = 30 * 60;
 /// SQLite 数据库在本地 Blob 存储根目录中的固定相对路径。
 const SQLITE_DATABASE_RELATIVE_PATH: &str = ".asset-hub/asset-hub.sqlite";
 /// 默认 SQLite 连接池最大连接数。
@@ -105,6 +107,7 @@ impl AssetInfraConfig {
         match self.blob.backend {
             BlobBackend::Local => {
                 self.blob.local.root = normalize_path(&self.blob.local.root)?;
+                self.blob.local.sync.validate()?;
             }
         }
         self.kind.plugin_manifests = self
@@ -205,22 +208,13 @@ pub struct PluginPermissionGrants {
 }
 
 /// 数据存储配置。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct DatabaseConfig {
     /// 当前启用的数据库后端。
     pub backend: DatabaseBackend,
     /// SQLite 后端专属配置。
     pub sqlite: SqliteDatabaseConfig,
-}
-
-impl Default for DatabaseConfig {
-    fn default() -> Self {
-        Self {
-            backend: DatabaseBackend::default(),
-            sqlite: SqliteDatabaseConfig::default(),
-        }
-    }
 }
 
 /// 可用的数据库后端。
@@ -248,22 +242,13 @@ impl Default for SqliteDatabaseConfig {
 }
 
 /// 对象存储配置。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct BlobConfig {
     /// 当前启用的 Blob 存储后端。
     pub backend: BlobBackend,
     /// 本地文件系统后端专属配置。
     pub local: LocalBlobConfig,
-}
-
-impl Default for BlobConfig {
-    fn default() -> Self {
-        Self {
-            backend: BlobBackend::default(),
-            local: LocalBlobConfig::default(),
-        }
-    }
 }
 
 /// 可用的 Blob 存储后端。
@@ -280,13 +265,54 @@ pub enum BlobBackend {
 pub struct LocalBlobConfig {
     /// 本地存储根目录。相对路径会在初始化时按当前工作目录转换为绝对路径。
     pub root: PathBuf,
+    /// 本地文件系统与 Resource 数据库的自动同步策略。
+    pub sync: LocalBlobSyncConfig,
 }
 
 impl Default for LocalBlobConfig {
     fn default() -> Self {
         Self {
             root: PathBuf::from(DEFAULT_LOCAL_BLOB_ROOT),
+            sync: LocalBlobSyncConfig::default(),
         }
+    }
+}
+
+/// 本地 Blob 存储自动同步配置。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct LocalBlobSyncConfig {
+    /// 是否启动文件系统监听和后台协调。默认启用。
+    pub enabled: bool,
+    /// 文件系统事件合并窗口，避免一次保存触发多次 checksum 计算。
+    pub debounce_milliseconds: u64,
+    /// 保底全量协调周期，用于纠正程序停机或平台事件丢失造成的偏差。
+    pub reconcile_interval_seconds: u64,
+}
+
+impl Default for LocalBlobSyncConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            debounce_milliseconds: DEFAULT_LOCAL_SYNC_DEBOUNCE_MILLISECONDS,
+            reconcile_interval_seconds: DEFAULT_LOCAL_SYNC_INTERVAL_SECONDS,
+        }
+    }
+}
+
+impl LocalBlobSyncConfig {
+    fn validate(&self) -> Result<(), CoreError> {
+        if self.enabled && self.debounce_milliseconds == 0 {
+            return Err(CoreError::configuration(
+                "blob.local.sync.debounce_milliseconds must be greater than 0",
+            ));
+        }
+        if self.enabled && self.reconcile_interval_seconds == 0 {
+            return Err(CoreError::configuration(
+                "blob.local.sync.reconcile_interval_seconds must be greater than 0",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -374,6 +400,18 @@ fn build_config() -> ::config::ConfigBuilder<::config::builder::DefaultState> {
         .expect("default blob backend should be a valid config value")
         .set_default("blob.local.root", DEFAULT_LOCAL_BLOB_ROOT)
         .expect("default local blob root should be a valid config value")
+        .set_default("blob.local.sync.enabled", true)
+        .expect("default local sync enabled should be a valid config value")
+        .set_default(
+            "blob.local.sync.debounce_milliseconds",
+            DEFAULT_LOCAL_SYNC_DEBOUNCE_MILLISECONDS as i64,
+        )
+        .expect("default local sync debounce should be a valid config value")
+        .set_default(
+            "blob.local.sync.reconcile_interval_seconds",
+            DEFAULT_LOCAL_SYNC_INTERVAL_SECONDS as i64,
+        )
+        .expect("default local sync interval should be a valid config value")
 }
 
 fn config_error(error: ::config::ConfigError) -> CoreError {

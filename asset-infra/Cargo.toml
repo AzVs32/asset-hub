@@ -19,6 +19,7 @@ extism.workspace = true
 futures-core.workspace = true
 futures-util.workspace = true
 opendal.workspace = true
+notify.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

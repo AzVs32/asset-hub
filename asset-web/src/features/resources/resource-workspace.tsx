@@ -78,7 +78,6 @@ export function ResourceWorkspace() {
         onCreate={() => setCreateOpen(true)}
         onUpload={() => setUploadOpen(true)}
         onCreateFolder={() => setFolderOpen(true)}
-        onScan={() => commands.scan.mutate(browser.filters.directory)}
         onUsers={() => setUsersOpen(true)}
         onLogout={() => void logout()}
       />

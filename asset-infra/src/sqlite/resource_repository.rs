@@ -328,6 +328,15 @@ impl ResourceRepository for SqliteResourceRepository {
             .map_err(|error| CoreError::repository("directory.ensure.commit", error))?;
         Ok(())
     }
+
+    async fn remove_directory(&self, directory: &ResourceDirectory) -> Result<(), CoreError> {
+        sqlx::query("DELETE FROM directories WHERE path = ?")
+            .bind(directory.path())
+            .execute(&self.pool)
+            .await
+            .map_err(|error| CoreError::repository("directory.remove", error))?;
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
