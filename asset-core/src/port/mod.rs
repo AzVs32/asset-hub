@@ -10,6 +10,7 @@ mod resource_action_registry;
 mod resource_kind_registry;
 mod resource_query;
 mod resource_repository;
+mod security_audit_repository;
 mod storage_scanner;
 mod user_repository;
 
@@ -25,5 +26,6 @@ pub use resource_action_registry::ResourceActionRegistry;
 pub use resource_kind_registry::{ResourceKindDefinition, ResourceKindRegistry};
 pub use resource_query::{ListResources, ResourcePage, ResourceQuery};
 pub use resource_repository::ResourceRepository;
+pub use security_audit_repository::SecurityAuditRepository;
 pub use storage_scanner::{ScannedBlob, StoragePrefix, StorageScanner};
 pub use user_repository::UserRepository;

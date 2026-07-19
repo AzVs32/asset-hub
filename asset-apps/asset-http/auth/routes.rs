@@ -20,15 +20,12 @@ pub(crate) async fn login(
     if let Err(error) = session.backend.check_login_allowed(&username) {
         session
             .backend
-            .record_audit(NewSecurityAuditEvent {
-                actor_user_id: None,
-                actor_username: None,
-                event_type: "auth.login",
-                method: "POST",
-                path: "/auth/login",
-                status_code: StatusCode::TOO_MANY_REQUESTS.as_u16(),
-                target: Some(&username),
-            })
+            .record_audit(http_audit_event(
+                SecurityAuditActor::unauthenticated(),
+                SecurityAuditEventType::AuthLogin,
+                StatusCode::TOO_MANY_REQUESTS,
+                Some(username.clone()),
+            ))
             .await;
         return Err(error);
     }
@@ -38,30 +35,24 @@ pub(crate) async fn login(
             session.backend.record_login_result(&username, false)?;
             session
                 .backend
-                .record_audit(NewSecurityAuditEvent {
-                    actor_user_id: None,
-                    actor_username: None,
-                    event_type: "auth.login",
-                    method: "POST",
-                    path: "/auth/login",
-                    status_code: StatusCode::UNAUTHORIZED.as_u16(),
-                    target: Some(&username),
-                })
+                .record_audit(http_audit_event(
+                    SecurityAuditActor::unauthenticated(),
+                    SecurityAuditEventType::AuthLogin,
+                    StatusCode::UNAUTHORIZED,
+                    Some(username.clone()),
+                ))
                 .await;
             return Err(CoreErrorMarker::Unauthenticated.into());
         }
         Err(error) => {
             session
                 .backend
-                .record_audit(NewSecurityAuditEvent {
-                    actor_user_id: None,
-                    actor_username: None,
-                    event_type: "auth.login",
-                    method: "POST",
-                    path: "/auth/login",
-                    status_code: StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
-                    target: Some(&username),
-                })
+                .record_audit(http_audit_event(
+                    SecurityAuditActor::unauthenticated(),
+                    SecurityAuditEventType::AuthLogin,
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Some(username.clone()),
+                ))
                 .await;
             return Err(internal(error));
         }
@@ -70,29 +61,23 @@ pub(crate) async fn login(
     if let Err(error) = session.login(&user).await {
         session
             .backend
-            .record_audit(NewSecurityAuditEvent {
-                actor_user_id: Some(user.id.to_string()),
-                actor_username: Some(user.username.clone()),
-                event_type: "auth.login",
-                method: "POST",
-                path: "/auth/login",
-                status_code: StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
-                target: Some(&username),
-            })
+            .record_audit(http_audit_event(
+                SecurityAuditActor::authenticated(user.id),
+                SecurityAuditEventType::AuthLogin,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Some(username.clone()),
+            ))
             .await;
         return Err(internal(error));
     }
     session
         .backend
-        .record_audit(NewSecurityAuditEvent {
-            actor_user_id: Some(user.id.to_string()),
-            actor_username: Some(user.username.clone()),
-            event_type: "auth.login",
-            method: "POST",
-            path: "/auth/login",
-            status_code: StatusCode::OK.as_u16(),
-            target: Some(&username),
-        })
+        .record_audit(http_audit_event(
+            SecurityAuditActor::authenticated(user.id),
+            SecurityAuditEventType::AuthLogin,
+            StatusCode::OK,
+            Some(username),
+        ))
         .await;
     Ok(Json(MeResponse { user }))
 }
@@ -220,7 +205,10 @@ pub(crate) async fn list_security_audit_events(
         .audit
         .list(limit, offset)
         .await
-        .map_err(|error| HttpError::internal(format!("list security audit events: {error}")))?;
+        .map_err(|error| HttpError::internal(format!("list security audit events: {error}")))?
+        .into_iter()
+        .map(Into::into)
+        .collect();
     Ok(Json(events))
 }
 
@@ -230,45 +218,71 @@ pub(crate) async fn audit_request(
     next: Next,
 ) -> Response {
     let method = request.method().clone();
-    let path = request.uri().path().to_string();
     if matches!(method, Method::GET | Method::HEAD | Method::OPTIONS)
         || request.uri().path() == "/auth/login"
     {
         return next.run(request).await;
     }
     let event_type = security_event_type(&method, request.uri().path());
-    let actor_user_id = session.user.as_ref().map(|user| user.id.to_string());
-    let actor_username = session.user.as_ref().map(|user| user.username.clone());
+    let actor = session
+        .user
+        .as_ref()
+        .map_or_else(SecurityAuditActor::unauthenticated, |user| {
+            SecurityAuditActor::authenticated(user.id)
+        });
     let response = next.run(request).await;
-    session
-        .backend
-        .record_audit(NewSecurityAuditEvent {
-            actor_user_id,
-            actor_username,
-            event_type,
-            method: method.as_str(),
-            path: &path,
-            status_code: response.status().as_u16(),
-            target: None,
-        })
-        .await;
+    if let Some(event_type) = event_type {
+        session
+            .backend
+            .record_audit(http_audit_event(actor, event_type, response.status(), None))
+            .await;
+    }
     response
 }
 
-fn security_event_type(method: &Method, path: &str) -> &'static str {
+fn http_audit_event(
+    actor: SecurityAuditActor,
+    event_type: SecurityAuditEventType,
+    status: StatusCode,
+    target: Option<String>,
+) -> NewSecurityAuditEvent {
+    NewSecurityAuditEvent {
+        actor,
+        source: SecurityAuditSource::Http,
+        event_type,
+        outcome: if status.as_u16() < 400 {
+            SecurityAuditOutcome::Success
+        } else {
+            SecurityAuditOutcome::Failure
+        },
+        target,
+    }
+}
+
+fn security_event_type(method: &Method, path: &str) -> Option<SecurityAuditEventType> {
     match (method, path) {
-        (&Method::POST, "/auth/logout") => "auth.logout",
-        (&Method::POST, "/auth/users") => "auth.user.create",
-        (&Method::PATCH, path) if path.starts_with("/auth/users/") => "auth.user.status",
-        (&Method::POST, "/scan") => "maintenance.storage_scan",
-        (&Method::DELETE, path) if path.ends_with("/purge") => "resource.purge",
-        (&Method::DELETE, path) if path.starts_with("/resources/") => "resource.soft_delete",
-        (&Method::POST, path) if path.contains("/actions/") => "resource.action",
-        (&Method::PUT, "/resources/content/stream") => "resource.upload",
-        (&Method::POST, "/resources") => "resource.create",
-        (&Method::PATCH, path) if path.starts_with("/resources/") => "resource.update",
-        (&Method::POST, "/directories") => "directory.create",
-        _ => "http.write",
+        (&Method::POST, "/auth/logout") => Some(SecurityAuditEventType::AuthLogout),
+        (&Method::POST, "/auth/users") => Some(SecurityAuditEventType::AuthUserCreate),
+        (&Method::PATCH, path) if path.starts_with("/auth/users/") => {
+            Some(SecurityAuditEventType::AuthUserStatus)
+        }
+        (&Method::POST, "/scan") => Some(SecurityAuditEventType::MaintenanceStorageScan),
+        (&Method::DELETE, path) if path.ends_with("/purge") => {
+            Some(SecurityAuditEventType::ResourcePurge)
+        }
+        (&Method::DELETE, path) if path.starts_with("/resources/") => {
+            Some(SecurityAuditEventType::ResourceSoftDelete)
+        }
+        (&Method::POST, path) if path.contains("/actions/") => {
+            Some(SecurityAuditEventType::ResourceAction)
+        }
+        (&Method::PUT, "/resources/content/stream") => Some(SecurityAuditEventType::ResourceUpload),
+        (&Method::POST, "/resources") => Some(SecurityAuditEventType::ResourceCreate),
+        (&Method::PATCH, path) if path.starts_with("/resources/") => {
+            Some(SecurityAuditEventType::ResourceUpdate)
+        }
+        (&Method::POST, "/directories") => Some(SecurityAuditEventType::DirectoryCreate),
+        _ => None,
     }
 }
 

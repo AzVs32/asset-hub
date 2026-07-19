@@ -55,7 +55,7 @@ pub(crate) struct Credentials {
 pub(crate) struct AuthBackend {
     pub(super) users: UserService,
     pub(super) authorization: AuthorizationService,
-    pub(super) audit: SecurityAuditLog,
+    pub(super) audit: Arc<dyn SecurityAuditRepository>,
     pub(super) login_failures: Arc<Mutex<LoginFailureCache>>,
 }
 
@@ -63,7 +63,7 @@ impl AuthBackend {
     pub(crate) fn new(
         users: UserService,
         authorization: AuthorizationService,
-        audit: SecurityAuditLog,
+        audit: Arc<dyn SecurityAuditRepository>,
     ) -> Self {
         Self {
             users,
@@ -122,8 +122,8 @@ impl AuthBackend {
         Ok(())
     }
 
-    pub(super) async fn record_audit(&self, event: NewSecurityAuditEvent<'_>) {
-        if let Err(error) = self.audit.record(event).await {
+    pub(super) async fn record_audit(&self, event: NewSecurityAuditEvent) {
+        if let Err(error) = self.audit.record(&event).await {
             tracing::error!(error = %error, "write security audit event");
         }
     }

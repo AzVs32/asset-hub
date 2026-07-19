@@ -95,11 +95,14 @@ actions are authorized inside the core use case after their target directory is
 known.
 
 Security events are stored in SQLite's `security_audit_events` table. Login
-successes, login failures, rate-limit rejections, and all authenticated
-state-changing HTTP requests are recorded with the actor, event type, method,
-path, status, outcome, and target when available. Request bodies and passwords
-are never stored. Audit persistence is fail-open: a temporary audit write error
-is logged without replacing the business response.
+successes, login failures, rate-limit rejections, and classified state-changing
+operations are recorded with a source-independent event type, operation source,
+and outcome. Protocol-specific diagnostics remain in application logs instead of
+expanding the audit table. Unauthenticated operations keep the actor ID empty;
+unverified login input is stored only as the event target. Request bodies,
+passwords, tokens, and other secret CLI arguments are never stored. Audit
+persistence is fail-open: a temporary audit write error is logged without
+replacing the business response.
 
 Storage scanning is an administrator-only maintenance operation. `POST /scan`
 imports previously unknown files and empty directories from the configured

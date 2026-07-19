@@ -3,7 +3,7 @@ use crate::handlers;
 use crate::openapi::ApiDoc;
 use crate::settings::{CorsPolicy, RouterOptions, SessionOptions};
 use crate::state::HttpState;
-use asset_core::port::ResourceKindRegistry;
+use asset_core::port::{ResourceKindRegistry, SecurityAuditRepository};
 use asset_core::service::ResourceService;
 use asset_core::service::{AuthorizationService, UserService};
 use axum::Router;
@@ -123,6 +123,7 @@ pub(crate) async fn with_authentication(
     router: Router,
     users: UserService,
     authorization: AuthorizationService,
+    audit: Arc<dyn SecurityAuditRepository>,
     sqlite_path: &std::path::Path,
     bootstrap_admin: Option<(&str, &str)>,
     session_options: &SessionOptions,
@@ -134,7 +135,6 @@ pub(crate) async fn with_authentication(
         .max_connections(2)
         .connect_with(session_connect_options)
         .await?;
-    let audit = crate::audit::SecurityAuditLog::new(session_pool.clone());
     let backend = AuthBackend::new(users, authorization, audit);
     backend.initialize(bootstrap_admin).await?;
     let session_store = SqliteStore::new(session_pool);

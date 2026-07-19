@@ -670,16 +670,12 @@ export interface components {
         };
         SecurityAuditEventResponse: {
             actor_user_id?: string | null;
-            actor_username?: string | null;
             event_type: string;
             /** Format: int64 */
             id: number;
-            method: string;
             occurred_at: string;
             outcome: string;
-            path: string;
-            /** Format: int32 */
-            status_code: number;
+            source: string;
             target?: string | null;
         };
         /**

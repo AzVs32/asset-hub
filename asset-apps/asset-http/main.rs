@@ -50,6 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         app,
         runtime.user_service(),
         authorization,
+        runtime.security_audit_repository(),
         &runtime.config().database.sqlite_path,
         bootstrap_admin,
         settings.session_options(),

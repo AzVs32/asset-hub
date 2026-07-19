@@ -16,7 +16,7 @@ use asset_core::service::{
 use asset_core::{
     CoreError, port::BlobStorage, port::DirectoryStorage, port::ResourceActionExecutor,
     port::ResourceActionRegistry, port::ResourceKindRegistry, port::ResourceQuery,
-    port::ResourceRepository, port::StorageScanner,
+    port::ResourceRepository, port::SecurityAuditRepository, port::StorageScanner,
 };
 use asset_plugin_api::PluginExecutionPolicy;
 use config::AssetInfraConfig;
@@ -24,7 +24,7 @@ use kind::{DefaultResourceActionRegistry, DefaultResourceKindRegistry, registrie
 use password::Argon2PasswordHasher;
 use plugin::ExtismResourceActionExecutor;
 use plugin_manifest::PluginCatalog;
-use sqlite::{SqliteIdentityRepository, SqliteResourceRepository};
+use sqlite::{SqliteIdentityRepository, SqliteResourceRepository, SqliteSecurityAuditRepository};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -42,6 +42,7 @@ pub struct AssetInfrastructure {
     /// 资源仓储适配器。
     resource_repository: Arc<SqliteResourceRepository>,
     identity_repository: Arc<SqliteIdentityRepository>,
+    security_audit_repository: Arc<SqliteSecurityAuditRepository>,
     /// 对象存储适配器。
     blob_storage: Arc<OpenDalBlobStorage>,
     storage_scanner: Arc<FileSystemScanner>,
@@ -68,6 +69,9 @@ impl AssetInfrastructure {
         let identity_repository = Arc::new(SqliteIdentityRepository::new(
             resource_repository.pool().clone(),
         ));
+        let security_audit_repository = Arc::new(SqliteSecurityAuditRepository::new(
+            resource_repository.pool().clone(),
+        ));
         let plugin_catalog = PluginCatalog::load(&config.kind)?;
         let (resource_kind_registry, resource_action_registry) =
             registries_from_catalog(&config.kind, &plugin_catalog)?;
@@ -89,6 +93,7 @@ impl AssetInfrastructure {
             config,
             resource_repository,
             identity_repository,
+            security_audit_repository,
             blob_storage,
             storage_scanner,
             resource_kind_registry,
@@ -128,6 +133,10 @@ impl AssetInfrastructure {
 
     pub fn authorization_service(&self) -> AuthorizationService {
         AuthorizationService::new(self.identity_repository.clone())
+    }
+
+    pub fn security_audit_repository(&self) -> Arc<dyn SecurityAuditRepository> {
+        self.security_audit_repository.clone()
     }
 
     /// 返回对象存储端口对象。

@@ -1,8 +1,11 @@
-use crate::audit::{NewSecurityAuditEvent, SecurityAuditEventResponse, SecurityAuditLog};
+use crate::audit::SecurityAuditEventResponse;
 use crate::error::HttpError;
 use asset_core::domain::{
-    AccessContext, DirectoryPermission, ResourceDirectory, User, UserId, UserRole, UserStatus,
+    AccessContext, DirectoryPermission, NewSecurityAuditEvent, ResourceDirectory,
+    SecurityAuditActor, SecurityAuditEventType, SecurityAuditOutcome, SecurityAuditSource, User,
+    UserId, UserRole, UserStatus,
 };
+use asset_core::port::SecurityAuditRepository;
 use asset_core::service::{AuthorizationService, UserService};
 use axum::{
     Json,

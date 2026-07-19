@@ -1,5 +1,5 @@
 use asset_core::CoreError;
-use asset_core::port::ResourceKindRegistry;
+use asset_core::port::{ResourceKindRegistry, SecurityAuditRepository};
 use asset_core::service::{AuthorizationService, ResourceService, UserService};
 use asset_infra::AssetInfrastructure;
 use asset_infra::config::{AssetInfraConfig, DEFAULT_CONFIG_FILE};
@@ -64,6 +64,10 @@ impl AssetRuntime {
 
     pub fn authorization_service(&self) -> AuthorizationService {
         self.infrastructure.authorization_service()
+    }
+
+    pub fn security_audit_repository(&self) -> Arc<dyn SecurityAuditRepository> {
+        self.infrastructure.security_audit_repository()
     }
 
     /// 返回资源类型注册表。

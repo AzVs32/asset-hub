@@ -1519,6 +1519,7 @@ async fn member_access_is_limited_to_the_workspace_subtree() {
         base,
         runtime.user_service(),
         authorization,
+        runtime.security_audit_repository(),
         &runtime.config().database.sqlite_path,
         Some(("admin", "administrator-password")),
         &SessionOptions {
@@ -1763,13 +1764,16 @@ async fn member_access_is_limited_to_the_workspace_subtree() {
     let events = audit_events.as_array().unwrap();
     assert!(events.iter().any(|event| {
         event["event_type"] == "auth.login"
+            && event["source"] == "http"
             && event["outcome"] == "failure"
             && event["target"] == "admin"
+            && event["actor_user_id"].is_null()
     }));
     assert!(events.iter().any(|event| {
         event["event_type"] == "auth.user.status"
-            && event["actor_username"] == "admin"
-            && event["status_code"] == 200
+            && event["source"] == "http"
+            && event["actor_user_id"].is_string()
+            && event["outcome"] == "success"
     }));
 }
 
