@@ -1,10 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import React from "react";
 import { Navigate, Outlet, useLocation } from "react-router";
-import { defaultDirectoryPath, LOGIN_PATH } from "@/app/paths";
+import { canonicalWorkspaceLocation, defaultDirectoryPath, LOGIN_PATH } from "@/app/paths";
 import { AuthenticationRequiredError } from "@/application/errors";
 import { useGateway } from "@/application/ports/gateway-context";
 import { queryKeys } from "@/application/queries/keys";
+import { createWorkspaceScope } from "@/application/workspace/workspace-scope";
+import { WorkspaceScopeProvider } from "@/application/workspace/workspace-scope-context";
 import type { CurrentUser } from "@/domain/auth";
 import { LoadingState } from "@/shared/ui/state";
 import { LoginForm } from "./login-form";
@@ -45,7 +47,9 @@ export function AuthBoundary() {
 
   return (
     <SessionProvider user={session.data}>
-      <Outlet />
+      <WorkspaceScopeProvider user={session.data}>
+        <Outlet />
+      </WorkspaceScopeProvider>
     </SessionProvider>
   );
 
@@ -69,8 +73,8 @@ function loginDestination(state: unknown, user: CurrentUser) {
       !from.startsWith("//") &&
       from !== LOGIN_PATH
     ) {
-      return from;
+      return canonicalWorkspaceLocation(from, createWorkspaceScope(user));
     }
   }
-  return defaultDirectoryPath(user);
+  return defaultDirectoryPath();
 }

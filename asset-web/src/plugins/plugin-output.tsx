@@ -1,6 +1,6 @@
 import { useGateway } from "@/application/ports/gateway-context";
+import type { WorkspaceResource } from "@/application/workspace/workspace-scope";
 import type { PluginActionOutput } from "@/domain/plugin";
-import type { Resource } from "@/domain/resource";
 import { PluginViewHost } from "@/kernel/plugin-view-host";
 
 export function PluginOutput({
@@ -9,7 +9,7 @@ export function PluginOutput({
   onResourceChanged,
 }: {
   output: PluginActionOutput;
-  resource: Resource;
+  resource: WorkspaceResource;
   onResourceChanged?: (() => void | Promise<void>) | undefined;
 }) {
   const gateway = useGateway();

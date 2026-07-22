@@ -13,7 +13,11 @@ import {
 import React from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import type { Resource, ResourceAction, ResourceDraft, ResourceKind } from "@/domain/resource";
+import type {
+  WorkspaceResource,
+  WorkspaceResourceDraft,
+} from "@/application/workspace/workspace-scope";
+import type { ResourceAction, ResourceKind } from "@/domain/resource";
 import { draftFromResource, formatBytes, formatDate } from "@/domain/resource-draft";
 import { usePluginKernel } from "@/kernel/plugin-kernel";
 import { hostSlots } from "@/kernel/slots";
@@ -40,10 +44,10 @@ export function ResourceDetail({
   onRestore,
   onResourceChanged,
 }: {
-  resource: Resource | null;
+  resource: WorkspaceResource | null;
   kinds: ResourceKind[];
   pending: boolean;
-  onSave: (draft: ResourceDraft) => Promise<unknown>;
+  onSave: (draft: WorkspaceResourceDraft) => Promise<unknown>;
   onAction: (action: ResourceAction) => void;
   onDelete: () => void;
   onRestore: () => void;
@@ -83,10 +87,10 @@ function Detail({
   onRestore,
   onResourceChanged,
 }: {
-  resource: Resource;
+  resource: WorkspaceResource;
   kinds: ResourceKind[];
   pending: boolean;
-  onSave: (draft: ResourceDraft) => Promise<unknown>;
+  onSave: (draft: WorkspaceResourceDraft) => Promise<unknown>;
   onAction: (action: ResourceAction) => void;
   onDelete: () => void;
   onRestore: () => void;
@@ -94,11 +98,18 @@ function Detail({
 }) {
   const kernel = usePluginKernel();
   const actions = kernel.actionsAt(resource, hostSlots.resourceDetailActions);
-  const form = useForm<ResourceDraft>({
+  const displayResource = {
+    ...resource,
+    directory: resource.directory || "/",
+  };
+  const form = useForm<WorkspaceResourceDraft>({
     resolver: zodResolver(draftSchema),
-    defaultValues: draftFromResource(resource),
+    defaultValues: draftFromResource(displayResource),
   });
-  React.useEffect(() => form.reset(draftFromResource(resource)), [form, resource]);
+  React.useEffect(
+    () => form.reset(draftFromResource({ ...resource, directory: displayResource.directory })),
+    [displayResource.directory, form, resource],
+  );
   const kind = kinds.find((candidate) => candidate.kind === resource.kind);
 
   return (
@@ -219,14 +230,18 @@ function Detail({
         <section className="grid grid-cols-2 gap-x-4 rounded-2xl border border-slate-200 bg-white p-4 text-sm">
           <Fact label="Created" value={formatDate(resource.createdAt)} />
           <Fact label="Updated" value={formatDate(resource.updatedAt)} />
-          <Fact label="Directory" value={resource.directory || "/"} />
+          <Fact label="Directory" value={displayResource.directory} />
           <Fact label="Size" value={formatBytes(resource.content?.size ?? 0)} />
           <Fact label="MIME" value={resource.content?.mimeType ?? "—"} />
           <Fact label="Kind source" value={kind?.source ?? "—"} />
           <Fact
             label="Content"
             value={
-              resource.content ? [resource.directory, resource.name].filter(Boolean).join("/") : "—"
+              resource.content
+                ? resource.directory
+                  ? `${resource.directory}/${resource.name}`
+                  : `/${resource.name}`
+                : "—"
             }
             wide
           />

@@ -1,6 +1,7 @@
 import Form, { type FormProps } from "@rjsf/core";
 import validator from "@rjsf/validator-ajv8";
 import React from "react";
+import { useWorkspaceScope } from "@/application/workspace/workspace-scope-context";
 import type { JsonObject } from "@/domain/plugin";
 import type { PluginViewRendererProps } from "@/kernel/plugin-kernel";
 import { PluginOutput } from "@/plugins/plugin-output";
@@ -13,6 +14,7 @@ export default function FormRenderer({
   gateway,
   onResourceChanged,
 }: PluginViewRendererProps) {
+  const scope = useWorkspaceScope();
   const [result, setResult] = React.useState<Awaited<
     ReturnType<typeof gateway.executeAction>
   > | null>(null);
@@ -40,7 +42,11 @@ export default function FormRenderer({
           setPending(true);
           setError(null);
           try {
-            const next = await gateway.executeAction(resource, target.id, jsonObject(formData));
+            const next = await gateway.executeAction(
+              scope.toStorageResource(resource),
+              target.id,
+              jsonObject(formData),
+            );
             setResult(next);
             if (target.access === "read_write") await onResourceChanged?.();
           } catch (cause) {

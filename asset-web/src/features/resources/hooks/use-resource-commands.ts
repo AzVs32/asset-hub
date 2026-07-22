@@ -3,11 +3,18 @@ import React from "react";
 import { toast } from "sonner";
 import { useGateway } from "@/application/ports/gateway-context";
 import { queryKeys } from "@/application/queries/keys";
-import type { Resource, ResourceAction, ResourceDraft, UploadDraft } from "@/domain/resource";
+import type {
+  WorkspaceResource,
+  WorkspaceResourceDraft,
+  WorkspaceUploadDraft,
+} from "@/application/workspace/workspace-scope";
+import { useWorkspaceScope } from "@/application/workspace/workspace-scope-context";
+import type { ResourceAction } from "@/domain/resource";
 import type { ActionResult } from "@/plugins/plugin-action-dialog";
 
 export function useResourceCommands() {
   const gateway = useGateway();
+  const scope = useWorkspaceScope();
   const queryClient = useQueryClient();
   const [actionResult, setActionResult] = React.useState<ActionResult | null>(null);
 
@@ -24,7 +31,8 @@ export function useResourceCommands() {
   );
 
   const create = useMutation({
-    mutationFn: (draft: ResourceDraft) => gateway.createResource(draft),
+    mutationFn: async (draft: WorkspaceResourceDraft) =>
+      scope.toVisibleResource(await gateway.createResource(scope.toStorageResourceDraft(draft))),
     onSuccess: async (resource) => {
       toast.success(`Created ${resource.name}`);
       await refresh(resource.id);
@@ -32,8 +40,10 @@ export function useResourceCommands() {
     onError: notifyError,
   });
   const update = useMutation({
-    mutationFn: ({ id, draft }: { id: string; draft: ResourceDraft }) =>
-      gateway.updateResource(id, draft),
+    mutationFn: async ({ id, draft }: { id: string; draft: WorkspaceResourceDraft }) =>
+      scope.toVisibleResource(
+        await gateway.updateResource(id, scope.toStorageResourceDraft(draft)),
+      ),
     onSuccess: async (resource) => {
       toast.success("Resource saved");
       queryClient.setQueryData(queryKeys.resource(resource.id), resource);
@@ -42,7 +52,8 @@ export function useResourceCommands() {
     onError: notifyError,
   });
   const upload = useMutation({
-    mutationFn: (draft: UploadDraft) => gateway.uploadResource(draft),
+    mutationFn: async (draft: WorkspaceUploadDraft) =>
+      scope.toVisibleResource(await gateway.uploadResource(scope.toStorageUploadDraft(draft))),
     onSuccess: async (resource) => {
       toast.success(`Uploaded ${resource.name}`);
       await refresh(resource.id);
@@ -50,7 +61,8 @@ export function useResourceCommands() {
     onError: notifyError,
   });
   const remove = useMutation({
-    mutationFn: (resource: Resource) => gateway.deleteResource(resource.id),
+    mutationFn: async (resource: WorkspaceResource) =>
+      scope.toVisibleResource(await gateway.deleteResource(resource.id)),
     onSuccess: async (resource) => {
       toast.success(`${resource.name} moved to deleted resources`);
       await refresh(resource.id);
@@ -58,7 +70,8 @@ export function useResourceCommands() {
     onError: notifyError,
   });
   const restore = useMutation({
-    mutationFn: (resource: Resource) => gateway.restoreResource(resource.id),
+    mutationFn: async (resource: WorkspaceResource) =>
+      scope.toVisibleResource(await gateway.restoreResource(resource.id)),
     onSuccess: async (resource) => {
       toast.success(`${resource.name} restored`);
       await refresh(resource.id);
@@ -67,7 +80,7 @@ export function useResourceCommands() {
   });
   const createFolder = useMutation({
     mutationFn: ({ parent, name }: { parent: string; name: string }) =>
-      gateway.createDirectory(parent, name),
+      gateway.createDirectory(scope.toStorageDirectory(parent), name),
     onSuccess: async () => {
       toast.success("Folder created");
       await refresh();
@@ -75,10 +88,16 @@ export function useResourceCommands() {
     onError: notifyError,
   });
   const execute = useMutation({
-    mutationFn: async ({ resource, action }: { resource: Resource; action: ResourceAction }) => ({
+    mutationFn: async ({
       resource,
       action,
-      output: await gateway.executeAction(resource, action.id),
+    }: {
+      resource: WorkspaceResource;
+      action: ResourceAction;
+    }) => ({
+      resource,
+      action,
+      output: await gateway.executeAction(scope.toStorageResource(resource), action.id),
     }),
     onSuccess: async (result) => {
       setActionResult(result);

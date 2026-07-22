@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { breadcrumbs, normalizeDirectory, parentDirectory } from "@/domain/resource-draft";
+import { createWorkspaceScope } from "@/application/workspace/workspace-scope";
+import {
+  breadcrumbs,
+  normalizeDirectory,
+  parentDirectory,
+  visibleDirectory,
+} from "@/domain/directory-path";
 
 describe("resource directory navigation", () => {
   it("normalizes separators and empty segments without changing spaces", () => {
@@ -8,16 +14,31 @@ describe("resource directory navigation", () => {
     );
   });
 
-  it("does not navigate above a member access root", () => {
-    expect(parentDirectory("members/alice/project", "members/alice")).toBe("members/alice");
-    expect(parentDirectory("members/alice", "members/alice")).toBeNull();
+  it("does not navigate above the visible root", () => {
+    expect(parentDirectory("project/raw")).toBe("project");
+    expect(parentDirectory("")).toBeNull();
   });
 
-  it("builds breadcrumbs relative to the access root", () => {
-    expect(breadcrumbs("members/alice/project/raw", "members/alice")).toEqual([
-      { path: "members/alice", label: "alice" },
-      { path: "members/alice/project", label: "project" },
-      { path: "members/alice/project/raw", label: "raw" },
+  it("builds breadcrumbs from visible paths only", () => {
+    expect(breadcrumbs("project/raw")).toEqual([
+      { path: "", label: "Root" },
+      { path: "project", label: "project" },
+      { path: "project/raw", label: "raw" },
     ]);
+  });
+
+  it("maps paths through a session workspace scope", () => {
+    const scope = createWorkspaceScope({
+      id: "azvs-1",
+      username: "azvs",
+      role: "member",
+      workspaceDirectory: "users/azvs",
+      isAdmin: false,
+    });
+    expect(scope.toVisibleDirectory("users/azvs")).toBe("");
+    expect(scope.toVisibleDirectory("users/azvs/images")).toBe("images");
+    expect(scope.toStorageDirectory(visibleDirectory())).toBe("users/azvs");
+    expect(scope.toStorageDirectory(visibleDirectory("images"))).toBe("users/azvs/images");
+    expect(() => scope.toVisibleDirectory("users/alice")).toThrow("outside");
   });
 });

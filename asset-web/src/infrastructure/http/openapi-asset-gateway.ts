@@ -2,6 +2,7 @@ import createClient from "openapi-fetch";
 import { AuthenticationRequiredError } from "@/application/errors";
 import type { AssetGateway } from "@/application/ports/asset-gateway";
 import type { CurrentUser, ManagedUser, UserStatus } from "@/domain/auth";
+import { normalizeDirectory } from "@/domain/directory-path";
 import type { JsonObject, PluginActionOutput, PluginDiagnostic } from "@/domain/plugin";
 import type {
   Directory,
@@ -13,7 +14,6 @@ import type {
   ResourceKind,
   UploadDraft,
 } from "@/domain/resource";
-import { normalizeDirectory } from "@/domain/resource-draft";
 import type { components, paths } from "./generated";
 import { HttpError, httpError } from "./http-error";
 import { isPluginViewKind, parsePluginView } from "./plugin-view-schema";

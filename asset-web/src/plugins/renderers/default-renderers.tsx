@@ -1,4 +1,5 @@
 import React from "react";
+import { useWorkspaceScope } from "@/application/workspace/workspace-scope-context";
 import type { PluginActionOutput, PluginView } from "@/domain/plugin";
 import type { ResourceAction } from "@/domain/resource";
 import type { PluginKernel, PluginViewRendererProps } from "@/kernel/plugin-kernel";
@@ -116,6 +117,7 @@ function PluginFrameView({
   onResourceChanged,
 }: PluginViewRendererProps & { view: Extract<PluginView, { view: "plugin_frame" }> }) {
   const ref = React.useRef<HTMLIFrameElement>(null);
+  const scope = useWorkspaceScope();
   const source = pluginFrameUrl(view.url, gateway.assetUrl.bind(gateway));
 
   React.useEffect(() => {
@@ -134,7 +136,11 @@ function PluginFrameView({
         return;
       }
       try {
-        const result = await gateway.executeAction(resource, action.id, message.input ?? {});
+        const result = await gateway.executeAction(
+          scope.toStorageResource(resource),
+          action.id,
+          message.input ?? {},
+        );
         postResult(ref.current, message.requestId, result, null);
         if (action.access === "read_write") await onResourceChanged?.();
       } catch (cause) {
@@ -148,7 +154,7 @@ function PluginFrameView({
     }
     window.addEventListener("message", receive);
     return () => window.removeEventListener("message", receive);
-  }, [gateway, onResourceChanged, resource, source]);
+  }, [gateway, onResourceChanged, resource, scope, source]);
 
   if (!source) return <PluginError message="The plugin returned an invalid frame URL." />;
   return (

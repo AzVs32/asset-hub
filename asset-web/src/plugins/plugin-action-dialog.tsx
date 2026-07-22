@@ -1,11 +1,12 @@
+import type { WorkspaceResource } from "@/application/workspace/workspace-scope";
 import type { PluginActionOutput } from "@/domain/plugin";
-import type { Resource, ResourceAction } from "@/domain/resource";
+import type { ResourceAction } from "@/domain/resource";
 import { Dialog } from "@/shared/ui/dialog";
 import { PluginOutput } from "./plugin-output";
 import { actionTitle } from "./renderers/default-renderers";
 
 export interface ActionResult {
-  resource: Resource;
+  resource: WorkspaceResource;
   action: ResourceAction;
   output: PluginActionOutput;
 }

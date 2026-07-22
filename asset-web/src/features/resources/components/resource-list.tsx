@@ -15,15 +15,16 @@ import {
 } from "lucide-react";
 import React from "react";
 import { useGateway } from "@/application/ports/gateway-context";
-import type { CurrentUser } from "@/domain/auth";
 import type {
-  DirectoryListing,
-  Resource,
-  ResourceAction,
-  ResourceFilters,
-  ResourceKind,
-} from "@/domain/resource";
-import { breadcrumbs, formatBytes, formatDate, parentDirectory } from "@/domain/resource-draft";
+  WorkspaceDirectoryListing,
+  WorkspaceResource,
+  WorkspaceResourceFilters,
+} from "@/application/workspace/workspace-scope";
+import { useWorkspaceScope } from "@/application/workspace/workspace-scope-context";
+import type { CurrentUser } from "@/domain/auth";
+import { breadcrumbs, parentDirectory } from "@/domain/directory-path";
+import type { ResourceAction, ResourceKind } from "@/domain/resource";
+import { formatBytes, formatDate } from "@/domain/resource-draft";
 import { usePluginKernel } from "@/kernel/plugin-kernel";
 import { hostSlots } from "@/kernel/slots";
 import { Button } from "@/shared/ui/button";
@@ -50,17 +51,17 @@ export function ResourceList({
   onUsers,
   onLogout,
 }: {
-  user: CurrentUser;
-  listing: DirectoryListing | undefined;
+  user: Pick<CurrentUser, "username" | "isAdmin">;
+  listing: WorkspaceDirectoryListing | undefined;
   kinds: ResourceKind[];
-  filters: ResourceFilters;
+  filters: WorkspaceResourceFilters;
   selectedId: string | null;
   loading: boolean;
   error: unknown;
-  onFilters: (patch: Partial<ResourceFilters>) => void;
+  onFilters: (patch: Partial<WorkspaceResourceFilters>) => void;
   onOpenDirectory: (path: string) => void;
-  onSelect: (resource: Resource) => void;
-  onAction: (resource: Resource, action: ResourceAction) => void;
+  onSelect: (resource: WorkspaceResource) => void;
+  onAction: (resource: WorkspaceResource, action: ResourceAction) => void;
   onRefresh: () => void;
   onCreate: () => void;
   onUpload: () => void;
@@ -70,9 +71,8 @@ export function ResourceList({
 }) {
   const total = listing?.resources.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / filters.limit));
-  const root = user.isAdmin ? "" : user.workspaceDirectory;
-  const crumbs = breadcrumbs(filters.directory, root);
-  const parent = parentDirectory(filters.directory, root);
+  const crumbs = breadcrumbs(filters.directory);
+  const parent = parentDirectory(filters.directory);
 
   return (
     <section className="flex min-h-0 min-w-0 flex-col bg-white" aria-label="Resource workspace">
@@ -251,7 +251,7 @@ function ResourceRow({
   onSelect,
   onAction,
 }: {
-  resource: Resource;
+  resource: WorkspaceResource;
   selected: boolean;
   onSelect: () => void;
   onAction: (action: ResourceAction) => void;
@@ -297,13 +297,14 @@ function ResourceRow({
   );
 }
 
-function ResourceThumbnail({ resource }: { resource: Resource }) {
+function ResourceThumbnail({ resource }: { resource: WorkspaceResource }) {
   const gateway = useGateway();
+  const scope = useWorkspaceScope();
   const kernel = usePluginKernel();
   const action = kernel.thumbnailAction(resource);
   const result = useQuery({
     queryKey: ["thumbnail", resource.id, resource.updatedAt, action?.id],
-    queryFn: () => gateway.executeAction(resource, action?.id ?? ""),
+    queryFn: () => gateway.executeAction(scope.toStorageResource(resource), action?.id ?? ""),
     enabled: Boolean(action),
     retry: false,
     staleTime: 5 * 60_000,

@@ -1,22 +1,24 @@
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
-import { directoryPath } from "@/app/paths";
+import { canonicalDirectoryRoute, decodeDirectoryPath, directoryPath } from "@/app/paths";
 import { useGateway } from "@/application/ports/gateway-context";
 import { queryKeys } from "@/application/queries/keys";
-import type { ResourceFilters } from "@/domain/resource";
-import { useSession } from "@/features/auth/session-context";
+import type { WorkspaceResourceFilters } from "@/application/workspace/workspace-scope";
+import { useWorkspaceScope } from "@/application/workspace/workspace-scope-context";
+import { visibleDirectory } from "@/domain/directory-path";
 
 export function useResourceListing() {
   const gateway = useGateway();
-  const user = useSession();
+  const scope = useWorkspaceScope();
   const navigate = useNavigate();
   const route = useParams<"*">();
   const [searchParams, setSearchParams] = useSearchParams();
-  const routeDirectory = route["*"] ?? "";
-  const filters = useMemo<ResourceFilters>(
+  const routeDirectory = decodeDirectoryPath(route["*"] ?? "");
+  const canonicalRoute = canonicalDirectoryRoute(routeDirectory, scope);
+  const filters = useMemo<WorkspaceResourceFilters>(
     () => ({
-      directory: routeDirectory || (user.isAdmin ? "" : user.workspaceDirectory),
+      directory: canonicalRoute.directory,
       page: positiveInteger(searchParams.get("page"), 1),
       limit: 30,
       query: searchParams.get("q") ?? "",
@@ -25,17 +27,21 @@ export function useResourceListing() {
       includeDescendants: searchParams.get("descendants") === "1",
       includeDeleted: searchParams.get("deleted") === "1",
     }),
-    [routeDirectory, searchParams, user.isAdmin, user.workspaceDirectory],
+    [canonicalRoute.directory, searchParams],
   );
+  const storageFilters = useMemo(() => scope.toStorageFilters(filters), [filters, scope]);
 
   useEffect(() => {
-    if (!routeDirectory && !user.isAdmin && user.workspaceDirectory) {
+    if (canonicalRoute.changed) {
       navigate(
-        { pathname: directoryPath(user.workspaceDirectory), search: searchParams.toString() },
+        {
+          pathname: directoryPath(canonicalRoute.directory),
+          search: searchParams.toString(),
+        },
         { replace: true },
       );
     }
-  }, [navigate, routeDirectory, searchParams, user.isAdmin, user.workspaceDirectory]);
+  }, [canonicalRoute.changed, canonicalRoute.directory, navigate, searchParams]);
 
   const kinds = useQuery({
     queryKey: queryKeys.resourceKinds,
@@ -43,12 +49,13 @@ export function useResourceListing() {
     staleTime: 5 * 60_000,
   });
   const listing = useQuery({
-    queryKey: queryKeys.directory(filters),
-    queryFn: ({ signal }) => gateway.listDirectory(filters, signal),
+    queryKey: queryKeys.directory(storageFilters),
+    queryFn: async ({ signal }) =>
+      scope.toVisibleListing(await gateway.listDirectory(storageFilters, signal)),
     placeholderData: (previous) => previous,
   });
   const updateFilters = useCallback(
-    (patch: Partial<ResourceFilters>) => {
+    (patch: Partial<WorkspaceResourceFilters>) => {
       setSearchParams(
         (current) => {
           const next = new URLSearchParams(current);
@@ -86,7 +93,7 @@ export function useResourceListing() {
       const next = new URLSearchParams(searchParams);
       next.delete("page");
       next.delete("resource");
-      navigate({ pathname: directoryPath(directory), search: next.toString() });
+      navigate({ pathname: directoryPath(visibleDirectory(directory)), search: next.toString() });
     },
     [navigate, searchParams],
   );
