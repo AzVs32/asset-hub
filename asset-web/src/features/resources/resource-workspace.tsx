@@ -5,6 +5,7 @@ import { useGateway } from "@/application/ports/gateway-context";
 import { queryKeys } from "@/application/queries/keys";
 import type { Resource } from "@/domain/resource";
 import { useSession } from "@/features/auth/session-context";
+import { useSignOut } from "@/features/auth/use-sign-out";
 import { PluginActionDialog } from "@/plugins/plugin-action-dialog";
 import { ResourceDetail } from "./components/resource-detail";
 import {
@@ -25,6 +26,7 @@ const UserAdministration = React.lazy(() =>
 export function ResourceWorkspace() {
   const gateway = useGateway();
   const user = useSession();
+  const signOut = useSignOut();
   const queryClient = useQueryClient();
   const browser = useResourceListing();
   const commands = useResourceCommands();
@@ -52,9 +54,7 @@ export function ResourceWorkspace() {
 
   async function logout() {
     try {
-      await gateway.logout();
-      queryClient.setQueryData(queryKeys.session, undefined);
-      await queryClient.invalidateQueries({ queryKey: queryKeys.session });
+      await signOut();
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : "Sign out failed");
     }

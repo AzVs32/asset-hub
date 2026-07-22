@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useMemo } from "react";
-import { useSearchParams } from "react-router";
+import { useCallback, useEffect, useMemo } from "react";
+import { useNavigate, useParams, useSearchParams } from "react-router";
+import { directoryPath } from "@/app/paths";
 import { useGateway } from "@/application/ports/gateway-context";
 import { queryKeys } from "@/application/queries/keys";
 import type { ResourceFilters } from "@/domain/resource";
@@ -9,10 +10,13 @@ import { useSession } from "@/features/auth/session-context";
 export function useResourceListing() {
   const gateway = useGateway();
   const user = useSession();
+  const navigate = useNavigate();
+  const route = useParams<"*">();
   const [searchParams, setSearchParams] = useSearchParams();
+  const routeDirectory = route["*"] ?? "";
   const filters = useMemo<ResourceFilters>(
     () => ({
-      directory: searchParams.get("directory") ?? (user.isAdmin ? "" : user.workspaceDirectory),
+      directory: routeDirectory || (user.isAdmin ? "" : user.workspaceDirectory),
       page: positiveInteger(searchParams.get("page"), 1),
       limit: 30,
       query: searchParams.get("q") ?? "",
@@ -21,8 +25,17 @@ export function useResourceListing() {
       includeDescendants: searchParams.get("descendants") === "1",
       includeDeleted: searchParams.get("deleted") === "1",
     }),
-    [searchParams, user.isAdmin, user.workspaceDirectory],
+    [routeDirectory, searchParams, user.isAdmin, user.workspaceDirectory],
   );
+
+  useEffect(() => {
+    if (!routeDirectory && !user.isAdmin && user.workspaceDirectory) {
+      navigate(
+        { pathname: directoryPath(user.workspaceDirectory), search: searchParams.toString() },
+        { replace: true },
+      );
+    }
+  }, [navigate, routeDirectory, searchParams, user.isAdmin, user.workspaceDirectory]);
 
   const kinds = useQuery({
     queryKey: queryKeys.resourceKinds,
@@ -40,7 +53,6 @@ export function useResourceListing() {
         (current) => {
           const next = new URLSearchParams(current);
           const merged = { ...filters, ...patch };
-          setOrDelete(next, "directory", merged.directory);
           setOrDelete(next, "q", merged.query);
           setOrDelete(next, "tag", merged.tag);
           setOrDelete(next, "kind", merged.kind);
@@ -71,18 +83,12 @@ export function useResourceListing() {
 
   const openDirectory = useCallback(
     (directory: string) => {
-      setSearchParams(
-        (current) => {
-          const next = new URLSearchParams(current);
-          setOrDelete(next, "directory", directory);
-          next.delete("page");
-          next.delete("resource");
-          return next;
-        },
-        { replace: true },
-      );
+      const next = new URLSearchParams(searchParams);
+      next.delete("page");
+      next.delete("resource");
+      navigate({ pathname: directoryPath(directory), search: next.toString() });
     },
-    [setSearchParams],
+    [navigate, searchParams],
   );
 
   return {

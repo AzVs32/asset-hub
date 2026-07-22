@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from "react-router";
 import { describe, expect, it } from "vitest";
 import type { AssetGateway } from "@/application/ports/asset-gateway";
 import { GatewayProvider } from "@/application/ports/gateway-context";
@@ -35,26 +35,36 @@ describe("resource listing navigation", () => {
               isAdmin: true,
             }}
           >
-            <MemoryRouter
-              initialEntries={["/?directory=library&page=4&resource=resource-1&q=photo"]}
-            >
-              {children}
+            <MemoryRouter initialEntries={["/library?page=4&resource=resource-1&q=photo"]}>
+              <Routes>
+                <Route path="/*" element={children} />
+              </Routes>
             </MemoryRouter>
           </SessionProvider>
         </GatewayProvider>
       </QueryClientProvider>
     );
-    const { result } = renderHook(() => useResourceListing(), { wrapper });
+    const { result } = renderHook(
+      () => ({ browser: useResourceListing(), location: useLocation(), navigate: useNavigate() }),
+      { wrapper },
+    );
 
-    act(() => result.current.openDirectory("library/images"));
+    act(() => result.current.browser.openDirectory("library/images"));
 
     await waitFor(() => {
-      expect(result.current.filters).toMatchObject({
+      expect(result.current.browser.filters).toMatchObject({
         directory: "library/images",
         page: 1,
         query: "photo",
       });
-      expect(result.current.selectedId).toBeNull();
+      expect(result.current.browser.selectedId).toBeNull();
+      expect(result.current.location.pathname).toBe("/library/images");
+      expect(result.current.location.search).toBe("?q=photo");
+    });
+
+    act(() => result.current.navigate(-1));
+    await waitFor(() => {
+      expect(result.current.location.pathname).toBe("/library");
     });
 
     queryClient.clear();
