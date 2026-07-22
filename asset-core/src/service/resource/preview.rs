@@ -2,13 +2,48 @@
 //!
 //! 本模块负责面向展示的读取用例：在线阅读、预览、缩略图和预览流。具体解析仍由 action/plugin 体系提供。
 
-use super::*;
+#[cfg(test)]
+use super::ResourcePreview;
+use super::content::content_type_for_media;
+use super::{
+    ReadableResource, ResourceActionService, ResourcePreviewStream, ResourceService,
+    ResourceThumbnail,
+};
+use crate::CoreError;
+use crate::domain::Resource;
+#[cfg(test)]
+use crate::domain::ResourceId;
+use asset_plugin_api::{
+    PluginMediaEncoding, PluginView, ResourceAction, ResourceActionExecutorKind,
+};
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use bytes::Bytes;
 
 /// 资源预览服务。
 ///
 /// 预览服务依赖动作服务执行 read/preview/thumbnail 声明动作，再把插件 view 转换为调用方需要的内容结构。
 pub(super) struct ResourcePreviewService<'a> {
     service: &'a ResourceService,
+}
+
+fn decode_media_view(action: &str, view: &PluginView) -> Result<(String, Bytes), CoreError> {
+    let PluginView::Media(media) = view else {
+        return Err(CoreError::configuration(format!(
+            "resource action `{action}` must return a media view"
+        )));
+    };
+    if media.encoding != PluginMediaEncoding::Base64 {
+        return Err(CoreError::configuration(format!(
+            "resource action `{action}` returned URL media where inline media was required"
+        )));
+    }
+    let content = BASE64_STANDARD.decode(&media.data).map_err(|error| {
+        CoreError::configuration(format!(
+            "resource action `{action}` returned invalid media: {error}"
+        ))
+    })?;
+    Ok((media.mime_type.clone(), Bytes::from(content)))
 }
 
 impl<'a> ResourcePreviewService<'a> {

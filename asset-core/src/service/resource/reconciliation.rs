@@ -1,28 +1,33 @@
-//! 资源内容服务。
+//! 对象存储与资源仓储的状态协调。
 //!
-//! 本模块负责对象内容的流式写入、导入和读取，包括校验和校验以及仓储保存失败后的对象清理补偿。
+//! 扫描器只报告存储事实；本服务负责把最终状态投影到资源和目录仓储。只有完整扫描成功
+//! 后才删除未见记录，避免一次不完整扫描造成误删。
 
-use super::*;
+use super::ResourceService;
+use super::command::build_resource;
+use super::content::{build_content, finalize_tracked_checksum, stream_with_checksum_tracking};
+use crate::CoreError;
+use crate::domain::{
+    Checksum, Resource, ResourceContent, ResourceDirectory, ResourceStatus, StorageKey,
+};
+use crate::port::{ListResources, ScannedBlob, ScannedStorageEntry, StoragePrefix};
+use futures_util::StreamExt;
+use std::cmp::Reverse;
+use std::collections::HashSet;
 
-/// 资源内容服务。
-///
-/// 内容服务只处理资源内容引用与对象存储之间的编排，资源基础字段变更由命令服务负责。
-pub(super) struct ResourceContentService<'a> {
+pub(super) struct StorageReconciliationService<'a> {
     service: &'a ResourceService,
 }
 
-impl<'a> ResourceContentService<'a> {
-    /// 创建资源内容服务。
+impl<'a> StorageReconciliationService<'a> {
     pub(super) fn new(service: &'a ResourceService) -> Self {
         Self { service }
     }
 
-    /// 将对象存储的完整最终状态协调到 Resource 和目录仓储。
-    pub(crate) async fn reconcile_storage(&self) -> Result<(), CoreError> {
-        let prefix = StoragePrefix::root();
-        let mut entries = self.service.storage_scanner.scan(&prefix);
-        let mut physical_directories = std::collections::HashSet::new();
-        let mut physical_keys = std::collections::HashSet::new();
+    pub(super) async fn reconcile_storage(&self) -> Result<(), CoreError> {
+        let mut entries = self.service.storage_scanner.scan(&StoragePrefix::root());
+        let mut physical_directories = HashSet::new();
+        let mut physical_keys = HashSet::new();
         while let Some(entry) = entries.next().await {
             match entry? {
                 ScannedStorageEntry::Directory(directory) => {
@@ -36,22 +41,7 @@ impl<'a> ResourceContentService<'a> {
             }
         }
 
-        // 只有完整消费扫描流后才执行删除，避免扫描中途失败导致错误删除未见条目。
-        let mut offset = 0_u64;
-        let mut stored_resources = Vec::new();
-        loop {
-            let page = self
-                .service
-                .query
-                .list(&ListResources::new(1_000, offset))
-                .await?;
-            offset += page.items.len() as u64;
-            stored_resources.extend(page.items);
-            if offset >= page.total {
-                break;
-            }
-        }
-        for resource in stored_resources {
+        for resource in self.all_active_resources().await? {
             if resource.content().is_some() && !physical_keys.contains(&resource.storage_key()) {
                 self.service
                     .repository
@@ -63,7 +53,7 @@ impl<'a> ResourceContentService<'a> {
         self.reconcile_directories(physical_directories).await
     }
 
-    pub(crate) async fn reconcile_storage_keys(
+    pub(super) async fn reconcile_storage_keys(
         &self,
         keys: &[StorageKey],
     ) -> Result<(), CoreError> {
@@ -75,6 +65,7 @@ impl<'a> ResourceContentService<'a> {
                 None => missing.push(key),
             }
         }
+
         // 先处理目标路径，再移除源路径，使拆分为 From/To 的平台重命名事件仍有机会保留 ID。
         for file in existing {
             self.reconcile_scanned_blob(file).await?;
@@ -85,7 +76,7 @@ impl<'a> ResourceContentService<'a> {
         Ok(())
     }
 
-    pub(crate) async fn reconcile_storage_rename(
+    pub(super) async fn reconcile_storage_rename(
         &self,
         from: &StorageKey,
         to: &StorageKey,
@@ -276,7 +267,7 @@ impl<'a> ResourceContentService<'a> {
 
     async fn reconcile_directories(
         &self,
-        physical_directories: std::collections::HashSet<ResourceDirectory>,
+        physical_directories: HashSet<ResourceDirectory>,
     ) -> Result<(), CoreError> {
         let mut stored = Vec::new();
         let mut pending = vec![ResourceDirectory::root()];
@@ -285,7 +276,7 @@ impl<'a> ResourceContentService<'a> {
             pending.extend(children.iter().cloned());
             stored.extend(children);
         }
-        stored.sort_by_key(|directory| std::cmp::Reverse(directory.path().matches('/').count()));
+        stored.sort_by_key(|directory| Reverse(directory.path().matches('/').count()));
         for directory in stored {
             if !physical_directories.contains(&directory) {
                 self.service.repository.remove_directory(&directory).await?;
@@ -320,158 +311,15 @@ impl<'a> ResourceContentService<'a> {
                 "blob `{key}` changed while its checksum was being calculated"
             )));
         }
-
         finalize_tracked_checksum(state)
     }
 
-    /// 流式上传对象内容并创建资源。
-    ///
-    /// 该 usecase 面向大文件上传。内容会以 chunk 流的形式写入 `BlobStorage`，不会在
-    /// service 层聚合成完整 `Bytes`。写入完成后，service 使用存储端口返回的实际字节数
-    /// 构建 `ResourceContent` 并保存资源聚合。
-    ///
-    /// 如果资源保存失败，本方法会尝试删除刚写入的对象内容。该补偿删除是 best-effort，
-    /// 不会覆盖原始仓储错误。
-    pub(crate) async fn upload_resource_content_stream(
-        &self,
-        command: UploadResourceContentStream,
-    ) -> Result<Resource, CoreError> {
-        let UploadResourceContentStream {
-            name,
-            kind,
-            status,
-            directory,
-            description,
-            tags,
-            payload: data,
-            mime_type,
-        } = command;
-
-        let detection_storage_key = StorageKey::from_resource_path(&directory, &name)?;
-
-        let kind = self.service.resolve_content_kind(
-            kind,
-            mime_type.as_deref(),
-            Some(detection_storage_key.as_str()),
-        )?;
-
-        let mut resource = build_resource(
-            name,
-            directory.clone(),
-            Some(kind),
-            status,
-            description,
-            tags,
-        )
-        .build()?;
-        let storage_key = resource.storage_key();
-        reject_reserved_storage_key(&storage_key)?;
-        build_content(0, mime_type.clone(), placeholder_checksum()?)?;
-
-        self.ensure_directory(&directory).await?;
-        let (data, checksum_state) = stream_with_checksum_tracking(data);
-        let write_result = self
-            .service
-            .blob_storage
-            .put_stream_if_absent(&storage_key, data)
-            .await?;
-        let checksum = match finalize_tracked_checksum(checksum_state) {
-            Ok(checksum) => checksum,
-            Err(error) => {
-                let _ = self.service.blob_storage.delete(&storage_key).await;
-                return Err(error);
-            }
-        };
-        let content = build_content(write_result.bytes_written(), mime_type, checksum)?;
-        resource.attach_content(content)?;
-
-        if let Err(error) = self.service.repository.save(&resource).await {
-            let _ = self.service.blob_storage.delete(&storage_key).await;
-            return Err(error);
-        }
-
-        Ok(resource)
-    }
-
-    /// 确保内容写入前，其用户可见父目录同时存在于存储端和目录仓储。
     async fn ensure_directory(&self, directory: &ResourceDirectory) -> Result<(), CoreError> {
         self.service
             .directory_storage
             .ensure_directory(directory)
             .await?;
         self.service.repository.ensure_directory(directory).await
-    }
-
-    /// 读取资源对应的对象内容。
-    ///
-    /// 该 usecase 会先读取资源聚合，再根据资源内容引用读取对象存储。
-    ///
-    /// 以下情况统一返回 `Ok(None)`：
-    /// - 资源不存在。
-    /// - 资源已软删除。
-    /// - 资源没有内容引用。
-    /// - 内容引用存在，但对象存储中没有对应对象。
-    ///
-    /// 对象存储自身故障会返回 `Err(CoreError::Storage { .. })`。
-    #[cfg(test)]
-    pub(crate) async fn get_resource_content(
-        &self,
-        id: &ResourceId,
-    ) -> Result<Option<Bytes>, CoreError> {
-        let Some(resource) = self.service.repository.find_by_id(id).await? else {
-            return Ok(None);
-        };
-
-        self.get_resource_content_snapshot(&resource).await
-    }
-
-    pub(crate) async fn get_resource_content_snapshot(
-        &self,
-        resource: &Resource,
-    ) -> Result<Option<Bytes>, CoreError> {
-        if resource.is_deleted() {
-            return Ok(None);
-        }
-
-        if resource.content().is_none() {
-            return Ok(None);
-        }
-
-        self.service.blob_storage.get(&resource.storage_key()).await
-    }
-
-    pub(crate) async fn get_resource_content_stream_snapshot(
-        &self,
-        resource: &Resource,
-        range: Option<(u64, u64)>,
-    ) -> Result<Option<ResourceContentStream>, CoreError> {
-        if resource.is_deleted() {
-            return Ok(None);
-        }
-
-        let Some(content) = resource.content() else {
-            return Ok(None);
-        };
-
-        let stream = if let Some((start, end)) = range {
-            self.service
-                .blob_storage
-                .get_range_stream(&resource.storage_key(), start, end)
-                .await?
-        } else {
-            self.service
-                .blob_storage
-                .get_stream(&resource.storage_key())
-                .await?
-        };
-
-        Ok(stream.map(|content_stream| {
-            ResourceContentStream::new(
-                content_type_for_media(content),
-                content.size(),
-                content_stream,
-            )
-        }))
     }
 }
 
@@ -481,18 +329,4 @@ fn resource_path_from_key(key: &StorageKey) -> Result<(ResourceDirectory, String
         .rsplit_once('/')
         .map_or(("", key.as_str()), |(directory, name)| (directory, name));
     Ok((ResourceDirectory::from_path(directory)?, name.to_owned()))
-}
-
-fn reject_reserved_storage_key(key: &StorageKey) -> Result<(), CoreError> {
-    if key.as_str() == crate::port::RESERVED_BLOB_STORAGE_PREFIX
-        || key
-            .as_str()
-            .starts_with(&format!("{}/", crate::port::RESERVED_BLOB_STORAGE_PREFIX))
-    {
-        return Err(CoreError::configuration(format!(
-            "storage key `{key}` uses reserved Asset Hub namespace"
-        )));
-    }
-
-    Ok(())
 }

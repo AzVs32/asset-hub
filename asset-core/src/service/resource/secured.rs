@@ -1,6 +1,19 @@
-use super::*;
-use crate::domain::{AccessContext, DirectoryPermission};
+//! 绑定授权上下文的资源服务入口。
+//!
+//! 非可信调用方先在这里完成目录权限校验，再进入内部 command/content/action/preview
+//! 编排，避免每个 transport 重复实现授权规则。
+
+use super::{
+    CreateResource, ExecuteResourceAction, ReadableResource, ResourceContentStream,
+    ResourcePreviewStream, ResourceService, ResourceThumbnail, UpdateResource,
+    UploadResourceContentStream,
+};
+use crate::CoreError;
+use crate::domain::{AccessContext, DirectoryPermission, Resource, ResourceDirectory, ResourceId};
+use crate::port::{ListResources, ResourceActionOutput, ResourcePage};
 use crate::service::AuthorizationService;
+use asset_plugin_api::ResourceActionAccess;
+use bytes::Bytes;
 
 /// 绑定访问主体后的资源用例门面。外部用户入口应使用本门面，可信维护任务可继续使用原服务。
 pub struct SecuredResourceService<'a> {

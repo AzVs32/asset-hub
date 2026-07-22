@@ -1,8 +1,11 @@
+//! 用户聚合持久化端口。
+
 use crate::{
     CoreError,
     domain::{User, UserId},
 };
 
+/// 保存和还原完整用户聚合，不承担密码哈希职责。
 #[async_trait::async_trait]
 pub trait UserRepository: Send + Sync {
     /// 原子创建用户及其工作目录记录。

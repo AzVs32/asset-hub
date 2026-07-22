@@ -1,3 +1,5 @@
+//! 用户可见目录的存储侧端口。
+
 use crate::CoreError;
 use crate::domain::ResourceDirectory;
 

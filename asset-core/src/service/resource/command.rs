@@ -3,7 +3,12 @@
 //! 本模块承接资源聚合本身的生命周期用例：创建、更新、软删除和物理移除。
 //! 它不直接处理预览渲染或插件动作，只在需要硬删除时协调对象内容清理。
 
-use super::*;
+use super::{CreateResource, ResourceService, UpdateResource};
+use crate::CoreError;
+use crate::domain::{
+    Resource, ResourceDirectory, ResourceId, ResourceKind, ResourceStatus, StorageKey,
+};
+use crate::port::{ListResources, RESERVED_BLOB_STORAGE_PREFIX, ResourcePage};
 
 /// 资源命令服务。
 ///
@@ -331,4 +336,25 @@ fn persisted_content_key(resource: &Resource) -> Result<Option<StorageKey>, Core
     }
 
     Ok(Some(resource.storage_key()))
+}
+
+pub(super) fn build_resource(
+    name: String,
+    directory: ResourceDirectory,
+    kind: Option<ResourceKind>,
+    status: ResourceStatus,
+    description: Option<String>,
+    tags: Vec<String>,
+) -> crate::domain::ResourceBuilder {
+    let mut builder = Resource::builder(name)
+        .with_directory(directory)
+        .with_status(status)
+        .with_tags(tags);
+    if let Some(description) = description {
+        builder = builder.with_description(description);
+    }
+    if let Some(kind) = kind {
+        builder = builder.with_kind(kind);
+    }
+    builder
 }

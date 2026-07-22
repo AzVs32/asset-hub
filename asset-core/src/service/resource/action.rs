@@ -2,7 +2,22 @@
 //!
 //! 本模块负责把资源、kind/action 声明和动作执行器连接起来：解析可用动作、执行声明动作，并应用动作返回的写入效果。
 
-use super::*;
+use super::content::{build_content, calculate_checksum};
+use super::{ExecuteResourceAction, ResourceActions, ResourceService};
+use crate::CoreError;
+#[cfg(test)]
+use crate::domain::ResourceId;
+use crate::domain::{Resource, ResourceContent, StorageKey};
+use crate::port::{
+    BlobStorage, RESERVED_BLOB_STORAGE_PREFIX, ResourceActionOutput, ResourceActionRequest,
+};
+use asset_plugin_api::{
+    PluginActionEffect, PluginExecutionPolicy, ResourceAction, ResourceActionAccess,
+    ResourceActionContentDelivery, ResourceActionDefinition,
+};
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use bytes::Bytes;
 
 /// 资源动作服务。
 ///
@@ -202,7 +217,7 @@ impl<'a> ResourceActionService<'a> {
         input: serde_json::Value,
         content: Option<Bytes>,
     ) -> Result<ResourceActionOutput, CoreError> {
-        let Some(executor) = &self.service.action_executor else {
+        let Some(ports) = &self.service.action_ports else {
             return Err(CoreError::configuration(
                 "resource action executor is not configured",
             ));
@@ -226,7 +241,7 @@ impl<'a> ResourceActionService<'a> {
             content,
         );
 
-        executor.execute(request).await
+        ports.executor.execute(request).await
     }
 
     async fn apply_action_effects(
@@ -336,16 +351,44 @@ impl<'a> ResourceActionService<'a> {
     }
 }
 
+pub(super) fn resolved_content_delivery(
+    action: &ResourceActionDefinition,
+    size: u64,
+    policy: &PluginExecutionPolicy,
+) -> Option<ResourceActionContentDelivery> {
+    if !action.requirements().content {
+        return None;
+    }
+    match action.requirements().content_delivery {
+        ResourceActionContentDelivery::Auto if size <= policy.max_inline_content_bytes() => {
+            Some(ResourceActionContentDelivery::Inline)
+        }
+        ResourceActionContentDelivery::Auto => Some(ResourceActionContentDelivery::Reference),
+        delivery => Some(delivery),
+    }
+}
+
+fn should_load_declared_action_content(
+    action: &ResourceActionDefinition,
+    content: &ResourceContent,
+    policy: &PluginExecutionPolicy,
+) -> bool {
+    matches!(
+        resolved_content_delivery(action, content.size(), policy),
+        Some(ResourceActionContentDelivery::Inline)
+    )
+}
+
 fn action_scratch_content_key(suffix: &str) -> Result<StorageKey, CoreError> {
     Ok(StorageKey::new(format!(
         "{}/action-effects/{suffix}/{}",
-        crate::port::RESERVED_BLOB_STORAGE_PREFIX,
+        RESERVED_BLOB_STORAGE_PREFIX,
         uuid::Uuid::now_v7()
     ))?)
 }
 
 async fn restore_replaced_content(
-    blob_storage: &dyn crate::port::BlobStorage,
+    blob_storage: &dyn BlobStorage,
     current_key: &StorageKey,
     backup_key: &StorageKey,
     previous: Option<Bytes>,
