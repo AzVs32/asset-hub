@@ -22,7 +22,7 @@ import { Button } from "@/shared/ui/button";
 import { controlClass, Field, Input, Textarea } from "@/shared/ui/field";
 
 const draftSchema = z.object({
-  name: z.string().trim().min(1, "Name is required"),
+  name: z.string().refine((value) => value.trim().length > 0, "Name is required"),
   directory: z.string(),
   kind: z.string().trim().min(1),
   status: z.enum(["active", "archived"]),

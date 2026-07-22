@@ -15,11 +15,10 @@ impl StoragePrefix {
 
     pub fn new(value: impl Into<String>) -> Result<Self, ResourceError> {
         let value = value.into();
-        let value = value.trim();
         if value.is_empty() {
             return Ok(Self::root());
         }
-        let key = StorageKey::new(value)?;
+        let key = StorageKey::new(&value)?;
         let value = key.as_str().trim_end_matches('/');
         if value.split('/').any(|part| part.is_empty() || part == ".") {
             return Err(ResourceError::InvalidFormat {

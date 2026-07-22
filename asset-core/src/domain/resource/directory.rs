@@ -1,4 +1,4 @@
-use super::normalize_required_text;
+use super::validate_required_text_exact;
 use crate::error::ResourceError;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{fmt, str::FromStr};
@@ -47,14 +47,15 @@ impl ResourceDirectory {
     /// 在父目录下创建一个直接子目录。
     pub fn child(&self, name: impl Into<String>) -> Result<Self, ResourceError> {
         let name = name.into();
-        let name = name.trim();
+        let name = name.as_str();
         if name == "." || name == ".." || name.contains('/') || name.contains('\\') {
             return Err(ResourceError::InvalidFormat {
                 field: "resource.directory",
                 reason: "directory name must be a single path segment",
             });
         }
-        let name = normalize_required_text("resource.directory", name, MAX_DIRECTORY_SEGMENT_LEN)?;
+        let name =
+            validate_required_text_exact("resource.directory", name, MAX_DIRECTORY_SEGMENT_LEN)?;
         let path = if self.is_root() {
             name
         } else {
@@ -155,7 +156,7 @@ impl<'de> Deserialize<'de> for ResourceDirectory {
 }
 
 fn normalize_path(value: String) -> Result<String, ResourceError> {
-    let value = value.trim().replace('\\', "/");
+    let value = value.replace('\\', "/");
     if value.is_empty() {
         return Ok(String::new());
     }
@@ -168,7 +169,6 @@ fn normalize_path(value: String) -> Result<String, ResourceError> {
 
     let mut parts = Vec::new();
     for part in value.split('/') {
-        let part = part.trim();
         if part.is_empty() || part == "." {
             continue;
         }
@@ -178,7 +178,7 @@ fn normalize_path(value: String) -> Result<String, ResourceError> {
                 reason: "parent path segments are not allowed",
             });
         }
-        parts.push(normalize_required_text(
+        parts.push(validate_required_text_exact(
             "resource.directory",
             part,
             MAX_DIRECTORY_SEGMENT_LEN,

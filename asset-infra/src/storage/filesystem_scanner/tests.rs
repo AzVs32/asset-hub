@@ -64,6 +64,29 @@ fn scan_includes_manually_created_empty_directories() {
 }
 
 #[test]
+fn scan_preserves_spaces_in_directory_and_file_names() {
+    let root = unique_temp_path("scanner-spaces");
+    let directory = " library / project A ";
+    let file = " design  draft 01.md ";
+    std::fs::create_dir_all(root.join(directory)).unwrap();
+    std::fs::write(root.join(directory).join(file), b"draft").unwrap();
+
+    let entries = scanned_entries(&root, &StoragePrefix::root());
+    assert!(entries.iter().any(|entry| matches!(
+        entry,
+        ScannedStorageEntry::Directory(directory)
+            if directory.path() == " library / project A "
+    )));
+    assert!(entries.iter().any(|entry| matches!(
+        entry,
+        ScannedStorageEntry::Blob(blob)
+            if blob.key.as_str() == " library / project A / design  draft 01.md "
+    )));
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn scan_reserved_directory_returns_no_files() {
     let root = unique_temp_path("scanner-reserved-direct");
     std::fs::create_dir_all(

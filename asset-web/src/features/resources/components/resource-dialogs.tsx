@@ -10,7 +10,7 @@ import { Dialog } from "@/shared/ui/dialog";
 import { controlClass, Field, Input, Textarea } from "@/shared/ui/field";
 
 const resourceSchema = z.object({
-  name: z.string().trim().min(1, "Name is required"),
+  name: z.string().refine((value) => value.trim().length > 0, "Name is required"),
   directory: z.string(),
   kind: z.string().trim().min(1, "Kind is required"),
   status: z.enum(["active", "archived"]),
@@ -227,12 +227,17 @@ export function CreateFolderDialog({
       <form
         className="grid gap-5 p-6"
         onSubmit={form.handleSubmit(async ({ name }) => {
-          await onCreate(name.trim());
+          await onCreate(name);
           onOpenChange(false);
         })}
       >
         <Field label="Folder name" error={form.formState.errors.name?.message}>
-          <Input autoFocus {...form.register("name", { required: "Folder name is required" })} />
+          <Input
+            autoFocus
+            {...form.register("name", {
+              validate: (value) => value.trim().length > 0 || "Folder name is required",
+            })}
+          />
         </Field>
         <div className="flex justify-end gap-2">
           <Button variant="secondary" onClick={() => onOpenChange(false)}>

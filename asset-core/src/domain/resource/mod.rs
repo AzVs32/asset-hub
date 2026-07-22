@@ -50,5 +50,32 @@ fn normalize_required_text(
     Ok(value.to_string())
 }
 
+/// 校验必须原样保存的必填文本字段。
+///
+/// 与 [`normalize_required_text`] 不同，本函数只校验、不去除首尾空白。文件名、目录段和
+/// 存储键属于持久化路径的一部分，任何静默改写都会让领域路径与实际存储路径发生分叉。
+fn validate_required_text_exact(
+    field: &'static str,
+    value: &str,
+    max: usize,
+) -> Result<String, ResourceError> {
+    if value.trim().is_empty() {
+        return Err(ResourceError::Blank { field });
+    }
+
+    if value.chars().count() > max {
+        return Err(ResourceError::TooLong { field, max });
+    }
+
+    if value.chars().any(char::is_control) {
+        return Err(ResourceError::InvalidFormat {
+            field,
+            reason: "control characters are not allowed",
+        });
+    }
+
+    Ok(value.to_string())
+}
+
 #[cfg(test)]
 mod tests;

@@ -347,24 +347,25 @@ impl<'a> ResourceContentService<'a> {
             mime_type,
         } = command;
 
-        let storage_key = StorageKey::from_resource_path(&directory, &name)?;
-        reject_reserved_storage_key(&storage_key)?;
+        let detection_storage_key = StorageKey::from_resource_path(&directory, &name)?;
 
         let kind = self.service.resolve_content_kind(
             kind,
             mime_type.as_deref(),
-            Some(storage_key.as_str()),
+            Some(detection_storage_key.as_str()),
         )?;
 
-        let resource_builder = build_resource(
+        let mut resource = build_resource(
             name,
             directory.clone(),
             Some(kind),
             status,
             description,
             tags,
-        );
-        resource_builder.clone().build()?;
+        )
+        .build()?;
+        let storage_key = resource.storage_key();
+        reject_reserved_storage_key(&storage_key)?;
         build_content(0, mime_type.clone(), placeholder_checksum()?)?;
 
         self.ensure_directory(&directory).await?;
@@ -382,7 +383,7 @@ impl<'a> ResourceContentService<'a> {
             }
         };
         let content = build_content(write_result.bytes_written(), mime_type, checksum)?;
-        let resource = resource_builder.with_content(content).build()?;
+        resource.attach_content(content)?;
 
         if let Err(error) = self.service.repository.save(&resource).await {
             let _ = self.service.blob_storage.delete(&storage_key).await;

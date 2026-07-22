@@ -1,4 +1,4 @@
-use super::{ResourceDirectory, normalize_required_text};
+use super::{ResourceDirectory, normalize_required_text, validate_required_text_exact};
 use crate::error::ResourceError;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -114,7 +114,8 @@ impl StorageKey {
 
     /// 创建并校验存储键。
     pub fn new(value: impl Into<String>) -> Result<Self, ResourceError> {
-        let value = normalize_required_text("storage.key", &value.into(), MAX_STORAGE_KEY_LEN)?;
+        let value =
+            validate_required_text_exact("storage.key", &value.into(), MAX_STORAGE_KEY_LEN)?;
 
         if value.starts_with('/') {
             return Err(ResourceError::InvalidFormat {

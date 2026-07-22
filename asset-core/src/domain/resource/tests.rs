@@ -8,7 +8,7 @@ fn new_resource_has_default_lifecycle_state() {
         .build()
         .unwrap();
 
-    assert_eq!(resource.name(), "Design Doc");
+    assert_eq!(resource.name(), " Design Doc ");
     assert_eq!(resource.kind().as_str(), "doc:markdown");
     assert_eq!(resource.status(), ResourceStatus::default());
     assert!(resource.directory().is_root());
@@ -72,8 +72,8 @@ fn resource_can_be_rehydrated_from_snapshot() {
     .unwrap();
 
     assert_eq!(resource.id(), id);
-    assert_eq!(resource.name(), "restored image");
-    assert_eq!(resource.directory().path(), "images/raw");
+    assert_eq!(resource.name(), " restored image ");
+    assert_eq!(resource.directory().path(), " images/raw ");
     assert!(resource.kind().is("core:image"));
     assert_eq!(resource.status(), ResourceStatus::Archived);
     assert_eq!(resource.description(), Some("restored description"));
@@ -152,6 +152,21 @@ fn resource_path_uniquely_derives_storage_key() {
 }
 
 #[test]
+fn resource_path_preserves_spaces_exactly() {
+    let resource = Resource::builder(" design  draft 01.md ")
+        .with_directory(ResourceDirectory::from_path(" library / project A ").unwrap())
+        .build()
+        .unwrap();
+
+    assert_eq!(resource.name(), " design  draft 01.md ");
+    assert_eq!(resource.directory().path(), " library / project A ");
+    assert_eq!(
+        resource.storage_key().as_str(),
+        " library / project A / design  draft 01.md "
+    );
+}
+
+#[test]
 fn resource_name_must_be_a_single_file_name() {
     for name in [".", "..", "docs/readme.md", "docs\\readme.md"] {
         assert!(matches!(
@@ -218,7 +233,13 @@ fn resource_tags_do_not_have_a_count_limit() {
 fn storage_key_rejects_unsafe_paths() {
     assert!(StorageKey::new("assets/image.png").is_ok());
     assert_eq!(
-        StorageKey::new(" /absolute/path "),
+        StorageKey::new(" library / design 01.md ")
+            .unwrap()
+            .as_str(),
+        " library / design 01.md "
+    );
+    assert_eq!(
+        StorageKey::new("/absolute/path"),
         Err(ResourceError::InvalidFormat {
             field: "storage.key",
             reason: "absolute paths are not allowed",
@@ -266,17 +287,18 @@ fn content_stores_one_typed_checksum() {
 fn directory_is_built_from_parent_and_single_name() {
     let parent = ResourceDirectory::from_path("projects").unwrap();
     let directory = parent.child(" images ").unwrap();
-    assert_eq!(directory.path(), "projects/images");
+    assert_eq!(directory.path(), "projects/ images ");
     assert_eq!(directory.parent_path(), "projects");
-    assert_eq!(directory.name(), "images");
+    assert_eq!(directory.name(), " images ");
     assert!(parent.child("../secret").is_err());
 }
 
 #[test]
 fn path_constructor_supports_root_and_normalizes_segments() {
-    assert!(ResourceDirectory::from_path("  ").unwrap().is_root());
+    assert!(ResourceDirectory::from_path("").unwrap().is_root());
+    assert!(ResourceDirectory::from_path("  ").is_err());
     assert_eq!(
-        ResourceDirectory::from_path(" projects\\images/./raw ")
+        ResourceDirectory::from_path("projects\\images/./raw")
             .unwrap()
             .path(),
         "projects/images/raw"

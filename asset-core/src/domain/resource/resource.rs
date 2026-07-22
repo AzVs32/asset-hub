@@ -1,6 +1,6 @@
 use super::{
     ResourceContent, ResourceDirectory, ResourceKind, ResourceStatus, ResourceTag, StorageKey,
-    normalize_required_text,
+    normalize_required_text, validate_required_text_exact,
 };
 use crate::error::ResourceError;
 use chrono::{DateTime, Utc};
@@ -189,7 +189,7 @@ impl Resource {
 
     /// 重命名资源。
     ///
-    /// 名称会被去除首尾空白，并按照资源名称规则校验。
+    /// 名称会按资源名称规则校验并原样保留，包括其中的首尾空白。
     pub fn rename(&mut self, name: impl Into<String>) -> Result<(), ResourceError> {
         self.ensure_not_deleted()?;
         let name = normalize_resource_name(name.into())?;
@@ -333,9 +333,9 @@ impl Resource {
     }
 }
 
-/// 归一化并校验资源名称。
+/// 校验资源名称并原样保留。
 fn normalize_resource_name(value: String) -> Result<String, ResourceError> {
-    let name = normalize_required_text("resource.name", &value, MAX_RESOURCE_NAME_LEN)?;
+    let name = validate_required_text_exact("resource.name", &value, MAX_RESOURCE_NAME_LEN)?;
     if name == "." || name == ".." || name.contains('/') || name.contains('\\') {
         return Err(ResourceError::InvalidFormat {
             field: "resource.name",

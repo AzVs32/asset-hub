@@ -72,7 +72,7 @@ pub struct CreateResource {
 impl CreateResource {
     /// 创建命令，默认自动推断资源类型、使用活跃状态、空描述和空标签。
     ///
-    /// `name` 会在 usecase 执行时去除首尾空白并校验，不会在命令构造阶段提前校验。
+    /// `name` 会在 usecase 执行时原样校验，不会在命令构造阶段提前校验；合法空白会保留。
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),

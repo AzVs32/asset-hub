@@ -191,7 +191,7 @@ fn content_match_score(
         }
     }
 
-    let storage_key = storage_key.map(|value| value.trim().to_ascii_lowercase());
+    let storage_key = storage_key.map(|value| value.to_ascii_lowercase());
     if let Some(storage_key) = storage_key.as_deref() {
         for extension in when.extensions() {
             if storage_key.ends_with(extension) {

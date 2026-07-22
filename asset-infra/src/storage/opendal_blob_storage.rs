@@ -9,11 +9,13 @@ use futures_util::{StreamExt, TryStreamExt};
 use opendal::services::Fs;
 use opendal::{ErrorKind, Operator};
 use std::path::PathBuf;
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 /// 基于 OpenDAL `Operator` 的对象存储适配器。
 ///
-/// 当前默认使用 Fs backend。后续接入 S3 时，可以复用该适配器结构，只替换 `Operator`
-/// 的构建方式。
+/// 当前本地后端直接使用文件系统 API，避免 OpenDAL 0.57 的高层路径归一化裁掉对象键
+/// 首尾空白。S3 本身允许对象键包含空格，但未来接入时必须同样使用可保留原始键的访问
+/// 方式并通过契约测试，不能只替换 `Operator` builder。
 #[derive(Clone)]
 pub struct OpenDalBlobStorage {
     operator: Operator,
@@ -21,7 +23,10 @@ pub struct OpenDalBlobStorage {
 }
 
 impl OpenDalBlobStorage {
-    /// 使用 OpenDAL `Operator` 创建适配器。
+    /// 使用 OpenDAL `Operator` 创建非本地适配器。
+    ///
+    /// 调用方必须确认该访问路径不会改写对象键；OpenDAL 0.57 的高层操作会裁剪整个键
+    /// 的首尾空白，不满足需要原样保留名称的 S3 契约。
     pub fn new(operator: Operator) -> Self {
         Self {
             operator,
@@ -52,6 +57,12 @@ impl OpenDalBlobStorage {
 #[async_trait::async_trait]
 impl BlobStorage for OpenDalBlobStorage {
     async fn health_check(&self) -> Result<(), CoreError> {
+        if let Some(root) = &self.local_root {
+            return tokio::fs::metadata(root)
+                .await
+                .map(|_| ())
+                .map_err(|error| CoreError::storage("health_check", error));
+        }
         self.operator
             .stat("")
             .await
@@ -60,6 +71,17 @@ impl BlobStorage for OpenDalBlobStorage {
     }
 
     async fn put(&self, key: &StorageKey, data: Bytes) -> Result<(), CoreError> {
+        if let Some(root) = &self.local_root {
+            let path = root.join(key.as_str());
+            if let Some(parent) = path.parent() {
+                tokio::fs::create_dir_all(parent)
+                    .await
+                    .map_err(|error| CoreError::storage("put.create_parent", error))?;
+            }
+            return tokio::fs::write(path, data)
+                .await
+                .map_err(|error| CoreError::storage("put", error));
+        }
         self.operator
             .write(key.as_str(), data)
             .await
@@ -72,6 +94,9 @@ impl BlobStorage for OpenDalBlobStorage {
         key: &StorageKey,
         data: BlobByteStream,
     ) -> Result<BlobWriteResult, CoreError> {
+        if let Some(root) = &self.local_root {
+            return put_local_stream_if_absent(root.join(key.as_str()), key, data).await;
+        }
         put_stream_with_writer(
             self.operator
                 .writer_with(key.as_str())
@@ -86,6 +111,13 @@ impl BlobStorage for OpenDalBlobStorage {
     }
 
     async fn get(&self, key: &StorageKey) -> Result<Option<Bytes>, CoreError> {
+        if let Some(root) = &self.local_root {
+            return match tokio::fs::read(root.join(key.as_str())).await {
+                Ok(data) => Ok(Some(Bytes::from(data))),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(error) => Err(CoreError::storage("get", error)),
+            };
+        }
         match self.operator.read(key.as_str()).await {
             Ok(buffer) => Ok(Some(buffer.to_bytes())),
             Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
@@ -94,6 +126,14 @@ impl BlobStorage for OpenDalBlobStorage {
     }
 
     async fn get_stream(&self, key: &StorageKey) -> Result<Option<BlobByteStream>, CoreError> {
+        if let Some(root) = &self.local_root {
+            let file = match tokio::fs::File::open(root.join(key.as_str())).await {
+                Ok(file) => file,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                Err(error) => return Err(CoreError::storage("get_stream.open", error)),
+            };
+            return Ok(Some(local_file_stream(file, None, "get_stream.read")));
+        }
         let reader = match self
             .operator
             .reader_with(key.as_str())
@@ -119,6 +159,25 @@ impl BlobStorage for OpenDalBlobStorage {
         start: u64,
         end: u64,
     ) -> Result<Option<BlobByteStream>, CoreError> {
+        if let Some(root) = &self.local_root {
+            let length = end
+                .checked_sub(start)
+                .and_then(|length| length.checked_add(1))
+                .ok_or_else(|| CoreError::configuration("invalid blob byte range"))?;
+            let mut file = match tokio::fs::File::open(root.join(key.as_str())).await {
+                Ok(file) => file,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                Err(error) => return Err(CoreError::storage("get_range_stream.open", error)),
+            };
+            file.seek(std::io::SeekFrom::Start(start))
+                .await
+                .map_err(|error| CoreError::storage("get_range_stream.seek", error))?;
+            return Ok(Some(local_file_stream(
+                file,
+                Some(length),
+                "get_range_stream.read",
+            )));
+        }
         let reader = match self
             .operator
             .reader_with(key.as_str())
@@ -186,6 +245,18 @@ impl BlobStorage for OpenDalBlobStorage {
     }
 
     async fn delete(&self, key: &StorageKey) -> Result<(), CoreError> {
+        if let Some(root) = &self.local_root {
+            let path = root.join(key.as_str());
+            match tokio::fs::remove_file(&path).await {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(CoreError::storage("delete", error)),
+            }
+            if is_internal_key(key) {
+                cleanup_internal_fs_parents(root, &path)?;
+            }
+            return Ok(());
+        }
         self.operator
             .delete(key.as_str())
             .await
@@ -197,6 +268,85 @@ impl BlobStorage for OpenDalBlobStorage {
         }
         Ok(())
     }
+}
+
+async fn put_local_stream_if_absent(
+    path: PathBuf,
+    key: &StorageKey,
+    mut data: BlobByteStream,
+) -> Result<BlobWriteResult, CoreError> {
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|error| CoreError::storage("put_stream.create_parent", error))?;
+    }
+    let mut file = tokio::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .await
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                CoreError::conflict(format!("storage key `{key}` already exists"))
+            } else {
+                CoreError::storage("put_stream.open", error)
+            }
+        })?;
+    let result = async {
+        let mut bytes_written = 0_u64;
+        while let Some(chunk) = data.next().await {
+            let chunk = chunk?;
+            bytes_written = bytes_written
+                .checked_add(chunk.len() as u64)
+                .ok_or_else(|| CoreError::storage("put_stream.size", SizeOverflow))?;
+            file.write_all(&chunk)
+                .await
+                .map_err(|error| CoreError::storage("put_stream.write", error))?;
+        }
+        file.flush()
+            .await
+            .map_err(|error| CoreError::storage("put_stream.close", error))?;
+        file.sync_all()
+            .await
+            .map_err(|error| CoreError::storage("put_stream.close", error))?;
+        Ok(BlobWriteResult::new(bytes_written))
+    }
+    .await;
+
+    if result.is_err() {
+        drop(file);
+        let _ = tokio::fs::remove_file(path).await;
+    }
+    result
+}
+
+fn local_file_stream(
+    file: tokio::fs::File,
+    remaining: Option<u64>,
+    operation: &'static str,
+) -> BlobByteStream {
+    Box::pin(futures_util::stream::try_unfold(
+        (file, remaining),
+        move |(mut file, remaining)| async move {
+            if remaining == Some(0) {
+                return Ok(None);
+            }
+            let capacity = remaining
+                .map(|remaining| remaining.min(256 * 1024) as usize)
+                .unwrap_or(256 * 1024);
+            let mut buffer = vec![0_u8; capacity];
+            let read = file
+                .read(&mut buffer)
+                .await
+                .map_err(|error| CoreError::storage(operation, error))?;
+            if read == 0 {
+                return Ok(None);
+            }
+            buffer.truncate(read);
+            let remaining = remaining.map(|remaining| remaining - read as u64);
+            Ok(Some((Bytes::from(buffer), (file, remaining))))
+        },
+    ))
 }
 
 #[async_trait::async_trait]

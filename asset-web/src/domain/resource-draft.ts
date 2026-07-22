@@ -24,10 +24,8 @@ export function emptyResourceDraft(directory: string, kinds: ResourceKind[]): Re
 
 export function normalizeDirectory(value: string): string {
   return value
-    .trim()
     .replace(/\\/g, "/")
     .split("/")
-    .map((part) => part.trim())
     .filter((part) => part && part !== ".")
     .join("/");
 }

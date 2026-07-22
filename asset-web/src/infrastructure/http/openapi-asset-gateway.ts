@@ -13,6 +13,7 @@ import type {
   ResourceKind,
   UploadDraft,
 } from "@/domain/resource";
+import { normalizeDirectory } from "@/domain/resource-draft";
 import type { components, paths } from "./generated";
 import { HttpError, httpError } from "./http-error";
 import { isPluginViewKind, parsePluginView } from "./plugin-view-schema";
@@ -122,7 +123,7 @@ export class OpenApiAssetGateway implements AssetGateway {
 
   async uploadResource(draft: UploadDraft): Promise<Resource> {
     const params = new URLSearchParams({
-      name: draft.name.trim() || draft.file.name,
+      name: draft.name.length > 0 ? draft.name : draft.file.name,
       directory: normalizeDirectory(draft.directory),
       tags_json: JSON.stringify(splitTags(draft.tags)),
     });
@@ -357,16 +358,6 @@ function resourceBody(draft: ResourceDraft): Schemas["CreateResourceRequest"] {
     description: draft.description.trim() || null,
     tags: splitTags(draft.tags),
   };
-}
-
-function normalizeDirectory(value: string): string {
-  return value
-    .trim()
-    .replace(/\\/g, "/")
-    .split("/")
-    .map((part) => part.trim())
-    .filter((part) => part && part !== ".")
-    .join("/");
 }
 
 function splitTags(value: string): string[] {

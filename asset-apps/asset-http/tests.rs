@@ -567,6 +567,42 @@ async fn stream_upload_roundtrips_small_blob_and_creates_directories() {
 }
 
 #[tokio::test]
+async fn stream_upload_preserves_spaces_in_names_and_physical_paths() {
+    let app = test_app("spaced-upload").await;
+    let data = b"spaces are part of the path";
+
+    let (status, resource) = stream_upload(
+        &app,
+        "/resources/content/stream?name=%20draft%20%2001.txt%20&kind=core%3Aunknown&directory=%20library%20%2Fproject%20A%20",
+        "text/plain",
+        data,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(resource["name"], " draft  01.txt ");
+    assert_eq!(resource["directory"], " library /project A ");
+
+    let exact_path = app
+        .root
+        .join("blob")
+        .join(" library /project A / draft  01.txt ");
+    assert_eq!(tokio::fs::read(&exact_path).await.unwrap(), data);
+    assert!(
+        !app.root
+            .join("blob/library/project A/draft  01.txt")
+            .exists()
+    );
+
+    let id = resource["id"].as_str().unwrap();
+    let (status, content) =
+        empty_bytes_request(&app, Method::GET, &format!("/resources/{id}/content")).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(content.as_ref(), data);
+}
+
+#[tokio::test]
 async fn empty_directories_and_contentless_resources_create_physical_directories() {
     let app = test_app("physical-directories").await;
 

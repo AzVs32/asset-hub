@@ -678,6 +678,29 @@ fn storage_reconciliation_creates_updates_and_removes_resources() {
 }
 
 #[test]
+fn storage_reconciliation_preserves_spaces_in_discovered_paths() {
+    let (service, repository, blob_storage) = service();
+    let directory = ResourceDirectory::from_path(" external files / project A ").unwrap();
+    let name = " draft  01.txt ";
+    let key = StorageKey::new(" external files / project A / draft  01.txt ").unwrap();
+    block_on(blob_storage.ensure_directory(&directory)).unwrap();
+    block_on(blob_storage.put(&key, Bytes::from_static(b"draft"))).unwrap();
+
+    block_on(service.reconcile_storage()).unwrap();
+
+    let resource = block_on(repository.find_by_path(&directory, name))
+        .unwrap()
+        .unwrap();
+    assert_eq!(resource.name(), name);
+    assert_eq!(resource.directory(), &directory);
+    assert_eq!(resource.storage_key(), key);
+    assert_eq!(
+        block_on(service.content().get_resource_content(&resource.id())).unwrap(),
+        Some(Bytes::from_static(b"draft"))
+    );
+}
+
+#[test]
 fn storage_reconciliation_preserves_resource_id_on_file_rename() {
     let (service, repository, blob_storage) = service();
     let from_directory = ResourceDirectory::from_path("incoming").unwrap();
@@ -864,7 +887,7 @@ fn create_resource_saves_resource_without_content() {
 
     let saved = repository.find_sync(&resource.id()).unwrap();
 
-    assert_eq!(resource.name(), "Design Doc");
+    assert_eq!(resource.name(), " Design Doc ");
     assert!(resource.kind().is("doc:markdown"));
     assert!(resource.content().is_none());
     assert_eq!(saved.description(), Some("Design document"));
@@ -972,6 +995,40 @@ fn stream_upload_resource_content_writes_blob_then_saves_resource() {
     assert_eq!(content.mime_type(), Some("image/png"));
     assert_eq!(content.checksum(), &checksum);
     assert_eq!(blob_storage.get_sync(&key), Some(data));
+}
+
+#[test]
+fn stream_upload_preserves_spaces_in_resource_and_blob_path() {
+    let (service, repository, blob_storage) = service();
+    let directory = ResourceDirectory::from_path(" library / project A ").unwrap();
+    let name = " design  draft 01.md ";
+    let key = StorageKey::new(" library / project A / design  draft 01.md ").unwrap();
+    let data = Bytes::from_static(b"draft");
+    let stream = futures_util::stream::once({
+        let data = data.clone();
+        async move { Ok(data) }
+    });
+
+    let resource = block_on(
+        service.content().upload_resource_content_stream(
+            UploadResourceContentStream::new(name, Box::pin(stream))
+                .with_directory(directory.clone())
+                .with_kind("azvs:markdown"),
+        ),
+    )
+    .unwrap();
+
+    assert_eq!(resource.name(), name);
+    assert_eq!(resource.directory(), &directory);
+    assert_eq!(resource.storage_key(), key);
+    assert_eq!(
+        repository.find_sync(&resource.id()).unwrap().storage_key(),
+        key
+    );
+    assert_eq!(
+        blob_storage.get_sync(&key),
+        Some(Bytes::from_static(b"draft"))
+    );
 }
 
 #[test]

@@ -108,6 +108,25 @@ async fn fs_storage_roundtrips_blob_content() {
 }
 
 #[tokio::test]
+async fn fs_storage_preserves_spaces_in_the_physical_path() {
+    let (storage, root) = storage_with_root("fs-path-spaces");
+    let key = StorageKey::new(" library / project A / design  01.md ").unwrap();
+    let data = Bytes::from_static(b"draft");
+    let stream: BlobByteStream = Box::pin(futures_util::stream::once({
+        let data = data.clone();
+        async move { Ok(data) }
+    }));
+
+    storage.put_stream_if_absent(&key, stream).await.unwrap();
+
+    assert_eq!(storage.get(&key).await.unwrap(), Some(data.clone()));
+    assert_eq!(std::fs::read(root.join(key.as_str())).unwrap(), data);
+    assert!(!root.join("library/project A/design  01.md").exists());
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn fs_storage_delete_removes_empty_sidecar_directories() {
     let (storage, root) = storage_with_root("fs-clean-sidecar");
     let key = StorageKey::new(format!(

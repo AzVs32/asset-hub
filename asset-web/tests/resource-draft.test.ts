@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import { breadcrumbs, normalizeDirectory, parentDirectory } from "@/domain/resource-draft";
 
 describe("resource directory navigation", () => {
-  it("normalizes separators and empty segments", () => {
-    expect(normalizeDirectory(" /library\\ video /./2026/ ")).toBe("library/video/2026");
+  it("normalizes separators and empty segments without changing spaces", () => {
+    expect(normalizeDirectory("/ library /project  A/./drafts /")).toBe(
+      " library /project  A/drafts ",
+    );
   });
 
   it("does not navigate above a member access root", () => {
