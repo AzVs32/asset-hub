@@ -1,12 +1,13 @@
-//! 资源动作执行端口。
+//! 资源动作注册与执行端口。
 //!
 //! 该端口隔离核心服务与插件运行时。插件只能收到核心构造的资源快照、可选对象内容和调用输入；
 //! 即使 action 声明为 read_write，也不能直接访问仓储或对象存储。
 
 use crate::CoreError;
-use crate::domain::{Resource, ResourceId};
+use crate::domain::{Resource, ResourceId, ResourceKind};
 use asset_plugin_api::{
     PluginActionOutput, ResourceAction, ResourceActionAccess, ResourceActionContentDelivery,
+    ResourceActionDefinition,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -115,4 +116,43 @@ pub trait ResourceActionExecutor: Send + Sync {
         &self,
         request: ResourceActionRequest,
     ) -> Result<ResourceActionOutput, CoreError>;
+}
+
+/// 资源动作的唯一运行时注册表。
+pub trait ResourceActionRegistry: Send + Sync {
+    /// 返回所有动作定义。多 kind 动作可以按 kind 专门化为同 ID 的上下文定义。
+    fn actions(&self) -> &[ResourceActionDefinition];
+
+    /// 按“具体 kind 到祖先 kind”的顺序返回适用动作；同 ID 的更具体定义优先。
+    fn actions_for_kinds(&self, kinds: &[ResourceKind]) -> Vec<ResourceActionDefinition> {
+        let mut selected = Vec::new();
+        for kind in kinds {
+            for action in self.actions().iter().filter(|action| {
+                action
+                    .kinds()
+                    .iter()
+                    .any(|expected| expected.eq_ignore_ascii_case(kind.as_str()))
+            }) {
+                if !selected
+                    .iter()
+                    .any(|existing: &ResourceActionDefinition| existing.id() == action.id())
+                {
+                    selected.push(action.clone());
+                }
+            }
+        }
+        for action in self
+            .actions()
+            .iter()
+            .filter(|action| action.kinds().is_empty())
+        {
+            if !selected
+                .iter()
+                .any(|existing: &ResourceActionDefinition| existing.id() == action.id())
+            {
+                selected.push(action.clone());
+            }
+        }
+        selected
+    }
 }

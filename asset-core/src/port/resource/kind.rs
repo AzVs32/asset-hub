@@ -211,6 +211,3 @@ fn mime_matches(expected: &str, actual: &str) -> bool {
         .strip_suffix("/*")
         .is_some_and(|prefix| actual.starts_with(&format!("{prefix}/")))
 }
-
-#[cfg(test)]
-mod tests;

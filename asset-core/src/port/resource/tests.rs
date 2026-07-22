@@ -1,11 +1,38 @@
 use super::*;
+use crate::domain::ResourceKind;
+use asset_plugin_api::{ResourceActionDefinition, ResourceContentMatcher};
+
+struct ActionRegistry(Vec<ResourceActionDefinition>);
+
+impl ResourceActionRegistry for ActionRegistry {
+    fn actions(&self) -> &[ResourceActionDefinition] {
+        &self.0
+    }
+}
+
+#[test]
+fn actions_are_selected_from_the_supplied_kind_lineage() {
+    let registry = ActionRegistry(vec![
+        ResourceActionDefinition::new("document.open", "Open").with_kinds(["core:document"]),
+        ResourceActionDefinition::new("image.view", "View").with_kinds(["core:image"]),
+    ]);
+    let lineage = vec![
+        ResourceKind::from("code:c"),
+        ResourceKind::from("core:document"),
+    ];
+
+    let actions = registry.actions_for_kinds(&lineage);
+
+    assert_eq!(actions.len(), 1);
+    assert_eq!(actions[0].id().as_str(), "document.open");
+}
 
 #[derive(Default)]
-struct TestRegistry {
+struct KindRegistry {
     definitions: Vec<ResourceKindDefinition>,
 }
 
-impl ResourceKindRegistry for TestRegistry {
+impl ResourceKindRegistry for KindRegistry {
     fn definitions(&self) -> &[ResourceKindDefinition] {
         &self.definitions
     }
@@ -13,7 +40,7 @@ impl ResourceKindRegistry for TestRegistry {
 
 #[test]
 fn kind_detection_uses_only_kind_matchers() {
-    let registry = TestRegistry {
+    let registry = KindRegistry {
         definitions: vec![
             ResourceKindDefinition::new(ResourceKind::from("core:image"), "Image", true)
                 .with_detect(ResourceContentMatcher::new().with_extensions([".png"])),
@@ -32,7 +59,7 @@ fn supports_arbitrary_depth_lineage_inheritance_and_leaf_detection() {
     let document = ResourceKind::from("core:document");
     let code = ResourceKind::from("core:code");
     let c = ResourceKind::from("code:c");
-    let registry = TestRegistry {
+    let registry = KindRegistry {
         definitions: vec![
             ResourceKindDefinition::new(document.clone(), "Document", true),
             ResourceKindDefinition::new(code.clone(), "Code", true)

@@ -100,6 +100,3 @@ pub trait StorageScanner: Send + Sync {
     /// 读取单个对象的当前状态；路径不存在或不是普通文件时返回 `None`。
     async fn inspect(&self, key: &StorageKey) -> Result<Option<ScannedBlob>, CoreError>;
 }
-
-#[cfg(test)]
-mod tests;

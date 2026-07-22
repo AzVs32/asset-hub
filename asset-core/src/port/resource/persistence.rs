@@ -1,9 +1,10 @@
-//! 资源只读查询端口。
+//! 资源聚合持久化与只读查询端口。
 //!
 //! 该端口承接分页、检索和目录浏览，不参与资源聚合的保存事务。
 
 use crate::CoreError;
-use crate::domain::{Resource, ResourceDirectory, ResourceKind};
+use crate::domain::{Resource, ResourceDirectory, ResourceId, ResourceKind};
+use chrono::{DateTime, Utc};
 
 /// 资源列表查询条件。
 #[derive(Debug, Clone)]
@@ -132,4 +133,44 @@ pub trait ResourceQuery: Send + Sync {
         &self,
         parent: &ResourceDirectory,
     ) -> Result<Vec<ResourceDirectory>, CoreError>;
+}
+
+/// 资源聚合写仓储。
+///
+/// 负责保存和还原完整 `Resource` 聚合以及用户可见目录记录；Blob 内容由存储端口管理。
+#[async_trait::async_trait]
+pub trait ResourceRepository: Send + Sync {
+    async fn health_check(&self) -> Result<(), CoreError>;
+
+    /// 按 Resource ID 保存完整聚合状态。
+    async fn save(&self, resource: &Resource) -> Result<(), CoreError>;
+
+    /// 仅在版本时间仍匹配时原子替换聚合。
+    async fn save_if_unchanged(
+        &self,
+        resource: &Resource,
+        expected_updated_at: DateTime<Utc>,
+    ) -> Result<bool, CoreError>;
+
+    /// 仅在版本时间仍匹配时原子删除聚合。
+    async fn remove_if_unchanged(
+        &self,
+        id: &ResourceId,
+        expected_updated_at: DateTime<Utc>,
+    ) -> Result<bool, CoreError>;
+
+    /// 按 ID 还原聚合，不过滤软删除状态。
+    async fn find_by_id(&self, id: &ResourceId) -> Result<Option<Resource>, CoreError>;
+
+    /// 保存已在存储侧创建的独立目录。
+    async fn save_directory(&self, directory: &ResourceDirectory) -> Result<(), CoreError>;
+
+    /// 幂等保存目录及其祖先链。
+    async fn ensure_directory(&self, directory: &ResourceDirectory) -> Result<(), CoreError>;
+
+    /// 删除不再存在于存储侧的空目录记录。
+    async fn remove_directory(&self, directory: &ResourceDirectory) -> Result<(), CoreError>;
+
+    /// 幂等物理移除资源记录。
+    async fn remove(&self, id: &ResourceId) -> Result<(), CoreError>;
 }

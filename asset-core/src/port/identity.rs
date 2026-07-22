@@ -1,4 +1,4 @@
-//! 用户聚合持久化端口。
+//! 用户聚合持久化与密码能力端口。
 
 use crate::{
     CoreError,
@@ -16,4 +16,10 @@ pub trait UserRepository: Send + Sync {
     async fn find_by_username(&self, username: &str) -> Result<Option<User>, CoreError>;
     async fn list(&self) -> Result<Vec<User>, CoreError>;
     async fn count(&self) -> Result<u64, CoreError>;
+}
+
+/// 隔离用户服务与具体密码哈希算法或密码库。
+pub trait PasswordHasher: Send + Sync {
+    fn hash(&self, password: &str) -> Result<String, CoreError>;
+    fn verify(&self, password: &str, hash: &str) -> Result<bool, CoreError>;
 }

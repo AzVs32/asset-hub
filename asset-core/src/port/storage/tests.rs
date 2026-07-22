@@ -1,4 +1,5 @@
 use super::*;
+use crate::domain::StorageKey;
 
 #[test]
 fn prefix_is_canonical_and_uses_segment_boundaries() {
