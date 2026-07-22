@@ -34,11 +34,6 @@ export interface AssetGateway {
   assetUrl(path: string): string | null;
 
   listUsers(): Promise<ManagedUser[]>;
-  createUser(input: {
-    username: string;
-    password: string;
-    isAdmin: boolean;
-    workspaceDirectory: string;
-  }): Promise<void>;
+  createUser(input: { username: string; password: string; isAdmin: boolean }): Promise<void>;
   updateUserStatus(id: string, status: UserStatus): Promise<ManagedUser>;
 }

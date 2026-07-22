@@ -57,8 +57,8 @@ Use a config file:
 cargo run -p asset-apps --bin asset-http -- --config config.example.toml
 ```
 
-The administration CLI currently exposes empty `config`, `system`, `user`, and `plugin` command
-groups as extension points:
+The administration CLI exposes configuration inspection and local user-management commands, with
+`system` and `plugin` retained as extension points:
 
 ```bash
 cargo run -p asset-apps --bin asset -- --help
@@ -101,6 +101,10 @@ reads, previews, downloads, actions, and updates are checked against the
 resource's directory. Creates, uploads, moves, deletes, and plugin write
 actions are authorized inside the core use case after their target directory is
 known.
+
+When user creation omits `workspace_directory`, the user service assigns
+`users/<username>` to members and `/` to administrators. API clients can still provide an
+explicit workspace when a custom boundary is required.
 
 Security events are stored in SQLite's `security_audit_events` table. Login
 successes, login failures, rate-limit rejections, and classified state-changing

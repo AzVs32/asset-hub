@@ -117,6 +117,18 @@ impl User {
         self.status = status;
         self.updated_at = Utc::now();
     }
+    pub fn change_credential_hash(
+        &mut self,
+        credential_hash: impl Into<String>,
+    ) -> Result<(), crate::UserError> {
+        let credential_hash = credential_hash.into();
+        if credential_hash.trim().is_empty() {
+            return Err(crate::UserError::InvalidCredentialHash);
+        }
+        self.credential_hash = credential_hash;
+        self.updated_at = Utc::now();
+        Ok(())
+    }
 }
 
 fn normalize_username(value: String) -> Result<String, crate::UserError> {

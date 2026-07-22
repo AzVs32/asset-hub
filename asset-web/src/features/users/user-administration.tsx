@@ -12,7 +12,6 @@ import { ErrorState, LoadingState } from "@/shared/ui/state";
 interface NewUserForm {
   username: string;
   password: string;
-  workspaceDirectory: string;
   isAdmin: boolean;
 }
 
@@ -33,7 +32,7 @@ export function UserAdministration({
     enabled: open,
   });
   const newUser = useForm<NewUserForm>({
-    defaultValues: { username: "", password: "", workspaceDirectory: "", isAdmin: false },
+    defaultValues: { username: "", password: "", isAdmin: false },
   });
 
   const createUser = useMutation({
@@ -61,7 +60,7 @@ export function UserAdministration({
       open={open}
       onOpenChange={onOpenChange}
       title="Users"
-      description="Accounts and their workspace boundaries."
+      description="Accounts and automatically assigned workspace boundaries."
       className="max-w-4xl"
     >
       <div className="grid gap-7 p-6">
@@ -111,17 +110,10 @@ export function UserAdministration({
           <Field label="Password">
             <Input
               type="password"
-              minLength={10}
+              minLength={4}
               {...newUser.register("password", { required: true })}
             />
           </Field>
-          {!newUser.watch("isAdmin") ? (
-            <Field label="Workspace directory">
-              <Input {...newUser.register("workspaceDirectory", { required: true })} />
-            </Field>
-          ) : (
-            <div />
-          )}
           <label className="flex items-center gap-2 self-end pb-3 text-sm font-medium text-slate-700">
             <input
               className="size-4 accent-blue-600"

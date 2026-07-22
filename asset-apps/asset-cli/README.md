@@ -27,6 +27,12 @@ asset
 │   └── --show [PATH]
 ├── system
 ├── user
+│   ├── --list
+│   ├── --create <USERNAME>
+│   ├── --password <USERNAME>
+│   ├── --enable <USERNAME>
+│   ├── --disable <USERNAME>
+│   └── --show <USERNAME>
 └── plugin
 ```
 
@@ -118,5 +124,72 @@ asset config --show config.toml
 # `asset system` 命令
 
 # `asset user` 命令
+
+`asset user` 读取当前目录的 `config.toml`（不存在时使用内置默认配置）并初始化本地运行时。
+每次必须且只能选择一个操作。
+
+## `asset user --list`
+
+按用户名列出全部用户，以表格展示用户名、角色、状态、工作目录和用户 ID。该命令不会输出
+密码哈希，也不会写入安全审计事件。
+
+```bash
+asset user --list
+```
+
+## `asset user --create <USERNAME>`
+
+创建启用状态的普通成员。`UserService` 会将未指定的工作目录设置为
+`users/<username>`。初始密码通过终端隐藏输入并要求二次确认，长度不得少于 4 个字符。
+
+```bash
+asset user --create alice
+```
+
+该命令会创建用户数据库记录及其工作目录，并写入 `auth.user.create` 安全审计事件。审计事件
+只记录目标用户名，不记录密码。
+
+## `asset user --password <USERNAME>`
+
+重置指定用户的密码；原密码存在时直接覆盖。新密码通过终端隐藏输入并要求二次确认，长度
+不得少于 4 个字符。
+
+```bash
+asset user --password alice
+```
+
+该命令会更新用户数据库记录并写入 `auth.user.password` 安全审计事件。密码不会作为命令参数
+传递，因此不会进入 shell 历史、进程参数列表或审计记录。密码更新会改变会话认证哈希，使
+已有会话在后续校验时失效。
+
+## `asset user --enable <USERNAME>`
+
+启用指定用户，使其可以重新登录。用户不存在时命令以非零状态退出。
+
+```bash
+asset user --enable alice
+```
+
+该命令会更新用户状态并写入 `auth.user.status` 安全审计事件。
+
+## `asset user --disable <USERNAME>`
+
+禁用指定用户。禁用后该用户不能登录，已有会话会在后续用户状态校验时失效。用户不存在时
+命令以非零状态退出。
+
+```bash
+asset user --disable alice
+```
+
+该命令会更新用户状态并写入 `auth.user.status` 安全审计事件。
+
+## `asset user --show <USERNAME>`
+
+展示指定用户的用户名、ID、角色、状态、工作目录及创建和更新时间。该命令不会输出任何密码
+信息，也不会写入安全审计事件。用户不存在时命令以非零状态退出。
+
+```bash
+asset user --show alice
+```
 
 # `asset plugin` 命令

@@ -18,6 +18,9 @@ asset-plugin-api = { path = "asset-plugin-api" }
 asset-core = { path = "asset-core"}
 asset-infra = { path = "asset-infra" }
 
+anyhow = "1.0.100"
+comfy-table = "7.2.2"
+rpassword = "7.4.0"
 thiserror = "2.0.18"
 uuid = { version = "1.23.3", features = ["v7", "serde"] }
 serde = { version = "1.0.228", features = ["derive"] }

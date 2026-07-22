@@ -1660,6 +1660,25 @@ async fn member_access_is_limited_to_the_workspace_subtree() {
     assert_eq!(root_member.status(), StatusCode::CREATED);
     let root_member = response_json(root_member).await;
     assert_eq!(root_member["user"]["workspace_directory"], "");
+    let default_workspace_member = request_with_cookie(
+        &app,
+        Method::POST,
+        "/auth/users",
+        json!({
+            "username": "bob",
+            "password": "bob-secure-password",
+            "is_admin": false
+        }),
+        &admin_cookie,
+    )
+    .await;
+    assert_eq!(default_workspace_member.status(), StatusCode::CREATED);
+    let default_workspace_member = response_json(default_workspace_member).await;
+    assert_eq!(
+        default_workspace_member["user"]["workspace_directory"],
+        "users/bob"
+    );
+    assert!(app.root.join("blob/users/bob").is_dir());
     let teams = request_with_cookie(
         &app,
         Method::GET,

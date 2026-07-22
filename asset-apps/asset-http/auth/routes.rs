@@ -112,15 +112,6 @@ pub(crate) async fn create_user(
     } else {
         UserRole::Member
     };
-    let workspace_directory = match request.workspace_directory {
-        Some(directory) => directory,
-        None if request.is_admin => ResourceDirectory::root(),
-        None => {
-            return Err(HttpError::bad_request(
-                "workspace_directory is required for member users",
-            ));
-        }
-    };
     let user = session
         .backend
         .users
@@ -128,7 +119,7 @@ pub(crate) async fn create_user(
             request.username,
             &request.password,
             role,
-            workspace_directory,
+            request.workspace_directory,
         )
         .await?;
     Ok((StatusCode::CREATED, Json(MeResponse { user: user.into() })))

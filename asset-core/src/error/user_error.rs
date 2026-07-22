@@ -6,6 +6,6 @@ pub enum UserError {
     InvalidUsername,
     #[error("credential hash must not be empty")]
     InvalidCredentialHash,
-    #[error("password must contain at least 10 characters")]
+    #[error("password must contain at least 4 characters")]
     WeakPassword,
 }

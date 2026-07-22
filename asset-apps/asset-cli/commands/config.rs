@@ -1,4 +1,4 @@
-use super::CommandResult;
+use super::CliResult;
 use asset_infra::config::AssetInfraConfig;
 use clap::{ArgGroup, Args};
 use std::path::PathBuf;
@@ -20,7 +20,7 @@ pub(crate) struct ConfigCommand {
     show: Option<Option<PathBuf>>,
 }
 
-pub(crate) fn run(command: ConfigCommand) -> CommandResult {
+pub(crate) fn run(command: ConfigCommand) -> CliResult {
     match (command.check, command.show) {
         (Some(path), None) => {
             load_normalized(path)?;

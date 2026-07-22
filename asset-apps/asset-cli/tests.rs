@@ -2,8 +2,12 @@ use super::*;
 
 #[test]
 fn parses_each_top_level_command_group() {
-    for (name, expected) in [("system", "system"), ("user", "user"), ("plugin", "plugin")] {
-        let cli = Cli::try_parse_from(["asset", name]).unwrap();
+    for (args, expected) in [
+        (vec!["asset", "system"], "system"),
+        (vec!["asset", "user", "--list"], "user"),
+        (vec!["asset", "plugin"], "plugin"),
+    ] {
+        let cli = Cli::try_parse_from(args).unwrap();
         let actual = match cli.command {
             Command::Config(_) => "config",
             Command::System(_) => "system",
@@ -38,4 +42,27 @@ fn config_requires_exactly_one_operation() {
 #[test]
 fn rejects_unknown_command_groups() {
     assert!(Cli::try_parse_from(["asset", "unknown"]).is_err());
+}
+
+#[test]
+fn parses_all_user_operations() {
+    for args in [
+        vec!["asset", "user", "--list"],
+        vec!["asset", "user", "--create", "alice"],
+        vec!["asset", "user", "--password", "alice"],
+        vec!["asset", "user", "--enable", "alice"],
+        vec!["asset", "user", "--disable", "alice"],
+        vec!["asset", "user", "--show", "alice"],
+    ] {
+        assert!(matches!(
+            Cli::try_parse_from(args).unwrap().command,
+            Command::User(_)
+        ));
+    }
+}
+
+#[test]
+fn user_requires_exactly_one_operation() {
+    assert!(Cli::try_parse_from(["asset", "user"]).is_err());
+    assert!(Cli::try_parse_from(["asset", "user", "--list", "--show", "alice"]).is_err());
 }

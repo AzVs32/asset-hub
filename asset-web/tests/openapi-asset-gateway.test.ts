@@ -16,6 +16,40 @@ describe("OpenApiAssetGateway URL boundary", () => {
     expect(gateway.assetUrl("plugins/example/view.html")).toBeNull();
   });
 
+  it("creates users without submitting a workspace directory", async () => {
+    const fetchMock = vi.fn(async (_request: Request) =>
+      Response.json(
+        {
+          user: {
+            id: "user-1",
+            username: "alice",
+            is_admin: false,
+            workspace_directory: "users/alice",
+          },
+        },
+        { status: 201 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const absoluteGateway = new OpenApiAssetGateway("http://localhost/api");
+
+    await absoluteGateway.createUser({
+      username: "alice",
+      password: "alice-password",
+      isAdmin: false,
+    });
+
+    const request = fetchMock.mock.calls[0]?.[0];
+    if (!request) throw new Error("request was not captured");
+    const body = JSON.parse(await request.text());
+    expect(body).toEqual({
+      username: "alice",
+      password: "alice-password",
+      is_admin: false,
+    });
+    expect(body).not.toHaveProperty("workspace_directory");
+  });
+
   it("preserves spaces in upload names and directories", async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL) =>
       Response.json(

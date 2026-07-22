@@ -2,6 +2,8 @@ use clap::{Parser, Subcommand};
 
 mod commands;
 
+use commands::{CliResult, config, plugin, system, user};
+
 #[derive(Debug, Parser)]
 #[command(
     name = "asset",
@@ -17,30 +19,31 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Inspect and manage Asset Hub configuration.
-    Config(commands::config::ConfigCommand),
+    Config(config::ConfigCommand),
     /// Inspect and maintain the local Asset Hub system.
-    System(commands::system::SystemCommand),
+    System(system::SystemCommand),
     /// Manage Asset Hub users.
-    User(commands::user::UserCommand),
+    User(user::UserCommand),
     /// Build and manage Asset Hub plugins.
-    Plugin(commands::plugin::PluginCommand),
+    Plugin(plugin::PluginCommand),
 }
 
-fn main() {
-    if let Err(error) = run(Cli::parse()) {
+#[tokio::main]
+async fn main() {
+    if let Err(error) = run(Cli::parse()).await {
         eprintln!("asset: {error}");
         std::process::exit(1);
     }
 }
 
-fn run(cli: Cli) -> commands::CommandResult {
+async fn run(cli: Cli) -> CliResult {
     match cli.command {
-        Command::Config(command) => commands::config::run(command),
-        Command::System(command) => commands::system::run(command),
-        Command::User(command) => commands::user::run(command),
-        Command::Plugin(command) => commands::plugin::run(command),
+        Command::Config(command) => config::run(command),
+        Command::System(command) => system::run(command),
+        Command::User(command) => user::run(command).await,
+        Command::Plugin(command) => plugin::run(command),
     }
 }
 
 #[cfg(test)]
-mod cli_tests;
+mod tests;

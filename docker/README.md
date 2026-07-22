@@ -65,7 +65,7 @@ docker compose down
 | 配置 | 用途 | 要求 |
 | --- | --- | --- |
 | `ASSET_HUB_BOOTSTRAP_ADMIN_USERNAME` | 创建首个管理员 | 3–64 位，仅字母、数字、`.`、`_`、`-` |
-| `ASSET_HUB_BOOTSTRAP_ADMIN_PASSWORD` | 首个管理员密码 | 至少 10 个字符，生产环境应使用随机强密码 |
+| `ASSET_HUB_BOOTSTRAP_ADMIN_PASSWORD` | 首个管理员密码 | 至少 4 个字符，生产环境应使用随机强密码 |
 
 只有 `users` 表为空时才会创建初始管理员。数据库已有用户后，这两个值不会覆盖用户、
 重置密码或创建第二个管理员。Compose 为避免空数据库无法登录，仍要求变量存在；首次

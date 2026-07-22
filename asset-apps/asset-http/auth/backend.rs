@@ -83,12 +83,7 @@ impl AuthBackend {
                 ));
             };
             self.users
-                .create(
-                    username,
-                    password,
-                    UserRole::Administrator,
-                    ResourceDirectory::root(),
-                )
+                .create(username, password, UserRole::Administrator, None)
                 .await?;
         }
         Ok(())

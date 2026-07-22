@@ -193,19 +193,13 @@ export class OpenApiAssetGateway implements AssetGateway {
     return expectData(result).map(mapManagedUser);
   }
 
-  async createUser(input: {
-    username: string;
-    password: string;
-    isAdmin: boolean;
-    workspaceDirectory: string;
-  }): Promise<void> {
+  async createUser(input: { username: string; password: string; isAdmin: boolean }): Promise<void> {
     expectSuccess(
       await this.#client.POST("/auth/users", {
         body: {
           username: input.username,
           password: input.password,
           is_admin: input.isAdmin,
-          ...(!input.isAdmin ? { workspace_directory: input.workspaceDirectory } : {}),
         },
       }),
     );
