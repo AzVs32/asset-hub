@@ -1,4 +1,4 @@
-use crate::domain::ResourceDirectory;
+use crate::domain::DirectoryRef;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -15,7 +15,7 @@ pub struct User {
     role: UserRole,
     status: UserStatus,
     /// 登录后的默认入口目录；可被多个用户共享，本身不产生任何权限。
-    workspace_directory: ResourceDirectory,
+    workspace_directory: DirectoryRef,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -41,7 +41,7 @@ pub struct UserSnapshot {
     pub credential_hash: String,
     pub role: UserRole,
     pub status: UserStatus,
-    pub workspace_directory: ResourceDirectory,
+    pub workspace_directory: DirectoryRef,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -51,7 +51,7 @@ impl User {
         username: impl Into<String>,
         credential_hash: impl Into<String>,
         role: UserRole,
-        workspace_directory: ResourceDirectory,
+        workspace_directory: DirectoryRef,
     ) -> Result<Self, crate::UserError> {
         let now = Utc::now();
         Self::rehydrate(UserSnapshot {
@@ -98,7 +98,7 @@ impl User {
     pub fn status(&self) -> UserStatus {
         self.status
     }
-    pub fn workspace_directory(&self) -> &ResourceDirectory {
+    pub fn workspace_directory(&self) -> &DirectoryRef {
         &self.workspace_directory
     }
     pub fn created_at(&self) -> DateTime<Utc> {

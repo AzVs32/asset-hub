@@ -1,5 +1,15 @@
 use super::*;
+use crate::domain::{DirectoryId, DirectoryPath, DirectoryRef};
 use crate::error::ResourceError;
+
+fn directory(path: &str) -> DirectoryRef {
+    let path = DirectoryPath::from_path(path).unwrap();
+    if path.is_root() {
+        DirectoryRef::root()
+    } else {
+        DirectoryRef::new(DirectoryId::new(), path)
+    }
+}
 
 #[test]
 fn new_resource_has_default_lifecycle_state() {
@@ -11,7 +21,7 @@ fn new_resource_has_default_lifecycle_state() {
     assert_eq!(resource.name(), " Design Doc ");
     assert_eq!(resource.kind().as_str(), "doc:markdown");
     assert_eq!(resource.status(), ResourceStatus::default());
-    assert!(resource.directory().is_root());
+    assert!(resource.directory().id().is_root());
     assert!(resource.is_active());
     assert!(!resource.is_archived());
     assert!(!resource.is_deleted());
@@ -59,7 +69,7 @@ fn resource_can_be_rehydrated_from_snapshot() {
     let resource = Resource::rehydrate(ResourceSnapshot {
         id,
         name: " restored image ".to_string(),
-        directory: ResourceDirectory::from_path(" images/raw ").unwrap(),
+        directory: directory(" images/raw "),
         kind: ResourceKind::from("core:image"),
         status: ResourceStatus::Archived,
         description: Some(" restored description ".to_owned()),
@@ -73,7 +83,7 @@ fn resource_can_be_rehydrated_from_snapshot() {
 
     assert_eq!(resource.id(), id);
     assert_eq!(resource.name(), " restored image ");
-    assert_eq!(resource.directory().path(), " images/raw ");
+    assert_eq!(resource.directory().path().path(), " images/raw ");
     assert!(resource.kind().is("core:image"));
     assert_eq!(resource.status(), ResourceStatus::Archived);
     assert_eq!(resource.description(), Some("restored description"));
@@ -144,7 +154,7 @@ fn resource_builder_accepts_description_tags_and_content() {
 #[test]
 fn resource_path_uniquely_derives_storage_key() {
     let resource = Resource::builder("readme.md")
-        .with_directory(ResourceDirectory::from_path("docs/guides").unwrap())
+        .with_directory(directory("docs/guides"))
         .with_content(
             ResourceContent::builder(42, Checksum::sha256("a".repeat(64)).unwrap())
                 .build()
@@ -159,12 +169,12 @@ fn resource_path_uniquely_derives_storage_key() {
 #[test]
 fn resource_path_preserves_spaces_exactly() {
     let resource = Resource::builder(" design  draft 01.md ")
-        .with_directory(ResourceDirectory::from_path(" library / project A ").unwrap())
+        .with_directory(directory(" library / project A "))
         .build()
         .unwrap();
 
     assert_eq!(resource.name(), " design  draft 01.md ");
-    assert_eq!(resource.directory().path(), " library / project A ");
+    assert_eq!(resource.directory().path().path(), " library / project A ");
     assert_eq!(
         resource.storage_key().as_str(),
         " library / project A / design  draft 01.md "
@@ -286,83 +296,4 @@ fn content_stores_one_typed_checksum() {
 
     assert_eq!(content.checksum(), &checksum);
     assert_eq!(content.checksum().kind(), ChecksumKind::Sha256);
-}
-
-#[test]
-fn directory_is_built_from_parent_and_single_name() {
-    let parent = ResourceDirectory::from_path("projects").unwrap();
-    let directory = parent.child(" images ").unwrap();
-    assert_eq!(directory.path(), "projects/ images ");
-    assert_eq!(directory.parent_path(), "projects");
-    assert_eq!(directory.name(), " images ");
-    assert!(parent.child("../secret").is_err());
-}
-
-#[test]
-fn path_constructor_supports_root_and_normalizes_segments() {
-    assert!(ResourceDirectory::from_path("").unwrap().is_root());
-    assert!(ResourceDirectory::from_path("  ").is_err());
-    assert_eq!(
-        ResourceDirectory::from_path("projects\\images/./raw")
-            .unwrap()
-            .path(),
-        "projects/images/raw"
-    );
-}
-
-#[test]
-fn directory_rejects_internal_asset_hub_namespace() {
-    for path in [".asset-hub", ".asset-hub/trash"] {
-        assert!(matches!(
-            ResourceDirectory::from_path(path),
-            Err(ResourceError::InvalidFormat {
-                field: "resource.directory",
-                ..
-            })
-        ));
-    }
-}
-
-#[test]
-fn serde_uses_the_path_representation() {
-    let directory = ResourceDirectory::from_path("projects/images").unwrap();
-    let json = serde_json::to_string(&directory).unwrap();
-    assert_eq!(json, "\"projects/images\"");
-    assert_eq!(
-        serde_json::from_str::<ResourceDirectory>(&json).unwrap(),
-        directory
-    );
-}
-
-#[test]
-fn contains_obeys_directory_segment_boundaries() {
-    let root = ResourceDirectory::root();
-    let home = ResourceDirectory::from_path("users/alice").unwrap();
-    let child = ResourceDirectory::from_path("users/alice/photos").unwrap();
-    let sibling = ResourceDirectory::from_path("users/alice2").unwrap();
-
-    assert!(root.contains(&home));
-    assert!(home.contains(&home));
-    assert!(home.contains(&child));
-    assert!(!home.contains(&sibling));
-}
-
-#[test]
-fn rehydrate_rejects_noncanonical_or_inconsistent_fields() {
-    assert!(
-        ResourceDirectory::rehydrate(
-            " projects/images ".to_owned(),
-            "projects".to_owned(),
-            "images".to_owned(),
-        )
-        .is_err()
-    );
-    assert!(
-        ResourceDirectory::rehydrate(
-            "projects/images".to_owned(),
-            "other".to_owned(),
-            "images".to_owned(),
-        )
-        .is_err()
-    );
 }

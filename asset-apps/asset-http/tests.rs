@@ -606,6 +606,15 @@ async fn stream_upload_preserves_spaces_in_names_and_physical_paths() {
 async fn empty_directories_and_contentless_resources_create_physical_directories() {
     let app = test_app("physical-directories").await;
 
+    let (status, _) = json_request(
+        &app,
+        Method::POST,
+        "/directories",
+        json!({ "parent_path": "", "name": "projects" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
     let (status, directory) = json_request(
         &app,
         Method::POST,

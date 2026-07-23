@@ -8,7 +8,7 @@ use crate::{
 /// 保存和还原完整用户聚合，不承担密码哈希职责。
 #[async_trait::async_trait]
 pub trait UserRepository: Send + Sync {
-    /// 原子创建用户及其工作目录记录。
+    /// 创建引用既有工作目录的用户；工作目录由应用服务预先确保。
     async fn create(&self, user: &User) -> Result<(), CoreError>;
     /// 保存既有用户的可变状态。
     async fn save(&self, user: &User) -> Result<(), CoreError>;

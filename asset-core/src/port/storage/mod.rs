@@ -1,4 +1,4 @@
-//! Blob、目录实体与外部存储扫描端口。
+//! Blob、物理目录与外部存储扫描端口。
 
 mod blob;
 mod directory;

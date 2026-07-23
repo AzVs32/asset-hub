@@ -1,59 +1,41 @@
 mod content;
-mod directory;
 mod kind;
 #[allow(clippy::module_inception)]
 mod resource;
 mod status;
 mod tag;
 
+use crate::error::ResourceError;
+
 pub use content::{Checksum, ChecksumKind, ResourceContent, ResourceContentBuilder, StorageKey};
-pub use directory::{INTERNAL_STORAGE_DIRECTORY_NAME, ResourceDirectory};
 pub use kind::ResourceKind;
 pub use resource::{Resource, ResourceBuilder, ResourceId, ResourceSnapshot};
 pub use status::ResourceStatus;
 pub use tag::ResourceTag;
 
-use crate::error::ResourceError;
-
-/// 归一化并校验资源领域中的必填文本字段。
-///
-/// 校验规则：
-/// - 去除首尾空白后不能为空，否则返回 `ResourceError::Blank`。
-/// - 文本长度按 Unicode 字符数计算，超过 `max` 时返回 `ResourceError::TooLong`。
-/// - 不允许包含控制字符，例如换行、制表符或不可见控制码，否则返回
-///   `ResourceError::InvalidFormat`。
-///
-/// `field` 用于标识具体出错的领域字段，最终会原样出现在错误对象中，方便调用方定位
-/// 是哪个属性没有通过校验。
+/// 归一化并校验 Resource 领域模型中的必填文本。
 fn normalize_required_text(
     field: &'static str,
     value: &str,
     max: usize,
 ) -> Result<String, ResourceError> {
     let value = value.trim();
-
     if value.is_empty() {
         return Err(ResourceError::Blank { field });
     }
-
     if value.chars().count() > max {
         return Err(ResourceError::TooLong { field, max });
     }
-
     if value.chars().any(char::is_control) {
         return Err(ResourceError::InvalidFormat {
             field,
             reason: "control characters are not allowed",
         });
     }
-
-    Ok(value.to_string())
+    Ok(value.to_owned())
 }
 
-/// 校验必须原样保存的必填文本字段。
-///
-/// 与 [`normalize_required_text`] 不同，本函数只校验、不去除首尾空白。文件名、目录段和
-/// 存储键属于持久化路径的一部分，任何静默改写都会让领域路径与实际存储路径发生分叉。
+/// 校验需要原样保存的 Resource 必填文本，不执行首尾裁剪。
 fn validate_required_text_exact(
     field: &'static str,
     value: &str,
@@ -62,19 +44,16 @@ fn validate_required_text_exact(
     if value.trim().is_empty() {
         return Err(ResourceError::Blank { field });
     }
-
     if value.chars().count() > max {
         return Err(ResourceError::TooLong { field, max });
     }
-
     if value.chars().any(char::is_control) {
         return Err(ResourceError::InvalidFormat {
             field,
             reason: "control characters are not allowed",
         });
     }
-
-    Ok(value.to_string())
+    Ok(value.to_owned())
 }
 
 #[cfg(test)]

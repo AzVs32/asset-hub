@@ -262,8 +262,8 @@ function mapManagedUser(value: Schemas["ManagedUserResponse"]): ManagedUser {
   };
 }
 
-function mapDirectory(value: Schemas["ResourceDirectoryResponse"]): Directory {
-  return { path: value.path, parentPath: value.parent_path, name: value.name };
+function mapDirectory(value: Schemas["DirectoryResponse"]): Directory {
+  return { id: value.id, path: value.path, parentPath: value.parent_path, name: value.name };
 }
 
 function mapKind(value: ApiKind): ResourceKind {

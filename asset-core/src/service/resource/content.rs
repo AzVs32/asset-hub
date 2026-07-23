@@ -7,9 +7,7 @@ use super::{ResourceContentStream, ResourceService, UploadResourceContentStream}
 use crate::CoreError;
 #[cfg(test)]
 use crate::domain::ResourceId;
-use crate::domain::{
-    Checksum, ChecksumKind, Resource, ResourceContent, ResourceDirectory, StorageKey,
-};
+use crate::domain::{Checksum, ChecksumKind, Resource, ResourceContent, StorageKey};
 use crate::port::{BlobByteStream, RESERVED_BLOB_STORAGE_PREFIX};
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
@@ -50,22 +48,15 @@ impl<'a> ResourceContentService<'a> {
             mime_type.as_deref(),
             Some(detection_storage_key.as_str()),
         )?;
+        let directory = self.service.directories.ensure_path(&directory).await?;
 
-        let mut resource = build_resource(
-            name,
-            directory.clone(),
-            Some(kind),
-            status,
-            description,
-            tags,
-        )
-        .build()?;
+        let mut resource =
+            build_resource(name, directory, Some(kind), status, description, tags).build()?;
         let storage_key = resource.storage_key();
         reject_reserved_storage_key(&storage_key)?;
         // 在写 Blob 前校验全部内容元数据，避免写入后才发现 MIME 等字段非法。
         build_content(0, mime_type.clone(), placeholder_checksum()?, None)?;
 
-        self.ensure_directory(&directory).await?;
         let (data, checksum_state) = stream_with_checksum_tracking(data);
         let write_result = self
             .service
@@ -111,14 +102,6 @@ impl<'a> ResourceContentService<'a> {
             return Err(error);
         }
         Ok(resource)
-    }
-
-    async fn ensure_directory(&self, directory: &ResourceDirectory) -> Result<(), CoreError> {
-        self.service
-            .directory_storage
-            .ensure_directory(directory)
-            .await?;
-        self.service.repository.ensure_directory(directory).await
     }
 
     #[cfg(test)]

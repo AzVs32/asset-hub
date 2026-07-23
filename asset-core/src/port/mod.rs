@@ -1,6 +1,7 @@
 //! Core 依赖的 Host Port。
 //!
 //! - 资源持久化：`ResourceRepository`、`ResourceQuery`
+//! - 目录持久化：`DirectoryRepository`
 //! - 内容存储：`BlobStorage`、`DirectoryStorage`、`StorageScanner`
 //! - 运行时注册与执行：kind/action registry、action executor
 //! - 身份与审计：用户仓储、密码哈希、安全审计仓储
@@ -9,11 +10,13 @@
 //! infrastructure adapter 中。所有公开端口统一从本模块 re-export。
 
 mod audit;
+mod directory;
 mod identity;
 mod resource;
 mod storage;
 
 pub use audit::SecurityAuditRepository;
+pub use directory::DirectoryRepository;
 pub use identity::{PasswordHasher, UserRepository};
 pub use resource::{
     ListResources, ResourceActionExecutor, ResourceActionOutput, ResourceActionRegistry,

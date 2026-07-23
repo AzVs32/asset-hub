@@ -1,4 +1,5 @@
-use super::{ResourceDirectory, normalize_required_text, validate_required_text_exact};
+use super::{normalize_required_text, validate_required_text_exact};
+use crate::domain::DirectoryPath;
 use crate::error::ResourceError;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -121,7 +122,7 @@ pub struct StorageKey(String);
 impl StorageKey {
     /// 从资源逻辑目录和文件名生成唯一的对象存储键。
     pub fn from_resource_path(
-        directory: &ResourceDirectory,
+        directory: &DirectoryPath,
         name: &str,
     ) -> Result<Self, ResourceError> {
         let value = if directory.is_root() {

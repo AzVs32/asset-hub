@@ -11,12 +11,13 @@ pub mod storage;
 
 use action::DefaultResourceActionExecutor;
 use asset_core::service::{
-    AuthorizationService, ResourceService, ResourceServicePorts, UserService,
+    AuthorizationService, DirectoryService, ResourceService, ResourceServicePorts, UserService,
 };
 use asset_core::{
-    CoreError, port::BlobStorage, port::DirectoryStorage, port::ResourceActionExecutor,
-    port::ResourceActionRegistry, port::ResourceKindRegistry, port::ResourceQuery,
-    port::ResourceRepository, port::SecurityAuditRepository, port::StorageScanner,
+    CoreError, port::BlobStorage, port::DirectoryRepository, port::DirectoryStorage,
+    port::ResourceActionExecutor, port::ResourceActionRegistry, port::ResourceKindRegistry,
+    port::ResourceQuery, port::ResourceRepository, port::SecurityAuditRepository,
+    port::StorageScanner,
 };
 use asset_plugin_api::PluginExecutionPolicy;
 use config::{AssetInfraConfig, BlobBackend, DatabaseBackend};
@@ -40,7 +41,7 @@ pub type PluginWebAssets = HashMap<String, HashMap<PathBuf, Arc<[u8]>>>;
 pub struct AssetInfrastructure {
     /// 实际生效的基础设施配置。
     config: AssetInfraConfig,
-    /// 资源仓储适配器。
+    /// SQLite 聚合持久化适配器，对外分别实现资源与目录仓储端口。
     resource_repository: Arc<SqliteResourceRepository>,
     identity_repository: Arc<SqliteIdentityRepository>,
     security_audit_repository: Arc<SqliteSecurityAuditRepository>,
@@ -149,6 +150,14 @@ impl AssetInfrastructure {
         self.resource_repository.clone()
     }
 
+    pub fn directory_repository(&self) -> Arc<dyn DirectoryRepository> {
+        self.resource_repository.clone()
+    }
+
+    pub fn directory_service(&self) -> DirectoryService {
+        DirectoryService::new(self.directory_repository(), self.directory_storage())
+    }
+
     /// 返回共享数据库连接池，供会话、用户与授权适配器复用。
     pub fn database_pool(&self) -> SqlitePool {
         self.resource_repository.pool().clone()
@@ -158,12 +167,12 @@ impl AssetInfrastructure {
         UserService::new(
             self.identity_repository.clone(),
             Arc::new(Argon2PasswordHasher),
-            self.directory_storage(),
+            self.directory_service(),
         )
     }
 
     pub fn authorization_service(&self) -> AuthorizationService {
-        AuthorizationService::new(self.identity_repository.clone())
+        AuthorizationService::new(self.identity_repository.clone(), self.directory_service())
     }
 
     pub fn security_audit_repository(&self) -> Arc<dyn SecurityAuditRepository> {
@@ -227,6 +236,7 @@ impl AssetInfrastructure {
                 self.resource_repository(),
                 self.resource_query(),
                 self.blob_storage(),
+                self.directory_repository(),
                 self.directory_storage(),
                 self.storage_scanner(),
                 self.resource_kind_registry(),

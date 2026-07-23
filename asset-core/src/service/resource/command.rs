@@ -5,9 +5,7 @@
 
 use super::{CreateResource, ResourceService, UpdateResource};
 use crate::CoreError;
-use crate::domain::{
-    Resource, ResourceDirectory, ResourceId, ResourceKind, ResourceStatus, StorageKey,
-};
+use crate::domain::{DirectoryRef, Resource, ResourceId, ResourceKind, ResourceStatus, StorageKey};
 use crate::port::{ListResources, RESERVED_BLOB_STORAGE_PREFIX, ResourcePage};
 
 /// 资源命令服务。
@@ -35,9 +33,14 @@ impl<'a> ResourceCommandService<'a> {
         command: CreateResource,
     ) -> Result<Resource, CoreError> {
         let kind = self.service.validate_registered_kind(command.kind)?;
+        let directory = self
+            .service
+            .directories
+            .ensure_path(&command.directory)
+            .await?;
         let resource = build_resource(
             command.name,
-            command.directory,
+            directory,
             Some(kind),
             command.status,
             command.description,
@@ -45,7 +48,6 @@ impl<'a> ResourceCommandService<'a> {
         )
         .build()?;
 
-        self.ensure_directory(resource.directory()).await?;
         self.service.repository.save(&resource).await?;
 
         Ok(resource)
@@ -84,29 +86,6 @@ impl<'a> ResourceCommandService<'a> {
         self.service.query.list(&query).await
     }
 
-    /// 列出指定父目录下的直接子目录。
-    pub(crate) async fn list_directories(
-        &self,
-        parent: &ResourceDirectory,
-    ) -> Result<Vec<ResourceDirectory>, CoreError> {
-        self.service.query.list_directories(parent).await
-    }
-
-    /// 在指定父目录下创建一个与存储端实体一一对应的独立目录。
-    pub(crate) async fn create_directory(
-        &self,
-        parent: &ResourceDirectory,
-        name: impl Into<String>,
-    ) -> Result<ResourceDirectory, CoreError> {
-        let directory = parent.child(name)?;
-        self.service
-            .directory_storage
-            .ensure_directory(&directory)
-            .await?;
-        self.service.repository.save_directory(&directory).await?;
-        Ok(directory)
-    }
-
     /// 更新资源基础信息、元数据、状态，或恢复软删除资源。
     pub(crate) async fn update_resource_snapshot(
         &self,
@@ -126,7 +105,7 @@ impl<'a> ResourceCommandService<'a> {
         }
 
         if let Some(directory) = command.directory {
-            resource.move_to_directory(directory)?;
+            resource.move_to_directory(self.service.directories.ensure_path(&directory).await?)?;
         }
 
         if let Some(kind) = command.kind {
@@ -152,7 +131,7 @@ impl<'a> ResourceCommandService<'a> {
             && self
                 .service
                 .query
-                .find_by_path(resource.directory(), resource.name())
+                .find_by_path(resource.directory().path(), resource.name())
                 .await?
                 .is_some()
         {
@@ -162,7 +141,6 @@ impl<'a> ResourceCommandService<'a> {
             )));
         }
 
-        self.ensure_directory(resource.directory()).await?;
         let new_storage_key = persisted_content_key(&resource)?;
         let moved_content = match (&old_storage_key, &new_storage_key) {
             (Some(from), Some(to)) if from != to => {
@@ -198,17 +176,6 @@ impl<'a> ResourceCommandService<'a> {
         }
 
         Err(error)
-    }
-
-    /// 先在存储端创建目录（文件系统目录或对象存储目录标记），再幂等登记目录链。
-    ///
-    /// 目录本身允许独立存在，因此后续资源保存失败时不回滚已经创建的目录。
-    async fn ensure_directory(&self, directory: &ResourceDirectory) -> Result<(), CoreError> {
-        self.service
-            .directory_storage
-            .ensure_directory(directory)
-            .await?;
-        self.service.repository.ensure_directory(directory).await
     }
 
     /// 软删除资源。
@@ -340,7 +307,7 @@ fn persisted_content_key(resource: &Resource) -> Result<Option<StorageKey>, Core
 
 pub(super) fn build_resource(
     name: String,
-    directory: ResourceDirectory,
+    directory: DirectoryRef,
     kind: Option<ResourceKind>,
     status: ResourceStatus,
     description: Option<String>,

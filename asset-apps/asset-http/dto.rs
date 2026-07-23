@@ -1,4 +1,4 @@
-use asset_core::domain::{Checksum, Resource, ResourceContent, ResourceDirectory};
+use asset_core::domain::{Checksum, DirectoryPath, Resource, ResourceContent};
 use asset_core::port::{ResourceActionOutput, ResourceKindDefinition};
 use asset_core::service::{ReadableResource, ResourceActions};
 use asset_plugin_api::{
@@ -35,7 +35,7 @@ pub(crate) struct CreateResourceRequest {
     pub(crate) status: Option<String>,
     /// 相对于当前用户可见根目录的路径；根目录为空字符串。
     #[schema(value_type = Option<String>)]
-    pub(crate) directory: Option<ResourceDirectory>,
+    pub(crate) directory: Option<DirectoryPath>,
     /// 可选资源描述。
     pub(crate) description: Option<String>,
     /// 可选资源标签。
@@ -48,7 +48,7 @@ pub(crate) struct CreateDirectoryRequest {
     /// 相对于当前用户可见根目录的父路径；根目录为空字符串。
     #[serde(default)]
     #[schema(value_type = String)]
-    pub(crate) parent_path: ResourceDirectory,
+    pub(crate) parent_path: DirectoryPath,
     /// 新目录名称，只允许单个路径段。
     pub(crate) name: String,
 }
@@ -71,7 +71,7 @@ pub(crate) struct ListResourcesQuery {
     pub(crate) q: Option<String>,
     /// 相对于当前用户可见根目录的过滤路径；根目录为空字符串。
     #[param(value_type = Option<String>)]
-    pub(crate) directory: Option<ResourceDirectory>,
+    pub(crate) directory: Option<DirectoryPath>,
     /// 是否包含软删除资源。
     pub(crate) include_deleted: Option<bool>,
 }
@@ -82,7 +82,7 @@ pub(crate) struct ListResourcesQuery {
 pub(crate) struct ListDirectoryQuery {
     /// 相对于当前用户可见根目录的路径；根目录为空字符串。
     #[param(value_type = Option<String>)]
-    pub(crate) path: Option<ResourceDirectory>,
+    pub(crate) path: Option<DirectoryPath>,
     /// 资源页码，从 1 开始。
     pub(crate) page: Option<u32>,
     /// 每页资源数量。
@@ -118,7 +118,7 @@ pub(crate) struct UpdateResourceRequest {
     pub(crate) status: Option<String>,
     /// 相对于当前用户可见根目录的新路径；根目录为空字符串。
     #[schema(value_type = Option<String>)]
-    pub(crate) directory: Option<ResourceDirectory>,
+    pub(crate) directory: Option<DirectoryPath>,
     /// 资源描述补丁：缺省表示不修改，`null` 表示清空。
     #[serde(default, deserialize_with = "deserialize_optional_field")]
     pub(crate) description: Option<Option<String>>,
@@ -139,7 +139,7 @@ pub(crate) struct UploadResourceContentStreamQuery {
     /// 相对于当前用户可见根目录的上传路径。
     #[param(value_type = Option<String>)]
     #[schema(value_type = Option<String>)]
-    pub(crate) directory: Option<ResourceDirectory>,
+    pub(crate) directory: Option<DirectoryPath>,
     /// 可选资源类型。
     pub(crate) kind: Option<String>,
     /// 可选初始状态：`active` 或 `archived`。
@@ -395,7 +395,7 @@ pub(crate) struct ResourceResponse {
     pub(crate) name: String,
     /// 相对于当前用户可见根目录的路径；根目录为空字符串。
     #[schema(value_type = String)]
-    pub(crate) directory: ResourceDirectory,
+    pub(crate) directory: DirectoryPath,
     /// 资源类型。
     pub(crate) kind: String,
     /// 资源生命周期状态。
@@ -438,7 +438,9 @@ pub(crate) struct ResourcePageResponse {
 
 /// 逻辑目录响应。
 #[derive(Debug, Serialize, ToSchema)]
-pub(crate) struct ResourceDirectoryResponse {
+pub(crate) struct DirectoryResponse {
+    /// 稳定目录标识；目录移动或重命名后保持不变。
+    pub(crate) id: String,
     /// 相对于当前用户可见根目录的路径。
     pub(crate) path: String,
     /// 相对于当前用户可见根目录的父路径。
@@ -452,9 +454,9 @@ pub(crate) struct ResourceDirectoryResponse {
 pub(crate) struct DirectoryListingResponse {
     /// 相对于当前用户可见根目录的当前路径。
     #[schema(value_type = String)]
-    pub(crate) path: ResourceDirectory,
+    pub(crate) path: DirectoryPath,
     /// 直接子目录。
-    pub(crate) folders: Vec<ResourceDirectoryResponse>,
+    pub(crate) folders: Vec<DirectoryResponse>,
     /// 当前目录下的资源分页。
     pub(crate) resources: ResourcePageResponse,
 }
@@ -558,7 +560,7 @@ impl From<&ReadableResource> for ResourceReadResponse {
 impl ResourceResponse {
     pub(crate) fn new(
         resource: &Resource,
-        directory: ResourceDirectory,
+        directory: DirectoryPath,
         actions: ResourceActions,
     ) -> Self {
         Self {

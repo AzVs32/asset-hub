@@ -1,4 +1,4 @@
--- 安全审计事件表：记录由 HTTP、CLI 等应用入口发起的敏感业务操作及执行结果。
+-- 安全审计事件：记录由 HTTP、CLI 等应用入口发起的敏感业务操作及执行结果。
 CREATE TABLE security_audit_events (
     -- 单调递增的本地审计事件标识。
     id INTEGER PRIMARY KEY AUTOINCREMENT,

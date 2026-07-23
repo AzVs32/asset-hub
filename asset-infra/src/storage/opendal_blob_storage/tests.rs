@@ -147,7 +147,7 @@ async fn fs_storage_delete_removes_empty_sidecar_directories() {
 #[tokio::test]
 async fn fs_storage_ensures_each_user_directory_segment() {
     let (storage, root) = storage_with_root("fs-ensure-directory");
-    let directory = ResourceDirectory::from_path("projects/design/assets").unwrap();
+    let directory = DirectoryPath::from_path("projects/design/assets").unwrap();
 
     storage.ensure_directory(&directory).await.unwrap();
 
@@ -155,6 +155,23 @@ async fn fs_storage_ensures_each_user_directory_segment() {
     assert!(root.join("projects/design").is_dir());
     assert!(root.join("projects/design/assets").is_dir());
     storage.ensure_directory(&directory).await.unwrap();
+}
+
+#[tokio::test]
+async fn fs_storage_moves_a_complete_directory_subtree() {
+    let (storage, root) = storage_with_root("fs-move-directory");
+    let source = DirectoryPath::from_path("games/title").unwrap();
+    let destination = DirectoryPath::from_path("archive/renamed").unwrap();
+    storage.ensure_directory(&source).await.unwrap();
+    std::fs::write(root.join("games/title/game.dat"), b"game").unwrap();
+
+    storage.move_directory(&source, &destination).await.unwrap();
+
+    assert!(!root.join("games/title").exists());
+    assert_eq!(
+        std::fs::read(root.join("archive/renamed/game.dat")).unwrap(),
+        b"game"
+    );
 }
 
 #[tokio::test]

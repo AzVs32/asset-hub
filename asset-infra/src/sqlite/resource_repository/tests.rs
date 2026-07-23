@@ -1,6 +1,6 @@
 use super::*;
 use asset_core::domain::{Checksum, ResourceContent};
-use asset_core::port::ListResources;
+use asset_core::port::{DirectoryRepository, ListResources};
 use std::path::PathBuf;
 
 #[tokio::test]
@@ -15,8 +15,12 @@ async fn sqlite_repository_roundtrips_resource() {
         .with_modified_at(modified_at)
         .build()
         .unwrap();
+    let assets = repository
+        .ensure_path(&DirectoryPath::from_path("assets").unwrap())
+        .await
+        .unwrap();
     let resource = Resource::builder("image.png")
-        .with_directory(ResourceDirectory::from_path("assets").unwrap())
+        .with_directory(assets)
         .with_kind("core:image")
         .with_description("cover")
         .with_tags(["rust", "asset"])
@@ -73,7 +77,7 @@ async fn sqlite_repository_updates_description_and_tags() {
     repository.save(&resource).await.unwrap();
     assert_eq!(
         repository
-            .find_by_path(resource.directory(), resource.name())
+            .find_by_path(resource.directory().path(), resource.name())
             .await
             .unwrap()
             .map(|found| found.id()),
@@ -94,8 +98,12 @@ async fn sqlite_repository_updates_description_and_tags() {
 #[tokio::test]
 async fn sqlite_path_lookup_ignores_soft_deleted_resource_and_finds_replacement() {
     let repository = repository("replace-soft-deleted-path").await;
+    let docs = repository
+        .ensure_path(&DirectoryPath::from_path("docs").unwrap())
+        .await
+        .unwrap();
     let mut deleted = Resource::builder("same-name.txt")
-        .with_directory(ResourceDirectory::from_path("docs").unwrap())
+        .with_directory(docs.clone())
         .build()
         .unwrap();
     repository.save(&deleted).await.unwrap();
@@ -104,21 +112,21 @@ async fn sqlite_path_lookup_ignores_soft_deleted_resource_and_finds_replacement(
 
     assert!(
         repository
-            .find_by_path(deleted.directory(), deleted.name())
+            .find_by_path(deleted.directory().path(), deleted.name())
             .await
             .unwrap()
             .is_none()
     );
 
     let replacement = Resource::builder("same-name.txt")
-        .with_directory(ResourceDirectory::from_path("docs").unwrap())
+        .with_directory(docs)
         .build()
         .unwrap();
     repository.save(&replacement).await.unwrap();
 
     assert_eq!(
         repository
-            .find_by_path(replacement.directory(), replacement.name())
+            .find_by_path(replacement.directory().path(), replacement.name())
             .await
             .unwrap()
             .map(|resource| resource.id()),
@@ -334,6 +342,110 @@ async fn conditional_remove_rejects_a_stale_resource_snapshot() {
             .unwrap(),
         0
     );
+}
+
+#[tokio::test]
+async fn directory_tree_derives_paths_from_stable_ids_after_rename_and_move() {
+    let repository = repository("directory-tree").await;
+    let games = repository
+        .ensure_path(&DirectoryPath::from_path("Games").unwrap())
+        .await
+        .unwrap();
+    let title = repository
+        .ensure_path(&DirectoryPath::from_path("Games/Title").unwrap())
+        .await
+        .unwrap();
+    let data = repository
+        .ensure_path(&DirectoryPath::from_path("Games/Title/data").unwrap())
+        .await
+        .unwrap();
+    let archive = repository
+        .ensure_path(&DirectoryPath::from_path("Archive").unwrap())
+        .await
+        .unwrap();
+    let resource = Resource::builder("game.dat")
+        .with_directory(data.clone())
+        .build()
+        .unwrap();
+    repository.save(&resource).await.unwrap();
+
+    let mut title_aggregate = repository
+        .find_directory(&title.id())
+        .await
+        .unwrap()
+        .unwrap();
+    title_aggregate.rename("Renamed").unwrap();
+    repository.save_directory(&title_aggregate).await.unwrap();
+
+    assert_eq!(
+        repository
+            .locate_by_id(&title.id())
+            .await
+            .unwrap()
+            .unwrap()
+            .path()
+            .path(),
+        "Games/Renamed"
+    );
+    assert_eq!(
+        repository
+            .locate_by_id(&data.id())
+            .await
+            .unwrap()
+            .unwrap()
+            .path()
+            .path(),
+        "Games/Renamed/data"
+    );
+    assert_eq!(
+        repository
+            .find_by_id(&resource.id())
+            .await
+            .unwrap()
+            .unwrap()
+            .storage_key()
+            .as_str(),
+        "Games/Renamed/data/game.dat"
+    );
+
+    let mut games_aggregate = repository
+        .find_directory(&games.id())
+        .await
+        .unwrap()
+        .unwrap();
+    games_aggregate.move_to(archive.id()).unwrap();
+    repository.save_directory(&games_aggregate).await.unwrap();
+    assert_eq!(
+        repository
+            .locate_by_id(&data.id())
+            .await
+            .unwrap()
+            .unwrap()
+            .path()
+            .path(),
+        "Archive/Games/Renamed/data"
+    );
+}
+
+#[tokio::test]
+async fn directory_repository_rejects_cycles() {
+    let repository = repository("directory-cycle").await;
+    let parent = repository
+        .ensure_path(&DirectoryPath::from_path("parent").unwrap())
+        .await
+        .unwrap();
+    let child = repository
+        .ensure_path(&DirectoryPath::from_path("parent/child").unwrap())
+        .await
+        .unwrap();
+    let mut parent_aggregate = repository
+        .find_directory(&parent.id())
+        .await
+        .unwrap()
+        .unwrap();
+    parent_aggregate.move_to(child.id()).unwrap();
+
+    assert!(repository.save_directory(&parent_aggregate).await.is_err());
 }
 
 async fn repository(name: &str) -> SqliteResourceRepository {

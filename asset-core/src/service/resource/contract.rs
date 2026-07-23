@@ -2,7 +2,7 @@
 //!
 //! 本模块只描述调用方与资源应用服务交换的数据，不包含仓储或对象存储编排。
 
-use crate::domain::{ResourceDirectory, ResourceId, ResourceKind, ResourceStatus};
+use crate::domain::{DirectoryPath, ResourceId, ResourceKind, ResourceStatus};
 use crate::port::BlobByteStream;
 use asset_plugin_api::{PluginView, ResourceAction, ResourceActionDefinition};
 use bytes::Bytes;
@@ -13,7 +13,7 @@ pub struct CreateResource {
     pub(super) name: String,
     pub(super) kind: Option<ResourceKind>,
     pub(super) status: ResourceStatus,
-    pub(super) directory: ResourceDirectory,
+    pub(super) directory: DirectoryPath,
     pub(super) description: Option<String>,
     pub(super) tags: Vec<String>,
 }
@@ -26,7 +26,7 @@ impl CreateResource {
             name: name.into(),
             kind: None,
             status: ResourceStatus::default(),
-            directory: ResourceDirectory::root(),
+            directory: DirectoryPath::root(),
             description: None,
             tags: Vec::new(),
         }
@@ -42,7 +42,7 @@ impl CreateResource {
         self
     }
 
-    pub fn with_directory(mut self, directory: ResourceDirectory) -> Self {
+    pub fn with_directory(mut self, directory: DirectoryPath) -> Self {
         self.directory = directory;
         self
     }
@@ -61,7 +61,7 @@ impl CreateResource {
         self
     }
 
-    pub fn directory(&self) -> &ResourceDirectory {
+    pub fn directory(&self) -> &DirectoryPath {
         &self.directory
     }
 }
@@ -74,7 +74,7 @@ pub struct ResourceContentCommand<T> {
     pub(super) name: String,
     pub(super) kind: Option<ResourceKind>,
     pub(super) status: ResourceStatus,
-    pub(super) directory: ResourceDirectory,
+    pub(super) directory: DirectoryPath,
     pub(super) description: Option<String>,
     pub(super) tags: Vec<String>,
     pub(super) payload: T,
@@ -90,7 +90,7 @@ impl<T> ResourceContentCommand<T> {
             name: name.into(),
             kind: None,
             status: ResourceStatus::default(),
-            directory: ResourceDirectory::root(),
+            directory: DirectoryPath::root(),
             description: None,
             tags: Vec::new(),
             payload,
@@ -108,7 +108,7 @@ impl<T> ResourceContentCommand<T> {
         self
     }
 
-    pub fn with_directory(mut self, directory: ResourceDirectory) -> Self {
+    pub fn with_directory(mut self, directory: DirectoryPath) -> Self {
         self.directory = directory;
         self
     }
@@ -132,7 +132,7 @@ impl<T> ResourceContentCommand<T> {
         self
     }
 
-    pub fn directory(&self) -> &ResourceDirectory {
+    pub fn directory(&self) -> &DirectoryPath {
         &self.directory
     }
 }
@@ -162,7 +162,7 @@ impl ExecuteResourceAction {
 #[derive(Debug, Clone, Default)]
 pub struct UpdateResource {
     pub(super) name: Option<String>,
-    pub(super) directory: Option<ResourceDirectory>,
+    pub(super) directory: Option<DirectoryPath>,
     pub(super) kind: Option<ResourceKind>,
     pub(super) status: Option<ResourceStatus>,
     pub(super) description: Option<Option<String>>,
@@ -180,7 +180,7 @@ impl UpdateResource {
         self
     }
 
-    pub fn with_directory(mut self, directory: ResourceDirectory) -> Self {
+    pub fn with_directory(mut self, directory: DirectoryPath) -> Self {
         self.directory = Some(directory);
         self
     }
@@ -214,7 +214,7 @@ impl UpdateResource {
         self
     }
 
-    pub fn directory(&self) -> Option<&ResourceDirectory> {
+    pub fn directory(&self) -> Option<&DirectoryPath> {
         self.directory.as_ref()
     }
 }

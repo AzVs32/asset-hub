@@ -182,7 +182,7 @@ export function ResourceList({
         {parent !== null ? <FolderRow name=".." onClick={() => onOpenDirectory(parent)} /> : null}
         {listing?.folders.map((folder) => (
           <FolderRow
-            key={folder.path}
+            key={folder.id}
             name={folder.name}
             onClick={() => onOpenDirectory(folder.path)}
           />

@@ -1,16 +1,14 @@
 use crate::dto::{
     BinaryContent, CreateDirectoryRequest, CreateResourceRequest, DirectoryListingResponse,
-    ExecuteResourceActionRequest, HealthResponse, ListDirectoryQuery, ListResourcesQuery,
-    ResourceActionOutputResponse, ResourceDirectoryResponse, ResourceKindResponse,
-    ResourceKindsResponse, ResourcePageResponse, ResourceReadResponse, ResourceResponse,
-    UpdateResourceRequest, UploadResourceContentStreamQuery,
+    DirectoryResponse, ExecuteResourceActionRequest, HealthResponse, ListDirectoryQuery,
+    ListResourcesQuery, ResourceActionOutputResponse, ResourceKindResponse, ResourceKindsResponse,
+    ResourcePageResponse, ResourceReadResponse, ResourceResponse, UpdateResourceRequest,
+    UploadResourceContentStreamQuery,
 };
 use crate::error::HttpError;
 use crate::state::HttpState;
 use asset_core::CoreError;
-use asset_core::domain::{
-    AccessContext, ResourceDirectory, ResourceId, ResourceKind, ResourceStatus,
-};
+use asset_core::domain::{AccessContext, DirectoryPath, ResourceId, ResourceKind, ResourceStatus};
 use asset_core::port::BlobByteStream;
 use asset_core::port::ListResources;
 use asset_core::service::{

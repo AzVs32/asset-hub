@@ -57,6 +57,7 @@ export interface ResourcePage {
 }
 
 export interface Directory {
+  id: string;
   path: string;
   parentPath: string;
   name: string;

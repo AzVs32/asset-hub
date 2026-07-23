@@ -1,9 +1,9 @@
 use crate::dto::{
     BinaryContent, ChecksumResponse, CreateDirectoryRequest, CreateResourceRequest,
-    DirectoryListingResponse, ErrorResponse, ExecuteResourceActionRequest, HealthComponentResponse,
-    HealthResponse, PluginDiagnosticResponse, ResourceActionDefinitionResponse,
-    ResourceActionOutputResponse, ResourceActionsResponse, ResourceContentResponse,
-    ResourceDirectoryResponse, ResourceKindResponse, ResourceKindsResponse, ResourcePageResponse,
+    DirectoryListingResponse, DirectoryResponse, ErrorResponse, ExecuteResourceActionRequest,
+    HealthComponentResponse, HealthResponse, PluginDiagnosticResponse,
+    ResourceActionDefinitionResponse, ResourceActionOutputResponse, ResourceActionsResponse,
+    ResourceContentResponse, ResourceKindResponse, ResourceKindsResponse, ResourcePageResponse,
     ResourceReadResponse, ResourceResponse, UpdateResourceRequest,
     UploadResourceContentStreamQuery,
 };
@@ -71,7 +71,7 @@ impl Modify for CookieSecurity {
             ResourceActionDefinitionResponse,
             ResourceActionOutputResponse,
             ResourceContentResponse,
-            ResourceDirectoryResponse,
+            DirectoryResponse,
             ResourceActionsResponse,
             ResourcePageResponse,
             ResourceReadResponse,

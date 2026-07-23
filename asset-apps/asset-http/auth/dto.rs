@@ -16,7 +16,7 @@ pub(crate) struct ManagedUserResponse {
     #[schema(value_type = String)]
     pub(super) status: UserStatus,
     #[schema(value_type = String)]
-    pub(super) workspace_directory: ResourceDirectory,
+    pub(super) workspace_directory: DirectoryPath,
 }
 
 impl From<User> for ManagedUserResponse {
@@ -26,7 +26,7 @@ impl From<User> for ManagedUserResponse {
             username: user.username().to_owned(),
             role: user.role(),
             status: user.status(),
-            workspace_directory: user.workspace_directory().clone(),
+            workspace_directory: user.workspace_directory().path().clone(),
         }
     }
 }
@@ -38,7 +38,7 @@ pub(crate) struct CreateUserRequest {
     #[serde(default)]
     pub(super) is_admin: bool,
     #[schema(value_type = Option<String>)]
-    pub(super) workspace_directory: Option<ResourceDirectory>,
+    pub(super) workspace_directory: Option<DirectoryPath>,
 }
 
 #[derive(Deserialize, ToSchema)]

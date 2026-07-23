@@ -382,7 +382,7 @@ export interface components {
         /** @description 目录浏览响应。 */
         DirectoryListingResponse: {
             /** @description 直接子目录。 */
-            folders: components["schemas"]["ResourceDirectoryResponse"][];
+            folders: components["schemas"]["DirectoryResponse"][];
             /** @description 当前目录路径。 */
             path: string;
             /** @description 当前目录下的资源分页。 */
@@ -521,7 +521,9 @@ export interface components {
             size: number;
         };
         /** @description 逻辑目录响应。 */
-        ResourceDirectoryResponse: {
+        DirectoryResponse: {
+            /** @description 稳定目录标识；目录移动或重命名后保持不变。 */
+            id: string;
             /** @description 当前目录名。 */
             name: string;
             /** @description 父目录路径。 */
@@ -944,7 +946,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ResourceDirectoryResponse"];
+                    "application/json": components["schemas"]["DirectoryResponse"];
                 };
             };
             /** @description 目录名称无效 */

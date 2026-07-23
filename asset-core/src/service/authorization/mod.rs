@@ -1,72 +1,78 @@
 use crate::{
     CoreError,
-    domain::{AccessContext, DirectoryPermission, ResourceDirectory},
+    domain::{AccessContext, DirectoryPath, DirectoryPermission, DirectoryRef},
     port::UserRepository,
+    service::DirectoryService,
 };
 use std::sync::Arc;
 
 /// 当前访问主体看到的目录根。外部路径相对于该根，内部服务始终使用真实目录。
 #[derive(Debug, Clone)]
 pub struct WorkspaceScope {
-    root: ResourceDirectory,
+    root: DirectoryRef,
 }
 
 impl WorkspaceScope {
-    pub fn resolve(&self, directory: &ResourceDirectory) -> Result<ResourceDirectory, CoreError> {
-        if self.root.is_root() {
+    pub fn resolve(&self, directory: &DirectoryPath) -> Result<DirectoryPath, CoreError> {
+        if self.root.id().is_root() {
             return Ok(directory.clone());
         }
         if directory.is_root() {
-            return Ok(self.root.clone());
+            return Ok(self.root.path().clone());
         }
-        ResourceDirectory::from_path(format!("{}/{}", self.root.path(), directory.path()))
+        DirectoryPath::from_path(format!("{}/{}", self.root.path().path(), directory.path()))
             .map_err(Into::into)
     }
 
-    pub fn project(&self, directory: &ResourceDirectory) -> Result<ResourceDirectory, CoreError> {
-        if self.root.is_root() {
+    pub fn project(&self, directory: &DirectoryPath) -> Result<DirectoryPath, CoreError> {
+        if self.root.id().is_root() {
             return Ok(directory.clone());
         }
-        if directory == &self.root {
-            return Ok(ResourceDirectory::root());
+        if directory == self.root.path() {
+            return Ok(DirectoryPath::root());
         }
         let Some(relative) = directory
             .path()
-            .strip_prefix(self.root.path())
+            .strip_prefix(self.root.path().path())
             .and_then(|suffix| suffix.strip_prefix('/'))
         else {
             return Err(CoreError::forbidden("read", directory.path()));
         };
-        ResourceDirectory::from_path(relative).map_err(Into::into)
+        DirectoryPath::from_path(relative).map_err(Into::into)
     }
 
-    fn contains(&self, directory: &ResourceDirectory) -> bool {
-        self.root.contains(directory)
+    pub fn root(&self) -> &DirectoryRef {
+        &self.root
     }
 }
 
 #[derive(Clone)]
 pub struct AuthorizationService {
     users: Arc<dyn UserRepository>,
+    directories: DirectoryService,
 }
 
 impl AuthorizationService {
-    pub fn new(users: Arc<dyn UserRepository>) -> Self {
-        Self { users }
+    pub fn new(users: Arc<dyn UserRepository>, directories: DirectoryService) -> Self {
+        Self { users, directories }
     }
     pub async fn require(
         &self,
         context: &AccessContext,
-        directory: &ResourceDirectory,
+        directory: &DirectoryRef,
         permission: DirectoryPermission,
     ) -> Result<(), CoreError> {
         let scope = self.workspace_scope(context).await?;
-        if scope.contains(directory) {
+        if self
+            .directories
+            .contains(&scope.root().id(), &directory.id())
+            .await?
+        {
             return Ok(());
         }
         Err(CoreError::forbidden(
             permission_action(permission),
-            directory.path(),
+            directory.path().path(),
         ))
     }
 
@@ -76,7 +82,7 @@ impl AuthorizationService {
     ) -> Result<WorkspaceScope, CoreError> {
         if context.is_administrator() {
             return Ok(WorkspaceScope {
-                root: ResourceDirectory::root(),
+                root: self.directories.root().await?,
             });
         }
         let user = self

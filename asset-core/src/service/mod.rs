@@ -7,10 +7,12 @@
 //! [`ResourceServicePorts`] 所声明的写仓储、查询、Blob、目录、扫描与运行时适配器。
 
 mod authorization;
+mod directory;
 mod resource;
 mod user;
 
 pub use authorization::{AuthorizationService, WorkspaceScope};
+pub use directory::DirectoryService;
 pub use user::UserService;
 
 pub use resource::{

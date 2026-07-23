@@ -9,7 +9,9 @@ use super::{
     UploadResourceContentStream,
 };
 use crate::CoreError;
-use crate::domain::{AccessContext, DirectoryPermission, Resource, ResourceDirectory, ResourceId};
+use crate::domain::{
+    AccessContext, DirectoryPath, DirectoryPermission, DirectoryRef, Resource, ResourceId,
+};
 use crate::port::{ListResources, ResourceActionOutput, ResourcePage};
 use crate::service::AuthorizationService;
 use asset_plugin_api::ResourceActionAccess;
@@ -36,14 +38,14 @@ impl<'a> SecuredResourceService<'a> {
     }
     async fn require(
         &self,
-        directory: &ResourceDirectory,
+        directory: &DirectoryRef,
         permission: DirectoryPermission,
     ) -> Result<(), CoreError> {
         self.authorization
             .require(self.context, directory, permission)
             .await
     }
-    async fn resolve(&self, directory: &ResourceDirectory) -> Result<ResourceDirectory, CoreError> {
+    async fn resolve(&self, directory: &DirectoryPath) -> Result<DirectoryPath, CoreError> {
         self.authorization
             .workspace_scope(self.context)
             .await?
@@ -99,26 +101,26 @@ impl<'a> SecuredResourceService<'a> {
     ) -> Result<ResourcePage, CoreError> {
         let requested_directory = query.directory().cloned().unwrap_or_default();
         let directory = self.resolve(&requested_directory).await?;
-        query = query.with_directory(directory);
+        let directory = self.service.directories.resolve_path(&directory).await?;
+        query = query.with_directory_id(directory.id());
         self.service.commands().list_resources(query).await
     }
     pub async fn list_directories(
         &self,
-        directory: &ResourceDirectory,
-    ) -> Result<Vec<ResourceDirectory>, CoreError> {
+        directory: &DirectoryPath,
+    ) -> Result<Vec<DirectoryRef>, CoreError> {
         let directory = self.resolve(directory).await?;
-        self.service.commands().list_directories(&directory).await
+        let directory = self.service.directories.resolve_path(&directory).await?;
+        self.service.directories.list_children(&directory).await
     }
     pub async fn create_directory(
         &self,
-        parent: &ResourceDirectory,
+        parent: &DirectoryPath,
         name: impl Into<String>,
-    ) -> Result<ResourceDirectory, CoreError> {
+    ) -> Result<DirectoryRef, CoreError> {
         let parent = self.resolve(parent).await?;
-        self.service
-            .commands()
-            .create_directory(&parent, name)
-            .await
+        let parent = self.service.directories.resolve_path(&parent).await?;
+        self.service.directories.create(&parent, name).await
     }
     pub async fn update_resource(
         &self,

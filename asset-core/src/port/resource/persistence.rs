@@ -1,9 +1,9 @@
 //! 资源聚合持久化与只读查询端口。
 //!
-//! 该端口承接分页、检索和目录浏览，不参与资源聚合的保存事务。
+//! 查询端口承接资源分页与检索，不负责目录树查询，也不参与资源聚合的保存事务。
 
 use crate::CoreError;
-use crate::domain::{Resource, ResourceDirectory, ResourceId, ResourceKind};
+use crate::domain::{DirectoryId, DirectoryPath, Resource, ResourceId, ResourceKind};
 use chrono::{DateTime, Utc};
 
 /// 资源列表查询条件。
@@ -15,7 +15,8 @@ pub struct ListResources {
     include_descendants: bool,
     tag: Option<String>,
     q: Option<String>,
-    directory: Option<ResourceDirectory>,
+    directory: Option<DirectoryPath>,
+    directory_id: Option<DirectoryId>,
     include_deleted: bool,
 }
 
@@ -29,6 +30,7 @@ impl ListResources {
             tag: None,
             q: None,
             directory: None,
+            directory_id: None,
             include_deleted: false,
         }
     }
@@ -58,8 +60,15 @@ impl ListResources {
         self
     }
 
-    pub fn with_directory(mut self, directory: ResourceDirectory) -> Self {
+    pub fn with_directory(mut self, directory: DirectoryPath) -> Self {
         self.directory = Some(directory);
+        self.directory_id = None;
+        self
+    }
+
+    pub fn with_directory_id(mut self, directory_id: DirectoryId) -> Self {
+        self.directory_id = Some(directory_id);
+        self.directory = None;
         self
     }
 
@@ -96,7 +105,11 @@ impl ListResources {
         self.q.as_deref()
     }
 
-    pub fn directory(&self) -> Option<&ResourceDirectory> {
+    pub fn directory_id(&self) -> Option<&DirectoryId> {
+        self.directory_id.as_ref()
+    }
+
+    pub fn directory(&self) -> Option<&DirectoryPath> {
         self.directory.as_ref()
     }
 
@@ -121,23 +134,17 @@ pub trait ResourceQuery: Send + Sync {
     /// 软删除资源的 Blob 已移入内部回收站，不再占用原逻辑路径，因此不应参与查找。
     async fn find_by_path(
         &self,
-        directory: &ResourceDirectory,
+        directory: &DirectoryPath,
         name: &str,
     ) -> Result<Option<Resource>, CoreError>;
 
     /// 按条件分页列出资源。
     async fn list(&self, query: &ListResources) -> Result<ResourcePage, CoreError>;
-
-    /// 列出指定父目录下的直接子目录。
-    async fn list_directories(
-        &self,
-        parent: &ResourceDirectory,
-    ) -> Result<Vec<ResourceDirectory>, CoreError>;
 }
 
 /// 资源聚合写仓储。
 ///
-/// 负责保存和还原完整 `Resource` 聚合以及用户可见目录记录；Blob 内容由存储端口管理。
+/// 只负责保存和还原完整 `Resource` 聚合；目录聚合与 Blob 内容分别由各自端口管理。
 #[async_trait::async_trait]
 pub trait ResourceRepository: Send + Sync {
     async fn health_check(&self) -> Result<(), CoreError>;
@@ -161,15 +168,6 @@ pub trait ResourceRepository: Send + Sync {
 
     /// 按 ID 还原聚合，不过滤软删除状态。
     async fn find_by_id(&self, id: &ResourceId) -> Result<Option<Resource>, CoreError>;
-
-    /// 保存已在存储侧创建的独立目录。
-    async fn save_directory(&self, directory: &ResourceDirectory) -> Result<(), CoreError>;
-
-    /// 幂等保存目录及其祖先链。
-    async fn ensure_directory(&self, directory: &ResourceDirectory) -> Result<(), CoreError>;
-
-    /// 删除不再存在于存储侧的空目录记录。
-    async fn remove_directory(&self, directory: &ResourceDirectory) -> Result<(), CoreError>;
 
     /// 幂等物理移除资源记录。
     async fn remove(&self, id: &ResourceId) -> Result<(), CoreError>;

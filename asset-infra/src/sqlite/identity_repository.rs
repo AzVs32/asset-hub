@@ -1,11 +1,32 @@
 use asset_core::{
     CoreError,
-    domain::{ResourceDirectory, User, UserId, UserRole, UserSnapshot, UserStatus},
+    domain::{
+        DirectoryId, DirectoryPath, DirectoryRef, User, UserId, UserRole, UserSnapshot, UserStatus,
+    },
     port::UserRepository,
 };
 use chrono::{DateTime, Utc};
 use sqlx::{Row, SqlitePool};
 use std::str::FromStr;
+
+const USER_SELECT: &str = r#"
+    WITH RECURSIVE directory_paths(id, parent_id, name, path) AS (
+        SELECT id, parent_id, name, ''
+        FROM directories
+        WHERE id = '00000000-0000-0000-0000-000000000000'
+        UNION ALL
+        SELECT child.id, child.parent_id, child.name,
+               CASE WHEN parent.path = '' THEN child.name
+                    ELSE parent.path || '/' || child.name END
+        FROM directories child
+        JOIN directory_paths parent ON child.parent_id = parent.id
+    )
+    SELECT users.id, users.username, users.password_hash, users.role, users.status,
+           users.workspace_directory_id, directory_paths.path AS workspace_directory_path,
+           users.created_at, users.updated_at
+    FROM users
+    JOIN directory_paths ON directory_paths.id = users.workspace_directory_id
+"#;
 
 #[derive(Clone)]
 pub struct SqliteIdentityRepository {
@@ -27,37 +48,13 @@ impl UserRepository for SqliteIdentityRepository {
             .await
             .map_err(|error| CoreError::repository("user.create.begin", error))?;
 
-        if !user.workspace_directory().is_root() {
-            let now = Utc::now().to_rfc3339();
-            let mut parent_path = String::new();
-            for name in user.workspace_directory().path().split('/') {
-                let path = if parent_path.is_empty() {
-                    name.to_owned()
-                } else {
-                    format!("{parent_path}/{name}")
-                };
-                sqlx::query(
-                    "INSERT INTO directories (path, parent_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(path) DO NOTHING",
-                )
-                .bind(&path)
-                .bind(&parent_path)
-                .bind(name)
-                .bind(&now)
-                .bind(&now)
-                .execute(&mut *transaction)
-                .await
-                .map_err(|error| CoreError::repository("user.create_workspace_directory", error))?;
-                parent_path = path;
-            }
-        }
-
-        sqlx::query("INSERT INTO users (id, username, password_hash, role, status, workspace_directory, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+        sqlx::query("INSERT INTO users (id, username, password_hash, role, status, workspace_directory_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
             .bind(user.id().to_string())
             .bind(user.username())
             .bind(user.credential_hash())
             .bind(role_to_str(user.role()))
             .bind(status_to_str(user.status()))
-            .bind(user.workspace_directory().path())
+            .bind(user.workspace_directory().id().to_string())
             .bind(user.created_at().to_rfc3339())
             .bind(user.updated_at().to_rfc3339())
             .execute(&mut *transaction)
@@ -95,12 +92,10 @@ impl UserRepository for SqliteIdentityRepository {
         self.find("username", username.to_owned()).await
     }
     async fn list(&self) -> Result<Vec<User>, CoreError> {
-        let rows = sqlx::query(
-            "SELECT id, username, password_hash, role, status, workspace_directory, created_at, updated_at FROM users ORDER BY username",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| CoreError::repository("user.list", e))?;
+        let rows = sqlx::query(&format!("{USER_SELECT} ORDER BY users.username"))
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| CoreError::repository("user.list", e))?;
         rows.into_iter().map(decode_user).collect()
     }
     async fn count(&self) -> Result<u64, CoreError> {
@@ -115,14 +110,10 @@ impl UserRepository for SqliteIdentityRepository {
 impl SqliteIdentityRepository {
     async fn find(&self, column: &'static str, value: String) -> Result<Option<User>, CoreError> {
         let sql = match column {
-            "id" => {
-                "SELECT id, username, password_hash, role, status, workspace_directory, created_at, updated_at FROM users WHERE id = ?"
-            }
-            _ => {
-                "SELECT id, username, password_hash, role, status, workspace_directory, created_at, updated_at FROM users WHERE username = ?"
-            }
+            "id" => format!("{USER_SELECT} WHERE users.id = ?"),
+            _ => format!("{USER_SELECT} WHERE users.username = ?"),
         };
-        let row = sqlx::query(sql)
+        let row = sqlx::query(&sql)
             .bind(value)
             .fetch_optional(&self.pool)
             .await
@@ -164,10 +155,18 @@ fn decode_user(row: sqlx::sqlite::SqliteRow) -> Result<User, CoreError> {
                 .map_err(|e| CoreError::repository("user.decode", e))?
                 .as_str(),
         )?,
-        workspace_directory: ResourceDirectory::from_path(
-            row.try_get::<String, _>("workspace_directory")
-                .map_err(|e| CoreError::repository("user.decode", e))?,
-        )?,
+        workspace_directory: DirectoryRef::new(
+            DirectoryId::from_str(
+                row.try_get::<String, _>("workspace_directory_id")
+                    .map_err(|e| CoreError::repository("user.decode", e))?
+                    .as_str(),
+            )
+            .map_err(|e| CoreError::repository("user.decode_directory_id", e))?,
+            DirectoryPath::from_path(
+                row.try_get::<String, _>("workspace_directory_path")
+                    .map_err(|e| CoreError::repository("user.decode", e))?,
+            )?,
+        ),
         created_at: timestamp("created_at")?,
         updated_at: timestamp("updated_at")?,
     })

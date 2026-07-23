@@ -185,7 +185,7 @@ pub(crate) async fn list_directory(
     tag = "resources",
     request_body = CreateDirectoryRequest,
     responses(
-        (status = 201, description = "目录已创建", body = ResourceDirectoryResponse),
+        (status = 201, description = "目录已创建", body = DirectoryResponse),
         (status = 400, description = "目录名称无效", body = crate::dto::ErrorResponse),
         (status = 403, description = "没有父目录写权限", body = crate::dto::ErrorResponse)
     )
@@ -194,7 +194,7 @@ pub(crate) async fn create_directory(
     State(state): State<HttpState>,
     access: Extension<AccessContext>,
     payload: Result<Json<CreateDirectoryRequest>, JsonRejection>,
-) -> Result<(StatusCode, Json<ResourceDirectoryResponse>), HttpError> {
+) -> Result<(StatusCode, Json<DirectoryResponse>), HttpError> {
     let payload = parse_json_payload(payload)?;
     let workspace = state.workspace(&access.0).await?;
     let directory = state
@@ -418,7 +418,7 @@ pub(super) fn apply_common_resource_fields(
     mut command: CreateResource,
     kind: Option<String>,
     status: Option<String>,
-    directory: Option<ResourceDirectory>,
+    directory: Option<DirectoryPath>,
     description: Option<String>,
     tags: Option<Vec<String>>,
 ) -> Result<CreateResource, HttpError> {
@@ -493,20 +493,21 @@ pub(super) fn resource_response(
     let actions = service.describe_resource_actions(resource)?;
     Ok(ResourceResponse::new(
         resource,
-        workspace.project(resource.directory())?,
+        workspace.project(resource.directory().path())?,
         actions,
     ))
 }
 
 pub(super) fn directory_response(
     workspace: &asset_core::service::WorkspaceScope,
-    directory: &ResourceDirectory,
-) -> Result<ResourceDirectoryResponse, CoreError> {
-    let directory = workspace.project(directory)?;
-    Ok(ResourceDirectoryResponse {
-        path: directory.path().to_owned(),
-        parent_path: directory.parent_path().to_owned(),
-        name: directory.name().to_owned(),
+    directory: &asset_core::domain::DirectoryRef,
+) -> Result<DirectoryResponse, CoreError> {
+    let path = workspace.project(directory.path())?;
+    Ok(DirectoryResponse {
+        id: directory.id().to_string(),
+        path: path.path().to_owned(),
+        parent_path: path.parent_path().to_owned(),
+        name: path.name().to_owned(),
     })
 }
 

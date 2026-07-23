@@ -33,7 +33,7 @@ pub(crate) async fn upload_resource_content_stream(
     let workspace = state.workspace(&access.0).await?;
     let directory = query
         .directory
-        .unwrap_or(ResourceDirectory::from_path("uploads")?);
+        .unwrap_or(DirectoryPath::from_path("uploads")?);
     ensure_content_length(&headers)?;
     let data = limited_body_stream(body);
 

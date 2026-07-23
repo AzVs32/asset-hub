@@ -1,7 +1,7 @@
 use crate::audit::SecurityAuditEventResponse;
 use crate::error::HttpError;
 use asset_core::domain::{
-    AccessContext, NewSecurityAuditEvent, ResourceDirectory, SecurityAuditActor,
+    AccessContext, DirectoryPath, NewSecurityAuditEvent, SecurityAuditActor,
     SecurityAuditEventType, SecurityAuditOutcome, SecurityAuditSource, User, UserId, UserRole,
     UserStatus,
 };

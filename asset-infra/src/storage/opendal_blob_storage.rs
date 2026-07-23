@@ -1,6 +1,6 @@
 use crate::config::LocalBlobConfig;
 use asset_core::CoreError;
-use asset_core::domain::{ResourceDirectory, StorageKey};
+use asset_core::domain::{DirectoryPath, StorageKey};
 use asset_core::port::{
     BlobByteStream, BlobStorage, BlobWriteResult, DirectoryStorage, RESERVED_BLOB_STORAGE_PREFIX,
 };
@@ -351,7 +351,7 @@ fn local_file_stream(
 
 #[async_trait::async_trait]
 impl DirectoryStorage for OpenDalBlobStorage {
-    async fn ensure_directory(&self, directory: &ResourceDirectory) -> Result<(), CoreError> {
+    async fn ensure_directory(&self, directory: &DirectoryPath) -> Result<(), CoreError> {
         let mut path = String::new();
 
         for name in directory.path().split('/').filter(|name| !name.is_empty()) {
@@ -359,7 +359,7 @@ impl DirectoryStorage for OpenDalBlobStorage {
                 path.push('/');
             }
             path.push_str(name);
-            let current = ResourceDirectory::from_path(path.clone())?;
+            let current = DirectoryPath::from_path(path.clone())?;
 
             if let Some(root) = &self.local_root {
                 let physical = root.join(current.path());
@@ -398,6 +398,37 @@ impl DirectoryStorage for OpenDalBlobStorage {
         }
 
         Ok(())
+    }
+
+    async fn move_directory(
+        &self,
+        from: &DirectoryPath,
+        to: &DirectoryPath,
+    ) -> Result<(), CoreError> {
+        let root = self.local_root.as_ref().ok_or_else(|| {
+            CoreError::configuration(
+                "directory moves are not implemented for the configured object storage",
+            )
+        })?;
+        let source = root.join(from.path());
+        let destination = root.join(to.path());
+        if tokio::fs::try_exists(&destination)
+            .await
+            .map_err(|error| CoreError::storage("directory_move.inspect_target", error))?
+        {
+            return Err(CoreError::conflict(format!(
+                "directory `{}` already exists",
+                to.path()
+            )));
+        }
+        if let Some(parent) = destination.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|error| CoreError::storage("directory_move.create_parent", error))?;
+        }
+        tokio::fs::rename(source, destination)
+            .await
+            .map_err(|error| CoreError::storage("directory_move", error))
     }
 }
 

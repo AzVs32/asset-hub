@@ -1,5 +1,5 @@
 use asset_core::CoreError;
-use asset_core::domain::{ResourceDirectory, StorageKey};
+use asset_core::domain::{DirectoryPath, StorageKey};
 use asset_core::port::{
     RESERVED_BLOB_STORAGE_PREFIX, ScannedBlob, ScannedStorageEntry, StoragePrefix,
     StorageScanStream, StorageScanner,
@@ -115,9 +115,9 @@ fn visit_storage_entries(
     }
 
     if !prefix.is_root()
-        && !emit(ScannedStorageEntry::Directory(
-            ResourceDirectory::from_path(prefix.as_str())?,
-        ))
+        && !emit(ScannedStorageEntry::Directory(DirectoryPath::from_path(
+            prefix.as_str(),
+        )?))
     {
         return Ok(());
     }
@@ -144,7 +144,7 @@ fn visit_directory(
             continue;
         }
         if metadata.is_dir() {
-            let directory = ResourceDirectory::from_path(relative_storage_path(root, &path)?)?;
+            let directory = DirectoryPath::from_path(relative_storage_path(root, &path)?)?;
             if !emit(ScannedStorageEntry::Directory(directory)) {
                 return Ok(false);
             }

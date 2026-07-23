@@ -1,7 +1,8 @@
 use crate::{
     CoreError, UserError,
-    domain::{ResourceDirectory, User, UserId, UserRole, UserStatus},
-    port::{DirectoryStorage, PasswordHasher, UserRepository},
+    domain::{DirectoryPath, User, UserId, UserRole, UserStatus},
+    port::{PasswordHasher, UserRepository},
+    service::DirectoryService,
 };
 use std::sync::Arc;
 
@@ -11,19 +12,19 @@ const MIN_PASSWORD_LEN: usize = 4;
 pub struct UserService {
     repository: Arc<dyn UserRepository>,
     password_hasher: Arc<dyn PasswordHasher>,
-    directory_storage: Arc<dyn DirectoryStorage>,
+    directories: DirectoryService,
 }
 
 impl UserService {
     pub fn new(
         repository: Arc<dyn UserRepository>,
         password_hasher: Arc<dyn PasswordHasher>,
-        directory_storage: Arc<dyn DirectoryStorage>,
+        directories: DirectoryService,
     ) -> Self {
         Self {
             repository,
             password_hasher,
-            directory_storage,
+            directories,
         }
     }
     pub async fn create(
@@ -31,7 +32,7 @@ impl UserService {
         username: impl Into<String>,
         password: &str,
         role: UserRole,
-        workspace_directory: Option<ResourceDirectory>,
+        workspace_directory: Option<DirectoryPath>,
     ) -> Result<User, CoreError> {
         if password.len() < MIN_PASSWORD_LEN {
             return Err(UserError::WeakPassword.into());
@@ -45,20 +46,18 @@ impl UserService {
         {
             return Err(CoreError::conflict("username already exists"));
         }
-        let workspace_directory = match workspace_directory {
+        let workspace_path = match workspace_directory {
             Some(directory) => directory,
-            None if role == UserRole::Administrator => ResourceDirectory::root(),
-            None => ResourceDirectory::from_path(format!("users/{}", username.trim()))?,
+            None if role == UserRole::Administrator => DirectoryPath::root(),
+            None => DirectoryPath::from_path(format!("users/{}", username.trim()))?,
         };
+        let workspace_directory = self.directories.ensure_path(&workspace_path).await?;
         let user = User::new(
             username,
             self.password_hasher.hash(password)?,
             role,
             workspace_directory,
         )?;
-        self.directory_storage
-            .ensure_directory(user.workspace_directory())
-            .await?;
         self.repository.create(&user).await?;
         Ok(user)
     }
@@ -123,7 +122,8 @@ impl UserService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::port::{DirectoryStorage, PasswordHasher, UserRepository};
+    use crate::domain::{Directory, DirectoryId, DirectoryRef};
+    use crate::port::{DirectoryRepository, DirectoryStorage, PasswordHasher, UserRepository};
     use async_trait::async_trait;
     use std::sync::Mutex;
 
@@ -193,8 +193,54 @@ mod tests {
 
     #[async_trait]
     impl DirectoryStorage for Directories {
-        async fn ensure_directory(&self, _directory: &ResourceDirectory) -> Result<(), CoreError> {
+        async fn ensure_directory(&self, _directory: &DirectoryPath) -> Result<(), CoreError> {
             Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl DirectoryRepository for Directories {
+        async fn save_directory(&self, _directory: &Directory) -> Result<(), CoreError> {
+            Ok(())
+        }
+        async fn find_directory(&self, _id: &DirectoryId) -> Result<Option<Directory>, CoreError> {
+            Ok(None)
+        }
+        async fn locate_by_id(&self, id: &DirectoryId) -> Result<Option<DirectoryRef>, CoreError> {
+            Ok(id.is_root().then(DirectoryRef::root))
+        }
+        async fn locate_by_path(
+            &self,
+            path: &DirectoryPath,
+        ) -> Result<Option<DirectoryRef>, CoreError> {
+            Ok(Some(if path.is_root() {
+                DirectoryRef::root()
+            } else {
+                DirectoryRef::new(DirectoryId::new(), path.clone())
+            }))
+        }
+        async fn list_children(
+            &self,
+            _parent_id: &DirectoryId,
+        ) -> Result<Vec<DirectoryRef>, CoreError> {
+            Ok(Vec::new())
+        }
+        async fn ensure_path(&self, path: &DirectoryPath) -> Result<DirectoryRef, CoreError> {
+            Ok(if path.is_root() {
+                DirectoryRef::root()
+            } else {
+                DirectoryRef::new(DirectoryId::new(), path.clone())
+            })
+        }
+        async fn remove_if_empty(&self, _id: &DirectoryId) -> Result<bool, CoreError> {
+            Ok(false)
+        }
+        async fn is_descendant_or_self(
+            &self,
+            ancestor_id: &DirectoryId,
+            candidate_id: &DirectoryId,
+        ) -> Result<bool, CoreError> {
+            Ok(ancestor_id == candidate_id)
         }
     }
 
@@ -203,15 +249,16 @@ mod tests {
             "alice",
             "hashed:old-password",
             UserRole::Member,
-            ResourceDirectory::root(),
+            DirectoryRef::root(),
         )
         .unwrap();
+        let directories = Arc::new(Directories);
         UserService::new(
             Arc::new(Users {
                 users: Mutex::new(vec![user]),
             }),
             Arc::new(TestPasswordHasher),
-            Arc::new(Directories),
+            DirectoryService::new(directories.clone(), directories),
         )
     }
 
@@ -279,14 +326,14 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(member.workspace_directory().path(), "users/bob");
-        assert!(administrator.workspace_directory().is_root());
+        assert_eq!(member.workspace_directory().path().path(), "users/bob");
+        assert!(administrator.workspace_directory().id().is_root());
     }
 
     #[tokio::test]
     async fn creating_user_preserves_an_explicit_workspace() {
         let service = service();
-        let workspace = ResourceDirectory::from_path("teams/bob").unwrap();
+        let workspace = DirectoryPath::from_path("teams/bob").unwrap();
 
         let member = service
             .create(
@@ -298,6 +345,6 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(member.workspace_directory(), &workspace);
+        assert_eq!(member.workspace_directory().path(), &workspace);
     }
 }

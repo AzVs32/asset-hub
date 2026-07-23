@@ -1,4 +1,4 @@
-use super::{ResourceError, UserError};
+use super::{DirectoryError, ResourceError, UserError};
 use asset_plugin_api::{PluginActionFailure, PluginDiagnostic};
 use thiserror::Error;
 
@@ -8,6 +8,10 @@ use thiserror::Error;
 /// 避免 OpenDAL、sqlx 等具体实现泄漏到核心端口签名中。
 #[derive(Error, Debug)]
 pub enum CoreError {
+    /// 目录领域内的业务校验或树结构约束错误。
+    #[error(transparent)]
+    Directory(#[from] DirectoryError),
+
     /// 资源领域内的业务校验或状态流转错误。
     #[error(transparent)]
     Resource(#[from] ResourceError),

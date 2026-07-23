@@ -8,7 +8,7 @@ use super::command::build_resource;
 use super::content::{build_content, finalize_tracked_checksum, stream_with_checksum_tracking};
 use crate::CoreError;
 use crate::domain::{
-    Checksum, Resource, ResourceContent, ResourceDirectory, ResourceStatus, StorageKey,
+    Checksum, DirectoryPath, Resource, ResourceContent, ResourceStatus, StorageKey,
 };
 use crate::port::{ListResources, ScannedBlob, ScannedStorageEntry, StoragePrefix};
 use futures_util::StreamExt;
@@ -60,7 +60,7 @@ impl<'a> StorageReconciliationService<'a> {
         while let Some(entry) = entries.next().await {
             match entry? {
                 ScannedStorageEntry::Directory(directory) => {
-                    self.service.repository.ensure_directory(&directory).await?;
+                    self.service.directories.ensure_path(&directory).await?;
                     physical_directories.insert(directory);
                     report.directories += 1;
                 }
@@ -166,7 +166,8 @@ impl<'a> StorageReconciliationService<'a> {
 
         let expected_updated_at = resource.updated_at();
         resource.rename(to_name)?;
-        resource.move_to_directory(to_directory.clone())?;
+        let to_directory = self.service.directories.ensure_path(&to_directory).await?;
+        resource.move_to_directory(to_directory)?;
         let checksum = self.calculate_stored_blob_checksum(to, target.size).await?;
         let content = build_content(
             target.size,
@@ -177,10 +178,6 @@ impl<'a> StorageReconciliationService<'a> {
         if resource.content() != Some(&content) {
             resource.attach_content(content)?;
         }
-        self.service
-            .repository
-            .ensure_directory(&to_directory)
-            .await?;
         if !self
             .service
             .repository
@@ -235,9 +232,9 @@ impl<'a> StorageReconciliationService<'a> {
         if let Some(mut resource) = self.find_missing_rename_candidate(&content).await? {
             let expected_updated_at = resource.updated_at();
             resource.rename(name)?;
-            resource.move_to_directory(directory.clone())?;
+            let directory = self.service.directories.ensure_path(&directory).await?;
+            resource.move_to_directory(directory)?;
             resource.attach_content(content)?;
-            self.service.repository.ensure_directory(&directory).await?;
             if !self
                 .service
                 .repository
@@ -259,7 +256,7 @@ impl<'a> StorageReconciliationService<'a> {
         )?;
         let resource = build_resource(
             name,
-            directory.clone(),
+            self.service.directories.ensure_path(&directory).await?,
             Some(kind),
             ResourceStatus::default(),
             None,
@@ -267,7 +264,6 @@ impl<'a> StorageReconciliationService<'a> {
         )
         .with_content(content)
         .build()?;
-        self.ensure_directory(&directory).await?;
         self.service.repository.save(&resource).await?;
         Ok(hash_elapsed)
     }
@@ -331,19 +327,19 @@ impl<'a> StorageReconciliationService<'a> {
 
     async fn reconcile_directories(
         &self,
-        physical_directories: HashSet<ResourceDirectory>,
+        physical_directories: HashSet<DirectoryPath>,
     ) -> Result<(), CoreError> {
         let mut stored = Vec::new();
-        let mut pending = vec![ResourceDirectory::root()];
+        let mut pending = vec![self.service.directories.root().await?];
         while let Some(parent) = pending.pop() {
-            let children = self.service.query.list_directories(&parent).await?;
+            let children = self.service.directories.list_children(&parent).await?;
             pending.extend(children.iter().cloned());
             stored.extend(children);
         }
-        stored.sort_by_key(|directory| Reverse(directory.path().matches('/').count()));
+        stored.sort_by_key(|directory| Reverse(directory.path().path().matches('/').count()));
         for directory in stored {
-            if !physical_directories.contains(&directory) {
-                self.service.repository.remove_directory(&directory).await?;
+            if !physical_directories.contains(directory.path()) {
+                self.service.directories.remove_if_empty(&directory).await?;
             }
         }
         Ok(())
@@ -377,20 +373,12 @@ impl<'a> StorageReconciliationService<'a> {
         }
         finalize_tracked_checksum(state)
     }
-
-    async fn ensure_directory(&self, directory: &ResourceDirectory) -> Result<(), CoreError> {
-        self.service
-            .directory_storage
-            .ensure_directory(directory)
-            .await?;
-        self.service.repository.ensure_directory(directory).await
-    }
 }
 
-fn resource_path_from_key(key: &StorageKey) -> Result<(ResourceDirectory, String), CoreError> {
+fn resource_path_from_key(key: &StorageKey) -> Result<(DirectoryPath, String), CoreError> {
     let (directory, name) = key
         .as_str()
         .rsplit_once('/')
         .map_or(("", key.as_str()), |(directory, name)| (directory, name));
-    Ok((ResourceDirectory::from_path(directory)?, name.to_owned()))
+    Ok((DirectoryPath::from_path(directory)?, name.to_owned()))
 }

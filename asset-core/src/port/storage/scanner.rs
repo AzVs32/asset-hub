@@ -1,4 +1,4 @@
-use crate::domain::{ResourceDirectory, StorageKey};
+use crate::domain::{DirectoryPath, StorageKey};
 use crate::{CoreError, ResourceError};
 use chrono::{DateTime, Utc};
 use futures_core::Stream;
@@ -86,7 +86,7 @@ pub struct ScannedBlob {
 /// 不感知分页游标或具体文件系统 API。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScannedStorageEntry {
-    Directory(ResourceDirectory),
+    Directory(DirectoryPath),
     Blob(ScannedBlob),
 }
 

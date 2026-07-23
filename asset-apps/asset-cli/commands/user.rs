@@ -2,7 +2,7 @@ use super::CliResult;
 use anyhow::{Context, bail};
 use asset_apps::AssetRuntime;
 use asset_core::domain::{
-    NewSecurityAuditEvent, ResourceDirectory, SecurityAuditActor, SecurityAuditEventType,
+    DirectoryPath, NewSecurityAuditEvent, SecurityAuditActor, SecurityAuditEventType,
     SecurityAuditOutcome, SecurityAuditSource, User, UserRole, UserStatus,
 };
 use clap::{ArgGroup, Args};
@@ -166,7 +166,7 @@ fn user_table(users: &[User]) -> Table {
             user.username().to_owned(),
             role_name(user.role()).to_owned(),
             status_name(user.status()).to_owned(),
-            workspace_name(user.workspace_directory()).to_owned(),
+            workspace_name(user.workspace_directory().path()).to_owned(),
             user.id().to_string(),
         ]);
     }
@@ -178,7 +178,10 @@ fn print_user(user: &User) {
     println!("ID: {}", user.id());
     println!("Role: {}", role_name(user.role()));
     println!("Status: {}", status_name(user.status()));
-    println!("Workspace: {}", workspace_name(user.workspace_directory()));
+    println!(
+        "Workspace: {}",
+        workspace_name(user.workspace_directory().path())
+    );
     println!("Created: {}", user.created_at().to_rfc3339());
     println!("Updated: {}", user.updated_at().to_rfc3339());
 }
@@ -197,7 +200,7 @@ fn status_name(status: UserStatus) -> &'static str {
     }
 }
 
-fn workspace_name(workspace: &ResourceDirectory) -> &str {
+fn workspace_name(workspace: &DirectoryPath) -> &str {
     if workspace.is_root() {
         "/"
     } else {
@@ -216,14 +219,17 @@ mod tests {
                 "admin",
                 "hash",
                 UserRole::Administrator,
-                ResourceDirectory::root(),
+                asset_core::domain::DirectoryRef::root(),
             )
             .unwrap(),
             User::new(
                 "azvs",
                 "hash",
                 UserRole::Member,
-                ResourceDirectory::from_path("users/azvs").unwrap(),
+                asset_core::domain::DirectoryRef::new(
+                    asset_core::domain::DirectoryId::new(),
+                    DirectoryPath::from_path("users/azvs").unwrap(),
+                ),
             )
             .unwrap(),
         ];

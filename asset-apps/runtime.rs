@@ -109,7 +109,7 @@ impl AssetRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use asset_core::domain::{Resource, ResourceDirectory};
+    use asset_core::domain::{DirectoryPath, Resource};
     use asset_infra::config::{
         BlobConfig, DatabaseConfig, LocalBlobConfig, LocalBlobSyncConfig, SqliteDatabaseConfig,
     };
@@ -117,7 +117,7 @@ mod tests {
 
     async fn wait_for_resource(
         runtime: &AssetRuntime,
-        directory: &ResourceDirectory,
+        directory: &DirectoryPath,
         name: &str,
     ) -> Option<Resource> {
         for _ in 0..100 {
@@ -135,7 +135,7 @@ mod tests {
         None
     }
 
-    async fn wait_until_absent(runtime: &AssetRuntime, directory: &ResourceDirectory, name: &str) {
+    async fn wait_until_absent(runtime: &AssetRuntime, directory: &DirectoryPath, name: &str) {
         for _ in 0..100 {
             if runtime
                 .infrastructure
@@ -181,7 +181,7 @@ mod tests {
             ..AssetInfraConfig::default()
         };
         let runtime = AssetRuntime::from_config(config).await.unwrap();
-        let directory = ResourceDirectory::from_path("documents").unwrap();
+        let directory = DirectoryPath::from_path("documents").unwrap();
         let directory_path = root.join("documents");
         std::fs::create_dir_all(&directory_path).unwrap();
         std::fs::write(directory_path.join("note.txt"), b"first").unwrap();
@@ -227,12 +227,12 @@ mod tests {
         for _ in 0..100 {
             if runtime
                 .infrastructure
-                .resource_query()
-                .list_directories(&ResourceDirectory::root())
+                .directory_repository()
+                .list_children(&asset_core::domain::DirectoryId::root())
                 .await
                 .unwrap()
                 .iter()
-                .any(|directory| directory.path() == "empty")
+                .any(|directory| directory.path().path() == "empty")
             {
                 directory_created = true;
                 break;
@@ -245,12 +245,12 @@ mod tests {
         for _ in 0..100 {
             if runtime
                 .infrastructure
-                .resource_query()
-                .list_directories(&ResourceDirectory::root())
+                .directory_repository()
+                .list_children(&asset_core::domain::DirectoryId::root())
                 .await
                 .unwrap()
                 .iter()
-                .all(|directory| directory.path() != "empty")
+                .all(|directory| directory.path().path() != "empty")
             {
                 directory_removed = true;
                 break;

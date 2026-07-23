@@ -6,9 +6,11 @@
 use crate::CoreError;
 use crate::domain::{Resource, ResourceKind, StorageKey};
 use crate::port::{
-    BlobStorage, DirectoryStorage, ResourceActionExecutor, ResourceActionRegistry,
-    ResourceKindRegistry, ResourceQuery, ResourceRepository, StorageScanner,
+    BlobStorage, DirectoryRepository, DirectoryStorage, ResourceActionExecutor,
+    ResourceActionRegistry, ResourceKindRegistry, ResourceQuery, ResourceRepository,
+    StorageScanner,
 };
+use crate::service::DirectoryService;
 use asset_plugin_api::{PluginExecutionPolicy, ResourceActionDefinition};
 use std::sync::Arc;
 
@@ -45,7 +47,7 @@ pub struct ResourceService {
     repository: Arc<dyn ResourceRepository>,
     query: Arc<dyn ResourceQuery>,
     blob_storage: Arc<dyn BlobStorage>,
-    directory_storage: Arc<dyn DirectoryStorage>,
+    directories: DirectoryService,
     storage_scanner: Arc<dyn StorageScanner>,
     kind_registry: Arc<dyn ResourceKindRegistry>,
     action_ports: Option<ResourceActionPorts>,
@@ -60,12 +62,13 @@ struct ResourceActionPorts {
 
 /// `ResourceService` 所需的 Host Port 装配。
 ///
-/// 写模型、读模型、Blob、目录实体、扫描器和 kind 注册表是必选端口；动作注册表与执行器
-/// 必须成对注入，避免出现只有动作声明或只有执行器的半配置状态。
+/// 写模型、读模型、Blob、目录聚合仓储、物理目录、扫描器和 kind 注册表是必选端口；
+/// 动作注册表与执行器必须成对注入，避免出现只有动作声明或只有执行器的半配置状态。
 pub struct ResourceServicePorts {
     repository: Arc<dyn ResourceRepository>,
     query: Arc<dyn ResourceQuery>,
     blob_storage: Arc<dyn BlobStorage>,
+    directory_repository: Arc<dyn DirectoryRepository>,
     directory_storage: Arc<dyn DirectoryStorage>,
     storage_scanner: Arc<dyn StorageScanner>,
     kind_registry: Arc<dyn ResourceKindRegistry>,
@@ -77,6 +80,7 @@ impl ResourceServicePorts {
         repository: Arc<dyn ResourceRepository>,
         query: Arc<dyn ResourceQuery>,
         blob_storage: Arc<dyn BlobStorage>,
+        directory_repository: Arc<dyn DirectoryRepository>,
         directory_storage: Arc<dyn DirectoryStorage>,
         storage_scanner: Arc<dyn StorageScanner>,
         kind_registry: Arc<dyn ResourceKindRegistry>,
@@ -85,6 +89,7 @@ impl ResourceServicePorts {
             repository,
             query,
             blob_storage,
+            directory_repository,
             directory_storage,
             storage_scanner,
             kind_registry,
@@ -112,6 +117,7 @@ impl ResourceService {
             repository,
             query,
             blob_storage,
+            directory_repository,
             directory_storage,
             storage_scanner,
             kind_registry,
@@ -121,7 +127,7 @@ impl ResourceService {
             repository,
             query,
             blob_storage,
-            directory_storage,
+            directories: DirectoryService::new(directory_repository, directory_storage),
             storage_scanner,
             kind_registry,
             action_ports,

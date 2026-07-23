@@ -100,9 +100,10 @@ impl HttpError {
 impl From<CoreError> for HttpError {
     fn from(error: CoreError) -> Self {
         let status = match &error {
-            CoreError::Resource(_) | CoreError::User(_) | CoreError::Configuration { .. } => {
-                StatusCode::BAD_REQUEST
-            }
+            CoreError::Directory(_)
+            | CoreError::Resource(_)
+            | CoreError::User(_)
+            | CoreError::Configuration { .. } => StatusCode::BAD_REQUEST,
             CoreError::Unauthenticated => StatusCode::UNAUTHORIZED,
             CoreError::Forbidden { .. } => StatusCode::FORBIDDEN,
             CoreError::NotFound { .. } => StatusCode::NOT_FOUND,
@@ -155,6 +156,12 @@ impl From<asset_core::ResourceError> for HttpError {
             diagnostic: None,
             diagnostics: Vec::new(),
         }
+    }
+}
+
+impl From<asset_core::DirectoryError> for HttpError {
+    fn from(error: asset_core::DirectoryError) -> Self {
+        Self::bad_request(error.to_string())
     }
 }
 

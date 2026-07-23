@@ -106,6 +106,14 @@ When user creation omits `workspace_directory`, the user service assigns
 `users/<username>` to members and `/` to administrators. API clients can still provide an
 explicit workspace when a custom boundary is required.
 
+Directory is an independent aggregate rather than a path embedded in Resource.
+Every directory has a stable UUID, a direct `parent_id`, a kind, namespaced JSON
+metadata, and lifecycle timestamps. SQLite stores the hierarchy as an adjacency
+tree and derives paths with recursive CTEs. Resource and User rows reference
+`directory_id`; paths remain HTTP and Blob-storage projections, so renaming or
+moving a directory does not invalidate domain references. The fixed nil UUID is
+the persisted global root directory.
+
 Security events are stored in SQLite's `security_audit_events` table. Login
 successes, login failures, rate-limit rejections, and classified state-changing
 operations are recorded with a source-independent event type, operation source,
@@ -133,9 +141,10 @@ updated, the database can temporarily or permanently record stale size/checksum
 values for that storage key. Detection and repair for this condition are deferred
 to a future explicit maintenance design.
 
-The identity and authorization model lives in `asset-core`: `User`,
-`AccessContext`, and `DirectoryPermission` are domain types; user and password
-persistence are ports. `asset-infra` supplies the SQLite and Argon2 adapters.
+The directory, identity, and authorization models live in `asset-core`:
+`Directory`, `User`, `AccessContext`, and `DirectoryPermission` are domain
+types; their persistence and physical-directory operations are ports.
+`asset-infra` supplies the SQLite, local storage, and Argon2 adapters.
 HTTP only maps the authenticated session into an
 `AccessContext` and calls the secured resource service, so future CLI and TUI
 entry points can reuse the same authorization rules.
