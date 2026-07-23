@@ -12,6 +12,7 @@ use crate::domain::{
 };
 use crate::port::{BlobByteStream, RESERVED_BLOB_STORAGE_PREFIX};
 use bytes::Bytes;
+use chrono::{DateTime, Utc};
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 use std::sync::{Arc, Mutex};
@@ -62,7 +63,7 @@ impl<'a> ResourceContentService<'a> {
         let storage_key = resource.storage_key();
         reject_reserved_storage_key(&storage_key)?;
         // 在写 Blob 前校验全部内容元数据，避免写入后才发现 MIME 等字段非法。
-        build_content(0, mime_type.clone(), placeholder_checksum()?)?;
+        build_content(0, mime_type.clone(), placeholder_checksum()?, None)?;
 
         self.ensure_directory(&directory).await?;
         let (data, checksum_state) = stream_with_checksum_tracking(data);
@@ -78,7 +79,31 @@ impl<'a> ResourceContentService<'a> {
                 return Err(error);
             }
         };
-        let content = build_content(write_result.bytes_written(), mime_type, checksum)?;
+        let stored = match self.service.storage_scanner.inspect(&storage_key).await {
+            Ok(Some(stored)) if stored.size == write_result.bytes_written() => stored,
+            Ok(Some(_)) => {
+                let _ = self.service.blob_storage.delete(&storage_key).await;
+                return Err(CoreError::conflict(format!(
+                    "blob `{storage_key}` changed while its upload was being finalized"
+                )));
+            }
+            Ok(None) => {
+                let _ = self.service.blob_storage.delete(&storage_key).await;
+                return Err(CoreError::conflict(format!(
+                    "blob `{storage_key}` disappeared while its upload was being finalized"
+                )));
+            }
+            Err(error) => {
+                let _ = self.service.blob_storage.delete(&storage_key).await;
+                return Err(error);
+            }
+        };
+        let content = build_content(
+            write_result.bytes_written(),
+            mime_type,
+            checksum,
+            Some(stored.modified_at),
+        )?;
         resource.attach_content(content)?;
 
         if let Err(error) = self.service.repository.save(&resource).await {
@@ -168,10 +193,14 @@ pub(super) fn build_content(
     size: u64,
     mime_type: Option<String>,
     checksum: Checksum,
+    storage_modified_at: Option<DateTime<Utc>>,
 ) -> Result<ResourceContent, CoreError> {
     let mut content = ResourceContent::builder(size, checksum);
     if let Some(mime_type) = mime_type {
         content = content.with_mime_type(mime_type);
+    }
+    if let Some(modified_at) = storage_modified_at {
+        content = content.with_modified_at(modified_at);
     }
     Ok(content.build()?)
 }

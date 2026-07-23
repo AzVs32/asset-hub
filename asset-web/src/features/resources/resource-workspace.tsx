@@ -3,8 +3,7 @@ import React from "react";
 import { toast } from "sonner";
 import { useGateway } from "@/application/ports/gateway-context";
 import { queryKeys } from "@/application/queries/keys";
-import type { WorkspaceResource } from "@/application/workspace/workspace-scope";
-import { useWorkspaceScope } from "@/application/workspace/workspace-scope-context";
+import type { Resource } from "@/domain/resource";
 import { useSession } from "@/features/auth/session-context";
 import { useSignOut } from "@/features/auth/use-sign-out";
 import { PluginActionDialog } from "@/plugins/plugin-action-dialog";
@@ -26,7 +25,6 @@ const UserAdministration = React.lazy(() =>
 
 export function ResourceWorkspace() {
   const gateway = useGateway();
-  const scope = useWorkspaceScope();
   const user = useSession();
   const signOut = useSignOut();
   const queryClient = useQueryClient();
@@ -38,8 +36,7 @@ export function ResourceWorkspace() {
   const [usersOpen, setUsersOpen] = React.useState(false);
   const selected = useQuery({
     queryKey: queryKeys.resource(browser.selectedId ?? ""),
-    queryFn: async () =>
-      scope.toVisibleResource(await gateway.findResource(browser.selectedId ?? "")),
+    queryFn: () => gateway.findResource(browser.selectedId ?? ""),
     enabled: Boolean(browser.selectedId),
   });
   const resource = browser.selectedId ? (selected.data ?? null) : null;
@@ -51,7 +48,7 @@ export function ResourceWorkspace() {
     commands.restore.isPending ||
     commands.execute.isPending;
 
-  function selectResource(item: WorkspaceResource) {
+  function selectResource(item: Resource) {
     queryClient.setQueryData(queryKeys.resource(item.id), item);
     browser.selectResource(item.id);
   }

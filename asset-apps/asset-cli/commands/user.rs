@@ -43,7 +43,7 @@ pub(crate) struct UserCommand {
 }
 
 pub(crate) async fn run(command: UserCommand) -> CliResult {
-    let runtime = AssetRuntime::from_default_config_file().await?;
+    let runtime = AssetRuntime::from_default_config_file_without_storage_sync().await?;
     let users = runtime.user_service();
 
     if command.list {

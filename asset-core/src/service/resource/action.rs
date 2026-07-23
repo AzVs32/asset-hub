@@ -289,6 +289,7 @@ impl<'a> ResourceActionService<'a> {
                             .clone()
                             .or_else(|| current_content.mime_type().map(str::to_string)),
                         checksum,
+                        None,
                     )?;
 
                     let expected_updated_at = resource.updated_at();

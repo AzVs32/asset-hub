@@ -50,7 +50,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = router::with_authentication(
         app,
         runtime.user_service(),
-        authorization,
         runtime.security_audit_repository(),
         &sqlite_path,
         bootstrap_admin,
@@ -64,8 +63,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn init_tracing() {
-    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("asset_http=info,tower_http=info"));
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        tracing_subscriber::EnvFilter::new(
+            "asset_http=info,asset_apps=info,asset_infra=info,asset_core=info,tower_http=info",
+        )
+    });
 
     tracing_subscriber::fmt().with_env_filter(env_filter).init();
 }

@@ -3,11 +3,7 @@ import { FileUp, FolderPlus, Plus } from "lucide-react";
 import React from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import type {
-  WorkspaceResourceDraft,
-  WorkspaceUploadDraft,
-} from "@/application/workspace/workspace-scope";
-import type { ResourceKind } from "@/domain/resource";
+import type { ResourceDraft, ResourceKind, UploadDraft } from "@/domain/resource";
 import { emptyResourceDraft } from "@/domain/resource-draft";
 import { Button } from "@/shared/ui/button";
 import { Dialog } from "@/shared/ui/dialog";
@@ -35,9 +31,9 @@ export function CreateResourceDialog({
   directory: string;
   kinds: ResourceKind[];
   pending: boolean;
-  onCreate: (draft: WorkspaceResourceDraft) => Promise<unknown>;
+  onCreate: (draft: ResourceDraft) => Promise<unknown>;
 }) {
-  const form = useForm<WorkspaceResourceDraft>({
+  const form = useForm<ResourceDraft>({
     resolver: zodResolver(resourceSchema),
     defaultValues: emptyResourceDraft(directory, kinds),
   });
@@ -126,7 +122,7 @@ export function UploadResourceDialog({
   directory: string;
   kinds: ResourceKind[];
   pending: boolean;
-  onUpload: (draft: WorkspaceUploadDraft) => Promise<unknown>;
+  onUpload: (draft: UploadDraft) => Promise<unknown>;
 }) {
   const form = useForm<UploadForm>({
     defaultValues: { name: "", directory, kind: "", description: "", tags: "" },

@@ -15,15 +15,15 @@ import {
 } from "lucide-react";
 import React from "react";
 import { useGateway } from "@/application/ports/gateway-context";
-import type {
-  WorkspaceDirectoryListing,
-  WorkspaceResource,
-  WorkspaceResourceFilters,
-} from "@/application/workspace/workspace-scope";
-import { useWorkspaceScope } from "@/application/workspace/workspace-scope-context";
 import type { CurrentUser } from "@/domain/auth";
 import { breadcrumbs, parentDirectory } from "@/domain/directory-path";
-import type { ResourceAction, ResourceKind } from "@/domain/resource";
+import type {
+  DirectoryListing,
+  Resource,
+  ResourceAction,
+  ResourceFilters,
+  ResourceKind,
+} from "@/domain/resource";
 import { formatBytes, formatDate } from "@/domain/resource-draft";
 import { usePluginKernel } from "@/kernel/plugin-kernel";
 import { hostSlots } from "@/kernel/slots";
@@ -52,16 +52,16 @@ export function ResourceList({
   onLogout,
 }: {
   user: Pick<CurrentUser, "username" | "isAdmin">;
-  listing: WorkspaceDirectoryListing | undefined;
+  listing: DirectoryListing | undefined;
   kinds: ResourceKind[];
-  filters: WorkspaceResourceFilters;
+  filters: ResourceFilters;
   selectedId: string | null;
   loading: boolean;
   error: unknown;
-  onFilters: (patch: Partial<WorkspaceResourceFilters>) => void;
+  onFilters: (patch: Partial<ResourceFilters>) => void;
   onOpenDirectory: (path: string) => void;
-  onSelect: (resource: WorkspaceResource) => void;
-  onAction: (resource: WorkspaceResource, action: ResourceAction) => void;
+  onSelect: (resource: Resource) => void;
+  onAction: (resource: Resource, action: ResourceAction) => void;
   onRefresh: () => void;
   onCreate: () => void;
   onUpload: () => void;
@@ -251,7 +251,7 @@ function ResourceRow({
   onSelect,
   onAction,
 }: {
-  resource: WorkspaceResource;
+  resource: Resource;
   selected: boolean;
   onSelect: () => void;
   onAction: (action: ResourceAction) => void;
@@ -297,14 +297,13 @@ function ResourceRow({
   );
 }
 
-function ResourceThumbnail({ resource }: { resource: WorkspaceResource }) {
+function ResourceThumbnail({ resource }: { resource: Resource }) {
   const gateway = useGateway();
-  const scope = useWorkspaceScope();
   const kernel = usePluginKernel();
   const action = kernel.thumbnailAction(resource);
   const result = useQuery({
     queryKey: ["thumbnail", resource.id, resource.updatedAt, action?.id],
-    queryFn: () => gateway.executeAction(scope.toStorageResource(resource), action?.id ?? ""),
+    queryFn: () => gateway.executeAction(resource, action?.id ?? ""),
     enabled: Boolean(action),
     retry: false,
     staleTime: 5 * 60_000,

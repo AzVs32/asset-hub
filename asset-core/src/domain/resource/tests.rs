@@ -109,8 +109,12 @@ fn resource_lifecycle_transitions_update_state() {
 #[test]
 fn resource_builder_accepts_description_tags_and_content() {
     let checksum = Checksum::sha256("a".repeat(64)).unwrap();
+    let modified_at = chrono::DateTime::parse_from_rfc3339("2026-07-23T03:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
     let content = ResourceContent::builder(42, checksum.clone())
         .with_mime_type(" image/png ")
+        .with_modified_at(modified_at)
         .build()
         .unwrap();
 
@@ -125,6 +129,7 @@ fn resource_builder_accepts_description_tags_and_content() {
     let content = resource.content().unwrap();
     assert_eq!(content.mime_type(), Some("image/png"));
     assert_eq!(content.checksum(), &checksum);
+    assert_eq!(content.modified_at(), Some(modified_at));
     assert_eq!(
         resource
             .tags()

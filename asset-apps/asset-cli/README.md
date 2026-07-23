@@ -123,6 +123,18 @@ asset config --show config.toml
 
 # `asset system` 命令
 
+## `asset system --scan-resource`
+
+完整遍历 Blob 存储、重新计算每个文件的 SHA-256，并将最终状态协调到资源数据库。该操作
+用于显式完整校验，不属于 HTTP 服务的日常启动流程。
+
+```bash
+asset system --scan-resource
+```
+
+HTTP 服务启动和周期同步只比较物理文件修改时间与 `ResourceContent.size`；只有新增或发生
+变化的文件才重新计算 SHA-256。
+
 # `asset user` 命令
 
 `asset user` 读取当前目录的 `config.toml`（不存在时使用内置默认配置）并初始化本地运行时。

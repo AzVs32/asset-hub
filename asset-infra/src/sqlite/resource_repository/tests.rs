@@ -7,8 +7,12 @@ use std::path::PathBuf;
 async fn sqlite_repository_roundtrips_resource() {
     let repository = repository("roundtrip").await;
     let checksum = Checksum::sha256("a".repeat(64)).unwrap();
+    let modified_at = chrono::DateTime::parse_from_rfc3339("2026-07-23T03:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
     let content = ResourceContent::builder(42, checksum.clone())
         .with_mime_type("image/png")
+        .with_modified_at(modified_at)
         .build()
         .unwrap();
     let resource = Resource::builder("image.png")
@@ -44,6 +48,7 @@ async fn sqlite_repository_roundtrips_resource() {
     assert_eq!(restored_content.size(), 42);
     assert_eq!(restored_content.mime_type(), Some("image/png"));
     assert_eq!(restored_content.checksum(), &checksum);
+    assert_eq!(restored_content.modified_at(), Some(modified_at));
 
     let tag_rows: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM resource_tags WHERE resource_id = ?")

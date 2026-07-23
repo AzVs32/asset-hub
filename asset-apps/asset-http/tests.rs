@@ -1258,6 +1258,11 @@ async fn openapi_exposes_current_http_contract() {
     assert!(document["paths"].get("/scan").is_none());
     assert!(document["paths"].get("/audit").is_none());
     assert!(document["paths"].get("/auth/directory-grants").is_none());
+    assert!(
+        document["components"]["schemas"]["AuthenticatedUser"]["properties"]
+            .get("workspace_directory")
+            .is_none()
+    );
     assert_eq!(
         document["components"]["securitySchemes"]["cookie_auth"]["in"],
         "cookie"
@@ -1528,7 +1533,6 @@ async fn member_access_is_limited_to_the_workspace_subtree() {
     let router = router::with_authentication(
         base,
         runtime.user_service(),
-        authorization,
         runtime.security_audit_repository(),
         &sqlite_path,
         Some(("admin", "administrator-password")),
@@ -1626,7 +1630,7 @@ async fn member_access_is_limited_to_the_workspace_subtree() {
 
     let (admin_cookie, admin_login) =
         login_with_password(&app, "admin", "administrator-password").await;
-    assert_eq!(admin_login["user"]["workspace_directory"], "");
+    assert!(admin_login["user"].get("workspace_directory").is_none());
     let response = request_with_cookie(
         &app,
         Method::POST,
@@ -1643,7 +1647,7 @@ async fn member_access_is_limited_to_the_workspace_subtree() {
     assert_eq!(response.status(), StatusCode::CREATED);
     let alice = response_json(response).await;
     let alice_id = alice["user"]["id"].as_str().unwrap();
-    assert_eq!(alice["user"]["workspace_directory"], "teams/alice");
+    assert!(alice["user"].get("workspace_directory").is_none());
     let root_member = request_with_cookie(
         &app,
         Method::POST,
@@ -1659,7 +1663,7 @@ async fn member_access_is_limited_to_the_workspace_subtree() {
     .await;
     assert_eq!(root_member.status(), StatusCode::CREATED);
     let root_member = response_json(root_member).await;
-    assert_eq!(root_member["user"]["workspace_directory"], "");
+    assert!(root_member["user"].get("workspace_directory").is_none());
     let default_workspace_member = request_with_cookie(
         &app,
         Method::POST,
@@ -1674,9 +1678,10 @@ async fn member_access_is_limited_to_the_workspace_subtree() {
     .await;
     assert_eq!(default_workspace_member.status(), StatusCode::CREATED);
     let default_workspace_member = response_json(default_workspace_member).await;
-    assert_eq!(
-        default_workspace_member["user"]["workspace_directory"],
-        "users/bob"
+    assert!(
+        default_workspace_member["user"]
+            .get("workspace_directory")
+            .is_none()
     );
     assert!(app.root.join("blob/users/bob").is_dir());
     let teams = request_with_cookie(
@@ -1698,72 +1703,159 @@ async fn member_access_is_limited_to_the_workspace_subtree() {
     );
 
     let (alice_cookie, login) = login_with_password(&app, "alice", "alice-secure-password").await;
-    assert_eq!(login["user"]["workspace_directory"], "teams/alice");
+    assert!(login["user"].get("workspace_directory").is_none());
     assert!(app.root.join("blob/teams/alice").is_dir());
     let folder = request_with_cookie(
         &app,
         Method::POST,
         "/directories",
-        json!({ "parent_path": "teams/alice", "name": "empty-folder" }),
+        json!({ "parent_path": "", "name": "empty-folder" }),
         &alice_cookie,
     )
     .await;
     assert_eq!(folder.status(), StatusCode::CREATED);
     let folder = response_json(folder).await;
-    assert_eq!(folder["path"], "teams/alice/empty-folder");
+    assert_eq!(folder["path"], "empty-folder");
+    assert_eq!(folder["parent_path"], "");
     assert!(app.root.join("blob/teams/alice/empty-folder").is_dir());
-
-    let denied_folder = request_with_cookie(
+    let nested_listing = request_with_cookie(
         &app,
-        Method::POST,
-        "/directories",
-        json!({ "parent_path": "teams/bob", "name": "forbidden" }),
+        Method::GET,
+        "/directories?path=empty-folder",
+        json!({}),
         &alice_cookie,
     )
     .await;
-    assert_eq!(denied_folder.status(), StatusCode::FORBIDDEN);
+    assert_eq!(nested_listing.status(), StatusCode::OK);
+    assert_eq!(response_json(nested_listing).await["path"], "empty-folder");
+
+    let invalid_folder = request_with_cookie(
+        &app,
+        Method::POST,
+        "/directories",
+        json!({ "parent_path": "../bob", "name": "invalid" }),
+        &alice_cookie,
+    )
+    .await;
+    assert_eq!(invalid_folder.status(), StatusCode::BAD_REQUEST);
 
     let allowed = request_with_cookie(
         &app,
         Method::POST,
         "/resources",
         json!({
-            "name": "allowed", "directory": "teams/alice"
+            "name": "allowed", "directory": ""
         }),
         &alice_cookie,
     )
     .await;
     assert_eq!(allowed.status(), StatusCode::CREATED);
-    let denied = request_with_cookie(
+    let allowed = response_json(allowed).await;
+    assert_eq!(allowed["directory"], "");
+    let uploaded = request(
+        &app,
+        Request::builder()
+            .method(Method::PUT)
+            .uri("/resources/content/stream?name=member-upload.txt&directory=")
+            .header(header::CONTENT_TYPE, "text/plain")
+            .header(header::COOKIE, &alice_cookie)
+            .body(Body::from("member content"))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(uploaded.status(), StatusCode::CREATED);
+    let uploaded = response_json(uploaded).await;
+    assert_eq!(uploaded["directory"], "");
+    assert!(
+        app.root
+            .join("blob/teams/alice/member-upload.txt")
+            .is_file()
+    );
+    let workspace_listing = request_with_cookie(
+        &app,
+        Method::GET,
+        "/directories?path=",
+        json!({}),
+        &alice_cookie,
+    )
+    .await;
+    assert_eq!(workspace_listing.status(), StatusCode::OK);
+    let workspace_listing = response_json(workspace_listing).await;
+    assert_eq!(workspace_listing["path"], "");
+    assert!(
+        workspace_listing["resources"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|resource| resource["id"] == allowed["id"])
+    );
+    assert!(
+        workspace_listing["resources"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|resource| resource["id"] == uploaded["id"])
+    );
+    let resource_listing = request_with_cookie(
+        &app,
+        Method::GET,
+        "/resources?directory=",
+        json!({}),
+        &alice_cookie,
+    )
+    .await;
+    assert_eq!(resource_listing.status(), StatusCode::OK);
+    assert!(
+        response_json(resource_listing).await["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|resource| resource["id"] == uploaded["id"])
+    );
+    let allowed_as_admin = request_with_cookie(
+        &app,
+        Method::GET,
+        &format!("/resources/{}", allowed["id"].as_str().unwrap()),
+        json!({}),
+        &admin_cookie,
+    )
+    .await;
+    assert_eq!(allowed_as_admin.status(), StatusCode::OK);
+    assert_eq!(
+        response_json(allowed_as_admin).await["directory"],
+        "teams/alice"
+    );
+    let admin_only = request_with_cookie(
         &app,
         Method::POST,
         "/resources",
-        json!({
-            "name": "denied", "directory": "teams/bob"
-        }),
+        json!({ "name": "admin-only", "directory": "" }),
+        &admin_cookie,
+    )
+    .await;
+    assert_eq!(admin_only.status(), StatusCode::CREATED);
+    let admin_only = response_json(admin_only).await;
+    let denied = request_with_cookie(
+        &app,
+        Method::GET,
+        &format!("/resources/{}", admin_only["id"].as_str().unwrap()),
+        json!({}),
         &alice_cookie,
     )
     .await;
     assert_eq!(denied.status(), StatusCode::FORBIDDEN);
 
-    let shared_write = request_with_cookie(
+    let invalid = request_with_cookie(
         &app,
         Method::POST,
         "/resources",
-        json!({ "name": "shared-write", "directory": "shared/photos" }),
+        json!({
+            "name": "invalid", "directory": "../bob"
+        }),
         &alice_cookie,
     )
     .await;
-    assert_eq!(shared_write.status(), StatusCode::FORBIDDEN);
-    let public_write = request_with_cookie(
-        &app,
-        Method::POST,
-        "/resources",
-        json!({ "name": "forbidden-public-write", "directory": "public" }),
-        &alice_cookie,
-    )
-    .await;
-    assert_eq!(public_write.status(), StatusCode::FORBIDDEN);
+    assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
 
     let disabled = request_with_cookie(
         &app,

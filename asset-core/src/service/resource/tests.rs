@@ -249,6 +249,7 @@ impl ResourceActionRegistry for InMemoryResourceActionRegistry {
 #[derive(Default)]
 struct InMemoryBlobStorage {
     objects: Mutex<HashMap<StorageKey, Bytes>>,
+    modified_at: Mutex<HashMap<StorageKey, chrono::DateTime<chrono::Utc>>>,
     directories: Mutex<HashSet<ResourceDirectory>>,
     fail_next_delete: Mutex<bool>,
     fail_scan_after_entries: Mutex<Option<usize>>,
@@ -305,6 +306,10 @@ impl BlobStorage for InMemoryBlobStorage {
 
     async fn put(&self, key: &StorageKey, data: Bytes) -> Result<(), CoreError> {
         self.objects.lock().unwrap().insert(key.clone(), data);
+        self.modified_at
+            .lock()
+            .unwrap()
+            .insert(key.clone(), chrono::Utc::now());
         Ok(())
     }
 
@@ -328,6 +333,10 @@ impl BlobStorage for InMemoryBlobStorage {
         }
 
         objects.insert(key.clone(), Bytes::from(bytes));
+        self.modified_at
+            .lock()
+            .unwrap()
+            .insert(key.clone(), chrono::Utc::now());
 
         Ok(BlobWriteResult::new(bytes_written))
     }
@@ -365,6 +374,16 @@ impl BlobStorage for InMemoryBlobStorage {
             .remove(from)
             .ok_or_else(|| CoreError::not_found("blob", from.to_string()))?;
         objects.insert(to.clone(), content);
+        let modified_at = self
+            .modified_at
+            .lock()
+            .unwrap()
+            .remove(from)
+            .unwrap_or_else(chrono::Utc::now);
+        self.modified_at
+            .lock()
+            .unwrap()
+            .insert(to.clone(), modified_at);
         Ok(())
     }
 
@@ -373,6 +392,7 @@ impl BlobStorage for InMemoryBlobStorage {
             return Err(CoreError::storage("delete", TestError("delete failed")));
         }
         self.objects.lock().unwrap().remove(key);
+        self.modified_at.lock().unwrap().remove(key);
         Ok(())
     }
 }
@@ -427,6 +447,7 @@ impl StorageScanner for InMemoryBlobStorage {
                 key: key.clone(),
                 size: content.len() as u64,
                 mime_type: None,
+                modified_at: self.modified_at.lock().unwrap()[key],
             })
             .collect::<Vec<_>>();
         files.sort_by(|left, right| left.key.as_str().cmp(right.key.as_str()));
@@ -453,6 +474,7 @@ impl StorageScanner for InMemoryBlobStorage {
                 key: key.clone(),
                 size: content.len() as u64,
                 mime_type: None,
+                modified_at: self.modified_at.lock().unwrap()[key],
             }))
     }
 }
@@ -682,6 +704,31 @@ fn storage_reconciliation_creates_updates_and_removes_resources() {
             .unwrap()
             .is_none()
     );
+}
+
+#[test]
+fn startup_reconciliation_hashes_only_new_or_changed_files() {
+    let (service, _, blob_storage) = service();
+    let key = StorageKey::new("library/book.txt").unwrap();
+    block_on(blob_storage.put(&key, Bytes::from_static(b"first"))).unwrap();
+
+    let initial = block_on(service.reconcile_storage()).unwrap();
+    assert_eq!(initial.files, 1);
+    assert_eq!(initial.hashed_files, 1);
+    assert_eq!(initial.unchanged_files, 0);
+
+    let unchanged = block_on(service.reconcile_storage()).unwrap();
+    assert_eq!(unchanged.hashed_files, 0);
+    assert_eq!(unchanged.unchanged_files, 1);
+
+    block_on(blob_storage.put(&key, Bytes::from_static(b"other"))).unwrap();
+    let changed = block_on(service.reconcile_storage()).unwrap();
+    assert_eq!(changed.hashed_files, 1);
+    assert_eq!(changed.unchanged_files, 0);
+
+    let forced = block_on(service.scan_resources()).unwrap();
+    assert_eq!(forced.hashed_files, 1);
+    assert_eq!(forced.unchanged_files, 0);
 }
 
 #[test]
@@ -1001,7 +1048,15 @@ fn stream_upload_resource_content_writes_blob_then_saves_resource() {
     assert_eq!(content.size(), data.len() as u64);
     assert_eq!(content.mime_type(), Some("image/png"));
     assert_eq!(content.checksum(), &checksum);
+    assert_eq!(
+        content.modified_at(),
+        blob_storage.modified_at.lock().unwrap().get(&key).copied()
+    );
     assert_eq!(blob_storage.get_sync(&key), Some(data));
+
+    let startup = block_on(service.reconcile_storage()).unwrap();
+    assert_eq!(startup.hashed_files, 0);
+    assert_eq!(startup.unchanged_files, 1);
 }
 
 #[test]

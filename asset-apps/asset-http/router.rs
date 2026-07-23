@@ -121,7 +121,6 @@ pub(crate) fn build_with_options_and_plugin_web_assets(
 pub(crate) async fn with_authentication(
     router: Router,
     users: UserService,
-    authorization: AuthorizationService,
     audit: Arc<dyn SecurityAuditRepository>,
     sqlite_path: &std::path::Path,
     bootstrap_admin: Option<(&str, &str)>,
@@ -134,7 +133,7 @@ pub(crate) async fn with_authentication(
         .max_connections(2)
         .connect_with(session_connect_options)
         .await?;
-    let backend = AuthBackend::new(users, authorization, audit);
+    let backend = AuthBackend::new(users, audit);
     backend.initialize(bootstrap_admin).await?;
     let session_store = SqliteStore::new(session_pool);
     session_store.migrate().await?;

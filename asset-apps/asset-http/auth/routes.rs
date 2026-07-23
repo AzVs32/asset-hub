@@ -297,46 +297,8 @@ pub(crate) async fn authorize_request(
         Err(error) => return error.into_response(),
     };
     let context = user.access_context();
-    request.extensions_mut().insert(context.clone());
-    if user.is_admin || request.uri().path() == "/resource-kinds" {
-        return next.run(request).await;
-    }
-    let method = request.method().clone();
-    let path = request.uri().path().to_owned();
-    let permission = if matches!(method, Method::GET | Method::HEAD) {
-        DirectoryPermission::Read
-    } else {
-        DirectoryPermission::Write
-    };
-    let directory = if path == "/directories" || path == "/resources" {
-        query_value(
-            request.uri().query().unwrap_or_default(),
-            if path == "/directories" {
-                "path"
-            } else {
-                "directory"
-            },
-        )
-    } else {
-        None
-    };
-    let Some(directory) = directory else {
-        // Resource-by-id and body-based commands are authorized inside their use case/handler.
-        return next.run(request).await;
-    };
-    let directory = match ResourceDirectory::from_path(directory) {
-        Ok(directory) => directory,
-        Err(error) => return HttpError::from(asset_core::CoreError::from(error)).into_response(),
-    };
-    match session
-        .backend
-        .authorization
-        .require(&context, &directory, permission)
-        .await
-    {
-        Ok(()) => next.run(request).await,
-        Err(error) => HttpError::from(error).into_response(),
-    }
+    request.extensions_mut().insert(context);
+    next.run(request).await
 }
 
 fn require_user(session: &Session) -> Result<&AuthenticatedUser, HttpError> {
@@ -351,12 +313,6 @@ fn require_admin(session: &Session) -> Result<(), HttpError> {
     } else {
         Err(HttpError::forbidden("administrator permission required"))
     }
-}
-fn query_value(query: &str, name: &str) -> Option<String> {
-    query.split('&').find_map(|pair| {
-        let (key, value) = pair.split_once('=')?;
-        (key == name).then(|| value.replace("%2F", "/").replace("%2f", "/"))
-    })
 }
 fn internal(error: impl std::fmt::Display) -> HttpError {
     HttpError::internal(format!("session error: {error}"))

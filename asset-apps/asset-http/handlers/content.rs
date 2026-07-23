@@ -30,6 +30,7 @@ pub(crate) async fn upload_resource_content_stream(
     headers: HeaderMap,
     body: Body,
 ) -> Result<(StatusCode, Json<ResourceResponse>), HttpError> {
+    let workspace = state.workspace(&access.0).await?;
     let directory = query
         .directory
         .unwrap_or(ResourceDirectory::from_path("uploads")?);
@@ -57,7 +58,7 @@ pub(crate) async fn upload_resource_content_stream(
 
     Ok((
         StatusCode::CREATED,
-        Json(resource_response(state.service(), &resource)?),
+        Json(resource_response(state.service(), &workspace, &resource)?),
     ))
 }
 

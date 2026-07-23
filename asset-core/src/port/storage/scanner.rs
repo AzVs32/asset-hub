@@ -1,5 +1,6 @@
 use crate::domain::{ResourceDirectory, StorageKey};
 use crate::{CoreError, ResourceError};
+use chrono::{DateTime, Utc};
 use futures_core::Stream;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::pin::Pin;
@@ -76,6 +77,7 @@ pub struct ScannedBlob {
     pub key: StorageKey,
     pub size: u64,
     pub mime_type: Option<String>,
+    pub modified_at: DateTime<Utc>,
 }
 
 /// 存储扫描过程中逐项产生的条目。

@@ -1,6 +1,9 @@
+use asset_core::CoreError;
 use asset_core::domain::AccessContext;
 use asset_core::port::ResourceKindRegistry;
-use asset_core::service::{AuthorizationService, ResourceService, SecuredResourceService};
+use asset_core::service::{
+    AuthorizationService, ResourceService, SecuredResourceService, WorkspaceScope,
+};
 use std::sync::Arc;
 
 /// HTTP handler 共享状态。
@@ -31,6 +34,13 @@ impl HttpState {
 
     pub(crate) fn secured<'a>(&'a self, context: &'a AccessContext) -> SecuredResourceService<'a> {
         self.service.secured(&self.authorization, context)
+    }
+
+    pub(crate) async fn workspace(
+        &self,
+        context: &AccessContext,
+    ) -> Result<WorkspaceScope, CoreError> {
+        self.authorization.workspace_scope(context).await
     }
 
     /// 返回资源应用服务。

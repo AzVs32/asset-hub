@@ -248,7 +248,6 @@ function mapCurrentUser(value: Schemas["AuthenticatedUser"]): CurrentUser {
     id: value.id,
     username: value.username,
     role: value.is_admin ? "administrator" : "member",
-    workspaceDirectory: value.workspace_directory,
     isAdmin: value.is_admin,
   };
 }

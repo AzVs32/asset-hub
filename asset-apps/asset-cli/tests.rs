@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn parses_each_top_level_command_group() {
     for (args, expected) in [
-        (vec!["asset", "system"], "system"),
+        (vec!["asset", "system", "--scan-resource"], "system"),
         (vec!["asset", "user", "--list"], "user"),
         (vec!["asset", "plugin"], "plugin"),
     ] {
@@ -37,6 +37,17 @@ fn parses_config_check_and_show_with_optional_paths() {
 fn config_requires_exactly_one_operation() {
     assert!(Cli::try_parse_from(["asset", "config"]).is_err());
     assert!(Cli::try_parse_from(["asset", "config", "--check", "--show"]).is_err());
+}
+
+#[test]
+fn system_requires_an_operation() {
+    assert!(Cli::try_parse_from(["asset", "system"]).is_err());
+    assert!(matches!(
+        Cli::try_parse_from(["asset", "system", "--scan-resource"])
+            .unwrap()
+            .command,
+        Command::System(_)
+    ));
 }
 
 #[test]

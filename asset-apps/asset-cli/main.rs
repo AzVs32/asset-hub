@@ -39,7 +39,7 @@ async fn main() {
 async fn run(cli: Cli) -> CliResult {
     match cli.command {
         Command::Config(command) => config::run(command),
-        Command::System(command) => system::run(command),
+        Command::System(command) => system::run(command).await,
         Command::User(command) => user::run(command).await,
         Command::Plugin(command) => plugin::run(command),
     }

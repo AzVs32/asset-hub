@@ -29,6 +29,7 @@ use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 use storage::{FileSystemScanner, LocalStorageSync, OpenDalBlobStorage};
 
 pub type PluginWebAssets = HashMap<String, HashMap<PathBuf, Arc<[u8]>>>;
@@ -68,6 +69,7 @@ impl AssetInfrastructure {
                 Arc::new(FileSystemScanner::new(config.blob.local.root.clone())),
             ),
         };
+        let sqlite_started = Instant::now();
         let resource_repository = match config.database.backend {
             DatabaseBackend::Sqlite => {
                 let sqlite_path = config.sqlite_path();
@@ -80,18 +82,29 @@ impl AssetInfrastructure {
                 )
             }
         };
+        tracing::info!(
+            elapsed_ms = sqlite_started.elapsed().as_millis(),
+            "SQLite initialized"
+        );
         let identity_repository = Arc::new(SqliteIdentityRepository::new(
             resource_repository.pool().clone(),
         ));
         let security_audit_repository = Arc::new(SqliteSecurityAuditRepository::new(
             resource_repository.pool().clone(),
         ));
+        let plugin_catalog_started = Instant::now();
         let plugin_catalog = PluginCatalog::load(&config.kind)?;
+        tracing::info!(
+            elapsed_ms = plugin_catalog_started.elapsed().as_millis(),
+            manifests = config.kind.plugin_manifests.len(),
+            "plugin artifacts verified"
+        );
         let (resource_kind_registry, resource_action_registry) =
             registries_from_catalog(&config.kind, &plugin_catalog)?;
         let resource_kind_registry = Arc::new(resource_kind_registry);
         let resource_action_registry = Arc::new(resource_action_registry);
         let plugin_execution_policy = Arc::new(config.plugin.execution_policy()?);
+        let plugin_compile_started = Instant::now();
         let extism_action_executor = ExtismResourceActionExecutor::from_catalog(
             &plugin_catalog,
             resource_kind_registry.as_ref(),
@@ -99,6 +112,10 @@ impl AssetInfrastructure {
             plugin_execution_policy.clone(),
             &config.plugin.grants,
         )?;
+        tracing::info!(
+            elapsed_ms = plugin_compile_started.elapsed().as_millis(),
+            "plugins compiled"
+        );
         let resource_action_executor =
             Arc::new(DefaultResourceActionExecutor::new(extism_action_executor));
         let plugin_web_assets = plugin_web_assets_from_catalog(&plugin_catalog)?;
@@ -175,7 +192,6 @@ impl AssetInfrastructure {
             BlobBackend::Local if self.config.blob.local.sync.enabled => LocalStorageSync::start(
                 self.config.blob.local.root.clone(),
                 &self.config.blob.local.sync,
-                self.storage_scanner.clone(),
                 service,
             )
             .await

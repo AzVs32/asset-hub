@@ -1,10 +1,7 @@
-use super::FileSystemScanner;
 use crate::config::LocalBlobSyncConfig;
 use asset_core::CoreError;
 use asset_core::domain::StorageKey;
-use asset_core::port::{ScannedStorageEntry, StoragePrefix, StorageScanner};
 use asset_core::service::ResourceService;
-use futures_util::StreamExt;
 use notify::event::{AccessKind, AccessMode, ModifyKind, RenameMode};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashSet;
@@ -26,7 +23,6 @@ impl LocalStorageSync {
     pub async fn start(
         root: PathBuf,
         config: &LocalBlobSyncConfig,
-        scanner: Arc<FileSystemScanner>,
         service: ResourceService,
     ) -> Result<Self, CoreError> {
         let (sender, receiver) = mpsc::channel(EVENT_QUEUE_CAPACITY);
@@ -42,13 +38,14 @@ impl LocalStorageSync {
             .watch(&root, RecursiveMode::Recursive)
             .map_err(notify_error)?;
 
-        service.reconcile_storage().await?;
-        let known_directories = load_known_directories(scanner.as_ref()).await?;
+        tracing::info!("incremental storage reconciliation started");
+        let report = service.reconcile_storage().await?;
+        log_reconciliation("initial", &report);
+        let known_directories = report.directory_keys().iter().cloned().collect();
         let debounce = Duration::from_millis(config.debounce_milliseconds);
         let interval = Duration::from_secs(config.reconcile_interval_seconds);
         let task = tokio::spawn(run_sync_loop(
             root,
-            scanner,
             service,
             receiver,
             overflowed,
@@ -73,7 +70,6 @@ impl Drop for LocalStorageSync {
 #[allow(clippy::too_many_arguments)]
 async fn run_sync_loop(
     root: PathBuf,
-    scanner: Arc<FileSystemScanner>,
     service: ResourceService,
     mut receiver: mpsc::Receiver<notify::Result<Event>>,
     overflowed: Arc<AtomicBool>,
@@ -96,7 +92,6 @@ async fn run_sync_loop(
                 }
                 if let Err(error) = reconcile_events(
                     &root,
-                    scanner.as_ref(),
                     &service,
                     &mut known_directories,
                     events,
@@ -106,7 +101,7 @@ async fn run_sync_loop(
                 }
             }
             _ = interval.tick() => {
-                if let Err(error) = reconcile_all(scanner.as_ref(), &service, &mut known_directories).await {
+                if let Err(error) = reconcile_all(&service, &mut known_directories).await {
                     tracing::error!(error = %error, "periodic local storage reconciliation failed");
                 }
             }
@@ -116,7 +111,6 @@ async fn run_sync_loop(
 
 async fn reconcile_events(
     root: &Path,
-    scanner: &FileSystemScanner,
     service: &ResourceService,
     known_directories: &mut HashSet<StorageKey>,
     events: Vec<notify::Result<Event>>,
@@ -167,7 +161,7 @@ async fn reconcile_events(
     }
 
     if full_reconciliation {
-        return reconcile_all(scanner, service, known_directories).await;
+        return reconcile_all(service, known_directories).await;
     }
     for (from, to) in renames {
         service.reconcile_storage_rename(&from, &to).await?;
@@ -180,26 +174,27 @@ async fn reconcile_events(
 }
 
 async fn reconcile_all(
-    scanner: &FileSystemScanner,
     service: &ResourceService,
     known_directories: &mut HashSet<StorageKey>,
 ) -> Result<(), CoreError> {
-    service.reconcile_storage().await?;
-    *known_directories = load_known_directories(scanner).await?;
+    let report = service.reconcile_storage().await?;
+    log_reconciliation("periodic", &report);
+    *known_directories = report.directory_keys().iter().cloned().collect();
     Ok(())
 }
 
-async fn load_known_directories(
-    scanner: &FileSystemScanner,
-) -> Result<HashSet<StorageKey>, CoreError> {
-    let mut directories = HashSet::new();
-    let mut entries = scanner.scan(&StoragePrefix::root());
-    while let Some(entry) = entries.next().await {
-        if let ScannedStorageEntry::Directory(directory) = entry? {
-            directories.insert(StorageKey::new(directory.path().to_owned())?);
-        }
-    }
-    Ok(directories)
+fn log_reconciliation(phase: &str, report: &asset_core::service::StorageReconciliationReport) {
+    tracing::info!(
+        phase,
+        files = report.files,
+        hashed_files = report.hashed_files,
+        unchanged_files = report.unchanged_files,
+        directories = report.directories,
+        removed_resources = report.removed_resources,
+        elapsed_ms = report.elapsed.as_millis(),
+        hash_elapsed_ms = report.hash_elapsed.as_millis(),
+        "storage reconciliation completed"
+    );
 }
 
 fn storage_key_from_path(root: &Path, path: &Path) -> Result<Option<StorageKey>, CoreError> {

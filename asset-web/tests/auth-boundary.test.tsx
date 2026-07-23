@@ -20,7 +20,6 @@ describe("AuthBoundary", () => {
       id: "admin-1",
       username: "admin",
       role: "administrator" as const,
-      workspaceDirectory: "",
       isAdmin: true,
     }));
     const gateway = { currentUser, logout } as unknown as AssetGateway;
@@ -54,7 +53,7 @@ describe("AuthBoundary", () => {
     queryClient.clear();
   });
 
-  it("returns to a nested file URL after signing in", async () => {
+  it("starts a fresh root workspace after signing in", async () => {
     const currentUser = vi.fn(async () => {
       throw new AuthenticationRequiredError();
     });
@@ -62,13 +61,13 @@ describe("AuthBoundary", () => {
       id: "admin-1",
       username: "admin",
       role: "administrator" as const,
-      workspaceDirectory: "",
       isAdmin: true,
     }));
     const gateway = { currentUser, login } as unknown as AssetGateway;
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
+    queryClient.setQueryData(queryKeys.resource("file-1"), { id: "file-1" });
     const user = userEvent.setup();
 
     render(
@@ -88,11 +87,10 @@ describe("AuthBoundary", () => {
     await user.click(screen.getByRole("button", { name: "Sign in" }));
 
     await waitFor(() => {
-      expect(screen.getByTestId("location")).toHaveTextContent(
-        "/users/azvs/images?resource=file-1&page=2&q=photo",
-      );
+      expect(screen.getByTestId("location")).toHaveTextContent(/^\/$/);
     });
     expect(screen.getByText("Files")).toBeInTheDocument();
+    expect(queryClient.getQueryData(queryKeys.resource("file-1"))).toBeUndefined();
     queryClient.clear();
   });
 
@@ -104,7 +102,6 @@ describe("AuthBoundary", () => {
       id: "azvs-1",
       username: "azvs",
       role: "member" as const,
-      workspaceDirectory: "users/azvs",
       isAdmin: false,
     }));
     const gateway = { currentUser, login } as unknown as AssetGateway;
@@ -129,43 +126,6 @@ describe("AuthBoundary", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("location")).toHaveTextContent("/");
-    });
-    queryClient.clear();
-  });
-
-  it("removes a member's real workspace prefix from a preserved login URL", async () => {
-    const currentUser = vi.fn(async () => {
-      throw new AuthenticationRequiredError();
-    });
-    const login = vi.fn(async () => ({
-      id: "azvs-1",
-      username: "azvs",
-      role: "member" as const,
-      workspaceDirectory: "users/azvs",
-      isAdmin: false,
-    }));
-    const gateway = { currentUser, login } as unknown as AssetGateway;
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-    const user = userEvent.setup();
-
-    render(
-      <QueryClientProvider client={queryClient}>
-        <GatewayProvider gateway={gateway}>
-          <MemoryRouter initialEntries={["/users/azvs/images?q=photo"]}>
-            <TestRoutes protectedElement={<div>Files</div>} />
-          </MemoryRouter>
-        </GatewayProvider>
-      </QueryClientProvider>,
-    );
-
-    await user.type(await screen.findByLabelText("Username"), "azvs");
-    await user.type(screen.getByLabelText("Password"), "password");
-    await user.click(screen.getByRole("button", { name: "Sign in" }));
-
-    await waitFor(() => {
-      expect(screen.getByTestId("location")).toHaveTextContent("/images?q=photo");
     });
     queryClient.clear();
   });

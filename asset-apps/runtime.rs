@@ -26,12 +26,28 @@ impl AssetRuntime {
         Self::from_config(AssetInfraConfig::from_default_config_file()?).await
     }
 
+    /// 创建不启动自动存储同步的短生命周期维护运行时。
+    pub async fn from_default_config_file_without_storage_sync() -> Result<Self, CoreError> {
+        Self::from_config_inner(AssetInfraConfig::from_default_config_file()?, false).await
+    }
+
     /// 使用显式配置创建应用运行时。
     pub async fn from_config(config: AssetInfraConfig) -> Result<Self, CoreError> {
+        Self::from_config_inner(config, true).await
+    }
+
+    async fn from_config_inner(
+        config: AssetInfraConfig,
+        start_storage_sync: bool,
+    ) -> Result<Self, CoreError> {
         let infrastructure = AssetInfrastructure::new(config).await?;
-        let storage_sync = infrastructure
-            .start_storage_sync(infrastructure.resource_service())
-            .await?;
+        let storage_sync = if start_storage_sync {
+            infrastructure
+                .start_storage_sync(infrastructure.resource_service())
+                .await?
+        } else {
+            None
+        };
 
         Ok(Self {
             infrastructure,

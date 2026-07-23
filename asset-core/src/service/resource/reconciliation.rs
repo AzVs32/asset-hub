@@ -13,7 +13,26 @@ use crate::domain::{
 use crate::port::{ListResources, ScannedBlob, ScannedStorageEntry, StoragePrefix};
 use futures_util::StreamExt;
 use std::cmp::Reverse;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StorageReconciliationReport {
+    pub files: u64,
+    pub hashed_files: u64,
+    pub unchanged_files: u64,
+    pub directories: u64,
+    pub removed_resources: u64,
+    pub elapsed: Duration,
+    pub hash_elapsed: Duration,
+    directory_keys: Vec<StorageKey>,
+}
+
+impl StorageReconciliationReport {
+    pub fn directory_keys(&self) -> &[StorageKey] {
+        &self.directory_keys
+    }
+}
 
 pub(super) struct StorageReconciliationService<'a> {
     service: &'a ResourceService,
@@ -24,33 +43,69 @@ impl<'a> StorageReconciliationService<'a> {
         Self { service }
     }
 
-    pub(super) async fn reconcile_storage(&self) -> Result<(), CoreError> {
+    pub(super) async fn reconcile_storage(
+        &self,
+        force_checksum: bool,
+    ) -> Result<StorageReconciliationReport, CoreError> {
+        let started = Instant::now();
+        let resources = self.all_active_resources().await?;
+        let resources_by_key = resources
+            .iter()
+            .map(|resource| (resource.storage_key(), resource))
+            .collect::<HashMap<_, _>>();
         let mut entries = self.service.storage_scanner.scan(&StoragePrefix::root());
         let mut physical_directories = HashSet::new();
         let mut physical_keys = HashSet::new();
+        let mut report = StorageReconciliationReport::default();
         while let Some(entry) = entries.next().await {
             match entry? {
                 ScannedStorageEntry::Directory(directory) => {
                     self.service.repository.ensure_directory(&directory).await?;
                     physical_directories.insert(directory);
+                    report.directories += 1;
                 }
                 ScannedStorageEntry::Blob(file) => {
                     physical_keys.insert(file.key.clone());
-                    self.reconcile_scanned_blob(file).await?;
+                    report.files += 1;
+                    let unchanged = !force_checksum
+                        && resources_by_key.get(&file.key).is_some_and(|resource| {
+                            resource.content().is_some_and(|content| {
+                                content.size() == file.size
+                                    && content.modified_at() == Some(file.modified_at)
+                            })
+                        });
+                    if unchanged {
+                        report.unchanged_files += 1;
+                        continue;
+                    }
+                    report.hash_elapsed += self.reconcile_changed_blob(&file).await?;
+                    report.hashed_files += 1;
                 }
             }
         }
 
-        for resource in self.all_active_resources().await? {
-            if resource.content().is_some() && !physical_keys.contains(&resource.storage_key()) {
-                self.service
+        for resource in resources {
+            if resource.content().is_some()
+                && !physical_keys.contains(&resource.storage_key())
+                && self
+                    .service
                     .repository
                     .remove_if_unchanged(&resource.id(), resource.updated_at())
-                    .await?;
+                    .await?
+            {
+                report.removed_resources += 1;
             }
         }
-
-        self.reconcile_directories(physical_directories).await
+        report.directory_keys = physical_directories
+            .iter()
+            .map(|directory| StorageKey::new(directory.path().to_owned()))
+            .collect::<Result<Vec<_>, _>>()?;
+        report
+            .directory_keys
+            .sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        self.reconcile_directories(physical_directories).await?;
+        report.elapsed = started.elapsed();
+        Ok(report)
     }
 
     pub(super) async fn reconcile_storage_keys(
@@ -68,7 +123,7 @@ impl<'a> StorageReconciliationService<'a> {
 
         // 先处理目标路径，再移除源路径，使拆分为 From/To 的平台重命名事件仍有机会保留 ID。
         for file in existing {
-            self.reconcile_scanned_blob(file).await?;
+            self.reconcile_changed_blob(&file).await?;
         }
         for key in missing {
             self.remove_missing_blob_resource(key).await?;
@@ -93,7 +148,8 @@ impl<'a> StorageReconciliationService<'a> {
             .find_by_path(&from_directory, &from_name)
             .await?
         else {
-            return self.reconcile_scanned_blob(target).await;
+            self.reconcile_changed_blob(&target).await?;
+            return Ok(());
         };
         let (to_directory, to_name) = resource_path_from_key(to)?;
         if self
@@ -104,24 +160,22 @@ impl<'a> StorageReconciliationService<'a> {
             .is_some()
         {
             self.remove_missing_blob_resource(from).await?;
-            return self.reconcile_scanned_blob(target).await;
+            self.reconcile_changed_blob(&target).await?;
+            return Ok(());
         }
 
         let expected_updated_at = resource.updated_at();
         resource.rename(to_name)?;
         resource.move_to_directory(to_directory.clone())?;
-        let existing_content = resource.content().cloned();
-        if existing_content.as_ref().map(ResourceContent::size) != Some(target.size) {
-            let checksum = self.calculate_stored_blob_checksum(to, target.size).await?;
-            resource.attach_content(build_content(target.size, target.mime_type, checksum)?)?;
-        } else if let Some(content) = existing_content
-            && content.mime_type() != target.mime_type.as_deref()
-        {
-            resource.attach_content(build_content(
-                target.size,
-                target.mime_type,
-                content.checksum().clone(),
-            )?)?;
+        let checksum = self.calculate_stored_blob_checksum(to, target.size).await?;
+        let content = build_content(
+            target.size,
+            target.mime_type.clone(),
+            checksum,
+            Some(target.modified_at),
+        )?;
+        if resource.content() != Some(&content) {
+            resource.attach_content(content)?;
         }
         self.service
             .repository
@@ -141,15 +195,26 @@ impl<'a> StorageReconciliationService<'a> {
         Ok(())
     }
 
-    async fn reconcile_scanned_blob(&self, file: ScannedBlob) -> Result<(), CoreError> {
+    async fn reconcile_changed_blob(&self, file: &ScannedBlob) -> Result<Duration, CoreError> {
+        self.reconcile_scanned_blob(file).await
+    }
+
+    async fn reconcile_scanned_blob(&self, file: &ScannedBlob) -> Result<Duration, CoreError> {
         let (directory, name) = resource_path_from_key(&file.key)?;
+        let hash_started = Instant::now();
         let checksum = self
             .calculate_stored_blob_checksum(&file.key, file.size)
             .await?;
-        let content = build_content(file.size, file.mime_type.clone(), checksum)?;
+        let hash_elapsed = hash_started.elapsed();
+        let content = build_content(
+            file.size,
+            file.mime_type.clone(),
+            checksum,
+            Some(file.modified_at),
+        )?;
         if let Some(mut resource) = self.service.query.find_by_path(&directory, &name).await? {
             if resource.content() == Some(&content) {
-                return Ok(());
+                return Ok(hash_elapsed);
             }
             let expected_updated_at = resource.updated_at();
             resource.attach_content(content)?;
@@ -164,7 +229,7 @@ impl<'a> StorageReconciliationService<'a> {
                     resource.id()
                 )));
             }
-            return Ok(());
+            return Ok(hash_elapsed);
         }
 
         if let Some(mut resource) = self.find_missing_rename_candidate(&content).await? {
@@ -184,7 +249,7 @@ impl<'a> StorageReconciliationService<'a> {
                     resource.id()
                 )));
             }
-            return Ok(());
+            return Ok(hash_elapsed);
         }
 
         let kind = self.service.resolve_content_kind(
@@ -204,7 +269,7 @@ impl<'a> StorageReconciliationService<'a> {
         .build()?;
         self.ensure_directory(&directory).await?;
         self.service.repository.save(&resource).await?;
-        Ok(())
+        Ok(hash_elapsed)
     }
 
     async fn find_missing_rename_candidate(
@@ -253,10 +318,9 @@ impl<'a> StorageReconciliationService<'a> {
 
     async fn remove_missing_blob_resource(&self, key: &StorageKey) -> Result<(), CoreError> {
         let (directory, name) = resource_path_from_key(key)?;
-        let Some(resource) = self.service.query.find_by_path(&directory, &name).await? else {
-            return Ok(());
-        };
-        if resource.content().is_some() {
+        if let Some(resource) = self.service.query.find_by_path(&directory, &name).await?
+            && resource.content().is_some()
+        {
             self.service
                 .repository
                 .remove_if_unchanged(&resource.id(), resource.updated_at())

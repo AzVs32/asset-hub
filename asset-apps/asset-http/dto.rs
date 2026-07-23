@@ -33,7 +33,7 @@ pub(crate) struct CreateResourceRequest {
     pub(crate) kind: Option<String>,
     /// 可选初始状态：`active` 或 `archived`。
     pub(crate) status: Option<String>,
-    /// 资源所在逻辑目录；根目录为空字符串。
+    /// 相对于当前用户可见根目录的路径；根目录为空字符串。
     #[schema(value_type = Option<String>)]
     pub(crate) directory: Option<ResourceDirectory>,
     /// 可选资源描述。
@@ -45,7 +45,7 @@ pub(crate) struct CreateResourceRequest {
 /// 创建逻辑目录请求。
 #[derive(Debug, Deserialize, ToSchema)]
 pub(crate) struct CreateDirectoryRequest {
-    /// 父目录路径，根目录为空字符串。
+    /// 相对于当前用户可见根目录的父路径；根目录为空字符串。
     #[serde(default)]
     #[schema(value_type = String)]
     pub(crate) parent_path: ResourceDirectory,
@@ -69,7 +69,7 @@ pub(crate) struct ListResourcesQuery {
     pub(crate) tag: Option<String>,
     /// 可选名称模糊搜索关键字。
     pub(crate) q: Option<String>,
-    /// 可选逻辑目录过滤；根目录为空字符串。
+    /// 相对于当前用户可见根目录的过滤路径；根目录为空字符串。
     #[param(value_type = Option<String>)]
     pub(crate) directory: Option<ResourceDirectory>,
     /// 是否包含软删除资源。
@@ -80,7 +80,7 @@ pub(crate) struct ListResourcesQuery {
 #[derive(Debug, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub(crate) struct ListDirectoryQuery {
-    /// 当前目录路径；根目录为空字符串。
+    /// 相对于当前用户可见根目录的路径；根目录为空字符串。
     #[param(value_type = Option<String>)]
     pub(crate) path: Option<ResourceDirectory>,
     /// 资源页码，从 1 开始。
@@ -116,7 +116,7 @@ pub(crate) struct UpdateResourceRequest {
     pub(crate) kind: Option<String>,
     /// 可选新状态：`active` 或 `archived`。
     pub(crate) status: Option<String>,
-    /// 可选新逻辑目录；根目录为空字符串。
+    /// 相对于当前用户可见根目录的新路径；根目录为空字符串。
     #[schema(value_type = Option<String>)]
     pub(crate) directory: Option<ResourceDirectory>,
     /// 资源描述补丁：缺省表示不修改，`null` 表示清空。
@@ -136,7 +136,7 @@ pub(crate) struct UpdateResourceRequest {
 pub(crate) struct UploadResourceContentStreamQuery {
     /// 资源文件名；与目录共同决定对象存储路径。
     pub(crate) name: String,
-    /// 可选上传目录。
+    /// 相对于当前用户可见根目录的上传路径。
     #[param(value_type = Option<String>)]
     #[schema(value_type = Option<String>)]
     pub(crate) directory: Option<ResourceDirectory>,
@@ -393,7 +393,7 @@ pub(crate) struct ResourceResponse {
     pub(crate) id: String,
     /// 资源展示名。
     pub(crate) name: String,
-    /// 资源所在逻辑目录，根目录为空字符串。
+    /// 相对于当前用户可见根目录的路径；根目录为空字符串。
     #[schema(value_type = String)]
     pub(crate) directory: ResourceDirectory,
     /// 资源类型。
@@ -439,9 +439,9 @@ pub(crate) struct ResourcePageResponse {
 /// 逻辑目录响应。
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct ResourceDirectoryResponse {
-    /// 目录完整路径。
+    /// 相对于当前用户可见根目录的路径。
     pub(crate) path: String,
-    /// 父目录路径。
+    /// 相对于当前用户可见根目录的父路径。
     pub(crate) parent_path: String,
     /// 当前目录名。
     pub(crate) name: String,
@@ -450,7 +450,7 @@ pub(crate) struct ResourceDirectoryResponse {
 /// 目录浏览响应。
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct DirectoryListingResponse {
-    /// 当前目录路径。
+    /// 相对于当前用户可见根目录的当前路径。
     #[schema(value_type = String)]
     pub(crate) path: ResourceDirectory,
     /// 直接子目录。
@@ -556,11 +556,15 @@ impl From<&ReadableResource> for ResourceReadResponse {
 }
 
 impl ResourceResponse {
-    pub(crate) fn new(resource: &Resource, actions: ResourceActions) -> Self {
+    pub(crate) fn new(
+        resource: &Resource,
+        directory: ResourceDirectory,
+        actions: ResourceActions,
+    ) -> Self {
         Self {
             id: resource.id().to_string(),
             name: resource.name().to_string(),
-            directory: resource.directory().clone(),
+            directory,
             kind: resource.kind().as_str().to_string(),
             status: resource.status().as_str().to_string(),
             description: resource.description().map(str::to_string),

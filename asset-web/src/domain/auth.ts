@@ -5,7 +5,6 @@ export interface CurrentUser {
   id: string;
   username: string;
   role: UserRole;
-  workspaceDirectory: string;
   isAdmin: boolean;
 }
 

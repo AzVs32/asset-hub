@@ -323,7 +323,6 @@ export interface components {
             id: string;
             is_admin: boolean;
             username: string;
-            workspace_directory: string;
         };
         /**
          * Format: binary

@@ -4,6 +4,7 @@ use asset_core::port::{
     RESERVED_BLOB_STORAGE_PREFIX, ScannedBlob, ScannedStorageEntry, StoragePrefix,
     StorageScanStream, StorageScanner,
 };
+use chrono::{DateTime, Utc};
 use std::path::{Component, Path, PathBuf};
 use tokio::sync::mpsc;
 
@@ -76,6 +77,7 @@ fn inspect_file(root: &Path, key: &StorageKey) -> Result<Option<ScannedBlob>, Co
         key: key.clone(),
         size: metadata.len(),
         mime_type: content_type_from_path(&path).map(str::to_owned),
+        modified_at: modified_at(&metadata)?,
     }))
 }
 
@@ -158,12 +160,20 @@ fn visit_directory(
             key: StorageKey::new(relative_storage_path(root, &path)?)?,
             size: metadata.len(),
             mime_type: content_type_from_path(&path).map(str::to_owned),
+            modified_at: modified_at(&metadata)?,
         };
         if !emit(ScannedStorageEntry::Blob(blob)) {
             return Ok(false);
         }
     }
     Ok(true)
+}
+
+fn modified_at(metadata: &std::fs::Metadata) -> Result<DateTime<Utc>, CoreError> {
+    metadata
+        .modified()
+        .map(DateTime::<Utc>::from)
+        .map_err(|error| CoreError::storage("scan.modified_at", error))
 }
 
 fn relative_storage_path(root: &Path, path: &Path) -> Result<String, CoreError> {

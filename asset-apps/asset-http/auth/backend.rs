@@ -7,8 +7,6 @@ pub(crate) struct AuthenticatedUser {
     pub id: UserId,
     pub username: String,
     pub is_admin: bool,
-    #[schema(value_type = String)]
-    pub workspace_directory: ResourceDirectory,
     #[serde(skip)]
     pub(super) credential_hash: String,
 }
@@ -19,7 +17,6 @@ impl From<User> for AuthenticatedUser {
             id: user.id(),
             username: user.username().to_owned(),
             is_admin: user.is_administrator(),
-            workspace_directory: user.workspace_directory().clone(),
             credential_hash: user.credential_hash().to_owned(),
         }
     }
@@ -54,20 +51,14 @@ pub(crate) struct Credentials {
 #[derive(Clone)]
 pub(crate) struct AuthBackend {
     pub(super) users: UserService,
-    pub(super) authorization: AuthorizationService,
     pub(super) audit: Arc<dyn SecurityAuditRepository>,
     pub(super) login_failures: Arc<Mutex<LoginFailureCache>>,
 }
 
 impl AuthBackend {
-    pub(crate) fn new(
-        users: UserService,
-        authorization: AuthorizationService,
-        audit: Arc<dyn SecurityAuditRepository>,
-    ) -> Self {
+    pub(crate) fn new(users: UserService, audit: Arc<dyn SecurityAuditRepository>) -> Self {
         Self {
             users,
-            authorization,
             audit,
             login_failures: Arc::new(Mutex::new(LoginFailureCache::default())),
         }

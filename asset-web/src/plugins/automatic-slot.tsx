@@ -1,8 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useGateway } from "@/application/ports/gateway-context";
-import type { WorkspaceResource } from "@/application/workspace/workspace-scope";
-import { useWorkspaceScope } from "@/application/workspace/workspace-scope-context";
-import type { ResourceAction } from "@/domain/resource";
+import type { Resource, ResourceAction } from "@/domain/resource";
 import { usePluginKernel } from "@/kernel/plugin-kernel";
 import type { HostSlot } from "@/kernel/slots";
 import { ErrorState, LoadingState } from "@/shared/ui/state";
@@ -14,7 +12,7 @@ export function AutomaticSlot({
   onResourceChanged,
 }: {
   slot: HostSlot;
-  resource: WorkspaceResource;
+  resource: Resource;
   onResourceChanged?: (() => void | Promise<void>) | undefined;
 }) {
   const kernel = usePluginKernel();
@@ -42,14 +40,13 @@ function AutomaticAction({
   onResourceChanged,
 }: {
   action: ResourceAction;
-  resource: WorkspaceResource;
+  resource: Resource;
   onResourceChanged?: (() => void | Promise<void>) | undefined;
 }) {
   const gateway = useGateway();
-  const scope = useWorkspaceScope();
   const result = useQuery({
     queryKey: ["plugin-slot", resource.id, resource.updatedAt, action.id],
-    queryFn: () => gateway.executeAction(scope.toStorageResource(resource), action.id),
+    queryFn: () => gateway.executeAction(resource, action.id),
     retry: false,
   });
   return (

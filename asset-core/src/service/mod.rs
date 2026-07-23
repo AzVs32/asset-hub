@@ -10,12 +10,12 @@ mod authorization;
 mod resource;
 mod user;
 
-pub use authorization::AuthorizationService;
+pub use authorization::{AuthorizationService, WorkspaceScope};
 pub use user::UserService;
 
 pub use resource::{
     CreateResource, ExecuteResourceAction, ReadableResource, ResourceActions,
     ResourceContentCommand, ResourceContentStream, ResourcePreviewStream, ResourceService,
-    ResourceServicePorts, ResourceThumbnail, SecuredResourceService, UpdateResource,
-    UploadResourceContentStream,
+    ResourceServicePorts, ResourceThumbnail, SecuredResourceService, StorageReconciliationReport,
+    UpdateResource, UploadResourceContentStream,
 };

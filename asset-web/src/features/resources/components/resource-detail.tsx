@@ -13,11 +13,7 @@ import {
 import React from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import type {
-  WorkspaceResource,
-  WorkspaceResourceDraft,
-} from "@/application/workspace/workspace-scope";
-import type { ResourceAction, ResourceKind } from "@/domain/resource";
+import type { Resource, ResourceAction, ResourceDraft, ResourceKind } from "@/domain/resource";
 import { draftFromResource, formatBytes, formatDate } from "@/domain/resource-draft";
 import { usePluginKernel } from "@/kernel/plugin-kernel";
 import { hostSlots } from "@/kernel/slots";
@@ -44,10 +40,10 @@ export function ResourceDetail({
   onRestore,
   onResourceChanged,
 }: {
-  resource: WorkspaceResource | null;
+  resource: Resource | null;
   kinds: ResourceKind[];
   pending: boolean;
-  onSave: (draft: WorkspaceResourceDraft) => Promise<unknown>;
+  onSave: (draft: ResourceDraft) => Promise<unknown>;
   onAction: (action: ResourceAction) => void;
   onDelete: () => void;
   onRestore: () => void;
@@ -87,10 +83,10 @@ function Detail({
   onRestore,
   onResourceChanged,
 }: {
-  resource: WorkspaceResource;
+  resource: Resource;
   kinds: ResourceKind[];
   pending: boolean;
-  onSave: (draft: WorkspaceResourceDraft) => Promise<unknown>;
+  onSave: (draft: ResourceDraft) => Promise<unknown>;
   onAction: (action: ResourceAction) => void;
   onDelete: () => void;
   onRestore: () => void;
@@ -102,7 +98,7 @@ function Detail({
     ...resource,
     directory: resource.directory || "/",
   };
-  const form = useForm<WorkspaceResourceDraft>({
+  const form = useForm<ResourceDraft>({
     resolver: zodResolver(draftSchema),
     defaultValues: draftFromResource(displayResource),
   });

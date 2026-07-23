@@ -116,12 +116,14 @@ passwords, tokens, and other secret CLI arguments are never stored. Audit
 persistence is fail-open: a temporary audit write error is logged without
 replacing the business response.
 
-Local Blob storage is synchronized automatically. Native file-system events are
+Local Blob storage is synchronized automatically. Startup reconciliation uses persisted file
+modification times and resource content sizes, hashing only new or changed files. Run
+`asset system --scan-resource` for an explicit full SHA-256 verification. Native file-system events are
 debounced for near-real-time updates, while startup and periodic reconciliation
 repair changes missed while the process was stopped. New and modified files
 update Resource content and checksums, external deletes remove the corresponding
 database record, directory changes synchronize the directory table, and the
-reserved `.asset-hub` namespace is always ignored. There is no manual scan API.
+reserved `.asset-hub` namespace is always ignored.
 
 Plugin write actions can update object bytes through `replace_content`. Runtime
 errors are compensated, but the current OpenDAL-backed replacement flow is not a

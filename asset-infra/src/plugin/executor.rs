@@ -245,6 +245,13 @@ impl ResourceActionExecutor for ExtismResourceActionExecutor {
         verify_permissions(binding, &request)?;
         verify_content_budget(binding, &request, &self.policy)?;
 
+        let resource_id = request.resource().id();
+        let operation = request
+            .input()
+            .get("operation")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("initial")
+            .to_owned();
         let queued_at = std::time::Instant::now();
         let permit = self
             .call_slots
@@ -278,9 +285,11 @@ impl ResourceActionExecutor for ExtismResourceActionExecutor {
         .and_then(|output| output);
         let elapsed_ms = started_at.elapsed().as_millis() as u64;
         match &output {
-            Ok(_) => tracing::info!(
+            Ok(_) => tracing::debug!(
                 plugin = %plugin_id,
                 action = %action_id,
+                resource_id = %resource_id,
+                operation = %operation,
                 queue_ms,
                 elapsed_ms,
                 "plugin action completed"
@@ -288,6 +297,8 @@ impl ResourceActionExecutor for ExtismResourceActionExecutor {
             Err(error) => tracing::warn!(
                 plugin = %plugin_id,
                 action = %action_id,
+                resource_id = %resource_id,
+                operation = %operation,
                 queue_ms,
                 elapsed_ms,
                 error = %error,

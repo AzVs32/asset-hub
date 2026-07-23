@@ -1,13 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import React from "react";
 import { Navigate, Outlet, useLocation } from "react-router";
-import { canonicalWorkspaceLocation, defaultDirectoryPath, LOGIN_PATH } from "@/app/paths";
+import { defaultDirectoryPath, LOGIN_PATH } from "@/app/paths";
 import { AuthenticationRequiredError } from "@/application/errors";
 import { useGateway } from "@/application/ports/gateway-context";
 import { queryKeys } from "@/application/queries/keys";
-import { createWorkspaceScope } from "@/application/workspace/workspace-scope";
-import { WorkspaceScopeProvider } from "@/application/workspace/workspace-scope-context";
-import type { CurrentUser } from "@/domain/auth";
 import { LoadingState } from "@/shared/ui/state";
 import { LoginForm } from "./login-form";
 import { SessionProvider } from "./session-context";
@@ -26,13 +23,7 @@ export function AuthBoundary() {
   if (session.isPending) return <LoadingState label="Opening workspace" />;
   if (!session.data) {
     if (location.pathname !== LOGIN_PATH) {
-      return (
-        <Navigate
-          to={LOGIN_PATH}
-          state={{ from: `${location.pathname}${location.search}${location.hash}` }}
-          replace
-        />
-      );
+      return <Navigate to={LOGIN_PATH} replace />;
     }
     const error =
       session.isError && !(session.error instanceof AuthenticationRequiredError)
@@ -42,14 +33,12 @@ export function AuthBoundary() {
   }
 
   if (location.pathname === LOGIN_PATH) {
-    return <Navigate to={loginDestination(location.state, session.data)} replace />;
+    return <Navigate to={defaultDirectoryPath()} replace />;
   }
 
   return (
     <SessionProvider user={session.data}>
-      <WorkspaceScopeProvider user={session.data}>
-        <Outlet />
-      </WorkspaceScopeProvider>
+      <Outlet />
     </SessionProvider>
   );
 
@@ -57,24 +46,12 @@ export function AuthBoundary() {
     setLoginError(null);
     try {
       const user = await gateway.login(input.username, input.password);
+      queryClient.removeQueries({
+        predicate: (query) => query.queryKey[0] !== queryKeys.session[0],
+      });
       queryClient.setQueryData(queryKeys.session, user);
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : "Sign in failed");
     }
   }
-}
-
-function loginDestination(state: unknown, user: CurrentUser) {
-  if (state && typeof state === "object" && "from" in state) {
-    const from = (state as { from?: unknown }).from;
-    if (
-      typeof from === "string" &&
-      from.startsWith("/") &&
-      !from.startsWith("//") &&
-      from !== LOGIN_PATH
-    ) {
-      return canonicalWorkspaceLocation(from, createWorkspaceScope(user));
-    }
-  }
-  return defaultDirectoryPath();
 }

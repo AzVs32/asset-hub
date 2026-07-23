@@ -31,6 +31,7 @@ pub use contract::{
     UpdateResource, UploadResourceContentStream,
 };
 use preview::ResourcePreviewService;
+pub use reconciliation::StorageReconciliationReport;
 use reconciliation::StorageReconciliationService;
 pub use secured::SecuredResourceService;
 
@@ -165,9 +166,14 @@ impl ResourceService {
         self.blob_storage.health_check().await
     }
 
-    /// 将对象存储的完整最终状态协调到 Resource 与目录仓储。
-    pub async fn reconcile_storage(&self) -> Result<(), CoreError> {
-        self.reconciliation().reconcile_storage().await
+    /// 使用大小与修改时间增量协调对象存储。
+    pub async fn reconcile_storage(&self) -> Result<StorageReconciliationReport, CoreError> {
+        self.reconciliation().reconcile_storage(false).await
+    }
+
+    /// 完整读取全部对象并重新计算校验和。
+    pub async fn scan_resources(&self) -> Result<StorageReconciliationReport, CoreError> {
+        self.reconciliation().reconcile_storage(true).await
     }
 
     /// 协调一组发生变化的对象路径。

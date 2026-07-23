@@ -1,6 +1,5 @@
 import React from "react";
 import type { AssetGateway } from "@/application/ports/asset-gateway";
-import type { WorkspaceResource } from "@/application/workspace/workspace-scope";
 import type { PluginActionOutput, PluginView, PluginViewKind } from "@/domain/plugin";
 import type { Resource, ResourceAction } from "@/domain/resource";
 import { type HostSlot, hostSlots } from "./slots";
@@ -8,7 +7,7 @@ import { type HostSlot, hostSlots } from "./slots";
 export interface PluginViewRendererProps {
   view: PluginView;
   output: PluginActionOutput;
-  resource: WorkspaceResource;
+  resource: Resource;
   gateway: AssetGateway;
   onResourceChanged?: (() => void | Promise<void>) | undefined;
 }

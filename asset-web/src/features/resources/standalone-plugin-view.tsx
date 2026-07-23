@@ -1,23 +1,20 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams } from "react-router";
 import { useGateway } from "@/application/ports/gateway-context";
-import { useWorkspaceScope } from "@/application/workspace/workspace-scope-context";
 import { PluginOutput } from "@/plugins/plugin-output";
 import { ErrorState, LoadingState } from "@/shared/ui/state";
 
 export function StandalonePluginView() {
   const gateway = useGateway();
-  const scope = useWorkspaceScope();
   const queryClient = useQueryClient();
   const { resourceId = "", actionId = "" } = useParams();
   const result = useQuery({
     queryKey: ["standalone-plugin-view", resourceId, actionId],
     queryFn: async () => {
-      const storageResource = await gateway.findResource(resourceId);
-      const resource = scope.toVisibleResource(storageResource);
+      const resource = await gateway.findResource(resourceId);
       const action = resource.actions.find((candidate) => candidate.id === actionId);
       if (!action) throw new Error(`Action ${actionId} is not available.`);
-      return { resource, output: await gateway.executeAction(storageResource, action.id) };
+      return { resource, output: await gateway.executeAction(resource, action.id) };
     },
     retry: false,
   });

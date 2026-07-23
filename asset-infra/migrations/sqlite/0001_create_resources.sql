@@ -12,7 +12,8 @@ CREATE TABLE IF NOT EXISTS resources (
     status TEXT NOT NULL,
     -- 可选的资源描述，最多 1024 个字符。
     description TEXT,
-    -- 可选的对象内容属性，包含大小、MIME 类型和服务端计算的单个校验和；
+    -- 可选的对象内容属性，包含大小、MIME 类型、服务端计算的单个校验和，
+    -- 以及最近一次成功协调时观察到的物理存储修改时间；
     content_json TEXT,
     -- 资源创建时间，使用 RFC 3339 文本表示。
     created_at TEXT NOT NULL,

@@ -1,5 +1,6 @@
 use super::{ResourceDirectory, normalize_required_text, validate_required_text_exact};
 use crate::error::ResourceError;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
@@ -15,7 +16,8 @@ const MAX_STORAGE_KEY_LEN: usize = 1024;
 
 /// 资源内容引用。
 ///
-/// 内容本体由外部存储系统管理，本结构只保存内容自身的不可变属性。
+/// 内容本体由外部存储系统管理，本结构保存内容属性，以及最近一次成功协调时观察到的
+/// 物理对象修改时间。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResourceContent {
     /// 内容字节大小。
@@ -24,6 +26,9 @@ pub struct ResourceContent {
     mime_type: Option<String>,
     /// 根据内容本体计算得到的唯一校验和。
     checksum: Checksum,
+    /// 最近一次成功协调时观察到的物理存储修改时间。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    modified_at: Option<DateTime<Utc>>,
 }
 
 impl ResourceContent {
@@ -46,6 +51,11 @@ impl ResourceContent {
     pub fn checksum(&self) -> &Checksum {
         &self.checksum
     }
+
+    /// 返回最近一次成功协调时观察到的物理存储修改时间。
+    pub fn modified_at(&self) -> Option<DateTime<Utc>> {
+        self.modified_at
+    }
 }
 
 /// 资源内容引用构建器。
@@ -57,6 +67,8 @@ pub struct ResourceContentBuilder {
     mime_type: Option<String>,
     /// 根据内容本体计算得到的唯一校验和。
     checksum: Checksum,
+    /// 最近一次成功协调时观察到的物理存储修改时间。
+    modified_at: Option<DateTime<Utc>>,
 }
 
 impl ResourceContentBuilder {
@@ -66,12 +78,19 @@ impl ResourceContentBuilder {
             size,
             mime_type: None,
             checksum,
+            modified_at: None,
         }
     }
 
     /// 设置内容 MIME 类型。
     pub fn with_mime_type(mut self, mime_type: impl Into<String>) -> Self {
         self.mime_type = Some(mime_type.into());
+        self
+    }
+
+    /// 设置最近一次成功协调时观察到的物理存储修改时间。
+    pub fn with_modified_at(mut self, modified_at: DateTime<Utc>) -> Self {
+        self.modified_at = Some(modified_at);
         self
     }
 
@@ -88,6 +107,7 @@ impl ResourceContentBuilder {
             size: self.size,
             mime_type,
             checksum: self.checksum,
+            modified_at: self.modified_at,
         })
     }
 }

@@ -150,3 +150,61 @@ async fn administrator_access_does_not_depend_on_a_workspace() {
             .is_ok()
     );
 }
+
+#[tokio::test]
+async fn member_workspace_scope_resolves_and_projects_relative_paths() {
+    let user = User::new(
+        "alice",
+        "credential-hash",
+        UserRole::Member,
+        ResourceDirectory::from_path("users/alice").unwrap(),
+    )
+    .unwrap();
+    let actor = AccessContext::member(user.id());
+    let service = AuthorizationService::new(Arc::new(Users::with_user(user)));
+    let scope = service.workspace_scope(&actor).await.unwrap();
+
+    assert_eq!(
+        scope.resolve(&ResourceDirectory::root()).unwrap().path(),
+        "users/alice"
+    );
+    assert_eq!(
+        scope
+            .resolve(&ResourceDirectory::from_path("images/raw").unwrap())
+            .unwrap()
+            .path(),
+        "users/alice/images/raw"
+    );
+    assert_eq!(
+        scope
+            .project(&ResourceDirectory::from_path("users/alice").unwrap())
+            .unwrap()
+            .path(),
+        ""
+    );
+    assert_eq!(
+        scope
+            .project(&ResourceDirectory::from_path("users/alice/images/raw").unwrap())
+            .unwrap()
+            .path(),
+        "images/raw"
+    );
+    assert!(
+        scope
+            .project(&ResourceDirectory::from_path("users/bob").unwrap())
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn administrator_workspace_scope_is_identity() {
+    let service = AuthorizationService::new(Arc::new(Users::default()));
+    let scope = service
+        .workspace_scope(&AccessContext::administrator(UserId::new()))
+        .await
+        .unwrap();
+    let directory = ResourceDirectory::from_path("images/raw").unwrap();
+
+    assert_eq!(scope.resolve(&directory).unwrap(), directory);
+    assert_eq!(scope.project(&directory).unwrap(), directory);
+}

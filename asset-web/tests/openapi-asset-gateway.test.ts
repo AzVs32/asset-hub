@@ -24,7 +24,6 @@ describe("OpenApiAssetGateway URL boundary", () => {
             id: "user-1",
             username: "alice",
             is_admin: false,
-            workspace_directory: "users/alice",
           },
         },
         { status: 201 },

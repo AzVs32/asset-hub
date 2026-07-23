@@ -1,6 +1,6 @@
 import type { AssetGateway } from "@/application/ports/asset-gateway";
-import type { WorkspaceResource } from "@/application/workspace/workspace-scope";
 import type { PluginActionOutput } from "@/domain/plugin";
+import type { Resource } from "@/domain/resource";
 import { usePluginKernel } from "./plugin-kernel";
 
 export function PluginViewHost({
@@ -10,7 +10,7 @@ export function PluginViewHost({
   onResourceChanged,
 }: {
   output: PluginActionOutput;
-  resource: WorkspaceResource;
+  resource: Resource;
   gateway: AssetGateway;
   onResourceChanged?: (() => void | Promise<void>) | undefined;
 }) {
