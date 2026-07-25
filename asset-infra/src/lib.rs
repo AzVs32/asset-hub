@@ -2,7 +2,7 @@ pub mod action;
 pub mod config;
 pub mod kind;
 pub mod migration;
-pub mod official_plugins;
+mod official_plugins;
 pub mod password;
 pub mod plugin;
 mod plugin_manifest;

@@ -2,7 +2,7 @@ use asset_core::CoreError;
 use asset_core::port::{DirectoryKindRegistry, ResourceKindRegistry, SecurityAuditRepository};
 use asset_core::service::{AuthorizationService, ResourceService, UserService};
 use asset_infra::AssetInfrastructure;
-use asset_infra::config::{AssetInfraConfig, DEFAULT_CONFIG_FILE};
+use asset_infra::config::AssetInfraConfig;
 use asset_infra::storage::LocalStorageSync;
 use std::path::Path;
 use std::sync::Arc;
@@ -70,7 +70,7 @@ impl AssetRuntime {
 
     /// 返回默认配置文件名。
     pub fn default_config_file() -> &'static str {
-        DEFAULT_CONFIG_FILE
+        AssetInfraConfig::default_config_file_name()
     }
 
     /// 返回实际生效的基础设施配置。
