@@ -665,8 +665,7 @@ fn service() -> (
     Arc<InMemoryBlobStorage>,
 ) {
     let kind_registry = Arc::new(InMemoryResourceKindRegistry::with_definitions(vec![
-        ResourceKindDefinition::new(ResourceKind::default(), "Unknown", true),
-        ResourceKindDefinition::new(ResourceKind::try_new("core:file").unwrap(), "File", true),
+        ResourceKindDefinition::new(ResourceKind::default(), "Resource", true),
         ResourceKindDefinition::new(
             ResourceKind::try_new("doc:markdown").unwrap(),
             "Markdown",
@@ -1021,7 +1020,7 @@ fn create_resource_saves_resource_without_content() {
     let resource = block_on(
         service.commands().create_resource(
             CreateResource::new(" Design Doc ")
-                .with_kind("doc:markdown")
+                .with_kind(ResourceKind::try_new("doc:markdown").unwrap())
                 .with_description(" Design document ")
                 .with_tags(["rust", "asset"]),
         ),
@@ -1047,11 +1046,9 @@ fn create_resource_saves_resource_without_content() {
 #[test]
 fn update_resource_rejects_a_stale_authorized_snapshot() {
     let (service, repository, _) = service();
-    let resource = block_on(
-        service
-            .commands()
-            .create_resource(CreateResource::new("original").with_kind("doc:markdown")),
-    )
+    let resource = block_on(service.commands().create_resource(
+        CreateResource::new("original").with_kind(ResourceKind::try_new("doc:markdown").unwrap()),
+    ))
     .unwrap();
     let stale = resource.clone();
     let mut concurrent = resource;
@@ -1076,9 +1073,10 @@ fn update_resource_rejects_a_stale_authorized_snapshot() {
 fn resource_without_content_describes_only_actions_without_content_requirements() {
     let (service, _, _) = service();
     let resource = block_on(
-        service
-            .commands()
-            .create_resource(CreateResource::new("contentless").with_kind("doc:markdown")),
+        service.commands().create_resource(
+            CreateResource::new("contentless")
+                .with_kind(ResourceKind::try_new("doc:markdown").unwrap()),
+        ),
     )
     .unwrap();
 
@@ -1099,9 +1097,10 @@ fn resource_without_content_describes_only_actions_without_content_requirements(
 fn resource_without_content_rejects_direct_content_action_execution() {
     let (service, _, _) = service();
     let resource = block_on(
-        service
-            .commands()
-            .create_resource(CreateResource::new("contentless").with_kind("doc:markdown")),
+        service.commands().create_resource(
+            CreateResource::new("contentless")
+                .with_kind(ResourceKind::try_new("doc:markdown").unwrap()),
+        ),
     )
     .unwrap();
 
@@ -1124,7 +1123,7 @@ fn stream_upload_resource_content_writes_blob_then_saves_resource() {
     let resource = block_on(
         service.content().upload_resource_content_stream(
             stream_upload_command("image", key.clone(), data.clone())
-                .with_kind("core:image")
+                .with_kind(ResourceKind::try_new("core:image").unwrap())
                 .with_mime_type(" image/png "),
         ),
     )
@@ -1164,7 +1163,7 @@ fn stream_upload_preserves_spaces_in_resource_and_blob_path() {
         service.content().upload_resource_content_stream(
             UploadResourceContentStream::new(name, Box::pin(stream))
                 .with_directory(directory.clone())
-                .with_kind("azvs:markdown"),
+                .with_kind(ResourceKind::try_new("azvs:markdown").unwrap()),
         ),
     )
     .unwrap();
@@ -1198,6 +1197,23 @@ fn stream_upload_resource_content_detects_most_specific_kind() {
     let saved = repository.find_sync(&resource.id()).unwrap();
 
     assert!(saved.kind().is("azvs:markdown"));
+}
+
+#[test]
+fn stream_upload_resource_content_falls_back_to_core_resource() {
+    let (service, repository, _) = service();
+    let key = StorageKey::new("assets/archive.bin").unwrap();
+
+    let resource = block_on(
+        service.content().upload_resource_content_stream(
+            stream_upload_command("archive", key, Bytes::from_static(b"binary"))
+                .with_mime_type("application/octet-stream"),
+        ),
+    )
+    .unwrap();
+
+    let saved = repository.find_sync(&resource.id()).unwrap();
+    assert_eq!(saved.kind(), &ResourceKind::default());
 }
 
 #[test]
@@ -1239,9 +1255,10 @@ fn create_resource_rejects_unsupported_kind() {
     ));
 
     let error = block_on(
-        service
-            .commands()
-            .create_resource(CreateResource::new("image").with_kind("plugin:not-installed")),
+        service.commands().create_resource(
+            CreateResource::new("image")
+                .with_kind(ResourceKind::try_new("plugin:not-installed").unwrap()),
+        ),
     )
     .unwrap_err();
 
@@ -1268,7 +1285,7 @@ fn stream_upload_resource_content_stream_writes_chunks_and_records_size() {
         service.content().upload_resource_content_stream(
             UploadResourceContentStream::new("large.bin", data)
                 .with_directory(DirectoryPath::from_path("assets").unwrap())
-                .with_kind("asset:binary")
+                .with_kind(ResourceKind::try_new("asset:binary").unwrap())
                 .with_mime_type("application/octet-stream"),
         ),
     )
@@ -1294,7 +1311,7 @@ fn stream_upload_resource_content_rejects_kind_without_content_support() {
     let error = block_on(
         service.content().upload_resource_content_stream(
             stream_upload_command("readme", key.clone(), Bytes::from_static(b"hello"))
-                .with_kind("doc:markdown"),
+                .with_kind(ResourceKind::try_new("doc:markdown").unwrap()),
         ),
     )
     .unwrap_err();
@@ -1386,7 +1403,7 @@ fn read_resource_returns_text_for_reader_kind() {
     let resource = block_on(
         service.content().upload_resource_content_stream(
             stream_upload_command("book", key, Bytes::from_static(b"Hello book"))
-                .with_kind("core:document"),
+                .with_kind(ResourceKind::try_new("core:document").unwrap()),
         ),
     )
     .unwrap();
@@ -1411,7 +1428,7 @@ fn execute_write_action_replaces_resource_content() {
     let resource = block_on(
         service.content().upload_resource_content_stream(
             stream_upload_command("note.md", key.clone(), Bytes::from_static(b"# Old"))
-                .with_kind("core:document")
+                .with_kind(ResourceKind::try_new("core:document").unwrap())
                 .with_mime_type("text/markdown"),
         ),
     )
@@ -1452,7 +1469,7 @@ fn write_action_scratch_content_uses_reserved_namespace() {
     let resource = block_on(
         service.content().upload_resource_content_stream(
             stream_upload_command("note.md", key, Bytes::from_static(b"# Old"))
-                .with_kind("core:document")
+                .with_kind(ResourceKind::try_new("core:document").unwrap())
                 .with_mime_type("text/markdown"),
         ),
     )
@@ -1475,9 +1492,12 @@ fn write_action_scratch_content_uses_reserved_namespace() {
 fn read_resource_rejects_non_reader_kind() {
     let (service, _, _) = service();
     let key = StorageKey::new("files/file.txt").unwrap();
-    let resource = block_on(service.content().upload_resource_content_stream(
-        stream_upload_command("file", key, Bytes::from_static(b"hello")).with_kind("asset:binary"),
-    ))
+    let resource = block_on(
+        service.content().upload_resource_content_stream(
+            stream_upload_command("file", key, Bytes::from_static(b"hello"))
+                .with_kind(ResourceKind::try_new("asset:binary").unwrap()),
+        ),
+    )
     .unwrap();
 
     let error = block_on(service.previews().read_resource(&resource.id())).unwrap_err();
@@ -1500,7 +1520,7 @@ fn describe_resource_actions_uses_declared_actions_without_format_sniffing() {
                 StorageKey::new("books/book.pdf").unwrap(),
                 Bytes::from_static(b"%PDF-1.4"),
             )
-            .with_kind("core:document")
+            .with_kind(ResourceKind::try_new("core:document").unwrap())
             .with_mime_type("application/pdf"),
         ),
     )
@@ -1512,7 +1532,7 @@ fn describe_resource_actions_uses_declared_actions_without_format_sniffing() {
                 StorageKey::new("books/book.txt").unwrap(),
                 Bytes::from_static(b"hello"),
             )
-            .with_kind("core:document")
+            .with_kind(ResourceKind::try_new("core:document").unwrap())
             .with_mime_type("text/plain"),
         ),
     )
@@ -1545,7 +1565,7 @@ fn core_video_resources_use_builtin_preview_for_common_video_formats() {
                 StorageKey::new("videos/demo.mp4").unwrap(),
                 Bytes::from_static(b"mp4"),
             )
-            .with_kind("core:video")
+            .with_kind(ResourceKind::try_new("core:video").unwrap())
             .with_mime_type("video/mp4"),
         ),
     )
@@ -1557,7 +1577,7 @@ fn core_video_resources_use_builtin_preview_for_common_video_formats() {
                 StorageKey::new("videos/demo.webm").unwrap(),
                 Bytes::from_static(b"webm"),
             )
-            .with_kind("core:video")
+            .with_kind(ResourceKind::try_new("core:video").unwrap())
             .with_mime_type("video/webm"),
         ),
     )
@@ -1590,7 +1610,7 @@ fn preview_resource_returns_pdf_content_for_preview_kind() {
                 StorageKey::new("books/book.pdf").unwrap(),
                 Bytes::from_static(b"%PDF-1.4"),
             )
-            .with_kind("core:document")
+            .with_kind(ResourceKind::try_new("core:document").unwrap())
             .with_mime_type("application/pdf"),
         ),
     )
@@ -1615,7 +1635,7 @@ fn thumbnail_resource_returns_image_content_for_thumbnail_kind() {
                 StorageKey::new("images/pixel.png").unwrap(),
                 image.clone(),
             )
-            .with_kind("core:image")
+            .with_kind(ResourceKind::try_new("core:image").unwrap())
             .with_mime_type("image/png"),
         ),
     )

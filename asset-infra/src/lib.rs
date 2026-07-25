@@ -14,14 +14,17 @@ use asset_core::service::{
     AuthorizationService, DirectoryService, ResourceService, ResourceServicePorts, UserService,
 };
 use asset_core::{
-    CoreError, port::BlobStorage, port::DirectoryRepository, port::DirectoryStorage,
-    port::ResourceActionExecutor, port::ResourceActionRegistry, port::ResourceKindRegistry,
-    port::ResourceQuery, port::ResourceRepository, port::SecurityAuditRepository,
-    port::StorageScanner,
+    CoreError, port::BlobStorage, port::DirectoryKindRegistry, port::DirectoryRepository,
+    port::DirectoryStorage, port::ResourceActionExecutor, port::ResourceActionRegistry,
+    port::ResourceKindRegistry, port::ResourceQuery, port::ResourceRepository,
+    port::SecurityAuditRepository, port::StorageScanner,
 };
 use asset_plugin_api::PluginExecutionPolicy;
 use config::{AssetInfraConfig, BlobBackend, DatabaseBackend};
-use kind::{DefaultResourceActionRegistry, DefaultResourceKindRegistry, registries_from_catalog};
+use kind::{
+    DefaultDirectoryKindRegistry, DefaultResourceActionRegistry, DefaultResourceKindRegistry,
+    registries_from_catalog,
+};
 use password::Argon2PasswordHasher;
 use plugin::ExtismResourceActionExecutor;
 use plugin_manifest::PluginCatalog;
@@ -50,6 +53,8 @@ pub struct AssetInfrastructure {
     storage_scanner: Arc<FileSystemScanner>,
     /// 资源类型注册表。
     resource_kind_registry: Arc<DefaultResourceKindRegistry>,
+    /// 目录类型注册表。
+    directory_kind_registry: Arc<DefaultDirectoryKindRegistry>,
     /// 资源动作注册表。
     resource_action_registry: Arc<DefaultResourceActionRegistry>,
     /// 资源动作执行器。
@@ -100,9 +105,10 @@ impl AssetInfrastructure {
             manifests = config.kind.plugin_manifests.len(),
             "plugin artifacts verified"
         );
-        let (resource_kind_registry, resource_action_registry) =
+        let (resource_kind_registry, directory_kind_registry, resource_action_registry) =
             registries_from_catalog(&config.kind, &plugin_catalog)?;
         let resource_kind_registry = Arc::new(resource_kind_registry);
+        let directory_kind_registry = Arc::new(directory_kind_registry);
         let resource_action_registry = Arc::new(resource_action_registry);
         let plugin_execution_policy = Arc::new(config.plugin.execution_policy()?);
         let plugin_compile_started = Instant::now();
@@ -129,6 +135,7 @@ impl AssetInfrastructure {
             blob_storage,
             storage_scanner,
             resource_kind_registry,
+            directory_kind_registry,
             resource_action_registry,
             resource_action_executor,
             plugin_execution_policy,
@@ -212,6 +219,11 @@ impl AssetInfrastructure {
     /// 返回资源类型注册表端口对象。
     pub fn resource_kind_registry(&self) -> Arc<dyn ResourceKindRegistry> {
         self.resource_kind_registry.clone()
+    }
+
+    /// 返回目录类型注册表端口对象。
+    pub fn directory_kind_registry(&self) -> Arc<dyn DirectoryKindRegistry> {
+        self.directory_kind_registry.clone()
     }
 
     /// 返回资源动作执行器端口对象。

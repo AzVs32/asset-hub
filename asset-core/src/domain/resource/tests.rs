@@ -12,9 +12,61 @@ fn directory(path: &str) -> DirectoryRef {
 }
 
 #[test]
+fn resource_kind_matches_directory_kind_naming_rules() {
+    let kind = ResourceKind::try_new(" AzVs.Game:Markdown_V2 ").unwrap();
+
+    assert_eq!(kind.as_str(), "azvs.game:markdown_v2");
+    assert_eq!(
+        ResourceKind::try_new(" Core:Image ").unwrap().as_str(),
+        "core:image"
+    );
+}
+
+#[test]
+fn resource_kind_rejects_non_namespaced_or_invalid_values() {
+    for value in [
+        "image",
+        ":image",
+        "core:",
+        "core:image:large",
+        "core/image",
+        "核心:图片",
+    ] {
+        assert!(
+            ResourceKind::try_new(value).is_err(),
+            "`{value}` should be rejected"
+        );
+    }
+}
+
+#[test]
+fn resource_kind_is_limited_to_256_characters() {
+    let max_length = format!("a:{}", "b".repeat(254));
+    let too_long = format!("a:{}", "b".repeat(255));
+
+    assert!(ResourceKind::try_new(max_length).is_ok());
+    assert!(matches!(
+        ResourceKind::try_new(too_long),
+        Err(ResourceError::TooLong {
+            field: "resource.kind",
+            max: 256,
+        })
+    ));
+}
+
+#[test]
+fn resource_kind_serde_normalizes_and_validates_input() {
+    let kind: ResourceKind = serde_json::from_str(r#"" Core:Image ""#).unwrap();
+
+    assert_eq!(kind.as_str(), "core:image");
+    assert_eq!(serde_json::to_string(&kind).unwrap(), r#""core:image""#);
+    assert!(serde_json::from_str::<ResourceKind>(r#""image""#).is_err());
+}
+
+#[test]
 fn new_resource_has_default_lifecycle_state() {
     let resource = Resource::builder(" Design Doc ")
-        .with_kind("doc:markdown")
+        .with_kind(ResourceKind::try_new("doc:markdown").unwrap())
         .build()
         .unwrap();
 
@@ -53,10 +105,10 @@ fn resource_status_uses_canonical_boundary_text() {
 
 #[test]
 fn resource_builder_uses_default_kind() {
-    let resource = Resource::builder("unknown resource").build().unwrap();
+    let resource = Resource::builder("generic resource").build().unwrap();
 
-    assert!(resource.kind().is(ResourceKind::UNKNOWN));
-    assert_eq!(resource.kind().as_str(), ResourceKind::UNKNOWN);
+    assert!(resource.kind().is(ResourceKind::DEFAULT));
+    assert_eq!(resource.kind().as_str(), ResourceKind::DEFAULT);
 }
 
 #[test]
@@ -70,7 +122,7 @@ fn resource_can_be_rehydrated_from_snapshot() {
         id,
         name: " restored image ".to_string(),
         directory: directory(" images/raw "),
-        kind: ResourceKind::from("core:image"),
+        kind: ResourceKind::try_new("core:image").unwrap(),
         status: ResourceStatus::Archived,
         description: Some(" restored description ".to_owned()),
         tags: vec![" image ".to_owned()],
@@ -97,7 +149,7 @@ fn resource_can_be_rehydrated_from_snapshot() {
 #[test]
 fn resource_lifecycle_transitions_update_state() {
     let mut resource = Resource::builder("image")
-        .with_kind("core:image")
+        .with_kind(ResourceKind::try_new("core:image").unwrap())
         .build()
         .unwrap();
 
@@ -129,7 +181,7 @@ fn resource_builder_accepts_description_tags_and_content() {
         .unwrap();
 
     let resource = Resource::builder("image")
-        .with_kind("core:image")
+        .with_kind(ResourceKind::try_new("core:image").unwrap())
         .with_description(" cover image ")
         .with_tags(["rust", "asset"])
         .with_content(content)
@@ -197,7 +249,7 @@ fn resource_name_must_be_a_single_file_name() {
 #[test]
 fn deleted_resource_rejects_mutations() {
     let mut resource = Resource::builder("image")
-        .with_kind("core:image")
+        .with_kind(ResourceKind::try_new("core:image").unwrap())
         .build()
         .unwrap();
     resource.soft_delete();
@@ -220,7 +272,7 @@ fn deleted_resource_rejects_mutations() {
 #[test]
 fn description_and_tags_can_be_replaced_or_cleared() {
     let mut resource = Resource::builder("image")
-        .with_kind("core:image")
+        .with_kind(ResourceKind::try_new("core:image").unwrap())
         .with_description("cover")
         .with_tags([" image ", "cover", "image"])
         .build()

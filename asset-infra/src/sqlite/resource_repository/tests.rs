@@ -21,7 +21,7 @@ async fn sqlite_repository_roundtrips_resource() {
         .unwrap();
     let resource = Resource::builder("image.png")
         .with_directory(assets)
-        .with_kind("core:image")
+        .with_kind(ResourceKind::try_new("core:image").unwrap())
         .with_description("cover")
         .with_tags(["rust", "asset"])
         .with_content(content)
@@ -68,7 +68,7 @@ async fn sqlite_repository_roundtrips_resource() {
 async fn sqlite_repository_updates_description_and_tags() {
     let repository = repository("description-tags").await;
     let mut resource = Resource::builder("image")
-        .with_kind("core:image")
+        .with_kind(ResourceKind::try_new("core:image").unwrap())
         .with_description("cover")
         .with_tags(["image", "cover"])
         .build()
@@ -238,7 +238,7 @@ async fn sqlite_repository_roundtrips_more_than_sixty_four_tags() {
 async fn sqlite_repository_upserts_and_removes_resource() {
     let repository = repository("upsert-remove").await;
     let mut resource = Resource::builder("image")
-        .with_kind("core:image")
+        .with_kind(ResourceKind::try_new("core:image").unwrap())
         .build()
         .unwrap();
 

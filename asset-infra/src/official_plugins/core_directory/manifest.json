@@ -1,0 +1,25 @@
+{
+  "$schema": "https://asset-hub.local/schemas/plugin-manifest-v3.json",
+  "manifest_version": 3,
+  "plugin": {
+    "id": "core.directory",
+    "name": "Core Directory",
+    "version": "0.1.0",
+    "publisher": "asset-hub",
+    "description": "Built-in directory support."
+  },
+  "runtime": {
+    "type": "builtin"
+  },
+  "capabilities": {
+    "directory_kinds": [
+      {
+        "kind": "core:directory",
+        "label": "Directory"
+      }
+    ]
+  },
+  "permissions": {
+    "allow": []
+  }
+}

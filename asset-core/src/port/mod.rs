@@ -11,12 +11,14 @@
 
 mod audit;
 mod directory;
+mod directory_kind;
 mod identity;
 mod resource;
 mod storage;
 
 pub use audit::SecurityAuditRepository;
 pub use directory::DirectoryRepository;
+pub use directory_kind::{DirectoryKindDefinition, DirectoryKindRegistry};
 pub use identity::{PasswordHasher, UserRepository};
 pub use resource::{
     ListResources, ResourceActionExecutor, ResourceActionOutput, ResourceActionRegistry,

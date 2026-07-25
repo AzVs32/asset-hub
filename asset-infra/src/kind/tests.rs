@@ -2,32 +2,39 @@ use super::*;
 use crate::config::{KindRegistryConfig, ResourceKindConfig};
 use crate::plugin_manifest::PluginCatalog;
 use asset_core::CoreError;
-use asset_core::domain::ResourceKind;
-use asset_core::port::{ResourceActionRegistry, ResourceKindRegistry};
+use asset_core::domain::{DirectoryKind, ResourceKind};
+use asset_core::port::{DirectoryKindRegistry, ResourceActionRegistry, ResourceKindRegistry};
 use asset_plugin_api::{ResourceAction, ResourceActionDefinition};
 use std::path::PathBuf;
 
 fn registries(
     config: &KindRegistryConfig,
-) -> Result<(DefaultResourceKindRegistry, DefaultResourceActionRegistry), CoreError> {
+) -> Result<
+    (
+        DefaultResourceKindRegistry,
+        DefaultDirectoryKindRegistry,
+        DefaultResourceActionRegistry,
+    ),
+    CoreError,
+> {
     let catalog = PluginCatalog::load(config)?;
     registries_from_catalog(config, &catalog)
 }
 
 fn kind_registry(config: &KindRegistryConfig) -> Result<DefaultResourceKindRegistry, CoreError> {
-    registries(config).map(|(kinds, _)| kinds)
+    registries(config).map(|(resource_kinds, _, _)| resource_kinds)
 }
 
 fn action_registry(
     config: &KindRegistryConfig,
 ) -> Result<DefaultResourceActionRegistry, CoreError> {
-    registries(config).map(|(_, actions)| actions)
+    registries(config).map(|(_, _, actions)| actions)
 }
 
 #[test]
 fn descendants_follow_definition_order() {
     let registry = kind_registry(&KindRegistryConfig::default()).unwrap();
-    let root = ResourceKind::try_new("core:file").unwrap();
+    let root = ResourceKind::try_new("core:resource").unwrap();
     let expected = registry
         .definitions
         .iter()
@@ -38,7 +45,7 @@ fn descendants_follow_definition_order() {
 }
 
 #[test]
-fn registry_includes_builtin_and_configured_kinds() {
+fn registry_includes_official_and_configured_kinds() {
     let registry = kind_registry(&KindRegistryConfig {
         definitions: vec![ResourceKindConfig {
             kind: "doc:note".to_string(),
@@ -51,12 +58,12 @@ fn registry_includes_builtin_and_configured_kinds() {
     })
     .unwrap();
 
-    let builtin = registry
+    let default = registry
         .definitions()
         .iter()
-        .find(|definition| definition.kind().is(ResourceKind::UNKNOWN))
+        .find(|definition| definition.kind().is(ResourceKind::DEFAULT))
         .unwrap();
-    assert_eq!(builtin.source(), "builtin");
+    assert_eq!(default.source(), "plugin:core.resource");
 
     let note = registry
         .get(&ResourceKind::try_new("doc:note").unwrap())
@@ -107,28 +114,24 @@ fn registry_rejects_unknown_parents_and_cycles() {
 }
 
 #[test]
-fn registry_includes_official_core_plugin_fallback_kinds() {
-    let (registry, action_registry) = registries(&KindRegistryConfig::default()).unwrap();
+fn registry_includes_official_core_resource_kinds() {
+    let (registry, _, action_registry) = registries(&KindRegistryConfig::default()).unwrap();
 
-    let file = registry
-        .get(&ResourceKind::try_new("core:file").unwrap())
+    let root = registry
+        .get(&ResourceKind::try_new("core:resource").unwrap())
         .unwrap();
-    let unknown = registry
-        .get(&ResourceKind::try_new(ResourceKind::UNKNOWN).unwrap())
-        .unwrap();
-    assert!(file.parent().is_none());
-    assert_eq!(unknown.parent(), Some(file.kind()));
+    assert!(root.parent().is_none());
     assert!(
-        actions_for_kind(&registry, &action_registry, unknown.kind())
+        actions_for_kind(&registry, &action_registry, root.kind())
             .iter()
             .any(|action| action.id().as_str() == ResourceAction::DOWNLOAD_CONTENT)
     );
 
     for (kind, label, source, expected_actions) in [
         (
-            "core:file",
-            "File",
-            "plugin:core.file",
+            "core:resource",
+            "Resource",
+            "plugin:core.resource",
             vec![ResourceAction::DOWNLOAD_CONTENT],
         ),
         (
@@ -191,10 +194,10 @@ fn registry_includes_official_core_plugin_fallback_kinds() {
             .detect()
             .matches_content(Some("image/png"), Some("images/pixel.png"))
     );
-    let file = registry
-        .get(&ResourceKind::try_new("core:file").unwrap())
+    let resource = registry
+        .get(&ResourceKind::try_new("core:resource").unwrap())
         .unwrap();
-    assert!(file.detect().is_empty());
+    assert!(resource.detect().is_empty());
 }
 
 #[test]
@@ -239,6 +242,13 @@ fn registry_loads_plugin_manifest_kinds() {
                 "supports_content": true
               }
             ],
+            "directory_kinds": [
+              {
+                "kind": "mindustry:workspace",
+                "parent": "core:directory",
+                "label": "Mindustry Workspace"
+              }
+            ],
             "resource_actions": [
               {
                 "id": "mindustry.preview",
@@ -273,13 +283,22 @@ fn registry_loads_plugin_manifest_kinds() {
         definitions: Vec::new(),
         plugin_manifests: vec![root.join("mindustry.json")],
     };
-    let (registry, action_registry) = registries(&config).unwrap();
+    let (registry, directory_registry, action_registry) = registries(&config).unwrap();
     let definition = registry
         .get(&ResourceKind::try_new("mindustry:mod").unwrap())
         .unwrap();
 
     assert_eq!(definition.label(), "Mindustry Mod");
     assert_eq!(definition.source(), "plugin:mindustry");
+    let directory_definition = directory_registry
+        .get(&DirectoryKind::try_new("mindustry:workspace").unwrap())
+        .unwrap();
+    assert_eq!(directory_definition.label(), "Mindustry Workspace");
+    assert_eq!(
+        directory_definition.parent(),
+        Some(&DirectoryKind::default())
+    );
+    assert_eq!(directory_definition.source(), "plugin:mindustry");
     assert!(
         actions_for_kind(&registry, &action_registry, definition.kind())
             .iter()
@@ -287,6 +306,18 @@ fn registry_loads_plugin_manifest_kinds() {
     );
 
     let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn directory_registry_includes_official_default_kind() {
+    let (_, registry, _) = registries(&KindRegistryConfig::default()).unwrap();
+    let default = DirectoryKind::default();
+    let definition = registry.get(&default).unwrap();
+
+    assert!(definition.parent().is_none());
+    assert_eq!(definition.label(), "Directory");
+    assert_eq!(definition.source(), "plugin:core.directory");
+    assert_eq!(registry.lineage(&default), vec![default]);
 }
 
 #[test]
@@ -359,7 +390,7 @@ fn registry_loads_format_plugin_as_independent_kind() {
         definitions: Vec::new(),
         plugin_manifests: vec![root.join("epub.json")],
     };
-    let (registry, action_registry) = registries(&config).unwrap();
+    let (registry, _, action_registry) = registries(&config).unwrap();
     let epub = registry
         .get(&ResourceKind::try_new("azvs:epub").unwrap())
         .unwrap();
@@ -450,7 +481,7 @@ fn registry_loads_plugin_manifest_kind_extensions() {
         definitions: Vec::new(),
         plugin_manifests: vec![root.join("mp4-tools.json")],
     };
-    let (registry, action_registry) = registries(&config).unwrap();
+    let (registry, _, action_registry) = registries(&config).unwrap();
     let video = registry
         .get(&ResourceKind::try_new("test:mp4").unwrap())
         .unwrap();
@@ -483,7 +514,7 @@ fn actions_for_kind(
 fn registry_rejects_duplicate_kinds() {
     let error = kind_registry(&KindRegistryConfig {
         definitions: vec![ResourceKindConfig {
-            kind: ResourceKind::UNKNOWN.to_string(),
+            kind: ResourceKind::DEFAULT.to_string(),
             ..ResourceKindConfig::default()
         }],
         plugin_manifests: Vec::new(),

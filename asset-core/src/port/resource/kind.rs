@@ -10,7 +10,7 @@ use std::collections::HashSet;
 /// 资源类型定义。
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResourceKindDefinition {
-    /// 资源类型值，例如 `core:file`、`mindustry:mod`。
+    /// 资源类型值，例如 `core:resource`、`mindustry:mod`。
     kind: ResourceKind,
     /// 可选父资源类型。父级能力会被后代继承。
     parent: Option<ResourceKind>,

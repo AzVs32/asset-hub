@@ -97,7 +97,8 @@ plugin_manifests = []
 # detect = { mime_types = ["text/x-c++"], extensions = [".cc", ".cpp", ".cxx", ".hpp"] }
 
 # Plugin manifest example.
-# Use `capabilities.kinds` for new resource types and `capabilities.actions` for actions.
+# Use `capabilities.kinds` for resource types, `capabilities.directory_kinds` for
+# directory types, and `capabilities.actions` for resource actions.
 # Start with `asset-plugin gen manifest`, then edit its fixed example fields.
 # Artifact hashes belong to the generated sibling `manifest.lock.json`; generate it with
 # `asset-plugin seal path/to/plugin.json` after building the plugin artifacts.

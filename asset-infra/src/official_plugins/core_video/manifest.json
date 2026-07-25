@@ -15,7 +15,7 @@
     "kinds": [
       {
         "kind": "core:video",
-        "parent": "core:file",
+        "parent": "core:resource",
         "label": "Video",
         "supports_content": true,
         "detect": {

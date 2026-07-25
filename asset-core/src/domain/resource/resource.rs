@@ -86,12 +86,11 @@ impl Resource {
 
     /// 从持久化快照还原资源聚合。
     ///
-    /// 该方法会保留快照中的 ID、时间戳和软删除状态，但仍会重新执行资源名称和类型校验。
+    /// 该方法会保留快照中的 ID、时间戳和软删除状态，但仍会重新执行聚合约束校验。
     /// Repository 实现应通过它还原数据库记录，避免绕过领域约束直接构造 `Resource`。
     pub fn rehydrate(snapshot: ResourceSnapshot) -> Result<Self, ResourceError> {
         let name = normalize_resource_name(snapshot.name)?;
         StorageKey::from_resource_path(snapshot.directory.path(), &name)?;
-        snapshot.kind.validate()?;
         let description = normalize_optional_description(snapshot.description)?;
         let tags = normalize_tags(snapshot.tags)?;
 
@@ -219,11 +218,9 @@ impl Resource {
 
     /// 修改资源类型。
     ///
-    /// 已删除资源不能修改类型，新类型必须满足 `ResourceKind` 校验规则。
-    pub fn change_kind(&mut self, kind: impl Into<ResourceKind>) -> Result<(), ResourceError> {
+    /// 已删除资源不能修改类型。
+    pub fn change_kind(&mut self, kind: ResourceKind) -> Result<(), ResourceError> {
         self.ensure_not_deleted()?;
-        let kind = kind.into();
-        kind.validate()?;
 
         if self.kind != kind {
             self.kind = kind;
@@ -403,8 +400,8 @@ impl ResourceBuilder {
     }
 
     /// 设置资源类型。
-    pub fn with_kind(mut self, kind: impl Into<ResourceKind>) -> Self {
-        self.kind = kind.into();
+    pub fn with_kind(mut self, kind: ResourceKind) -> Self {
+        self.kind = kind;
         self
     }
 
@@ -446,7 +443,6 @@ impl ResourceBuilder {
     pub fn build(self) -> Result<Resource, ResourceError> {
         let name = normalize_resource_name(self.name)?;
         StorageKey::from_resource_path(self.directory.path(), &name)?;
-        self.kind.validate()?;
         let description = normalize_optional_description(self.description)?;
         let tags = normalize_tags(self.tags)?;
         let now = Utc::now();

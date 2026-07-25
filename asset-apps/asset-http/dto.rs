@@ -22,7 +22,7 @@ pub(crate) struct BinaryContent(Vec<u8>);
 #[serde(deny_unknown_fields)]
 #[schema(example = json!({
     "name": "resources_not_blob",
-    "kind": "core:unknown",
+    "kind": "core:resource",
     "description": "A resource without blob content",
     "tags": ["demo", "document"]
 }))]
@@ -104,7 +104,7 @@ pub(crate) struct ListDirectoryQuery {
 #[serde(deny_unknown_fields)]
 #[schema(example = json!({
     "name": "renamed.txt",
-    "kind": "core:unknown",
+    "kind": "core:resource",
     "status": "archived",
     "description": "updated resource",
     "tags": ["demo", "updated"]

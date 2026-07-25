@@ -56,7 +56,7 @@ describe("OpenApiAssetGateway URL boundary", () => {
           id: "resource-1",
           name: " draft  01.txt ",
           directory: " library /project A ",
-          kind: "core:unknown",
+          kind: "core:resource",
           status: "active",
           tags: [],
           content: null,
@@ -73,7 +73,7 @@ describe("OpenApiAssetGateway URL boundary", () => {
       file: new File(["content"], "fallback.txt", { type: "text/plain" }),
       name: " draft  01.txt ",
       directory: " library /project A ",
-      kind: "core:unknown",
+      kind: "core:resource",
       description: "",
       tags: "",
     });

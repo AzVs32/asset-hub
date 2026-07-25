@@ -15,7 +15,7 @@ export function emptyResourceDraft(directory: string, kinds: ResourceKind[]): Re
   return {
     name: "",
     directory,
-    kind: kinds[0]?.kind ?? "core:unknown",
+    kind: kinds[0]?.kind ?? "core:resource",
     status: "active",
     description: "",
     tags: "",

@@ -4,8 +4,8 @@ mod plugin;
 mod runtime;
 
 pub use capabilities::{
-    ActionAppliesTo, ActionRequirements, ActionUi, ContentDelivery, ManifestActionAccess,
-    PluginCapabilities, ResourceActionCapability, ResourceKindCapability,
+    ActionAppliesTo, ActionRequirements, ActionUi, ContentDelivery, DirectoryKindCapability,
+    ManifestActionAccess, PluginCapabilities, ResourceActionCapability, ResourceKindCapability,
 };
 pub use lock::{PluginManifestLock, PluginRuntimeLock, PluginWebLock};
 pub use permissions::{
@@ -229,6 +229,20 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
             .is_some_and(|parent| parent.trim().is_empty())
         {
             return Err("capabilities.kinds[].parent must not be empty".to_string());
+        }
+    }
+    for kind in &capabilities.directory_kinds {
+        validate_id(
+            "capabilities.directory_kinds[].kind",
+            &kind.kind,
+            &[':', '-', '_'],
+        )?;
+        if kind
+            .parent
+            .as_ref()
+            .is_some_and(|parent| parent.trim().is_empty())
+        {
+            return Err("capabilities.directory_kinds[].parent must not be empty".to_string());
         }
     }
     for action in &capabilities.resource_actions {

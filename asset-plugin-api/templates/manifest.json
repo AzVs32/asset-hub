@@ -13,13 +13,14 @@
     "wasm": "dist/plugin.wasm"
   },
   "capabilities": {
+    "directory_kinds": [],
     "actions": [
       {
         "id": "example.plugin.action",
         "label": "Example Action",
         "handler": "run",
         "applies_to": {
-          "kinds": ["core:file"]
+          "kinds": ["core:resource"]
         },
         "views": ["json"],
         "ui": {

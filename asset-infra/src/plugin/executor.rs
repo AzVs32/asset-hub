@@ -148,23 +148,23 @@ pub(super) fn bind_action(
             action.id
         )));
     }
-    for kind in &action.applies_to.kinds {
-        asset_core::domain::ResourceKind::try_new(kind)?;
-    }
+    let declared_kinds = action
+        .applies_to
+        .kinds
+        .iter()
+        .map(asset_core::domain::ResourceKind::try_new)
+        .collect::<Result<Vec<_>, _>>()?;
 
-    let applicable_kinds = if action.applies_to.kinds.is_empty() {
+    let applicable_kinds = if declared_kinds.is_empty() {
         Vec::new()
     } else {
         kind_registry
             .definitions()
             .iter()
             .filter(|definition| {
-                action.applies_to.kinds.iter().any(|ancestor| {
-                    kind_registry.is_a(
-                        definition.kind(),
-                        &asset_core::domain::ResourceKind::new(ancestor),
-                    )
-                })
+                declared_kinds
+                    .iter()
+                    .any(|ancestor| kind_registry.is_a(definition.kind(), ancestor))
             })
             .map(|definition| definition.kind().as_str().to_owned())
             .collect()
@@ -176,7 +176,7 @@ pub(super) fn bind_action(
     if applies_to.content().is_empty() && !action.applies_to.kinds.is_empty() {
         applies_to = applies_to.with_content_matcher(detect_for_action_kinds(
             kind_registry.definitions(),
-            &action.applies_to.kinds,
+            &declared_kinds,
         )?);
     }
 
@@ -193,14 +193,14 @@ pub(super) fn bind_action(
 
 pub(super) fn detect_for_action_kinds(
     definitions: &[ResourceKindDefinition],
-    kinds: &[String],
+    kinds: &[asset_core::domain::ResourceKind],
 ) -> Result<ResourceContentMatcher, CoreError> {
     let mut mime_types = Vec::new();
     let mut extensions = Vec::new();
     for kind in kinds {
         let definition = definitions
             .iter()
-            .find(|definition| definition.kind().as_str().eq_ignore_ascii_case(kind))
+            .find(|definition| definition.kind() == kind)
             .ok_or_else(|| {
                 CoreError::configuration(format!(
                     "resource action references unknown kind `{kind}`"

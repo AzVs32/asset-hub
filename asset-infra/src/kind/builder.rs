@@ -9,10 +9,18 @@ use asset_plugin_api::{ResourceActionDefinition, ResourceContentMatcher, Resourc
 pub(crate) fn registries_from_catalog(
     config: &KindRegistryConfig,
     catalog: &PluginCatalog,
-) -> Result<(DefaultResourceKindRegistry, DefaultResourceActionRegistry), CoreError> {
+) -> Result<
+    (
+        DefaultResourceKindRegistry,
+        DefaultDirectoryKindRegistry,
+        DefaultResourceActionRegistry,
+    ),
+    CoreError,
+> {
     let (definitions, actions) = build_registries_with_catalog(config, catalog)?;
     Ok((
         DefaultResourceKindRegistry::from_definitions(definitions),
+        directory_registry_from_catalog(catalog)?,
         DefaultResourceActionRegistry { actions },
     ))
 }
@@ -33,20 +41,6 @@ pub(super) fn build_registries_with_catalog(
         .filter(|plugin| plugin.manifest_path.is_some())
         .collect::<Vec<_>>();
 
-    for kind in ResourceKind::builtin_values() {
-        let parent = (*kind == ResourceKind::UNKNOWN).then_some("core:file");
-        push_definition(
-            &mut definitions,
-            definition_from_parts(
-                kind,
-                kind,
-                parent,
-                true,
-                ResourceContentMatcher::default(),
-                "builtin",
-            )?,
-        )?;
-    }
     for manifest in &official_manifests {
         for config_definition in &manifest.manifest.capabilities.resource_kinds {
             push_definition(

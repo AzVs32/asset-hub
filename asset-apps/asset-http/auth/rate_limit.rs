@@ -20,10 +20,7 @@ pub(super) struct LoginFailureCache {
 
 impl LoginFailureCache {
     pub(super) fn prune_expired(&mut self, now: Instant) {
-        loop {
-            let Some((key, started_at)) = self.order.front() else {
-                break;
-            };
+        while let Some((key, started_at)) = self.order.front() {
             let current = self.entries.get(key);
             let stale = current.is_none_or(|state| state.started_at != *started_at);
             if !stale && now.duration_since(*started_at) < LOGIN_FAILURE_WINDOW {

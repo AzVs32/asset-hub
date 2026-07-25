@@ -39,15 +39,15 @@ async fn resource_kinds_are_listed_and_unsupported_kind_is_rejected() {
     let (status, kinds) = empty_json_request(&app, Method::GET, "/resource-kinds").await;
 
     assert_eq!(status, StatusCode::OK);
-    let unknown = kinds["items"]
+    let default = kinds["items"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|kind| kind["kind"] == "core:unknown")
+        .find(|kind| kind["kind"] == "core:resource")
         .unwrap();
-    assert_eq!(unknown["parent"], "core:file");
+    assert!(default["parent"].is_null());
     for (kind, source) in [
-        ("core:file", "plugin:core.file"),
+        ("core:resource", "plugin:core.resource"),
         ("core:image", "plugin:core.image"),
         ("core:document", "plugin:core.document"),
         ("core:video", "plugin:core.video"),
@@ -78,7 +78,7 @@ async fn resource_kinds_are_listed_and_unsupported_kind_is_rejected() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|kind| kind["kind"] == "core:file")
+        .find(|kind| kind["kind"] == "core:resource")
         .unwrap();
     assert!(file_kind.get("detect").is_none());
 
@@ -489,7 +489,7 @@ async fn create_resource_accepts_description_and_tags() {
         "/resources",
         json!({
             "name": "resources_not_blob",
-            "kind": "core:unknown",
+            "kind": "core:resource",
             "description": "resource without content",
             "tags": ["demo", "document"]
         }),
@@ -498,7 +498,7 @@ async fn create_resource_accepts_description_and_tags() {
 
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(resource["name"], "resources_not_blob");
-    assert_eq!(resource["kind"], "core:unknown");
+    assert_eq!(resource["kind"], "core:resource");
     assert_eq!(resource["description"], "resource without content");
     assert_eq!(resource["tags"], json!(["demo", "document"]));
 
@@ -516,7 +516,7 @@ async fn stream_upload_roundtrips_small_blob_and_creates_directories() {
 
     let (status, resource) = stream_upload(
         &app,
-        "/resources/content/stream?name=hello.txt&kind=core%3Aunknown&directory=examples",
+        "/resources/content/stream?name=hello.txt&kind=core%3Aresource&directory=examples",
         "text/plain",
         data,
     )
@@ -540,7 +540,7 @@ async fn stream_upload_roundtrips_small_blob_and_creates_directories() {
 
     let (status, directory_resource) = stream_upload(
         &app,
-        "/resources/content/stream?name=nested.txt&kind=core%3Afile&directory=examples%2Fnested",
+        "/resources/content/stream?name=nested.txt&kind=core%3Aresource&directory=examples%2Fnested",
         "text/plain",
         b"nested",
     )
@@ -573,7 +573,7 @@ async fn stream_upload_preserves_spaces_in_names_and_physical_paths() {
 
     let (status, resource) = stream_upload(
         &app,
-        "/resources/content/stream?name=%20draft%20%2001.txt%20&kind=core%3Aunknown&directory=%20library%20%2Fproject%20A%20",
+        "/resources/content/stream?name=%20draft%20%2001.txt%20&kind=core%3Aresource&directory=%20library%20%2Fproject%20A%20",
         "text/plain",
         data,
     )
@@ -1065,7 +1065,7 @@ async fn list_resources_filters_by_kind_tag_and_query() {
         "/resources",
         json!({
             "name": "alpha document",
-            "kind": "core:unknown",
+            "kind": "core:resource",
             "tags": ["alpha", "docs"]
         }),
     )
@@ -1076,7 +1076,7 @@ async fn list_resources_filters_by_kind_tag_and_query() {
         "/resources",
         json!({
             "name": "beta image",
-            "kind": "core:unknown",
+            "kind": "core:resource",
             "tags": ["beta", "media"]
         }),
     )
@@ -1087,7 +1087,7 @@ async fn list_resources_filters_by_kind_tag_and_query() {
         "/resources",
         json!({
             "name": "alpha image",
-            "kind": "core:unknown",
+            "kind": "core:resource",
             "tags": ["alpha", "media"]
         }),
     )
@@ -1100,7 +1100,7 @@ async fn list_resources_filters_by_kind_tag_and_query() {
     let (status, page) = empty_json_request(
         &app,
         Method::GET,
-        "/resources?kind=core%3Aunknown&tag=alpha&q=image&page=1&limit=10",
+        "/resources?kind=core%3Aresource&tag=alpha&q=image&page=1&limit=10",
     )
     .await;
 
@@ -1179,7 +1179,7 @@ async fn kind_filter_can_include_all_descendants() {
     assert_eq!(c["parent"], "core:code");
     assert_eq!(
         c["ancestors"],
-        json!(["core:code", "core:document", "core:file"])
+        json!(["core:code", "core:document", "core:resource"])
     );
     assert!(
         c["actions"]
@@ -1205,7 +1205,7 @@ async fn update_resource_changes_fields_and_restores_soft_deleted_resource() {
         json!({
             "name": "updated.txt",
             "directory": "archive",
-            "kind": "core:unknown",
+            "kind": "core:resource",
             "status": "archived",
             "description": "updated resource",
             "tags": ["updated"]
@@ -1216,7 +1216,7 @@ async fn update_resource_changes_fields_and_restores_soft_deleted_resource() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(updated["name"], "updated.txt");
     assert_eq!(updated["directory"], "archive");
-    assert_eq!(updated["kind"], "core:unknown");
+    assert_eq!(updated["kind"], "core:resource");
     assert_eq!(updated["status"], "archived");
     assert_eq!(updated["description"], "updated resource");
     assert_eq!(updated["tags"], json!(["updated"]));
@@ -1476,7 +1476,7 @@ async fn create_text_resource(app: &TestApp, path: &str) -> String {
     let (status, resource) = stream_upload(app, &uri, "text/plain", b"delete me").await;
 
     assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(resource["kind"], "core:file");
+    assert_eq!(resource["kind"], "core:resource");
 
     resource["id"].as_str().unwrap().to_string()
 }

@@ -1,5 +1,5 @@
 use asset_core::CoreError;
-use asset_core::port::{ResourceKindRegistry, SecurityAuditRepository};
+use asset_core::port::{DirectoryKindRegistry, ResourceKindRegistry, SecurityAuditRepository};
 use asset_core::service::{AuthorizationService, ResourceService, UserService};
 use asset_infra::AssetInfrastructure;
 use asset_infra::config::{AssetInfraConfig, DEFAULT_CONFIG_FILE};
@@ -98,6 +98,11 @@ impl AssetRuntime {
     /// 返回资源类型注册表。
     pub fn resource_kind_registry(&self) -> Arc<dyn ResourceKindRegistry> {
         self.infrastructure.resource_kind_registry()
+    }
+
+    /// 返回目录类型注册表。
+    pub fn directory_kind_registry(&self) -> Arc<dyn DirectoryKindRegistry> {
+        self.infrastructure.directory_kind_registry()
     }
 
     /// 返回启动时校验并冻结的插件浏览器静态资源。

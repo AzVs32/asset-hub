@@ -12,8 +12,18 @@ use serde::{Deserialize, Serialize};
 pub struct PluginCapabilities {
     #[serde(rename = "kinds", alias = "resource_kinds")]
     pub resource_kinds: Vec<ResourceKindCapability>,
+    pub directory_kinds: Vec<DirectoryKindCapability>,
     #[serde(rename = "actions", alias = "resource_actions")]
     pub resource_actions: Vec<ResourceActionCapability>,
+}
+
+/// Directory kind contributed by a plugin manifest.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DirectoryKindCapability {
+    pub kind: String,
+    pub parent: Option<String>,
+    pub label: Option<String>,
 }
 
 /// Resource kind contributed by a plugin manifest.

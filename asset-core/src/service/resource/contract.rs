@@ -19,7 +19,7 @@ pub struct CreateResource {
 }
 
 impl CreateResource {
-    /// 创建命令，默认使用 `core:file`、活跃状态、根目录、空描述和空标签。
+    /// 创建命令，默认使用 `core:resource`、活跃状态、根目录、空描述和空标签。
     /// 名称在用例执行阶段原样校验，合法空格不会被裁剪。
     pub fn new(name: impl Into<String>) -> Self {
         Self {
@@ -32,8 +32,8 @@ impl CreateResource {
         }
     }
 
-    pub fn with_kind(mut self, kind: impl Into<ResourceKind>) -> Self {
-        self.kind = Some(kind.into());
+    pub fn with_kind(mut self, kind: ResourceKind) -> Self {
+        self.kind = Some(kind);
         self
     }
 
@@ -98,8 +98,8 @@ impl<T> ResourceContentCommand<T> {
         }
     }
 
-    pub fn with_kind(mut self, kind: impl Into<ResourceKind>) -> Self {
-        self.kind = Some(kind.into());
+    pub fn with_kind(mut self, kind: ResourceKind) -> Self {
+        self.kind = Some(kind);
         self
     }
 
@@ -185,8 +185,8 @@ impl UpdateResource {
         self
     }
 
-    pub fn with_kind(mut self, kind: impl Into<ResourceKind>) -> Self {
-        self.kind = Some(kind.into());
+    pub fn with_kind(mut self, kind: ResourceKind) -> Self {
+        self.kind = Some(kind);
         self
     }
 

@@ -210,7 +210,7 @@ impl ResourceService {
         &self,
         kind: Option<ResourceKind>,
     ) -> Result<ResourceKind, CoreError> {
-        let kind = kind.unwrap_or_else(|| ResourceKind::from("core:file"));
+        let kind = kind.unwrap_or_default();
         self.ensure_kind_registered(&kind)?;
         Ok(kind)
     }

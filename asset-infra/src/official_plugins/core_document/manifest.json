@@ -15,7 +15,7 @@
     "kinds": [
       {
         "kind": "core:document",
-        "parent": "core:file",
+        "parent": "core:resource",
         "label": "Document",
         "supports_content": true,
         "detect": {

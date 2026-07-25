@@ -296,8 +296,10 @@ Resource kinds form an arbitrary-depth acyclic hierarchy through the optional
 override inherited actions with the same ID. `description` and `tags` are direct
 fields of every Resource. Detection returns the most specific
 matching kind. For example, the bundled hierarchy contains
-`core:file → core:document → azvs:markdown`; `core:unknown` is another child of
-`core:file` for files whose concrete format has not been identified.
+`core:resource → core:document → azvs:markdown`. `core:resource` is the root and the
+default for resources whose concrete format has not been identified.
+Directory kinds use the separate `capabilities.directory_kinds` manifest capability
+and an independent acyclic registry rooted at the built-in `core:directory`.
 
 Kind-filtered list endpoints accept `include_descendants=true`. A query for
 `core:document` can therefore include Markdown, EPUB, source-code families, and

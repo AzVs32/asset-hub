@@ -3,39 +3,23 @@ use crate::error::ResourceError;
 use serde::{Deserialize, Serialize};
 
 /// 资源类型允许的最大字符数。
-const MAX_RESOURCE_KIND_LEN: usize = 128;
-
-// ==================================================
-// 资源类型
-// ==================================================
+const MAX_RESOURCE_KIND_LEN: usize = 256;
 
 /// 资源类型值对象。
 ///
-/// 建议使用 `namespace:typename` 形式避免不同业务模块之间的类型冲突。
+/// 类型必须使用小写的 `namespace:name` 形式。命名空间和名称只允许包含 ASCII
+/// 字母、数字、`.`、`-` 和 `_`。
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct ResourceKind(String);
 
 impl ResourceKind {
-    /// 资源类型未知
-    pub const UNKNOWN: &'static str = "core:unknown";
+    /// 未指定或未能识别具体类型时使用的默认资源类型。
+    pub const DEFAULT: &'static str = "core:resource";
 
-    /// 返回核心内置资源类型。
-    pub const fn builtin_values() -> &'static [&'static str] {
-        &[Self::UNKNOWN]
-    }
-
-    /// 创建一个资源类型实例。支持传入 `String` 或 `&str`。
-    ///
-    /// 建议采用 `namespace:typename` 的命名规范防止冲突。
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into().trim().to_string())
-    }
-
-    /// 创建并校验资源类型。
+    /// 创建、规范化并校验资源类型。
     pub fn try_new(value: impl Into<String>) -> Result<Self, ResourceError> {
-        let kind = Self::new(value);
-        kind.validate()?;
-        Ok(kind)
+        normalize_resource_kind(value.into()).map(Self)
     }
 
     /// 获取内部原始字符串的只读借用（`&str`）。
@@ -46,30 +30,16 @@ impl ResourceKind {
     /// 判断当前资源类型是否等于指定类型值。
     ///
     /// 例如
-    /// `kind.is(ResourceKind::UNKNOWN)` 或 `kind.is("core:image")`。
+    /// `kind.is(ResourceKind::DEFAULT)` 或 `kind.is("core:image")`。
     pub fn is(&self, kind: impl AsRef<str>) -> bool {
         self.0 == kind.as_ref()
-    }
-
-    /// 校验资源类型是否满足领域规则。
-    pub fn validate(&self) -> Result<(), ResourceError> {
-        normalize_required_text("resource.kind", &self.0, MAX_RESOURCE_KIND_LEN)?;
-
-        if self.0.chars().any(char::is_whitespace) {
-            return Err(ResourceError::InvalidFormat {
-                field: "resource.kind",
-                reason: "whitespace is not allowed",
-            });
-        }
-
-        Ok(())
     }
 }
 
 impl Default for ResourceKind {
-    /// 默认值： "UNKNOWN"。
+    /// 默认值：`core:resource`。
     fn default() -> Self {
-        Self(Self::UNKNOWN.to_string())
+        Self::try_new(Self::DEFAULT).expect("core:resource must be a valid resource kind")
     }
 }
 
@@ -87,10 +57,17 @@ impl AsRef<str> for ResourceKind {
     }
 }
 
-/// 将能转换成 `String` 的类型允许通过 `.into()` 转换为 `ResourceKind` 类型。
-impl<T: Into<String>> From<T> for ResourceKind {
-    fn from(value: T) -> Self {
-        Self::new(value)
+impl TryFrom<String> for ResourceKind {
+    type Error = ResourceError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::try_new(value)
+    }
+}
+
+impl From<ResourceKind> for String {
+    fn from(value: ResourceKind) -> Self {
+        value.0
     }
 }
 
@@ -101,4 +78,30 @@ impl std::str::FromStr for ResourceKind {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Self::try_new(s)
     }
+}
+
+fn normalize_resource_kind(value: String) -> Result<String, ResourceError> {
+    let value = normalize_required_text("resource.kind", &value, MAX_RESOURCE_KIND_LEN)?
+        .to_ascii_lowercase();
+    let Some((namespace, name)) = value.split_once(':') else {
+        return Err(ResourceError::InvalidFormat {
+            field: "resource.kind",
+            reason: "resource kind must use namespace:name format",
+        });
+    };
+    let valid = |part: &str| {
+        !part.is_empty()
+            && part.chars().all(|character| {
+                character.is_ascii_alphanumeric()
+                    || matches!(character, '-' | '_')
+                    || character == '.'
+            })
+    };
+    if !valid(namespace) || !valid(name) {
+        return Err(ResourceError::InvalidFormat {
+            field: "resource.kind",
+            reason: "resource kind contains invalid characters",
+        });
+    }
+    Ok(value)
 }

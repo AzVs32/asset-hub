@@ -41,12 +41,13 @@ pub use content::{
 };
 pub use diagnostic::{PluginActionFailure, PluginDiagnostic, PluginDiagnosticSeverity};
 pub use manifest::{
-    ActionAppliesTo, ActionRequirements, ActionUi, ContentDelivery, FilesystemPermission,
-    MANIFEST_SCHEMA, MANIFEST_TEMPLATE, MANIFEST_VERSION, MIN_MANIFEST_VERSION,
-    ManifestActionAccess, NetworkPermission, PLUGIN_API_VERSION, PluginCapabilities,
-    PluginDescriptor, PluginManifest, PluginManifestLock, PluginPermission, PluginPermissions,
-    PluginRuntime, PluginRuntimeLock, PluginWeb, PluginWebLock, ReadWritePermission,
-    ResourceActionCapability, ResourceKindCapability, is_plugin_api_compatible,
+    ActionAppliesTo, ActionRequirements, ActionUi, ContentDelivery, DirectoryKindCapability,
+    FilesystemPermission, MANIFEST_SCHEMA, MANIFEST_TEMPLATE, MANIFEST_VERSION,
+    MIN_MANIFEST_VERSION, ManifestActionAccess, NetworkPermission, PLUGIN_API_VERSION,
+    PluginCapabilities, PluginDescriptor, PluginManifest, PluginManifestLock, PluginPermission,
+    PluginPermissions, PluginRuntime, PluginRuntimeLock, PluginWeb, PluginWebLock,
+    ReadWritePermission, ResourceActionCapability, ResourceKindCapability,
+    is_plugin_api_compatible,
 };
 pub use policy::{InvalidPluginExecutionPolicy, PluginExecutionPolicy};
 pub use request::{

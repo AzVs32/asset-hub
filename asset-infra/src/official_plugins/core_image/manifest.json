@@ -15,7 +15,7 @@
     "kinds": [
       {
         "kind": "core:image",
-        "parent": "core:file",
+        "parent": "core:resource",
         "label": "Image",
         "supports_content": true,
         "detect": {

@@ -2,11 +2,11 @@
   "$schema": "https://asset-hub.local/schemas/plugin-manifest-v3.json",
   "manifest_version": 3,
   "plugin": {
-    "id": "core.file",
-    "name": "Core File",
+    "id": "core.resource",
+    "name": "Core Resource",
     "version": "0.1.0",
     "publisher": "asset-hub",
-    "description": "Built-in generic file resource support."
+    "description": "Built-in generic resource support."
   },
   "runtime": {
     "type": "builtin"
@@ -14,8 +14,8 @@
   "capabilities": {
     "kinds": [
       {
-        "kind": "core:file",
-        "label": "File",
+        "kind": "core:resource",
+        "label": "Resource",
         "supports_content": true
       }
     ],
@@ -25,7 +25,7 @@
         "label": "Download",
         "handler": "builtin.content.download",
         "applies_to": {
-          "kinds": ["core:file"]
+          "kinds": ["core:resource"]
         },
         "access": "read",
         "requires": {

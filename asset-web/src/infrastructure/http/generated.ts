@@ -347,7 +347,7 @@ export interface components {
          * @description 创建不包含对象内容的资源请求。
          * @example {
          *       "name": "resources_not_blob",
-         *       "kind": "core:unknown",
+         *       "kind": "core:resource",
          *       "description": "A resource without blob content",
          *       "tags": [
          *         "demo",
@@ -625,7 +625,7 @@ export interface components {
          * @description 更新资源请求。
          * @example {
          *       "name": "renamed.txt",
-         *       "kind": "core:unknown",
+         *       "kind": "core:resource",
          *       "status": "archived",
          *       "description": "updated resource",
          *       "tags": [

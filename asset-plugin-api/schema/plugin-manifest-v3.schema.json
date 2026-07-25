@@ -78,7 +78,18 @@
       "additionalProperties": false,
       "properties": {
         "kinds": { "type": "array", "items": { "$ref": "#/$defs/kind" }, "default": [] },
+        "directory_kinds": { "type": "array", "items": { "$ref": "#/$defs/directoryKind" }, "default": [] },
         "actions": { "type": "array", "items": { "$ref": "#/$defs/action" }, "default": [] }
+      }
+    },
+    "directoryKind": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "$ref": "#/$defs/canonicalId" },
+        "parent": { "$ref": "#/$defs/canonicalId" },
+        "label": { "$ref": "#/$defs/nonBlankString" }
       }
     },
     "kind": {

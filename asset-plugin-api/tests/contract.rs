@@ -84,6 +84,21 @@ fn manifest_matchers_are_schema_valid_and_normalized_by_serde() {
 }
 
 #[test]
+fn manifest_accepts_extensible_directory_kind_hierarchies() {
+    let mut value: Value = serde_json::from_str(MANIFEST_TEMPLATE).unwrap();
+    value["capabilities"]["directory_kinds"] = json!([{
+        "kind": "example:collection",
+        "parent": "core:directory",
+        "label": "Collection"
+    }]);
+
+    let manifest = canonical_manifest(&value).unwrap();
+    let kind = &manifest.capabilities.directory_kinds[0];
+    assert_eq!(kind.kind, "example:collection");
+    assert_eq!(kind.parent.as_deref(), Some("core:directory"));
+}
+
+#[test]
 fn v2_compatibility_is_runtime_only_and_serializes_to_the_canonical_shape() {
     let mut value: Value = serde_json::from_str(MANIFEST_TEMPLATE).unwrap();
     value.as_object_mut().unwrap().remove("$schema");

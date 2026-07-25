@@ -17,8 +17,8 @@ fn actions_are_selected_from_the_supplied_kind_lineage() {
         ResourceActionDefinition::new("image.view", "View").with_kinds(["core:image"]),
     ]);
     let lineage = vec![
-        ResourceKind::from("code:c"),
-        ResourceKind::from("core:document"),
+        ResourceKind::try_new("code:c").unwrap(),
+        ResourceKind::try_new("core:document").unwrap(),
     ];
 
     let actions = registry.actions_for_kinds(&lineage);
@@ -42,23 +42,31 @@ impl ResourceKindRegistry for KindRegistry {
 fn kind_detection_uses_only_kind_matchers() {
     let registry = KindRegistry {
         definitions: vec![
-            ResourceKindDefinition::new(ResourceKind::from("core:image"), "Image", true)
-                .with_detect(ResourceContentMatcher::new().with_extensions([".png"])),
-            ResourceKindDefinition::new(ResourceKind::from("core:file"), "File", true),
+            ResourceKindDefinition::new(
+                ResourceKind::try_new("core:image").unwrap(),
+                "Image",
+                true,
+            )
+            .with_detect(ResourceContentMatcher::new().with_extensions([".png"])),
+            ResourceKindDefinition::new(
+                ResourceKind::try_new("core:resource").unwrap(),
+                "File",
+                true,
+            ),
         ],
     };
 
     assert_eq!(
         registry.detect_content_kind(None, Some("images/demo.png")),
-        Some(ResourceKind::from("core:image"))
+        Some(ResourceKind::try_new("core:image").unwrap())
     );
 }
 
 #[test]
 fn supports_arbitrary_depth_lineage_inheritance_and_leaf_detection() {
-    let document = ResourceKind::from("core:document");
-    let code = ResourceKind::from("core:code");
-    let c = ResourceKind::from("code:c");
+    let document = ResourceKind::try_new("core:document").unwrap();
+    let code = ResourceKind::try_new("core:code").unwrap();
+    let c = ResourceKind::try_new("code:c").unwrap();
     let registry = KindRegistry {
         definitions: vec![
             ResourceKindDefinition::new(document.clone(), "Document", true),
