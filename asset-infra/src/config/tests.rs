@@ -96,15 +96,24 @@ fn normalized_config_turns_relative_paths_into_absolute_paths() {
 
 #[test]
 fn config_rejects_manually_configured_sqlite_path() {
-    let error = AssetInfraConfig::from_config_str(
-        r#"
-        [database]
-        sqlite_path = "custom.sqlite"
-        "#,
-    )
-    .unwrap_err();
+    for source in [
+        "[database]\nsqlite_path = \"custom.sqlite\"",
+        "[database.sqlite]\npath = \"custom.sqlite\"",
+    ] {
+        let error = AssetInfraConfig::from_config_str(source).unwrap_err();
+        assert!(error.to_string().contains("path"));
+    }
+}
 
-    assert!(error.to_string().contains("sqlite_path"));
+#[test]
+fn config_rejects_unknown_top_level_and_kind_fields() {
+    for source in [
+        "unknown_section = true",
+        "[kind]\nplugin_manifest = [\"plugin.json\"]",
+        "[[kind.definitions]]\nkind = \"doc:note\"\nunknown = true",
+    ] {
+        assert!(AssetInfraConfig::from_config_str(source).is_err());
+    }
 }
 
 #[test]

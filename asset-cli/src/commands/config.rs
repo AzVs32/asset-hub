@@ -1,5 +1,4 @@
-use super::CliResult;
-use asset_infra::config::AssetInfraConfig;
+use crate::{CliHost, CliResult};
 use clap::{ArgGroup, Args};
 use std::path::PathBuf;
 
@@ -20,27 +19,18 @@ pub(crate) struct ConfigCommand {
     show: Option<Option<PathBuf>>,
 }
 
-pub(crate) fn run(command: ConfigCommand) -> CliResult {
+pub(crate) fn run(command: ConfigCommand, host: &impl CliHost) -> CliResult {
     match (command.check, command.show) {
         (Some(path), None) => {
-            load_normalized(path)?;
+            host.validate_config(path.as_deref())?;
             println!("configuration is valid");
         }
         (None, Some(path)) => {
-            let config = load_normalized(path)?;
-            print!("{}", toml::to_string_pretty(&config)?);
+            print!("{}", host.normalized_config_toml(path.as_deref())?);
         }
         (None, None) | (Some(_), Some(_)) => {
             unreachable!("clap requires exactly one config operation")
         }
     }
     Ok(())
-}
-
-fn load_normalized(path: Option<PathBuf>) -> Result<AssetInfraConfig, asset_core::CoreError> {
-    match path {
-        Some(path) => AssetInfraConfig::from_config_file(path),
-        None => AssetInfraConfig::from_default_config_file(),
-    }?
-    .normalized()
 }

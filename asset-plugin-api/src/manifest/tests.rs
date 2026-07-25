@@ -1,32 +1,34 @@
 use super::*;
 
-#[test]
-fn embedded_manifest_template_is_a_v3_draft_without_generated_integrity() {
-    let document: serde_json::Value = serde_json::from_str(MANIFEST_TEMPLATE).unwrap();
-
-    assert_eq!(document["manifest_version"], MANIFEST_VERSION);
-    assert!(document["runtime"].get("plugin_api").is_none());
-    assert!(document["runtime"].get("wasm_sha256").is_none());
-    assert!(document.get("web").is_none());
-}
-
-#[test]
-fn embedded_json_schema_is_draft_2020_12() {
-    let schema: serde_json::Value = serde_json::from_str(MANIFEST_SCHEMA).unwrap();
-    assert_eq!(
-        schema["$schema"],
-        "https://json-schema.org/draft/2020-12/schema"
-    );
-    assert_eq!(
-        schema["properties"]["manifest_version"]["const"],
-        MANIFEST_VERSION
-    );
+fn manifest_document() -> serde_json::Value {
+    serde_json::json!({
+        "manifest_version": MANIFEST_VERSION,
+        "plugin": {
+            "id": "example.plugin",
+            "name": "Example Plugin",
+            "version": "0.1.0",
+            "publisher": "example"
+        },
+        "runtime": {
+            "type": "extism",
+            "wasm": "dist/plugin.wasm"
+        },
+        "capabilities": {
+            "actions": [{
+                "id": "example.plugin.action",
+                "label": "Example Action",
+                "handler": "run",
+                "applies_to": {"kinds": ["core:resource"]},
+                "views": ["json"]
+            }]
+        },
+        "permissions": {"allow": ["resource.read"]}
+    })
 }
 
 #[test]
 fn compatibility_window_accepts_v2_with_current_api_and_rejects_unknown_versions() {
-    let mut document: serde_json::Value = serde_json::from_str(MANIFEST_TEMPLATE).unwrap();
-    document.as_object_mut().unwrap().remove("$schema");
+    let mut document = manifest_document();
     document["manifest_version"] = serde_json::json!(2);
     document["runtime"]["plugin_api"] = serde_json::json!(PLUGIN_API_VERSION);
     let capabilities = document["capabilities"].as_object_mut().unwrap();
@@ -60,15 +62,15 @@ fn compatibility_window_accepts_v2_with_current_api_and_rejects_unknown_versions
 
 #[test]
 fn manifest_rejects_unknown_fields_at_every_level() {
-    let mut document: serde_json::Value = serde_json::from_str(MANIFEST_TEMPLATE).unwrap();
+    let mut document = manifest_document();
     document["unexpected"] = serde_json::json!(true);
     assert!(serde_json::from_value::<PluginManifest>(document).is_err());
 
-    let mut document: serde_json::Value = serde_json::from_str(MANIFEST_TEMPLATE).unwrap();
+    let mut document = manifest_document();
     document["capabilities"]["actions"][0]["applies_to"]["typo"] = serde_json::json!([]);
     assert!(serde_json::from_value::<PluginManifest>(document).is_err());
 
-    let mut document: serde_json::Value = serde_json::from_str(MANIFEST_TEMPLATE).unwrap();
+    let mut document = manifest_document();
     document["runtime"]["wais"] = serde_json::json!(false);
     assert!(serde_json::from_value::<PluginManifest>(document).is_err());
 }

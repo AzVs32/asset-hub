@@ -6,6 +6,7 @@ use crate::state::HttpState;
 use asset_core::port::{ResourceKindRegistry, SecurityAuditRepository};
 use asset_core::service::ResourceService;
 use asset_core::service::{AuthorizationService, UserService};
+use asset_plugin_api::PluginWebAssets;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderName, Method, StatusCode};
@@ -17,24 +18,16 @@ use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
-use tower_sessions::{
-    Expiry, SessionManagerLayer, cookie::SameSite, session_store::ExpiredDeletion,
-};
-use tower_sessions_sqlx_store::{
-    SqliteStore,
-    sqlx::sqlite::{
-        SqliteConnectOptions as SessionConnectOptions, SqlitePoolOptions as SessionPoolOptions,
-    },
-};
+use tower_sessions::{Expiry, SessionManagerLayer, cookie::SameSite, session_store::SessionStore};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 /// 使用显式边界配置和插件 web 根目录构建 HTTP 路由。
-pub(crate) fn build_with_options_and_plugin_web_assets(
+pub fn build_router(
     service: ResourceService,
     kind_registry: Arc<dyn ResourceKindRegistry>,
     options: RouterOptions,
-    plugin_web_assets: asset_infra::PluginWebAssets,
+    plugin_web_assets: PluginWebAssets,
     authorization: AuthorizationService,
 ) -> Router {
     let mut router = Router::new()
@@ -117,31 +110,20 @@ pub(crate) fn build_with_options_and_plugin_web_assets(
         ))
 }
 
-/// 为既有 API 增加 SQLite 会话、登录接口和登录保护。
-pub(crate) async fn with_authentication(
+/// 为既有 API 增加由 host 提供的会话存储、登录接口和登录保护。
+pub async fn with_authentication<S>(
     router: Router,
     users: UserService,
     audit: Arc<dyn SecurityAuditRepository>,
-    sqlite_path: &std::path::Path,
+    session_store: S,
     bootstrap_admin: Option<(&str, &str)>,
     session_options: &SessionOptions,
-) -> Result<Router, Box<dyn std::error::Error>> {
-    let session_connect_options = SessionConnectOptions::new()
-        .filename(sqlite_path)
-        .create_if_missing(true);
-    let session_pool = SessionPoolOptions::new()
-        .max_connections(2)
-        .connect_with(session_connect_options)
-        .await?;
+) -> Result<Router, Box<dyn std::error::Error>>
+where
+    S: SessionStore + Clone,
+{
     let backend = AuthBackend::new(users, audit);
     backend.initialize(bootstrap_admin).await?;
-    let session_store = SqliteStore::new(session_pool);
-    session_store.migrate().await?;
-    let _session_cleanup = tokio::spawn(
-        session_store
-            .clone()
-            .continuously_delete_expired(std::time::Duration::from_secs(60 * 60)),
-    );
     let inactivity_seconds = i64::try_from(session_options.inactivity_timeout.as_secs())?;
     let session_layer = SessionManagerLayer::new(session_store)
         .with_secure(session_options.cookie_secure)

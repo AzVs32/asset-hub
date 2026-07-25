@@ -1,11 +1,14 @@
-use crate::router;
-use crate::settings::{CorsPolicy, RouterOptions, SessionOptions};
-use asset_apps::AssetRuntime;
+use asset_bootstrap::AssetRuntime;
 use asset_core::domain::{AccessContext, UserId};
+use asset_http::{
+    CorsPolicy, MAX_ACTION_REQUEST_BYTES, MAX_LOGIN_REQUEST_BYTES, RouterOptions, SessionOptions,
+    build_router, with_authentication,
+};
 use asset_infra::config::{
     AssetInfraConfig, BlobConfig, DatabaseConfig, KindRegistryConfig, LocalBlobConfig,
     LocalBlobSyncConfig, PluginHostConfig, ResourceKindConfig, SqliteDatabaseConfig,
 };
+use asset_plugin_api::PluginWebAssets;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
 use axum::{Extension, Router};
@@ -19,6 +22,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tower::ServiceExt;
+use tower_sessions_sqlx_store::SqliteStore;
 
 const BODY_LIMIT: usize = 1024 * 1024;
 
@@ -240,7 +244,7 @@ async fn action_endpoint_has_a_dedicated_request_body_limit() {
     let app = test_app("action-body-limit").await;
     let oversized = format!(
         "{{\"input\":{{\"value\":\"{}\"}}}}",
-        "x".repeat(crate::handlers::MAX_ACTION_REQUEST_BYTES)
+        "x".repeat(MAX_ACTION_REQUEST_BYTES)
     );
     let response = request(
         &app,
@@ -1417,7 +1421,7 @@ async fn test_app_with_kind_and_plugin_config(
     };
     let runtime = AssetRuntime::from_config(config).await.unwrap();
     let authorization = runtime.authorization_service();
-    let router = router::build_with_options_and_plugin_web_assets(
+    let router = build_router(
         runtime.resource_service(),
         runtime.resource_kind_registry(),
         options,
@@ -1431,7 +1435,7 @@ async fn test_app_with_kind_and_plugin_config(
 
 async fn test_app_with_plugin_web_assets(
     root: PathBuf,
-    plugin_web_assets: asset_infra::PluginWebAssets,
+    plugin_web_assets: PluginWebAssets,
 ) -> TestApp {
     let config = AssetInfraConfig {
         database: DatabaseConfig {
@@ -1453,7 +1457,7 @@ async fn test_app_with_plugin_web_assets(
     };
     let runtime = AssetRuntime::from_config(config).await.unwrap();
     let authorization = runtime.authorization_service();
-    let router = router::build_with_options_and_plugin_web_assets(
+    let router = build_router(
         runtime.resource_service(),
         runtime.resource_kind_registry(),
         RouterOptions::default(),
@@ -1507,7 +1511,7 @@ async fn member_access_is_limited_to_the_workspace_subtree() {
     let root = unique_temp_root("authenticated-workspace");
     let config = AssetInfraConfig {
         database: DatabaseConfig {
-            sqlite: SqliteDatabaseConfig { max_connections: 2 },
+            sqlite: SqliteDatabaseConfig { max_connections: 1 },
             ..DatabaseConfig::default()
         },
         blob: BlobConfig {
@@ -1524,8 +1528,13 @@ async fn member_access_is_limited_to_the_workspace_subtree() {
         plugin: Default::default(),
     };
     let runtime = AssetRuntime::from_config(config).await.unwrap();
+    assert_eq!(
+        runtime.database_pool().options().get_max_connections(),
+        1,
+        "HTTP sessions must reuse the configured infrastructure pool",
+    );
     let authorization = runtime.authorization_service();
-    let base = router::build_with_options_and_plugin_web_assets(
+    let base = build_router(
         runtime.resource_service(),
         runtime.resource_kind_registry(),
         RouterOptions::default(),
@@ -1538,12 +1547,13 @@ async fn member_access_is_limited_to_the_workspace_subtree() {
         )]),
         authorization.clone(),
     );
-    let sqlite_path = runtime.config().sqlite_path();
-    let router = router::with_authentication(
+    let session_store = SqliteStore::new(runtime.database_pool());
+    session_store.migrate().await.unwrap();
+    let router = with_authentication(
         base,
         runtime.user_service(),
         runtime.security_audit_repository(),
-        &sqlite_path,
+        session_store,
         Some(("admin", "administrator-password")),
         &SessionOptions {
             cookie_secure: false,
@@ -1621,7 +1631,7 @@ async fn member_access_is_limited_to_the_workspace_subtree() {
         &app,
         Method::POST,
         "/auth/login",
-        json!({ "username": "admin", "password": "x".repeat(crate::auth::MAX_LOGIN_REQUEST_BYTES) }),
+        json!({ "username": "admin", "password": "x".repeat(MAX_LOGIN_REQUEST_BYTES) }),
         "",
     )
     .await;

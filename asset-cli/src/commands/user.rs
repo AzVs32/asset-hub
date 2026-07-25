@@ -1,6 +1,5 @@
-use super::CliResult;
+use crate::{CliHost, CliResult, CliServices};
 use anyhow::{Context, bail};
-use asset_apps::AssetRuntime;
 use asset_core::domain::{
     DirectoryPath, NewSecurityAuditEvent, SecurityAuditActor, SecurityAuditEventType,
     SecurityAuditOutcome, SecurityAuditSource, User, UserRole, UserStatus,
@@ -42,16 +41,16 @@ pub(crate) struct UserCommand {
     show: Option<String>,
 }
 
-pub(crate) async fn run(command: UserCommand) -> CliResult {
-    let runtime = AssetRuntime::from_default_config_file_without_storage_sync().await?;
-    let users = runtime.user_service();
+pub(crate) async fn run(command: UserCommand, host: &impl CliHost) -> CliResult {
+    let services = host.maintenance_services().await?;
+    let users = services.user_service();
 
     if command.list {
         print_user_list(&users.list().await?);
     } else if let Some(username) = command.create {
         let password = prompt_new_password()?;
         let user = audited(
-            &runtime,
+            &services,
             SecurityAuditEventType::AuthUserCreate,
             &username,
             users.create(username.clone(), &password, UserRole::Member, None),
@@ -61,7 +60,7 @@ pub(crate) async fn run(command: UserCommand) -> CliResult {
     } else if let Some(username) = command.password {
         let password = prompt_new_password()?;
         let user = audited(
-            &runtime,
+            &services,
             SecurityAuditEventType::AuthUserPassword,
             &username,
             async {
@@ -74,9 +73,9 @@ pub(crate) async fn run(command: UserCommand) -> CliResult {
         .await?;
         println!("updated password for user `{}`", user.username());
     } else if let Some(username) = command.enable {
-        update_status(&runtime, &username, UserStatus::Active).await?;
+        update_status(&services, &username, UserStatus::Active).await?;
     } else if let Some(username) = command.disable {
-        update_status(&runtime, &username, UserStatus::Disabled).await?;
+        update_status(&services, &username, UserStatus::Disabled).await?;
     } else if let Some(username) = command.show {
         let user = users
             .find_by_username(&username)
@@ -89,10 +88,10 @@ pub(crate) async fn run(command: UserCommand) -> CliResult {
     Ok(())
 }
 
-async fn update_status(runtime: &AssetRuntime, username: &str, status: UserStatus) -> CliResult {
-    let users = runtime.user_service();
+async fn update_status(services: &CliServices, username: &str, status: UserStatus) -> CliResult {
+    let users = services.user_service();
     let user = audited(
-        runtime,
+        services,
         SecurityAuditEventType::AuthUserStatus,
         username,
         async {
@@ -119,7 +118,7 @@ async fn update_status(runtime: &AssetRuntime, username: &str, status: UserStatu
 }
 
 async fn audited<T>(
-    runtime: &AssetRuntime,
+    services: &CliServices,
     event_type: SecurityAuditEventType,
     target: &str,
     operation: impl Future<Output = Result<T, asset_core::CoreError>>,
@@ -136,7 +135,7 @@ async fn audited<T>(
         },
         target: Some(target.trim().to_owned()),
     };
-    if let Err(error) = runtime.security_audit_repository().record(&event).await {
+    if let Err(error) = services.security_audit_repository().record(&event).await {
         eprintln!("asset: failed to record security audit event: {error}");
     }
     result

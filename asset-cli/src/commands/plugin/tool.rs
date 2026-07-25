@@ -1,9 +1,7 @@
 use asset_plugin_api::{
-    MANIFEST_SCHEMA, MANIFEST_TEMPLATE, PluginCapabilities, PluginDescriptor, PluginManifest,
-    PluginManifestLock, PluginPermissions, PluginRuntime, PluginRuntimeLock, PluginWeb,
-    PluginWebLock,
+    PluginManifest, PluginManifestLock, PluginRuntime, PluginRuntimeLock, PluginWebLock,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -24,85 +22,6 @@ impl std::error::Error for ToolError {}
 
 type Result<T> = std::result::Result<T, ToolError>;
 
-pub fn generate_manifest(path: &Path) -> Result<PluginManifest> {
-    let document: serde_json::Value = serde_json::from_str(MANIFEST_TEMPLATE)
-        .map_err(|error| ToolError(format!("parse embedded manifest template: {error}")))?;
-    let draft: DraftManifest = serde_json::from_value(document)
-        .map_err(|error| ToolError(format!("parse embedded manifest template: {error}")))?;
-    let manifest = manifest_for_draft_validation(draft);
-    validate_contract(&manifest)?;
-    write_new_file(path, MANIFEST_TEMPLATE.as_bytes())?;
-    Ok(manifest)
-}
-
-pub fn generate_schema(path: &Path) -> Result<()> {
-    write_new_file(path, MANIFEST_SCHEMA.as_bytes())
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DraftManifest {
-    #[serde(default, rename = "$schema")]
-    schema: Option<String>,
-    manifest_version: u32,
-    plugin: PluginDescriptor,
-    runtime: DraftRuntime,
-    #[serde(default)]
-    web: Option<DraftWeb>,
-    #[serde(default)]
-    capabilities: PluginCapabilities,
-    permissions: PluginPermissions,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-enum DraftRuntime {
-    Builtin,
-    Extism {
-        wasm: PathBuf,
-        #[serde(default)]
-        wasi: bool,
-        #[serde(default = "default_plugin_api_version")]
-        plugin_api: String,
-    },
-}
-
-fn default_plugin_api_version() -> String {
-    asset_plugin_api::PLUGIN_API_VERSION.to_string()
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DraftWeb {
-    root: PathBuf,
-}
-
-fn manifest_for_draft_validation(draft: DraftManifest) -> PluginManifest {
-    let runtime = match draft.runtime {
-        DraftRuntime::Builtin => PluginRuntime::Builtin,
-        DraftRuntime::Extism {
-            wasm,
-            wasi,
-            plugin_api,
-            ..
-        } => PluginRuntime::Extism {
-            wasm,
-            wasi,
-            plugin_api,
-        },
-    };
-    let web = draft.web.map(|web| PluginWeb { root: web.root });
-    PluginManifest {
-        schema: draft.schema,
-        manifest_version: draft.manifest_version,
-        plugin: draft.plugin,
-        runtime,
-        web,
-        capabilities: draft.capabilities,
-        permissions: draft.permissions,
-    }
-}
-
 pub fn seal_manifest(path: &Path) -> Result<PluginManifest> {
     let manifest: PluginManifest = read_json(path)?;
     validate_contract(&manifest)?;
@@ -117,22 +36,6 @@ pub fn verify_manifest(path: &Path) -> Result<PluginManifest> {
     validate_contract(&manifest)?;
     let lock = read_required_lock(&manifest, path)?;
     verify_wasm(&manifest, lock.as_ref(), path)?;
-    verify_web(&manifest, lock.as_ref(), path)?;
-    Ok(manifest)
-}
-
-pub fn verify_wasm_manifest(path: &Path) -> Result<PluginManifest> {
-    let manifest: PluginManifest = read_json(path)?;
-    validate_contract(&manifest)?;
-    let lock = read_required_lock(&manifest, path)?;
-    verify_wasm(&manifest, lock.as_ref(), path)?;
-    Ok(manifest)
-}
-
-pub fn verify_web_manifest(path: &Path) -> Result<PluginManifest> {
-    let manifest: PluginManifest = read_json(path)?;
-    validate_contract(&manifest)?;
-    let lock = read_required_lock(&manifest, path)?;
     verify_web(&manifest, lock.as_ref(), path)?;
     Ok(manifest)
 }
@@ -385,19 +288,7 @@ fn write_json_atomically(path: &Path, value: &impl Serialize) -> Result<()> {
     write_result
 }
 
-fn write_new_file(path: &Path, bytes: &[u8]) -> Result<()> {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(|error| ToolError(format!("create `{}`: {error}", path.display())))?;
-    if let Err(error) = file.write_all(bytes).and_then(|_| file.sync_all()) {
-        drop(file);
-        let _ = std::fs::remove_file(path);
-        return Err(ToolError(format!("write `{}`: {error}", path.display())));
-    }
-    Ok(())
-}
-
 #[cfg(test)]
-mod tests;
+mod tests {
+    include!("tests.rs");
+}

@@ -4,6 +4,8 @@ use asset_core::service::{AuthorizationService, ResourceService, UserService};
 use asset_infra::AssetInfrastructure;
 use asset_infra::config::AssetInfraConfig;
 use asset_infra::storage::LocalStorageSync;
+use asset_plugin_api::PluginWebAssets;
+use sqlx::SqlitePool;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -68,11 +70,6 @@ impl AssetRuntime {
         }
     }
 
-    /// 返回默认配置文件名。
-    pub fn default_config_file() -> &'static str {
-        AssetInfraConfig::default_config_file_name()
-    }
-
     /// 返回实际生效的基础设施配置。
     pub fn config(&self) -> &AssetInfraConfig {
         self.infrastructure.config()
@@ -95,6 +92,11 @@ impl AssetRuntime {
         self.infrastructure.security_audit_repository()
     }
 
+    /// 返回由基础设施统一创建的数据库连接池。
+    pub fn database_pool(&self) -> SqlitePool {
+        self.infrastructure.database_pool()
+    }
+
     /// 返回资源类型注册表。
     pub fn resource_kind_registry(&self) -> Arc<dyn ResourceKindRegistry> {
         self.infrastructure.resource_kind_registry()
@@ -106,7 +108,7 @@ impl AssetRuntime {
     }
 
     /// 返回启动时校验并冻结的插件浏览器静态资源。
-    pub fn plugin_web_assets(&self) -> asset_infra::PluginWebAssets {
+    pub fn plugin_web_assets(&self) -> PluginWebAssets {
         self.infrastructure.plugin_web_assets()
     }
 }

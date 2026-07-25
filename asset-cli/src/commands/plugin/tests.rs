@@ -35,43 +35,6 @@ fn seal_generates_wasm_and_web_integrity() {
 }
 
 #[test]
-fn generate_writes_a_seal_ready_manifest_without_generated_hashes() {
-    let root = test_root("generate");
-    std::fs::create_dir_all(&root).unwrap();
-    let path = root.join("manifest.json");
-
-    let generated = generate_manifest(&path).unwrap();
-    let document: serde_json::Value = read_json(&path).unwrap();
-
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), MANIFEST_TEMPLATE);
-    assert_eq!(generated.plugin_id(), "example.plugin");
-    assert_eq!(
-        document["manifest_version"],
-        asset_plugin_api::MANIFEST_VERSION
-    );
-    assert_eq!(document["runtime"]["wasm"], "dist/plugin.wasm");
-    assert!(document["runtime"].get("wasm_sha256").is_none());
-    assert_eq!(document["capabilities"]["actions"][0]["handler"], "run");
-    assert!(generate_manifest(&path).is_err());
-    std::fs::create_dir_all(root.join("dist")).unwrap();
-    std::fs::write(root.join("dist/plugin.wasm"), b"wasm").unwrap();
-    seal_manifest(&path).unwrap();
-    verify_manifest(&path).unwrap();
-    let _ = std::fs::remove_dir_all(root);
-}
-
-#[test]
-fn generate_schema_writes_the_embedded_schema_without_overwriting() {
-    let root = test_root("schema");
-    std::fs::create_dir_all(&root).unwrap();
-    let path = root.join("manifest.schema.json");
-    generate_schema(&path).unwrap();
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), MANIFEST_SCHEMA);
-    assert!(generate_schema(&path).is_err());
-    let _ = std::fs::remove_dir_all(root);
-}
-
-#[test]
 fn verify_detects_artifact_changes_without_modifying_manifest() {
     let root = test_root("verify");
     std::fs::create_dir_all(&root).unwrap();

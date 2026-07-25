@@ -71,13 +71,7 @@ async fn content_handles_read_raw_bounded_ranges_and_close() {
         "asset-hub-content-handle-test-{}",
         uuid::Uuid::now_v7()
     ));
-    let storage = Arc::new(
-        crate::storage::OpenDalBlobStorage::from_local_config(&crate::config::LocalBlobConfig {
-            root: root.clone(),
-            ..crate::config::LocalBlobConfig::default()
-        })
-        .unwrap(),
-    );
+    let storage = Arc::new(crate::storage::OpenDalBlobStorage::from_local_root(&root).unwrap());
     let key = StorageKey::new("docs/demo.bin").unwrap();
     storage
         .put(&key, bytes::Bytes::from_static(b"abcdefgh"))

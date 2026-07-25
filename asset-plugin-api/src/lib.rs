@@ -22,6 +22,13 @@
 /// Cargo package version of the Rust authoring library. This is not a wire protocol version.
 pub const CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Browser assets loaded from verified plugin packages, grouped by plugin id
+/// and package-relative path.
+pub type PluginWebAssets = std::collections::HashMap<
+    String,
+    std::collections::HashMap<std::path::PathBuf, std::sync::Arc<[u8]>>,
+>;
+
 pub mod action;
 pub mod content;
 pub mod diagnostic;
@@ -42,12 +49,11 @@ pub use content::{
 pub use diagnostic::{PluginActionFailure, PluginDiagnostic, PluginDiagnosticSeverity};
 pub use manifest::{
     ActionAppliesTo, ActionRequirements, ActionUi, ContentDelivery, DirectoryKindCapability,
-    FilesystemPermission, MANIFEST_SCHEMA, MANIFEST_TEMPLATE, MANIFEST_VERSION,
-    MIN_MANIFEST_VERSION, ManifestActionAccess, NetworkPermission, PLUGIN_API_VERSION,
-    PluginCapabilities, PluginDescriptor, PluginManifest, PluginManifestLock, PluginPermission,
-    PluginPermissions, PluginRuntime, PluginRuntimeLock, PluginWeb, PluginWebLock,
-    ReadWritePermission, ResourceActionCapability, ResourceKindCapability,
-    is_plugin_api_compatible,
+    FilesystemPermission, MANIFEST_VERSION, MIN_MANIFEST_VERSION, ManifestActionAccess,
+    NetworkPermission, PLUGIN_API_VERSION, PluginCapabilities, PluginDescriptor, PluginManifest,
+    PluginManifestLock, PluginPermission, PluginPermissions, PluginRuntime, PluginRuntimeLock,
+    PluginWeb, PluginWebLock, ReadWritePermission, ResourceActionCapability,
+    ResourceKindCapability, is_plugin_api_compatible,
 };
 pub use policy::{InvalidPluginExecutionPolicy, PluginExecutionPolicy};
 pub use request::{

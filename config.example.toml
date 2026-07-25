@@ -21,6 +21,8 @@ backend = "sqlite"
 [database.sqlite]
 # SQLite connection pool size.
 max_connections = 5
+# SQLite is always stored at <blob.local.root>/.asset-hub/asset-hub.sqlite so database metadata
+# and Blob content can be migrated as one data domain.
 
 [blob]
 backend = "local"
@@ -28,7 +30,6 @@ backend = "local"
 [blob.local]
 # Local Blob storage root directory.
 # Relative paths are resolved from the current working directory.
-# SQLite is always stored at <root>/.asset-hub/asset-hub.sqlite.
 root = "data"
 
 [blob.local.sync]
@@ -99,9 +100,9 @@ plugin_manifests = []
 # Plugin manifest example.
 # Use `capabilities.kinds` for resource types, `capabilities.directory_kinds` for
 # directory types, and `capabilities.actions` for resource actions.
-# Start with `asset-plugin gen manifest`, then edit its fixed example fields.
+# Author a Manifest V3 JSON document, then build the declared artifacts.
 # Artifact hashes belong to the generated sibling `manifest.lock.json`; generate it with
-# `asset-plugin seal path/to/plugin.json` after building the plugin artifacts.
+# `asset plugin --seal path/to/plugin.json` after building the plugin artifacts.
 #
 # {
 #   "$schema": "https://asset-hub.local/schemas/plugin-manifest-v3.json",

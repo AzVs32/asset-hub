@@ -8,7 +8,7 @@ RUN apt-get update \
 COPY . .
 RUN rustup target add wasm32-unknown-unknown \
     && ./scripts/verify-plugin-artifacts.sh
-RUN cargo build --locked --release -p asset-apps --bins
+RUN cargo build --locked --release -p asset-bootstrap --bins
 
 FROM node:22-trixie-slim AS web-builder
 WORKDIR /src/asset-web
@@ -22,22 +22,22 @@ WORKDIR /src/plugins/azvs-markdown/web
 COPY plugins/azvs-markdown/web/package.json plugins/azvs-markdown/web/package-lock.json ./
 RUN npm ci
 COPY plugins/azvs-markdown/web/ ./
-COPY plugins/azvs-markdown/manifest.json /src/plugins/azvs-markdown/manifest.json
-COPY --from=api-builder /src/target/release/asset-plugin /usr/local/bin/asset-plugin
+COPY plugins/azvs-markdown/manifest.json plugins/azvs-markdown/manifest.lock.json plugins/azvs-markdown/azvs-markdown.wasm /src/plugins/azvs-markdown/
+COPY --from=api-builder /src/target/release/asset /usr/local/bin/asset
 RUN npm run build
 WORKDIR /src
-RUN asset-plugin verify-web plugins/azvs-markdown/manifest.json
+RUN asset plugin --verify plugins/azvs-markdown/manifest.json
 
 FROM node:22-trixie-slim AS epub-web-builder
 WORKDIR /src/plugins/azvs-epub/web
 COPY plugins/azvs-epub/web/package.json plugins/azvs-epub/web/package-lock.json ./
 RUN npm ci
 COPY plugins/azvs-epub/web/ ./
-COPY plugins/azvs-epub/manifest.json /src/plugins/azvs-epub/manifest.json
-COPY --from=api-builder /src/target/release/asset-plugin /usr/local/bin/asset-plugin
+COPY plugins/azvs-epub/manifest.json plugins/azvs-epub/manifest.lock.json plugins/azvs-epub/azvs-epub.wasm /src/plugins/azvs-epub/
+COPY --from=api-builder /src/target/release/asset /usr/local/bin/asset
 RUN npm run build
 WORKDIR /src
-RUN asset-plugin verify-web plugins/azvs-epub/manifest.json
+RUN asset plugin --verify plugins/azvs-epub/manifest.json
 
 FROM debian:trixie-slim AS api
 RUN apt-get update \

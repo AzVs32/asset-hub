@@ -4,7 +4,9 @@ members = [
     "asset-plugin-api",
     "asset-core",
     "asset-infra",
-    "asset-apps",
+    "asset-http",
+    "asset-cli",
+    "asset-bootstrap",
 ]
 
 [workspace.package]

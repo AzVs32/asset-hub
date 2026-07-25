@@ -1,4 +1,3 @@
-use crate::config::LocalBlobConfig;
 use asset_core::CoreError;
 use asset_core::domain::{DirectoryPath, StorageKey};
 use asset_core::port::{
@@ -8,7 +7,7 @@ use bytes::Bytes;
 use futures_util::{StreamExt, TryStreamExt};
 use opendal::services::Fs;
 use opendal::{ErrorKind, Operator};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 /// 基于 OpenDAL `Operator` 的对象存储适配器。
@@ -34,17 +33,22 @@ impl OpenDalBlobStorage {
         }
     }
 
-    /// 根据本地 Blob 后端配置创建对象存储适配器。
-    pub fn from_local_config(config: &LocalBlobConfig) -> Result<Self, CoreError> {
-        let root = config.root.to_string_lossy();
-        let builder = Fs::default().root(root.as_ref());
+    /// 根据已经归一化的本地根目录创建对象存储适配器。
+    pub fn from_local_root(root: &Path) -> Result<Self, CoreError> {
+        if root.as_os_str().is_empty() {
+            return Err(CoreError::configuration(
+                "blob local root must not be empty",
+            ));
+        }
+        let root_text = root.to_string_lossy();
+        let builder = Fs::default().root(root_text.as_ref());
         let operator = Operator::new(builder)
             .map_err(|error| CoreError::storage("fs.build", error))?
             .finish();
 
         Ok(Self {
             operator,
-            local_root: Some(config.root.clone()),
+            local_root: Some(root.to_path_buf()),
         })
     }
 

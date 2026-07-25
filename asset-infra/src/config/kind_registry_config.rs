@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 /// 资源类型注册表配置。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct KindRegistryConfig {
     /// 由系统配置声明的资源类型。
     pub definitions: Vec<ResourceKindConfig>,
@@ -14,7 +14,7 @@ pub struct KindRegistryConfig {
 
 /// 配置文件中的资源类型定义。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ResourceKindConfig {
     /// 资源类型值，例如 `core:image`。
     pub kind: String,

@@ -1,5 +1,4 @@
-use super::CliResult;
-use asset_apps::AssetRuntime;
+use crate::{CliHost, CliResult};
 use clap::{ArgGroup, Args};
 use std::io::Write;
 use std::time::Duration;
@@ -17,12 +16,12 @@ pub(crate) struct SystemCommand {
     scan_resource: bool,
 }
 
-pub(crate) async fn run(command: SystemCommand) -> CliResult {
+pub(crate) async fn run(command: SystemCommand, host: &impl CliHost) -> CliResult {
     if command.scan_resource {
-        let runtime = AssetRuntime::from_default_config_file_without_storage_sync().await?;
+        let services = host.maintenance_services().await?;
         println!("verifying all stored resources with SHA-256...");
         std::io::stdout().flush()?;
-        let report = runtime.resource_service().scan_resources().await?;
+        let report = services.resource_service().scan_resources().await?;
         println!(
             "verified {} resources ({} hashed, {} directories) in {}",
             report.files,

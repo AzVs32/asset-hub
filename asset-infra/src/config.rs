@@ -48,10 +48,10 @@ const DEFAULT_PLUGIN_TIMEOUT_SECONDS: u64 = 20;
 /// - 数据库后端：`sqlite`
 /// - Blob 存储后端：`local`
 /// - 本地 Blob 存储根目录：`data`
-/// - SQLite 数据库文件：`<blob.local.root>/.asset-hub/asset-hub.sqlite`
+/// - SQLite 数据库文件：固定为 `<blob.local.root>/.asset-hub/asset-hub.sqlite`
 /// - SQLite 最大连接数：`5`
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct AssetInfraConfig {
     /// 数据存储配置。
     pub database: DatabaseConfig,
@@ -64,11 +64,6 @@ pub struct AssetInfraConfig {
 }
 
 impl AssetInfraConfig {
-    /// 返回缺省启动场景使用的配置文件名。
-    pub fn default_config_file_name() -> &'static str {
-        DEFAULT_CONFIG_FILE
-    }
-
     /// 从 TOML 字符串解析配置。
     ///
     /// 空字符串会被视为默认配置。缺失的字段会逐层填充默认值。
@@ -117,7 +112,8 @@ impl AssetInfraConfig {
     /// 归一化配置。
     ///
     /// 当前主要处理路径：本地 Blob 根目录可以在配置中写相对路径，归一化后会基于当前
-    /// 工作目录转换成绝对路径。SQLite 文件始终位于该根目录下的固定内部路径。
+    /// 工作目录转换成绝对路径。SQLite 路径始终由归一化后的 Blob 根目录派生；插件
+    /// manifest 路径也会执行相同的绝对路径处理。
     pub fn normalized(mut self) -> Result<Self, CoreError> {
         match self.database.backend {
             DatabaseBackend::Sqlite => {
@@ -144,7 +140,9 @@ impl AssetInfraConfig {
         Ok(self)
     }
 
-    /// 返回由本地 Blob 存储根目录派生的固定 SQLite 数据库文件路径。
+    /// 返回由本地 Blob 根目录派生的固定 SQLite 数据库文件路径。
+    ///
+    /// 数据库必须与 Blob 数据域一起迁移，因此不允许单独配置路径。
     pub fn sqlite_path(&self) -> PathBuf {
         match self.blob.backend {
             BlobBackend::Local => self.blob.local.root.join(SQLITE_DATABASE_RELATIVE_PATH),

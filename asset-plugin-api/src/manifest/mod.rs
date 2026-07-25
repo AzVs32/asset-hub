@@ -65,9 +65,6 @@ mod lock {
 pub const MANIFEST_VERSION: u32 = 3;
 pub const MIN_MANIFEST_VERSION: u32 = 2;
 pub const PLUGIN_API_VERSION: &str = "asset-hub.plugin-api@0.3";
-/// Editable Manifest V3 draft copied by `asset-plugin gen manifest`.
-pub const MANIFEST_TEMPLATE: &str = include_str!("../../templates/manifest.json");
-pub const MANIFEST_SCHEMA: &str = include_str!("../../schema/plugin-manifest-v3.schema.json");
 
 /// Complete plugin manifest document.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

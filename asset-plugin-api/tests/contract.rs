@@ -1,6 +1,5 @@
 use asset_plugin_api::{
-    MANIFEST_SCHEMA, MANIFEST_TEMPLATE, PluginActionFailure, PluginActionOutput,
-    PluginActionRequest, PluginManifest,
+    MANIFEST_VERSION, PluginActionFailure, PluginActionOutput, PluginActionRequest, PluginManifest,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -16,8 +15,6 @@ where
 }
 
 fn canonical_manifest(value: &Value) -> Result<PluginManifest, String> {
-    let schema: Value = serde_json::from_str(MANIFEST_SCHEMA).unwrap();
-    jsonschema::draft202012::validate(&schema, value).map_err(|error| error.to_string())?;
     let manifest: PluginManifest = serde_json::from_value(value.clone())
         .map_err(|error| format!("Serde rejected manifest: {error}"))?;
     manifest
@@ -26,19 +23,35 @@ fn canonical_manifest(value: &Value) -> Result<PluginManifest, String> {
     Ok(manifest)
 }
 
-#[test]
-fn manifest_schema_is_valid_and_template_passes_all_contract_layers() {
-    let schema: Value = serde_json::from_str(MANIFEST_SCHEMA).unwrap();
-    jsonschema::draft202012::meta::validate(&schema).unwrap();
-
-    let template: Value = serde_json::from_str(MANIFEST_TEMPLATE).unwrap();
-    canonical_manifest(&template).unwrap();
+fn manifest_document() -> Value {
+    json!({
+        "manifest_version": MANIFEST_VERSION,
+        "plugin": {
+            "id": "example.plugin",
+            "name": "Example Plugin",
+            "version": "0.1.0",
+            "publisher": "example"
+        },
+        "runtime": {
+            "type": "extism",
+            "wasm": "dist/plugin.wasm"
+        },
+        "capabilities": {
+            "actions": [{
+                "id": "example.plugin.action",
+                "label": "Example Action",
+                "handler": "run",
+                "applies_to": {"kinds": ["core:resource"]},
+                "views": ["json"]
+            }]
+        },
+        "permissions": {"allow": ["resource.read"]}
+    })
 }
 
 #[test]
-fn schema_and_host_reject_the_same_canonical_manifest_violations() {
-    let schema: Value = serde_json::from_str(MANIFEST_SCHEMA).unwrap();
-    let template: Value = serde_json::from_str(MANIFEST_TEMPLATE).unwrap();
+fn host_rejects_canonical_manifest_violations() {
+    let template = manifest_document();
     let invalid_documents = [
         {
             let mut value = template.clone();
@@ -58,15 +71,14 @@ fn schema_and_host_reject_the_same_canonical_manifest_violations() {
     ];
 
     for value in invalid_documents {
-        assert!(!jsonschema::draft202012::is_valid(&schema, &value));
         let manifest: PluginManifest = serde_json::from_value(value).unwrap();
         assert!(manifest.validate().is_err());
     }
 }
 
 #[test]
-fn manifest_matchers_are_schema_valid_and_normalized_by_serde() {
-    let mut value: Value = serde_json::from_str(MANIFEST_TEMPLATE).unwrap();
+fn manifest_matchers_are_normalized_by_serde() {
+    let mut value = manifest_document();
     value["capabilities"]["kinds"] = json!([{
         "kind": "example:markdown",
         "parent": "core:document",
@@ -85,7 +97,7 @@ fn manifest_matchers_are_schema_valid_and_normalized_by_serde() {
 
 #[test]
 fn manifest_accepts_extensible_directory_kind_hierarchies() {
-    let mut value: Value = serde_json::from_str(MANIFEST_TEMPLATE).unwrap();
+    let mut value = manifest_document();
     value["capabilities"]["directory_kinds"] = json!([{
         "kind": "example:collection",
         "parent": "core:directory",
@@ -100,8 +112,7 @@ fn manifest_accepts_extensible_directory_kind_hierarchies() {
 
 #[test]
 fn v2_compatibility_is_runtime_only_and_serializes_to_the_canonical_shape() {
-    let mut value: Value = serde_json::from_str(MANIFEST_TEMPLATE).unwrap();
-    value.as_object_mut().unwrap().remove("$schema");
+    let mut value = manifest_document();
     value["manifest_version"] = json!(2);
     value["runtime"]["plugin_api"] = json!(asset_plugin_api::PLUGIN_API_VERSION);
     let capabilities = value["capabilities"].as_object_mut().unwrap();

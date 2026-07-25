@@ -2,7 +2,6 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use asset_apps::AssetRuntime;
 use axum::http::HeaderValue;
 use clap::{ArgAction, Parser};
 
@@ -85,7 +84,7 @@ struct HttpCli {
 
 /// HTTP CORS 策略。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum CorsPolicy {
+pub enum CorsPolicy {
     /// 不启用 CORS 响应头。
     None,
     /// 只允许显式配置的 origin。
@@ -94,17 +93,17 @@ pub(crate) enum CorsPolicy {
 
 /// HTTP 路由边界配置。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RouterOptions {
-    pub(crate) enable_swagger: bool,
-    pub(crate) enable_purge: bool,
-    pub(crate) cors: CorsPolicy,
-    pub(crate) request_timeout: Duration,
+pub struct RouterOptions {
+    pub enable_swagger: bool,
+    pub enable_purge: bool,
+    pub cors: CorsPolicy,
+    pub request_timeout: Duration,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SessionOptions {
-    pub(crate) cookie_secure: bool,
-    pub(crate) inactivity_timeout: Duration,
+pub struct SessionOptions {
+    pub cookie_secure: bool,
+    pub inactivity_timeout: Duration,
 }
 
 impl Default for RouterOptions {
@@ -120,10 +119,9 @@ impl Default for RouterOptions {
 
 /// HTTP 应用启动配置。
 ///
-/// 负责读取 HTTP 监听、路由和会话边界配置。业务和基础设施配置由 `AssetRuntime`
-/// 和 `asset-infra` 处理。未通过命令行或 `ASSET_HUB_CONFIG` 指定路径时，runtime
-/// 会尝试读取默认 `config.toml`。
-pub(crate) struct HttpSettings {
+/// 负责读取 HTTP 监听、路由和会话边界配置。业务和基础设施配置由外部 host 处理。
+/// 未通过命令行或 `ASSET_HUB_CONFIG` 指定路径时，由 host 选择默认配置文件。
+pub struct HttpSettings {
     addr: SocketAddr,
     config_path: Option<PathBuf>,
     router_options: RouterOptions,
@@ -141,7 +139,7 @@ impl HttpSettings {
     /// - `ASSET_HTTP_REQUEST_TIMEOUT_SECS`：普通请求总超时秒数，默认 `30`；不限制流式上传总时长。
     /// - `ASSET_HTTP_COOKIE_SECURE`：是否为会话 Cookie 添加 Secure，默认 `false`。
     /// - `ASSET_HTTP_SESSION_INACTIVITY_SECS`：会话空闲超时秒数，默认 `43200`。
-    pub(crate) fn from_cli() -> Self {
+    pub fn from_cli() -> Self {
         Self::from_cli_args(HttpCli::parse())
     }
 
@@ -166,27 +164,22 @@ impl HttpSettings {
     }
 
     /// 返回 HTTP 监听地址。
-    pub(crate) fn addr(&self) -> SocketAddr {
+    pub fn addr(&self) -> SocketAddr {
         self.addr
     }
 
     /// 返回可选配置文件路径。
-    pub(crate) fn config_path(&self) -> Option<&Path> {
+    pub fn config_path(&self) -> Option<&Path> {
         self.config_path.as_deref()
     }
 
     /// 返回 HTTP 路由边界配置。
-    pub(crate) fn router_options(&self) -> &RouterOptions {
+    pub fn router_options(&self) -> &RouterOptions {
         &self.router_options
     }
 
-    pub(crate) fn session_options(&self) -> &SessionOptions {
+    pub fn session_options(&self) -> &SessionOptions {
         &self.session_options
-    }
-
-    /// 返回当前生效的默认配置文件名。
-    pub(crate) fn default_config_file(&self) -> &'static str {
-        AssetRuntime::default_config_file()
     }
 }
 

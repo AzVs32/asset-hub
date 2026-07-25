@@ -5,7 +5,7 @@ fn parses_each_top_level_command_group() {
     for (args, expected) in [
         (vec!["asset", "system", "--scan-resource"], "system"),
         (vec!["asset", "user", "--list"], "user"),
-        (vec!["asset", "plugin"], "plugin"),
+        (vec!["asset", "plugin", "--verify", "plugin.json"], "plugin"),
     ] {
         let cli = Cli::try_parse_from(args).unwrap();
         let actual = match cli.command {
@@ -15,6 +15,46 @@ fn parses_each_top_level_command_group() {
             Command::Plugin(_) => "plugin",
         };
         assert_eq!(actual, expected);
+    }
+}
+
+#[test]
+fn parses_plugin_seal_and_verify_paths() {
+    for args in [
+        vec!["asset", "plugin", "--seal", "path/plugin.json"],
+        vec!["asset", "plugin", "--verify", "path/plugin.json"],
+    ] {
+        assert!(matches!(
+            Cli::try_parse_from(args).unwrap().command,
+            Command::Plugin(_)
+        ));
+    }
+}
+
+#[test]
+fn plugin_requires_exactly_one_operation() {
+    assert!(Cli::try_parse_from(["asset", "plugin"]).is_err());
+    assert!(
+        Cli::try_parse_from([
+            "asset",
+            "plugin",
+            "--seal",
+            "plugin.json",
+            "--verify",
+            "plugin.json",
+        ])
+        .is_err()
+    );
+}
+
+#[test]
+fn rejects_removed_plugin_operations() {
+    for args in [
+        vec!["asset", "plugin", "gen"],
+        vec!["asset", "plugin", "--verify-wasm", "plugin.json"],
+        vec!["asset", "plugin", "--verify-web", "plugin.json"],
+    ] {
+        assert!(Cli::try_parse_from(args).is_err());
     }
 }
 

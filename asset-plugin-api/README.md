@@ -42,14 +42,12 @@ new checksum from the returned content bytes.
 
 ## Manifest version
 
-Manifest V3 is the canonical authoring format and is the only format described by the embedded
-JSON Schema and starter template. The runtime currently accepts V2 as a migration input and
-normalizes its aliases and permissions to the V3 Rust representation. Compatibility-only V2
-syntax is intentionally not valid against the V3 schema.
+Manifest V3 is the canonical authoring format. The runtime currently accepts V2 as a migration
+input and normalizes its aliases and permissions to the V3 Rust representation.
 
 Additive optional fields may remain in the current Manifest version. Removing or renaming fields,
-adding required fields, or changing declaration semantics requires a new Manifest version and a
-new schema document. The host must validate the declared version before registering capabilities.
+adding required fields, or changing declaration semantics requires a new Manifest version. The
+host must validate the declared version before registering capabilities.
 
 ## Plugin JSON API version
 
@@ -75,7 +73,7 @@ before calling host functions.
 For every protocol change:
 
 1. Classify the change against all four surfaces and bump only the affected versions.
-2. Update the Manifest schema/template and the Schema–Serde–host conformance tests when relevant.
+2. Update Manifest Serde and host-validation tests when relevant.
 3. Update JSON golden fixtures for every supported plugin API level.
 4. Build bundled plugins against the new Rust crate and verify their sealed packages.
 5. Document the oldest Manifest, plugin API, and content ABI versions accepted by the host.

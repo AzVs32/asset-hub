@@ -20,6 +20,7 @@ use asset_core::{
     port::SecurityAuditRepository, port::StorageScanner,
 };
 use asset_plugin_api::PluginExecutionPolicy;
+pub use asset_plugin_api::PluginWebAssets;
 use config::{AssetInfraConfig, BlobBackend, DatabaseBackend};
 use kind::{
     DefaultDirectoryKindRegistry, DefaultResourceActionRegistry, DefaultResourceKindRegistry,
@@ -31,12 +32,9 @@ use plugin_manifest::PluginCatalog;
 use sqlite::{SqliteIdentityRepository, SqliteResourceRepository, SqliteSecurityAuditRepository};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use storage::{FileSystemScanner, LocalStorageSync, OpenDalBlobStorage};
-
-pub type PluginWebAssets = HashMap<String, HashMap<PathBuf, Arc<[u8]>>>;
 
 /// 根据配置的后端选型组装基础设施对象。
 ///
@@ -71,7 +69,9 @@ impl AssetInfrastructure {
         let config = config.normalized()?;
         let (blob_storage, storage_scanner) = match config.blob.backend {
             BlobBackend::Local => (
-                Arc::new(OpenDalBlobStorage::from_local_config(&config.blob.local)?),
+                Arc::new(OpenDalBlobStorage::from_local_root(
+                    &config.blob.local.root,
+                )?),
                 Arc::new(FileSystemScanner::new(config.blob.local.root.clone())),
             ),
         };
@@ -207,7 +207,8 @@ impl AssetInfrastructure {
         match self.config.blob.backend {
             BlobBackend::Local if self.config.blob.local.sync.enabled => LocalStorageSync::start(
                 self.config.blob.local.root.clone(),
-                &self.config.blob.local.sync,
+                Duration::from_millis(self.config.blob.local.sync.debounce_milliseconds),
+                Duration::from_secs(self.config.blob.local.sync.reconcile_interval_seconds),
                 service,
             )
             .await

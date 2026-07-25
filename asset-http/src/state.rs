@@ -4,6 +4,7 @@ use asset_core::port::ResourceKindRegistry;
 use asset_core::service::{
     AuthorizationService, ResourceService, SecuredResourceService, WorkspaceScope,
 };
+use asset_plugin_api::PluginWebAssets;
 use std::sync::Arc;
 
 /// HTTP handler 共享状态。
@@ -13,7 +14,7 @@ use std::sync::Arc;
 pub(crate) struct HttpState {
     service: ResourceService,
     kind_registry: Arc<dyn ResourceKindRegistry>,
-    plugin_web_assets: Arc<asset_infra::PluginWebAssets>,
+    plugin_web_assets: Arc<PluginWebAssets>,
     authorization: AuthorizationService,
 }
 
@@ -21,7 +22,7 @@ impl HttpState {
     pub(crate) fn new_with_plugin_web_assets(
         service: ResourceService,
         kind_registry: Arc<dyn ResourceKindRegistry>,
-        plugin_web_assets: asset_infra::PluginWebAssets,
+        plugin_web_assets: PluginWebAssets,
         authorization: AuthorizationService,
     ) -> Self {
         Self {

@@ -4,8 +4,10 @@ Asset Hub is a local-first asset management service. The current workspace conta
 
 - `asset-core`: workspace-internal resource domain model, adapter ports, and secured resource use cases.
 - `asset-infra`: SQLite repository, OpenDAL Fs blob storage, built-in kinds, plugin manifest loading, and Extism action execution.
-- `asset-apps`: reusable runtime assembly plus the `asset-http` API, `asset` administration CLI,
-  and the existing `asset-plugin` packaging CLI.
+- `asset-http`: inbound HTTP adapter; depends on core contracts and receives session storage from the host.
+- `asset-cli`: inbound administration CLI; depends on core services exposed through a host capability.
+- `asset-bootstrap`: executable host and composition root. It loads infrastructure configuration, wires concrete
+  adapters into HTTP/CLI, and owns background-task lifetimes.
 - `asset-plugin-api`: shared manifest, action, request, and view contracts for plugins.
 - `asset-web`: React host with domain/application/adapter boundaries and a slot-based plugin kernel.
 - `plugins`: sample Markdown and EPUB plugins.
@@ -13,7 +15,7 @@ Asset Hub is a local-first asset management service. The current workspace conta
 ## API Boundaries
 
 `asset-plugin-api` is the only extension contract for plugin authors. Plugin runtimes must not
-depend on `asset-core`, `asset-infra`, or `asset-apps`; those crates are host implementation details
+depend on `asset-core`, `asset-infra`, or `asset-bootstrap`; those crates are host implementation details
 and do not carry a compatibility promise for external consumers.
 
 Inside the host workspace, `asset-core` exposes three deliberately separate surfaces:
@@ -24,6 +26,10 @@ Inside the host workspace, `asset-core` exposes three deliberately separate surf
 - `service` contains application commands and results. Untrusted HTTP, CLI, and TUI entry points
   bind an `AccessContext` through `ResourceService::secured`; unbound command, content, action, and
   preview services are Core implementation details.
+
+`asset-http` and `asset-cli` do not depend on `asset-infra`. The concrete dependency is restricted
+to `asset-bootstrap`, which is the composition root and is intentionally responsible for joining inbound
+adapters, core services, and outbound infrastructure.
 
 Manifest, action, request, view, diagnostic, and content ABI types belong to `asset-plugin-api` and
 are imported from that crate directly rather than re-exported through `asset-core`.
@@ -41,7 +47,7 @@ their compatibility and release rules are documented in
 Start the HTTP API from the repository root:
 
 ```bash
-cargo run -p asset-apps --bin asset-http
+cargo run -p asset-bootstrap --bin asset-http
 ```
 
 Defaults:
@@ -54,14 +60,14 @@ Defaults:
 Use a config file:
 
 ```bash
-cargo run -p asset-apps --bin asset-http -- --config config.example.toml
+cargo run -p asset-bootstrap --bin asset-http -- --config config.example.toml
 ```
 
 The administration CLI exposes configuration inspection and local user-management commands, with
 `system` and `plugin` retained as extension points:
 
 ```bash
-cargo run -p asset-apps --bin asset -- --help
+cargo run -p asset-bootstrap --bin asset -- --help
 ```
 
 ## Users And Directory Access
@@ -73,7 +79,7 @@ written to configuration:
 ```bash
 ASSET_HUB_BOOTSTRAP_ADMIN_USERNAME=admin \
 ASSET_HUB_BOOTSTRAP_ADMIN_PASSWORD='replace-with-a-long-password' \
-cargo run -p asset-apps --bin asset-http
+cargo run -p asset-bootstrap --bin asset-http
 ```
 
 The bootstrap values are only used when the `users` table is empty. Later
@@ -152,7 +158,7 @@ entry points can reuse the same authorization rules.
 ## HTTP Boundary Settings
 
 `asset-http` uses Clap for command-line parsing. Run
-`cargo run -p asset-apps --bin asset-http -- --help` to see all options. Each
+`cargo run -p asset-bootstrap --bin asset-http -- --help` to see all options. Each
 HTTP option also accepts its existing environment variable for deployment
 compatibility; an explicit command-line value takes precedence over the
 environment:
@@ -178,7 +184,7 @@ not ready.
 Example production-leaning local run:
 
 ```bash
-cargo run -p asset-apps --bin asset-http -- \
+cargo run -p asset-bootstrap --bin asset-http -- \
   --enable-swagger=false \
   --enable-purge=false \
   --cors-allowed-origins http://127.0.0.1:5173
@@ -203,24 +209,12 @@ and idle timeouts to reject stalled clients without terminating healthy long-run
 
 ## Package A Plugin
 
-Generate a Manifest V3 starter in a new plugin directory:
+Author a Manifest V3 `plugin.json`, then build the declared Wasm and optional Web bundle.
+Seal the finished artifacts with the administration CLI:
 
 ```bash
-asset-plugin gen manifest
-```
-
-Generate the matching Draft 2020-12 JSON Schema for editor or CI integration with
-`asset-plugin gen schema`.
-
-This creates `manifest.json` without overwriting an existing file. Replace the `example.plugin`
-identity, action, handler, matching rules, requirements, views, and permissions, then build the
-Wasm and optional Web bundle. The source template is
-`asset-plugin-api/templates/manifest.json`, so protocol template changes require no CLI code
-changes. Integrity data is generated; seal the finished artifacts:
-
-```bash
-cargo run -p asset-apps --bin asset-plugin -- \
-  seal path/to/plugin.json
+cargo run -p asset-bootstrap --bin asset -- \
+  plugin --seal path/to/plugin.json
 ```
 
 The command calculates the Wasm digest and complete Web asset map into a sibling
@@ -229,13 +223,12 @@ application startup: release or CI should instead verify the previously sealed p
 modifying it:
 
 ```bash
-cargo run -p asset-apps --bin asset-plugin -- \
-  verify path/to/plugin.json
+cargo run -p asset-bootstrap --bin asset -- \
+  plugin --verify path/to/plugin.json
 ```
 
-The standalone binary can also be installed with
-`cargo install --path asset-apps --bin asset-plugin`, after which the equivalent commands are
-`asset-plugin gen manifest`, `asset-plugin seal ...`, and `asset-plugin verify ...`.
+`--seal` writes integrity data; release and CI workflows should use the read-only `--verify`
+operation and must not reseal changed artifacts.
 
 ## Docker
 

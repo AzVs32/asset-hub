@@ -1,4 +1,3 @@
-use crate::config::LocalBlobSyncConfig;
 use asset_core::CoreError;
 use asset_core::domain::StorageKey;
 use asset_core::service::ResourceService;
@@ -22,9 +21,20 @@ pub struct LocalStorageSync {
 impl LocalStorageSync {
     pub async fn start(
         root: PathBuf,
-        config: &LocalBlobSyncConfig,
+        debounce: Duration,
+        reconcile_interval: Duration,
         service: ResourceService,
     ) -> Result<Self, CoreError> {
+        if debounce.is_zero() {
+            return Err(CoreError::configuration(
+                "local storage sync debounce must be greater than zero",
+            ));
+        }
+        if reconcile_interval.is_zero() {
+            return Err(CoreError::configuration(
+                "local storage sync reconcile interval must be greater than zero",
+            ));
+        }
         let (sender, receiver) = mpsc::channel(EVENT_QUEUE_CAPACITY);
         let overflowed = Arc::new(AtomicBool::new(false));
         let callback_overflowed = overflowed.clone();
@@ -42,8 +52,6 @@ impl LocalStorageSync {
         let report = service.reconcile_storage().await?;
         log_reconciliation("initial", &report);
         let known_directories = report.directory_keys().iter().cloned().collect();
-        let debounce = Duration::from_millis(config.debounce_milliseconds);
-        let interval = Duration::from_secs(config.reconcile_interval_seconds);
         let task = tokio::spawn(run_sync_loop(
             root,
             service,
@@ -51,7 +59,7 @@ impl LocalStorageSync {
             overflowed,
             known_directories,
             debounce,
-            interval,
+            reconcile_interval,
         ));
 
         Ok(Self {
