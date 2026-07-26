@@ -7,7 +7,7 @@
 在项目根目录运行：
 
 ```bash
-cargo run -p asset-bootstrap --bin asset -- --help
+cargo run -p asset-cli --bin asset -- --help
 ```
 
 安装或发布可执行文件后，可以直接使用：

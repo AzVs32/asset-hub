@@ -70,7 +70,7 @@ cd ../../..
 Then, from the repository root, generate `manifest.lock.json` and validate Manifest V3:
 
 ```bash
-cargo run -p asset-bootstrap --bin asset -- \
+cargo run -p asset-cli --bin asset -- \
   plugin --seal plugins/azvs-epub/manifest.json
 ```
 

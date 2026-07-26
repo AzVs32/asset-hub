@@ -136,45 +136,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "asset-bootstrap"
-version = "0.1.0"
-dependencies = [
- "asset-cli",
- "asset-core",
- "asset-http",
- "asset-infra",
- "asset-plugin-api",
- "async-trait",
- "axum",
- "base64",
- "bytes",
- "clap",
- "futures-util",
- "serde_json",
- "sqlx",
- "tokio",
- "toml 0.9.12+spec-1.1.0",
- "tower",
- "tower-sessions",
- "tower-sessions-sqlx-store",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "asset-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "asset-core",
+ "asset-infra",
  "asset-plugin-api",
- "async-trait",
+ "asset-runtime",
  "clap",
  "comfy-table",
  "rpassword",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tokio",
+ "toml 0.9.12+spec-1.1.0",
 ]
 
 [[package]]
@@ -201,9 +178,12 @@ name = "asset-http"
 version = "0.1.0"
 dependencies = [
  "asset-core",
+ "asset-infra",
  "asset-plugin-api",
+ "asset-runtime",
  "axum",
  "axum-login",
+ "base64",
  "bytes",
  "clap",
  "futures-util",
@@ -215,7 +195,9 @@ dependencies = [
  "tower",
  "tower-http",
  "tower-sessions",
+ "tower-sessions-sqlx-store",
  "tracing",
+ "tracing-subscriber",
  "utoipa",
  "utoipa-swagger-ui",
 ]
@@ -253,6 +235,17 @@ dependencies = [
  "extism-pdk",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "asset-runtime"
+version = "0.1.0"
+dependencies = [
+ "asset-core",
+ "asset-infra",
+ "asset-plugin-api",
+ "sqlx",
+ "tokio",
 ]
 
 [[package]]

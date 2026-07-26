@@ -1,4 +1,3 @@
-use asset_bootstrap::AssetRuntime;
 use asset_core::domain::{AccessContext, UserId};
 use asset_http::{
     CorsPolicy, MAX_ACTION_REQUEST_BYTES, MAX_LOGIN_REQUEST_BYTES, RouterOptions, SessionOptions,
@@ -9,6 +8,7 @@ use asset_infra::config::{
     LocalBlobSyncConfig, PluginHostConfig, ResourceKindConfig, SqliteDatabaseConfig,
 };
 use asset_plugin_api::PluginWebAssets;
+use asset_runtime::AssetRuntime;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
 use axum::{Extension, Router};
@@ -1419,7 +1419,7 @@ async fn test_app_with_kind_and_plugin_config(
         kind,
         plugin,
     };
-    let runtime = AssetRuntime::from_config(config).await.unwrap();
+    let runtime = AssetRuntime::new(config).await.unwrap();
     let authorization = runtime.authorization_service();
     let router = build_router(
         runtime.resource_service(),
@@ -1455,7 +1455,7 @@ async fn test_app_with_plugin_web_assets(
         kind: KindRegistryConfig::default(),
         plugin: Default::default(),
     };
-    let runtime = AssetRuntime::from_config(config).await.unwrap();
+    let runtime = AssetRuntime::new(config).await.unwrap();
     let authorization = runtime.authorization_service();
     let router = build_router(
         runtime.resource_service(),
@@ -1527,7 +1527,7 @@ async fn member_access_is_limited_to_the_workspace_subtree() {
         kind: KindRegistryConfig::default(),
         plugin: Default::default(),
     };
-    let runtime = AssetRuntime::from_config(config).await.unwrap();
+    let runtime = AssetRuntime::new(config).await.unwrap();
     assert_eq!(
         runtime.database_pool().options().get_max_connections(),
         1,

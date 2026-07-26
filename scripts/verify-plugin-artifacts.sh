@@ -14,7 +14,7 @@ build_and_verify() {
   cmp "$root/$built_wasm" "$root/$deployed_wasm"
 
   cargo run --manifest-path "$root/Cargo.toml" --locked --quiet \
-    -p asset-bootstrap --bin asset -- \
+    -p asset-cli --bin asset -- \
     plugin --verify "$root/$manifest_path"
 }
 

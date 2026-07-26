@@ -6,15 +6,22 @@ license.workspace = true
 authors.workspace = true
 publish = false
 
+[[bin]]
+name = "asset"
+path = "src/main.rs"
+
 [dependencies]
 asset-core.workspace = true
+asset-infra.workspace = true
 asset-plugin-api.workspace = true
+asset-runtime.workspace = true
 
 anyhow.workspace = true
-async-trait.workspace = true
 clap.workspace = true
 comfy-table.workspace = true
 rpassword.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+tokio.workspace = true
+toml.workspace = true

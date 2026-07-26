@@ -8,7 +8,7 @@ RUN apt-get update \
 COPY . .
 RUN rustup target add wasm32-unknown-unknown \
     && ./scripts/verify-plugin-artifacts.sh
-RUN cargo build --locked --release -p asset-bootstrap --bins
+RUN cargo build --locked --release -p asset-http -p asset-cli --bins
 
 FROM node:22-trixie-slim AS web-builder
 WORKDIR /src/asset-web

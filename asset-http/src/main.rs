@@ -1,8 +1,6 @@
-#[cfg(test)]
-mod tests;
-
-use asset_bootstrap::AssetRuntime;
 use asset_http::{HttpSettings, build_router, with_authentication};
+use asset_infra::config::AssetInfraConfig;
+use asset_runtime::AssetRuntime;
 use tower_sessions::session_store::ExpiredDeletion;
 use tower_sessions_sqlx_store::SqliteStore;
 use tracing::info;
@@ -12,7 +10,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_tracing();
 
     let settings = HttpSettings::from_cli();
-    let runtime = AssetRuntime::from_optional_config_file(settings.config_path()).await?;
+    let config = match settings.config_path() {
+        Some(path) => AssetInfraConfig::from_config_file(path)?,
+        None => AssetInfraConfig::from_default_config_file()?,
+    };
+    let mut runtime = AssetRuntime::new(config).await?;
+    runtime.start_storage_sync().await?;
     let listener = tokio::net::TcpListener::bind(settings.addr()).await?;
 
     info!(addr = %settings.addr(), "asset-http listening");
@@ -56,7 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn init_tracing() {
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         tracing_subscriber::EnvFilter::new(
-            "asset_http=info,asset_bootstrap=info,asset_infra=info,asset_core=info,tower_http=info",
+            "asset_http=info,asset_runtime=info,asset_infra=info,asset_core=info,tower_http=info",
         )
     });
 

@@ -1,0 +1,16 @@
+[package]
+name = "asset-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+asset-core.workspace = true
+asset-infra.workspace = true
+asset-plugin-api.workspace = true
+
+sqlx.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

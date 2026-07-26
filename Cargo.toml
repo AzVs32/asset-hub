@@ -4,9 +4,9 @@ members = [
     "asset-plugin-api",
     "asset-core",
     "asset-infra",
+    "asset-runtime",
     "asset-http",
     "asset-cli",
-    "asset-bootstrap",
 ]
 
 [workspace.package]
@@ -19,6 +19,7 @@ authors = ["AzVs"]
 asset-plugin-api = { path = "asset-plugin-api" }
 asset-core = { path = "asset-core"}
 asset-infra = { path = "asset-infra" }
+asset-runtime = { path = "asset-runtime" }
 
 anyhow = "1.0.100"
 comfy-table = "7.2.2"

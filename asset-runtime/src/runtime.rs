@@ -6,68 +6,43 @@ use asset_infra::config::AssetInfraConfig;
 use asset_infra::storage::LocalStorageSync;
 use asset_plugin_api::PluginWebAssets;
 use sqlx::SqlitePool;
-use std::path::Path;
 use std::sync::Arc;
 
 /// 应用运行时。
 ///
-/// `AssetRuntime` 负责把配置、基础设施实现和核心 service 组装起来。
-/// HTTP、CLI、TUI 等外部入口都应复用它，避免重复初始化 SQLite、Fs 等依赖。
+/// `AssetRuntime` 负责根据调用方已经加载的配置组装基础设施与核心 service，并持有由
+/// 应用入口显式启动的后台任务。配置来源、命令行参数和传输层生命周期由各应用自行决定。
 pub struct AssetRuntime {
     /// 已初始化的基础设施组合。
     infrastructure: AssetInfrastructure,
     /// 保持自动存储同步监听器与后台任务存活。
-    _storage_sync: Option<LocalStorageSync>,
+    storage_sync: Option<LocalStorageSync>,
 }
 
 impl AssetRuntime {
-    /// 使用默认配置文件创建应用运行时。
+    /// 使用调用方提供的配置组装应用运行时。
     ///
-    /// 当前默认配置文件名是 `config.toml`。文件不存在时使用默认配置。
-    pub async fn from_default_config_file() -> Result<Self, CoreError> {
-        Self::from_config(AssetInfraConfig::from_default_config_file()?).await
-    }
-
-    /// 创建不启动自动存储同步的短生命周期维护运行时。
-    pub async fn from_default_config_file_without_storage_sync() -> Result<Self, CoreError> {
-        Self::from_config_inner(AssetInfraConfig::from_default_config_file()?, false).await
-    }
-
-    /// 使用显式配置创建应用运行时。
-    pub async fn from_config(config: AssetInfraConfig) -> Result<Self, CoreError> {
-        Self::from_config_inner(config, true).await
-    }
-
-    async fn from_config_inner(
-        config: AssetInfraConfig,
-        start_storage_sync: bool,
-    ) -> Result<Self, CoreError> {
+    /// 创建运行时时不会自动启动后台任务；长生命周期应用应按需显式调用
+    /// [`AssetRuntime::start_storage_sync`]。
+    pub async fn new(config: AssetInfraConfig) -> Result<Self, CoreError> {
         let infrastructure = AssetInfrastructure::new(config).await?;
-        let storage_sync = if start_storage_sync {
-            infrastructure
-                .start_storage_sync(infrastructure.resource_service())
-                .await?
-        } else {
-            None
-        };
-
         Ok(Self {
             infrastructure,
-            _storage_sync: storage_sync,
+            storage_sync: None,
         })
     }
 
-    /// 使用可选配置文件创建应用运行时。
+    /// 启动配置所指定的自动存储同步任务，并由运行时持有其生命周期。
     ///
-    /// `path` 为 `Some` 时读取指定配置文件，文件不存在会返回错误。
-    /// `path` 为 `None` 时读取默认 `config.toml`，文件不存在则使用默认配置。
-    pub async fn from_optional_config_file(
-        path: Option<impl AsRef<Path>>,
-    ) -> Result<Self, CoreError> {
-        match path {
-            Some(path) => Self::from_config(AssetInfraConfig::from_config_file(path)?).await,
-            None => Self::from_default_config_file().await,
+    /// 重复调用不会创建第二个同步任务。配置禁用同步时该方法成功返回但不启动任务。
+    pub async fn start_storage_sync(&mut self) -> Result<(), CoreError> {
+        if self.storage_sync.is_none() {
+            self.storage_sync = self
+                .infrastructure
+                .start_storage_sync(self.infrastructure.resource_service())
+                .await?;
         }
+        Ok(())
     }
 
     /// 返回实际生效的基础设施配置。
@@ -187,7 +162,8 @@ mod tests {
             },
             ..AssetInfraConfig::default()
         };
-        let runtime = AssetRuntime::from_config(config).await.unwrap();
+        let mut runtime = AssetRuntime::new(config).await.unwrap();
+        runtime.start_storage_sync().await.unwrap();
         let directory = DirectoryPath::from_path("documents").unwrap();
         let directory_path = root.join("documents");
         std::fs::create_dir_all(&directory_path).unwrap();

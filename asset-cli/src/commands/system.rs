@@ -1,4 +1,5 @@
-use crate::{CliHost, CliResult};
+use crate::CliResult;
+use asset_core::service::ResourceService;
 use clap::{ArgGroup, Args};
 use std::io::Write;
 use std::time::Duration;
@@ -16,12 +17,11 @@ pub(crate) struct SystemCommand {
     scan_resource: bool,
 }
 
-pub(crate) async fn run(command: SystemCommand, host: &impl CliHost) -> CliResult {
+pub(crate) async fn run(command: SystemCommand, service: ResourceService) -> CliResult {
     if command.scan_resource {
-        let services = host.maintenance_services().await?;
         println!("verifying all stored resources with SHA-256...");
         std::io::stdout().flush()?;
-        let report = services.resource_service().scan_resources().await?;
+        let report = service.scan_resources().await?;
         println!(
             "verified {} resources ({} hashed, {} directories) in {}",
             report.files,

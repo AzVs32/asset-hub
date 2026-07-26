@@ -4,10 +4,9 @@ Asset Hub is a local-first asset management service. The current workspace conta
 
 - `asset-core`: workspace-internal resource domain model, adapter ports, and secured resource use cases.
 - `asset-infra`: SQLite repository, OpenDAL Fs blob storage, built-in kinds, plugin manifest loading, and Extism action execution.
-- `asset-http`: inbound HTTP adapter; depends on core contracts and receives session storage from the host.
-- `asset-cli`: inbound administration CLI; depends on core services exposed through a host capability.
-- `asset-bootstrap`: executable host and composition root. It loads infrastructure configuration, wires concrete
-  adapters into HTTP/CLI, and owns background-task lifetimes.
+- `asset-http`: complete HTTP application, including its executable entry point, router, handlers, and host wiring.
+- `asset-cli`: complete administration CLI, including its executable entry point, commands, and on-demand runtime wiring.
+- `asset-runtime`: shared runtime assembly that owns initialized infrastructure and background-task lifetimes.
 - `asset-plugin-api`: shared manifest, action, request, and view contracts for plugins.
 - `asset-web`: React host with domain/application/adapter boundaries and a slot-based plugin kernel.
 - `plugins`: sample Markdown and EPUB plugins.
@@ -15,7 +14,7 @@ Asset Hub is a local-first asset management service. The current workspace conta
 ## API Boundaries
 
 `asset-plugin-api` is the only extension contract for plugin authors. Plugin runtimes must not
-depend on `asset-core`, `asset-infra`, or `asset-bootstrap`; those crates are host implementation details
+depend on `asset-core`, `asset-infra`, or `asset-runtime`; those crates are host implementation details
 and do not carry a compatibility promise for external consumers.
 
 Inside the host workspace, `asset-core` exposes three deliberately separate surfaces:
@@ -27,9 +26,9 @@ Inside the host workspace, `asset-core` exposes three deliberately separate surf
   bind an `AccessContext` through `ResourceService::secured`; unbound command, content, action, and
   preview services are Core implementation details.
 
-`asset-http` and `asset-cli` do not depend on `asset-infra`. The concrete dependency is restricted
-to `asset-bootstrap`, which is the composition root and is intentionally responsible for joining inbound
-adapters, core services, and outbound infrastructure.
+`asset-http` and `asset-cli` each own their executable startup and may use `asset-infra` when they need
+concrete configuration or infrastructure behavior. Protocol handlers and commands should still prefer
+`asset-core` services. Shared runtime assembly and background-task ownership live in `asset-runtime`.
 
 Manifest, action, request, view, diagnostic, and content ABI types belong to `asset-plugin-api` and
 are imported from that crate directly rather than re-exported through `asset-core`.
@@ -47,7 +46,7 @@ their compatibility and release rules are documented in
 Start the HTTP API from the repository root:
 
 ```bash
-cargo run -p asset-bootstrap --bin asset-http
+cargo run -p asset-http --bin asset-http
 ```
 
 Defaults:
@@ -60,14 +59,14 @@ Defaults:
 Use a config file:
 
 ```bash
-cargo run -p asset-bootstrap --bin asset-http -- --config config.example.toml
+cargo run -p asset-http --bin asset-http -- --config config.example.toml
 ```
 
 The administration CLI exposes configuration inspection and local user-management commands, with
 `system` and `plugin` retained as extension points:
 
 ```bash
-cargo run -p asset-bootstrap --bin asset -- --help
+cargo run -p asset-cli --bin asset -- --help
 ```
 
 ## Users And Directory Access
@@ -79,7 +78,7 @@ written to configuration:
 ```bash
 ASSET_HUB_BOOTSTRAP_ADMIN_USERNAME=admin \
 ASSET_HUB_BOOTSTRAP_ADMIN_PASSWORD='replace-with-a-long-password' \
-cargo run -p asset-bootstrap --bin asset-http
+cargo run -p asset-http --bin asset-http
 ```
 
 The bootstrap values are only used when the `users` table is empty. Later
@@ -158,7 +157,7 @@ entry points can reuse the same authorization rules.
 ## HTTP Boundary Settings
 
 `asset-http` uses Clap for command-line parsing. Run
-`cargo run -p asset-bootstrap --bin asset-http -- --help` to see all options. Each
+`cargo run -p asset-http --bin asset-http -- --help` to see all options. Each
 HTTP option also accepts its existing environment variable for deployment
 compatibility; an explicit command-line value takes precedence over the
 environment:
@@ -184,7 +183,7 @@ not ready.
 Example production-leaning local run:
 
 ```bash
-cargo run -p asset-bootstrap --bin asset-http -- \
+cargo run -p asset-http --bin asset-http -- \
   --enable-swagger=false \
   --enable-purge=false \
   --cors-allowed-origins http://127.0.0.1:5173
@@ -213,7 +212,7 @@ Author a Manifest V3 `plugin.json`, then build the declared Wasm and optional We
 Seal the finished artifacts with the administration CLI:
 
 ```bash
-cargo run -p asset-bootstrap --bin asset -- \
+cargo run -p asset-cli --bin asset -- \
   plugin --seal path/to/plugin.json
 ```
 
@@ -223,7 +222,7 @@ application startup: release or CI should instead verify the previously sealed p
 modifying it:
 
 ```bash
-cargo run -p asset-bootstrap --bin asset -- \
+cargo run -p asset-cli --bin asset -- \
   plugin --verify path/to/plugin.json
 ```
 

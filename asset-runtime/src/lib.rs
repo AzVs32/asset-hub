@@ -1,3 +1,3 @@
-pub mod runtime;
+mod runtime;
 
 pub use runtime::AssetRuntime;
