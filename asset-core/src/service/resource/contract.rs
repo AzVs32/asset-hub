@@ -2,10 +2,9 @@
 //!
 //! 本模块只描述调用方与资源应用服务交换的数据，不包含仓储或对象存储编排。
 
-use crate::domain::{DirectoryPath, ResourceId, ResourceKind, ResourceStatus};
+use crate::domain::{DirectoryPath, ResourceKind, ResourceStatus};
 use crate::port::BlobByteStream;
-use asset_plugin_api::{PluginView, ResourceAction, ResourceActionDefinition};
-use bytes::Bytes;
+use asset_plugin_api::{ResourceAction, ResourceActionDefinition};
 
 /// 创建不包含对象内容的资源。
 #[derive(Debug, Clone)]
@@ -219,42 +218,6 @@ impl UpdateResource {
     }
 }
 
-/// 应用服务返回的可阅读资源结果。
-#[derive(Debug, Clone, PartialEq)]
-pub struct ReadableResource {
-    id: ResourceId,
-    name: String,
-    kind: ResourceKind,
-    view: PluginView,
-}
-
-impl ReadableResource {
-    pub(super) fn new(id: ResourceId, name: String, kind: ResourceKind, view: PluginView) -> Self {
-        Self {
-            id,
-            name,
-            kind,
-            view,
-        }
-    }
-
-    pub fn id(&self) -> ResourceId {
-        self.id
-    }
-
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn kind(&self) -> &ResourceKind {
-        &self.kind
-    }
-
-    pub fn view(&self) -> &PluginView {
-        &self.view
-    }
-}
-
 /// 资源当前可执行动作。
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ResourceActions {
@@ -268,65 +231,6 @@ impl ResourceActions {
 
     pub fn available_actions(&self) -> &[ResourceActionDefinition] {
         &self.available_actions
-    }
-}
-
-/// Core 内部使用的缓冲预览结果。
-#[cfg(test)]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct ResourcePreview {
-    content_type: String,
-    content: Bytes,
-}
-
-#[cfg(test)]
-impl ResourcePreview {
-    pub(super) fn new(content_type: String, content: Bytes) -> Self {
-        Self {
-            content_type,
-            content,
-        }
-    }
-
-    pub(super) fn content_type(&self) -> &str {
-        &self.content_type
-    }
-
-    pub(super) fn content(&self) -> &Bytes {
-        &self.content
-    }
-}
-
-/// 流式预览资源结果。
-pub struct ResourcePreviewStream {
-    content_type: String,
-    content_length: Option<u64>,
-    content: BlobByteStream,
-}
-
-impl ResourcePreviewStream {
-    pub(super) fn new(
-        content_type: String,
-        content_length: Option<u64>,
-        content: BlobByteStream,
-    ) -> Self {
-        Self {
-            content_type,
-            content_length,
-            content,
-        }
-    }
-
-    pub fn content_type(&self) -> &str {
-        &self.content_type
-    }
-
-    pub fn content_length(&self) -> Option<u64> {
-        self.content_length
-    }
-
-    pub fn into_content(self) -> BlobByteStream {
-        self.content
     }
 }
 
@@ -356,29 +260,5 @@ impl ResourceContentStream {
 
     pub fn into_content(self) -> BlobByteStream {
         self.content
-    }
-}
-
-/// 缩略图结果。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResourceThumbnail {
-    content_type: String,
-    content: Bytes,
-}
-
-impl ResourceThumbnail {
-    pub(super) fn new(content_type: String, content: Bytes) -> Self {
-        Self {
-            content_type,
-            content,
-        }
-    }
-
-    pub fn content_type(&self) -> &str {
-        &self.content_type
-    }
-
-    pub fn content(&self) -> &Bytes {
-        &self.content
     }
 }

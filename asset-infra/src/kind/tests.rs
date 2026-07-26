@@ -124,7 +124,7 @@ fn registry_includes_official_core_resource_kinds() {
     assert!(
         actions_for_kind(&registry, &action_registry, root.kind())
             .iter()
-            .any(|action| action.id().as_str() == ResourceAction::DOWNLOAD_CONTENT)
+            .any(|action| action.id().as_str() == ResourceAction::CORE_RESOURCE_DOWNLOAD)
     );
 
     for (kind, label, source, expected_actions) in [
@@ -132,38 +132,25 @@ fn registry_includes_official_core_resource_kinds() {
             "core:resource",
             "Resource",
             "plugin:core.resource",
-            vec![ResourceAction::DOWNLOAD_CONTENT],
+            vec![ResourceAction::CORE_RESOURCE_DOWNLOAD],
         ),
         (
             "core:image",
             "Image",
             "plugin:core.image",
-            vec![
-                ResourceAction::DOWNLOAD_CONTENT,
-                ResourceAction::VIEW_INLINE,
-                ResourceAction::PREVIEW,
-                ResourceAction::THUMBNAIL,
-            ],
+            vec![ResourceAction::CORE_RESOURCE_DOWNLOAD],
         ),
         (
             "core:document",
             "Document",
             "plugin:core.document",
-            vec![
-                ResourceAction::DOWNLOAD_CONTENT,
-                ResourceAction::VIEW_INLINE,
-                ResourceAction::PREVIEW,
-            ],
+            vec![ResourceAction::CORE_RESOURCE_DOWNLOAD],
         ),
         (
             "core:video",
             "Video",
             "plugin:core.video",
-            vec![
-                ResourceAction::DOWNLOAD_CONTENT,
-                ResourceAction::VIEW_INLINE,
-                ResourceAction::PREVIEW,
-            ],
+            vec![ResourceAction::CORE_RESOURCE_DOWNLOAD],
         ),
     ] {
         let definition = registry.get(&ResourceKind::try_new(kind).unwrap()).unwrap();
@@ -179,11 +166,7 @@ fn registry_includes_official_core_resource_kinds() {
                     .any(|definition| definition.id().as_str() == action)
             );
         }
-        assert!(
-            !inherited_actions
-                .iter()
-                .any(|definition| definition.id().as_str() == ResourceAction::READ)
-        );
+        assert_eq!(inherited_actions.len(), 1);
     }
 
     let image = registry
@@ -205,14 +188,11 @@ fn registry_exposes_actions_as_global_capabilities() {
     let registry = action_registry(&KindRegistryConfig::default()).unwrap();
     let actions = registry.actions();
 
-    assert!(actions.iter().any(|action| {
-        action.id().as_str() == ResourceAction::PREVIEW
-            && action.matches_resource("core:video", Some("video/mp4"), Some("demo.mp4"))
-    }));
-    assert!(actions.iter().any(|action| {
-        action.id().as_str() == ResourceAction::PREVIEW
-            && action.matches_resource("core:image", Some("image/png"), Some("demo.png"))
-    }));
+    assert_eq!(actions.len(), 1);
+    assert_eq!(
+        actions[0].id().as_str(),
+        ResourceAction::CORE_RESOURCE_DOWNLOAD
+    );
 }
 
 #[test]
@@ -251,14 +231,14 @@ fn registry_loads_plugin_manifest_kinds() {
             ],
             "resource_actions": [
               {
-                "id": "mindustry.preview",
-                "label": "Preview",
-                "handler": "builtin.media.preview",
+                "id": "mindustry.download",
+                "label": "Download Mod",
+                "handler": "builtin.content.download",
                 "applies_to": {
                   "kinds": ["mindustry:mod"]
                 },
                 "access": "read",
-                "views": ["media"]
+                "views": ["binary_url"]
               }
             ]
           },
@@ -302,7 +282,7 @@ fn registry_loads_plugin_manifest_kinds() {
     assert!(
         actions_for_kind(&registry, &action_registry, definition.kind())
             .iter()
-            .any(|action| action.id().as_str() == "mindustry.preview")
+            .any(|action| action.id().as_str() == "mindustry.download")
     );
 
     let _ = std::fs::remove_dir_all(root);
@@ -529,12 +509,12 @@ fn registry_rejects_duplicate_global_action_ids() {
     let root = unique_temp_path("duplicate-action");
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(
-        root.join("duplicate-preview.json"),
+        root.join("duplicate-download.json"),
         r#"
         {
           "manifest_version": 2,
           "plugin": {
-            "id": "duplicate-preview",
+            "id": "duplicate-download",
             "name": "Duplicate Preview",
             "version": "0.1.0",
             "publisher": "test",
@@ -547,14 +527,14 @@ fn registry_rejects_duplicate_global_action_ids() {
             "resource_kinds": [],
             "resource_actions": [
               {
-                "id": "preview",
-                "label": "Preview",
-                "handler": "builtin.media.preview",
+                "id": "core.resource.download",
+                "label": "Duplicate Download",
+                "handler": "builtin.content.download",
                 "applies_to": {
-                  "kinds": ["core:image"]
+                  "kinds": ["core:resource"]
                 },
                 "access": "read",
-                "views": ["media"]
+                "views": ["binary_url"]
               }
             ]
           },
@@ -577,14 +557,14 @@ fn registry_rejects_duplicate_global_action_ids() {
 
     let error = action_registry(&KindRegistryConfig {
         definitions: Vec::new(),
-        plugin_manifests: vec![root.join("duplicate-preview.json")],
+        plugin_manifests: vec![root.join("duplicate-download.json")],
     })
     .unwrap_err();
 
     assert!(
         error
             .to_string()
-            .contains("duplicate global resource action `preview`")
+            .contains("duplicate global resource action `core.resource.download`")
     );
 
     let _ = std::fs::remove_dir_all(root);

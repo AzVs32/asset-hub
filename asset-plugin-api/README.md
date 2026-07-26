@@ -60,6 +60,18 @@ strings, changing defaults, or making data required requires a new plugin API le
 must retain request, success-output, and failure golden fixtures. A host may remove an old level
 only after its documented compatibility window ends.
 
+## Action ID convention
+
+Action IDs are extensible and their naming convention is not enforced by the wire protocol.
+Authors should use `<plugin-id>.<verb>` so globally registered actions remain distinct and their
+owner is clear. For example, the built-in resource download action is
+`core.resource.download`, while bundled plugins contribute actions such as
+`azvs.markdown.render` and `azvs.epub.cover`.
+
+Use a stable lowercase ID for protocol calls and keep user-facing text in the action `label`.
+Plugins that expose several subjects may add another segment, such as
+`example.media.image.convert`.
+
 ## Content ABI version
 
 The content ABI versions the Extism host functions used for non-inline object bytes. It is

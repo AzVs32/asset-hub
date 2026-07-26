@@ -1,11 +1,10 @@
 //! 绑定授权上下文的资源服务入口。
 //!
-//! 非可信调用方先在这里完成目录权限校验，再进入内部 command/content/action/preview
+//! 非可信调用方先在这里完成目录权限校验，再进入内部 command/content/action
 //! 编排，避免每个 transport 重复实现授权规则。
 
 use super::{
-    CreateResource, ExecuteResourceAction, ReadableResource, ResourceContentStream,
-    ResourcePreviewStream, ResourceService, ResourceThumbnail, UpdateResource,
+    CreateResource, ExecuteResourceAction, ResourceContentStream, ResourceService, UpdateResource,
     UploadResourceContentStream,
 };
 use crate::CoreError;
@@ -164,45 +163,6 @@ impl<'a> SecuredResourceService<'a> {
             .content()
             .get_resource_content_stream_snapshot(&resource, range)
             .await
-    }
-    pub async fn read_resource(
-        &self,
-        id: &ResourceId,
-    ) -> Result<Option<ReadableResource>, CoreError> {
-        let Some(resource) = self.resource_for(id, DirectoryPermission::Read).await? else {
-            return Ok(None);
-        };
-        self.service
-            .previews()
-            .read_resource_snapshot(resource)
-            .await
-            .map(Some)
-    }
-    pub async fn preview_resource_stream(
-        &self,
-        id: &ResourceId,
-    ) -> Result<Option<ResourcePreviewStream>, CoreError> {
-        let Some(resource) = self.resource_for(id, DirectoryPermission::Read).await? else {
-            return Ok(None);
-        };
-        self.service
-            .previews()
-            .preview_resource_stream_snapshot(&resource)
-            .await
-            .map(Some)
-    }
-    pub async fn thumbnail_resource(
-        &self,
-        id: &ResourceId,
-    ) -> Result<Option<ResourceThumbnail>, CoreError> {
-        let Some(resource) = self.resource_for(id, DirectoryPermission::Read).await? else {
-            return Ok(None);
-        };
-        self.service
-            .previews()
-            .thumbnail_resource_snapshot(resource)
-            .await
-            .map(Some)
     }
     pub async fn execute_resource_action(
         &self,

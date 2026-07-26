@@ -1,7 +1,7 @@
 //! 资源应用服务门面。
 //!
 //! 本模块只负责装配 Host Port、暴露可信维护入口，并把具体用例路由到内部子服务。
-//! 公开输入/输出位于 `contract`，资源生命周期、内容、动作和预览分别由对应模块编排。
+//! 公开输入/输出位于 `contract`，资源生命周期、内容和动作分别由对应模块编排。
 
 use crate::CoreError;
 use crate::domain::{Resource, ResourceKind, StorageKey};
@@ -18,21 +18,16 @@ mod action;
 mod command;
 mod content;
 mod contract;
-mod preview;
 mod reconciliation;
 mod secured;
 
 use action::ResourceActionService;
 use command::ResourceCommandService;
 use content::ResourceContentService;
-#[cfg(test)]
-use contract::ResourcePreview;
 pub use contract::{
-    CreateResource, ExecuteResourceAction, ReadableResource, ResourceActions,
-    ResourceContentCommand, ResourceContentStream, ResourcePreviewStream, ResourceThumbnail,
-    UpdateResource, UploadResourceContentStream,
+    CreateResource, ExecuteResourceAction, ResourceActions, ResourceContentCommand,
+    ResourceContentStream, UpdateResource, UploadResourceContentStream,
 };
-use preview::ResourcePreviewService;
 pub use reconciliation::StorageReconciliationReport;
 use reconciliation::StorageReconciliationService;
 pub use secured::SecuredResourceService;
@@ -41,7 +36,7 @@ pub use secured::SecuredResourceService;
 ///
 /// 外部用户入口应通过 [`ResourceService::secured`] 获取带授权上下文的门面；未授权门面只
 /// 暴露健康检查和存储协调等可信维护入口。具体业务编排分布在 command、content、action
-///、preview、reconciliation 和 secured 子服务中。
+///、reconciliation 和 secured 子服务中。
 #[derive(Clone)]
 pub struct ResourceService {
     repository: Arc<dyn ResourceRepository>,
@@ -145,10 +140,6 @@ impl ResourceService {
 
     fn actions(&self) -> ResourceActionService<'_> {
         ResourceActionService::new(self)
-    }
-
-    fn previews(&self) -> ResourcePreviewService<'_> {
-        ResourcePreviewService::new(self)
     }
 
     fn reconciliation(&self) -> StorageReconciliationService<'_> {

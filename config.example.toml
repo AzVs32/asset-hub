@@ -128,7 +128,7 @@ plugin_manifests = []
 #     ],
 #     "actions": [
 #       {
-#         "id": "example:summarize",
+#         "id": "example.tools.summarize",
 #         "label": "Summarize",
 #         "handler": "summarize",
 #         "applies_to": {

@@ -110,7 +110,7 @@ export interface paths {
         /** 列出当前目录的直接子目录和资源。 */
         get: operations["list_directory"];
         put?: never;
-        /** 创建一个空逻辑目录。 */
+        /** 创建一个与存储侧实体对应的空目录。 */
         post: operations["create_directory"];
         delete?: never;
         options?: never;
@@ -244,23 +244,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/resources/{id}/preview": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** 预览资源内容。 */
-        get: operations["preview_resource"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/resources/{id}/purge": {
         parameters: {
             query?: never;
@@ -273,43 +256,6 @@ export interface paths {
         post?: never;
         /** 物理移除资源和对象内容。 */
         delete: operations["remove_resource"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/resources/{id}/read": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * 在线阅读资源内容。
-         * @description 当前 MVP 只支持声明 `read` action 的 kind，并要求内容可转换为文本。
-         */
-        get: operations["read_resource"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/resources/{id}/thumbnail": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** 读取资源缩略图。 */
-        get: operations["thumbnail_resource"];
-        put?: never;
-        post?: never;
-        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -340,7 +286,7 @@ export interface components {
         CreateDirectoryRequest: {
             /** @description 新目录名称，只允许单个路径段。 */
             name: string;
-            /** @description 父目录路径，根目录为空字符串。 */
+            /** @description 相对于当前用户可见根目录的父路径；根目录为空字符串。 */
             parent_path?: string;
         };
         /**
@@ -358,7 +304,7 @@ export interface components {
         CreateResourceRequest: {
             /** @description 可选资源描述。 */
             description?: string | null;
-            /** @description 资源所在逻辑目录；根目录为空字符串。 */
+            /** @description 相对于当前用户可见根目录的路径；根目录为空字符串。 */
             directory?: string | null;
             /** @description 可选资源类型。 */
             kind?: string | null;
@@ -383,10 +329,21 @@ export interface components {
         DirectoryListingResponse: {
             /** @description 直接子目录。 */
             folders: components["schemas"]["DirectoryResponse"][];
-            /** @description 当前目录路径。 */
+            /** @description 相对于当前用户可见根目录的当前路径。 */
             path: string;
             /** @description 当前目录下的资源分页。 */
             resources: components["schemas"]["ResourcePageResponse"];
+        };
+        /** @description 逻辑目录响应。 */
+        DirectoryResponse: {
+            /** @description 稳定目录标识；目录移动或重命名后保持不变。 */
+            id: string;
+            /** @description 当前目录名。 */
+            name: string;
+            /** @description 相对于当前用户可见根目录的父路径。 */
+            parent_path: string;
+            /** @description 相对于当前用户可见根目录的路径。 */
+            path: string;
         };
         /** @description 统一 HTTP 错误响应。 */
         ErrorResponse: {
@@ -520,17 +477,6 @@ export interface components {
              */
             size: number;
         };
-        /** @description 逻辑目录响应。 */
-        DirectoryResponse: {
-            /** @description 稳定目录标识；目录移动或重命名后保持不变。 */
-            id: string;
-            /** @description 当前目录名。 */
-            name: string;
-            /** @description 父目录路径。 */
-            parent_path: string;
-            /** @description 目录完整路径。 */
-            path: string;
-        };
         /** @description 资源类型响应。 */
         ResourceKindResponse: {
             /** @description kind 支持的动作。 */
@@ -574,17 +520,6 @@ export interface components {
              */
             total: number;
         };
-        /** @description 在线阅读响应。 */
-        ResourceReadResponse: {
-            /** @description 资源唯一标识。 */
-            id: string;
-            /** @description 资源类型。 */
-            kind: string;
-            /** @description 资源展示名。 */
-            name: string;
-            /** @description 插件返回的 View。 */
-            view: unknown;
-        };
         /** @description 资源响应。 */
         ResourceResponse: {
             /** @description 当前资源允许的操作。 */
@@ -596,7 +531,7 @@ export interface components {
             deleted_at?: string | null;
             /** @description 可选资源描述。 */
             description?: string | null;
-            /** @description 资源所在逻辑目录，根目录为空字符串。 */
+            /** @description 相对于当前用户可见根目录的路径；根目录为空字符串。 */
             directory: string;
             /** @description 资源唯一标识。 */
             id: string;
@@ -637,7 +572,7 @@ export interface components {
         UpdateResourceRequest: {
             /** @description 资源描述补丁：缺省表示不修改，`null` 表示清空。 */
             description?: string | null;
-            /** @description 可选新逻辑目录；根目录为空字符串。 */
+            /** @description 相对于当前用户可见根目录的新路径；根目录为空字符串。 */
             directory?: string | null;
             /** @description 可选新资源类型。 */
             kind?: string | null;
@@ -660,7 +595,7 @@ export interface components {
         UploadResourceContentStreamQuery: {
             /** @description 可选资源描述。 */
             description?: string | null;
-            /** @description 可选上传目录。 */
+            /** @description 相对于当前用户可见根目录的上传路径。 */
             directory?: string | null;
             /** @description 可选资源类型。 */
             kind?: string | null;
@@ -875,7 +810,7 @@ export interface operations {
     list_directory: {
         parameters: {
             query?: {
-                /** @description 当前目录路径；根目录为空字符串。 */
+                /** @description 相对于当前用户可见根目录的路径；根目录为空字符串。 */
                 path?: string;
                 /** @description 资源页码，从 1 开始。 */
                 page?: number;
@@ -1033,7 +968,7 @@ export interface operations {
                 tag?: string;
                 /** @description 可选名称模糊搜索关键字。 */
                 q?: string;
-                /** @description 可选逻辑目录过滤；根目录为空字符串。 */
+                /** @description 相对于当前用户可见根目录的过滤路径；根目录为空字符串。 */
                 directory?: string;
                 /** @description 是否包含软删除资源。 */
                 include_deleted?: boolean;
@@ -1120,7 +1055,7 @@ export interface operations {
             query: {
                 /** @description 资源文件名；与目录共同决定对象存储路径。 */
                 name: string;
-                /** @description 可选上传目录。 */
+                /** @description 相对于当前用户可见根目录的上传路径。 */
                 directory?: string;
                 /** @description 可选资源类型。 */
                 kind?: string;
@@ -1431,56 +1366,6 @@ export interface operations {
             };
         };
     };
-    preview_resource: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description 资源 ID */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description 资源预览内容 */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/octet-stream": components["schemas"]["BinaryContent"];
-                };
-            };
-            /** @description 资源类型不支持预览 */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description 资源或内容不存在 */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description 服务端错误 */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
     remove_resource: {
         parameters: {
             query?: never;
@@ -1510,106 +1395,6 @@ export interface operations {
                 };
             };
             /** @description 资源不存在 */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description 服务端错误 */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    read_resource: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description 资源 ID */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description 资源阅读内容 */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ResourceReadResponse"];
-                };
-            };
-            /** @description 资源类型不支持阅读或内容格式不支持 */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description 资源或内容不存在 */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description 服务端错误 */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    thumbnail_resource: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description 资源 ID */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description 资源缩略图 */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/octet-stream": components["schemas"]["BinaryContent"];
-                };
-            };
-            /** @description 资源类型不支持缩略图 */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description 资源或内容不存在 */
             404: {
                 headers: {
                     [name: string]: unknown;

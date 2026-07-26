@@ -10,9 +10,9 @@ use crate::port::{
     ScannedStorageEntry, StoragePrefix,
 };
 use asset_plugin_api::{
-    MediaView, PluginActionEffect, PluginActionOutput, PluginExecutionPolicy, PluginMediaEncoding,
-    PluginReplacementEncoding, PluginView, ReplaceContentEffect, ResourceAction,
-    ResourceActionAccess, ResourceActionDefinition, ResourceContentMatcher, TextView,
+    PluginActionEffect, PluginActionOutput, PluginExecutionPolicy, PluginReplacementEncoding,
+    PluginView, ReplaceContentEffect, ResourceActionAccess, ResourceActionDefinition,
+    ResourceContentMatcher, TextView,
 };
 use async_trait::async_trait;
 use base64::Engine;
@@ -587,7 +587,7 @@ impl ResourceActionExecutor for StaticResourceActionExecutor {
         request: ResourceActionRequest,
     ) -> Result<ResourceActionOutput, CoreError> {
         let view = match request.action().as_str() {
-            ResourceAction::READ => PluginView::Text(TextView {
+            "test.document.extract" => PluginView::Text(TextView {
                 text: String::from_utf8(
                     request
                         .content()
@@ -596,20 +596,6 @@ impl ResourceActionExecutor for StaticResourceActionExecutor {
                 )
                 .unwrap(),
             }),
-            ResourceAction::PREVIEW | ResourceAction::THUMBNAIL => {
-                let content = request.content().cloned().unwrap_or_default();
-                PluginView::Media(MediaView {
-                    mime_type: request
-                        .resource()
-                        .content()
-                        .and_then(|content| content.mime_type())
-                        .unwrap_or("application/octet-stream")
-                        .to_string(),
-                    title: Some(request.resource().name().to_string()),
-                    encoding: PluginMediaEncoding::Base64,
-                    data: STANDARD.encode(content),
-                })
-            }
             "azvs.markdown.update" => {
                 let markdown = request
                     .input()
@@ -697,25 +683,15 @@ fn service() -> (
     ]));
     let action_registry = Arc::new(InMemoryResourceActionRegistry {
         actions: vec![
-            ResourceActionDefinition::new(ResourceAction::READ, "Read")
+            ResourceActionDefinition::new("test.document.extract", "Extract document")
                 .with_kinds(["doc:markdown", "core:document"])
-                .with_handler("read_document")
+                .with_handler("extract_document")
                 .with_requirements(content_requirements())
                 .with_output(output_contract(["text"])),
             ResourceActionDefinition::new("resource.inspect", "Inspect resource")
                 .with_kinds(["doc:markdown"])
                 .with_handler("inspect_resource")
                 .with_output(output_contract(["json"])),
-            ResourceActionDefinition::new(ResourceAction::PREVIEW, "Preview")
-                .with_kinds(["core:image", "core:document", "core:video"])
-                .with_handler("preview_document")
-                .with_requirements(content_requirements())
-                .with_output(output_contract(["media"])),
-            ResourceActionDefinition::new(ResourceAction::THUMBNAIL, "Thumbnail")
-                .with_kinds(["core:image"])
-                .with_handler("thumbnail_image")
-                .with_requirements(content_requirements())
-                .with_output(output_contract(["media"])),
             ResourceActionDefinition::new("azvs.markdown.render", "Read Markdown")
                 .with_kinds(["core:document"])
                 .with_handler("render_markdown")
@@ -1106,11 +1082,15 @@ fn resource_without_content_rejects_direct_content_action_execution() {
 
     let error = block_on(service.actions().execute_resource_action(
         &resource.id(),
-        ExecuteResourceAction::new(ResourceAction::READ),
+        ExecuteResourceAction::new("test.document.extract"),
     ))
     .unwrap_err();
 
-    assert!(error.to_string().contains("does not support action `read`"));
+    assert!(
+        error
+            .to_string()
+            .contains("does not support action `test.document.extract`")
+    );
 }
 
 #[test]
@@ -1397,7 +1377,7 @@ fn get_resource_content_reads_existing_blob() {
 }
 
 #[test]
-fn read_resource_returns_text_for_reader_kind() {
+fn execute_content_action_returns_text_for_matching_kind() {
     let (service, _, _) = service();
     let key = StorageKey::new("books/book.txt").unwrap();
     let resource = block_on(
@@ -1408,13 +1388,15 @@ fn read_resource_returns_text_for_reader_kind() {
     )
     .unwrap();
 
-    let readable = block_on(service.previews().read_resource(&resource.id()))
-        .unwrap()
-        .unwrap();
+    let output = block_on(service.actions().execute_resource_action(
+        &resource.id(),
+        ExecuteResourceAction::new("test.document.extract"),
+    ))
+    .unwrap()
+    .unwrap();
 
-    assert_eq!(readable.kind().as_str(), "core:document");
     assert_eq!(
-        readable.view(),
+        &output.output().view,
         &PluginView::Text(TextView {
             text: "Hello book".to_string()
         })
@@ -1489,29 +1471,7 @@ fn write_action_scratch_content_uses_reserved_namespace() {
 }
 
 #[test]
-fn read_resource_rejects_non_reader_kind() {
-    let (service, _, _) = service();
-    let key = StorageKey::new("files/file.txt").unwrap();
-    let resource = block_on(
-        service.content().upload_resource_content_stream(
-            stream_upload_command("file", key, Bytes::from_static(b"hello"))
-                .with_kind(ResourceKind::try_new("asset:binary").unwrap()),
-        ),
-    )
-    .unwrap();
-
-    let error = block_on(service.previews().read_resource(&resource.id())).unwrap_err();
-
-    match error {
-        CoreError::Configuration { message } => {
-            assert!(message.contains("does not support action `read`"))
-        }
-        other => panic!("expected configuration error, got {other:?}"),
-    }
-}
-
-#[test]
-fn describe_resource_actions_uses_declared_actions_without_format_sniffing() {
+fn describe_resource_actions_uses_declared_content_matchers() {
     let (service, _, _) = service();
     let pdf = block_on(
         service.content().upload_resource_content_stream(
@@ -1547,106 +1507,10 @@ fn describe_resource_actions_uses_declared_actions_without_format_sniffing() {
             .any(|action| action.id().as_str() == id)
     };
 
-    assert!(has_action(&pdf_actions, "download_content"));
-    assert!(has_action(&pdf_actions, "read"));
-    assert!(!has_action(&pdf_actions, "view_inline"));
-    assert!(has_action(&text_actions, "download_content"));
-    assert!(has_action(&text_actions, "read"));
-    assert!(!has_action(&text_actions, "view_inline"));
-}
-
-#[test]
-fn core_video_resources_use_builtin_preview_for_common_video_formats() {
-    let (service, _, _) = service();
-    let mp4 = block_on(
-        service.content().upload_resource_content_stream(
-            stream_upload_command(
-                "demo.mp4",
-                StorageKey::new("videos/demo.mp4").unwrap(),
-                Bytes::from_static(b"mp4"),
-            )
-            .with_kind(ResourceKind::try_new("core:video").unwrap())
-            .with_mime_type("video/mp4"),
-        ),
-    )
-    .unwrap();
-    let webm = block_on(
-        service.content().upload_resource_content_stream(
-            stream_upload_command(
-                "demo.webm",
-                StorageKey::new("videos/demo.webm").unwrap(),
-                Bytes::from_static(b"webm"),
-            )
-            .with_kind(ResourceKind::try_new("core:video").unwrap())
-            .with_mime_type("video/webm"),
-        ),
-    )
-    .unwrap();
-
-    let mp4_actions = service.actions().describe_resource_actions(&mp4).unwrap();
-    let webm_actions = service.actions().describe_resource_actions(&webm).unwrap();
-
-    assert!(
-        mp4_actions
-            .available_actions()
-            .iter()
-            .any(|action| action.id().as_str() == ResourceAction::PREVIEW)
-    );
-    assert!(
-        webm_actions
-            .available_actions()
-            .iter()
-            .any(|action| action.id().as_str() == ResourceAction::PREVIEW)
-    );
-}
-
-#[test]
-fn preview_resource_returns_pdf_content_for_preview_kind() {
-    let (service, _, _) = service();
-    let resource = block_on(
-        service.content().upload_resource_content_stream(
-            stream_upload_command(
-                "book",
-                StorageKey::new("books/book.pdf").unwrap(),
-                Bytes::from_static(b"%PDF-1.4"),
-            )
-            .with_kind(ResourceKind::try_new("core:document").unwrap())
-            .with_mime_type("application/pdf"),
-        ),
-    )
-    .unwrap();
-
-    let preview = block_on(service.previews().preview_resource(&resource.id()))
-        .unwrap()
-        .unwrap();
-
-    assert_eq!(preview.content_type(), "application/pdf");
-    assert_eq!(preview.content().as_ref(), b"%PDF-1.4");
-}
-
-#[test]
-fn thumbnail_resource_returns_image_content_for_thumbnail_kind() {
-    let (service, _, _) = service();
-    let image = Bytes::from_static(b"fake-image");
-    let resource = block_on(
-        service.content().upload_resource_content_stream(
-            stream_upload_command(
-                "image",
-                StorageKey::new("images/pixel.png").unwrap(),
-                image.clone(),
-            )
-            .with_kind(ResourceKind::try_new("core:image").unwrap())
-            .with_mime_type("image/png"),
-        ),
-    )
-    .unwrap();
-
-    let thumbnail = block_on(service.previews().thumbnail_resource(&resource.id()))
-        .unwrap()
-        .unwrap();
-
-    assert_eq!(thumbnail.content_type(), "image/png");
-    assert_eq!(thumbnail.content(), &image);
+    assert!(has_action(&pdf_actions, "test.document.extract"));
+    assert!(!has_action(&pdf_actions, "azvs.markdown.render"));
+    assert!(has_action(&text_actions, "test.document.extract"));
+    assert!(!has_action(&text_actions, "azvs.markdown.render"));
 }
 
 #[test]

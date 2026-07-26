@@ -24,27 +24,7 @@
         }
       }
     ],
-    "actions": [
-      {
-        "id": "thumbnail",
-        "label": "Thumbnail",
-        "handler": "builtin.media.thumbnail",
-        "applies_to": {
-          "kinds": ["core:image"]
-        },
-        "access": "read",
-        "requires": {
-          "content": true,
-          "content_delivery": "inline"
-        },
-        "views": ["media"],
-        "ui": {
-          "group": "preview",
-          "order": 40,
-          "locations": ["resource_detail"]
-        }
-      }
-    ]
+    "actions": []
   },
   "permissions": {
     "allow": ["resource.read", "content.read"]

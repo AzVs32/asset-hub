@@ -1,6 +1,6 @@
 use asset_core::domain::{Checksum, DirectoryPath, Resource, ResourceContent};
 use asset_core::port::{ResourceActionOutput, ResourceKindDefinition};
-use asset_core::service::{ReadableResource, ResourceActions};
+use asset_core::service::ResourceActions;
 use asset_plugin_api::{
     PluginDiagnostic, PluginDiagnosticSeverity, ResourceActionAccess,
     ResourceActionContentDelivery, ResourceActionDefinition, ResourceActionExecutorKind,
@@ -461,19 +461,6 @@ pub(crate) struct DirectoryListingResponse {
     pub(crate) resources: ResourcePageResponse,
 }
 
-/// 在线阅读响应。
-#[derive(Debug, Serialize, ToSchema)]
-pub(crate) struct ResourceReadResponse {
-    /// 资源唯一标识。
-    pub(crate) id: String,
-    /// 资源展示名。
-    pub(crate) name: String,
-    /// 资源类型。
-    pub(crate) kind: String,
-    /// 插件返回的 View。
-    pub(crate) view: Value,
-}
-
 /// 执行资源动作请求。
 #[derive(Debug, Deserialize, ToSchema)]
 #[schema(example = json!({
@@ -541,18 +528,6 @@ impl From<&ResourceActionOutput> for ResourceActionOutputResponse {
                 .iter()
                 .map(PluginDiagnosticResponse::from)
                 .collect(),
-        }
-    }
-}
-
-impl From<&ReadableResource> for ResourceReadResponse {
-    fn from(resource: &ReadableResource) -> Self {
-        Self {
-            id: resource.id().to_string(),
-            name: resource.name().to_string(),
-            kind: resource.kind().as_str().to_string(),
-            view: serde_json::to_value(resource.view())
-                .expect("plugin view should serialize to JSON"),
         }
     }
 }

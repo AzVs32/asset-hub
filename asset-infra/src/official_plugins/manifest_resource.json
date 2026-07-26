@@ -21,7 +21,7 @@
     ],
     "actions": [
       {
-        "id": "download_content",
+        "id": "core.resource.download",
         "label": "Download",
         "handler": "builtin.content.download",
         "applies_to": {
@@ -37,44 +37,6 @@
           "group": "open",
           "order": 10,
           "locations": ["resource_detail", "context_menu"]
-        }
-      },
-      {
-        "id": "view_inline",
-        "label": "View",
-        "handler": "builtin.media.view",
-        "applies_to": {
-          "kinds": ["core:image", "core:document", "core:video"]
-        },
-        "access": "read",
-        "requires": {
-          "content": true,
-          "content_delivery": "reference"
-        },
-        "views": ["media"],
-        "ui": {
-          "group": "open",
-          "order": 20,
-          "locations": ["resource_detail"]
-        }
-      },
-      {
-        "id": "preview",
-        "label": "Preview",
-        "handler": "builtin.media.preview",
-        "applies_to": {
-          "kinds": ["core:image", "core:document", "core:video"]
-        },
-        "access": "read",
-        "requires": {
-          "content": true,
-          "content_delivery": "reference"
-        },
-        "views": ["media"],
-        "ui": {
-          "group": "preview",
-          "order": 30,
-          "locations": ["resource_detail"]
         }
       }
     ]

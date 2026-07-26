@@ -2,12 +2,11 @@ use super::*;
 
 #[test]
 fn action_requirements_are_the_only_content_requirement_state() {
-    let action = ResourceActionDefinition::new("preview", "Preview").with_requirements(
-        ResourceActionRequirements {
+    let action = ResourceActionDefinition::new("example.document.inspect", "Inspect")
+        .with_requirements(ResourceActionRequirements {
             content: true,
             content_delivery: ResourceActionContentDelivery::Reference,
-        },
-    );
+        });
 
     let value = serde_json::to_value(action).unwrap();
     assert_eq!(value["requires"]["content"], true);

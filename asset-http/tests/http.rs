@@ -12,8 +12,6 @@ use asset_runtime::AssetRuntime;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
 use axum::{Extension, Router};
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use bytes::Bytes;
 use futures_util::stream;
 use serde_json::{Value, json};
@@ -145,9 +143,7 @@ async fn configured_resource_kind_is_listed_and_content_support_is_enforced() {
 
     assert_eq!(status, StatusCode::CREATED, "{resource}");
     assert_eq!(resource["kind"], "doc:note");
-    assert!(!has_action(&resource, "download_content"));
-    assert!(!has_action(&resource, "read"));
-    assert!(!has_action(&resource, "view_inline"));
+    assert!(!has_action(&resource, "core.resource.download"));
 
     let (status, error) = stream_upload(
         &app,
@@ -167,8 +163,8 @@ async fn configured_resource_kind_is_listed_and_content_support_is_enforced() {
 }
 
 #[tokio::test]
-async fn core_document_resource_exposes_download_only() {
-    let app = test_app("core-document-read").await;
+async fn core_document_resource_inherits_core_download_action() {
+    let app = test_app("core-document-download").await;
 
     let (status, kinds) = empty_json_request(&app, Method::GET, "/resource-kinds").await;
     assert_eq!(status, StatusCode::OK);
@@ -182,7 +178,7 @@ async fn core_document_resource_exposes_download_only() {
     let actions = document_kind["actions"].as_array().unwrap();
     let download = actions
         .iter()
-        .find(|action| action["id"] == "download_content")
+        .find(|action| action["id"] == "core.resource.download")
         .unwrap();
     assert_eq!(download["label"], "Download");
     assert_eq!(download["access"], "read_only");
@@ -195,29 +191,7 @@ async fn core_document_resource_exposes_download_only() {
         json!(["resource_detail", "context_menu"])
     );
 
-    let view_inline = actions
-        .iter()
-        .find(|action| action["id"] == "view_inline")
-        .unwrap();
-    assert_eq!(view_inline["executor"]["handler"], "builtin.media.view");
-    assert!(view_inline["requires"].get("resource").is_none());
-    assert_eq!(view_inline["requires"]["content_delivery"], "reference");
-    assert_eq!(view_inline["output"]["view"], json!(["media"]));
-    assert_eq!(
-        view_inline["applies_to"],
-        json!({
-            "kinds": ["core:document"],
-            "mime_types": ["application/pdf"],
-            "extensions": [".pdf"]
-        })
-    );
-
-    let preview = actions
-        .iter()
-        .find(|action| action["id"] == "preview")
-        .unwrap();
-    assert_eq!(preview["executor"]["handler"], "builtin.media.preview");
-    assert_eq!(preview["ui"]["group"], "preview");
+    assert_eq!(actions.len(), 1);
 
     let (status, resource) = stream_upload(
         &app,
@@ -228,15 +202,14 @@ async fn core_document_resource_exposes_download_only() {
     .await;
 
     assert_eq!(status, StatusCode::CREATED);
-    let id = resource["id"].as_str().unwrap();
-    assert!(has_action(&resource, "download_content"));
-    assert!(!has_action(&resource, "read"));
-    assert!(!has_action(&resource, "view_inline"));
-    let (status, error) =
-        empty_json_request(&app, Method::GET, &format!("/resources/{id}/read")).await;
-
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(error["error"].as_str().unwrap().contains("action `read`"));
+    assert!(has_action(&resource, "core.resource.download"));
+    assert_eq!(
+        resource["actions"]["available_actions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 #[tokio::test]
@@ -258,229 +231,6 @@ async fn action_endpoint_has_a_dedicated_request_body_limit() {
     .await;
 
     assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
-}
-
-#[tokio::test]
-async fn core_document_pdf_resource_supports_builtin_preview() {
-    let app = test_app("core-document-pdf-read").await;
-    let pdf = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n";
-
-    let response = request(
-        &app,
-        Request::builder()
-            .method(Method::PUT)
-            .uri("/resources/content/stream?name=book.pdf&directory=books&kind=core%3Adocument")
-            .header(header::CONTENT_TYPE, "application/pdf")
-            .body(Body::from(pdf.as_slice()))
-            .unwrap(),
-    )
-    .await;
-    let status = response.status();
-    let resource = response_json(response).await;
-
-    assert_eq!(status, StatusCode::CREATED);
-    assert!(has_action(&resource, "download_content"));
-    assert!(!has_action(&resource, "read"));
-    assert!(has_action(&resource, "view_inline"));
-    assert!(has_action(&resource, "preview"));
-
-    let id = resource["id"].as_str().unwrap();
-    let preview = request(
-        &app,
-        Request::builder()
-            .method(Method::GET)
-            .uri(format!("/resources/{id}/preview"))
-            .body(Body::empty())
-            .unwrap(),
-    )
-    .await;
-    assert_eq!(preview.status(), StatusCode::OK);
-    assert_eq!(
-        preview.headers().get(header::CONTENT_TYPE).unwrap(),
-        "application/pdf"
-    );
-    let preview_content = to_bytes(preview.into_body(), BODY_LIMIT).await.unwrap();
-    assert_eq!(preview_content.as_ref(), pdf);
-    let response = request(
-        &app,
-        Request::builder()
-            .method(Method::GET)
-            .uri(format!("/resources/{id}/content"))
-            .body(Body::empty())
-            .unwrap(),
-    )
-    .await;
-
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(
-        response.headers().get(header::CONTENT_TYPE).unwrap(),
-        "application/pdf"
-    );
-    assert_eq!(
-        response.headers().get(header::CONTENT_DISPOSITION).unwrap(),
-        "inline"
-    );
-    assert_eq!(
-        response.headers().get(header::ACCEPT_RANGES).unwrap(),
-        "bytes"
-    );
-    let content = to_bytes(response.into_body(), BODY_LIMIT).await.unwrap();
-    assert_eq!(content.as_ref(), pdf);
-
-    let (status, error) =
-        empty_json_request(&app, Method::GET, &format!("/resources/{id}/read")).await;
-
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(error["error"].as_str().unwrap().contains("action `read`"));
-}
-
-#[tokio::test]
-async fn builtin_pdf_preview_action_returns_url_media_view() {
-    let app = test_app("core-document-pdf-url-preview").await;
-    let pdf = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n";
-
-    let response = request(
-        &app,
-        Request::builder()
-            .method(Method::PUT)
-            .uri("/resources/content/stream?name=url-book.pdf&directory=books&kind=core%3Adocument")
-            .header(header::CONTENT_TYPE, "application/pdf")
-            .body(Body::from(pdf.as_slice()))
-            .unwrap(),
-    )
-    .await;
-    let resource = response_json(response).await;
-    let id = resource["id"].as_str().unwrap();
-
-    let (status, output) = json_request(
-        &app,
-        Method::POST,
-        &format!("/resources/{id}/actions/preview"),
-        json!({"input": {}}),
-    )
-    .await;
-
-    assert_eq!(status, StatusCode::OK, "{output}");
-    assert_eq!(output["view"]["view"], "media");
-    assert_eq!(output["view"]["mime_type"], "application/pdf");
-    assert_eq!(output["view"]["encoding"], "url");
-    assert_eq!(output["view"]["data"], format!("/resources/{id}/content"));
-}
-
-#[tokio::test]
-async fn image_resource_exposes_builtin_preview_and_thumbnail() {
-    let app = test_app("image-preview-thumbnail").await;
-    let png_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+yF9sAAAAASUVORK5CYII=";
-    let png_bytes = BASE64_STANDARD.decode(png_base64).unwrap();
-
-    let (status, resource) = stream_upload(
-        &app,
-        "/resources/content/stream?name=pixel.png&kind=core%3Aimage&directory=images",
-        "image/png",
-        &png_bytes,
-    )
-    .await;
-
-    assert_eq!(status, StatusCode::CREATED);
-    assert!(has_action(&resource, "preview"));
-    assert!(has_action(&resource, "thumbnail"));
-    assert!(has_action(&resource, "view_inline"));
-    let id = resource["id"].as_str().unwrap();
-    let (content_status, content) =
-        empty_bytes_request(&app, Method::GET, &format!("/resources/{id}/content")).await;
-    assert_eq!(content_status, StatusCode::OK);
-    assert_eq!(content.as_ref(), png_bytes);
-    assert_eq!(&content[..8], b"\x89PNG\r\n\x1a\n");
-
-    let preview = request(
-        &app,
-        Request::builder()
-            .method(Method::GET)
-            .uri(format!("/resources/{id}/preview"))
-            .body(Body::empty())
-            .unwrap(),
-    )
-    .await;
-    assert_eq!(preview.status(), StatusCode::OK);
-    assert_eq!(
-        preview.headers().get(header::CONTENT_TYPE).unwrap(),
-        "image/png"
-    );
-
-    let thumbnail = request(
-        &app,
-        Request::builder()
-            .method(Method::GET)
-            .uri(format!("/resources/{id}/thumbnail"))
-            .body(Body::empty())
-            .unwrap(),
-    )
-    .await;
-    assert_eq!(thumbnail.status(), StatusCode::OK);
-    assert_eq!(
-        thumbnail.headers().get(header::CONTENT_TYPE).unwrap(),
-        "image/png"
-    );
-}
-
-#[tokio::test]
-async fn builtin_large_image_preview_uses_url() {
-    let app = test_app("large-image-url-preview").await;
-    let large_image = vec![0u8; 4 * 1024 * 1024 + 1];
-
-    let response = request(
-        &app,
-        Request::builder()
-            .method(Method::PUT)
-            .uri("/resources/content/stream?name=large.png&directory=images&kind=core%3Aimage")
-            .header(header::CONTENT_TYPE, "image/png")
-            .body(Body::from(large_image))
-            .unwrap(),
-    )
-    .await;
-    assert_eq!(response.status(), StatusCode::CREATED);
-    let resource = response_json(response).await;
-    let id = resource["id"].as_str().unwrap();
-
-    let (status, preview) = json_request(
-        &app,
-        Method::POST,
-        &format!("/resources/{id}/actions/preview"),
-        json!({"input": {}}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{preview}");
-    assert_eq!(preview["view"]["view"], "media");
-    assert_eq!(preview["view"]["encoding"], "url");
-    assert_eq!(preview["view"]["data"], format!("/resources/{id}/content"));
-}
-
-#[tokio::test]
-async fn builtin_image_thumbnail_action_stays_inline() {
-    let app = test_app("image-thumbnail-inline").await;
-    let png_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+yF9sAAAAASUVORK5CYII=";
-    let png_bytes = BASE64_STANDARD.decode(png_base64).unwrap();
-
-    let (status, resource) = stream_upload(
-        &app,
-        "/resources/content/stream?name=thumbnail-pixel.png&kind=core%3Aimage&directory=images",
-        "image/png",
-        &png_bytes,
-    )
-    .await;
-    assert_eq!(status, StatusCode::CREATED);
-    let id = resource["id"].as_str().unwrap();
-
-    let (status, thumbnail) = json_request(
-        &app,
-        Method::POST,
-        &format!("/resources/{id}/actions/thumbnail"),
-        json!({"input": {}}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{thumbnail}");
-    assert_eq!(thumbnail["view"]["view"], "media");
-    assert_eq!(thumbnail["view"]["encoding"], "base64");
 }
 
 #[tokio::test]
@@ -871,7 +621,7 @@ async fn upload_detects_most_specific_plugin_kind() {
     assert!(
         actions
             .iter()
-            .any(|action| action["id"] == "download_content")
+            .any(|action| action["id"] == "core.resource.download")
     );
 
     let resource_id = resource["id"].as_str().unwrap();
@@ -1190,7 +940,7 @@ async fn kind_filter_can_include_all_descendants() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|action| action["id"] == "download_content")
+            .any(|action| action["id"] == "core.resource.download")
     );
 }
 
@@ -1266,6 +1016,9 @@ async fn openapi_exposes_current_http_contract() {
     assert!(create_properties.get("description").is_some());
     assert!(create_properties.get("tags").is_some());
     assert!(document["paths"].get("/resources/content/stream").is_some());
+    assert!(document["paths"].get("/resources/{id}/read").is_none());
+    assert!(document["paths"].get("/resources/{id}/preview").is_none());
+    assert!(document["paths"].get("/resources/{id}/thumbnail").is_none());
     assert!(document["paths"].get("/auth/login").is_some());
     assert!(document["paths"].get("/auth/users/{id}").is_some());
     assert!(document["paths"].get("/scan").is_none());

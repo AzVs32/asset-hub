@@ -23,8 +23,8 @@ Inside the host workspace, `asset-core` exposes three deliberately separate surf
 - `port` contains the curated SPI implemented by repositories, object storage, scanners, and the
   plugin host. Port implementation modules are private, so every SPI type has one import path.
 - `service` contains application commands and results. Untrusted HTTP, CLI, and TUI entry points
-  bind an `AccessContext` through `ResourceService::secured`; unbound command, content, action, and
-  preview services are Core implementation details.
+  bind an `AccessContext` through `ResourceService::secured`; unbound command, content, and action
+  services are Core implementation details.
 
 `asset-http` and `asset-cli` each own their executable startup and may use `asset-infra` when they need
 concrete configuration or infrastructure behavior. Protocol handlers and commands should still prefer
@@ -102,7 +102,7 @@ Authentication endpoints:
 Administrators can access all user-visible directories. A non-administrator's
 `workspace_directory` is their only authorization boundary: they have complete
 access to that directory and its descendants, and no access outside it. Direct resource
-reads, previews, downloads, actions, and updates are checked against the
+content reads, downloads, actions, and updates are checked against the
 resource's directory. Creates, uploads, moves, deletes, and plugin write
 actions are authorized inside the core use case after their target directory is
 known.

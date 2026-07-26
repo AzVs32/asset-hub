@@ -2,7 +2,7 @@ use crate::dto::{
     BinaryContent, CreateDirectoryRequest, CreateResourceRequest, DirectoryListingResponse,
     DirectoryResponse, ExecuteResourceActionRequest, HealthResponse, ListDirectoryQuery,
     ListResourcesQuery, ResourceActionOutputResponse, ResourceKindResponse, ResourceKindsResponse,
-    ResourcePageResponse, ResourceReadResponse, ResourceResponse, UpdateResourceRequest,
+    ResourcePageResponse, ResourceResponse, UpdateResourceRequest,
     UploadResourceContentStreamQuery,
 };
 use crate::error::HttpError;
@@ -20,7 +20,6 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use bytes::Bytes;
 use futures_util::StreamExt;
 use std::path::{Component, Path as FsPath};
 use std::str::FromStr;
@@ -32,10 +31,7 @@ pub(crate) mod maintenance;
 pub(crate) mod plugin;
 pub(crate) mod resource;
 
-pub(crate) use content::{
-    MAX_UPLOAD_BYTES, get_resource_content, preview_resource, read_resource, thumbnail_resource,
-    upload_resource_content_stream,
-};
+pub(crate) use content::{MAX_UPLOAD_BYTES, get_resource_content, upload_resource_content_stream};
 pub(crate) use maintenance::{health, purge_disabled};
 pub(crate) use plugin::plugin_web_asset;
 pub(crate) use resource::{

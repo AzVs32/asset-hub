@@ -1,16 +1,17 @@
 use serde::{Deserialize, Deserializer, Serialize};
 
 /// Resource action identifier.
+///
+/// Action IDs are extensible. Authors are encouraged to use
+/// `<plugin-id>.<verb>` (for example `core.resource.download` or
+/// `azvs.markdown.render`) so independently contributed actions remain globally distinct.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ResourceAction(String);
 
 impl ResourceAction {
-    pub const DOWNLOAD_CONTENT: &'static str = "download_content";
-    pub const READ: &'static str = "read";
-    pub const VIEW_INLINE: &'static str = "view_inline";
-    pub const PREVIEW: &'static str = "preview";
-    pub const THUMBNAIL: &'static str = "thumbnail";
+    /// Built-in download capability contributed by the `core.resource` plugin.
+    pub const CORE_RESOURCE_DOWNLOAD: &'static str = "core.resource.download";
 
     pub fn new(value: impl Into<String>) -> Self {
         Self(value.into().trim().to_string())

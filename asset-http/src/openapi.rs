@@ -4,8 +4,7 @@ use crate::dto::{
     HealthComponentResponse, HealthResponse, PluginDiagnosticResponse,
     ResourceActionDefinitionResponse, ResourceActionOutputResponse, ResourceActionsResponse,
     ResourceContentResponse, ResourceKindResponse, ResourceKindsResponse, ResourcePageResponse,
-    ResourceReadResponse, ResourceResponse, UpdateResourceRequest,
-    UploadResourceContentStreamQuery,
+    ResourceResponse, UpdateResourceRequest, UploadResourceContentStreamQuery,
 };
 use crate::{auth, handlers};
 use utoipa::{
@@ -47,9 +46,6 @@ impl Modify for CookieSecurity {
         handlers::resource::find_resource,
         handlers::resource::update_resource,
         handlers::content::get_resource_content,
-        handlers::content::preview_resource,
-        handlers::content::thumbnail_resource,
-        handlers::content::read_resource,
         handlers::resource::execute_resource_action,
         handlers::resource::soft_delete_resource,
         handlers::resource::remove_resource
@@ -74,7 +70,6 @@ impl Modify for CookieSecurity {
             DirectoryResponse,
             ResourceActionsResponse,
             ResourcePageResponse,
-            ResourceReadResponse,
             ResourceResponse,
             UpdateResourceRequest,
             UploadResourceContentStreamQuery

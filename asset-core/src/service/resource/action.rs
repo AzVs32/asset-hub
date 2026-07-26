@@ -59,24 +59,13 @@ impl<'a> ResourceActionService<'a> {
             return Ok(ResourceActions::default());
         }
 
-        let mut available_actions = self
+        let available_actions = self
             .service
             .actions_for_resource_kind(resource.kind())
             .into_iter()
             .filter(|action| resource.content().is_some() || !action.requirements().content)
             .filter(|action| self.service.action_matches_resource(action, resource))
             .collect::<Vec<_>>();
-
-        if resource.content().is_some()
-            && !available_actions
-                .iter()
-                .any(|action| action.id().as_str() == ResourceAction::DOWNLOAD_CONTENT)
-        {
-            available_actions.insert(
-                0,
-                ResourceActionDefinition::new(ResourceAction::DOWNLOAD_CONTENT, "Download"),
-            );
-        }
 
         Ok(ResourceActions::new(available_actions))
     }
