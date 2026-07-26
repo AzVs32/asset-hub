@@ -135,7 +135,8 @@ asset system --scan-resource
 ```
 
 HTTP 服务启动和周期同步只比较物理文件修改时间与 `ResourceContent.size`；只有新增或发生
-变化的文件才重新计算 SHA-256。
+变化的文件才重新计算 SHA-256。扫描成功或失败后会写入 `resource.scan` 安全审计事件；
+该事件不包含资源内容或文件路径。
 
 # `asset user` 命令
 

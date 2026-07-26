@@ -17,6 +17,8 @@ pub enum SecurityAuditEventType {
     ResourceUpload,
     ResourceCreate,
     ResourceUpdate,
+    /// 显式完整扫描对象存储并协调资源记录。
+    ResourceScan,
     DirectoryCreate,
 }
 
@@ -35,6 +37,7 @@ impl SecurityAuditEventType {
             Self::ResourceUpload => "resource.upload",
             Self::ResourceCreate => "resource.create",
             Self::ResourceUpdate => "resource.update",
+            Self::ResourceScan => "resource.scan",
             Self::DirectoryCreate => "directory.create",
         }
     }
@@ -53,6 +56,7 @@ impl SecurityAuditEventType {
             "resource.upload" => Some(Self::ResourceUpload),
             "resource.create" => Some(Self::ResourceCreate),
             "resource.update" => Some(Self::ResourceUpdate),
+            "resource.scan" => Some(Self::ResourceScan),
             "directory.create" => Some(Self::DirectoryCreate),
             _ => None,
         }
@@ -171,6 +175,7 @@ mod tests {
             SecurityAuditEventType::ResourceUpload,
             SecurityAuditEventType::ResourceCreate,
             SecurityAuditEventType::ResourceUpdate,
+            SecurityAuditEventType::ResourceScan,
             SecurityAuditEventType::DirectoryCreate,
         ];
 

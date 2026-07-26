@@ -2,6 +2,7 @@ use asset_infra::config::AssetInfraConfig;
 use asset_runtime::AssetRuntime;
 use clap::{Parser, Subcommand};
 
+mod audit;
 mod commands;
 
 use commands::{config, plugin, system, user};
@@ -37,7 +38,12 @@ pub async fn run(cli: Cli) -> CliResult {
         Command::Config(command) => config::run(command),
         Command::System(command) => {
             let runtime = maintenance_runtime().await?;
-            system::run(command, runtime.resource_service()).await
+            system::run(
+                command,
+                runtime.resource_service(),
+                runtime.security_audit_repository(),
+            )
+            .await
         }
         Command::User(command) => {
             let runtime = maintenance_runtime().await?;

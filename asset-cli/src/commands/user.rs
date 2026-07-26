@@ -1,14 +1,10 @@
-use crate::CliResult;
+use crate::{CliResult, audit};
 use anyhow::{Context, bail};
-use asset_core::domain::{
-    DirectoryPath, NewSecurityAuditEvent, SecurityAuditActor, SecurityAuditEventType,
-    SecurityAuditOutcome, SecurityAuditSource, User, UserRole, UserStatus,
-};
+use asset_core::domain::{DirectoryPath, SecurityAuditEventType, User, UserRole, UserStatus};
 use asset_core::port::SecurityAuditRepository;
 use asset_core::service::UserService;
 use clap::{ArgGroup, Args};
 use comfy_table::{Table, presets::UTF8_FULL};
-use std::future::Future;
 use std::sync::Arc;
 
 #[derive(Debug, Args)]
@@ -53,20 +49,20 @@ pub(crate) async fn run(
         print_user_list(&users.list().await?);
     } else if let Some(username) = command.create {
         let password = prompt_new_password()?;
-        let user = audited(
+        let user = audit::audited(
             audit.as_ref(),
             SecurityAuditEventType::AuthUserCreate,
-            &username,
+            Some(&username),
             users.create(username.clone(), &password, UserRole::Member, None),
         )
         .await?;
         println!("created user `{}`", user.username());
     } else if let Some(username) = command.password {
         let password = prompt_new_password()?;
-        let user = audited(
+        let user = audit::audited(
             audit.as_ref(),
             SecurityAuditEventType::AuthUserPassword,
-            &username,
+            Some(&username),
             async {
                 users
                     .update_password(&username, &password)
@@ -98,10 +94,10 @@ async fn update_status(
     username: &str,
     status: UserStatus,
 ) -> CliResult {
-    let user = audited(
+    let user = audit::audited(
         audit,
         SecurityAuditEventType::AuthUserStatus,
-        username,
+        Some(username),
         async {
             let user = users
                 .find_by_username(username)
@@ -123,30 +119,6 @@ async fn update_status(
         user.username()
     );
     Ok(())
-}
-
-async fn audited<T>(
-    audit: &dyn SecurityAuditRepository,
-    event_type: SecurityAuditEventType,
-    target: &str,
-    operation: impl Future<Output = Result<T, asset_core::CoreError>>,
-) -> Result<T, asset_core::CoreError> {
-    let result = operation.await;
-    let event = NewSecurityAuditEvent {
-        actor: SecurityAuditActor::unauthenticated(),
-        source: SecurityAuditSource::Cli,
-        event_type,
-        outcome: if result.is_ok() {
-            SecurityAuditOutcome::Success
-        } else {
-            SecurityAuditOutcome::Failure
-        },
-        target: Some(target.trim().to_owned()),
-    };
-    if let Err(error) = audit.record(&event).await {
-        eprintln!("asset: failed to record security audit event: {error}");
-    }
-    result
 }
 
 fn prompt_new_password() -> CliResult<String> {
