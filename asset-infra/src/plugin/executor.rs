@@ -83,10 +83,10 @@ impl ExtismResourceActionExecutor {
             preflight_handlers(
                 manifest.plugin_id(),
                 &compiled,
-                &manifest.capabilities.resource_actions,
+                &manifest.capabilities.actions,
             )?;
 
-            for action in &manifest.capabilities.resource_actions {
+            for action in &manifest.capabilities.actions {
                 bindings.push(bind_action(
                     manifest.plugin_id(),
                     &manifest.permissions,

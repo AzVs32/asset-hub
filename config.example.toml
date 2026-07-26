@@ -116,7 +116,8 @@ plugin_manifests = []
 #   },
 #   "runtime": {
 #     "type": "extism",
-#     "wasm": "example-tools.wasm"
+#     "wasm": "example-tools.wasm",
+#     "plugin_api": "asset-hub.plugin-api@0.4"
 #   },
 #   "capabilities": {
 #     "kinds": [

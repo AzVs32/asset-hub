@@ -44,13 +44,15 @@ describe("PluginKernel", () => {
     expect(kernel.thumbnailAction(resource([fallback, explicit]))?.id).toBe("cover");
   });
 
-  it("can preview video content through the builtin content fallback", () => {
+  it("does not infer a thumbnail action from MIME type or output view", () => {
     const kernel = new PluginKernel();
-    const content = action({
-      id: "content",
-      executor: { type: "builtin", handler: null },
-      output: { views: [] },
-    });
-    expect(kernel.thumbnailAction(resource([content]))?.id).toBe("content");
+    const media = action({ id: "media", output: { views: ["media"] } });
+    const item = resource([media]);
+    item.content = {
+      size: 42,
+      mimeType: "image/png",
+      checksum: { kind: "sha256", value: "digest" },
+    };
+    expect(kernel.thumbnailAction(item)).toBeNull();
   });
 });

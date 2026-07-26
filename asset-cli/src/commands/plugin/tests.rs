@@ -61,13 +61,12 @@ fn draft_manifest_without_web() -> String {
 fn draft_manifest_with_web(web: &str) -> String {
     format!(
         r#"{{
-          "manifest_version": 2,
+          "manifest_version": 3,
           "plugin": {{"id": "test.plugin", "name": "Test", "version": "0.1.0", "publisher": "test"}},
-          "runtime": {{"type": "extism", "wasm": "plugin.wasm", "plugin_api": "asset-hub.plugin-api@0.3"}},
-          "capabilities": {{"resource_kinds": [], "resource_actions": []}},
+          "runtime": {{"type": "extism", "wasm": "plugin.wasm", "plugin_api": "asset-hub.plugin-api@0.4"}},
+          "capabilities": {{"kinds": [], "actions": []}},
           "permissions": {{
-            "resource": {{"read": true, "write": false}},
-            "content": {{"read": false, "write": false}},
+            "allow": ["resource.read"],
             "network": false,
             "filesystem": false
           }}{web}

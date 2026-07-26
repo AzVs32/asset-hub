@@ -46,6 +46,7 @@ impl Modify for CookieSecurity {
         handlers::resource::find_resource,
         handlers::resource::update_resource,
         handlers::content::get_resource_content,
+        handlers::content::download_resource_content,
         handlers::resource::execute_resource_action,
         handlers::resource::soft_delete_resource,
         handlers::resource::remove_resource

@@ -17,7 +17,7 @@ const pluginViewSchema = z.discriminatedUnion("view", [
     data: z.string(),
   }),
   z.object({
-    view: z.literal("binary_url"),
+    view: z.literal("download"),
     url: z.string(),
     mime_type: z.string().optional(),
     filename: z.string().optional(),

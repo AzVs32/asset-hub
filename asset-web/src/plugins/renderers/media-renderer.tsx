@@ -1,7 +1,6 @@
 import {
   MediaControlBar,
   MediaController,
-  MediaFullscreenButton,
   MediaMuteButton,
   MediaPlayButton,
   MediaTimeDisplay,
@@ -9,43 +8,15 @@ import {
   MediaVolumeRange,
 } from "media-chrome/react";
 import type { PluginViewRendererProps } from "@/kernel/plugin-kernel";
-import { Button } from "@/shared/ui/button";
 
 export default function MediaRenderer({ view, gateway }: PluginViewRendererProps) {
-  if (view.view === "media") {
-    const source =
-      view.encoding === "base64"
-        ? `data:${view.mime_type};base64,${view.data}`
-        : gateway.assetUrl(view.data);
-    if (!source) return <InvalidMediaUrl />;
-    return <MediaContent source={source} mimeType={view.mime_type} title={view.title} />;
-  }
-  if (view.view !== "binary_url") return null;
-  const source = gateway.assetUrl(view.url);
+  if (view.view !== "media") return null;
+  const source =
+    view.encoding === "base64"
+      ? `data:${view.mime_type};base64,${view.data}`
+      : gateway.assetUrl(view.data);
   if (!source) return <InvalidMediaUrl />;
-  if (
-    view.mime_type?.startsWith("image/") ||
-    view.mime_type?.startsWith("video/") ||
-    view.mime_type?.startsWith("audio/")
-  ) {
-    return <MediaContent source={source} mimeType={view.mime_type} title={view.filename} />;
-  }
-  if (view.mime_type === "application/pdf") {
-    return (
-      <iframe
-        className="h-[65vh] min-h-96 w-full border-0"
-        src={source}
-        title={view.filename ?? "PDF"}
-      />
-    );
-  }
-  return (
-    <div className="grid min-h-48 place-items-center bg-slate-50 p-6">
-      <Button onClick={() => window.open(source, "_blank", "noopener,noreferrer")}>
-        Open file
-      </Button>
-    </div>
-  );
+  return <MediaContent source={source} mimeType={view.mime_type} title={view.title} />;
 }
 
 function InvalidMediaUrl() {
@@ -73,28 +44,6 @@ function MediaContent({
         alt={title ?? "Plugin output"}
       />
     );
-  if (mimeType.startsWith("video/")) {
-    return (
-      <MediaController className="aspect-video w-full bg-black">
-        {/* biome-ignore lint/a11y/useMediaCaption: the plugin media ABI does not expose caption tracks */}
-        <video
-          slot="media"
-          className="h-full w-full object-contain"
-          src={source}
-          playsInline
-          preload="metadata"
-        />
-        <MediaControlBar>
-          <MediaPlayButton />
-          <MediaTimeDisplay />
-          <MediaTimeRange />
-          <MediaMuteButton />
-          <MediaVolumeRange />
-          <MediaFullscreenButton />
-        </MediaControlBar>
-      </MediaController>
-    );
-  }
   if (mimeType.startsWith("audio/")) {
     return (
       <MediaController className="w-full bg-slate-950">
@@ -110,5 +59,9 @@ function MediaContent({
       </MediaController>
     );
   }
-  return <pre className="p-5 text-xs">{JSON.stringify({ source, mimeType }, null, 2)}</pre>;
+  return (
+    <p className="m-4 rounded-xl bg-slate-100 p-4 text-sm text-slate-600">
+      No host renderer is available for media type <code>{mimeType}</code>.
+    </p>
+  );
 }

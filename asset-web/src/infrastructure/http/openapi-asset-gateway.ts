@@ -153,19 +153,6 @@ export class OpenApiAssetGateway implements AssetGateway {
   ): Promise<PluginActionOutput> {
     const action = resource.actions.find((candidate) => candidate.id === actionId);
     if (!action) throw new Error(`Action ${actionId} is not available for resource ${resource.id}`);
-    if (isContentFallbackAction(resource, action)) {
-      return {
-        resourceId: resource.id,
-        action: action.id,
-        diagnostics: [],
-        view: {
-          view: "binary_url",
-          url: `/resources/${encodeURIComponent(resource.id)}/content`,
-          ...(resource.content?.mimeType ? { mime_type: resource.content.mimeType } : {}),
-          filename: resource.name,
-        },
-      };
-    }
     const result = await this.#client.POST("/resources/{id}/actions/{action}", {
       params: { path: { id: resource.id, action: actionId } },
       body: { input },
@@ -368,14 +355,4 @@ function enumValue<const T extends string>(value: string, values: readonly T[]):
   const match = values.find((candidate) => candidate === value);
   if (!match) throw new Error(`Unexpected API enum value: ${value}`);
   return match;
-}
-
-function isContentFallbackAction(resource: Resource, action: ResourceAction): boolean {
-  return Boolean(
-    resource.content &&
-      action.executor.type === "builtin" &&
-      !action.executor.handler &&
-      action.access === "read_only" &&
-      action.output.views.length === 0,
-  );
 }

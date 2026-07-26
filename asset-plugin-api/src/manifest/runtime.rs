@@ -10,13 +10,8 @@ pub enum PluginRuntime {
         wasm: PathBuf,
         #[serde(default)]
         wasi: bool,
-        #[serde(default = "default_plugin_api_version")]
         plugin_api: String,
     },
-}
-
-fn default_plugin_api_version() -> String {
-    super::PLUGIN_API_VERSION.to_string()
 }
 
 impl PluginRuntime {

@@ -47,7 +47,7 @@ Actions with no location, or only locations unknown to this host version, remain
 `resource_detail`. Automatic slots deliberately ignore write actions.
 
 Supported output views are `text`, `markdown`, `html`, `plugin_frame`, `json`, `media`,
-`binary_url`, `table`, and JSON Schema `form`. Generic outputs are rendered by the host. A plugin
+`download`, `table`, and JSON Schema `form`. Generic outputs are rendered by the host. A plugin
 that needs its own application UI returns `plugin_frame` with a verified `/plugins/<id>/...` path;
 the frame runs with `sandbox="allow-scripts"` and can request only actions already exposed for the
 current resource through the versioned `postMessage` protocol.

@@ -10,7 +10,6 @@ pub use capabilities::{
 pub use lock::{PluginManifestLock, PluginRuntimeLock, PluginWebLock};
 pub use permissions::{
     FilesystemPermission, NetworkPermission, PluginPermission, PluginPermissions,
-    ReadWritePermission,
 };
 pub use plugin::PluginDescriptor;
 pub use runtime::PluginRuntime;
@@ -61,10 +60,9 @@ mod lock {
     }
 }
 
-/// Current manifest schema version. V2 remains loadable during the V3 compatibility window.
+/// Current and only supported manifest schema version.
 pub const MANIFEST_VERSION: u32 = 3;
-pub const MIN_MANIFEST_VERSION: u32 = 2;
-pub const PLUGIN_API_VERSION: &str = "asset-hub.plugin-api@0.3";
+pub const PLUGIN_API_VERSION: &str = "asset-hub.plugin-api@0.4";
 
 /// Complete plugin manifest document.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -88,9 +86,9 @@ impl PluginManifest {
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        if !(MIN_MANIFEST_VERSION..=MANIFEST_VERSION).contains(&self.manifest_version) {
+        if self.manifest_version != MANIFEST_VERSION {
             return Err(format!(
-                "unsupported manifest_version `{}`; supported range is {MIN_MANIFEST_VERSION}..={MANIFEST_VERSION}",
+                "unsupported manifest_version `{}`; supported version is `{MANIFEST_VERSION}`",
                 self.manifest_version
             ));
         }
@@ -129,13 +127,8 @@ impl PluginManifest {
     }
 }
 
-/// Returns whether a guest JSON API is supported by this host.
-pub fn is_plugin_api_compatible(value: &str) -> bool {
-    value == PLUGIN_API_VERSION
-}
-
 fn validate_plugin_api_version(value: &str) -> Result<(), String> {
-    if is_plugin_api_compatible(value) {
+    if value == PLUGIN_API_VERSION {
         Ok(())
     } else {
         Err(format!(
@@ -210,7 +203,7 @@ const SUPPORTED_VIEWS: &[&str] = &[
     "plugin_frame",
     "json",
     "media",
-    "binary_url",
+    "download",
     "table",
     "form",
 ];
@@ -218,7 +211,7 @@ const SUPPORTED_VIEWS: &[&str] = &[
 fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
     let capabilities = &manifest.capabilities;
     let mut action_ids = HashSet::new();
-    for kind in &capabilities.resource_kinds {
+    for kind in &capabilities.kinds {
         validate_id("capabilities.kinds[].kind", &kind.kind, &[':', '-', '_'])?;
         if kind
             .parent
@@ -242,7 +235,7 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
             return Err("capabilities.directory_kinds[].parent must not be empty".to_string());
         }
     }
-    for action in &capabilities.resource_actions {
+    for action in &capabilities.actions {
         validate_id(
             "capabilities.actions[].id",
             &action.id,

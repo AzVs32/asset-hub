@@ -12,6 +12,22 @@ describe("plugin view boundary", () => {
     ).toBe("table");
   });
 
+  it("accepts download views and rejects the removed binary URL view", () => {
+    expect(
+      parsePluginView({
+        view: "download",
+        url: "/resources/resource-1/download",
+        filename: "asset.bin",
+      }).view,
+    ).toBe("download");
+    expect(() =>
+      parsePluginView({
+        view: "binary_url",
+        url: "/resources/resource-1/content",
+      }),
+    ).toThrow();
+  });
+
   it("rejects untrusted output that does not match a host renderer contract", () => {
     expect(() => parsePluginView({ view: "plugin_frame", url: 42 })).toThrow();
     expect(() => parsePluginView({ view: "script", code: "alert(1)" })).toThrow();

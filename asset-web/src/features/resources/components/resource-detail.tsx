@@ -269,7 +269,7 @@ function Fact({ label, value, wide = false }: { label: string; value: string; wi
 
 function ActionIcon({ action }: { action: ResourceAction }) {
   if (action.access === "read_write") return <Pencil size={15} />;
-  if (action.output.views.includes("binary_url")) return <Download size={15} />;
+  if (action.output.views.includes("download")) return <Download size={15} />;
   if (action.output.views.includes("media") || action.output.views.includes("plugin_frame"))
     return <Eye size={15} />;
   if (action.output.views.includes("json") || action.output.views.includes("table"))

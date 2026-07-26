@@ -1,16 +1,16 @@
 use asset_core::CoreError;
 use asset_core::domain::Resource;
 use asset_core::port::{ResourceActionExecutor, ResourceActionOutput, ResourceActionRequest};
-use asset_plugin_api::{BinaryUrlView, PluginActionOutput, PluginView, ResourceAction};
+use asset_plugin_api::{DownloadView, PluginActionOutput, PluginView, ResourceAction};
 use async_trait::async_trait;
 
-const DOWNLOAD_CONTENT_HANDLER: &str = "builtin.content.download";
+const RESOURCE_DOWNLOAD_HANDLER: &str = "builtin.resource.download";
 
 #[derive(Debug, Clone, Copy)]
 pub struct BuiltinResourceActionExecutor;
 
 pub fn is_builtin_handler(handler: Option<&str>) -> bool {
-    matches!(handler, Some(DOWNLOAD_CONTENT_HANDLER))
+    matches!(handler, Some(RESOURCE_DOWNLOAD_HANDLER))
 }
 
 #[async_trait]
@@ -35,17 +35,14 @@ fn execute(
     action: ResourceAction,
 ) -> Result<ResourceActionOutput, CoreError> {
     match handler {
-        DOWNLOAD_CONTENT_HANDLER => download_content(resource, action),
+        RESOURCE_DOWNLOAD_HANDLER => download(resource, action),
         _ => Err(CoreError::configuration(format!(
             "unknown built-in action handler `{handler}`"
         ))),
     }
 }
 
-fn download_content(
-    resource: Resource,
-    action: ResourceAction,
-) -> Result<ResourceActionOutput, CoreError> {
+fn download(resource: Resource, action: ResourceAction) -> Result<ResourceActionOutput, CoreError> {
     let Some(content_ref) = resource.content() else {
         return Err(CoreError::not_found(
             "resource content",
@@ -53,8 +50,8 @@ fn download_content(
         ));
     };
 
-    let view = PluginView::BinaryUrl(BinaryUrlView {
-        url: format!("/resources/{}/content", resource.id()),
+    let view = PluginView::Download(DownloadView {
+        url: format!("/resources/{}/download", resource.id()),
         mime_type: content_ref.mime_type().map(ToOwned::to_owned),
         filename: Some(resource.name().to_owned()),
     });

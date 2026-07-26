@@ -84,7 +84,49 @@ pub(crate) async fn get_resource_content(
     Path(id): Path<String>,
 ) -> Result<Response, HttpError> {
     let id = parse_resource_id(&id)?;
-    let Some(resource) = state.secured(&access.0).find_resource(&id).await? else {
+    let (response, _) = resource_content_response(&state, &access.0, &headers, &id).await?;
+    Ok(response)
+}
+
+/// 下载资源内容。
+#[utoipa::path(
+    get,
+    path = "/resources/{id}/download",
+    tag = "resources",
+    params(
+        ("id" = String, Path, description = "资源 ID")
+    ),
+    responses(
+        (status = 200, description = "资源下载流", content_type = "application/octet-stream", body = BinaryContent),
+        (status = 206, description = "资源部分下载流", content_type = "application/octet-stream", body = BinaryContent),
+        (status = 400, description = "请求参数无效", body = crate::dto::ErrorResponse),
+        (status = 404, description = "资源内容不存在", body = crate::dto::ErrorResponse),
+        (status = 500, description = "服务端错误", body = crate::dto::ErrorResponse)
+    )
+)]
+pub(crate) async fn download_resource_content(
+    State(state): State<HttpState>,
+    access: Extension<AccessContext>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Response, HttpError> {
+    let id = parse_resource_id(&id)?;
+    let (mut response, filename) =
+        resource_content_response(&state, &access.0, &headers, &id).await?;
+    response.headers_mut().insert(
+        header::CONTENT_DISPOSITION,
+        attachment_content_disposition(&filename),
+    );
+    Ok(response)
+}
+
+async fn resource_content_response(
+    state: &HttpState,
+    access: &AccessContext,
+    headers: &HeaderMap,
+    id: &ResourceId,
+) -> Result<(Response, String), HttpError> {
+    let Some(resource) = state.secured(access).find_resource(id).await? else {
         return Err(HttpError::not_found(format!("resource `{id}` not found")));
     };
     let content_type = resource
@@ -99,39 +141,45 @@ pub(crate) async fn get_resource_content(
     };
     let range = requested_byte_range(&headers, content_ref.size());
 
-    match range {
-        ByteRangeRequest::Unsatisfiable => Ok(range_not_satisfiable_response(content_ref.size())),
+    let response = match range {
+        ByteRangeRequest::Unsatisfiable => range_not_satisfiable_response(content_ref.size()),
         ByteRangeRequest::None => match state
-            .secured(&access.0)
-            .get_resource_content_stream(&id, None)
+            .secured(access)
+            .get_resource_content_stream(id, None)
             .await?
         {
-            Some(content) => Ok(binary_stream_response(
+            Some(content) => binary_stream_response(
                 content_type,
                 Some(content.content_length()),
                 content.into_content(),
-            )),
-            None => Err(HttpError::not_found(format!(
-                "resource content `{id}` not found"
-            ))),
+            ),
+            None => {
+                return Err(HttpError::not_found(format!(
+                    "resource content `{id}` not found"
+                )));
+            }
         },
         ByteRangeRequest::Range { start, end } => match state
-            .secured(&access.0)
-            .get_resource_content_stream(&id, Some((start, end)))
+            .secured(access)
+            .get_resource_content_stream(id, Some((start, end)))
             .await?
         {
-            Some(content) => Ok(range_stream_response(
+            Some(content) => range_stream_response(
                 content_type,
                 start,
                 end,
                 content.content_length(),
                 content.into_content(),
-            )),
-            None => Err(HttpError::not_found(format!(
-                "resource content `{id}` not found"
-            ))),
+            ),
+            None => {
+                return Err(HttpError::not_found(format!(
+                    "resource content `{id}` not found"
+                )));
+            }
         },
-    }
+    };
+
+    Ok((response, resource.name().to_owned()))
 }
 
 pub(super) fn content_type(headers: &HeaderMap) -> Result<Option<String>, HttpError> {
@@ -226,6 +274,45 @@ pub(super) fn binary_stream_response(
     response
 }
 
+fn attachment_content_disposition(filename: &str) -> header::HeaderValue {
+    let fallback = filename
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    let fallback = if fallback.is_empty() {
+        "download"
+    } else {
+        fallback.as_str()
+    };
+    format!(
+        "attachment; filename=\"{fallback}\"; filename*=UTF-8''{}",
+        encode_rfc5987(filename)
+    )
+    .parse()
+    .expect("sanitized content disposition should be a valid header value")
+}
+
+fn encode_rfc5987(value: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || b"!#$&+-.^_`|~".contains(&byte) {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push('%');
+            encoded.push(char::from(HEX[(byte >> 4) as usize]));
+            encoded.push(char::from(HEX[(byte & 0x0f) as usize]));
+        }
+    }
+    encoded
+}
+
 pub(super) fn range_stream_response(
     content_type: String,
     start: u64,
@@ -314,4 +401,19 @@ pub(super) fn requested_byte_range(headers: &HeaderMap, content_len: u64) -> Byt
         return ByteRangeRequest::Unsatisfiable;
     }
     ByteRangeRequest::Range { start, end }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::attachment_content_disposition;
+
+    #[test]
+    fn attachment_filename_has_safe_ascii_and_utf8_forms() {
+        let value = attachment_content_disposition("报告 2026\".txt");
+
+        assert_eq!(
+            value.to_str().unwrap(),
+            "attachment; filename=\"___2026_.txt\"; filename*=UTF-8''%E6%8A%A5%E5%91%8A%202026%22.txt"
+        );
+    }
 }

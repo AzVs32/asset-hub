@@ -41,23 +41,10 @@ export class PluginKernel {
   }
 
   thumbnailAction(resource: Resource): ResourceAction | null {
-    const explicit = this.actionsAt(resource, hostSlots.resourceListThumbnail).find(
-      (action) => action.access === "read_only",
-    );
-    if (explicit) return explicit;
-    const mimeType = resource.content?.mimeType;
-    if (!mimeType?.startsWith("image/") && !mimeType?.startsWith("video/")) return null;
     return (
-      sortActions(
-        resource.actions.filter(
-          (action) =>
-            action.access === "read_only" &&
-            (action.output.views.includes("media") ||
-              (action.executor.type === "builtin" &&
-                !action.executor.handler &&
-                action.output.views.length === 0)),
-        ),
-      )[0] ?? null
+      this.actionsAt(resource, hostSlots.resourceListThumbnail).find(
+        (action) => action.access === "read_only",
+      ) ?? null
     );
   }
 }

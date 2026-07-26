@@ -170,7 +170,7 @@ fn validate_loaded_manifest(
     })?;
 
     if matches!(manifest.runtime, PluginRuntime::Builtin) {
-        for action in &manifest.capabilities.resource_actions {
+        for action in &manifest.capabilities.actions {
             let handler = action.handler();
             if !builtin::is_builtin_handler(Some(handler)) {
                 return Err(CoreError::configuration(format!(

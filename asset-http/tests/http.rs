@@ -183,9 +183,9 @@ async fn core_document_resource_inherits_core_download_action() {
     assert_eq!(download["label"], "Download");
     assert_eq!(download["access"], "read_only");
     assert_eq!(download["executor"]["type"], "builtin");
-    assert_eq!(download["executor"]["handler"], "builtin.content.download");
+    assert_eq!(download["executor"]["handler"], "builtin.resource.download");
     assert_eq!(download["requires"]["content_delivery"], "reference");
-    assert_eq!(download["output"]["view"], json!(["binary_url"]));
+    assert_eq!(download["output"]["view"], json!(["download"]));
     assert_eq!(
         download["ui"]["locations"],
         json!(["resource_detail", "context_menu"])
@@ -209,6 +209,58 @@ async fn core_document_resource_inherits_core_download_action() {
             .unwrap()
             .len(),
         1
+    );
+
+    let resource_id = resource["id"].as_str().unwrap();
+    let (status, output) = json_request(
+        &app,
+        Method::POST,
+        &format!("/resources/{resource_id}/actions/core.resource.download"),
+        json!({ "input": {} }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{output}");
+    assert_eq!(output["view"]["view"], "download");
+    assert_eq!(
+        output["view"]["url"],
+        format!("/resources/{resource_id}/download")
+    );
+    assert_eq!(output["view"]["filename"], "book.txt");
+
+    let download = request(
+        &app,
+        Request::builder()
+            .method(Method::GET)
+            .uri(output["view"]["url"].as_str().unwrap())
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(download.status(), StatusCode::OK);
+    assert_eq!(
+        download.headers().get(header::CONTENT_DISPOSITION).unwrap(),
+        "attachment; filename=\"book.txt\"; filename*=UTF-8''book.txt"
+    );
+    assert_eq!(
+        download.headers().get(header::CONTENT_TYPE).unwrap(),
+        "text/plain"
+    );
+    let body = to_bytes(download.into_body(), BODY_LIMIT).await.unwrap();
+    assert_eq!(body.as_ref(), b"Hello book");
+
+    let inline = request(
+        &app,
+        Request::builder()
+            .method(Method::GET)
+            .uri(format!("/resources/{resource_id}/content"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(inline.status(), StatusCode::OK);
+    assert_eq!(
+        inline.headers().get(header::CONTENT_DISPOSITION).unwrap(),
+        "inline"
     );
 }
 
@@ -439,6 +491,33 @@ async fn resource_content_supports_single_byte_ranges_for_video_seek() {
         "video/mp4"
     );
     let body = to_bytes(ranged.into_body(), BODY_LIMIT).await.unwrap();
+    assert_eq!(body.as_ref(), b"2345");
+
+    let download_range = request(
+        &app,
+        Request::builder()
+            .method(Method::GET)
+            .uri(format!("/resources/{id}/download"))
+            .header(header::RANGE, "bytes=2-5")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(download_range.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(
+        download_range
+            .headers()
+            .get(header::CONTENT_DISPOSITION)
+            .unwrap(),
+        "attachment; filename=\"clip.mp4\"; filename*=UTF-8''clip.mp4"
+    );
+    assert_eq!(
+        download_range.headers().get(header::CONTENT_RANGE).unwrap(),
+        "bytes 2-5/10"
+    );
+    let body = to_bytes(download_range.into_body(), BODY_LIMIT)
+        .await
+        .unwrap();
     assert_eq!(body.as_ref(), b"2345");
 
     let open_ended = request(
@@ -1016,6 +1095,7 @@ async fn openapi_exposes_current_http_contract() {
     assert!(create_properties.get("description").is_some());
     assert!(create_properties.get("tags").is_some());
     assert!(document["paths"].get("/resources/content/stream").is_some());
+    assert!(document["paths"].get("/resources/{id}/download").is_some());
     assert!(document["paths"].get("/resources/{id}/read").is_none());
     assert!(document["paths"].get("/resources/{id}/preview").is_none());
     assert!(document["paths"].get("/resources/{id}/thumbnail").is_none());

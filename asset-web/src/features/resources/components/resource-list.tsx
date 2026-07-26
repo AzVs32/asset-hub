@@ -308,15 +308,11 @@ function ResourceThumbnail({ resource }: { resource: Resource }) {
     retry: false,
     staleTime: 5 * 60_000,
   });
-  const media = result.data
-    ? thumbnailMedia(result.data.view, gateway.assetUrl.bind(gateway))
+  const image = result.data
+    ? thumbnailImage(result.data.view, gateway.assetUrl.bind(gateway))
     : null;
-  if (media?.mimeType.startsWith("image/"))
-    return (
-      <img className="size-14 rounded-xl bg-slate-100 object-cover" src={media.source} alt="" />
-    );
-  if (media?.mimeType.startsWith("video/"))
-    return <VideoThumbnail source={media.source} name={resource.name} />;
+  if (image)
+    return <img className="size-14 rounded-xl bg-slate-100 object-cover" src={image} alt="" />;
   return (
     <span className="grid size-14 place-items-center rounded-xl border border-dashed border-slate-300 bg-white text-slate-400">
       <File className={result.isPending ? "animate-pulse" : ""} size={19} />
@@ -324,48 +320,14 @@ function ResourceThumbnail({ resource }: { resource: Resource }) {
   );
 }
 
-function VideoThumbnail({ source, name }: { source: string; name: string }) {
-  const ref = React.useRef<HTMLVideoElement>(null);
-  function seekPreview(video: HTMLVideoElement) {
-    if (Number.isFinite(video.duration) && video.duration > 0.2)
-      video.currentTime = Math.min(5, Math.max(0.5, video.duration * 0.1));
-  }
-  return (
-    <video
-      ref={ref}
-      className="size-14 rounded-xl bg-slate-950 object-cover"
-      src={source}
-      aria-label={`${name} video preview`}
-      muted
-      loop
-      playsInline
-      preload="metadata"
-      onLoadedMetadata={(event) => seekPreview(event.currentTarget)}
-      onMouseEnter={() => void ref.current?.play().catch(() => undefined)}
-      onMouseLeave={() => {
-        if (ref.current) {
-          ref.current.pause();
-          seekPreview(ref.current);
-        }
-      }}
-    />
-  );
-}
-
-function thumbnailMedia(
+function thumbnailImage(
   view: import("@/domain/plugin").PluginView,
   resolveUrl: (url: string) => string | null,
-): { source: string; mimeType: string } | null {
-  if (view.view === "media") {
-    const source =
-      view.encoding === "base64"
-        ? `data:${view.mime_type};base64,${view.data}`
-        : resolveUrl(view.data);
-    return source ? { source, mimeType: view.mime_type } : null;
-  }
-  if (view.view === "binary_url" && view.mime_type) {
-    const source = resolveUrl(view.url);
-    return source ? { source, mimeType: view.mime_type } : null;
+): string | null {
+  if (view.view === "media" && view.mime_type.startsWith("image/")) {
+    return view.encoding === "base64"
+      ? `data:${view.mime_type};base64,${view.data}`
+      : resolveUrl(view.data);
   }
   return null;
 }

@@ -11,7 +11,8 @@
   "runtime": {
     "type": "extism",
     "wasm": "azvs-epub.wasm",
-    "wasi": false
+    "wasi": false,
+    "plugin_api": "asset-hub.plugin-api@0.4"
   },
   "web": {
     "root": "dist"

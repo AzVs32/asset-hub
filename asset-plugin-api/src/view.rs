@@ -33,7 +33,7 @@ impl PluginView {
             Self::PluginFrame(_) => "plugin_frame",
             Self::Json(_) => "json",
             Self::Media(_) => "media",
-            Self::BinaryUrl(_) => "binary_url",
+            Self::Download(_) => "download",
             Self::Table(_) => "table",
             Self::Form(_) => "form",
         }
@@ -73,7 +73,7 @@ pub enum PluginView {
     PluginFrame(PluginFrameView),
     Json(JsonView),
     Media(MediaView),
-    BinaryUrl(BinaryUrlView),
+    Download(DownloadView),
     Table(TableView),
     Form(FormView),
 }
@@ -124,8 +124,9 @@ pub enum PluginMediaEncoding {
     Url,
 }
 
+/// Host-owned URL exposed as a downloadable file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BinaryUrlView {
+pub struct DownloadView {
     pub url: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
@@ -154,4 +155,29 @@ pub struct FormView {
     pub value: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub submit_action: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DownloadView, PluginView};
+
+    #[test]
+    fn download_view_has_an_explicit_wire_discriminator() {
+        let view = PluginView::Download(DownloadView {
+            url: "/resources/resource-1/download".to_string(),
+            mime_type: Some("application/octet-stream".to_string()),
+            filename: Some("asset.bin".to_string()),
+        });
+
+        assert_eq!(view.kind(), "download");
+        assert_eq!(
+            serde_json::to_value(view).unwrap(),
+            serde_json::json!({
+                "view": "download",
+                "url": "/resources/resource-1/download",
+                "mime_type": "application/octet-stream",
+                "filename": "asset.bin"
+            })
+        );
+    }
 }

@@ -5,7 +5,7 @@ export const pluginViewKinds = [
   "plugin_frame",
   "json",
   "media",
-  "binary_url",
+  "download",
   "table",
   "form",
 ] as const;
@@ -26,7 +26,7 @@ export type PluginView =
       encoding: "base64" | "url";
       data: string;
     }
-  | { view: "binary_url"; url: string; mime_type?: string; filename?: string }
+  | { view: "download"; url: string; mime_type?: string; filename?: string }
   | { view: "table"; columns: Array<{ key: string; label: string }>; rows: unknown[] }
   | { view: "form"; schema: JsonObject; value?: unknown; submit_action?: string };
 

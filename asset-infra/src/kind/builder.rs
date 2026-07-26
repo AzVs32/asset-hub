@@ -42,7 +42,7 @@ pub(super) fn build_registries_with_catalog(
         .collect::<Vec<_>>();
 
     for manifest in &official_manifests {
-        for config_definition in &manifest.manifest.capabilities.resource_kinds {
+        for config_definition in &manifest.manifest.capabilities.kinds {
             push_definition(
                 &mut definitions,
                 definition_from_manifest_kind(
@@ -61,7 +61,7 @@ pub(super) fn build_registries_with_catalog(
     }
 
     for manifest in &plugin_manifests {
-        for config_definition in &manifest.manifest.capabilities.resource_kinds {
+        for config_definition in &manifest.manifest.capabilities.kinds {
             push_definition(
                 &mut definitions,
                 definition_from_manifest_kind(
@@ -84,7 +84,7 @@ pub(super) fn build_registries_with_catalog(
         }
     }
     for manifest in &official_manifests {
-        for action in &manifest.manifest.capabilities.resource_actions {
+        for action in &manifest.manifest.capabilities.actions {
             let action_definitions = action_definitions_with_inherited_content(
                 &definitions,
                 action,
@@ -100,7 +100,7 @@ pub(super) fn build_registries_with_catalog(
         }
     }
     for manifest in &plugin_manifests {
-        for action in &manifest.manifest.capabilities.resource_actions {
+        for action in &manifest.manifest.capabilities.actions {
             let action_definitions = action_definitions_with_inherited_content(
                 &definitions,
                 action,

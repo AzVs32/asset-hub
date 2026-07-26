@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OpenApiAssetGateway } from "@/infrastructure/http/openapi-asset-gateway";
+import { action, resource } from "./fixtures";
 
 describe("OpenApiAssetGateway URL boundary", () => {
   const gateway = new OpenApiAssetGateway("/api");
@@ -14,6 +15,33 @@ describe("OpenApiAssetGateway URL boundary", () => {
     expect(gateway.assetUrl("https://example.com/tracker")).toBeNull();
     expect(gateway.assetUrl("//example.com/tracker")).toBeNull();
     expect(gateway.assetUrl("plugins/example/view.html")).toBeNull();
+  });
+
+  it("executes handlerless builtin actions through the action endpoint", async () => {
+    const fetchMock = vi.fn(async (_request: Request) =>
+      Response.json({
+        resource_id: "resource-1",
+        action: "legacy.content",
+        diagnostics: [],
+        view: { view: "json", data: { executed: true } },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const absoluteGateway = new OpenApiAssetGateway("http://localhost/api");
+    const item = resource([
+      action({
+        id: "legacy.content",
+        executor: { type: "builtin", handler: null },
+        output: { views: [] },
+      }),
+    ]);
+
+    await absoluteGateway.executeAction(item, "legacy.content");
+
+    const request = fetchMock.mock.calls[0]?.[0];
+    if (!request) throw new Error("request was not captured");
+    expect(new URL(request.url).pathname).toBe("/api/resources/resource-1/actions/legacy.content");
+    expect(request.method).toBe("POST");
   });
 
   it("creates users without submitting a workspace directory", async () => {

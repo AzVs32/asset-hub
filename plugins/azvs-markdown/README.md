@@ -48,6 +48,19 @@ provides source editing with live preview in edit mode.
 
 ## Build
 
+Prerequisites:
+
+- Rust with the `wasm32-unknown-unknown` target.
+- Node.js 22 and npm 10 (`web/.node-version` pins the tested Node.js release).
+
+Install the Rust WebAssembly target once:
+
+```bash
+rustup target add wasm32-unknown-unknown
+```
+
+Then run the following commands from the repository root:
+
 ```bash
 cargo build --locked --release --target wasm32-unknown-unknown \
   --manifest-path plugins/azvs-markdown/runtime/Cargo.toml

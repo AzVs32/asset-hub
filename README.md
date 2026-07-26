@@ -310,9 +310,9 @@ requested host or path must also be approved under `[plugin.grants]`. Network gr
 wildcards are rejected; filesystem grants are normalized roots. The default host policy grants no
 network or filesystem access.
 
-The current authoring target is Manifest V3 with plugin API `0.3`; omitting `runtime.plugin_api`
-selects it. The host continues to accept Manifest V2, but plugin JSON API `0.2` is the only
-supported protocol level. Other manifest or ABI versions are rejected at startup. Plugin failures
+The current and only supported authoring target is Manifest V3 with
+`runtime.plugin_api = "asset-hub.plugin-api@0.4"`. Both versions must be declared explicitly;
+other manifest or plugin API versions are rejected at startup. Plugin failures
 may return a structured `error` diagnostic with a stable `code`, message, retry hint, and optional
 JSON details; successful outputs may also carry non-fatal diagnostics.
 

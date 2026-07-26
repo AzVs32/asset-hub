@@ -23,7 +23,7 @@
       {
         "id": "core.resource.download",
         "label": "Download",
-        "handler": "builtin.content.download",
+        "handler": "builtin.resource.download",
         "applies_to": {
           "kinds": ["core:resource"]
         },
@@ -32,7 +32,7 @@
           "content": true,
           "content_delivery": "reference"
         },
-        "views": ["binary_url"],
+        "views": ["download"],
         "ui": {
           "group": "open",
           "order": 10,

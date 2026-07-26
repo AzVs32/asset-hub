@@ -6,6 +6,7 @@ import { parseExecuteActionMessage, pluginFrameProtocolVersion } from "../frame-
 
 const MarkdownRenderer = React.lazy(() => import("./markdown-renderer"));
 const MediaRenderer = React.lazy(() => import("./media-renderer"));
+const DownloadRenderer = React.lazy(() => import("./download-renderer"));
 const FormRenderer = React.lazy(() => import("./form-renderer"));
 
 export function registerDefaultViewRenderers(kernel: PluginKernel): void {
@@ -16,7 +17,7 @@ export function registerDefaultViewRenderers(kernel: PluginKernel): void {
     "plugin_frame",
     "json",
     "media",
-    "binary_url",
+    "download",
     "table",
     "form",
   ] as const) {
@@ -35,10 +36,16 @@ function DefaultViewRenderer(props: PluginViewRendererProps) {
     );
   if (view.view === "html") return <HtmlView view={view} />;
   if (view.view === "plugin_frame") return <PluginFrameView {...props} view={view} />;
-  if (view.view === "media" || view.view === "binary_url")
+  if (view.view === "media")
     return (
       <LazyView>
         <MediaRenderer {...props} />
+      </LazyView>
+    );
+  if (view.view === "download")
+    return (
+      <LazyView>
+        <DownloadRenderer {...props} />
       </LazyView>
     );
   if (view.view === "table") return <TableView view={view} />;
@@ -221,7 +228,7 @@ export function actionTitle(action: ResourceAction, output: PluginActionOutput):
   const view = output.view;
   if ((view.view === "html" || view.view === "plugin_frame" || view.view === "media") && view.title)
     return view.title;
-  if (view.view === "binary_url" && view.filename) return view.filename;
+  if (view.view === "download" && view.filename) return view.filename;
   return action.label;
 }
 

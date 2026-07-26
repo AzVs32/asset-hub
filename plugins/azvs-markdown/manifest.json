@@ -11,7 +11,8 @@
   "runtime": {
     "type": "extism",
     "wasm": "azvs-markdown.wasm",
-    "wasi": true
+    "wasi": true,
+    "plugin_api": "asset-hub.plugin-api@0.4"
   },
   "web": {
     "root": "dist"

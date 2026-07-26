@@ -56,6 +56,10 @@ pub fn build_router(
             get(handlers::get_resource_content),
         )
         .route(
+            "/resources/{id}/download",
+            get(handlers::download_resource_content),
+        )
+        .route(
             "/resources/{id}/actions/{action}",
             post(handlers::execute_resource_action)
                 .layer(DefaultBodyLimit::max(handlers::MAX_ACTION_REQUEST_BYTES)),

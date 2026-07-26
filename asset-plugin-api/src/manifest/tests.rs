@@ -11,7 +11,8 @@ fn manifest_document() -> serde_json::Value {
         },
         "runtime": {
             "type": "extism",
-            "wasm": "dist/plugin.wasm"
+            "wasm": "dist/plugin.wasm",
+            "plugin_api": PLUGIN_API_VERSION
         },
         "capabilities": {
             "actions": [{
@@ -27,37 +28,28 @@ fn manifest_document() -> serde_json::Value {
 }
 
 #[test]
-fn compatibility_window_accepts_v2_with_current_api_and_rejects_unknown_versions() {
+fn manifest_requires_current_manifest_and_plugin_api_versions() {
     let mut document = manifest_document();
     document["manifest_version"] = serde_json::json!(2);
-    document["runtime"]["plugin_api"] = serde_json::json!(PLUGIN_API_VERSION);
-    let capabilities = document["capabilities"].as_object_mut().unwrap();
-    let actions = capabilities.remove("actions").unwrap();
-    capabilities.insert("resource_actions".to_string(), actions);
-    document["permissions"] = serde_json::json!({
-        "resource": {"read": true, "write": false},
-        "content": {"read": false, "write": false},
-        "network": false,
-        "filesystem": false
-    });
-    let manifest: PluginManifest = serde_json::from_value(document.clone()).unwrap();
-    manifest.validate().unwrap();
-
-    document["manifest_version"] = serde_json::json!(1);
     assert!(
         serde_json::from_value::<PluginManifest>(document.clone())
             .unwrap()
             .validate()
             .is_err()
     );
-    document["manifest_version"] = serde_json::json!(2);
+    document["manifest_version"] = serde_json::json!(MANIFEST_VERSION);
     document["runtime"]["plugin_api"] = serde_json::json!("asset-hub.plugin-api@0.1");
     assert!(
-        serde_json::from_value::<PluginManifest>(document)
+        serde_json::from_value::<PluginManifest>(document.clone())
             .unwrap()
             .validate()
             .is_err()
     );
+    document["runtime"]
+        .as_object_mut()
+        .unwrap()
+        .remove("plugin_api");
+    assert!(serde_json::from_value::<PluginManifest>(document).is_err());
 }
 
 #[test]
@@ -73,4 +65,21 @@ fn manifest_rejects_unknown_fields_at_every_level() {
     let mut document = manifest_document();
     document["runtime"]["wais"] = serde_json::json!(false);
     assert!(serde_json::from_value::<PluginManifest>(document).is_err());
+}
+
+#[test]
+fn manifest_accepts_download_view_and_rejects_removed_binary_url_view() {
+    let mut document = manifest_document();
+    document["capabilities"]["actions"][0]["views"] = serde_json::json!(["download"]);
+    serde_json::from_value::<PluginManifest>(document.clone())
+        .unwrap()
+        .validate()
+        .unwrap();
+
+    document["capabilities"]["actions"][0]["views"] = serde_json::json!(["binary_url"]);
+    let error = serde_json::from_value::<PluginManifest>(document)
+        .unwrap()
+        .validate()
+        .unwrap_err();
+    assert!(error.contains("unsupported view `binary_url`"));
 }

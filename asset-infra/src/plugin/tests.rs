@@ -42,8 +42,7 @@ fn plugin_frame_hash_only_url_defaults_to_index_html() {
 #[test]
 fn external_permissions_require_matching_host_grants() {
     let permissions: PluginPermissions = serde_json::from_value(serde_json::json!({
-        "resource": {"read": true, "write": false},
-        "content": {"read": false, "write": false},
+        "allow": ["resource.read"],
         "network": {"hosts": ["api.example.com"]},
         "filesystem": {"read": ["/srv/plugins/input"], "write": []}
     }))
