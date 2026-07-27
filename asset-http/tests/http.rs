@@ -1137,7 +1137,7 @@ async fn list_resources_filters_by_kind_tag_and_query() {
     assert_eq!(page["page"], 1);
     assert_eq!(page["limit"], 10);
     assert_eq!(page["items"][0]["name"], "alpha image");
-    assert_eq!(page["items"][0]["status"], "active");
+    assert!(page["items"][0].get("status").is_none());
 }
 
 #[tokio::test]
@@ -1234,7 +1234,6 @@ async fn update_resource_changes_fields_and_restores_soft_deleted_resource() {
             "name": "updated.txt",
             "directory": "archive",
             "kind": "core:resource",
-            "status": "archived",
             "tags": ["updated"]
         }),
     )
@@ -1244,7 +1243,7 @@ async fn update_resource_changes_fields_and_restores_soft_deleted_resource() {
     assert_eq!(updated["name"], "updated.txt");
     assert_eq!(updated["directory"], "archive");
     assert_eq!(updated["kind"], "core:resource");
-    assert_eq!(updated["status"], "archived");
+    assert!(updated.get("status").is_none());
     assert_eq!(updated["tags"], json!(["updated"]));
     assert!(!old_blob_path.exists());
     assert_eq!(std::fs::read(&new_blob_path).unwrap(), b"delete me");
@@ -1262,15 +1261,12 @@ async fn update_resource_changes_fields_and_restores_soft_deleted_resource() {
         &app,
         Method::PATCH,
         &format!("/resources/{id}"),
-        json!({
-            "restore": true,
-            "status": "active"
-        }),
+        json!({"restore": true}),
     )
     .await;
 
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(restored["status"], "active");
+    assert!(restored.get("status").is_none());
     assert!(restored["deleted_at"].is_null());
     assert_eq!(std::fs::read(&new_blob_path).unwrap(), b"delete me");
     assert!(!trash_blob_path.exists());
@@ -1290,15 +1286,17 @@ async fn openapi_exposes_current_http_contract() {
     assert!(create_properties.get("description").is_none());
     assert!(update_properties.get("description").is_none());
     assert!(response_properties.get("description").is_none());
+    assert!(create_properties.get("status").is_none());
+    assert!(update_properties.get("status").is_none());
+    assert!(response_properties.get("status").is_none());
     assert!(create_properties.get("tags").is_some());
     let upload_parameters = document["paths"]["/resources/content/stream"]["put"]["parameters"]
         .as_array()
         .unwrap();
-    assert!(
-        !upload_parameters
-            .iter()
-            .any(|parameter| { parameter["name"] == "description" && parameter["in"] == "query" })
-    );
+    assert!(!upload_parameters.iter().any(|parameter| {
+        matches!(parameter["name"].as_str(), Some("description" | "status"))
+            && parameter["in"] == "query"
+    }));
     assert!(document["paths"].get("/resources/content/stream").is_some());
     assert!(document["paths"].get("/resources/{id}/download").is_some());
     assert!(document["paths"].get("/directory-kinds").is_some());

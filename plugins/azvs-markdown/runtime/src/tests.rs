@@ -119,7 +119,6 @@ fn resource_json() -> Value {
         "directory": "documents",
         "name": "demo.md",
         "kind": "azvs:markdown",
-        "status": "active",
         "tags": [],
         "content": {
             "size": 4,

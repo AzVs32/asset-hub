@@ -7,9 +7,7 @@ use super::ResourceService;
 use super::command::build_resource;
 use super::content::{build_content, finalize_tracked_checksum, stream_with_checksum_tracking};
 use crate::CoreError;
-use crate::domain::{
-    Checksum, DirectoryPath, Resource, ResourceContent, ResourceStatus, StorageKey,
-};
+use crate::domain::{Checksum, DirectoryPath, Resource, ResourceContent, StorageKey};
 use crate::port::{
     ListResources, LocatedResource, ScannedBlob, ScannedStorageEntry, StoragePrefix,
 };
@@ -264,7 +262,6 @@ impl<'a> StorageReconciliationService<'a> {
             name,
             self.service.directories.ensure_path(&directory).await?.id(),
             Some(kind),
-            ResourceStatus::default(),
             Vec::new(),
         )
         .with_content(content)

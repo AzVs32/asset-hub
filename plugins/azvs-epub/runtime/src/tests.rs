@@ -129,7 +129,6 @@ fn request_json(input: Value) -> String {
             "directory": "books",
             "name": "book.epub",
             "kind": "azvs:epub",
-            "status": "active",
             "tags": [],
             "content": {
                 "size": 1,
@@ -143,7 +142,8 @@ fn request_json(input: Value) -> String {
             "updated_at": "2026-01-01T00:00:00Z"
         },
         "content": {"encoding": "base64", "data": STANDARD.encode(sample_epub())}
-    }).to_string()
+    })
+    .to_string()
 }
 
 fn sample_epub() -> Vec<u8> {

@@ -13,7 +13,6 @@ const resourceSchema = z.object({
   name: z.string().refine((value) => value.trim().length > 0, "Name is required"),
   directory: z.string(),
   kind: z.string().trim().min(1, "Kind is required"),
-  status: z.enum(["active", "archived"]),
   tags: z.string(),
 });
 
@@ -67,12 +66,6 @@ export function CreateResourceDialog({
                 {kind.label} · {kind.kind}
               </option>
             ))}
-          </select>
-        </Field>
-        <Field label="Status">
-          <select className={controlClass} {...form.register("status")}>
-            <option value="active">Active</option>
-            <option value="archived">Archived</option>
           </select>
         </Field>
         <div className="sm:col-span-2">

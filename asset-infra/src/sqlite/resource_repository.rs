@@ -2,7 +2,7 @@ use crate::migration;
 use asset_core::CoreError;
 use asset_core::domain::{
     Directory, DirectoryId, DirectoryKind, DirectoryPath, DirectorySnapshot, Resource,
-    ResourceContent, ResourceId, ResourceKind, ResourceSnapshot, ResourceStatus,
+    ResourceContent, ResourceId, ResourceKind, ResourceSnapshot,
 };
 use asset_core::port::{
     DirectoryLocation, DirectoryStore, ListResources, LocatedResource, ResourcePage, ResourceQuery,
@@ -33,7 +33,6 @@ const RESOURCE_SELECT: &str = r#"
         resources.directory_id,
         directory_paths.path AS directory_path,
         resources.kind,
-        resources.status,
         COALESCE(
             (
                 SELECT json_group_array(tag)
@@ -61,7 +60,6 @@ const RESOURCE_AGGREGATE_SELECT: &str = r#"
         resources.name,
         resources.directory_id,
         resources.kind,
-        resources.status,
         COALESCE(
             (
                 SELECT json_group_array(tag)
@@ -170,18 +168,16 @@ impl ResourceRepository for SqliteResourceRepository {
                 name,
                 directory_id,
                 kind,
-                status,
                 content_json,
                 created_at,
                 updated_at,
                 deleted_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 directory_id = excluded.directory_id,
                 kind = excluded.kind,
-                status = excluded.status,
                 content_json = excluded.content_json,
                 created_at = excluded.created_at,
                 updated_at = excluded.updated_at,
@@ -192,7 +188,6 @@ impl ResourceRepository for SqliteResourceRepository {
         .bind(resource.name())
         .bind(resource.directory_id().to_string())
         .bind(resource.kind().as_str())
-        .bind(resource.status().as_str())
         .bind(content_json)
         .bind(encode_timestamp(resource.created_at()))
         .bind(encode_timestamp(resource.updated_at()))
@@ -229,7 +224,7 @@ impl ResourceRepository for SqliteResourceRepository {
         let result = sqlx::query(
             r#"
             UPDATE resources SET
-                name = ?, directory_id = ?, kind = ?, status = ?, content_json = ?,
+                name = ?, directory_id = ?, kind = ?, content_json = ?,
                 created_at = ?, updated_at = ?, deleted_at = ?
             WHERE id = ? AND updated_at = ?
             "#,
@@ -237,7 +232,6 @@ impl ResourceRepository for SqliteResourceRepository {
         .bind(resource.name())
         .bind(resource.directory_id().to_string())
         .bind(resource.kind().as_str())
-        .bind(resource.status().as_str())
         .bind(content_json)
         .bind(encode_timestamp(resource.created_at()))
         .bind(encode_timestamp(resource.updated_at()))
@@ -586,7 +580,6 @@ fn decode_resource(row: SqliteRow) -> Result<Resource, CoreError> {
     let name = column(&row, "name")?;
     let directory_id = decode_directory_id(column(&row, "directory_id")?)?;
     let kind = ResourceKind::try_new(column::<String>(&row, "kind")?)?;
-    let status = status_from_str(column(&row, "status")?)?;
     let tags = decode_tags(&row)?;
     let content = decode_content(column(&row, "content_json")?)?;
     let created_at = decode_timestamp(column(&row, "created_at")?)?;
@@ -600,7 +593,6 @@ fn decode_resource(row: SqliteRow) -> Result<Resource, CoreError> {
         name,
         directory_id,
         kind,
-        status,
         tags,
         content,
         created_at,
@@ -730,12 +722,6 @@ fn decode_timestamp(value: String) -> Result<DateTime<Utc>, CoreError> {
     DateTime::parse_from_rfc3339(&value)
         .map(|value| value.with_timezone(&Utc))
         .map_err(|error| CoreError::repository("resource.decode_timestamp", error))
-}
-
-fn status_from_str(value: String) -> Result<ResourceStatus, CoreError> {
-    value
-        .parse()
-        .map_err(|error| CoreError::repository("resource.decode_status", error))
 }
 
 #[cfg(test)]

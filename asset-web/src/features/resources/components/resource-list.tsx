@@ -354,11 +354,11 @@ function ResourceRow({
         </span>
       </button>
       <div className="flex items-center gap-2 pr-4">
-        <span
-          className={`rounded-full px-2 py-1 text-[11px] font-semibold ${resource.deletedAt ? "bg-red-50 text-red-700" : resource.status === "active" ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`}
-        >
-          {resource.deletedAt ? "deleted" : resource.status}
-        </span>
+        {resource.deletedAt ? (
+          <span className="rounded-full bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-700">
+            deleted
+          </span>
+        ) : null}
         {actions.length ? (
           <ActionMenu>
             {actions.map((action) => (

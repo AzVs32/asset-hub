@@ -2,7 +2,7 @@
 //!
 //! 本模块只描述调用方与资源应用服务交换的数据，不包含仓储或对象存储编排。
 
-use crate::domain::{DirectoryPath, ResourceId, ResourceKind, ResourceStatus};
+use crate::domain::{DirectoryPath, ResourceId, ResourceKind};
 use crate::port::BlobByteStream;
 use asset_plugin_api::{ResourceAction, ResourceActionDefinition};
 
@@ -11,19 +11,17 @@ use asset_plugin_api::{ResourceAction, ResourceActionDefinition};
 pub struct CreateResource {
     pub(super) name: String,
     pub(super) kind: Option<ResourceKind>,
-    pub(super) status: ResourceStatus,
     pub(super) directory: DirectoryPath,
     pub(super) tags: Vec<String>,
 }
 
 impl CreateResource {
-    /// 创建命令，默认使用 `core:resource`、活跃状态、根目录和空标签。
+    /// 创建命令，默认使用 `core:resource`、根目录和空标签。
     /// 名称在用例执行阶段原样校验，合法空格不会被裁剪。
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
             kind: None,
-            status: ResourceStatus::default(),
             directory: DirectoryPath::root(),
             tags: Vec::new(),
         }
@@ -31,11 +29,6 @@ impl CreateResource {
 
     pub fn with_kind(mut self, kind: ResourceKind) -> Self {
         self.kind = Some(kind);
-        self
-    }
-
-    pub fn with_status(mut self, status: ResourceStatus) -> Self {
-        self.status = status;
         self
     }
 
@@ -65,7 +58,6 @@ impl CreateResource {
 pub struct ResourceContentCommand<T> {
     pub(super) name: String,
     pub(super) kind: Option<ResourceKind>,
-    pub(super) status: ResourceStatus,
     pub(super) directory: DirectoryPath,
     pub(super) tags: Vec<String>,
     pub(super) payload: T,
@@ -80,7 +72,6 @@ impl<T> ResourceContentCommand<T> {
         Self {
             name: name.into(),
             kind: None,
-            status: ResourceStatus::default(),
             directory: DirectoryPath::root(),
             tags: Vec::new(),
             payload,
@@ -90,11 +81,6 @@ impl<T> ResourceContentCommand<T> {
 
     pub fn with_kind(mut self, kind: ResourceKind) -> Self {
         self.kind = Some(kind);
-        self
-    }
-
-    pub fn with_status(mut self, status: ResourceStatus) -> Self {
-        self.status = status;
         self
     }
 
@@ -149,7 +135,6 @@ pub struct UpdateResource {
     pub(super) name: Option<String>,
     pub(super) directory: Option<DirectoryPath>,
     pub(super) kind: Option<ResourceKind>,
-    pub(super) status: Option<ResourceStatus>,
     pub(super) tags: Option<Vec<String>>,
     pub(super) restore: bool,
 }
@@ -171,11 +156,6 @@ impl UpdateResource {
 
     pub fn with_kind(mut self, kind: ResourceKind) -> Self {
         self.kind = Some(kind);
-        self
-    }
-
-    pub fn with_status(mut self, status: ResourceStatus) -> Self {
-        self.status = Some(status);
         self
     }
 

@@ -5,7 +5,7 @@
 
 use super::{CreateResource, ResourceService, UpdateResource};
 use crate::CoreError;
-use crate::domain::{DirectoryId, Resource, ResourceId, ResourceKind, ResourceStatus, StorageKey};
+use crate::domain::{DirectoryId, Resource, ResourceId, ResourceKind, StorageKey};
 use crate::port::{
     DirectoryLocation, ListResources, LocatedResource, RESERVED_BLOB_STORAGE_PREFIX, ResourcePage,
 };
@@ -40,14 +40,8 @@ impl<'a> ResourceCommandService<'a> {
             .directories
             .ensure_path(&command.directory)
             .await?;
-        let resource = build_resource(
-            command.name,
-            directory.id(),
-            Some(kind),
-            command.status,
-            command.tags,
-        )
-        .build()?;
+        let resource =
+            build_resource(command.name, directory.id(), Some(kind), command.tags).build()?;
 
         self.service.repository.save(&resource).await?;
 
@@ -87,7 +81,7 @@ impl<'a> ResourceCommandService<'a> {
         self.service.query.list(&query).await
     }
 
-    /// 更新资源基础信息、元数据、状态，或恢复软删除资源。
+    /// 更新资源基础信息或恢复软删除资源。
     pub(crate) async fn update_resource_snapshot(
         &self,
         located: LocatedResource,
@@ -119,30 +113,22 @@ impl<'a> ResourceCommandService<'a> {
             resource.change_kind(self.service.validate_registered_kind(Some(kind))?)?;
         }
 
-        if let Some(status) = command.status {
-            match status {
-                ResourceStatus::Active => resource.activate()?,
-                ResourceStatus::Archived => resource.archive()?,
-            }
-        }
-
         if let Some(tags) = command.tags {
             resource.replace_tags(tags)?;
         }
 
-        if restoring {
-            if self
+        if restoring
+            && self
                 .service
                 .query
                 .find_by_path(directory.path(), resource.name())
                 .await?
                 .is_some()
-            {
-                return Err(CoreError::conflict(format!(
-                    "resource path `{}` is already occupied",
-                    StorageKey::from_resource_path(directory.path(), resource.name())?
-                )));
-            }
+        {
+            return Err(CoreError::conflict(format!(
+                "resource path `{}` is already occupied",
+                StorageKey::from_resource_path(directory.path(), resource.name())?
+            )));
         }
 
         let new_storage_key = persisted_content_key(&resource, &directory)?;
@@ -320,12 +306,10 @@ pub(super) fn build_resource(
     name: String,
     directory_id: DirectoryId,
     kind: Option<ResourceKind>,
-    status: ResourceStatus,
     tags: Vec<String>,
 ) -> crate::domain::ResourceBuilder {
     let mut builder = Resource::builder(name)
         .with_directory_id(directory_id)
-        .with_status(status)
         .with_tags(tags);
     if let Some(kind) = kind {
         builder = builder.with_kind(kind);

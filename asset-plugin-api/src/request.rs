@@ -23,7 +23,6 @@ pub struct PluginResource {
     pub directory: String,
     pub name: String,
     pub kind: String,
-    pub status: String,
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

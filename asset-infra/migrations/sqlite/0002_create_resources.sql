@@ -4,7 +4,6 @@ CREATE TABLE resources (
     name TEXT NOT NULL,
     directory_id TEXT NOT NULL,
     kind TEXT NOT NULL,
-    status TEXT NOT NULL,
     content_json TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,

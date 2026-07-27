@@ -25,7 +25,6 @@ const draftSchema = z.object({
   name: z.string().refine((value) => value.trim().length > 0, "Name is required"),
   directory: z.string(),
   kind: z.string().trim().min(1),
-  status: z.enum(["active", "archived"]),
   tags: z.string(),
 });
 
@@ -118,11 +117,11 @@ function Detail({
             <h2 className="break-words text-xl font-bold text-slate-950">{resource.name}</h2>
             <code className="mt-1 block truncate text-[11px] text-slate-400">{resource.id}</code>
           </div>
-          <span
-            className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${resource.deletedAt ? "bg-red-100 text-red-700" : resource.status === "active" ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"}`}
-          >
-            {resource.deletedAt ? "deleted" : resource.status}
-          </span>
+          {resource.deletedAt ? (
+            <span className="shrink-0 rounded-full bg-red-100 px-2.5 py-1 text-xs font-semibold text-red-700">
+              deleted
+            </span>
+          ) : null}
         </header>
 
         <div className="flex flex-wrap gap-2" data-plugin-slot={hostSlots.resourceDetailActions}>
@@ -198,16 +197,6 @@ function Detail({
                   {item.label}
                 </option>
               ))}
-            </select>
-          </Field>
-          <Field label="Status">
-            <select
-              className={controlClass}
-              disabled={Boolean(resource.deletedAt)}
-              {...form.register("status")}
-            >
-              <option value="active">Active</option>
-              <option value="archived">Archived</option>
             </select>
           </Field>
           <div className="sm:col-span-2">

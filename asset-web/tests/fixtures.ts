@@ -22,7 +22,6 @@ export function resource(actions: ResourceAction[] = []): Resource {
     name: "Example",
     directory: "library",
     kind: "core:video",
-    status: "active",
     tags: [],
     content: {
       size: 128,

@@ -123,7 +123,7 @@ export class OpenApiAssetGateway implements AssetGateway {
   async restoreResource(id: string): Promise<Resource> {
     const result = await this.#client.PATCH("/resources/{id}", {
       params: { path: { id } },
-      body: { restore: true, status: "active" },
+      body: { restore: true },
     });
     return mapResource(expectData(result));
   }
@@ -347,7 +347,6 @@ function mapResource(value: ApiResource): Resource {
     name: value.name,
     directory: value.directory,
     kind: value.kind,
-    status: enumValue(value.status, ["active", "archived"]),
     tags: value.tags,
     content: value.content
       ? {
@@ -406,7 +405,6 @@ function resourceBody(draft: ResourceDraft): Schemas["CreateResourceRequest"] {
     name: draft.name,
     directory: normalizeDirectory(draft.directory),
     kind: draft.kind,
-    status: draft.status,
     tags: splitTags(draft.tags),
   };
 }

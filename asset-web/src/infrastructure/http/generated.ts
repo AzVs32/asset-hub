@@ -377,8 +377,6 @@ export interface components {
             kind?: string | null;
             /** @description 资源展示名。 */
             name: string;
-            /** @description 可选初始状态：`active` 或 `archived`。 */
-            status?: string | null;
             /** @description 可选资源标签。 */
             tags?: string[] | null;
         };
@@ -649,8 +647,6 @@ export interface components {
             kind: string;
             /** @description 资源展示名。 */
             name: string;
-            /** @description 资源生命周期状态。 */
-            status: string;
             /** @description 资源标签。 */
             tags: string[];
             /** @description 资源最后更新时间，RFC3339 格式。 */
@@ -671,7 +667,6 @@ export interface components {
          * @example {
          *       "name": "renamed.txt",
          *       "kind": "core:resource",
-         *       "status": "archived",
          *       "tags": [
          *         "demo",
          *         "updated"
@@ -687,8 +682,6 @@ export interface components {
             name?: string | null;
             /** @description 是否恢复软删除资源。 */
             restore?: boolean | null;
-            /** @description 可选新状态：`active` 或 `archived`。 */
-            status?: string | null;
             /** @description 可选资源标签；提供时替换全部标签，空数组表示清空。 */
             tags?: string[] | null;
         };
@@ -706,8 +699,6 @@ export interface components {
             kind?: string | null;
             /** @description 资源文件名；与目录共同决定对象存储路径。 */
             name: string;
-            /** @description 可选初始状态：`active` 或 `archived`。 */
-            status?: string | null;
             /** @description 可选 JSON 字符串形式的资源标签数组。 */
             tags_json?: string | null;
         };
@@ -1288,8 +1279,6 @@ export interface operations {
                 directory?: string;
                 /** @description 可选资源类型。 */
                 kind?: string;
-                /** @description 可选初始状态：`active` 或 `archived`。 */
-                status?: string;
                 /** @description 可选 JSON 字符串形式的资源标签数组。 */
                 tags_json?: string;
             };

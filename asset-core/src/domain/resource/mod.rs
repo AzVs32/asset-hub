@@ -2,7 +2,6 @@ mod content;
 mod kind;
 #[allow(clippy::module_inception)]
 mod resource;
-mod status;
 mod tag;
 
 use crate::error::ResourceError;
@@ -10,7 +9,6 @@ use crate::error::ResourceError;
 pub use content::{Checksum, ChecksumKind, ResourceContent, ResourceContentBuilder, StorageKey};
 pub use kind::ResourceKind;
 pub use resource::{Resource, ResourceBuilder, ResourceId, ResourceSnapshot};
-pub use status::ResourceStatus;
 pub use tag::ResourceTag;
 
 /// 归一化并校验 Resource 领域模型中的必填文本。

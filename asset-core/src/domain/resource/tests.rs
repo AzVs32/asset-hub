@@ -55,7 +55,7 @@ fn resource_kind_serde_normalizes_and_validates_input() {
 }
 
 #[test]
-fn new_resource_has_default_lifecycle_state() {
+fn new_resource_has_default_fields() {
     let resource = Resource::builder(" Design Doc ")
         .with_kind(ResourceKind::try_new("doc:markdown").unwrap())
         .build()
@@ -63,34 +63,11 @@ fn new_resource_has_default_lifecycle_state() {
 
     assert_eq!(resource.name(), " Design Doc ");
     assert_eq!(resource.kind().as_str(), "doc:markdown");
-    assert_eq!(resource.status(), ResourceStatus::default());
     assert!(resource.directory_id().is_root());
-    assert!(resource.is_active());
-    assert!(!resource.is_archived());
     assert!(!resource.is_deleted());
     assert!(resource.content().is_none());
     assert!(resource.tags().is_empty());
     assert_eq!(resource.created_at(), resource.updated_at());
-}
-
-#[test]
-fn resource_builder_accepts_initial_status() {
-    let resource = Resource::builder("archived resource")
-        .with_status(ResourceStatus::Archived)
-        .build()
-        .unwrap();
-
-    assert_eq!(resource.status(), ResourceStatus::Archived);
-    assert!(resource.is_archived());
-}
-
-#[test]
-fn resource_status_uses_canonical_boundary_text() {
-    assert_eq!(ResourceStatus::Active.as_str(), "active");
-    assert_eq!(ResourceStatus::Archived.to_string(), "archived");
-    assert_eq!("active".parse(), Ok(ResourceStatus::Active));
-    assert_eq!("archived".parse(), Ok(ResourceStatus::Archived));
-    assert!("deleted".parse::<ResourceStatus>().is_err());
 }
 
 #[test]
@@ -113,7 +90,6 @@ fn resource_can_be_rehydrated_from_snapshot() {
         name: " restored image ".to_string(),
         directory_id: DirectoryId::new(),
         kind: ResourceKind::try_new("core:image").unwrap(),
-        status: ResourceStatus::Archived,
         tags: vec![" image ".to_owned()],
         content: None,
         created_at,
@@ -125,7 +101,6 @@ fn resource_can_be_rehydrated_from_snapshot() {
     assert_eq!(resource.id(), id);
     assert_eq!(resource.name(), " restored image ");
     assert!(resource.kind().is("core:image"));
-    assert_eq!(resource.status(), ResourceStatus::Archived);
     assert_eq!(resource.tags()[0].as_str(), "image");
     assert_eq!(resource.created_at(), created_at);
     assert_eq!(resource.updated_at(), updated_at);
@@ -134,24 +109,16 @@ fn resource_can_be_rehydrated_from_snapshot() {
 }
 
 #[test]
-fn resource_lifecycle_transitions_update_state() {
+fn resource_soft_delete_and_restore_update_state() {
     let mut resource = Resource::builder("image")
         .with_kind(ResourceKind::try_new("core:image").unwrap())
         .build()
         .unwrap();
 
-    resource.archive().unwrap();
-    assert!(resource.is_archived());
-
-    resource.activate().unwrap();
-    assert!(resource.is_active());
-
     resource.soft_delete();
     assert!(resource.is_deleted());
-    assert!(!resource.is_active());
 
     resource.restore();
-    assert!(resource.is_active());
     assert!(!resource.is_deleted());
 }
 
@@ -236,7 +203,6 @@ fn deleted_resource_rejects_mutations() {
         resource.rename("new image"),
         Err(ResourceError::DeletedResource)
     );
-    assert_eq!(resource.archive(), Err(ResourceError::DeletedResource));
     assert_eq!(
         resource.attach_content(
             ResourceContent::builder(1, Checksum::sha256("a".repeat(64)).unwrap())

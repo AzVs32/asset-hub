@@ -34,7 +34,6 @@ impl<'a> ResourceContentService<'a> {
         let UploadResourceContentStream {
             name,
             kind,
-            status,
             directory,
             tags,
             payload: data,
@@ -49,8 +48,7 @@ impl<'a> ResourceContentService<'a> {
         )?;
         let directory = self.service.directories.ensure_path(&directory).await?;
 
-        let mut resource =
-            build_resource(name, directory.id(), Some(kind), status, tags).build()?;
+        let mut resource = build_resource(name, directory.id(), Some(kind), tags).build()?;
         let storage_key = detection_storage_key;
         reject_reserved_storage_key(&storage_key)?;
         // 在写 Blob 前校验全部内容元数据，避免写入后才发现 MIME 等字段非法。

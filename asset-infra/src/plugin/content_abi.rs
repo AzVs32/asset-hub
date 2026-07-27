@@ -338,7 +338,6 @@ pub(super) fn build_payload(
             directory: request.directory().path().to_string(),
             name: resource.name().to_string(),
             kind: resource.kind().as_str().to_string(),
-            status: resource.status().as_str().to_string(),
             tags: resource
                 .tags()
                 .iter()

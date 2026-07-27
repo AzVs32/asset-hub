@@ -5,7 +5,6 @@ export function draftFromResource(resource: Resource): ResourceDraft {
     name: resource.name,
     directory: resource.directory,
     kind: resource.kind,
-    status: resource.status,
     tags: resource.tags.join(", "),
   };
 }
@@ -15,7 +14,6 @@ export function emptyResourceDraft(directory: string, kinds: ResourceKind[]): Re
     name: "",
     directory,
     kind: kinds[0]?.kind ?? "core:resource",
-    status: "active",
     tags: "",
   };
 }

@@ -1,6 +1,5 @@
 import type { PluginViewKind } from "./plugin";
 
-export type ResourceStatus = "active" | "archived";
 export type ActionAccess = "read_only" | "read_write";
 export type ActionExecutor = "builtin" | "plugin";
 export type ContentDelivery = "auto" | "inline" | "reference";
@@ -40,7 +39,6 @@ export interface Resource {
   name: string;
   directory: string;
   kind: string;
-  status: ResourceStatus;
   tags: string[];
   content: ResourceContent | null;
   actions: ResourceAction[];
@@ -107,7 +105,6 @@ export interface ResourceDraft {
   name: string;
   directory: string;
   kind: string;
-  status: ResourceStatus;
   tags: string;
 }
 

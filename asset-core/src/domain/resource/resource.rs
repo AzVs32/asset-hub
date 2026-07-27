@@ -1,6 +1,4 @@
-use super::{
-    ResourceContent, ResourceKind, ResourceStatus, ResourceTag, validate_required_text_exact,
-};
+use super::{ResourceContent, ResourceKind, ResourceTag, validate_required_text_exact};
 use crate::domain::DirectoryId;
 use crate::error::ResourceError;
 use chrono::{DateTime, Utc};
@@ -17,7 +15,7 @@ crate::gen_id_uuid_v7!(ResourceId);
 
 /// 资源聚合根。
 ///
-/// `Resource` 负责维护资源基础信息、标签、内容引用和生命周期状态。
+/// `Resource` 负责维护资源基础信息、标签、内容引用和软删除状态。
 /// 外部代码应通过构建器和行为方法修改资源，避免绕过领域规则直接写字段。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Resource {
@@ -29,8 +27,6 @@ pub struct Resource {
     directory_id: DirectoryId,
     /// 资源类型，用于区分图片、文档、音频等不同业务资源。
     kind: ResourceKind,
-    /// 资源生命周期状态，不包含软删除状态。
-    status: ResourceStatus,
     /// 去重并按稳定字典序排列的资源标签集合。
     tags: Vec<ResourceTag>,
     /// 资源内容引用；资源可以不包含对象内容。
@@ -57,8 +53,6 @@ pub struct ResourceSnapshot {
     pub directory_id: DirectoryId,
     /// 资源类型。
     pub kind: ResourceKind,
-    /// 资源生命周期状态。
-    pub status: ResourceStatus,
     /// 资源标签；从持久化边界进入时会重新归一化和校验。
     pub tags: Vec<String>,
     /// 资源内容引用。
@@ -90,7 +84,6 @@ impl Resource {
             name,
             directory_id: snapshot.directory_id,
             kind: snapshot.kind,
-            status: snapshot.status,
             tags,
             content: snapshot.content,
             created_at: snapshot.created_at,
@@ -119,11 +112,6 @@ impl Resource {
         &self.kind
     }
 
-    /// 返回资源生命周期状态。
-    pub fn status(&self) -> ResourceStatus {
-        self.status
-    }
-
     /// 返回资源标签。
     pub fn tags(&self) -> &[ResourceTag] {
         &self.tags
@@ -147,16 +135,6 @@ impl Resource {
     /// 返回资源软删除时间。
     pub fn deleted_at(&self) -> Option<DateTime<Utc>> {
         self.deleted_at
-    }
-
-    /// 判断资源是否处于未删除且活跃的状态。
-    pub fn is_active(&self) -> bool {
-        self.deleted_at.is_none() && matches!(self.status, ResourceStatus::Active)
-    }
-
-    /// 判断资源是否处于未删除且已归档的状态。
-    pub fn is_archived(&self) -> bool {
-        self.deleted_at.is_none() && matches!(self.status, ResourceStatus::Archived)
     }
 
     /// 是否已被软删除
@@ -200,32 +178,6 @@ impl Resource {
 
         if self.kind != kind {
             self.kind = kind;
-            self.touch();
-        }
-
-        Ok(())
-    }
-
-    /// 将资源归档。
-    ///
-    /// 归档后的资源仍然存在，但不再被视为活跃资源。
-    pub fn archive(&mut self) -> Result<(), ResourceError> {
-        self.ensure_not_deleted()?;
-
-        if !self.status.is_archived() {
-            self.status = ResourceStatus::Archived;
-            self.touch();
-        }
-
-        Ok(())
-    }
-
-    /// 将资源恢复为活跃状态。
-    pub fn activate(&mut self) -> Result<(), ResourceError> {
-        self.ensure_not_deleted()?;
-
-        if !self.status.is_active() {
-            self.status = ResourceStatus::Active;
             self.touch();
         }
 
@@ -330,8 +282,6 @@ pub struct ResourceBuilder {
     name: String,
     /// 资源类型。
     kind: ResourceKind,
-    /// 初始生命周期状态。
-    status: ResourceStatus,
     /// 初始逻辑目录。
     directory_id: DirectoryId,
     /// 初始资源标签。
@@ -346,7 +296,6 @@ impl ResourceBuilder {
         Self {
             name: name.into(),
             kind: ResourceKind::default(),
-            status: ResourceStatus::default(),
             directory_id: DirectoryId::root(),
             tags: Vec::new(),
             content: None,
@@ -356,12 +305,6 @@ impl ResourceBuilder {
     /// 设置资源类型。
     pub fn with_kind(mut self, kind: ResourceKind) -> Self {
         self.kind = kind;
-        self
-    }
-
-    /// 设置初始生命周期状态。
-    pub fn with_status(mut self, status: ResourceStatus) -> Self {
-        self.status = status;
         self
     }
 
@@ -398,7 +341,6 @@ impl ResourceBuilder {
             name,
             directory_id: self.directory_id,
             kind: self.kind,
-            status: self.status,
             tags,
             content: self.content,
             created_at: now,

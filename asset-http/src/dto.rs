@@ -32,8 +32,6 @@ pub(crate) struct CreateResourceRequest {
     pub(crate) name: String,
     /// 可选资源类型。
     pub(crate) kind: Option<String>,
-    /// 可选初始状态：`active` 或 `archived`。
-    pub(crate) status: Option<String>,
     /// 相对于当前用户可见根目录的路径；根目录为空字符串。
     #[schema(value_type = Option<String>)]
     pub(crate) directory: Option<DirectoryPath>,
@@ -106,7 +104,6 @@ pub(crate) struct ListDirectoryQuery {
 #[schema(example = json!({
     "name": "renamed.txt",
     "kind": "core:resource",
-    "status": "archived",
     "tags": ["demo", "updated"]
 }))]
 pub(crate) struct UpdateResourceRequest {
@@ -114,8 +111,6 @@ pub(crate) struct UpdateResourceRequest {
     pub(crate) name: Option<String>,
     /// 可选新资源类型。
     pub(crate) kind: Option<String>,
-    /// 可选新状态：`active` 或 `archived`。
-    pub(crate) status: Option<String>,
     /// 相对于当前用户可见根目录的新路径；根目录为空字符串。
     #[schema(value_type = Option<String>)]
     pub(crate) directory: Option<DirectoryPath>,
@@ -139,8 +134,6 @@ pub(crate) struct UploadResourceContentStreamQuery {
     pub(crate) directory: Option<DirectoryPath>,
     /// 可选资源类型。
     pub(crate) kind: Option<String>,
-    /// 可选初始状态：`active` 或 `archived`。
-    pub(crate) status: Option<String>,
     /// 可选 JSON 字符串形式的资源标签数组。
     pub(crate) tags_json: Option<String>,
 }
@@ -487,8 +480,6 @@ pub(crate) struct ResourceResponse {
     pub(crate) directory: DirectoryPath,
     /// 资源类型。
     pub(crate) kind: String,
-    /// 资源生命周期状态。
-    pub(crate) status: String,
     /// 资源标签。
     pub(crate) tags: Vec<String>,
     /// 资源内容引用。
@@ -682,7 +673,6 @@ impl ResourceResponse {
             name: resource.name().to_string(),
             directory,
             kind: resource.kind().as_str().to_string(),
-            status: resource.status().as_str().to_string(),
             tags: resource
                 .tags()
                 .iter()

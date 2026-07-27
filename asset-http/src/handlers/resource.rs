@@ -75,7 +75,6 @@ pub(crate) async fn create_resource(
     let command = apply_common_resource_fields(
         CreateResource::new(payload.name),
         payload.kind,
-        payload.status,
         payload.directory,
         payload.tags,
     )?;
@@ -335,10 +334,6 @@ pub(crate) async fn update_resource(
         command = command.with_kind(parse_kind(kind)?);
     }
 
-    if let Some(status) = payload.status {
-        command = command.with_status(parse_status(&status)?);
-    }
-
     if let Some(directory) = payload.directory {
         command = command.with_directory(directory);
     }
@@ -469,16 +464,11 @@ pub(crate) async fn remove_resource(
 pub(super) fn apply_common_resource_fields(
     mut command: CreateResource,
     kind: Option<String>,
-    status: Option<String>,
     directory: Option<DirectoryPath>,
     tags: Option<Vec<String>>,
 ) -> Result<CreateResource, HttpError> {
     if let Some(kind) = kind {
         command = command.with_kind(parse_kind(kind)?);
-    }
-
-    if let Some(status) = status {
-        command = command.with_status(parse_status(&status)?);
     }
 
     if let Some(directory) = directory {
@@ -495,15 +485,10 @@ pub(super) fn apply_common_resource_fields(
 pub(super) fn apply_common_stream_fields(
     mut command: UploadResourceContentStream,
     kind: Option<String>,
-    status: Option<String>,
     tags_json: Option<String>,
 ) -> Result<UploadResourceContentStream, HttpError> {
     if let Some(kind) = kind {
         command = command.with_kind(parse_kind(kind)?);
-    }
-
-    if let Some(status) = status {
-        command = command.with_status(parse_status(&status)?);
     }
 
     if let Some(tags_json) = tags_json {
@@ -513,14 +498,6 @@ pub(super) fn apply_common_stream_fields(
     }
 
     Ok(command)
-}
-
-pub(super) fn parse_status(value: &str) -> Result<ResourceStatus, HttpError> {
-    value
-        .trim()
-        .to_ascii_lowercase()
-        .parse()
-        .map_err(|_| HttpError::bad_request(format!("invalid resource status `{value}`")))
 }
 
 pub(super) fn parse_kind(value: impl Into<String>) -> Result<ResourceKind, HttpError> {

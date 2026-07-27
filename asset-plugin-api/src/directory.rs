@@ -103,7 +103,6 @@ pub struct PluginDirectoryResource {
     pub id: String,
     pub name: String,
     pub kind: String,
-    pub status: String,
 }
 
 #[cfg(all(feature = "extism-guest", target_arch = "wasm32"))]
