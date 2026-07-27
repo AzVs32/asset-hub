@@ -1,6 +1,5 @@
 use super::*;
 use crate::error::DirectoryError;
-use serde_json::json;
 
 #[test]
 fn directory_kind_is_limited_to_256_characters() {
@@ -86,15 +85,11 @@ fn directory_is_an_independent_aggregate_with_a_stable_identity() {
 
     directory.rename("Library").unwrap();
     directory.move_to(DirectoryId::new()).unwrap();
-    directory.change_kind("azvs.game:library").unwrap();
-    directory
-        .replace_metadata(json!({"platform": "windows"}))
-        .unwrap();
+    directory.change_kind(DirectoryKind::try_new("azvs.game:library").unwrap());
 
     assert_eq!(directory.id(), id);
     assert_eq!(directory.name(), "Library");
     assert_eq!(directory.kind().as_str(), "azvs.game:library");
-    assert_eq!(directory.metadata(), &json!({"platform": "windows"}));
 }
 
 #[test]
@@ -108,9 +103,8 @@ fn root_directory_has_fixed_identity_and_cannot_be_mutated_as_a_child() {
 }
 
 #[test]
-fn directory_rejects_self_parent_and_non_object_metadata() {
+fn directory_rejects_self_parent() {
     let mut directory = Directory::new(DirectoryId::root(), "Games").unwrap();
 
     assert!(directory.move_to(directory.id()).is_err());
-    assert!(directory.replace_metadata(json!(["invalid"])).is_err());
 }

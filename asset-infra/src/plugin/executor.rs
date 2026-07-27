@@ -1,11 +1,14 @@
 use asset_core::CoreError;
 use asset_core::port::{
-    BlobStorage, ResourceActionExecutor, ResourceActionOutput, ResourceActionRequest,
-    ResourceKindDefinition, ResourceKindRegistry,
+    BlobStorage, DirectoryActionExecutor, DirectoryActionOutput, DirectoryActionRequest,
+    DirectoryKindRegistry, DirectoryQuery, ResourceActionExecutor, ResourceActionOutput,
+    ResourceActionRequest, ResourceKindDefinition, ResourceKindRegistry, ResourceQuery,
 };
 use asset_plugin_api::{
-    PluginActionFailure, PluginActionOutput, PluginActionRequest, PluginExecutionPolicy,
-    PluginPermissions, PluginRuntime, ResourceActionCapability, ResourceContentMatcher,
+    DirectoryActionCapability, DirectoryActionEffect, DirectoryPluginActionOutput,
+    PluginActionFailure, PluginActionOutput, PluginActionRequest, PluginDirectory,
+    PluginDirectoryActionRequest, PluginExecutionPolicy, PluginPermission, PluginPermissions,
+    PluginRuntime, ResourceActionCapability, ResourceContentMatcher,
 };
 use async_trait::async_trait;
 use extism::{CompiledPlugin, Plugin};
@@ -15,6 +18,7 @@ use tokio::sync::Semaphore;
 use super::content_abi::{
     ContentLease, HostContentResolver, HostContentState, build_payload, compile_plugin,
 };
+use super::directory_abi::HostDirectoryResolver;
 use super::frame_url::resolve_plugin_output_urls;
 use super::permissions::{
     host_diagnostic, validate_external_permissions, verify_content_budget, verify_permissions,
@@ -24,31 +28,36 @@ use crate::plugin_manifest::PluginCatalog;
 
 /// Extism 资源动作执行器。
 #[derive(Clone)]
-pub struct ExtismResourceActionExecutor {
+pub struct ExtismActionExecutor {
     pub(super) bindings: Arc<Vec<ActionBinding>>,
     pub(super) call_slots: Arc<Semaphore>,
     pub(super) policy: Arc<PluginExecutionPolicy>,
+    pub(super) directory_bindings: Arc<Vec<DirectoryActionBinding>>,
 }
 
-impl std::fmt::Debug for ExtismResourceActionExecutor {
+impl std::fmt::Debug for ExtismActionExecutor {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("ExtismResourceActionExecutor")
+            .debug_struct("ExtismActionExecutor")
             .field("bindings", &self.bindings)
             .finish_non_exhaustive()
     }
 }
 
-impl ExtismResourceActionExecutor {
+impl ExtismActionExecutor {
     /// 从插件 manifest 目录创建 Extism 执行器。
     pub(crate) fn from_catalog(
         catalog: &PluginCatalog,
         kind_registry: &dyn ResourceKindRegistry,
+        directory_kind_registry: &dyn DirectoryKindRegistry,
+        directory_query: Arc<dyn DirectoryQuery>,
+        resource_query: Arc<dyn ResourceQuery>,
         blob_storage: Arc<dyn BlobStorage>,
         policy: Arc<PluginExecutionPolicy>,
         grants: &PluginPermissionGrants,
     ) -> Result<Self, CoreError> {
         let mut bindings = Vec::new();
+        let mut directory_bindings = Vec::new();
 
         for loaded_manifest in catalog
             .plugins()
@@ -72,18 +81,29 @@ impl ExtismResourceActionExecutor {
                 runtime: tokio::runtime::Handle::current(),
                 policy: policy.clone(),
             };
+            let host_directories = HostDirectoryResolver::new(
+                directory_query.clone(),
+                resource_query.clone(),
+                manifest.permissions.clone(),
+            );
             let compiled = compile_plugin(
                 manifest.plugin_id(),
                 wasm,
                 *wasi,
                 &manifest.permissions,
                 &host_content,
+                &host_directories,
                 &policy,
             )?;
             preflight_handlers(
                 manifest.plugin_id(),
                 &compiled,
                 &manifest.capabilities.actions,
+            )?;
+            preflight_directory_handlers(
+                manifest.plugin_id(),
+                &compiled,
+                &manifest.capabilities.directory_actions,
             )?;
 
             for action in &manifest.capabilities.actions {
@@ -97,14 +117,105 @@ impl ExtismResourceActionExecutor {
                     kind_registry,
                 )?);
             }
+            for action in &manifest.capabilities.directory_actions {
+                if !manifest.permissions.directory_read() {
+                    return Err(CoreError::configuration(format!(
+                        "plugin `{}` directory action `{}` requires directory.read permission",
+                        manifest.plugin_id(),
+                        action.id
+                    )));
+                }
+                if action
+                    .requires
+                    .as_ref()
+                    .is_some_and(|requires| requires.children)
+                    && !manifest.permissions.directory_children_list()
+                {
+                    return Err(CoreError::configuration(format!(
+                        "plugin `{}` directory action `{}` requires directory.children.list permission",
+                        manifest.plugin_id(),
+                        action.id
+                    )));
+                }
+                if action
+                    .requires
+                    .as_ref()
+                    .is_some_and(|requires| requires.resources)
+                    && !manifest.permissions.directory_resources_list()
+                {
+                    return Err(CoreError::configuration(format!(
+                        "plugin `{}` directory action `{}` requires directory.resources.list permission",
+                        manifest.plugin_id(),
+                        action.id
+                    )));
+                }
+                let declared_kinds = action
+                    .applies_to
+                    .kinds
+                    .iter()
+                    .map(asset_core::domain::DirectoryKind::try_new)
+                    .collect::<Result<Vec<_>, _>>()?;
+                for kind in &declared_kinds {
+                    if !directory_kind_registry.supports(kind) {
+                        return Err(CoreError::configuration(format!(
+                            "directory action `{}` references unknown kind `{kind}`",
+                            action.id
+                        )));
+                    }
+                }
+                let applicable_kinds = if declared_kinds.is_empty() {
+                    Vec::new()
+                } else {
+                    directory_kind_registry
+                        .definitions()
+                        .iter()
+                        .filter(|definition| {
+                            declared_kinds.iter().any(|ancestor| {
+                                directory_kind_registry.is_a(definition.kind(), ancestor)
+                            })
+                        })
+                        .map(|definition| definition.kind().as_str().to_string())
+                        .collect()
+                };
+                directory_bindings.push(DirectoryActionBinding {
+                    plugin_id: manifest.plugin_id().to_string(),
+                    action: action.id.clone(),
+                    handler: action.handler.clone(),
+                    kinds: applicable_kinds,
+                    permissions: manifest.permissions.clone(),
+                    compiled: compiled.clone(),
+                    host_directories: host_directories.clone(),
+                });
+            }
         }
 
         Ok(Self {
             bindings: Arc::new(bindings),
             call_slots: Arc::new(Semaphore::new(policy.max_concurrent_calls())),
             policy,
+            directory_bindings: Arc::new(directory_bindings),
         })
     }
+}
+
+fn preflight_directory_handlers(
+    plugin_id: &str,
+    compiled: &CompiledPlugin,
+    actions: &[DirectoryActionCapability],
+) -> Result<(), CoreError> {
+    let plugin = Plugin::new_from_compiled(compiled).map_err(|error| {
+        CoreError::configuration(format!("instantiate plugin `{plugin_id}`: {error}"))
+    })?;
+    for action in actions {
+        if !plugin.function_exists(action.handler()) {
+            return Err(CoreError::configuration(format!(
+                "plugin `{plugin_id}` directory action `{}` references missing Wasm export `{}`",
+                action.id,
+                action.handler()
+            )));
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn preflight_handlers(
@@ -219,7 +330,7 @@ pub(super) fn detect_for_action_kinds(
 }
 
 #[async_trait]
-impl ResourceActionExecutor for ExtismResourceActionExecutor {
+impl ResourceActionExecutor for ExtismActionExecutor {
     async fn execute(
         &self,
         request: ResourceActionRequest,
@@ -315,6 +426,91 @@ impl ResourceActionExecutor for ExtismResourceActionExecutor {
     }
 }
 
+#[async_trait]
+impl DirectoryActionExecutor for ExtismActionExecutor {
+    async fn execute(
+        &self,
+        request: DirectoryActionRequest,
+    ) -> Result<DirectoryActionOutput, CoreError> {
+        let kind = request.directory().directory().kind();
+        let Some(binding) = self.directory_bindings.iter().find(|binding| {
+            binding.action == request.action().as_str()
+                && request.handler() == Some(binding.handler.as_str())
+                && (binding.kinds.is_empty()
+                    || binding
+                        .kinds
+                        .iter()
+                        .any(|candidate| candidate.eq_ignore_ascii_case(kind.as_str())))
+        }) else {
+            return Err(CoreError::configuration(format!(
+                "no Extism binding for directory kind `{kind}` action `{}`",
+                request.action()
+            )));
+        };
+        if !binding.permissions.directory_read() {
+            return Err(CoreError::configuration(format!(
+                "plugin `{}` action `{}` lacks directory.read permission",
+                binding.plugin_id, binding.action
+            )));
+        }
+        if matches!(
+            request.access(),
+            asset_plugin_api::DirectoryActionAccess::ReadWrite
+        ) && !binding.permissions.directory_write()
+            && !binding.permissions.directory_create_child()
+        {
+            return Err(CoreError::configuration(format!(
+                "plugin `{}` action `{}` lacks a directory write permission",
+                binding.plugin_id, binding.action
+            )));
+        }
+
+        let permit = self
+            .call_slots
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| CoreError::configuration("plugin executor is shutting down"))?;
+        let binding = binding.clone();
+        let plugin_id = binding.plugin_id.clone();
+        let action_id = binding.action.clone();
+        let directory_id = request.directory().id();
+        let lease = binding.host_directories.register(&request)?;
+        let directory = request.directory();
+        let payload = PluginDirectoryActionRequest {
+            action: request.action().as_str().to_string(),
+            access: request.access(),
+            input: request.input().clone(),
+            directory: PluginDirectory {
+                id: directory.id().to_string(),
+                parent_id: directory.directory().parent_id().map(|id| id.to_string()),
+                path: directory.path().path().to_string(),
+                name: directory.directory().name().to_string(),
+                kind: directory.directory().kind().as_str().to_string(),
+                created_at: directory.directory().created_at().to_rfc3339(),
+                updated_at: directory.directory().updated_at().to_rfc3339(),
+            },
+            directory_ref: lease.reference().to_string(),
+        };
+        let policy = self.policy.clone();
+        let output = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            let _lease = lease;
+            call_extism_directory(binding, payload, &policy)
+        })
+        .await
+        .map_err(|error| {
+            CoreError::plugin(&plugin_id, &action_id, format!("join plugin task: {error}"))
+        })??;
+
+        Ok(DirectoryActionOutput::new(
+            directory_id,
+            request.action().clone(),
+            output,
+        ))
+    }
+}
+
 #[derive(Clone)]
 
 pub(super) struct ActionBinding {
@@ -325,6 +521,115 @@ pub(super) struct ActionBinding {
     pub(super) permissions: PluginPermissions,
     pub(super) compiled: Arc<CompiledPlugin>,
     pub(super) host_content: HostContentResolver,
+}
+
+#[derive(Clone)]
+pub(super) struct DirectoryActionBinding {
+    plugin_id: String,
+    action: String,
+    handler: String,
+    kinds: Vec<String>,
+    permissions: PluginPermissions,
+    compiled: Arc<CompiledPlugin>,
+    host_directories: HostDirectoryResolver,
+}
+
+fn call_extism_directory(
+    binding: DirectoryActionBinding,
+    payload: PluginDirectoryActionRequest,
+    policy: &PluginExecutionPolicy,
+) -> Result<DirectoryPluginActionOutput, CoreError> {
+    let mut plugin = Plugin::new_from_compiled(&binding.compiled).map_err(|error| {
+        CoreError::plugin(
+            &binding.plugin_id,
+            &binding.action,
+            format!("instantiate precompiled plugin: {error}"),
+        )
+    })?;
+    let input = serde_json::to_string(&payload).map_err(|error| {
+        CoreError::plugin(&binding.plugin_id, &binding.action, error.to_string())
+    })?;
+    if input.len() > policy.max_input_bytes() {
+        return Err(CoreError::plugin(
+            &binding.plugin_id,
+            &binding.action,
+            "serialized directory action input exceeds plugin limit",
+        ));
+    }
+    let raw = plugin
+        .call::<&str, String>(&binding.handler, &input)
+        .map_err(|error| {
+            CoreError::plugin(&binding.plugin_id, &binding.action, error.to_string())
+        })?;
+    if raw.len() > policy.max_output_bytes() {
+        return Err(CoreError::plugin(
+            &binding.plugin_id,
+            &binding.action,
+            "directory action output exceeds plugin limit",
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(&raw).map_err(|error| {
+        CoreError::plugin(
+            &binding.plugin_id,
+            &binding.action,
+            format!("invalid JSON output: {error}"),
+        )
+    })?;
+    if value.get("error").is_some() {
+        let failure: PluginActionFailure = serde_json::from_value(value).map_err(|error| {
+            CoreError::plugin(
+                &binding.plugin_id,
+                &binding.action,
+                format!("invalid failure diagnostic: {error}"),
+            )
+        })?;
+        return Err(CoreError::plugin_failure(
+            &binding.plugin_id,
+            &binding.action,
+            failure,
+        ));
+    }
+    let mut output: DirectoryPluginActionOutput =
+        serde_json::from_value(value).map_err(|error| {
+            CoreError::plugin(
+                &binding.plugin_id,
+                &binding.action,
+                format!("invalid directory action output: {error}"),
+            )
+        })?;
+    for effect in &output.effects {
+        let allowed = match effect {
+            DirectoryActionEffect::Update(_) => {
+                binding.permissions.allows(PluginPermission::DirectoryWrite)
+            }
+            DirectoryActionEffect::CreateChild(_) => binding
+                .permissions
+                .allows(PluginPermission::DirectoryCreateChild),
+        };
+        if !allowed {
+            return Err(CoreError::plugin(
+                &binding.plugin_id,
+                &binding.action,
+                "directory action returned an effect without the required permission",
+            ));
+        }
+    }
+    resolve_plugin_output_urls_for_directory(&mut output, &binding.plugin_id)?;
+    Ok(output)
+}
+
+fn resolve_plugin_output_urls_for_directory(
+    output: &mut DirectoryPluginActionOutput,
+    plugin_id: &str,
+) -> Result<(), CoreError> {
+    let mut shared = PluginActionOutput {
+        view: output.view.clone(),
+        effects: Vec::new(),
+        diagnostics: output.diagnostics.clone(),
+    };
+    resolve_plugin_output_urls(&mut shared, plugin_id)?;
+    output.view = shared.view;
+    Ok(())
 }
 
 impl std::fmt::Debug for ActionBinding {

@@ -18,6 +18,8 @@ import { useGateway } from "@/application/ports/gateway-context";
 import type { CurrentUser } from "@/domain/auth";
 import { breadcrumbs, parentDirectory } from "@/domain/directory-path";
 import type {
+  Directory,
+  DirectoryAction,
   DirectoryListing,
   Resource,
   ResourceAction,
@@ -38,12 +40,15 @@ export function ResourceList({
   kinds,
   filters,
   selectedId,
+  selectedDirectoryId,
   loading,
   error,
   onFilters,
   onOpenDirectory,
   onSelect,
+  onSelectDirectory,
   onAction,
+  onDirectoryAction,
   onRefresh,
   onCreate,
   onUpload,
@@ -56,12 +61,15 @@ export function ResourceList({
   kinds: ResourceKind[];
   filters: ResourceFilters;
   selectedId: string | null;
+  selectedDirectoryId: string | null;
   loading: boolean;
   error: unknown;
   onFilters: (patch: Partial<ResourceFilters>) => void;
   onOpenDirectory: (path: string) => void;
   onSelect: (resource: Resource) => void;
+  onSelectDirectory: (directory: Directory) => void;
   onAction: (resource: Resource, action: ResourceAction) => void;
+  onDirectoryAction: (directory: Directory, action: DirectoryAction) => void;
   onRefresh: () => void;
   onCreate: () => void;
   onUpload: () => void;
@@ -73,6 +81,11 @@ export function ResourceList({
   const totalPages = Math.max(1, Math.ceil(total / filters.limit));
   const crumbs = breadcrumbs(filters.directory);
   const parent = parentDirectory(filters.directory);
+  const kernel = usePluginKernel();
+  const currentDirectory = listing?.directory;
+  const directoryActions = currentDirectory
+    ? kernel.directoryActionsAt(currentDirectory, hostSlots.directoryToolbar)
+    : [];
 
   return (
     <section className="flex min-h-0 min-w-0 flex-col bg-white" aria-label="Resource workspace">
@@ -174,6 +187,22 @@ export function ResourceList({
             </React.Fragment>
           ))}
         </div>
+        {directoryActions.length ? (
+          <div className="ml-auto flex flex-wrap gap-2">
+            {directoryActions.map((action) => (
+              <Button
+                key={action.id}
+                variant="secondary"
+                size="small"
+                onClick={() => {
+                  if (currentDirectory) onDirectoryAction(currentDirectory, action);
+                }}
+              >
+                {action.label}
+              </Button>
+            ))}
+          </div>
+        ) : null}
       </nav>
 
       <div className="min-h-0 flex-1 overflow-auto">
@@ -184,7 +213,11 @@ export function ResourceList({
           <FolderRow
             key={folder.id}
             name={folder.name}
-            onClick={() => onOpenDirectory(folder.path)}
+            directory={folder}
+            selected={folder.id === selectedDirectoryId}
+            onSelect={() => onSelectDirectory(folder)}
+            onOpen={() => onOpenDirectory(folder.path)}
+            onAction={(action) => onDirectoryAction(folder, action)}
           />
         ))}
         {listing?.resources.items.map((resource) => (
@@ -230,18 +263,61 @@ export function ResourceList({
   );
 }
 
-function FolderRow({ name, onClick }: { name: string; onClick: () => void }) {
+function FolderRow({
+  name,
+  directory,
+  selected = false,
+  onClick,
+  onSelect,
+  onOpen,
+  onAction,
+}: {
+  name: string;
+  directory?: Directory;
+  selected?: boolean;
+  onClick?: () => void;
+  onSelect?: () => void;
+  onOpen?: () => void;
+  onAction?: (action: DirectoryAction) => void;
+}) {
+  const kernel = usePluginKernel();
+  const actions = directory
+    ? kernel.directoryActionsAt(directory, hostSlots.directoryContextMenu)
+    : [];
   return (
-    <button
-      className="grid min-h-14 w-full grid-cols-[3.5rem_1fr] items-center gap-3 border-b border-slate-100 bg-slate-50/60 px-5 text-left hover:bg-blue-50 xl:px-7"
-      type="button"
-      onClick={onClick}
+    <div
+      className={`grid min-h-14 grid-cols-[minmax(0,1fr)_auto] items-center border-b border-slate-100 transition ${selected ? "bg-blue-50 ring-1 ring-inset ring-blue-200" : "bg-slate-50/60 hover:bg-blue-50"}`}
     >
-      <span className="grid size-10 place-items-center rounded-xl bg-amber-100 text-amber-700">
-        <Folder size={19} />
-      </span>
-      <span className="font-medium text-slate-800">{name}</span>
-    </button>
+      <button
+        className="grid min-h-14 w-full grid-cols-[3.5rem_1fr] items-center gap-3 px-5 text-left xl:px-7"
+        type="button"
+        aria-pressed={directory ? selected : undefined}
+        onClick={onSelect ?? onClick}
+        onDoubleClick={onOpen}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && onOpen) {
+            event.preventDefault();
+            onOpen();
+          }
+        }}
+      >
+        <span className="grid size-10 place-items-center rounded-xl bg-amber-100 text-amber-700">
+          <Folder size={19} />
+        </span>
+        <span className="font-medium text-slate-800">{name}</span>
+      </button>
+      {actions.length && onAction ? (
+        <div className="pr-4">
+          <ActionMenu>
+            {actions.map((action) => (
+              <ActionMenuItem key={action.id} onSelect={() => onAction(action)}>
+                {action.label}
+              </ActionMenuItem>
+            ))}
+          </ActionMenu>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

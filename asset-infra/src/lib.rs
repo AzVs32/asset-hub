@@ -1,5 +1,6 @@
 pub mod action;
 pub mod config;
+mod directory_index;
 pub mod kind;
 pub mod migration;
 mod official_plugins;
@@ -9,25 +10,27 @@ mod plugin_manifest;
 pub mod sqlite;
 pub mod storage;
 
-use action::DefaultResourceActionExecutor;
+use action::{DefaultDirectoryActionExecutor, DefaultResourceActionExecutor};
 use asset_core::service::{
     AuthorizationService, DirectoryService, ResourceService, ResourceServicePorts, UserService,
 };
 use asset_core::{
-    CoreError, port::BlobStorage, port::DirectoryKindRegistry, port::DirectoryRepository,
-    port::DirectoryStorage, port::ResourceActionExecutor, port::ResourceActionRegistry,
+    CoreError, port::BlobStorage, port::DirectoryActionExecutor, port::DirectoryActionRegistry,
+    port::DirectoryIndex, port::DirectoryKindRegistry, port::DirectoryStorage,
+    port::DirectoryStore, port::ResourceActionExecutor, port::ResourceActionRegistry,
     port::ResourceKindRegistry, port::ResourceQuery, port::ResourceRepository,
     port::SecurityAuditRepository, port::StorageScanner,
 };
 use asset_plugin_api::PluginExecutionPolicy;
 pub use asset_plugin_api::PluginWebAssets;
 use config::{AssetInfraConfig, BlobBackend, DatabaseBackend};
+use directory_index::InMemoryDirectoryIndex;
 use kind::{
-    DefaultDirectoryKindRegistry, DefaultResourceActionRegistry, DefaultResourceKindRegistry,
-    registries_from_catalog,
+    DefaultDirectoryActionRegistry, DefaultDirectoryKindRegistry, DefaultResourceActionRegistry,
+    DefaultResourceKindRegistry, directory_action_registry_from_catalog, registries_from_catalog,
 };
 use password::Argon2PasswordHasher;
-use plugin::ExtismResourceActionExecutor;
+use plugin::ExtismActionExecutor;
 use plugin_manifest::PluginCatalog;
 use sqlite::{SqliteIdentityRepository, SqliteResourceRepository, SqliteSecurityAuditRepository};
 use sqlx::SqlitePool;
@@ -44,6 +47,7 @@ pub struct AssetInfrastructure {
     config: AssetInfraConfig,
     /// SQLite 聚合持久化适配器，对外分别实现资源与目录仓储端口。
     resource_repository: Arc<SqliteResourceRepository>,
+    directory_index: Arc<InMemoryDirectoryIndex>,
     identity_repository: Arc<SqliteIdentityRepository>,
     security_audit_repository: Arc<SqliteSecurityAuditRepository>,
     /// 对象存储适配器。
@@ -53,6 +57,8 @@ pub struct AssetInfrastructure {
     resource_kind_registry: Arc<DefaultResourceKindRegistry>,
     /// 目录类型注册表。
     directory_kind_registry: Arc<DefaultDirectoryKindRegistry>,
+    directory_action_registry: Arc<DefaultDirectoryActionRegistry>,
+    directory_action_executor: Arc<DefaultDirectoryActionExecutor>,
     /// 资源动作注册表。
     resource_action_registry: Arc<DefaultResourceActionRegistry>,
     /// 资源动作执行器。
@@ -92,6 +98,9 @@ impl AssetInfrastructure {
             elapsed_ms = sqlite_started.elapsed().as_millis(),
             "SQLite initialized"
         );
+        let directory_index = Arc::new(InMemoryDirectoryIndex::from_directories(
+            resource_repository.load_all().await?,
+        )?);
         let identity_repository = Arc::new(SqliteIdentityRepository::new(
             resource_repository.pool().clone(),
         ));
@@ -110,15 +119,23 @@ impl AssetInfrastructure {
         let resource_kind_registry = Arc::new(resource_kind_registry);
         let directory_kind_registry = Arc::new(directory_kind_registry);
         let resource_action_registry = Arc::new(resource_action_registry);
+        let directory_action_registry =
+            Arc::new(directory_action_registry_from_catalog(&plugin_catalog)?);
         let plugin_execution_policy = Arc::new(config.plugin.execution_policy()?);
         let plugin_compile_started = Instant::now();
-        let extism_action_executor = ExtismResourceActionExecutor::from_catalog(
+        let extism_action_executor = ExtismActionExecutor::from_catalog(
             &plugin_catalog,
             resource_kind_registry.as_ref(),
+            directory_kind_registry.as_ref(),
+            directory_index.clone(),
+            resource_repository.clone(),
             blob_storage.clone(),
             plugin_execution_policy.clone(),
             &config.plugin.grants,
         )?;
+        let directory_action_executor = Arc::new(DefaultDirectoryActionExecutor::new(
+            extism_action_executor.clone(),
+        ));
         tracing::info!(
             elapsed_ms = plugin_compile_started.elapsed().as_millis(),
             "plugins compiled"
@@ -130,12 +147,15 @@ impl AssetInfrastructure {
         Ok(Self {
             config,
             resource_repository,
+            directory_index,
             identity_repository,
             security_audit_repository,
             blob_storage,
             storage_scanner,
             resource_kind_registry,
             directory_kind_registry,
+            directory_action_registry,
+            directory_action_executor,
             resource_action_registry,
             resource_action_executor,
             plugin_execution_policy,
@@ -157,12 +177,25 @@ impl AssetInfrastructure {
         self.resource_repository.clone()
     }
 
-    pub fn directory_repository(&self) -> Arc<dyn DirectoryRepository> {
+    pub fn directory_store(&self) -> Arc<dyn DirectoryStore> {
         self.resource_repository.clone()
     }
 
+    pub fn directory_index(&self) -> Arc<dyn DirectoryIndex> {
+        self.directory_index.clone()
+    }
+
     pub fn directory_service(&self) -> DirectoryService {
-        DirectoryService::new(self.directory_repository(), self.directory_storage())
+        DirectoryService::new(
+            self.directory_store(),
+            self.directory_index(),
+            self.directory_storage(),
+            self.directory_kind_registry(),
+        )
+        .with_actions(
+            self.directory_action_registry(),
+            self.directory_action_executor(),
+        )
     }
 
     /// 返回共享数据库连接池，供会话、用户与授权适配器复用。
@@ -228,6 +261,14 @@ impl AssetInfrastructure {
         self.directory_kind_registry.clone()
     }
 
+    pub fn directory_action_registry(&self) -> Arc<dyn DirectoryActionRegistry> {
+        self.directory_action_registry.clone()
+    }
+
+    pub fn directory_action_executor(&self) -> Arc<dyn DirectoryActionExecutor> {
+        self.directory_action_executor.clone()
+    }
+
     /// 返回资源动作执行器端口对象。
     pub fn resource_action_executor(&self) -> Arc<dyn ResourceActionExecutor> {
         self.resource_action_executor.clone()
@@ -250,14 +291,20 @@ impl AssetInfrastructure {
                 self.resource_repository(),
                 self.resource_query(),
                 self.blob_storage(),
-                self.directory_repository(),
+                self.directory_store(),
+                self.directory_index(),
                 self.directory_storage(),
+                self.directory_kind_registry(),
                 self.storage_scanner(),
                 self.resource_kind_registry(),
             )
             .with_actions(
                 self.resource_action_registry(),
                 self.resource_action_executor(),
+            )
+            .with_directory_actions(
+                self.directory_action_registry(),
+                self.directory_action_executor(),
             ),
             self.plugin_execution_policy.clone(),
         )

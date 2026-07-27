@@ -14,6 +14,16 @@ pub enum PluginPermission {
     ContentReplace,
     #[serde(rename = "derived_asset.write")]
     DerivedAssetWrite,
+    #[serde(rename = "directory.read")]
+    DirectoryRead,
+    #[serde(rename = "directory.children.list")]
+    DirectoryChildrenList,
+    #[serde(rename = "directory.resources.list")]
+    DirectoryResourcesList,
+    #[serde(rename = "directory.write")]
+    DirectoryWrite,
+    #[serde(rename = "directory.create_child")]
+    DirectoryCreateChild,
 }
 
 /// Fine-grained permissions requested by a plugin manifest.
@@ -51,6 +61,22 @@ impl PluginPermissions {
 
     pub fn derived_asset_write(&self) -> bool {
         self.allows(PluginPermission::DerivedAssetWrite)
+    }
+
+    pub fn directory_read(&self) -> bool {
+        self.allows(PluginPermission::DirectoryRead)
+    }
+    pub fn directory_children_list(&self) -> bool {
+        self.allows(PluginPermission::DirectoryChildrenList)
+    }
+    pub fn directory_resources_list(&self) -> bool {
+        self.allows(PluginPermission::DirectoryResourcesList)
+    }
+    pub fn directory_write(&self) -> bool {
+        self.allows(PluginPermission::DirectoryWrite)
+    }
+    pub fn directory_create_child(&self) -> bool {
+        self.allows(PluginPermission::DirectoryCreateChild)
     }
 }
 

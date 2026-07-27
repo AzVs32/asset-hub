@@ -1,7 +1,7 @@
 import React from "react";
 import type { AssetGateway } from "@/application/ports/asset-gateway";
 import type { PluginActionOutput, PluginView, PluginViewKind } from "@/domain/plugin";
-import type { Resource, ResourceAction } from "@/domain/resource";
+import type { Directory, DirectoryAction, Resource, ResourceAction } from "@/domain/resource";
 import { type HostSlot, hostSlots } from "./slots";
 
 export interface PluginViewRendererProps {
@@ -47,11 +47,24 @@ export class PluginKernel {
       ) ?? null
     );
   }
+
+  directoryActionsAt(directory: Directory, slot: HostSlot): DirectoryAction[] {
+    return sortActions(
+      directory.actions.filter((action) => {
+        if (action.ui.locations.includes(slot)) return true;
+        if (slot !== hostSlots.directoryToolbar) return false;
+        return (
+          action.ui.locations.length === 0 ||
+          action.ui.locations.every((location) => !knownSlots.has(location as HostSlot))
+        );
+      }),
+    );
+  }
 }
 
 const knownSlots = new Set<HostSlot>(Object.values(hostSlots));
 
-function sortActions(actions: ResourceAction[]): ResourceAction[] {
+function sortActions<T extends ResourceAction | DirectoryAction>(actions: T[]): T[] {
   return [...actions].sort(
     (left, right) =>
       (left.ui.group ?? "").localeCompare(right.ui.group ?? "") ||

@@ -12,7 +12,7 @@ mod resource;
 mod user;
 
 pub use authorization::{AuthorizationService, WorkspaceScope};
-pub use directory::DirectoryService;
+pub use directory::{DirectoryActions, DirectoryService, ExecuteDirectoryAction, UpdateDirectory};
 pub use user::UserService;
 
 pub use resource::{

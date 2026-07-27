@@ -3,13 +3,23 @@ import React from "react";
 import { toast } from "sonner";
 import { useGateway } from "@/application/ports/gateway-context";
 import { queryKeys } from "@/application/queries/keys";
-import type { Resource, ResourceAction, ResourceDraft, UploadDraft } from "@/domain/resource";
+import type {
+  Directory,
+  DirectoryAction,
+  Resource,
+  ResourceAction,
+  ResourceDraft,
+  UploadDraft,
+} from "@/domain/resource";
+import type { DirectoryActionResult } from "@/plugins/directory-action-dialog";
 import type { ActionResult } from "@/plugins/plugin-action-dialog";
 
 export function useResourceCommands() {
   const gateway = useGateway();
   const queryClient = useQueryClient();
   const [actionResult, setActionResult] = React.useState<ActionResult | null>(null);
+  const [directoryActionResult, setDirectoryActionResult] =
+    React.useState<DirectoryActionResult | null>(null);
 
   const refresh = React.useCallback(
     async (resourceId?: string) => {
@@ -66,8 +76,8 @@ export function useResourceCommands() {
     onError: notifyError,
   });
   const createFolder = useMutation({
-    mutationFn: ({ parent, name }: { parent: string; name: string }) =>
-      gateway.createDirectory(parent, name),
+    mutationFn: ({ parent, name, kind }: { parent: string; name: string; kind?: string }) =>
+      gateway.createDirectory(parent, name, kind),
     onSuccess: async () => {
       toast.success("Folder created");
       await refresh();
@@ -86,6 +96,24 @@ export function useResourceCommands() {
     },
     onError: notifyError,
   });
+  const executeDirectory = useMutation({
+    mutationFn: async ({
+      directory,
+      action,
+    }: {
+      directory: Directory;
+      action: DirectoryAction;
+    }) => ({
+      directory,
+      action,
+      output: await gateway.executeDirectoryAction(directory, action),
+    }),
+    onSuccess: async (result) => {
+      setDirectoryActionResult(result);
+      if (result.action.access === "read_write") await refresh();
+    },
+    onError: notifyError,
+  });
 
   return {
     create,
@@ -95,8 +123,11 @@ export function useResourceCommands() {
     restore,
     createFolder,
     execute,
+    executeDirectory,
     actionResult,
     setActionResult,
+    directoryActionResult,
+    setDirectoryActionResult,
     refresh,
   };
 }

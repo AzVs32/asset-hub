@@ -3,9 +3,16 @@ import { AuthenticationRequiredError } from "@/application/errors";
 import type { AssetGateway } from "@/application/ports/asset-gateway";
 import type { CurrentUser, ManagedUser, UserStatus } from "@/domain/auth";
 import { normalizeDirectory } from "@/domain/directory-path";
-import type { JsonObject, PluginActionOutput, PluginDiagnostic } from "@/domain/plugin";
+import type {
+  DirectoryPluginActionOutput,
+  JsonObject,
+  PluginActionOutput,
+  PluginDiagnostic,
+} from "@/domain/plugin";
 import type {
   Directory,
+  DirectoryAction,
+  DirectoryKind,
   DirectoryListing,
   Resource,
   ResourceAction,
@@ -22,6 +29,7 @@ type Schemas = components["schemas"];
 type ApiResource = Schemas["ResourceResponse"];
 type ApiAction = Schemas["ResourceActionDefinitionResponse"];
 type ApiKind = Schemas["ResourceKindResponse"];
+type ApiDirectoryAction = Schemas["DirectoryActionDefinitionResponse"];
 
 export class OpenApiAssetGateway implements AssetGateway {
   readonly #baseUrl: string;
@@ -60,6 +68,11 @@ export class OpenApiAssetGateway implements AssetGateway {
     return expectData(result).items.map(mapKind);
   }
 
+  async listDirectoryKinds(): Promise<DirectoryKind[]> {
+    const result = await this.#client.GET("/directory-kinds");
+    return expectData(result).items.map(mapDirectoryKind);
+  }
+
   async listDirectory(filters: ResourceFilters, signal?: AbortSignal): Promise<DirectoryListing> {
     const query = {
       path: filters.directory,
@@ -78,6 +91,7 @@ export class OpenApiAssetGateway implements AssetGateway {
     const data = expectData(result);
     return {
       path: data.path,
+      directory: mapDirectory(data.directory),
       folders: data.folders.map(mapDirectory),
       resources: {
         items: data.resources.items.map(mapResource),
@@ -138,11 +152,32 @@ export class OpenApiAssetGateway implements AssetGateway {
     return mapResource((await response.json()) as ApiResource);
   }
 
-  async createDirectory(parentPath: string, name: string): Promise<Directory> {
+  async createDirectory(parentPath: string, name: string, kind?: string): Promise<Directory> {
     const result = await this.#client.POST("/directories", {
-      body: { parent_path: parentPath, name },
+      body: { parent_path: parentPath, name, ...(kind ? { kind } : {}) },
     });
     return mapDirectory(expectData(result));
+  }
+
+  async executeDirectoryAction(
+    directory: Directory,
+    action: DirectoryAction,
+    input: JsonObject = {},
+  ): Promise<DirectoryPluginActionOutput> {
+    if (!directory.actions.some((candidate) => candidate.id === action.id)) {
+      throw new Error(`Action ${action.id} is not available for directory ${directory.id}`);
+    }
+    const result = await this.#client.POST("/directories/{id}/actions/{action}", {
+      params: { path: { id: directory.id, action: action.id } },
+      body: { input },
+    });
+    const data = expectData(result);
+    return {
+      directoryId: data.directory_id,
+      action: data.action,
+      diagnostics: data.diagnostics.map(mapDiagnostic),
+      view: parsePluginView(data.view),
+    };
   }
 
   async executeAction(
@@ -249,7 +284,46 @@ function mapManagedUser(value: Schemas["ManagedUserResponse"]): ManagedUser {
 }
 
 function mapDirectory(value: Schemas["DirectoryResponse"]): Directory {
-  return { id: value.id, path: value.path, parentPath: value.parent_path, name: value.name };
+  return {
+    id: value.id,
+    path: value.path,
+    parentPath: value.parent_path,
+    name: value.name,
+    kind: value.kind,
+    actions: value.actions.available_actions.map(mapDirectoryAction),
+  };
+}
+
+function mapDirectoryKind(value: Schemas["DirectoryKindResponse"]): DirectoryKind {
+  return {
+    kind: value.kind,
+    parent: value.parent ?? null,
+    ancestors: value.ancestors,
+    label: value.label,
+    source: value.source,
+    actions: value.actions.map(mapDirectoryAction),
+  };
+}
+
+function mapDirectoryAction(value: ApiDirectoryAction): DirectoryAction {
+  return {
+    id: value.id,
+    label: value.label,
+    description: value.description ?? null,
+    access: enumValue(value.access, ["read_only", "read_write"]),
+    executor: {
+      type: enumValue(value.executor.type, ["builtin", "plugin"]),
+      handler: value.executor.handler ?? null,
+    },
+    requires: { children: value.requires.children, resources: value.requires.resources },
+    output: { views: value.output.view.filter(isPluginViewKind) },
+    ui: {
+      group: value.ui.group ?? null,
+      order: value.ui.order ?? null,
+      locations: value.ui.locations,
+    },
+    appliesTo: { kinds: value.applies_to.kinds },
+  };
 }
 
 function mapKind(value: ApiKind): ResourceKind {

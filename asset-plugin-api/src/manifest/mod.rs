@@ -4,8 +4,10 @@ mod plugin;
 mod runtime;
 
 pub use capabilities::{
-    ActionAppliesTo, ActionRequirements, ActionUi, ContentDelivery, DirectoryKindCapability,
-    ManifestActionAccess, PluginCapabilities, ResourceActionCapability, ResourceKindCapability,
+    ActionAppliesTo, ActionRequirements, ActionUi, ContentDelivery,
+    DirectoryActionAppliesToCapability, DirectoryActionCapability,
+    DirectoryActionRequirementsCapability, DirectoryKindCapability, ManifestActionAccess,
+    PluginCapabilities, ResourceActionCapability, ResourceKindCapability,
 };
 pub use lock::{PluginManifestLock, PluginRuntimeLock, PluginWebLock};
 pub use permissions::{
@@ -302,6 +304,37 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
                 "capabilities.actions[`{}`] is writable without a write permission",
                 action.id
             ));
+        }
+    }
+    for action in &capabilities.directory_actions {
+        validate_id(
+            "capabilities.directory_actions[].id",
+            &action.id,
+            &['.', '-', '_'],
+        )?;
+        if action.label.trim().is_empty() || action.handler.trim().is_empty() {
+            return Err("directory action label and handler must not be empty".to_string());
+        }
+        if !action_ids.insert(action.id.as_str()) {
+            return Err(format!("duplicate action id `{}`", action.id));
+        }
+        if action.views.is_empty()
+            || action
+                .views
+                .iter()
+                .any(|view| !SUPPORTED_VIEWS.contains(&view.as_str()))
+        {
+            return Err(format!(
+                "directory action `{}` must declare only supported views",
+                action.id
+            ));
+        }
+        for kind in &action.applies_to.kinds {
+            validate_id(
+                "capabilities.directory_actions[].applies_to.kinds[]",
+                kind,
+                &[':', '.', '-', '_'],
+            )?;
         }
     }
     Ok(())

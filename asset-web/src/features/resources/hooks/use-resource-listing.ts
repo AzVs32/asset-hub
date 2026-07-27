@@ -31,6 +31,11 @@ export function useResourceListing() {
     queryFn: () => gateway.listResourceKinds(),
     staleTime: 5 * 60_000,
   });
+  const directoryKinds = useQuery({
+    queryKey: queryKeys.directoryKinds,
+    queryFn: () => gateway.listDirectoryKinds(),
+    staleTime: 5 * 60_000,
+  });
   const listing = useQuery({
     queryKey: queryKeys.directory(filters),
     queryFn: ({ signal }) => gateway.listDirectory(filters, signal),
@@ -62,6 +67,22 @@ export function useResourceListing() {
         (current) => {
           const next = new URLSearchParams(current);
           setOrDelete(next, "resource", id ?? "");
+          if (id) next.delete("folder");
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
+  const selectDirectory = useCallback(
+    (id: string | null) => {
+      setSearchParams(
+        (current) => {
+          const next = new URLSearchParams(current);
+          setOrDelete(next, "folder", id ?? "");
+          if (id) next.delete("resource");
           return next;
         },
         { replace: true },
@@ -75,6 +96,7 @@ export function useResourceListing() {
       const next = new URLSearchParams(searchParams);
       next.delete("page");
       next.delete("resource");
+      next.delete("folder");
       navigate({ pathname: directoryPath(directory), search: next.toString() });
     },
     [navigate, searchParams],
@@ -85,9 +107,12 @@ export function useResourceListing() {
     updateFilters,
     openDirectory,
     selectResource,
+    selectDirectory,
     selectedId: searchParams.get("resource"),
+    selectedDirectoryId: searchParams.get("folder"),
     listing,
     kinds,
+    directoryKinds,
   };
 }
 

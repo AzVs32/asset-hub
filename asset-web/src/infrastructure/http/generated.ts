@@ -118,6 +118,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/directories/{id}/actions/{action}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 执行目录插件动作。 */
+        post: operations["execute_directory_action"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/directories/{id}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Download a directory tree as a ZIP archive. */
+        get: operations["download_directory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/directory-kinds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 列出当前后端支持的目录类型。 */
+        get: operations["list_directory_kinds"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -301,6 +352,8 @@ export interface components {
         };
         /** @description 创建逻辑目录请求。 */
         CreateDirectoryRequest: {
+            /** @description 可选目录类型。 */
+            kind?: string | null;
             /** @description 新目录名称，只允许单个路径段。 */
             name: string;
             /** @description 相对于当前用户可见根目录的父路径；根目录为空字符串。 */
@@ -339,8 +392,48 @@ export interface components {
             password: string;
             username: string;
         };
+        DirectoryActionAppliesToResponse: {
+            kinds: string[];
+        };
+        DirectoryActionDefinitionResponse: {
+            access: string;
+            applies_to: components["schemas"]["DirectoryActionAppliesToResponse"];
+            description?: string | null;
+            executor: components["schemas"]["ResourceActionExecutorResponse"];
+            id: string;
+            label: string;
+            output: components["schemas"]["ResourceActionOutputContractResponse"];
+            requires: components["schemas"]["DirectoryActionRequirementsResponse"];
+            ui: components["schemas"]["ResourceActionUiResponse"];
+        };
+        DirectoryActionOutputResponse: {
+            action: string;
+            diagnostics: components["schemas"]["PluginDiagnosticResponse"][];
+            directory_id: string;
+            view: unknown;
+        };
+        DirectoryActionRequirementsResponse: {
+            children: boolean;
+            resources: boolean;
+        };
+        DirectoryActionsResponse: {
+            available_actions: components["schemas"]["DirectoryActionDefinitionResponse"][];
+        };
+        DirectoryKindResponse: {
+            actions: components["schemas"]["DirectoryActionDefinitionResponse"][];
+            ancestors: string[];
+            kind: string;
+            label: string;
+            parent?: string | null;
+            source: string;
+        };
+        DirectoryKindsResponse: {
+            items: components["schemas"]["DirectoryKindResponse"][];
+        };
         /** @description 目录浏览响应。 */
         DirectoryListingResponse: {
+            /** @description 当前目录。 */
+            directory: components["schemas"]["DirectoryResponse"];
             /** @description 直接子目录。 */
             folders: components["schemas"]["DirectoryResponse"][];
             /** @description 相对于当前用户可见根目录的当前路径。 */
@@ -350,8 +443,10 @@ export interface components {
         };
         /** @description 逻辑目录响应。 */
         DirectoryResponse: {
+            actions: components["schemas"]["DirectoryActionsResponse"];
             /** @description 稳定目录标识；目录移动或重命名后保持不变。 */
             id: string;
+            kind: string;
             /** @description 当前目录名。 */
             name: string;
             /** @description 相对于当前用户可见根目录的父路径。 */
@@ -371,6 +466,9 @@ export interface components {
             error: string;
             /** @description Whether retrying the same operation may succeed. */
             retryable?: boolean | null;
+        };
+        ExecuteDirectoryActionRequest: {
+            input?: unknown;
         };
         /**
          * @description 执行资源动作请求。
@@ -907,6 +1005,130 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    execute_directory_action: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                action: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExecuteDirectoryActionRequest"];
+            };
+        };
+        responses: {
+            /** @description 动作执行结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DirectoryActionOutputResponse"];
+                };
+            };
+            /** @description 目录类型不支持该动作 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 目录不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    download_directory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Directory ID */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Directory ZIP archive */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/zip": components["schemas"]["BinaryContent"];
+                };
+            };
+            /** @description Invalid directory ID */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Directory is outside the current workspace */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Directory or resource content not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Archive generation failed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_directory_kinds: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 目录类型列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DirectoryKindsResponse"];
                 };
             };
         };

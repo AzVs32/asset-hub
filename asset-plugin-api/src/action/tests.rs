@@ -48,3 +48,24 @@ fn matcher_deserialization_preserves_normalized_invariants() {
         .is_err()
     );
 }
+
+#[test]
+fn directory_actions_share_the_common_shell_but_keep_directory_contracts() {
+    let action = DirectoryActionDefinition::new("example.collection.organize", "Organize")
+        .with_handler("organize")
+        .with_access(ActionAccess::ReadWrite)
+        .with_kinds(["example:collection"])
+        .with_requirements(DirectoryActionRequirements {
+            children: true,
+            resources: true,
+        });
+
+    assert_eq!(action.common().handler(), Some("organize"));
+    assert!(action.matches_directory("EXAMPLE:COLLECTION"));
+    assert!(!action.matches_directory("core:directory"));
+    let value = serde_json::to_value(action).unwrap();
+    assert_eq!(value["access"], "read_write");
+    assert_eq!(value["requires"]["children"], true);
+    assert!(value["requires"].get("content").is_none());
+    assert!(value["applies_to"].get("mime_types").is_none());
+}

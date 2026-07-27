@@ -112,12 +112,19 @@ When user creation omits `workspace_directory`, the user service assigns
 explicit workspace when a custom boundary is required.
 
 Directory is an independent aggregate rather than a path embedded in Resource.
-Every directory has a stable UUID, a direct `parent_id`, a kind, namespaced JSON
-metadata, and lifecycle timestamps. SQLite stores the hierarchy as an adjacency
-tree and derives paths with recursive CTEs. Resource and User rows reference
-`directory_id`; paths remain HTTP and Blob-storage projections, so renaming or
-moving a directory does not invalidate domain references. The fixed nil UUID is
-the persisted global root directory.
+Every directory has a stable UUID, a direct `parent_id`, a kind, and lifecycle
+timestamps. SQLite is the source of truth and stores the hierarchy as adjacency
+data. At startup the host loads all directory aggregates into a rebuildable
+`InMemoryDirectoryIndex`, which derives paths and tree projections and is kept in
+sync after committed writes. Resource and User rows reference `directory_id`;
+paths remain HTTP and Blob-storage projections, so renaming or moving a directory
+does not invalidate domain references. The fixed nil UUID is the persisted global
+root directory.
+
+The process-local index assumes a single service instance owns directory writes.
+For multi-instance deployment it must be replaced by a coherently invalidated
+shared index (or rebuilt from a change stream); using Redis only as a startup copy
+without invalidation would still permit stale authorization and path projections.
 
 Security events are stored in SQLite's `security_audit_events` table. Login
 successes, login failures, rate-limit rejections, and classified state-changing

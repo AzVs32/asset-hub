@@ -4,7 +4,6 @@ CREATE TABLE directories (
     parent_id TEXT,
     name TEXT NOT NULL,
     kind TEXT NOT NULL,
-    metadata_json TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
 
@@ -14,19 +13,17 @@ CREATE TABLE directories (
         OR
         (id <> '00000000-0000-0000-0000-000000000000' AND parent_id IS NOT NULL AND length(name) > 0)
     ),
-    CHECK (kind LIKE '%:%'),
-    CHECK (json_valid(metadata_json) AND json_type(metadata_json) = 'object')
+    CHECK (kind LIKE '%:%')
 );
 
 -- 迁移直接建立唯一全局根节点。它是普通持久化聚合，而不是查询时伪造的隐式路径。
 INSERT INTO directories (
-    id, parent_id, name, kind, metadata_json, created_at, updated_at
+    id, parent_id, name, kind, created_at, updated_at
 ) VALUES (
     '00000000-0000-0000-0000-000000000000',
     NULL,
     '',
     'core:directory',
-    '{}',
     strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
     strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 );

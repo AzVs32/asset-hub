@@ -1,4 +1,7 @@
 use super::*;
+use std::io::{Seek, Write};
+use tokio_util::io::ReaderStream;
+use zip::write::SimpleFileOptions;
 
 pub(crate) const MAX_UPLOAD_BYTES: usize = 4 * 1024 * 1024 * 1024;
 pub(super) const DEFAULT_CONTENT_TYPE: &str = "application/octet-stream";
@@ -110,6 +113,110 @@ pub(crate) async fn download_resource_content(
     response.headers_mut().insert(
         header::CONTENT_DISPOSITION,
         attachment_content_disposition(&filename),
+    );
+    Ok(response)
+}
+
+/// Download a directory tree as a ZIP archive.
+#[utoipa::path(
+    get,
+    path = "/directories/{id}/download",
+    tag = "directories",
+    params(("id" = String, Path, description = "Directory ID")),
+    responses(
+        (status = 200, description = "Directory ZIP archive", content_type = "application/zip", body = BinaryContent),
+        (status = 400, description = "Invalid directory ID", body = crate::dto::ErrorResponse),
+        (status = 403, description = "Directory is outside the current workspace", body = crate::dto::ErrorResponse),
+        (status = 404, description = "Directory or resource content not found", body = crate::dto::ErrorResponse),
+        (status = 500, description = "Archive generation failed", body = crate::dto::ErrorResponse)
+    )
+)]
+pub(crate) async fn download_directory(
+    State(state): State<HttpState>,
+    access: Extension<AccessContext>,
+    Path(id): Path<String>,
+) -> Result<Response, HttpError> {
+    let id = parse_directory_id(&id)?;
+    let manifest = state
+        .secured(&access.0)
+        .directory_archive_manifest(&id)
+        .await?;
+    let filename = manifest.filename().to_string();
+    let temporary = tempfile::NamedTempFile::new()
+        .map_err(|error| CoreError::storage("directory.archive.create", error))?;
+    let (file, temporary_path) = temporary.into_parts();
+    let mut archive = zip::ZipWriter::new(file);
+    let options = SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .large_file(true);
+
+    for directory in manifest.directories() {
+        archive
+            .add_directory(directory, options)
+            .map_err(|error| CoreError::storage("directory.archive.add_directory", error))?;
+    }
+    for entry in manifest.resources() {
+        archive
+            .start_file(entry.path(), options)
+            .map_err(|error| CoreError::storage("directory.archive.start_file", error))?;
+        let Some(content) = state
+            .secured(&access.0)
+            .get_resource_content_stream(&entry.resource_id(), None)
+            .await?
+        else {
+            return Err(HttpError::not_found(format!(
+                "resource content `{}` not found",
+                entry.resource_id()
+            )));
+        };
+        let mut content = content.into_content();
+        while let Some(chunk) = content.next().await {
+            archive
+                .write_all(&chunk?)
+                .map_err(|error| CoreError::storage("directory.archive.write", error))?;
+        }
+    }
+
+    let mut file = archive
+        .finish()
+        .map_err(|error| CoreError::storage("directory.archive.finish", error))?;
+    file.seek(std::io::SeekFrom::Start(0))
+        .map_err(|error| CoreError::storage("directory.archive.rewind", error))?;
+    let content_length = file
+        .metadata()
+        .map_err(|error| CoreError::storage("directory.archive.metadata", error))?
+        .len();
+    let reader = ReaderStream::new(tokio::fs::File::from_std(file));
+    let content = futures_util::stream::try_unfold(
+        (reader, temporary_path),
+        |(mut reader, temporary_path)| async move {
+            match reader.next().await {
+                Some(Ok(chunk)) => Ok(Some((chunk, (reader, temporary_path)))),
+                Some(Err(error)) => Err(CoreError::storage("directory.archive.read", error)),
+                None => Ok(None),
+            }
+        },
+    );
+    let mut response = Body::from_stream(content).into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        header::HeaderValue::from_static("application/zip"),
+    );
+    headers.insert(
+        header::CONTENT_LENGTH,
+        content_length
+            .to_string()
+            .parse()
+            .expect("archive length is a valid header value"),
+    );
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        attachment_content_disposition(&filename),
+    );
+    headers.insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
     );
     Ok(response)
 }

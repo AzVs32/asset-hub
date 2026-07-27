@@ -1,5 +1,7 @@
 use crate::PluginRuntime;
 use crate::{
+    ActionAccess, ActionDefinitionUi, ActionExecutorKind, ActionOutputContract,
+    DirectoryActionAppliesTo, DirectoryActionDefinition, DirectoryActionRequirements,
     ResourceActionAccess, ResourceActionAppliesTo, ResourceActionContentDelivery,
     ResourceActionDefinition, ResourceActionExecutorKind, ResourceActionOutputContract,
     ResourceActionRequirements, ResourceActionUi, ResourceContentMatcher,
@@ -13,6 +15,7 @@ pub struct PluginCapabilities {
     pub kinds: Vec<ResourceKindCapability>,
     pub directory_kinds: Vec<DirectoryKindCapability>,
     pub actions: Vec<ResourceActionCapability>,
+    pub directory_actions: Vec<DirectoryActionCapability>,
 }
 
 /// Directory kind contributed by a plugin manifest.
@@ -97,6 +100,86 @@ impl ResourceActionCapability {
 
     pub fn handler(&self) -> &str {
         self.handler.as_str()
+    }
+}
+
+/// Directory action contributed by a plugin manifest.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DirectoryActionCapability {
+    pub id: String,
+    pub label: String,
+    pub handler: String,
+    #[serde(default)]
+    pub applies_to: DirectoryActionAppliesToCapability,
+    #[serde(default)]
+    pub access: ManifestActionAccess,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requires: Option<DirectoryActionRequirementsCapability>,
+    pub views: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui: Option<ActionUi>,
+}
+
+impl DirectoryActionCapability {
+    pub fn to_definition(&self, runtime: &PluginRuntime) -> DirectoryActionDefinition {
+        let mut definition = DirectoryActionDefinition::new(self.id.clone(), self.label.clone())
+            .with_handler(self.handler.clone())
+            .with_executor(match runtime {
+                PluginRuntime::Builtin => ActionExecutorKind::Builtin,
+                PluginRuntime::Extism { .. } => ActionExecutorKind::Plugin,
+            })
+            .with_access(match self.access {
+                ManifestActionAccess::Read => ActionAccess::ReadOnly,
+                ManifestActionAccess::Write => ActionAccess::ReadWrite,
+            })
+            .with_applies_to(self.applies_to.to_definition())
+            .with_output(ActionOutputContract {
+                view: self.views.clone(),
+            });
+        if let Some(requires) = &self.requires {
+            definition = definition.with_requirements(requires.to_definition());
+        }
+        if let Some(ui) = &self.ui {
+            definition = definition.with_ui(ActionDefinitionUi {
+                group: ui.group.clone(),
+                order: ui.order,
+                locations: ui.locations.clone(),
+            });
+        }
+        definition
+    }
+
+    pub fn handler(&self) -> &str {
+        &self.handler
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DirectoryActionAppliesToCapability {
+    pub kinds: Vec<String>,
+}
+
+impl DirectoryActionAppliesToCapability {
+    pub fn to_definition(&self) -> DirectoryActionAppliesTo {
+        DirectoryActionAppliesTo::new().with_kinds(self.kinds.clone())
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DirectoryActionRequirementsCapability {
+    pub children: bool,
+    pub resources: bool,
+}
+
+impl DirectoryActionRequirementsCapability {
+    pub fn to_definition(&self) -> DirectoryActionRequirements {
+        DirectoryActionRequirements {
+            children: self.children,
+            resources: self.resources,
+        }
     }
 }
 

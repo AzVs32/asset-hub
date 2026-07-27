@@ -23,6 +23,18 @@ export interface ResourceAction {
   appliesTo: { kinds: string[]; mimeTypes: string[]; extensions: string[] };
 }
 
+export interface DirectoryAction {
+  id: string;
+  label: string;
+  description: string | null;
+  access: ActionAccess;
+  executor: { type: ActionExecutor; handler: string | null };
+  requires: { children: boolean; resources: boolean };
+  output: { views: PluginViewKind[] };
+  ui: { group: string | null; order: number | null; locations: string[] };
+  appliesTo: { kinds: string[] };
+}
+
 export interface Resource {
   id: string;
   name: string;
@@ -60,10 +72,22 @@ export interface Directory {
   path: string;
   parentPath: string;
   name: string;
+  kind: string;
+  actions: DirectoryAction[];
+}
+
+export interface DirectoryKind {
+  kind: string;
+  parent: string | null;
+  ancestors: string[];
+  label: string;
+  source: string;
+  actions: DirectoryAction[];
 }
 
 export interface DirectoryListing {
   path: string;
+  directory: Directory;
   folders: Directory[];
   resources: ResourcePage;
 }

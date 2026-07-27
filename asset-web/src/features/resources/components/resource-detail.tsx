@@ -53,7 +53,7 @@ export function ResourceDetail({
       <aside className="grid min-h-72 place-items-center border-l border-slate-200 bg-slate-50/60 text-slate-400">
         <span className="grid justify-items-center gap-3 text-sm">
           <Database size={30} />
-          Select a resource to inspect it
+          Select a resource or directory to inspect it
         </span>
       </aside>
     );

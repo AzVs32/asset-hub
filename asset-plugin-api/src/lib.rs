@@ -32,13 +32,18 @@ pub type PluginWebAssets = std::collections::HashMap<
 pub mod action;
 pub mod content;
 pub mod diagnostic;
+pub mod directory;
 pub mod manifest;
 pub mod policy;
 pub mod request;
 pub mod view;
 
 pub use action::{
-    ResourceAction, ResourceActionAccess, ResourceActionAppliesTo, ResourceActionContentDelivery,
+    ActionAccess, ActionDefinition, ActionExecutorKind, ActionId, ActionOutputContract,
+    ActionUi as ActionDefinitionUi, DirectoryAction, DirectoryActionAccess,
+    DirectoryActionAppliesTo, DirectoryActionDefinition, DirectoryActionExecutorKind,
+    DirectoryActionOutputContract, DirectoryActionRequirements, DirectoryActionUi, ResourceAction,
+    ResourceActionAccess, ResourceActionAppliesTo, ResourceActionContentDelivery,
     ResourceActionDefinition, ResourceActionExecutorKind, ResourceActionOutputContract,
     ResourceActionRequirements, ResourceActionUi, ResourceContentMatcher,
 };
@@ -47,12 +52,20 @@ pub use content::{
     ContentRangeError, PluginContentRange,
 };
 pub use diagnostic::{PluginActionFailure, PluginDiagnostic, PluginDiagnosticSeverity};
+pub use directory::{
+    CreateChildDirectoryEffect, DIRECTORY_HOST_API_VERSION, DIRECTORY_LIST_CHILDREN_FN,
+    DIRECTORY_LIST_RESOURCES_FN, DirectoryActionEffect, DirectoryPluginActionOutput,
+    PluginDirectory, PluginDirectoryActionRequest, PluginDirectoryChild, PluginDirectoryPage,
+    PluginDirectoryResource, PluginDirectoryResourcePage, UpdateDirectoryEffect,
+};
 pub use manifest::{
-    ActionAppliesTo, ActionRequirements, ActionUi, ContentDelivery, DirectoryKindCapability,
-    FilesystemPermission, MANIFEST_VERSION, ManifestActionAccess, NetworkPermission,
-    PLUGIN_API_VERSION, PluginCapabilities, PluginDescriptor, PluginManifest, PluginManifestLock,
-    PluginPermission, PluginPermissions, PluginRuntime, PluginRuntimeLock, PluginWeb,
-    PluginWebLock, ResourceActionCapability, ResourceKindCapability,
+    ActionAppliesTo, ActionRequirements, ActionUi, ContentDelivery,
+    DirectoryActionAppliesToCapability, DirectoryActionCapability,
+    DirectoryActionRequirementsCapability, DirectoryKindCapability, FilesystemPermission,
+    MANIFEST_VERSION, ManifestActionAccess, NetworkPermission, PLUGIN_API_VERSION,
+    PluginCapabilities, PluginDescriptor, PluginManifest, PluginManifestLock, PluginPermission,
+    PluginPermissions, PluginRuntime, PluginRuntimeLock, PluginWeb, PluginWebLock,
+    ResourceActionCapability, ResourceKindCapability,
 };
 pub use policy::{InvalidPluginExecutionPolicy, PluginExecutionPolicy};
 pub use request::{

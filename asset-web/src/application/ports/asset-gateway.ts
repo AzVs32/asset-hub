@@ -1,7 +1,9 @@
 import type { CurrentUser, ManagedUser, UserStatus } from "@/domain/auth";
-import type { JsonObject, PluginActionOutput } from "@/domain/plugin";
+import type { DirectoryPluginActionOutput, JsonObject, PluginActionOutput } from "@/domain/plugin";
 import type {
   Directory,
+  DirectoryAction,
+  DirectoryKind,
   DirectoryListing,
   Resource,
   ResourceDraft,
@@ -16,6 +18,7 @@ export interface AssetGateway {
   logout(): Promise<void>;
 
   listResourceKinds(): Promise<ResourceKind[]>;
+  listDirectoryKinds(): Promise<DirectoryKind[]>;
   listDirectory(filters: ResourceFilters, signal?: AbortSignal): Promise<DirectoryListing>;
   findResource(id: string): Promise<Resource>;
   createResource(draft: ResourceDraft): Promise<Resource>;
@@ -23,7 +26,12 @@ export interface AssetGateway {
   restoreResource(id: string): Promise<Resource>;
   deleteResource(id: string): Promise<Resource>;
   uploadResource(draft: UploadDraft): Promise<Resource>;
-  createDirectory(parentPath: string, name: string): Promise<Directory>;
+  createDirectory(parentPath: string, name: string, kind?: string): Promise<Directory>;
+  executeDirectoryAction(
+    directory: Directory,
+    action: DirectoryAction,
+    input?: JsonObject,
+  ): Promise<DirectoryPluginActionOutput>;
 
   executeAction(
     resource: Resource,

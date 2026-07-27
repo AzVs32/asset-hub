@@ -4,6 +4,9 @@ export const hostSlots = {
   resourceListThumbnail: "resource_list_thumbnail",
   resourceDetailPanel: "resource_detail_panel",
   resourceDetailAside: "resource_detail_aside",
+  directoryToolbar: "directory_toolbar",
+  directoryContextMenu: "directory_context_menu",
+  directoryDetail: "directory_detail",
 } as const;
 
 export type HostSlot = (typeof hostSlots)[keyof typeof hostSlots];
@@ -13,6 +16,21 @@ export const hostSlotCatalog: ReadonlyArray<{
   behavior: "action" | "menu" | "automatic_view";
   description: string;
 }> = [
+  {
+    id: hostSlots.directoryToolbar,
+    behavior: "action",
+    description: "Actions for the currently open directory.",
+  },
+  {
+    id: hostSlots.directoryContextMenu,
+    behavior: "menu",
+    description: "Entries in a directory row context menu.",
+  },
+  {
+    id: hostSlots.directoryDetail,
+    behavior: "action",
+    description: "Actions in the selected directory detail panel.",
+  },
   {
     id: hostSlots.resourceDetailActions,
     behavior: "action",

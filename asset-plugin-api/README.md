@@ -9,6 +9,7 @@ version from another.
 | Manifest | `3` | `manifest_version` | The authoring document structure or declaration semantics break |
 | Plugin JSON API | `asset-hub.plugin-api@0.4` | `runtime.plugin_api` | Handler request, success output, or failure wire contracts break |
 | Content ABI | `1` | `content_ref.abi_version` | A host function signature, handle lifecycle, or range-read contract breaks |
+| Directory Host API | `1` | `DIRECTORY_HOST_API_VERSION` | Directory pagination functions, cursors, or page shapes break |
 
 ## Rust crate version
 
@@ -55,11 +56,24 @@ independent of the JSON API because the JSON contains only an opaque reference a
 or handle ownership/lifetime requires a new ABI version. Guests must reject unknown ABI versions
 before calling host functions.
 
+## Directory actions and Host API
+
+Resource and directory actions share the normalized action shell (ID, label, handler, access,
+executor, views, and UI locations), while keeping target contracts separate. Resource actions own
+content matching, delivery requirements, and `replace_content`; directory actions own kind matching,
+children/resources requirements, and constrained `update` or `create_child` effects.
+
+A directory handler receives one aggregate snapshot plus an opaque, call-scoped `directory_ref`.
+It can page direct children through `asset_hub_directory_list_children` and direct resources through
+`asset_hub_directory_list_resources`. The host validates `directory.children.list` and
+`directory.resources.list` independently, caps each page at 100 items, and invalidates the reference
+when the action call ends. The reference cannot select another directory or request a whole subtree.
+
 ## Release checklist
 
 For every protocol change:
 
-1. Classify the change against all four surfaces and bump only the affected versions.
+1. Classify the change against all five surfaces and bump only the affected versions.
 2. Update Manifest Serde and host-validation tests when relevant.
 3. Replace the JSON golden fixtures with the new current wire contract.
 4. Build bundled plugins against the new Rust crate and verify their sealed packages.

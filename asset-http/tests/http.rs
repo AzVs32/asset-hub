@@ -16,6 +16,7 @@ use bytes::Bytes;
 use futures_util::stream;
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::PathBuf;
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -102,6 +103,185 @@ async fn resource_kinds_are_listed_and_unsupported_kind_is_rejected() {
             .unwrap()
             .contains("unsupported resource kind")
     );
+}
+
+#[tokio::test]
+async fn directory_kinds_and_directory_capabilities_are_exposed() {
+    let app = test_app("directory-kinds").await;
+    let (status, kinds) = empty_json_request(&app, Method::GET, "/directory-kinds").await;
+
+    assert_eq!(status, StatusCode::OK);
+    let default = kinds["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|kind| kind["kind"] == "core:directory")
+        .unwrap();
+    assert!(default["parent"].is_null());
+    assert_eq!(default["label"], "Directory");
+    assert_eq!(default["source"], "plugin:core.directory");
+    let download = default["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|action| action["id"] == "core.directory.download")
+        .unwrap();
+    assert_eq!(download["access"], "read_only");
+    assert_eq!(download["executor"]["type"], "builtin");
+    assert_eq!(
+        download["executor"]["handler"],
+        "builtin.directory.download"
+    );
+    assert_eq!(download["output"]["view"], json!(["download"]));
+
+    let (status, directory) = json_request(
+        &app,
+        Method::POST,
+        "/directories",
+        json!({
+            "parent_path": "",
+            "name": "typed",
+            "kind": "core:directory"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{directory}");
+    assert_eq!(directory["kind"], "core:directory");
+    assert!(has_directory_action(&directory, "core.directory.download"));
+
+    let (status, listing) = empty_json_request(&app, Method::GET, "/directories").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(listing["directory"]["kind"], "core:directory");
+    let listed = listing["folders"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|folder| folder["id"] == directory["id"])
+        .unwrap();
+    assert_eq!(listed["kind"], "core:directory");
+    assert!(has_directory_action(listed, "core.directory.download"));
+
+    let (status, error) = json_request(
+        &app,
+        Method::POST,
+        "/directories",
+        json!({
+            "parent_path": "",
+            "name": "unsupported",
+            "kind": "plugin:not-installed"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        error["error"]
+            .as_str()
+            .unwrap()
+            .contains("unsupported directory kind")
+    );
+}
+
+#[tokio::test]
+async fn directory_download_action_archives_nested_resources_and_empty_directories() {
+    let app = test_app("directory-download").await;
+    let (status, directory) = json_request(
+        &app,
+        Method::POST,
+        "/directories",
+        json!({"parent_path": "", "name": "bundle"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{directory}");
+    let directory_id = directory["id"].as_str().unwrap();
+
+    let (status, _) = json_request(
+        &app,
+        Method::POST,
+        "/directories",
+        json!({"parent_path": "bundle", "name": "empty"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (status, _) = stream_upload(
+        &app,
+        "/resources/content/stream?name=top.txt&directory=bundle",
+        "text/plain",
+        b"top-level",
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (status, _) = stream_upload(
+        &app,
+        "/resources/content/stream?name=readme.txt&directory=bundle%2Fnested",
+        "text/plain",
+        b"nested-content",
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let (status, output) = json_request(
+        &app,
+        Method::POST,
+        &format!("/directories/{directory_id}/actions/core.directory.download"),
+        json!({"input": {}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{output}");
+    assert_eq!(output["view"]["view"], "download");
+    assert_eq!(output["view"]["mime_type"], "application/zip");
+    assert_eq!(output["view"]["filename"], "bundle.zip");
+    assert_eq!(
+        output["view"]["url"],
+        format!("/directories/{directory_id}/download")
+    );
+
+    let response = request(
+        &app,
+        Request::builder()
+            .method(Method::GET)
+            .uri(format!("/directories/{directory_id}/download"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CONTENT_TYPE], "application/zip");
+    assert!(
+        response.headers()[header::CONTENT_DISPOSITION]
+            .to_str()
+            .unwrap()
+            .contains("bundle.zip")
+    );
+    let body = to_bytes(response.into_body(), BODY_LIMIT).await.unwrap();
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(body)).unwrap();
+    let mut names = (0..archive.len())
+        .map(|index| archive.by_index(index).unwrap().name().to_string())
+        .collect::<Vec<_>>();
+    names.sort();
+    assert_eq!(
+        names,
+        vec![
+            "bundle/",
+            "bundle/empty/",
+            "bundle/nested/",
+            "bundle/nested/readme.txt",
+            "bundle/top.txt",
+        ]
+    );
+    let mut top = String::new();
+    archive
+        .by_name("bundle/top.txt")
+        .unwrap()
+        .read_to_string(&mut top)
+        .unwrap();
+    assert_eq!(top, "top-level");
+    let mut nested = String::new();
+    archive
+        .by_name("bundle/nested/readme.txt")
+        .unwrap()
+        .read_to_string(&mut nested)
+        .unwrap();
+    assert_eq!(nested, "nested-content");
 }
 
 #[tokio::test]
@@ -276,6 +456,23 @@ async fn action_endpoint_has_a_dedicated_request_body_limit() {
         Request::builder()
             .method(Method::POST)
             .uri("/resources/01900000-0000-7000-8000-000000000000/actions/example")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(oversized))
+            .unwrap(),
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+
+    let oversized = format!(
+        "{{\"input\":{{\"value\":\"{}\"}}}}",
+        "x".repeat(MAX_ACTION_REQUEST_BYTES)
+    );
+    let response = request(
+        &app,
+        Request::builder()
+            .method(Method::POST)
+            .uri("/directories/00000000-0000-0000-0000-000000000000/actions/example")
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(oversized))
             .unwrap(),
@@ -1104,6 +1301,17 @@ async fn openapi_exposes_current_http_contract() {
     );
     assert!(document["paths"].get("/resources/content/stream").is_some());
     assert!(document["paths"].get("/resources/{id}/download").is_some());
+    assert!(document["paths"].get("/directory-kinds").is_some());
+    assert!(
+        document["paths"]
+            .get("/directories/{id}/download")
+            .is_some()
+    );
+    assert!(
+        document["paths"]
+            .get("/directories/{id}/actions/{action}")
+            .is_some()
+    );
     assert!(document["paths"].get("/resources/{id}/read").is_none());
     assert!(document["paths"].get("/resources/{id}/preview").is_none());
     assert!(document["paths"].get("/resources/{id}/thumbnail").is_none());
@@ -1871,6 +2079,12 @@ async fn response_json(response: axum::response::Response) -> Value {
 
 fn has_action(resource: &Value, id: &str) -> bool {
     resource["actions"]["available_actions"]
+        .as_array()
+        .is_some_and(|actions| actions.iter().any(|action| action["id"] == id))
+}
+
+fn has_directory_action(directory: &Value, id: &str) -> bool {
+    directory["actions"]["available_actions"]
         .as_array()
         .is_some_and(|actions| actions.iter().any(|action| action["id"] == id))
 }

@@ -1,16 +1,23 @@
 use super::action::resolved_content_delivery;
 use super::content::hex_sha256;
 use super::*;
-use crate::domain::{Checksum, ChecksumKind, Directory, DirectoryId, DirectoryPath, ResourceId};
+use crate::domain::{
+    AccessContext, Checksum, ChecksumKind, Directory, DirectoryId, DirectoryPath, ResourceId, User,
+    UserId, UserRole,
+};
 use crate::port::{
-    BlobByteStream, BlobWriteResult, DirectoryLocation, DirectoryRepository, ListResources,
-    LocatedResource, ResourceActionOutput, ResourceActionRequest, ResourceKindDefinition,
-    ResourceKindRegistry, ResourcePage, ScannedStorageEntry, StoragePrefix,
+    BlobByteStream, BlobWriteResult, DirectoryActionExecutor, DirectoryActionOutput,
+    DirectoryActionRegistry, DirectoryActionRequest, DirectoryIndex, DirectoryKindDefinition,
+    DirectoryKindRegistry, DirectoryLocation, DirectoryQuery, DirectoryStore, ListResources,
+    LocatedDirectory, LocatedResource, ResourceActionOutput, ResourceActionRequest,
+    ResourceKindDefinition, ResourceKindRegistry, ResourcePage, ScannedStorageEntry, StoragePrefix,
+    UserRepository,
 };
 use asset_plugin_api::{
-    PluginActionEffect, PluginActionOutput, PluginExecutionPolicy, PluginReplacementEncoding,
-    PluginView, ReplaceContentEffect, ResourceActionAccess, ResourceActionDefinition,
-    ResourceContentMatcher, TextView,
+    DirectoryActionAccess, DirectoryActionDefinition, DirectoryActionEffect,
+    DirectoryPluginActionOutput, PluginActionEffect, PluginActionOutput, PluginExecutionPolicy,
+    PluginReplacementEncoding, PluginView, ReplaceContentEffect, ResourceActionAccess,
+    ResourceActionDefinition, ResourceContentMatcher, TextView, UpdateDirectoryEffect,
 };
 use async_trait::async_trait;
 use base64::Engine;
@@ -250,8 +257,18 @@ impl ResourceQuery for InMemoryResourceRepository {
 }
 
 #[async_trait::async_trait]
-impl DirectoryRepository for InMemoryResourceRepository {
-    async fn save_directory(&self, directory: &Directory) -> Result<(), CoreError> {
+impl DirectoryStore for InMemoryResourceRepository {
+    async fn load_all(&self) -> Result<Vec<Directory>, CoreError> {
+        Ok(self
+            .directories
+            .lock()
+            .unwrap()
+            .values()
+            .map(|(directory, _)| directory.clone())
+            .collect())
+    }
+
+    async fn insert(&self, directory: &Directory) -> Result<(), CoreError> {
         let parent_id = directory
             .parent_id()
             .ok_or_else(|| CoreError::configuration("only the fixed root may lack a parent"))?;
@@ -270,71 +287,22 @@ impl DirectoryRepository for InMemoryResourceRepository {
         Ok(())
     }
 
-    async fn find_directory(&self, id: &DirectoryId) -> Result<Option<Directory>, CoreError> {
-        Ok(self
-            .directories
-            .lock()
-            .unwrap()
-            .get(id)
-            .map(|(directory, _)| directory.clone()))
-    }
-
-    async fn locate_by_id(&self, id: &DirectoryId) -> Result<Option<DirectoryLocation>, CoreError> {
-        Ok(self
-            .directories
-            .lock()
-            .unwrap()
-            .get(id)
-            .map(|(_, path)| DirectoryLocation::new(*id, path.clone())))
-    }
-
-    async fn locate_by_path(
+    async fn save_if_unchanged(
         &self,
-        path: &DirectoryPath,
-    ) -> Result<Option<DirectoryLocation>, CoreError> {
-        Ok(self
+        directory: &Directory,
+        expected_updated_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, CoreError> {
+        let current = self
             .directories
             .lock()
             .unwrap()
-            .iter()
-            .find(|(_, (_, candidate))| candidate == path)
-            .map(|(id, _)| DirectoryLocation::new(*id, path.clone())))
-    }
-
-    async fn list_children(
-        &self,
-        parent_id: &DirectoryId,
-    ) -> Result<Vec<DirectoryLocation>, CoreError> {
-        let directories = self.directories.lock().unwrap();
-        let mut children = directories
-            .iter()
-            .filter(|(_, (directory, _))| directory.parent_id() == Some(*parent_id))
-            .map(|(id, (_, path))| DirectoryLocation::new(*id, path.clone()))
-            .collect::<Vec<_>>();
-        children.sort_by(|left, right| left.path().cmp(right.path()));
-        Ok(children)
-    }
-
-    async fn ensure_path(&self, path: &DirectoryPath) -> Result<DirectoryLocation, CoreError> {
-        if let Some(directory) = self.locate_by_path(path).await? {
-            return Ok(directory);
+            .get(&directory.id())
+            .cloned();
+        if !current.is_some_and(|(current, _)| current.updated_at() == expected_updated_at) {
+            return Ok(false);
         }
-        let mut parent = DirectoryLocation::root();
-        for name in path.path().split('/').filter(|name| !name.is_empty()) {
-            let next_path = parent.path().child(name)?;
-            if let Some(existing) = self.locate_by_path(&next_path).await? {
-                parent = existing;
-            } else {
-                let directory = Directory::new(parent.id(), name)?;
-                let reference = DirectoryLocation::new(directory.id(), next_path);
-                self.directories
-                    .lock()
-                    .unwrap()
-                    .insert(directory.id(), (directory, reference.path().clone()));
-                parent = reference;
-            }
-        }
-        Ok(parent)
+        self.insert(directory).await?;
+        Ok(true)
     }
 
     async fn remove_if_empty(&self, id: &DirectoryId) -> Result<bool, CoreError> {
@@ -354,6 +322,52 @@ impl DirectoryRepository for InMemoryResourceRepository {
         }
         Ok(directories.remove(id).is_some())
     }
+}
+
+#[async_trait::async_trait]
+impl DirectoryQuery for InMemoryResourceRepository {
+    async fn find_by_id(&self, id: &DirectoryId) -> Result<Option<LocatedDirectory>, CoreError> {
+        self.directories
+            .lock()
+            .unwrap()
+            .get(id)
+            .cloned()
+            .map(|(directory, path)| {
+                LocatedDirectory::new(directory, DirectoryLocation::new(*id, path))
+            })
+            .transpose()
+    }
+
+    async fn find_by_path(
+        &self,
+        path: &DirectoryPath,
+    ) -> Result<Option<LocatedDirectory>, CoreError> {
+        self.directories
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(_, (_, candidate))| candidate == path)
+            .map(|(id, (directory, _))| {
+                LocatedDirectory::new(directory.clone(), DirectoryLocation::new(*id, path.clone()))
+            })
+            .transpose()
+    }
+
+    async fn list_children(
+        &self,
+        parent_id: &DirectoryId,
+    ) -> Result<Vec<LocatedDirectory>, CoreError> {
+        let directories = self.directories.lock().unwrap();
+        let mut children = directories
+            .iter()
+            .filter(|(_, (directory, _))| directory.parent_id() == Some(*parent_id))
+            .map(|(id, (directory, path))| {
+                LocatedDirectory::new(directory.clone(), DirectoryLocation::new(*id, path.clone()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        children.sort_by(|left, right| left.path().cmp(right.path()));
+        Ok(children)
+    }
 
     async fn is_descendant_or_self(
         &self,
@@ -371,6 +385,71 @@ impl DirectoryRepository for InMemoryResourceRepository {
                 .and_then(|(directory, _)| directory.parent_id());
         }
         Ok(false)
+    }
+}
+
+#[async_trait::async_trait]
+impl DirectoryIndex for InMemoryResourceRepository {
+    async fn replace_all(&self, directories: Vec<Directory>) -> Result<(), CoreError> {
+        let mut indexed = HashMap::new();
+        indexed.insert(
+            DirectoryId::root(),
+            (Directory::root(), DirectoryPath::root()),
+        );
+        let mut pending = directories
+            .into_iter()
+            .filter(|directory| !directory.id().is_root())
+            .collect::<Vec<_>>();
+        while !pending.is_empty() {
+            let before = pending.len();
+            pending.retain(|directory| {
+                let Some(parent_id) = directory.parent_id() else {
+                    return true;
+                };
+                let Some((_, parent_path)) = indexed.get(&parent_id) else {
+                    return true;
+                };
+                let path = parent_path.child(directory.name()).unwrap();
+                indexed.insert(directory.id(), (directory.clone(), path));
+                false
+            });
+            if pending.len() == before {
+                return Err(CoreError::configuration("invalid directory test index"));
+            }
+        }
+        *self.directories.lock().unwrap() = indexed;
+        Ok(())
+    }
+
+    async fn upsert(&self, directory: Directory) -> Result<(), CoreError> {
+        self.insert(&directory).await
+    }
+
+    async fn remove(&self, id: &DirectoryId) -> Result<(), CoreError> {
+        self.directories.lock().unwrap().remove(id);
+        Ok(())
+    }
+}
+
+struct InMemoryDirectoryKindRegistry {
+    definitions: Vec<DirectoryKindDefinition>,
+}
+
+impl Default for InMemoryDirectoryKindRegistry {
+    fn default() -> Self {
+        Self {
+            definitions: vec![DirectoryKindDefinition::with_source(
+                crate::domain::DirectoryKind::default(),
+                "Directory",
+                "test",
+            )],
+        }
+    }
+}
+
+impl DirectoryKindRegistry for InMemoryDirectoryKindRegistry {
+    fn definitions(&self) -> &[DirectoryKindDefinition] {
+        &self.definitions
     }
 }
 
@@ -397,6 +476,16 @@ struct InMemoryResourceActionRegistry {
 
 impl ResourceActionRegistry for InMemoryResourceActionRegistry {
     fn actions(&self) -> &[ResourceActionDefinition] {
+        &self.actions
+    }
+}
+
+struct InMemoryDirectoryActionRegistry {
+    actions: Vec<DirectoryActionDefinition>,
+}
+
+impl DirectoryActionRegistry for InMemoryDirectoryActionRegistry {
+    fn actions(&self) -> &[DirectoryActionDefinition] {
         &self.actions
     }
 }
@@ -703,6 +792,63 @@ impl ResourceActionExecutor for StaticResourceActionExecutor {
     }
 }
 
+#[derive(Debug, Default)]
+struct StaticDirectoryActionExecutor;
+
+#[async_trait]
+impl DirectoryActionExecutor for StaticDirectoryActionExecutor {
+    async fn execute(
+        &self,
+        request: DirectoryActionRequest,
+    ) -> Result<DirectoryActionOutput, CoreError> {
+        let parent_id = request
+            .input()
+            .get("parent_id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+        let mut output = DirectoryPluginActionOutput::new(PluginView::Text(TextView {
+            text: "updated".to_string(),
+        }));
+        output
+            .effects
+            .push(DirectoryActionEffect::Update(UpdateDirectoryEffect {
+                name: None,
+                parent_id,
+                kind: None,
+            }));
+        Ok(DirectoryActionOutput::new(
+            request.directory().id(),
+            request.action().clone(),
+            output,
+        ))
+    }
+}
+
+struct SingleUserRepository(User);
+
+#[async_trait]
+impl UserRepository for SingleUserRepository {
+    async fn create(&self, _user: &User) -> Result<(), CoreError> {
+        Ok(())
+    }
+
+    async fn save(&self, _user: &User) -> Result<(), CoreError> {
+        Ok(())
+    }
+
+    async fn find_by_id(&self, id: &UserId) -> Result<Option<User>, CoreError> {
+        Ok((self.0.id() == *id).then(|| self.0.clone()))
+    }
+
+    async fn find_by_username(&self, username: &str) -> Result<Option<User>, CoreError> {
+        Ok((self.0.username() == username).then(|| self.0.clone()))
+    }
+
+    async fn count(&self) -> Result<u64, CoreError> {
+        Ok(1)
+    }
+}
+
 fn block_on<F: Future>(future: F) -> F::Output {
     let mut context = Context::from_waker(Waker::noop());
     let mut future = std::pin::pin!(future);
@@ -791,15 +937,64 @@ fn service() -> (
             repository.clone(),
             blob_storage.clone(),
             repository.clone(),
+            repository.clone(),
             blob_storage.clone(),
+            Arc::new(InMemoryDirectoryKindRegistry::default()),
             blob_storage.clone(),
             kind_registry,
         )
-        .with_actions(action_registry, Arc::new(StaticResourceActionExecutor)),
+        .with_actions(action_registry, Arc::new(StaticResourceActionExecutor))
+        .with_directory_actions(
+            Arc::new(InMemoryDirectoryActionRegistry {
+                actions: vec![
+                    DirectoryActionDefinition::new("test.directory.move", "Move directory")
+                        .with_kinds(["core:directory"])
+                        .with_handler("move_directory")
+                        .with_access(DirectoryActionAccess::ReadWrite)
+                        .with_output(output_contract(["text"])),
+                ],
+            }),
+            Arc::new(StaticDirectoryActionExecutor),
+        ),
         Arc::new(test_plugin_execution_policy()),
     );
 
     (service, repository, blob_storage)
+}
+
+#[test]
+fn directory_action_cannot_move_a_directory_outside_the_member_workspace() {
+    let (service, _, _) = service();
+    let root = block_on(service.directory_service().root()).unwrap();
+    let workspace = block_on(service.directory_service().create(&root, "workspace")).unwrap();
+    let outside = block_on(service.directory_service().create(&root, "outside")).unwrap();
+    let inside = block_on(service.directory_service().create(&workspace, "inside")).unwrap();
+    let user = User::new("member", "hash", UserRole::Member, workspace.id()).unwrap();
+    let context = AccessContext::member(user.id());
+    let authorization = crate::service::AuthorizationService::new(
+        Arc::new(SingleUserRepository(user)),
+        service.directory_service().clone(),
+    );
+
+    let error = block_on(
+        service
+            .secured(&authorization, &context)
+            .execute_directory_action(
+                &inside.id(),
+                crate::service::ExecuteDirectoryAction::new("test.directory.move")
+                    .with_input(serde_json::json!({"parent_id": outside.id().to_string()})),
+            ),
+    )
+    .unwrap_err();
+
+    assert!(matches!(error, CoreError::Forbidden { .. }));
+    assert_eq!(
+        block_on(service.directory_service().locate_by_id(&inside.id()))
+            .unwrap()
+            .path()
+            .path(),
+        "workspace/inside"
+    );
 }
 
 #[test]
@@ -811,16 +1006,24 @@ fn storage_reconciliation_creates_updates_and_removes_resources() {
     block_on(blob_storage.put(&key, Bytes::from_static(b"first"))).unwrap();
 
     block_on(service.reconcile_storage()).unwrap();
-    let first = block_on(repository.find_by_path(&directory, "note.txt"))
-        .unwrap()
-        .unwrap();
+    let first = block_on(ResourceQuery::find_by_path(
+        repository.as_ref(),
+        &directory,
+        "note.txt",
+    ))
+    .unwrap()
+    .unwrap();
     assert_eq!(first.resource().content().unwrap().size(), 5);
 
     block_on(blob_storage.put(&key, Bytes::from_static(b"second version"))).unwrap();
     block_on(service.reconcile_storage_keys(std::slice::from_ref(&key))).unwrap();
-    let updated = block_on(repository.find_by_path(&directory, "note.txt"))
-        .unwrap()
-        .unwrap();
+    let updated = block_on(ResourceQuery::find_by_path(
+        repository.as_ref(),
+        &directory,
+        "note.txt",
+    ))
+    .unwrap()
+    .unwrap();
     assert_eq!(updated.resource().id(), first.resource().id());
     assert_eq!(updated.resource().content().unwrap().size(), 14);
     assert_ne!(
@@ -831,9 +1034,13 @@ fn storage_reconciliation_creates_updates_and_removes_resources() {
     block_on(blob_storage.delete(&key)).unwrap();
     block_on(service.reconcile_storage_keys(std::slice::from_ref(&key))).unwrap();
     assert!(
-        block_on(repository.find_by_path(&directory, "note.txt"))
-            .unwrap()
-            .is_none()
+        block_on(ResourceQuery::find_by_path(
+            repository.as_ref(),
+            &directory,
+            "note.txt",
+        ))
+        .unwrap()
+        .is_none()
     );
 }
 
@@ -873,9 +1080,13 @@ fn storage_reconciliation_preserves_spaces_in_discovered_paths() {
 
     block_on(service.reconcile_storage()).unwrap();
 
-    let resource = block_on(repository.find_by_path(&directory, name))
-        .unwrap()
-        .unwrap();
+    let resource = block_on(ResourceQuery::find_by_path(
+        repository.as_ref(),
+        &directory,
+        name,
+    ))
+    .unwrap()
+    .unwrap();
     assert_eq!(resource.resource().name(), name);
     assert_eq!(
         block_on(service.locate_resource_directory(resource.resource()))
@@ -909,21 +1120,33 @@ fn storage_reconciliation_preserves_resource_id_on_file_rename() {
     block_on(blob_storage.ensure_directory(&to_directory)).unwrap();
     block_on(blob_storage.put(&from, Bytes::from_static(b"content"))).unwrap();
     block_on(service.reconcile_storage()).unwrap();
-    let original = block_on(repository.find_by_path(&from_directory, "book.txt"))
-        .unwrap()
-        .unwrap();
+    let original = block_on(ResourceQuery::find_by_path(
+        repository.as_ref(),
+        &from_directory,
+        "book.txt",
+    ))
+    .unwrap()
+    .unwrap();
 
     block_on(blob_storage.move_if_absent(&from, &to)).unwrap();
     block_on(service.reconcile_storage_rename(&from, &to)).unwrap();
-    let renamed = block_on(repository.find_by_path(&to_directory, "renamed.txt"))
-        .unwrap()
-        .unwrap();
+    let renamed = block_on(ResourceQuery::find_by_path(
+        repository.as_ref(),
+        &to_directory,
+        "renamed.txt",
+    ))
+    .unwrap()
+    .unwrap();
 
     assert_eq!(renamed.resource().id(), original.resource().id());
     assert!(
-        block_on(repository.find_by_path(&from_directory, "book.txt"))
-            .unwrap()
-            .is_none()
+        block_on(ResourceQuery::find_by_path(
+            repository.as_ref(),
+            &from_directory,
+            "book.txt",
+        ))
+        .unwrap()
+        .is_none()
     );
 }
 
@@ -942,9 +1165,13 @@ fn storage_reconciliation_does_not_delete_resources_after_stream_failure() {
     assert!(block_on(service.reconcile_storage()).is_err());
 
     assert!(
-        block_on(repository.find_by_path(&directory, "b.txt"))
-            .unwrap()
-            .is_some()
+        block_on(ResourceQuery::find_by_path(
+            repository.as_ref(),
+            &directory,
+            "b.txt",
+        ))
+        .unwrap()
+        .is_some()
     );
 }
 
@@ -1059,7 +1286,9 @@ fn service_with_registry(
             repository.clone(),
             blob_storage.clone(),
             repository.clone(),
+            repository.clone(),
             blob_storage.clone(),
+            Arc::new(InMemoryDirectoryKindRegistry::default()),
             blob_storage.clone(),
             kind_registry,
         ),

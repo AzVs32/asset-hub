@@ -1,6 +1,8 @@
 use crate::dto::{
     BinaryContent, ChecksumResponse, CreateDirectoryRequest, CreateResourceRequest,
-    DirectoryListingResponse, DirectoryResponse, ErrorResponse, ExecuteResourceActionRequest,
+    DirectoryActionDefinitionResponse, DirectoryActionOutputResponse, DirectoryActionsResponse,
+    DirectoryKindResponse, DirectoryKindsResponse, DirectoryListingResponse, DirectoryResponse,
+    ErrorResponse, ExecuteDirectoryActionRequest, ExecuteResourceActionRequest,
     HealthComponentResponse, HealthResponse, PluginDiagnosticResponse,
     ResourceActionDefinitionResponse, ResourceActionOutputResponse, ResourceActionsResponse,
     ResourceContentResponse, ResourceKindResponse, ResourceKindsResponse, ResourcePageResponse,
@@ -38,15 +40,18 @@ impl Modify for CookieSecurity {
         auth::routes::list_security_audit_events,
         handlers::maintenance::health,
         handlers::resource::list_resource_kinds,
+        handlers::resource::list_directory_kinds,
         handlers::resource::list_resources,
         handlers::resource::list_directory,
         handlers::resource::create_directory,
+        handlers::resource::execute_directory_action,
         handlers::resource::create_resource,
         handlers::content::upload_resource_content_stream,
         handlers::resource::find_resource,
         handlers::resource::update_resource,
         handlers::content::get_resource_content,
         handlers::content::download_resource_content,
+        handlers::content::download_directory,
         handlers::resource::execute_resource_action,
         handlers::resource::soft_delete_resource,
         handlers::resource::remove_resource
@@ -58,8 +63,14 @@ impl Modify for CookieSecurity {
             CreateResourceRequest,
             CreateDirectoryRequest,
             DirectoryListingResponse,
+            DirectoryKindResponse,
+            DirectoryKindsResponse,
+            DirectoryActionDefinitionResponse,
+            DirectoryActionOutputResponse,
+            DirectoryActionsResponse,
             ErrorResponse,
             ExecuteResourceActionRequest,
+            ExecuteDirectoryActionRequest,
             PluginDiagnosticResponse,
             HealthResponse,
             HealthComponentResponse,
@@ -87,7 +98,8 @@ impl Modify for CookieSecurity {
     security(("cookie_auth" = [])),
     tags(
         (name = "system", description = "系统状态接口"),
-        (name = "resources", description = "资源管理接口")
+        (name = "resources", description = "资源管理接口"),
+        (name = "directories", description = "目录管理接口")
         ,(name = "authentication", description = "登录和用户管理接口")
     )
 )]

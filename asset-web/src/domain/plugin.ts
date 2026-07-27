@@ -40,3 +40,10 @@ export interface PluginActionOutput {
   view: PluginView;
   diagnostics: PluginDiagnostic[];
 }
+
+export interface DirectoryPluginActionOutput {
+  directoryId: string;
+  action: string;
+  view: PluginView;
+  diagnostics: PluginDiagnostic[];
+}

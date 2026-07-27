@@ -13,6 +13,7 @@ describe("resource listing navigation", () => {
     const requestedDirectories: string[] = [];
     const gateway = {
       listResourceKinds: async () => [],
+      listDirectoryKinds: async () => [],
       listDirectory: async (filters: ResourceFilters) => {
         requestedDirectories.push(filters.directory);
         return {
@@ -44,12 +45,25 @@ describe("resource listing navigation", () => {
     await waitFor(() => expect(requestedDirectories).toContain("images"));
     expect(result.current.browser.filters.directory).toBe("images");
 
+    act(() => result.current.browser.selectDirectory("directory-1"));
+    await waitFor(() => {
+      expect(result.current.browser.selectedDirectoryId).toBe("directory-1");
+      expect(result.current.browser.selectedId).toBeNull();
+    });
+
+    act(() => result.current.browser.selectResource("resource-2"));
+    await waitFor(() => {
+      expect(result.current.browser.selectedId).toBe("resource-2");
+      expect(result.current.browser.selectedDirectoryId).toBeNull();
+    });
+
     act(() => result.current.browser.openDirectory("images/raw"));
     await waitFor(() => {
       expect(result.current.location.pathname).toBe("/images/raw");
       expect(result.current.location.search).toBe("?q=photo");
       expect(result.current.browser.filters.directory).toBe("images/raw");
       expect(result.current.browser.selectedId).toBeNull();
+      expect(result.current.browser.selectedDirectoryId).toBeNull();
     });
 
     act(() => result.current.browser.openDirectory(""));

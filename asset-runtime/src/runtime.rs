@@ -210,7 +210,7 @@ mod tests {
         for _ in 0..100 {
             if runtime
                 .infrastructure
-                .directory_repository()
+                .directory_index()
                 .list_children(&asset_core::domain::DirectoryId::root())
                 .await
                 .unwrap()
@@ -228,7 +228,7 @@ mod tests {
         for _ in 0..100 {
             if runtime
                 .infrastructure
-                .directory_repository()
+                .directory_index()
                 .list_children(&asset_core::domain::DirectoryId::root())
                 .await
                 .unwrap()

@@ -255,7 +255,8 @@ fn parse_status(value: &str) -> Result<UserStatus, CoreError> {
 mod tests {
     use super::*;
     use crate::sqlite::SqliteResourceRepository;
-    use asset_core::port::{DirectoryRepository, UserQuery, UserRepository};
+    use asset_core::domain::Directory;
+    use asset_core::port::{DirectoryStore, UserQuery, UserRepository};
     use sqlx::sqlite::SqlitePoolOptions;
 
     #[tokio::test]
@@ -267,8 +268,10 @@ mod tests {
             .unwrap();
         let directories = SqliteResourceRepository::from_pool(pool.clone());
         directories.run_migrations().await.unwrap();
-        let workspace = directories
-            .ensure_path(&DirectoryPath::from_path("teams/alice").unwrap())
+        let teams = Directory::new(DirectoryId::root(), "teams").unwrap();
+        DirectoryStore::insert(&directories, &teams).await.unwrap();
+        let workspace = Directory::new(teams.id(), "alice").unwrap();
+        DirectoryStore::insert(&directories, &workspace)
             .await
             .unwrap();
         let repository = SqliteIdentityRepository::new(pool);
@@ -279,6 +282,6 @@ mod tests {
 
         assert_eq!(users.len(), 1);
         assert_eq!(users[0].user().id(), user.id());
-        assert_eq!(users[0].workspace().path(), workspace.path());
+        assert_eq!(users[0].workspace().path().path(), "teams/alice");
     }
 }

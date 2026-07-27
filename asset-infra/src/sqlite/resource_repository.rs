@@ -5,8 +5,8 @@ use asset_core::domain::{
     ResourceContent, ResourceId, ResourceKind, ResourceSnapshot, ResourceStatus,
 };
 use asset_core::port::{
-    DirectoryLocation, DirectoryRepository, ListResources, LocatedResource, ResourcePage,
-    ResourceQuery, ResourceRepository,
+    DirectoryLocation, DirectoryStore, ListResources, LocatedResource, ResourcePage, ResourceQuery,
+    ResourceRepository,
 };
 use chrono::{DateTime, Utc};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow};
@@ -80,27 +80,6 @@ const RESOURCE_AGGREGATE_SELECT: &str = r#"
         resources.updated_at,
         resources.deleted_at
     FROM resources
-"#;
-
-const DIRECTORY_LOCATION_SELECT: &str = r#"
-    WITH RECURSIVE directory_paths(
-        id, parent_id, name, kind, metadata_json, created_at, updated_at, path
-    ) AS (
-        SELECT id, parent_id, name, kind, metadata_json, created_at, updated_at, ''
-        FROM directories
-        WHERE id = '00000000-0000-0000-0000-000000000000'
-        UNION ALL
-        SELECT child.id, child.parent_id, child.name, child.kind, child.metadata_json,
-               child.created_at, child.updated_at,
-               CASE
-                   WHEN parent.path = '' THEN child.name
-                   ELSE parent.path || '/' || child.name
-               END
-        FROM directories child
-        JOIN directory_paths parent ON child.parent_id = parent.id
-    )
-    SELECT id, parent_id, name, kind, metadata_json, created_at, updated_at, path
-    FROM directory_paths
 "#;
 
 /// SQLite 版本的资源聚合仓储。
@@ -406,8 +385,42 @@ impl ResourceQuery for SqliteResourceRepository {
 }
 
 #[async_trait::async_trait]
-impl DirectoryRepository for SqliteResourceRepository {
-    async fn save_directory(&self, directory: &Directory) -> Result<(), CoreError> {
+impl DirectoryStore for SqliteResourceRepository {
+    async fn load_all(&self) -> Result<Vec<Directory>, CoreError> {
+        let rows = sqlx::query(
+            "SELECT id, parent_id, name, kind, created_at, updated_at FROM directories",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| CoreError::repository("directory.load_all", error))?;
+        rows.into_iter().map(decode_directory).collect()
+    }
+
+    async fn insert(&self, directory: &Directory) -> Result<(), CoreError> {
+        sqlx::query(
+            r#"
+            INSERT INTO directories (
+                id, parent_id, name, kind, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(directory.id().to_string())
+        .bind(directory.parent_id().map(|id| id.to_string()))
+        .bind(directory.name())
+        .bind(directory.kind().as_str())
+        .bind(encode_timestamp(directory.created_at()))
+        .bind(encode_timestamp(directory.updated_at()))
+        .execute(&self.pool)
+        .await
+        .map_err(map_directory_write_error("directory.insert"))?;
+        Ok(())
+    }
+
+    async fn save_if_unchanged(
+        &self,
+        directory: &Directory,
+        expected_updated_at: DateTime<Utc>,
+    ) -> Result<bool, CoreError> {
         let mut transaction = self
             .pool
             .begin()
@@ -441,141 +454,27 @@ impl DirectoryRepository for SqliteResourceRepository {
                 ));
             }
         }
-        let metadata = serde_json::to_string(directory.metadata())
-            .map_err(|error| CoreError::repository("directory.encode_metadata", error))?;
-        sqlx::query(
+        let result = sqlx::query(
             r#"
-            INSERT INTO directories (
-                id, parent_id, name, kind, metadata_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                parent_id = excluded.parent_id,
-                name = excluded.name,
-                kind = excluded.kind,
-                metadata_json = excluded.metadata_json,
-                updated_at = excluded.updated_at
+            UPDATE directories
+            SET parent_id = ?, name = ?, kind = ?, updated_at = ?
+            WHERE id = ? AND updated_at = ?
             "#,
         )
-        .bind(directory.id().to_string())
         .bind(directory.parent_id().map(|id| id.to_string()))
         .bind(directory.name())
         .bind(directory.kind().as_str())
-        .bind(metadata)
-        .bind(encode_timestamp(directory.created_at()))
         .bind(encode_timestamp(directory.updated_at()))
+        .bind(directory.id().to_string())
+        .bind(encode_timestamp(expected_updated_at))
         .execute(&mut *transaction)
         .await
-        .map_err(|error| {
-            if error.to_string().contains("UNIQUE") {
-                CoreError::conflict("a directory with the same name already exists")
-            } else {
-                CoreError::repository("directory.save", error)
-            }
-        })?;
+        .map_err(map_directory_write_error("directory.save_if_unchanged"))?;
         transaction
             .commit()
             .await
             .map_err(|error| CoreError::repository("directory.save.commit", error))?;
-        Ok(())
-    }
-
-    async fn find_directory(&self, id: &DirectoryId) -> Result<Option<Directory>, CoreError> {
-        let row = sqlx::query(
-            r#"
-            SELECT id, parent_id, name, kind, metadata_json, created_at, updated_at
-            FROM directories
-            WHERE id = ?
-            "#,
-        )
-        .bind(id.to_string())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|error| CoreError::repository("directory.find_by_id", error))?;
-        row.map(decode_directory).transpose()
-    }
-
-    async fn locate_by_id(&self, id: &DirectoryId) -> Result<Option<DirectoryLocation>, CoreError> {
-        let statement = format!("{DIRECTORY_LOCATION_SELECT} WHERE id = ?");
-        let row = sqlx::query(&statement)
-            .bind(id.to_string())
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|error| CoreError::repository("directory.locate_by_id", error))?;
-        row.map(decode_directory_location).transpose()
-    }
-
-    async fn locate_by_path(
-        &self,
-        path: &DirectoryPath,
-    ) -> Result<Option<DirectoryLocation>, CoreError> {
-        let statement = format!("{DIRECTORY_LOCATION_SELECT} WHERE path = ?");
-        let row = sqlx::query(&statement)
-            .bind(path.path())
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|error| CoreError::repository("directory.find_by_path", error))?;
-        row.map(decode_directory_location).transpose()
-    }
-
-    async fn list_children(
-        &self,
-        parent_id: &DirectoryId,
-    ) -> Result<Vec<DirectoryLocation>, CoreError> {
-        let statement =
-            format!("{DIRECTORY_LOCATION_SELECT} WHERE parent_id = ? ORDER BY name COLLATE BINARY");
-        let rows = sqlx::query(&statement)
-            .bind(parent_id.to_string())
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|error| CoreError::repository("directory.list_children", error))?;
-        rows.into_iter().map(decode_directory_location).collect()
-    }
-
-    async fn ensure_path(&self, path: &DirectoryPath) -> Result<DirectoryLocation, CoreError> {
-        if path.is_root() {
-            return Ok(DirectoryLocation::root());
-        }
-        let mut transaction = self
-            .pool
-            .begin()
-            .await
-            .map_err(|error| CoreError::repository("directory.ensure.begin", error))?;
-        let mut parent_id = DirectoryId::root();
-        let mut current_path = DirectoryPath::root();
-        for name in path.path().split('/') {
-            current_path = current_path.child(name)?;
-            let existing = sqlx::query_scalar::<_, String>(
-                "SELECT id FROM directories WHERE parent_id = ? AND name = ?",
-            )
-            .bind(parent_id.to_string())
-            .bind(name)
-            .fetch_optional(&mut *transaction)
-            .await
-            .map_err(|error| CoreError::repository("directory.ensure.find_child", error))?;
-            parent_id = match existing {
-                Some(id) => decode_directory_id(id)?,
-                None => {
-                    let directory = Directory::new(parent_id, name)?;
-                    insert_directory(&mut transaction, &directory).await?;
-                    let id = sqlx::query_scalar::<_, String>(
-                        "SELECT id FROM directories WHERE parent_id = ? AND name = ?",
-                    )
-                    .bind(parent_id.to_string())
-                    .bind(name)
-                    .fetch_one(&mut *transaction)
-                    .await
-                    .map_err(|error| {
-                        CoreError::repository("directory.ensure.read_inserted_child", error)
-                    })?;
-                    decode_directory_id(id)?
-                }
-            };
-        }
-        transaction
-            .commit()
-            .await
-            .map_err(|error| CoreError::repository("directory.ensure.commit", error))?;
-        Ok(DirectoryLocation::new(parent_id, current_path))
+        Ok(result.rows_affected() == 1)
     }
 
     async fn remove_if_empty(&self, id: &DirectoryId) -> Result<bool, CoreError> {
@@ -596,30 +495,15 @@ impl DirectoryRepository for SqliteResourceRepository {
         .map_err(|error| CoreError::repository("directory.remove_if_empty", error))?;
         Ok(result.rows_affected() == 1)
     }
+}
 
-    async fn is_descendant_or_self(
-        &self,
-        ancestor_id: &DirectoryId,
-        candidate_id: &DirectoryId,
-    ) -> Result<bool, CoreError> {
-        let found = sqlx::query_scalar::<_, i64>(
-            r#"
-            WITH RECURSIVE subtree(id) AS (
-                SELECT id FROM directories WHERE id = ?
-                UNION ALL
-                SELECT child.id
-                FROM directories child
-                JOIN subtree parent ON child.parent_id = parent.id
-            )
-            SELECT EXISTS(SELECT 1 FROM subtree WHERE id = ?)
-            "#,
-        )
-        .bind(ancestor_id.to_string())
-        .bind(candidate_id.to_string())
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|error| CoreError::repository("directory.is_descendant", error))?;
-        Ok(found != 0)
+fn map_directory_write_error(operation: &'static str) -> impl FnOnce(sqlx::Error) -> CoreError {
+    move |error| {
+        if error.to_string().contains("UNIQUE") {
+            CoreError::conflict("a directory with the same name already exists")
+        } else {
+            CoreError::repository(operation, error)
+        }
     }
 }
 
@@ -789,33 +673,6 @@ async fn delete_orphan_tags(transaction: &mut Transaction<'_, Sqlite>) -> Result
     Ok(())
 }
 
-async fn insert_directory(
-    transaction: &mut Transaction<'_, Sqlite>,
-    directory: &Directory,
-) -> Result<(), CoreError> {
-    let metadata = serde_json::to_string(directory.metadata())
-        .map_err(|error| CoreError::repository("directory.encode_metadata", error))?;
-    sqlx::query(
-        r#"
-        INSERT INTO directories (
-            id, parent_id, name, kind, metadata_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(parent_id, name) DO NOTHING
-        "#,
-    )
-    .bind(directory.id().to_string())
-    .bind(directory.parent_id().map(|id| id.to_string()))
-    .bind(directory.name())
-    .bind(directory.kind().as_str())
-    .bind(metadata)
-    .bind(encode_timestamp(directory.created_at()))
-    .bind(encode_timestamp(directory.updated_at()))
-    .execute(&mut **transaction)
-    .await
-    .map_err(|error| CoreError::repository("directory.insert", error))?;
-    Ok(())
-}
-
 fn column<T>(row: &SqliteRow, name: &'static str) -> Result<T, CoreError>
 where
     for<'row> T: sqlx::Decode<'row, Sqlite> + sqlx::Type<Sqlite>,
@@ -836,16 +693,7 @@ fn decode_directory_id(value: String) -> Result<DirectoryId, CoreError> {
         .map_err(|error| CoreError::repository("directory.decode_id", error))
 }
 
-fn decode_directory_location(row: SqliteRow) -> Result<DirectoryLocation, CoreError> {
-    Ok(DirectoryLocation::new(
-        decode_directory_id(column(&row, "id")?)?,
-        DirectoryPath::from_path(column::<String>(&row, "path")?)?,
-    ))
-}
-
 fn decode_directory(row: SqliteRow) -> Result<Directory, CoreError> {
-    let metadata = serde_json::from_str(&column::<String>(&row, "metadata_json")?)
-        .map_err(|error| CoreError::repository("directory.decode_metadata", error))?;
     Directory::rehydrate(DirectorySnapshot {
         id: decode_directory_id(column(&row, "id")?)?,
         parent_id: column::<Option<String>>(&row, "parent_id")?
@@ -853,7 +701,6 @@ fn decode_directory(row: SqliteRow) -> Result<Directory, CoreError> {
             .transpose()?,
         name: column(&row, "name")?,
         kind: DirectoryKind::try_new(column::<String>(&row, "kind")?)?,
-        metadata,
         created_at: decode_timestamp(column(&row, "created_at")?)?,
         updated_at: decode_timestamp(column(&row, "updated_at")?)?,
     })

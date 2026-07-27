@@ -1,16 +1,70 @@
 use super::*;
 use asset_core::domain::{Checksum, ResourceContent, StorageKey};
-use asset_core::port::{DirectoryRepository, ListResources};
+use asset_core::port::{
+    DirectoryKindDefinition, DirectoryKindRegistry, DirectoryStorage, DirectoryStore,
+    ListResources, ResourceRepository,
+};
+use asset_core::service::{DirectoryService, UpdateDirectory};
 use std::path::PathBuf;
+use std::sync::Arc;
+
+struct TestDirectoryStorage;
+
+#[async_trait::async_trait]
+impl DirectoryStorage for TestDirectoryStorage {
+    async fn ensure_directory(&self, _directory: &DirectoryPath) -> Result<(), CoreError> {
+        Ok(())
+    }
+    async fn move_directory(
+        &self,
+        _from: &DirectoryPath,
+        _to: &DirectoryPath,
+    ) -> Result<(), CoreError> {
+        Ok(())
+    }
+}
+
+struct TestDirectoryKinds(Vec<DirectoryKindDefinition>);
+
+impl Default for TestDirectoryKinds {
+    fn default() -> Self {
+        Self(vec![DirectoryKindDefinition::with_source(
+            DirectoryKind::default(),
+            "Directory",
+            "test",
+        )])
+    }
+}
+
+impl DirectoryKindRegistry for TestDirectoryKinds {
+    fn definitions(&self) -> &[DirectoryKindDefinition] {
+        &self.0
+    }
+}
+
+async fn directory_service(repository: Arc<SqliteResourceRepository>) -> DirectoryService {
+    let index = Arc::new(
+        crate::directory_index::InMemoryDirectoryIndex::from_directories(
+            DirectoryStore::load_all(repository.as_ref()).await.unwrap(),
+        )
+        .unwrap(),
+    );
+    DirectoryService::new(
+        repository,
+        index,
+        Arc::new(TestDirectoryStorage),
+        Arc::new(TestDirectoryKinds::default()),
+    )
+}
 
 async fn resource_storage_key(
-    repository: &SqliteResourceRepository,
+    repository: &Arc<SqliteResourceRepository>,
     resource: &Resource,
 ) -> StorageKey {
-    let directory = repository
+    let directory = directory_service(repository.clone())
+        .await
         .locate_by_id(&resource.directory_id())
         .await
-        .unwrap()
         .unwrap();
     StorageKey::from_resource_path(directory.path(), resource.name()).unwrap()
 }
@@ -18,6 +72,7 @@ async fn resource_storage_key(
 #[tokio::test]
 async fn sqlite_repository_roundtrips_resource() {
     let repository = repository("roundtrip").await;
+    let directories = directory_service(repository.clone()).await;
     let checksum = Checksum::sha256("a".repeat(64)).unwrap();
     let modified_at = chrono::DateTime::parse_from_rfc3339("2026-07-23T03:00:00Z")
         .unwrap()
@@ -27,7 +82,7 @@ async fn sqlite_repository_roundtrips_resource() {
         .with_modified_at(modified_at)
         .build()
         .unwrap();
-    let assets = repository
+    let assets = directories
         .ensure_path(&DirectoryPath::from_path("assets").unwrap())
         .await
         .unwrap();
@@ -108,7 +163,8 @@ async fn sqlite_repository_updates_tags() {
 #[tokio::test]
 async fn sqlite_path_lookup_ignores_soft_deleted_resource_and_finds_replacement() {
     let repository = repository("replace-soft-deleted-path").await;
-    let docs = repository
+    let directories = directory_service(repository.clone()).await;
+    let docs = directories
         .ensure_path(&DirectoryPath::from_path("docs").unwrap())
         .await
         .unwrap();
@@ -289,8 +345,7 @@ async fn conditional_save_rejects_a_stale_resource_snapshot() {
     let mut stale = resource.clone();
     stale.rename("stale").unwrap();
     assert!(
-        !repository
-            .save_if_unchanged(&stale, expected)
+        !ResourceRepository::save_if_unchanged(repository.as_ref(), &stale, expected)
             .await
             .unwrap()
     );
@@ -302,6 +357,40 @@ async fn conditional_save_rejects_a_stale_resource_snapshot() {
             .unwrap()
             .name(),
         "concurrent"
+    );
+}
+
+#[tokio::test]
+async fn directory_store_rejects_a_stale_aggregate_snapshot() {
+    let repository = repository("conditional-directory-save").await;
+    let directories = directory_service(repository.clone()).await;
+    let located = directories
+        .create_with_kind(
+            &directories.root().await.unwrap(),
+            "library",
+            DirectoryKind::default(),
+        )
+        .await
+        .unwrap();
+    let expected = located.directory().updated_at();
+    let mut stale = located.directory().clone();
+
+    directories.rename(&located.id(), "current").await.unwrap();
+    stale.rename("stale").unwrap();
+
+    assert!(
+        !DirectoryStore::save_if_unchanged(repository.as_ref(), &stale, expected)
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        directories
+            .find_by_id(&located.id())
+            .await
+            .unwrap()
+            .directory()
+            .name(),
+        "current"
     );
 }
 
@@ -357,19 +446,20 @@ async fn conditional_remove_rejects_a_stale_resource_snapshot() {
 #[tokio::test]
 async fn directory_tree_derives_paths_from_stable_ids_after_rename_and_move() {
     let repository = repository("directory-tree").await;
-    let games = repository
+    let directories = directory_service(repository.clone()).await;
+    let games = directories
         .ensure_path(&DirectoryPath::from_path("Games").unwrap())
         .await
         .unwrap();
-    let title = repository
+    let title = directories
         .ensure_path(&DirectoryPath::from_path("Games/Title").unwrap())
         .await
         .unwrap();
-    let data = repository
+    let data = directories
         .ensure_path(&DirectoryPath::from_path("Games/Title/data").unwrap())
         .await
         .unwrap();
-    let archive = repository
+    let archive = directories
         .ensure_path(&DirectoryPath::from_path("Archive").unwrap())
         .await
         .unwrap();
@@ -379,29 +469,21 @@ async fn directory_tree_derives_paths_from_stable_ids_after_rename_and_move() {
         .unwrap();
     repository.save(&resource).await.unwrap();
 
-    let mut title_aggregate = repository
-        .find_directory(&title.id())
-        .await
-        .unwrap()
-        .unwrap();
-    title_aggregate.rename("Renamed").unwrap();
-    repository.save_directory(&title_aggregate).await.unwrap();
+    directories.rename(&title.id(), "Renamed").await.unwrap();
 
     assert_eq!(
-        repository
+        directories
             .locate_by_id(&title.id())
             .await
-            .unwrap()
             .unwrap()
             .path()
             .path(),
         "Games/Renamed"
     );
     assert_eq!(
-        repository
+        directories
             .locate_by_id(&data.id())
             .await
-            .unwrap()
             .unwrap()
             .path()
             .path(),
@@ -421,18 +503,14 @@ async fn directory_tree_derives_paths_from_stable_ids_after_rename_and_move() {
         "Games/Renamed/data/game.dat"
     );
 
-    let mut games_aggregate = repository
-        .find_directory(&games.id())
+    directories
+        .move_to(&games.id(), &archive.id())
         .await
-        .unwrap()
         .unwrap();
-    games_aggregate.move_to(archive.id()).unwrap();
-    repository.save_directory(&games_aggregate).await.unwrap();
     assert_eq!(
-        repository
+        directories
             .locate_by_id(&data.id())
             .await
-            .unwrap()
             .unwrap()
             .path()
             .path(),
@@ -443,28 +521,32 @@ async fn directory_tree_derives_paths_from_stable_ids_after_rename_and_move() {
 #[tokio::test]
 async fn directory_repository_rejects_cycles() {
     let repository = repository("directory-cycle").await;
-    let parent = repository
+    let directories = directory_service(repository.clone()).await;
+    let parent = directories
         .ensure_path(&DirectoryPath::from_path("parent").unwrap())
         .await
         .unwrap();
-    let child = repository
+    let child = directories
         .ensure_path(&DirectoryPath::from_path("parent/child").unwrap())
         .await
         .unwrap();
-    let mut parent_aggregate = repository
-        .find_directory(&parent.id())
-        .await
-        .unwrap()
-        .unwrap();
-    parent_aggregate.move_to(child.id()).unwrap();
-
-    assert!(repository.save_directory(&parent_aggregate).await.is_err());
+    assert!(
+        directories
+            .update(
+                &parent.id(),
+                UpdateDirectory::new().with_parent_id(child.id())
+            )
+            .await
+            .is_err()
+    );
 }
 
-async fn repository(name: &str) -> SqliteResourceRepository {
-    SqliteResourceRepository::connect(&unique_temp_path(name).join("asset-hub.sqlite"), 1)
-        .await
-        .unwrap()
+async fn repository(name: &str) -> Arc<SqliteResourceRepository> {
+    Arc::new(
+        SqliteResourceRepository::connect(&unique_temp_path(name).join("asset-hub.sqlite"), 1)
+            .await
+            .unwrap(),
+    )
 }
 
 fn unique_temp_path(name: &str) -> PathBuf {

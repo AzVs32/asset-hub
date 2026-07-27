@@ -6,9 +6,10 @@
 use crate::CoreError;
 use crate::domain::{Resource, ResourceKind, StorageKey};
 use crate::port::{
-    BlobStorage, DirectoryLocation, DirectoryRepository, DirectoryStorage, ResourceActionExecutor,
-    ResourceActionRegistry, ResourceKindRegistry, ResourceQuery, ResourceRepository,
-    StorageScanner,
+    BlobStorage, DirectoryActionExecutor, DirectoryActionRegistry, DirectoryIndex,
+    DirectoryKindRegistry, DirectoryLocation, DirectoryStorage, DirectoryStore,
+    ResourceActionExecutor, ResourceActionRegistry, ResourceKindRegistry, ResourceQuery,
+    ResourceRepository, StorageScanner,
 };
 use crate::service::DirectoryService;
 use asset_plugin_api::{PluginExecutionPolicy, ResourceActionDefinition};
@@ -25,8 +26,9 @@ use action::ResourceActionService;
 use command::ResourceCommandService;
 use content::ResourceContentService;
 pub use contract::{
-    CreateResource, ExecuteResourceAction, ResourceActions, ResourceContentCommand,
-    ResourceContentStream, UpdateResource, UploadResourceContentStream,
+    CreateResource, DirectoryArchiveManifest, DirectoryArchiveResource, ExecuteResourceAction,
+    ResourceActions, ResourceContentCommand, ResourceContentStream, UpdateResource,
+    UploadResourceContentStream,
 };
 pub use reconciliation::StorageReconciliationReport;
 use reconciliation::StorageReconciliationService;
@@ -55,6 +57,12 @@ struct ResourceActionPorts {
     executor: Arc<dyn ResourceActionExecutor>,
 }
 
+#[derive(Clone)]
+struct DirectoryActionPorts {
+    registry: Arc<dyn DirectoryActionRegistry>,
+    executor: Arc<dyn DirectoryActionExecutor>,
+}
+
 /// `ResourceService` 所需的 Host Port 装配。
 ///
 /// 写模型、读模型、Blob、目录聚合仓储、物理目录、扫描器和 kind 注册表是必选端口；
@@ -63,11 +71,14 @@ pub struct ResourceServicePorts {
     repository: Arc<dyn ResourceRepository>,
     query: Arc<dyn ResourceQuery>,
     blob_storage: Arc<dyn BlobStorage>,
-    directory_repository: Arc<dyn DirectoryRepository>,
+    directory_store: Arc<dyn DirectoryStore>,
+    directory_index: Arc<dyn DirectoryIndex>,
     directory_storage: Arc<dyn DirectoryStorage>,
+    directory_kind_registry: Arc<dyn DirectoryKindRegistry>,
     storage_scanner: Arc<dyn StorageScanner>,
     kind_registry: Arc<dyn ResourceKindRegistry>,
     action_ports: Option<ResourceActionPorts>,
+    directory_action_ports: Option<DirectoryActionPorts>,
 }
 
 impl ResourceServicePorts {
@@ -75,8 +86,10 @@ impl ResourceServicePorts {
         repository: Arc<dyn ResourceRepository>,
         query: Arc<dyn ResourceQuery>,
         blob_storage: Arc<dyn BlobStorage>,
-        directory_repository: Arc<dyn DirectoryRepository>,
+        directory_store: Arc<dyn DirectoryStore>,
+        directory_index: Arc<dyn DirectoryIndex>,
         directory_storage: Arc<dyn DirectoryStorage>,
+        directory_kind_registry: Arc<dyn DirectoryKindRegistry>,
         storage_scanner: Arc<dyn StorageScanner>,
         kind_registry: Arc<dyn ResourceKindRegistry>,
     ) -> Self {
@@ -84,11 +97,14 @@ impl ResourceServicePorts {
             repository,
             query,
             blob_storage,
-            directory_repository,
+            directory_store,
+            directory_index,
             directory_storage,
+            directory_kind_registry,
             storage_scanner,
             kind_registry,
             action_ports: None,
+            directory_action_ports: None,
         }
     }
 
@@ -98,6 +114,15 @@ impl ResourceServicePorts {
         executor: Arc<dyn ResourceActionExecutor>,
     ) -> Self {
         self.action_ports = Some(ResourceActionPorts { registry, executor });
+        self
+    }
+
+    pub fn with_directory_actions(
+        mut self,
+        registry: Arc<dyn DirectoryActionRegistry>,
+        executor: Arc<dyn DirectoryActionExecutor>,
+    ) -> Self {
+        self.directory_action_ports = Some(DirectoryActionPorts { registry, executor });
         self
     }
 }
@@ -112,22 +137,38 @@ impl ResourceService {
             repository,
             query,
             blob_storage,
-            directory_repository,
+            directory_store,
+            directory_index,
             directory_storage,
+            directory_kind_registry,
             storage_scanner,
             kind_registry,
             action_ports,
+            directory_action_ports,
         } = ports;
+        let mut directories = DirectoryService::new(
+            directory_store,
+            directory_index,
+            directory_storage,
+            directory_kind_registry,
+        );
+        if let Some(ports) = directory_action_ports {
+            directories = directories.with_actions(ports.registry, ports.executor);
+        }
         Self {
             repository,
             query,
             blob_storage,
-            directories: DirectoryService::new(directory_repository, directory_storage),
+            directories,
             storage_scanner,
             kind_registry,
             action_ports,
             plugin_execution_policy,
         }
+    }
+
+    pub fn directory_service(&self) -> &DirectoryService {
+        &self.directories
     }
 
     fn commands(&self) -> ResourceCommandService<'_> {

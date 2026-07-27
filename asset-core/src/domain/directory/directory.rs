@@ -2,7 +2,6 @@ use super::{DirectoryKind, MAX_DIRECTORY_SEGMENT_LEN, validate_required_text_exa
 use crate::error::DirectoryError;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 crate::gen_id_uuid_v7!(DirectoryId);
 
@@ -20,14 +19,13 @@ impl DirectoryId {
 /// 独立的目录聚合根。
 ///
 /// 聚合只保存自身及直接父目录标识，不加载子树。完整路径、祖先链和后代列表属于查询
-/// 模型，由 DirectoryRepository 使用递归查询组合。
+/// 模型，由可重建的 DirectoryIndex 查询投影组合。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Directory {
     id: DirectoryId,
     parent_id: Option<DirectoryId>,
     name: String,
     kind: DirectoryKind,
-    metadata: Value,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -38,20 +36,26 @@ pub struct DirectorySnapshot {
     pub parent_id: Option<DirectoryId>,
     pub name: String,
     pub kind: DirectoryKind,
-    pub metadata: Value,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
 impl Directory {
     pub fn new(parent_id: DirectoryId, name: impl Into<String>) -> Result<Self, DirectoryError> {
+        Self::new_with_kind(parent_id, name, DirectoryKind::default())
+    }
+
+    pub fn new_with_kind(
+        parent_id: DirectoryId,
+        name: impl Into<String>,
+        kind: DirectoryKind,
+    ) -> Result<Self, DirectoryError> {
         let now = Utc::now();
         Self::rehydrate(DirectorySnapshot {
             id: DirectoryId::new(),
             parent_id: Some(parent_id),
             name: name.into(),
-            kind: DirectoryKind::default(),
-            metadata: Value::Object(Default::default()),
+            kind,
             created_at: now,
             updated_at: now,
         })
@@ -64,7 +68,6 @@ impl Directory {
             parent_id: None,
             name: String::new(),
             kind: DirectoryKind::default(),
-            metadata: Value::Object(Default::default()),
             created_at: now,
             updated_at: now,
         }
@@ -87,18 +90,11 @@ impl Directory {
             }
             validate_directory_name(&snapshot.name)?;
         }
-        if !snapshot.metadata.is_object() {
-            return Err(DirectoryError::InvalidFormat {
-                field: "directory.metadata",
-                reason: "directory metadata must be a JSON object",
-            });
-        }
         Ok(Self {
             id: snapshot.id,
             parent_id: snapshot.parent_id,
             name: snapshot.name,
             kind: snapshot.kind,
-            metadata: snapshot.metadata,
             created_at: snapshot.created_at,
             updated_at: snapshot.updated_at,
         })
@@ -118,10 +114,6 @@ impl Directory {
 
     pub fn kind(&self) -> &DirectoryKind {
         &self.kind
-    }
-
-    pub fn metadata(&self) -> &Value {
-        &self.metadata
     }
 
     pub fn created_at(&self) -> DateTime<Utc> {
@@ -167,27 +159,11 @@ impl Directory {
         Ok(())
     }
 
-    pub fn change_kind(&mut self, kind: impl Into<String>) -> Result<(), DirectoryError> {
-        let kind = DirectoryKind::try_new(kind)?;
+    pub fn change_kind(&mut self, kind: DirectoryKind) {
         if self.kind != kind {
             self.kind = kind;
             self.touch();
         }
-        Ok(())
-    }
-
-    pub fn replace_metadata(&mut self, metadata: Value) -> Result<(), DirectoryError> {
-        if !metadata.is_object() {
-            return Err(DirectoryError::InvalidFormat {
-                field: "directory.metadata",
-                reason: "directory metadata must be a JSON object",
-            });
-        }
-        if self.metadata != metadata {
-            self.metadata = metadata;
-            self.touch();
-        }
-        Ok(())
     }
 
     fn touch(&mut self) {

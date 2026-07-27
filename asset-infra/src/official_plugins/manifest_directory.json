@@ -17,9 +17,30 @@
         "kind": "core:directory",
         "label": "Directory"
       }
+    ],
+    "directory_actions": [
+      {
+        "id": "core.directory.download",
+        "label": "Download",
+        "handler": "builtin.directory.download",
+        "applies_to": {
+          "kinds": ["core:directory"]
+        },
+        "access": "read",
+        "views": ["download"],
+        "ui": {
+          "group": "open",
+          "order": 10,
+          "locations": [
+            "directory_toolbar",
+            "directory_context_menu",
+            "directory_detail"
+          ]
+        }
+      }
     ]
   },
   "permissions": {
-    "allow": []
+    "allow": ["directory.read"]
   }
 }

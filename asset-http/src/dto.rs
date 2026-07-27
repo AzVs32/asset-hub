@@ -1,9 +1,11 @@
 use asset_core::domain::{Checksum, DirectoryPath, Resource, ResourceContent};
-use asset_core::port::{ResourceActionOutput, ResourceKindDefinition};
-use asset_core::service::ResourceActions;
+use asset_core::port::{
+    DirectoryActionOutput, DirectoryKindDefinition, ResourceActionOutput, ResourceKindDefinition,
+};
+use asset_core::service::{DirectoryActions, ResourceActions};
 use asset_plugin_api::{
-    PluginDiagnostic, PluginDiagnosticSeverity, ResourceActionAccess,
-    ResourceActionContentDelivery, ResourceActionDefinition, ResourceActionExecutorKind,
+    ActionAccess, ActionExecutorKind, DirectoryActionDefinition, PluginDiagnostic,
+    PluginDiagnosticSeverity, ResourceActionContentDelivery, ResourceActionDefinition,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -48,6 +50,8 @@ pub(crate) struct CreateDirectoryRequest {
     pub(crate) parent_path: DirectoryPath,
     /// 新目录名称，只允许单个路径段。
     pub(crate) name: String,
+    /// 可选目录类型。
+    pub(crate) kind: Option<String>,
 }
 
 /// 资源列表查询参数。
@@ -181,6 +185,46 @@ pub(crate) struct ResourceKindsResponse {
     pub(crate) items: Vec<ResourceKindResponse>,
 }
 
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct DirectoryKindsResponse {
+    pub(crate) items: Vec<DirectoryKindResponse>,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub(crate) struct DirectoryKindResponse {
+    pub(crate) kind: String,
+    pub(crate) parent: Option<String>,
+    pub(crate) ancestors: Vec<String>,
+    pub(crate) label: String,
+    pub(crate) actions: Vec<DirectoryActionDefinitionResponse>,
+    pub(crate) source: String,
+}
+
+impl DirectoryKindResponse {
+    pub(crate) fn from_definition(
+        definition: &DirectoryKindDefinition,
+        service: &asset_core::service::DirectoryService,
+    ) -> Self {
+        Self {
+            kind: definition.kind().as_str().to_string(),
+            parent: definition.parent().map(|kind| kind.as_str().to_string()),
+            ancestors: service
+                .kind_lineage(definition.kind())
+                .into_iter()
+                .skip(1)
+                .map(|kind| kind.as_str().to_string())
+                .collect(),
+            label: definition.label().to_string(),
+            actions: service
+                .describe_kind_actions(definition.kind())
+                .iter()
+                .map(DirectoryActionDefinitionResponse::from)
+                .collect(),
+            source: definition.source().to_string(),
+        }
+    }
+}
+
 /// 资源类型响应。
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub(crate) struct ResourceKindResponse {
@@ -258,6 +302,60 @@ pub(crate) struct ResourceActionDefinitionResponse {
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
+pub(crate) struct DirectoryActionDefinitionResponse {
+    pub(crate) id: String,
+    pub(crate) label: String,
+    pub(crate) description: Option<String>,
+    pub(crate) executor: ResourceActionExecutorResponse,
+    pub(crate) access: String,
+    pub(crate) requires: DirectoryActionRequirementsResponse,
+    pub(crate) output: ResourceActionOutputContractResponse,
+    pub(crate) ui: ResourceActionUiResponse,
+    pub(crate) applies_to: DirectoryActionAppliesToResponse,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub(crate) struct DirectoryActionRequirementsResponse {
+    pub(crate) children: bool,
+    pub(crate) resources: bool,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub(crate) struct DirectoryActionAppliesToResponse {
+    pub(crate) kinds: Vec<String>,
+}
+
+impl From<&DirectoryActionDefinition> for DirectoryActionDefinitionResponse {
+    fn from(action: &DirectoryActionDefinition) -> Self {
+        Self {
+            id: action.id().as_str().to_string(),
+            label: action.label().to_string(),
+            description: action.description().map(str::to_string),
+            executor: ResourceActionExecutorResponse {
+                kind: action_executor_text(action.executor()).to_string(),
+                handler: action.handler().map(str::to_string),
+            },
+            access: action_access_text(action.access()).to_string(),
+            requires: DirectoryActionRequirementsResponse {
+                children: action.requirements().children,
+                resources: action.requirements().resources,
+            },
+            output: ResourceActionOutputContractResponse {
+                view: action.output().view.clone(),
+            },
+            ui: ResourceActionUiResponse {
+                group: action.ui().group.clone(),
+                order: action.ui().order,
+                locations: action.ui().locations.clone(),
+            },
+            applies_to: DirectoryActionAppliesToResponse {
+                kinds: action.kinds().to_vec(),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub(crate) struct ResourceActionExecutorResponse {
     #[serde(rename = "type")]
     pub(crate) kind: String,
@@ -332,17 +430,17 @@ impl From<&ResourceActionDefinition> for ResourceActionDefinitionResponse {
     }
 }
 
-fn action_executor_text(executor: ResourceActionExecutorKind) -> &'static str {
+fn action_executor_text(executor: ActionExecutorKind) -> &'static str {
     match executor {
-        ResourceActionExecutorKind::Builtin => "builtin",
-        ResourceActionExecutorKind::Plugin => "plugin",
+        ActionExecutorKind::Builtin => "builtin",
+        ActionExecutorKind::Plugin => "plugin",
     }
 }
 
-fn action_access_text(access: ResourceActionAccess) -> &'static str {
+fn action_access_text(access: ActionAccess) -> &'static str {
     match access {
-        ResourceActionAccess::ReadOnly => "read_only",
-        ResourceActionAccess::ReadWrite => "read_write",
+        ActionAccess::ReadOnly => "read_only",
+        ActionAccess::ReadWrite => "read_write",
     }
 }
 
@@ -436,6 +534,25 @@ pub(crate) struct DirectoryResponse {
     pub(crate) parent_path: String,
     /// 当前目录名。
     pub(crate) name: String,
+    pub(crate) kind: String,
+    pub(crate) actions: DirectoryActionsResponse,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct DirectoryActionsResponse {
+    pub(crate) available_actions: Vec<DirectoryActionDefinitionResponse>,
+}
+
+impl From<DirectoryActions> for DirectoryActionsResponse {
+    fn from(actions: DirectoryActions) -> Self {
+        Self {
+            available_actions: actions
+                .available_actions()
+                .iter()
+                .map(DirectoryActionDefinitionResponse::from)
+                .collect(),
+        }
+    }
 }
 
 /// 目录浏览响应。
@@ -444,6 +561,8 @@ pub(crate) struct DirectoryListingResponse {
     /// 相对于当前用户可见根目录的当前路径。
     #[schema(value_type = String)]
     pub(crate) path: DirectoryPath,
+    /// 当前目录。
+    pub(crate) directory: DirectoryResponse,
     /// 直接子目录。
     pub(crate) folders: Vec<DirectoryResponse>,
     /// 当前目录下的资源分页。
@@ -463,6 +582,12 @@ pub(crate) struct ExecuteResourceActionRequest {
     pub(crate) input: Value,
 }
 
+#[derive(Debug, Deserialize, ToSchema)]
+pub(crate) struct ExecuteDirectoryActionRequest {
+    #[serde(default)]
+    pub(crate) input: Value,
+}
+
 /// 执行资源动作响应。
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct ResourceActionOutputResponse {
@@ -474,6 +599,31 @@ pub(crate) struct ResourceActionOutputResponse {
     pub(crate) view: Value,
     /// 插件返回的非致命诊断信息。
     pub(crate) diagnostics: Vec<PluginDiagnosticResponse>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct DirectoryActionOutputResponse {
+    pub(crate) directory_id: String,
+    pub(crate) action: String,
+    pub(crate) view: Value,
+    pub(crate) diagnostics: Vec<PluginDiagnosticResponse>,
+}
+
+impl From<&DirectoryActionOutput> for DirectoryActionOutputResponse {
+    fn from(output: &DirectoryActionOutput) -> Self {
+        Self {
+            directory_id: output.directory_id().to_string(),
+            action: output.action().as_str().to_string(),
+            view: serde_json::to_value(&output.output().view)
+                .expect("plugin view should serialize to JSON"),
+            diagnostics: output
+                .output()
+                .diagnostics
+                .iter()
+                .map(PluginDiagnosticResponse::from)
+                .collect(),
+        }
+    }
 }
 
 /// 插件或宿主产生的结构化诊断信息。

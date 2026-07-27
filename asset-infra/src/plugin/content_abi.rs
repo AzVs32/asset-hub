@@ -13,6 +13,7 @@ use futures_util::StreamExt;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use super::directory_abi::{HostDirectoryResolver, host_functions as directory_host_functions};
 use super::permissions::manifest_for_plugin;
 
 #[derive(Clone)]
@@ -87,6 +88,7 @@ pub(super) fn compile_plugin(
     wasi: bool,
     permissions: &PluginPermissions,
     host_content: &HostContentResolver,
+    host_directories: &HostDirectoryResolver,
     policy: &PluginExecutionPolicy,
 ) -> Result<Arc<CompiledPlugin>, CoreError> {
     let content_open = Function::new(
@@ -117,9 +119,17 @@ pub(super) fn compile_plugin(
         UserData::new(host_content.clone()),
         asset_hub_content_close,
     );
+    let [directory_children, directory_resources] = directory_host_functions(host_directories);
     PluginBuilder::new(manifest_for_plugin(wasm, permissions, policy))
         .with_wasi(wasi)
-        .with_functions([content_open, content_size, content_read, content_close])
+        .with_functions([
+            content_open,
+            content_size,
+            content_read,
+            content_close,
+            directory_children,
+            directory_resources,
+        ])
         .compile()
         .map(Arc::new)
         .map_err(|error| {

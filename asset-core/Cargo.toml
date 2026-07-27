@@ -19,6 +19,4 @@ base64.workspace = true
 bytes.workspace = true
 futures-core.workspace = true
 futures-util.workspace = true
-
-[dev-dependencies]
 tokio.workspace = true

@@ -2,7 +2,7 @@
 //!
 //! 本模块只描述调用方与资源应用服务交换的数据，不包含仓储或对象存储编排。
 
-use crate::domain::{DirectoryPath, ResourceKind, ResourceStatus};
+use crate::domain::{DirectoryPath, ResourceId, ResourceKind, ResourceStatus};
 use crate::port::BlobByteStream;
 use asset_plugin_api::{ResourceAction, ResourceActionDefinition};
 
@@ -240,5 +240,59 @@ impl ResourceContentStream {
 
     pub fn into_content(self) -> BlobByteStream {
         self.content
+    }
+}
+
+/// Authorized, point-in-time directory tree projection used to build a ZIP download.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectoryArchiveManifest {
+    filename: String,
+    directories: Vec<String>,
+    resources: Vec<DirectoryArchiveResource>,
+}
+
+impl DirectoryArchiveManifest {
+    pub(super) fn new(
+        filename: String,
+        directories: Vec<String>,
+        resources: Vec<DirectoryArchiveResource>,
+    ) -> Self {
+        Self {
+            filename,
+            directories,
+            resources,
+        }
+    }
+
+    pub fn filename(&self) -> &str {
+        &self.filename
+    }
+
+    pub fn directories(&self) -> &[String] {
+        &self.directories
+    }
+
+    pub fn resources(&self) -> &[DirectoryArchiveResource] {
+        &self.resources
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectoryArchiveResource {
+    resource_id: ResourceId,
+    path: String,
+}
+
+impl DirectoryArchiveResource {
+    pub(super) fn new(resource_id: ResourceId, path: String) -> Self {
+        Self { resource_id, path }
+    }
+
+    pub fn resource_id(&self) -> ResourceId {
+        self.resource_id
+    }
+
+    pub fn path(&self) -> &str {
+        &self.path
     }
 }

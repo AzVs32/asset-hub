@@ -4,17 +4,24 @@
 //! 编排，避免每个 transport 重复实现授权规则。
 
 use super::{
-    CreateResource, ExecuteResourceAction, ResourceContentStream, ResourceService, UpdateResource,
-    UploadResourceContentStream,
+    CreateResource, DirectoryArchiveManifest, DirectoryArchiveResource, ExecuteResourceAction,
+    ResourceContentStream, ResourceService, UpdateResource, UploadResourceContentStream,
 };
 use crate::CoreError;
-use crate::domain::{AccessContext, DirectoryPath, DirectoryPermission, Resource, ResourceId};
-use crate::port::{
-    DirectoryLocation, ListResources, LocatedResource, ResourceActionOutput, ResourcePage,
+use crate::domain::{
+    AccessContext, DirectoryId, DirectoryKind, DirectoryPath, DirectoryPermission, Resource,
+    ResourceId,
 };
-use crate::service::AuthorizationService;
-use asset_plugin_api::ResourceActionAccess;
+use crate::port::{
+    DirectoryActionOutput, DirectoryLocation, ListResources, LocatedDirectory, LocatedResource,
+    ResourceActionOutput, ResourcePage,
+};
+use crate::service::{AuthorizationService, ExecuteDirectoryAction};
+use asset_plugin_api::{DirectoryActionAccess, ResourceActionAccess};
 use bytes::Bytes;
+use std::collections::VecDeque;
+
+const DIRECTORY_ARCHIVE_PAGE_SIZE: u32 = 100;
 
 /// 绑定访问主体后的资源用例门面。外部用户入口应使用本门面，可信维护任务可继续使用原服务。
 pub struct SecuredResourceService<'a> {
@@ -117,19 +124,148 @@ impl<'a> SecuredResourceService<'a> {
     pub async fn list_directories(
         &self,
         directory: &DirectoryPath,
-    ) -> Result<Vec<DirectoryLocation>, CoreError> {
+    ) -> Result<Vec<LocatedDirectory>, CoreError> {
         let directory = self.resolve(directory).await?;
         let directory = self.service.directories.resolve_path(&directory).await?;
-        self.service.directories.list_children(&directory).await
+        self.require(&directory, DirectoryPermission::Read).await?;
+        self.service
+            .directories
+            .list_located_children(&directory.id())
+            .await
+    }
+    pub async fn find_directory(
+        &self,
+        path: &DirectoryPath,
+    ) -> Result<LocatedDirectory, CoreError> {
+        let path = self.resolve(path).await?;
+        let directory = self.service.directories.find_by_path(&path).await?;
+        self.require(directory.location(), DirectoryPermission::Read)
+            .await?;
+        Ok(directory)
+    }
+
+    pub async fn directory_archive_manifest(
+        &self,
+        id: &DirectoryId,
+    ) -> Result<DirectoryArchiveManifest, CoreError> {
+        let root = self.service.directories.find_by_id(id).await?;
+        self.require(root.location(), DirectoryPermission::Read)
+            .await?;
+        let archive_root = if root.id().is_root() {
+            "asset-hub".to_string()
+        } else {
+            root.directory().name().to_string()
+        };
+        let filename = format!("{archive_root}.zip");
+        let root_path = root.path().path().to_string();
+        let mut pending = VecDeque::from([root]);
+        let mut directories = Vec::new();
+        let mut resources = Vec::new();
+
+        while let Some(directory) = pending.pop_front() {
+            if !self
+                .service
+                .directories
+                .contains(id, &directory.id())
+                .await?
+            {
+                continue;
+            }
+            let archive_path =
+                directory_archive_path(&archive_root, &root_path, directory.path().path())?;
+            directories.push(format!("{archive_path}/"));
+
+            let mut offset = 0;
+            loop {
+                let page = self
+                    .service
+                    .commands()
+                    .list_resources(
+                        ListResources::new(DIRECTORY_ARCHIVE_PAGE_SIZE, offset)
+                            .with_directory_id(directory.id()),
+                    )
+                    .await?;
+                let item_count = page.items.len() as u64;
+                resources.extend(page.items.into_iter().filter_map(|located| {
+                    let resource = located.resource();
+                    resource.content().map(|_| {
+                        DirectoryArchiveResource::new(
+                            resource.id(),
+                            format!("{archive_path}/{}", resource.name()),
+                        )
+                    })
+                }));
+                offset += item_count;
+                if offset >= page.total || item_count == 0 {
+                    break;
+                }
+            }
+
+            pending.extend(
+                self.service
+                    .directories
+                    .list_located_children(&directory.id())
+                    .await?,
+            );
+        }
+
+        directories.sort();
+        resources.sort_by(|left, right| left.path().cmp(right.path()));
+        Ok(DirectoryArchiveManifest::new(
+            filename,
+            directories,
+            resources,
+        ))
     }
     pub async fn create_directory(
         &self,
         parent: &DirectoryPath,
         name: impl Into<String>,
-    ) -> Result<DirectoryLocation, CoreError> {
+        kind: DirectoryKind,
+    ) -> Result<LocatedDirectory, CoreError> {
         let parent = self.resolve(parent).await?;
         let parent = self.service.directories.resolve_path(&parent).await?;
-        self.service.directories.create(&parent, name).await
+        self.require(&parent, DirectoryPermission::Write).await?;
+        let scope_root = self
+            .authorization
+            .workspace_scope(self.context)
+            .await?
+            .root()
+            .id();
+        self.service
+            .directories
+            .create_with_kind_in_scope(&parent, name, kind, scope_root)
+            .await
+    }
+
+    pub async fn execute_directory_action(
+        &self,
+        id: &DirectoryId,
+        command: ExecuteDirectoryAction,
+    ) -> Result<DirectoryActionOutput, CoreError> {
+        let directory = self.service.directories.find_by_id(id).await?;
+        let access = self
+            .service
+            .directories
+            .resolve_action(directory.directory(), &command.action)?
+            .access();
+        let permission = match access {
+            DirectoryActionAccess::ReadOnly => DirectoryPermission::Read,
+            DirectoryActionAccess::ReadWrite => DirectoryPermission::Write,
+        };
+        self.require(directory.location(), permission).await?;
+        let scope_root = self
+            .authorization
+            .workspace_scope(self.context)
+            .await?
+            .root()
+            .id();
+        let executed = self.service.directories.invoke_action(id, command).await?;
+        self.service
+            .directories
+            .apply_executed_action(&executed, Some(scope_root))
+            .await?;
+        Ok(executed.into_output())
     }
     pub async fn update_resource(
         &self,
@@ -228,4 +364,23 @@ impl<'a> SecuredResourceService<'a> {
             .await?;
         Ok(true)
     }
+}
+
+fn directory_archive_path(
+    archive_root: &str,
+    root_path: &str,
+    directory_path: &str,
+) -> Result<String, CoreError> {
+    if directory_path == root_path {
+        return Ok(archive_root.to_string());
+    }
+    let relative = if root_path.is_empty() {
+        directory_path
+    } else {
+        directory_path
+            .strip_prefix(root_path)
+            .and_then(|suffix| suffix.strip_prefix('/'))
+            .ok_or_else(|| CoreError::configuration("directory left the archive subtree"))?
+    };
+    Ok(format!("{archive_root}/{relative}"))
 }

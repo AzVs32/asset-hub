@@ -1,3 +1,4 @@
+use super::directory_action_registry::push_directory_action;
 use super::*;
 use crate::config::{KindRegistryConfig, ResourceKindConfig};
 use crate::plugin_manifest::PluginCatalog;
@@ -5,6 +6,23 @@ use asset_core::CoreError;
 use asset_core::domain::ResourceKind;
 use asset_core::port::ResourceKindDefinition;
 use asset_plugin_api::{ResourceActionDefinition, ResourceContentMatcher, ResourceKindCapability};
+
+pub(crate) fn directory_action_registry_from_catalog(
+    catalog: &PluginCatalog,
+) -> Result<DefaultDirectoryActionRegistry, CoreError> {
+    let mut actions = Vec::new();
+    for plugin in catalog.plugins() {
+        for action in &plugin.manifest.capabilities.directory_actions {
+            push_directory_action(
+                &mut actions,
+                action,
+                &plugin.manifest.runtime,
+                &format!("plugin:{}", plugin.manifest.plugin_id()),
+            )?;
+        }
+    }
+    Ok(DefaultDirectoryActionRegistry { actions })
+}
 
 pub(crate) fn registries_from_catalog(
     config: &KindRegistryConfig,

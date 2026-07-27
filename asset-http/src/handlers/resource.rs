@@ -33,6 +33,26 @@ pub(crate) async fn list_resource_kinds(
     })
 }
 
+/// 列出当前后端支持的目录类型。
+#[utoipa::path(
+    get,
+    path = "/directory-kinds",
+    tag = "directories",
+    responses((status = 200, description = "目录类型列表", body = DirectoryKindsResponse))
+)]
+pub(crate) async fn list_directory_kinds(
+    State(state): State<HttpState>,
+) -> Json<DirectoryKindsResponse> {
+    let directories = state.service().directory_service();
+    Json(DirectoryKindsResponse {
+        items: directories
+            .kind_definitions()
+            .iter()
+            .map(|definition| DirectoryKindResponse::from_definition(definition, directories))
+            .collect(),
+    })
+}
+
 /// 创建不包含对象内容的资源。
 #[utoipa::path(
     post,
@@ -163,8 +183,9 @@ pub(crate) async fn list_directory(
         .list_directories(&directory)
         .await?
         .into_iter()
-        .map(|directory| directory_response(&workspace, &directory))
+        .map(|directory| directory_response(state.service(), &workspace, &directory))
         .collect::<Result<Vec<_>, _>>()?;
+    let current = state.secured(&access.0).find_directory(&directory).await?;
     let resources = state
         .secured(&access.0)
         .list_resources(resources_query)
@@ -172,6 +193,7 @@ pub(crate) async fn list_directory(
 
     Ok(Json(DirectoryListingResponse {
         path: directory,
+        directory: directory_response(state.service(), &workspace, &current)?,
         folders,
         resources: resource_page_response(state.service(), &workspace, resources, page)?,
     }))
@@ -198,12 +220,51 @@ pub(crate) async fn create_directory(
     let workspace = state.workspace(&access.0).await?;
     let directory = state
         .secured(&access.0)
-        .create_directory(&payload.parent_path, payload.name)
+        .create_directory(
+            &payload.parent_path,
+            payload.name,
+            payload
+                .kind
+                .map(parse_directory_kind)
+                .transpose()?
+                .unwrap_or_default(),
+        )
         .await?;
     Ok((
         StatusCode::CREATED,
-        Json(directory_response(&workspace, &directory)?),
+        Json(directory_response(state.service(), &workspace, &directory)?),
     ))
+}
+
+/// 执行目录插件动作。
+#[utoipa::path(
+    post,
+    path = "/directories/{id}/actions/{action}",
+    tag = "directories",
+    request_body = ExecuteDirectoryActionRequest,
+    params(("id" = String, Path), ("action" = String, Path)),
+    responses(
+        (status = 200, description = "动作执行结果", body = DirectoryActionOutputResponse),
+        (status = 400, description = "目录类型不支持该动作", body = crate::dto::ErrorResponse),
+        (status = 404, description = "目录不存在", body = crate::dto::ErrorResponse)
+    )
+)]
+pub(crate) async fn execute_directory_action(
+    State(state): State<HttpState>,
+    access: Extension<AccessContext>,
+    Path((id, action)): Path<(String, String)>,
+    payload: Result<Json<ExecuteDirectoryActionRequest>, JsonRejection>,
+) -> Result<Json<DirectoryActionOutputResponse>, HttpError> {
+    let id = parse_directory_id(&id)?;
+    let payload = parse_json_payload(payload)?;
+    let output = state
+        .secured(&access.0)
+        .execute_directory_action(
+            &id,
+            ExecuteDirectoryAction::new(action).with_input(payload.input),
+        )
+        .await?;
+    Ok(Json(DirectoryActionOutputResponse::from(&output)))
 }
 
 /// 按 ID 查询资源。
@@ -466,6 +527,10 @@ pub(super) fn parse_kind(value: impl Into<String>) -> Result<ResourceKind, HttpE
     ResourceKind::try_new(value.into()).map_err(Into::into)
 }
 
+pub(super) fn parse_directory_kind(value: impl Into<String>) -> Result<DirectoryKind, HttpError> {
+    DirectoryKind::try_new(value.into()).map_err(Into::into)
+}
+
 pub(super) fn resource_response(
     service: &asset_core::service::ResourceService,
     workspace: &asset_core::service::WorkspaceScope,
@@ -494,15 +559,21 @@ pub(super) async fn resource_snapshot_response(
 }
 
 pub(super) fn directory_response(
+    service: &asset_core::service::ResourceService,
     workspace: &asset_core::service::WorkspaceScope,
-    directory: &asset_core::port::DirectoryLocation,
+    directory: &asset_core::port::LocatedDirectory,
 ) -> Result<DirectoryResponse, CoreError> {
     let path = workspace.project(directory.path())?;
+    let actions = service
+        .directory_service()
+        .describe_actions(directory.directory())?;
     Ok(DirectoryResponse {
         id: directory.id().to_string(),
         path: path.path().to_owned(),
         parent_path: path.parent_path().to_owned(),
         name: path.name().to_owned(),
+        kind: directory.directory().kind().as_str().to_string(),
+        actions: actions.into(),
     })
 }
 
@@ -528,10 +599,18 @@ pub(super) fn parse_resource_id(value: &str) -> Result<ResourceId, HttpError> {
     ResourceId::from_str(value).map_err(|error| HttpError::bad_request(error.to_string()))
 }
 
+pub(super) fn parse_directory_id(value: &str) -> Result<DirectoryId, HttpError> {
+    DirectoryId::from_str(value).map_err(|error| HttpError::bad_request(error.to_string()))
+}
+
 pub(super) fn parse_json_payload<T>(
     payload: Result<Json<T>, JsonRejection>,
 ) -> Result<T, HttpError> {
-    payload
-        .map(|Json(payload)| payload)
-        .map_err(|error| HttpError::bad_request(format!("invalid JSON request body: {error}")))
+    payload.map(|Json(payload)| payload).map_err(|error| {
+        if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
+            HttpError::payload_too_large(error.body_text())
+        } else {
+            HttpError::bad_request(format!("invalid JSON request body: {error}"))
+        }
+    })
 }

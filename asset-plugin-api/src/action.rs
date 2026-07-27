@@ -1,17 +1,19 @@
 use serde::{Deserialize, Deserializer, Serialize};
 
-/// Resource action identifier.
+/// Action identifier shared by resource and directory targets.
 ///
 /// Action IDs are extensible. Authors are encouraged to use
 /// `<plugin-id>.<verb>` (for example `core.resource.download` or
 /// `azvs.markdown.render`) so independently contributed actions remain globally distinct.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct ResourceAction(String);
+pub struct ActionId(String);
 
-impl ResourceAction {
+impl ActionId {
     /// Built-in download capability contributed by the `core.resource` plugin.
     pub const CORE_RESOURCE_DOWNLOAD: &'static str = "core.resource.download";
+    /// Built-in ZIP download capability contributed by the `core.directory` plugin.
+    pub const CORE_DIRECTORY_DOWNLOAD: &'static str = "core.directory.download";
 
     pub fn new(value: impl Into<String>) -> Self {
         Self(value.into().trim().to_string())
@@ -22,25 +24,25 @@ impl ResourceAction {
     }
 }
 
-impl std::fmt::Display for ResourceAction {
+impl std::fmt::Display for ActionId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
     }
 }
 
-impl From<&str> for ResourceAction {
+impl From<&str> for ActionId {
     fn from(value: &str) -> Self {
         Self::new(value)
     }
 }
 
-impl From<String> for ResourceAction {
+impl From<String> for ActionId {
     fn from(value: String) -> Self {
         Self::new(value)
     }
 }
 
-impl AsRef<str> for ResourceAction {
+impl AsRef<str> for ActionId {
     fn as_ref(&self) -> &str {
         self.as_str()
     }
@@ -49,7 +51,7 @@ impl AsRef<str> for ResourceAction {
 /// Resource action access boundary used by host execution requests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
-pub enum ResourceActionAccess {
+pub enum ActionAccess {
     #[default]
     ReadOnly,
     ReadWrite,
@@ -68,7 +70,7 @@ pub enum ResourceActionContentDelivery {
 /// Resource action executor family after manifest capabilities are resolved.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
-pub enum ResourceActionExecutorKind {
+pub enum ActionExecutorKind {
     #[default]
     Builtin,
     Plugin,
@@ -92,12 +94,12 @@ impl Default for ResourceActionRequirements {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ResourceActionOutputContract {
+pub struct ActionOutputContract {
     pub view: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ResourceActionUi {
+pub struct ActionUi {
     pub group: Option<String>,
     pub order: Option<i32>,
     pub locations: Vec<String>,
@@ -153,42 +155,36 @@ pub struct ResourceActionAppliesTo {
     content: ResourceContentMatcher,
 }
 
-/// Resource kind action declaration after manifest capabilities are resolved.
+/// Target-independent action declaration fields.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ResourceActionDefinition {
-    id: ResourceAction,
+pub struct ActionDefinition {
+    id: ActionId,
     label: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     handler: Option<String>,
     #[serde(default)]
-    access: ResourceActionAccess,
-    #[serde(default, skip_serializing_if = "ResourceActionAppliesTo::is_empty")]
-    applies_to: ResourceActionAppliesTo,
+    access: ActionAccess,
     #[serde(default)]
-    executor: ResourceActionExecutorKind,
+    executor: ActionExecutorKind,
     #[serde(default)]
-    requires: ResourceActionRequirements,
+    output: ActionOutputContract,
     #[serde(default)]
-    output: ResourceActionOutputContract,
-    #[serde(default)]
-    ui: ResourceActionUi,
+    ui: ActionUi,
 }
 
-impl ResourceActionDefinition {
-    pub fn new(id: impl Into<ResourceAction>, label: impl Into<String>) -> Self {
+impl ActionDefinition {
+    pub fn new(id: impl Into<ActionId>, label: impl Into<String>) -> Self {
         Self {
             id: id.into(),
             label: label.into(),
             description: None,
             handler: None,
-            access: ResourceActionAccess::ReadOnly,
-            applies_to: ResourceActionAppliesTo::default(),
-            executor: ResourceActionExecutorKind::Builtin,
-            requires: ResourceActionRequirements::default(),
-            output: ResourceActionOutputContract::default(),
-            ui: ResourceActionUi::default(),
+            access: ActionAccess::ReadOnly,
+            executor: ActionExecutorKind::Builtin,
+            output: ActionOutputContract::default(),
+            ui: ActionUi::default(),
         }
     }
 
@@ -202,47 +198,27 @@ impl ResourceActionDefinition {
         self
     }
 
-    pub fn with_access(mut self, access: ResourceActionAccess) -> Self {
+    pub fn with_access(mut self, access: ActionAccess) -> Self {
         self.access = access;
         self
     }
 
-    pub fn with_applies_to(mut self, applies_to: ResourceActionAppliesTo) -> Self {
-        self.applies_to = applies_to;
-        self
-    }
-
-    pub fn with_kinds(mut self, kinds: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        self.applies_to.kinds = normalize_kinds(kinds);
-        self
-    }
-
-    pub fn with_content_matcher(mut self, content: ResourceContentMatcher) -> Self {
-        self.applies_to.content = content;
-        self
-    }
-
-    pub fn with_executor(mut self, executor: ResourceActionExecutorKind) -> Self {
+    pub fn with_executor(mut self, executor: ActionExecutorKind) -> Self {
         self.executor = executor;
         self
     }
 
-    pub fn with_requirements(mut self, requirements: ResourceActionRequirements) -> Self {
-        self.requires = requirements;
-        self
-    }
-
-    pub fn with_output(mut self, output: ResourceActionOutputContract) -> Self {
+    pub fn with_output(mut self, output: ActionOutputContract) -> Self {
         self.output = output;
         self
     }
 
-    pub fn with_ui(mut self, ui: ResourceActionUi) -> Self {
+    pub fn with_ui(mut self, ui: ActionUi) -> Self {
         self.ui = ui;
         self
     }
 
-    pub fn id(&self) -> &ResourceAction {
+    pub fn id(&self) -> &ActionId {
         &self.id
     }
 
@@ -258,26 +234,114 @@ impl ResourceActionDefinition {
         self.handler.as_deref()
     }
 
-    pub fn access(&self) -> ResourceActionAccess {
+    pub fn access(&self) -> ActionAccess {
         self.access
     }
 
-    pub fn executor(&self) -> ResourceActionExecutorKind {
+    pub fn executor(&self) -> ActionExecutorKind {
         self.executor
     }
 
-    pub fn requirements(&self) -> &ResourceActionRequirements {
-        &self.requires
-    }
-
-    pub fn output(&self) -> &ResourceActionOutputContract {
+    pub fn output(&self) -> &ActionOutputContract {
         &self.output
     }
 
-    pub fn ui(&self) -> &ResourceActionUi {
+    pub fn ui(&self) -> &ActionUi {
         &self.ui
     }
+}
 
+/// Resource action declaration after manifest capabilities are resolved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceActionDefinition {
+    #[serde(flatten)]
+    action: ActionDefinition,
+    #[serde(default, skip_serializing_if = "ResourceActionAppliesTo::is_empty")]
+    applies_to: ResourceActionAppliesTo,
+    #[serde(default)]
+    requires: ResourceActionRequirements,
+}
+
+impl ResourceActionDefinition {
+    pub fn new(id: impl Into<ActionId>, label: impl Into<String>) -> Self {
+        Self {
+            action: ActionDefinition::new(id, label),
+            applies_to: ResourceActionAppliesTo::default(),
+            requires: ResourceActionRequirements::default(),
+        }
+    }
+
+    pub fn with_description(mut self, description: Option<String>) -> Self {
+        self.action = self.action.with_description(description);
+        self
+    }
+    pub fn with_handler(mut self, handler: impl Into<String>) -> Self {
+        self.action = self.action.with_handler(handler);
+        self
+    }
+    pub fn with_access(mut self, access: ActionAccess) -> Self {
+        self.action = self.action.with_access(access);
+        self
+    }
+    pub fn with_executor(mut self, executor: ActionExecutorKind) -> Self {
+        self.action = self.action.with_executor(executor);
+        self
+    }
+    pub fn with_output(mut self, output: ActionOutputContract) -> Self {
+        self.action = self.action.with_output(output);
+        self
+    }
+    pub fn with_ui(mut self, ui: ActionUi) -> Self {
+        self.action = self.action.with_ui(ui);
+        self
+    }
+    pub fn with_applies_to(mut self, applies_to: ResourceActionAppliesTo) -> Self {
+        self.applies_to = applies_to;
+        self
+    }
+    pub fn with_kinds(mut self, kinds: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.applies_to.kinds = normalize_kinds(kinds);
+        self
+    }
+    pub fn with_content_matcher(mut self, content: ResourceContentMatcher) -> Self {
+        self.applies_to.content = content;
+        self
+    }
+    pub fn with_requirements(mut self, requirements: ResourceActionRequirements) -> Self {
+        self.requires = requirements;
+        self
+    }
+
+    pub fn common(&self) -> &ActionDefinition {
+        &self.action
+    }
+    pub fn id(&self) -> &ActionId {
+        self.action.id()
+    }
+    pub fn label(&self) -> &str {
+        self.action.label()
+    }
+    pub fn description(&self) -> Option<&str> {
+        self.action.description()
+    }
+    pub fn handler(&self) -> Option<&str> {
+        self.action.handler()
+    }
+    pub fn access(&self) -> ActionAccess {
+        self.action.access()
+    }
+    pub fn executor(&self) -> ActionExecutorKind {
+        self.action.executor()
+    }
+    pub fn output(&self) -> &ActionOutputContract {
+        self.action.output()
+    }
+    pub fn ui(&self) -> &ActionUi {
+        self.action.ui()
+    }
+    pub fn requirements(&self) -> &ResourceActionRequirements {
+        &self.requires
+    }
     pub fn applies_to(&self) -> &ResourceActionAppliesTo {
         &self.applies_to
     }
@@ -304,6 +368,153 @@ impl ResourceActionDefinition {
             .matches_resource(kind, mime_type, storage_key)
     }
 }
+
+/// Directory/action matching rules.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct DirectoryActionAppliesTo {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    kinds: Vec<String>,
+}
+
+impl DirectoryActionAppliesTo {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn with_kinds(mut self, kinds: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.kinds = normalize_kinds(kinds);
+        self
+    }
+    pub fn kinds(&self) -> &[String] {
+        &self.kinds
+    }
+    pub fn is_empty(&self) -> bool {
+        self.kinds.is_empty()
+    }
+    pub fn matches(&self, kind: &str) -> bool {
+        self.kinds.is_empty()
+            || self
+                .kinds
+                .iter()
+                .any(|expected| expected.eq_ignore_ascii_case(kind))
+    }
+}
+
+/// Directory data a handler expects to query through paginated Host APIs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct DirectoryActionRequirements {
+    #[serde(default)]
+    pub children: bool,
+    #[serde(default)]
+    pub resources: bool,
+}
+
+/// Directory action declaration after manifest capabilities are resolved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DirectoryActionDefinition {
+    #[serde(flatten)]
+    action: ActionDefinition,
+    #[serde(default, skip_serializing_if = "DirectoryActionAppliesTo::is_empty")]
+    applies_to: DirectoryActionAppliesTo,
+    #[serde(default)]
+    requires: DirectoryActionRequirements,
+}
+
+impl DirectoryActionDefinition {
+    pub fn new(id: impl Into<ActionId>, label: impl Into<String>) -> Self {
+        Self {
+            action: ActionDefinition::new(id, label),
+            applies_to: DirectoryActionAppliesTo::default(),
+            requires: DirectoryActionRequirements::default(),
+        }
+    }
+    pub fn with_description(mut self, description: Option<String>) -> Self {
+        self.action = self.action.with_description(description);
+        self
+    }
+    pub fn with_handler(mut self, handler: impl Into<String>) -> Self {
+        self.action = self.action.with_handler(handler);
+        self
+    }
+    pub fn with_access(mut self, access: ActionAccess) -> Self {
+        self.action = self.action.with_access(access);
+        self
+    }
+    pub fn with_executor(mut self, executor: ActionExecutorKind) -> Self {
+        self.action = self.action.with_executor(executor);
+        self
+    }
+    pub fn with_output(mut self, output: ActionOutputContract) -> Self {
+        self.action = self.action.with_output(output);
+        self
+    }
+    pub fn with_ui(mut self, ui: ActionUi) -> Self {
+        self.action = self.action.with_ui(ui);
+        self
+    }
+    pub fn with_applies_to(mut self, applies_to: DirectoryActionAppliesTo) -> Self {
+        self.applies_to = applies_to;
+        self
+    }
+    pub fn with_kinds(mut self, kinds: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.applies_to = self.applies_to.with_kinds(kinds);
+        self
+    }
+    pub fn with_requirements(mut self, requirements: DirectoryActionRequirements) -> Self {
+        self.requires = requirements;
+        self
+    }
+    pub fn common(&self) -> &ActionDefinition {
+        &self.action
+    }
+    pub fn id(&self) -> &ActionId {
+        self.action.id()
+    }
+    pub fn label(&self) -> &str {
+        self.action.label()
+    }
+    pub fn description(&self) -> Option<&str> {
+        self.action.description()
+    }
+    pub fn handler(&self) -> Option<&str> {
+        self.action.handler()
+    }
+    pub fn access(&self) -> ActionAccess {
+        self.action.access()
+    }
+    pub fn executor(&self) -> ActionExecutorKind {
+        self.action.executor()
+    }
+    pub fn output(&self) -> &ActionOutputContract {
+        self.action.output()
+    }
+    pub fn ui(&self) -> &ActionUi {
+        self.action.ui()
+    }
+    pub fn requirements(&self) -> &DirectoryActionRequirements {
+        &self.requires
+    }
+    pub fn applies_to(&self) -> &DirectoryActionAppliesTo {
+        &self.applies_to
+    }
+    pub fn kinds(&self) -> &[String] {
+        self.applies_to.kinds()
+    }
+    pub fn matches_directory(&self, kind: &str) -> bool {
+        self.applies_to.matches(kind)
+    }
+}
+
+pub type ResourceAction = ActionId;
+pub type DirectoryAction = ActionId;
+pub type ResourceActionAccess = ActionAccess;
+pub type DirectoryActionAccess = ActionAccess;
+pub type ResourceActionExecutorKind = ActionExecutorKind;
+pub type DirectoryActionExecutorKind = ActionExecutorKind;
+pub type ResourceActionOutputContract = ActionOutputContract;
+pub type DirectoryActionOutputContract = ActionOutputContract;
+pub type ResourceActionUi = ActionUi;
+pub type DirectoryActionUi = ActionUi;
 
 impl ResourceContentMatcher {
     pub fn new() -> Self {

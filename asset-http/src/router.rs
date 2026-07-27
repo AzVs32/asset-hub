@@ -37,6 +37,7 @@ pub fn build_router(
             get(handlers::plugin_web_asset),
         )
         .route("/resource-kinds", get(handlers::list_resource_kinds))
+        .route("/directory-kinds", get(handlers::list_directory_kinds))
         .route(
             "/directories",
             get(handlers::list_directory).post(handlers::create_directory),
@@ -64,6 +65,11 @@ pub fn build_router(
             post(handlers::execute_resource_action)
                 .layer(DefaultBodyLimit::max(handlers::MAX_ACTION_REQUEST_BYTES)),
         );
+    router = router.route(
+        "/directories/{id}/actions/{action}",
+        post(handlers::execute_directory_action)
+            .layer(DefaultBodyLimit::max(handlers::MAX_ACTION_REQUEST_BYTES)),
+    );
 
     router = if options.enable_purge {
         router.route("/resources/{id}/purge", delete(handlers::remove_resource))
@@ -88,6 +94,17 @@ pub fn build_router(
                 .layer(DefaultBodyLimit::max(handlers::MAX_UPLOAD_BYTES)),
         );
 
+    let directory_download_router = Router::new()
+        .route(
+            "/directories/{id}/download",
+            get(handlers::download_directory),
+        )
+        .layer(
+            ServiceBuilder::new()
+                .layer(TraceLayer::new_for_http())
+                .layer(cors_layer(options.cors.clone())),
+        );
+
     router
         .layer(
             ServiceBuilder::new()
@@ -100,6 +117,7 @@ pub fn build_router(
                 .layer(DefaultBodyLimit::max(handlers::MAX_UPLOAD_BYTES)),
         )
         .merge(upload_router)
+        .merge(directory_download_router)
         .with_state(HttpState::new_with_plugin_web_assets(
             service,
             kind_registry,

@@ -1,6 +1,9 @@
 use super::*;
-use crate::domain::{Directory, DirectoryId, DirectoryPath, User, UserId, UserRole};
-use crate::port::{DirectoryLocation, DirectoryRepository, DirectoryStorage};
+use crate::domain::{Directory, DirectoryId, DirectoryKind, DirectoryPath, User, UserId, UserRole};
+use crate::port::{
+    DirectoryIndex, DirectoryKindDefinition, DirectoryKindRegistry, DirectoryLocation,
+    DirectoryQuery, DirectoryStorage, DirectoryStore, LocatedDirectory,
+};
 use async_trait::async_trait;
 use std::{collections::HashMap, sync::Mutex};
 
@@ -58,25 +61,51 @@ impl UserRepository for Users {
 }
 
 struct Directories {
-    paths: HashMap<DirectoryId, DirectoryPath>,
+    values: Mutex<HashMap<DirectoryId, (Directory, DirectoryPath)>>,
 }
 
 impl Directories {
     fn new(paths: &[&str]) -> Self {
-        let mut values = HashMap::from([(DirectoryId::root(), DirectoryPath::root())]);
-        for value in paths {
-            let path = DirectoryPath::from_path(*value).unwrap();
-            values.insert(DirectoryId::new(), path);
+        let root = Directory::root();
+        let mut values = HashMap::from([(root.id(), (root, DirectoryPath::root()))]);
+        let mut paths = paths
+            .iter()
+            .flat_map(|path| {
+                let segments = path
+                    .split('/')
+                    .filter(|segment| !segment.is_empty())
+                    .collect::<Vec<_>>();
+                (1..=segments.len()).map(move |length| {
+                    DirectoryPath::from_path(segments[..length].join("/")).unwrap()
+                })
+            })
+            .collect::<Vec<_>>();
+        paths.sort_by(|left, right| left.path().cmp(right.path()));
+        paths.dedup();
+        paths.sort_by_key(|path| path.path().matches('/').count());
+        for path in paths {
+            let parent_id = values
+                .iter()
+                .find_map(|(id, (_, candidate))| {
+                    (candidate.path() == path.parent_path()).then_some(*id)
+                })
+                .unwrap();
+            let directory = Directory::new(parent_id, path.name()).unwrap();
+            values.insert(directory.id(), (directory, path));
         }
-        Self { paths: values }
+        Self {
+            values: Mutex::new(values),
+        }
     }
 
     fn reference(&self, path: &str) -> DirectoryLocation {
         let path = DirectoryPath::from_path(path).unwrap();
         let id = self
-            .paths
+            .values
+            .lock()
+            .unwrap()
             .iter()
-            .find_map(|(id, candidate)| (candidate == &path).then_some(*id))
+            .find_map(|(id, (_, candidate))| (candidate == &path).then_some(*id))
             .unwrap_or_else(|| {
                 if path.is_root() {
                     DirectoryId::root()
@@ -96,59 +125,121 @@ impl DirectoryStorage for Directories {
 }
 
 #[async_trait]
-impl DirectoryRepository for Directories {
-    async fn save_directory(&self, _directory: &Directory) -> Result<(), CoreError> {
+impl DirectoryStore for Directories {
+    async fn load_all(&self) -> Result<Vec<Directory>, CoreError> {
+        Ok(self
+            .values
+            .lock()
+            .unwrap()
+            .values()
+            .map(|(directory, _)| directory.clone())
+            .collect())
+    }
+    async fn insert(&self, _directory: &Directory) -> Result<(), CoreError> {
         Ok(())
     }
-    async fn find_directory(&self, _id: &DirectoryId) -> Result<Option<Directory>, CoreError> {
-        Ok(None)
+    async fn save_if_unchanged(
+        &self,
+        _directory: &Directory,
+        _expected_updated_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, CoreError> {
+        Ok(true)
     }
-    async fn locate_by_id(&self, id: &DirectoryId) -> Result<Option<DirectoryLocation>, CoreError> {
-        Ok(self
-            .paths
+    async fn remove_if_empty(&self, _id: &DirectoryId) -> Result<bool, CoreError> {
+        Ok(false)
+    }
+}
+
+#[async_trait]
+impl DirectoryQuery for Directories {
+    async fn find_by_id(&self, id: &DirectoryId) -> Result<Option<LocatedDirectory>, CoreError> {
+        self.values
+            .lock()
+            .unwrap()
             .get(id)
             .cloned()
-            .map(|path| DirectoryLocation::new(*id, path)))
+            .map(|(directory, path)| {
+                LocatedDirectory::new(directory, DirectoryLocation::new(*id, path))
+            })
+            .transpose()
     }
-    async fn locate_by_path(
+    async fn find_by_path(
         &self,
         path: &DirectoryPath,
-    ) -> Result<Option<DirectoryLocation>, CoreError> {
-        Ok(self.paths.iter().find_map(|(id, candidate)| {
-            (candidate == path).then(|| DirectoryLocation::new(*id, candidate.clone()))
-        }))
+    ) -> Result<Option<LocatedDirectory>, CoreError> {
+        self.values
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(_, (_, candidate))| candidate == path)
+            .map(|(id, (directory, candidate))| {
+                LocatedDirectory::new(
+                    directory.clone(),
+                    DirectoryLocation::new(*id, candidate.clone()),
+                )
+            })
+            .transpose()
     }
     async fn list_children(
         &self,
         _parent_id: &DirectoryId,
-    ) -> Result<Vec<DirectoryLocation>, CoreError> {
+    ) -> Result<Vec<LocatedDirectory>, CoreError> {
         Ok(Vec::new())
-    }
-    async fn ensure_path(&self, path: &DirectoryPath) -> Result<DirectoryLocation, CoreError> {
-        self.locate_by_path(path)
-            .await?
-            .ok_or_else(|| CoreError::not_found("directory", path.path()))
-    }
-    async fn remove_if_empty(&self, _id: &DirectoryId) -> Result<bool, CoreError> {
-        Ok(false)
     }
     async fn is_descendant_or_self(
         &self,
         ancestor_id: &DirectoryId,
         candidate_id: &DirectoryId,
     ) -> Result<bool, CoreError> {
-        let ancestor = self.paths.get(ancestor_id);
-        let candidate = self.paths.get(candidate_id);
+        let values = self.values.lock().unwrap();
+        let ancestor = values.get(ancestor_id).map(|(_, path)| path);
+        let candidate = values.get(candidate_id).map(|(_, path)| path);
         Ok(
             matches!((ancestor, candidate), (Some(ancestor), Some(candidate)) if ancestor.contains(candidate)),
         )
     }
 }
 
+#[async_trait]
+impl DirectoryIndex for Directories {
+    async fn replace_all(&self, _directories: Vec<Directory>) -> Result<(), CoreError> {
+        Ok(())
+    }
+    async fn upsert(&self, _directory: Directory) -> Result<(), CoreError> {
+        Ok(())
+    }
+    async fn remove(&self, _id: &DirectoryId) -> Result<(), CoreError> {
+        Ok(())
+    }
+}
+
+struct DirectoryKinds(Vec<DirectoryKindDefinition>);
+
+impl Default for DirectoryKinds {
+    fn default() -> Self {
+        Self(vec![DirectoryKindDefinition::with_source(
+            DirectoryKind::default(),
+            "Directory",
+            "test",
+        )])
+    }
+}
+
+impl DirectoryKindRegistry for DirectoryKinds {
+    fn definitions(&self) -> &[DirectoryKindDefinition] {
+        &self.0
+    }
+}
+
 fn authorization(users: Users, directories: Arc<Directories>) -> AuthorizationService {
     AuthorizationService::new(
         Arc::new(users),
-        DirectoryService::new(directories.clone(), directories),
+        DirectoryService::new(
+            directories.clone(),
+            directories.clone(),
+            directories,
+            Arc::new(DirectoryKinds::default()),
+        ),
     )
 }
 

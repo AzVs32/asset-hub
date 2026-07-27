@@ -191,16 +191,20 @@ export function CreateFolderDialog({
   open,
   onOpenChange,
   parent,
+  kinds,
   pending,
   onCreate,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   parent: string;
+  kinds: import("@/domain/resource").DirectoryKind[];
   pending: boolean;
-  onCreate: (name: string) => Promise<unknown>;
+  onCreate: (name: string, kind?: string) => Promise<unknown>;
 }) {
-  const form = useForm<{ name: string }>({ defaultValues: { name: "" } });
+  const form = useForm<{ name: string; kind: string }>({
+    defaultValues: { name: "", kind: "core:directory" },
+  });
   React.useEffect(() => {
     if (open) form.reset();
   }, [form, open]);
@@ -213,8 +217,8 @@ export function CreateFolderDialog({
     >
       <form
         className="grid gap-5 p-6"
-        onSubmit={form.handleSubmit(async ({ name }) => {
-          await onCreate(name);
+        onSubmit={form.handleSubmit(async ({ name, kind }) => {
+          await onCreate(name, kind || undefined);
           onOpenChange(false);
         })}
       >
@@ -225,6 +229,15 @@ export function CreateFolderDialog({
               validate: (value) => value.trim().length > 0 || "Folder name is required",
             })}
           />
+        </Field>
+        <Field label="Folder kind">
+          <select className={controlClass} {...form.register("kind")}>
+            {kinds.map((kind) => (
+              <option key={kind.kind} value={kind.kind}>
+                {kind.label}
+              </option>
+            ))}
+          </select>
         </Field>
         <div className="flex justify-end gap-2">
           <Button variant="secondary" onClick={() => onOpenChange(false)}>

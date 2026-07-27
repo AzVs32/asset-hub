@@ -1,16 +1,27 @@
 use asset_core::CoreError;
 use asset_core::domain::Resource;
-use asset_core::port::{ResourceActionExecutor, ResourceActionOutput, ResourceActionRequest};
-use asset_plugin_api::{DownloadView, PluginActionOutput, PluginView, ResourceAction};
+use asset_core::port::{
+    DirectoryActionExecutor, DirectoryActionOutput, DirectoryActionRequest, ResourceActionExecutor,
+    ResourceActionOutput, ResourceActionRequest,
+};
+use asset_plugin_api::{
+    DirectoryAction, DirectoryPluginActionOutput, DownloadView, PluginActionOutput, PluginView,
+    ResourceAction,
+};
 use async_trait::async_trait;
 
 const RESOURCE_DOWNLOAD_HANDLER: &str = "builtin.resource.download";
+const DIRECTORY_DOWNLOAD_HANDLER: &str = "builtin.directory.download";
 
 #[derive(Debug, Clone, Copy)]
 pub struct BuiltinResourceActionExecutor;
 
 pub fn is_builtin_handler(handler: Option<&str>) -> bool {
     matches!(handler, Some(RESOURCE_DOWNLOAD_HANDLER))
+}
+
+pub fn is_builtin_directory_handler(handler: Option<&str>) -> bool {
+    matches!(handler, Some(DIRECTORY_DOWNLOAD_HANDLER))
 }
 
 #[async_trait]
@@ -27,6 +38,45 @@ impl ResourceActionExecutor for BuiltinResourceActionExecutor {
             request.action().clone(),
         )
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct BuiltinDirectoryActionExecutor;
+
+#[async_trait]
+impl DirectoryActionExecutor for BuiltinDirectoryActionExecutor {
+    async fn execute(
+        &self,
+        request: DirectoryActionRequest,
+    ) -> Result<DirectoryActionOutput, CoreError> {
+        let handler = request
+            .handler()
+            .ok_or_else(|| CoreError::configuration("built-in action is missing handler"))?;
+        if handler != DIRECTORY_DOWNLOAD_HANDLER {
+            return Err(CoreError::configuration(format!(
+                "unknown built-in directory action handler `{handler}`"
+            )));
+        }
+        directory_download(request)
+    }
+}
+
+fn directory_download(request: DirectoryActionRequest) -> Result<DirectoryActionOutput, CoreError> {
+    let directory = request.directory();
+    let filename = if directory.id().is_root() {
+        "asset-hub.zip".to_string()
+    } else {
+        format!("{}.zip", directory.directory().name())
+    };
+    Ok(DirectoryActionOutput::new(
+        directory.id(),
+        DirectoryAction::from(request.action().as_str()),
+        DirectoryPluginActionOutput::new(PluginView::Download(DownloadView {
+            url: format!("/directories/{}/download", directory.id()),
+            mime_type: Some("application/zip".to_string()),
+            filename: Some(filename),
+        })),
+    ))
 }
 
 fn execute(

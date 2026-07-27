@@ -1,5 +1,6 @@
 use asset_plugin_api::{
-    MANIFEST_VERSION, PluginActionFailure, PluginActionOutput, PluginActionRequest, PluginManifest,
+    DirectoryPluginActionOutput, MANIFEST_VERSION, PluginActionFailure, PluginActionOutput,
+    PluginActionRequest, PluginDirectoryActionRequest, PluginManifest,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -109,6 +110,63 @@ fn manifest_accepts_extensible_directory_kind_hierarchies() {
     let kind = &manifest.capabilities.directory_kinds[0];
     assert_eq!(kind.kind, "example:collection");
     assert_eq!(kind.parent.as_deref(), Some("core:directory"));
+}
+
+#[test]
+fn manifest_accepts_directory_actions_with_target_specific_requirements() {
+    let mut value = manifest_document();
+    value["capabilities"]["directory_actions"] = json!([{
+        "id": "example.plugin.organize",
+        "label": "Organize",
+        "handler": "organize",
+        "applies_to": {"kinds": ["example:collection"]},
+        "access": "write",
+        "requires": {"children": true, "resources": true},
+        "views": ["json"],
+        "ui": {"locations": ["directory_toolbar"]}
+    }]);
+    value["permissions"]["allow"] = json!([
+        "resource.read",
+        "directory.read",
+        "directory.children.list",
+        "directory.resources.list",
+        "directory.write"
+    ]);
+
+    let manifest = canonical_manifest(&value).unwrap();
+    let action = manifest.capabilities.directory_actions[0].to_definition(&manifest.runtime);
+    assert!(action.requirements().children);
+    assert!(action.requirements().resources);
+    assert_eq!(action.ui().locations, ["directory_toolbar"]);
+}
+
+#[test]
+fn directory_request_and_output_have_separate_wire_effects() {
+    let request: PluginDirectoryActionRequest = serde_json::from_value(json!({
+        "action": "example.plugin.organize",
+        "access": "read_write",
+        "input": {},
+        "directory": {
+            "id": "01900000-0000-7000-8000-000000000001",
+            "parent_id": "00000000-0000-0000-0000-000000000000",
+            "path": "library",
+            "name": "library",
+            "kind": "example:collection",
+            "created_at": "2026-07-28T00:00:00Z",
+            "updated_at": "2026-07-28T00:00:00Z"
+        },
+        "directory_ref": "directory:reference:call-scoped"
+    }))
+    .unwrap();
+    assert_eq!(request.directory.path, "library");
+
+    let output: DirectoryPluginActionOutput = serde_json::from_value(json!({
+        "view": "json",
+        "data": {"organized": true},
+        "effects": [{"type": "create_child", "name": "covers", "kind": "core:directory"}]
+    }))
+    .unwrap();
+    assert_eq!(output.effects.len(), 1);
 }
 
 #[test]

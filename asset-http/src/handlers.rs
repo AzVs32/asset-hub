@@ -1,18 +1,23 @@
 use crate::dto::{
-    BinaryContent, CreateDirectoryRequest, CreateResourceRequest, DirectoryListingResponse,
-    DirectoryResponse, ExecuteResourceActionRequest, HealthResponse, ListDirectoryQuery,
-    ListResourcesQuery, ResourceActionOutputResponse, ResourceKindResponse, ResourceKindsResponse,
-    ResourcePageResponse, ResourceResponse, UpdateResourceRequest,
+    BinaryContent, CreateDirectoryRequest, CreateResourceRequest, DirectoryActionOutputResponse,
+    DirectoryKindResponse, DirectoryKindsResponse, DirectoryListingResponse, DirectoryResponse,
+    ExecuteDirectoryActionRequest, ExecuteResourceActionRequest, HealthResponse,
+    ListDirectoryQuery, ListResourcesQuery, ResourceActionOutputResponse, ResourceKindResponse,
+    ResourceKindsResponse, ResourcePageResponse, ResourceResponse, UpdateResourceRequest,
     UploadResourceContentStreamQuery,
 };
 use crate::error::HttpError;
 use crate::state::HttpState;
 use asset_core::CoreError;
-use asset_core::domain::{AccessContext, DirectoryPath, ResourceId, ResourceKind, ResourceStatus};
+use asset_core::domain::{
+    AccessContext, DirectoryId, DirectoryKind, DirectoryPath, ResourceId, ResourceKind,
+    ResourceStatus,
+};
 use asset_core::port::BlobByteStream;
 use asset_core::port::ListResources;
 use asset_core::service::{
-    CreateResource, ExecuteResourceAction, UpdateResource, UploadResourceContentStream,
+    CreateResource, ExecuteDirectoryAction, ExecuteResourceAction, UpdateResource,
+    UploadResourceContentStream,
 };
 use axum::Json;
 use axum::body::Body;
@@ -32,15 +37,15 @@ pub(crate) mod plugin;
 pub(crate) mod resource;
 
 pub(crate) use content::{
-    MAX_UPLOAD_BYTES, download_resource_content, get_resource_content,
+    MAX_UPLOAD_BYTES, download_directory, download_resource_content, get_resource_content,
     upload_resource_content_stream,
 };
 pub(crate) use maintenance::{health, purge_disabled};
 pub(crate) use plugin::plugin_web_asset;
 pub(crate) use resource::{
-    MAX_ACTION_REQUEST_BYTES, create_directory, create_resource, execute_resource_action,
-    find_resource, list_directory, list_resource_kinds, list_resources, remove_resource,
-    soft_delete_resource, update_resource,
+    MAX_ACTION_REQUEST_BYTES, create_directory, create_resource, execute_directory_action,
+    execute_resource_action, find_resource, list_directory, list_directory_kinds,
+    list_resource_kinds, list_resources, remove_resource, soft_delete_resource, update_resource,
 };
 
 use content::*;
