@@ -33,7 +33,6 @@ const RESOURCE_SELECT: &str = r#"
         directory_paths.path AS directory_path,
         resources.kind,
         resources.status,
-        resources.description,
         COALESCE(
             (
                 SELECT json_group_array(tag)
@@ -165,19 +164,17 @@ impl ResourceRepository for SqliteResourceRepository {
                 directory_id,
                 kind,
                 status,
-                description,
                 content_json,
                 created_at,
                 updated_at,
                 deleted_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 directory_id = excluded.directory_id,
                 kind = excluded.kind,
                 status = excluded.status,
-                description = excluded.description,
                 content_json = excluded.content_json,
                 created_at = excluded.created_at,
                 updated_at = excluded.updated_at,
@@ -189,7 +186,6 @@ impl ResourceRepository for SqliteResourceRepository {
         .bind(resource.directory().id().to_string())
         .bind(resource.kind().as_str())
         .bind(resource.status().as_str())
-        .bind(resource.description())
         .bind(content_json)
         .bind(encode_timestamp(resource.created_at()))
         .bind(encode_timestamp(resource.updated_at()))
@@ -226,7 +222,7 @@ impl ResourceRepository for SqliteResourceRepository {
         let result = sqlx::query(
             r#"
             UPDATE resources SET
-                name = ?, directory_id = ?, kind = ?, status = ?, description = ?, content_json = ?,
+                name = ?, directory_id = ?, kind = ?, status = ?, content_json = ?,
                 created_at = ?, updated_at = ?, deleted_at = ?
             WHERE id = ? AND updated_at = ?
             "#,
@@ -235,7 +231,6 @@ impl ResourceRepository for SqliteResourceRepository {
         .bind(resource.directory().id().to_string())
         .bind(resource.kind().as_str())
         .bind(resource.status().as_str())
-        .bind(resource.description())
         .bind(content_json)
         .bind(encode_timestamp(resource.created_at()))
         .bind(encode_timestamp(resource.updated_at()))
@@ -666,7 +661,6 @@ fn decode_resource(row: SqliteRow) -> Result<Resource, CoreError> {
     );
     let kind = ResourceKind::try_new(column::<String>(&row, "kind")?)?;
     let status = status_from_str(column(&row, "status")?)?;
-    let description = column(&row, "description")?;
     let tags = decode_tags(&row)?;
     let content = decode_content(column(&row, "content_json")?)?;
     let created_at = decode_timestamp(column(&row, "created_at")?)?;
@@ -681,7 +675,6 @@ fn decode_resource(row: SqliteRow) -> Result<Resource, CoreError> {
         directory,
         kind,
         status,
-        description,
         tags,
         content,
         created_at,

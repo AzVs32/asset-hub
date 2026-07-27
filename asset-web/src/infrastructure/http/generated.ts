@@ -311,7 +311,6 @@ export interface components {
          * @example {
          *       "name": "resources_not_blob",
          *       "kind": "core:resource",
-         *       "description": "A resource without blob content",
          *       "tags": [
          *         "demo",
          *         "document"
@@ -319,8 +318,6 @@ export interface components {
          *     }
          */
         CreateResourceRequest: {
-            /** @description 可选资源描述。 */
-            description?: string | null;
             /** @description 相对于当前用户可见根目录的路径；根目录为空字符串。 */
             directory?: string | null;
             /** @description 可选资源类型。 */
@@ -546,8 +543,6 @@ export interface components {
             created_at: string;
             /** @description 软删除时间，RFC3339 格式；为空表示未删除。 */
             deleted_at?: string | null;
-            /** @description 可选资源描述。 */
-            description?: string | null;
             /** @description 相对于当前用户可见根目录的路径；根目录为空字符串。 */
             directory: string;
             /** @description 资源唯一标识。 */
@@ -579,7 +574,6 @@ export interface components {
          *       "name": "renamed.txt",
          *       "kind": "core:resource",
          *       "status": "archived",
-         *       "description": "updated resource",
          *       "tags": [
          *         "demo",
          *         "updated"
@@ -587,8 +581,6 @@ export interface components {
          *     }
          */
         UpdateResourceRequest: {
-            /** @description 资源描述补丁：缺省表示不修改，`null` 表示清空。 */
-            description?: string | null;
             /** @description 相对于当前用户可见根目录的新路径；根目录为空字符串。 */
             directory?: string | null;
             /** @description 可选新资源类型。 */
@@ -610,8 +602,6 @@ export interface components {
          *     流式上传内容并创建资源的 query 参数。
          */
         UploadResourceContentStreamQuery: {
-            /** @description 可选资源描述。 */
-            description?: string | null;
             /** @description 相对于当前用户可见根目录的上传路径。 */
             directory?: string | null;
             /** @description 可选资源类型。 */
@@ -1078,8 +1068,6 @@ export interface operations {
                 kind?: string;
                 /** @description 可选初始状态：`active` 或 `archived`。 */
                 status?: string;
-                /** @description 可选资源描述。 */
-                description?: string;
                 /** @description 可选 JSON 字符串形式的资源标签数组。 */
                 tags_json?: string;
             };

@@ -259,7 +259,6 @@ impl<'a> StorageReconciliationService<'a> {
             self.service.directories.ensure_path(&directory).await?,
             Some(kind),
             ResourceStatus::default(),
-            None,
             Vec::new(),
         )
         .with_content(content)

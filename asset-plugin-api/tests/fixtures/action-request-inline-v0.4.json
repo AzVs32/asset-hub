@@ -10,7 +10,6 @@
     "name": "notes.md",
     "kind": "core:document",
     "status": "active",
-    "description": "Release notes",
     "tags": [
       "docs"
     ],

@@ -286,7 +286,7 @@ async fn action_endpoint_has_a_dedicated_request_body_limit() {
 }
 
 #[tokio::test]
-async fn create_resource_accepts_description_and_tags() {
+async fn create_resource_accepts_tags() {
     let app = test_app("create-resource").await;
 
     let (status, resource) = json_request(
@@ -296,7 +296,6 @@ async fn create_resource_accepts_description_and_tags() {
         json!({
             "name": "resources_not_blob",
             "kind": "core:resource",
-            "description": "resource without content",
             "tags": ["demo", "document"]
         }),
     )
@@ -305,7 +304,6 @@ async fn create_resource_accepts_description_and_tags() {
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(resource["name"], "resources_not_blob");
     assert_eq!(resource["kind"], "core:resource");
-    assert_eq!(resource["description"], "resource without content");
     assert_eq!(resource["tags"], json!(["demo", "document"]));
 
     let id = resource["id"].as_str().unwrap();
@@ -1040,7 +1038,6 @@ async fn update_resource_changes_fields_and_restores_soft_deleted_resource() {
             "directory": "archive",
             "kind": "core:resource",
             "status": "archived",
-            "description": "updated resource",
             "tags": ["updated"]
         }),
     )
@@ -1051,7 +1048,6 @@ async fn update_resource_changes_fields_and_restores_soft_deleted_resource() {
     assert_eq!(updated["directory"], "archive");
     assert_eq!(updated["kind"], "core:resource");
     assert_eq!(updated["status"], "archived");
-    assert_eq!(updated["description"], "updated resource");
     assert_eq!(updated["tags"], json!(["updated"]));
     assert!(!old_blob_path.exists());
     assert_eq!(std::fs::read(&new_blob_path).unwrap(), b"delete me");
@@ -1090,10 +1086,22 @@ async fn openapi_exposes_current_http_contract() {
 
     assert_eq!(status, StatusCode::OK);
 
-    let create_properties =
-        &document["components"]["schemas"]["CreateResourceRequest"]["properties"];
-    assert!(create_properties.get("description").is_some());
+    let schemas = &document["components"]["schemas"];
+    let create_properties = &schemas["CreateResourceRequest"]["properties"];
+    let update_properties = &schemas["UpdateResourceRequest"]["properties"];
+    let response_properties = &schemas["ResourceResponse"]["properties"];
+    assert!(create_properties.get("description").is_none());
+    assert!(update_properties.get("description").is_none());
+    assert!(response_properties.get("description").is_none());
     assert!(create_properties.get("tags").is_some());
+    let upload_parameters = document["paths"]["/resources/content/stream"]["put"]["parameters"]
+        .as_array()
+        .unwrap();
+    assert!(
+        !upload_parameters
+            .iter()
+            .any(|parameter| { parameter["name"] == "description" && parameter["in"] == "query" })
+    );
     assert!(document["paths"].get("/resources/content/stream").is_some());
     assert!(document["paths"].get("/resources/{id}/download").is_some());
     assert!(document["paths"].get("/resources/{id}/read").is_none());

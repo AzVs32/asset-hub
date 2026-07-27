@@ -23,7 +23,6 @@ pub(crate) struct BinaryContent(Vec<u8>);
 #[schema(example = json!({
     "name": "resources_not_blob",
     "kind": "core:resource",
-    "description": "A resource without blob content",
     "tags": ["demo", "document"]
 }))]
 pub(crate) struct CreateResourceRequest {
@@ -36,8 +35,6 @@ pub(crate) struct CreateResourceRequest {
     /// 相对于当前用户可见根目录的路径；根目录为空字符串。
     #[schema(value_type = Option<String>)]
     pub(crate) directory: Option<DirectoryPath>,
-    /// 可选资源描述。
-    pub(crate) description: Option<String>,
     /// 可选资源标签。
     pub(crate) tags: Option<Vec<String>>,
 }
@@ -106,7 +103,6 @@ pub(crate) struct ListDirectoryQuery {
     "name": "renamed.txt",
     "kind": "core:resource",
     "status": "archived",
-    "description": "updated resource",
     "tags": ["demo", "updated"]
 }))]
 pub(crate) struct UpdateResourceRequest {
@@ -119,9 +115,6 @@ pub(crate) struct UpdateResourceRequest {
     /// 相对于当前用户可见根目录的新路径；根目录为空字符串。
     #[schema(value_type = Option<String>)]
     pub(crate) directory: Option<DirectoryPath>,
-    /// 资源描述补丁：缺省表示不修改，`null` 表示清空。
-    #[serde(default, deserialize_with = "deserialize_optional_field")]
-    pub(crate) description: Option<Option<String>>,
     /// 可选资源标签；提供时替换全部标签，空数组表示清空。
     pub(crate) tags: Option<Vec<String>>,
     /// 是否恢复软删除资源。
@@ -144,8 +137,6 @@ pub(crate) struct UploadResourceContentStreamQuery {
     pub(crate) kind: Option<String>,
     /// 可选初始状态：`active` 或 `archived`。
     pub(crate) status: Option<String>,
-    /// 可选资源描述。
-    pub(crate) description: Option<String>,
     /// 可选 JSON 字符串形式的资源标签数组。
     pub(crate) tags_json: Option<String>,
 }
@@ -400,8 +391,6 @@ pub(crate) struct ResourceResponse {
     pub(crate) kind: String,
     /// 资源生命周期状态。
     pub(crate) status: String,
-    /// 可选资源描述。
-    pub(crate) description: Option<String>,
     /// 资源标签。
     pub(crate) tags: Vec<String>,
     /// 资源内容引用。
@@ -544,7 +533,6 @@ impl ResourceResponse {
             directory,
             kind: resource.kind().as_str().to_string(),
             status: resource.status().as_str().to_string(),
-            description: resource.description().map(str::to_string),
             tags: resource
                 .tags()
                 .iter()
@@ -557,14 +545,6 @@ impl ResourceResponse {
             deleted_at: resource.deleted_at().map(|value| value.to_rfc3339()),
         }
     }
-}
-
-fn deserialize_optional_field<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-    T: Deserialize<'de>,
-{
-    Option::<T>::deserialize(deserializer).map(Some)
 }
 
 impl From<ResourceActions> for ResourceActionsResponse {

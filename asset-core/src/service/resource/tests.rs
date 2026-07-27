@@ -839,7 +839,6 @@ fn storage_reconciliation_preserves_resource_id_on_file_rename() {
         .unwrap();
 
     assert_eq!(renamed.id(), original.id());
-    assert_eq!(renamed.description(), original.description());
     assert!(
         block_on(repository.find_by_path(&from_directory, "book.txt"))
             .unwrap()
@@ -997,7 +996,6 @@ fn create_resource_saves_resource_without_content() {
         service.commands().create_resource(
             CreateResource::new(" Design Doc ")
                 .with_kind(ResourceKind::try_new("doc:markdown").unwrap())
-                .with_description(" Design document ")
                 .with_tags(["rust", "asset"]),
         ),
     )
@@ -1008,7 +1006,6 @@ fn create_resource_saves_resource_without_content() {
     assert_eq!(resource.name(), " Design Doc ");
     assert!(resource.kind().is("doc:markdown"));
     assert!(resource.content().is_none());
-    assert_eq!(saved.description(), Some("Design document"));
     assert_eq!(
         saved
             .tags()
@@ -1581,7 +1578,7 @@ fn soft_delete_rolls_blob_back_when_resource_snapshot_is_stale() {
     let trash_key = StorageKey::new(format!(".asset-hub/trash/{}", resource.id())).unwrap();
     let mut concurrent = resource;
     concurrent
-        .set_description(Some("concurrent".to_owned()))
+        .replace_tags(vec!["concurrent".to_owned()])
         .unwrap();
     block_on(repository.save(&concurrent)).unwrap();
 

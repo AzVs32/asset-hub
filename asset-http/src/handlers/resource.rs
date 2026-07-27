@@ -57,7 +57,6 @@ pub(crate) async fn create_resource(
         payload.kind,
         payload.status,
         payload.directory,
-        payload.description,
         payload.tags,
     )?;
     let resource = state.secured(&access.0).create_resource(command).await?;
@@ -283,10 +282,6 @@ pub(crate) async fn update_resource(
         command = command.with_directory(directory);
     }
 
-    if let Some(description) = payload.description {
-        command = command.with_description(description);
-    }
-
     if let Some(tags) = payload.tags {
         command = command.with_tags(tags);
     }
@@ -419,7 +414,6 @@ pub(super) fn apply_common_resource_fields(
     kind: Option<String>,
     status: Option<String>,
     directory: Option<DirectoryPath>,
-    description: Option<String>,
     tags: Option<Vec<String>>,
 ) -> Result<CreateResource, HttpError> {
     if let Some(kind) = kind {
@@ -434,10 +428,6 @@ pub(super) fn apply_common_resource_fields(
         command = command.with_directory(directory);
     }
 
-    if let Some(description) = description {
-        command = command.with_description(description);
-    }
-
     if let Some(tags) = tags {
         command = command.with_tags(tags);
     }
@@ -449,7 +439,6 @@ pub(super) fn apply_common_stream_fields(
     mut command: UploadResourceContentStream,
     kind: Option<String>,
     status: Option<String>,
-    description: Option<String>,
     tags_json: Option<String>,
 ) -> Result<UploadResourceContentStream, HttpError> {
     if let Some(kind) = kind {
@@ -458,10 +447,6 @@ pub(super) fn apply_common_stream_fields(
 
     if let Some(status) = status {
         command = command.with_status(parse_status(&status)?);
-    }
-
-    if let Some(description) = description {
-        command = command.with_description(description);
     }
 
     if let Some(tags_json) = tags_json {

@@ -22,7 +22,6 @@ async fn sqlite_repository_roundtrips_resource() {
     let resource = Resource::builder("image.png")
         .with_directory(assets)
         .with_kind(ResourceKind::try_new("core:image").unwrap())
-        .with_description("cover")
         .with_tags(["rust", "asset"])
         .with_content(content)
         .build()
@@ -60,16 +59,14 @@ async fn sqlite_repository_roundtrips_resource() {
             .fetch_one(repository.pool())
             .await
             .unwrap();
-    assert_eq!(restored.description(), Some("cover"));
     assert_eq!(tag_rows, 2);
 }
 
 #[tokio::test]
-async fn sqlite_repository_updates_description_and_tags() {
-    let repository = repository("description-tags").await;
+async fn sqlite_repository_updates_tags() {
+    let repository = repository("tags").await;
     let mut resource = Resource::builder("image")
         .with_kind(ResourceKind::try_new("core:image").unwrap())
-        .with_description("cover")
         .with_tags(["image", "cover"])
         .build()
         .unwrap();
@@ -83,7 +80,6 @@ async fn sqlite_repository_updates_description_and_tags() {
             .map(|found| found.id()),
         Some(resource.id())
     );
-    resource.set_description(None).unwrap();
     resource.replace_tags(vec!["document".to_owned()]).unwrap();
     repository.save(&resource).await.unwrap();
     let restored = repository
@@ -91,7 +87,6 @@ async fn sqlite_repository_updates_description_and_tags() {
         .await
         .unwrap()
         .unwrap();
-    assert!(restored.description().is_none());
     assert_eq!(restored.tags()[0].as_str(), "document");
 }
 

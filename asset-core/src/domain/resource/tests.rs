@@ -78,7 +78,6 @@ fn new_resource_has_default_lifecycle_state() {
     assert!(!resource.is_archived());
     assert!(!resource.is_deleted());
     assert!(resource.content().is_none());
-    assert!(resource.description().is_none());
     assert!(resource.tags().is_empty());
     assert_eq!(resource.created_at(), resource.updated_at());
 }
@@ -124,7 +123,6 @@ fn resource_can_be_rehydrated_from_snapshot() {
         directory: directory(" images/raw "),
         kind: ResourceKind::try_new("core:image").unwrap(),
         status: ResourceStatus::Archived,
-        description: Some(" restored description ".to_owned()),
         tags: vec![" image ".to_owned()],
         content: None,
         created_at,
@@ -138,7 +136,6 @@ fn resource_can_be_rehydrated_from_snapshot() {
     assert_eq!(resource.directory().path().path(), " images/raw ");
     assert!(resource.kind().is("core:image"));
     assert_eq!(resource.status(), ResourceStatus::Archived);
-    assert_eq!(resource.description(), Some("restored description"));
     assert_eq!(resource.tags()[0].as_str(), "image");
     assert_eq!(resource.created_at(), created_at);
     assert_eq!(resource.updated_at(), updated_at);
@@ -169,7 +166,7 @@ fn resource_lifecycle_transitions_update_state() {
 }
 
 #[test]
-fn resource_builder_accepts_description_tags_and_content() {
+fn resource_builder_accepts_tags_and_content() {
     let checksum = Checksum::sha256("a".repeat(64)).unwrap();
     let modified_at = chrono::DateTime::parse_from_rfc3339("2026-07-23T03:00:00Z")
         .unwrap()
@@ -182,7 +179,6 @@ fn resource_builder_accepts_description_tags_and_content() {
 
     let resource = Resource::builder("image")
         .with_kind(ResourceKind::try_new("core:image").unwrap())
-        .with_description(" cover image ")
         .with_tags(["rust", "asset"])
         .with_content(content)
         .build()
@@ -200,7 +196,6 @@ fn resource_builder_accepts_description_tags_and_content() {
             .collect::<Vec<_>>(),
         vec!["asset", "rust"]
     );
-    assert_eq!(resource.description(), Some("cover image"));
 }
 
 #[test]
@@ -270,10 +265,9 @@ fn deleted_resource_rejects_mutations() {
 }
 
 #[test]
-fn description_and_tags_can_be_replaced_or_cleared() {
+fn tags_can_be_replaced() {
     let mut resource = Resource::builder("image")
         .with_kind(ResourceKind::try_new("core:image").unwrap())
-        .with_description("cover")
         .with_tags([" image ", "cover", "image"])
         .build()
         .unwrap();
@@ -281,10 +275,8 @@ fn description_and_tags_can_be_replaced_or_cleared() {
     assert_eq!(resource.tags().len(), 2);
     assert_eq!(resource.tags()[0].as_str(), "cover");
     assert_eq!(resource.tags()[1].as_str(), "image");
-    resource.set_description(None).unwrap();
     resource.replace_tags(vec!["document".to_owned()]).unwrap();
 
-    assert!(resource.description().is_none());
     assert_eq!(resource.tags()[0].as_str(), "document");
 }
 

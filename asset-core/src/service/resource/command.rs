@@ -43,7 +43,6 @@ impl<'a> ResourceCommandService<'a> {
             directory,
             Some(kind),
             command.status,
-            command.description,
             command.tags,
         )
         .build()?;
@@ -117,10 +116,6 @@ impl<'a> ResourceCommandService<'a> {
                 ResourceStatus::Active => resource.activate()?,
                 ResourceStatus::Archived => resource.archive()?,
             }
-        }
-
-        if let Some(description) = command.description {
-            resource.set_description(description)?;
         }
 
         if let Some(tags) = command.tags {
@@ -310,16 +305,12 @@ pub(super) fn build_resource(
     directory: DirectoryRef,
     kind: Option<ResourceKind>,
     status: ResourceStatus,
-    description: Option<String>,
     tags: Vec<String>,
 ) -> crate::domain::ResourceBuilder {
     let mut builder = Resource::builder(name)
         .with_directory(directory)
         .with_status(status)
         .with_tags(tags);
-    if let Some(description) = description {
-        builder = builder.with_description(description);
-    }
     if let Some(kind) = kind {
         builder = builder.with_kind(kind);
     }

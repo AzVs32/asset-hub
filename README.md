@@ -285,8 +285,8 @@ Wasm, and reseal the package.
 
 Resource kinds form an arbitrary-depth acyclic hierarchy through the optional
 `parent` field. Child kinds inherit actions, and their own action declarations
-override inherited actions with the same ID. `description` and `tags` are direct
-fields of every Resource. Detection returns the most specific
+override inherited actions with the same ID. `tags` are direct fields of every
+Resource. Detection returns the most specific
 matching kind. For example, the bundled hierarchy contains
 `core:resource → core:document → azvs:markdown`. `core:resource` is the root and the
 default for resources whose concrete format has not been identified.

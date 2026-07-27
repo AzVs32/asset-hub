@@ -19,14 +19,13 @@ import { usePluginKernel } from "@/kernel/plugin-kernel";
 import { hostSlots } from "@/kernel/slots";
 import { AutomaticSlot } from "@/plugins/automatic-slot";
 import { Button } from "@/shared/ui/button";
-import { controlClass, Field, Input, Textarea } from "@/shared/ui/field";
+import { controlClass, Field, Input } from "@/shared/ui/field";
 
 const draftSchema = z.object({
   name: z.string().refine((value) => value.trim().length > 0, "Name is required"),
   directory: z.string(),
   kind: z.string().trim().min(1),
   status: z.enum(["active", "archived"]),
-  description: z.string(),
   tags: z.string(),
 });
 
@@ -211,11 +210,6 @@ function Detail({
               <option value="archived">Archived</option>
             </select>
           </Field>
-          <div className="sm:col-span-2">
-            <Field label="Description">
-              <Textarea disabled={Boolean(resource.deletedAt)} {...form.register("description")} />
-            </Field>
-          </div>
           <div className="sm:col-span-2">
             <Field label="Tags">
               <Input disabled={Boolean(resource.deletedAt)} {...form.register("tags")} />

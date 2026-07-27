@@ -5,14 +5,12 @@ CREATE TABLE resources (
     directory_id TEXT NOT NULL,
     kind TEXT NOT NULL,
     status TEXT NOT NULL,
-    description TEXT,
     content_json TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     deleted_at TEXT,
 
-    FOREIGN KEY (directory_id) REFERENCES directories(id) ON DELETE RESTRICT,
-    CHECK (description IS NULL OR length(description) <= 1024)
+    FOREIGN KEY (directory_id) REFERENCES directories(id) ON DELETE RESTRICT
 );
 
 CREATE TABLE tags (

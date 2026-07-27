@@ -102,7 +102,6 @@ describe("OpenApiAssetGateway URL boundary", () => {
       name: " draft  01.txt ",
       directory: " library /project A ",
       kind: "core:resource",
-      description: "",
       tags: "",
     });
 

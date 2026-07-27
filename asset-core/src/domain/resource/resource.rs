@@ -1,6 +1,6 @@
 use super::{
     ResourceContent, ResourceKind, ResourceStatus, ResourceTag, StorageKey,
-    normalize_required_text, validate_required_text_exact,
+    validate_required_text_exact,
 };
 use crate::domain::DirectoryRef;
 use crate::error::ResourceError;
@@ -9,8 +9,6 @@ use serde::{Deserialize, Serialize};
 
 /// 资源名称允许的最大字符数。
 const MAX_RESOURCE_NAME_LEN: usize = 255;
-/// 资源描述允许的最大字符数。
-const MAX_RESOURCE_DESCRIPTION_LEN: usize = 1024;
 
 // ==================================================
 // 核心聚合根
@@ -20,7 +18,7 @@ crate::gen_id_uuid_v7!(ResourceId);
 
 /// 资源聚合根。
 ///
-/// `Resource` 负责维护资源基础信息、描述、标签、内容引用和生命周期状态。
+/// `Resource` 负责维护资源基础信息、标签、内容引用和生命周期状态。
 /// 外部代码应通过构建器和行为方法修改资源，避免绕过领域规则直接写字段。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Resource {
@@ -34,8 +32,6 @@ pub struct Resource {
     kind: ResourceKind,
     /// 资源生命周期状态，不包含软删除状态。
     status: ResourceStatus,
-    /// 可选资源描述。
-    description: Option<String>,
     /// 去重并按稳定字典序排列的资源标签集合。
     tags: Vec<ResourceTag>,
     /// 资源内容引用；资源可以不包含对象内容。
@@ -64,8 +60,6 @@ pub struct ResourceSnapshot {
     pub kind: ResourceKind,
     /// 资源生命周期状态。
     pub status: ResourceStatus,
-    /// 可选资源描述。
-    pub description: Option<String>,
     /// 资源标签；从持久化边界进入时会重新归一化和校验。
     pub tags: Vec<String>,
     /// 资源内容引用。
@@ -91,7 +85,6 @@ impl Resource {
     pub fn rehydrate(snapshot: ResourceSnapshot) -> Result<Self, ResourceError> {
         let name = normalize_resource_name(snapshot.name)?;
         StorageKey::from_resource_path(snapshot.directory.path(), &name)?;
-        let description = normalize_optional_description(snapshot.description)?;
         let tags = normalize_tags(snapshot.tags)?;
 
         Ok(Self {
@@ -100,7 +93,6 @@ impl Resource {
             directory: snapshot.directory,
             kind: snapshot.kind,
             status: snapshot.status,
-            description,
             tags,
             content: snapshot.content,
             created_at: snapshot.created_at,
@@ -138,11 +130,6 @@ impl Resource {
     /// 返回资源生命周期状态。
     pub fn status(&self) -> ResourceStatus {
         self.status
-    }
-
-    /// 返回资源描述。
-    pub fn description(&self) -> Option<&str> {
-        self.description.as_deref()
     }
 
     /// 返回资源标签。
@@ -258,7 +245,7 @@ impl Resource {
 
     /// 软删除资源。
     ///
-    /// 软删除会记录 `deleted_at` 并刷新 `updated_at`，不会清除内容引用、描述或标签。
+    /// 软删除会记录 `deleted_at` 并刷新 `updated_at`，不会清除内容引用或标签。
     pub fn soft_delete(&mut self) {
         if self.deleted_at.is_none() {
             let now = Utc::now();
@@ -272,17 +259,6 @@ impl Resource {
         if self.deleted_at.take().is_some() {
             self.touch();
         }
-    }
-
-    /// 替换资源描述；`None` 表示清空描述。
-    pub fn set_description(&mut self, description: Option<String>) -> Result<(), ResourceError> {
-        self.ensure_not_deleted()?;
-        let description = normalize_optional_description(description)?;
-        if self.description != description {
-            self.description = description;
-            self.touch();
-        }
-        Ok(())
     }
 
     /// 替换全部资源标签；标签会被归一化、去重并按稳定字典序排列。
@@ -343,14 +319,6 @@ fn normalize_resource_name(value: String) -> Result<String, ResourceError> {
     Ok(name)
 }
 
-fn normalize_optional_description(value: Option<String>) -> Result<Option<String>, ResourceError> {
-    value
-        .map(|value| {
-            normalize_required_text("resource.description", &value, MAX_RESOURCE_DESCRIPTION_LEN)
-        })
-        .transpose()
-}
-
 fn normalize_tags(tags: Vec<String>) -> Result<Vec<ResourceTag>, ResourceError> {
     let mut normalized = Vec::with_capacity(tags.len());
     for tag in tags {
@@ -366,7 +334,7 @@ fn normalize_tags(tags: Vec<String>) -> Result<Vec<ResourceTag>, ResourceError> 
 
 /// 资源构建器。
 ///
-/// 用于统一创建包含可选描述、标签和内容引用的 `Resource`。
+/// 用于统一创建包含可选标签和内容引用的 `Resource`。
 #[derive(Debug, Clone)]
 pub struct ResourceBuilder {
     /// 资源展示名。
@@ -377,8 +345,6 @@ pub struct ResourceBuilder {
     status: ResourceStatus,
     /// 初始逻辑目录。
     directory: DirectoryRef,
-    /// 初始资源描述。
-    description: Option<String>,
     /// 初始资源标签。
     tags: Vec<String>,
     /// 初始内容引用。
@@ -393,7 +359,6 @@ impl ResourceBuilder {
             kind: ResourceKind::default(),
             status: ResourceStatus::default(),
             directory: DirectoryRef::root(),
-            description: None,
             tags: Vec::new(),
             content: None,
         }
@@ -417,12 +382,6 @@ impl ResourceBuilder {
         self
     }
 
-    /// 设置初始资源描述。
-    pub fn with_description(mut self, description: impl Into<String>) -> Self {
-        self.description = Some(description.into());
-        self
-    }
-
     /// 设置初始资源标签。
     pub fn with_tags<T, I>(mut self, tags: I) -> Self
     where
@@ -443,7 +402,6 @@ impl ResourceBuilder {
     pub fn build(self) -> Result<Resource, ResourceError> {
         let name = normalize_resource_name(self.name)?;
         StorageKey::from_resource_path(self.directory.path(), &name)?;
-        let description = normalize_optional_description(self.description)?;
         let tags = normalize_tags(self.tags)?;
         let now = Utc::now();
 
@@ -453,7 +411,6 @@ impl ResourceBuilder {
             directory: self.directory,
             kind: self.kind,
             status: self.status,
-            description,
             tags,
             content: self.content,
             created_at: now,

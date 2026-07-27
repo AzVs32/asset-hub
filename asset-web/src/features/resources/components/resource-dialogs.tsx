@@ -7,14 +7,13 @@ import type { ResourceDraft, ResourceKind, UploadDraft } from "@/domain/resource
 import { emptyResourceDraft } from "@/domain/resource-draft";
 import { Button } from "@/shared/ui/button";
 import { Dialog } from "@/shared/ui/dialog";
-import { controlClass, Field, Input, Textarea } from "@/shared/ui/field";
+import { controlClass, Field, Input } from "@/shared/ui/field";
 
 const resourceSchema = z.object({
   name: z.string().refine((value) => value.trim().length > 0, "Name is required"),
   directory: z.string(),
   kind: z.string().trim().min(1, "Kind is required"),
   status: z.enum(["active", "archived"]),
-  description: z.string(),
   tags: z.string(),
 });
 
@@ -77,11 +76,6 @@ export function CreateResourceDialog({
           </select>
         </Field>
         <div className="sm:col-span-2">
-          <Field label="Description">
-            <Textarea {...form.register("description")} />
-          </Field>
-        </div>
-        <div className="sm:col-span-2">
           <Field label="Tags" error={form.formState.errors.tags?.message}>
             <Input placeholder="reference, approved, 2026" {...form.register("tags")} />
           </Field>
@@ -105,7 +99,6 @@ interface UploadForm {
   name: string;
   directory: string;
   kind: string;
-  description: string;
   tags: string;
 }
 
@@ -125,10 +118,10 @@ export function UploadResourceDialog({
   onUpload: (draft: UploadDraft) => Promise<unknown>;
 }) {
   const form = useForm<UploadForm>({
-    defaultValues: { name: "", directory, kind: "", description: "", tags: "" },
+    defaultValues: { name: "", directory, kind: "", tags: "" },
   });
   React.useEffect(() => {
-    if (open) form.reset({ name: "", directory, kind: "", description: "", tags: "" });
+    if (open) form.reset({ name: "", directory, kind: "", tags: "" });
   }, [directory, form, open]);
   const file = form.watch("file")?.item(0);
 
@@ -149,7 +142,6 @@ export function UploadResourceDialog({
             name: input.name,
             directory: input.directory,
             kind: input.kind,
-            description: input.description,
             tags: input.tags,
           });
           onOpenChange(false);
@@ -181,11 +173,6 @@ export function UploadResourceDialog({
         <Field label="Tags">
           <Input {...form.register("tags")} />
         </Field>
-        <div className="sm:col-span-2">
-          <Field label="Description">
-            <Textarea {...form.register("description")} />
-          </Field>
-        </div>
         <div className="flex justify-end gap-2 border-t border-slate-100 pt-4 sm:col-span-2">
           <Button variant="secondary" onClick={() => onOpenChange(false)}>
             Cancel

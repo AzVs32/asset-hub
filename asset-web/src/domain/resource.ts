@@ -29,7 +29,6 @@ export interface Resource {
   directory: string;
   kind: string;
   status: ResourceStatus;
-  description: string | null;
   tags: string[];
   content: ResourceContent | null;
   actions: ResourceAction[];
@@ -85,7 +84,6 @@ export interface ResourceDraft {
   directory: string;
   kind: string;
   status: ResourceStatus;
-  description: string;
   tags: string;
 }
 
@@ -94,6 +92,5 @@ export interface UploadDraft {
   name: string;
   directory: string;
   kind: string;
-  description: string;
   tags: string;
 }
