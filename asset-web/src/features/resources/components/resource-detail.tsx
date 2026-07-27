@@ -272,7 +272,6 @@ function ActionIcon({ action }: { action: ResourceAction }) {
   if (action.output.views.includes("download")) return <Download size={15} />;
   if (action.output.views.includes("media") || action.output.views.includes("plugin_frame"))
     return <Eye size={15} />;
-  if (action.output.views.includes("json") || action.output.views.includes("table"))
-    return <FileJson size={15} />;
+  if (action.output.views.includes("json")) return <FileJson size={15} />;
   return <Play size={15} />;
 }

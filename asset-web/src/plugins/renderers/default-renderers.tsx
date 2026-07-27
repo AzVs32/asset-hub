@@ -7,7 +7,6 @@ import { parseExecuteActionMessage, pluginFrameProtocolVersion } from "../frame-
 const MarkdownRenderer = React.lazy(() => import("./markdown-renderer"));
 const MediaRenderer = React.lazy(() => import("./media-renderer"));
 const DownloadRenderer = React.lazy(() => import("./download-renderer"));
-const FormRenderer = React.lazy(() => import("./form-renderer"));
 
 export function registerDefaultViewRenderers(kernel: PluginKernel): void {
   for (const kind of [
@@ -18,8 +17,6 @@ export function registerDefaultViewRenderers(kernel: PluginKernel): void {
     "json",
     "media",
     "download",
-    "table",
-    "form",
   ] as const) {
     kernel.registerView(kind, DefaultViewRenderer);
   }
@@ -48,13 +45,6 @@ function DefaultViewRenderer(props: PluginViewRendererProps) {
         <DownloadRenderer {...props} />
       </LazyView>
     );
-  if (view.view === "table") return <TableView view={view} />;
-  if (view.view === "form")
-    return (
-      <LazyView>
-        <FormRenderer {...props} />
-      </LazyView>
-    );
   return <JsonView value={view.data} />;
 }
 
@@ -78,41 +68,6 @@ function JsonView({ value }: { value: unknown }) {
     <pre className="max-h-[65vh] overflow-auto bg-slate-950 p-5 font-mono text-xs leading-6 text-slate-100">
       {JSON.stringify(value, null, 2)}
     </pre>
-  );
-}
-
-function TableView({ view }: { view: Extract<PluginView, { view: "table" }> }) {
-  return (
-    <div className="max-h-[65vh] overflow-auto">
-      <table className="w-full border-collapse text-left text-sm">
-        <thead className="sticky top-0 bg-slate-100 text-xs uppercase tracking-wide text-slate-600">
-          <tr>
-            {view.columns.map((column) => (
-              <th className="border-b border-slate-200 px-4 py-3" key={column.key}>
-                {column.label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {view.rows.map((row) => (
-            <tr
-              className="even:bg-slate-50"
-              key={rowIdentity(
-                row,
-                view.columns.map((column) => column.key),
-              )}
-            >
-              {view.columns.map((column) => (
-                <td className="border-b border-slate-100 px-4 py-3 align-top" key={column.key}>
-                  {tableCell(row, column.key)}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
   );
 }
 
@@ -205,23 +160,6 @@ function htmlWithoutNetwork(html: string): string {
   const policy =
     "default-src 'none'; img-src data:; media-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'";
   return `<meta http-equiv="Content-Security-Policy" content="${policy}">${html}`;
-}
-
-function tableCell(row: unknown, key: string): string {
-  const value =
-    row && typeof row === "object" && !Array.isArray(row)
-      ? (row as Record<string, unknown>)[key]
-      : undefined;
-  return typeof value === "string" ? value : JSON.stringify(value ?? "");
-}
-
-function rowIdentity(row: unknown, columns: string[]): string {
-  if (row && typeof row === "object" && !Array.isArray(row)) {
-    const id = (row as Record<string, unknown>).id;
-    if (typeof id === "string" || typeof id === "number") return String(id);
-    return columns.map((column) => tableCell(row, column)).join("\u001f");
-  }
-  return JSON.stringify(row);
 }
 
 export function actionTitle(action: ResourceAction, output: PluginActionOutput): string {

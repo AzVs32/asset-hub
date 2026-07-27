@@ -204,8 +204,6 @@ const SUPPORTED_VIEWS: &[&str] = &[
     "json",
     "media",
     "download",
-    "table",
-    "form",
 ];
 
 fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {

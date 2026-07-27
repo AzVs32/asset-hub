@@ -14,7 +14,7 @@
 //! - [`request`] 定义 host 发送给插件 action handler 的 JSON 输入协议，包括资源快照、
 //!   可选的 inline content，以及 host 可读取的 content reference。
 //! - [`view`] 定义插件 action handler 返回给 host 的 JSON 输出协议，用于表达文本、
-//!   HTML、媒体、表格、表单、下载等可由 host 渲染的视图。
+//!   HTML、媒体、下载等可由 host 渲染的视图。
 //!
 //! Cargo crate、Manifest、JSON plugin API 和 Wasm content ABI 独立版本化；升级规则见
 //! `asset-plugin-api/README.md`。
@@ -61,7 +61,7 @@ pub use request::{
     PluginResourceContent,
 };
 pub use view::{
-    DownloadView, FormView, HtmlView, JsonView, MarkdownView, MediaView, PluginActionEffect,
+    DownloadView, HtmlView, JsonView, MarkdownView, MediaView, PluginActionEffect,
     PluginActionOutput, PluginFrameView, PluginMediaEncoding, PluginReplacementEncoding,
-    PluginView, ReplaceContentEffect, TableColumn, TableView, TextView,
+    PluginView, ReplaceContentEffect, TextView,
 };

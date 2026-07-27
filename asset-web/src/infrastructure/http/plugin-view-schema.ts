@@ -1,8 +1,6 @@
 import { z } from "zod";
 import { type PluginView, pluginViewKinds } from "@/domain/plugin";
 
-const jsonObject = z.record(z.string(), z.unknown());
-
 const pluginViewSchema = z.discriminatedUnion("view", [
   z.object({ view: z.literal("text"), text: z.string() }),
   z.object({ view: z.literal("markdown"), markdown: z.string() }),
@@ -21,17 +19,6 @@ const pluginViewSchema = z.discriminatedUnion("view", [
     url: z.string(),
     mime_type: z.string().optional(),
     filename: z.string().optional(),
-  }),
-  z.object({
-    view: z.literal("table"),
-    columns: z.array(z.object({ key: z.string(), label: z.string() })),
-    rows: z.array(z.unknown()),
-  }),
-  z.object({
-    view: z.literal("form"),
-    schema: jsonObject,
-    value: z.unknown().optional(),
-    submit_action: z.string().optional(),
   }),
 ]);
 

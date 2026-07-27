@@ -82,10 +82,10 @@ action 和用户授权能力。Feature 只知道这个接口。
 - `automatic-slot` 自动执行明确放入自动插槽的只读 action。
 - `plugin-action-dialog` 承载用户触发的 action 结果。
 - `plugin-output` 统一展示 diagnostics 并进入 view renderer。
-- `renderers` 支持 text、Markdown、HTML、JSON、table、media、binary、form 和 iframe。
+- `renderers` 支持 text、Markdown、HTML、JSON、media、download 和 iframe。
 - `frame-protocol` 校验 iframe 消息，iframe 只能调用当前资源已经暴露的 action。
 
-Markdown、媒体播放器和 JSON Schema 表单均按需加载，不进入基础首屏包。
+Markdown 和媒体播放器均按需加载，不进入基础首屏包。
 
 ### `features`
 
@@ -129,7 +129,7 @@ main.tsx
 | --- | --- |
 | 当前目录、搜索、kind、tag、分页、选中资源 | URL search params |
 | 资源、目录、kind、用户、授权、session | TanStack Query server cache |
-| 创建、编辑、上传、插件表单 | React Hook Form/local component state |
+| 创建、编辑、上传表单 | React Hook Form/local component state |
 | 当前登录用户读取 | Session context |
 | view renderer 与 slot 规则 | PluginKernel |
 

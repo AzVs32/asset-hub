@@ -34,8 +34,6 @@ impl PluginView {
             Self::Json(_) => "json",
             Self::Media(_) => "media",
             Self::Download(_) => "download",
-            Self::Table(_) => "table",
-            Self::Form(_) => "form",
         }
     }
 }
@@ -74,8 +72,6 @@ pub enum PluginView {
     Json(JsonView),
     Media(MediaView),
     Download(DownloadView),
-    Table(TableView),
-    Form(FormView),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -132,29 +128,6 @@ pub struct DownloadView {
     pub mime_type: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filename: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct TableView {
-    #[serde(default)]
-    pub columns: Vec<TableColumn>,
-    #[serde(default)]
-    pub rows: Vec<Value>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TableColumn {
-    pub key: String,
-    pub label: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct FormView {
-    pub schema: Value,
-    #[serde(default)]
-    pub value: Value,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub submit_action: Option<String>,
 }
 
 #[cfg(test)]

@@ -6,8 +6,6 @@ export const pluginViewKinds = [
   "json",
   "media",
   "download",
-  "table",
-  "form",
 ] as const;
 
 export type PluginViewKind = (typeof pluginViewKinds)[number];
@@ -26,9 +24,7 @@ export type PluginView =
       encoding: "base64" | "url";
       data: string;
     }
-  | { view: "download"; url: string; mime_type?: string; filename?: string }
-  | { view: "table"; columns: Array<{ key: string; label: string }>; rows: unknown[] }
-  | { view: "form"; schema: JsonObject; value?: unknown; submit_action?: string };
+  | { view: "download"; url: string; mime_type?: string; filename?: string };
 
 export interface PluginDiagnostic {
   code: string;

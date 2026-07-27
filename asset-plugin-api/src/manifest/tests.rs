@@ -83,3 +83,16 @@ fn manifest_accepts_download_view_and_rejects_removed_binary_url_view() {
         .unwrap_err();
     assert!(error.contains("unsupported view `binary_url`"));
 }
+
+#[test]
+fn manifest_rejects_removed_table_and_form_views() {
+    for view in ["table", "form"] {
+        let mut document = manifest_document();
+        document["capabilities"]["actions"][0]["views"] = serde_json::json!([view]);
+        let error = serde_json::from_value::<PluginManifest>(document)
+            .unwrap()
+            .validate()
+            .unwrap_err();
+        assert!(error.contains(&format!("unsupported view `{view}`")));
+    }
+}
