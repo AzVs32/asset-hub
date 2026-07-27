@@ -1,13 +1,11 @@
 use super::action::resolved_content_delivery;
 use super::content::hex_sha256;
 use super::*;
-use crate::domain::{
-    Checksum, ChecksumKind, Directory, DirectoryId, DirectoryPath, DirectoryRef, ResourceId,
-};
+use crate::domain::{Checksum, ChecksumKind, Directory, DirectoryId, DirectoryPath, ResourceId};
 use crate::port::{
-    BlobByteStream, BlobWriteResult, DirectoryRepository, ListResources, ResourceActionOutput,
-    ResourceActionRequest, ResourceKindDefinition, ResourceKindRegistry, ResourcePage,
-    ScannedStorageEntry, StoragePrefix,
+    BlobByteStream, BlobWriteResult, DirectoryLocation, DirectoryRepository, ListResources,
+    LocatedResource, ResourceActionOutput, ResourceActionRequest, ResourceKindDefinition,
+    ResourceKindRegistry, ResourcePage, ScannedStorageEntry, StoragePrefix,
 };
 use asset_plugin_api::{
     PluginActionEffect, PluginActionOutput, PluginExecutionPolicy, PluginReplacementEncoding,
@@ -50,6 +48,22 @@ impl InMemoryResourceRepository {
 
     fn find_sync(&self, id: &ResourceId) -> Option<Resource> {
         self.resources.lock().unwrap().get(id).cloned()
+    }
+
+    fn locate_sync(&self, resource: Resource) -> LocatedResource {
+        let path = self
+            .directories
+            .lock()
+            .unwrap()
+            .get(&resource.directory_id())
+            .unwrap()
+            .1
+            .clone();
+        LocatedResource::new(
+            resource.clone(),
+            DirectoryLocation::new(resource.directory_id(), path),
+        )
+        .unwrap()
     }
 
     fn is_empty(&self) -> bool {
@@ -123,22 +137,58 @@ impl ResourceRepository for InMemoryResourceRepository {
 
 #[async_trait::async_trait]
 impl ResourceQuery for InMemoryResourceRepository {
+    async fn find_located_by_id(
+        &self,
+        id: &ResourceId,
+    ) -> Result<Option<LocatedResource>, CoreError> {
+        let Some(resource) = self.find_sync(id) else {
+            return Ok(None);
+        };
+        let path = self
+            .directories
+            .lock()
+            .unwrap()
+            .get(&resource.directory_id())
+            .map(|(_, path)| path.clone())
+            .ok_or_else(|| {
+                CoreError::not_found("directory", resource.directory_id().to_string())
+            })?;
+        LocatedResource::new(
+            resource.clone(),
+            DirectoryLocation::new(resource.directory_id(), path),
+        )
+        .map(Some)
+    }
+
     async fn find_by_path(
         &self,
         directory: &DirectoryPath,
         name: &str,
-    ) -> Result<Option<Resource>, CoreError> {
-        Ok(self
-            .resources
+    ) -> Result<Option<LocatedResource>, CoreError> {
+        let directory_id = self
+            .directories
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(_, (_, candidate))| candidate == directory)
+            .map(|(id, _)| *id);
+        self.resources
             .lock()
             .unwrap()
             .values()
             .find(|resource| {
                 !resource.is_deleted()
-                    && resource.directory().path() == directory
+                    && Some(resource.directory_id()) == directory_id
                     && resource.name() == name
             })
-            .cloned())
+            .cloned()
+            .map(|resource| {
+                LocatedResource::new(
+                    resource,
+                    DirectoryLocation::new(directory_id.unwrap(), directory.clone()),
+                )
+            })
+            .transpose()
     }
 
     async fn list(&self, query: &ListResources) -> Result<ResourcePage, CoreError> {
@@ -162,7 +212,7 @@ impl ResourceQuery for InMemoryResourceRepository {
             .filter(|resource| {
                 query
                     .directory_id()
-                    .is_none_or(|directory_id| resource.directory().id() == *directory_id)
+                    .is_none_or(|directory_id| resource.directory_id() == *directory_id)
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -173,7 +223,22 @@ impl ResourceQuery for InMemoryResourceRepository {
             .into_iter()
             .skip(query.offset() as usize)
             .take(query.limit() as usize)
-            .collect();
+            .map(|resource| {
+                let path = self
+                    .directories
+                    .lock()
+                    .unwrap()
+                    .get(&resource.directory_id())
+                    .map(|(_, path)| path.clone())
+                    .ok_or_else(|| {
+                        CoreError::not_found("directory", resource.directory_id().to_string())
+                    })?;
+                LocatedResource::new(
+                    resource.clone(),
+                    DirectoryLocation::new(resource.directory_id(), path),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
         Ok(ResourcePage {
             items,
@@ -214,51 +279,54 @@ impl DirectoryRepository for InMemoryResourceRepository {
             .map(|(directory, _)| directory.clone()))
     }
 
-    async fn locate_by_id(&self, id: &DirectoryId) -> Result<Option<DirectoryRef>, CoreError> {
+    async fn locate_by_id(&self, id: &DirectoryId) -> Result<Option<DirectoryLocation>, CoreError> {
         Ok(self
             .directories
             .lock()
             .unwrap()
             .get(id)
-            .map(|(_, path)| DirectoryRef::new(*id, path.clone())))
+            .map(|(_, path)| DirectoryLocation::new(*id, path.clone())))
     }
 
     async fn locate_by_path(
         &self,
         path: &DirectoryPath,
-    ) -> Result<Option<DirectoryRef>, CoreError> {
+    ) -> Result<Option<DirectoryLocation>, CoreError> {
         Ok(self
             .directories
             .lock()
             .unwrap()
             .iter()
             .find(|(_, (_, candidate))| candidate == path)
-            .map(|(id, _)| DirectoryRef::new(*id, path.clone())))
+            .map(|(id, _)| DirectoryLocation::new(*id, path.clone())))
     }
 
-    async fn list_children(&self, parent_id: &DirectoryId) -> Result<Vec<DirectoryRef>, CoreError> {
+    async fn list_children(
+        &self,
+        parent_id: &DirectoryId,
+    ) -> Result<Vec<DirectoryLocation>, CoreError> {
         let directories = self.directories.lock().unwrap();
         let mut children = directories
             .iter()
             .filter(|(_, (directory, _))| directory.parent_id() == Some(*parent_id))
-            .map(|(id, (_, path))| DirectoryRef::new(*id, path.clone()))
+            .map(|(id, (_, path))| DirectoryLocation::new(*id, path.clone()))
             .collect::<Vec<_>>();
         children.sort_by(|left, right| left.path().cmp(right.path()));
         Ok(children)
     }
 
-    async fn ensure_path(&self, path: &DirectoryPath) -> Result<DirectoryRef, CoreError> {
+    async fn ensure_path(&self, path: &DirectoryPath) -> Result<DirectoryLocation, CoreError> {
         if let Some(directory) = self.locate_by_path(path).await? {
             return Ok(directory);
         }
-        let mut parent = DirectoryRef::root();
+        let mut parent = DirectoryLocation::root();
         for name in path.path().split('/').filter(|name| !name.is_empty()) {
             let next_path = parent.path().child(name)?;
             if let Some(existing) = self.locate_by_path(&next_path).await? {
                 parent = existing;
             } else {
                 let directory = Directory::new(parent.id(), name)?;
-                let reference = DirectoryRef::new(directory.id(), next_path);
+                let reference = DirectoryLocation::new(directory.id(), next_path);
                 self.directories
                     .lock()
                     .unwrap()
@@ -280,7 +348,7 @@ impl DirectoryRepository for InMemoryResourceRepository {
                 .lock()
                 .unwrap()
                 .values()
-                .any(|resource| resource.directory().id() == *id)
+                .any(|resource| resource.directory_id() == *id)
         {
             return Ok(false);
         }
@@ -746,18 +814,18 @@ fn storage_reconciliation_creates_updates_and_removes_resources() {
     let first = block_on(repository.find_by_path(&directory, "note.txt"))
         .unwrap()
         .unwrap();
-    assert_eq!(first.content().unwrap().size(), 5);
+    assert_eq!(first.resource().content().unwrap().size(), 5);
 
     block_on(blob_storage.put(&key, Bytes::from_static(b"second version"))).unwrap();
     block_on(service.reconcile_storage_keys(std::slice::from_ref(&key))).unwrap();
     let updated = block_on(repository.find_by_path(&directory, "note.txt"))
         .unwrap()
         .unwrap();
-    assert_eq!(updated.id(), first.id());
-    assert_eq!(updated.content().unwrap().size(), 14);
+    assert_eq!(updated.resource().id(), first.resource().id());
+    assert_eq!(updated.resource().content().unwrap().size(), 14);
     assert_ne!(
-        updated.content().unwrap().checksum(),
-        first.content().unwrap().checksum()
+        updated.resource().content().unwrap().checksum(),
+        first.resource().content().unwrap().checksum()
     );
 
     block_on(blob_storage.delete(&key)).unwrap();
@@ -808,11 +876,24 @@ fn storage_reconciliation_preserves_spaces_in_discovered_paths() {
     let resource = block_on(repository.find_by_path(&directory, name))
         .unwrap()
         .unwrap();
-    assert_eq!(resource.name(), name);
-    assert_eq!(resource.directory().path(), &directory);
-    assert_eq!(resource.storage_key(), key);
+    assert_eq!(resource.resource().name(), name);
     assert_eq!(
-        block_on(service.content().get_resource_content(&resource.id())).unwrap(),
+        block_on(service.locate_resource_directory(resource.resource()))
+            .unwrap()
+            .path(),
+        &directory
+    );
+    assert_eq!(
+        block_on(service.storage_key(resource.resource())).unwrap(),
+        key
+    );
+    assert_eq!(
+        block_on(
+            service
+                .content()
+                .get_resource_content(&resource.resource().id())
+        )
+        .unwrap(),
         Some(Bytes::from_static(b"draft"))
     );
 }
@@ -838,7 +919,7 @@ fn storage_reconciliation_preserves_resource_id_on_file_rename() {
         .unwrap()
         .unwrap();
 
-    assert_eq!(renamed.id(), original.id());
+    assert_eq!(renamed.resource().id(), original.resource().id());
     assert!(
         block_on(repository.find_by_path(&from_directory, "book.txt"))
             .unwrap()
@@ -1028,11 +1109,10 @@ fn update_resource_rejects_a_stale_authorized_snapshot() {
     concurrent.rename("concurrent").unwrap();
     block_on(repository.save(&concurrent)).unwrap();
 
-    let error = block_on(
-        service
-            .commands()
-            .update_resource_snapshot(stale, UpdateResource::new().with_name("stale")),
-    )
+    let error = block_on(service.commands().update_resource_snapshot(
+        repository.locate_sync(stale),
+        UpdateResource::new().with_name("stale"),
+    ))
     .unwrap_err();
 
     assert!(matches!(error, CoreError::Conflict { .. }));
@@ -1109,7 +1189,7 @@ fn stream_upload_resource_content_writes_blob_then_saves_resource() {
     let saved = repository.find_sync(&resource.id()).unwrap();
     let content = saved.content().unwrap();
 
-    assert_eq!(saved.storage_key(), key);
+    assert_eq!(block_on(service.storage_key(&saved)).unwrap(), key);
     assert_eq!(content.size(), data.len() as u64);
     assert_eq!(content.mime_type(), Some("image/png"));
     assert_eq!(content.checksum(), &checksum);
@@ -1146,10 +1226,15 @@ fn stream_upload_preserves_spaces_in_resource_and_blob_path() {
     .unwrap();
 
     assert_eq!(resource.name(), name);
-    assert_eq!(resource.directory().path(), &directory);
-    assert_eq!(resource.storage_key(), key);
     assert_eq!(
-        repository.find_sync(&resource.id()).unwrap().storage_key(),
+        block_on(service.locate_resource_directory(&resource))
+            .unwrap()
+            .path(),
+        &directory
+    );
+    assert_eq!(block_on(service.storage_key(&resource)).unwrap(), key);
+    assert_eq!(
+        block_on(service.storage_key(&repository.find_sync(&resource.id()).unwrap())).unwrap(),
         key
     );
     assert_eq!(
@@ -1271,7 +1356,7 @@ fn stream_upload_resource_content_stream_writes_chunks_and_records_size() {
     let saved = repository.find_sync(&resource.id()).unwrap();
     let content = saved.content().unwrap();
 
-    assert_eq!(saved.storage_key(), key);
+    assert_eq!(block_on(service.storage_key(&saved)).unwrap(), key);
     assert_eq!(content.size(), 16);
     assert_eq!(content.mime_type(), Some("application/octet-stream"));
     assert_eq!(
@@ -1427,12 +1512,14 @@ fn execute_write_action_replaces_resource_content() {
     let updated = repository.find_sync(&resource.id()).unwrap();
     let content = updated.content().unwrap();
     assert!(blob_storage.contains(&key));
-    assert_eq!(updated.storage_key(), key);
+    assert_eq!(block_on(service.storage_key(&updated)).unwrap(), key);
     assert!(!blob_storage.contains_fragment(".asset-hub/"));
     assert!(!blob_storage.contains_fragment(".action-replacements/"));
     assert!(!blob_storage.contains_fragment(".action-backups/"));
     assert_eq!(
-        blob_storage.get_sync(&updated.storage_key()).unwrap(),
+        blob_storage
+            .get_sync(&block_on(service.storage_key(&updated)).unwrap())
+            .unwrap(),
         Bytes::from_static(b"# New\n\nUpdated.")
     );
     assert_eq!(content.size(), 15);
@@ -1443,7 +1530,7 @@ fn execute_write_action_replaces_resource_content() {
 
 #[test]
 fn write_action_scratch_content_uses_reserved_namespace() {
-    let (service, _, blob_storage) = service();
+    let (service, _repository, blob_storage) = service();
     let key = StorageKey::new("docs/note.md").unwrap();
     let resource = block_on(
         service.content().upload_resource_content_stream(
@@ -1541,7 +1628,7 @@ fn soft_delete_resource_moves_blob_to_trash_and_hides_content_read() {
 
 #[test]
 fn restoring_soft_deleted_resource_moves_blob_back_from_trash() {
-    let (service, _, blob_storage) = service();
+    let (service, repository, blob_storage) = service();
     let key = StorageKey::new("assets/restored.png").unwrap();
     let data = Bytes::from_static(b"restored bytes");
     let resource = block_on(service.content().upload_resource_content_stream(
@@ -1553,11 +1640,10 @@ fn restoring_soft_deleted_resource_moves_blob_back_from_trash() {
         .unwrap()
         .unwrap();
 
-    let restored = block_on(
-        service
-            .commands()
-            .update_resource_snapshot(deleted, UpdateResource::new().with_restore(true)),
-    )
+    let restored = block_on(service.commands().update_resource_snapshot(
+        repository.locate_sync(deleted),
+        UpdateResource::new().with_restore(true),
+    ))
     .unwrap();
 
     assert!(!restored.is_deleted());
@@ -1582,7 +1668,12 @@ fn soft_delete_rolls_blob_back_when_resource_snapshot_is_stale() {
         .unwrap();
     block_on(repository.save(&concurrent)).unwrap();
 
-    let error = block_on(service.commands().soft_delete_resource_snapshot(stale)).unwrap_err();
+    let error = block_on(
+        service
+            .commands()
+            .soft_delete_resource_snapshot(repository.locate_sync(stale)),
+    )
+    .unwrap_err();
 
     assert!(matches!(error, CoreError::Conflict { .. }));
     assert_eq!(blob_storage.get_sync(&key), Some(data));
@@ -1618,7 +1709,12 @@ fn remove_resource_rejects_a_stale_authorized_snapshot_without_deleting_content(
     concurrent.rename("moved by another request").unwrap();
     block_on(repository.save(&concurrent)).unwrap();
 
-    let error = block_on(service.commands().remove_resource_snapshot(stale)).unwrap_err();
+    let error = block_on(
+        service
+            .commands()
+            .remove_resource_snapshot(repository.locate_sync(stale)),
+    )
+    .unwrap_err();
 
     assert!(matches!(error, CoreError::Conflict { .. }));
     assert!(repository.find_sync(&concurrent.id()).is_some());

@@ -8,7 +8,9 @@ pub use action::{
     ResourceActionExecutor, ResourceActionOutput, ResourceActionRegistry, ResourceActionRequest,
 };
 pub use kind::{ResourceKindDefinition, ResourceKindRegistry};
-pub use persistence::{ListResources, ResourcePage, ResourceQuery, ResourceRepository};
+pub use persistence::{
+    ListResources, LocatedResource, ResourcePage, ResourceQuery, ResourceRepository,
+};
 
 #[cfg(test)]
 mod tests;

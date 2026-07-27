@@ -3,7 +3,8 @@
 //! 查询端口承接资源分页与检索，不负责目录树查询，也不参与资源聚合的保存事务。
 
 use crate::CoreError;
-use crate::domain::{DirectoryId, DirectoryPath, Resource, ResourceId, ResourceKind};
+use crate::domain::{DirectoryId, DirectoryPath, Resource, ResourceId, ResourceKind, StorageKey};
+use crate::port::DirectoryLocation;
 use chrono::{DateTime, Utc};
 
 /// 资源列表查询条件。
@@ -118,10 +119,52 @@ impl ListResources {
     }
 }
 
+/// 带当前目录位置的资源读取投影。
+#[derive(Debug, Clone)]
+pub struct LocatedResource {
+    resource: Resource,
+    directory: DirectoryLocation,
+}
+
+impl LocatedResource {
+    pub fn new(resource: Resource, directory: DirectoryLocation) -> Result<Self, CoreError> {
+        if resource.directory_id() != directory.id() {
+            return Err(CoreError::configuration(
+                "resource directory does not match its location projection",
+            ));
+        }
+        Ok(Self {
+            resource,
+            directory,
+        })
+    }
+
+    pub fn resource(&self) -> &Resource {
+        &self.resource
+    }
+
+    pub fn directory(&self) -> &DirectoryLocation {
+        &self.directory
+    }
+
+    pub fn storage_key(&self) -> Result<StorageKey, CoreError> {
+        StorageKey::from_resource_path(self.directory.path(), self.resource.name())
+            .map_err(Into::into)
+    }
+
+    pub fn into_resource(self) -> Resource {
+        self.resource
+    }
+
+    pub fn into_parts(self) -> (Resource, DirectoryLocation) {
+        (self.resource, self.directory)
+    }
+}
+
 /// 资源分页查询结果。
 #[derive(Debug, Clone)]
 pub struct ResourcePage {
-    pub items: Vec<Resource>,
+    pub items: Vec<LocatedResource>,
     pub total: u64,
     pub limit: u32,
     pub offset: u64,
@@ -129,6 +172,12 @@ pub struct ResourcePage {
 
 #[async_trait::async_trait]
 pub trait ResourceQuery: Send + Sync {
+    /// 按 ID 返回聚合及其当前目录位置，不过滤软删除状态。
+    async fn find_located_by_id(
+        &self,
+        id: &ResourceId,
+    ) -> Result<Option<LocatedResource>, CoreError>;
+
     /// 按逻辑目录和名称查找未软删除资源，用于导入和自动协调的幂等去重。
     ///
     /// 软删除资源的 Blob 已移入内部回收站，不再占用原逻辑路径，因此不应参与查找。
@@ -136,7 +185,7 @@ pub trait ResourceQuery: Send + Sync {
         &self,
         directory: &DirectoryPath,
         name: &str,
-    ) -> Result<Option<Resource>, CoreError>;
+    ) -> Result<Option<LocatedResource>, CoreError>;
 
     /// 按条件分页列出资源。
     async fn list(&self, query: &ListResources) -> Result<ResourcePage, CoreError>;

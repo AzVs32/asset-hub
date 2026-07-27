@@ -1,7 +1,7 @@
 use crate::{
     CoreError, UserError,
     domain::{DirectoryPath, User, UserId, UserRole, UserStatus},
-    port::{PasswordHasher, UserRepository},
+    port::{LocatedUser, PasswordHasher, UserQuery, UserRepository},
     service::DirectoryService,
 };
 use std::sync::Arc;
@@ -11,6 +11,7 @@ const MIN_PASSWORD_LEN: usize = 4;
 #[derive(Clone)]
 pub struct UserService {
     repository: Arc<dyn UserRepository>,
+    query: Arc<dyn UserQuery>,
     password_hasher: Arc<dyn PasswordHasher>,
     directories: DirectoryService,
 }
@@ -18,11 +19,13 @@ pub struct UserService {
 impl UserService {
     pub fn new(
         repository: Arc<dyn UserRepository>,
+        query: Arc<dyn UserQuery>,
         password_hasher: Arc<dyn PasswordHasher>,
         directories: DirectoryService,
     ) -> Self {
         Self {
             repository,
+            query,
             password_hasher,
             directories,
         }
@@ -56,7 +59,7 @@ impl UserService {
             username,
             self.password_hasher.hash(password)?,
             role,
-            workspace_directory,
+            workspace_directory.id(),
         )?;
         self.repository.create(&user).await?;
         Ok(user)
@@ -84,20 +87,36 @@ impl UserService {
     pub async fn find_by_username(&self, username: &str) -> Result<Option<User>, CoreError> {
         self.repository.find_by_username(username.trim()).await
     }
-    pub async fn list(&self) -> Result<Vec<User>, CoreError> {
-        self.repository.list().await
+    pub async fn find_located_by_username(
+        &self,
+        username: &str,
+    ) -> Result<Option<LocatedUser>, CoreError> {
+        self.query.find_located_by_username(username.trim()).await
+    }
+    pub async fn list(&self) -> Result<Vec<LocatedUser>, CoreError> {
+        self.query.list_located().await
+    }
+    #[cfg(test)]
+    async fn workspace_location(
+        &self,
+        user: &User,
+    ) -> Result<crate::port::DirectoryLocation, CoreError> {
+        self.directories
+            .locate_by_id(&user.workspace_directory_id())
+            .await
     }
     pub async fn update_status(
         &self,
         id: &UserId,
         status: UserStatus,
-    ) -> Result<Option<User>, CoreError> {
-        let Some(mut user) = self.repository.find_by_id(id).await? else {
+    ) -> Result<Option<LocatedUser>, CoreError> {
+        let Some(located) = self.query.find_located_by_id(id).await? else {
             return Ok(None);
         };
+        let (mut user, workspace) = located.into_parts();
         user.change_status(status);
         self.repository.save(&user).await?;
-        Ok(Some(user))
+        LocatedUser::new(user, workspace).map(Some)
     }
     pub async fn update_password(
         &self,
@@ -122,9 +141,14 @@ impl UserService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{Directory, DirectoryId, DirectoryRef};
-    use crate::port::{DirectoryRepository, DirectoryStorage, PasswordHasher, UserRepository};
+    use crate::domain::{Directory, DirectoryId};
+    use crate::port::DirectoryLocation;
+    use crate::port::{
+        DirectoryRepository, DirectoryStorage, LocatedUser, PasswordHasher, UserQuery,
+        UserRepository,
+    };
     use async_trait::async_trait;
+    use std::collections::HashMap;
     use std::sync::Mutex;
 
     struct Users {
@@ -168,12 +192,38 @@ mod tests {
                 .cloned())
         }
 
-        async fn list(&self) -> Result<Vec<User>, CoreError> {
-            Ok(self.users.lock().unwrap().clone())
-        }
-
         async fn count(&self) -> Result<u64, CoreError> {
             Ok(self.users.lock().unwrap().len() as u64)
+        }
+    }
+
+    #[async_trait]
+    impl UserQuery for Users {
+        async fn find_located_by_id(&self, id: &UserId) -> Result<Option<LocatedUser>, CoreError> {
+            self.find_by_id(id)
+                .await?
+                .map(|user| LocatedUser::new(user, DirectoryLocation::root()))
+                .transpose()
+        }
+
+        async fn find_located_by_username(
+            &self,
+            username: &str,
+        ) -> Result<Option<LocatedUser>, CoreError> {
+            self.find_by_username(username)
+                .await?
+                .map(|user| LocatedUser::new(user, DirectoryLocation::root()))
+                .transpose()
+        }
+
+        async fn list_located(&self) -> Result<Vec<LocatedUser>, CoreError> {
+            self.users
+                .lock()
+                .unwrap()
+                .iter()
+                .cloned()
+                .map(|user| LocatedUser::new(user, DirectoryLocation::root()))
+                .collect()
         }
     }
 
@@ -189,7 +239,20 @@ mod tests {
         }
     }
 
-    struct Directories;
+    struct Directories {
+        locations: Mutex<HashMap<DirectoryId, DirectoryPath>>,
+    }
+
+    impl Default for Directories {
+        fn default() -> Self {
+            Self {
+                locations: Mutex::new(HashMap::from([(
+                    DirectoryId::root(),
+                    DirectoryPath::root(),
+                )])),
+            }
+        }
+    }
 
     #[async_trait]
     impl DirectoryStorage for Directories {
@@ -206,31 +269,43 @@ mod tests {
         async fn find_directory(&self, _id: &DirectoryId) -> Result<Option<Directory>, CoreError> {
             Ok(None)
         }
-        async fn locate_by_id(&self, id: &DirectoryId) -> Result<Option<DirectoryRef>, CoreError> {
-            Ok(id.is_root().then(DirectoryRef::root))
+        async fn locate_by_id(
+            &self,
+            id: &DirectoryId,
+        ) -> Result<Option<DirectoryLocation>, CoreError> {
+            Ok(self
+                .locations
+                .lock()
+                .unwrap()
+                .get(id)
+                .cloned()
+                .map(|path| DirectoryLocation::new(*id, path)))
         }
         async fn locate_by_path(
             &self,
             path: &DirectoryPath,
-        ) -> Result<Option<DirectoryRef>, CoreError> {
-            Ok(Some(if path.is_root() {
-                DirectoryRef::root()
-            } else {
-                DirectoryRef::new(DirectoryId::new(), path.clone())
-            }))
+        ) -> Result<Option<DirectoryLocation>, CoreError> {
+            Ok(self
+                .locations
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|(_, candidate)| *candidate == path)
+                .map(|(id, path)| DirectoryLocation::new(*id, path.clone())))
         }
         async fn list_children(
             &self,
             _parent_id: &DirectoryId,
-        ) -> Result<Vec<DirectoryRef>, CoreError> {
+        ) -> Result<Vec<DirectoryLocation>, CoreError> {
             Ok(Vec::new())
         }
-        async fn ensure_path(&self, path: &DirectoryPath) -> Result<DirectoryRef, CoreError> {
-            Ok(if path.is_root() {
-                DirectoryRef::root()
-            } else {
-                DirectoryRef::new(DirectoryId::new(), path.clone())
-            })
+        async fn ensure_path(&self, path: &DirectoryPath) -> Result<DirectoryLocation, CoreError> {
+            if let Some(location) = self.locate_by_path(path).await? {
+                return Ok(location);
+            }
+            let id = DirectoryId::new();
+            self.locations.lock().unwrap().insert(id, path.clone());
+            Ok(DirectoryLocation::new(id, path.clone()))
         }
         async fn remove_if_empty(&self, _id: &DirectoryId) -> Result<bool, CoreError> {
             Ok(false)
@@ -249,14 +324,16 @@ mod tests {
             "alice",
             "hashed:old-password",
             UserRole::Member,
-            DirectoryRef::root(),
+            DirectoryId::root(),
         )
         .unwrap();
-        let directories = Arc::new(Directories);
+        let directories = Arc::new(Directories::default());
+        let users = Arc::new(Users {
+            users: Mutex::new(vec![user]),
+        });
         UserService::new(
-            Arc::new(Users {
-                users: Mutex::new(vec![user]),
-            }),
+            users.clone(),
+            users,
             Arc::new(TestPasswordHasher),
             DirectoryService::new(directories.clone(), directories),
         )
@@ -326,8 +403,16 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(member.workspace_directory().path().path(), "users/bob");
-        assert!(administrator.workspace_directory().id().is_root());
+        assert_eq!(
+            service
+                .workspace_location(&member)
+                .await
+                .unwrap()
+                .path()
+                .path(),
+            "users/bob"
+        );
+        assert!(administrator.workspace_directory_id().is_root());
     }
 
     #[tokio::test]
@@ -345,6 +430,9 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(member.workspace_directory().path(), &workspace);
+        assert_eq!(
+            service.workspace_location(&member).await.unwrap().path(),
+            &workspace
+        );
     }
 }

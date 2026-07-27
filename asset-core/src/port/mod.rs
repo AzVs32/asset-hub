@@ -17,13 +17,13 @@ mod resource;
 mod storage;
 
 pub use audit::SecurityAuditRepository;
-pub use directory::DirectoryRepository;
+pub use directory::{DirectoryLocation, DirectoryRepository};
 pub use directory_kind::{DirectoryKindDefinition, DirectoryKindRegistry};
-pub use identity::{PasswordHasher, UserRepository};
+pub use identity::{LocatedUser, PasswordHasher, UserQuery, UserRepository};
 pub use resource::{
-    ListResources, ResourceActionExecutor, ResourceActionOutput, ResourceActionRegistry,
-    ResourceActionRequest, ResourceKindDefinition, ResourceKindRegistry, ResourcePage,
-    ResourceQuery, ResourceRepository,
+    ListResources, LocatedResource, ResourceActionExecutor, ResourceActionOutput,
+    ResourceActionRegistry, ResourceActionRequest, ResourceKindDefinition, ResourceKindRegistry,
+    ResourcePage, ResourceQuery, ResourceRepository,
 };
 pub use storage::{
     BlobByteStream, BlobStorage, BlobWriteResult, DirectoryStorage, RESERVED_BLOB_STORAGE_PREFIX,

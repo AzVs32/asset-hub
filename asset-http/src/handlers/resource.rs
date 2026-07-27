@@ -63,7 +63,7 @@ pub(crate) async fn create_resource(
 
     Ok((
         StatusCode::CREATED,
-        Json(resource_response(state.service(), &workspace, &resource)?),
+        Json(resource_snapshot_response(state.service(), &workspace, &resource).await?),
     ))
 }
 
@@ -295,11 +295,9 @@ pub(crate) async fn update_resource(
         .update_resource(&id, command)
         .await?
     {
-        Some(resource) => Ok(Json(resource_response(
-            state.service(),
-            &workspace,
-            &resource,
-        )?)),
+        Some(resource) => Ok(Json(
+            resource_snapshot_response(state.service(), &workspace, &resource).await?,
+        )),
         None => Err(HttpError::not_found(format!("resource `{id}` not found"))),
     }
 }
@@ -371,11 +369,9 @@ pub(crate) async fn soft_delete_resource(
     let workspace = state.workspace(&access.0).await?;
 
     match state.secured(&access.0).soft_delete_resource(&id).await? {
-        Some(resource) => Ok(Json(resource_response(
-            state.service(),
-            &workspace,
-            &resource,
-        )?)),
+        Some(resource) => Ok(Json(
+            resource_snapshot_response(state.service(), &workspace, &resource).await?,
+        )),
         None => Err(HttpError::not_found(format!("resource `{id}` not found"))),
     }
 }
@@ -473,19 +469,33 @@ pub(super) fn parse_kind(value: impl Into<String>) -> Result<ResourceKind, HttpE
 pub(super) fn resource_response(
     service: &asset_core::service::ResourceService,
     workspace: &asset_core::service::WorkspaceScope,
+    resource: &asset_core::port::LocatedResource,
+) -> Result<ResourceResponse, CoreError> {
+    let actions = service.describe_resource_actions(resource.resource())?;
+    Ok(ResourceResponse::new(
+        resource.resource(),
+        workspace.project(resource.directory().path())?,
+        actions,
+    ))
+}
+
+pub(super) async fn resource_snapshot_response(
+    service: &asset_core::service::ResourceService,
+    workspace: &asset_core::service::WorkspaceScope,
     resource: &asset_core::domain::Resource,
 ) -> Result<ResourceResponse, CoreError> {
     let actions = service.describe_resource_actions(resource)?;
+    let directory = service.locate_resource_directory(resource).await?;
     Ok(ResourceResponse::new(
         resource,
-        workspace.project(resource.directory().path())?,
+        workspace.project(directory.path())?,
         actions,
     ))
 }
 
 pub(super) fn directory_response(
     workspace: &asset_core::service::WorkspaceScope,
-    directory: &asset_core::domain::DirectoryRef,
+    directory: &asset_core::port::DirectoryLocation,
 ) -> Result<DirectoryResponse, CoreError> {
     let path = workspace.project(directory.path())?;
     Ok(DirectoryResponse {
@@ -502,12 +512,12 @@ pub(super) fn resource_page_response(
     page_result: asset_core::port::ResourcePage,
     page: u32,
 ) -> Result<ResourcePageResponse, CoreError> {
+    let mut items = Vec::with_capacity(page_result.items.len());
+    for resource in &page_result.items {
+        items.push(resource_response(service, workspace, resource)?);
+    }
     Ok(ResourcePageResponse {
-        items: page_result
-            .items
-            .iter()
-            .map(|resource| resource_response(service, workspace, resource))
-            .collect::<Result<Vec<_>, _>>()?,
+        items,
         total: page_result.total,
         page,
         limit: page_result.limit,

@@ -2,8 +2,33 @@
 
 use crate::{
     CoreError,
-    domain::{Directory, DirectoryId, DirectoryPath, DirectoryRef},
+    domain::{Directory, DirectoryId, DirectoryPath},
 };
+
+/// 目录查询得到的稳定标识与当前路径投影。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectoryLocation {
+    id: DirectoryId,
+    path: DirectoryPath,
+}
+
+impl DirectoryLocation {
+    pub fn new(id: DirectoryId, path: DirectoryPath) -> Self {
+        Self { id, path }
+    }
+
+    pub fn root() -> Self {
+        Self::new(DirectoryId::root(), DirectoryPath::root())
+    }
+
+    pub fn id(&self) -> DirectoryId {
+        self.id
+    }
+
+    pub fn path(&self) -> &DirectoryPath {
+        &self.path
+    }
+}
 
 /// 目录聚合仓储。
 ///
@@ -13,11 +38,16 @@ use crate::{
 pub trait DirectoryRepository: Send + Sync {
     async fn save_directory(&self, directory: &Directory) -> Result<(), CoreError>;
     async fn find_directory(&self, id: &DirectoryId) -> Result<Option<Directory>, CoreError>;
-    async fn locate_by_id(&self, id: &DirectoryId) -> Result<Option<DirectoryRef>, CoreError>;
-    async fn locate_by_path(&self, path: &DirectoryPath)
-    -> Result<Option<DirectoryRef>, CoreError>;
-    async fn list_children(&self, parent_id: &DirectoryId) -> Result<Vec<DirectoryRef>, CoreError>;
-    async fn ensure_path(&self, path: &DirectoryPath) -> Result<DirectoryRef, CoreError>;
+    async fn locate_by_id(&self, id: &DirectoryId) -> Result<Option<DirectoryLocation>, CoreError>;
+    async fn locate_by_path(
+        &self,
+        path: &DirectoryPath,
+    ) -> Result<Option<DirectoryLocation>, CoreError>;
+    async fn list_children(
+        &self,
+        parent_id: &DirectoryId,
+    ) -> Result<Vec<DirectoryLocation>, CoreError>;
+    async fn ensure_path(&self, path: &DirectoryPath) -> Result<DirectoryLocation, CoreError>;
     async fn remove_if_empty(&self, id: &DirectoryId) -> Result<bool, CoreError>;
     async fn is_descendant_or_self(
         &self,

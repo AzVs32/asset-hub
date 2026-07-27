@@ -4,7 +4,8 @@
 //! 即使 action 声明为 read_write，也不能直接访问仓储或对象存储。
 
 use crate::CoreError;
-use crate::domain::{Resource, ResourceId, ResourceKind};
+use crate::domain::{Resource, ResourceId, ResourceKind, StorageKey};
+use crate::port::DirectoryLocation;
 use asset_plugin_api::{
     PluginActionOutput, ResourceAction, ResourceActionAccess, ResourceActionContentDelivery,
     ResourceActionDefinition,
@@ -17,6 +18,8 @@ use serde_json::Value;
 #[derive(Debug, Clone)]
 pub struct ResourceActionRequest {
     resource: Resource,
+    directory: DirectoryLocation,
+    storage_key: StorageKey,
     action: ResourceAction,
     handler: Option<String>,
     access: ResourceActionAccess,
@@ -28,6 +31,8 @@ pub struct ResourceActionRequest {
 impl ResourceActionRequest {
     pub fn new(
         resource: Resource,
+        directory: DirectoryLocation,
+        storage_key: StorageKey,
         action: ResourceAction,
         handler: Option<impl Into<String>>,
         access: ResourceActionAccess,
@@ -37,6 +42,8 @@ impl ResourceActionRequest {
     ) -> Self {
         Self {
             resource,
+            directory,
+            storage_key,
             action,
             handler: handler.map(Into::into),
             access,
@@ -48,6 +55,14 @@ impl ResourceActionRequest {
 
     pub fn resource(&self) -> &Resource {
         &self.resource
+    }
+
+    pub fn directory(&self) -> &DirectoryLocation {
+        &self.directory
+    }
+
+    pub fn storage_key(&self) -> &StorageKey {
+        &self.storage_key
     }
 
     pub fn action(&self) -> &ResourceAction {

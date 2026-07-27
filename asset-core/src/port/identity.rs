@@ -3,7 +3,53 @@
 use crate::{
     CoreError,
     domain::{User, UserId},
+    port::DirectoryLocation,
 };
+
+/// 带当前工作目录位置的用户读取投影。
+#[derive(Debug, Clone)]
+pub struct LocatedUser {
+    user: User,
+    workspace: DirectoryLocation,
+}
+
+impl LocatedUser {
+    pub fn new(user: User, workspace: DirectoryLocation) -> Result<Self, CoreError> {
+        if user.workspace_directory_id() != workspace.id() {
+            return Err(CoreError::configuration(
+                "user workspace does not match its location projection",
+            ));
+        }
+        Ok(Self { user, workspace })
+    }
+
+    pub fn user(&self) -> &User {
+        &self.user
+    }
+
+    pub fn workspace(&self) -> &DirectoryLocation {
+        &self.workspace
+    }
+
+    pub fn into_user(self) -> User {
+        self.user
+    }
+
+    pub fn into_parts(self) -> (User, DirectoryLocation) {
+        (self.user, self.workspace)
+    }
+}
+
+/// 用户读取查询，不参与身份验证和聚合保存。
+#[async_trait::async_trait]
+pub trait UserQuery: Send + Sync {
+    async fn find_located_by_id(&self, id: &UserId) -> Result<Option<LocatedUser>, CoreError>;
+    async fn find_located_by_username(
+        &self,
+        username: &str,
+    ) -> Result<Option<LocatedUser>, CoreError>;
+    async fn list_located(&self) -> Result<Vec<LocatedUser>, CoreError>;
+}
 
 /// 保存和还原完整用户聚合，不承担密码哈希职责。
 #[async_trait::async_trait]
@@ -14,7 +60,6 @@ pub trait UserRepository: Send + Sync {
     async fn save(&self, user: &User) -> Result<(), CoreError>;
     async fn find_by_id(&self, id: &UserId) -> Result<Option<User>, CoreError>;
     async fn find_by_username(&self, username: &str) -> Result<Option<User>, CoreError>;
-    async fn list(&self) -> Result<Vec<User>, CoreError>;
     async fn count(&self) -> Result<u64, CoreError>;
 }
 

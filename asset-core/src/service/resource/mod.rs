@@ -6,7 +6,7 @@
 use crate::CoreError;
 use crate::domain::{Resource, ResourceKind, StorageKey};
 use crate::port::{
-    BlobStorage, DirectoryRepository, DirectoryStorage, ResourceActionExecutor,
+    BlobStorage, DirectoryLocation, DirectoryRepository, DirectoryStorage, ResourceActionExecutor,
     ResourceActionRegistry, ResourceKindRegistry, ResourceQuery, ResourceRepository,
     StorageScanner,
 };
@@ -163,6 +163,21 @@ impl ResourceService {
         self.blob_storage.health_check().await
     }
 
+    pub async fn locate_resource_directory(
+        &self,
+        resource: &Resource,
+    ) -> Result<DirectoryLocation, CoreError> {
+        self.directories
+            .locate_by_id(&resource.directory_id())
+            .await
+    }
+
+    #[cfg(test)]
+    async fn storage_key(&self, resource: &Resource) -> Result<StorageKey, CoreError> {
+        let directory = self.locate_resource_directory(resource).await?;
+        StorageKey::from_resource_path(directory.path(), resource.name()).map_err(Into::into)
+    }
+
     /// 使用大小与修改时间增量协调对象存储。
     pub async fn reconcile_storage(&self) -> Result<StorageReconciliationReport, CoreError> {
         self.reconciliation().reconcile_storage(false).await
@@ -274,10 +289,7 @@ impl ResourceService {
                 action.matches_resource(
                     kind.as_str(),
                     content.and_then(|content| content.mime_type()),
-                    content
-                        .map(|_| resource.storage_key())
-                        .as_ref()
-                        .map(StorageKey::as_str),
+                    content.map(|_| resource.name()),
                 )
             })
     }

@@ -110,7 +110,7 @@ mod tests {
                 .await
                 .unwrap()
             {
-                return Some(resource);
+                return Some(resource.into_resource());
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
@@ -182,14 +182,14 @@ mod tests {
                 .await
                 .unwrap()
                 .unwrap();
-            if resource.content().unwrap().size() == 14 {
+            if resource.resource().content().unwrap().size() == 14 {
                 updated = Some(resource);
                 break;
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         let updated = updated.expect("modified file should update Resource content");
-        assert_eq!(updated.id(), first.id());
+        assert_eq!(updated.resource().id(), first.id());
 
         std::fs::rename(
             directory_path.join("note.txt"),

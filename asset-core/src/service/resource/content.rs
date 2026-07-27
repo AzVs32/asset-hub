@@ -8,7 +8,7 @@ use crate::CoreError;
 #[cfg(test)]
 use crate::domain::ResourceId;
 use crate::domain::{Checksum, ChecksumKind, Resource, ResourceContent, StorageKey};
-use crate::port::{BlobByteStream, RESERVED_BLOB_STORAGE_PREFIX};
+use crate::port::{BlobByteStream, LocatedResource, RESERVED_BLOB_STORAGE_PREFIX};
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use futures_util::StreamExt;
@@ -49,8 +49,9 @@ impl<'a> ResourceContentService<'a> {
         )?;
         let directory = self.service.directories.ensure_path(&directory).await?;
 
-        let mut resource = build_resource(name, directory, Some(kind), status, tags).build()?;
-        let storage_key = resource.storage_key();
+        let mut resource =
+            build_resource(name, directory.id(), Some(kind), status, tags).build()?;
+        let storage_key = detection_storage_key;
         reject_reserved_storage_key(&storage_key)?;
         // 在写 Blob 前校验全部内容元数据，避免写入后才发现 MIME 等字段非法。
         build_content(0, mime_type.clone(), placeholder_checksum()?, None)?;
@@ -107,7 +108,7 @@ impl<'a> ResourceContentService<'a> {
         &self,
         id: &ResourceId,
     ) -> Result<Option<Bytes>, CoreError> {
-        let Some(resource) = self.service.repository.find_by_id(id).await? else {
+        let Some(resource) = self.service.query.find_located_by_id(id).await? else {
             return Ok(None);
         };
         self.get_resource_content_snapshot(&resource).await
@@ -115,19 +116,22 @@ impl<'a> ResourceContentService<'a> {
 
     pub(crate) async fn get_resource_content_snapshot(
         &self,
-        resource: &Resource,
+        located: &LocatedResource,
     ) -> Result<Option<Bytes>, CoreError> {
+        let resource = located.resource();
         if resource.is_deleted() || resource.content().is_none() {
             return Ok(None);
         }
-        self.service.blob_storage.get(&resource.storage_key()).await
+        let storage_key = located.storage_key()?;
+        self.service.blob_storage.get(&storage_key).await
     }
 
     pub(crate) async fn get_resource_content_stream_snapshot(
         &self,
-        resource: &Resource,
+        located: &LocatedResource,
         range: Option<(u64, u64)>,
     ) -> Result<Option<ResourceContentStream>, CoreError> {
+        let resource = located.resource();
         if resource.is_deleted() {
             return Ok(None);
         }
@@ -135,16 +139,14 @@ impl<'a> ResourceContentService<'a> {
             return Ok(None);
         };
 
+        let storage_key = located.storage_key()?;
         let stream = if let Some((start, end)) = range {
             self.service
                 .blob_storage
-                .get_range_stream(&resource.storage_key(), start, end)
+                .get_range_stream(&storage_key, start, end)
                 .await?
         } else {
-            self.service
-                .blob_storage
-                .get_stream(&resource.storage_key())
-                .await?
+            self.service.blob_storage.get_stream(&storage_key).await?
         };
 
         Ok(stream.map(|content_stream| {

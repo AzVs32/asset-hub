@@ -1,8 +1,7 @@
 use super::{
-    ResourceContent, ResourceKind, ResourceStatus, ResourceTag, StorageKey,
-    validate_required_text_exact,
+    ResourceContent, ResourceKind, ResourceStatus, ResourceTag, validate_required_text_exact,
 };
-use crate::domain::DirectoryRef;
+use crate::domain::DirectoryId;
 use crate::error::ResourceError;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -26,8 +25,8 @@ pub struct Resource {
     id: ResourceId,
     /// 资源文件名；与目录共同构成资源及其 Blob 的唯一规范路径。
     name: String,
-    /// 资源所在目录的稳定引用；路径只是读取时附带的当前位置投影。
-    directory: DirectoryRef,
+    /// 资源所在目录的稳定标识。
+    directory_id: DirectoryId,
     /// 资源类型，用于区分图片、文档、音频等不同业务资源。
     kind: ResourceKind,
     /// 资源生命周期状态，不包含软删除状态。
@@ -54,8 +53,8 @@ pub struct ResourceSnapshot {
     pub id: ResourceId,
     /// 资源展示名。
     pub name: String,
-    /// 资源所在目录的稳定引用。
-    pub directory: DirectoryRef,
+    /// 资源所在目录的稳定标识。
+    pub directory_id: DirectoryId,
     /// 资源类型。
     pub kind: ResourceKind,
     /// 资源生命周期状态。
@@ -84,13 +83,12 @@ impl Resource {
     /// Repository 实现应通过它还原数据库记录，避免绕过领域约束直接构造 `Resource`。
     pub fn rehydrate(snapshot: ResourceSnapshot) -> Result<Self, ResourceError> {
         let name = normalize_resource_name(snapshot.name)?;
-        StorageKey::from_resource_path(snapshot.directory.path(), &name)?;
         let tags = normalize_tags(snapshot.tags)?;
 
         Ok(Self {
             id: snapshot.id,
             name,
-            directory: snapshot.directory,
+            directory_id: snapshot.directory_id,
             kind: snapshot.kind,
             status: snapshot.status,
             tags,
@@ -111,15 +109,9 @@ impl Resource {
         &self.name
     }
 
-    /// 返回资源所在目录。
-    pub fn directory(&self) -> &DirectoryRef {
-        &self.directory
-    }
-
-    /// 返回由逻辑目录和资源名称唯一派生的对象存储键。
-    pub fn storage_key(&self) -> StorageKey {
-        StorageKey::from_resource_path(self.directory.path(), &self.name)
-            .expect("resource path is validated when the aggregate changes")
+    /// 返回资源所在目录的稳定标识。
+    pub fn directory_id(&self) -> DirectoryId {
+        self.directory_id
     }
 
     /// 返回资源类型。
@@ -180,8 +172,6 @@ impl Resource {
     pub fn rename(&mut self, name: impl Into<String>) -> Result<(), ResourceError> {
         self.ensure_not_deleted()?;
         let name = normalize_resource_name(name.into())?;
-        StorageKey::from_resource_path(self.directory.path(), &name)?;
-
         if self.name != name {
             self.name = name;
             self.touch();
@@ -191,12 +181,11 @@ impl Resource {
     }
 
     /// 移动资源到新的逻辑目录。
-    pub fn move_to_directory(&mut self, directory: DirectoryRef) -> Result<(), ResourceError> {
+    pub fn move_to_directory(&mut self, directory_id: DirectoryId) -> Result<(), ResourceError> {
         self.ensure_not_deleted()?;
-        StorageKey::from_resource_path(directory.path(), &self.name)?;
 
-        if self.directory != directory {
-            self.directory = directory;
+        if self.directory_id != directory_id {
+            self.directory_id = directory_id;
             self.touch();
         }
 
@@ -344,7 +333,7 @@ pub struct ResourceBuilder {
     /// 初始生命周期状态。
     status: ResourceStatus,
     /// 初始逻辑目录。
-    directory: DirectoryRef,
+    directory_id: DirectoryId,
     /// 初始资源标签。
     tags: Vec<String>,
     /// 初始内容引用。
@@ -358,7 +347,7 @@ impl ResourceBuilder {
             name: name.into(),
             kind: ResourceKind::default(),
             status: ResourceStatus::default(),
-            directory: DirectoryRef::root(),
+            directory_id: DirectoryId::root(),
             tags: Vec::new(),
             content: None,
         }
@@ -377,8 +366,8 @@ impl ResourceBuilder {
     }
 
     /// 设置初始逻辑目录。
-    pub fn with_directory(mut self, directory: DirectoryRef) -> Self {
-        self.directory = directory;
+    pub fn with_directory_id(mut self, directory_id: DirectoryId) -> Self {
+        self.directory_id = directory_id;
         self
     }
 
@@ -401,14 +390,13 @@ impl ResourceBuilder {
     /// 完成构建并执行领域校验。
     pub fn build(self) -> Result<Resource, ResourceError> {
         let name = normalize_resource_name(self.name)?;
-        StorageKey::from_resource_path(self.directory.path(), &name)?;
         let tags = normalize_tags(self.tags)?;
         let now = Utc::now();
 
         Ok(Resource {
             id: ResourceId::new(),
             name,
-            directory: self.directory,
+            directory_id: self.directory_id,
             kind: self.kind,
             status: self.status,
             tags,

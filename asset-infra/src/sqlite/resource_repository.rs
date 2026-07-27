@@ -1,11 +1,12 @@
 use crate::migration;
 use asset_core::CoreError;
 use asset_core::domain::{
-    Directory, DirectoryId, DirectoryKind, DirectoryPath, DirectoryRef, DirectorySnapshot,
-    Resource, ResourceContent, ResourceId, ResourceKind, ResourceSnapshot, ResourceStatus,
+    Directory, DirectoryId, DirectoryKind, DirectoryPath, DirectorySnapshot, Resource,
+    ResourceContent, ResourceId, ResourceKind, ResourceSnapshot, ResourceStatus,
 };
 use asset_core::port::{
-    DirectoryRepository, ListResources, ResourcePage, ResourceQuery, ResourceRepository,
+    DirectoryLocation, DirectoryRepository, ListResources, LocatedResource, ResourcePage,
+    ResourceQuery, ResourceRepository,
 };
 use chrono::{DateTime, Utc};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow};
@@ -52,6 +53,33 @@ const RESOURCE_SELECT: &str = r#"
         resources.deleted_at
     FROM resources
     JOIN directory_paths ON directory_paths.id = resources.directory_id
+"#;
+
+const RESOURCE_AGGREGATE_SELECT: &str = r#"
+    SELECT
+        resources.id,
+        resources.name,
+        resources.directory_id,
+        resources.kind,
+        resources.status,
+        COALESCE(
+            (
+                SELECT json_group_array(tag)
+                FROM (
+                    SELECT tags.name AS tag
+                    FROM resource_tags
+                    JOIN tags ON tags.id = resource_tags.tag_id
+                    WHERE resource_tags.resource_id = resources.id
+                    ORDER BY tags.name COLLATE BINARY
+                )
+            ),
+            '[]'
+        ) AS tags_json,
+        resources.content_json,
+        resources.created_at,
+        resources.updated_at,
+        resources.deleted_at
+    FROM resources
 "#;
 
 const DIRECTORY_LOCATION_SELECT: &str = r#"
@@ -183,7 +211,7 @@ impl ResourceRepository for SqliteResourceRepository {
         )
         .bind(resource.id().to_string())
         .bind(resource.name())
-        .bind(resource.directory().id().to_string())
+        .bind(resource.directory_id().to_string())
         .bind(resource.kind().as_str())
         .bind(resource.status().as_str())
         .bind(content_json)
@@ -228,7 +256,7 @@ impl ResourceRepository for SqliteResourceRepository {
             "#,
         )
         .bind(resource.name())
-        .bind(resource.directory().id().to_string())
+        .bind(resource.directory_id().to_string())
         .bind(resource.kind().as_str())
         .bind(resource.status().as_str())
         .bind(content_json)
@@ -258,7 +286,7 @@ impl ResourceRepository for SqliteResourceRepository {
     }
 
     async fn find_by_id(&self, id: &ResourceId) -> Result<Option<Resource>, CoreError> {
-        let statement = format!("{RESOURCE_SELECT} WHERE resources.id = ?");
+        let statement = format!("{RESOURCE_AGGREGATE_SELECT} WHERE resources.id = ?");
         let row = sqlx::query(&statement)
             .bind(id.to_string())
             .fetch_optional(&self.pool)
@@ -319,11 +347,25 @@ impl ResourceRepository for SqliteResourceRepository {
 
 #[async_trait::async_trait]
 impl ResourceQuery for SqliteResourceRepository {
+    async fn find_located_by_id(
+        &self,
+        id: &ResourceId,
+    ) -> Result<Option<LocatedResource>, CoreError> {
+        let statement = format!("{RESOURCE_SELECT} WHERE resources.id = ?");
+        let row = sqlx::query(&statement)
+            .bind(id.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| CoreError::repository("query.find_by_id", error))?;
+
+        row.map(decode_located_resource).transpose()
+    }
+
     async fn find_by_path(
         &self,
         directory: &DirectoryPath,
         name: &str,
-    ) -> Result<Option<Resource>, CoreError> {
+    ) -> Result<Option<LocatedResource>, CoreError> {
         let statement = format!(
             "{RESOURCE_SELECT} WHERE directory_paths.path = ? AND resources.name = ? \
              AND resources.deleted_at IS NULL"
@@ -335,7 +377,7 @@ impl ResourceQuery for SqliteResourceRepository {
             .await
             .map_err(|error| CoreError::repository("find_by_path", error))?;
 
-        row.map(decode_resource).transpose()
+        row.map(decode_located_resource).transpose()
     }
 
     async fn list(&self, query: &ListResources) -> Result<ResourcePage, CoreError> {
@@ -351,7 +393,7 @@ impl ResourceQuery for SqliteResourceRepository {
             .map_err(|error| CoreError::repository("list.select", error))?;
         let items = rows
             .into_iter()
-            .map(decode_resource)
+            .map(decode_located_resource)
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(ResourcePage {
@@ -452,30 +494,33 @@ impl DirectoryRepository for SqliteResourceRepository {
         row.map(decode_directory).transpose()
     }
 
-    async fn locate_by_id(&self, id: &DirectoryId) -> Result<Option<DirectoryRef>, CoreError> {
+    async fn locate_by_id(&self, id: &DirectoryId) -> Result<Option<DirectoryLocation>, CoreError> {
         let statement = format!("{DIRECTORY_LOCATION_SELECT} WHERE id = ?");
         let row = sqlx::query(&statement)
             .bind(id.to_string())
             .fetch_optional(&self.pool)
             .await
             .map_err(|error| CoreError::repository("directory.locate_by_id", error))?;
-        row.map(decode_directory_ref).transpose()
+        row.map(decode_directory_location).transpose()
     }
 
     async fn locate_by_path(
         &self,
         path: &DirectoryPath,
-    ) -> Result<Option<DirectoryRef>, CoreError> {
+    ) -> Result<Option<DirectoryLocation>, CoreError> {
         let statement = format!("{DIRECTORY_LOCATION_SELECT} WHERE path = ?");
         let row = sqlx::query(&statement)
             .bind(path.path())
             .fetch_optional(&self.pool)
             .await
             .map_err(|error| CoreError::repository("directory.find_by_path", error))?;
-        row.map(decode_directory_ref).transpose()
+        row.map(decode_directory_location).transpose()
     }
 
-    async fn list_children(&self, parent_id: &DirectoryId) -> Result<Vec<DirectoryRef>, CoreError> {
+    async fn list_children(
+        &self,
+        parent_id: &DirectoryId,
+    ) -> Result<Vec<DirectoryLocation>, CoreError> {
         let statement =
             format!("{DIRECTORY_LOCATION_SELECT} WHERE parent_id = ? ORDER BY name COLLATE BINARY");
         let rows = sqlx::query(&statement)
@@ -483,12 +528,12 @@ impl DirectoryRepository for SqliteResourceRepository {
             .fetch_all(&self.pool)
             .await
             .map_err(|error| CoreError::repository("directory.list_children", error))?;
-        rows.into_iter().map(decode_directory_ref).collect()
+        rows.into_iter().map(decode_directory_location).collect()
     }
 
-    async fn ensure_path(&self, path: &DirectoryPath) -> Result<DirectoryRef, CoreError> {
+    async fn ensure_path(&self, path: &DirectoryPath) -> Result<DirectoryLocation, CoreError> {
         if path.is_root() {
-            return Ok(DirectoryRef::root());
+            return Ok(DirectoryLocation::root());
         }
         let mut transaction = self
             .pool
@@ -530,7 +575,7 @@ impl DirectoryRepository for SqliteResourceRepository {
             .commit()
             .await
             .map_err(|error| CoreError::repository("directory.ensure.commit", error))?;
-        Ok(DirectoryRef::new(parent_id, current_path))
+        Ok(DirectoryLocation::new(parent_id, current_path))
     }
 
     async fn remove_if_empty(&self, id: &DirectoryId) -> Result<bool, CoreError> {
@@ -655,10 +700,7 @@ fn escape_like(value: &str) -> String {
 fn decode_resource(row: SqliteRow) -> Result<Resource, CoreError> {
     let id = decode_id(column(&row, "id")?)?;
     let name = column(&row, "name")?;
-    let directory = DirectoryRef::new(
-        decode_directory_id(column(&row, "directory_id")?)?,
-        DirectoryPath::from_path(column::<String>(&row, "directory_path")?)?,
-    );
+    let directory_id = decode_directory_id(column(&row, "directory_id")?)?;
     let kind = ResourceKind::try_new(column::<String>(&row, "kind")?)?;
     let status = status_from_str(column(&row, "status")?)?;
     let tags = decode_tags(&row)?;
@@ -672,7 +714,7 @@ fn decode_resource(row: SqliteRow) -> Result<Resource, CoreError> {
     Resource::rehydrate(ResourceSnapshot {
         id,
         name,
-        directory,
+        directory_id,
         kind,
         status,
         tags,
@@ -682,6 +724,16 @@ fn decode_resource(row: SqliteRow) -> Result<Resource, CoreError> {
         deleted_at,
     })
     .map_err(CoreError::from)
+}
+
+fn decode_located_resource(row: SqliteRow) -> Result<LocatedResource, CoreError> {
+    let directory_id = decode_directory_id(column(&row, "directory_id")?)?;
+    let directory_path = DirectoryPath::from_path(column::<String>(&row, "directory_path")?)?;
+    let resource = decode_resource(row)?;
+    LocatedResource::new(
+        resource,
+        DirectoryLocation::new(directory_id, directory_path),
+    )
 }
 
 async fn sync_tags(
@@ -784,8 +836,8 @@ fn decode_directory_id(value: String) -> Result<DirectoryId, CoreError> {
         .map_err(|error| CoreError::repository("directory.decode_id", error))
 }
 
-fn decode_directory_ref(row: SqliteRow) -> Result<DirectoryRef, CoreError> {
-    Ok(DirectoryRef::new(
+fn decode_directory_location(row: SqliteRow) -> Result<DirectoryLocation, CoreError> {
+    Ok(DirectoryLocation::new(
         decode_directory_id(column(&row, "id")?)?,
         DirectoryPath::from_path(column::<String>(&row, "path")?)?,
     ))

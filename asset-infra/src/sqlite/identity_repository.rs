@@ -1,23 +1,29 @@
 use asset_core::{
     CoreError,
-    domain::{
-        DirectoryId, DirectoryPath, DirectoryRef, User, UserId, UserRole, UserSnapshot, UserStatus,
-    },
-    port::UserRepository,
+    domain::{DirectoryId, DirectoryPath, User, UserId, UserRole, UserSnapshot, UserStatus},
+    port::{DirectoryLocation, LocatedUser, UserQuery, UserRepository},
 };
 use chrono::{DateTime, Utc};
 use sqlx::{Row, SqlitePool};
 use std::str::FromStr;
 
 const USER_SELECT: &str = r#"
-    WITH RECURSIVE directory_paths(id, parent_id, name, path) AS (
-        SELECT id, parent_id, name, ''
+    SELECT users.id, users.username, users.password_hash, users.role, users.status,
+           users.workspace_directory_id, users.created_at, users.updated_at
+    FROM users
+"#;
+
+const LOCATED_USER_SELECT: &str = r#"
+    WITH RECURSIVE directory_paths(id, path) AS (
+        SELECT id, ''
         FROM directories
         WHERE id = '00000000-0000-0000-0000-000000000000'
         UNION ALL
-        SELECT child.id, child.parent_id, child.name,
-               CASE WHEN parent.path = '' THEN child.name
-                    ELSE parent.path || '/' || child.name END
+        SELECT child.id,
+               CASE
+                   WHEN parent.path = '' THEN child.name
+                   ELSE parent.path || '/' || child.name
+               END
         FROM directories child
         JOIN directory_paths parent ON child.parent_id = parent.id
     )
@@ -54,7 +60,7 @@ impl UserRepository for SqliteIdentityRepository {
             .bind(user.credential_hash())
             .bind(role_to_str(user.role()))
             .bind(status_to_str(user.status()))
-            .bind(user.workspace_directory().id().to_string())
+            .bind(user.workspace_directory_id().to_string())
             .bind(user.created_at().to_rfc3339())
             .bind(user.updated_at().to_rfc3339())
             .execute(&mut *transaction)
@@ -91,19 +97,34 @@ impl UserRepository for SqliteIdentityRepository {
     async fn find_by_username(&self, username: &str) -> Result<Option<User>, CoreError> {
         self.find("username", username.to_owned()).await
     }
-    async fn list(&self) -> Result<Vec<User>, CoreError> {
-        let rows = sqlx::query(&format!("{USER_SELECT} ORDER BY users.username"))
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| CoreError::repository("user.list", e))?;
-        rows.into_iter().map(decode_user).collect()
-    }
     async fn count(&self) -> Result<u64, CoreError> {
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
             .fetch_one(&self.pool)
             .await
             .map_err(|e| CoreError::repository("user.count", e))?;
         Ok(count as u64)
+    }
+}
+
+#[async_trait::async_trait]
+impl UserQuery for SqliteIdentityRepository {
+    async fn find_located_by_id(&self, id: &UserId) -> Result<Option<LocatedUser>, CoreError> {
+        self.find_located("id", id.to_string()).await
+    }
+
+    async fn find_located_by_username(
+        &self,
+        username: &str,
+    ) -> Result<Option<LocatedUser>, CoreError> {
+        self.find_located("username", username.to_owned()).await
+    }
+
+    async fn list_located(&self) -> Result<Vec<LocatedUser>, CoreError> {
+        let rows = sqlx::query(&format!("{LOCATED_USER_SELECT} ORDER BY users.username"))
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|error| CoreError::repository("user.list", error))?;
+        rows.into_iter().map(decode_located_user).collect()
     }
 }
 
@@ -119,6 +140,23 @@ impl SqliteIdentityRepository {
             .await
             .map_err(|e| CoreError::repository("user.find", e))?;
         row.map(decode_user).transpose()
+    }
+
+    async fn find_located(
+        &self,
+        column: &'static str,
+        value: String,
+    ) -> Result<Option<LocatedUser>, CoreError> {
+        let sql = match column {
+            "id" => format!("{LOCATED_USER_SELECT} WHERE users.id = ?"),
+            _ => format!("{LOCATED_USER_SELECT} WHERE users.username = ?"),
+        };
+        let row = sqlx::query(&sql)
+            .bind(value)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| CoreError::repository("user.query", error))?;
+        row.map(decode_located_user).transpose()
     }
 }
 
@@ -155,22 +193,31 @@ fn decode_user(row: sqlx::sqlite::SqliteRow) -> Result<User, CoreError> {
                 .map_err(|e| CoreError::repository("user.decode", e))?
                 .as_str(),
         )?,
-        workspace_directory: DirectoryRef::new(
-            DirectoryId::from_str(
-                row.try_get::<String, _>("workspace_directory_id")
-                    .map_err(|e| CoreError::repository("user.decode", e))?
-                    .as_str(),
-            )
-            .map_err(|e| CoreError::repository("user.decode_directory_id", e))?,
-            DirectoryPath::from_path(
-                row.try_get::<String, _>("workspace_directory_path")
-                    .map_err(|e| CoreError::repository("user.decode", e))?,
-            )?,
-        ),
+        workspace_directory_id: DirectoryId::from_str(
+            row.try_get::<String, _>("workspace_directory_id")
+                .map_err(|e| CoreError::repository("user.decode", e))?
+                .as_str(),
+        )
+        .map_err(|e| CoreError::repository("user.decode_directory_id", e))?,
         created_at: timestamp("created_at")?,
         updated_at: timestamp("updated_at")?,
     })
     .map_err(Into::into)
+}
+
+fn decode_located_user(row: sqlx::sqlite::SqliteRow) -> Result<LocatedUser, CoreError> {
+    let workspace_id = DirectoryId::from_str(
+        row.try_get::<String, _>("workspace_directory_id")
+            .map_err(|error| CoreError::repository("user.decode", error))?
+            .as_str(),
+    )
+    .map_err(|error| CoreError::repository("user.decode_directory_id", error))?;
+    let workspace_path = DirectoryPath::from_path(
+        row.try_get::<String, _>("workspace_directory_path")
+            .map_err(|error| CoreError::repository("user.decode", error))?,
+    )?;
+    let user = decode_user(row)?;
+    LocatedUser::new(user, DirectoryLocation::new(workspace_id, workspace_path))
 }
 
 fn role_to_str(role: UserRole) -> &'static str {
@@ -201,5 +248,37 @@ fn parse_status(value: &str) -> Result<UserStatus, CoreError> {
         _ => Err(CoreError::configuration(format!(
             "unknown user status `{value}`"
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sqlite::SqliteResourceRepository;
+    use asset_core::port::{DirectoryRepository, UserQuery, UserRepository};
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    #[tokio::test]
+    async fn user_queries_return_workspace_locations_in_one_projection() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        let directories = SqliteResourceRepository::from_pool(pool.clone());
+        directories.run_migrations().await.unwrap();
+        let workspace = directories
+            .ensure_path(&DirectoryPath::from_path("teams/alice").unwrap())
+            .await
+            .unwrap();
+        let repository = SqliteIdentityRepository::new(pool);
+        let user = User::new("alice", "credential-hash", UserRole::Member, workspace.id()).unwrap();
+        repository.create(&user).await.unwrap();
+
+        let users = repository.list_located().await.unwrap();
+
+        assert_eq!(users.len(), 1);
+        assert_eq!(users[0].user().id(), user.id());
+        assert_eq!(users[0].workspace().path(), workspace.path());
     }
 }

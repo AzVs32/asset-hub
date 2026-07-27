@@ -5,7 +5,7 @@ mod path;
 
 use crate::error::DirectoryError;
 
-pub use directory::{Directory, DirectoryId, DirectoryRef, DirectorySnapshot};
+pub use directory::{Directory, DirectoryId, DirectorySnapshot};
 pub use kind::DirectoryKind;
 pub use path::{DirectoryPath, INTERNAL_STORAGE_DIRECTORY_NAME};
 

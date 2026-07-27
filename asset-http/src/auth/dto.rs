@@ -19,14 +19,15 @@ pub(crate) struct ManagedUserResponse {
     pub(super) workspace_directory: DirectoryPath,
 }
 
-impl From<User> for ManagedUserResponse {
-    fn from(user: User) -> Self {
+impl ManagedUserResponse {
+    pub(super) fn new(user: asset_core::port::LocatedUser) -> Self {
+        let (user, workspace) = user.into_parts();
         Self {
             id: user.id(),
             username: user.username().to_owned(),
             role: user.role(),
             status: user.status(),
-            workspace_directory: user.workspace_directory().path().clone(),
+            workspace_directory: workspace.path().clone(),
         }
     }
 }

@@ -1,4 +1,4 @@
-use crate::domain::DirectoryRef;
+use crate::domain::DirectoryId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -15,7 +15,7 @@ pub struct User {
     role: UserRole,
     status: UserStatus,
     /// 登录后的默认入口目录；可被多个用户共享，本身不产生任何权限。
-    workspace_directory: DirectoryRef,
+    workspace_directory_id: DirectoryId,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -41,7 +41,7 @@ pub struct UserSnapshot {
     pub credential_hash: String,
     pub role: UserRole,
     pub status: UserStatus,
-    pub workspace_directory: DirectoryRef,
+    pub workspace_directory_id: DirectoryId,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -51,7 +51,7 @@ impl User {
         username: impl Into<String>,
         credential_hash: impl Into<String>,
         role: UserRole,
-        workspace_directory: DirectoryRef,
+        workspace_directory_id: DirectoryId,
     ) -> Result<Self, crate::UserError> {
         let now = Utc::now();
         Self::rehydrate(UserSnapshot {
@@ -60,7 +60,7 @@ impl User {
             credential_hash: credential_hash.into(),
             role,
             status: UserStatus::Active,
-            workspace_directory,
+            workspace_directory_id,
             created_at: now,
             updated_at: now,
         })
@@ -77,7 +77,7 @@ impl User {
             credential_hash: snapshot.credential_hash,
             role: snapshot.role,
             status: snapshot.status,
-            workspace_directory: snapshot.workspace_directory,
+            workspace_directory_id: snapshot.workspace_directory_id,
             created_at: snapshot.created_at,
             updated_at: snapshot.updated_at,
         })
@@ -98,8 +98,8 @@ impl User {
     pub fn status(&self) -> UserStatus {
         self.status
     }
-    pub fn workspace_directory(&self) -> &DirectoryRef {
-        &self.workspace_directory
+    pub fn workspace_directory_id(&self) -> DirectoryId {
+        self.workspace_directory_id
     }
     pub fn created_at(&self) -> DateTime<Utc> {
         self.created_at

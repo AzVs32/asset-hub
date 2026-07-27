@@ -1,7 +1,19 @@
 use super::*;
-use asset_core::domain::{Checksum, ResourceContent};
+use asset_core::domain::{Checksum, ResourceContent, StorageKey};
 use asset_core::port::{DirectoryRepository, ListResources};
 use std::path::PathBuf;
+
+async fn resource_storage_key(
+    repository: &SqliteResourceRepository,
+    resource: &Resource,
+) -> StorageKey {
+    let directory = repository
+        .locate_by_id(&resource.directory_id())
+        .await
+        .unwrap()
+        .unwrap();
+    StorageKey::from_resource_path(directory.path(), resource.name()).unwrap()
+}
 
 #[tokio::test]
 async fn sqlite_repository_roundtrips_resource() {
@@ -20,7 +32,7 @@ async fn sqlite_repository_roundtrips_resource() {
         .await
         .unwrap();
     let resource = Resource::builder("image.png")
-        .with_directory(assets)
+        .with_directory_id(assets.id())
         .with_kind(ResourceKind::try_new("core:image").unwrap())
         .with_tags(["rust", "asset"])
         .with_content(content)
@@ -47,7 +59,10 @@ async fn sqlite_repository_roundtrips_resource() {
             .collect::<Vec<_>>(),
         vec!["asset", "rust"]
     );
-    assert_eq!(restored.storage_key().as_str(), "assets/image.png");
+    assert_eq!(
+        resource_storage_key(&repository, &restored).await.as_str(),
+        "assets/image.png"
+    );
     assert_eq!(restored_content.size(), 42);
     assert_eq!(restored_content.mime_type(), Some("image/png"));
     assert_eq!(restored_content.checksum(), &checksum);
@@ -74,10 +89,10 @@ async fn sqlite_repository_updates_tags() {
     repository.save(&resource).await.unwrap();
     assert_eq!(
         repository
-            .find_by_path(resource.directory().path(), resource.name())
+            .find_by_path(&DirectoryPath::root(), resource.name())
             .await
             .unwrap()
-            .map(|found| found.id()),
+            .map(|found| found.resource().id()),
         Some(resource.id())
     );
     resource.replace_tags(vec!["document".to_owned()]).unwrap();
@@ -98,7 +113,7 @@ async fn sqlite_path_lookup_ignores_soft_deleted_resource_and_finds_replacement(
         .await
         .unwrap();
     let mut deleted = Resource::builder("same-name.txt")
-        .with_directory(docs.clone())
+        .with_directory_id(docs.id())
         .build()
         .unwrap();
     repository.save(&deleted).await.unwrap();
@@ -107,24 +122,24 @@ async fn sqlite_path_lookup_ignores_soft_deleted_resource_and_finds_replacement(
 
     assert!(
         repository
-            .find_by_path(deleted.directory().path(), deleted.name())
+            .find_by_path(docs.path(), deleted.name())
             .await
             .unwrap()
             .is_none()
     );
 
     let replacement = Resource::builder("same-name.txt")
-        .with_directory(docs)
+        .with_directory_id(docs.id())
         .build()
         .unwrap();
     repository.save(&replacement).await.unwrap();
 
     assert_eq!(
         repository
-            .find_by_path(replacement.directory().path(), replacement.name())
+            .find_by_path(docs.path(), replacement.name())
             .await
             .unwrap()
-            .map(|resource| resource.id()),
+            .map(|resource| resource.resource().id()),
         Some(replacement.id())
     );
 }
@@ -146,7 +161,7 @@ async fn sqlite_repository_filters_tags_through_relational_index() {
         .unwrap();
 
     assert_eq!(page.total, 1);
-    assert_eq!(page.items[0].id(), rust.id());
+    assert_eq!(page.items[0].resource().id(), rust.id());
 }
 
 #[tokio::test]
@@ -359,7 +374,7 @@ async fn directory_tree_derives_paths_from_stable_ids_after_rename_and_move() {
         .await
         .unwrap();
     let resource = Resource::builder("game.dat")
-        .with_directory(data.clone())
+        .with_directory_id(data.id())
         .build()
         .unwrap();
     repository.save(&resource).await.unwrap();
@@ -393,13 +408,16 @@ async fn directory_tree_derives_paths_from_stable_ids_after_rename_and_move() {
         "Games/Renamed/data"
     );
     assert_eq!(
-        repository
-            .find_by_id(&resource.id())
-            .await
-            .unwrap()
-            .unwrap()
-            .storage_key()
-            .as_str(),
+        resource_storage_key(
+            &repository,
+            &repository
+                .find_by_id(&resource.id())
+                .await
+                .unwrap()
+                .unwrap(),
+        )
+        .await
+        .as_str(),
         "Games/Renamed/data/game.dat"
     );
 

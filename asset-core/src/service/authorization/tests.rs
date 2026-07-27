@@ -1,6 +1,6 @@
 use super::*;
-use crate::domain::{Directory, DirectoryId, DirectoryPath, DirectoryRef, User, UserId, UserRole};
-use crate::port::{DirectoryRepository, DirectoryStorage};
+use crate::domain::{Directory, DirectoryId, DirectoryPath, User, UserId, UserRole};
+use crate::port::{DirectoryLocation, DirectoryRepository, DirectoryStorage};
 use async_trait::async_trait;
 use std::{collections::HashMap, sync::Mutex};
 
@@ -52,10 +52,6 @@ impl UserRepository for Users {
             .cloned())
     }
 
-    async fn list(&self) -> Result<Vec<User>, CoreError> {
-        Ok(self.users.lock().unwrap().clone())
-    }
-
     async fn count(&self) -> Result<u64, CoreError> {
         Ok(self.users.lock().unwrap().len() as u64)
     }
@@ -75,7 +71,7 @@ impl Directories {
         Self { paths: values }
     }
 
-    fn reference(&self, path: &str) -> DirectoryRef {
+    fn reference(&self, path: &str) -> DirectoryLocation {
         let path = DirectoryPath::from_path(path).unwrap();
         let id = self
             .paths
@@ -88,7 +84,7 @@ impl Directories {
                     DirectoryId::new()
                 }
             });
-        DirectoryRef::new(id, path)
+        DirectoryLocation::new(id, path)
     }
 }
 
@@ -107,28 +103,28 @@ impl DirectoryRepository for Directories {
     async fn find_directory(&self, _id: &DirectoryId) -> Result<Option<Directory>, CoreError> {
         Ok(None)
     }
-    async fn locate_by_id(&self, id: &DirectoryId) -> Result<Option<DirectoryRef>, CoreError> {
+    async fn locate_by_id(&self, id: &DirectoryId) -> Result<Option<DirectoryLocation>, CoreError> {
         Ok(self
             .paths
             .get(id)
             .cloned()
-            .map(|path| DirectoryRef::new(*id, path)))
+            .map(|path| DirectoryLocation::new(*id, path)))
     }
     async fn locate_by_path(
         &self,
         path: &DirectoryPath,
-    ) -> Result<Option<DirectoryRef>, CoreError> {
+    ) -> Result<Option<DirectoryLocation>, CoreError> {
         Ok(self.paths.iter().find_map(|(id, candidate)| {
-            (candidate == path).then(|| DirectoryRef::new(*id, candidate.clone()))
+            (candidate == path).then(|| DirectoryLocation::new(*id, candidate.clone()))
         }))
     }
     async fn list_children(
         &self,
         _parent_id: &DirectoryId,
-    ) -> Result<Vec<DirectoryRef>, CoreError> {
+    ) -> Result<Vec<DirectoryLocation>, CoreError> {
         Ok(Vec::new())
     }
-    async fn ensure_path(&self, path: &DirectoryPath) -> Result<DirectoryRef, CoreError> {
+    async fn ensure_path(&self, path: &DirectoryPath) -> Result<DirectoryLocation, CoreError> {
         self.locate_by_path(path)
             .await?
             .ok_or_else(|| CoreError::not_found("directory", path.path()))
@@ -166,13 +162,7 @@ async fn member_has_full_access_only_inside_workspace_subtree() {
         "shared",
     ]));
     let workspace = directories.reference("users/alice");
-    let user = User::new(
-        "alice",
-        "credential-hash",
-        UserRole::Member,
-        workspace.clone(),
-    )
-    .unwrap();
+    let user = User::new("alice", "credential-hash", UserRole::Member, workspace.id()).unwrap();
     let actor = AccessContext::member(user.id());
     let service = authorization(Users::with_user(user), directories.clone());
 
@@ -220,7 +210,7 @@ async fn root_workspace_contains_every_user_directory() {
         "root-member",
         "credential-hash",
         UserRole::Member,
-        DirectoryRef::root(),
+        DirectoryId::root(),
     )
     .unwrap();
     let actor = AccessContext::member(user.id());
@@ -263,7 +253,7 @@ async fn member_workspace_scope_resolves_and_projects_relative_paths() {
         "alice",
         "credential-hash",
         UserRole::Member,
-        directories.reference("users/alice"),
+        directories.reference("users/alice").id(),
     )
     .unwrap();
     let actor = AccessContext::member(user.id());

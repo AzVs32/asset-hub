@@ -163,7 +163,7 @@ impl HostContentResolver {
             .insert(
                 reference.clone(),
                 AvailableContent {
-                    key: request.resource().storage_key(),
+                    key: request.storage_key().clone(),
                     size: content.size(),
                 },
             );
@@ -325,7 +325,7 @@ pub(super) fn build_payload(
         input: request.input().clone(),
         resource: PluginResource {
             id: resource.id().to_string(),
-            directory: resource.directory().path().to_string(),
+            directory: request.directory().path().to_string(),
             name: resource.name().to_string(),
             kind: resource.kind().as_str().to_string(),
             status: resource.status().as_str().to_string(),

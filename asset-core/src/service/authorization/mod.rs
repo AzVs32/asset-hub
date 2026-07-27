@@ -1,7 +1,7 @@
 use crate::{
     CoreError,
-    domain::{AccessContext, DirectoryPath, DirectoryPermission, DirectoryRef},
-    port::UserRepository,
+    domain::{AccessContext, DirectoryPath, DirectoryPermission},
+    port::{DirectoryLocation, UserRepository},
     service::DirectoryService,
 };
 use std::sync::Arc;
@@ -9,7 +9,7 @@ use std::sync::Arc;
 /// 当前访问主体看到的目录根。外部路径相对于该根，内部服务始终使用真实目录。
 #[derive(Debug, Clone)]
 pub struct WorkspaceScope {
-    root: DirectoryRef,
+    root: DirectoryLocation,
 }
 
 impl WorkspaceScope {
@@ -41,7 +41,7 @@ impl WorkspaceScope {
         DirectoryPath::from_path(relative).map_err(Into::into)
     }
 
-    pub fn root(&self) -> &DirectoryRef {
+    pub fn root(&self) -> &DirectoryLocation {
         &self.root
     }
 }
@@ -59,7 +59,7 @@ impl AuthorizationService {
     pub async fn require(
         &self,
         context: &AccessContext,
-        directory: &DirectoryRef,
+        directory: &DirectoryLocation,
         permission: DirectoryPermission,
     ) -> Result<(), CoreError> {
         let scope = self.workspace_scope(context).await?;
@@ -91,7 +91,10 @@ impl AuthorizationService {
             .await?
             .ok_or_else(|| CoreError::not_found("user", context.user_id().to_string()))?;
         Ok(WorkspaceScope {
-            root: user.workspace_directory().clone(),
+            root: self
+                .directories
+                .locate_by_id(&user.workspace_directory_id())
+                .await?,
         })
     }
 }

@@ -52,7 +52,7 @@ pub(crate) async fn upload_resource_content_stream(
 
     Ok((
         StatusCode::CREATED,
-        Json(resource_response(state.service(), &workspace, &resource)?),
+        Json(resource_snapshot_response(state.service(), &workspace, &resource).await?),
     ))
 }
 
@@ -124,11 +124,12 @@ async fn resource_content_response(
         return Err(HttpError::not_found(format!("resource `{id}` not found")));
     };
     let content_type = resource
+        .resource()
         .content()
         .and_then(|content| content.mime_type())
         .unwrap_or(DEFAULT_CONTENT_TYPE)
         .to_string();
-    let Some(content_ref) = resource.content() else {
+    let Some(content_ref) = resource.resource().content() else {
         return Err(HttpError::not_found(format!(
             "resource content `{id}` not found"
         )));
@@ -173,7 +174,7 @@ async fn resource_content_response(
         },
     };
 
-    Ok((response, resource.name().to_owned()))
+    Ok((response, resource.resource().name().to_owned()))
 }
 
 pub(super) fn content_type(headers: &HeaderMap) -> Result<Option<String>, HttpError> {

@@ -2,8 +2,8 @@
 
 use crate::{
     CoreError,
-    domain::{Directory, DirectoryId, DirectoryPath, DirectoryRef},
-    port::{DirectoryRepository, DirectoryStorage},
+    domain::{Directory, DirectoryId, DirectoryPath},
+    port::{DirectoryLocation, DirectoryRepository, DirectoryStorage},
 };
 use std::sync::Arc;
 
@@ -25,14 +25,21 @@ impl DirectoryService {
         }
     }
 
-    pub async fn root(&self) -> Result<DirectoryRef, CoreError> {
+    pub async fn root(&self) -> Result<DirectoryLocation, CoreError> {
         self.repository
             .locate_by_id(&DirectoryId::root())
             .await?
             .ok_or_else(|| CoreError::configuration("root directory is missing"))
     }
 
-    pub async fn resolve_path(&self, path: &DirectoryPath) -> Result<DirectoryRef, CoreError> {
+    pub async fn locate_by_id(&self, id: &DirectoryId) -> Result<DirectoryLocation, CoreError> {
+        self.repository
+            .locate_by_id(id)
+            .await?
+            .ok_or_else(|| CoreError::not_found("directory", id.to_string()))
+    }
+
+    pub async fn resolve_path(&self, path: &DirectoryPath) -> Result<DirectoryLocation, CoreError> {
         self.repository
             .locate_by_path(path)
             .await?
@@ -40,35 +47,35 @@ impl DirectoryService {
     }
 
     /// 确保路径对应的每个目录聚合和物理目录都存在。
-    pub async fn ensure_path(&self, path: &DirectoryPath) -> Result<DirectoryRef, CoreError> {
+    pub async fn ensure_path(&self, path: &DirectoryPath) -> Result<DirectoryLocation, CoreError> {
         self.storage.ensure_directory(path).await?;
         self.repository.ensure_path(path).await
     }
 
     pub async fn list_children(
         &self,
-        parent: &DirectoryRef,
-    ) -> Result<Vec<DirectoryRef>, CoreError> {
+        parent: &DirectoryLocation,
+    ) -> Result<Vec<DirectoryLocation>, CoreError> {
         self.repository.list_children(&parent.id()).await
     }
 
     pub async fn create(
         &self,
-        parent: &DirectoryRef,
+        parent: &DirectoryLocation,
         name: impl Into<String>,
-    ) -> Result<DirectoryRef, CoreError> {
+    ) -> Result<DirectoryLocation, CoreError> {
         let directory = Directory::new(parent.id(), name)?;
         let path = parent.path().child(directory.name())?;
         self.storage.ensure_directory(&path).await?;
         self.repository.save_directory(&directory).await?;
-        Ok(DirectoryRef::new(directory.id(), path))
+        Ok(DirectoryLocation::new(directory.id(), path))
     }
 
     pub async fn rename(
         &self,
         id: &DirectoryId,
         name: impl Into<String>,
-    ) -> Result<DirectoryRef, CoreError> {
+    ) -> Result<DirectoryLocation, CoreError> {
         let directory = self
             .repository
             .find_directory(id)
@@ -84,7 +91,7 @@ impl DirectoryService {
         &self,
         id: &DirectoryId,
         parent_id: &DirectoryId,
-    ) -> Result<DirectoryRef, CoreError> {
+    ) -> Result<DirectoryLocation, CoreError> {
         let directory = self
             .repository
             .find_directory(id)
@@ -93,7 +100,7 @@ impl DirectoryService {
         self.relocate(directory, *parent_id, None).await
     }
 
-    pub async fn remove_if_empty(&self, directory: &DirectoryRef) -> Result<bool, CoreError> {
+    pub async fn remove_if_empty(&self, directory: &DirectoryLocation) -> Result<bool, CoreError> {
         if directory.id().is_root() {
             return Ok(false);
         }
@@ -115,7 +122,7 @@ impl DirectoryService {
         mut directory: Directory,
         parent_id: DirectoryId,
         name: Option<String>,
-    ) -> Result<DirectoryRef, CoreError> {
+    ) -> Result<DirectoryLocation, CoreError> {
         let from = self
             .repository
             .locate_by_id(&directory.id())
@@ -152,6 +159,6 @@ impl DirectoryService {
             }
             return Err(error);
         }
-        Ok(DirectoryRef::new(directory.id(), destination))
+        Ok(DirectoryLocation::new(directory.id(), destination))
     }
 }

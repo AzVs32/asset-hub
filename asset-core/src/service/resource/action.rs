@@ -9,7 +9,8 @@ use crate::CoreError;
 use crate::domain::ResourceId;
 use crate::domain::{Resource, ResourceContent, StorageKey};
 use crate::port::{
-    BlobStorage, RESERVED_BLOB_STORAGE_PREFIX, ResourceActionOutput, ResourceActionRequest,
+    BlobStorage, LocatedResource, RESERVED_BLOB_STORAGE_PREFIX, ResourceActionOutput,
+    ResourceActionRequest,
 };
 use asset_plugin_api::{
     PluginActionEffect, PluginExecutionPolicy, ResourceAction, ResourceActionAccess,
@@ -76,7 +77,7 @@ impl<'a> ResourceActionService<'a> {
     /// 运行时由 `ResourceActionExecutor` 端口承接。
     pub(super) async fn execute_resource_action_snapshot(
         &self,
-        resource: Resource,
+        resource: LocatedResource,
         command: ExecuteResourceAction,
     ) -> Result<ResourceActionOutput, CoreError> {
         self.execute_declared_resource_action_snapshot(resource, command.action, command.input)
@@ -85,28 +86,38 @@ impl<'a> ResourceActionService<'a> {
 
     pub(super) async fn execute_declared_resource_action_snapshot(
         &self,
-        mut resource: Resource,
+        located: LocatedResource,
         action_id: ResourceAction,
         input: serde_json::Value,
     ) -> Result<ResourceActionOutput, CoreError> {
+        let (mut resource, directory) = located.into_parts();
         // 1. Resolve the action from the resource kind/global action registry before touching
         //    content or plugin runtime state.
         let action = self.resolve_declared_resource_action(&resource, &action_id)?;
 
         // 2. Load content only when the action contract says the executor should receive it.
+        let storage_key = StorageKey::from_resource_path(directory.path(), resource.name())?;
         let content = self
-            .load_declared_resource_action_content(&resource, &action)
+            .load_declared_resource_action_content(&resource, &storage_key, &action)
             .await?;
 
         // 3. Dispatch the request through the configured action executor.
         let access = action.access();
         let output = self
-            .execute_resource_action_request(&resource, action_id, &action, input, content)
+            .execute_resource_action_request(
+                &resource,
+                directory,
+                storage_key.clone(),
+                action_id,
+                &action,
+                input,
+                content,
+            )
             .await?;
         self.validate_action_output(&action, &output)?;
 
         // 4. Apply write effects after the executor returns, guarded by the action access boundary.
-        self.apply_action_effects(&mut resource, &output, access)
+        self.apply_action_effects(&mut resource, &storage_key, &output, access)
             .await?;
 
         Ok(output)
@@ -176,6 +187,7 @@ impl<'a> ResourceActionService<'a> {
     async fn load_declared_resource_action_content(
         &self,
         resource: &Resource,
+        storage_key: &StorageKey,
         action: &ResourceActionDefinition,
     ) -> Result<Option<Bytes>, CoreError> {
         let Some(content_ref) = resource.content() else {
@@ -195,12 +207,14 @@ impl<'a> ResourceActionService<'a> {
             )));
         }
 
-        self.service.blob_storage.get(&resource.storage_key()).await
+        self.service.blob_storage.get(storage_key).await
     }
 
     async fn execute_resource_action_request(
         &self,
         resource: &Resource,
+        directory: crate::port::DirectoryLocation,
+        storage_key: StorageKey,
         action_id: ResourceAction,
         action: &ResourceActionDefinition,
         input: serde_json::Value,
@@ -213,6 +227,8 @@ impl<'a> ResourceActionService<'a> {
         };
         let request = ResourceActionRequest::new(
             resource.clone(),
+            directory,
+            storage_key,
             action_id,
             action.handler(),
             action.access(),
@@ -236,6 +252,7 @@ impl<'a> ResourceActionService<'a> {
     async fn apply_action_effects(
         &self,
         resource: &mut Resource,
+        storage_key: &StorageKey,
         output: &ResourceActionOutput,
         access: ResourceActionAccess,
     ) -> Result<(), CoreError> {
@@ -268,7 +285,7 @@ impl<'a> ResourceActionService<'a> {
                             ))
                         })?;
                     let checksum = calculate_checksum(data.as_ref())?;
-                    let target_key = resource.storage_key();
+                    let target_key = storage_key.clone();
                     let replacement_key = action_scratch_content_key("action-replacements")?;
                     let backup_key = action_scratch_content_key("action-backups")?;
                     let content = build_content(

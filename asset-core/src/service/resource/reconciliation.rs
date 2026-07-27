@@ -10,7 +10,9 @@ use crate::CoreError;
 use crate::domain::{
     Checksum, DirectoryPath, Resource, ResourceContent, ResourceStatus, StorageKey,
 };
-use crate::port::{ListResources, ScannedBlob, ScannedStorageEntry, StoragePrefix};
+use crate::port::{
+    ListResources, LocatedResource, ScannedBlob, ScannedStorageEntry, StoragePrefix,
+};
 use futures_util::StreamExt;
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
@@ -49,10 +51,10 @@ impl<'a> StorageReconciliationService<'a> {
     ) -> Result<StorageReconciliationReport, CoreError> {
         let started = Instant::now();
         let resources = self.all_active_resources().await?;
-        let resources_by_key = resources
-            .iter()
-            .map(|resource| (resource.storage_key(), resource))
-            .collect::<HashMap<_, _>>();
+        let mut resources_by_key = HashMap::with_capacity(resources.len());
+        for resource in &resources {
+            resources_by_key.insert(resource.storage_key()?, resource.resource());
+        }
         let mut entries = self.service.storage_scanner.scan(&StoragePrefix::root());
         let mut physical_directories = HashSet::new();
         let mut physical_keys = HashSet::new();
@@ -84,9 +86,11 @@ impl<'a> StorageReconciliationService<'a> {
             }
         }
 
-        for resource in resources {
+        for located in resources {
+            let storage_key = located.storage_key()?;
+            let resource = located.resource();
             if resource.content().is_some()
-                && !physical_keys.contains(&resource.storage_key())
+                && !physical_keys.contains(&storage_key)
                 && self
                     .service
                     .repository
@@ -142,7 +146,7 @@ impl<'a> StorageReconciliationService<'a> {
                 .await;
         };
         let (from_directory, from_name) = resource_path_from_key(from)?;
-        let Some(mut resource) = self
+        let Some(located) = self
             .service
             .query
             .find_by_path(&from_directory, &from_name)
@@ -151,6 +155,7 @@ impl<'a> StorageReconciliationService<'a> {
             self.reconcile_changed_blob(&target).await?;
             return Ok(());
         };
+        let mut resource = located.into_resource();
         let (to_directory, to_name) = resource_path_from_key(to)?;
         if self
             .service
@@ -167,7 +172,7 @@ impl<'a> StorageReconciliationService<'a> {
         let expected_updated_at = resource.updated_at();
         resource.rename(to_name)?;
         let to_directory = self.service.directories.ensure_path(&to_directory).await?;
-        resource.move_to_directory(to_directory)?;
+        resource.move_to_directory(to_directory.id())?;
         let checksum = self.calculate_stored_blob_checksum(to, target.size).await?;
         let content = build_content(
             target.size,
@@ -209,7 +214,8 @@ impl<'a> StorageReconciliationService<'a> {
             checksum,
             Some(file.modified_at),
         )?;
-        if let Some(mut resource) = self.service.query.find_by_path(&directory, &name).await? {
+        if let Some(located) = self.service.query.find_by_path(&directory, &name).await? {
+            let mut resource = located.into_resource();
             if resource.content() == Some(&content) {
                 return Ok(hash_elapsed);
             }
@@ -233,7 +239,7 @@ impl<'a> StorageReconciliationService<'a> {
             let expected_updated_at = resource.updated_at();
             resource.rename(name)?;
             let directory = self.service.directories.ensure_path(&directory).await?;
-            resource.move_to_directory(directory)?;
+            resource.move_to_directory(directory.id())?;
             resource.attach_content(content)?;
             if !self
                 .service
@@ -256,7 +262,7 @@ impl<'a> StorageReconciliationService<'a> {
         )?;
         let resource = build_resource(
             name,
-            self.service.directories.ensure_path(&directory).await?,
+            self.service.directories.ensure_path(&directory).await?.id(),
             Some(kind),
             ResourceStatus::default(),
             Vec::new(),
@@ -272,20 +278,22 @@ impl<'a> StorageReconciliationService<'a> {
         content: &ResourceContent,
     ) -> Result<Option<Resource>, CoreError> {
         let mut candidates = Vec::new();
-        for resource in self.all_active_resources().await? {
+        for located in self.all_active_resources().await? {
+            let resource = located.resource();
             if !resource.content().is_some_and(|existing| {
                 existing.size() == content.size() && existing.checksum() == content.checksum()
             }) {
                 continue;
             }
+            let storage_key = located.storage_key()?;
             if self
                 .service
                 .storage_scanner
-                .inspect(&resource.storage_key())
+                .inspect(&storage_key)
                 .await?
                 .is_none()
             {
-                candidates.push(resource);
+                candidates.push(located.into_resource());
                 if candidates.len() > 1 {
                     return Ok(None);
                 }
@@ -294,7 +302,7 @@ impl<'a> StorageReconciliationService<'a> {
         Ok(candidates.pop())
     }
 
-    async fn all_active_resources(&self) -> Result<Vec<Resource>, CoreError> {
+    async fn all_active_resources(&self) -> Result<Vec<LocatedResource>, CoreError> {
         let mut offset = 0_u64;
         let mut resources = Vec::new();
         loop {
@@ -313,9 +321,10 @@ impl<'a> StorageReconciliationService<'a> {
 
     async fn remove_missing_blob_resource(&self, key: &StorageKey) -> Result<(), CoreError> {
         let (directory, name) = resource_path_from_key(key)?;
-        if let Some(resource) = self.service.query.find_by_path(&directory, &name).await?
-            && resource.content().is_some()
+        if let Some(located) = self.service.query.find_by_path(&directory, &name).await?
+            && located.resource().content().is_some()
         {
+            let resource = located.resource();
             self.service
                 .repository
                 .remove_if_unchanged(&resource.id(), resource.updated_at())

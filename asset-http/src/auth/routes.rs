@@ -135,16 +135,9 @@ pub(crate) async fn list_users(
     session: Session,
 ) -> Result<Json<Vec<ManagedUserResponse>>, HttpError> {
     require_admin(&session)?;
-    Ok(Json(
-        session
-            .backend
-            .users
-            .list()
-            .await?
-            .into_iter()
-            .map(Into::into)
-            .collect(),
-    ))
+    let users = session.backend.users.list().await?;
+    let response = users.into_iter().map(ManagedUserResponse::new).collect();
+    Ok(Json(response))
 }
 
 #[utoipa::path(
@@ -173,7 +166,7 @@ pub(crate) async fn update_user_status(
         .update_status(&id, request.status)
         .await?
         .ok_or_else(|| HttpError::not_found(format!("user `{id}` not found")))?;
-    Ok(Json(user.into()))
+    Ok(Json(ManagedUserResponse::new(user)))
 }
 
 #[utoipa::path(

@@ -1,7 +1,7 @@
 use crate::{CliResult, audit};
 use anyhow::{Context, bail};
-use asset_core::domain::{DirectoryPath, SecurityAuditEventType, User, UserRole, UserStatus};
-use asset_core::port::SecurityAuditRepository;
+use asset_core::domain::{DirectoryPath, SecurityAuditEventType, UserRole, UserStatus};
+use asset_core::port::{LocatedUser, SecurityAuditRepository};
 use asset_core::service::UserService;
 use clap::{ArgGroup, Args};
 use comfy_table::{Table, presets::UTF8_FULL};
@@ -78,7 +78,7 @@ pub(crate) async fn run(
         update_status(&users, audit.as_ref(), &username, UserStatus::Disabled).await?;
     } else if let Some(username) = command.show {
         let user = users
-            .find_by_username(&username)
+            .find_located_by_username(&username)
             .await?
             .ok_or_else(|| asset_core::CoreError::not_found("user", &username))?;
         print_user(&user);
@@ -116,7 +116,7 @@ async fn update_status(
             UserStatus::Active => "enabled",
             UserStatus::Disabled => "disabled",
         },
-        user.username()
+        user.user().username()
     );
     Ok(())
 }
@@ -132,35 +132,36 @@ fn prompt_new_password() -> CliResult<String> {
     Ok(password)
 }
 
-fn print_user_list(users: &[User]) {
+fn print_user_list(users: &[LocatedUser]) {
     println!("{}", user_table(users));
 }
 
-fn user_table(users: &[User]) -> Table {
+fn user_table(users: &[LocatedUser]) -> Table {
     let mut table = Table::new();
     table.load_preset(UTF8_FULL);
     table.set_header(["USERNAME", "ROLE", "STATUS", "WORKSPACE", "ID"]);
-    for user in users {
+    for located in users {
+        let user = located.user();
+        let workspace = located.workspace();
         table.add_row([
             user.username().to_owned(),
             role_name(user.role()).to_owned(),
             status_name(user.status()).to_owned(),
-            workspace_name(user.workspace_directory().path()).to_owned(),
+            workspace_name(workspace.path()).to_owned(),
             user.id().to_string(),
         ]);
     }
     table
 }
 
-fn print_user(user: &User) {
+fn print_user(located: &LocatedUser) {
+    let user = located.user();
+    let workspace = located.workspace();
     println!("Username: {}", user.username());
     println!("ID: {}", user.id());
     println!("Role: {}", role_name(user.role()));
     println!("Status: {}", status_name(user.status()));
-    println!(
-        "Workspace: {}",
-        workspace_name(user.workspace_directory().path())
-    );
+    println!("Workspace: {}", workspace_name(workspace.path()));
     println!("Created: {}", user.created_at().to_rfc3339());
     println!("Updated: {}", user.updated_at().to_rfc3339());
 }
@@ -190,23 +191,26 @@ fn workspace_name(workspace: &DirectoryPath) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use asset_core::domain::User;
+    use asset_core::port::DirectoryLocation;
 
     #[test]
     fn user_list_is_rendered_as_an_aligned_table() {
+        let admin = User::new(
+            "admin",
+            "hash",
+            UserRole::Administrator,
+            asset_core::domain::DirectoryId::root(),
+        )
+        .unwrap();
+        let member_directory_id = asset_core::domain::DirectoryId::new();
+        let member = User::new("azvs", "hash", UserRole::Member, member_directory_id).unwrap();
         let users = [
-            User::new(
-                "admin",
-                "hash",
-                UserRole::Administrator,
-                asset_core::domain::DirectoryRef::root(),
-            )
-            .unwrap(),
-            User::new(
-                "azvs",
-                "hash",
-                UserRole::Member,
-                asset_core::domain::DirectoryRef::new(
-                    asset_core::domain::DirectoryId::new(),
+            LocatedUser::new(admin, DirectoryLocation::root()).unwrap(),
+            LocatedUser::new(
+                member,
+                DirectoryLocation::new(
+                    member_directory_id,
                     DirectoryPath::from_path("users/azvs").unwrap(),
                 ),
             )

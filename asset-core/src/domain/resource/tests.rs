@@ -1,15 +1,6 @@
 use super::*;
-use crate::domain::{DirectoryId, DirectoryPath, DirectoryRef};
+use crate::domain::DirectoryId;
 use crate::error::ResourceError;
-
-fn directory(path: &str) -> DirectoryRef {
-    let path = DirectoryPath::from_path(path).unwrap();
-    if path.is_root() {
-        DirectoryRef::root()
-    } else {
-        DirectoryRef::new(DirectoryId::new(), path)
-    }
-}
 
 #[test]
 fn resource_kind_matches_directory_kind_naming_rules() {
@@ -73,7 +64,7 @@ fn new_resource_has_default_lifecycle_state() {
     assert_eq!(resource.name(), " Design Doc ");
     assert_eq!(resource.kind().as_str(), "doc:markdown");
     assert_eq!(resource.status(), ResourceStatus::default());
-    assert!(resource.directory().id().is_root());
+    assert!(resource.directory_id().is_root());
     assert!(resource.is_active());
     assert!(!resource.is_archived());
     assert!(!resource.is_deleted());
@@ -120,7 +111,7 @@ fn resource_can_be_rehydrated_from_snapshot() {
     let resource = Resource::rehydrate(ResourceSnapshot {
         id,
         name: " restored image ".to_string(),
-        directory: directory(" images/raw "),
+        directory_id: DirectoryId::new(),
         kind: ResourceKind::try_new("core:image").unwrap(),
         status: ResourceStatus::Archived,
         tags: vec![" image ".to_owned()],
@@ -133,7 +124,6 @@ fn resource_can_be_rehydrated_from_snapshot() {
 
     assert_eq!(resource.id(), id);
     assert_eq!(resource.name(), " restored image ");
-    assert_eq!(resource.directory().path().path(), " images/raw ");
     assert!(resource.kind().is("core:image"));
     assert_eq!(resource.status(), ResourceStatus::Archived);
     assert_eq!(resource.tags()[0].as_str(), "image");
@@ -199,9 +189,10 @@ fn resource_builder_accepts_tags_and_content() {
 }
 
 #[test]
-fn resource_path_uniquely_derives_storage_key() {
+fn resource_tracks_its_directory_by_id() {
+    let directory_id = DirectoryId::new();
     let resource = Resource::builder("readme.md")
-        .with_directory(directory("docs/guides"))
+        .with_directory_id(directory_id)
         .with_content(
             ResourceContent::builder(42, Checksum::sha256("a".repeat(64)).unwrap())
                 .build()
@@ -210,22 +201,14 @@ fn resource_path_uniquely_derives_storage_key() {
         .build()
         .unwrap();
 
-    assert_eq!(resource.storage_key().as_str(), "docs/guides/readme.md");
+    assert_eq!(resource.directory_id(), directory_id);
 }
 
 #[test]
-fn resource_path_preserves_spaces_exactly() {
-    let resource = Resource::builder(" design  draft 01.md ")
-        .with_directory(directory(" library / project A "))
-        .build()
-        .unwrap();
+fn resource_name_preserves_spaces_exactly() {
+    let resource = Resource::builder(" design  draft 01.md ").build().unwrap();
 
     assert_eq!(resource.name(), " design  draft 01.md ");
-    assert_eq!(resource.directory().path().path(), " library / project A ");
-    assert_eq!(
-        resource.storage_key().as_str(),
-        " library / project A / design  draft 01.md "
-    );
 }
 
 #[test]

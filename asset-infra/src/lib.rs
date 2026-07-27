@@ -173,6 +173,7 @@ impl AssetInfrastructure {
     pub fn user_service(&self) -> UserService {
         UserService::new(
             self.identity_repository.clone(),
+            self.identity_repository.clone(),
             Arc::new(Argon2PasswordHasher),
             self.directory_service(),
         )

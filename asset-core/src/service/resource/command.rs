@@ -5,8 +5,10 @@
 
 use super::{CreateResource, ResourceService, UpdateResource};
 use crate::CoreError;
-use crate::domain::{DirectoryRef, Resource, ResourceId, ResourceKind, ResourceStatus, StorageKey};
-use crate::port::{ListResources, RESERVED_BLOB_STORAGE_PREFIX, ResourcePage};
+use crate::domain::{DirectoryId, Resource, ResourceId, ResourceKind, ResourceStatus, StorageKey};
+use crate::port::{
+    DirectoryLocation, ListResources, LocatedResource, RESERVED_BLOB_STORAGE_PREFIX, ResourcePage,
+};
 
 /// 资源命令服务。
 ///
@@ -40,7 +42,7 @@ impl<'a> ResourceCommandService<'a> {
             .await?;
         let resource = build_resource(
             command.name,
-            directory,
+            directory.id(),
             Some(kind),
             command.status,
             command.tags,
@@ -59,13 +61,13 @@ impl<'a> ResourceCommandService<'a> {
     pub(crate) async fn find_resource(
         &self,
         id: &ResourceId,
-    ) -> Result<Option<Resource>, CoreError> {
+    ) -> Result<Option<LocatedResource>, CoreError> {
         Ok(self
             .service
-            .repository
-            .find_by_id(id)
+            .query
+            .find_located_by_id(id)
             .await?
-            .filter(|resource| !resource.is_deleted()))
+            .filter(|located| !located.resource().is_deleted()))
     }
 
     /// 分页列出资源。
@@ -88,11 +90,12 @@ impl<'a> ResourceCommandService<'a> {
     /// 更新资源基础信息、元数据、状态，或恢复软删除资源。
     pub(crate) async fn update_resource_snapshot(
         &self,
-        mut resource: Resource,
+        located: LocatedResource,
         command: UpdateResource,
     ) -> Result<Resource, CoreError> {
+        let (mut resource, mut directory) = located.into_parts();
         let expected_updated_at = resource.updated_at();
-        let old_storage_key = persisted_content_key(&resource)?;
+        let old_storage_key = persisted_content_key(&resource, &directory)?;
         let restoring = resource.is_deleted() && command.restore;
 
         if command.restore {
@@ -103,8 +106,13 @@ impl<'a> ResourceCommandService<'a> {
             resource.rename(name)?;
         }
 
-        if let Some(directory) = command.directory {
-            resource.move_to_directory(self.service.directories.ensure_path(&directory).await?)?;
+        if let Some(target_directory) = command.directory {
+            directory = self
+                .service
+                .directories
+                .ensure_path(&target_directory)
+                .await?;
+            resource.move_to_directory(directory.id())?;
         }
 
         if let Some(kind) = command.kind {
@@ -122,21 +130,22 @@ impl<'a> ResourceCommandService<'a> {
             resource.replace_tags(tags)?;
         }
 
-        if restoring
-            && self
+        if restoring {
+            if self
                 .service
                 .query
-                .find_by_path(resource.directory().path(), resource.name())
+                .find_by_path(directory.path(), resource.name())
                 .await?
                 .is_some()
-        {
-            return Err(CoreError::conflict(format!(
-                "resource path `{}` is already occupied",
-                resource.storage_key()
-            )));
+            {
+                return Err(CoreError::conflict(format!(
+                    "resource path `{}` is already occupied",
+                    StorageKey::from_resource_path(directory.path(), resource.name())?
+                )));
+            }
         }
 
-        let new_storage_key = persisted_content_key(&resource)?;
+        let new_storage_key = persisted_content_key(&resource, &directory)?;
         let moved_content = match (&old_storage_key, &new_storage_key) {
             (Some(from), Some(to)) if from != to => {
                 self.service.blob_storage.move_if_absent(from, to).await?;
@@ -185,7 +194,7 @@ impl<'a> ResourceCommandService<'a> {
         &self,
         id: &ResourceId,
     ) -> Result<Option<Resource>, CoreError> {
-        let Some(resource) = self.service.repository.find_by_id(id).await? else {
+        let Some(resource) = self.service.query.find_located_by_id(id).await? else {
             return Ok(None);
         };
 
@@ -194,13 +203,14 @@ impl<'a> ResourceCommandService<'a> {
 
     pub(crate) async fn soft_delete_resource_snapshot(
         &self,
-        mut resource: Resource,
+        located: LocatedResource,
     ) -> Result<Resource, CoreError> {
+        let (mut resource, directory) = located.into_parts();
         let expected_updated_at = resource.updated_at();
-        let old_storage_key = persisted_content_key(&resource)?;
+        let old_storage_key = persisted_content_key(&resource, &directory)?;
 
         resource.soft_delete();
-        let new_storage_key = persisted_content_key(&resource)?;
+        let new_storage_key = persisted_content_key(&resource, &directory)?;
         let moved_content = match (&old_storage_key, &new_storage_key) {
             (Some(from), Some(to)) if from != to => {
                 self.service.blob_storage.move_if_absent(from, to).await?;
@@ -247,7 +257,7 @@ impl<'a> ResourceCommandService<'a> {
     /// 返回 `Ok(true)`。
     #[cfg(test)]
     pub(crate) async fn remove_resource(&self, id: &ResourceId) -> Result<bool, CoreError> {
-        let Some(resource) = self.service.repository.find_by_id(id).await? else {
+        let Some(resource) = self.service.query.find_located_by_id(id).await? else {
             return Ok(false);
         };
 
@@ -257,9 +267,10 @@ impl<'a> ResourceCommandService<'a> {
 
     pub(crate) async fn remove_resource_snapshot(
         &self,
-        resource: Resource,
+        located: LocatedResource,
     ) -> Result<(), CoreError> {
-        let storage_key = persisted_content_key(&resource)?;
+        let (resource, directory) = located.into_parts();
+        let storage_key = persisted_content_key(&resource, &directory)?;
         if !self
             .service
             .repository
@@ -283,7 +294,10 @@ impl<'a> ResourceCommandService<'a> {
 /// 返回资源内容当前实际占用的对象键。
 ///
 /// 活动资源使用其逻辑路径；软删除资源使用按资源 ID 隔离的内部回收站路径。
-fn persisted_content_key(resource: &Resource) -> Result<Option<StorageKey>, CoreError> {
+fn persisted_content_key(
+    resource: &Resource,
+    directory: &DirectoryLocation,
+) -> Result<Option<StorageKey>, CoreError> {
     if resource.content().is_none() {
         return Ok(None);
     }
@@ -297,18 +311,20 @@ fn persisted_content_key(resource: &Resource) -> Result<Option<StorageKey>, Core
         .map_err(CoreError::from);
     }
 
-    Ok(Some(resource.storage_key()))
+    StorageKey::from_resource_path(directory.path(), resource.name())
+        .map(Some)
+        .map_err(Into::into)
 }
 
 pub(super) fn build_resource(
     name: String,
-    directory: DirectoryRef,
+    directory_id: DirectoryId,
     kind: Option<ResourceKind>,
     status: ResourceStatus,
     tags: Vec<String>,
 ) -> crate::domain::ResourceBuilder {
     let mut builder = Resource::builder(name)
-        .with_directory(directory)
+        .with_directory_id(directory_id)
         .with_status(status)
         .with_tags(tags);
     if let Some(kind) = kind {

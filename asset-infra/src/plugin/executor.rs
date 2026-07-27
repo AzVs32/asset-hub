@@ -224,7 +224,7 @@ impl ResourceActionExecutor for ExtismResourceActionExecutor {
         &self,
         request: ResourceActionRequest,
     ) -> Result<ResourceActionOutput, CoreError> {
-        let storage_key = request.resource().storage_key();
+        let storage_key = request.storage_key();
         let Some(binding) = self.bindings.iter().find(|binding| {
             let content = request.resource().content();
             binding.action == request.action().as_str()

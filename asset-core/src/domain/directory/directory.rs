@@ -1,6 +1,4 @@
-use super::{
-    DirectoryKind, DirectoryPath, MAX_DIRECTORY_SEGMENT_LEN, validate_required_text_exact,
-};
+use super::{DirectoryKind, MAX_DIRECTORY_SEGMENT_LEN, validate_required_text_exact};
 use crate::error::DirectoryError;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -16,34 +14,6 @@ impl DirectoryId {
 
     pub fn is_root(self) -> bool {
         self == Self::root()
-    }
-}
-
-/// 对目录聚合的稳定引用，并携带当前路径查询投影。
-///
-/// `id` 是领域关系中的事实；`path` 只用于本次读取快照中的展示和存储定位。Repository
-/// 只持久化 `id`，读取时通过目录树重建路径。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DirectoryRef {
-    id: DirectoryId,
-    path: DirectoryPath,
-}
-
-impl DirectoryRef {
-    pub fn new(id: DirectoryId, path: DirectoryPath) -> Self {
-        Self { id, path }
-    }
-
-    pub fn root() -> Self {
-        Self::new(DirectoryId::root(), DirectoryPath::root())
-    }
-
-    pub fn id(&self) -> DirectoryId {
-        self.id
-    }
-
-    pub fn path(&self) -> &DirectoryPath {
-        &self.path
     }
 }
 
