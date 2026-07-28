@@ -99,14 +99,15 @@ plugin_manifests = []
 
 # Plugin manifest example.
 # Use `capabilities.kinds` for resource types, `capabilities.directory_kinds` for
-# directory types, and `capabilities.actions` for resource actions.
-# Author a Manifest V3 JSON document, then build the declared artifacts.
+# directory types, `capabilities.resource_actions` for resource actions, and
+# `capabilities.directory_actions` for directory actions.
+# Author a Manifest V1 JSON document, then build the declared artifacts.
 # Artifact hashes belong to the generated sibling `manifest.lock.json`; generate it with
 # `asset plugin --seal path/to/plugin.json` after building the plugin artifacts.
 #
 # {
-#   "$schema": "https://asset-hub.local/schemas/plugin-manifest-v3.json",
-#   "manifest_version": 3,
+#   "$schema": "https://asset-hub.local/schemas/plugin-manifest-v1.json",
+#   "manifest_version": 1,
 #   "plugin": {
 #     "id": "example.tools",
 #     "name": "Example Tools",
@@ -117,7 +118,7 @@ plugin_manifests = []
 #   "runtime": {
 #     "type": "extism",
 #     "wasm": "example-tools.wasm",
-#     "plugin_api": "asset-hub.plugin-api@0.4"
+#     "plugin_api": "asset-hub.plugin-api@1"
 #   },
 #   "capabilities": {
 #     "kinds": [
@@ -127,7 +128,7 @@ plugin_manifests = []
 #         "supports_content": true
 #       }
 #     ],
-#     "actions": [
+#     "resource_actions": [
 #       {
 #         "id": "example.tools.summarize",
 #         "label": "Summarize",
@@ -145,6 +146,6 @@ plugin_manifests = []
 #     ]
 #   },
 #   "permissions": {
-#     "allow": ["resource.read", "content.read"]
+#     "allow": ["resource.read", "resource.content.read"]
 #   }
 # }

@@ -1,6 +1,6 @@
 {
-  "$schema": "https://asset-hub.local/schemas/plugin-manifest-v3.json",
-  "manifest_version": 3,
+  "$schema": "https://asset-hub.local/schemas/plugin-manifest-v1.json",
+  "manifest_version": 1,
   "plugin": {
     "id": "core.resource",
     "name": "Core Resource",
@@ -19,7 +19,7 @@
         "supports_content": true
       }
     ],
-    "actions": [
+    "resource_actions": [
       {
         "id": "core.resource.download",
         "label": "Download",
@@ -42,6 +42,6 @@
     ]
   },
   "permissions": {
-    "allow": ["resource.read", "content.read"]
+    "allow": ["resource.read", "resource.content.read"]
   }
 }

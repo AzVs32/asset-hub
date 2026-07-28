@@ -1,7 +1,7 @@
 use super::*;
 use crate::handler::render_epub_payload;
 use base64::Engine;
-use base64::engine::general_purpose::STANDARD;
+use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use serde_json::{Value, json};
 use std::io::{Cursor, Write};
 use zip::write::SimpleFileOptions;
@@ -65,11 +65,16 @@ fn initial_action_returns_plugin_frame() {
     let output = render_epub_payload(request_json(json!({}))).unwrap();
     let output: Value = serde_json::from_str(&output).unwrap();
     assert_eq!(output["view"], "plugin_frame");
-    assert!(
-        output["url"]
-            .as_str()
-            .unwrap()
-            .starts_with("index.html#payload=")
+    let encoded = output["url"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("index.html#payload=")
+        .unwrap();
+    let payload: Value =
+        serde_json::from_slice(&URL_SAFE_NO_PAD.decode(encoded).unwrap()).unwrap();
+    assert_eq!(
+        payload["plugin_api"],
+        asset_plugin_api::PLUGIN_API_VERSION
     );
 }
 

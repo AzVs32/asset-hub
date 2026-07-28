@@ -2,7 +2,7 @@ import React from "react";
 import type { PluginActionOutput, PluginView } from "@/domain/plugin";
 import type { ResourceAction } from "@/domain/resource";
 import type { PluginKernel, PluginViewRendererProps } from "@/kernel/plugin-kernel";
-import { parseExecuteActionMessage, pluginFrameProtocolVersion } from "../frame-protocol";
+import { parseExecuteActionMessage } from "../frame-protocol";
 
 const MarkdownRenderer = React.lazy(() => import("./markdown-renderer"));
 const MediaRenderer = React.lazy(() => import("./media-renderer"));
@@ -83,12 +83,13 @@ function PluginFrameView({
   React.useEffect(() => {
     async function receive(event: MessageEvent) {
       if (event.source !== ref.current?.contentWindow) return;
-      const message = parseExecuteActionMessage(event.data);
+      const message = parseExecuteActionMessage(event.data, view.plugin_api);
       if (!message || !source || message.resourceId !== resource.id) return;
       const action = resource.actions.find((candidate) => candidate.id === message.action);
       if (!action) {
         postResult(
           ref.current,
+          view.plugin_api,
           message.requestId,
           null,
           `Action ${message.action} is not available.`,
@@ -97,11 +98,12 @@ function PluginFrameView({
       }
       try {
         const result = await gateway.executeAction(resource, action.id, message.input ?? {});
-        postResult(ref.current, message.requestId, result, null);
+        postResult(ref.current, view.plugin_api, message.requestId, result, null);
         if (action.access === "read_write") await onResourceChanged?.();
       } catch (cause) {
         postResult(
           ref.current,
+          view.plugin_api,
           message.requestId,
           null,
           cause instanceof Error ? cause.message : "Action failed",
@@ -110,7 +112,7 @@ function PluginFrameView({
     }
     window.addEventListener("message", receive);
     return () => window.removeEventListener("message", receive);
-  }, [gateway, onResourceChanged, resource, source]);
+  }, [gateway, onResourceChanged, resource, source, view.plugin_api]);
 
   if (!source) return <PluginError message="The plugin returned an invalid frame URL." />;
   return (
@@ -139,6 +141,7 @@ function pluginFrameUrl(value: string, resolveUrl: (url: string) => string | nul
 
 function postResult(
   frame: HTMLIFrameElement | null,
+  pluginApi: string,
   requestId: string,
   data: unknown,
   error: string | null,
@@ -146,7 +149,7 @@ function postResult(
   frame?.contentWindow?.postMessage(
     {
       type: "asset-hub:execute-resource-action-result",
-      version: pluginFrameProtocolVersion,
+      plugin_api: pluginApi,
       request_id: requestId,
       ok: error === null,
       data,

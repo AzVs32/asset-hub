@@ -56,11 +56,13 @@ fn update_markdown_payload(input: String) -> FnResult<String> {
 
 fn frame_response(request: &PluginActionRequest, mode: &str) -> FnResult<String> {
     let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&json!({
+        "plugin_api": asset_plugin_api::PLUGIN_API_VERSION,
         "resource_id": request.resource.id,
         "mode": mode,
         "action": request.action,
     }))?);
     let output = PluginActionOutput::new(PluginView::PluginFrame(PluginFrameView {
+        plugin_api: asset_plugin_api::PLUGIN_API_VERSION.to_string(),
         title: Some(request.resource.name.clone()),
         url: format!("{VIEWER_ENTRYPOINT}#payload={payload}"),
     }));
@@ -169,9 +171,6 @@ fn markdown_content_size(input: &PluginActionRequest) -> FnResult<u64> {
     if content_ref.encoding != PluginContentReferenceEncoding::Handle {
         return Err(Error::msg("unsupported content reference encoding").into());
     }
-    if content_ref.abi_version != asset_plugin_api::CONTENT_ABI_VERSION {
-        return Err(Error::msg("unsupported content ABI version").into());
-    }
     input
         .resource
         .content
@@ -204,9 +203,6 @@ fn markdown_content_range(
         .content_ref
         .as_ref()
         .ok_or_else(|| Error::msg("missing Markdown content payload"))?;
-    if content_ref.abi_version != asset_plugin_api::CONTENT_ABI_VERSION {
-        return Err(Error::msg("unsupported content ABI version").into());
-    }
     read_content_reference_range(&content_ref.reference, offset, length)
 }
 

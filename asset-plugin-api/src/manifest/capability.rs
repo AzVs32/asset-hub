@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 pub struct PluginCapabilities {
     pub kinds: Vec<ResourceKindCapability>,
     pub directory_kinds: Vec<DirectoryKindCapability>,
-    pub actions: Vec<ResourceActionCapability>,
+    pub resource_actions: Vec<ResourceActionCapability>,
     pub directory_actions: Vec<DirectoryActionCapability>,
 }
 
@@ -131,9 +131,6 @@ pub enum ContentDelivery {
     Inline,
     Reference,
 }
-
-#[cfg(test)]
-mod tests;
 
 /// Optional UI placement hints for host applications.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

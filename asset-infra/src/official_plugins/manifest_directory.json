@@ -1,6 +1,6 @@
 {
-  "$schema": "https://asset-hub.local/schemas/plugin-manifest-v3.json",
-  "manifest_version": 3,
+  "$schema": "https://asset-hub.local/schemas/plugin-manifest-v1.json",
+  "manifest_version": 1,
   "plugin": {
     "id": "core.directory",
     "name": "Core Directory",

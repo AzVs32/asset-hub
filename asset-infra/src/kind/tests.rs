@@ -203,7 +203,7 @@ fn registry_loads_plugin_manifest_kinds() {
         root.join("mindustry.json"),
         r#"
         {
-          "manifest_version": 3,
+          "manifest_version": 1,
           "plugin": {
             "id": "mindustry",
             "name": "Mindustry",
@@ -229,7 +229,7 @@ fn registry_loads_plugin_manifest_kinds() {
                 "label": "Mindustry Workspace"
               }
             ],
-            "actions": [
+            "resource_actions": [
               {
                 "id": "mindustry.download",
                 "label": "Download Mod",
@@ -243,7 +243,7 @@ fn registry_loads_plugin_manifest_kinds() {
             ]
           },
           "permissions": {
-            "allow": ["resource.read", "content.read"],
+            "allow": ["resource.read", "resource.content.read"],
             "network": false,
             "filesystem": false
           }
@@ -302,7 +302,7 @@ fn registry_loads_format_plugin_as_independent_kind() {
         root.join("epub.json"),
         r#"
         {
-          "manifest_version": 3,
+          "manifest_version": 1,
           "plugin": {
             "id": "epub",
             "name": "EPUB",
@@ -314,7 +314,7 @@ fn registry_loads_format_plugin_as_independent_kind() {
             "type": "extism",
             "wasm": "epub.wasm",
             "wasi": false,
-            "plugin_api": "asset-hub.plugin-api@0.4"
+            "plugin_api": "asset-hub.plugin-api@1"
           },
           "capabilities": {
             "kinds": [
@@ -328,7 +328,7 @@ fn registry_loads_format_plugin_as_independent_kind() {
                 }
               }
             ],
-            "actions": [
+            "resource_actions": [
               {
                 "id": "azvs.epub.render",
                 "label": "Read EPUB",
@@ -342,7 +342,7 @@ fn registry_loads_format_plugin_as_independent_kind() {
             ]
           },
           "permissions": {
-            "allow": ["resource.read", "content.read"],
+            "allow": ["resource.read", "resource.content.read"],
             "network": false,
             "filesystem": false
           }
@@ -385,7 +385,7 @@ fn registry_loads_plugin_manifest_kind_extensions() {
         root.join("mp4-tools.json"),
         r#"
         {
-          "manifest_version": 3,
+          "manifest_version": 1,
           "plugin": {
             "id": "mp4-tools",
             "name": "MP4 Tools",
@@ -397,7 +397,7 @@ fn registry_loads_plugin_manifest_kind_extensions() {
             "type": "extism",
             "wasm": "mp4-tools.wasm",
             "wasi": false,
-            "plugin_api": "asset-hub.plugin-api@0.4"
+            "plugin_api": "asset-hub.plugin-api@1"
           },
           "capabilities": {
             "kinds": [
@@ -412,7 +412,7 @@ fn registry_loads_plugin_manifest_kind_extensions() {
                 }
               }
             ],
-            "actions": [
+            "resource_actions": [
               {
                 "id": "mp4-tools:inspect",
                 "label": "Inspect MP4",
@@ -426,7 +426,7 @@ fn registry_loads_plugin_manifest_kind_extensions() {
             ]
           },
           "permissions": {
-            "allow": ["resource.read", "content.read"],
+            "allow": ["resource.read", "resource.content.read"],
             "network": false,
             "filesystem": false
           }
@@ -491,7 +491,7 @@ fn registry_rejects_duplicate_global_action_ids() {
         root.join("duplicate-download.json"),
         r#"
         {
-          "manifest_version": 3,
+          "manifest_version": 1,
           "plugin": {
             "id": "duplicate-download",
             "name": "Duplicate Preview",
@@ -504,7 +504,7 @@ fn registry_rejects_duplicate_global_action_ids() {
           },
           "capabilities": {
             "kinds": [],
-            "actions": [
+            "resource_actions": [
               {
                 "id": "core.resource.download",
                 "label": "Duplicate Download",
@@ -518,7 +518,7 @@ fn registry_rejects_duplicate_global_action_ids() {
             ]
           },
           "permissions": {
-            "allow": ["resource.read", "content.read"],
+            "allow": ["resource.read", "resource.content.read"],
             "network": false,
             "filesystem": false
           }
@@ -547,7 +547,7 @@ fn write_empty_wasm_lock(root: &std::path::Path, plugin_id: &str) {
         root.join("manifest.lock.json"),
         format!(
             r#"{{
-              "manifest_version": 3,
+              "manifest_version": 1,
               "plugin_id": "{plugin_id}",
               "runtime": {{
                 "wasm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"

@@ -63,11 +63,13 @@ pub(super) fn render_epub_payload(input: String) -> FnResult<String> {
         Some(_) => return Err(Error::msg("unsupported EPUB operation").into()),
         None => {
             let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&json!({
+                "plugin_api": asset_plugin_api::PLUGIN_API_VERSION,
                 "resource_id": &request.resource.id,
                 "resource_name": &request.resource.name,
                 "action": &request.action,
             }))?);
             PluginActionOutput::new(PluginView::PluginFrame(PluginFrameView {
+                plugin_api: asset_plugin_api::PLUGIN_API_VERSION.to_string(),
                 title: Some(request.resource.name.clone()),
                 url: format!("index.html#payload={payload}"),
             }))

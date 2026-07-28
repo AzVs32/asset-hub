@@ -41,7 +41,7 @@ fn manifest_document() -> Value {
             "plugin_api": asset_plugin_api::PLUGIN_API_VERSION
         },
         "capabilities": {
-            "actions": [{
+            "resource_actions": [{
                 "id": "example.plugin.action",
                 "label": "Example Action",
                 "handler": "run",
@@ -69,7 +69,7 @@ fn host_rejects_canonical_manifest_violations() {
         },
         {
             let mut value = template.clone();
-            value["capabilities"]["actions"][0]["views"] = json!(["json", "json"]);
+            value["capabilities"]["resource_actions"][0]["views"] = json!(["json", "json"]);
             value
         },
     ];
@@ -143,6 +143,20 @@ fn manifest_accepts_directory_actions_with_target_specific_requirements() {
 }
 
 #[test]
+fn resource_and_directory_action_ids_use_separate_namespaces() {
+    let mut value = manifest_document();
+    value["capabilities"]["directory_actions"] = json!([{
+        "id": "example.plugin.action",
+        "label": "Directory Action",
+        "handler": "run_for_directory",
+        "views": ["json"]
+    }]);
+    value["permissions"]["allow"] = json!(["resource.read", "directory.read"]);
+
+    canonical_manifest(&value).unwrap();
+}
+
+#[test]
 fn directory_request_and_output_have_separate_wire_effects() {
     let request: PluginDirectoryActionRequest = serde_json::from_value(json!({
         "action": "example.plugin.organize",
@@ -172,58 +186,36 @@ fn directory_request_and_output_have_separate_wire_effects() {
 }
 
 #[test]
-fn legacy_manifest_shapes_are_rejected() {
-    let mut version_two = manifest_document();
-    version_two["manifest_version"] = json!(2);
-    assert!(canonical_manifest(&version_two).is_err());
-
-    let mut legacy_capabilities = manifest_document();
-    let capabilities = legacy_capabilities["capabilities"].as_object_mut().unwrap();
-    let actions = capabilities.remove("actions").unwrap();
-    capabilities.insert("resource_actions".to_string(), actions);
-    assert!(serde_json::from_value::<PluginManifest>(legacy_capabilities).is_err());
-
-    let mut legacy_permissions = manifest_document();
-    legacy_permissions["permissions"] = json!({
-        "resource": {"read": true, "write": false},
-        "content": {"read": false, "write": false}
-    });
-    assert!(serde_json::from_value::<PluginManifest>(legacy_permissions).is_err());
-}
-
-#[test]
-fn request_and_output_wire_shapes_match_the_v04_goldens() {
+fn request_and_output_wire_shapes_match_the_v1_goldens() {
     assert_golden_round_trip::<PluginActionRequest>(include_str!(
-        "fixtures/action-request-inline-v0.4.json"
+        "fixtures/action-request-inline-v1.json"
     ));
     assert_golden_round_trip::<PluginActionRequest>(include_str!(
-        "fixtures/action-request-reference-v0.4.json"
+        "fixtures/action-request-reference-v1.json"
     ));
+    assert_golden_round_trip::<PluginActionOutput>(include_str!("fixtures/action-output-v1.json"));
     assert_golden_round_trip::<PluginActionOutput>(include_str!(
-        "fixtures/action-output-v0.4.json"
-    ));
-    assert_golden_round_trip::<PluginActionOutput>(include_str!(
-        "fixtures/action-output-download-v0.4.json"
+        "fixtures/action-output-download-v1.json"
     ));
     assert_golden_round_trip::<PluginActionFailure>(include_str!(
-        "fixtures/action-failure-v0.4.json"
+        "fixtures/action-failure-v1.json"
     ));
 }
 
 #[test]
 fn context_specific_encodings_reject_invalid_wire_combinations() {
     let mut request: Value =
-        serde_json::from_str(include_str!("fixtures/action-request-inline-v0.4.json")).unwrap();
+        serde_json::from_str(include_str!("fixtures/action-request-inline-v1.json")).unwrap();
     request["content"]["encoding"] = json!("handle");
     assert!(serde_json::from_value::<PluginActionRequest>(request).is_err());
 
     let mut output: Value =
-        serde_json::from_str(include_str!("fixtures/action-output-v0.4.json")).unwrap();
+        serde_json::from_str(include_str!("fixtures/action-output-v1.json")).unwrap();
     output["effects"][0]["encoding"] = json!("url");
     assert!(serde_json::from_value::<PluginActionOutput>(output).is_err());
 
     let mut output: Value =
-        serde_json::from_str(include_str!("fixtures/action-output-v0.4.json")).unwrap();
+        serde_json::from_str(include_str!("fixtures/action-output-v1.json")).unwrap();
     output["effects"][0]["checksum"] = json!({
         "kind": "sha256",
         "value": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"

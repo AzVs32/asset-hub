@@ -1,6 +1,6 @@
 {
-  "$schema": "https://asset-hub.local/schemas/plugin-manifest-v3.json",
-  "manifest_version": 3,
+  "$schema": "https://asset-hub.local/schemas/plugin-manifest-v1.json",
+  "manifest_version": 1,
   "plugin": {
     "id": "core.video",
     "name": "Core Video",
@@ -24,9 +24,9 @@
         }
       }
     ],
-    "actions": []
+    "resource_actions": []
   },
   "permissions": {
-    "allow": ["resource.read", "content.read"]
+    "allow": ["resource.read", "resource.content.read"]
   }
 }

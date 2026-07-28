@@ -18,7 +18,7 @@ fn rejects_manifest_with_missing_fields() {
             "type": "builtin"
           },
           "permissions": {
-            "allow": ["resource.read", "content.read"],
+            "allow": ["resource.read", "resource.content.read"],
             "network": false,
             "filesystem": false
           }
@@ -110,10 +110,10 @@ fn catalog_keeps_the_verified_wasm_snapshot() {
 fn minimal_builtin_manifest(id: &str) -> String {
     format!(
         r#"{{
-          "manifest_version": 3,
+          "manifest_version": 1,
           "plugin": {{"id": "{id}", "name": "Test", "version": "0.1.0", "publisher": "test"}},
           "runtime": {{"type": "builtin"}},
-          "capabilities": {{"kinds": [], "actions": []}},
+          "capabilities": {{"kinds": [], "resource_actions": []}},
           "permissions": {{
             "allow": ["resource.read"],
             "network": false,
@@ -126,13 +126,13 @@ fn minimal_builtin_manifest(id: &str) -> String {
 fn minimal_extism_manifest(id: &str) -> String {
     format!(
         r#"{{
-          "manifest_version": 3,
+          "manifest_version": 1,
           "plugin": {{"id": "{id}", "name": "Test", "version": "0.1.0", "publisher": "test"}},
           "runtime": {{
             "type": "extism", "wasm": "plugin.wasm",
-            "wasi": false, "plugin_api": "asset-hub.plugin-api@0.4"
+            "wasi": false, "plugin_api": "asset-hub.plugin-api@1"
           }},
-          "capabilities": {{"kinds": [], "actions": []}},
+          "capabilities": {{"kinds": [], "resource_actions": []}},
           "permissions": {{
             "allow": ["resource.read"],
             "network": false,
@@ -147,7 +147,7 @@ fn write_wasm_lock(root: &Path, plugin_id: &str, digest: &str) {
         root.join("manifest.lock.json"),
         format!(
             r#"{{
-              "manifest_version": 3,
+              "manifest_version": 1,
               "plugin_id": "{plugin_id}",
               "runtime": {{
                 "wasm_sha256": "{digest}"

@@ -12,6 +12,7 @@ import {
 import "./styles.css";
 
 type FramePayload = {
+  plugin_api: string;
   resource_id: string;
   resource_name: string;
   action: string;
@@ -37,6 +38,7 @@ type Book = {
 
 type ActionResultMessage = {
   type: "asset-hub:execute-resource-action-result";
+  plugin_api: string;
   request_id: string;
   ok: boolean;
   data?: {
@@ -375,7 +377,13 @@ function readPayload(): FramePayload | null {
     const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
     const bytes = Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
     const value = JSON.parse(new TextDecoder().decode(bytes)) as Partial<FramePayload>;
-    if (!value.resource_id || !value.resource_name || !value.action) return null;
+    if (
+      typeof value.plugin_api !== "string"
+      || !value.plugin_api
+      || !value.resource_id
+      || !value.resource_name
+      || !value.action
+    ) return null;
     return value as FramePayload;
   } catch {
     return null;
@@ -400,6 +408,7 @@ function executeEpubAction<T>(
       if (
         !message ||
         message.type !== "asset-hub:execute-resource-action-result" ||
+        message.plugin_api !== frame.plugin_api ||
         message.request_id !== requestId
       ) return;
       window.clearTimeout(timeout);
@@ -420,6 +429,7 @@ function executeEpubAction<T>(
     window.parent.postMessage(
       {
         type: "asset-hub:execute-resource-action",
+        plugin_api: frame.plugin_api,
         request_id: requestId,
         resource_id: frame.resource_id,
         action: frame.action,

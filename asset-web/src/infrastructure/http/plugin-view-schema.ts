@@ -5,7 +5,12 @@ const pluginViewSchema = z.discriminatedUnion("view", [
   z.object({ view: z.literal("text"), text: z.string() }),
   z.object({ view: z.literal("markdown"), markdown: z.string() }),
   z.object({ view: z.literal("html"), title: z.string().optional(), html: z.string() }),
-  z.object({ view: z.literal("plugin_frame"), title: z.string().optional(), url: z.string() }),
+  z.object({
+    view: z.literal("plugin_frame"),
+    plugin_api: z.string().min(1),
+    title: z.string().optional(),
+    url: z.string(),
+  }),
   z.object({ view: z.literal("json"), data: z.unknown() }),
   z.object({
     view: z.literal("media"),

@@ -13,12 +13,12 @@ pub enum PluginPermission {
     ResourceRead,
     #[serde(rename = "resource.write")]
     ResourceWrite,
-    #[serde(rename = "content.read")]
-    ContentRead,
-    #[serde(rename = "content.replace")]
-    ContentReplace,
-    #[serde(rename = "derived_asset.write")]
-    DerivedAssetWrite,
+    #[serde(rename = "resource.content.read")]
+    ResourceContentRead,
+    #[serde(rename = "resource.content.replace")]
+    ResourceContentReplace,
+    #[serde(rename = "resource.derived_asset.write")]
+    ResourceDerivedAssetWrite,
     #[serde(rename = "directory.read")]
     DirectoryRead,
     #[serde(rename = "directory.children.list")]
@@ -56,16 +56,16 @@ impl PluginPermissions {
         self.allows(PluginPermission::ResourceWrite)
     }
 
-    pub fn content_read(&self) -> bool {
-        self.allows(PluginPermission::ContentRead)
+    pub fn resource_content_read(&self) -> bool {
+        self.allows(PluginPermission::ResourceContentRead)
     }
 
-    pub fn content_replace(&self) -> bool {
-        self.allows(PluginPermission::ContentReplace)
+    pub fn resource_content_replace(&self) -> bool {
+        self.allows(PluginPermission::ResourceContentReplace)
     }
 
-    pub fn derived_asset_write(&self) -> bool {
-        self.allows(PluginPermission::DerivedAssetWrite)
+    pub fn resource_derived_asset_write(&self) -> bool {
+        self.allows(PluginPermission::ResourceDerivedAssetWrite)
     }
 
     pub fn directory_read(&self) -> bool {

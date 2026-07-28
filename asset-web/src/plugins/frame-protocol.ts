@@ -1,21 +1,22 @@
 import type { JsonObject } from "@/domain/plugin";
 
-export const pluginFrameProtocolVersion = 1;
-
 export interface ExecuteActionMessage {
   type: "asset-hub:execute-resource-action";
-  version: number;
+  pluginApi: string;
   requestId: string;
   resourceId: string;
   action: string;
   input?: JsonObject;
 }
 
-export function parseExecuteActionMessage(value: unknown): ExecuteActionMessage | null {
+export function parseExecuteActionMessage(
+  value: unknown,
+  expectedPluginApi: string,
+): ExecuteActionMessage | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const message = value as Record<string, unknown>;
   if (message.type !== "asset-hub:execute-resource-action") return null;
-  if (message.version !== undefined && message.version !== pluginFrameProtocolVersion) return null;
+  if (message.plugin_api !== expectedPluginApi) return null;
   const requestId = message.request_id;
   const resourceId = message.resource_id;
   const action = message.action;
@@ -26,7 +27,7 @@ export function parseExecuteActionMessage(value: unknown): ExecuteActionMessage 
   if (message.input !== undefined && !input) return null;
   return {
     type: message.type,
-    version: pluginFrameProtocolVersion,
+    pluginApi: expectedPluginApi,
     requestId,
     resourceId,
     action,

@@ -30,9 +30,6 @@ pub(super) fn epub_content_bytes(input: &PluginActionRequest) -> FnResult<Vec<u8
     if content_ref.encoding != PluginContentReferenceEncoding::Handle {
         return Err(Error::msg("unsupported content reference encoding").into());
     }
-    if content_ref.abi_version != asset_plugin_api::CONTENT_ABI_VERSION {
-        return Err(Error::msg("unsupported content ABI version").into());
-    }
     read_content_reference(&content_ref.reference)
 }
 

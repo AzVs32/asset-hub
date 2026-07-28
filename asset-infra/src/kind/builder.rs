@@ -102,7 +102,7 @@ pub(super) fn build_registries_with_catalog(
         }
     }
     for manifest in &official_manifests {
-        for action in &manifest.manifest.capabilities.actions {
+        for action in &manifest.manifest.capabilities.resource_actions {
             let action_definitions = action_definitions_with_inherited_content(
                 &definitions,
                 action,
@@ -118,7 +118,7 @@ pub(super) fn build_registries_with_catalog(
         }
     }
     for manifest in &plugin_manifests {
-        for action in &manifest.manifest.capabilities.actions {
+        for action in &manifest.manifest.capabilities.resource_actions {
             let action_definitions = action_definitions_with_inherited_content(
                 &definitions,
                 action,

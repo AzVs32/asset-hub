@@ -82,8 +82,8 @@ pub(super) fn verify_permissions(
         request.access(),
         asset_plugin_api::ResourceActionAccess::ReadWrite
     ) && !binding.permissions.resource_write()
-        && !binding.permissions.content_replace()
-        && !binding.permissions.derived_asset_write()
+        && !binding.permissions.resource_content_replace()
+        && !binding.permissions.resource_derived_asset_write()
     {
         return Err(CoreError::configuration(format!(
             "plugin `{}` action `{}` lacks a write permission",
@@ -93,10 +93,12 @@ pub(super) fn verify_permissions(
     if !matches!(
         request.content_delivery(),
         asset_plugin_api::ResourceActionContentDelivery::Auto
-    ) && !binding.permissions.allows(PluginPermission::ContentRead)
+    ) && !binding
+        .permissions
+        .allows(PluginPermission::ResourceContentRead)
     {
         return Err(CoreError::configuration(format!(
-            "plugin `{}` action `{}` lacks content.read permission",
+            "plugin `{}` action `{}` lacks resource.content.read permission",
             binding.plugin_id, binding.action
         )));
     }

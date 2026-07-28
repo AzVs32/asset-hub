@@ -30,10 +30,11 @@ Inside the host workspace, `asset-core` exposes three deliberately separate surf
 concrete configuration or infrastructure behavior. Protocol handlers and commands should still prefer
 `asset-core` services. Shared runtime assembly and background-task ownership live in `asset-runtime`.
 
-Manifest, action, request, view, diagnostic, and content ABI types belong to `asset-plugin-api` and
+Manifest, action, request, view, diagnostic, and Host function types belong to `asset-plugin-api` and
 are imported from that crate directly rather than re-exported through `asset-core`.
-The Rust crate, Manifest document, plugin JSON API, and content ABI are versioned independently;
-their compatibility and release rules are documented in
+The Rust crate and Manifest document are versioned independently from the unified Plugin API.
+The Plugin API covers Action JSON, Wasm Host functions, and Plugin Frame messages; compatibility
+and release rules are documented in
 [`asset-plugin-api/README.md`](asset-plugin-api/README.md).
 
 ## Requirements
@@ -215,7 +216,7 @@ and idle timeouts to reject stalled clients without terminating healthy long-run
 
 ## Package A Plugin
 
-Author a Manifest V3 `plugin.json`, then build the declared Wasm and optional Web bundle.
+Author a Manifest V1 `plugin.json`, then build the declared Wasm and optional Web bundle.
 Seal the finished artifacts with the administration CLI:
 
 ```bash
@@ -278,7 +279,7 @@ output size, concurrency, Wasm memory, and execution timeout. A configured
 core content ceiling.
 
 Non-inline Wasm content is passed as an opaque, call-scoped reference rather than file bytes. The
-versioned content ABI exposes `asset_hub_content_open`, `asset_hub_content_size`,
+Plugin API exposes `asset_hub_content_open`, `asset_hub_content_size`,
 `asset_hub_content_read`, and `asset_hub_content_close`. The `extism-guest` feature of
 `asset-plugin-api` provides the safe client used by bundled plugins. `content_read` returns raw
 bytes for the requested offset and may return a smaller chunk according to
@@ -286,7 +287,6 @@ bytes for the requested offset and may return a smaller chunk according to
 Handles cannot be reused by another plugin call and are reclaimed automatically when a call ends.
 This keeps large input content out of JSON and avoids Base64 expansion; inline content remains
 available for small payloads controlled by `plugin.max_inline_content_bytes`.
-This host ABI replaces the former single-argument, Base64-returning `asset_hub_content_read`.
 External Wasm plugins declare `content_delivery` as `reference`, read bounded ranges, rebuild their
 Wasm, and reseal the package.
 
@@ -309,17 +309,20 @@ eight concurrent calls. The HTTP action input itself is limited to 1 MiB. These 
 configured under `[plugin]`; non-inline content up to the configured total limit is available
 through the Range-based handle API.
 
-Manifest V3 uses a fine-grained `permissions.allow` list containing
-`resource.read`, `resource.write`, `content.read`, `content.replace`, and
-`derived_asset.write`. Effects are checked against their specific permission. Network and
+Manifest V1 uses a fine-grained `permissions.allow` list containing
+`resource.read`, `resource.write`, `resource.content.read`, `resource.content.replace`, and
+`resource.derived_asset.write`. Effects are checked against their specific permission. Network and
 filesystem permissions are requested by a Manifest but are not self-granting. Every
 requested host or path must also be approved under `[plugin.grants]`. Network grants are exact and
 wildcards are rejected; filesystem grants are normalized roots. The default host policy grants no
 network or filesystem access.
 
-The current and only supported authoring target is Manifest V3 with
-`runtime.plugin_api = "asset-hub.plugin-api@0.4"`. Both versions must be declared explicitly;
-other manifest or plugin API versions are rejected at startup. Plugin failures
+Resource and directory actions are declared independently under
+`capabilities.resource_actions` and `capabilities.directory_actions`.
+
+The current and only supported authoring target is Manifest V1 with
+`runtime.plugin_api = "asset-hub.plugin-api@1"`. Both versions must be declared explicitly;
+other manifest or Plugin API versions are rejected at startup. Plugin failures
 may return a structured `error` diagnostic with a stable `code`, message, retry hint, and optional
 JSON details; successful outputs may also carry non-fatal diagnostics.
 

@@ -71,9 +71,8 @@ pub enum PluginInlineContentEncoding {
 
 /// Non-inline object content supplied to a plugin.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PluginContentReference {
-    #[serde(default = "content_abi_version")]
-    pub abi_version: u32,
     pub encoding: PluginContentReferenceEncoding,
     pub reference: String,
 }
@@ -83,8 +82,4 @@ pub struct PluginContentReference {
 #[serde(rename_all = "snake_case")]
 pub enum PluginContentReferenceEncoding {
     Handle,
-}
-
-fn content_abi_version() -> u32 {
-    crate::CONTENT_ABI_VERSION
 }

@@ -80,7 +80,7 @@ npm run build
 cd ../../..
 ```
 
-Then, from the repository root, generate `manifest.lock.json` and validate Manifest V3:
+Then, from the repository root, generate `manifest.lock.json` and validate Manifest V1:
 
 ```bash
 cargo run -p asset-cli --bin asset -- \

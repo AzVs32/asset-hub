@@ -13,6 +13,7 @@ import {
 import "./styles.css";
 
 type FramePayload = {
+  plugin_api: string;
   resource_id: string;
   mode: "read" | "edit";
   action: string;
@@ -55,6 +56,7 @@ type SaveState =
 
 type ActionResultMessage = {
   type: "asset-hub:execute-resource-action-result";
+  plugin_api: string;
   request_id: string;
   ok: boolean;
   data?: {
@@ -144,7 +146,7 @@ function App() {
 
     setSaveState({ status: "saving", label: "Saving" });
     try {
-      const result = await executeResourceAction(payload.resource_id, payload.action, { markdown: source });
+      const result = await executeResourceAction(payload, { markdown: source });
       if (!result.ok) {
         throw new Error(result.error || "Save failed");
       }
@@ -277,7 +279,9 @@ function readPayload(): FramePayload | null {
     const bytes = Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
     const value = JSON.parse(new TextDecoder().decode(bytes)) as Partial<FramePayload>;
     if (
-      typeof value.resource_id !== "string"
+      typeof value.plugin_api !== "string"
+      || !value.plugin_api
+      || typeof value.resource_id !== "string"
       || (value.mode !== "read" && value.mode !== "edit")
       || typeof value.action !== "string"
     ) return null;
@@ -288,7 +292,7 @@ function readPayload(): FramePayload | null {
 }
 
 async function loadMarkdown(payload: FramePayload): Promise<{ resourceName: string; markdown: string }> {
-  const load = await executeResourceAction(payload.resource_id, payload.action, { operation: "load" });
+  const load = await executeResourceAction(payload, { operation: "load" });
   const description = jsonViewData(load, isLoadResponse, "Markdown plugin returned an invalid load response");
   if (description.transfer === "complete") {
     return {
@@ -300,7 +304,7 @@ async function loadMarkdown(payload: FramePayload): Promise<{ resourceName: stri
   const bytes = new Uint8Array(description.byte_length);
   let offset = 0;
   while (offset < description.byte_length) {
-    const result = await executeResourceAction(payload.resource_id, payload.action, {
+    const result = await executeResourceAction(payload, {
       operation: "chunk",
       offset,
     });
@@ -458,8 +462,7 @@ function slugify(value: string): string {
 }
 
 function executeResourceAction(
-  resourceId: string,
-  action: string,
+  frame: FramePayload,
   input: Record<string, unknown>,
 ): Promise<ExecuteActionResult> {
   const requestId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
@@ -475,6 +478,7 @@ function executeResourceAction(
       if (
         !message ||
         message.type !== "asset-hub:execute-resource-action-result" ||
+        message.plugin_api !== frame.plugin_api ||
         message.request_id !== requestId
       ) {
         return;
@@ -492,9 +496,10 @@ function executeResourceAction(
     window.parent.postMessage(
       {
         type: "asset-hub:execute-resource-action",
+        plugin_api: frame.plugin_api,
         request_id: requestId,
-        resource_id: resourceId,
-        action,
+        resource_id: frame.resource_id,
+        action: frame.action,
         input,
       },
       "*",

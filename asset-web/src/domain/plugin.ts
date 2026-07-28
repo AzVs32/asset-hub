@@ -15,7 +15,7 @@ export type PluginView =
   | { view: "text"; text: string }
   | { view: "markdown"; markdown: string }
   | { view: "html"; title?: string; html: string }
-  | { view: "plugin_frame"; title?: string; url: string }
+  | { view: "plugin_frame"; plugin_api: string; title?: string; url: string }
   | { view: "json"; data: unknown }
   | {
       view: "media";

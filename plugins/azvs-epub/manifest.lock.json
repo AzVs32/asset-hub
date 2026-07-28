@@ -1,14 +1,14 @@
 {
-  "manifest_version": 3,
+  "manifest_version": 1,
   "plugin_id": "azvs.epub",
   "runtime": {
-    "wasm_sha256": "8a31ab4cfbf08be74254dbb15e5ba1b9edcb3d6695d81d740fbe607d10d92984"
+    "wasm_sha256": "8231f4c8630309dd65439d4338cf6fe066f35105ea694c196a1c014667df215d"
   },
   "web": {
     "integrity": {
-      "assets/index-CclLvMSD.js": "72cad09687a6a39f3c1fc21c4d69118a8b506b1023fcd8e12f344cb23190c43f",
+      "assets/index-BOhJZFjH.js": "c814d0b9c9aed4994954d77cecab99c350e94170ad26cb7126b86f3fc0a4b033",
       "assets/index-CiFWStLC.css": "83ad9256fd3a8d16ae17f1d1ef8aad3dd663df177abaa5e0416a343637221f27",
-      "index.html": "c039823678de62b22b6de756ad30ede046a8835755868a169e2c8b9dff9eafea"
+      "index.html": "8e268b61e92502bc18079b63db76742dc5650a79d007219d2817679e27badafe"
     }
   }
 }

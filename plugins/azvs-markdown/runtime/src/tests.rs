@@ -7,6 +7,10 @@ fn initial_frame_contains_only_small_routing_payload() {
     let output: Value = serde_json::from_str(&output).unwrap();
     let payload = decode_frame_payload(&output);
 
+    assert_eq!(
+        payload["plugin_api"],
+        asset_plugin_api::PLUGIN_API_VERSION
+    );
     assert_eq!(payload["resource_id"], resource_json()["id"]);
     assert_eq!(payload["mode"], "read");
     assert_eq!(payload["action"], "azvs.markdown.render");

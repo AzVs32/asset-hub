@@ -101,7 +101,7 @@ impl ExtismActionExecutor {
             preflight_handlers(
                 manifest.plugin_id(),
                 &compiled,
-                &manifest.capabilities.actions,
+                &manifest.capabilities.resource_actions,
             )?;
             preflight_directory_handlers(
                 manifest.plugin_id(),
@@ -109,7 +109,7 @@ impl ExtismActionExecutor {
                 &manifest.capabilities.directory_actions,
             )?;
 
-            for action in &manifest.capabilities.actions {
+            for action in &manifest.capabilities.resource_actions {
                 bindings.push(bind_action(
                     manifest.plugin_id(),
                     &manifest.permissions,
@@ -737,14 +737,14 @@ pub(super) fn call_extism(
             effect,
             asset_plugin_api::PluginActionEffect::ReplaceContent(_)
         )
-    }) && !binding.permissions.content_replace()
+    }) && !binding.permissions.resource_content_replace()
     {
         return Err(CoreError::plugin_diagnostic(
             &binding.plugin_id,
             &binding.action,
             host_diagnostic(
                 asset_plugin_api::diagnostic::codes::PERMISSION_DENIED,
-                "plugin returned replace_content without content.replace permission",
+                "plugin returned replace_content without resource.content.replace permission",
             ),
         ));
     }

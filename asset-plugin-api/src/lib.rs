@@ -13,7 +13,8 @@
 //! 继续导出；Directory 协议与 ABI 分别通过 [`protocol::directory`] 和
 //! [`abi::directory`] 访问。
 //!
-//! Cargo crate、Manifest、JSON plugin API 和 Wasm content ABI 独立版本化；升级规则见
+//! Cargo crate、Manifest 与统一 Plugin API 独立版本化；Plugin API 同时覆盖 Action
+//! JSON、Wasm Host functions 和 Plugin Frame 消息。升级规则见
 //! `asset-plugin-api/README.md`。
 
 /// Cargo package version of the Rust authoring library. This is not a wire protocol version.
@@ -40,8 +41,8 @@ pub use action::{
     ResourceActionRequirements, ResourceActionUi, ResourceContentMatcher,
 };
 pub use content::{
-    CONTENT_ABI_VERSION, CONTENT_CLOSE_FN, CONTENT_OPEN_FN, CONTENT_READ_RANGE_FN, CONTENT_SIZE_FN,
-    ContentRangeError, PluginContentRange,
+    CONTENT_CLOSE_FN, CONTENT_OPEN_FN, CONTENT_READ_RANGE_FN, CONTENT_SIZE_FN, ContentRangeError,
+    PluginContentRange,
 };
 pub use diagnostic::{PluginActionFailure, PluginDiagnostic, PluginDiagnosticSeverity};
 pub use manifest::{

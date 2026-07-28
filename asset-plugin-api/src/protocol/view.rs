@@ -97,7 +97,9 @@ pub struct HtmlView {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PluginFrameView {
+    pub plugin_api: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     pub url: String,

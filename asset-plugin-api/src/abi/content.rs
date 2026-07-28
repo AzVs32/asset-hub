@@ -1,12 +1,11 @@
-//! Resource 内容读取的 Wasm Host ABI。
+//! Plugin API 中的 Resource 内容读取 Wasm Host functions。
 //!
-//! 本模块定义稳定的 Host function 名称、范围值对象，并在 `extism-guest` 特性下提供
-//! guest 侧安全调用封装。Resource Action 的 JSON 内容引用定义在协议层。
+//! 本模块定义 Host function 名称、范围值对象，并在 `extism-guest` 特性下提供 guest
+//! 侧安全调用封装。Resource Action 的 JSON 内容引用定义在协议层；二者统一由
+//! `PLUGIN_API_VERSION` 版本化。
 
 use serde::{Deserialize, Deserializer, Serialize};
 
-/// Version of the host content functions exposed to Wasm plugins.
-pub const CONTENT_ABI_VERSION: u32 = 1;
 pub const CONTENT_OPEN_FN: &str = "asset_hub_content_open";
 pub const CONTENT_SIZE_FN: &str = "asset_hub_content_size";
 pub const CONTENT_READ_RANGE_FN: &str = "asset_hub_content_read";
@@ -87,7 +86,7 @@ impl std::fmt::Display for ContentRangeError {
 
 impl std::error::Error for ContentRangeError {}
 
-/// Safe guest-side client for the Extism content ABI.
+/// Safe guest-side client for the Plugin API content Host functions.
 #[cfg(all(feature = "extism-guest", target_arch = "wasm32"))]
 pub mod guest {
     use super::PluginContentRange;
@@ -103,7 +102,7 @@ pub mod guest {
 
     pub fn read_all(reference: &str, max_size: u64, chunk_size: u64) -> FnResult<Vec<u8>> {
         if chunk_size == 0 {
-            return Err(Error::msg("content ABI chunk size must be greater than zero").into());
+            return Err(Error::msg("content host chunk size must be greater than zero").into());
         }
         with_content(reference, |handle, size| {
             if size > max_size {
@@ -123,7 +122,7 @@ pub mod guest {
         chunk_size: u64,
     ) -> FnResult<Vec<u8>> {
         if chunk_size == 0 {
-            return Err(Error::msg("content ABI chunk size must be greater than zero").into());
+            return Err(Error::msg("content host chunk size must be greater than zero").into());
         }
         with_content(reference, |handle, size| {
             if size > max_size {
@@ -133,7 +132,7 @@ pub mod guest {
                 .into());
             }
             if range.end() > size {
-                return Err(Error::msg("content ABI range is out of bounds").into());
+                return Err(Error::msg("content host range is out of bounds").into());
             }
             read_open_range(handle, size, range, chunk_size)
         })
@@ -163,14 +162,14 @@ pub mod guest {
         chunk_size: u64,
     ) -> FnResult<Vec<u8>> {
         let capacity = usize::try_from(range.length())
-            .map_err(|_| Error::msg("content ABI range does not fit guest memory"))?;
+            .map_err(|_| Error::msg("content host range does not fit guest memory"))?;
         let mut bytes = Vec::with_capacity(capacity);
         let mut offset = range.offset();
         while offset < range.end() {
             let requested = (range.end() - offset).min(chunk_size);
             let chunk = unsafe { asset_hub_content_read(handle.to_string(), offset, requested) }?;
             if chunk.is_empty() || chunk.len() as u64 > requested {
-                return Err(Error::msg("content ABI host returned an invalid chunk").into());
+                return Err(Error::msg("content host returned an invalid chunk").into());
             }
             offset += chunk.len() as u64;
             bytes.extend_from_slice(&chunk);

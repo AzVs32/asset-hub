@@ -134,7 +134,8 @@ const SUPPORTED_VIEWS: &[&str] = &[
 
 fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
     let capabilities = &manifest.capabilities;
-    let mut action_ids = HashSet::new();
+    let mut resource_action_ids = HashSet::new();
+    let mut directory_action_ids = HashSet::new();
     for kind in &capabilities.kinds {
         validate_id("capabilities.kinds[].kind", &kind.kind, &[':', '-', '_'])?;
         if kind
@@ -159,52 +160,52 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
             return Err("capabilities.directory_kinds[].parent must not be empty".to_string());
         }
     }
-    for action in &capabilities.actions {
+    for action in &capabilities.resource_actions {
         validate_id(
-            "capabilities.actions[].id",
+            "capabilities.resource_actions[].id",
             &action.id,
             &['.', ':', '-', '_'],
         )?;
-        if !action_ids.insert(action.id.as_str()) {
+        if !resource_action_ids.insert(action.id.as_str()) {
             return Err(format!("duplicate resource action `{}`", action.id));
         }
         if action.label.trim().is_empty() {
             return Err(format!(
-                "capabilities.actions[`{}`].label must not be empty",
+                "capabilities.resource_actions[`{}`].label must not be empty",
                 action.id
             ));
         }
         if !manifest.permissions.resource_read() {
             return Err(format!(
-                "capabilities.actions[`{}`] lacks resource.read permission",
+                "capabilities.resource_actions[`{}`] lacks resource.read permission",
                 action.id
             ));
         }
         validate_id("handler", &action.handler, &['.', '-', '_'])?;
         if action.views.is_empty() {
             return Err(format!(
-                "capabilities.actions[`{}`].views must not be empty",
+                "capabilities.resource_actions[`{}`].views must not be empty",
                 action.id
             ));
         }
         let unique_views = action.views.iter().collect::<HashSet<_>>();
         if unique_views.len() != action.views.len() {
             return Err(format!(
-                "capabilities.actions[`{}`].views must not contain duplicates",
+                "capabilities.resource_actions[`{}`].views must not contain duplicates",
                 action.id
             ));
         }
         for view in &action.views {
             if !SUPPORTED_VIEWS.contains(&view.as_str()) {
                 return Err(format!(
-                    "capabilities.actions[`{}`] declares unsupported view `{view}`",
+                    "capabilities.resource_actions[`{}`] declares unsupported view `{view}`",
                     action.id
                 ));
             }
         }
         if action.views.iter().any(|view| view == "plugin_frame") && manifest.web.is_none() {
             return Err(format!(
-                "capabilities.actions[`{}`] returns plugin_frame but plugin.web is missing",
+                "capabilities.resource_actions[`{}`] returns plugin_frame but plugin.web is missing",
                 action.id
             ));
         }
@@ -212,20 +213,20 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
             .requires
             .as_ref()
             .is_some_and(|requires| requires.content)
-            && !manifest.permissions.content_read()
+            && !manifest.permissions.resource_content_read()
         {
             return Err(format!(
-                "capabilities.actions[`{}`] requires content without content.read permission",
+                "capabilities.resource_actions[`{}`] requires content without resource.content.read permission",
                 action.id
             ));
         }
         if matches!(action.access, ManifestActionAccess::Write)
             && !manifest.permissions.resource_write()
-            && !manifest.permissions.content_replace()
-            && !manifest.permissions.derived_asset_write()
+            && !manifest.permissions.resource_content_replace()
+            && !manifest.permissions.resource_derived_asset_write()
         {
             return Err(format!(
-                "capabilities.actions[`{}`] is writable without a write permission",
+                "capabilities.resource_actions[`{}`] is writable without a write permission",
                 action.id
             ));
         }
@@ -239,8 +240,8 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
         if action.label.trim().is_empty() || action.handler.trim().is_empty() {
             return Err("directory action label and handler must not be empty".to_string());
         }
-        if !action_ids.insert(action.id.as_str()) {
-            return Err(format!("duplicate action id `{}`", action.id));
+        if !directory_action_ids.insert(action.id.as_str()) {
+            return Err(format!("duplicate directory action `{}`", action.id));
         }
         if action.views.is_empty()
             || action

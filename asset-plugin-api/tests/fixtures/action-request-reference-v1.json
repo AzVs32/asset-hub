@@ -20,7 +20,6 @@
     "updated_at": "2026-07-16T10:05:00Z"
   },
   "content_ref": {
-    "abi_version": 1,
     "encoding": "handle",
     "reference": "asset://content/0198a123-4567-7000-8000-000000000002"
   }

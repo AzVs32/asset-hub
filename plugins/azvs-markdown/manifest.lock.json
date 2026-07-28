@@ -1,14 +1,14 @@
 {
-  "manifest_version": 3,
+  "manifest_version": 1,
   "plugin_id": "azvs.markdown",
   "runtime": {
-    "wasm_sha256": "352418028bbf9747081d3f80a72b5527dccc81a7867a0f66b88f4613640e164d"
+    "wasm_sha256": "49a4b79ae304fc0ccdf109eb4312e119edaa5f18f6f52d2c24166bb2bb10978a"
   },
   "web": {
     "integrity": {
-      "assets/index-BLTxERHS.js": "0fc0c4ec96ef70831722be0ad109d729dd0ad3d4de99ab12638a221759b0d0ea",
       "assets/index-BdOy_sm1.css": "7055fe710b52bc7b44fa10182efbc1eb95cd1378932e6aa4f750235db2184555",
-      "index.html": "7ddb31285b71776e2296a77b376adc1a3223a5037ef9e4b0b48ef1147b164f90"
+      "assets/index-XOiXVLU8.js": "be175423938a66bb7f496fa229e8668760625536c8f858725467ffe343b8c649",
+      "index.html": "e83bbff11728e5718102610bb4e930c3fb295af8d95ab2474dbf6c4d93f4a409"
     }
   }
 }

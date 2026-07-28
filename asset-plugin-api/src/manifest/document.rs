@@ -7,8 +7,8 @@ use super::{PluginCapabilities, PluginDescriptor, PluginPermissions, PluginRunti
 use serde::{Deserialize, Serialize};
 
 /// Current and only supported manifest schema version.
-pub const MANIFEST_VERSION: u32 = 3;
-pub const PLUGIN_API_VERSION: &str = "asset-hub.plugin-api@0.4";
+pub const MANIFEST_VERSION: u32 = 1;
+pub const PLUGIN_API_VERSION: &str = "asset-hub.plugin-api@1";
 
 /// Complete plugin manifest document.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

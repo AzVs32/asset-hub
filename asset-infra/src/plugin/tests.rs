@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 #[test]
 fn plugin_frame_relative_url_is_resolved_to_plugin_web_route() {
     let mut output = PluginActionOutput::new(PluginView::PluginFrame(PluginFrameView {
+        plugin_api: asset_plugin_api::PLUGIN_API_VERSION.to_string(),
         title: Some("demo.md".to_string()),
         url: "index.html#payload=abc".to_string(),
     }));
@@ -22,6 +23,17 @@ fn plugin_frame_relative_url_is_resolved_to_plugin_web_route() {
         panic!("expected plugin frame");
     };
     assert_eq!(frame.url, "/plugins/azvs.markdown/index.html#payload=abc");
+}
+
+#[test]
+fn plugin_frame_rejects_a_different_plugin_api() {
+    let mut output = PluginActionOutput::new(PluginView::PluginFrame(PluginFrameView {
+        plugin_api: "asset-hub.plugin-api@2".to_string(),
+        title: None,
+        url: "index.html".to_string(),
+    }));
+
+    assert!(resolve_plugin_output_urls(&mut output, "azvs.markdown").is_err());
 }
 
 #[test]

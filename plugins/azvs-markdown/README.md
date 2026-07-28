@@ -28,14 +28,14 @@ The initial action returns an Asset Hub `PluginView` frame with a small routing 
 }
 ```
 
-The URL payload contains only `resource_id`, `mode`, and `action`; document content is never copied
-into the iframe URL. After loading, the frame requests content through Asset Hub's validated
-`postMessage` action bridge:
+The URL payload contains only `plugin_api`, `resource_id`, `mode`, and `action`; document content is
+never copied into the iframe URL. After loading, the frame requests content through Asset Hub's
+validated `postMessage` action bridge:
 
 - `{"operation":"load"}` returns UTF-8 Markdown directly up to 512 KiB.
 - Larger documents return transfer details and are fetched with sequential
   `{"operation":"chunk","offset":N}` requests using bounded 2 MiB Base64 byte chunks.
-- The browser validates protocol version, total length, offsets, chunk sizes, completion state,
+- The browser validates the Plugin API, total length, offsets, chunk sizes, completion state,
   Base64, and final UTF-8 before rendering.
 
 The runtime rejects documents larger than 128 MiB. The effective maximum can be lower when the
@@ -74,7 +74,7 @@ npm run build
 cd ../../..
 ```
 
-From the repository root, generate `manifest.lock.json` and validate Manifest V3:
+From the repository root, generate `manifest.lock.json` and validate Manifest V1:
 
 ```bash
 cargo run -p asset-cli --bin asset -- \

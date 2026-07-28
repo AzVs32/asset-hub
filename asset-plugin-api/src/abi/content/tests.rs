@@ -1,4 +1,4 @@
-//! Content ABI 范围值对象的边界测试。
+//! Plugin API 内容范围值对象的边界测试。
 
 use super::*;
 

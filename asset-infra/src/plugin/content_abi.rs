@@ -319,7 +319,6 @@ pub(super) fn build_payload(
         asset_plugin_api::ResourceActionContentDelivery::Reference
     ) {
         content_ref.map(|_| PluginContentReference {
-            abi_version: asset_plugin_api::CONTENT_ABI_VERSION,
             encoding: PluginContentReferenceEncoding::Handle,
             reference: content_reference
                 .expect("reference content delivery must hold a content lease")

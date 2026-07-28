@@ -2,6 +2,29 @@ import { describe, expect, it } from "vitest";
 import { parsePluginView } from "@/infrastructure/http/plugin-view-schema";
 
 describe("plugin view boundary", () => {
+  it("preserves the Plugin API carried by frame views", () => {
+    expect(
+      parsePluginView({
+        view: "plugin_frame",
+        plugin_api: "asset-hub.plugin-api@1",
+        title: "Reader",
+        url: "/plugins/example.reader/index.html",
+      }),
+    ).toEqual({
+      view: "plugin_frame",
+      plugin_api: "asset-hub.plugin-api@1",
+      title: "Reader",
+      url: "/plugins/example.reader/index.html",
+    });
+
+    expect(() =>
+      parsePluginView({
+        view: "plugin_frame",
+        url: "/plugins/example.reader/index.html",
+      }),
+    ).toThrow();
+  });
+
   it("accepts download views and rejects the removed binary URL view", () => {
     expect(
       parsePluginView({
