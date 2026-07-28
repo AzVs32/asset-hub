@@ -3,10 +3,10 @@ use asset_core::{
     domain::DirectoryId,
     port::{DirectoryActionRequest, DirectoryQuery, ListResources, ResourceQuery},
 };
-use asset_plugin_api::{
-    PluginDirectoryChild, PluginDirectoryPage, PluginDirectoryResource,
-    PluginDirectoryResourcePage, PluginPermission, PluginPermissions,
+use asset_plugin_api::protocol::directory::{
+    PluginDirectoryChild, PluginDirectoryPage, PluginDirectoryResource, PluginDirectoryResourcePage,
 };
+use asset_plugin_api::{PluginPermission, PluginPermissions};
 use extism::{Function, PTR, UserData};
 use serde::Deserialize;
 use std::{

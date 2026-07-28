@@ -9,9 +9,8 @@ use crate::{
         DirectoryStorage, DirectoryStore, LocatedDirectory,
     },
 };
-use asset_plugin_api::{
-    DirectoryAction, DirectoryActionAccess, DirectoryActionDefinition, DirectoryActionEffect,
-};
+use asset_plugin_api::protocol::directory::DirectoryActionEffect;
+use asset_plugin_api::{DirectoryAction, DirectoryActionAccess, DirectoryActionDefinition};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::str::FromStr;

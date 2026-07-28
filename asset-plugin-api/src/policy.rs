@@ -1,3 +1,7 @@
+//! Host 执行插件时采用的资源限制策略。
+//!
+//! 该策略不是插件 handler 的线协议，而是 Host 创建执行环境时使用的受校验配置值对象。
+
 use serde::{Deserialize, Serialize};
 use std::fmt;
 

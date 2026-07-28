@@ -1,3 +1,5 @@
+//! Manifest capability 的 JSON 形状与领域转换测试。
+
 use super::*;
 use serde_json::json;
 

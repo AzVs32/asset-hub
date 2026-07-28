@@ -1,92 +1,16 @@
-mod capabilities;
-mod permissions;
-mod plugin;
-mod runtime;
+//! Manifest 与锁文件的跨字段不变量校验。
+//!
+//! 本模块在文档完成反序列化后检查版本、标识符、相对路径、权限与 capability 的组合
+//! 约束。它只验证声明，不读取文件或探测实际运行时产物。
 
-pub use capabilities::{
-    ActionAppliesTo, ActionRequirements, ActionUi, ContentDelivery,
-    DirectoryActionAppliesToCapability, DirectoryActionCapability,
-    DirectoryActionRequirementsCapability, DirectoryKindCapability, ManifestActionAccess,
-    PluginCapabilities, ResourceActionCapability, ResourceKindCapability,
+use super::{
+    MANIFEST_VERSION, ManifestActionAccess, PLUGIN_API_VERSION, PluginManifest, PluginManifestLock,
+    PluginRuntime,
 };
-pub use lock::{PluginManifestLock, PluginRuntimeLock, PluginWebLock};
-pub use permissions::{
-    FilesystemPermission, NetworkPermission, PluginPermission, PluginPermissions,
-};
-pub use plugin::PluginDescriptor;
-pub use runtime::PluginRuntime;
-pub use web::PluginWeb;
-
-use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-
-mod web {
-    use serde::{Deserialize, Serialize};
-    use std::path::PathBuf;
-
-    /// Browser-facing assets contributed by a plugin.
-    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-    #[serde(deny_unknown_fields)]
-    pub struct PluginWeb {
-        pub root: PathBuf,
-    }
-}
-
-mod lock {
-    use serde::{Deserialize, Serialize};
-    use std::collections::BTreeMap;
-    use std::path::PathBuf;
-
-    /// Generated integrity data for a plugin package.
-    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-    #[serde(deny_unknown_fields)]
-    pub struct PluginManifestLock {
-        pub manifest_version: u32,
-        pub plugin_id: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub runtime: Option<PluginRuntimeLock>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub web: Option<PluginWebLock>,
-    }
-
-    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-    #[serde(deny_unknown_fields)]
-    pub struct PluginRuntimeLock {
-        pub wasm_sha256: String,
-    }
-
-    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-    #[serde(deny_unknown_fields)]
-    pub struct PluginWebLock {
-        pub integrity: BTreeMap<PathBuf, String>,
-    }
-}
-
-/// Current and only supported manifest schema version.
-pub const MANIFEST_VERSION: u32 = 3;
-pub const PLUGIN_API_VERSION: &str = "asset-hub.plugin-api@0.4";
-
-/// Complete plugin manifest document.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PluginManifest {
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "$schema")]
-    pub schema: Option<String>,
-    pub manifest_version: u32,
-    pub plugin: PluginDescriptor,
-    pub runtime: PluginRuntime,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub web: Option<PluginWeb>,
-    #[serde(default)]
-    pub capabilities: PluginCapabilities,
-    pub permissions: PluginPermissions,
-}
+use std::path::Path;
 
 impl PluginManifest {
-    pub fn plugin_id(&self) -> &str {
-        &self.plugin.id
-    }
-
     pub fn validate(&self) -> Result<(), String> {
         if self.manifest_version != MANIFEST_VERSION {
             return Err(format!(
@@ -126,16 +50,6 @@ impl PluginManifest {
         }
         validate_capabilities(self)?;
         Ok(())
-    }
-}
-
-fn validate_plugin_api_version(value: &str) -> Result<(), String> {
-    if value == PLUGIN_API_VERSION {
-        Ok(())
-    } else {
-        Err(format!(
-            "unsupported runtime.plugin_api `{value}`; supported version is `{PLUGIN_API_VERSION}`"
-        ))
     }
 }
 
@@ -195,6 +109,16 @@ impl PluginManifestLock {
             (None, None) => {}
         }
         Ok(())
+    }
+}
+
+fn validate_plugin_api_version(value: &str) -> Result<(), String> {
+    if value == PLUGIN_API_VERSION {
+        Ok(())
+    } else {
+        Err(format!(
+            "unsupported runtime.plugin_api `{value}`; supported version is `{PLUGIN_API_VERSION}`"
+        ))
     }
 }
 
@@ -340,7 +264,7 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_relative_path(field: &str, path: &std::path::Path) -> Result<(), String> {
+fn validate_relative_path(field: &str, path: &Path) -> Result<(), String> {
     if path.as_os_str().is_empty()
         || path.is_absolute()
         || path
@@ -376,6 +300,3 @@ fn validate_id(field: &str, value: &str, punctuation: &[char]) -> Result<(), Str
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod tests;

@@ -1,3 +1,8 @@
+//! Manifest 权限声明及作用域值对象。
+//!
+//! 权限只表达插件申请的能力边界；Host 仍需结合 Action access、当前用户授权和执行策略
+//! 做最终判定。
+
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::BTreeSet;
 

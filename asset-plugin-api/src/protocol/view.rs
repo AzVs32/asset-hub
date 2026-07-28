@@ -1,3 +1,8 @@
+//! 插件 Action 的 JSON 输出与视图协议。
+//!
+//! 插件通过这里的 DTO 返回可渲染视图、受约束的副作用声明和诊断信息；实际副作用
+//! 是否允许以及如何落库仍由 Host 校验和执行。
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

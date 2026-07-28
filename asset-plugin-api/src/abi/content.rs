@@ -1,3 +1,8 @@
+//! Resource 内容读取的 Wasm Host ABI。
+//!
+//! 本模块定义稳定的 Host function 名称、范围值对象，并在 `extism-guest` 特性下提供
+//! guest 侧安全调用封装。Resource Action 的 JSON 内容引用定义在协议层。
+
 use serde::{Deserialize, Deserializer, Serialize};
 
 /// Version of the host content functions exposed to Wasm plugins.

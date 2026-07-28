@@ -1,10 +1,11 @@
+//! Directory Action 的 JSON 调用协议。
+//!
+//! 本模块只描述目录快照、分页结果和插件可声明的目录副作用。Directory Host ABI
+//! 常量与 guest helper 定义在 [`crate::abi::directory`]。
+
 use crate::{ActionAccess, PluginDiagnostic, PluginView};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-
-pub const DIRECTORY_HOST_API_VERSION: u32 = 1;
-pub const DIRECTORY_LIST_CHILDREN_FN: &str = "asset_hub_directory_list_children";
-pub const DIRECTORY_LIST_RESOURCES_FN: &str = "asset_hub_directory_list_resources";
 
 /// Directory action request passed from the host to a plugin handler.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -103,38 +104,4 @@ pub struct PluginDirectoryResource {
     pub id: String,
     pub name: String,
     pub kind: String,
-}
-
-#[cfg(all(feature = "extism-guest", target_arch = "wasm32"))]
-pub mod guest {
-    use super::{PluginDirectoryPage, PluginDirectoryResourcePage};
-    use extism_pdk::{FnResult, host_fn};
-
-    #[host_fn]
-    extern "ExtismHost" {
-        fn asset_hub_directory_list_children(request: String) -> String;
-        fn asset_hub_directory_list_resources(request: String) -> String;
-    }
-
-    pub fn list_children(
-        reference: &str,
-        cursor: Option<&str>,
-        limit: u32,
-    ) -> FnResult<PluginDirectoryPage> {
-        let request = serde_json::json!({"reference": reference, "cursor": cursor, "limit": limit})
-            .to_string();
-        let response = unsafe { asset_hub_directory_list_children(request) }?;
-        Ok(serde_json::from_str(&response)?)
-    }
-
-    pub fn list_resources(
-        reference: &str,
-        cursor: Option<&str>,
-        limit: u32,
-    ) -> FnResult<PluginDirectoryResourcePage> {
-        let request = serde_json::json!({"reference": reference, "cursor": cursor, "limit": limit})
-            .to_string();
-        let response = unsafe { asset_hub_directory_list_resources(request) }?;
-        Ok(serde_json::from_str(&response)?)
-    }
 }

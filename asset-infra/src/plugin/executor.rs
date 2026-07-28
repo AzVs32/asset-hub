@@ -4,11 +4,14 @@ use asset_core::port::{
     DirectoryKindRegistry, DirectoryQuery, ResourceActionExecutor, ResourceActionOutput,
     ResourceActionRequest, ResourceKindDefinition, ResourceKindRegistry, ResourceQuery,
 };
+use asset_plugin_api::protocol::directory::{
+    DirectoryActionEffect, DirectoryPluginActionOutput, PluginDirectory,
+    PluginDirectoryActionRequest,
+};
 use asset_plugin_api::{
-    DirectoryActionCapability, DirectoryActionEffect, DirectoryPluginActionOutput,
-    PluginActionFailure, PluginActionOutput, PluginActionRequest, PluginDirectory,
-    PluginDirectoryActionRequest, PluginExecutionPolicy, PluginPermission, PluginPermissions,
-    PluginRuntime, ResourceActionCapability, ResourceContentMatcher,
+    DirectoryActionCapability, PluginActionFailure, PluginActionOutput, PluginActionRequest,
+    PluginExecutionPolicy, PluginPermission, PluginPermissions, PluginRuntime,
+    ResourceActionCapability, ResourceContentMatcher,
 };
 use async_trait::async_trait;
 use extism::{CompiledPlugin, Plugin};

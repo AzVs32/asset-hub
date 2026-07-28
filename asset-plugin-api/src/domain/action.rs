@@ -1,3 +1,8 @@
+//! 插件 Action 的归一化领域模型。
+//!
+//! Manifest 中的 Action capability 经归一化后形成这里的定义，供 Host 进行
+//! Action 注册、匹配、授权和执行。该模块不定义 Host 与插件之间的 JSON 调用协议。
+
 use serde::{Deserialize, Deserializer, Serialize};
 
 /// Action identifier shared by resource and directory targets.

@@ -1,3 +1,7 @@
+//! Manifest 中声明的插件执行运行时。
+//!
+//! 该模块只描述运行时选择及其包内入口，不负责加载 Wasm、创建执行器或实施资源限制。
+
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 

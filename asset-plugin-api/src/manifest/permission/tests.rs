@@ -1,3 +1,5 @@
+//! Manifest 权限作用域的反序列化和查询行为测试。
+
 use super::*;
 use serde_json::json;
 

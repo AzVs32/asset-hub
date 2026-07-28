@@ -1,3 +1,5 @@
+//! 完整 Manifest 文档的跨字段校验测试。
+
 use super::*;
 
 fn manifest_document() -> serde_json::Value {

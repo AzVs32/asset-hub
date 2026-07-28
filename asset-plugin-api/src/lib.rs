@@ -1,20 +1,17 @@
 //! Asset Hub 插件协议。
 //!
-//! 这个 crate 定义 Asset Hub、插件 manifest 和插件 action handler 之间共享的协议。
-//! 模块按协议层次拆分：
+//! 这个 crate 定义 Asset Hub、插件 manifest 和插件 action handler 之间共享的模型与协议。
+//! 模块按职责边界拆分：
 //!
-//! - [`manifest`] 对应插件 manifest JSON 文档。
-//!   - `plugin` 描述插件自身的注册信息。
-//!   - `runtime` 描述插件的执行方式。
-//!   - `capabilities` 描述插件向 host 提供的能力。
-//!   - `permissions` 描述插件运行时需要的权限边界。
-//! - [`action`] 定义 Asset Hub 归一化后的资源 action 模型。manifest 加载后，
-//!   host 使用这些类型在不同资源上列出、匹配和执行 action；manifest 中声明的
-//!   action capability 会先转换成这里的 action definition 再进入运行时。
-//! - [`request`] 定义 host 发送给插件 action handler 的 JSON 输入协议，包括资源快照、
-//!   可选的 inline content，以及 host 可读取的 content reference。
-//! - [`view`] 定义插件 action handler 返回给 host 的 JSON 输出协议，用于表达文本、
-//!   HTML、媒体、下载等可由 host 渲染的视图。
+//! - [`domain`] 定义 Manifest 归一化后供 Host 注册和匹配的 Action 领域模型。
+//! - [`manifest`] 定义插件包的 Manifest 文档、校验和领域归一化入口。
+//! - [`protocol`] 定义 Host 与插件 Action handler 之间的 JSON 线协议。
+//! - [`abi`] 定义 Wasm 插件访问 Host 能力的版本化函数边界和 guest helper。
+//! - [`policy`] 定义 Host 创建插件执行环境时使用的资源限制策略。
+//!
+//! 根部的 `action`、`request`、`view`、`diagnostic` 和 `content` 模块名作为兼容入口
+//! 继续导出；Directory 协议与 ABI 分别通过 [`protocol::directory`] 和
+//! [`abi::directory`] 访问。
 //!
 //! Cargo crate、Manifest、JSON plugin API 和 Wasm content ABI 独立版本化；升级规则见
 //! `asset-plugin-api/README.md`。
@@ -22,21 +19,16 @@
 /// Cargo package version of the Rust authoring library. This is not a wire protocol version.
 pub const CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Browser assets loaded from verified plugin packages, grouped by plugin id
-/// and package-relative path.
-pub type PluginWebAssets = std::collections::HashMap<
-    String,
-    std::collections::HashMap<std::path::PathBuf, std::sync::Arc<[u8]>>,
->;
-
-pub mod action;
-pub mod content;
-pub mod diagnostic;
-pub mod directory;
+pub mod abi;
+pub mod domain;
 pub mod manifest;
 pub mod policy;
-pub mod request;
-pub mod view;
+pub mod protocol;
+
+pub use abi::content;
+pub use domain::action;
+pub use protocol::resource as request;
+pub use protocol::{diagnostic, view};
 
 pub use action::{
     ActionAccess, ActionDefinition, ActionExecutorKind, ActionId, ActionOutputContract,
@@ -52,19 +44,13 @@ pub use content::{
     ContentRangeError, PluginContentRange,
 };
 pub use diagnostic::{PluginActionFailure, PluginDiagnostic, PluginDiagnosticSeverity};
-pub use directory::{
-    CreateChildDirectoryEffect, DIRECTORY_HOST_API_VERSION, DIRECTORY_LIST_CHILDREN_FN,
-    DIRECTORY_LIST_RESOURCES_FN, DirectoryActionEffect, DirectoryPluginActionOutput,
-    PluginDirectory, PluginDirectoryActionRequest, PluginDirectoryChild, PluginDirectoryPage,
-    PluginDirectoryResource, PluginDirectoryResourcePage, UpdateDirectoryEffect,
-};
 pub use manifest::{
     ActionAppliesTo, ActionRequirements, ActionUi, ContentDelivery,
     DirectoryActionAppliesToCapability, DirectoryActionCapability,
     DirectoryActionRequirementsCapability, DirectoryKindCapability, FilesystemPermission,
     MANIFEST_VERSION, ManifestActionAccess, NetworkPermission, PLUGIN_API_VERSION,
     PluginCapabilities, PluginDescriptor, PluginManifest, PluginManifestLock, PluginPermission,
-    PluginPermissions, PluginRuntime, PluginRuntimeLock, PluginWeb, PluginWebLock,
+    PluginPermissions, PluginRuntime, PluginRuntimeLock, PluginWeb, PluginWebAssets, PluginWebLock,
     ResourceActionCapability, ResourceKindCapability,
 };
 pub use policy::{InvalidPluginExecutionPolicy, PluginExecutionPolicy};

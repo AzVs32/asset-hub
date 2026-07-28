@@ -4,9 +4,9 @@ use asset_core::port::{
     DirectoryActionExecutor, DirectoryActionOutput, DirectoryActionRequest, ResourceActionExecutor,
     ResourceActionOutput, ResourceActionRequest,
 };
+use asset_plugin_api::protocol::directory::DirectoryPluginActionOutput;
 use asset_plugin_api::{
-    DirectoryAction, DirectoryPluginActionOutput, DownloadView, PluginActionOutput, PluginView,
-    ResourceAction,
+    DirectoryAction, DownloadView, PluginActionOutput, PluginView, ResourceAction,
 };
 use async_trait::async_trait;
 

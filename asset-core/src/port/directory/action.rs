@@ -7,9 +7,8 @@ use crate::{
     domain::{DirectoryId, DirectoryKind},
     port::LocatedDirectory,
 };
-use asset_plugin_api::{
-    DirectoryAction, DirectoryActionAccess, DirectoryActionDefinition, DirectoryPluginActionOutput,
-};
+use asset_plugin_api::protocol::directory::DirectoryPluginActionOutput;
+use asset_plugin_api::{DirectoryAction, DirectoryActionAccess, DirectoryActionDefinition};
 use async_trait::async_trait;
 use serde_json::Value;
 

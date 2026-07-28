@@ -1,72 +1,20 @@
-use crate::PluginRuntime;
+//! Manifest capability 到插件领域模型的归一化转换。
+//!
+//! 转换会结合 Manifest runtime 补全 executor，并把面向作者的简洁字段映射成 Host
+//! 注册和匹配 Action 所需的完整定义；这里不负责校验整个 Manifest 的跨字段约束。
+
+use super::{
+    ActionAppliesTo, ActionRequirements, ContentDelivery, DirectoryActionAppliesToCapability,
+    DirectoryActionCapability, DirectoryActionRequirementsCapability, ManifestActionAccess,
+    PluginRuntime, ResourceActionCapability,
+};
 use crate::{
     ActionAccess, ActionDefinitionUi, ActionExecutorKind, ActionOutputContract,
     DirectoryActionAppliesTo, DirectoryActionDefinition, DirectoryActionRequirements,
     ResourceActionAccess, ResourceActionAppliesTo, ResourceActionContentDelivery,
     ResourceActionDefinition, ResourceActionExecutorKind, ResourceActionOutputContract,
-    ResourceActionRequirements, ResourceActionUi, ResourceContentMatcher,
+    ResourceActionRequirements, ResourceActionUi,
 };
-use serde::{Deserialize, Serialize};
-
-/// Capabilities contributed by a plugin.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct PluginCapabilities {
-    pub kinds: Vec<ResourceKindCapability>,
-    pub directory_kinds: Vec<DirectoryKindCapability>,
-    pub actions: Vec<ResourceActionCapability>,
-    pub directory_actions: Vec<DirectoryActionCapability>,
-}
-
-/// Directory kind contributed by a plugin manifest.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct DirectoryKindCapability {
-    pub kind: String,
-    pub parent: Option<String>,
-    pub label: Option<String>,
-}
-
-/// Resource kind contributed by a plugin manifest.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct ResourceKindCapability {
-    pub kind: String,
-    pub parent: Option<String>,
-    pub label: Option<String>,
-    pub supports_content: bool,
-    pub detect: ResourceContentMatcher,
-}
-
-impl Default for ResourceKindCapability {
-    fn default() -> Self {
-        Self {
-            kind: String::new(),
-            parent: None,
-            label: None,
-            supports_content: true,
-            detect: ResourceContentMatcher::default(),
-        }
-    }
-}
-
-/// Resource action contributed by a plugin manifest.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ResourceActionCapability {
-    pub id: String,
-    pub label: String,
-    pub handler: String,
-    #[serde(default)]
-    pub applies_to: ActionAppliesTo,
-    #[serde(default)]
-    pub access: ManifestActionAccess,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub requires: Option<ActionRequirements>,
-    pub views: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ui: Option<ActionUi>,
-}
 
 impl ResourceActionCapability {
     pub fn to_definition(&self, runtime: &PluginRuntime) -> ResourceActionDefinition {
@@ -103,24 +51,6 @@ impl ResourceActionCapability {
     }
 }
 
-/// Directory action contributed by a plugin manifest.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DirectoryActionCapability {
-    pub id: String,
-    pub label: String,
-    pub handler: String,
-    #[serde(default)]
-    pub applies_to: DirectoryActionAppliesToCapability,
-    #[serde(default)]
-    pub access: ManifestActionAccess,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub requires: Option<DirectoryActionRequirementsCapability>,
-    pub views: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ui: Option<ActionUi>,
-}
-
 impl DirectoryActionCapability {
     pub fn to_definition(&self, runtime: &PluginRuntime) -> DirectoryActionDefinition {
         let mut definition = DirectoryActionDefinition::new(self.id.clone(), self.label.clone())
@@ -155,23 +85,10 @@ impl DirectoryActionCapability {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct DirectoryActionAppliesToCapability {
-    pub kinds: Vec<String>,
-}
-
 impl DirectoryActionAppliesToCapability {
     pub fn to_definition(&self) -> DirectoryActionAppliesTo {
         DirectoryActionAppliesTo::new().with_kinds(self.kinds.clone())
     }
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct DirectoryActionRequirementsCapability {
-    pub children: bool,
-    pub resources: bool,
 }
 
 impl DirectoryActionRequirementsCapability {
@@ -183,15 +100,6 @@ impl DirectoryActionRequirementsCapability {
     }
 }
 
-/// Manifest-level action access declaration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum ManifestActionAccess {
-    #[default]
-    Read,
-    Write,
-}
-
 impl ManifestActionAccess {
     pub fn to_resource_action_access(self) -> ResourceActionAccess {
         match self {
@@ -201,15 +109,6 @@ impl ManifestActionAccess {
     }
 }
 
-/// Resource/action matching declaration.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct ActionAppliesTo {
-    pub kinds: Vec<String>,
-    pub media_types: Vec<String>,
-    pub extensions: Vec<String>,
-}
-
 impl ActionAppliesTo {
     pub fn to_definition(&self) -> ResourceActionAppliesTo {
         ResourceActionAppliesTo::new()
@@ -217,16 +116,6 @@ impl ActionAppliesTo {
             .with_mime_types(self.media_types.clone())
             .with_extensions(self.extensions.clone())
     }
-}
-
-/// Optional object content a handler needs in addition to the resource snapshot.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ActionRequirements {
-    #[serde(default)]
-    pub content: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub content_delivery: Option<ContentDelivery>,
 }
 
 impl ActionRequirements {
@@ -241,13 +130,6 @@ impl ActionRequirements {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ContentDelivery {
-    Inline,
-    Reference,
-}
-
 impl ContentDelivery {
     pub fn to_resource_delivery(self) -> ResourceActionContentDelivery {
         match self {
@@ -255,16 +137,4 @@ impl ContentDelivery {
             Self::Reference => ResourceActionContentDelivery::Reference,
         }
     }
-}
-
-#[cfg(test)]
-mod tests;
-
-/// Optional UI placement hints for host applications.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct ActionUi {
-    pub group: Option<String>,
-    pub order: Option<i32>,
-    pub locations: Vec<String>,
 }

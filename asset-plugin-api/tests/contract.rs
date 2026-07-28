@@ -1,6 +1,8 @@
+use asset_plugin_api::protocol::directory::{
+    DirectoryPluginActionOutput, PluginDirectoryActionRequest,
+};
 use asset_plugin_api::{
-    DirectoryPluginActionOutput, MANIFEST_VERSION, PluginActionFailure, PluginActionOutput,
-    PluginActionRequest, PluginDirectoryActionRequest, PluginManifest,
+    MANIFEST_VERSION, PluginActionFailure, PluginActionOutput, PluginActionRequest, PluginManifest,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;

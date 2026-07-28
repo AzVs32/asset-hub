@@ -1,3 +1,8 @@
+//! Resource Action 的 JSON 输入协议。
+//!
+//! 这些 DTO 是 Host 调用插件 Resource Action handler 时传递的线协议，不承担
+//! Action 可用性判断、权限决策或持久化等领域职责。
+
 use crate::ResourceActionAccess;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

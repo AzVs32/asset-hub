@@ -13,11 +13,13 @@ use crate::port::{
     ResourceKindDefinition, ResourceKindRegistry, ResourcePage, ScannedStorageEntry, StoragePrefix,
     UserRepository,
 };
+use asset_plugin_api::protocol::directory::{
+    DirectoryActionEffect, DirectoryPluginActionOutput, UpdateDirectoryEffect,
+};
 use asset_plugin_api::{
-    DirectoryActionAccess, DirectoryActionDefinition, DirectoryActionEffect,
-    DirectoryPluginActionOutput, PluginActionEffect, PluginActionOutput, PluginExecutionPolicy,
-    PluginReplacementEncoding, PluginView, ReplaceContentEffect, ResourceActionAccess,
-    ResourceActionDefinition, ResourceContentMatcher, TextView, UpdateDirectoryEffect,
+    DirectoryActionAccess, DirectoryActionDefinition, PluginActionEffect, PluginActionOutput,
+    PluginExecutionPolicy, PluginReplacementEncoding, PluginView, ReplaceContentEffect,
+    ResourceActionAccess, ResourceActionDefinition, ResourceContentMatcher, TextView,
 };
 use async_trait::async_trait;
 use base64::Engine;

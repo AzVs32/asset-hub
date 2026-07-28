@@ -1,3 +1,7 @@
+//! Host 与插件共享的诊断和失败响应协议。
+//!
+//! 诊断码用于跨运行时边界稳定表达错误类别；其中不包含 Host 内部错误类型或日志实现。
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
