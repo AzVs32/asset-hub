@@ -66,37 +66,6 @@ filesystem_write = []
 # Manifest files are loaded at startup; restart the service after adding/removing plugins.
 plugin_manifests = []
 
-# Optional system-configured resource kinds.
-# Built-in kinds are always available and cannot be overridden.
-#
-# [[kind.definitions]]
-# kind = "doc:note"
-# parent = "core:document"
-# label = "Note"
-# supports_content = false
-
-# Arbitrarily deep hierarchy example. Actions declared for `core:document`
-# are inherited by `core:code`, `code:c`, and `code:cpp`.
-# [[kind.definitions]]
-# kind = "core:code"
-# parent = "core:document"
-# label = "Source Code"
-# supports_content = true
-#
-# [[kind.definitions]]
-# kind = "code:c"
-# parent = "core:code"
-# label = "C"
-# supports_content = true
-# detect = { mime_types = ["text/x-c"], extensions = [".c", ".h"] }
-#
-# [[kind.definitions]]
-# kind = "code:cpp"
-# parent = "core:code"
-# label = "C++"
-# supports_content = true
-# detect = { mime_types = ["text/x-c++"], extensions = [".cc", ".cpp", ".cxx", ".hpp"] }
-
 # Plugin manifest example.
 # Use `capabilities.kinds` for resource types, `capabilities.directory_kinds` for
 # directory types, `capabilities.resource_actions` for resource actions, and

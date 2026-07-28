@@ -1,6 +1,5 @@
 use super::directory_action_registry::push_directory_action;
 use super::*;
-use crate::config::{KindRegistryConfig, ResourceKindConfig};
 use crate::plugin_manifest::PluginCatalog;
 use asset_core::CoreError;
 use asset_core::domain::ResourceKind;
@@ -25,7 +24,6 @@ pub(crate) fn directory_action_registry_from_catalog(
 }
 
 pub(crate) fn registries_from_catalog(
-    config: &KindRegistryConfig,
     catalog: &PluginCatalog,
 ) -> Result<
     (
@@ -35,7 +33,7 @@ pub(crate) fn registries_from_catalog(
     ),
     CoreError,
 > {
-    let (definitions, actions) = build_registries_with_catalog(config, catalog)?;
+    let (definitions, actions) = build_registries_with_catalog(catalog)?;
     Ok((
         DefaultResourceKindRegistry::from_definitions(definitions),
         directory_registry_from_catalog(catalog)?,
@@ -44,7 +42,6 @@ pub(crate) fn registries_from_catalog(
 }
 
 pub(super) fn build_registries_with_catalog(
-    config: &KindRegistryConfig,
     catalog: &PluginCatalog,
 ) -> Result<(Vec<ResourceKindDefinition>, Vec<ResourceActionDefinition>), CoreError> {
     let mut definitions = Vec::new();
@@ -71,13 +68,6 @@ pub(super) fn build_registries_with_catalog(
         }
     }
 
-    for config_definition in &config.definitions {
-        push_definition(
-            &mut definitions,
-            definition_from_config(config_definition, "config")?,
-        )?;
-    }
-
     for manifest in &plugin_manifests {
         for config_definition in &manifest.manifest.capabilities.kinds {
             push_definition(
@@ -92,15 +82,6 @@ pub(super) fn build_registries_with_catalog(
     validate_kind_hierarchy(&definitions)?;
 
     let mut actions = Vec::new();
-    for definition in &config.definitions {
-        for action in &definition.actions {
-            push_action_definition(
-                &mut actions,
-                action.clone().with_kinds([definition.kind.clone()]),
-                format!("config kind `{}`", definition.kind),
-            )?;
-        }
-    }
     for manifest in &official_manifests {
         for action in &manifest.manifest.capabilities.resource_actions {
             let action_definitions = action_definitions_with_inherited_content(
@@ -157,21 +138,6 @@ pub(super) fn push_definition(
 
 pub(super) fn definition_from_manifest_kind(
     config: &ResourceKindCapability,
-    source: impl Into<String>,
-) -> Result<ResourceKindDefinition, CoreError> {
-    let label = config.label.as_deref().unwrap_or(config.kind.as_str());
-    definition_from_parts(
-        &config.kind,
-        label,
-        config.parent.as_deref(),
-        config.supports_content,
-        config.detect.clone(),
-        source,
-    )
-}
-
-pub(super) fn definition_from_config(
-    config: &ResourceKindConfig,
     source: impl Into<String>,
 ) -> Result<ResourceKindDefinition, CoreError> {
     let label = config.label.as_deref().unwrap_or(config.kind.as_str());

@@ -44,16 +44,11 @@ fn partial_config_keeps_missing_defaults() {
 }
 
 #[test]
-fn kind_config_accepts_static_definitions_and_plugin_manifests() {
+fn kind_config_accepts_plugin_manifests() {
     let config = AssetInfraConfig::from_config_str(
         r#"
         [kind]
         plugin_manifests = ["plugins/example.json"]
-
-        [[kind.definitions]]
-        kind = "doc:note"
-        label = "Note"
-        supports_content = false
         "#,
     )
     .unwrap();
@@ -62,10 +57,6 @@ fn kind_config_accepts_static_definitions_and_plugin_manifests() {
         config.kind.plugin_manifests,
         [PathBuf::from("plugins/example.json")]
     );
-    assert_eq!(config.kind.definitions.len(), 1);
-    assert_eq!(config.kind.definitions[0].kind, "doc:note");
-    assert_eq!(config.kind.definitions[0].label.as_deref(), Some("Note"));
-    assert!(!config.kind.definitions[0].supports_content);
 }
 
 #[test]
@@ -110,7 +101,7 @@ fn config_rejects_unknown_top_level_and_kind_fields() {
     for source in [
         "unknown_section = true",
         "[kind]\nplugin_manifest = [\"plugin.json\"]",
-        "[[kind.definitions]]\nkind = \"doc:note\"\nunknown = true",
+        "[[kind.definitions]]\nkind = \"doc:note\"",
     ] {
         assert!(AssetInfraConfig::from_config_str(source).is_err());
     }
@@ -142,7 +133,6 @@ fn normalized_config_turns_plugin_manifests_into_absolute_paths() {
     let config = AssetInfraConfig {
         kind: KindRegistryConfig {
             plugin_manifests: vec![PathBuf::from("plugins/example.json")],
-            ..KindRegistryConfig::default()
         },
         ..AssetInfraConfig::default()
     }

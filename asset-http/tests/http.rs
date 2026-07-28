@@ -5,7 +5,7 @@ use asset_http::{
 };
 use asset_infra::config::{
     AssetInfraConfig, BlobConfig, DatabaseConfig, KindRegistryConfig, LocalBlobConfig,
-    LocalBlobSyncConfig, PluginHostConfig, ResourceKindConfig, SqliteDatabaseConfig,
+    LocalBlobSyncConfig, PluginHostConfig, SqliteDatabaseConfig,
 };
 use asset_plugin_api::PluginWebAssets;
 use asset_runtime::AssetRuntime;
@@ -282,64 +282,6 @@ async fn directory_download_action_archives_nested_resources_and_empty_directori
         .read_to_string(&mut nested)
         .unwrap();
     assert_eq!(nested, "nested-content");
-}
-
-#[tokio::test]
-async fn configured_resource_kind_is_listed_and_content_support_is_enforced() {
-    let app = test_app_with_kind_definitions(
-        "configured-resource-kinds",
-        vec![ResourceKindConfig {
-            kind: "doc:note".to_string(),
-            label: Some("Note".to_string()),
-            supports_content: false,
-            actions: Vec::new(),
-            ..ResourceKindConfig::default()
-        }],
-    )
-    .await;
-    let (status, kinds) = empty_json_request(&app, Method::GET, "/resource-kinds").await;
-
-    assert_eq!(status, StatusCode::OK);
-    let note_kind = kinds["items"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|kind| kind["kind"] == "doc:note")
-        .unwrap();
-    assert_eq!(note_kind["label"], "Note");
-    assert_eq!(note_kind["source"], "config");
-    assert_eq!(note_kind["supports_content"], false);
-
-    let (status, resource) = json_request(
-        &app,
-        Method::POST,
-        "/resources",
-        json!({
-            "name": "contentless note",
-            "kind": "doc:note"
-        }),
-    )
-    .await;
-
-    assert_eq!(status, StatusCode::CREATED, "{resource}");
-    assert_eq!(resource["kind"], "doc:note");
-    assert!(!has_action(&resource, "core.resource.download"));
-
-    let (status, error) = stream_upload(
-        &app,
-        "/resources/content/stream?name=note.txt&kind=doc%3Anote&directory=notes",
-        "text/plain",
-        b"note",
-    )
-    .await;
-
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(
-        error["error"]
-            .as_str()
-            .unwrap()
-            .contains("does not support content upload")
-    );
 }
 
 #[tokio::test]
@@ -1142,35 +1084,12 @@ async fn list_resources_filters_by_kind_tag_and_query() {
 
 #[tokio::test]
 async fn kind_filter_can_include_all_descendants() {
-    let app = test_app_with_kind_definitions(
-        "kind-descendant-filter",
-        vec![
-            ResourceKindConfig {
-                kind: "core:code".to_string(),
-                parent: Some("core:document".to_string()),
-                label: Some("Code".to_string()),
-                ..ResourceKindConfig::default()
-            },
-            ResourceKindConfig {
-                kind: "code:c".to_string(),
-                parent: Some("core:code".to_string()),
-                label: Some("C".to_string()),
-                ..ResourceKindConfig::default()
-            },
-            ResourceKindConfig {
-                kind: "code:cpp".to_string(),
-                parent: Some("core:code".to_string()),
-                label: Some("C++".to_string()),
-                ..ResourceKindConfig::default()
-            },
-        ],
-    )
-    .await;
+    let app = test_app("kind-descendant-filter").await;
 
     for (name, kind) in [
-        ("generic code", "core:code"),
-        ("main.c", "code:c"),
-        ("main.cpp", "code:cpp"),
+        ("generic resource", "core:resource"),
+        ("document.txt", "core:document"),
+        ("image.png", "core:image"),
     ] {
         let (status, _) = json_request(
             &app,
@@ -1183,14 +1102,14 @@ async fn kind_filter_can_include_all_descendants() {
     }
 
     let (status, exact) =
-        empty_json_request(&app, Method::GET, "/resources?kind=core%3Acode").await;
+        empty_json_request(&app, Method::GET, "/resources?kind=core%3Aresource").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(exact["total"], 1);
 
     let (status, hierarchy) = empty_json_request(
         &app,
         Method::GET,
-        "/resources?kind=core%3Acode&include_descendants=true",
+        "/resources?kind=core%3Aresource&include_descendants=true",
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -1198,19 +1117,16 @@ async fn kind_filter_can_include_all_descendants() {
 
     let (status, kinds) = empty_json_request(&app, Method::GET, "/resource-kinds").await;
     assert_eq!(status, StatusCode::OK);
-    let c = kinds["items"]
+    let document = kinds["items"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|kind| kind["kind"] == "code:c")
+        .find(|kind| kind["kind"] == "core:document")
         .unwrap();
-    assert_eq!(c["parent"], "core:code");
-    assert_eq!(
-        c["ancestors"],
-        json!(["core:code", "core:document", "core:resource"])
-    );
+    assert_eq!(document["parent"], "core:resource");
+    assert_eq!(document["ancestors"], json!(["core:resource"]));
     assert!(
-        c["actions"]
+        document["actions"]
             .as_array()
             .unwrap()
             .iter()
@@ -1377,11 +1293,16 @@ async fn plugin_web_assets_are_served_from_the_verified_startup_snapshot() {
 }
 
 async fn test_app(name: &str) -> TestApp {
-    test_app_with_kind_definitions(name, Vec::new()).await
+    test_app_with_config(
+        name,
+        KindRegistryConfig::default(),
+        RouterOptions::default(),
+    )
+    .await
 }
 
 async fn test_app_with_router_options(name: &str, options: RouterOptions) -> TestApp {
-    test_app_with_kind_definitions_and_router_options(name, Vec::new(), options).await
+    test_app_with_config(name, KindRegistryConfig::default(), options).await
 }
 
 async fn test_app_with_plugin_manifests(name: &str, plugin_manifests: Vec<PathBuf>) -> TestApp {
@@ -1395,40 +1316,9 @@ async fn test_app_with_plugin_host_config(
 ) -> TestApp {
     test_app_with_kind_and_plugin_config(
         name,
-        KindRegistryConfig {
-            definitions: Vec::new(),
-            plugin_manifests,
-        },
+        KindRegistryConfig { plugin_manifests },
         plugin,
         RouterOptions::default(),
-    )
-    .await
-}
-
-async fn test_app_with_kind_definitions(
-    name: &str,
-    kind_definitions: Vec<ResourceKindConfig>,
-) -> TestApp {
-    test_app_with_kind_definitions_and_router_options(
-        name,
-        kind_definitions,
-        RouterOptions::default(),
-    )
-    .await
-}
-
-async fn test_app_with_kind_definitions_and_router_options(
-    name: &str,
-    kind_definitions: Vec<ResourceKindConfig>,
-    options: RouterOptions,
-) -> TestApp {
-    test_app_with_config(
-        name,
-        KindRegistryConfig {
-            definitions: kind_definitions,
-            plugin_manifests: Vec::new(),
-        },
-        options,
     )
     .await
 }

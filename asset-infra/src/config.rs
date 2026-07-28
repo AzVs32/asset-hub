@@ -10,7 +10,7 @@ mod plugin_host_config;
 
 pub use blob_config::{BlobBackend, BlobConfig, LocalBlobConfig, LocalBlobSyncConfig};
 pub use database_config::{DatabaseBackend, DatabaseConfig, SqliteDatabaseConfig};
-pub use kind_registry_config::{KindRegistryConfig, ResourceKindConfig};
+pub use kind_registry_config::KindRegistryConfig;
 pub use plugin_host_config::{PluginHostConfig, PluginPermissionGrants};
 
 /// 默认配置文件名。

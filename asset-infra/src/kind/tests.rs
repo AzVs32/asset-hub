@@ -1,10 +1,11 @@
 use super::*;
-use crate::config::{KindRegistryConfig, ResourceKindConfig};
+use crate::config::KindRegistryConfig;
+use crate::kind::builder::{definition_from_parts, push_definition};
 use crate::plugin_manifest::PluginCatalog;
 use asset_core::CoreError;
 use asset_core::domain::{DirectoryKind, ResourceKind};
 use asset_core::port::{DirectoryKindRegistry, ResourceActionRegistry, ResourceKindRegistry};
-use asset_plugin_api::{ResourceAction, ResourceActionDefinition};
+use asset_plugin_api::{ResourceAction, ResourceActionDefinition, ResourceContentMatcher};
 use std::path::PathBuf;
 
 fn registries(
@@ -18,7 +19,7 @@ fn registries(
     CoreError,
 > {
     let catalog = PluginCatalog::load(config)?;
-    registries_from_catalog(config, &catalog)
+    registries_from_catalog(&catalog)
 }
 
 fn kind_registry(config: &KindRegistryConfig) -> Result<DefaultResourceKindRegistry, CoreError> {
@@ -45,68 +46,47 @@ fn descendants_follow_definition_order() {
 }
 
 #[test]
-fn registry_includes_official_and_configured_kinds() {
-    let registry = kind_registry(&KindRegistryConfig {
-        definitions: vec![ResourceKindConfig {
-            kind: "doc:note".to_string(),
-            label: Some("Note".to_string()),
-            supports_content: false,
-            actions: Vec::new(),
-            ..ResourceKindConfig::default()
-        }],
-        plugin_manifests: Vec::new(),
-    })
-    .unwrap();
-
-    let default = registry
-        .definitions()
-        .iter()
-        .find(|definition| definition.kind().is(ResourceKind::DEFAULT))
-        .unwrap();
-    assert_eq!(default.source(), "plugin:core.resource");
-
-    let note = registry
-        .get(&ResourceKind::try_new("doc:note").unwrap())
-        .unwrap();
-    assert_eq!(note.label(), "Note");
-    assert!(!note.supports_content());
-    assert_eq!(note.source(), "config");
-}
-
-#[test]
 fn registry_rejects_unknown_parents_and_cycles() {
-    let unknown_parent = KindRegistryConfig {
-        definitions: vec![ResourceKindConfig {
-            kind: "code:c".to_string(),
-            parent: Some("core:missing".to_string()),
-            ..ResourceKindConfig::default()
-        }],
-        plugin_manifests: Vec::new(),
-    };
+    let unknown_parent = vec![
+        definition_from_parts(
+            "code:c",
+            "C",
+            Some("core:missing"),
+            true,
+            ResourceContentMatcher::default(),
+            "test",
+        )
+        .unwrap(),
+    ];
     assert!(
-        kind_registry(&unknown_parent)
+        validate_kind_hierarchy(&unknown_parent)
             .unwrap_err()
             .to_string()
             .contains("unknown parent")
     );
 
-    let cycle = KindRegistryConfig {
-        definitions: vec![
-            ResourceKindConfig {
-                kind: "code:a".to_string(),
-                parent: Some("code:b".to_string()),
-                ..ResourceKindConfig::default()
-            },
-            ResourceKindConfig {
-                kind: "code:b".to_string(),
-                parent: Some("code:a".to_string()),
-                ..ResourceKindConfig::default()
-            },
-        ],
-        plugin_manifests: Vec::new(),
-    };
+    let cycle = vec![
+        definition_from_parts(
+            "code:a",
+            "A",
+            Some("code:b"),
+            true,
+            ResourceContentMatcher::default(),
+            "test",
+        )
+        .unwrap(),
+        definition_from_parts(
+            "code:b",
+            "B",
+            Some("code:a"),
+            true,
+            ResourceContentMatcher::default(),
+            "test",
+        )
+        .unwrap(),
+    ];
     assert!(
-        kind_registry(&cycle)
+        validate_kind_hierarchy(&cycle)
             .unwrap_err()
             .to_string()
             .contains("cycle")
@@ -253,7 +233,6 @@ fn registry_loads_plugin_manifest_kinds() {
     .unwrap();
 
     let config = KindRegistryConfig {
-        definitions: Vec::new(),
         plugin_manifests: vec![root.join("mindustry.json")],
     };
     let (registry, directory_registry, action_registry) = registries(&config).unwrap();
@@ -353,7 +332,6 @@ fn registry_loads_format_plugin_as_independent_kind() {
     write_empty_wasm_lock(&root, "epub");
 
     let config = KindRegistryConfig {
-        definitions: Vec::new(),
         plugin_manifests: vec![root.join("epub.json")],
     };
     let (registry, _, action_registry) = registries(&config).unwrap();
@@ -437,7 +415,6 @@ fn registry_loads_plugin_manifest_kind_extensions() {
     write_empty_wasm_lock(&root, "mp4-tools");
 
     let config = KindRegistryConfig {
-        definitions: Vec::new(),
         plugin_manifests: vec![root.join("mp4-tools.json")],
     };
     let (registry, _, action_registry) = registries(&config).unwrap();
@@ -471,14 +448,18 @@ fn actions_for_kind(
 
 #[test]
 fn registry_rejects_duplicate_kinds() {
-    let error = kind_registry(&KindRegistryConfig {
-        definitions: vec![ResourceKindConfig {
-            kind: ResourceKind::DEFAULT.to_string(),
-            ..ResourceKindConfig::default()
-        }],
-        plugin_manifests: Vec::new(),
-    })
-    .unwrap_err();
+    let mut definitions = Vec::new();
+    let definition = definition_from_parts(
+        ResourceKind::DEFAULT,
+        "Resource",
+        None,
+        true,
+        ResourceContentMatcher::default(),
+        "test",
+    )
+    .unwrap();
+    push_definition(&mut definitions, definition.clone()).unwrap();
+    let error = push_definition(&mut definitions, definition).unwrap_err();
 
     assert!(error.to_string().contains("duplicate resource kind"));
 }
@@ -528,7 +509,6 @@ fn registry_rejects_duplicate_global_action_ids() {
     .unwrap();
 
     let error = action_registry(&KindRegistryConfig {
-        definitions: Vec::new(),
         plugin_manifests: vec![root.join("duplicate-download.json")],
     })
     .unwrap_err();

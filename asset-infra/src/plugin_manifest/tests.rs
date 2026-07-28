@@ -44,7 +44,6 @@ fn catalog_rejects_duplicate_plugin_ids() {
     std::fs::write(&second, &manifest).unwrap();
 
     let error = PluginCatalog::load(&KindRegistryConfig {
-        definitions: Vec::new(),
         plugin_manifests: vec![first, second],
     })
     .unwrap_err();
@@ -71,7 +70,6 @@ fn catalog_rejects_a_wasm_digest_mismatch() {
     );
 
     let error = PluginCatalog::load(&KindRegistryConfig {
-        definitions: Vec::new(),
         plugin_manifests: vec![path],
     })
     .unwrap_err();
@@ -92,7 +90,6 @@ fn catalog_keeps_the_verified_wasm_snapshot() {
     write_wasm_lock(&root, "snapshot.plugin", &digest);
 
     let catalog = PluginCatalog::load(&KindRegistryConfig {
-        definitions: Vec::new(),
         plugin_manifests: vec![path],
     })
     .unwrap();

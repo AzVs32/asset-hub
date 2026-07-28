@@ -115,7 +115,7 @@ impl AssetInfrastructure {
             "plugin artifacts verified"
         );
         let (resource_kind_registry, directory_kind_registry, resource_action_registry) =
-            registries_from_catalog(&config.kind, &plugin_catalog)?;
+            registries_from_catalog(&plugin_catalog)?;
         let resource_kind_registry = Arc::new(resource_kind_registry);
         let directory_kind_registry = Arc::new(directory_kind_registry);
         let resource_action_registry = Arc::new(resource_action_registry);
