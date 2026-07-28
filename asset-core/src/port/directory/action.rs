@@ -1,3 +1,7 @@
+//! 目录动作注册与执行端口。
+//!
+//! 这些端口隔离 Core 与内置动作、插件目录及 Wasm 运行时等基础设施实现。
+
 use crate::{
     CoreError,
     domain::{DirectoryId, DirectoryKind},
@@ -87,17 +91,26 @@ impl DirectoryActionOutput {
     }
 }
 
+/// 目录动作执行端口。
+///
+/// 执行器只运行声明的处理器并返回结果；聚合更新等 effect 由 Core 校验后落地。
 #[async_trait]
 pub trait DirectoryActionExecutor: Send + Sync {
+    /// 执行一次已经解析并授权的目录动作请求。
     async fn execute(
         &self,
         request: DirectoryActionRequest,
     ) -> Result<DirectoryActionOutput, CoreError>;
 }
 
+/// 目录动作定义注册表端口。
+///
+/// 基础设施适配器负责提供经过启动校验的稳定动作定义集合。
 pub trait DirectoryActionRegistry: Send + Sync {
+    /// 返回全部目录动作定义。
     fn actions(&self) -> &[DirectoryActionDefinition];
 
+    /// 按具体类型到祖先类型的顺序选择动作；同 ID 的更具体定义优先。
     fn actions_for_kinds(&self, kinds: &[DirectoryKind]) -> Vec<DirectoryActionDefinition> {
         let mut selected = Vec::new();
         for kind in kinds {

@@ -49,7 +49,7 @@ impl BlobWriteResult {
 /// 不应把具体基础设施错误类型暴露到端口签名中。
 #[async_trait::async_trait]
 pub trait BlobStorage: Send + Sync {
-    /// Verify that the configured storage namespace is reachable.
+    /// 检查配置的对象存储命名空间是否可访问；正常可用时返回 `Ok(())`。
     async fn health_check(&self) -> Result<(), CoreError>;
 
     /// 写入或覆盖指定存储键对应的对象内容。

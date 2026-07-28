@@ -94,6 +94,10 @@ pub enum ScannedStorageEntry {
 pub type StorageScanStream =
     Pin<Box<dyn Stream<Item = Result<ScannedStorageEntry, CoreError>> + Send + 'static>>;
 
+/// 对象存储事实扫描端口。
+///
+/// 基础设施适配器负责隐藏文件系统遍历、对象存储分页和元数据读取等后端细节。
+/// 扫描只报告事实，不得直接创建、更新或删除资源聚合。
 #[async_trait::async_trait]
 pub trait StorageScanner: Send + Sync {
     /// 流式扫描用户可见的目录和普通文件；内部 `.asset-hub` 命名空间必须排除。

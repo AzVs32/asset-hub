@@ -88,7 +88,9 @@ impl ResourceKindDefinition {
     }
 }
 
-/// 资源类型注册表。
+/// 资源类型注册表端口。
+///
+/// 基础设施适配器负责在启动时聚合、校验并冻结内置及插件贡献的类型定义。
 pub trait ResourceKindRegistry: Send + Sync {
     /// 返回当前运行时支持的资源类型，不复制整个注册表。
     fn definitions(&self) -> &[ResourceKindDefinition];
@@ -123,10 +125,12 @@ pub trait ResourceKindRegistry: Send + Sync {
         lineage
     }
 
+    /// 判断 `kind` 是否等于或继承自 `ancestor`。
     fn is_a(&self, kind: &ResourceKind, ancestor: &ResourceKind) -> bool {
         self.lineage(kind).iter().any(|item| item == ancestor)
     }
 
+    /// 返回指定类型自身及其全部已注册后代。
     fn descendants(&self, kind: &ResourceKind) -> Vec<ResourceKind> {
         self.definitions()
             .iter()

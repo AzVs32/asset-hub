@@ -11,20 +11,16 @@
 
 mod audit;
 mod directory;
-mod directory_action;
-mod directory_kind;
 mod identity;
 mod resource;
 mod storage;
 
 pub use audit::SecurityAuditRepository;
 pub use directory::{
-    DirectoryIndex, DirectoryLocation, DirectoryQuery, DirectoryStore, LocatedDirectory,
+    DirectoryActionExecutor, DirectoryActionOutput, DirectoryActionRegistry,
+    DirectoryActionRequest, DirectoryIndex, DirectoryKindDefinition, DirectoryKindRegistry,
+    DirectoryLocation, DirectoryQuery, DirectoryStore, LocatedDirectory,
 };
-pub use directory_action::{
-    DirectoryActionExecutor, DirectoryActionOutput, DirectoryActionRegistry, DirectoryActionRequest,
-};
-pub use directory_kind::{DirectoryKindDefinition, DirectoryKindRegistry};
 pub use identity::{LocatedUser, PasswordHasher, UserQuery, UserRepository};
 pub use resource::{
     ListResources, LocatedResource, ResourceActionExecutor, ResourceActionOutput,

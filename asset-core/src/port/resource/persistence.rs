@@ -170,6 +170,9 @@ pub struct ResourcePage {
     pub offset: u64,
 }
 
+/// 资源读取投影端口。
+///
+/// 查询适配器负责组合资源聚合与当前目录位置，不承担聚合写入职责。
 #[async_trait::async_trait]
 pub trait ResourceQuery: Send + Sync {
     /// 按 ID 返回聚合及其当前目录位置，不过滤软删除状态。
@@ -196,6 +199,7 @@ pub trait ResourceQuery: Send + Sync {
 /// 只负责保存和还原完整 `Resource` 聚合；目录聚合与 Blob 内容分别由各自端口管理。
 #[async_trait::async_trait]
 pub trait ResourceRepository: Send + Sync {
+    /// 检查资源持久化后端是否可访问；正常可用时返回 `Ok(())`。
     async fn health_check(&self) -> Result<(), CoreError>;
 
     /// 按 Resource ID 保存完整聚合状态。

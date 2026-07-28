@@ -1,7 +1,16 @@
-use super::{DirectoryKind, MAX_DIRECTORY_SEGMENT_LEN, validate_required_text_exact};
+//! 目录聚合及其类型、路径值对象。
+
+mod kind;
+mod path;
+
 use crate::error::DirectoryError;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+
+pub use kind::DirectoryKind;
+pub use path::{DirectoryPath, INTERNAL_STORAGE_DIRECTORY_NAME};
+
+const MAX_DIRECTORY_SEGMENT_LEN: usize = 255;
 
 crate::gen_id_uuid_v7!(DirectoryId);
 
@@ -180,3 +189,26 @@ fn validate_directory_name(value: &str) -> Result<String, DirectoryError> {
     }
     validate_required_text_exact("directory.name", value, MAX_DIRECTORY_SEGMENT_LEN)
 }
+
+fn validate_required_text_exact(
+    field: &'static str,
+    value: &str,
+    max: usize,
+) -> Result<String, DirectoryError> {
+    if value.trim().is_empty() {
+        return Err(DirectoryError::Blank { field });
+    }
+    if value.chars().count() > max {
+        return Err(DirectoryError::TooLong { field, max });
+    }
+    if value.chars().any(char::is_control) {
+        return Err(DirectoryError::InvalidFormat {
+            field,
+            reason: "control characters are not allowed",
+        });
+    }
+    Ok(value.to_owned())
+}
+
+#[cfg(test)]
+mod tests;

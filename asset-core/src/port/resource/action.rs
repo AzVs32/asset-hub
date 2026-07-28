@@ -124,16 +124,21 @@ impl ResourceActionOutput {
     }
 }
 
-/// 资源动作执行器。
+/// 资源动作执行端口。
+///
+/// 执行器只运行声明的处理器并返回结果；内容替换等 effect 由 Core 校验后落地。
 #[async_trait]
 pub trait ResourceActionExecutor: Send + Sync {
+    /// 执行一次已经解析并授权的资源动作请求。
     async fn execute(
         &self,
         request: ResourceActionRequest,
     ) -> Result<ResourceActionOutput, CoreError>;
 }
 
-/// 资源动作的唯一运行时注册表。
+/// 资源动作的唯一运行时注册表端口。
+///
+/// 基础设施适配器负责提供经过启动校验的稳定动作定义集合。
 pub trait ResourceActionRegistry: Send + Sync {
     /// 返回所有动作定义。多 kind 动作可以按 kind 专门化为同 ID 的上下文定义。
     fn actions(&self) -> &[ResourceActionDefinition];
