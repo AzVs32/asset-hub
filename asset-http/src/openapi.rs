@@ -1,12 +1,12 @@
 use crate::dto::{
-    BinaryContent, ChecksumResponse, CreateDirectoryRequest, CreateResourceRequest,
+    BinaryContent, ChecksumResponse, CreateDirectoryRequest, CreateResourceQuery,
     DirectoryActionDefinitionResponse, DirectoryActionOutputResponse, DirectoryActionsResponse,
     DirectoryKindResponse, DirectoryKindsResponse, DirectoryListingResponse, DirectoryResponse,
     ErrorResponse, ExecuteDirectoryActionRequest, ExecuteResourceActionRequest,
     HealthComponentResponse, HealthResponse, PluginDiagnosticResponse,
     ResourceActionDefinitionResponse, ResourceActionOutputResponse, ResourceActionsResponse,
     ResourceContentResponse, ResourceKindResponse, ResourceKindsResponse, ResourcePageResponse,
-    ResourceResponse, UpdateResourceRequest, UploadResourceContentStreamQuery,
+    ResourceResponse, UpdateResourceRequest,
 };
 use crate::{auth, handlers};
 use utoipa::{
@@ -45,8 +45,7 @@ impl Modify for CookieSecurity {
         handlers::resource::list_directory,
         handlers::resource::create_directory,
         handlers::resource::execute_directory_action,
-        handlers::resource::create_resource,
-        handlers::content::upload_resource_content_stream,
+        handlers::content::create_resource,
         handlers::resource::find_resource,
         handlers::resource::update_resource,
         handlers::content::get_resource_content,
@@ -60,7 +59,6 @@ impl Modify for CookieSecurity {
         schemas(
             ChecksumResponse,
             BinaryContent,
-            CreateResourceRequest,
             CreateDirectoryRequest,
             DirectoryListingResponse,
             DirectoryKindResponse,
@@ -84,7 +82,7 @@ impl Modify for CookieSecurity {
             ResourcePageResponse,
             ResourceResponse,
             UpdateResourceRequest,
-            UploadResourceContentStreamQuery
+            CreateResourceQuery
             ,auth::AuthenticatedUser
             ,auth::Credentials
             ,auth::MeResponse

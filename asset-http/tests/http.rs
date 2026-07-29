@@ -85,14 +85,11 @@ async fn resource_kinds_are_listed_and_unsupported_kind_is_rejected() {
         .unwrap();
     assert!(file_kind.get("detect").is_none());
 
-    let (status, error) = json_request(
+    let (status, error) = stream_upload(
         &app,
-        Method::POST,
-        "/resources",
-        json!({
-            "name": "unsupported",
-            "kind": "plugin:not-installed"
-        }),
+        "/resources?name=unsupported.bin&kind=plugin%3Anot-installed",
+        "application/octet-stream",
+        b"unsupported",
     )
     .await;
 
@@ -204,7 +201,7 @@ async fn directory_download_action_archives_nested_resources_and_empty_directori
     assert_eq!(status, StatusCode::CREATED);
     let (status, _) = stream_upload(
         &app,
-        "/resources/content/stream?name=top.txt&directory=bundle",
+        "/resources?name=top.txt&directory=bundle",
         "text/plain",
         b"top-level",
     )
@@ -212,7 +209,7 @@ async fn directory_download_action_archives_nested_resources_and_empty_directori
     assert_eq!(status, StatusCode::CREATED);
     let (status, _) = stream_upload(
         &app,
-        "/resources/content/stream?name=readme.txt&directory=bundle%2Fnested",
+        "/resources?name=readme.txt&directory=bundle%2Fnested",
         "text/plain",
         b"nested-content",
     )
@@ -317,7 +314,7 @@ async fn core_document_resource_inherits_core_download_action() {
 
     let (status, resource) = stream_upload(
         &app,
-        "/resources/content/stream?name=book.txt&kind=core%3Adocument&directory=books",
+        "/resources?name=book.txt&kind=core%3Adocument&directory=books",
         "text/plain",
         b"Hello book",
     )
@@ -425,31 +422,20 @@ async fn action_endpoint_has_a_dedicated_request_body_limit() {
 }
 
 #[tokio::test]
-async fn create_resource_accepts_tags() {
-    let app = test_app("create-resource").await;
-
-    let (status, resource) = json_request(
+async fn create_resource_requires_query_metadata() {
+    let app = test_app("create-resource-requires-query-metadata").await;
+    let response = request(
         &app,
-        Method::POST,
-        "/resources",
-        json!({
-            "name": "resources_not_blob",
-            "kind": "core:resource",
-            "tags": ["demo", "document"]
-        }),
+        Request::builder()
+            .method(Method::POST)
+            .uri("/resources")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"name":"metadata-only-resource"}"#))
+            .unwrap(),
     )
     .await;
 
-    assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(resource["name"], "resources_not_blob");
-    assert_eq!(resource["kind"], "core:resource");
-    assert_eq!(resource["tags"], json!(["demo", "document"]));
-
-    let id = resource["id"].as_str().unwrap();
-    let (status, found) = empty_json_request(&app, Method::GET, &format!("/resources/{id}")).await;
-
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(found["id"], id);
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -459,7 +445,7 @@ async fn stream_upload_roundtrips_small_blob_and_creates_directories() {
 
     let (status, resource) = stream_upload(
         &app,
-        "/resources/content/stream?name=hello.txt&kind=core%3Aresource&directory=examples",
+        "/resources?name=hello.txt&kind=core%3Aresource&directory=examples",
         "text/plain",
         data,
     )
@@ -483,7 +469,7 @@ async fn stream_upload_roundtrips_small_blob_and_creates_directories() {
 
     let (status, directory_resource) = stream_upload(
         &app,
-        "/resources/content/stream?name=nested.txt&kind=core%3Aresource&directory=examples%2Fnested",
+        "/resources?name=nested.txt&kind=core%3Aresource&directory=examples%2Fnested",
         "text/plain",
         b"nested",
     )
@@ -516,7 +502,7 @@ async fn stream_upload_preserves_spaces_in_names_and_physical_paths() {
 
     let (status, resource) = stream_upload(
         &app,
-        "/resources/content/stream?name=%20draft%20%2001.txt%20&kind=core%3Aresource&directory=%20library%20%2Fproject%20A%20",
+        "/resources?name=%20draft%20%2001.txt%20&kind=core%3Aresource&directory=%20library%20%2Fproject%20A%20",
         "text/plain",
         data,
     )
@@ -546,7 +532,7 @@ async fn stream_upload_preserves_spaces_in_names_and_physical_paths() {
 }
 
 #[tokio::test]
-async fn empty_directories_and_contentless_resources_create_physical_directories() {
+async fn empty_directories_create_physical_directories() {
     let app = test_app("physical-directories").await;
 
     let (status, _) = json_request(
@@ -569,17 +555,6 @@ async fn empty_directories_and_contentless_resources_create_physical_directories
     assert_eq!(directory["path"], "projects/empty");
     assert!(app.root.join("blob/projects/empty").is_dir());
 
-    let (status, resource) = json_request(
-        &app,
-        Method::POST,
-        "/resources",
-        json!({ "name": "placeholder", "directory": "projects/contentless" }),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CREATED);
-    assert!(resource["content"].is_null());
-    assert!(app.root.join("blob/projects/contentless").is_dir());
-
     let (status, _) = json_request(
         &app,
         Method::POST,
@@ -594,13 +569,8 @@ async fn empty_directories_and_contentless_resources_create_physical_directories
 async fn resource_content_supports_single_byte_ranges_for_video_seek() {
     let app = test_app("content-range").await;
     let data = b"0123456789";
-    let (status, resource) = stream_upload(
-        &app,
-        "/resources/content/stream?name=clip.mp4",
-        "video/mp4",
-        data,
-    )
-    .await;
+    let (status, resource) =
+        stream_upload(&app, "/resources?name=clip.mp4", "video/mp4", data).await;
     assert_eq!(status, StatusCode::CREATED, "{resource}");
 
     let id = resource["id"].as_str().unwrap();
@@ -717,8 +687,8 @@ async fn upload_rejects_client_supplied_checksum_and_existing_resource_path() {
     let response = request(
         &app,
         Request::builder()
-            .method(Method::PUT)
-            .uri("/resources/content/stream?name=bad.txt&directory=secure&sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+            .method(Method::POST)
+            .uri("/resources?name=bad.txt&directory=secure&sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
             .header(header::CONTENT_TYPE, "text/plain")
             .body(Body::from("hello, asset-hub!"))
             .unwrap(),
@@ -733,8 +703,8 @@ async fn upload_rejects_client_supplied_checksum_and_existing_resource_path() {
     let response = request(
         &app,
         Request::builder()
-            .method(Method::PUT)
-            .uri("/resources/content/stream?name=unsupported.txt&directory=secure&checksum_kind=sha256")
+            .method(Method::POST)
+            .uri("/resources?name=unsupported.txt&directory=secure&checksum_kind=sha256")
             .header(header::CONTENT_TYPE, "text/plain")
             .body(Body::from("hello, asset-hub!"))
             .unwrap(),
@@ -751,7 +721,7 @@ async fn upload_rejects_client_supplied_checksum_and_existing_resource_path() {
 
     let (status, error) = stream_upload(
         &app,
-        "/resources/content/stream?name=existing.txt&directory=secure",
+        "/resources?name=existing.txt&directory=secure",
         "text/plain",
         b"hello, asset-hub!",
     )
@@ -787,8 +757,8 @@ async fn stream_upload_is_not_limited_by_the_regular_request_timeout() {
     let response = request(
         &app,
         Request::builder()
-            .method(Method::PUT)
-            .uri("/resources/content/stream?name=slow.txt&directory=uploads")
+            .method(Method::POST)
+            .uri("/resources?name=slow.txt&directory=uploads")
             .header(header::CONTENT_TYPE, "text/plain")
             .header(header::ORIGIN, "http://127.0.0.1:5173")
             .body(body)
@@ -816,8 +786,8 @@ async fn upload_detects_most_specific_plugin_kind() {
     let response = request(
         &app,
         Request::builder()
-            .method(Method::PUT)
-            .uri("/resources/content/stream?name=README.md")
+            .method(Method::POST)
+            .uri("/resources?name=README.md")
             .header(header::CONTENT_TYPE, "text/plain")
             .body(Body::from("# README"))
             .unwrap(),
@@ -876,7 +846,7 @@ async fn plugin_reference_content_respects_the_host_content_budget() {
     .await;
     let (status, resource) = stream_upload(
         &app,
-        "/resources/content/stream?name=README.md",
+        "/resources?name=README.md",
         "text/markdown",
         b"# README",
     )
@@ -1029,43 +999,37 @@ async fn cors_policy_adds_allowed_origin_header() {
 async fn list_resources_filters_by_kind_tag_and_query() {
     let app = test_app("list-resources").await;
 
-    let (_, first) = json_request(
+    let (first_status, first) = stream_upload(
         &app,
-        Method::POST,
-        "/resources",
-        json!({
-            "name": "alpha document",
-            "kind": "core:resource",
-            "tags": ["alpha", "docs"]
-        }),
+        "/resources?name=alpha%20document&directory=&kind=core%3Aresource&tags_json=%5B%22alpha%22%2C%22docs%22%5D",
+        "application/octet-stream",
+        b"alpha document",
     )
     .await;
-    let (_, second) = json_request(
+    let (second_status, second) = stream_upload(
         &app,
-        Method::POST,
-        "/resources",
-        json!({
-            "name": "beta image",
-            "kind": "core:resource",
-            "tags": ["beta", "media"]
-        }),
+        "/resources?name=beta%20image&directory=&kind=core%3Aresource&tags_json=%5B%22beta%22%2C%22media%22%5D",
+        "application/octet-stream",
+        b"beta image",
     )
     .await;
-    let (_, third) = json_request(
+    let (third_status, third) = stream_upload(
         &app,
-        Method::POST,
-        "/resources",
-        json!({
-            "name": "alpha image",
-            "kind": "core:resource",
-            "tags": ["alpha", "media"]
-        }),
+        "/resources?name=alpha%20image&directory=&kind=core%3Aresource&tags_json=%5B%22alpha%22%2C%22media%22%5D",
+        "application/octet-stream",
+        b"alpha image",
     )
     .await;
 
+    assert_eq!(first_status, StatusCode::CREATED);
+    assert_eq!(second_status, StatusCode::CREATED);
+    assert_eq!(third_status, StatusCode::CREATED);
     assert!(first["id"].is_string());
     assert!(second["id"].is_string());
     assert!(third["id"].is_string());
+    assert_eq!(first["kind"], "core:resource");
+    assert_eq!(second["kind"], "core:resource");
+    assert_eq!(third["kind"], "core:resource");
 
     let (status, page) = empty_json_request(
         &app,
@@ -1083,7 +1047,7 @@ async fn list_resources_filters_by_kind_tag_and_query() {
 }
 
 #[tokio::test]
-async fn kind_filter_can_include_all_descendants() {
+async fn kind_filter_includes_all_descendants() {
     let app = test_app("kind-descendant-filter").await;
 
     for (name, kind) in [
@@ -1091,27 +1055,19 @@ async fn kind_filter_can_include_all_descendants() {
         ("document.txt", "core:document"),
         ("image.png", "core:image"),
     ] {
-        let (status, _) = json_request(
-            &app,
-            Method::POST,
-            "/resources",
-            json!({ "name": name, "kind": kind }),
-        )
-        .await;
+        let uri = format!(
+            "/resources?name={}&directory=&kind={}",
+            name.replace(' ', "%20"),
+            kind.replace(':', "%3A")
+        );
+        let (status, resource) =
+            stream_upload(&app, &uri, "application/octet-stream", name.as_bytes()).await;
         assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(resource["kind"], kind);
     }
 
-    let (status, exact) =
+    let (status, hierarchy) =
         empty_json_request(&app, Method::GET, "/resources?kind=core%3Aresource").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(exact["total"], 1);
-
-    let (status, hierarchy) = empty_json_request(
-        &app,
-        Method::GET,
-        "/resources?kind=core%3Aresource&include_descendants=true",
-    )
-    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(hierarchy["total"], 3);
 
@@ -1196,24 +1152,29 @@ async fn openapi_exposes_current_http_contract() {
     assert_eq!(status, StatusCode::OK);
 
     let schemas = &document["components"]["schemas"];
-    let create_properties = &schemas["CreateResourceRequest"]["properties"];
     let update_properties = &schemas["UpdateResourceRequest"]["properties"];
     let response_properties = &schemas["ResourceResponse"]["properties"];
-    assert!(create_properties.get("description").is_none());
     assert!(update_properties.get("description").is_none());
     assert!(response_properties.get("description").is_none());
-    assert!(create_properties.get("status").is_none());
     assert!(update_properties.get("status").is_none());
     assert!(response_properties.get("status").is_none());
-    assert!(create_properties.get("tags").is_some());
-    let upload_parameters = document["paths"]["/resources/content/stream"]["put"]["parameters"]
-        .as_array()
-        .unwrap();
-    assert!(!upload_parameters.iter().any(|parameter| {
+    assert!(schemas.get("CreateResourceRequest").is_none());
+    let create_operation = &document["paths"]["/resources"]["post"];
+    assert!(create_operation.is_object());
+    let create_parameters = create_operation["parameters"].as_array().unwrap();
+    assert!(!create_parameters.iter().any(|parameter| {
         matches!(parameter["name"].as_str(), Some("description" | "status"))
             && parameter["in"] == "query"
     }));
-    assert!(document["paths"].get("/resources/content/stream").is_some());
+    assert!(document["paths"].get("/resources/content/stream").is_none());
+    let list_parameters = document["paths"]["/resources"]["get"]["parameters"]
+        .as_array()
+        .unwrap();
+    assert!(
+        !list_parameters
+            .iter()
+            .any(|parameter| parameter["name"] == "include_descendants")
+    );
     assert!(document["paths"].get("/resources/{id}/download").is_some());
     assert!(document["paths"].get("/directory-kinds").is_some());
     assert!(
@@ -1396,7 +1357,7 @@ async fn create_text_resource(app: &TestApp, path: &str) -> String {
         .rsplit_once('/')
         .map_or(("", path), |(directory, name)| (directory, name));
     let uri = format!(
-        "/resources/content/stream?name={name}&directory={}",
+        "/resources?name={name}&directory={}",
         directory.replace('/', "%2F")
     );
     let (status, resource) = stream_upload(app, &uri, "text/plain", b"delete me").await;
@@ -1416,7 +1377,7 @@ async fn stream_upload(
     let response = request(
         app,
         Request::builder()
-            .method(Method::PUT)
+            .method(Method::POST)
             .uri(uri)
             .header(header::CONTENT_TYPE, content_type)
             .body(Body::from(data.as_ref().to_vec()))
@@ -1679,24 +1640,11 @@ async fn member_access_is_limited_to_the_workspace_subtree() {
     .await;
     assert_eq!(invalid_folder.status(), StatusCode::BAD_REQUEST);
 
-    let allowed = request_with_cookie(
-        &app,
-        Method::POST,
-        "/resources",
-        json!({
-            "name": "allowed", "directory": ""
-        }),
-        &alice_cookie,
-    )
-    .await;
-    assert_eq!(allowed.status(), StatusCode::CREATED);
-    let allowed = response_json(allowed).await;
-    assert_eq!(allowed["directory"], "");
     let uploaded = request(
         &app,
         Request::builder()
-            .method(Method::PUT)
-            .uri("/resources/content/stream?name=member-upload.txt&directory=")
+            .method(Method::POST)
+            .uri("/resources?name=member-upload.txt&directory=")
             .header(header::CONTENT_TYPE, "text/plain")
             .header(header::COOKIE, &alice_cookie)
             .body(Body::from("member content"))
@@ -1727,13 +1675,6 @@ async fn member_access_is_limited_to_the_workspace_subtree() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|resource| resource["id"] == allowed["id"])
-    );
-    assert!(
-        workspace_listing["resources"]["items"]
-            .as_array()
-            .unwrap()
-            .iter()
             .any(|resource| resource["id"] == uploaded["id"])
     );
     let resource_listing = request_with_cookie(
@@ -1755,7 +1696,7 @@ async fn member_access_is_limited_to_the_workspace_subtree() {
     let allowed_as_admin = request_with_cookie(
         &app,
         Method::GET,
-        &format!("/resources/{}", allowed["id"].as_str().unwrap()),
+        &format!("/resources/{}", uploaded["id"].as_str().unwrap()),
         json!({}),
         &admin_cookie,
     )
@@ -1765,12 +1706,15 @@ async fn member_access_is_limited_to_the_workspace_subtree() {
         response_json(allowed_as_admin).await["directory"],
         "teams/alice"
     );
-    let admin_only = request_with_cookie(
+    let admin_only = request(
         &app,
-        Method::POST,
-        "/resources",
-        json!({ "name": "admin-only", "directory": "" }),
-        &admin_cookie,
+        Request::builder()
+            .method(Method::POST)
+            .uri("/resources?name=admin-only.txt&directory=")
+            .header(header::CONTENT_TYPE, "text/plain")
+            .header(header::COOKIE, &admin_cookie)
+            .body(Body::from("admin content"))
+            .unwrap(),
     )
     .await;
     assert_eq!(admin_only.status(), StatusCode::CREATED);
@@ -1785,14 +1729,15 @@ async fn member_access_is_limited_to_the_workspace_subtree() {
     .await;
     assert_eq!(denied.status(), StatusCode::FORBIDDEN);
 
-    let invalid = request_with_cookie(
+    let invalid = request(
         &app,
-        Method::POST,
-        "/resources",
-        json!({
-            "name": "invalid", "directory": "../bob"
-        }),
-        &alice_cookie,
+        Request::builder()
+            .method(Method::POST)
+            .uri("/resources?name=invalid.txt&directory=..%2Fbob")
+            .header(header::CONTENT_TYPE, "text/plain")
+            .header(header::COOKIE, &alice_cookie)
+            .body(Body::from("invalid"))
+            .unwrap(),
     )
     .await;
     assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);

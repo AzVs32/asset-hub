@@ -20,7 +20,6 @@ export function useResourceListing() {
       query: searchParams.get("q") ?? "",
       tag: searchParams.get("tag") ?? "",
       kind: searchParams.get("kind") ?? "",
-      includeDescendants: searchParams.get("descendants") === "1",
       includeDeleted: searchParams.get("deleted") === "1",
     }),
     [routeDirectory, searchParams],
@@ -51,7 +50,6 @@ export function useResourceListing() {
           setOrDelete(next, "tag", merged.tag);
           setOrDelete(next, "kind", merged.kind);
           setOrDelete(next, "page", merged.page === 1 ? "" : String(merged.page));
-          setOrDelete(next, "descendants", merged.includeDescendants ? "1" : "");
           setOrDelete(next, "deleted", merged.includeDeleted ? "1" : "");
           return next;
         },

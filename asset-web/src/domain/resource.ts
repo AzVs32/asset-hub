@@ -97,7 +97,6 @@ export interface ResourceFilters {
   query: string;
   tag: string;
   kind: string;
-  includeDescendants: boolean;
   includeDeleted: boolean;
 }
 

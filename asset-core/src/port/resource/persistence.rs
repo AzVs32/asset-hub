@@ -13,7 +13,6 @@ pub struct ListResources {
     limit: u32,
     offset: u64,
     kinds: Vec<ResourceKind>,
-    include_descendants: bool,
     tag: Option<String>,
     q: Option<String>,
     directory: Option<DirectoryPath>,
@@ -27,7 +26,6 @@ impl ListResources {
             limit,
             offset,
             kinds: Vec::new(),
-            include_descendants: false,
             tag: None,
             q: None,
             directory: None,
@@ -43,11 +41,6 @@ impl ListResources {
 
     pub fn with_kinds(mut self, kinds: Vec<ResourceKind>) -> Self {
         self.kinds = kinds;
-        self
-    }
-
-    pub fn with_include_descendants(mut self, include_descendants: bool) -> Self {
-        self.include_descendants = include_descendants;
         self
     }
 
@@ -92,10 +85,6 @@ impl ListResources {
 
     pub fn kinds(&self) -> &[ResourceKind] {
         &self.kinds
-    }
-
-    pub fn include_descendants(&self) -> bool {
-        self.include_descendants
     }
 
     pub fn tag(&self) -> Option<&str> {

@@ -19,7 +19,8 @@ import { usePluginKernel } from "@/kernel/plugin-kernel";
 import { hostSlots } from "@/kernel/slots";
 import { AutomaticSlot } from "@/plugins/automatic-slot";
 import { Button } from "@/shared/ui/button";
-import { controlClass, Field, Input } from "@/shared/ui/field";
+import { Field, Input } from "@/shared/ui/field";
+import { KindSelect } from "./kind-select";
 
 const draftSchema = z.object({
   name: z.string().refine((value) => value.trim().length > 0, "Name is required"),
@@ -187,17 +188,11 @@ function Detail({
             <Input disabled={Boolean(resource.deletedAt)} {...form.register("directory")} />
           </Field>
           <Field label="Kind">
-            <select
-              className={controlClass}
+            <KindSelect
+              kinds={kinds}
               disabled={Boolean(resource.deletedAt)}
               {...form.register("kind")}
-            >
-              {kinds.map((item) => (
-                <option key={item.kind} value={item.kind}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
+            />
           </Field>
           <div className="sm:col-span-2">
             <Field label="Tags">

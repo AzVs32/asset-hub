@@ -79,7 +79,6 @@ export class OpenApiAssetGateway implements AssetGateway {
       page: filters.page,
       limit: filters.limit,
       ...(filters.kind ? { kind: filters.kind } : {}),
-      ...(filters.kind && filters.includeDescendants ? { include_descendants: true } : {}),
       ...(filters.tag.trim() ? { tag: filters.tag.trim() } : {}),
       ...(filters.query.trim() ? { q: filters.query.trim() } : {}),
       ...(filters.includeDeleted ? { include_deleted: true } : {}),
@@ -104,11 +103,6 @@ export class OpenApiAssetGateway implements AssetGateway {
 
   async findResource(id: string): Promise<Resource> {
     const result = await this.#client.GET("/resources/{id}", { params: { path: { id } } });
-    return mapResource(expectData(result));
-  }
-
-  async createResource(draft: ResourceDraft): Promise<Resource> {
-    const result = await this.#client.POST("/resources", { body: resourceBody(draft) });
     return mapResource(expectData(result));
   }
 
@@ -142,8 +136,8 @@ export class OpenApiAssetGateway implements AssetGateway {
       tags_json: JSON.stringify(splitTags(draft.tags)),
     });
     if (draft.kind.trim()) params.set("kind", draft.kind.trim());
-    const response = await fetch(`${this.#baseUrl}/resources/content/stream?${params}`, {
-      method: "PUT",
+    const response = await fetch(`${this.#baseUrl}/resources?${params}`, {
+      method: "POST",
       credentials: "include",
       headers: { "Content-Type": draft.file.type || "application/octet-stream" },
       body: draft.file,
@@ -400,7 +394,7 @@ function mapDiagnostic(value: Schemas["PluginDiagnosticResponse"]): PluginDiagno
   };
 }
 
-function resourceBody(draft: ResourceDraft): Schemas["CreateResourceRequest"] {
+function resourceBody(draft: ResourceDraft): Schemas["UpdateResourceRequest"] {
   return {
     name: draft.name,
     directory: normalizeDirectory(draft.directory),

@@ -6,75 +6,24 @@ use crate::domain::{DirectoryPath, ResourceId, ResourceKind};
 use crate::port::BlobByteStream;
 use asset_plugin_api::{ResourceAction, ResourceActionDefinition};
 
-/// 创建不包含对象内容的资源。
-#[derive(Debug, Clone)]
+/// 使用原始内容流创建资源。
 pub struct CreateResource {
     pub(super) name: String,
     pub(super) kind: Option<ResourceKind>,
     pub(super) directory: DirectoryPath,
     pub(super) tags: Vec<String>,
-}
-
-impl CreateResource {
-    /// 创建命令，默认使用 `core:resource`、根目录和空标签。
-    /// 名称在用例执行阶段原样校验，合法空格不会被裁剪。
-    pub fn new(name: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            kind: None,
-            directory: DirectoryPath::root(),
-            tags: Vec::new(),
-        }
-    }
-
-    pub fn with_kind(mut self, kind: ResourceKind) -> Self {
-        self.kind = Some(kind);
-        self
-    }
-
-    pub fn with_directory(mut self, directory: DirectoryPath) -> Self {
-        self.directory = directory;
-        self
-    }
-
-    pub fn with_tags<T, I>(mut self, tags: I) -> Self
-    where
-        T: Into<String>,
-        I: IntoIterator<Item = T>,
-    {
-        self.tags = tags.into_iter().map(Into::into).collect();
-        self
-    }
-
-    pub fn directory(&self) -> &DirectoryPath {
-        &self.directory
-    }
-}
-
-/// 创建带内容资源的通用命令。
-///
-/// 公共资源字段集中在这里，`payload` 表示不同写入用例特有的数据载荷。
-#[derive(Debug, Clone)]
-pub struct ResourceContentCommand<T> {
-    pub(super) name: String,
-    pub(super) kind: Option<ResourceKind>,
-    pub(super) directory: DirectoryPath,
-    pub(super) tags: Vec<String>,
-    pub(super) payload: T,
+    pub(super) content: BlobByteStream,
     pub(super) mime_type: Option<String>,
 }
 
-/// 流式上传内容并创建资源。
-pub type UploadResourceContentStream = ResourceContentCommand<BlobByteStream>;
-
-impl<T> ResourceContentCommand<T> {
-    pub fn new(name: impl Into<String>, payload: T) -> Self {
+impl CreateResource {
+    pub fn new(name: impl Into<String>, content: BlobByteStream) -> Self {
         Self {
             name: name.into(),
             kind: None,
             directory: DirectoryPath::root(),
             tags: Vec::new(),
-            payload,
+            content,
             mime_type: None,
         }
     }

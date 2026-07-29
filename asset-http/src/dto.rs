@@ -19,26 +19,6 @@ use utoipa::{IntoParams, ToSchema};
 #[allow(dead_code)]
 pub(crate) struct BinaryContent(Vec<u8>);
 
-/// 创建不包含对象内容的资源请求。
-#[derive(Debug, Deserialize, ToSchema)]
-#[serde(deny_unknown_fields)]
-#[schema(example = json!({
-    "name": "resources_not_blob",
-    "kind": "core:resource",
-    "tags": ["demo", "document"]
-}))]
-pub(crate) struct CreateResourceRequest {
-    /// 资源展示名。
-    pub(crate) name: String,
-    /// 可选资源类型。
-    pub(crate) kind: Option<String>,
-    /// 相对于当前用户可见根目录的路径；根目录为空字符串。
-    #[schema(value_type = Option<String>)]
-    pub(crate) directory: Option<DirectoryPath>,
-    /// 可选资源标签。
-    pub(crate) tags: Option<Vec<String>>,
-}
-
 /// 创建逻辑目录请求。
 #[derive(Debug, Deserialize, ToSchema)]
 pub(crate) struct CreateDirectoryRequest {
@@ -62,8 +42,6 @@ pub(crate) struct ListResourcesQuery {
     pub(crate) limit: Option<u32>,
     /// 可选资源类型过滤。
     pub(crate) kind: Option<String>,
-    /// kind 过滤是否包含所有后代类型。
-    pub(crate) include_descendants: Option<bool>,
     /// 可选标签过滤。
     pub(crate) tag: Option<String>,
     /// 可选名称模糊搜索关键字。
@@ -88,8 +66,6 @@ pub(crate) struct ListDirectoryQuery {
     pub(crate) limit: Option<u32>,
     /// 可选资源类型过滤。
     pub(crate) kind: Option<String>,
-    /// kind 过滤是否包含所有后代类型。
-    pub(crate) include_descendants: Option<bool>,
     /// 可选标签过滤。
     pub(crate) tag: Option<String>,
     /// 可选名称模糊搜索关键字。
@@ -120,15 +96,14 @@ pub(crate) struct UpdateResourceRequest {
     pub(crate) restore: Option<bool>,
 }
 
-/// 上传内容并创建资源请求。
-/// 流式上传内容并创建资源的 query 参数。
+/// 使用原始内容流创建资源的 query 参数。
 #[derive(Debug, Deserialize, IntoParams, ToSchema)]
 #[into_params(parameter_in = Query)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct UploadResourceContentStreamQuery {
+pub(crate) struct CreateResourceQuery {
     /// 资源文件名；与目录共同决定对象存储路径。
     pub(crate) name: String,
-    /// 相对于当前用户可见根目录的上传路径。
+    /// 相对于当前用户可见根目录的资源路径。
     #[param(value_type = Option<String>)]
     #[schema(value_type = Option<String>)]
     pub(crate) directory: Option<DirectoryPath>,

@@ -207,11 +207,7 @@ impl ResourceQuery for InMemoryResourceRepository {
             .unwrap()
             .values()
             .filter(|resource| query.include_deleted() || !resource.is_deleted())
-            .filter(|resource| {
-                query
-                    .kind()
-                    .is_none_or(|kind| resource.kind().as_str() == kind.as_str())
-            })
+            .filter(|resource| query.kinds().is_empty() || query.kinds().contains(resource.kind()))
             .filter(|resource| {
                 query
                     .tag()
@@ -1210,13 +1206,13 @@ fn stream_upload_command(
     _name: impl Into<String>,
     storage_key: StorageKey,
     data: Bytes,
-) -> UploadResourceContentStream {
+) -> CreateResource {
     let (directory, name) = storage_key
         .as_str()
         .rsplit_once('/')
         .unwrap_or(("", storage_key.as_str()));
     let stream = futures_util::stream::once(async move { Ok(data) });
-    UploadResourceContentStream::new(name, Box::pin(stream))
+    CreateResource::new(name, Box::pin(stream))
         .with_directory(DirectoryPath::from_path(directory).unwrap())
 }
 
@@ -1301,40 +1297,17 @@ fn service_with_registry(
 }
 
 #[test]
-fn create_resource_saves_resource_without_content() {
-    let (service, repository, _) = service();
-
-    let resource = block_on(
-        service.commands().create_resource(
-            CreateResource::new(" Design Doc ")
-                .with_kind(ResourceKind::try_new("doc:markdown").unwrap())
-                .with_tags(["rust", "asset"]),
-        ),
-    )
-    .unwrap();
-
-    let saved = repository.find_sync(&resource.id()).unwrap();
-
-    assert_eq!(resource.name(), " Design Doc ");
-    assert!(resource.kind().is("doc:markdown"));
-    assert!(resource.content().is_none());
-    assert_eq!(
-        saved
-            .tags()
-            .iter()
-            .map(|tag| tag.as_str())
-            .collect::<Vec<_>>(),
-        vec!["asset", "rust"]
-    );
-}
-
-#[test]
 fn update_resource_rejects_a_stale_authorized_snapshot() {
     let (service, repository, _) = service();
-    let resource = block_on(service.commands().create_resource(
-        CreateResource::new("original").with_kind(ResourceKind::try_new("doc:markdown").unwrap()),
-    ))
+    let resource = command::build_resource(
+        "original".to_string(),
+        DirectoryId::root(),
+        Some(ResourceKind::try_new("doc:markdown").unwrap()),
+        Vec::new(),
+    )
+    .build()
     .unwrap();
+    block_on(repository.save(&resource)).unwrap();
     let stale = resource.clone();
     let mut concurrent = resource;
     concurrent.rename("concurrent").unwrap();
@@ -1356,12 +1329,13 @@ fn update_resource_rejects_a_stale_authorized_snapshot() {
 #[test]
 fn resource_without_content_describes_only_actions_without_content_requirements() {
     let (service, _, _) = service();
-    let resource = block_on(
-        service.commands().create_resource(
-            CreateResource::new("contentless")
-                .with_kind(ResourceKind::try_new("doc:markdown").unwrap()),
-        ),
+    let resource = command::build_resource(
+        "contentless".to_string(),
+        DirectoryId::root(),
+        Some(ResourceKind::try_new("doc:markdown").unwrap()),
+        Vec::new(),
     )
+    .build()
     .unwrap();
 
     let actions = service
@@ -1379,14 +1353,16 @@ fn resource_without_content_describes_only_actions_without_content_requirements(
 
 #[test]
 fn resource_without_content_rejects_direct_content_action_execution() {
-    let (service, _, _) = service();
-    let resource = block_on(
-        service.commands().create_resource(
-            CreateResource::new("contentless")
-                .with_kind(ResourceKind::try_new("doc:markdown").unwrap()),
-        ),
+    let (service, repository, _) = service();
+    let resource = command::build_resource(
+        "contentless".to_string(),
+        DirectoryId::root(),
+        Some(ResourceKind::try_new("doc:markdown").unwrap()),
+        Vec::new(),
     )
+    .build()
     .unwrap();
+    block_on(repository.save(&resource)).unwrap();
 
     let error = block_on(service.actions().execute_resource_action(
         &resource.id(),
@@ -1409,7 +1385,7 @@ fn stream_upload_resource_content_writes_blob_then_saves_resource() {
     let checksum = Checksum::sha256(hex_sha256(&data)).unwrap();
 
     let resource = block_on(
-        service.content().upload_resource_content_stream(
+        service.content().create_resource(
             stream_upload_command("image", key.clone(), data.clone())
                 .with_kind(ResourceKind::try_new("core:image").unwrap())
                 .with_mime_type(" image/png "),
@@ -1448,8 +1424,8 @@ fn stream_upload_preserves_spaces_in_resource_and_blob_path() {
     });
 
     let resource = block_on(
-        service.content().upload_resource_content_stream(
-            UploadResourceContentStream::new(name, Box::pin(stream))
+        service.content().create_resource(
+            CreateResource::new(name, Box::pin(stream))
                 .with_directory(directory.clone())
                 .with_kind(ResourceKind::try_new("azvs:markdown").unwrap()),
         ),
@@ -1480,7 +1456,7 @@ fn stream_upload_resource_content_detects_most_specific_kind() {
     let key = StorageKey::new("docs/readme.md").unwrap();
 
     let resource = block_on(
-        service.content().upload_resource_content_stream(
+        service.content().create_resource(
             stream_upload_command("readme", key, Bytes::from_static(b"# Readme"))
                 .with_mime_type("text/plain"),
         ),
@@ -1498,7 +1474,7 @@ fn stream_upload_resource_content_falls_back_to_core_resource() {
     let key = StorageKey::new("assets/archive.bin").unwrap();
 
     let resource = block_on(
-        service.content().upload_resource_content_stream(
+        service.content().create_resource(
             stream_upload_command("archive", key, Bytes::from_static(b"binary"))
                 .with_mime_type("application/octet-stream"),
         ),
@@ -1519,15 +1495,11 @@ fn stream_upload_resource_content_rejects_existing_storage_key() {
         .unwrap()
         .insert(key.clone(), Bytes::from_static(b"existing"));
 
-    let error = block_on(
-        service
-            .content()
-            .upload_resource_content_stream(stream_upload_command(
-                "image",
-                key,
-                Bytes::from_static(b"new"),
-            )),
-    )
+    let error = block_on(service.content().create_resource(stream_upload_command(
+        "image",
+        key,
+        Bytes::from_static(b"new"),
+    )))
     .unwrap_err();
 
     match error {
@@ -1538,7 +1510,7 @@ fn stream_upload_resource_content_rejects_existing_storage_key() {
 }
 
 #[test]
-fn create_resource_rejects_unsupported_kind() {
+fn stream_upload_rejects_unsupported_kind() {
     let (service, repository, _) = service_with_registry(Arc::new(
         InMemoryResourceKindRegistry::with_definitions(vec![ResourceKindDefinition::new(
             ResourceKind::default(),
@@ -1548,9 +1520,13 @@ fn create_resource_rejects_unsupported_kind() {
     ));
 
     let error = block_on(
-        service.commands().create_resource(
-            CreateResource::new("image")
-                .with_kind(ResourceKind::try_new("plugin:not-installed").unwrap()),
+        service.content().create_resource(
+            stream_upload_command(
+                "image",
+                StorageKey::new("image.png").unwrap(),
+                Bytes::from_static(b"image"),
+            )
+            .with_kind(ResourceKind::try_new("plugin:not-installed").unwrap()),
         ),
     )
     .unwrap_err();
@@ -1565,7 +1541,7 @@ fn create_resource_rejects_unsupported_kind() {
 }
 
 #[test]
-fn stream_upload_resource_content_stream_writes_chunks_and_records_size() {
+fn stream_create_resource_writes_chunks_and_records_size() {
     let (service, repository, blob_storage) = service();
     let key = StorageKey::new("assets/large.bin").unwrap();
     let data: BlobByteStream = Box::pin(futures_util::stream::iter([
@@ -1575,8 +1551,8 @@ fn stream_upload_resource_content_stream_writes_chunks_and_records_size() {
     ]));
 
     let resource = block_on(
-        service.content().upload_resource_content_stream(
-            UploadResourceContentStream::new("large.bin", data)
+        service.content().create_resource(
+            CreateResource::new("large.bin", data)
                 .with_directory(DirectoryPath::from_path("assets").unwrap())
                 .with_kind(ResourceKind::try_new("asset:binary").unwrap())
                 .with_mime_type("application/octet-stream"),
@@ -1602,7 +1578,7 @@ fn stream_upload_resource_content_rejects_kind_without_content_support() {
     let key = StorageKey::new("docs/readme.md").unwrap();
 
     let error = block_on(
-        service.content().upload_resource_content_stream(
+        service.content().create_resource(
             stream_upload_command("readme", key.clone(), Bytes::from_static(b"hello"))
                 .with_kind(ResourceKind::try_new("doc:markdown").unwrap()),
         ),
@@ -1625,15 +1601,11 @@ fn stream_upload_resource_content_removes_blob_when_save_fails() {
     let key = StorageKey::new("assets/image.png").unwrap();
     repository.fail_next_save();
 
-    let result = block_on(
-        service
-            .content()
-            .upload_resource_content_stream(stream_upload_command(
-                "image",
-                key.clone(),
-                Bytes::from_static(b"image bytes"),
-            )),
-    );
+    let result = block_on(service.content().create_resource(stream_upload_command(
+        "image",
+        key.clone(),
+        Bytes::from_static(b"image bytes"),
+    )));
 
     match result {
         Err(CoreError::Repository { operation, .. }) => assert_eq!(operation, "save"),
@@ -1651,15 +1623,11 @@ fn upload_preserves_repository_error_when_compensation_delete_fails() {
     repository.fail_next_save();
     blob_storage.fail_next_delete();
 
-    let error = block_on(
-        service
-            .content()
-            .upload_resource_content_stream(stream_upload_command(
-                "file",
-                key.clone(),
-                Bytes::from_static(b"data"),
-            )),
-    )
+    let error = block_on(service.content().create_resource(stream_upload_command(
+        "file",
+        key.clone(),
+        Bytes::from_static(b"data"),
+    )))
     .unwrap_err();
 
     assert!(matches!(
@@ -1677,11 +1645,11 @@ fn get_resource_content_reads_existing_blob() {
     let (service, _, _) = service();
     let key = StorageKey::new("assets/image.png").unwrap();
     let data = Bytes::from_static(b"image bytes");
-    let resource = block_on(
-        service
-            .content()
-            .upload_resource_content_stream(stream_upload_command("image", key, data.clone())),
-    )
+    let resource = block_on(service.content().create_resource(stream_upload_command(
+        "image",
+        key,
+        data.clone(),
+    )))
     .unwrap();
 
     let content = block_on(service.content().get_resource_content(&resource.id())).unwrap();
@@ -1694,7 +1662,7 @@ fn execute_content_action_returns_text_for_matching_kind() {
     let (service, _, _) = service();
     let key = StorageKey::new("books/book.txt").unwrap();
     let resource = block_on(
-        service.content().upload_resource_content_stream(
+        service.content().create_resource(
             stream_upload_command("book", key, Bytes::from_static(b"Hello book"))
                 .with_kind(ResourceKind::try_new("core:document").unwrap()),
         ),
@@ -1721,7 +1689,7 @@ fn execute_write_action_replaces_resource_content() {
     let (service, repository, blob_storage) = service();
     let key = StorageKey::new("docs/note.md").unwrap();
     let resource = block_on(
-        service.content().upload_resource_content_stream(
+        service.content().create_resource(
             stream_upload_command("note.md", key.clone(), Bytes::from_static(b"# Old"))
                 .with_kind(ResourceKind::try_new("core:document").unwrap())
                 .with_mime_type("text/markdown"),
@@ -1764,7 +1732,7 @@ fn write_action_scratch_content_uses_reserved_namespace() {
     let (service, _repository, blob_storage) = service();
     let key = StorageKey::new("docs/note.md").unwrap();
     let resource = block_on(
-        service.content().upload_resource_content_stream(
+        service.content().create_resource(
             stream_upload_command("note.md", key, Bytes::from_static(b"# Old"))
                 .with_kind(ResourceKind::try_new("core:document").unwrap())
                 .with_mime_type("text/markdown"),
@@ -1789,7 +1757,7 @@ fn write_action_scratch_content_uses_reserved_namespace() {
 fn describe_resource_actions_uses_declared_content_matchers() {
     let (service, _, _) = service();
     let pdf = block_on(
-        service.content().upload_resource_content_stream(
+        service.content().create_resource(
             stream_upload_command(
                 "book",
                 StorageKey::new("books/book.pdf").unwrap(),
@@ -1801,7 +1769,7 @@ fn describe_resource_actions_uses_declared_content_matchers() {
     )
     .unwrap();
     let text = block_on(
-        service.content().upload_resource_content_stream(
+        service.content().create_resource(
             stream_upload_command(
                 "book",
                 StorageKey::new("books/book.txt").unwrap(),
@@ -1833,15 +1801,11 @@ fn soft_delete_resource_moves_blob_to_trash_and_hides_content_read() {
     let (service, repository, blob_storage) = service();
     let key = StorageKey::new("assets/image.png").unwrap();
     let data = Bytes::from_static(b"image bytes");
-    let resource = block_on(
-        service
-            .content()
-            .upload_resource_content_stream(stream_upload_command(
-                "image",
-                key.clone(),
-                data.clone(),
-            )),
-    )
+    let resource = block_on(service.content().create_resource(stream_upload_command(
+        "image",
+        key.clone(),
+        data.clone(),
+    )))
     .unwrap();
     let trash_key = StorageKey::new(format!(".asset-hub/trash/{}", resource.id())).unwrap();
 
@@ -1862,9 +1826,11 @@ fn restoring_soft_deleted_resource_moves_blob_back_from_trash() {
     let (service, repository, blob_storage) = service();
     let key = StorageKey::new("assets/restored.png").unwrap();
     let data = Bytes::from_static(b"restored bytes");
-    let resource = block_on(service.content().upload_resource_content_stream(
-        stream_upload_command("restored", key.clone(), data.clone()),
-    ))
+    let resource = block_on(service.content().create_resource(stream_upload_command(
+        "restored",
+        key.clone(),
+        data.clone(),
+    )))
     .unwrap();
     let trash_key = StorageKey::new(format!(".asset-hub/trash/{}", resource.id())).unwrap();
     let deleted = block_on(service.commands().soft_delete_resource(&resource.id()))
@@ -1887,9 +1853,11 @@ fn soft_delete_rolls_blob_back_when_resource_snapshot_is_stale() {
     let (service, repository, blob_storage) = service();
     let key = StorageKey::new("assets/concurrent-delete.png").unwrap();
     let data = Bytes::from_static(b"still active");
-    let resource = block_on(service.content().upload_resource_content_stream(
-        stream_upload_command("concurrent-delete", key.clone(), data.clone()),
-    ))
+    let resource = block_on(service.content().create_resource(stream_upload_command(
+        "concurrent-delete",
+        key.clone(),
+        data.clone(),
+    )))
     .unwrap();
     let stale = resource.clone();
     let trash_key = StorageKey::new(format!(".asset-hub/trash/{}", resource.id())).unwrap();
@@ -1916,9 +1884,11 @@ fn soft_delete_rolls_blob_back_when_resource_snapshot_is_stale() {
 fn remove_resource_deletes_blob_and_repository_record() {
     let (service, repository, blob_storage) = service();
     let key = StorageKey::new("assets/image.png").unwrap();
-    let resource = block_on(service.content().upload_resource_content_stream(
-        stream_upload_command("image", key.clone(), Bytes::from_static(b"image bytes")),
-    ))
+    let resource = block_on(service.content().create_resource(stream_upload_command(
+        "image",
+        key.clone(),
+        Bytes::from_static(b"image bytes"),
+    )))
     .unwrap();
 
     assert!(block_on(service.commands().remove_resource(&resource.id())).unwrap());
@@ -1931,9 +1901,11 @@ fn remove_resource_deletes_blob_and_repository_record() {
 fn remove_resource_rejects_a_stale_authorized_snapshot_without_deleting_content() {
     let (service, repository, blob_storage) = service();
     let key = StorageKey::new("assets/concurrent.png").unwrap();
-    let resource = block_on(service.content().upload_resource_content_stream(
-        stream_upload_command("image", key.clone(), Bytes::from_static(b"image bytes")),
-    ))
+    let resource = block_on(service.content().create_resource(stream_upload_command(
+        "image",
+        key.clone(),
+        Bytes::from_static(b"image bytes"),
+    )))
     .unwrap();
     let stale = resource.clone();
     let mut concurrent = resource;

@@ -3,7 +3,7 @@
 //! 本模块只处理资源内容引用与 Blob 之间的编排；后台扫描协调位于 `reconciliation`。
 
 use super::command::build_resource;
-use super::{ResourceContentStream, ResourceService, UploadResourceContentStream};
+use super::{CreateResource, ResourceContentStream, ResourceService};
 use crate::CoreError;
 #[cfg(test)]
 use crate::domain::ResourceId;
@@ -27,16 +27,16 @@ impl<'a> ResourceContentService<'a> {
     /// 流式上传对象内容并创建资源。
     ///
     /// Blob 写入成功、聚合保存失败时会 best-effort 删除新对象，同时保留原始仓储错误。
-    pub(crate) async fn upload_resource_content_stream(
+    pub(crate) async fn create_resource(
         &self,
-        command: UploadResourceContentStream,
+        command: CreateResource,
     ) -> Result<Resource, CoreError> {
-        let UploadResourceContentStream {
+        let CreateResource {
             name,
             kind,
             directory,
             tags,
-            payload: data,
+            content: data,
             mime_type,
         } = command;
 

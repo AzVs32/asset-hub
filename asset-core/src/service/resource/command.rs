@@ -1,9 +1,9 @@
 //! 资源命令服务。
 //!
-//! 本模块承接资源聚合本身的生命周期用例：创建、更新、软删除和物理移除。
+//! 本模块承接资源聚合本身的生命周期用例：更新、软删除和物理移除。
 //! 它不直接处理预览渲染或插件动作，只在需要硬删除时协调对象内容清理。
 
-use super::{CreateResource, ResourceService, UpdateResource};
+use super::{ResourceService, UpdateResource};
 use crate::CoreError;
 use crate::domain::{DirectoryId, Resource, ResourceId, ResourceKind, StorageKey};
 use crate::port::{
@@ -21,31 +21,6 @@ impl<'a> ResourceCommandService<'a> {
     /// 创建资源命令服务。
     pub(super) fn new(service: &'a ResourceService) -> Self {
         Self { service }
-    }
-
-    /// 创建不包含对象内容的资源。
-    ///
-    /// 该 usecase 不写入对象内容，但会确保资源所在目录已经在存储端和目录仓储中存在。
-    /// 成功时返回已经保存的 `Resource`，
-    /// 其中包含新生成的 `ResourceId`、创建时间和更新时间。
-    ///
-    /// 可能返回的错误包括领域校验错误和仓储保存错误。
-    pub(crate) async fn create_resource(
-        &self,
-        command: CreateResource,
-    ) -> Result<Resource, CoreError> {
-        let kind = self.service.validate_registered_kind(command.kind)?;
-        let directory = self
-            .service
-            .directories
-            .ensure_path(&command.directory)
-            .await?;
-        let resource =
-            build_resource(command.name, directory.id(), Some(kind), command.tags).build()?;
-
-        self.service.repository.save(&resource).await?;
-
-        Ok(resource)
     }
 
     /// 按 ID 查找资源。
@@ -72,9 +47,7 @@ impl<'a> ResourceCommandService<'a> {
         for kind in query.kinds() {
             self.service.ensure_kind_registered(kind)?;
         }
-        if query.include_descendants()
-            && let Some(kind) = query.kind().cloned()
-        {
+        if let Some(kind) = query.kind().cloned() {
             query = query.with_kinds(self.service.kind_registry.descendants(&kind));
         }
 

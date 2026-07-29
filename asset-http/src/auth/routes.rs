@@ -259,8 +259,7 @@ fn security_event_type(method: &Method, path: &str) -> Option<SecurityAuditEvent
         (&Method::POST, path) if path.contains("/actions/") => {
             Some(SecurityAuditEventType::ResourceAction)
         }
-        (&Method::PUT, "/resources/content/stream") => Some(SecurityAuditEventType::ResourceUpload),
-        (&Method::POST, "/resources") => Some(SecurityAuditEventType::ResourceCreate),
+        (&Method::POST, "/resources") => Some(SecurityAuditEventType::ResourceUpload),
         (&Method::PATCH, path) if path.starts_with("/resources/") => {
             Some(SecurityAuditEventType::ResourceUpdate)
         }

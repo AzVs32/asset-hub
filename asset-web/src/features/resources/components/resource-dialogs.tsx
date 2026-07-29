@@ -1,91 +1,11 @@
-import { zodResolver } from "@hookform/resolvers/zod";
-import { FileUp, FolderPlus, Plus } from "lucide-react";
+import { FileUp, FolderPlus } from "lucide-react";
 import React from "react";
 import { useForm } from "react-hook-form";
-import { z } from "zod";
-import type { ResourceDraft, ResourceKind, UploadDraft } from "@/domain/resource";
-import { emptyResourceDraft } from "@/domain/resource-draft";
+import type { ResourceKind, UploadDraft } from "@/domain/resource";
 import { Button } from "@/shared/ui/button";
 import { Dialog } from "@/shared/ui/dialog";
-import { controlClass, Field, Input } from "@/shared/ui/field";
-
-const resourceSchema = z.object({
-  name: z.string().refine((value) => value.trim().length > 0, "Name is required"),
-  directory: z.string(),
-  kind: z.string().trim().min(1, "Kind is required"),
-  tags: z.string(),
-});
-
-export function CreateResourceDialog({
-  open,
-  onOpenChange,
-  directory,
-  kinds,
-  pending,
-  onCreate,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  directory: string;
-  kinds: ResourceKind[];
-  pending: boolean;
-  onCreate: (draft: ResourceDraft) => Promise<unknown>;
-}) {
-  const form = useForm<ResourceDraft>({
-    resolver: zodResolver(resourceSchema),
-    defaultValues: emptyResourceDraft(directory, kinds),
-  });
-  React.useEffect(() => {
-    if (open) form.reset(emptyResourceDraft(directory, kinds));
-  }, [directory, form, kinds, open]);
-
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={onOpenChange}
-      title="New resource"
-      description="Create a resource without uploading content."
-    >
-      <form
-        className="grid gap-4 p-6 sm:grid-cols-2"
-        onSubmit={form.handleSubmit(async (draft) => {
-          await onCreate(draft);
-          onOpenChange(false);
-        })}
-      >
-        <Field label="Name" error={form.formState.errors.name?.message}>
-          <Input {...form.register("name")} />
-        </Field>
-        <Field label="Directory">
-          <Input {...form.register("directory")} />
-        </Field>
-        <Field label="Kind" error={form.formState.errors.kind?.message}>
-          <select className={controlClass} {...form.register("kind")}>
-            {kinds.map((kind) => (
-              <option key={kind.kind} value={kind.kind}>
-                {kind.label} · {kind.kind}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <div className="sm:col-span-2">
-          <Field label="Tags" error={form.formState.errors.tags?.message}>
-            <Input placeholder="reference, approved, 2026" {...form.register("tags")} />
-          </Field>
-        </div>
-        <div className="flex justify-end gap-2 border-t border-slate-100 pt-4 sm:col-span-2">
-          <Button variant="secondary" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button type="submit" disabled={pending}>
-            <Plus size={17} />
-            {pending ? "Creating…" : "Create"}
-          </Button>
-        </div>
-      </form>
-    </Dialog>
-  );
-}
+import { Field, Input } from "@/shared/ui/field";
+import { KindSelect } from "./kind-select";
 
 interface UploadForm {
   file: FileList;
@@ -152,16 +72,13 @@ export function UploadResourceDialog({
           <Input {...form.register("directory")} />
         </Field>
         <Field label="Kind">
-          <select className={controlClass} {...form.register("kind")}>
-            <option value="">Automatic detection</option>
-            {kinds
-              .filter((kind) => kind.supportsContent)
-              .map((kind) => (
-                <option key={kind.kind} value={kind.kind}>
-                  {kind.label} · {kind.kind}
-                </option>
-              ))}
-          </select>
+          <KindSelect
+            kinds={kinds}
+            emptyOption={{ label: "Automatic detection" }}
+            showKind
+            isKindDisabled={(kind) => !kinds.find((item) => item.kind === kind)?.supportsContent}
+            {...form.register("kind")}
+          />
         </Field>
         <Field label="Tags">
           <Input {...form.register("tags")} />
@@ -224,13 +141,7 @@ export function CreateFolderDialog({
           />
         </Field>
         <Field label="Folder kind">
-          <select className={controlClass} {...form.register("kind")}>
-            {kinds.map((kind) => (
-              <option key={kind.kind} value={kind.kind}>
-                {kind.label}
-              </option>
-            ))}
-          </select>
+          <KindSelect kinds={kinds} {...form.register("kind")} />
         </Field>
         <div className="flex justify-end gap-2">
           <Button variant="secondary" onClick={() => onOpenChange(false)}>

@@ -33,14 +33,6 @@ export function useResourceCommands() {
     [queryClient],
   );
 
-  const create = useMutation({
-    mutationFn: (draft: ResourceDraft) => gateway.createResource(draft),
-    onSuccess: async (resource) => {
-      toast.success(`Created ${resource.name}`);
-      await refresh(resource.id);
-    },
-    onError: notifyError,
-  });
   const update = useMutation({
     mutationFn: ({ id, draft }: { id: string; draft: ResourceDraft }) =>
       gateway.updateResource(id, draft),
@@ -116,7 +108,6 @@ export function useResourceCommands() {
   });
 
   return {
-    create,
     update,
     upload,
     remove,

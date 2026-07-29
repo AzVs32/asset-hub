@@ -8,7 +8,6 @@ import {
   Folder,
   FolderPlus,
   LogOut,
-  Plus,
   RefreshCw,
   Search,
   Users,
@@ -31,8 +30,9 @@ import { usePluginKernel } from "@/kernel/plugin-kernel";
 import { hostSlots } from "@/kernel/slots";
 import { Button } from "@/shared/ui/button";
 import { ActionMenu, ActionMenuItem } from "@/shared/ui/dropdown";
-import { controlClass, Input } from "@/shared/ui/field";
+import { Input } from "@/shared/ui/field";
 import { ErrorState, LoadingState } from "@/shared/ui/state";
+import { KindSelect } from "./kind-select";
 
 export function ResourceList({
   user,
@@ -50,7 +50,6 @@ export function ResourceList({
   onAction,
   onDirectoryAction,
   onRefresh,
-  onCreate,
   onUpload,
   onCreateFolder,
   onUsers,
@@ -71,7 +70,6 @@ export function ResourceList({
   onAction: (resource: Resource, action: ResourceAction) => void;
   onDirectoryAction: (directory: Directory, action: DirectoryAction) => void;
   onRefresh: () => void;
-  onCreate: () => void;
   onUpload: () => void;
   onCreateFolder: () => void;
   onUsers: () => void;
@@ -115,10 +113,6 @@ export function ResourceList({
             <FolderPlus size={16} />
             Folder
           </Button>
-          <Button variant="secondary" size="small" onClick={onCreate}>
-            <Plus size={16} />
-            Resource
-          </Button>
           <Button size="small" onClick={onUpload}>
             <FileUp size={16} />
             Upload
@@ -129,7 +123,7 @@ export function ResourceList({
         </div>
       </header>
 
-      <div className="grid gap-3 border-b border-slate-200 bg-slate-50/80 p-4 md:grid-cols-2 xl:grid-cols-[minmax(180px,1fr)_minmax(160px,220px)_minmax(120px,180px)_auto_auto]">
+      <div className="grid gap-3 border-b border-slate-200 bg-slate-50/80 p-4 md:grid-cols-2 xl:grid-cols-[minmax(180px,1fr)_minmax(160px,220px)_minmax(120px,180px)_auto]">
         <div className="relative">
           <Search className="absolute left-3 top-3 text-slate-400" size={16} />
           <Input
@@ -140,19 +134,13 @@ export function ResourceList({
             onChange={(event) => onFilters({ query: event.target.value, page: 1 })}
           />
         </div>
-        <select
+        <KindSelect
           aria-label="Resource kind"
-          className={controlClass}
+          kinds={kinds}
+          emptyOption={{ label: "All kinds" }}
           value={filters.kind}
           onChange={(event) => onFilters({ kind: event.target.value, page: 1 })}
-        >
-          <option value="">All kinds</option>
-          {kinds.map((kind) => (
-            <option key={kind.kind} value={kind.kind}>
-              {kind.label}
-            </option>
-          ))}
-        </select>
+        />
         <Input
           aria-label="Tag"
           placeholder="Filter by tag"
@@ -163,12 +151,6 @@ export function ResourceList({
           label="Deleted"
           checked={filters.includeDeleted}
           onChange={(includeDeleted) => onFilters({ includeDeleted, page: 1 })}
-        />
-        <Toggle
-          label="Descendants"
-          checked={filters.includeDescendants}
-          disabled={!filters.kind}
-          onChange={(includeDescendants) => onFilters({ includeDescendants, page: 1 })}
         />
       </div>
 

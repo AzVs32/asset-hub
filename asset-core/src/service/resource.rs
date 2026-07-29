@@ -27,8 +27,7 @@ use command::ResourceCommandService;
 use content::ResourceContentService;
 pub use contract::{
     CreateResource, DirectoryArchiveManifest, DirectoryArchiveResource, ExecuteResourceAction,
-    ResourceActions, ResourceContentCommand, ResourceContentStream, UpdateResource,
-    UploadResourceContentStream,
+    ResourceActions, ResourceContentStream, UpdateResource,
 };
 pub use reconciliation::StorageReconciliationReport;
 use reconciliation::StorageReconciliationService;

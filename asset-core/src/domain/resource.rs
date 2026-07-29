@@ -230,18 +230,6 @@ impl Resource {
         Ok(())
     }
 
-    /// 解绑资源内容引用，并返回原内容引用。
-    pub fn detach_content(&mut self) -> Result<Option<ResourceContent>, ResourceError> {
-        self.ensure_not_deleted()?;
-        let content = self.content.take();
-
-        if content.is_some() {
-            self.touch();
-        }
-
-        Ok(content)
-    }
-
     /// 确认资源当前仍可被修改。
     fn ensure_not_deleted(&self) -> Result<(), ResourceError> {
         if self.is_deleted() {

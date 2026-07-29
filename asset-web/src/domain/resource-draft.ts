@@ -1,4 +1,4 @@
-import type { Resource, ResourceDraft, ResourceKind } from "./resource";
+import type { Resource, ResourceDraft } from "./resource";
 
 export function draftFromResource(resource: Resource): ResourceDraft {
   return {
@@ -6,15 +6,6 @@ export function draftFromResource(resource: Resource): ResourceDraft {
     directory: resource.directory,
     kind: resource.kind,
     tags: resource.tags.join(", "),
-  };
-}
-
-export function emptyResourceDraft(directory: string, kinds: ResourceKind[]): ResourceDraft {
-  return {
-    name: "",
-    directory,
-    kind: kinds[0]?.kind ?? "core:resource",
-    tags: "",
   };
 }
 

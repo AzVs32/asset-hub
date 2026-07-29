@@ -213,29 +213,12 @@ export interface paths {
         /** 分页列出资源。 */
         get: operations["list_resources"];
         put?: never;
-        /** 创建不包含对象内容的资源。 */
-        post: operations["create_resource"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/resources/content/stream": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
         /**
-         * 流式上传内容并创建资源。
+         * 使用原始内容流创建资源。
          * @description 请求体必须是原始二进制流。资源名称、目录等元信息从 query 参数读取，MIME 类型
          *     优先使用请求的 `Content-Type` header。
          */
-        put: operations["upload_resource_content_stream"];
-        post?: never;
+        post: operations["create_resource"];
         delete?: never;
         options?: never;
         head?: never;
@@ -359,26 +342,16 @@ export interface components {
             /** @description 相对于当前用户可见根目录的父路径；根目录为空字符串。 */
             parent_path?: string;
         };
-        /**
-         * @description 创建不包含对象内容的资源请求。
-         * @example {
-         *       "name": "resources_not_blob",
-         *       "kind": "core:resource",
-         *       "tags": [
-         *         "demo",
-         *         "document"
-         *       ]
-         *     }
-         */
-        CreateResourceRequest: {
-            /** @description 相对于当前用户可见根目录的路径；根目录为空字符串。 */
+        /** @description 使用原始内容流创建资源的 query 参数。 */
+        CreateResourceQuery: {
+            /** @description 相对于当前用户可见根目录的资源路径。 */
             directory?: string | null;
             /** @description 可选资源类型。 */
             kind?: string | null;
-            /** @description 资源展示名。 */
+            /** @description 资源文件名；与目录共同决定对象存储路径。 */
             name: string;
-            /** @description 可选资源标签。 */
-            tags?: string[] | null;
+            /** @description 可选 JSON 字符串形式的资源标签数组。 */
+            tags_json?: string | null;
         };
         CreateUserRequest: {
             is_admin?: boolean;
@@ -688,20 +661,6 @@ export interface components {
         UpdateUserStatusRequest: {
             status: string;
         };
-        /**
-         * @description 上传内容并创建资源请求。
-         *     流式上传内容并创建资源的 query 参数。
-         */
-        UploadResourceContentStreamQuery: {
-            /** @description 相对于当前用户可见根目录的上传路径。 */
-            directory?: string | null;
-            /** @description 可选资源类型。 */
-            kind?: string | null;
-            /** @description 资源文件名；与目录共同决定对象存储路径。 */
-            name: string;
-            /** @description 可选 JSON 字符串形式的资源标签数组。 */
-            tags_json?: string | null;
-        };
     };
     responses: never;
     parameters: never;
@@ -914,8 +873,6 @@ export interface operations {
                 limit?: number;
                 /** @description 可选资源类型过滤。 */
                 kind?: string;
-                /** @description kind 过滤是否包含所有后代类型。 */
-                include_descendants?: boolean;
                 /** @description 可选标签过滤。 */
                 tag?: string;
                 /** @description 可选名称模糊搜索关键字。 */
@@ -1182,8 +1139,6 @@ export interface operations {
                 limit?: number;
                 /** @description 可选资源类型过滤。 */
                 kind?: string;
-                /** @description kind 过滤是否包含所有后代类型。 */
-                include_descendants?: boolean;
                 /** @description 可选标签过滤。 */
                 tag?: string;
                 /** @description 可选名称模糊搜索关键字。 */
@@ -1230,52 +1185,10 @@ export interface operations {
     };
     create_resource: {
         parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateResourceRequest"];
-            };
-        };
-        responses: {
-            /** @description 资源已创建 */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ResourceResponse"];
-                };
-            };
-            /** @description 请求参数无效 */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description 服务端错误 */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    upload_resource_content_stream: {
-        parameters: {
             query: {
                 /** @description 资源文件名；与目录共同决定对象存储路径。 */
                 name: string;
-                /** @description 相对于当前用户可见根目录的上传路径。 */
+                /** @description 相对于当前用户可见根目录的资源路径。 */
                 directory?: string;
                 /** @description 可选资源类型。 */
                 kind?: string;
@@ -1293,7 +1206,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description 资源内容已流式上传并创建资源 */
+            /** @description 资源已创建 */
             201: {
                 headers: {
                     [name: string]: unknown;

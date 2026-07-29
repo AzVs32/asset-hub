@@ -10,11 +10,7 @@ import { DirectoryActionDialog } from "@/plugins/directory-action-dialog";
 import { PluginActionDialog } from "@/plugins/plugin-action-dialog";
 import { DirectoryDetail } from "./components/directory-detail";
 import { ResourceDetail } from "./components/resource-detail";
-import {
-  CreateFolderDialog,
-  CreateResourceDialog,
-  UploadResourceDialog,
-} from "./components/resource-dialogs";
+import { CreateFolderDialog, UploadResourceDialog } from "./components/resource-dialogs";
 import { ResourceList } from "./components/resource-list";
 import { useResourceCommands } from "./hooks/use-resource-commands";
 import { useResourceListing } from "./hooks/use-resource-listing";
@@ -32,7 +28,6 @@ export function ResourceWorkspace() {
   const queryClient = useQueryClient();
   const browser = useResourceListing();
   const commands = useResourceCommands();
-  const [createOpen, setCreateOpen] = React.useState(false);
   const [uploadOpen, setUploadOpen] = React.useState(false);
   const [folderOpen, setFolderOpen] = React.useState(false);
   const [usersOpen, setUsersOpen] = React.useState(false);
@@ -89,7 +84,6 @@ export function ResourceWorkspace() {
           commands.executeDirectory.mutate({ directory, action })
         }
         onRefresh={() => void browser.listing.refetch()}
-        onCreate={() => setCreateOpen(true)}
         onUpload={() => setUploadOpen(true)}
         onCreateFolder={() => setFolderOpen(true)}
         onUsers={() => setUsersOpen(true)}
@@ -122,14 +116,6 @@ export function ResourceWorkspace() {
         />
       )}
 
-      <CreateResourceDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        directory={formDirectory}
-        kinds={kinds}
-        pending={commands.create.isPending}
-        onCreate={async (draft) => selectResource(await commands.create.mutateAsync(draft))}
-      />
       <UploadResourceDialog
         open={uploadOpen}
         onOpenChange={setUploadOpen}

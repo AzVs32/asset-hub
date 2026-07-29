@@ -6,52 +6,54 @@ use zip::write::SimpleFileOptions;
 pub(crate) const MAX_UPLOAD_BYTES: usize = 4 * 1024 * 1024 * 1024;
 pub(super) const DEFAULT_CONTENT_TYPE: &str = "application/octet-stream";
 
-/// 流式上传内容并创建资源。
+/// 使用原始内容流创建资源。
 ///
 /// 请求体必须是原始二进制流。资源名称、目录等元信息从 query 参数读取，MIME 类型
 /// 优先使用请求的 `Content-Type` header。
 #[utoipa::path(
-    put,
-    path = "/resources/content/stream",
+    post,
+    path = "/resources",
     tag = "resources",
-    params(UploadResourceContentStreamQuery),
+    params(CreateResourceQuery),
     request_body(
         content = inline(BinaryContent),
         content_type = "application/octet-stream",
         description = "原始二进制内容流"
     ),
     responses(
-        (status = 201, description = "资源内容已流式上传并创建资源", body = ResourceResponse),
+        (status = 201, description = "资源已创建", body = ResourceResponse),
         (status = 400, description = "请求参数无效", body = crate::dto::ErrorResponse),
         (status = 500, description = "服务端错误", body = crate::dto::ErrorResponse)
     )
 )]
-pub(crate) async fn upload_resource_content_stream(
+pub(crate) async fn create_resource(
     State(state): State<HttpState>,
     access: Extension<AccessContext>,
-    Query(query): Query<UploadResourceContentStreamQuery>,
+    Query(query): Query<CreateResourceQuery>,
     headers: HeaderMap,
     body: Body,
 ) -> Result<(StatusCode, Json<ResourceResponse>), HttpError> {
     let workspace = state.workspace(&access.0).await?;
-    let directory = query
-        .directory
-        .unwrap_or(DirectoryPath::from_path("uploads")?);
+    let directory = query.directory.unwrap_or_default();
     ensure_content_length(&headers)?;
     let data = limited_body_stream(body);
 
-    let mut command = UploadResourceContentStream::new(query.name, data);
+    let mut command = CreateResource::new(query.name, data);
     command = command.with_directory(directory);
-    command = apply_common_stream_fields(command, query.kind, query.tags_json)?;
+    if let Some(kind) = query.kind {
+        command = command.with_kind(parse_kind(kind)?);
+    }
+    if let Some(tags_json) = query.tags_json {
+        let tags = serde_json::from_str::<Vec<String>>(&tags_json)
+            .map_err(|error| HttpError::bad_request(format!("invalid tags_json: {error}")))?;
+        command = command.with_tags(tags);
+    }
 
     if let Some(mime_type) = content_type(&headers)? {
         command = command.with_mime_type(mime_type);
     }
 
-    let resource = state
-        .secured(&access.0)
-        .upload_resource_content_stream(command)
-        .await?;
+    let resource = state.secured(&access.0).create_resource(command).await?;
 
     Ok((
         StatusCode::CREATED,

@@ -299,9 +299,9 @@ default for resources whose concrete format has not been identified.
 Directory kinds use the separate `capabilities.directory_kinds` manifest capability
 and an independent acyclic registry rooted at the built-in `core:directory`.
 
-Kind-filtered list endpoints accept `include_descendants=true`. A query for
-`core:document` can therefore include Markdown, EPUB, source-code families, and
-any future nested document formats.
+Kind-filtered list endpoints include all descendant kinds by default. A query for
+`core:document` therefore includes Markdown, EPUB, source-code families, and any
+future nested document formats.
 By default, plugin calls are limited to 64 MiB of resource content, 4 MiB inline content and read
 chunks, 8 MiB of serialized input, 8 MiB of output, 256 MiB of Wasm linear memory, 20 seconds, and
 eight concurrent calls. The HTTP action input itself is limited to 1 MiB. These values are

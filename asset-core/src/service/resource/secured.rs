@@ -5,7 +5,7 @@
 
 use super::{
     CreateResource, DirectoryArchiveManifest, DirectoryArchiveResource, ExecuteResourceAction,
-    ResourceContentStream, ResourceService, UpdateResource, UploadResourceContentStream,
+    ResourceContentStream, ResourceService, UpdateResource,
 };
 use crate::CoreError;
 use crate::domain::{
@@ -92,18 +92,7 @@ impl<'a> SecuredResourceService<'a> {
     ) -> Result<Resource, CoreError> {
         let directory = self.resolve(command.directory()).await?;
         command = command.with_directory(directory);
-        self.service.commands().create_resource(command).await
-    }
-    pub async fn upload_resource_content_stream(
-        &self,
-        mut command: UploadResourceContentStream,
-    ) -> Result<Resource, CoreError> {
-        let directory = self.resolve(command.directory()).await?;
-        command = command.with_directory(directory);
-        self.service
-            .content()
-            .upload_resource_content_stream(command)
-            .await
+        self.service.content().create_resource(command).await
     }
     pub async fn find_resource(
         &self,

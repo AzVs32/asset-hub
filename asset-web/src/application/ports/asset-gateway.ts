@@ -21,7 +21,6 @@ export interface AssetGateway {
   listDirectoryKinds(): Promise<DirectoryKind[]>;
   listDirectory(filters: ResourceFilters, signal?: AbortSignal): Promise<DirectoryListing>;
   findResource(id: string): Promise<Resource>;
-  createResource(draft: ResourceDraft): Promise<Resource>;
   updateResource(id: string, draft: ResourceDraft): Promise<Resource>;
   restoreResource(id: string): Promise<Resource>;
   deleteResource(id: string): Promise<Resource>;

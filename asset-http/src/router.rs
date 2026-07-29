@@ -11,7 +11,7 @@ use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderName, Method, StatusCode};
 use axum::middleware;
-use axum::routing::{delete, get, post, put};
+use axum::routing::{delete, get, post};
 use axum_login::AuthManagerLayerBuilder;
 use std::sync::Arc;
 use tower::ServiceBuilder;
@@ -42,10 +42,7 @@ pub fn build_router(
             "/directories",
             get(handlers::list_directory).post(handlers::create_directory),
         )
-        .route(
-            "/resources",
-            get(handlers::list_resources).post(handlers::create_resource),
-        )
+        .route("/resources", get(handlers::list_resources))
         .route(
             "/resources/{id}",
             get(handlers::find_resource)
@@ -83,10 +80,7 @@ pub fn build_router(
     }
 
     let upload_router = Router::new()
-        .route(
-            "/resources/content/stream",
-            put(handlers::upload_resource_content_stream),
-        )
+        .route("/resources", post(handlers::create_resource))
         .layer(
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())

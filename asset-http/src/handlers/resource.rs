@@ -53,39 +53,6 @@ pub(crate) async fn list_directory_kinds(
     })
 }
 
-/// 创建不包含对象内容的资源。
-#[utoipa::path(
-    post,
-    path = "/resources",
-    tag = "resources",
-    request_body = CreateResourceRequest,
-    responses(
-        (status = 201, description = "资源已创建", body = ResourceResponse),
-        (status = 400, description = "请求参数无效", body = crate::dto::ErrorResponse),
-        (status = 500, description = "服务端错误", body = crate::dto::ErrorResponse)
-    )
-)]
-pub(crate) async fn create_resource(
-    State(state): State<HttpState>,
-    access: Extension<AccessContext>,
-    payload: Result<Json<CreateResourceRequest>, JsonRejection>,
-) -> Result<(StatusCode, Json<ResourceResponse>), HttpError> {
-    let payload = parse_json_payload(payload)?;
-    let workspace = state.workspace(&access.0).await?;
-    let command = apply_common_resource_fields(
-        CreateResource::new(payload.name),
-        payload.kind,
-        payload.directory,
-        payload.tags,
-    )?;
-    let resource = state.secured(&access.0).create_resource(command).await?;
-
-    Ok((
-        StatusCode::CREATED,
-        Json(resource_snapshot_response(state.service(), &workspace, &resource).await?),
-    ))
-}
-
 /// 分页列出资源。
 #[utoipa::path(
     get,
@@ -113,7 +80,6 @@ pub(crate) async fn list_resources(
     if let Some(kind) = query.kind {
         command = command.with_kind(parse_kind(kind)?);
     }
-    command = command.with_include_descendants(query.include_descendants.unwrap_or(false));
 
     if let Some(tag) = query.tag {
         command = command.with_tag(tag);
@@ -166,8 +132,6 @@ pub(crate) async fn list_directory(
     if let Some(kind) = query.kind {
         resources_query = resources_query.with_kind(parse_kind(kind)?);
     }
-    resources_query =
-        resources_query.with_include_descendants(query.include_descendants.unwrap_or(false));
 
     if let Some(tag) = query.tag {
         resources_query = resources_query.with_tag(tag);
@@ -459,45 +423,6 @@ pub(crate) async fn remove_resource(
     } else {
         Err(HttpError::not_found(format!("resource `{id}` not found")))
     }
-}
-
-pub(super) fn apply_common_resource_fields(
-    mut command: CreateResource,
-    kind: Option<String>,
-    directory: Option<DirectoryPath>,
-    tags: Option<Vec<String>>,
-) -> Result<CreateResource, HttpError> {
-    if let Some(kind) = kind {
-        command = command.with_kind(parse_kind(kind)?);
-    }
-
-    if let Some(directory) = directory {
-        command = command.with_directory(directory);
-    }
-
-    if let Some(tags) = tags {
-        command = command.with_tags(tags);
-    }
-
-    Ok(command)
-}
-
-pub(super) fn apply_common_stream_fields(
-    mut command: UploadResourceContentStream,
-    kind: Option<String>,
-    tags_json: Option<String>,
-) -> Result<UploadResourceContentStream, HttpError> {
-    if let Some(kind) = kind {
-        command = command.with_kind(parse_kind(kind)?);
-    }
-
-    if let Some(tags_json) = tags_json {
-        let tags = serde_json::from_str::<Vec<String>>(&tags_json)
-            .map_err(|error| HttpError::bad_request(format!("invalid tags_json: {error}")))?;
-        command = command.with_tags(tags);
-    }
-
-    Ok(command)
 }
 
 pub(super) fn parse_kind(value: impl Into<String>) -> Result<ResourceKind, HttpError> {
