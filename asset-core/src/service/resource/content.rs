@@ -2,13 +2,12 @@
 //!
 //! 本模块只处理资源内容引用与 Blob 之间的编排；后台扫描协调位于 `reconciliation`。
 
-use super::command::build_resource;
-use super::{CreateResource, ResourceContentStream, ResourceService};
+use super::{ResourceContentStream, ResourceService};
 use crate::CoreError;
 #[cfg(test)]
 use crate::domain::ResourceId;
-use crate::domain::{Checksum, ChecksumKind, Resource, ResourceContent, StorageKey};
-use crate::port::{BlobByteStream, LocatedResource, RESERVED_BLOB_STORAGE_PREFIX};
+use crate::domain::{Checksum, ChecksumKind, ResourceContent};
+use crate::port::{BlobByteStream, LocatedResource};
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use futures_util::StreamExt;
@@ -22,96 +21,6 @@ pub(super) struct ResourceContentService<'a> {
 impl<'a> ResourceContentService<'a> {
     pub(super) fn new(service: &'a ResourceService) -> Self {
         Self { service }
-    }
-
-    /// 流式上传对象内容并创建资源。
-    ///
-    /// Blob 写入成功、聚合保存失败时会 best-effort 删除新对象，同时保留原始仓储错误。
-    pub(crate) async fn create_resource(
-        &self,
-        command: CreateResource,
-    ) -> Result<Resource, CoreError> {
-        let CreateResource {
-            name,
-            kind,
-            directory,
-            tags,
-            content: data,
-            mime_type,
-        } = command;
-
-        let detection_storage_key = StorageKey::from_resource_path(&directory, &name)?;
-        let kind = self.service.resolve_content_kind(
-            kind,
-            mime_type.as_deref(),
-            Some(detection_storage_key.as_str()),
-        )?;
-        let directory = self.service.directories.ensure_path(&directory).await?;
-
-        let mut resource = build_resource(name, directory.id(), Some(kind), tags).build()?;
-        let storage_key = detection_storage_key;
-        reject_reserved_storage_key(&storage_key)?;
-        // 在写 Blob 前校验全部内容元数据，避免写入后才发现 MIME 等字段非法。
-        build_content(0, mime_type.clone(), placeholder_checksum()?, None)?;
-
-        let (data, checksum_state) = stream_with_checksum_tracking(data);
-        let staged = self.service.blob_storage.stage_stream(data).await?;
-        let checksum = match finalize_tracked_checksum(checksum_state) {
-            Ok(checksum) => checksum,
-            Err(error) => {
-                let _ = self.service.blob_storage.discard_staged(&staged).await;
-                return Err(error);
-            }
-        };
-
-        let _storage_key_guard = self.service.storage_key_locks.lock(&storage_key).await;
-        if let Err(error) = self
-            .service
-            .blob_storage
-            .publish_staged_if_absent(&staged, &storage_key)
-            .await
-        {
-            let _ = self.service.blob_storage.discard_staged(&staged).await;
-            return Err(error);
-        }
-
-        let finalized = async {
-            let stored = match self.service.storage_scanner.inspect(&storage_key).await? {
-                Some(stored) if stored.size == staged.bytes_written() => stored,
-                Some(_) => {
-                    return Err(CoreError::conflict(format!(
-                        "blob `{storage_key}` changed while its upload was being finalized"
-                    )));
-                }
-                None => {
-                    return Err(CoreError::conflict(format!(
-                        "blob `{storage_key}` disappeared while its upload was being finalized"
-                    )));
-                }
-            };
-            let content = build_content(
-                staged.bytes_written(),
-                mime_type,
-                checksum,
-                Some(stored.modified_at),
-            )?;
-            resource.attach_content(content)?;
-            self.service.repository.save(&resource).await?;
-            Ok(resource)
-        }
-        .await;
-
-        match finalized {
-            Ok(resource) => {
-                let _ = self.service.blob_storage.discard_staged(&staged).await;
-                Ok(resource)
-            }
-            Err(error) => {
-                let _ = self.service.blob_storage.delete(&storage_key).await;
-                let _ = self.service.blob_storage.discard_staged(&staged).await;
-                Err(error)
-            }
-        }
     }
 
     #[cfg(test)]
@@ -170,26 +79,44 @@ impl<'a> ResourceContentService<'a> {
     }
 }
 
-fn reject_reserved_storage_key(key: &StorageKey) -> Result<(), CoreError> {
-    if key.as_str() == RESERVED_BLOB_STORAGE_PREFIX
-        || key
-            .as_str()
-            .starts_with(&format!("{RESERVED_BLOB_STORAGE_PREFIX}/"))
-    {
-        return Err(CoreError::configuration(format!(
-            "storage key `{key}` uses reserved Asset Hub namespace"
-        )));
-    }
-    Ok(())
-}
-
-pub(super) fn build_content(
+pub(super) fn build_verified_content(
     size: u64,
     mime_type: Option<String>,
     checksum: Checksum,
     storage_modified_at: Option<DateTime<Utc>>,
 ) -> Result<ResourceContent, CoreError> {
-    let mut content = ResourceContent::builder(size, checksum);
+    let mut content = ResourceContent::verified(size, checksum);
+    if let Some(mime_type) = mime_type {
+        content = content.with_mime_type(mime_type);
+    }
+    if let Some(modified_at) = storage_modified_at {
+        content = content.with_modified_at(modified_at);
+    }
+    Ok(content.build()?)
+}
+
+pub(super) fn build_pending_content(
+    size: u64,
+    mime_type: Option<String>,
+    storage_modified_at: Option<DateTime<Utc>>,
+) -> Result<ResourceContent, CoreError> {
+    let mut content = ResourceContent::pending(size);
+    if let Some(mime_type) = mime_type {
+        content = content.with_mime_type(mime_type);
+    }
+    if let Some(modified_at) = storage_modified_at {
+        content = content.with_modified_at(modified_at);
+    }
+    Ok(content.build()?)
+}
+
+pub(super) fn build_failed_content(
+    size: u64,
+    mime_type: Option<String>,
+    error: impl Into<String>,
+    storage_modified_at: Option<DateTime<Utc>>,
+) -> Result<ResourceContent, CoreError> {
+    let mut content = ResourceContent::verification_failed(size, error);
     if let Some(mime_type) = mime_type {
         content = content.with_mime_type(mime_type);
     }
@@ -212,10 +139,6 @@ pub(super) fn calculate_checksum(data: &[u8]) -> Result<Checksum, CoreError> {
     let mut state = ChecksumState::new(CONTENT_CHECKSUM_KIND);
     state.update(data);
     state.finish()
-}
-
-fn placeholder_checksum() -> Result<Checksum, CoreError> {
-    calculate_checksum(&[])
 }
 
 pub(super) fn stream_with_checksum_tracking(
@@ -242,6 +165,16 @@ pub(super) fn finalize_tracked_checksum(
         .lock()
         .expect("checksum mutex should not be poisoned")
         .finish()
+}
+
+pub(super) async fn calculate_stream_checksum(
+    stream: BlobByteStream,
+) -> Result<Checksum, CoreError> {
+    let (mut stream, state) = stream_with_checksum_tracking(stream);
+    while let Some(chunk) = stream.next().await {
+        chunk?;
+    }
+    finalize_tracked_checksum(state)
 }
 
 pub(super) enum ChecksumState {

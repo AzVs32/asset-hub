@@ -1,12 +1,12 @@
 use crate::dto::{
-    BinaryContent, ChecksumResponse, CreateDirectoryRequest, CreateResourceQuery,
-    DirectoryActionDefinitionResponse, DirectoryActionOutputResponse, DirectoryActionsResponse,
-    DirectoryKindResponse, DirectoryKindsResponse, DirectoryListingResponse, DirectoryResponse,
-    ErrorResponse, ExecuteDirectoryActionRequest, ExecuteResourceActionRequest,
-    HealthComponentResponse, HealthResponse, PluginDiagnosticResponse,
-    ResourceActionDefinitionResponse, ResourceActionOutputResponse, ResourceActionsResponse,
-    ResourceContentResponse, ResourceKindResponse, ResourceKindsResponse, ResourcePageResponse,
-    ResourceResponse, UpdateResourceRequest,
+    BinaryContent, ChecksumResponse, ContentVerificationStatusResponse, CreateDirectoryRequest,
+    CreateUploadRequest, DirectoryActionDefinitionResponse, DirectoryActionOutputResponse,
+    DirectoryActionsResponse, DirectoryKindResponse, DirectoryKindsResponse,
+    DirectoryListingResponse, DirectoryResponse, ErrorResponse, ExecuteDirectoryActionRequest,
+    ExecuteResourceActionRequest, HealthComponentResponse, HealthResponse,
+    PluginDiagnosticResponse, ResourceActionDefinitionResponse, ResourceActionOutputResponse,
+    ResourceActionsResponse, ResourceContentResponse, ResourceKindResponse, ResourceKindsResponse,
+    ResourcePageResponse, ResourceResponse, UpdateResourceRequest, UploadSessionResponse,
 };
 use crate::{auth, handlers};
 use utoipa::{
@@ -45,7 +45,11 @@ impl Modify for CookieSecurity {
         handlers::resource::list_directory,
         handlers::resource::create_directory,
         handlers::resource::execute_directory_action,
-        handlers::content::create_resource,
+        handlers::upload::create_upload,
+        handlers::upload::upload_status,
+        handlers::upload::append_upload,
+        handlers::upload::complete_upload,
+        handlers::upload::abort_upload,
         handlers::resource::find_resource,
         handlers::resource::update_resource,
         handlers::content::get_resource_content,
@@ -58,6 +62,7 @@ impl Modify for CookieSecurity {
     components(
         schemas(
             ChecksumResponse,
+            ContentVerificationStatusResponse,
             BinaryContent,
             CreateDirectoryRequest,
             DirectoryListingResponse,
@@ -82,7 +87,8 @@ impl Modify for CookieSecurity {
             ResourcePageResponse,
             ResourceResponse,
             UpdateResourceRequest,
-            CreateResourceQuery
+            CreateUploadRequest
+            ,UploadSessionResponse
             ,auth::AuthenticatedUser
             ,auth::Credentials
             ,auth::MeResponse
@@ -98,6 +104,7 @@ impl Modify for CookieSecurity {
         (name = "system", description = "系统状态接口"),
         (name = "resources", description = "资源管理接口"),
         (name = "directories", description = "目录管理接口")
+        ,(name = "uploads", description = "断点续传接口")
         ,(name = "authentication", description = "登录和用户管理接口")
     )
 )]

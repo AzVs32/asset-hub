@@ -125,7 +125,7 @@ async fn fs_storage_stages_complete_content_before_atomic_publish() {
         Ok(Bytes::from_static(b"file")),
     ]));
 
-    let staged = storage.stage_stream(stream).await.unwrap();
+    let staged = stage(&storage, stream).await;
 
     assert!(!root.join(key.as_str()).exists());
     assert_eq!(
@@ -154,17 +154,22 @@ async fn fs_storage_stages_complete_content_before_atomic_publish() {
 }
 
 #[tokio::test]
-async fn fs_storage_removes_partial_staging_file_after_stream_failure() {
+async fn fs_storage_preserves_partial_staging_file_after_stream_failure() {
     let (storage, root) = storage_with_root("fs-staged-failure");
+    let key = upload_key();
+    storage.create_staged(&key).await.unwrap();
     let stream: BlobByteStream = Box::pin(futures_util::stream::iter([
         Ok(Bytes::from_static(b"partial")),
         Err(CoreError::configuration("input failed")),
     ]));
 
-    assert!(storage.stage_stream(stream).await.is_err());
+    assert!(storage.append_staged(&key, 0, stream).await.is_err());
 
-    let uploads = root.join(".asset-hub/uploads");
-    assert!(!uploads.exists() || std::fs::read_dir(uploads).unwrap().next().is_none());
+    assert_eq!(std::fs::read(root.join(key.as_str())).unwrap(), b"partial");
+    storage
+        .discard_staged(&StagedBlob::new(key, 7))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -198,7 +203,7 @@ async fn fs_storage_atomic_publish_rejects_existing_blob() {
     ))]));
 
     stage_and_publish(&storage, &key, first).await;
-    let staged = storage.stage_stream(second).await.unwrap();
+    let staged = stage(&storage, second).await;
     let error = storage
         .publish_staged_if_absent(&staged, &key)
         .await
@@ -261,13 +266,27 @@ async fn stage_and_publish(
     key: &StorageKey,
     stream: BlobByteStream,
 ) -> StagedBlob {
-    let staged = storage.stage_stream(stream).await.unwrap();
+    let staged = stage(storage, stream).await;
     storage
         .publish_staged_if_absent(&staged, key)
         .await
         .unwrap();
     storage.discard_staged(&staged).await.unwrap();
     staged
+}
+
+async fn stage(storage: &OpenDalBlobStorage, stream: BlobByteStream) -> StagedBlob {
+    let key = upload_key();
+    storage.create_staged(&key).await.unwrap();
+    storage.append_staged(&key, 0, stream).await.unwrap()
+}
+
+fn upload_key() -> StorageKey {
+    StorageKey::new(format!(
+        "{RESERVED_BLOB_STORAGE_PREFIX}/uploads/{}",
+        uuid::Uuid::now_v7()
+    ))
+    .unwrap()
 }
 
 fn storage_with_root(name: &str) -> (OpenDalBlobStorage, PathBuf) {

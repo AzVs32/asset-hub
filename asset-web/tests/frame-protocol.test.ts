@@ -36,7 +36,7 @@ describe("plugin frame messages", () => {
       parseExecuteActionMessage(
         {
           type: "asset-hub:execute-resource-action",
-          plugin_api: "asset-hub.plugin-api@2",
+          plugin_api: "asset-hub.plugin-api@1",
         },
         pluginApi,
       ),

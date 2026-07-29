@@ -39,6 +39,12 @@ export function useResourceListing() {
     queryKey: queryKeys.directory(filters),
     queryFn: ({ signal }) => gateway.listDirectory(filters, signal),
     placeholderData: (previous) => previous,
+    refetchInterval: (query) =>
+      query.state.data?.resources.items.some(
+        (resource) => resource.content?.verificationStatus === "pending",
+      )
+        ? 1_000
+        : false,
   });
   const updateFilters = useCallback(
     (patch: Partial<ResourceFilters>) => {

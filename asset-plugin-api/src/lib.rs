@@ -58,8 +58,8 @@ pub use manifest::{
 pub use policy::{InvalidPluginExecutionPolicy, PluginExecutionPolicy};
 pub use request::{
     PluginActionRequest, PluginChecksum, PluginContentBytes, PluginContentReference,
-    PluginContentReferenceEncoding, PluginInlineContentEncoding, PluginResource,
-    PluginResourceContent,
+    PluginContentReferenceEncoding, PluginContentVerificationStatus, PluginInlineContentEncoding,
+    PluginResource, PluginResourceContent,
 };
 pub use view::{
     DownloadView, HtmlView, JsonView, MarkdownView, MediaView, PluginActionEffect,

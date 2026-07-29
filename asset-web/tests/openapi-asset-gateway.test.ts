@@ -5,7 +5,10 @@ import { action, resource } from "./fixtures";
 describe("OpenApiAssetGateway URL boundary", () => {
   const gateway = new OpenApiAssetGateway("/api");
 
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    localStorage.clear();
+  });
 
   it("resolves backend-owned asset paths", () => {
     expect(gateway.assetUrl("/plugins/example/view.html")).toBe("/api/plugins/example/view.html");
@@ -78,36 +81,135 @@ describe("OpenApiAssetGateway URL boundary", () => {
   });
 
   it("preserves spaces in upload names and directories", async () => {
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL) =>
-      Response.json(
-        {
-          id: "resource-1",
-          name: " draft  01.txt ",
-          directory: " library /project A ",
-          kind: "core:resource",
-          tags: [],
-          content: null,
-          actions: { available_actions: [] },
-          created_at: "2026-01-01T00:00:00Z",
-          updated_at: "2026-01-01T00:00:00Z",
-        },
-        { status: 201 },
-      ),
-    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({ id: "upload-1", offset: 0, size: 7, status: "uploading" }, { status: 201 }),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204, headers: { "Upload-Offset": "7" } }))
+      .mockResolvedValueOnce(
+        Response.json(
+          {
+            id: "upload-1",
+            offset: 7,
+            size: 7,
+            status: "finalizing",
+          },
+          { status: 202 },
+        ),
+      );
     vi.stubGlobal("fetch", fetchMock);
 
-    const resource = await gateway.uploadResource({
-      file: new File(["content"], "fallback.txt", { type: "text/plain" }),
-      name: " draft  01.txt ",
-      directory: " library /project A ",
+    const progress: Array<{ stage: string; bytesSent: number; totalBytes: number }> = [];
+    const receipt = await gateway.uploadResource(
+      {
+        file: new File(["content"], "fallback.txt", { type: "text/plain" }),
+        name: " draft  01.txt ",
+        directory: " library /project A ",
+        kind: "core:resource",
+        tags: "",
+      },
+      (event) => progress.push(event),
+    );
+
+    const createUrl = new URL(String(fetchMock.mock.calls[0]?.[0]), "http://localhost");
+    expect(createUrl.pathname).toBe("/api/uploads");
+    const createBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(createBody.name).toBe(" draft  01.txt ");
+    expect(createBody.directory).toBe(" library /project A ");
+    expect(fetchMock.mock.calls[1]?.[1]?.headers).toMatchObject({ "Upload-Offset": "0" });
+    expect(String(fetchMock.mock.calls[2]?.[0])).toContain("/uploads/upload-1/complete");
+    expect(receipt).toEqual({ id: "upload-1", name: " draft  01.txt " });
+    expect(progress).toEqual([
+      { stage: "preparing", bytesSent: 0, totalBytes: 7 },
+      { stage: "uploading", bytesSent: 0, totalBytes: 7 },
+      { stage: "uploading", bytesSent: 7, totalBytes: 7 },
+      { stage: "finalizing", bytesSent: 7, totalBytes: 7 },
+    ]);
+  });
+
+  it("continues a persisted upload from the server offset", async () => {
+    const uploadGateway = new OpenApiAssetGateway("http://localhost/api");
+    const file = new File(["content"], "resume.txt", {
+      type: "text/plain",
+      lastModified: 1_700_000_000_000,
+    });
+    const draft = {
+      file,
+      name: "resume.txt",
+      directory: "uploads",
       kind: "core:resource",
       tags: "",
-    });
+    };
+    const failedFetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json(
+          { id: "upload-resume", offset: 0, size: 7, status: "uploading" },
+          { status: 201 },
+        ),
+      )
+      .mockResolvedValueOnce(Response.json({ error: "connection lost" }, { status: 500 }));
+    vi.stubGlobal("fetch", failedFetch);
 
-    const requestUrl = new URL(String(fetchMock.mock.calls[0]?.[0]), "http://localhost");
-    expect(requestUrl.searchParams.get("name")).toBe(" draft  01.txt ");
-    expect(requestUrl.searchParams.get("directory")).toBe(" library /project A ");
-    expect(resource.name).toBe(" draft  01.txt ");
-    expect(resource.directory).toBe(" library /project A ");
+    await expect(uploadGateway.uploadResource(draft)).rejects.toThrow("connection lost");
+
+    const resumedFetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({ id: "upload-resume", offset: 4, size: 7, status: "uploading" }),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204, headers: { "Upload-Offset": "7" } }))
+      .mockResolvedValueOnce(
+        Response.json(
+          { id: "upload-resume", offset: 7, size: 7, status: "finalizing" },
+          { status: 202 },
+        ),
+      );
+    vi.stubGlobal("fetch", resumedFetch);
+
+    const receipt = await uploadGateway.uploadResource(draft);
+
+    expect(resumedFetch.mock.calls[0]?.[1]?.method).toBeUndefined();
+    const resumedPatch = resumedFetch.mock.calls[1]?.[1];
+    expect(resumedPatch?.headers).toMatchObject({ "Upload-Offset": "4" });
+    if (!(resumedPatch?.body instanceof Blob)) throw new Error("resumed chunk was not captured");
+    expect(await resumedPatch.body.text()).toBe("ent");
+    expect(receipt.id).toBe("upload-resume");
+
+    const completionFetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({
+          id: "upload-resume",
+          offset: 7,
+          size: 7,
+          status: "completed",
+          resource_id: "resource-resumed",
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json(
+          {
+            id: "resource-resumed",
+            name: "resume.txt",
+            directory: "uploads",
+            kind: "core:resource",
+            tags: [],
+            content: null,
+            actions: { available_actions: [] },
+            created_at: "2026-01-01T00:00:00Z",
+            updated_at: "2026-01-01T00:00:00Z",
+          },
+          { status: 201 },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", completionFetch);
+    const completionGateway = new OpenApiAssetGateway("http://localhost/api");
+
+    const uploaded = await completionGateway.waitForUpload(receipt.id);
+
+    expect(uploaded.id).toBe("resource-resumed");
   });
 });

@@ -9,6 +9,7 @@ authors.workspace = true
 asset-core.workspace = true
 asset-infra.workspace = true
 asset-plugin-api.workspace = true
+tracing.workspace = true
 
 sqlx.workspace = true
 

@@ -80,7 +80,14 @@ pub fn build_router(
     }
 
     let upload_router = Router::new()
-        .route("/resources", post(handlers::create_resource))
+        .route("/uploads", post(handlers::create_upload))
+        .route(
+            "/uploads/{id}",
+            axum::routing::patch(handlers::append_upload)
+                .get(handlers::upload_status)
+                .delete(handlers::abort_upload),
+        )
+        .route("/uploads/{id}/complete", post(handlers::complete_upload))
         .layer(
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
@@ -177,6 +184,11 @@ fn cors_layer(policy: CorsPolicy) -> CorsLayer {
         .allow_headers([
             HeaderName::from_static("content-type"),
             HeaderName::from_static("authorization"),
+            HeaderName::from_static("upload-offset"),
+        ])
+        .expose_headers([
+            HeaderName::from_static("upload-offset"),
+            HeaderName::from_static("upload-length"),
         ]);
 
     match policy {

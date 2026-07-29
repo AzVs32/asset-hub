@@ -77,15 +77,106 @@ impl BlobStorage for OpenDalBlobStorage {
             .map_err(|error| CoreError::storage("put", error))
     }
 
-    async fn stage_stream(&self, data: BlobByteStream) -> Result<StagedBlob, CoreError> {
+    async fn create_staged(&self, key: &StorageKey) -> Result<StagedBlob, CoreError> {
         let root = self.local_root.as_ref().ok_or_else(|| {
             CoreError::configuration("staged uploads require the local blob storage backend")
         })?;
-        let key = StorageKey::new(format!(
-            "{RESERVED_BLOB_STORAGE_PREFIX}/uploads/{}",
-            uuid::Uuid::now_v7()
-        ))?;
-        write_local_staged_stream(root.join(key.as_str()), &key, data).await
+        require_upload_staging_key(key)?;
+        let path = root.join(key.as_str());
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|error| CoreError::storage("create_staged.create_parent", error))?;
+        }
+        let mut file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .await
+            .map_err(|error| CoreError::storage("create_staged.open", error))?;
+        file.flush()
+            .await
+            .map_err(|error| CoreError::storage("create_staged.flush", error))?;
+        file.sync_all()
+            .await
+            .map_err(|error| CoreError::storage("create_staged.sync", error))?;
+        drop(file);
+        Ok(StagedBlob::new(key.clone(), 0))
+    }
+
+    async fn append_staged(
+        &self,
+        key: &StorageKey,
+        expected_offset: u64,
+        mut data: BlobByteStream,
+    ) -> Result<StagedBlob, CoreError> {
+        let root = self.local_root.as_ref().ok_or_else(|| {
+            CoreError::configuration("staged uploads require the local blob storage backend")
+        })?;
+        require_upload_staging_key(key)?;
+        let path = root.join(key.as_str());
+        let mut file = tokio::fs::OpenOptions::new()
+            .append(true)
+            .open(path)
+            .await
+            .map_err(|error| CoreError::storage("append_staged.open", error))?;
+        let actual_offset = file
+            .metadata()
+            .await
+            .map_err(|error| CoreError::storage("append_staged.metadata", error))?
+            .len();
+        if actual_offset != expected_offset {
+            return Err(CoreError::conflict(format!(
+                "upload offset mismatch: expected {expected_offset}, actual {actual_offset}"
+            )));
+        }
+
+        let mut offset = actual_offset;
+        let mut stream_error = None;
+        while let Some(chunk) = data.next().await {
+            match chunk {
+                Ok(chunk) => {
+                    offset = offset
+                        .checked_add(chunk.len() as u64)
+                        .ok_or_else(|| CoreError::storage("append_staged.size", SizeOverflow))?;
+                    file.write_all(&chunk)
+                        .await
+                        .map_err(|error| CoreError::storage("append_staged.write", error))?;
+                }
+                Err(error) => {
+                    stream_error = Some(error);
+                    break;
+                }
+            }
+        }
+        file.flush()
+            .await
+            .map_err(|error| CoreError::storage("append_staged.flush", error))?;
+        file.sync_all()
+            .await
+            .map_err(|error| CoreError::storage("append_staged.sync", error))?;
+        drop(file);
+        if let Some(error) = stream_error {
+            return Err(error);
+        }
+        Ok(StagedBlob::new(key.clone(), offset))
+    }
+
+    async fn inspect_staged(&self, key: &StorageKey) -> Result<Option<StagedBlob>, CoreError> {
+        let root = self.local_root.as_ref().ok_or_else(|| {
+            CoreError::configuration("staged uploads require the local blob storage backend")
+        })?;
+        require_upload_staging_key(key)?;
+        match tokio::fs::metadata(root.join(key.as_str())).await {
+            Ok(metadata) if metadata.is_file() => {
+                Ok(Some(StagedBlob::new(key.clone(), metadata.len())))
+            }
+            Ok(_) => Err(CoreError::conflict(format!(
+                "staged upload `{key}` is not a file"
+            ))),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(CoreError::storage("inspect_staged", error)),
+        }
     }
 
     async fn publish_staged_if_absent(
@@ -96,12 +187,7 @@ impl BlobStorage for OpenDalBlobStorage {
         let root = self.local_root.as_ref().ok_or_else(|| {
             CoreError::configuration("staged uploads require the local blob storage backend")
         })?;
-        if !is_upload_staging_key(staged.key()) {
-            return Err(CoreError::configuration(format!(
-                "staged blob `{}` is outside the upload staging namespace",
-                staged.key()
-            )));
-        }
+        require_upload_staging_key(staged.key())?;
         let source = root.join(staged.key().as_str());
         let target_path = root.join(target.as_str());
         if let Some(parent) = target_path.parent() {
@@ -121,12 +207,7 @@ impl BlobStorage for OpenDalBlobStorage {
     }
 
     async fn discard_staged(&self, staged: &StagedBlob) -> Result<(), CoreError> {
-        if !is_upload_staging_key(staged.key()) {
-            return Err(CoreError::configuration(format!(
-                "staged blob `{}` is outside the upload staging namespace",
-                staged.key()
-            )));
-        }
+        require_upload_staging_key(staged.key())?;
         self.delete(staged.key()).await
     }
 
@@ -290,83 +371,6 @@ impl BlobStorage for OpenDalBlobStorage {
     }
 }
 
-async fn write_local_staged_stream(
-    path: PathBuf,
-    key: &StorageKey,
-    mut data: BlobByteStream,
-) -> Result<StagedBlob, CoreError> {
-    if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|error| CoreError::storage("stage_stream.create_parent", error))?;
-    }
-    let file = tokio::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)
-        .await
-        .map_err(|error| CoreError::storage("stage_stream.open", error))?;
-    let mut staged_file = StagedFile::new(path, file);
-    let mut bytes_written = 0_u64;
-    while let Some(chunk) = data.next().await {
-        let chunk = chunk?;
-        bytes_written = bytes_written
-            .checked_add(chunk.len() as u64)
-            .ok_or_else(|| CoreError::storage("stage_stream.size", SizeOverflow))?;
-        staged_file
-            .file()
-            .write_all(&chunk)
-            .await
-            .map_err(|error| CoreError::storage("stage_stream.write", error))?;
-    }
-    staged_file
-        .file()
-        .flush()
-        .await
-        .map_err(|error| CoreError::storage("stage_stream.flush", error))?;
-    staged_file
-        .file()
-        .sync_all()
-        .await
-        .map_err(|error| CoreError::storage("stage_stream.sync", error))?;
-    staged_file.finish();
-    Ok(StagedBlob::new(key.clone(), bytes_written))
-}
-
-struct StagedFile {
-    path: PathBuf,
-    file: Option<tokio::fs::File>,
-    complete: bool,
-}
-
-impl StagedFile {
-    fn new(path: PathBuf, file: tokio::fs::File) -> Self {
-        Self {
-            path,
-            file: Some(file),
-            complete: false,
-        }
-    }
-
-    fn file(&mut self) -> &mut tokio::fs::File {
-        self.file.as_mut().expect("staged file must still be open")
-    }
-
-    fn finish(mut self) {
-        drop(self.file.take());
-        self.complete = true;
-    }
-}
-
-impl Drop for StagedFile {
-    fn drop(&mut self) {
-        drop(self.file.take());
-        if !self.complete {
-            let _ = std::fs::remove_file(&self.path);
-        }
-    }
-}
-
 fn local_file_stream(
     file: tokio::fs::File,
     remaining: Option<u64>,
@@ -491,6 +495,16 @@ fn is_upload_staging_key(key: &StorageKey) -> bool {
     key.as_str()
         .strip_prefix(&format!("{RESERVED_BLOB_STORAGE_PREFIX}/uploads/"))
         .is_some_and(|suffix| !suffix.is_empty() && !suffix.contains('/'))
+}
+
+fn require_upload_staging_key(key: &StorageKey) -> Result<(), CoreError> {
+    if is_upload_staging_key(key) {
+        Ok(())
+    } else {
+        Err(CoreError::configuration(format!(
+            "staged blob `{key}` is outside the upload staging namespace"
+        )))
+    }
 }
 
 /// `.asset-hub` 不属于用户目录模型，可以在内部对象删除后清理其空目录。

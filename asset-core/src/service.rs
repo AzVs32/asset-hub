@@ -16,6 +16,6 @@ pub use directory::{DirectoryActions, DirectoryService, ExecuteDirectoryAction, 
 pub use user::UserService;
 
 pub use resource::{
-    CreateResource, ExecuteResourceAction, ResourceActions, ResourceContentStream, ResourceService,
+    CreateUpload, ExecuteResourceAction, ResourceActions, ResourceContentStream, ResourceService,
     ResourceServicePorts, SecuredResourceService, StorageReconciliationReport, UpdateResource,
 };

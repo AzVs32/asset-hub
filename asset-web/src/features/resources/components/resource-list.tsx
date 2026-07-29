@@ -336,6 +336,19 @@ function ResourceRow({
         </span>
       </button>
       <div className="flex items-center gap-2 pr-4">
+        {resource.content?.verificationStatus === "pending" ? (
+          <span className="rounded-full bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-700">
+            verifying
+          </span>
+        ) : null}
+        {resource.content?.verificationStatus === "failed" ? (
+          <span
+            className="rounded-full bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-700"
+            title={resource.content.verificationError ?? "Checksum verification failed"}
+          >
+            verification failed
+          </span>
+        ) : null}
         {resource.deletedAt ? (
           <span className="rounded-full bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-700">
             deleted

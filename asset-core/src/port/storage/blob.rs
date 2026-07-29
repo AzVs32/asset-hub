@@ -67,11 +67,21 @@ pub trait BlobStorage: Send + Sync {
     /// 应返回 `CoreError::Storage`。
     async fn put(&self, key: &StorageKey, data: Bytes) -> Result<(), CoreError>;
 
-    /// 将内容流完整写入内部暂存区。
+    /// 创建一个空的内部暂存对象。
+    async fn create_staged(&self, key: &StorageKey) -> Result<StagedBlob, CoreError>;
+
+    /// 在实际长度与 `expected_offset` 一致时追加内容。
     ///
-    /// 暂存对象不得出现在用户扫描命名空间中；成功返回前必须完成 flush、持久化同步并
-    /// 关闭写入句柄。
-    async fn stage_stream(&self, data: BlobByteStream) -> Result<StagedBlob, CoreError>;
+    /// 返回成功前必须完成 flush、持久化同步并关闭写入句柄。
+    async fn append_staged(
+        &self,
+        key: &StorageKey,
+        expected_offset: u64,
+        data: BlobByteStream,
+    ) -> Result<StagedBlob, CoreError>;
+
+    /// 检查暂存对象的实际长度。
+    async fn inspect_staged(&self, key: &StorageKey) -> Result<Option<StagedBlob>, CoreError>;
 
     /// 将完整暂存对象原子发布到目标键，且不得覆盖已有目标。
     ///

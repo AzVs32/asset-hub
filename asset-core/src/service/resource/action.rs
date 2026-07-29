@@ -2,7 +2,7 @@
 //!
 //! 本模块负责把资源、kind/action 声明和动作执行器连接起来：解析可用动作、执行声明动作，并应用动作返回的写入效果。
 
-use super::content::{build_content, calculate_checksum};
+use super::content::{build_verified_content, calculate_checksum};
 use super::{ExecuteResourceAction, ResourceActions, ResourceService};
 use crate::CoreError;
 #[cfg(test)]
@@ -288,7 +288,7 @@ impl<'a> ResourceActionService<'a> {
                     let target_key = storage_key.clone();
                     let replacement_key = action_scratch_content_key("action-replacements")?;
                     let backup_key = action_scratch_content_key("action-backups")?;
-                    let content = build_content(
+                    let content = build_verified_content(
                         data.len() as u64,
                         effect
                             .mime_type

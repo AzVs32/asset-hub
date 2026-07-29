@@ -16,8 +16,8 @@ pub use directory::{
 };
 pub use resource::{
     PluginActionRequest, PluginChecksum, PluginContentBytes, PluginContentReference,
-    PluginContentReferenceEncoding, PluginInlineContentEncoding, PluginResource,
-    PluginResourceContent,
+    PluginContentReferenceEncoding, PluginContentVerificationStatus, PluginInlineContentEncoding,
+    PluginResource, PluginResourceContent,
 };
 pub use view::{
     DownloadView, HtmlView, JsonView, MarkdownView, MediaView, PluginActionEffect,

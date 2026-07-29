@@ -96,21 +96,34 @@ pub(crate) struct UpdateResourceRequest {
     pub(crate) restore: Option<bool>,
 }
 
-/// 使用原始内容流创建资源的 query 参数。
-#[derive(Debug, Deserialize, IntoParams, ToSchema)]
-#[into_params(parameter_in = Query)]
+/// 创建断点续传会话。
+#[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct CreateResourceQuery {
-    /// 资源文件名；与目录共同决定对象存储路径。
+pub(crate) struct CreateUploadRequest {
     pub(crate) name: String,
-    /// 相对于当前用户可见根目录的资源路径。
-    #[param(value_type = Option<String>)]
-    #[schema(value_type = Option<String>)]
-    pub(crate) directory: Option<DirectoryPath>,
-    /// 可选资源类型。
+    #[serde(default)]
+    #[schema(value_type = String)]
+    pub(crate) directory: DirectoryPath,
     pub(crate) kind: Option<String>,
-    /// 可选 JSON 字符串形式的资源标签数组。
-    pub(crate) tags_json: Option<String>,
+    #[serde(default)]
+    pub(crate) tags: Vec<String>,
+    pub(crate) mime_type: Option<String>,
+    pub(crate) size: u64,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct UploadSessionResponse {
+    pub(crate) id: String,
+    pub(crate) offset: u64,
+    pub(crate) size: u64,
+    /// uploading、finalizing、completed 或 failed。
+    pub(crate) status: String,
+    /// finalization 完成后创建的 Resource ID。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) resource_id: Option<String>,
+    /// 后台 finalization 的失败原因。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) error: Option<String>,
 }
 
 /// 统一 HTTP 错误响应。
@@ -681,16 +694,42 @@ pub(crate) struct ResourceContentResponse {
     pub(crate) size: u64,
     /// 内容 MIME 类型。
     pub(crate) mime_type: Option<String>,
-    /// 服务端根据内容本体计算得到的校验和。
-    pub(crate) checksum: ChecksumResponse,
+    /// 内容校验状态。
+    pub(crate) verification_status: ContentVerificationStatusResponse,
+    /// 服务端根据内容本体计算得到的校验和；待校验或校验失败时为空。
+    pub(crate) checksum: Option<ChecksumResponse>,
+    /// 后台校验失败原因；仅校验失败时存在。
+    pub(crate) verification_error: Option<String>,
+}
+
+/// 内容校验状态响应。
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ContentVerificationStatusResponse {
+    Pending,
+    Verified,
+    Failed,
 }
 
 impl From<&ResourceContent> for ResourceContentResponse {
     fn from(content: &ResourceContent) -> Self {
+        let verification_status = match content.verification_status() {
+            asset_core::domain::ContentVerificationStatus::Pending => {
+                ContentVerificationStatusResponse::Pending
+            }
+            asset_core::domain::ContentVerificationStatus::Verified => {
+                ContentVerificationStatusResponse::Verified
+            }
+            asset_core::domain::ContentVerificationStatus::Failed => {
+                ContentVerificationStatusResponse::Failed
+            }
+        };
         Self {
             size: content.size(),
             mime_type: content.mime_type().map(str::to_string),
-            checksum: ChecksumResponse::from(content.checksum()),
+            verification_status,
+            checksum: content.checksum().map(ChecksumResponse::from),
+            verification_error: content.verification_error().map(str::to_string),
         }
     }
 }

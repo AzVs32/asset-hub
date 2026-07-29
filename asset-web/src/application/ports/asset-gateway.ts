@@ -10,6 +10,8 @@ import type {
   ResourceFilters,
   ResourceKind,
   UploadDraft,
+  UploadProgress,
+  UploadReceipt,
 } from "@/domain/resource";
 
 export interface AssetGateway {
@@ -24,7 +26,11 @@ export interface AssetGateway {
   updateResource(id: string, draft: ResourceDraft): Promise<Resource>;
   restoreResource(id: string): Promise<Resource>;
   deleteResource(id: string): Promise<Resource>;
-  uploadResource(draft: UploadDraft): Promise<Resource>;
+  uploadResource(
+    draft: UploadDraft,
+    onProgress?: (progress: UploadProgress) => void,
+  ): Promise<UploadReceipt>;
+  waitForUpload(id: string): Promise<Resource>;
   createDirectory(parentPath: string, name: string, kind?: string): Promise<Directory>;
   executeDirectoryAction(
     directory: Directory,

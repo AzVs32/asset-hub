@@ -26,6 +26,13 @@ impl AssetRuntime {
     /// [`AssetRuntime::start_storage_sync`]。
     pub async fn new(config: AssetInfraConfig) -> Result<Self, CoreError> {
         let infrastructure = AssetInfrastructure::new(config).await?;
+        let resumed = infrastructure
+            .resource_service()
+            .resume_upload_finalizations()
+            .await?;
+        if resumed > 0 {
+            tracing::info!(count = resumed, "resumed pending upload finalizations");
+        }
         Ok(Self {
             infrastructure,
             storage_sync: None,
@@ -33,6 +40,8 @@ impl AssetRuntime {
     }
 
     /// 启动配置所指定的自动存储同步任务，并由运行时持有其生命周期。
+    ///
+    /// 文件监听器会在返回前建立；首次全盘协调和校验和计算在后台执行，不阻塞应用监听端口。
     ///
     /// 重复调用不会创建第二个同步任务。配置禁用同步时该方法成功返回但不启动任务。
     pub async fn start_storage_sync(&mut self) -> Result<(), CoreError> {

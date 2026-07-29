@@ -185,7 +185,7 @@ fn directory_request_and_output_have_separate_wire_effects() {
 }
 
 #[test]
-fn request_and_output_wire_shapes_match_the_v1_goldens() {
+fn request_and_output_wire_shapes_match_the_current_goldens() {
     assert_golden_round_trip::<PluginActionRequest>(include_str!(
         "fixtures/action-request-inline-v1.json"
     ));

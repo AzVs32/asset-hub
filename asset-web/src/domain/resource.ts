@@ -7,7 +7,9 @@ export type ContentDelivery = "auto" | "inline" | "reference";
 export interface ResourceContent {
   size: number;
   mimeType: string | null;
-  checksum: { kind: string; value: string };
+  verificationStatus: "pending" | "verified" | "failed";
+  checksum: { kind: string; value: string } | null;
+  verificationError: string | null;
 }
 
 export interface ResourceAction {
@@ -113,4 +115,15 @@ export interface UploadDraft {
   directory: string;
   kind: string;
   tags: string;
+}
+
+export interface UploadProgress {
+  stage: "preparing" | "uploading" | "finalizing";
+  bytesSent: number;
+  totalBytes: number;
+}
+
+export interface UploadReceipt {
+  id: string;
+  name: string;
 }

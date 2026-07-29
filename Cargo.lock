@@ -171,6 +171,7 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror 2.0.18",
  "tokio",
+ "tracing",
  "uuid",
 ]
 
@@ -250,6 +251,7 @@ dependencies = [
  "asset-plugin-api",
  "sqlx",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

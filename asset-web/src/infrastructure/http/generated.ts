@@ -213,12 +213,7 @@ export interface paths {
         /** 分页列出资源。 */
         get: operations["list_resources"];
         put?: never;
-        /**
-         * 使用原始内容流创建资源。
-         * @description 请求体必须是原始二进制流。资源名称、目录等元信息从 query 参数读取，MIME 类型
-         *     优先使用请求的 `Content-Type` header。
-         */
-        post: operations["create_resource"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -312,6 +307,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/uploads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["create_upload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/uploads/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["upload_status"];
+        put?: never;
+        post?: never;
+        delete: operations["abort_upload"];
+        options?: never;
+        head?: never;
+        patch: operations["append_upload"];
+        trace?: never;
+    };
+    "/uploads/{id}/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["complete_upload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -333,6 +376,11 @@ export interface components {
             /** @description 校验和值。 */
             value: string;
         };
+        /**
+         * @description 内容校验状态响应。
+         * @enum {string}
+         */
+        ContentVerificationStatusResponse: "pending" | "verified" | "failed";
         /** @description 创建逻辑目录请求。 */
         CreateDirectoryRequest: {
             /** @description 可选目录类型。 */
@@ -342,16 +390,15 @@ export interface components {
             /** @description 相对于当前用户可见根目录的父路径；根目录为空字符串。 */
             parent_path?: string;
         };
-        /** @description 使用原始内容流创建资源的 query 参数。 */
-        CreateResourceQuery: {
-            /** @description 相对于当前用户可见根目录的资源路径。 */
-            directory?: string | null;
-            /** @description 可选资源类型。 */
+        /** @description 创建断点续传会话。 */
+        CreateUploadRequest: {
+            directory?: string;
             kind?: string | null;
-            /** @description 资源文件名；与目录共同决定对象存储路径。 */
+            mime_type?: string | null;
             name: string;
-            /** @description 可选 JSON 字符串形式的资源标签数组。 */
-            tags_json?: string | null;
+            /** Format: int64 */
+            size: number;
+            tags?: string[];
         };
         CreateUserRequest: {
             is_admin?: boolean;
@@ -550,8 +597,7 @@ export interface components {
         };
         /** @description 资源内容引用响应。 */
         ResourceContentResponse: {
-            /** @description 服务端根据内容本体计算得到的校验和。 */
-            checksum: components["schemas"]["ChecksumResponse"];
+            checksum?: null | components["schemas"]["ChecksumResponse"];
             /** @description 内容 MIME 类型。 */
             mime_type?: string | null;
             /**
@@ -559,6 +605,10 @@ export interface components {
              * @description 内容字节大小。
              */
             size: number;
+            /** @description 后台校验失败原因；仅校验失败时存在。 */
+            verification_error?: string | null;
+            /** @description 内容校验状态。 */
+            verification_status: components["schemas"]["ContentVerificationStatusResponse"];
         };
         /** @description 资源类型响应。 */
         ResourceKindResponse: {
@@ -659,6 +709,19 @@ export interface components {
             tags?: string[] | null;
         };
         UpdateUserStatusRequest: {
+            status: string;
+        };
+        UploadSessionResponse: {
+            /** @description 后台 finalization 的失败原因。 */
+            error?: string | null;
+            id: string;
+            /** Format: int64 */
+            offset: number;
+            /** @description finalization 完成后创建的 Resource ID。 */
+            resource_id?: string | null;
+            /** Format: int64 */
+            size: number;
+            /** @description uploading、finalizing、completed 或 failed。 */
             status: string;
         };
     };
@@ -1183,58 +1246,6 @@ export interface operations {
             };
         };
     };
-    create_resource: {
-        parameters: {
-            query: {
-                /** @description 资源文件名；与目录共同决定对象存储路径。 */
-                name: string;
-                /** @description 相对于当前用户可见根目录的资源路径。 */
-                directory?: string;
-                /** @description 可选资源类型。 */
-                kind?: string;
-                /** @description 可选 JSON 字符串形式的资源标签数组。 */
-                tags_json?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description 原始二进制内容流 */
-        requestBody: {
-            content: {
-                "application/octet-stream": string;
-            };
-        };
-        responses: {
-            /** @description 资源已创建 */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ResourceResponse"];
-                };
-            };
-            /** @description 请求参数无效 */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description 服务端错误 */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
     find_resource: {
         parameters: {
             query?: never;
@@ -1593,6 +1604,180 @@ export interface operations {
             };
             /** @description 服务端错误 */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    create_upload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateUploadRequest"];
+            };
+        };
+        responses: {
+            /** @description 上传会话已创建 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UploadSessionResponse"];
+                };
+            };
+            /** @description 请求参数无效 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 目标路径冲突 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    upload_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 上传会话 ID */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 上传偏移和后台 finalization 状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UploadSessionResponse"];
+                };
+            };
+            /** @description 上传会话不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    abort_upload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 上传会话 ID */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 上传会话及临时内容已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 上传会话不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    append_upload: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 本分片起始偏移 */
+                "Upload-Offset": number;
+            };
+            path: {
+                /** @description 上传会话 ID */
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** @description 从 Upload-Offset 开始的原始文件分片 */
+        requestBody: {
+            content: {
+                "application/octet-stream": string;
+            };
+        };
+        responses: {
+            /** @description 分片已持久化 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 上传偏移冲突 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    complete_upload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 上传会话 ID */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 后台 finalization 已接受 */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UploadSessionResponse"];
+                };
+            };
+            /** @description 上传不完整或目标路径冲突 */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

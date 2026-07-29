@@ -6,25 +6,26 @@ use crate::domain::{DirectoryPath, ResourceId, ResourceKind};
 use crate::port::BlobByteStream;
 use asset_plugin_api::{ResourceAction, ResourceActionDefinition};
 
-/// 使用原始内容流创建资源。
-pub struct CreateResource {
+/// 创建持久化上传会话。
+#[derive(Debug, Clone)]
+pub struct CreateUpload {
     pub(super) name: String,
     pub(super) kind: Option<ResourceKind>,
     pub(super) directory: DirectoryPath,
     pub(super) tags: Vec<String>,
-    pub(super) content: BlobByteStream,
     pub(super) mime_type: Option<String>,
+    pub(super) expected_size: u64,
 }
 
-impl CreateResource {
-    pub fn new(name: impl Into<String>, content: BlobByteStream) -> Self {
+impl CreateUpload {
+    pub fn new(name: impl Into<String>, expected_size: u64) -> Self {
         Self {
             name: name.into(),
             kind: None,
             directory: DirectoryPath::root(),
             tags: Vec::new(),
-            content,
             mime_type: None,
+            expected_size,
         }
     }
 

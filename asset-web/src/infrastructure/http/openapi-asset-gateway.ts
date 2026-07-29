@@ -20,6 +20,8 @@ import type {
   ResourceFilters,
   ResourceKind,
   UploadDraft,
+  UploadProgress,
+  UploadReceipt,
 } from "@/domain/resource";
 import type { components, paths } from "./generated";
 import { HttpError, httpError } from "./http-error";
@@ -30,6 +32,19 @@ type ApiResource = Schemas["ResourceResponse"];
 type ApiAction = Schemas["ResourceActionDefinitionResponse"];
 type ApiKind = Schemas["ResourceKindResponse"];
 type ApiDirectoryAction = Schemas["DirectoryActionDefinitionResponse"];
+
+const UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024;
+const UPLOAD_RESUME_STORAGE_KEY = "asset-hub.upload-sessions";
+const UPLOAD_STATUS_POLL_MILLISECONDS = 1_000;
+
+interface ApiUploadSession {
+  id: string;
+  offset: number;
+  size: number;
+  status: "uploading" | "finalizing" | "completed" | "failed";
+  resource_id?: string;
+  error?: string;
+}
 
 export class OpenApiAssetGateway implements AssetGateway {
   readonly #baseUrl: string;
@@ -129,21 +144,118 @@ export class OpenApiAssetGateway implements AssetGateway {
     return mapResource(expectData(result));
   }
 
-  async uploadResource(draft: UploadDraft): Promise<Resource> {
-    const params = new URLSearchParams({
-      name: draft.name.length > 0 ? draft.name : draft.file.name,
+  async uploadResource(
+    draft: UploadDraft,
+    onProgress?: (progress: UploadProgress) => void,
+  ): Promise<UploadReceipt> {
+    const file = draft.file;
+    reportUploadProgress(onProgress, "preparing", 0, file.size);
+    const metadata = {
+      name: draft.name.length > 0 ? draft.name : file.name,
       directory: normalizeDirectory(draft.directory),
-      tags_json: JSON.stringify(splitTags(draft.tags)),
-    });
-    if (draft.kind.trim()) params.set("kind", draft.kind.trim());
-    const response = await fetch(`${this.#baseUrl}/resources?${params}`, {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": draft.file.type || "application/octet-stream" },
-      body: draft.file,
-    });
+      ...(draft.kind.trim() ? { kind: draft.kind.trim() } : {}),
+      tags: splitTags(draft.tags),
+      mime_type: file.type || "application/octet-stream",
+      size: file.size,
+    };
+    const fingerprint = uploadFingerprint(file, metadata);
+    let uploadId = loadUploadId(fingerprint);
+    let offset = 0;
+
+    if (uploadId) {
+      const response = await fetch(`${this.#baseUrl}/uploads/${encodeURIComponent(uploadId)}`, {
+        credentials: "include",
+      });
+      if (response.ok) {
+        const session = parseUploadSession(await response.json());
+        offset = session.offset;
+        if (offset > file.size || session.size !== file.size) {
+          clearUploadId(fingerprint);
+          uploadId = null;
+          offset = 0;
+        }
+      } else if (response.status === 404) {
+        clearUploadId(fingerprint);
+        uploadId = null;
+      } else {
+        throw await httpError(response);
+      }
+    }
+
+    if (!uploadId) {
+      const response = await fetch(`${this.#baseUrl}/uploads`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(metadata),
+      });
+      if (!response.ok) throw await httpError(response);
+      const session = parseUploadSession(await response.json());
+      uploadId = session.id;
+      offset = session.offset;
+      saveUploadId(fingerprint, uploadId);
+    }
+
+    reportUploadProgress(onProgress, "uploading", offset, file.size);
+    while (offset < file.size) {
+      const chunk = file.slice(offset, Math.min(offset + UPLOAD_CHUNK_BYTES, file.size));
+      const response = await fetch(`${this.#baseUrl}/uploads/${encodeURIComponent(uploadId)}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "Upload-Offset": String(offset),
+        },
+        body: chunk,
+      });
+      if (!response.ok) throw await httpError(response);
+      const nextOffset = uploadOffset(response);
+      if (nextOffset <= offset) throw new Error("Upload server did not advance the file offset");
+      offset = nextOffset;
+      reportUploadProgress(onProgress, "uploading", offset, file.size);
+    }
+
+    reportUploadProgress(onProgress, "finalizing", offset, file.size);
+    const response = await fetch(
+      `${this.#baseUrl}/uploads/${encodeURIComponent(uploadId)}/complete`,
+      {
+        method: "POST",
+        credentials: "include",
+      },
+    );
     if (!response.ok) throw await httpError(response);
-    return mapResource((await response.json()) as ApiResource);
+    parseUploadSession(await response.json());
+    return { id: uploadId, name: metadata.name };
+  }
+
+  async waitForUpload(id: string): Promise<Resource> {
+    for (;;) {
+      const response = await fetch(`${this.#baseUrl}/uploads/${encodeURIComponent(id)}`, {
+        credentials: "include",
+      });
+      if (!response.ok) throw await httpError(response);
+      const session = parseUploadSession(await response.json());
+      if (session.status === "failed") {
+        throw new Error(session.error || "Resource publishing failed");
+      }
+      if (session.status === "completed") {
+        if (!session.resource_id) {
+          throw new Error("Completed upload did not include a Resource ID");
+        }
+        const resource = await this.findResource(session.resource_id);
+        try {
+          await fetch(`${this.#baseUrl}/uploads/${encodeURIComponent(id)}`, {
+            method: "DELETE",
+            credentials: "include",
+          });
+        } catch {
+          // Resource 已确认创建；会话确认删除失败不影响最终结果。
+        }
+        clearUploadIdById(id);
+        return resource;
+      }
+      await delay(UPLOAD_STATUS_POLL_MILLISECONDS);
+    }
   }
 
   async createDirectory(parentPath: string, name: string, kind?: string): Promise<Directory> {
@@ -346,7 +458,9 @@ function mapResource(value: ApiResource): Resource {
       ? {
           size: value.content.size,
           mimeType: value.content.mime_type ?? null,
-          checksum: value.content.checksum,
+          verificationStatus: value.content.verification_status,
+          checksum: value.content.checksum ?? null,
+          verificationError: value.content.verification_error ?? null,
         }
       : null,
     actions: value.actions.available_actions.map(mapAction),
@@ -412,6 +526,107 @@ function splitTags(value: string): string[] {
         .filter(Boolean),
     ),
   ];
+}
+
+function uploadOffset(response: Response): number {
+  const value = response.headers.get("upload-offset");
+  const offset = value === null ? Number.NaN : Number(value);
+  if (!Number.isSafeInteger(offset) || offset < 0) {
+    throw new Error("Upload server returned an invalid Upload-Offset");
+  }
+  return offset;
+}
+
+function parseUploadSession(value: unknown): ApiUploadSession {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Upload server returned an invalid session");
+  }
+  const session = value as Record<string, unknown>;
+  const statuses: ApiUploadSession["status"][] = ["uploading", "finalizing", "completed", "failed"];
+  if (
+    typeof session.id !== "string" ||
+    !Number.isSafeInteger(session.offset) ||
+    Number(session.offset) < 0 ||
+    !Number.isSafeInteger(session.size) ||
+    Number(session.size) < 0 ||
+    !statuses.includes(session.status as ApiUploadSession["status"]) ||
+    (session.resource_id !== undefined && typeof session.resource_id !== "string") ||
+    (session.error !== undefined && typeof session.error !== "string")
+  ) {
+    throw new Error("Upload server returned an invalid session");
+  }
+  return session as unknown as ApiUploadSession;
+}
+
+function reportUploadProgress(
+  callback: ((progress: UploadProgress) => void) | undefined,
+  stage: UploadProgress["stage"],
+  bytesSent: number,
+  totalBytes: number,
+): void {
+  callback?.({ stage, bytesSent, totalBytes });
+}
+
+function uploadFingerprint(file: File, metadata: object): string {
+  return JSON.stringify({
+    file: {
+      name: file.name,
+      size: file.size,
+      lastModified: file.lastModified,
+    },
+    resource: metadata,
+  });
+}
+
+function loadUploadId(fingerprint: string): string | null {
+  return uploadSessions()[fingerprint] ?? null;
+}
+
+function saveUploadId(fingerprint: string, id: string): void {
+  const sessions = uploadSessions();
+  sessions[fingerprint] = id;
+  saveUploadSessions(sessions);
+}
+
+function clearUploadId(fingerprint: string): void {
+  const sessions = uploadSessions();
+  delete sessions[fingerprint];
+  saveUploadSessions(sessions);
+}
+
+function clearUploadIdById(id: string): void {
+  const sessions = Object.fromEntries(
+    Object.entries(uploadSessions()).filter(([, uploadId]) => uploadId !== id),
+  );
+  saveUploadSessions(sessions);
+}
+
+function uploadSessions(): Record<string, string> {
+  try {
+    const value = globalThis.localStorage?.getItem(UPLOAD_RESUME_STORAGE_KEY);
+    if (!value) return {};
+    const parsed: unknown = JSON.parse(value);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string",
+      ),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function saveUploadSessions(sessions: Record<string, string>): void {
+  try {
+    globalThis.localStorage?.setItem(UPLOAD_RESUME_STORAGE_KEY, JSON.stringify(sessions));
+  } catch {
+    // 浏览器禁用持久化时仍允许当前上传继续。
+  }
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => globalThis.setTimeout(resolve, milliseconds));
 }
 
 function enumValue<const T extends string>(value: string, values: readonly T[]): T {

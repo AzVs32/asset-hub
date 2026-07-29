@@ -25,17 +25,32 @@ pub struct ResourceContent {
     size: u64,
     /// 内容 MIME 类型。
     mime_type: Option<String>,
-    /// 根据内容本体计算得到的唯一校验和。
-    checksum: Checksum,
+    /// 内容校验状态；未校验和失败状态仍引用真实存在的物理内容。
+    verification: ContentVerification,
     /// 最近一次成功协调时观察到的物理存储修改时间。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     modified_at: Option<DateTime<Utc>>,
 }
 
 impl ResourceContent {
-    /// 创建内容引用构建器。
-    pub fn builder(size: u64, checksum: Checksum) -> ResourceContentBuilder {
-        ResourceContentBuilder::new(size, checksum)
+    /// 创建尚待后台校验的内容引用构建器。
+    pub fn pending(size: u64) -> ResourceContentBuilder {
+        ResourceContentBuilder::new(size, ContentVerification::Pending)
+    }
+
+    /// 创建已经完成内容校验的内容引用构建器。
+    pub fn verified(size: u64, checksum: Checksum) -> ResourceContentBuilder {
+        ResourceContentBuilder::new(size, ContentVerification::Verified { checksum })
+    }
+
+    /// 创建后台校验失败的内容引用构建器。
+    pub fn verification_failed(size: u64, error: impl Into<String>) -> ResourceContentBuilder {
+        ResourceContentBuilder::new(
+            size,
+            ContentVerification::Failed {
+                error: error.into(),
+            },
+        )
     }
 
     /// 返回内容字节大小。
@@ -48,14 +63,76 @@ impl ResourceContent {
         self.mime_type.as_deref()
     }
 
-    /// 返回根据内容本体计算得到的校验和。
-    pub fn checksum(&self) -> &Checksum {
-        &self.checksum
+    /// 返回当前内容校验状态。
+    pub fn verification_status(&self) -> ContentVerificationStatus {
+        self.verification.status()
+    }
+
+    /// 仅在校验完成时返回根据内容本体计算得到的校验和。
+    pub fn checksum(&self) -> Option<&Checksum> {
+        self.verification.checksum()
+    }
+
+    /// 仅在后台校验失败时返回错误说明。
+    pub fn verification_error(&self) -> Option<&str> {
+        self.verification.error()
     }
 
     /// 返回最近一次成功协调时观察到的物理存储修改时间。
     pub fn modified_at(&self) -> Option<DateTime<Utc>> {
         self.modified_at
+    }
+}
+
+/// 内容校验的完整持久化状态。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum ContentVerification {
+    Pending,
+    Verified { checksum: Checksum },
+    Failed { error: String },
+}
+
+impl ContentVerification {
+    pub fn status(&self) -> ContentVerificationStatus {
+        match self {
+            Self::Pending => ContentVerificationStatus::Pending,
+            Self::Verified { .. } => ContentVerificationStatus::Verified,
+            Self::Failed { .. } => ContentVerificationStatus::Failed,
+        }
+    }
+
+    pub fn checksum(&self) -> Option<&Checksum> {
+        match self {
+            Self::Verified { checksum } => Some(checksum),
+            Self::Pending | Self::Failed { .. } => None,
+        }
+    }
+
+    pub fn error(&self) -> Option<&str> {
+        match self {
+            Self::Failed { error } => Some(error),
+            Self::Pending | Self::Verified { .. } => None,
+        }
+    }
+}
+
+/// 面向业务和传输边界的稳定校验状态。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContentVerificationStatus {
+    Pending,
+    Verified,
+    Failed,
+}
+
+impl ContentVerificationStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Verified => "verified",
+            Self::Failed => "failed",
+        }
     }
 }
 
@@ -66,19 +143,18 @@ pub struct ResourceContentBuilder {
     size: u64,
     /// 内容 MIME 类型。
     mime_type: Option<String>,
-    /// 根据内容本体计算得到的唯一校验和。
-    checksum: Checksum,
+    /// 内容校验状态。
+    verification: ContentVerification,
     /// 最近一次成功协调时观察到的物理存储修改时间。
     modified_at: Option<DateTime<Utc>>,
 }
 
 impl ResourceContentBuilder {
-    /// 创建资源内容引用构建器。
-    pub fn new(size: u64, checksum: Checksum) -> Self {
+    fn new(size: u64, verification: ContentVerification) -> Self {
         Self {
             size,
             mime_type: None,
-            checksum,
+            verification,
             modified_at: None,
         }
     }
@@ -104,10 +180,21 @@ impl ResourceContentBuilder {
             })
             .transpose()?;
 
+        let verification = match self.verification {
+            ContentVerification::Failed { error } => ContentVerification::Failed {
+                error: normalize_required_text(
+                    "content.verification.error",
+                    &error,
+                    MAX_CONTENT_TEXT_LEN,
+                )?,
+            },
+            verification => verification,
+        };
+
         Ok(ResourceContent {
             size: self.size,
             mime_type,
-            checksum: self.checksum,
+            verification,
             modified_at: self.modified_at,
         })
     }

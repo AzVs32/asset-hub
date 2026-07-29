@@ -128,7 +128,7 @@ fn resource_builder_accepts_tags_and_content() {
     let modified_at = chrono::DateTime::parse_from_rfc3339("2026-07-23T03:00:00Z")
         .unwrap()
         .with_timezone(&chrono::Utc);
-    let content = ResourceContent::builder(42, checksum.clone())
+    let content = ResourceContent::verified(42, checksum.clone())
         .with_mime_type(" image/png ")
         .with_modified_at(modified_at)
         .build()
@@ -143,7 +143,7 @@ fn resource_builder_accepts_tags_and_content() {
 
     let content = resource.content().unwrap();
     assert_eq!(content.mime_type(), Some("image/png"));
-    assert_eq!(content.checksum(), &checksum);
+    assert_eq!(content.checksum(), Some(&checksum));
     assert_eq!(content.modified_at(), Some(modified_at));
     assert_eq!(
         resource
@@ -156,12 +156,36 @@ fn resource_builder_accepts_tags_and_content() {
 }
 
 #[test]
+fn resource_content_supports_explicit_pending_and_failed_verification() {
+    let pending = ResourceContent::pending(42)
+        .with_mime_type("application/octet-stream")
+        .build()
+        .unwrap();
+    assert_eq!(
+        pending.verification_status(),
+        ContentVerificationStatus::Pending
+    );
+    assert_eq!(pending.checksum(), None);
+    assert_eq!(pending.verification_error(), None);
+
+    let failed = ResourceContent::verification_failed(42, "storage read failed")
+        .build()
+        .unwrap();
+    assert_eq!(
+        failed.verification_status(),
+        ContentVerificationStatus::Failed
+    );
+    assert_eq!(failed.checksum(), None);
+    assert_eq!(failed.verification_error(), Some("storage read failed"));
+}
+
+#[test]
 fn resource_tracks_its_directory_by_id() {
     let directory_id = DirectoryId::new();
     let resource = Resource::builder("readme.md")
         .with_directory_id(directory_id)
         .with_content(
-            ResourceContent::builder(42, Checksum::sha256("a".repeat(64)).unwrap())
+            ResourceContent::verified(42, Checksum::sha256("a".repeat(64)).unwrap())
                 .build()
                 .unwrap(),
         )
@@ -205,7 +229,7 @@ fn deleted_resource_rejects_mutations() {
     );
     assert_eq!(
         resource.attach_content(
-            ResourceContent::builder(1, Checksum::sha256("a".repeat(64)).unwrap())
+            ResourceContent::verified(1, Checksum::sha256("a".repeat(64)).unwrap())
                 .build()
                 .unwrap(),
         ),
@@ -283,10 +307,10 @@ fn checksum_kind_uses_canonical_boundary_text() {
 #[test]
 fn content_stores_one_typed_checksum() {
     let checksum = Checksum::sha256("a".repeat(64)).unwrap();
-    let content = ResourceContent::builder(1, checksum.clone())
+    let content = ResourceContent::verified(1, checksum.clone())
         .build()
         .unwrap();
 
-    assert_eq!(content.checksum(), &checksum);
-    assert_eq!(content.checksum().kind(), ChecksumKind::Sha256);
+    assert_eq!(content.checksum(), Some(&checksum));
+    assert_eq!(content.checksum().unwrap().kind(), ChecksumKind::Sha256);
 }

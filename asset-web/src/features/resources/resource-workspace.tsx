@@ -35,6 +35,8 @@ export function ResourceWorkspace() {
     queryKey: queryKeys.resource(browser.selectedId ?? ""),
     queryFn: () => gateway.findResource(browser.selectedId ?? ""),
     enabled: Boolean(browser.selectedId),
+    refetchInterval: (query) =>
+      query.state.data?.content?.verificationStatus === "pending" ? 1_000 : false,
   });
   const resource = browser.selectedId ? (selected.data ?? null) : null;
   const directory = browser.selectedDirectoryId
@@ -122,7 +124,8 @@ export function ResourceWorkspace() {
         directory={user.isAdmin && !browser.filters.directory ? "uploads" : formDirectory}
         kinds={kinds}
         pending={commands.upload.isPending}
-        onUpload={async (draft) => selectResource(await commands.upload.mutateAsync(draft))}
+        progress={commands.uploadProgress}
+        onUpload={(draft) => commands.upload.mutateAsync(draft)}
       />
       <CreateFolderDialog
         open={folderOpen}

@@ -77,7 +77,7 @@ async fn sqlite_repository_roundtrips_resource() {
     let modified_at = chrono::DateTime::parse_from_rfc3339("2026-07-23T03:00:00Z")
         .unwrap()
         .with_timezone(&chrono::Utc);
-    let content = ResourceContent::builder(42, checksum.clone())
+    let content = ResourceContent::verified(42, checksum.clone())
         .with_mime_type("image/png")
         .with_modified_at(modified_at)
         .build()
@@ -120,7 +120,7 @@ async fn sqlite_repository_roundtrips_resource() {
     );
     assert_eq!(restored_content.size(), 42);
     assert_eq!(restored_content.mime_type(), Some("image/png"));
-    assert_eq!(restored_content.checksum(), &checksum);
+    assert_eq!(restored_content.checksum(), Some(&checksum));
     assert_eq!(restored_content.modified_at(), Some(modified_at));
 
     let tag_rows: i64 =

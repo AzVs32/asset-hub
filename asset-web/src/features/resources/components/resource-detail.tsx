@@ -207,6 +207,16 @@ function Detail({
           <Fact label="Directory" value={displayResource.directory} />
           <Fact label="Size" value={formatBytes(resource.content?.size ?? 0)} />
           <Fact label="MIME" value={resource.content?.mimeType ?? "—"} />
+          <Fact
+            label="Verification"
+            value={
+              resource.content
+                ? resource.content.verificationStatus === "failed"
+                  ? `failed: ${resource.content.verificationError ?? "unknown error"}`
+                  : resource.content.verificationStatus
+                : "—"
+            }
+          />
           <Fact label="Kind source" value={kind?.source ?? "—"} />
           <Fact
             label="Content"

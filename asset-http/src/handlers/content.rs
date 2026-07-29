@@ -5,60 +5,6 @@ use zip::write::SimpleFileOptions;
 
 pub(super) const DEFAULT_CONTENT_TYPE: &str = "application/octet-stream";
 
-/// 使用原始内容流创建资源。
-///
-/// 请求体必须是原始二进制流。资源名称、目录等元信息从 query 参数读取，MIME 类型
-/// 优先使用请求的 `Content-Type` header。
-#[utoipa::path(
-    post,
-    path = "/resources",
-    tag = "resources",
-    params(CreateResourceQuery),
-    request_body(
-        content = inline(BinaryContent),
-        content_type = "application/octet-stream",
-        description = "原始二进制内容流"
-    ),
-    responses(
-        (status = 201, description = "资源已创建", body = ResourceResponse),
-        (status = 400, description = "请求参数无效", body = crate::dto::ErrorResponse),
-        (status = 500, description = "服务端错误", body = crate::dto::ErrorResponse)
-    )
-)]
-pub(crate) async fn create_resource(
-    State(state): State<HttpState>,
-    access: Extension<AccessContext>,
-    Query(query): Query<CreateResourceQuery>,
-    headers: HeaderMap,
-    body: Body,
-) -> Result<(StatusCode, Json<ResourceResponse>), HttpError> {
-    let workspace = state.workspace(&access.0).await?;
-    let directory = query.directory.unwrap_or_default();
-    let data = body_stream(body);
-
-    let mut command = CreateResource::new(query.name, data);
-    command = command.with_directory(directory);
-    if let Some(kind) = query.kind {
-        command = command.with_kind(parse_kind(kind)?);
-    }
-    if let Some(tags_json) = query.tags_json {
-        let tags = serde_json::from_str::<Vec<String>>(&tags_json)
-            .map_err(|error| HttpError::bad_request(format!("invalid tags_json: {error}")))?;
-        command = command.with_tags(tags);
-    }
-
-    if let Some(mime_type) = content_type(&headers)? {
-        command = command.with_mime_type(mime_type);
-    }
-
-    let resource = state.secured(&access.0).create_resource(command).await?;
-
-    Ok((
-        StatusCode::CREATED,
-        Json(resource_snapshot_response(state.service(), &workspace, &resource).await?),
-    ))
-}
-
 /// 读取资源内容。
 #[utoipa::path(
     get,
@@ -282,26 +228,6 @@ async fn resource_content_response(
     };
 
     Ok((response, resource.resource().name().to_owned()))
-}
-
-pub(super) fn content_type(headers: &HeaderMap) -> Result<Option<String>, HttpError> {
-    headers
-        .get(header::CONTENT_TYPE)
-        .map(|value| {
-            value
-                .to_str()
-                .map(|value| value.to_string())
-                .map_err(|error| HttpError::bad_request(format!("invalid content-type: {error}")))
-        })
-        .transpose()
-}
-
-pub(super) fn body_stream(body: Body) -> BlobByteStream {
-    Box::pin(
-        body.into_data_stream().map(move |chunk| {
-            chunk.map_err(|error| CoreError::storage("http.request_body", error))
-        }),
-    )
 }
 
 pub(super) fn binary_stream_response(

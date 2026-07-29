@@ -26,10 +26,12 @@ export function resource(actions: ResourceAction[] = []): Resource {
     content: {
       size: 128,
       mimeType: "video/mp4",
+      verificationStatus: "verified",
       checksum: {
         kind: "sha256",
         value: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
       },
+      verificationError: null,
     },
     actions,
     createdAt: "2026-01-01T00:00:00Z",

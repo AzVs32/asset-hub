@@ -9,7 +9,7 @@ use crate::port::{
     BlobStorage, DirectoryActionExecutor, DirectoryActionRegistry, DirectoryIndex,
     DirectoryKindRegistry, DirectoryLocation, DirectoryStorage, DirectoryStore,
     ResourceActionExecutor, ResourceActionRegistry, ResourceKindRegistry, ResourceQuery,
-    ResourceRepository, StorageScanner,
+    ResourceRepository, StorageScanner, UploadSessionRepository,
 };
 use crate::service::DirectoryService;
 use asset_plugin_api::{PluginExecutionPolicy, ResourceActionDefinition};
@@ -22,18 +22,22 @@ mod contract;
 mod reconciliation;
 mod secured;
 mod storage_key_locks;
+mod upload;
+mod upload_locks;
 
 use action::ResourceActionService;
 use command::ResourceCommandService;
 use content::ResourceContentService;
 pub use contract::{
-    CreateResource, DirectoryArchiveManifest, DirectoryArchiveResource, ExecuteResourceAction,
+    CreateUpload, DirectoryArchiveManifest, DirectoryArchiveResource, ExecuteResourceAction,
     ResourceActions, ResourceContentStream, UpdateResource,
 };
 pub use reconciliation::StorageReconciliationReport;
 use reconciliation::StorageReconciliationService;
 pub use secured::SecuredResourceService;
 use storage_key_locks::StorageKeyLocks;
+use upload::ResourceUploadService;
+use upload_locks::UploadLocks;
 
 /// 资源应用服务。
 ///
@@ -51,6 +55,8 @@ pub struct ResourceService {
     action_ports: Option<ResourceActionPorts>,
     plugin_execution_policy: Arc<PluginExecutionPolicy>,
     storage_key_locks: Arc<StorageKeyLocks>,
+    upload_sessions: Arc<dyn UploadSessionRepository>,
+    upload_locks: Arc<UploadLocks>,
 }
 
 #[derive(Clone)]
@@ -79,6 +85,7 @@ pub struct ResourceServicePorts {
     directory_kind_registry: Arc<dyn DirectoryKindRegistry>,
     storage_scanner: Arc<dyn StorageScanner>,
     kind_registry: Arc<dyn ResourceKindRegistry>,
+    upload_sessions: Arc<dyn UploadSessionRepository>,
     action_ports: Option<ResourceActionPorts>,
     directory_action_ports: Option<DirectoryActionPorts>,
 }
@@ -94,6 +101,7 @@ impl ResourceServicePorts {
         directory_kind_registry: Arc<dyn DirectoryKindRegistry>,
         storage_scanner: Arc<dyn StorageScanner>,
         kind_registry: Arc<dyn ResourceKindRegistry>,
+        upload_sessions: Arc<dyn UploadSessionRepository>,
     ) -> Self {
         Self {
             repository,
@@ -105,6 +113,7 @@ impl ResourceServicePorts {
             directory_kind_registry,
             storage_scanner,
             kind_registry,
+            upload_sessions,
             action_ports: None,
             directory_action_ports: None,
         }
@@ -145,6 +154,7 @@ impl ResourceService {
             directory_kind_registry,
             storage_scanner,
             kind_registry,
+            upload_sessions,
             action_ports,
             directory_action_ports,
         } = ports;
@@ -167,6 +177,8 @@ impl ResourceService {
             action_ports,
             plugin_execution_policy,
             storage_key_locks: Arc::new(StorageKeyLocks::default()),
+            upload_sessions,
+            upload_locks: Arc::new(UploadLocks::default()),
         }
     }
 
@@ -180,6 +192,10 @@ impl ResourceService {
 
     fn content(&self) -> ResourceContentService<'_> {
         ResourceContentService::new(self)
+    }
+
+    fn uploads(&self) -> ResourceUploadService<'_> {
+        ResourceUploadService::new(self)
     }
 
     fn actions(&self) -> ResourceActionService<'_> {
@@ -207,6 +223,34 @@ impl ResourceService {
         self.blob_storage.health_check().await
     }
 
+    /// 恢复数据库中尚未完成的上传 finalization。
+    pub async fn resume_upload_finalizations(&self) -> Result<usize, CoreError> {
+        let ids = self.upload_sessions.list_finalizing().await?;
+        let count = ids.len();
+        for id in ids {
+            self.spawn_upload_finalization(id);
+        }
+        Ok(count)
+    }
+
+    fn spawn_upload_finalization(&self, id: crate::domain::UploadId) {
+        let service = self.clone();
+        tokio::spawn(async move {
+            match service.uploads().finalize(&id).await {
+                Ok(resource) => tracing::info!(
+                    upload_id = %id,
+                    resource_id = %resource.id(),
+                    "upload finalization completed"
+                ),
+                Err(error) => tracing::error!(
+                    upload_id = %id,
+                    error = %error,
+                    "upload finalization failed"
+                ),
+            }
+        });
+    }
+
     pub async fn locate_resource_directory(
         &self,
         resource: &Resource,
@@ -225,6 +269,13 @@ impl ResourceService {
     /// 使用大小与修改时间增量协调对象存储。
     pub async fn reconcile_storage(&self) -> Result<StorageReconciliationReport, CoreError> {
         self.reconciliation().reconcile_storage(false).await
+    }
+
+    /// 启动恢复：空仓储先按对象元数据建立 pending Resource，再由调用方后台校验。
+    pub async fn reconcile_storage_on_startup(
+        &self,
+    ) -> Result<StorageReconciliationReport, CoreError> {
+        self.reconciliation().reconcile_storage_on_startup().await
     }
 
     /// 完整读取全部对象并重新计算校验和。

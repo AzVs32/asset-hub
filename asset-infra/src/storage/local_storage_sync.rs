@@ -49,24 +49,59 @@ impl LocalStorageSync {
             .map_err(notify_error)?;
 
         tracing::info!("incremental storage reconciliation started");
-        let report = service.reconcile_storage().await?;
-        log_reconciliation("initial", &report);
-        let known_directories = report.directory_keys().iter().cloned().collect();
-        let task = tokio::spawn(run_sync_loop(
-            root,
-            service,
-            receiver,
-            overflowed,
-            known_directories,
-            debounce,
-            reconcile_interval,
-        ));
+        let task = tokio::spawn(async move {
+            let known_directories = match service.reconcile_storage_on_startup().await {
+                Ok(report) => {
+                    log_reconciliation("initial", &report);
+                    for key in report.pending_verification_keys() {
+                        spawn_checksum_verification(service.clone(), key.clone());
+                    }
+                    report.directory_keys().iter().cloned().collect()
+                }
+                Err(error) => {
+                    tracing::error!(
+                        error = %error,
+                        "initial local storage reconciliation failed; periodic reconciliation will retry"
+                    );
+                    HashSet::new()
+                }
+            };
+            run_sync_loop(
+                root,
+                service,
+                receiver,
+                overflowed,
+                known_directories,
+                debounce,
+                reconcile_interval,
+            )
+            .await;
+        });
 
         Ok(Self {
             _watcher: watcher,
             task,
         })
     }
+}
+
+fn spawn_checksum_verification(service: ResourceService, key: StorageKey) {
+    tokio::spawn(async move {
+        match service
+            .reconcile_storage_keys(std::slice::from_ref(&key))
+            .await
+        {
+            Ok(()) => tracing::info!(
+                storage_key = %key,
+                "background content checksum verification completed"
+            ),
+            Err(error) => tracing::error!(
+                storage_key = %key,
+                error = %error,
+                "background content checksum verification failed"
+            ),
+        }
+    });
 }
 
 impl Drop for LocalStorageSync {
@@ -197,6 +232,7 @@ fn log_reconciliation(phase: &str, report: &asset_core::service::StorageReconcil
         files = report.files,
         hashed_files = report.hashed_files,
         unchanged_files = report.unchanged_files,
+        pending_verification_files = report.pending_verification_keys().len(),
         directories = report.directories,
         removed_resources = report.removed_resources,
         elapsed_ms = report.elapsed.as_millis(),

@@ -14,6 +14,7 @@ mod directory;
 mod identity;
 mod resource;
 mod storage;
+mod upload;
 
 pub use audit::SecurityAuditRepository;
 pub use directory::{
@@ -31,3 +32,4 @@ pub use storage::{
     BlobByteStream, BlobStorage, DirectoryStorage, RESERVED_BLOB_STORAGE_PREFIX, ScannedBlob,
     ScannedStorageEntry, StagedBlob, StoragePrefix, StorageScanStream, StorageScanner,
 };
+pub use upload::UploadSessionRepository;

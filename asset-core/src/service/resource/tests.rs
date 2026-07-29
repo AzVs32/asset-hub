@@ -2,8 +2,8 @@ use super::action::resolved_content_delivery;
 use super::content::hex_sha256;
 use super::*;
 use crate::domain::{
-    AccessContext, Checksum, ChecksumKind, Directory, DirectoryId, DirectoryPath, ResourceId, User,
-    UserId, UserRole,
+    AccessContext, Checksum, ChecksumKind, ContentVerificationStatus, Directory, DirectoryId,
+    DirectoryPath, ResourceId, UploadId, UploadSession, UploadStatus, User, UserId, UserRole,
 };
 use crate::port::{
     BlobByteStream, DirectoryActionExecutor, DirectoryActionOutput, DirectoryActionRegistry,
@@ -11,7 +11,7 @@ use crate::port::{
     DirectoryLocation, DirectoryQuery, DirectoryStore, ListResources, LocatedDirectory,
     LocatedResource, ResourceActionOutput, ResourceActionRequest, ResourceKindDefinition,
     ResourceKindRegistry, ResourcePage, ScannedStorageEntry, StagedBlob, StoragePrefix,
-    UserRepository,
+    UploadSessionRepository, UserRepository,
 };
 use asset_plugin_api::protocol::directory::{
     DirectoryActionEffect, DirectoryPluginActionOutput, UpdateDirectoryEffect,
@@ -33,6 +33,101 @@ use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 use tokio::sync::oneshot;
+
+#[derive(Default)]
+struct InMemoryUploadSessionRepository {
+    sessions: Mutex<HashMap<UploadId, UploadSession>>,
+}
+
+#[async_trait::async_trait]
+impl UploadSessionRepository for InMemoryUploadSessionRepository {
+    async fn save(&self, session: &UploadSession) -> Result<(), CoreError> {
+        self.sessions
+            .lock()
+            .unwrap()
+            .insert(session.id(), session.clone());
+        Ok(())
+    }
+
+    async fn find_by_id(&self, id: &UploadId) -> Result<Option<UploadSession>, CoreError> {
+        Ok(self.sessions.lock().unwrap().get(id).cloned())
+    }
+
+    async fn update_offset(
+        &self,
+        id: &UploadId,
+        expected_offset: u64,
+        offset: u64,
+    ) -> Result<bool, CoreError> {
+        let mut sessions = self.sessions.lock().unwrap();
+        let Some(session) = sessions.get_mut(id) else {
+            return Ok(false);
+        };
+        if session.offset() != expected_offset {
+            return Ok(false);
+        }
+        session.set_offset(offset);
+        Ok(true)
+    }
+
+    async fn mark_finalizing(&self, id: &UploadId) -> Result<bool, CoreError> {
+        let mut sessions = self.sessions.lock().unwrap();
+        let Some(session) = sessions.get_mut(id) else {
+            return Ok(false);
+        };
+        if !matches!(
+            session.status(),
+            UploadStatus::Uploading | UploadStatus::Failed
+        ) {
+            return Ok(false);
+        }
+        session.mark_finalizing();
+        Ok(true)
+    }
+
+    async fn save_checksum(&self, id: &UploadId, checksum: &Checksum) -> Result<(), CoreError> {
+        let mut sessions = self.sessions.lock().unwrap();
+        let session = sessions
+            .get_mut(id)
+            .ok_or_else(|| CoreError::not_found("upload", id.to_string()))?;
+        session.set_checksum(checksum.clone());
+        Ok(())
+    }
+
+    async fn mark_completed(&self, id: &UploadId) -> Result<(), CoreError> {
+        let mut sessions = self.sessions.lock().unwrap();
+        let session = sessions
+            .get_mut(id)
+            .ok_or_else(|| CoreError::not_found("upload", id.to_string()))?;
+        session.mark_completed();
+        Ok(())
+    }
+
+    async fn mark_failed(&self, id: &UploadId, failure: &str) -> Result<(), CoreError> {
+        let mut sessions = self.sessions.lock().unwrap();
+        let session = sessions
+            .get_mut(id)
+            .ok_or_else(|| CoreError::not_found("upload", id.to_string()))?;
+        session.mark_failed(failure);
+        Ok(())
+    }
+
+    async fn list_finalizing(&self) -> Result<Vec<UploadId>, CoreError> {
+        Ok(self
+            .sessions
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|session| session.status() == UploadStatus::Finalizing)
+            .map(UploadSession::id)
+            .collect())
+    }
+
+    async fn remove(&self, id: &UploadId) -> Result<(), CoreError> {
+        self.sessions.lock().unwrap().remove(id);
+        Ok(())
+    }
+}
 
 struct InMemoryResourceRepository {
     resources: Mutex<HashMap<ResourceId, Resource>>,
@@ -580,29 +675,59 @@ impl BlobStorage for InMemoryBlobStorage {
         Ok(())
     }
 
-    async fn stage_stream(&self, mut data: BlobByteStream) -> Result<StagedBlob, CoreError> {
-        let mut bytes = Vec::new();
-
-        while let Some(chunk) = data.next().await {
-            bytes.extend_from_slice(&chunk?);
-        }
-
-        let bytes_written = bytes.len() as u64;
-        let key = StorageKey::new(format!(
-            "{}/uploads/{}",
-            crate::port::RESERVED_BLOB_STORAGE_PREFIX,
-            uuid::Uuid::now_v7()
-        ))?;
+    async fn create_staged(&self, key: &StorageKey) -> Result<StagedBlob, CoreError> {
         self.objects
             .lock()
             .unwrap()
-            .insert(key.clone(), Bytes::from(bytes));
+            .insert(key.clone(), Bytes::new());
         self.modified_at
             .lock()
             .unwrap()
             .insert(key.clone(), chrono::Utc::now());
+        Ok(StagedBlob::new(key.clone(), 0))
+    }
 
-        Ok(StagedBlob::new(key, bytes_written))
+    async fn append_staged(
+        &self,
+        key: &StorageKey,
+        expected_offset: u64,
+        mut data: BlobByteStream,
+    ) -> Result<StagedBlob, CoreError> {
+        let actual = self
+            .objects
+            .lock()
+            .unwrap()
+            .get(key)
+            .map_or(0, |bytes| bytes.len() as u64);
+        if actual != expected_offset {
+            return Err(CoreError::conflict("upload offset mismatch"));
+        }
+        while let Some(chunk) = data.next().await {
+            let chunk = chunk?;
+            let mut objects = self.objects.lock().unwrap();
+            let current = objects
+                .get(key)
+                .cloned()
+                .ok_or_else(|| CoreError::not_found("staged upload", key.to_string()))?;
+            let mut bytes = current.to_vec();
+            bytes.extend_from_slice(&chunk);
+            objects.insert(key.clone(), Bytes::from(bytes));
+        }
+        let size = self.objects.lock().unwrap()[key].len() as u64;
+        self.modified_at
+            .lock()
+            .unwrap()
+            .insert(key.clone(), chrono::Utc::now());
+        Ok(StagedBlob::new(key.clone(), size))
+    }
+
+    async fn inspect_staged(&self, key: &StorageKey) -> Result<Option<StagedBlob>, CoreError> {
+        Ok(self
+            .objects
+            .lock()
+            .unwrap()
+            .get(key)
+            .map(|bytes| StagedBlob::new(key.clone(), bytes.len() as u64)))
     }
 
     async fn publish_staged_if_absent(
@@ -989,6 +1114,7 @@ fn service() -> (
             Arc::new(InMemoryDirectoryKindRegistry::default()),
             blob_storage.clone(),
             kind_registry,
+            Arc::new(InMemoryUploadSessionRepository::default()),
         )
         .with_actions(action_registry, Arc::new(StaticResourceActionExecutor))
         .with_directory_actions(
@@ -1114,6 +1240,59 @@ fn startup_reconciliation_hashes_only_new_or_changed_files() {
     let forced = block_on(service.scan_resources()).unwrap();
     assert_eq!(forced.hashed_files, 1);
     assert_eq!(forced.unchanged_files, 0);
+}
+
+#[test]
+fn empty_repository_startup_recovers_metadata_before_checksum_verification() {
+    let (service, repository, blob_storage) = service();
+    let directory = DirectoryPath::from_path("library").unwrap();
+    let key = StorageKey::new("library/book.txt").unwrap();
+    let second_key = StorageKey::new("library/second.txt").unwrap();
+    block_on(blob_storage.put(&key, Bytes::from_static(b"first"))).unwrap();
+    block_on(blob_storage.put(&second_key, Bytes::from_static(b"second"))).unwrap();
+
+    let recovered = block_on(service.reconcile_storage_on_startup()).unwrap();
+    assert_eq!(recovered.files, 2);
+    assert_eq!(recovered.hashed_files, 0);
+    assert_eq!(
+        recovered.pending_verification_keys(),
+        &[key.clone(), second_key.clone()]
+    );
+
+    let pending = block_on(ResourceQuery::find_by_path(
+        repository.as_ref(),
+        &directory,
+        "book.txt",
+    ))
+    .unwrap()
+    .unwrap();
+    let content = pending.resource().content().unwrap();
+    assert_eq!(
+        content.verification_status(),
+        ContentVerificationStatus::Pending
+    );
+    assert_eq!(content.size(), 5);
+    assert_eq!(content.checksum(), None);
+
+    block_on(service.reconcile_storage_keys(std::slice::from_ref(&key))).unwrap();
+    let verified = block_on(ResourceQuery::find_by_path(
+        repository.as_ref(),
+        &directory,
+        "book.txt",
+    ))
+    .unwrap()
+    .unwrap();
+    let content = verified.resource().content().unwrap();
+    assert_eq!(
+        content.verification_status(),
+        ContentVerificationStatus::Verified
+    );
+    assert_eq!(content.checksum().unwrap().value(), hex_sha256(b"first"));
+
+    let resumed = block_on(service.reconcile_storage_on_startup()).unwrap();
+    assert_eq!(resumed.hashed_files, 0);
+    assert_eq!(resumed.unchanged_files, 1);
+    assert_eq!(resumed.pending_verification_keys(), &[second_key]);
 }
 
 #[test]
@@ -1251,17 +1430,96 @@ fn output_contract<const N: usize>(
     }
 }
 
+struct TestUpload {
+    name: String,
+    kind: Option<ResourceKind>,
+    directory: DirectoryPath,
+    tags: Vec<String>,
+    content: BlobByteStream,
+    mime_type: Option<String>,
+}
+
+impl TestUpload {
+    fn new(name: impl Into<String>, content: BlobByteStream) -> Self {
+        Self {
+            name: name.into(),
+            kind: None,
+            directory: DirectoryPath::root(),
+            tags: Vec::new(),
+            content,
+            mime_type: None,
+        }
+    }
+
+    fn with_kind(mut self, kind: ResourceKind) -> Self {
+        self.kind = Some(kind);
+        self
+    }
+
+    fn with_directory(mut self, directory: DirectoryPath) -> Self {
+        self.directory = directory;
+        self
+    }
+
+    fn with_mime_type(mut self, mime_type: impl Into<String>) -> Self {
+        self.mime_type = Some(mime_type.into());
+        self
+    }
+}
+
+impl ResourceService {
+    async fn upload_resource_for_test(&self, draft: TestUpload) -> Result<Resource, CoreError> {
+        let TestUpload {
+            name,
+            kind,
+            directory,
+            tags,
+            mut content,
+            mime_type,
+        } = draft;
+        let mut bytes = Vec::new();
+        while let Some(chunk) = content.next().await {
+            bytes.extend_from_slice(&chunk?);
+        }
+        let owner = UserId::new();
+        let mut command = CreateUpload::new(name, bytes.len() as u64)
+            .with_directory(directory)
+            .with_tags(tags);
+        if let Some(kind) = kind {
+            command = command.with_kind(kind);
+        }
+        if let Some(mime_type) = mime_type {
+            command = command.with_mime_type(mime_type);
+        }
+        let session = self.uploads().create(owner, command).await?;
+        let data = futures_util::stream::once(async move { Ok(Bytes::from(bytes)) });
+        self.uploads()
+            .append(owner, &session.id(), 0, Box::pin(data))
+            .await?;
+        let (session, should_finalize) = self
+            .uploads()
+            .request_finalization(owner, &session.id())
+            .await?;
+        if !should_finalize {
+            return Err(CoreError::conflict(
+                "test upload did not enter finalization",
+            ));
+        }
+        self.uploads().finalize(&session.id()).await
+    }
+}
+
 fn stream_upload_command(
     _name: impl Into<String>,
     storage_key: StorageKey,
     data: Bytes,
-) -> CreateResource {
+) -> TestUpload {
     let (directory, name) = storage_key
         .as_str()
         .rsplit_once('/')
         .unwrap_or(("", storage_key.as_str()));
     let stream = futures_util::stream::once(async move { Ok(data) });
-    CreateResource::new(name, Box::pin(stream))
+    TestUpload::new(name, Box::pin(stream))
         .with_directory(DirectoryPath::from_path(directory).unwrap())
 }
 
@@ -1338,6 +1596,7 @@ fn service_with_registry(
             Arc::new(InMemoryDirectoryKindRegistry::default()),
             blob_storage.clone(),
             kind_registry,
+            Arc::new(InMemoryUploadSessionRepository::default()),
         ),
         Arc::new(test_plugin_execution_policy()),
     );
@@ -1434,7 +1693,7 @@ fn stream_upload_resource_content_writes_blob_then_saves_resource() {
     let checksum = Checksum::sha256(hex_sha256(&data)).unwrap();
 
     let resource = block_on(
-        service.content().create_resource(
+        service.upload_resource_for_test(
             stream_upload_command("image", key.clone(), data.clone())
                 .with_kind(ResourceKind::try_new("core:image").unwrap())
                 .with_mime_type(" image/png "),
@@ -1448,7 +1707,7 @@ fn stream_upload_resource_content_writes_blob_then_saves_resource() {
     assert_eq!(block_on(service.storage_key(&saved)).unwrap(), key);
     assert_eq!(content.size(), data.len() as u64);
     assert_eq!(content.mime_type(), Some("image/png"));
-    assert_eq!(content.checksum(), &checksum);
+    assert_eq!(content.checksum(), Some(&checksum));
     assert_eq!(
         content.modified_at(),
         blob_storage.modified_at.lock().unwrap().get(&key).copied()
@@ -1473,8 +1732,8 @@ fn stream_upload_preserves_spaces_in_resource_and_blob_path() {
     });
 
     let resource = block_on(
-        service.content().create_resource(
-            CreateResource::new(name, Box::pin(stream))
+        service.upload_resource_for_test(
+            TestUpload::new(name, Box::pin(stream))
                 .with_directory(directory.clone())
                 .with_kind(ResourceKind::try_new("azvs:markdown").unwrap()),
         ),
@@ -1505,7 +1764,7 @@ fn stream_upload_resource_content_detects_most_specific_kind() {
     let key = StorageKey::new("docs/readme.md").unwrap();
 
     let resource = block_on(
-        service.content().create_resource(
+        service.upload_resource_for_test(
             stream_upload_command("readme", key, Bytes::from_static(b"# Readme"))
                 .with_mime_type("text/plain"),
         ),
@@ -1523,7 +1782,7 @@ fn stream_upload_resource_content_falls_back_to_core_resource() {
     let key = StorageKey::new("assets/archive.bin").unwrap();
 
     let resource = block_on(
-        service.content().create_resource(
+        service.upload_resource_for_test(
             stream_upload_command("archive", key, Bytes::from_static(b"binary"))
                 .with_mime_type("application/octet-stream"),
         ),
@@ -1543,8 +1802,13 @@ fn stream_upload_resource_content_rejects_existing_storage_key() {
         .lock()
         .unwrap()
         .insert(key.clone(), Bytes::from_static(b"existing"));
+    blob_storage
+        .modified_at
+        .lock()
+        .unwrap()
+        .insert(key.clone(), chrono::Utc::now());
 
-    let error = block_on(service.content().create_resource(stream_upload_command(
+    let error = block_on(service.upload_resource_for_test(stream_upload_command(
         "image",
         key,
         Bytes::from_static(b"new"),
@@ -1560,7 +1824,7 @@ fn stream_upload_resource_content_rejects_existing_storage_key() {
         blob_storage.get_sync(&StorageKey::new("assets/image.png").unwrap()),
         Some(Bytes::from_static(b"existing"))
     );
-    assert!(!blob_storage.contains_fragment(".asset-hub/uploads/"));
+    assert!(blob_storage.contains_fragment(".asset-hub/uploads/"));
 }
 
 #[test]
@@ -1574,7 +1838,7 @@ fn stream_upload_rejects_unsupported_kind() {
     ));
 
     let error = block_on(
-        service.content().create_resource(
+        service.upload_resource_for_test(
             stream_upload_command(
                 "image",
                 StorageKey::new("image.png").unwrap(),
@@ -1605,8 +1869,8 @@ fn stream_create_resource_writes_chunks_and_records_size() {
     ]));
 
     let resource = block_on(
-        service.content().create_resource(
-            CreateResource::new("large.bin", data)
+        service.upload_resource_for_test(
+            TestUpload::new("large.bin", data)
                 .with_directory(DirectoryPath::from_path("assets").unwrap())
                 .with_kind(ResourceKind::try_new("asset:binary").unwrap())
                 .with_mime_type("application/octet-stream"),
@@ -1628,6 +1892,60 @@ fn stream_create_resource_writes_chunks_and_records_size() {
 }
 
 #[tokio::test]
+async fn pending_upload_finalization_is_resumed_in_the_background() {
+    let (service, repository, blob_storage) = service();
+    let owner = UserId::new();
+    let data = Bytes::from_static(b"resume finalization");
+    let session = service
+        .uploads()
+        .create(
+            owner,
+            CreateUpload::new("resumed.bin", data.len() as u64)
+                .with_directory(DirectoryPath::from_path("assets").unwrap()),
+        )
+        .await
+        .unwrap();
+    service
+        .uploads()
+        .append(
+            owner,
+            &session.id(),
+            0,
+            Box::pin(futures_util::stream::once({
+                let data = data.clone();
+                async move { Ok(data) }
+            })),
+        )
+        .await
+        .unwrap();
+    let (finalizing, should_start) = service
+        .uploads()
+        .request_finalization(owner, &session.id())
+        .await
+        .unwrap();
+    assert!(should_start);
+    assert_eq!(finalizing.status(), UploadStatus::Finalizing);
+
+    assert_eq!(service.resume_upload_finalizations().await.unwrap(), 1);
+    let resource = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            if let Some(resource) = repository.find_sync(&session.resource_id()) {
+                break resource;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("resumed finalization should finish");
+
+    assert_eq!(resource.id(), session.resource_id());
+    assert_eq!(
+        blob_storage.get_sync(&StorageKey::new("assets/resumed.bin").unwrap()),
+        Some(data)
+    );
+}
+
+#[tokio::test]
 async fn storage_reconciliation_waits_for_same_key_upload_to_save_resource() {
     let (service, repository, blob_storage) = service();
     let key = StorageKey::new("assets/slow.bin").unwrap();
@@ -1636,8 +1954,7 @@ async fn storage_reconciliation_waits_for_same_key_upload_to_save_resource() {
     let upload_key = key.clone();
     let upload = tokio::spawn(async move {
         upload_service
-            .content()
-            .create_resource(stream_upload_command(
+            .upload_resource_for_test(stream_upload_command(
                 "slow.bin",
                 upload_key,
                 Bytes::from_static(b"complete content"),
@@ -1681,7 +1998,7 @@ fn stream_upload_resource_content_rejects_kind_without_content_support() {
     let key = StorageKey::new("docs/readme.md").unwrap();
 
     let error = block_on(
-        service.content().create_resource(
+        service.upload_resource_for_test(
             stream_upload_command("readme", key.clone(), Bytes::from_static(b"hello"))
                 .with_kind(ResourceKind::try_new("doc:markdown").unwrap()),
         ),
@@ -1704,7 +2021,7 @@ fn stream_upload_resource_content_removes_blob_when_save_fails() {
     let key = StorageKey::new("assets/image.png").unwrap();
     repository.fail_next_save();
 
-    let result = block_on(service.content().create_resource(stream_upload_command(
+    let result = block_on(service.upload_resource_for_test(stream_upload_command(
         "image",
         key.clone(),
         Bytes::from_static(b"image bytes"),
@@ -1716,7 +2033,7 @@ fn stream_upload_resource_content_removes_blob_when_save_fails() {
     }
 
     assert!(!blob_storage.contains(&key));
-    assert!(!blob_storage.contains_fragment(".asset-hub/uploads/"));
+    assert!(blob_storage.contains_fragment(".asset-hub/uploads/"));
     assert!(repository.is_empty());
 }
 
@@ -1727,7 +2044,7 @@ fn upload_preserves_repository_error_when_compensation_delete_fails() {
     repository.fail_next_save();
     blob_storage.fail_next_delete();
 
-    let error = block_on(service.content().create_resource(stream_upload_command(
+    let error = block_on(service.upload_resource_for_test(stream_upload_command(
         "file",
         key.clone(),
         Bytes::from_static(b"data"),
@@ -1742,7 +2059,7 @@ fn upload_preserves_repository_error_when_compensation_delete_fails() {
         }
     ));
     assert!(blob_storage.contains(&key));
-    assert!(!blob_storage.contains_fragment(".asset-hub/uploads/"));
+    assert!(blob_storage.contains_fragment(".asset-hub/uploads/"));
 }
 
 #[test]
@@ -1750,7 +2067,7 @@ fn get_resource_content_reads_existing_blob() {
     let (service, _, _) = service();
     let key = StorageKey::new("assets/image.png").unwrap();
     let data = Bytes::from_static(b"image bytes");
-    let resource = block_on(service.content().create_resource(stream_upload_command(
+    let resource = block_on(service.upload_resource_for_test(stream_upload_command(
         "image",
         key,
         data.clone(),
@@ -1767,7 +2084,7 @@ fn execute_content_action_returns_text_for_matching_kind() {
     let (service, _, _) = service();
     let key = StorageKey::new("books/book.txt").unwrap();
     let resource = block_on(
-        service.content().create_resource(
+        service.upload_resource_for_test(
             stream_upload_command("book", key, Bytes::from_static(b"Hello book"))
                 .with_kind(ResourceKind::try_new("core:document").unwrap()),
         ),
@@ -1794,7 +2111,7 @@ fn execute_write_action_replaces_resource_content() {
     let (service, repository, blob_storage) = service();
     let key = StorageKey::new("docs/note.md").unwrap();
     let resource = block_on(
-        service.content().create_resource(
+        service.upload_resource_for_test(
             stream_upload_command("note.md", key.clone(), Bytes::from_static(b"# Old"))
                 .with_kind(ResourceKind::try_new("core:document").unwrap())
                 .with_mime_type("text/markdown"),
@@ -1828,8 +2145,11 @@ fn execute_write_action_replaces_resource_content() {
     );
     assert_eq!(content.size(), 15);
     assert_eq!(content.mime_type(), Some("text/markdown"));
-    assert_eq!(content.checksum().kind(), ChecksumKind::Sha256);
-    assert_eq!(content.checksum().value(), hex_sha256(b"# New\n\nUpdated."));
+    assert_eq!(content.checksum().unwrap().kind(), ChecksumKind::Sha256);
+    assert_eq!(
+        content.checksum().unwrap().value(),
+        hex_sha256(b"# New\n\nUpdated.")
+    );
 }
 
 #[test]
@@ -1837,7 +2157,7 @@ fn write_action_scratch_content_uses_reserved_namespace() {
     let (service, _repository, blob_storage) = service();
     let key = StorageKey::new("docs/note.md").unwrap();
     let resource = block_on(
-        service.content().create_resource(
+        service.upload_resource_for_test(
             stream_upload_command("note.md", key, Bytes::from_static(b"# Old"))
                 .with_kind(ResourceKind::try_new("core:document").unwrap())
                 .with_mime_type("text/markdown"),
@@ -1862,7 +2182,7 @@ fn write_action_scratch_content_uses_reserved_namespace() {
 fn describe_resource_actions_uses_declared_content_matchers() {
     let (service, _, _) = service();
     let pdf = block_on(
-        service.content().create_resource(
+        service.upload_resource_for_test(
             stream_upload_command(
                 "book",
                 StorageKey::new("books/book.pdf").unwrap(),
@@ -1874,7 +2194,7 @@ fn describe_resource_actions_uses_declared_content_matchers() {
     )
     .unwrap();
     let text = block_on(
-        service.content().create_resource(
+        service.upload_resource_for_test(
             stream_upload_command(
                 "book",
                 StorageKey::new("books/book.txt").unwrap(),
@@ -1906,7 +2226,7 @@ fn soft_delete_resource_moves_blob_to_trash_and_hides_content_read() {
     let (service, repository, blob_storage) = service();
     let key = StorageKey::new("assets/image.png").unwrap();
     let data = Bytes::from_static(b"image bytes");
-    let resource = block_on(service.content().create_resource(stream_upload_command(
+    let resource = block_on(service.upload_resource_for_test(stream_upload_command(
         "image",
         key.clone(),
         data.clone(),
@@ -1931,7 +2251,7 @@ fn restoring_soft_deleted_resource_moves_blob_back_from_trash() {
     let (service, repository, blob_storage) = service();
     let key = StorageKey::new("assets/restored.png").unwrap();
     let data = Bytes::from_static(b"restored bytes");
-    let resource = block_on(service.content().create_resource(stream_upload_command(
+    let resource = block_on(service.upload_resource_for_test(stream_upload_command(
         "restored",
         key.clone(),
         data.clone(),
@@ -1958,7 +2278,7 @@ fn soft_delete_rolls_blob_back_when_resource_snapshot_is_stale() {
     let (service, repository, blob_storage) = service();
     let key = StorageKey::new("assets/concurrent-delete.png").unwrap();
     let data = Bytes::from_static(b"still active");
-    let resource = block_on(service.content().create_resource(stream_upload_command(
+    let resource = block_on(service.upload_resource_for_test(stream_upload_command(
         "concurrent-delete",
         key.clone(),
         data.clone(),
@@ -1989,7 +2309,7 @@ fn soft_delete_rolls_blob_back_when_resource_snapshot_is_stale() {
 fn remove_resource_deletes_blob_and_repository_record() {
     let (service, repository, blob_storage) = service();
     let key = StorageKey::new("assets/image.png").unwrap();
-    let resource = block_on(service.content().create_resource(stream_upload_command(
+    let resource = block_on(service.upload_resource_for_test(stream_upload_command(
         "image",
         key.clone(),
         Bytes::from_static(b"image bytes"),
@@ -2006,7 +2326,7 @@ fn remove_resource_deletes_blob_and_repository_record() {
 fn remove_resource_rejects_a_stale_authorized_snapshot_without_deleting_content() {
     let (service, repository, blob_storage) = service();
     let key = StorageKey::new("assets/concurrent.png").unwrap();
-    let resource = block_on(service.content().create_resource(stream_upload_command(
+    let resource = block_on(service.upload_resource_for_test(stream_upload_command(
         "image",
         key.clone(),
         Bytes::from_static(b"image bytes"),

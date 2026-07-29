@@ -138,8 +138,9 @@ passwords, tokens, and other secret CLI arguments are never stored. Audit
 persistence is fail-open: a temporary audit write error is logged without
 replacing the business response.
 
-Local Blob storage is synchronized automatically. Startup reconciliation uses persisted file
-modification times and resource content sizes, hashing only new or changed files. Run
+Local Blob storage is synchronized automatically. When an existing Resource index is available,
+startup reconciliation uses persisted file modification times and content sizes, hashing only new
+or changed files. Run
 `asset system --scan-resource` for an explicit full SHA-256 verification. Native file-system events are
 debounced for near-real-time updates, while startup and periodic reconciliation
 repair changes missed while the process was stopped. New and modified files
@@ -210,10 +211,24 @@ npm run dev
 
 Vite serves `http://127.0.0.1:5173` and proxies `/api` to `http://127.0.0.1:8080`.
 
-Uploads use the raw-body streaming endpoint, which supports files up to 4 GiB
-without encoding them as base64 or buffering the complete file in application memory. The regular
-request timeout does not cap total upload duration; deployments should use proxy-level connection
-and idle timeouts to reject stalled clients without terminating healthy long-running uploads.
+Uploads use persistent sessions and 8 MiB client-side chunks. The API does not impose a
+per-file size limit and never buffers the complete file in application memory. Interrupted uploads
+resume from the server-reported offset after the user selects the same file again. Once all bytes
+arrive, `POST /uploads/{id}/complete` persists the `finalizing` state and returns `202 Accepted`;
+checksum verification, atomic publication and Resource creation continue in the background.
+Clients poll `GET /uploads/{id}` until it reports `completed` or `failed`. Pending finalizations
+resume automatically after a service restart. Background checksum verification is currently
+unbounded, so separate uploads may finalize concurrently. The regular request timeout does not cap
+upload chunks; deployments should use proxy-level connection and idle timeouts to reject stalled
+clients without terminating healthy uploads.
+
+When automatic local-storage synchronization is enabled, the filesystem watcher is established
+before startup returns. After the Resource database has been recreated, recovery runs in two
+stages: a metadata-only scan first creates real Resources with `pending` content verification, then
+one independent background task per StorageKey calculates SHA-256 and changes the state to
+`verified` or `failed`. The metadata stage does not read complete object bodies, so Resources become
+available without waiting for large files to be hashed. Background verification has no global
+concurrency limit; StorageKey locks only serialize work targeting the same object.
 
 ## Package A Plugin
 

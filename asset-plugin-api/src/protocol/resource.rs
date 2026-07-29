@@ -45,7 +45,19 @@ pub struct PluginResourceContent {
     pub size: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
-    pub checksum: PluginChecksum,
+    pub verification_status: PluginContentVerificationStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checksum: Option<PluginChecksum>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginContentVerificationStatus {
+    Pending,
+    Verified,
+    Failed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

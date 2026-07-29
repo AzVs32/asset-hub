@@ -10,6 +10,7 @@ import type {
   ResourceAction,
   ResourceDraft,
   UploadDraft,
+  UploadProgress,
 } from "@/domain/resource";
 import type { DirectoryActionResult } from "@/plugins/directory-action-dialog";
 import type { ActionResult } from "@/plugins/plugin-action-dialog";
@@ -20,6 +21,7 @@ export function useResourceCommands() {
   const [actionResult, setActionResult] = React.useState<ActionResult | null>(null);
   const [directoryActionResult, setDirectoryActionResult] =
     React.useState<DirectoryActionResult | null>(null);
+  const [uploadProgress, setUploadProgress] = React.useState<UploadProgress | null>(null);
 
   const refresh = React.useCallback(
     async (resourceId?: string) => {
@@ -44,12 +46,31 @@ export function useResourceCommands() {
     onError: notifyError,
   });
   const upload = useMutation({
-    mutationFn: (draft: UploadDraft) => gateway.uploadResource(draft),
-    onSuccess: async (resource) => {
-      toast.success(`Uploaded ${resource.name}`);
-      await refresh(resource.id);
+    mutationFn: (draft: UploadDraft) => gateway.uploadResource(draft, setUploadProgress),
+    onMutate: (draft) => {
+      setUploadProgress({ stage: "preparing", bytesSent: 0, totalBytes: draft.file.size });
     },
-    onError: notifyError,
+    onSuccess: (receipt) => {
+      setUploadProgress(null);
+      const notification = toast.loading(
+        `${receipt.name} uploaded; verifying and publishing in the background`,
+      );
+      void gateway
+        .waitForUpload(receipt.id)
+        .then(async (resource) => {
+          toast.success(`${resource.name} is ready`, { id: notification });
+          await refresh(resource.id);
+        })
+        .catch((error) => {
+          toast.error(error instanceof Error ? error.message : "Resource publishing failed", {
+            id: notification,
+          });
+        });
+    },
+    onError: (error) => {
+      setUploadProgress(null);
+      notifyError(error);
+    },
   });
   const remove = useMutation({
     mutationFn: (resource: Resource) => gateway.deleteResource(resource.id),
@@ -110,6 +131,7 @@ export function useResourceCommands() {
   return {
     update,
     upload,
+    uploadProgress,
     remove,
     restore,
     createFolder,

@@ -5,9 +5,14 @@
 
 use super::ResourceService;
 use super::command::build_resource;
-use super::content::{build_content, finalize_tracked_checksum, stream_with_checksum_tracking};
+use super::content::{
+    build_failed_content, build_pending_content, build_verified_content, finalize_tracked_checksum,
+    stream_with_checksum_tracking,
+};
 use crate::CoreError;
-use crate::domain::{Checksum, DirectoryPath, Resource, ResourceContent, StorageKey};
+use crate::domain::{
+    Checksum, ContentVerificationStatus, DirectoryPath, Resource, ResourceContent, StorageKey,
+};
 use crate::port::{
     ListResources, LocatedResource, ScannedBlob, ScannedStorageEntry, StoragePrefix,
 };
@@ -26,11 +31,17 @@ pub struct StorageReconciliationReport {
     pub elapsed: Duration,
     pub hash_elapsed: Duration,
     directory_keys: Vec<StorageKey>,
+    pending_verification_keys: Vec<StorageKey>,
 }
 
 impl StorageReconciliationReport {
     pub fn directory_keys(&self) -> &[StorageKey] {
         &self.directory_keys
+    }
+
+    /// 返回第一阶段恢复后需要在后台计算校验和的对象。
+    pub fn pending_verification_keys(&self) -> &[StorageKey] {
+        &self.pending_verification_keys
     }
 }
 
@@ -43,9 +54,134 @@ impl<'a> StorageReconciliationService<'a> {
         Self { service }
     }
 
+    /// 启动时优先恢复可用的资源索引。
+    ///
+    /// 仓储为空或尚未产生任何已校验内容时，第一阶段仅读取对象元数据并创建 pending
+    /// Resource；调用方随后并发校验 `pending_verification_keys`。已有已校验索引时继续
+    /// 增量协调，但把尚未完成的校验交给后台，以保留依赖校验和识别离线重命名的语义。
+    pub(super) async fn reconcile_storage_on_startup(
+        &self,
+    ) -> Result<StorageReconciliationReport, CoreError> {
+        let resources = self.all_active_resources().await?;
+        if resources.is_empty()
+            || resources.iter().all(|located| {
+                located.resource().content().is_some_and(|content| {
+                    content.verification_status() != ContentVerificationStatus::Verified
+                })
+            })
+        {
+            self.recover_storage_metadata().await
+        } else {
+            self.reconcile_storage_inner(false, true).await
+        }
+    }
+
+    async fn recover_storage_metadata(&self) -> Result<StorageReconciliationReport, CoreError> {
+        let started = Instant::now();
+        let resources = self.all_active_resources().await?;
+        let mut entries = self.service.storage_scanner.scan(&StoragePrefix::root());
+        let mut physical_directories = HashSet::new();
+        let mut physical_keys = HashSet::new();
+        let mut report = StorageReconciliationReport::default();
+
+        while let Some(entry) = entries.next().await {
+            match entry? {
+                ScannedStorageEntry::Directory(directory) => {
+                    self.service.directories.ensure_path(&directory).await?;
+                    physical_directories.insert(directory);
+                    report.directories += 1;
+                }
+                ScannedStorageEntry::Blob(file) => {
+                    physical_keys.insert(file.key.clone());
+                    let _storage_key_guard = self.service.storage_key_locks.lock(&file.key).await;
+                    let Some(current) = self.service.storage_scanner.inspect(&file.key).await?
+                    else {
+                        continue;
+                    };
+                    self.recover_scanned_blob_metadata(&current).await?;
+                    report.files += 1;
+                    report.pending_verification_keys.push(current.key.clone());
+                }
+            }
+        }
+
+        for located in resources {
+            let storage_key = located.storage_key()?;
+            let resource = located.resource();
+            if resource.content().is_some() && !physical_keys.contains(&storage_key) {
+                let _storage_key_guard = self.service.storage_key_locks.lock(&storage_key).await;
+                if self
+                    .service
+                    .storage_scanner
+                    .inspect(&storage_key)
+                    .await?
+                    .is_none()
+                    && self
+                        .service
+                        .repository
+                        .remove_if_unchanged(&resource.id(), resource.updated_at())
+                        .await?
+                {
+                    report.removed_resources += 1;
+                }
+            }
+        }
+
+        report.directory_keys = physical_directories
+            .iter()
+            .map(|directory| StorageKey::new(directory.path().to_owned()))
+            .collect::<Result<Vec<_>, _>>()?;
+        report
+            .directory_keys
+            .sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        report
+            .pending_verification_keys
+            .sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        self.reconcile_directories(physical_directories).await?;
+        report.elapsed = started.elapsed();
+        Ok(report)
+    }
+
+    async fn recover_scanned_blob_metadata(&self, file: &ScannedBlob) -> Result<(), CoreError> {
+        let (directory, name) = resource_path_from_key(&file.key)?;
+        if self
+            .service
+            .query
+            .find_by_path(&directory, &name)
+            .await?
+            .is_some()
+        {
+            return Ok(());
+        }
+        let content =
+            build_pending_content(file.size, file.mime_type.clone(), Some(file.modified_at))?;
+        let kind = self.service.resolve_content_kind(
+            None,
+            content.mime_type(),
+            Some(file.key.as_str()),
+        )?;
+        let resource = build_resource(
+            name,
+            self.service.directories.ensure_path(&directory).await?.id(),
+            Some(kind),
+            Vec::new(),
+        )
+        .with_content(content)
+        .build()?;
+        self.service.repository.save(&resource).await
+    }
+
     pub(super) async fn reconcile_storage(
         &self,
         force_checksum: bool,
+    ) -> Result<StorageReconciliationReport, CoreError> {
+        self.reconcile_storage_inner(force_checksum, false).await
+    }
+
+    async fn reconcile_storage_inner(
+        &self,
+        force_checksum: bool,
+        defer_pending_verification: bool,
     ) -> Result<StorageReconciliationReport, CoreError> {
         let started = Instant::now();
         let resources = self.all_active_resources().await?;
@@ -67,12 +203,25 @@ impl<'a> StorageReconciliationService<'a> {
                 ScannedStorageEntry::Blob(file) => {
                     physical_keys.insert(file.key.clone());
                     report.files += 1;
+                    let matching_content = resources_by_key
+                        .get(&file.key)
+                        .and_then(|resource| resource.content())
+                        .filter(|content| {
+                            content.size() == file.size
+                                && content.modified_at() == Some(file.modified_at)
+                        });
+                    if !force_checksum
+                        && defer_pending_verification
+                        && matching_content.is_some_and(|content| {
+                            content.verification_status() != ContentVerificationStatus::Verified
+                        })
+                    {
+                        report.pending_verification_keys.push(file.key.clone());
+                        continue;
+                    }
                     let unchanged = !force_checksum
-                        && resources_by_key.get(&file.key).is_some_and(|resource| {
-                            resource.content().is_some_and(|content| {
-                                content.size() == file.size
-                                    && content.modified_at() == Some(file.modified_at)
-                            })
+                        && matching_content.is_some_and(|content| {
+                            content.verification_status() == ContentVerificationStatus::Verified
                         });
                     if unchanged {
                         report.unchanged_files += 1;
@@ -111,6 +260,9 @@ impl<'a> StorageReconciliationService<'a> {
             .collect::<Result<Vec<_>, _>>()?;
         report
             .directory_keys
+            .sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        report
+            .pending_verification_keys
             .sort_by(|left, right| left.as_str().cmp(right.as_str()));
         self.reconcile_directories(physical_directories).await?;
         report.elapsed = started.elapsed();
@@ -186,7 +338,7 @@ impl<'a> StorageReconciliationService<'a> {
         let to_directory = self.service.directories.ensure_path(&to_directory).await?;
         resource.move_to_directory(to_directory.id())?;
         let checksum = self.calculate_stored_blob_checksum(to, target.size).await?;
-        let content = build_content(
+        let content = build_verified_content(
             target.size,
             target.mime_type.clone(),
             checksum,
@@ -236,11 +388,18 @@ impl<'a> StorageReconciliationService<'a> {
     async fn reconcile_scanned_blob(&self, file: &ScannedBlob) -> Result<Duration, CoreError> {
         let (directory, name) = resource_path_from_key(&file.key)?;
         let hash_started = Instant::now();
-        let checksum = self
+        let checksum = match self
             .calculate_stored_blob_checksum(&file.key, file.size)
-            .await?;
+            .await
+        {
+            Ok(checksum) => checksum,
+            Err(error) => {
+                self.mark_verification_failed(file, &error).await?;
+                return Err(error);
+            }
+        };
         let hash_elapsed = hash_started.elapsed();
-        let content = build_content(
+        let content = build_verified_content(
             file.size,
             file.mime_type.clone(),
             checksum,
@@ -304,15 +463,71 @@ impl<'a> StorageReconciliationService<'a> {
         Ok(hash_elapsed)
     }
 
+    async fn mark_verification_failed(
+        &self,
+        file: &ScannedBlob,
+        error: &CoreError,
+    ) -> Result<(), CoreError> {
+        let Some(current) = self.service.storage_scanner.inspect(&file.key).await? else {
+            return Ok(());
+        };
+        if current.size != file.size || current.modified_at != file.modified_at {
+            return Ok(());
+        }
+
+        let (directory, name) = resource_path_from_key(&file.key)?;
+        let content = build_failed_content(
+            file.size,
+            file.mime_type.clone(),
+            error.to_string(),
+            Some(file.modified_at),
+        )?;
+        if let Some(located) = self.service.query.find_by_path(&directory, &name).await? {
+            let mut resource = located.into_resource();
+            let expected_updated_at = resource.updated_at();
+            resource.attach_content(content)?;
+            if !self
+                .service
+                .repository
+                .save_if_unchanged(&resource, expected_updated_at)
+                .await?
+            {
+                return Err(CoreError::conflict(format!(
+                    "resource `{}` changed while checksum failure was recorded",
+                    resource.id()
+                )));
+            }
+            return Ok(());
+        }
+
+        let kind = self.service.resolve_content_kind(
+            None,
+            content.mime_type(),
+            Some(file.key.as_str()),
+        )?;
+        let resource = build_resource(
+            name,
+            self.service.directories.ensure_path(&directory).await?.id(),
+            Some(kind),
+            Vec::new(),
+        )
+        .with_content(content)
+        .build()?;
+        self.service.repository.save(&resource).await
+    }
+
     async fn find_missing_rename_candidate(
         &self,
         content: &ResourceContent,
     ) -> Result<Option<Resource>, CoreError> {
         let mut candidates = Vec::new();
+        let Some(checksum) = content.checksum() else {
+            return Ok(None);
+        };
         for located in self.all_active_resources().await? {
             let resource = located.resource();
             if !resource.content().is_some_and(|existing| {
-                existing.size() == content.size() && existing.checksum() == content.checksum()
+                existing.size() == content.size() && existing.checksum() == Some(checksum)
             }) {
                 continue;
             }

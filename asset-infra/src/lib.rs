@@ -31,7 +31,10 @@ use kind::{
 use password::Argon2PasswordHasher;
 use plugin::ExtismActionExecutor;
 use plugin_manifest::PluginCatalog;
-use sqlite::{SqliteIdentityRepository, SqliteResourceRepository, SqliteSecurityAuditRepository};
+use sqlite::{
+    SqliteIdentityRepository, SqliteResourceRepository, SqliteSecurityAuditRepository,
+    SqliteUploadSessionRepository,
+};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -106,6 +109,9 @@ impl AssetInfrastructure {
         let security_audit_repository = Arc::new(SqliteSecurityAuditRepository::new(
             resource_repository.pool().clone(),
         ));
+        let upload_session_repository = Arc::new(SqliteUploadSessionRepository::new(
+            resource_repository.pool().clone(),
+        ));
         let plugin_catalog_started = Instant::now();
         let plugin_catalog = PluginCatalog::load(&config.plugin_packages_path())?;
         tracing::info!(
@@ -153,6 +159,7 @@ impl AssetInfrastructure {
                 directory_kind_registry.clone(),
                 storage_scanner.clone(),
                 resource_kind_registry.clone(),
+                upload_session_repository.clone(),
             )
             .with_actions(
                 resource_action_registry.clone(),

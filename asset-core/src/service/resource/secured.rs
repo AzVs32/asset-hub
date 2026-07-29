@@ -4,17 +4,17 @@
 //! 编排，避免每个 transport 重复实现授权规则。
 
 use super::{
-    CreateResource, DirectoryArchiveManifest, DirectoryArchiveResource, ExecuteResourceAction,
+    CreateUpload, DirectoryArchiveManifest, DirectoryArchiveResource, ExecuteResourceAction,
     ResourceContentStream, ResourceService, UpdateResource,
 };
 use crate::CoreError;
 use crate::domain::{
     AccessContext, DirectoryId, DirectoryKind, DirectoryPath, DirectoryPermission, Resource,
-    ResourceId,
+    ResourceId, UploadId, UploadSession,
 };
 use crate::port::{
-    DirectoryActionOutput, DirectoryLocation, ListResources, LocatedDirectory, LocatedResource,
-    ResourceActionOutput, ResourcePage,
+    BlobByteStream, DirectoryActionOutput, DirectoryLocation, ListResources, LocatedDirectory,
+    LocatedResource, ResourceActionOutput, ResourcePage,
 };
 use crate::service::{AuthorizationService, ExecuteDirectoryAction};
 use asset_plugin_api::{DirectoryActionAccess, ResourceActionAccess};
@@ -86,13 +86,50 @@ impl<'a> SecuredResourceService<'a> {
         }
         Ok(resource)
     }
-    pub async fn create_resource(
+    pub async fn create_upload(
         &self,
-        mut command: CreateResource,
-    ) -> Result<Resource, CoreError> {
+        mut command: CreateUpload,
+    ) -> Result<UploadSession, CoreError> {
         let directory = self.resolve(command.directory()).await?;
         command = command.with_directory(directory);
-        self.service.content().create_resource(command).await
+        self.service
+            .uploads()
+            .create(self.context.user_id(), command)
+            .await
+    }
+    pub async fn upload_status(&self, id: &UploadId) -> Result<UploadSession, CoreError> {
+        self.service
+            .uploads()
+            .status(self.context.user_id(), id)
+            .await
+    }
+    pub async fn append_upload(
+        &self,
+        id: &UploadId,
+        offset: u64,
+        data: BlobByteStream,
+    ) -> Result<UploadSession, CoreError> {
+        self.service
+            .uploads()
+            .append(self.context.user_id(), id, offset, data)
+            .await
+    }
+    pub async fn complete_upload(&self, id: &UploadId) -> Result<UploadSession, CoreError> {
+        let (session, should_start) = self
+            .service
+            .uploads()
+            .request_finalization(self.context.user_id(), id)
+            .await?;
+        if should_start {
+            self.service.spawn_upload_finalization(*id);
+        }
+        Ok(session)
+    }
+    pub async fn abort_upload(&self, id: &UploadId) -> Result<(), CoreError> {
+        self.service
+            .uploads()
+            .abort(self.context.user_id(), id)
+            .await
     }
     pub async fn find_resource(
         &self,

@@ -9,7 +9,10 @@ use crate::error::ResourceError;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-pub use content::{Checksum, ChecksumKind, ResourceContent, ResourceContentBuilder, StorageKey};
+pub use content::{
+    Checksum, ChecksumKind, ContentVerification, ContentVerificationStatus, ResourceContent,
+    ResourceContentBuilder, StorageKey,
+};
 pub use kind::ResourceKind;
 pub use tag::ResourceTag;
 
@@ -275,6 +278,8 @@ fn normalize_tags(tags: Vec<String>) -> Result<Vec<ResourceTag>, ResourceError> 
 /// 用于统一创建包含可选标签和内容引用的 `Resource`。
 #[derive(Debug, Clone)]
 pub struct ResourceBuilder {
+    /// 由持久化工作流预先分配的资源 ID。
+    id: Option<ResourceId>,
     /// 资源展示名。
     name: String,
     /// 资源类型。
@@ -291,12 +296,19 @@ impl ResourceBuilder {
     /// 创建资源构建器。
     pub fn new(name: impl Into<String>) -> Self {
         Self {
+            id: None,
             name: name.into(),
             kind: ResourceKind::default(),
             directory_id: DirectoryId::root(),
             tags: Vec::new(),
             content: None,
         }
+    }
+
+    /// 使用持久化工作流预先分配的资源 ID。
+    pub(crate) fn with_id(mut self, id: ResourceId) -> Self {
+        self.id = Some(id);
+        self
     }
 
     /// 设置资源类型。
@@ -334,7 +346,7 @@ impl ResourceBuilder {
         let now = Utc::now();
 
         Ok(Resource {
-            id: ResourceId::new(),
+            id: self.id.unwrap_or_else(ResourceId::new),
             name,
             directory_id: self.directory_id,
             kind: self.kind,

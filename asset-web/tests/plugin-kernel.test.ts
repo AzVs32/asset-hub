@@ -51,7 +51,9 @@ describe("PluginKernel", () => {
     item.content = {
       size: 42,
       mimeType: "image/png",
+      verificationStatus: "verified",
       checksum: { kind: "sha256", value: "digest" },
+      verificationError: null,
     };
     expect(kernel.thumbnailAction(item)).toBeNull();
   });

@@ -1,10 +1,11 @@
 use asset_core::CoreError;
-use asset_core::domain::StorageKey;
+use asset_core::domain::{ContentVerificationStatus, StorageKey};
 use asset_core::port::{BlobStorage, ResourceActionRequest};
 use asset_plugin_api::{
     PluginActionRequest, PluginChecksum, PluginContentBytes, PluginContentRange,
-    PluginContentReference, PluginContentReferenceEncoding, PluginExecutionPolicy,
-    PluginInlineContentEncoding, PluginPermissions, PluginResource, PluginResourceContent,
+    PluginContentReference, PluginContentReferenceEncoding, PluginContentVerificationStatus,
+    PluginExecutionPolicy, PluginInlineContentEncoding, PluginPermissions, PluginResource,
+    PluginResourceContent,
 };
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
@@ -345,10 +346,18 @@ pub(super) fn build_payload(
             content: content_ref.map(|content| PluginResourceContent {
                 size: content.size(),
                 mime_type: content.mime_type().map(str::to_string),
-                checksum: PluginChecksum {
-                    kind: content.checksum().kind().as_str().to_string(),
-                    value: content.checksum().value().to_string(),
+                verification_status: match content.verification_status() {
+                    ContentVerificationStatus::Pending => PluginContentVerificationStatus::Pending,
+                    ContentVerificationStatus::Verified => {
+                        PluginContentVerificationStatus::Verified
+                    }
+                    ContentVerificationStatus::Failed => PluginContentVerificationStatus::Failed,
                 },
+                checksum: content.checksum().map(|checksum| PluginChecksum {
+                    kind: checksum.kind().as_str().to_string(),
+                    value: checksum.value().to_string(),
+                }),
+                verification_error: content.verification_error().map(str::to_string),
             }),
             created_at: resource.created_at().to_rfc3339(),
             updated_at: resource.updated_at().to_rfc3339(),

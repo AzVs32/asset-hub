@@ -422,8 +422,8 @@ async fn action_endpoint_has_a_dedicated_request_body_limit() {
 }
 
 #[tokio::test]
-async fn create_resource_requires_query_metadata() {
-    let app = test_app("create-resource-requires-query-metadata").await;
+async fn legacy_resource_upload_endpoint_is_removed() {
+    let app = test_app("legacy-resource-upload-removed").await;
     let response = request(
         &app,
         Request::builder()
@@ -435,7 +435,7 @@ async fn create_resource_requires_query_metadata() {
     )
     .await;
 
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
 }
 
 #[tokio::test]
@@ -454,6 +454,8 @@ async fn stream_upload_roundtrips_small_blob_and_creates_directories() {
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(resource["content"]["size"], data.len() as u64);
     assert_eq!(resource["content"]["mime_type"], "text/plain");
+    assert_eq!(resource["content"]["verification_status"], "verified");
+    assert!(resource["content"]["verification_error"].is_null());
     assert_eq!(resource["content"]["checksum"]["kind"], "sha256");
     assert_eq!(
         resource["content"]["checksum"]["value"],
@@ -493,6 +495,158 @@ async fn stream_upload_roundtrips_small_blob_and_creates_directories() {
         examples_listing["resources"]["items"][0]["name"],
         "hello.txt"
     );
+}
+
+#[tokio::test]
+async fn upload_session_resumes_after_runtime_restart_and_publishes_only_on_complete() {
+    let root = unique_temp_root("resumable-restart");
+    let app = test_app_at_root(
+        root.clone(),
+        PluginHostConfig::default(),
+        RouterOptions::default(),
+    )
+    .await;
+    let create = request(
+        &app,
+        Request::builder()
+            .method(Method::POST)
+            .uri("/uploads")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({
+                    "name": "resume.txt",
+                    "directory": "resumable",
+                    "mime_type": "text/plain",
+                    "size": 11
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(create.status(), StatusCode::CREATED);
+    let id = response_json(create).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let first_chunk = request(
+        &app,
+        Request::builder()
+            .method(Method::PATCH)
+            .uri(format!("/uploads/{id}"))
+            .header("upload-offset", "0")
+            .body(Body::from("hello "))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(first_chunk.status(), StatusCode::NO_CONTENT);
+    assert_eq!(first_chunk.headers()["upload-offset"], "6");
+    assert!(!root.join("blob/resumable/resume.txt").exists());
+
+    let restarted = test_app_at_root(
+        root.clone(),
+        PluginHostConfig::default(),
+        RouterOptions::default(),
+    )
+    .await;
+    let status = request(
+        &restarted,
+        Request::builder()
+            .method(Method::GET)
+            .uri(format!("/uploads/{id}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status.status(), StatusCode::OK);
+    let status = response_json(status).await;
+    assert_eq!(status["offset"], 6);
+    assert_eq!(status["size"], 11);
+    assert_eq!(status["status"], "uploading");
+
+    let conflict = request(
+        &restarted,
+        Request::builder()
+            .method(Method::PATCH)
+            .uri(format!("/uploads/{id}"))
+            .header("upload-offset", "0")
+            .body(Body::from("world"))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(conflict.status(), StatusCode::CONFLICT);
+
+    let second_chunk = request(
+        &restarted,
+        Request::builder()
+            .method(Method::PATCH)
+            .uri(format!("/uploads/{id}"))
+            .header("upload-offset", "6")
+            .body(Body::from("world"))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(second_chunk.status(), StatusCode::NO_CONTENT);
+    assert_eq!(second_chunk.headers()["upload-offset"], "11");
+    assert!(!root.join("blob/resumable/resume.txt").exists());
+
+    let complete = request(
+        &restarted,
+        Request::builder()
+            .method(Method::POST)
+            .uri(format!("/uploads/{id}/complete"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(complete.status(), StatusCode::ACCEPTED);
+    assert_eq!(response_json(complete).await["status"], "finalizing");
+    let (completion_status, resource) = wait_for_upload_resource(&restarted, &id, None).await;
+    assert_eq!(completion_status, StatusCode::CREATED, "{resource}");
+    let resource_id = resource["id"].as_str().unwrap().to_string();
+    assert_eq!(resource["content"]["size"], 11);
+    assert_eq!(
+        std::fs::read(root.join("blob/resumable/resume.txt")).unwrap(),
+        b"hello world"
+    );
+
+    let repeated_complete = request(
+        &restarted,
+        Request::builder()
+            .method(Method::POST)
+            .uri(format!("/uploads/{id}/complete"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(repeated_complete.status(), StatusCode::ACCEPTED);
+    assert_eq!(
+        response_json(repeated_complete).await["resource_id"],
+        resource_id
+    );
+
+    let acknowledged = request(
+        &restarted,
+        Request::builder()
+            .method(Method::DELETE)
+            .uri(format!("/uploads/{id}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(acknowledged.status(), StatusCode::NO_CONTENT);
+    let removed = request(
+        &restarted,
+        Request::builder()
+            .method(Method::GET)
+            .uri(format!("/uploads/{id}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(removed.status(), StatusCode::NOT_FOUND);
+    assert!(!root.join("blob/.asset-hub/uploads").exists());
 }
 
 #[tokio::test]
@@ -688,9 +842,17 @@ async fn upload_rejects_client_supplied_checksum_and_existing_resource_path() {
         &app,
         Request::builder()
             .method(Method::POST)
-            .uri("/resources?name=bad.txt&directory=secure&sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-            .header(header::CONTENT_TYPE, "text/plain")
-            .body(Body::from("hello, asset-hub!"))
+            .uri("/uploads")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({
+                    "name": "bad.txt",
+                    "directory": "secure",
+                    "size": 17,
+                    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                })
+                .to_string(),
+            ))
             .unwrap(),
     )
     .await;
@@ -704,9 +866,17 @@ async fn upload_rejects_client_supplied_checksum_and_existing_resource_path() {
         &app,
         Request::builder()
             .method(Method::POST)
-            .uri("/resources?name=unsupported.txt&directory=secure&checksum_kind=sha256")
-            .header(header::CONTENT_TYPE, "text/plain")
-            .body(Body::from("hello, asset-hub!"))
+            .uri("/uploads")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({
+                    "name": "unsupported.txt",
+                    "directory": "secure",
+                    "size": 17,
+                    "checksum_kind": "sha256"
+                })
+                .to_string(),
+            ))
             .unwrap(),
     )
     .await;
@@ -744,6 +914,27 @@ async fn stream_upload_is_not_limited_by_the_regular_request_timeout() {
         },
     )
     .await;
+    let create = request(
+        &app,
+        Request::builder()
+            .method(Method::POST)
+            .uri("/uploads")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({
+                    "name": "slow.txt",
+                    "directory": "uploads",
+                    "mime_type": "text/plain",
+                    "size": 11
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(create.status(), StatusCode::CREATED);
+    let session = response_json(create).await;
+    let id = session["id"].as_str().unwrap();
     let (sender, receiver) = tokio::sync::oneshot::channel();
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(25));
@@ -757,20 +948,39 @@ async fn stream_upload_is_not_limited_by_the_regular_request_timeout() {
     let response = request(
         &app,
         Request::builder()
-            .method(Method::POST)
-            .uri("/resources?name=slow.txt&directory=uploads")
-            .header(header::CONTENT_TYPE, "text/plain")
+            .method(Method::PATCH)
+            .uri(format!("/uploads/{id}"))
+            .header("upload-offset", "0")
+            .header(header::CONTENT_TYPE, "application/octet-stream")
             .header(header::ORIGIN, "http://127.0.0.1:5173")
             .body(body)
             .unwrap(),
     )
     .await;
 
-    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
     assert_eq!(
         response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN),
         Some(&header::HeaderValue::from_static("http://127.0.0.1:5173"))
     );
+    let exposed = response
+        .headers()
+        .get(header::ACCESS_CONTROL_EXPOSE_HEADERS)
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(exposed.contains("upload-offset"));
+    assert!(exposed.contains("upload-length"));
+    let complete = request(
+        &app,
+        Request::builder()
+            .method(Method::POST)
+            .uri(format!("/uploads/{id}/complete"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(complete.status(), StatusCode::ACCEPTED);
 }
 
 #[tokio::test]
@@ -783,18 +993,8 @@ async fn upload_detects_most_specific_plugin_kind() {
         ],
     )
     .await;
-    let response = request(
-        &app,
-        Request::builder()
-            .method(Method::POST)
-            .uri("/resources?name=README.md")
-            .header(header::CONTENT_TYPE, "text/plain")
-            .body(Body::from("# README"))
-            .unwrap(),
-    )
-    .await;
-    let status = response.status();
-    let resource = response_json(response).await;
+    let (status, resource) =
+        stream_upload(&app, "/resources?name=README.md", "text/plain", "# README").await;
 
     assert_eq!(status, StatusCode::CREATED, "{resource}");
     assert_eq!(resource["kind"], "azvs:markdown");
@@ -993,6 +1193,30 @@ async fn cors_policy_adds_allowed_origin_header() {
             .get(header::ACCESS_CONTROL_ALLOW_CREDENTIALS),
         Some(&header::HeaderValue::from_static("true"))
     );
+
+    let preflight = request(
+        &app,
+        Request::builder()
+            .method(Method::OPTIONS)
+            .uri("/uploads/example")
+            .header(header::ORIGIN, "http://127.0.0.1:5173")
+            .header(header::ACCESS_CONTROL_REQUEST_METHOD, "PATCH")
+            .header(
+                header::ACCESS_CONTROL_REQUEST_HEADERS,
+                "content-type,upload-offset",
+            )
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(preflight.status(), StatusCode::OK);
+    let allowed_headers = preflight
+        .headers()
+        .get(header::ACCESS_CONTROL_ALLOW_HEADERS)
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(allowed_headers.contains("upload-offset"));
 }
 
 #[tokio::test]
@@ -1159,13 +1383,13 @@ async fn openapi_exposes_current_http_contract() {
     assert!(update_properties.get("status").is_none());
     assert!(response_properties.get("status").is_none());
     assert!(schemas.get("CreateResourceRequest").is_none());
-    let create_operation = &document["paths"]["/resources"]["post"];
-    assert!(create_operation.is_object());
-    let create_parameters = create_operation["parameters"].as_array().unwrap();
-    assert!(!create_parameters.iter().any(|parameter| {
-        matches!(parameter["name"].as_str(), Some("description" | "status"))
-            && parameter["in"] == "query"
-    }));
+    assert!(document["paths"]["/resources"].get("post").is_none());
+    assert!(document["paths"]["/uploads"]["post"].is_object());
+    assert!(document["paths"]["/uploads/{id}"]["get"].is_object());
+    assert!(document["paths"]["/uploads/{id}"].get("head").is_none());
+    assert!(document["paths"]["/uploads/{id}"]["patch"].is_object());
+    assert!(document["paths"]["/uploads/{id}"]["delete"].is_object());
+    assert!(document["paths"]["/uploads/{id}/complete"]["post"].is_object());
     assert!(document["paths"].get("/resources/content/stream").is_none());
     let list_parameters = document["paths"]["/resources"]["get"]["parameters"]
         .as_array()
@@ -1312,7 +1536,7 @@ async fn test_app_at_root(
         HashMap::new(),
         authorization,
     )
-    .layer(Extension(AccessContext::administrator(UserId::new())));
+    .layer(Extension(test_admin_context()));
 
     TestApp { router, root }
 }
@@ -1347,7 +1571,7 @@ async fn test_app_with_plugin_web_assets(
         plugin_web_assets,
         authorization,
     )
-    .layer(Extension(AccessContext::administrator(UserId::new())));
+    .layer(Extension(test_admin_context()));
 
     TestApp { router, root }
 }
@@ -1374,19 +1598,167 @@ async fn stream_upload(
     content_type: &str,
     data: impl AsRef<[u8]>,
 ) -> (StatusCode, Value) {
-    let response = request(
+    resumable_upload(app, uri, content_type, data.as_ref(), None).await
+}
+
+async fn resumable_upload(
+    app: &TestApp,
+    uri: &str,
+    content_type: &str,
+    data: &[u8],
+    cookie: Option<&str>,
+) -> (StatusCode, Value) {
+    let query = uri.split_once('?').map_or("", |(_, query)| query);
+    let parameters = query
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .map(|(key, value)| (key, percent_decode(value)))
+        .collect::<HashMap<_, _>>();
+    let tags = parameters
+        .get("tags_json")
+        .map_or_else(|| json!([]), |value| serde_json::from_str(value).unwrap());
+    let create_body = json!({
+        "name": parameters.get("name").cloned().unwrap_or_default(),
+        "directory": parameters.get("directory").cloned().unwrap_or_default(),
+        "kind": parameters.get("kind").cloned(),
+        "tags": tags,
+        "mime_type": content_type,
+        "size": data.len(),
+    });
+    let mut create_request = Request::builder()
+        .method(Method::POST)
+        .uri("/uploads")
+        .header(header::CONTENT_TYPE, "application/json");
+    if let Some(cookie) = cookie {
+        create_request = create_request.header(header::COOKIE, cookie);
+    }
+    let create = request(
         app,
-        Request::builder()
-            .method(Method::POST)
-            .uri(uri)
-            .header(header::CONTENT_TYPE, content_type)
-            .body(Body::from(data.as_ref().to_vec()))
+        create_request
+            .body(Body::from(create_body.to_string()))
             .unwrap(),
     )
     .await;
-    let status = response.status();
-    let body = response_json(response).await;
-    (status, body)
+    if create.status() != StatusCode::CREATED {
+        let status = create.status();
+        return (status, response_json(create).await);
+    }
+    let session = response_json(create).await;
+    let id = session["id"].as_str().unwrap();
+    let mut append_request = Request::builder()
+        .method(Method::PATCH)
+        .uri(format!("/uploads/{id}"))
+        .header("upload-offset", "0")
+        .header(header::CONTENT_TYPE, "application/octet-stream");
+    if let Some(cookie) = cookie {
+        append_request = append_request.header(header::COOKIE, cookie);
+    }
+    let append = request(app, append_request.body(Body::from(data.to_vec())).unwrap()).await;
+    if append.status() != StatusCode::NO_CONTENT {
+        let status = append.status();
+        return (status, response_json(append).await);
+    }
+    let mut complete_request = Request::builder()
+        .method(Method::POST)
+        .uri(format!("/uploads/{id}/complete"));
+    if let Some(cookie) = cookie {
+        complete_request = complete_request.header(header::COOKIE, cookie);
+    }
+    let complete = request(app, complete_request.body(Body::empty()).unwrap()).await;
+    let status = complete.status();
+    let body = response_json(complete).await;
+    if status != StatusCode::ACCEPTED {
+        return (status, body);
+    }
+    wait_for_upload_resource(app, id, cookie).await
+}
+
+async fn wait_for_upload_resource(
+    app: &TestApp,
+    id: &str,
+    cookie: Option<&str>,
+) -> (StatusCode, Value) {
+    for _ in 0..500 {
+        let mut status_request = Request::builder()
+            .method(Method::GET)
+            .uri(format!("/uploads/{id}"));
+        if let Some(cookie) = cookie {
+            status_request = status_request.header(header::COOKIE, cookie);
+        }
+        let response = request(app, status_request.body(Body::empty()).unwrap()).await;
+        if response.status() != StatusCode::OK {
+            let status = response.status();
+            return (status, response_json(response).await);
+        }
+        let session = response_json(response).await;
+        match session["status"].as_str() {
+            Some("completed") => {
+                let resource_id = session["resource_id"]
+                    .as_str()
+                    .expect("completed upload should expose its Resource ID");
+                let mut resource_request = Request::builder()
+                    .method(Method::GET)
+                    .uri(format!("/resources/{resource_id}"));
+                if let Some(cookie) = cookie {
+                    resource_request = resource_request.header(header::COOKIE, cookie);
+                }
+                let response = request(app, resource_request.body(Body::empty()).unwrap()).await;
+                let status = if response.status() == StatusCode::OK {
+                    StatusCode::CREATED
+                } else {
+                    response.status()
+                };
+                return (status, response_json(response).await);
+            }
+            Some("failed") => {
+                return (
+                    StatusCode::CONFLICT,
+                    json!({ "error": session["error"].clone() }),
+                );
+            }
+            Some("uploading" | "finalizing") => {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            other => panic!("unexpected upload status: {other:?}"),
+        }
+    }
+    panic!("upload `{id}` did not finish in time");
+}
+
+fn percent_decode(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            let hex = |byte: u8| match byte {
+                b'0'..=b'9' => Some(byte - b'0'),
+                b'a'..=b'f' => Some(byte - b'a' + 10),
+                b'A'..=b'F' => Some(byte - b'A' + 10),
+                _ => None,
+            };
+            if let (Some(high), Some(low)) = (hex(bytes[index + 1]), hex(bytes[index + 2])) {
+                decoded.push(high * 16 + low);
+                index += 3;
+                continue;
+            }
+        }
+        decoded.push(if bytes[index] == b'+' {
+            b' '
+        } else {
+            bytes[index]
+        });
+        index += 1;
+    }
+    String::from_utf8(decoded).unwrap()
+}
+
+fn test_admin_context() -> AccessContext {
+    AccessContext::administrator(
+        "01900000-0000-7000-8000-000000000001"
+            .parse::<UserId>()
+            .unwrap(),
+    )
 }
 
 #[tokio::test]
@@ -1640,19 +2012,15 @@ async fn member_access_is_limited_to_the_workspace_subtree() {
     .await;
     assert_eq!(invalid_folder.status(), StatusCode::BAD_REQUEST);
 
-    let uploaded = request(
+    let (status, uploaded) = resumable_upload(
         &app,
-        Request::builder()
-            .method(Method::POST)
-            .uri("/resources?name=member-upload.txt&directory=")
-            .header(header::CONTENT_TYPE, "text/plain")
-            .header(header::COOKIE, &alice_cookie)
-            .body(Body::from("member content"))
-            .unwrap(),
+        "/resources?name=member-upload.txt&directory=",
+        "text/plain",
+        b"member content",
+        Some(&alice_cookie),
     )
     .await;
-    assert_eq!(uploaded.status(), StatusCode::CREATED);
-    let uploaded = response_json(uploaded).await;
+    assert_eq!(status, StatusCode::CREATED);
     assert_eq!(uploaded["directory"], "");
     assert!(
         app.root
@@ -1706,19 +2074,15 @@ async fn member_access_is_limited_to_the_workspace_subtree() {
         response_json(allowed_as_admin).await["directory"],
         "teams/alice"
     );
-    let admin_only = request(
+    let (status, admin_only) = resumable_upload(
         &app,
-        Request::builder()
-            .method(Method::POST)
-            .uri("/resources?name=admin-only.txt&directory=")
-            .header(header::CONTENT_TYPE, "text/plain")
-            .header(header::COOKIE, &admin_cookie)
-            .body(Body::from("admin content"))
-            .unwrap(),
+        "/resources?name=admin-only.txt&directory=",
+        "text/plain",
+        b"admin content",
+        Some(&admin_cookie),
     )
     .await;
-    assert_eq!(admin_only.status(), StatusCode::CREATED);
-    let admin_only = response_json(admin_only).await;
+    assert_eq!(status, StatusCode::CREATED);
     let denied = request_with_cookie(
         &app,
         Method::GET,
@@ -1729,18 +2093,15 @@ async fn member_access_is_limited_to_the_workspace_subtree() {
     .await;
     assert_eq!(denied.status(), StatusCode::FORBIDDEN);
 
-    let invalid = request(
+    let (status, _) = resumable_upload(
         &app,
-        Request::builder()
-            .method(Method::POST)
-            .uri("/resources?name=invalid.txt&directory=..%2Fbob")
-            .header(header::CONTENT_TYPE, "text/plain")
-            .header(header::COOKIE, &alice_cookie)
-            .body(Body::from("invalid"))
-            .unwrap(),
+        "/resources?name=invalid.txt&directory=..%2Fbob",
+        "text/plain",
+        b"invalid",
+        Some(&alice_cookie),
     )
     .await;
-    assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 
     let disabled = request_with_cookie(
         &app,
