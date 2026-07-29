@@ -3,7 +3,6 @@ use std::io::{Seek, Write};
 use tokio_util::io::ReaderStream;
 use zip::write::SimpleFileOptions;
 
-pub(crate) const MAX_UPLOAD_BYTES: usize = 4 * 1024 * 1024 * 1024;
 pub(super) const DEFAULT_CONTENT_TYPE: &str = "application/octet-stream";
 
 /// 使用原始内容流创建资源。
@@ -35,8 +34,7 @@ pub(crate) async fn create_resource(
 ) -> Result<(StatusCode, Json<ResourceResponse>), HttpError> {
     let workspace = state.workspace(&access.0).await?;
     let directory = query.directory.unwrap_or_default();
-    ensure_content_length(&headers)?;
-    let data = limited_body_stream(body);
+    let data = body_stream(body);
 
     let mut command = CreateResource::new(query.name, data);
     command = command.with_directory(directory);
@@ -298,49 +296,12 @@ pub(super) fn content_type(headers: &HeaderMap) -> Result<Option<String>, HttpEr
         .transpose()
 }
 
-pub(super) fn ensure_content_length(headers: &HeaderMap) -> Result<(), HttpError> {
-    let Some(value) = headers.get(header::CONTENT_LENGTH) else {
-        return Ok(());
-    };
-    let value = value
-        .to_str()
-        .map_err(|error| HttpError::bad_request(format!("invalid content-length: {error}")))?;
-    let value = value
-        .parse::<u64>()
-        .map_err(|error| HttpError::bad_request(format!("invalid content-length: {error}")))?;
-
-    ensure_upload_size(value)
-}
-
-pub(super) fn ensure_upload_size(size: u64) -> Result<(), HttpError> {
-    if size > MAX_UPLOAD_BYTES as u64 {
-        return Err(HttpError::bad_request(format!(
-            "request body too large: max {} bytes",
-            MAX_UPLOAD_BYTES
-        )));
-    }
-
-    Ok(())
-}
-
-pub(super) fn limited_body_stream(body: Body) -> BlobByteStream {
-    let bytes_read = Arc::new(AtomicU64::new(0));
-    let stream_bytes_read = bytes_read.clone();
-
-    Box::pin(body.into_data_stream().map(move |chunk| {
-        let chunk = chunk.map_err(|error| CoreError::storage("http.request_body", error))?;
-        let total =
-            stream_bytes_read.fetch_add(chunk.len() as u64, Ordering::Relaxed) + chunk.len() as u64;
-
-        if total > MAX_UPLOAD_BYTES as u64 {
-            return Err(CoreError::configuration(format!(
-                "request body too large: max {} bytes",
-                MAX_UPLOAD_BYTES
-            )));
-        }
-
-        Ok(chunk)
-    }))
+pub(super) fn body_stream(body: Body) -> BlobByteStream {
+    Box::pin(
+        body.into_data_stream().map(move |chunk| {
+            chunk.map_err(|error| CoreError::storage("http.request_body", error))
+        }),
+    )
 }
 
 pub(super) fn binary_stream_response(

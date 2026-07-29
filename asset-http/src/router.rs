@@ -85,7 +85,7 @@ pub fn build_router(
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
                 .layer(cors_layer(options.cors.clone()))
-                .layer(DefaultBodyLimit::max(handlers::MAX_UPLOAD_BYTES)),
+                .layer(DefaultBodyLimit::disable()),
         );
 
     let directory_download_router = Router::new()
@@ -107,8 +107,7 @@ pub fn build_router(
                     StatusCode::REQUEST_TIMEOUT,
                     options.request_timeout,
                 ))
-                .layer(cors_layer(options.cors))
-                .layer(DefaultBodyLimit::max(handlers::MAX_UPLOAD_BYTES)),
+                .layer(cors_layer(options.cors)),
         )
         .merge(upload_router)
         .merge(directory_download_router)

@@ -23,8 +23,6 @@ use axum::response::{IntoResponse, Response};
 use futures_util::StreamExt;
 use std::path::{Component, Path as FsPath};
 use std::str::FromStr;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 pub(crate) mod content;
 pub(crate) mod maintenance;
@@ -32,8 +30,7 @@ pub(crate) mod plugin;
 pub(crate) mod resource;
 
 pub(crate) use content::{
-    MAX_UPLOAD_BYTES, create_resource, download_directory, download_resource_content,
-    get_resource_content,
+    create_resource, download_directory, download_resource_content, get_resource_content,
 };
 pub(crate) use maintenance::{health, purge_disabled};
 pub(crate) use plugin::plugin_web_asset;
