@@ -87,15 +87,22 @@ impl<'a> StorageReconciliationService<'a> {
         for located in resources {
             let storage_key = located.storage_key()?;
             let resource = located.resource();
-            if resource.content().is_some()
-                && !physical_keys.contains(&storage_key)
-                && self
+            if resource.content().is_some() && !physical_keys.contains(&storage_key) {
+                let _storage_key_guard = self.service.storage_key_locks.lock(&storage_key).await;
+                if self
                     .service
-                    .repository
-                    .remove_if_unchanged(&resource.id(), resource.updated_at())
+                    .storage_scanner
+                    .inspect(&storage_key)
                     .await?
-            {
-                report.removed_resources += 1;
+                    .is_none()
+                    && self
+                        .service
+                        .repository
+                        .remove_if_unchanged(&resource.id(), resource.updated_at())
+                        .await?
+                {
+                    report.removed_resources += 1;
+                }
             }
         }
         report.directory_keys = physical_directories
@@ -117,18 +124,20 @@ impl<'a> StorageReconciliationService<'a> {
         let mut existing = Vec::new();
         let mut missing = Vec::new();
         for key in keys {
-            match self.service.storage_scanner.inspect(key).await? {
-                Some(file) => existing.push(file),
-                None => missing.push(key),
+            if self.service.storage_scanner.inspect(key).await?.is_some() {
+                existing.push(key);
+            } else {
+                missing.push(key);
             }
         }
 
         // 先处理目标路径，再移除源路径，使拆分为 From/To 的平台重命名事件仍有机会保留 ID。
-        for file in existing {
-            self.reconcile_changed_blob(&file).await?;
-        }
-        for key in missing {
-            self.remove_missing_blob_resource(key).await?;
+        existing.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        existing.dedup();
+        missing.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        missing.dedup();
+        for key in existing.into_iter().chain(missing) {
+            self.reconcile_storage_key(key).await?;
         }
         Ok(())
     }
@@ -138,10 +147,15 @@ impl<'a> StorageReconciliationService<'a> {
         from: &StorageKey,
         to: &StorageKey,
     ) -> Result<(), CoreError> {
+        let _storage_key_guards = self
+            .service
+            .storage_key_locks
+            .lock_many(&[from.clone(), to.clone()])
+            .await;
         let Some(target) = self.service.storage_scanner.inspect(to).await? else {
-            return self
-                .reconcile_storage_keys(&[from.clone(), to.clone()])
-                .await;
+            self.reconcile_storage_key_locked(from).await?;
+            self.reconcile_storage_key_locked(to).await?;
+            return Ok(());
         };
         let (from_directory, from_name) = resource_path_from_key(from)?;
         let Some(located) = self
@@ -150,7 +164,7 @@ impl<'a> StorageReconciliationService<'a> {
             .find_by_path(&from_directory, &from_name)
             .await?
         else {
-            self.reconcile_changed_blob(&target).await?;
+            self.reconcile_scanned_blob(&target).await?;
             return Ok(());
         };
         let mut resource = located.into_resource();
@@ -162,8 +176,8 @@ impl<'a> StorageReconciliationService<'a> {
             .await?
             .is_some()
         {
-            self.remove_missing_blob_resource(from).await?;
-            self.reconcile_changed_blob(&target).await?;
+            self.remove_missing_blob_resource_locked(from).await?;
+            self.reconcile_scanned_blob(&target).await?;
             return Ok(());
         }
 
@@ -196,7 +210,27 @@ impl<'a> StorageReconciliationService<'a> {
     }
 
     async fn reconcile_changed_blob(&self, file: &ScannedBlob) -> Result<Duration, CoreError> {
-        self.reconcile_scanned_blob(file).await
+        let _storage_key_guard = self.service.storage_key_locks.lock(&file.key).await;
+        let Some(current) = self.service.storage_scanner.inspect(&file.key).await? else {
+            self.remove_missing_blob_resource_locked(&file.key).await?;
+            return Ok(Duration::ZERO);
+        };
+        self.reconcile_scanned_blob(&current).await
+    }
+
+    async fn reconcile_storage_key(&self, key: &StorageKey) -> Result<(), CoreError> {
+        let _storage_key_guard = self.service.storage_key_locks.lock(key).await;
+        self.reconcile_storage_key_locked(key).await
+    }
+
+    async fn reconcile_storage_key_locked(&self, key: &StorageKey) -> Result<(), CoreError> {
+        match self.service.storage_scanner.inspect(key).await? {
+            Some(file) => {
+                self.reconcile_scanned_blob(&file).await?;
+            }
+            None => self.remove_missing_blob_resource_locked(key).await?,
+        }
+        Ok(())
     }
 
     async fn reconcile_scanned_blob(&self, file: &ScannedBlob) -> Result<Duration, CoreError> {
@@ -316,7 +350,7 @@ impl<'a> StorageReconciliationService<'a> {
         }
     }
 
-    async fn remove_missing_blob_resource(&self, key: &StorageKey) -> Result<(), CoreError> {
+    async fn remove_missing_blob_resource_locked(&self, key: &StorageKey) -> Result<(), CoreError> {
         let (directory, name) = resource_path_from_key(key)?;
         if let Some(located) = self.service.query.find_by_path(&directory, &name).await?
             && located.resource().content().is_some()

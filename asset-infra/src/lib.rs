@@ -21,7 +21,6 @@ use asset_core::{
     port::ResourceKindRegistry, port::ResourceQuery, port::ResourceRepository,
     port::SecurityAuditRepository, port::StorageScanner,
 };
-use asset_plugin_api::PluginExecutionPolicy;
 pub use asset_plugin_api::PluginWebAssets;
 use config::{AssetInfraConfig, BlobBackend, DatabaseBackend};
 use directory_index::InMemoryDirectoryIndex;
@@ -63,8 +62,8 @@ pub struct AssetInfrastructure {
     resource_action_registry: Arc<DefaultResourceActionRegistry>,
     /// 资源动作执行器。
     resource_action_executor: Arc<DefaultResourceActionExecutor>,
-    plugin_execution_policy: Arc<PluginExecutionPolicy>,
     plugin_web_assets: PluginWebAssets,
+    resource_service: ResourceService,
 }
 
 impl AssetInfrastructure {
@@ -143,6 +142,28 @@ impl AssetInfrastructure {
         let resource_action_executor =
             Arc::new(DefaultResourceActionExecutor::new(extism_action_executor));
         let plugin_web_assets = plugin_web_assets_from_catalog(&plugin_catalog)?;
+        let resource_service = ResourceService::new(
+            ResourceServicePorts::new(
+                resource_repository.clone(),
+                resource_repository.clone(),
+                blob_storage.clone(),
+                resource_repository.clone(),
+                directory_index.clone(),
+                blob_storage.clone(),
+                directory_kind_registry.clone(),
+                storage_scanner.clone(),
+                resource_kind_registry.clone(),
+            )
+            .with_actions(
+                resource_action_registry.clone(),
+                resource_action_executor.clone(),
+            )
+            .with_directory_actions(
+                directory_action_registry.clone(),
+                directory_action_executor.clone(),
+            ),
+            plugin_execution_policy.clone(),
+        );
 
         Ok(Self {
             config,
@@ -158,8 +179,8 @@ impl AssetInfrastructure {
             directory_action_executor,
             resource_action_registry,
             resource_action_executor,
-            plugin_execution_policy,
             plugin_web_assets,
+            resource_service,
         })
     }
 
@@ -284,30 +305,9 @@ impl AssetInfrastructure {
         self.plugin_web_assets.clone()
     }
 
-    /// 创建资源应用服务。
+    /// 返回共享同一组 StorageKey 锁的资源应用服务。
     pub fn resource_service(&self) -> ResourceService {
-        ResourceService::new(
-            ResourceServicePorts::new(
-                self.resource_repository(),
-                self.resource_query(),
-                self.blob_storage(),
-                self.directory_store(),
-                self.directory_index(),
-                self.directory_storage(),
-                self.directory_kind_registry(),
-                self.storage_scanner(),
-                self.resource_kind_registry(),
-            )
-            .with_actions(
-                self.resource_action_registry(),
-                self.resource_action_executor(),
-            )
-            .with_directory_actions(
-                self.directory_action_registry(),
-                self.directory_action_executor(),
-            ),
-            self.plugin_execution_policy.clone(),
-        )
+        self.resource_service.clone()
     }
 }
 

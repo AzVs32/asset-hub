@@ -55,50 +55,63 @@ impl<'a> ResourceContentService<'a> {
         build_content(0, mime_type.clone(), placeholder_checksum()?, None)?;
 
         let (data, checksum_state) = stream_with_checksum_tracking(data);
-        let write_result = self
-            .service
-            .blob_storage
-            .put_stream_if_absent(&storage_key, data)
-            .await?;
+        let staged = self.service.blob_storage.stage_stream(data).await?;
         let checksum = match finalize_tracked_checksum(checksum_state) {
             Ok(checksum) => checksum,
             Err(error) => {
-                let _ = self.service.blob_storage.delete(&storage_key).await;
+                let _ = self.service.blob_storage.discard_staged(&staged).await;
                 return Err(error);
             }
         };
-        let stored = match self.service.storage_scanner.inspect(&storage_key).await {
-            Ok(Some(stored)) if stored.size == write_result.bytes_written() => stored,
-            Ok(Some(_)) => {
-                let _ = self.service.blob_storage.delete(&storage_key).await;
-                return Err(CoreError::conflict(format!(
-                    "blob `{storage_key}` changed while its upload was being finalized"
-                )));
-            }
-            Ok(None) => {
-                let _ = self.service.blob_storage.delete(&storage_key).await;
-                return Err(CoreError::conflict(format!(
-                    "blob `{storage_key}` disappeared while its upload was being finalized"
-                )));
+
+        let _storage_key_guard = self.service.storage_key_locks.lock(&storage_key).await;
+        if let Err(error) = self
+            .service
+            .blob_storage
+            .publish_staged_if_absent(&staged, &storage_key)
+            .await
+        {
+            let _ = self.service.blob_storage.discard_staged(&staged).await;
+            return Err(error);
+        }
+
+        let finalized = async {
+            let stored = match self.service.storage_scanner.inspect(&storage_key).await? {
+                Some(stored) if stored.size == staged.bytes_written() => stored,
+                Some(_) => {
+                    return Err(CoreError::conflict(format!(
+                        "blob `{storage_key}` changed while its upload was being finalized"
+                    )));
+                }
+                None => {
+                    return Err(CoreError::conflict(format!(
+                        "blob `{storage_key}` disappeared while its upload was being finalized"
+                    )));
+                }
+            };
+            let content = build_content(
+                staged.bytes_written(),
+                mime_type,
+                checksum,
+                Some(stored.modified_at),
+            )?;
+            resource.attach_content(content)?;
+            self.service.repository.save(&resource).await?;
+            Ok(resource)
+        }
+        .await;
+
+        match finalized {
+            Ok(resource) => {
+                let _ = self.service.blob_storage.discard_staged(&staged).await;
+                Ok(resource)
             }
             Err(error) => {
                 let _ = self.service.blob_storage.delete(&storage_key).await;
-                return Err(error);
+                let _ = self.service.blob_storage.discard_staged(&staged).await;
+                Err(error)
             }
-        };
-        let content = build_content(
-            write_result.bytes_written(),
-            mime_type,
-            checksum,
-            Some(stored.modified_at),
-        )?;
-        resource.attach_content(content)?;
-
-        if let Err(error) = self.service.repository.save(&resource).await {
-            let _ = self.service.blob_storage.delete(&storage_key).await;
-            return Err(error);
         }
-        Ok(resource)
     }
 
     #[cfg(test)]

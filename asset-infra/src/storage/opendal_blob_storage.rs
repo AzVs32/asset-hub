@@ -1,7 +1,7 @@
 use asset_core::CoreError;
 use asset_core::domain::{DirectoryPath, StorageKey};
 use asset_core::port::{
-    BlobByteStream, BlobStorage, BlobWriteResult, DirectoryStorage, RESERVED_BLOB_STORAGE_PREFIX,
+    BlobByteStream, BlobStorage, DirectoryStorage, RESERVED_BLOB_STORAGE_PREFIX, StagedBlob,
 };
 use bytes::Bytes;
 use futures_util::{StreamExt, TryStreamExt};
@@ -22,17 +22,6 @@ pub struct OpenDalBlobStorage {
 }
 
 impl OpenDalBlobStorage {
-    /// 使用 OpenDAL `Operator` 创建非本地适配器。
-    ///
-    /// 调用方必须确认该访问路径不会改写对象键；OpenDAL 0.57 的高层操作会裁剪整个键
-    /// 的首尾空白，不满足需要原样保留名称的 S3 契约。
-    pub fn new(operator: Operator) -> Self {
-        Self {
-            operator,
-            local_root: None,
-        }
-    }
-
     /// 根据已经归一化的本地根目录创建对象存储适配器。
     pub fn from_local_root(root: &Path) -> Result<Self, CoreError> {
         if root.as_os_str().is_empty() {
@@ -50,11 +39,6 @@ impl OpenDalBlobStorage {
             operator,
             local_root: Some(root.to_path_buf()),
         })
-    }
-
-    /// 返回内部 OpenDAL `Operator`。
-    pub fn operator(&self) -> &Operator {
-        &self.operator
     }
 }
 
@@ -93,25 +77,57 @@ impl BlobStorage for OpenDalBlobStorage {
             .map_err(|error| CoreError::storage("put", error))
     }
 
-    async fn put_stream_if_absent(
+    async fn stage_stream(&self, data: BlobByteStream) -> Result<StagedBlob, CoreError> {
+        let root = self.local_root.as_ref().ok_or_else(|| {
+            CoreError::configuration("staged uploads require the local blob storage backend")
+        })?;
+        let key = StorageKey::new(format!(
+            "{RESERVED_BLOB_STORAGE_PREFIX}/uploads/{}",
+            uuid::Uuid::now_v7()
+        ))?;
+        write_local_staged_stream(root.join(key.as_str()), &key, data).await
+    }
+
+    async fn publish_staged_if_absent(
         &self,
-        key: &StorageKey,
-        data: BlobByteStream,
-    ) -> Result<BlobWriteResult, CoreError> {
-        if let Some(root) = &self.local_root {
-            return put_local_stream_if_absent(root.join(key.as_str()), key, data).await;
+        staged: &StagedBlob,
+        target: &StorageKey,
+    ) -> Result<(), CoreError> {
+        let root = self.local_root.as_ref().ok_or_else(|| {
+            CoreError::configuration("staged uploads require the local blob storage backend")
+        })?;
+        if !is_upload_staging_key(staged.key()) {
+            return Err(CoreError::configuration(format!(
+                "staged blob `{}` is outside the upload staging namespace",
+                staged.key()
+            )));
         }
-        put_stream_with_writer(
-            self.operator
-                .writer_with(key.as_str())
-                .if_not_exists(true)
+        let source = root.join(staged.key().as_str());
+        let target_path = root.join(target.as_str());
+        if let Some(parent) = target_path.parent() {
+            tokio::fs::create_dir_all(parent)
                 .await
-                .map_err(|error| {
-                    conditional_write_error("put_stream_if_absent.open", key, error)
-                })?,
-            data,
-        )
-        .await
+                .map_err(|error| CoreError::storage("staged_publish.create_parent", error))?;
+        }
+        tokio::fs::hard_link(source, target_path)
+            .await
+            .map_err(|error| {
+                if error.kind() == std::io::ErrorKind::AlreadyExists {
+                    CoreError::conflict(format!("storage key `{target}` already exists"))
+                } else {
+                    CoreError::storage("staged_publish.link", error)
+                }
+            })
+    }
+
+    async fn discard_staged(&self, staged: &StagedBlob) -> Result<(), CoreError> {
+        if !is_upload_staging_key(staged.key()) {
+            return Err(CoreError::configuration(format!(
+                "staged blob `{}` is outside the upload staging namespace",
+                staged.key()
+            )));
+        }
+        self.delete(staged.key()).await
     }
 
     async fn get(&self, key: &StorageKey) -> Result<Option<Bytes>, CoreError> {
@@ -274,54 +290,81 @@ impl BlobStorage for OpenDalBlobStorage {
     }
 }
 
-async fn put_local_stream_if_absent(
+async fn write_local_staged_stream(
     path: PathBuf,
     key: &StorageKey,
     mut data: BlobByteStream,
-) -> Result<BlobWriteResult, CoreError> {
+) -> Result<StagedBlob, CoreError> {
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent)
             .await
-            .map_err(|error| CoreError::storage("put_stream.create_parent", error))?;
+            .map_err(|error| CoreError::storage("stage_stream.create_parent", error))?;
     }
-    let mut file = tokio::fs::OpenOptions::new()
+    let file = tokio::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&path)
         .await
-        .map_err(|error| {
-            if error.kind() == std::io::ErrorKind::AlreadyExists {
-                CoreError::conflict(format!("storage key `{key}` already exists"))
-            } else {
-                CoreError::storage("put_stream.open", error)
-            }
-        })?;
-    let result = async {
-        let mut bytes_written = 0_u64;
-        while let Some(chunk) = data.next().await {
-            let chunk = chunk?;
-            bytes_written = bytes_written
-                .checked_add(chunk.len() as u64)
-                .ok_or_else(|| CoreError::storage("put_stream.size", SizeOverflow))?;
-            file.write_all(&chunk)
-                .await
-                .map_err(|error| CoreError::storage("put_stream.write", error))?;
-        }
-        file.flush()
+        .map_err(|error| CoreError::storage("stage_stream.open", error))?;
+    let mut staged_file = StagedFile::new(path, file);
+    let mut bytes_written = 0_u64;
+    while let Some(chunk) = data.next().await {
+        let chunk = chunk?;
+        bytes_written = bytes_written
+            .checked_add(chunk.len() as u64)
+            .ok_or_else(|| CoreError::storage("stage_stream.size", SizeOverflow))?;
+        staged_file
+            .file()
+            .write_all(&chunk)
             .await
-            .map_err(|error| CoreError::storage("put_stream.close", error))?;
-        file.sync_all()
-            .await
-            .map_err(|error| CoreError::storage("put_stream.close", error))?;
-        Ok(BlobWriteResult::new(bytes_written))
+            .map_err(|error| CoreError::storage("stage_stream.write", error))?;
     }
-    .await;
+    staged_file
+        .file()
+        .flush()
+        .await
+        .map_err(|error| CoreError::storage("stage_stream.flush", error))?;
+    staged_file
+        .file()
+        .sync_all()
+        .await
+        .map_err(|error| CoreError::storage("stage_stream.sync", error))?;
+    staged_file.finish();
+    Ok(StagedBlob::new(key.clone(), bytes_written))
+}
 
-    if result.is_err() {
-        drop(file);
-        let _ = tokio::fs::remove_file(path).await;
+struct StagedFile {
+    path: PathBuf,
+    file: Option<tokio::fs::File>,
+    complete: bool,
+}
+
+impl StagedFile {
+    fn new(path: PathBuf, file: tokio::fs::File) -> Self {
+        Self {
+            path,
+            file: Some(file),
+            complete: false,
+        }
     }
-    result
+
+    fn file(&mut self) -> &mut tokio::fs::File {
+        self.file.as_mut().expect("staged file must still be open")
+    }
+
+    fn finish(mut self) {
+        drop(self.file.take());
+        self.complete = true;
+    }
+}
+
+impl Drop for StagedFile {
+    fn drop(&mut self) {
+        drop(self.file.take());
+        if !self.complete {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
 }
 
 fn local_file_stream(
@@ -444,6 +487,12 @@ fn is_internal_key(key: &StorageKey) -> bool {
             .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
+fn is_upload_staging_key(key: &StorageKey) -> bool {
+    key.as_str()
+        .strip_prefix(&format!("{RESERVED_BLOB_STORAGE_PREFIX}/uploads/"))
+        .is_some_and(|suffix| !suffix.is_empty() && !suffix.contains('/'))
+}
+
 /// `.asset-hub` 不属于用户目录模型，可以在内部对象删除后清理其空目录。
 /// 用户可见目录绝不在 Blob 操作中隐式删除。
 fn cleanup_internal_fs_parents(
@@ -466,98 +515,6 @@ fn cleanup_internal_fs_parents(
         }
     }
     Ok(())
-}
-
-async fn put_stream_with_writer(
-    mut writer: impl StreamWriter,
-    mut data: BlobByteStream,
-) -> Result<BlobWriteResult, CoreError> {
-    let mut bytes_written = 0_u64;
-
-    while let Some(chunk) = data.next().await {
-        let chunk = match chunk {
-            Ok(chunk) => chunk,
-            Err(error) => {
-                let _ = writer.abort().await;
-                return Err(error);
-            }
-        };
-
-        bytes_written = bytes_written
-            .checked_add(chunk.len() as u64)
-            .ok_or_else(|| CoreError::storage("put_stream.size", SizeOverflow))?;
-
-        if let Err(error) = writer.write(chunk).await {
-            let _ = writer.abort().await;
-            return Err(CoreError::storage("put_stream.write", WriterFailure(error)));
-        }
-    }
-
-    if let Err(error) = writer.close().await {
-        let _ = writer.abort().await;
-        return Err(CoreError::storage("put_stream.close", WriterFailure(error)));
-    }
-
-    Ok(BlobWriteResult::new(bytes_written))
-}
-
-type WriterError = Box<dyn std::error::Error + Send + Sync>;
-
-#[derive(Debug)]
-struct WriterFailure(WriterError);
-impl std::fmt::Display for WriterFailure {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(formatter)
-    }
-}
-impl std::error::Error for WriterFailure {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(self.0.as_ref())
-    }
-}
-
-#[async_trait::async_trait]
-trait StreamWriter: Send {
-    async fn write(&mut self, chunk: Bytes) -> Result<(), WriterError>;
-    async fn close(&mut self) -> Result<(), WriterError>;
-    async fn abort(&mut self) -> Result<(), WriterError>;
-}
-
-#[async_trait::async_trait]
-impl StreamWriter for opendal::Writer {
-    async fn write(&mut self, chunk: Bytes) -> Result<(), WriterError> {
-        opendal::Writer::write(self, chunk)
-            .await
-            .map_err(|error| Box::new(error) as WriterError)
-    }
-
-    async fn close(&mut self) -> Result<(), WriterError> {
-        opendal::Writer::close(self)
-            .await
-            .map(|_| ())
-            .map_err(|error| Box::new(error) as WriterError)
-    }
-
-    async fn abort(&mut self) -> Result<(), WriterError> {
-        opendal::Writer::abort(self)
-            .await
-            .map_err(|error| Box::new(error) as WriterError)
-    }
-}
-
-fn conditional_write_error(
-    operation: &'static str,
-    key: &StorageKey,
-    error: opendal::Error,
-) -> CoreError {
-    if matches!(
-        error.kind(),
-        ErrorKind::AlreadyExists | ErrorKind::ConditionNotMatch
-    ) {
-        return CoreError::conflict(format!("storage key `{key}` already exists"));
-    }
-
-    CoreError::storage(operation, error)
 }
 
 #[derive(Debug)]

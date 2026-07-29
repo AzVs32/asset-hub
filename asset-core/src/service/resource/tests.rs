@@ -6,11 +6,11 @@ use crate::domain::{
     UserId, UserRole,
 };
 use crate::port::{
-    BlobByteStream, BlobWriteResult, DirectoryActionExecutor, DirectoryActionOutput,
-    DirectoryActionRegistry, DirectoryActionRequest, DirectoryIndex, DirectoryKindDefinition,
-    DirectoryKindRegistry, DirectoryLocation, DirectoryQuery, DirectoryStore, ListResources,
-    LocatedDirectory, LocatedResource, ResourceActionOutput, ResourceActionRequest,
-    ResourceKindDefinition, ResourceKindRegistry, ResourcePage, ScannedStorageEntry, StoragePrefix,
+    BlobByteStream, DirectoryActionExecutor, DirectoryActionOutput, DirectoryActionRegistry,
+    DirectoryActionRequest, DirectoryIndex, DirectoryKindDefinition, DirectoryKindRegistry,
+    DirectoryLocation, DirectoryQuery, DirectoryStore, ListResources, LocatedDirectory,
+    LocatedResource, ResourceActionOutput, ResourceActionRequest, ResourceKindDefinition,
+    ResourceKindRegistry, ResourcePage, ScannedStorageEntry, StagedBlob, StoragePrefix,
     UserRepository,
 };
 use asset_plugin_api::protocol::directory::{
@@ -32,11 +32,14 @@ use std::fmt;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
+use tokio::sync::oneshot;
 
 struct InMemoryResourceRepository {
     resources: Mutex<HashMap<ResourceId, Resource>>,
     directories: Mutex<HashMap<DirectoryId, (Directory, DirectoryPath)>>,
     fail_next_save: Mutex<bool>,
+    next_save_started: Mutex<Option<oneshot::Sender<()>>>,
+    next_save_release: Mutex<Option<oneshot::Receiver<()>>>,
 }
 
 impl Default for InMemoryResourceRepository {
@@ -46,6 +49,8 @@ impl Default for InMemoryResourceRepository {
             resources: Mutex::new(HashMap::new()),
             directories: Mutex::new(HashMap::from([(root.id(), (root, DirectoryPath::root()))])),
             fail_next_save: Mutex::new(false),
+            next_save_started: Mutex::new(None),
+            next_save_release: Mutex::new(None),
         }
     }
 }
@@ -78,6 +83,18 @@ impl InMemoryResourceRepository {
     fn is_empty(&self) -> bool {
         self.resources.lock().unwrap().is_empty()
     }
+
+    fn len(&self) -> usize {
+        self.resources.lock().unwrap().len()
+    }
+
+    fn pause_next_save(&self) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+        let (started_sender, started_receiver) = oneshot::channel();
+        let (release_sender, release_receiver) = oneshot::channel();
+        *self.next_save_started.lock().unwrap() = Some(started_sender);
+        *self.next_save_release.lock().unwrap() = Some(release_receiver);
+        (started_receiver, release_sender)
+    }
 }
 
 #[async_trait::async_trait]
@@ -89,6 +106,14 @@ impl ResourceRepository for InMemoryResourceRepository {
     async fn save(&self, resource: &Resource) -> Result<(), CoreError> {
         if std::mem::take(&mut *self.fail_next_save.lock().unwrap()) {
             return Err(CoreError::repository("save", TestError("save failed")));
+        }
+        let started = self.next_save_started.lock().unwrap().take();
+        let release = self.next_save_release.lock().unwrap().take();
+        if let Some(started) = started {
+            let _ = started.send(());
+        }
+        if let Some(release) = release {
+            let _ = release.await;
         }
 
         self.resources
@@ -555,11 +580,7 @@ impl BlobStorage for InMemoryBlobStorage {
         Ok(())
     }
 
-    async fn put_stream_if_absent(
-        &self,
-        key: &StorageKey,
-        mut data: BlobByteStream,
-    ) -> Result<BlobWriteResult, CoreError> {
+    async fn stage_stream(&self, mut data: BlobByteStream) -> Result<StagedBlob, CoreError> {
         let mut bytes = Vec::new();
 
         while let Some(chunk) = data.next().await {
@@ -567,20 +588,48 @@ impl BlobStorage for InMemoryBlobStorage {
         }
 
         let bytes_written = bytes.len() as u64;
-        let mut objects = self.objects.lock().unwrap();
-        if objects.contains_key(key) {
-            return Err(CoreError::conflict(format!(
-                "storage key `{key}` already exists"
-            )));
-        }
-
-        objects.insert(key.clone(), Bytes::from(bytes));
+        let key = StorageKey::new(format!(
+            "{}/uploads/{}",
+            crate::port::RESERVED_BLOB_STORAGE_PREFIX,
+            uuid::Uuid::now_v7()
+        ))?;
+        self.objects
+            .lock()
+            .unwrap()
+            .insert(key.clone(), Bytes::from(bytes));
         self.modified_at
             .lock()
             .unwrap()
             .insert(key.clone(), chrono::Utc::now());
 
-        Ok(BlobWriteResult::new(bytes_written))
+        Ok(StagedBlob::new(key, bytes_written))
+    }
+
+    async fn publish_staged_if_absent(
+        &self,
+        staged: &StagedBlob,
+        target: &StorageKey,
+    ) -> Result<(), CoreError> {
+        let mut objects = self.objects.lock().unwrap();
+        if objects.contains_key(target) {
+            return Err(CoreError::conflict(format!(
+                "storage key `{target}` already exists"
+            )));
+        }
+        let content = objects
+            .get(staged.key())
+            .cloned()
+            .ok_or_else(|| CoreError::not_found("staged blob", staged.key().to_string()))?;
+        objects.insert(target.clone(), content);
+        self.modified_at
+            .lock()
+            .unwrap()
+            .insert(target.clone(), chrono::Utc::now());
+        Ok(())
+    }
+
+    async fn discard_staged(&self, staged: &StagedBlob) -> Result<(), CoreError> {
+        self.delete(staged.key()).await
     }
 
     async fn get(&self, key: &StorageKey) -> Result<Option<Bytes>, CoreError> {
@@ -1507,6 +1556,11 @@ fn stream_upload_resource_content_rejects_existing_storage_key() {
         other => panic!("expected storage key conflict, got {other:?}"),
     }
     assert!(repository.is_empty());
+    assert_eq!(
+        blob_storage.get_sync(&StorageKey::new("assets/image.png").unwrap()),
+        Some(Bytes::from_static(b"existing"))
+    );
+    assert!(!blob_storage.contains_fragment(".asset-hub/uploads/"));
 }
 
 #[test]
@@ -1570,6 +1624,55 @@ fn stream_create_resource_writes_chunks_and_records_size() {
         blob_storage.get_sync(&key),
         Some(Bytes::from_static(b"large file bytes"))
     );
+    assert!(!blob_storage.contains_fragment(".asset-hub/uploads/"));
+}
+
+#[tokio::test]
+async fn storage_reconciliation_waits_for_same_key_upload_to_save_resource() {
+    let (service, repository, blob_storage) = service();
+    let key = StorageKey::new("assets/slow.bin").unwrap();
+    let (save_started, release_save) = repository.pause_next_save();
+    let upload_service = service.clone();
+    let upload_key = key.clone();
+    let upload = tokio::spawn(async move {
+        upload_service
+            .content()
+            .create_resource(stream_upload_command(
+                "slow.bin",
+                upload_key,
+                Bytes::from_static(b"complete content"),
+            ))
+            .await
+    });
+
+    save_started
+        .await
+        .expect("upload should reach repository save");
+    assert!(blob_storage.contains(&key));
+    assert!(repository.is_empty());
+
+    let reconcile_service = service.clone();
+    let reconcile_key = key.clone();
+    let reconciliation = tokio::spawn(async move {
+        reconcile_service
+            .reconcile_storage_keys(&[reconcile_key])
+            .await
+    });
+    tokio::task::yield_now().await;
+    assert!(
+        !reconciliation.is_finished(),
+        "same-key reconciliation must wait until upload saves the Resource"
+    );
+
+    release_save.send(()).unwrap();
+    let uploaded = upload.await.unwrap().unwrap();
+    reconciliation.await.unwrap().unwrap();
+
+    assert_eq!(repository.len(), 1);
+    assert_eq!(
+        repository.find_sync(&uploaded.id()).unwrap().content(),
+        uploaded.content()
+    );
 }
 
 #[test]
@@ -1613,6 +1716,7 @@ fn stream_upload_resource_content_removes_blob_when_save_fails() {
     }
 
     assert!(!blob_storage.contains(&key));
+    assert!(!blob_storage.contains_fragment(".asset-hub/uploads/"));
     assert!(repository.is_empty());
 }
 
@@ -1638,6 +1742,7 @@ fn upload_preserves_repository_error_when_compensation_delete_fails() {
         }
     ));
     assert!(blob_storage.contains(&key));
+    assert!(!blob_storage.contains_fragment(".asset-hub/uploads/"));
 }
 
 #[test]

@@ -28,6 +28,6 @@ pub use resource::{
     ResourcePage, ResourceQuery, ResourceRepository,
 };
 pub use storage::{
-    BlobByteStream, BlobStorage, BlobWriteResult, DirectoryStorage, RESERVED_BLOB_STORAGE_PREFIX,
-    ScannedBlob, ScannedStorageEntry, StoragePrefix, StorageScanStream, StorageScanner,
+    BlobByteStream, BlobStorage, DirectoryStorage, RESERVED_BLOB_STORAGE_PREFIX, ScannedBlob,
+    ScannedStorageEntry, StagedBlob, StoragePrefix, StorageScanStream, StorageScanner,
 };

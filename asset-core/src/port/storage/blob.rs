@@ -21,19 +21,25 @@ pub type BlobByteStream = Pin<Box<dyn Stream<Item = Result<Bytes, CoreError>> + 
 /// same value to keep internal action scratch objects out of user-visible imports.
 pub const RESERVED_BLOB_STORAGE_PREFIX: &str = crate::domain::INTERNAL_STORAGE_DIRECTORY_NAME;
 
-/// 对象写入结果。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BlobWriteResult {
+/// 已完整写入内部暂存区、尚未发布到用户可见路径的 Blob。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StagedBlob {
+    key: StorageKey,
     bytes_written: u64,
 }
 
-impl BlobWriteResult {
-    /// 创建对象写入结果。
-    pub fn new(bytes_written: u64) -> Self {
-        Self { bytes_written }
+impl StagedBlob {
+    /// 由存储适配器创建暂存句柄。
+    pub fn new(key: StorageKey, bytes_written: u64) -> Self {
+        Self { key, bytes_written }
     }
 
-    /// 返回实际写入的字节数。
+    /// 返回内部暂存对象键。
+    pub fn key(&self) -> &StorageKey {
+        &self.key
+    }
+
+    /// 返回暂存对象的实际字节数。
     pub fn bytes_written(&self) -> u64 {
         self.bytes_written
     }
@@ -61,14 +67,23 @@ pub trait BlobStorage: Send + Sync {
     /// 应返回 `CoreError::Storage`。
     async fn put(&self, key: &StorageKey, data: Bytes) -> Result<(), CoreError>;
 
-    /// 仅当对象不存在时流式写入内容。
+    /// 将内容流完整写入内部暂存区。
     ///
-    /// 仅当目标对象不存在时写入 chunk 流；已存在时返回 `CoreError::Conflict`。
-    async fn put_stream_if_absent(
+    /// 暂存对象不得出现在用户扫描命名空间中；成功返回前必须完成 flush、持久化同步并
+    /// 关闭写入句柄。
+    async fn stage_stream(&self, data: BlobByteStream) -> Result<StagedBlob, CoreError>;
+
+    /// 将完整暂存对象原子发布到目标键，且不得覆盖已有目标。
+    ///
+    /// 成功发布后暂存对象仍然存在，由调用方在 Resource 保存完成后显式清理。
+    async fn publish_staged_if_absent(
         &self,
-        key: &StorageKey,
-        data: BlobByteStream,
-    ) -> Result<BlobWriteResult, CoreError>;
+        staged: &StagedBlob,
+        target: &StorageKey,
+    ) -> Result<(), CoreError>;
+
+    /// 幂等清理内部暂存对象。
+    async fn discard_staged(&self, staged: &StagedBlob) -> Result<(), CoreError>;
 
     /// 读取指定存储键对应的对象内容。
     ///

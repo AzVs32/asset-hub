@@ -21,6 +21,7 @@ mod content;
 mod contract;
 mod reconciliation;
 mod secured;
+mod storage_key_locks;
 
 use action::ResourceActionService;
 use command::ResourceCommandService;
@@ -32,6 +33,7 @@ pub use contract::{
 pub use reconciliation::StorageReconciliationReport;
 use reconciliation::StorageReconciliationService;
 pub use secured::SecuredResourceService;
+use storage_key_locks::StorageKeyLocks;
 
 /// 资源应用服务。
 ///
@@ -48,6 +50,7 @@ pub struct ResourceService {
     kind_registry: Arc<dyn ResourceKindRegistry>,
     action_ports: Option<ResourceActionPorts>,
     plugin_execution_policy: Arc<PluginExecutionPolicy>,
+    storage_key_locks: Arc<StorageKeyLocks>,
 }
 
 #[derive(Clone)]
@@ -163,6 +166,7 @@ impl ResourceService {
             kind_registry,
             action_ports,
             plugin_execution_policy,
+            storage_key_locks: Arc::new(StorageKeyLocks::default()),
         }
     }
 

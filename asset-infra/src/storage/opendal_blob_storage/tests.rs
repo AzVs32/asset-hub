@@ -1,96 +1,5 @@
 use super::*;
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-#[derive(Debug)]
-struct WriterTestError(&'static str);
-impl std::fmt::Display for WriterTestError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.0)
-    }
-}
-impl std::error::Error for WriterTestError {}
-
-struct FailingWriter {
-    fail_write: bool,
-    fail_close: bool,
-    fail_abort: bool,
-    aborts: Arc<AtomicUsize>,
-}
-
-#[async_trait::async_trait]
-impl StreamWriter for FailingWriter {
-    async fn write(&mut self, _chunk: Bytes) -> Result<(), WriterError> {
-        if self.fail_write {
-            Err(Box::new(WriterTestError("write")))
-        } else {
-            Ok(())
-        }
-    }
-    async fn close(&mut self) -> Result<(), WriterError> {
-        if self.fail_close {
-            Err(Box::new(WriterTestError("close")))
-        } else {
-            Ok(())
-        }
-    }
-    async fn abort(&mut self) -> Result<(), WriterError> {
-        self.aborts.fetch_add(1, Ordering::Relaxed);
-        if self.fail_abort {
-            Err(Box::new(WriterTestError("abort")))
-        } else {
-            Ok(())
-        }
-    }
-}
-
-fn failing_writer(
-    fail_write: bool,
-    fail_close: bool,
-    fail_abort: bool,
-) -> (FailingWriter, Arc<AtomicUsize>) {
-    let aborts = Arc::new(AtomicUsize::new(0));
-    (
-        FailingWriter {
-            fail_write,
-            fail_close,
-            fail_abort,
-            aborts: aborts.clone(),
-        },
-        aborts,
-    )
-}
-
-#[tokio::test]
-async fn stream_writer_aborts_after_write_or_close_failure() {
-    for (fail_write, fail_close) in [(true, false), (false, true)] {
-        let (writer, aborts) = failing_writer(fail_write, fail_close, true);
-        let stream: BlobByteStream = Box::pin(futures_util::stream::once(async {
-            Ok(Bytes::from_static(b"data"))
-        }));
-        let error = put_stream_with_writer(writer, stream).await.unwrap_err();
-        let expected_operation = if fail_write {
-            "put_stream.write"
-        } else {
-            "put_stream.close"
-        };
-        assert!(
-            matches!(error, CoreError::Storage { operation, .. } if operation == expected_operation)
-        );
-        assert_eq!(aborts.load(Ordering::Relaxed), 1);
-    }
-}
-
-#[tokio::test]
-async fn stream_writer_aborts_after_input_failure() {
-    let (writer, aborts) = failing_writer(false, false, false);
-    let stream: BlobByteStream = Box::pin(futures_util::stream::once(async {
-        Err(CoreError::configuration("input failed"))
-    }));
-    assert!(put_stream_with_writer(writer, stream).await.is_err());
-    assert_eq!(aborts.load(Ordering::Relaxed), 1);
-}
 
 #[tokio::test]
 async fn fs_storage_roundtrips_blob_content() {
@@ -117,7 +26,7 @@ async fn fs_storage_preserves_spaces_in_the_physical_path() {
         async move { Ok(data) }
     }));
 
-    storage.put_stream_if_absent(&key, stream).await.unwrap();
+    stage_and_publish(&storage, &key, stream).await;
 
     assert_eq!(storage.get(&key).await.unwrap(), Some(data.clone()));
     assert_eq!(std::fs::read(root.join(key.as_str())).unwrap(), data);
@@ -198,13 +107,64 @@ async fn fs_storage_writes_streaming_blob_content() {
         Ok(Bytes::from_static(b"bytes")),
     ]));
 
-    let result = storage.put_stream_if_absent(&key, stream).await.unwrap();
+    let staged = stage_and_publish(&storage, &key, stream).await;
 
-    assert_eq!(result.bytes_written(), 16);
+    assert_eq!(staged.bytes_written(), 16);
     assert_eq!(
         storage.get(&key).await.unwrap(),
         Some(Bytes::from_static(b"large file bytes"))
     );
+}
+
+#[tokio::test]
+async fn fs_storage_stages_complete_content_before_atomic_publish() {
+    let (storage, root) = storage_with_root("fs-staged-publish");
+    let key = StorageKey::new("assets/large.bin").unwrap();
+    let stream: BlobByteStream = Box::pin(futures_util::stream::iter([
+        Ok(Bytes::from_static(b"large ")),
+        Ok(Bytes::from_static(b"file")),
+    ]));
+
+    let staged = storage.stage_stream(stream).await.unwrap();
+
+    assert!(!root.join(key.as_str()).exists());
+    assert_eq!(
+        std::fs::read(root.join(staged.key().as_str())).unwrap(),
+        b"large file"
+    );
+
+    storage
+        .publish_staged_if_absent(&staged, &key)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        std::fs::read(root.join(key.as_str())).unwrap(),
+        b"large file"
+    );
+    assert!(root.join(staged.key().as_str()).exists());
+
+    storage.discard_staged(&staged).await.unwrap();
+
+    assert!(!root.join(staged.key().as_str()).exists());
+    assert_eq!(
+        std::fs::read(root.join(key.as_str())).unwrap(),
+        b"large file"
+    );
+}
+
+#[tokio::test]
+async fn fs_storage_removes_partial_staging_file_after_stream_failure() {
+    let (storage, root) = storage_with_root("fs-staged-failure");
+    let stream: BlobByteStream = Box::pin(futures_util::stream::iter([
+        Ok(Bytes::from_static(b"partial")),
+        Err(CoreError::configuration("input failed")),
+    ]));
+
+    assert!(storage.stage_stream(stream).await.is_err());
+
+    let uploads = root.join(".asset-hub/uploads");
+    assert!(!uploads.exists() || std::fs::read_dir(uploads).unwrap().next().is_none());
 }
 
 #[tokio::test]
@@ -227,7 +187,7 @@ async fn fs_storage_streams_blob_byte_range() {
 }
 
 #[tokio::test]
-async fn fs_storage_put_stream_if_absent_rejects_existing_blob() {
+async fn fs_storage_atomic_publish_rejects_existing_blob() {
     let storage = storage("fs-stream-if-absent");
     let key = StorageKey::new("assets/large.bin").unwrap();
     let first: BlobByteStream = Box::pin(futures_util::stream::iter([Ok(Bytes::from_static(
@@ -237,11 +197,13 @@ async fn fs_storage_put_stream_if_absent_rejects_existing_blob() {
         b"second",
     ))]));
 
-    storage.put_stream_if_absent(&key, first).await.unwrap();
+    stage_and_publish(&storage, &key, first).await;
+    let staged = storage.stage_stream(second).await.unwrap();
     let error = storage
-        .put_stream_if_absent(&key, second)
+        .publish_staged_if_absent(&staged, &key)
         .await
         .unwrap_err();
+    storage.discard_staged(&staged).await.unwrap();
 
     match error {
         CoreError::Conflict { message } => assert!(message.contains("already exists")),
@@ -292,6 +254,20 @@ async fn fs_storage_moves_blob_without_overwriting_target() {
 
 fn storage(name: &str) -> OpenDalBlobStorage {
     storage_with_root(name).0
+}
+
+async fn stage_and_publish(
+    storage: &OpenDalBlobStorage,
+    key: &StorageKey,
+    stream: BlobByteStream,
+) -> StagedBlob {
+    let staged = storage.stage_stream(stream).await.unwrap();
+    storage
+        .publish_staged_if_absent(&staged, key)
+        .await
+        .unwrap();
+    storage.discard_staged(&staged).await.unwrap();
+    staged
 }
 
 fn storage_with_root(name: &str) -> (OpenDalBlobStorage, PathBuf) {
