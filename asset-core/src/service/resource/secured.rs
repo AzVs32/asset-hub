@@ -9,8 +9,8 @@ use super::{
 };
 use crate::CoreError;
 use crate::domain::{
-    AccessContext, DirectoryId, DirectoryKind, DirectoryPath, DirectoryPermission, Resource,
-    ResourceId, UploadId, UploadSession,
+    AccessContext, Checksum, DirectoryId, DirectoryKind, DirectoryPath, DirectoryPermission,
+    Resource, ResourceId, UploadId, UploadSession,
 };
 use crate::port::{
     BlobByteStream, DirectoryActionOutput, DirectoryLocation, ListResources, LocatedDirectory,
@@ -107,11 +107,18 @@ impl<'a> SecuredResourceService<'a> {
         &self,
         id: &UploadId,
         offset: u64,
+        expected_chunk_checksum: Checksum,
         data: BlobByteStream,
     ) -> Result<UploadSession, CoreError> {
         self.service
             .uploads()
-            .append(self.context.user_id(), id, offset, data)
+            .append(
+                self.context.user_id(),
+                id,
+                offset,
+                expected_chunk_checksum,
+                data,
+            )
             .await
     }
     pub async fn complete_upload(&self, id: &UploadId) -> Result<UploadSession, CoreError> {

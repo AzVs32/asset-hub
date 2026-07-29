@@ -3,6 +3,7 @@ use axum::http::{HeaderName, HeaderValue};
 
 const UPLOAD_OFFSET: HeaderName = HeaderName::from_static("upload-offset");
 const UPLOAD_LENGTH: HeaderName = HeaderName::from_static("upload-length");
+const UPLOAD_CHECKSUM: HeaderName = HeaderName::from_static("upload-checksum");
 
 #[utoipa::path(
     post,
@@ -21,7 +22,8 @@ pub(crate) async fn create_upload(
     payload: Result<Json<CreateUploadRequest>, JsonRejection>,
 ) -> Result<(StatusCode, Json<UploadSessionResponse>), HttpError> {
     let request = parse_json_payload(payload)?;
-    let mut command = CreateUpload::new(request.name, request.size)
+    let expected_checksum = asset_core::domain::Checksum::sha256(request.expected_sha256)?;
+    let mut command = CreateUpload::new(request.name, request.size, expected_checksum)
         .with_directory(request.directory)
         .with_tags(request.tags);
     if let Some(kind) = request.kind {
@@ -60,7 +62,8 @@ pub(crate) async fn upload_status(
     tag = "uploads",
     params(
         ("id" = String, Path, description = "上传会话 ID"),
-        ("Upload-Offset" = u64, Header, description = "本分片起始偏移")
+        ("Upload-Offset" = u64, Header, description = "本分片起始偏移"),
+        ("Upload-Checksum" = String, Header, description = "本分片的 64 位小写十六进制 SHA-256")
     ),
     request_body(
         content = inline(BinaryContent),
@@ -69,7 +72,7 @@ pub(crate) async fn upload_status(
     ),
     responses(
         (status = 204, description = "分片已持久化"),
-        (status = 409, description = "上传偏移冲突", body = crate::dto::ErrorResponse)
+        (status = 409, description = "上传偏移或分片摘要冲突", body = crate::dto::ErrorResponse)
     )
 )]
 pub(crate) async fn append_upload(
@@ -81,9 +84,10 @@ pub(crate) async fn append_upload(
 ) -> Result<(StatusCode, HeaderMap), HttpError> {
     let id = parse_upload_id(&id)?;
     let offset = parse_offset(&headers)?;
+    let expected_chunk_checksum = parse_checksum(&headers)?;
     let session = state
         .secured(&access.0)
-        .append_upload(&id, offset, body_stream(body))
+        .append_upload(&id, offset, expected_chunk_checksum, body_stream(body))
         .await?;
     Ok((StatusCode::NO_CONTENT, session_headers(&session)?))
 }
@@ -149,6 +153,16 @@ fn parse_offset(headers: &HeaderMap) -> Result<u64, HttpError> {
         .map_err(|error| HttpError::bad_request(format!("invalid Upload-Offset: {error}")))?
         .parse()
         .map_err(|error| HttpError::bad_request(format!("invalid Upload-Offset: {error}")))
+}
+
+fn parse_checksum(headers: &HeaderMap) -> Result<asset_core::domain::Checksum, HttpError> {
+    let value = headers
+        .get(&UPLOAD_CHECKSUM)
+        .ok_or_else(|| HttpError::bad_request("missing Upload-Checksum header"))?
+        .to_str()
+        .map_err(|error| HttpError::bad_request(format!("invalid Upload-Checksum: {error}")))?;
+    asset_core::domain::Checksum::sha256(value)
+        .map_err(|error| HttpError::bad_request(format!("invalid Upload-Checksum: {error}")))
 }
 
 fn session_headers(session: &UploadSession) -> Result<HeaderMap, HttpError> {

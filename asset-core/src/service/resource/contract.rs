@@ -2,7 +2,7 @@
 //!
 //! 本模块只描述调用方与资源应用服务交换的数据，不包含仓储或对象存储编排。
 
-use crate::domain::{DirectoryPath, ResourceId, ResourceKind};
+use crate::domain::{Checksum, DirectoryPath, ResourceId, ResourceKind};
 use crate::port::BlobByteStream;
 use asset_plugin_api::{ResourceAction, ResourceActionDefinition};
 
@@ -15,10 +15,11 @@ pub struct CreateUpload {
     pub(super) tags: Vec<String>,
     pub(super) mime_type: Option<String>,
     pub(super) expected_size: u64,
+    pub(super) expected_checksum: Checksum,
 }
 
 impl CreateUpload {
-    pub fn new(name: impl Into<String>, expected_size: u64) -> Self {
+    pub fn new(name: impl Into<String>, expected_size: u64, expected_checksum: Checksum) -> Self {
         Self {
             name: name.into(),
             kind: None,
@@ -26,6 +27,7 @@ impl CreateUpload {
             tags: Vec::new(),
             mime_type: None,
             expected_size,
+            expected_checksum,
         }
     }
 

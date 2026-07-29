@@ -15,6 +15,7 @@ use axum::{Extension, Router};
 use bytes::Bytes;
 use futures_util::stream;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::PathBuf;
@@ -517,7 +518,8 @@ async fn upload_session_resumes_after_runtime_restart_and_publishes_only_on_comp
                     "name": "resume.txt",
                     "directory": "resumable",
                     "mime_type": "text/plain",
-                    "size": 11
+                    "size": 11,
+                    "expected_sha256": sha256_hex(b"hello world")
                 })
                 .to_string(),
             ))
@@ -536,6 +538,7 @@ async fn upload_session_resumes_after_runtime_restart_and_publishes_only_on_comp
             .method(Method::PATCH)
             .uri(format!("/uploads/{id}"))
             .header("upload-offset", "0")
+            .header("upload-checksum", sha256_hex(b"hello "))
             .body(Body::from("hello "))
             .unwrap(),
     )
@@ -571,6 +574,7 @@ async fn upload_session_resumes_after_runtime_restart_and_publishes_only_on_comp
             .method(Method::PATCH)
             .uri(format!("/uploads/{id}"))
             .header("upload-offset", "0")
+            .header("upload-checksum", sha256_hex(b"world"))
             .body(Body::from("world"))
             .unwrap(),
     )
@@ -583,6 +587,7 @@ async fn upload_session_resumes_after_runtime_restart_and_publishes_only_on_comp
             .method(Method::PATCH)
             .uri(format!("/uploads/{id}"))
             .header("upload-offset", "6")
+            .header("upload-checksum", sha256_hex(b"world"))
             .body(Body::from("world"))
             .unwrap(),
     )
@@ -647,6 +652,107 @@ async fn upload_session_resumes_after_runtime_restart_and_publishes_only_on_comp
     .await;
     assert_eq!(removed.status(), StatusCode::NOT_FOUND);
     assert!(!root.join("blob/.asset-hub/uploads").exists());
+}
+
+#[tokio::test]
+async fn upload_chunk_checksum_mismatch_keeps_server_offset_unchanged() {
+    let app = test_app("upload-chunk-checksum-mismatch").await;
+    let data = b"verified chunk";
+    let create = request(
+        &app,
+        Request::builder()
+            .method(Method::POST)
+            .uri("/uploads")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({
+                    "name": "chunk.bin",
+                    "directory": "uploads",
+                    "size": data.len(),
+                    "expected_sha256": sha256_hex(data)
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(create.status(), StatusCode::CREATED);
+    let id = response_json(create).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let missing_checksum = request(
+        &app,
+        Request::builder()
+            .method(Method::PATCH)
+            .uri(format!("/uploads/{id}"))
+            .header("upload-offset", "0")
+            .body(Body::from(data.to_vec()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(missing_checksum.status(), StatusCode::BAD_REQUEST);
+
+    let mismatch = request(
+        &app,
+        Request::builder()
+            .method(Method::PATCH)
+            .uri(format!("/uploads/{id}"))
+            .header("upload-offset", "0")
+            .header("upload-checksum", sha256_hex(b"different chunk"))
+            .body(Body::from(data.to_vec()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(mismatch.status(), StatusCode::CONFLICT);
+    assert!(
+        response_json(mismatch).await["error"]
+            .as_str()
+            .unwrap()
+            .contains("chunk checksum mismatch")
+    );
+
+    let status = request(
+        &app,
+        Request::builder()
+            .method(Method::GET)
+            .uri(format!("/uploads/{id}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(response_json(status).await["offset"], 0);
+    assert_eq!(
+        std::fs::metadata(app.root.join(format!("blob/.asset-hub/uploads/{id}")))
+            .unwrap()
+            .len(),
+        0
+    );
+    assert!(
+        !app.root
+            .join(format!("blob/.asset-hub/uploads/{id}.chunk"))
+            .exists()
+    );
+
+    let accepted = request(
+        &app,
+        Request::builder()
+            .method(Method::PATCH)
+            .uri(format!("/uploads/{id}"))
+            .header("upload-offset", "0")
+            .header("upload-checksum", sha256_hex(data))
+            .body(Body::from(data.to_vec()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(accepted.status(), StatusCode::NO_CONTENT);
+    assert_eq!(accepted.headers()["upload-offset"], data.len().to_string());
+    assert!(
+        !app.root
+            .join(format!("blob/.asset-hub/uploads/{id}.chunk"))
+            .exists()
+    );
 }
 
 #[tokio::test]
@@ -835,7 +941,7 @@ async fn resource_content_supports_single_byte_ranges_for_video_seek() {
 }
 
 #[tokio::test]
-async fn upload_rejects_client_supplied_checksum_and_existing_resource_path() {
+async fn upload_rejects_legacy_checksum_fields_and_existing_resource_path() {
     let app = test_app("upload-security").await;
 
     let response = request(
@@ -902,6 +1008,32 @@ async fn upload_rejects_client_supplied_checksum_and_existing_resource_path() {
 }
 
 #[tokio::test]
+async fn upload_checksum_mismatch_never_publishes_a_resource() {
+    let app = test_app("upload-checksum-mismatch").await;
+    let (status, error) = resumable_upload_with_expected_checksum(
+        &app,
+        "/resources?name=mismatch.bin&directory=secure",
+        "application/octet-stream",
+        b"wrong",
+        None,
+        &sha256_hex(b"right"),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert!(
+        error["error"]
+            .as_str()
+            .unwrap()
+            .contains("checksum mismatch")
+    );
+    assert!(!app.root.join("blob/secure/mismatch.bin").exists());
+    let (status, listing) = empty_json_request(&app, Method::GET, "/directories?path=secure").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(listing["resources"]["total"], 0);
+}
+
+#[tokio::test]
 async fn stream_upload_is_not_limited_by_the_regular_request_timeout() {
     let app = test_app_with_router_options(
         "stream-upload-timeout",
@@ -925,7 +1057,8 @@ async fn stream_upload_is_not_limited_by_the_regular_request_timeout() {
                     "name": "slow.txt",
                     "directory": "uploads",
                     "mime_type": "text/plain",
-                    "size": 11
+                    "size": 11,
+                    "expected_sha256": sha256_hex(b"slow upload")
                 })
                 .to_string(),
             ))
@@ -951,6 +1084,7 @@ async fn stream_upload_is_not_limited_by_the_regular_request_timeout() {
             .method(Method::PATCH)
             .uri(format!("/uploads/{id}"))
             .header("upload-offset", "0")
+            .header("upload-checksum", sha256_hex(b"slow upload"))
             .header(header::CONTENT_TYPE, "application/octet-stream")
             .header(header::ORIGIN, "http://127.0.0.1:5173")
             .body(body)
@@ -1203,7 +1337,7 @@ async fn cors_policy_adds_allowed_origin_header() {
             .header(header::ACCESS_CONTROL_REQUEST_METHOD, "PATCH")
             .header(
                 header::ACCESS_CONTROL_REQUEST_HEADERS,
-                "content-type,upload-offset",
+                "content-type,upload-offset,upload-checksum",
             )
             .body(Body::empty())
             .unwrap(),
@@ -1217,6 +1351,7 @@ async fn cors_policy_adds_allowed_origin_header() {
         .to_str()
         .unwrap();
     assert!(allowed_headers.contains("upload-offset"));
+    assert!(allowed_headers.contains("upload-checksum"));
 }
 
 #[tokio::test]
@@ -1608,6 +1743,18 @@ async fn resumable_upload(
     data: &[u8],
     cookie: Option<&str>,
 ) -> (StatusCode, Value) {
+    resumable_upload_with_expected_checksum(app, uri, content_type, data, cookie, &sha256_hex(data))
+        .await
+}
+
+async fn resumable_upload_with_expected_checksum(
+    app: &TestApp,
+    uri: &str,
+    content_type: &str,
+    data: &[u8],
+    cookie: Option<&str>,
+    expected_sha256: &str,
+) -> (StatusCode, Value) {
     let query = uri.split_once('?').map_or("", |(_, query)| query);
     let parameters = query
         .split('&')
@@ -1624,6 +1771,7 @@ async fn resumable_upload(
         "tags": tags,
         "mime_type": content_type,
         "size": data.len(),
+        "expected_sha256": expected_sha256,
     });
     let mut create_request = Request::builder()
         .method(Method::POST)
@@ -1649,6 +1797,7 @@ async fn resumable_upload(
         .method(Method::PATCH)
         .uri(format!("/uploads/{id}"))
         .header("upload-offset", "0")
+        .header("upload-checksum", sha256_hex(data))
         .header(header::CONTENT_TYPE, "application/octet-stream");
     if let Some(cookie) = cookie {
         append_request = append_request.header(header::COOKIE, cookie);
@@ -2259,6 +2408,10 @@ fn has_action(resource: &Value, id: &str) -> bool {
     resource["actions"]["available_actions"]
         .as_array()
         .is_some_and(|actions| actions.iter().any(|action| action["id"] == id))
+}
+
+fn sha256_hex(data: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(data))
 }
 
 fn has_directory_action(directory: &Value, id: &str) -> bool {

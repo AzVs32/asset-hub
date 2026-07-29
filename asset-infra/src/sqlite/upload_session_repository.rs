@@ -28,8 +28,9 @@ impl UploadSessionRepository for SqliteUploadSessionRepository {
             r#"
             INSERT INTO upload_sessions (
                 id, resource_id, owner_id, name, directory, kind, tags_json, mime_type,
-                expected_size, offset, status, checksum_value, failure, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                expected_size, offset, status, expected_checksum_value, actual_checksum_value,
+                failure, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(session.id().to_string())
@@ -43,7 +44,8 @@ impl UploadSessionRepository for SqliteUploadSessionRepository {
         .bind(encode_u64(session.expected_size())?)
         .bind(encode_u64(session.offset())?)
         .bind(session.status().as_str())
-        .bind(session.checksum().map(Checksum::value))
+        .bind(session.expected_checksum().value())
+        .bind(session.actual_checksum().map(Checksum::value))
         .bind(session.failure())
         .bind(session.created_at().to_rfc3339())
         .bind(session.updated_at().to_rfc3339())
@@ -57,7 +59,8 @@ impl UploadSessionRepository for SqliteUploadSessionRepository {
         let row = sqlx::query(
             r#"
             SELECT id, resource_id, owner_id, name, directory, kind, tags_json, mime_type,
-                   expected_size, offset, status, checksum_value, failure, created_at, updated_at
+                   expected_size, offset, status, expected_checksum_value, actual_checksum_value,
+                   failure, created_at, updated_at
             FROM upload_sessions
             WHERE id = ?
             "#,
@@ -117,11 +120,15 @@ impl UploadSessionRepository for SqliteUploadSessionRepository {
         Ok(result.rows_affected() == 1)
     }
 
-    async fn save_checksum(&self, id: &UploadId, checksum: &Checksum) -> Result<(), CoreError> {
+    async fn save_actual_checksum(
+        &self,
+        id: &UploadId,
+        checksum: &Checksum,
+    ) -> Result<(), CoreError> {
         let result = sqlx::query(
             r#"
             UPDATE upload_sessions
-            SET checksum_value = ?, updated_at = ?
+            SET actual_checksum_value = ?, updated_at = ?
             WHERE id = ? AND status = 'finalizing'
             "#,
         )
@@ -130,7 +137,7 @@ impl UploadSessionRepository for SqliteUploadSessionRepository {
         .bind(id.to_string())
         .execute(&self.pool)
         .await
-        .map_err(|error| CoreError::repository("upload_session.save_checksum", error))?;
+        .map_err(|error| CoreError::repository("upload_session.save_actual_checksum", error))?;
         if result.rows_affected() != 1 {
             return Err(CoreError::conflict(format!(
                 "upload session `{id}` is no longer finalizing"
@@ -227,8 +234,9 @@ fn decode_session(row: sqlx::sqlite::SqliteRow) -> Result<UploadSession, CoreErr
         expected_size,
         offset,
         status: decode_status(row.get("status"))?,
-        checksum: row
-            .get::<Option<String>, _>("checksum_value")
+        expected_checksum: Checksum::sha256(row.get::<String, _>("expected_checksum_value"))?,
+        actual_checksum: row
+            .get::<Option<String>, _>("actual_checksum_value")
             .map(Checksum::sha256)
             .transpose()?,
         failure: row.get("failure"),

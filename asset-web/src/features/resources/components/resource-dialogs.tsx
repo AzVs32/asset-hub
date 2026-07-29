@@ -110,7 +110,7 @@ function UploadProgressView({ progress }: { progress: UploadProgress }) {
         : 0
       : Math.min(100, Math.floor((progress.bytesSent / progress.totalBytes) * 100));
   const label = {
-    preparing: "Preparing upload…",
+    preparing: "Calculating local SHA-256…",
     uploading: "Uploading file…",
     finalizing: "Verifying and publishing resource…",
   }[progress.stage];
@@ -146,14 +146,14 @@ function UploadProgressView({ progress }: { progress: UploadProgress }) {
           ? " · updates after each 8 MiB chunk"
           : finalizing
             ? " transferred · large files take longer to verify"
-            : ""}
+            : " hashed locally in a background worker"}
       </p>
     </div>
   );
 }
 
 function uploadButtonLabel(progress: UploadProgress): string {
-  if (progress.stage === "preparing") return "Preparing…";
+  if (progress.stage === "preparing") return "Hashing…";
   if (progress.stage === "finalizing") return "Publishing…";
   const percentage =
     progress.totalBytes === 0

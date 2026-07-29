@@ -36,7 +36,8 @@ pub struct UploadSession {
     expected_size: u64,
     offset: u64,
     status: UploadStatus,
-    checksum: Option<Checksum>,
+    expected_checksum: Checksum,
+    actual_checksum: Option<Checksum>,
     failure: Option<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -55,7 +56,8 @@ pub struct UploadSessionSnapshot {
     pub expected_size: u64,
     pub offset: u64,
     pub status: UploadStatus,
-    pub checksum: Option<Checksum>,
+    pub expected_checksum: Checksum,
+    pub actual_checksum: Option<Checksum>,
     pub failure: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -70,6 +72,7 @@ impl UploadSession {
         tags: Vec<String>,
         mime_type: Option<String>,
         expected_size: u64,
+        expected_checksum: Checksum,
     ) -> Self {
         let now = Utc::now();
         Self {
@@ -84,7 +87,8 @@ impl UploadSession {
             expected_size,
             offset: 0,
             status: UploadStatus::Uploading,
-            checksum: None,
+            expected_checksum,
+            actual_checksum: None,
             failure: None,
             created_at: now,
             updated_at: now,
@@ -104,7 +108,8 @@ impl UploadSession {
             expected_size: snapshot.expected_size,
             offset: snapshot.offset,
             status: snapshot.status,
-            checksum: snapshot.checksum,
+            expected_checksum: snapshot.expected_checksum,
+            actual_checksum: snapshot.actual_checksum,
             failure: snapshot.failure,
             created_at: snapshot.created_at,
             updated_at: snapshot.updated_at,
@@ -144,8 +149,11 @@ impl UploadSession {
     pub fn status(&self) -> UploadStatus {
         self.status
     }
-    pub fn checksum(&self) -> Option<&Checksum> {
-        self.checksum.as_ref()
+    pub fn expected_checksum(&self) -> &Checksum {
+        &self.expected_checksum
+    }
+    pub fn actual_checksum(&self) -> Option<&Checksum> {
+        self.actual_checksum.as_ref()
     }
     pub fn failure(&self) -> Option<&str> {
         self.failure.as_deref()
@@ -165,8 +173,8 @@ impl UploadSession {
         self.failure = None;
         self.updated_at = Utc::now();
     }
-    pub fn set_checksum(&mut self, checksum: Checksum) {
-        self.checksum = Some(checksum);
+    pub fn set_actual_checksum(&mut self, checksum: Checksum) {
+        self.actual_checksum = Some(checksum);
         self.updated_at = Utc::now();
     }
     pub fn mark_completed(&mut self) {

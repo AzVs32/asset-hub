@@ -22,8 +22,10 @@ CREATE TABLE upload_sessions (
     offset INTEGER NOT NULL,
     -- uploading、finalizing、completed 或 failed。
     status TEXT NOT NULL,
-    -- finalization 已计算出的 SHA-256；持久化后服务重启无需重新校验暂存文件。
-    checksum_value TEXT,
+    -- 客户端对本地原文件计算出的 SHA-256；用于端到端完整性校验和安全恢复上传会话。
+    expected_checksum_value TEXT NOT NULL,
+    -- finalization 对服务端暂存文件计算出的 SHA-256；持久化后服务重启无需重复计算。
+    actual_checksum_value TEXT,
     -- 后台 finalization 的最近一次失败原因；重新提交 complete 时清空。
     failure TEXT,
     -- 会话创建时间，RFC 3339。
@@ -35,7 +37,17 @@ CREATE TABLE upload_sessions (
     CHECK (expected_size >= 0),
     CHECK (offset >= 0 AND offset <= expected_size),
     CHECK (status IN ('uploading', 'finalizing', 'completed', 'failed')),
-    CHECK (status != 'completed' OR checksum_value IS NOT NULL),
+    -- SHA-256 使用 64 位小写十六进制；精确格式同时由领域对象校验。
+    CHECK (length(expected_checksum_value) = 64),
+    CHECK (actual_checksum_value IS NULL OR length(actual_checksum_value) = 64),
+    -- 只有客户端期望摘要和服务端实际摘要完全一致，上传才能完成。
+    CHECK (
+        status != 'completed'
+        OR (
+            actual_checksum_value IS NOT NULL
+            AND actual_checksum_value = expected_checksum_value
+        )
+    ),
     CHECK (status != 'failed' OR failure IS NOT NULL)
 );
 

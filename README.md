@@ -211,16 +211,25 @@ npm run dev
 
 Vite serves `http://127.0.0.1:5173` and proxies `/api` to `http://127.0.0.1:8080`.
 
-Uploads use persistent sessions and 8 MiB client-side chunks. The API does not impose a
-per-file size limit and never buffers the complete file in application memory. Interrupted uploads
-resume from the server-reported offset after the user selects the same file again. Once all bytes
-arrive, `POST /uploads/{id}/complete` persists the `finalizing` state and returns `202 Accepted`;
-checksum verification, atomic publication and Resource creation continue in the background.
+Uploads use persistent sessions and 8 MiB client-side chunks. Before creating a session, a Web
+Worker incrementally calculates the local file SHA-256 without buffering the complete file. The
+digest is persisted as the expected checksum and is part of the resume fingerprint, so a different
+same-name/same-size file cannot attach to an older session. Interrupted uploads resume from the
+server-reported offset after the user selects the same file again. Every `PATCH` includes an
+independent `Upload-Checksum` SHA-256. The server streams that request into an isolated temporary
+chunk while hashing it, and only appends verified bytes to the session's staged file. A mismatch
+deletes the temporary chunk and leaves the durable upload offset unchanged. The web client retries
+an explicitly rejected checksum up to three times before surfacing the resumable failure.
+Once all bytes arrive,
+`POST /uploads/{id}/complete` persists the `finalizing` state and returns `202 Accepted`; the
+server-side SHA-256 must match the expected checksum before atomic publication and Resource
+creation. A mismatch marks the session failed and never publishes the staged file.
 Clients poll `GET /uploads/{id}` until it reports `completed` or `failed`. Pending finalizations
 resume automatically after a service restart. Background checksum verification is currently
 unbounded, so separate uploads may finalize concurrently. The regular request timeout does not cap
 upload chunks; deployments should use proxy-level connection and idle timeouts to reject stalled
-clients without terminating healthy uploads.
+clients without terminating healthy uploads. The API does not impose a per-file size limit, and
+neither hashing nor uploading buffers the complete file in application memory.
 
 When automatic local-storage synchronization is enabled, the filesystem watcher is established
 before startup returns. After the Resource database has been recreated, recovery runs in two

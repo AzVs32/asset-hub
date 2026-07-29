@@ -185,6 +185,7 @@ fn cors_layer(policy: CorsPolicy) -> CorsLayer {
             HeaderName::from_static("content-type"),
             HeaderName::from_static("authorization"),
             HeaderName::from_static("upload-offset"),
+            HeaderName::from_static("upload-checksum"),
         ])
         .expose_headers([
             HeaderName::from_static("upload-offset"),

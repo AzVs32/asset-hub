@@ -393,6 +393,8 @@ export interface components {
         /** @description 创建断点续传会话。 */
         CreateUploadRequest: {
             directory?: string;
+            /** @description 客户端对完整本地文件增量计算出的 SHA-256。 */
+            expected_sha256: string;
             kind?: string | null;
             mime_type?: string | null;
             name: string;
@@ -1723,6 +1725,8 @@ export interface operations {
             header: {
                 /** @description 本分片起始偏移 */
                 "Upload-Offset": number;
+                /** @description 本分片的 64 位小写十六进制 SHA-256 */
+                "Upload-Checksum": string;
             };
             path: {
                 /** @description 上传会话 ID */
@@ -1744,7 +1748,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description 上传偏移冲突 */
+            /** @description 上传偏移或分片摘要冲突 */
             409: {
                 headers: {
                     [name: string]: unknown;

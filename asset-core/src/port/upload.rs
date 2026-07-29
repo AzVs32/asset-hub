@@ -13,7 +13,11 @@ pub trait UploadSessionRepository: Send + Sync {
         offset: u64,
     ) -> Result<bool, CoreError>;
     async fn mark_finalizing(&self, id: &UploadId) -> Result<bool, CoreError>;
-    async fn save_checksum(&self, id: &UploadId, checksum: &Checksum) -> Result<(), CoreError>;
+    async fn save_actual_checksum(
+        &self,
+        id: &UploadId,
+        checksum: &Checksum,
+    ) -> Result<(), CoreError>;
     async fn mark_completed(&self, id: &UploadId) -> Result<(), CoreError>;
     async fn mark_failed(&self, id: &UploadId, failure: &str) -> Result<(), CoreError>;
     async fn list_finalizing(&self) -> Result<Vec<UploadId>, CoreError>;

@@ -23,6 +23,12 @@ import type {
   UploadProgress,
   UploadReceipt,
 } from "@/domain/resource";
+import {
+  type BlobSha256,
+  calculateBlobSha256,
+  calculateFileSha256,
+  type FileSha256,
+} from "./file-sha256";
 import type { components, paths } from "./generated";
 import { HttpError, httpError } from "./http-error";
 import { isPluginViewKind, parsePluginView } from "./plugin-view-schema";
@@ -34,6 +40,7 @@ type ApiKind = Schemas["ResourceKindResponse"];
 type ApiDirectoryAction = Schemas["DirectoryActionDefinitionResponse"];
 
 const UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024;
+const UPLOAD_CHUNK_CHECKSUM_ATTEMPTS = 3;
 const UPLOAD_RESUME_STORAGE_KEY = "asset-hub.upload-sessions";
 const UPLOAD_STATUS_POLL_MILLISECONDS = 1_000;
 
@@ -49,10 +56,18 @@ interface ApiUploadSession {
 export class OpenApiAssetGateway implements AssetGateway {
   readonly #baseUrl: string;
   readonly #client;
+  readonly #hashFile: FileSha256;
+  readonly #hashChunk: BlobSha256;
 
-  constructor(baseUrl = import.meta.env.VITE_API_BASE_URL || "/api") {
+  constructor(
+    baseUrl = import.meta.env.VITE_API_BASE_URL || "/api",
+    hashFile: FileSha256 = calculateFileSha256,
+    hashChunk: BlobSha256 = calculateBlobSha256,
+  ) {
     this.#baseUrl = baseUrl.replace(/\/$/, "");
     this.#client = createClient<paths>({ baseUrl: this.#baseUrl, credentials: "include" });
+    this.#hashFile = hashFile;
+    this.#hashChunk = hashChunk;
   }
 
   async currentUser(): Promise<CurrentUser> {
@@ -150,6 +165,9 @@ export class OpenApiAssetGateway implements AssetGateway {
   ): Promise<UploadReceipt> {
     const file = draft.file;
     reportUploadProgress(onProgress, "preparing", 0, file.size);
+    const expectedSha256 = await this.#hashFile(file, (bytesHashed) =>
+      reportUploadProgress(onProgress, "preparing", bytesHashed, file.size),
+    );
     const metadata = {
       name: draft.name.length > 0 ? draft.name : file.name,
       directory: normalizeDirectory(draft.directory),
@@ -157,8 +175,9 @@ export class OpenApiAssetGateway implements AssetGateway {
       tags: splitTags(draft.tags),
       mime_type: file.type || "application/octet-stream",
       size: file.size,
+      expected_sha256: expectedSha256,
     };
-    const fingerprint = uploadFingerprint(file, metadata);
+    const fingerprint = uploadFingerprint(file, metadata, expectedSha256);
     let uploadId = loadUploadId(fingerprint);
     let offset = 0;
 
@@ -199,16 +218,28 @@ export class OpenApiAssetGateway implements AssetGateway {
     reportUploadProgress(onProgress, "uploading", offset, file.size);
     while (offset < file.size) {
       const chunk = file.slice(offset, Math.min(offset + UPLOAD_CHUNK_BYTES, file.size));
-      const response = await fetch(`${this.#baseUrl}/uploads/${encodeURIComponent(uploadId)}`, {
-        method: "PATCH",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/octet-stream",
-          "Upload-Offset": String(offset),
-        },
-        body: chunk,
-      });
-      if (!response.ok) throw await httpError(response);
+      const chunkChecksum = await this.#hashChunk(chunk);
+      let response: Response | undefined;
+      for (let attempt = 1; attempt <= UPLOAD_CHUNK_CHECKSUM_ATTEMPTS; attempt += 1) {
+        response = await fetch(`${this.#baseUrl}/uploads/${encodeURIComponent(uploadId)}`, {
+          method: "PATCH",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/octet-stream",
+            "Upload-Offset": String(offset),
+            "Upload-Checksum": chunkChecksum,
+          },
+          body: chunk,
+        });
+        if (response.ok) break;
+        const error = await httpError(response);
+        const retryChecksumMismatch =
+          response.status === 409 &&
+          error.message.includes("upload chunk checksum mismatch") &&
+          attempt < UPLOAD_CHUNK_CHECKSUM_ATTEMPTS;
+        if (!retryChecksumMismatch) throw error;
+      }
+      if (!response?.ok) throw new Error("Upload chunk did not complete");
       const nextOffset = uploadOffset(response);
       if (nextOffset <= offset) throw new Error("Upload server did not advance the file offset");
       offset = nextOffset;
@@ -567,12 +598,13 @@ function reportUploadProgress(
   callback?.({ stage, bytesSent, totalBytes });
 }
 
-function uploadFingerprint(file: File, metadata: object): string {
+function uploadFingerprint(file: File, metadata: object, expectedSha256: string): string {
   return JSON.stringify({
     file: {
       name: file.name,
       size: file.size,
       lastModified: file.lastModified,
+      sha256: expectedSha256,
     },
     resource: metadata,
   });

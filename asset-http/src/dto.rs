@@ -109,6 +109,8 @@ pub(crate) struct CreateUploadRequest {
     pub(crate) tags: Vec<String>,
     pub(crate) mime_type: Option<String>,
     pub(crate) size: u64,
+    /// 客户端对完整本地文件增量计算出的 SHA-256。
+    pub(crate) expected_sha256: String,
 }
 
 #[derive(Debug, Serialize, ToSchema)]

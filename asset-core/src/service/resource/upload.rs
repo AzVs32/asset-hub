@@ -1,5 +1,8 @@
 use super::command::build_resource;
-use super::content::{build_verified_content, calculate_stream_checksum};
+use super::content::{
+    build_verified_content, calculate_stream_checksum, finalize_tracked_checksum,
+    stream_with_checksum_tracking,
+};
 use super::{CreateUpload, ResourceService};
 use crate::CoreError;
 use crate::domain::{
@@ -29,6 +32,7 @@ impl<'a> ResourceUploadService<'a> {
             tags,
             mime_type,
             expected_size,
+            expected_checksum,
         } = command;
         let storage_key = StorageKey::from_resource_path(&directory, &name)?;
         reject_reserved_storage_key(&storage_key)?;
@@ -65,6 +69,7 @@ impl<'a> ResourceUploadService<'a> {
             tags,
             mime_type,
             expected_size,
+            expected_checksum,
         );
         let staged = staged_for(session.id())?;
         self.service
@@ -96,6 +101,7 @@ impl<'a> ResourceUploadService<'a> {
         owner_id: UserId,
         id: &UploadId,
         requested_offset: u64,
+        expected_chunk_checksum: Checksum,
         data: BlobByteStream,
     ) -> Result<UploadSession, CoreError> {
         let _guard = self.service.upload_locks.lock(id).await;
@@ -118,26 +124,59 @@ impl<'a> ResourceUploadService<'a> {
             .checked_sub(session.offset())
             .ok_or_else(|| CoreError::conflict("upload offset exceeds expected size"))?;
         let staged_key = staged_for(*id)?;
-        let staged = self
+        let chunk_key = chunk_for(*id)?;
+        self.service.blob_storage.discard_staged(&chunk_key).await?;
+        let chunk = self
             .service
             .blob_storage
-            .append_staged(
-                staged_key.key(),
-                session.offset(),
-                limit_stream(data, remaining),
-            )
+            .create_staged(chunk_key.key())
             .await?;
-        if !self
-            .service
-            .upload_sessions
-            .update_offset(id, session.offset(), staged.bytes_written())
-            .await?
-        {
-            return Err(CoreError::conflict(
-                "upload session offset changed concurrently",
-            ));
+
+        let append_result = async {
+            let (tracked_data, checksum_state) =
+                stream_with_checksum_tracking(limit_stream(data, remaining));
+            self.service
+                .blob_storage
+                .append_staged(chunk.key(), 0, tracked_data)
+                .await?;
+            let actual_chunk_checksum = finalize_tracked_checksum(checksum_state)?;
+            if actual_chunk_checksum != expected_chunk_checksum {
+                return Err(CoreError::conflict(format!(
+                    "upload chunk checksum mismatch: expected {}, actual {}",
+                    expected_chunk_checksum.value(),
+                    actual_chunk_checksum.value()
+                )));
+            }
+
+            let verified_chunk = self
+                .service
+                .blob_storage
+                .get_stream(chunk.key())
+                .await?
+                .ok_or_else(|| CoreError::not_found("staged upload chunk", id.to_string()))?;
+            let staged = self
+                .service
+                .blob_storage
+                .append_staged(staged_key.key(), session.offset(), verified_chunk)
+                .await?;
+            if !self
+                .service
+                .upload_sessions
+                .update_offset(id, session.offset(), staged.bytes_written())
+                .await?
+            {
+                return Err(CoreError::conflict(
+                    "upload session offset changed concurrently",
+                ));
+            }
+            Ok(staged.bytes_written())
         }
-        session.set_offset(staged.bytes_written());
+        .await;
+
+        let cleanup_result = self.service.blob_storage.discard_staged(&chunk).await;
+        let offset = append_result?;
+        cleanup_result?;
+        session.set_offset(offset);
         Ok(session)
     }
 
@@ -162,6 +201,10 @@ impl<'a> ResourceUploadService<'a> {
                 session.offset()
             )));
         }
+        self.service
+            .blob_storage
+            .discard_staged(&chunk_for(*id)?)
+            .await?;
         if !self.service.upload_sessions.mark_finalizing(id).await? {
             return Err(CoreError::conflict(
                 "upload session status changed concurrently",
@@ -219,7 +262,7 @@ impl<'a> ResourceUploadService<'a> {
         }
 
         let staged = staged_for(id)?;
-        let checksum = match session.checksum() {
+        let checksum = match session.actual_checksum() {
             Some(checksum) => checksum.clone(),
             None => {
                 let checksum_stream = self
@@ -231,12 +274,19 @@ impl<'a> ResourceUploadService<'a> {
                 let checksum = calculate_stream_checksum(checksum_stream).await?;
                 self.service
                     .upload_sessions
-                    .save_checksum(&id, &checksum)
+                    .save_actual_checksum(&id, &checksum)
                     .await?;
-                session.set_checksum(checksum.clone());
+                session.set_actual_checksum(checksum.clone());
                 checksum
             }
         };
+        if checksum != *session.expected_checksum() {
+            return Err(CoreError::conflict(format!(
+                "upload checksum mismatch: expected {}, actual {}",
+                session.expected_checksum().value(),
+                checksum.value()
+            )));
+        }
         let directory = self
             .service
             .directories
@@ -335,6 +385,8 @@ impl<'a> ResourceUploadService<'a> {
         let _guard = self.service.upload_locks.lock(id).await;
         let session = self.load(owner_id, id).await?;
         let staged = staged_for(session.id())?;
+        let chunk = chunk_for(session.id())?;
+        self.service.blob_storage.discard_staged(&chunk).await?;
         self.service.blob_storage.discard_staged(&staged).await?;
         self.service.upload_sessions.remove(id).await
     }
@@ -415,6 +467,13 @@ impl<'a> ResourceUploadService<'a> {
 fn staged_for(id: UploadId) -> Result<StagedBlob, CoreError> {
     Ok(StagedBlob::new(
         StorageKey::new(format!("{RESERVED_BLOB_STORAGE_PREFIX}/uploads/{id}"))?,
+        0,
+    ))
+}
+
+fn chunk_for(id: UploadId) -> Result<StagedBlob, CoreError> {
+    Ok(StagedBlob::new(
+        StorageKey::new(format!("{RESERVED_BLOB_STORAGE_PREFIX}/uploads/{id}.chunk"))?,
         0,
     ))
 }
