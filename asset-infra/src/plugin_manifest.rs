@@ -1,10 +1,15 @@
 use crate::action::builtin;
-use crate::config::KindRegistryConfig;
 use crate::official_plugins;
 use asset_core::CoreError;
-use asset_plugin_api::{PluginManifest, PluginManifestLock, PluginRuntime};
+use asset_plugin_api::{
+    PLUGIN_LOCK_FILE_NAME, PLUGIN_MANIFEST_FILE_NAME, PLUGIN_WASM_FILE_NAME,
+    PLUGIN_WEB_ENTRY_FILE_NAME, PluginManifest, PluginManifestLock, PluginRuntime,
+};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -27,7 +32,7 @@ pub(crate) struct PluginCatalog {
 }
 
 impl PluginCatalog {
-    pub(crate) fn load(config: &KindRegistryConfig) -> Result<Self, CoreError> {
+    pub(crate) fn load(packages_root: &Path) -> Result<Self, CoreError> {
         let mut plugins = Vec::new();
         for content in official_plugins::MANIFESTS {
             let manifest: PluginManifest = serde_json::from_str(content).map_err(|error| {
@@ -41,12 +46,22 @@ impl PluginCatalog {
                 web_assets: artifacts.web_assets,
             });
         }
-        for path in &config.plugin_manifests {
-            let manifest = load_plugin_manifest_file(path)?;
-            let artifacts = validate_loaded_manifest(&manifest, Some(path))?;
+
+        for package_root in discover_plugin_packages(packages_root)? {
+            let manifest_path = package_root.join(PLUGIN_MANIFEST_FILE_NAME);
+            let manifest = load_plugin_manifest_file(&manifest_path)?;
+            let directory_name = package_root.file_name().and_then(|name| name.to_str());
+            if directory_name != Some(manifest.plugin_id()) {
+                return Err(CoreError::configuration(format!(
+                    "plugin package directory `{}` must match plugin.id `{}`",
+                    package_root.display(),
+                    manifest.plugin_id()
+                )));
+            }
+            let artifacts = validate_loaded_manifest(&manifest, Some(&package_root))?;
             plugins.push(LoadedPlugin {
                 manifest,
-                manifest_path: Some(path.clone()),
+                manifest_path: Some(manifest_path),
                 wasm: artifacts.wasm,
                 web_assets: artifacts.web_assets,
             });
@@ -67,15 +82,63 @@ impl PluginCatalog {
     pub(crate) fn plugins(&self) -> &[LoadedPlugin] {
         &self.plugins
     }
+
+    pub(crate) fn external_plugin_count(&self) -> usize {
+        self.plugins
+            .iter()
+            .filter(|plugin| plugin.manifest_path.is_some())
+            .count()
+    }
+}
+
+fn discover_plugin_packages(root: &Path) -> Result<Vec<PathBuf>, CoreError> {
+    let metadata = match std::fs::symlink_metadata(root) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(CoreError::configuration(format!(
+                "inspect plugin packages root `{}`: {error}",
+                root.display()
+            )));
+        }
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(CoreError::configuration(format!(
+            "plugin packages root `{}` must be a directory",
+            root.display()
+        )));
+    }
+
+    let mut packages = Vec::new();
+    for entry in std::fs::read_dir(root).map_err(|error| {
+        CoreError::configuration(format!(
+            "read plugin packages root `{}`: {error}",
+            root.display()
+        ))
+    })? {
+        let entry = entry.map_err(|error| {
+            CoreError::configuration(format!("read plugin package entry: {error}"))
+        })?;
+        let file_type = entry.file_type().map_err(|error| {
+            CoreError::configuration(format!(
+                "inspect plugin package `{}`: {error}",
+                entry.path().display()
+            ))
+        })?;
+        if file_type.is_symlink() || !file_type.is_dir() {
+            return Err(CoreError::configuration(format!(
+                "plugin package `{}` must be a directory",
+                entry.path().display()
+            )));
+        }
+        packages.push(entry.path());
+    }
+    packages.sort();
+    Ok(packages)
 }
 
 pub(crate) fn load_plugin_manifest_file(path: &Path) -> Result<PluginManifest, CoreError> {
-    let metadata = std::fs::metadata(path).map_err(|error| {
-        CoreError::configuration(format!(
-            "inspect plugin manifest `{}`: {error}",
-            path.display()
-        ))
-    })?;
+    let metadata = regular_file_metadata(path, "plugin manifest")?;
     if metadata.len() > MAX_PLUGIN_MANIFEST_BYTES {
         return Err(CoreError::configuration(format!(
             "plugin manifest `{}` exceeds the {MAX_PLUGIN_MANIFEST_BYTES} byte limit",
@@ -100,28 +163,54 @@ pub(crate) fn load_plugin_manifest_file(path: &Path) -> Result<PluginManifest, C
             path.display()
         ))
     })?;
-
     Ok(manifest)
 }
 
-fn load_plugin_manifest_lock_file(
-    manifest_path: &Path,
+fn load_or_create_plugin_manifest_lock_file(
+    package_root: &Path,
     manifest: &PluginManifest,
 ) -> Result<PluginManifestLock, CoreError> {
-    let path = manifest_lock_path(manifest_path);
-    let metadata = std::fs::metadata(&path).map_err(|error| {
-        CoreError::configuration(format!(
+    let path = package_root.join(PLUGIN_LOCK_FILE_NAME);
+    match std::fs::symlink_metadata(&path) {
+        Ok(_) => load_plugin_manifest_lock_file(&path, manifest),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let lock = generate_plugin_manifest_lock(package_root, manifest)?;
+            lock.validate_for(manifest).map_err(|error| {
+                CoreError::configuration(format!(
+                    "generated invalid plugin manifest lock `{}`: {error}",
+                    path.display()
+                ))
+            })?;
+            if write_json_atomically(&path, &lock)? {
+                tracing::info!(
+                    plugin_id = manifest.plugin_id(),
+                    path = %path.display(),
+                    "plugin manifest lock generated"
+                );
+                Ok(lock)
+            } else {
+                load_plugin_manifest_lock_file(&path, manifest)
+            }
+        }
+        Err(error) => Err(CoreError::configuration(format!(
             "inspect plugin manifest lock `{}`: {error}",
             path.display()
-        ))
-    })?;
+        ))),
+    }
+}
+
+fn load_plugin_manifest_lock_file(
+    path: &Path,
+    manifest: &PluginManifest,
+) -> Result<PluginManifestLock, CoreError> {
+    let metadata = regular_file_metadata(path, "plugin manifest lock")?;
     if metadata.len() > MAX_PLUGIN_LOCK_BYTES {
         return Err(CoreError::configuration(format!(
             "plugin manifest lock `{}` exceeds the {MAX_PLUGIN_LOCK_BYTES} byte limit",
             path.display()
         )));
     }
-    let content = std::fs::read_to_string(&path).map_err(|error| {
+    let content = std::fs::read_to_string(path).map_err(|error| {
         CoreError::configuration(format!(
             "read plugin manifest lock `{}`: {error}",
             path.display()
@@ -142,14 +231,161 @@ fn load_plugin_manifest_lock_file(
     Ok(lock)
 }
 
-fn manifest_lock_path(path: &Path) -> PathBuf {
-    path.parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("manifest.lock.json")
+fn generate_plugin_manifest_lock(
+    package_root: &Path,
+    manifest: &PluginManifest,
+) -> Result<PluginManifestLock, CoreError> {
+    let mut artifact_paths = HashSet::new();
+    collect_package_artifact_files(package_root, package_root, &mut artifact_paths)?;
+    let wasm_path = Path::new(PLUGIN_WASM_FILE_NAME);
+    let has_wasm = artifact_paths.contains(wasm_path);
+    match manifest.runtime {
+        PluginRuntime::Builtin if has_wasm => {
+            return Err(CoreError::configuration(format!(
+                "builtin plugin `{}` must not contain `{PLUGIN_WASM_FILE_NAME}`",
+                manifest.plugin_id()
+            )));
+        }
+        PluginRuntime::Extism { .. } if !has_wasm => {
+            return Err(CoreError::configuration(format!(
+                "extism plugin `{}` must contain `{PLUGIN_WASM_FILE_NAME}`",
+                manifest.plugin_id()
+            )));
+        }
+        _ => {}
+    }
+
+    let has_web_assets = artifact_paths.iter().any(|path| path != wasm_path);
+    let has_entry = artifact_paths.contains(Path::new(PLUGIN_WEB_ENTRY_FILE_NAME));
+    if !has_entry && has_web_assets {
+        return Err(CoreError::configuration(format!(
+            "plugin `{}` contains Web assets but `{PLUGIN_WEB_ENTRY_FILE_NAME}` is missing",
+            manifest.plugin_id()
+        )));
+    }
+    if manifest_uses_plugin_frame(manifest) && !has_entry {
+        return Err(CoreError::configuration(format!(
+            "plugin `{}` declares plugin_frame but `{PLUGIN_WEB_ENTRY_FILE_NAME}` is missing",
+            manifest.plugin_id()
+        )));
+    }
+
+    let mut integrity = BTreeMap::new();
+    let mut total_web_bytes = 0usize;
+    let mut paths = artifact_paths.into_iter().collect::<Vec<_>>();
+    paths.sort();
+    for relative_path in paths {
+        let path = package_root.join(&relative_path);
+        let metadata = regular_file_metadata(&path, "plugin artifact")?;
+        if relative_path == wasm_path {
+            if metadata.len() > MAX_PLUGIN_WASM_BYTES as u64 {
+                return Err(CoreError::configuration(format!(
+                    "plugin `{}` Wasm exceeds the {MAX_PLUGIN_WASM_BYTES} byte limit",
+                    manifest.plugin_id()
+                )));
+            }
+        } else {
+            total_web_bytes = total_web_bytes
+                .checked_add(metadata.len() as usize)
+                .ok_or_else(|| {
+                    CoreError::configuration(format!(
+                        "plugin `{}` Web assets exceed the host size limit",
+                        manifest.plugin_id()
+                    ))
+                })?;
+            if total_web_bytes > MAX_PLUGIN_WEB_BYTES {
+                return Err(CoreError::configuration(format!(
+                    "plugin `{}` Web assets exceed the {MAX_PLUGIN_WEB_BYTES} byte limit",
+                    manifest.plugin_id()
+                )));
+            }
+        }
+        integrity.insert(relative_path, digest_file(&path, "plugin artifact")?);
+    }
+
+    Ok(PluginManifestLock {
+        manifest_version: manifest.manifest_version,
+        plugin_id: manifest.plugin_id().to_string(),
+        integrity,
+    })
 }
 
-fn manifest_requires_lock(manifest: &PluginManifest) -> bool {
-    matches!(manifest.runtime, PluginRuntime::Extism { .. }) || manifest.web.is_some()
+fn digest_file(path: &Path, label: &str) -> Result<String, CoreError> {
+    let bytes = std::fs::read(path).map_err(|error| {
+        CoreError::configuration(format!("read {label} `{}`: {error}", path.display()))
+    })?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+/// Installs a complete JSON file without replacing a file created concurrently.
+/// Returns whether this call installed the file.
+fn write_json_atomically(path: &Path, value: &impl Serialize) -> Result<bool, CoreError> {
+    let mut bytes = serde_json::to_vec_pretty(value).map_err(|error| {
+        CoreError::configuration(format!("encode `{}`: {error}", path.display()))
+    })?;
+    bytes.push(b'\n');
+    if bytes.len() > MAX_PLUGIN_LOCK_BYTES as usize {
+        return Err(CoreError::configuration(format!(
+            "generated plugin manifest lock `{}` exceeds the {MAX_PLUGIN_LOCK_BYTES} byte limit",
+            path.display()
+        )));
+    }
+    let temporary = path.with_file_name(format!(
+        ".{PLUGIN_LOCK_FILE_NAME}.{}.tmp",
+        uuid::Uuid::now_v7()
+    ));
+    let write_result = (|| -> Result<bool, CoreError> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|error| {
+                CoreError::configuration(format!(
+                    "create plugin manifest lock `{}`: {error}",
+                    temporary.display()
+                ))
+            })?;
+        file.write_all(&bytes)
+            .and_then(|_| file.sync_all())
+            .map_err(|error| {
+                CoreError::configuration(format!(
+                    "write plugin manifest lock `{}`: {error}",
+                    temporary.display()
+                ))
+            })?;
+        let installed = match std::fs::hard_link(&temporary, path) {
+            Ok(()) => true,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
+            Err(error) => Err(CoreError::configuration(format!(
+                "install plugin manifest lock `{}`: {error}",
+                path.display()
+            )))?,
+        };
+        std::fs::remove_file(&temporary).map_err(|error| {
+            CoreError::configuration(format!(
+                "remove temporary plugin manifest lock `{}`: {error}",
+                temporary.display()
+            ))
+        })?;
+        Ok(installed)
+    })();
+    if write_result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    write_result
+}
+
+fn regular_file_metadata(path: &Path, label: &str) -> Result<std::fs::Metadata, CoreError> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|error| {
+        CoreError::configuration(format!("inspect {label} `{}`: {error}", path.display()))
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(CoreError::configuration(format!(
+            "{label} `{}` must be a regular file",
+            path.display()
+        )));
+    }
+    Ok(metadata)
 }
 
 #[derive(Debug, Default)]
@@ -160,10 +396,10 @@ struct LoadedArtifacts {
 
 fn validate_loaded_manifest(
     manifest: &PluginManifest,
-    manifest_path: Option<&PathBuf>,
+    package_root: Option<&Path>,
 ) -> Result<LoadedArtifacts, CoreError> {
     manifest.validate().map_err(|error| {
-        let source = manifest_path
+        let source = package_root
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| format!("official plugin `{}`", manifest.plugin_id()));
         CoreError::configuration(format!("invalid plugin manifest `{source}`: {error}"))
@@ -181,170 +417,167 @@ fn validate_loaded_manifest(
         }
     }
 
-    let Some(manifest_path) = manifest_path else {
+    let Some(package_root) = package_root else {
         return Ok(LoadedArtifacts::default());
     };
-    let lock = if manifest_requires_lock(manifest) {
-        Some(load_plugin_manifest_lock_file(manifest_path, manifest)?)
-    } else {
-        None
-    };
+    let lock = load_or_create_plugin_manifest_lock_file(package_root, manifest)?;
     let mut artifacts = LoadedArtifacts::default();
-    let resolve = |configured: &Path| {
-        if configured.is_absolute() {
-            configured.to_path_buf()
-        } else {
-            manifest_path
-                .parent()
-                .unwrap_or_else(|| Path::new("."))
-                .join(configured)
-        }
-    };
-    if let PluginRuntime::Extism { wasm, .. } = &manifest.runtime {
-        let wasm_sha256 = lock
-            .as_ref()
-            .and_then(|lock| lock.runtime.as_ref())
-            .ok_or_else(|| {
-                CoreError::configuration(format!(
-                    "plugin `{}` manifest.lock.json missing runtime.wasm_sha256",
-                    manifest.plugin_id()
-                ))
-            })?
-            .wasm_sha256
-            .as_str();
-        let wasm_path = resolve(wasm);
-        let metadata = std::fs::symlink_metadata(&wasm_path).map_err(|error| {
-            CoreError::configuration(format!(
-                "inspect plugin `{}` Wasm `{}`: {error}",
-                manifest.plugin_id(),
-                wasm_path.display()
-            ))
-        })?;
-        if metadata.file_type().is_symlink() || !metadata.is_file() {
-            return Err(CoreError::configuration(format!(
-                "plugin `{}` Wasm `{}` must be a regular file",
-                manifest.plugin_id(),
-                wasm_path.display()
-            )));
-        }
-        let bytes = std::fs::read(&wasm_path).map_err(|error| {
-            CoreError::configuration(format!(
-                "read plugin `{}` Wasm `{}`: {error}",
-                manifest.plugin_id(),
-                wasm_path.display()
-            ))
-        })?;
-        if bytes.len() > MAX_PLUGIN_WASM_BYTES {
-            return Err(CoreError::configuration(format!(
-                "plugin `{}` Wasm exceeds the {MAX_PLUGIN_WASM_BYTES} byte limit",
-                manifest.plugin_id()
-            )));
-        }
-        let actual = format!("{:x}", Sha256::digest(&bytes));
-        if actual != wasm_sha256 {
-            return Err(CoreError::configuration(format!(
-                "plugin `{}` Wasm digest mismatch: expected `{wasm_sha256}`, got `{actual}`",
-                manifest.plugin_id()
-            )));
-        }
-        artifacts.wasm = Some(Arc::from(bytes));
+
+    let mut actual_paths = HashSet::new();
+    collect_package_artifact_files(package_root, package_root, &mut actual_paths)?;
+    let wasm_path = Path::new(PLUGIN_WASM_FILE_NAME);
+    let has_web_assets = actual_paths.iter().any(|path| path != wasm_path);
+    let has_entry = actual_paths.contains(Path::new(PLUGIN_WEB_ENTRY_FILE_NAME));
+    if has_web_assets && !has_entry {
+        return Err(CoreError::configuration(format!(
+            "plugin `{}` contains Web assets but `{PLUGIN_WEB_ENTRY_FILE_NAME}` is missing",
+            manifest.plugin_id()
+        )));
     }
-    if let Some(web) = &manifest.web {
-        let integrity = &lock
-            .as_ref()
-            .and_then(|lock| lock.web.as_ref())
-            .ok_or_else(|| {
-                CoreError::configuration(format!(
-                    "plugin `{}` manifest.lock.json missing web.integrity",
+    if manifest_uses_plugin_frame(manifest) && !has_entry {
+        return Err(CoreError::configuration(format!(
+            "plugin `{}` declares plugin_frame but `{PLUGIN_WEB_ENTRY_FILE_NAME}` is missing",
+            manifest.plugin_id()
+        )));
+    }
+
+    let mut total_web_bytes = 0usize;
+    for (relative_path, expected) in &lock.integrity {
+        let path = package_root.join(relative_path);
+        let metadata = regular_file_metadata(&path, "plugin artifact")?;
+        if relative_path == wasm_path {
+            if metadata.len() > MAX_PLUGIN_WASM_BYTES as u64 {
+                return Err(CoreError::configuration(format!(
+                    "plugin `{}` Wasm exceeds the {MAX_PLUGIN_WASM_BYTES} byte limit",
                     manifest.plugin_id()
-                ))
-            })?
-            .integrity;
-        let root = resolve(&web.root);
-        if !root.is_dir() {
-            return Err(CoreError::configuration(format!(
-                "plugin `{}` Web root `{}` is not a directory",
-                manifest.plugin_id(),
-                root.display()
-            )));
-        }
-        let mut actual_paths = HashSet::new();
-        let mut total_web_bytes = 0usize;
-        collect_web_files(&root, &root, &mut actual_paths)?;
-        for (relative_path, expected) in integrity {
-            let path = root.join(relative_path);
-            let bytes = std::fs::read(&path).map_err(|error| {
-                CoreError::configuration(format!(
-                    "read plugin `{}` Web asset `{}`: {error}",
-                    manifest.plugin_id(),
-                    path.display()
-                ))
-            })?;
-            total_web_bytes = total_web_bytes.checked_add(bytes.len()).ok_or_else(|| {
-                CoreError::configuration(format!(
-                    "plugin `{}` Web assets exceed the host size limit",
-                    manifest.plugin_id()
-                ))
-            })?;
+                )));
+            }
+        } else {
+            total_web_bytes = total_web_bytes
+                .checked_add(metadata.len() as usize)
+                .ok_or_else(|| {
+                    CoreError::configuration(format!(
+                        "plugin `{}` Web assets exceed the host size limit",
+                        manifest.plugin_id()
+                    ))
+                })?;
             if total_web_bytes > MAX_PLUGIN_WEB_BYTES {
                 return Err(CoreError::configuration(format!(
                     "plugin `{}` Web assets exceed the {MAX_PLUGIN_WEB_BYTES} byte limit",
                     manifest.plugin_id()
                 )));
             }
-            let actual = format!("{:x}", Sha256::digest(&bytes));
-            if &actual != expected {
-                return Err(CoreError::configuration(format!(
-                    "plugin `{}` Web asset `{}` digest mismatch",
-                    manifest.plugin_id(),
-                    relative_path.display()
-                )));
-            }
+        }
+        let bytes = std::fs::read(&path).map_err(|error| {
+            CoreError::configuration(format!(
+                "read plugin `{}` artifact `{}`: {error}",
+                manifest.plugin_id(),
+                path.display()
+            ))
+        })?;
+        let actual = format!("{:x}", Sha256::digest(&bytes));
+        if &actual != expected {
+            let detail = if relative_path == wasm_path {
+                format!("Wasm digest mismatch for `{}`", relative_path.display())
+            } else {
+                format!("artifact `{}` digest mismatch", relative_path.display())
+            };
+            return Err(CoreError::configuration(format!(
+                "plugin `{}` {detail}",
+                manifest.plugin_id(),
+            )));
+        }
+        if relative_path == wasm_path {
+            artifacts.wasm = Some(Arc::from(bytes));
+        } else {
             artifacts
                 .web_assets
                 .insert(relative_path.clone(), Arc::from(bytes));
-            actual_paths.remove(relative_path);
         }
-        if !actual_paths.is_empty() {
-            return Err(CoreError::configuration(format!(
-                "plugin `{}` Web root contains undeclared files: {actual_paths:?}",
-                manifest.plugin_id()
-            )));
-        }
+        actual_paths.remove(relative_path);
+    }
+    if !actual_paths.is_empty() {
+        return Err(CoreError::configuration(format!(
+            "plugin `{}` package contains undeclared artifact files: {actual_paths:?}",
+            manifest.plugin_id()
+        )));
     }
     Ok(artifacts)
 }
 
-fn collect_web_files(
+fn collect_package_artifact_files(
     root: &Path,
     directory: &Path,
     files: &mut HashSet<PathBuf>,
 ) -> Result<(), CoreError> {
-    for entry in std::fs::read_dir(directory)
-        .map_err(|error| CoreError::configuration(format!("read Web root: {error}")))?
-    {
-        let entry =
-            entry.map_err(|error| CoreError::configuration(format!("read Web asset: {error}")))?;
-        let file_type = entry
-            .file_type()
-            .map_err(|error| CoreError::configuration(format!("inspect Web asset: {error}")))?;
+    for entry in std::fs::read_dir(directory).map_err(|error| {
+        CoreError::configuration(format!(
+            "read plugin package `{}`: {error}",
+            directory.display()
+        ))
+    })? {
+        let entry = entry
+            .map_err(|error| CoreError::configuration(format!("read plugin package: {error}")))?;
+        let file_type = entry.file_type().map_err(|error| {
+            CoreError::configuration(format!(
+                "inspect plugin package entry `{}`: {error}",
+                entry.path().display()
+            ))
+        })?;
         if file_type.is_symlink() {
             return Err(CoreError::configuration(format!(
-                "plugin Web asset `{}` must not be a symbolic link",
+                "plugin package entry `{}` must not be a symbolic link",
                 entry.path().display()
             )));
         }
         if file_type.is_dir() {
-            collect_web_files(root, &entry.path(), files)?;
+            collect_package_artifact_files(root, &entry.path(), files)?;
         } else if file_type.is_file() {
             let path = entry.path();
             let relative = path.strip_prefix(root).map_err(|error| {
-                CoreError::configuration(format!("resolve Web asset path: {error}"))
+                CoreError::configuration(format!("resolve plugin artifact path: {error}"))
             })?;
-            files.insert(relative.to_path_buf());
+            if !is_plugin_metadata_file(relative) {
+                files.insert(relative.to_path_buf());
+            }
+        } else {
+            return Err(CoreError::configuration(format!(
+                "plugin package entry `{}` must be a regular file or directory",
+                entry.path().display()
+            )));
         }
     }
     Ok(())
+}
+
+fn is_plugin_metadata_file(path: &Path) -> bool {
+    [PLUGIN_MANIFEST_FILE_NAME, PLUGIN_LOCK_FILE_NAME]
+        .iter()
+        .any(|name| path == Path::new(name))
+        || is_temporary_lock_file(path)
+}
+
+fn is_temporary_lock_file(path: &Path) -> bool {
+    path.components().count() == 1
+        && path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| {
+                name.starts_with(&format!(".{PLUGIN_LOCK_FILE_NAME}.")) && name.ends_with(".tmp")
+            })
+}
+
+fn manifest_uses_plugin_frame(manifest: &PluginManifest) -> bool {
+    manifest
+        .capabilities
+        .resource_actions
+        .iter()
+        .any(|action| action.views.iter().any(|view| view == "plugin_frame"))
+        || manifest
+            .capabilities
+            .directory_actions
+            .iter()
+            .any(|action| action.views.iter().any(|view| view == "plugin_frame"))
 }
 
 #[cfg(test)]

@@ -10,12 +10,8 @@
   },
   "runtime": {
     "type": "extism",
-    "wasm": "azvs-markdown.wasm",
     "wasi": true,
     "plugin_api": "asset-hub.plugin-api@1"
-  },
-  "web": {
-    "root": "dist"
   },
   "capabilities": {
     "kinds": [

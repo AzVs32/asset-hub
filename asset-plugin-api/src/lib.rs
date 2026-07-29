@@ -50,8 +50,9 @@ pub use manifest::{
     DirectoryActionAppliesToCapability, DirectoryActionCapability,
     DirectoryActionRequirementsCapability, DirectoryKindCapability, FilesystemPermission,
     MANIFEST_VERSION, ManifestActionAccess, NetworkPermission, PLUGIN_API_VERSION,
-    PluginCapabilities, PluginDescriptor, PluginManifest, PluginManifestLock, PluginPermission,
-    PluginPermissions, PluginRuntime, PluginRuntimeLock, PluginWeb, PluginWebAssets, PluginWebLock,
+    PLUGIN_LOCK_FILE_NAME, PLUGIN_MANIFEST_FILE_NAME, PLUGIN_WASM_FILE_NAME,
+    PLUGIN_WEB_ENTRY_FILE_NAME, PluginCapabilities, PluginDescriptor, PluginManifest,
+    PluginManifestLock, PluginPermission, PluginPermissions, PluginRuntime, PluginWebAssets,
     ResourceActionCapability, ResourceKindCapability,
 };
 pub use policy::{InvalidPluginExecutionPolicy, PluginExecutionPolicy};

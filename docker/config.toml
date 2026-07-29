@@ -16,9 +16,3 @@ root = "/data"
 enabled = true
 debounce_milliseconds = 1000
 reconcile_interval_seconds = 1800
-
-[kind]
-plugin_manifests = [
-  "/app/plugins/azvs-markdown/manifest.json",
-  "/app/plugins/azvs-epub/manifest.json",
-]

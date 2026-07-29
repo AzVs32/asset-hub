@@ -22,35 +22,36 @@ WORKDIR /src/plugins/azvs-markdown/web
 COPY plugins/azvs-markdown/web/package.json plugins/azvs-markdown/web/package-lock.json ./
 RUN npm ci
 COPY plugins/azvs-markdown/web/ ./
-COPY plugins/azvs-markdown/manifest.json plugins/azvs-markdown/manifest.lock.json plugins/azvs-markdown/azvs-markdown.wasm /src/plugins/azvs-markdown/
-COPY --from=api-builder /src/target/release/asset /usr/local/bin/asset
+COPY plugins/azvs-markdown/manifest.json plugins/azvs-markdown/plugin.wasm /src/plugins/azvs-markdown/
 RUN npm run build
-WORKDIR /src
-RUN asset plugin --verify plugins/azvs-markdown/manifest.json
+RUN mkdir -p /out/azvs.markdown \
+    && cp /src/plugins/azvs-markdown/manifest.json /src/plugins/azvs-markdown/plugin.wasm \
+      /out/azvs.markdown/ \
+    && cp -R /src/plugins/azvs-markdown/dist/. /out/azvs.markdown/
 
 FROM node:22-trixie-slim AS epub-web-builder
 WORKDIR /src/plugins/azvs-epub/web
 COPY plugins/azvs-epub/web/package.json plugins/azvs-epub/web/package-lock.json ./
 RUN npm ci
 COPY plugins/azvs-epub/web/ ./
-COPY plugins/azvs-epub/manifest.json plugins/azvs-epub/manifest.lock.json plugins/azvs-epub/azvs-epub.wasm /src/plugins/azvs-epub/
-COPY --from=api-builder /src/target/release/asset /usr/local/bin/asset
+COPY plugins/azvs-epub/manifest.json plugins/azvs-epub/plugin.wasm /src/plugins/azvs-epub/
 RUN npm run build
-WORKDIR /src
-RUN asset plugin --verify plugins/azvs-epub/manifest.json
+RUN mkdir -p /out/azvs.epub \
+    && cp /src/plugins/azvs-epub/manifest.json /src/plugins/azvs-epub/plugin.wasm \
+      /out/azvs.epub/ \
+    && cp -R /src/plugins/azvs-epub/dist/. /out/azvs.epub/
 
 FROM debian:trixie-slim AS api
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --home-dir /app asset-hub \
-    && mkdir -p /app/plugins/azvs-markdown/dist /app/plugins/azvs-epub/dist /conf /data \
+    && mkdir -p /app /conf /data/.asset-hub/plugins \
     && chown -R asset-hub:asset-hub /app /conf /data
 WORKDIR /app
 COPY --from=api-builder /src/target/release/asset-http /usr/local/bin/asset-http
-COPY --from=api-builder /src/plugins /app/plugins
-COPY --from=markdown-web-builder /src/plugins/azvs-markdown/dist /app/plugins/azvs-markdown/dist
-COPY --from=epub-web-builder /src/plugins/azvs-epub/dist /app/plugins/azvs-epub/dist
+COPY --from=markdown-web-builder --chown=asset-hub:asset-hub /out/azvs.markdown /data/.asset-hub/plugins/azvs.markdown
+COPY --from=epub-web-builder --chown=asset-hub:asset-hub /out/azvs.epub /data/.asset-hub/plugins/azvs.epub
 COPY --chown=asset-hub:asset-hub docker/config.toml /conf/config.toml
 USER asset-hub
 ENV ASSET_HUB_CONFIG=/conf/config.toml \

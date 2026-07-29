@@ -4,8 +4,8 @@ use asset_http::{
     build_router, with_authentication,
 };
 use asset_infra::config::{
-    AssetInfraConfig, BlobConfig, DatabaseConfig, KindRegistryConfig, LocalBlobConfig,
-    LocalBlobSyncConfig, PluginHostConfig, SqliteDatabaseConfig,
+    AssetInfraConfig, BlobConfig, DatabaseConfig, LocalBlobConfig, LocalBlobSyncConfig,
+    PluginHostConfig, SqliteDatabaseConfig,
 };
 use asset_plugin_api::PluginWebAssets;
 use asset_runtime::AssetRuntime;
@@ -1293,16 +1293,11 @@ async fn plugin_web_assets_are_served_from_the_verified_startup_snapshot() {
 }
 
 async fn test_app(name: &str) -> TestApp {
-    test_app_with_config(
-        name,
-        KindRegistryConfig::default(),
-        RouterOptions::default(),
-    )
-    .await
+    test_app_with_config(name, RouterOptions::default()).await
 }
 
 async fn test_app_with_router_options(name: &str, options: RouterOptions) -> TestApp {
-    test_app_with_config(name, KindRegistryConfig::default(), options).await
+    test_app_with_config(name, options).await
 }
 
 async fn test_app_with_plugin_manifests(name: &str, plugin_manifests: Vec<PathBuf>) -> TestApp {
@@ -1314,30 +1309,22 @@ async fn test_app_with_plugin_host_config(
     plugin_manifests: Vec<PathBuf>,
     plugin: PluginHostConfig,
 ) -> TestApp {
-    test_app_with_kind_and_plugin_config(
-        name,
-        KindRegistryConfig { plugin_manifests },
-        plugin,
-        RouterOptions::default(),
-    )
-    .await
+    let root = unique_temp_root(name);
+    for manifest_path in plugin_manifests {
+        install_test_plugin(&root.join("blob"), &manifest_path);
+    }
+    test_app_at_root(root, plugin, RouterOptions::default()).await
 }
 
-async fn test_app_with_config(
-    name: &str,
-    kind: KindRegistryConfig,
-    options: RouterOptions,
-) -> TestApp {
-    test_app_with_kind_and_plugin_config(name, kind, PluginHostConfig::default(), options).await
+async fn test_app_with_config(name: &str, options: RouterOptions) -> TestApp {
+    test_app_at_root(unique_temp_root(name), PluginHostConfig::default(), options).await
 }
 
-async fn test_app_with_kind_and_plugin_config(
-    name: &str,
-    kind: KindRegistryConfig,
+async fn test_app_at_root(
+    root: PathBuf,
     plugin: PluginHostConfig,
     options: RouterOptions,
 ) -> TestApp {
-    let root = unique_temp_root(name);
     let config = AssetInfraConfig {
         database: DatabaseConfig {
             sqlite: SqliteDatabaseConfig { max_connections: 1 },
@@ -1353,7 +1340,6 @@ async fn test_app_with_kind_and_plugin_config(
             },
             ..BlobConfig::default()
         },
-        kind,
         plugin,
     };
     let runtime = AssetRuntime::new(config).await.unwrap();
@@ -1389,7 +1375,6 @@ async fn test_app_with_plugin_web_assets(
             },
             ..BlobConfig::default()
         },
-        kind: KindRegistryConfig::default(),
         plugin: Default::default(),
     };
     let runtime = AssetRuntime::new(config).await.unwrap();
@@ -1461,7 +1446,6 @@ async fn member_access_is_limited_to_the_workspace_subtree() {
             },
             ..BlobConfig::default()
         },
-        kind: KindRegistryConfig::default(),
         plugin: Default::default(),
     };
     let runtime = AssetRuntime::new(config).await.unwrap();
@@ -1975,6 +1959,31 @@ fn has_directory_action(directory: &Value, id: &str) -> bool {
     directory["actions"]["available_actions"]
         .as_array()
         .is_some_and(|actions| actions.iter().any(|action| action["id"] == id))
+}
+
+fn install_test_plugin(blob_root: &std::path::Path, source_manifest: &std::path::Path) {
+    let manifest: Value = serde_json::from_slice(&std::fs::read(source_manifest).unwrap()).unwrap();
+    let plugin_id = manifest["plugin"]["id"].as_str().unwrap();
+    let source_root = source_manifest.parent().unwrap();
+    let package_root = blob_root.join(".asset-hub/plugins").join(plugin_id);
+    std::fs::create_dir_all(&package_root).unwrap();
+    for file in ["manifest.json", "plugin.wasm"] {
+        std::fs::copy(source_root.join(file), package_root.join(file)).unwrap();
+    }
+    copy_test_plugin_web(&source_root.join("dist"), &package_root);
+}
+
+fn copy_test_plugin_web(source: &std::path::Path, destination: &std::path::Path) {
+    for entry in std::fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let target = destination.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            std::fs::create_dir_all(&target).unwrap();
+            copy_test_plugin_web(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).unwrap();
+        }
+    }
 }
 
 fn unique_temp_root(name: &str) -> PathBuf {

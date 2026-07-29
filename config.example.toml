@@ -61,18 +61,14 @@ network_hosts = []
 filesystem_read = []
 filesystem_write = []
 
-[kind]
-# Optional plugin JSON manifest files.
-# Manifest files are loaded at startup; restart the service after adding/removing plugins.
-plugin_manifests = []
-
-# Plugin manifest example.
+# Plugins are discovered from <blob.local.root>/.asset-hub/plugins/<plugin-id>/manifest.json.
+# Restart the service after installing, removing, or changing a plugin package.
+# Plugin manifest example (Manifest V1):
 # Use `capabilities.kinds` for resource types, `capabilities.directory_kinds` for
 # directory types, `capabilities.resource_actions` for resource actions, and
 # `capabilities.directory_actions` for directory actions.
-# Author a Manifest V1 JSON document, then build the declared artifacts.
-# Artifact hashes belong to the generated sibling `manifest.lock.json`; generate it with
-# `asset plugin --seal path/to/plugin.json` after building the plugin artifacts.
+# Build the fixed `plugin.wasm` runtime and optional root `index.html` plus Web assets. Asset Hub
+# generates `manifest.lock.json` on first startup and verifies it on later startups.
 #
 # {
 #   "$schema": "https://asset-hub.local/schemas/plugin-manifest-v1.json",
@@ -86,7 +82,6 @@ plugin_manifests = []
 #   },
 #   "runtime": {
 #     "type": "extism",
-#     "wasm": "example-tools.wasm",
 #     "plugin_api": "asset-hub.plugin-api@1"
 #   },
 #   "capabilities": {

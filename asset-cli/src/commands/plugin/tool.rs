@@ -1,13 +1,11 @@
 use asset_plugin_api::{
-    PluginManifest, PluginManifestLock, PluginRuntime, PluginRuntimeLock, PluginWebLock,
+    PLUGIN_LOCK_FILE_NAME, PLUGIN_MANIFEST_FILE_NAME, PLUGIN_WASM_FILE_NAME,
+    PLUGIN_WEB_ENTRY_FILE_NAME, PluginManifest, PluginManifestLock,
 };
-use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::fs::OpenOptions;
-use std::io::Write;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
 pub struct ToolError(String);
@@ -22,111 +20,45 @@ impl std::error::Error for ToolError {}
 
 type Result<T> = std::result::Result<T, ToolError>;
 
-pub fn seal_manifest(path: &Path) -> Result<PluginManifest> {
-    let manifest: PluginManifest = read_json(path)?;
-    validate_contract(&manifest)?;
-    let lock = lock_for_manifest(&manifest, path)?;
-    validate_lock(&manifest, &lock)?;
-    write_json_atomically(&manifest_lock_path(path), &lock)?;
-    Ok(manifest)
-}
-
 pub fn verify_manifest(path: &Path) -> Result<PluginManifest> {
     let manifest: PluginManifest = read_json(path)?;
     validate_contract(&manifest)?;
+    validate_package_location(&manifest, path)?;
     let lock = read_required_lock(&manifest, path)?;
-    verify_wasm(&manifest, lock.as_ref(), path)?;
-    verify_web(&manifest, lock.as_ref(), path)?;
+    verify_integrity(&manifest, &lock, path)?;
     Ok(manifest)
 }
 
-fn lock_for_manifest(manifest: &PluginManifest, path: &Path) -> Result<PluginManifestLock> {
-    let base = manifest_base(path);
-    let runtime = match &manifest.runtime {
-        PluginRuntime::Builtin => None,
-        PluginRuntime::Extism { wasm, .. } => Some(PluginRuntimeLock {
-            wasm_sha256: digest_file(&resolve_artifact(&base, "runtime.wasm", wasm)?)?,
-        }),
-    };
-    let web = manifest
-        .web
-        .as_ref()
-        .map(|web| {
-            let root = resolve_artifact(&base, "web.root", &web.root)?;
-            Ok(PluginWebLock {
-                integrity: web_integrity(&root)?,
-            })
-        })
-        .transpose()?;
-    Ok(PluginManifestLock {
-        manifest_version: manifest.manifest_version,
-        plugin_id: manifest.plugin_id().to_string(),
-        runtime,
-        web,
-    })
-}
-
-fn verify_wasm(
+fn verify_integrity(
     manifest: &PluginManifest,
-    lock: Option<&PluginManifestLock>,
+    lock: &PluginManifestLock,
     path: &Path,
 ) -> Result<()> {
     let base = manifest_base(path);
-    if let PluginRuntime::Extism { wasm, .. } = &manifest.runtime {
-        let expected = lock
-            .and_then(|lock| lock.runtime.as_ref())
-            .ok_or_else(|| ToolError("manifest.lock.json runtime.wasm_sha256 is required".into()))?
-            .wasm_sha256
-            .as_str();
-        let actual = digest_file(&resolve_artifact(&base, "runtime.wasm", wasm)?)?;
-        if actual != expected {
-            return Err(ToolError(format!(
-                "Wasm digest mismatch: manifest.lock.json={expected} actual={actual}"
-            )));
-        }
+    let actual = package_integrity(&base)?;
+    if manifest_uses_plugin_frame(manifest)
+        && !actual.contains_key(Path::new(PLUGIN_WEB_ENTRY_FILE_NAME))
+    {
+        return Err(ToolError(format!(
+            "plugin_frame actions require package-root `{PLUGIN_WEB_ENTRY_FILE_NAME}`"
+        )));
+    }
+    if lock.integrity != actual {
+        return Err(ToolError(integrity_difference(&lock.integrity, &actual)));
     }
     Ok(())
 }
 
-fn verify_web(
-    manifest: &PluginManifest,
-    lock: Option<&PluginManifestLock>,
-    path: &Path,
-) -> Result<()> {
-    let base = manifest_base(path);
-    if let Some(web) = &manifest.web {
-        let expected = &lock
-            .and_then(|lock| lock.web.as_ref())
-            .ok_or_else(|| ToolError("manifest.lock.json web.integrity is required".into()))?
-            .integrity;
-        let actual = web_integrity(&resolve_artifact(&base, "web.root", &web.root)?)?;
-        if &actual != expected {
-            return Err(ToolError(web_integrity_difference(expected, &actual)));
-        }
-    }
-    Ok(())
-}
-
-fn read_required_lock(
-    manifest: &PluginManifest,
-    path: &Path,
-) -> Result<Option<PluginManifestLock>> {
-    if !manifest_requires_lock(manifest) {
-        return Ok(None);
-    }
+fn read_required_lock(manifest: &PluginManifest, path: &Path) -> Result<PluginManifestLock> {
     let lock_path = manifest_lock_path(path);
     let lock: PluginManifestLock = read_json(&lock_path)?;
     validate_lock(manifest, &lock)?;
-    Ok(Some(lock))
+    Ok(lock)
 }
 
 fn validate_lock(manifest: &PluginManifest, lock: &PluginManifestLock) -> Result<()> {
     lock.validate_for(manifest)
         .map_err(|error| ToolError(format!("invalid manifest.lock.json: {error}")))
-}
-
-fn manifest_requires_lock(manifest: &PluginManifest) -> bool {
-    matches!(manifest.runtime, PluginRuntime::Extism { .. }) || manifest.web.is_some()
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
@@ -149,19 +81,26 @@ fn manifest_base(path: &Path) -> PathBuf {
 }
 
 fn manifest_lock_path(path: &Path) -> PathBuf {
-    manifest_base(path).join("manifest.lock.json")
+    manifest_base(path).join(PLUGIN_LOCK_FILE_NAME)
 }
 
-fn resolve_artifact(base: &Path, field: &str, path: &Path) -> Result<PathBuf> {
-    if path.as_os_str().is_empty()
-        || path.is_absolute()
-        || path
-            .components()
-            .any(|component| matches!(component, Component::ParentDir))
-    {
-        return Err(ToolError(format!("{field} must be a safe relative path")));
+fn validate_package_location(manifest: &PluginManifest, path: &Path) -> Result<()> {
+    if path.file_name().and_then(|name| name.to_str()) != Some(PLUGIN_MANIFEST_FILE_NAME) {
+        return Err(ToolError(format!(
+            "plugin manifest must be named `{PLUGIN_MANIFEST_FILE_NAME}`"
+        )));
     }
-    Ok(base.join(path))
+    let directory_name = path
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str());
+    if directory_name != Some(manifest.plugin_id()) {
+        return Err(ToolError(format!(
+            "plugin package directory must be named `{}`",
+            manifest.plugin_id()
+        )));
+    }
+    Ok(())
 }
 
 fn digest_file(path: &Path) -> Result<String> {
@@ -178,15 +117,27 @@ fn digest_file(path: &Path) -> Result<String> {
     Ok(format!("{:x}", Sha256::digest(bytes)))
 }
 
-fn web_integrity(root: &Path) -> Result<BTreeMap<PathBuf, String>> {
+fn package_integrity(root: &Path) -> Result<BTreeMap<PathBuf, String>> {
     if !root.is_dir() {
         return Err(ToolError(format!(
-            "Web root `{}` is not a directory",
+            "plugin package `{}` is not a directory",
             root.display()
         )));
     }
     let mut files = Vec::new();
     collect_files(root, root, &mut files)?;
+    files.retain(|(relative, _)| !is_plugin_metadata_file(relative));
+    let has_web_assets = files
+        .iter()
+        .any(|(relative, _)| relative != Path::new(PLUGIN_WASM_FILE_NAME));
+    let has_entry = files
+        .iter()
+        .any(|(relative, _)| relative == Path::new(PLUGIN_WEB_ENTRY_FILE_NAME));
+    if has_web_assets && !has_entry {
+        return Err(ToolError(format!(
+            "plugin package contains Web assets but `{PLUGIN_WEB_ENTRY_FILE_NAME}` is missing"
+        )));
+    }
     let mut integrity = BTreeMap::new();
     for (relative, absolute) in files {
         integrity.insert(relative, digest_file(&absolute)?);
@@ -194,22 +145,52 @@ fn web_integrity(root: &Path) -> Result<BTreeMap<PathBuf, String>> {
     Ok(integrity)
 }
 
+fn is_plugin_metadata_file(path: &Path) -> bool {
+    [PLUGIN_MANIFEST_FILE_NAME, PLUGIN_LOCK_FILE_NAME]
+        .iter()
+        .any(|name| path == Path::new(name))
+        || path.components().count() == 1
+            && path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    name.starts_with(&format!(".{PLUGIN_LOCK_FILE_NAME}."))
+                        && name.ends_with(".tmp")
+                })
+}
+
+fn manifest_uses_plugin_frame(manifest: &PluginManifest) -> bool {
+    manifest
+        .capabilities
+        .resource_actions
+        .iter()
+        .any(|action| action.views.iter().any(|view| view == "plugin_frame"))
+        || manifest
+            .capabilities
+            .directory_actions
+            .iter()
+            .any(|action| action.views.iter().any(|view| view == "plugin_frame"))
+}
+
 fn collect_files(root: &Path, directory: &Path, files: &mut Vec<(PathBuf, PathBuf)>) -> Result<()> {
     let entries = std::fs::read_dir(directory).map_err(|error| {
         ToolError(format!(
-            "read Web directory `{}`: {error}",
+            "read plugin package directory `{}`: {error}",
             directory.display()
         ))
     })?;
     for entry in entries {
-        let entry = entry.map_err(|error| ToolError(format!("read Web entry: {error}")))?;
+        let entry = entry.map_err(|error| ToolError(format!("read plugin package: {error}")))?;
         let path = entry.path();
         let file_type = entry.file_type().map_err(|error| {
-            ToolError(format!("inspect Web asset `{}`: {error}", path.display()))
+            ToolError(format!(
+                "inspect plugin package entry `{}`: {error}",
+                path.display()
+            ))
         })?;
         if file_type.is_symlink() {
             return Err(ToolError(format!(
-                "symbolic links are not allowed in Web roots: `{}`",
+                "symbolic links are not allowed in plugin packages: `{}`",
                 path.display()
             )));
         }
@@ -218,7 +199,7 @@ fn collect_files(root: &Path, directory: &Path, files: &mut Vec<(PathBuf, PathBu
         } else if file_type.is_file() {
             let relative = path
                 .strip_prefix(root)
-                .map_err(|error| ToolError(format!("resolve Web asset path: {error}")))?
+                .map_err(|error| ToolError(format!("resolve plugin artifact path: {error}")))?
                 .to_path_buf();
             files.push((relative, path));
         }
@@ -227,7 +208,7 @@ fn collect_files(root: &Path, directory: &Path, files: &mut Vec<(PathBuf, PathBu
     Ok(())
 }
 
-fn web_integrity_difference(
+fn integrity_difference(
     expected: &BTreeMap<PathBuf, String>,
     actual: &BTreeMap<PathBuf, String>,
 ) -> String {
@@ -240,52 +221,8 @@ fn web_integrity_difference(
         .filter(|path| expected.get(*path) != actual.get(*path))
         .collect::<Vec<_>>();
     format!(
-        "Web integrity mismatch: missing={missing:?} undeclared={undeclared:?} changed={changed:?}"
+        "Plugin integrity mismatch: missing={missing:?} undeclared={undeclared:?} changed={changed:?}"
     )
-}
-
-fn write_json_atomically(path: &Path, value: &impl Serialize) -> Result<()> {
-    let mut bytes = serde_json::to_vec_pretty(value)
-        .map_err(|error| ToolError(format!("encode `{}`: {error}", path.display())))?;
-    bytes.push(b'\n');
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| ToolError(format!("invalid manifest path `{}`", path.display())))?;
-    let temporary = path.with_file_name(format!(".{file_name}.{}.tmp", std::process::id()));
-    let permissions = std::fs::metadata(path)
-        .map(|metadata| metadata.permissions())
-        .ok();
-    let write_result = (|| -> Result<()> {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)
-            .map_err(|error| ToolError(format!("create `{}`: {error}", temporary.display())))?;
-        if let Some(permissions) = permissions {
-            file.set_permissions(permissions).map_err(|error| {
-                ToolError(format!(
-                    "set permissions on `{}`: {error}",
-                    temporary.display()
-                ))
-            })?;
-        }
-        file.write_all(&bytes)
-            .and_then(|_| file.sync_all())
-            .map_err(|error| ToolError(format!("write `{}`: {error}", temporary.display())))?;
-        std::fs::rename(&temporary, path).map_err(|error| {
-            ToolError(format!(
-                "replace `{}` with `{}`: {error}",
-                path.display(),
-                temporary.display()
-            ))
-        })?;
-        Ok(())
-    })();
-    if write_result.is_err() {
-        let _ = std::fs::remove_file(&temporary);
-    }
-    write_result
 }
 
 #[cfg(test)]

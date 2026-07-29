@@ -54,6 +54,7 @@ Defaults:
 
 - API listens on `127.0.0.1:8080`.
 - SQLite database is `data/.asset-hub/asset-hub.sqlite`.
+- Plugins are discovered from `data/.asset-hub/plugins/<plugin-id>`.
 - File storage root is `data`.
 - If `config.toml` exists, it is loaded. Otherwise built-in defaults are used.
 
@@ -216,26 +217,22 @@ and idle timeouts to reject stalled clients without terminating healthy long-run
 
 ## Package A Plugin
 
-Author a Manifest V1 `plugin.json`, then build the declared Wasm and optional Web bundle.
-Seal the finished artifacts with the administration CLI:
+Author a Manifest V1 package whose directory name equals `plugin.id`. Extism packages use the
+fixed `plugin.wasm` entry; optional Web UI starts at the package-root `index.html`. Install the
+package without a lock file. On first startup Asset Hub calculates every plugin artifact digest and
+atomically creates `manifest.lock.json`. On later startups the existing lock is only verified and
+is never refreshed automatically. The service therefore needs write access to a newly installed
+plugin directory for its first startup.
+
+After the first successful startup, the generated package can be checked without modifying it:
 
 ```bash
 cargo run -p asset-cli --bin asset -- \
-  plugin --seal path/to/plugin.json
+  plugin --verify .asset-hub/plugins/example.tools/manifest.json
 ```
 
-The command calculates the Wasm digest and complete Web asset map into a sibling
-`manifest.lock.json`, then runs plugin contract validation. Do not run `seal` during
-application startup: release or CI should instead verify the previously sealed package without
-modifying it:
-
-```bash
-cargo run -p asset-cli --bin asset -- \
-  plugin --verify path/to/plugin.json
-```
-
-`--seal` writes integrity data; release and CI workflows should use the read-only `--verify`
-operation and must not reseal changed artifacts.
+To deploy a changed plugin, replace the package as a new lock-free installation rather than
+retaining its previous lock.
 
 ## Docker
 
@@ -266,8 +263,10 @@ Also add the UI origin to `ASSET_HTTP_CORS_ALLOWED_ORIGINS`. Credentialed CORS o
 
 ## Plugins
 
-Plugin manifest paths are configured under `[kind].plugin_manifests` in `config.toml`.
-Manifests, Wasm, and Web assets are read and integrity-checked once at API startup. Wasm is
+Plugins are discovered from `<blob.local.root>/.asset-hub/plugins/<plugin-id>/manifest.json`.
+The package directory must exactly match `plugin.id`; no `[kind]` configuration is required.
+Manifests, Wasm, and Web assets are read once at API startup. A missing lock is generated
+atomically; an existing lock is integrity-checked without modification. Wasm is
 precompiled and every declared handler export is checked before the server starts; Web assets are
 served from the verified in-memory snapshot. Restart the service after changing any plugin file.
 
@@ -288,7 +287,7 @@ Handles cannot be reused by another plugin call and are reclaimed automatically 
 This keeps large input content out of JSON and avoids Base64 expansion; inline content remains
 available for small payloads controlled by `plugin.max_inline_content_bytes`.
 External Wasm plugins declare `content_delivery` as `reference`, read bounded ranges, rebuild their
-Wasm, and reseal the package.
+Wasm, and reinstall the package without carrying over its previous lock.
 
 Resource kinds form an arbitrary-depth acyclic hierarchy through the optional
 `parent` field. Child kinds inherit actions, and their own action declarations
@@ -326,15 +325,11 @@ other manifest or Plugin API versions are rejected at startup. Plugin failures
 may return a structured `error` diagnostic with a stable `code`, message, retry hint, and optional
 JSON details; successful outputs may also carry non-fatal diagnostics.
 
-Example:
-
-```toml
-[kind]
-plugin_manifests = [
-  "plugins/azvs-markdown/manifest.json",
-  "plugins/azvs-epub/manifest.json",
-]
-```
+An initial package contains `manifest.json`, plus `plugin.wasm` for an Extism runtime and
+`index.html` with any relative asset layout for a Web UI. Asset Hub creates `manifest.lock.json`
+on first startup. The lock contains one flat `integrity` map keyed by package-relative file path;
+`manifest.json` and the lock itself are excluded. Non-Wasm entries in that verified map are exposed
+over HTTP.
 
 ## Checks
 

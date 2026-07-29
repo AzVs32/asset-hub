@@ -108,10 +108,10 @@ impl AssetInfrastructure {
             resource_repository.pool().clone(),
         ));
         let plugin_catalog_started = Instant::now();
-        let plugin_catalog = PluginCatalog::load(&config.kind)?;
+        let plugin_catalog = PluginCatalog::load(&config.plugin_packages_path())?;
         tracing::info!(
             elapsed_ms = plugin_catalog_started.elapsed().as_millis(),
-            manifests = config.kind.plugin_manifests.len(),
+            plugins = plugin_catalog.external_plugin_count(),
             "plugin artifacts verified"
         );
         let (resource_kind_registry, directory_kind_registry, resource_action_registry) =
@@ -319,7 +319,7 @@ fn plugin_web_assets_from_catalog(catalog: &PluginCatalog) -> Result<PluginWebAs
         .filter(|plugin| plugin.manifest_path.is_some())
     {
         let manifest = &plugin.manifest;
-        if manifest.web.is_none() {
+        if plugin.web_assets.is_empty() {
             continue;
         }
         if assets

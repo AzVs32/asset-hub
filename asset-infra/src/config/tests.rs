@@ -23,7 +23,10 @@ fn empty_config_uses_defaults() {
         config.blob.local.sync.reconcile_interval_seconds,
         DEFAULT_LOCAL_SYNC_INTERVAL_SECONDS
     );
-    assert!(config.kind.plugin_manifests.is_empty());
+    assert_eq!(
+        config.plugin_packages_path(),
+        PathBuf::from("data/.asset-hub/plugins")
+    );
 }
 
 #[test]
@@ -40,22 +43,6 @@ fn partial_config_keeps_missing_defaults() {
     assert_eq!(
         config.sqlite_path(),
         PathBuf::from("tmp/blob/.asset-hub/asset-hub.sqlite")
-    );
-}
-
-#[test]
-fn kind_config_accepts_plugin_manifests() {
-    let config = AssetInfraConfig::from_config_str(
-        r#"
-        [kind]
-        plugin_manifests = ["plugins/example.json"]
-        "#,
-    )
-    .unwrap();
-
-    assert_eq!(
-        config.kind.plugin_manifests,
-        [PathBuf::from("plugins/example.json")]
     );
 }
 
@@ -82,7 +69,10 @@ fn normalized_config_turns_relative_paths_into_absolute_paths() {
         config.sqlite_path(),
         config.blob.local.root.join(SQLITE_DATABASE_RELATIVE_PATH)
     );
-    assert!(config.kind.plugin_manifests.is_empty());
+    assert_eq!(
+        config.plugin_packages_path(),
+        config.blob.local.root.join(PLUGIN_PACKAGES_RELATIVE_PATH)
+    );
 }
 
 #[test]
@@ -100,6 +90,7 @@ fn config_rejects_manually_configured_sqlite_path() {
 fn config_rejects_unknown_top_level_and_kind_fields() {
     for source in [
         "unknown_section = true",
+        "[kind]\nplugin_manifests = [\"plugin.json\"]",
         "[kind]\nplugin_manifest = [\"plugin.json\"]",
         "[[kind.definitions]]\nkind = \"doc:note\"",
     ] {
@@ -126,20 +117,6 @@ fn config_rejects_unsupported_backends() {
     )
     .unwrap_err();
     assert!(blob_error.to_string().contains("s3"));
-}
-
-#[test]
-fn normalized_config_turns_plugin_manifests_into_absolute_paths() {
-    let config = AssetInfraConfig {
-        kind: KindRegistryConfig {
-            plugin_manifests: vec![PathBuf::from("plugins/example.json")],
-        },
-        ..AssetInfraConfig::default()
-    }
-    .normalized()
-    .unwrap();
-
-    assert!(config.kind.plugin_manifests[0].is_absolute());
 }
 
 #[test]

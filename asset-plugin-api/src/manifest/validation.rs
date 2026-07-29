@@ -4,11 +4,11 @@
 //! 约束。它只验证声明，不读取文件或探测实际运行时产物。
 
 use super::{
-    MANIFEST_VERSION, ManifestActionAccess, PLUGIN_API_VERSION, PluginManifest, PluginManifestLock,
-    PluginRuntime,
+    MANIFEST_VERSION, ManifestActionAccess, PLUGIN_API_VERSION, PLUGIN_LOCK_FILE_NAME,
+    PLUGIN_MANIFEST_FILE_NAME, PLUGIN_WASM_FILE_NAME, PLUGIN_WEB_ENTRY_FILE_NAME, PluginManifest,
+    PluginManifestLock, PluginRuntime,
 };
 use std::collections::HashSet;
-use std::path::Path;
 
 impl PluginManifest {
     pub fn validate(&self) -> Result<(), String> {
@@ -29,18 +29,9 @@ impl PluginManifest {
         }
         match &self.runtime {
             PluginRuntime::Builtin => {}
-            PluginRuntime::Extism {
-                wasm, plugin_api, ..
-            } => {
-                if wasm.as_os_str().is_empty() {
-                    return Err("runtime.wasm must not be empty".to_string());
-                }
-                validate_relative_path("runtime.wasm", wasm)?;
+            PluginRuntime::Extism { plugin_api, .. } => {
                 validate_plugin_api_version(plugin_api)?;
             }
-        }
-        if let Some(web) = &self.web {
-            validate_relative_path("web.root", &web.root)?;
         }
         if self.permissions.network.enabled() && !self.permissions.network.has_scope() {
             return Err("permissions.network must declare an explicit host scope".to_string());
@@ -67,46 +58,43 @@ impl PluginManifestLock {
                 self.plugin_id, manifest.plugin.id
             ));
         }
-        match &manifest.runtime {
-            PluginRuntime::Builtin => {
-                if self.runtime.is_some() {
-                    return Err(
-                        "manifest.lock.json runtime is only valid for extism plugins".to_string(),
-                    );
-                }
+        let wasm_path = std::path::Path::new(PLUGIN_WASM_FILE_NAME);
+        let has_wasm = self.integrity.contains_key(wasm_path);
+        match manifest.runtime {
+            PluginRuntime::Builtin if has_wasm => {
+                return Err(format!(
+                    "manifest.lock.json integrity must not contain `{PLUGIN_WASM_FILE_NAME}` for builtin plugins"
+                ));
             }
-            PluginRuntime::Extism { .. } => {
-                let Some(runtime) = &self.runtime else {
-                    return Err("manifest.lock.json runtime.wasm_sha256 is required".to_string());
-                };
-                validate_digest(
-                    "manifest.lock.json runtime.wasm_sha256",
-                    &runtime.wasm_sha256,
-                )?;
+            PluginRuntime::Extism { .. } if !has_wasm => {
+                return Err(format!(
+                    "manifest.lock.json integrity must contain `{PLUGIN_WASM_FILE_NAME}` for extism plugins"
+                ));
             }
+            _ => {}
         }
-        match (&manifest.web, &self.web) {
-            (None, Some(_)) => {
-                return Err(
-                    "manifest.lock.json web is only valid when manifest.web is present".to_string(),
-                );
+        let has_web_assets = self.integrity.keys().any(|path| path != wasm_path);
+        if has_web_assets
+            && !self
+                .integrity
+                .contains_key(std::path::Path::new(PLUGIN_WEB_ENTRY_FILE_NAME))
+        {
+            return Err(format!(
+                "manifest.lock.json integrity must contain `{PLUGIN_WEB_ENTRY_FILE_NAME}` when Web assets are present"
+            ));
+        }
+        for (path, digest) in &self.integrity {
+            validate_relative_path("manifest.lock.json integrity path", path)?;
+            if is_plugin_metadata_path(path) {
+                return Err(format!(
+                    "manifest.lock.json integrity must not contain metadata file `{}`",
+                    path.display()
+                ));
             }
-            (Some(_), None) => {
-                return Err("manifest.lock.json web.integrity is required".to_string());
-            }
-            (Some(_), Some(web)) => {
-                if web.integrity.is_empty() {
-                    return Err("manifest.lock.json web.integrity must not be empty".to_string());
-                }
-                for (path, digest) in &web.integrity {
-                    validate_relative_path("manifest.lock.json web.integrity path", path)?;
-                    validate_digest(
-                        &format!("manifest.lock.json web.integrity[`{}`]", path.display()),
-                        digest,
-                    )?;
-                }
-            }
-            (None, None) => {}
+            validate_digest(
+                &format!("manifest.lock.json integrity[`{}`]", path.display()),
+                digest,
+            )?;
         }
         Ok(())
     }
@@ -203,12 +191,6 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
                 ));
             }
         }
-        if action.views.iter().any(|view| view == "plugin_frame") && manifest.web.is_none() {
-            return Err(format!(
-                "capabilities.resource_actions[`{}`] returns plugin_frame but plugin.web is missing",
-                action.id
-            ));
-        }
         if action
             .requires
             .as_ref()
@@ -265,7 +247,7 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_relative_path(field: &str, path: &Path) -> Result<(), String> {
+fn validate_relative_path(field: &str, path: &std::path::Path) -> Result<(), String> {
     if path.as_os_str().is_empty()
         || path.is_absolute()
         || path
@@ -275,6 +257,20 @@ fn validate_relative_path(field: &str, path: &Path) -> Result<(), String> {
         return Err(format!("{field} must be a safe relative path"));
     }
     Ok(())
+}
+
+fn is_plugin_metadata_path(path: &std::path::Path) -> bool {
+    [PLUGIN_MANIFEST_FILE_NAME, PLUGIN_LOCK_FILE_NAME]
+        .iter()
+        .any(|name| path == std::path::Path::new(name))
+        || path.components().count() == 1
+            && path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    name.starts_with(&format!(".{PLUGIN_LOCK_FILE_NAME}."))
+                        && name.ends_with(".tmp")
+                })
 }
 
 fn validate_digest(field: &str, value: &str) -> Result<(), String> {

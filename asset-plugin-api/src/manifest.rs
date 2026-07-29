@@ -12,7 +12,6 @@ mod normalization;
 mod permission;
 mod runtime;
 mod validation;
-mod web;
 
 pub use capability::{
     ActionAppliesTo, ActionRequirements, ActionUi, ContentDelivery,
@@ -21,13 +20,26 @@ pub use capability::{
     PluginCapabilities, ResourceActionCapability, ResourceKindCapability,
 };
 pub use descriptor::PluginDescriptor;
-pub use document::{MANIFEST_VERSION, PLUGIN_API_VERSION, PluginManifest};
-pub use lock::{PluginManifestLock, PluginRuntimeLock, PluginWebLock};
+pub use document::{
+    MANIFEST_VERSION, PLUGIN_API_VERSION, PLUGIN_LOCK_FILE_NAME, PLUGIN_MANIFEST_FILE_NAME,
+    PLUGIN_WASM_FILE_NAME, PLUGIN_WEB_ENTRY_FILE_NAME, PluginManifest,
+};
+pub use lock::PluginManifestLock;
 pub use permission::{
     FilesystemPermission, NetworkPermission, PluginPermission, PluginPermissions,
 };
 pub use runtime::PluginRuntime;
-pub use web::{PluginWeb, PluginWebAssets};
+pub use web_assets::PluginWebAssets;
+
+mod web_assets {
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    /// Browser assets loaded from verified plugin packages, grouped by plugin id
+    /// and package-relative path.
+    pub type PluginWebAssets = HashMap<String, HashMap<PathBuf, Arc<[u8]>>>;
+}
 
 #[cfg(test)]
 mod tests;

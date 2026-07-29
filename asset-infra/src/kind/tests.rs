@@ -1,15 +1,14 @@
 use super::*;
-use crate::config::KindRegistryConfig;
 use crate::kind::builder::{definition_from_parts, push_definition};
 use crate::plugin_manifest::PluginCatalog;
 use asset_core::CoreError;
 use asset_core::domain::{DirectoryKind, ResourceKind};
 use asset_core::port::{DirectoryKindRegistry, ResourceActionRegistry, ResourceKindRegistry};
 use asset_plugin_api::{ResourceAction, ResourceActionDefinition, ResourceContentMatcher};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn registries(
-    config: &KindRegistryConfig,
+    packages_root: &Path,
 ) -> Result<
     (
         DefaultResourceKindRegistry,
@@ -18,23 +17,21 @@ fn registries(
     ),
     CoreError,
 > {
-    let catalog = PluginCatalog::load(config)?;
+    let catalog = PluginCatalog::load(packages_root)?;
     registries_from_catalog(&catalog)
 }
 
-fn kind_registry(config: &KindRegistryConfig) -> Result<DefaultResourceKindRegistry, CoreError> {
-    registries(config).map(|(resource_kinds, _, _)| resource_kinds)
+fn kind_registry(packages_root: &Path) -> Result<DefaultResourceKindRegistry, CoreError> {
+    registries(packages_root).map(|(resource_kinds, _, _)| resource_kinds)
 }
 
-fn action_registry(
-    config: &KindRegistryConfig,
-) -> Result<DefaultResourceActionRegistry, CoreError> {
-    registries(config).map(|(_, _, actions)| actions)
+fn action_registry(packages_root: &Path) -> Result<DefaultResourceActionRegistry, CoreError> {
+    registries(packages_root).map(|(_, _, actions)| actions)
 }
 
 #[test]
 fn descendants_follow_definition_order() {
-    let registry = kind_registry(&KindRegistryConfig::default()).unwrap();
+    let registry = kind_registry(&unique_temp_path("no-plugins")).unwrap();
     let root = ResourceKind::try_new("core:resource").unwrap();
     let expected = registry
         .definitions
@@ -95,7 +92,7 @@ fn registry_rejects_unknown_parents_and_cycles() {
 
 #[test]
 fn registry_includes_official_core_resource_kinds() {
-    let (registry, _, action_registry) = registries(&KindRegistryConfig::default()).unwrap();
+    let (registry, _, action_registry) = registries(&unique_temp_path("no-plugins")).unwrap();
 
     let root = registry
         .get(&ResourceKind::try_new("core:resource").unwrap())
@@ -165,7 +162,7 @@ fn registry_includes_official_core_resource_kinds() {
 
 #[test]
 fn registry_exposes_actions_as_global_capabilities() {
-    let registry = action_registry(&KindRegistryConfig::default()).unwrap();
+    let registry = action_registry(&unique_temp_path("no-plugins")).unwrap();
     let actions = registry.actions();
 
     assert_eq!(actions.len(), 1);
@@ -178,9 +175,10 @@ fn registry_exposes_actions_as_global_capabilities() {
 #[test]
 fn registry_loads_plugin_manifest_kinds() {
     let root = unique_temp_path("plugin-manifest");
-    std::fs::create_dir_all(&root).unwrap();
+    let package = root.join("mindustry");
+    std::fs::create_dir_all(&package).unwrap();
     std::fs::write(
-        root.join("mindustry.json"),
+        package.join("manifest.json"),
         r#"
         {
           "manifest_version": 1,
@@ -231,11 +229,9 @@ fn registry_loads_plugin_manifest_kinds() {
         "#,
     )
     .unwrap();
+    write_builtin_lock(&package, "mindustry");
 
-    let config = KindRegistryConfig {
-        plugin_manifests: vec![root.join("mindustry.json")],
-    };
-    let (registry, directory_registry, action_registry) = registries(&config).unwrap();
+    let (registry, directory_registry, action_registry) = registries(&root).unwrap();
     let definition = registry
         .get(&ResourceKind::try_new("mindustry:mod").unwrap())
         .unwrap();
@@ -262,7 +258,7 @@ fn registry_loads_plugin_manifest_kinds() {
 
 #[test]
 fn directory_registry_includes_official_default_kind() {
-    let (_, registry, _) = registries(&KindRegistryConfig::default()).unwrap();
+    let (_, registry, _) = registries(&unique_temp_path("no-plugins")).unwrap();
     let default = DirectoryKind::default();
     let definition = registry.get(&default).unwrap();
 
@@ -275,10 +271,11 @@ fn directory_registry_includes_official_default_kind() {
 #[test]
 fn registry_loads_format_plugin_as_independent_kind() {
     let root = unique_temp_path("plugin-kind");
-    std::fs::create_dir_all(&root).unwrap();
-    std::fs::write(root.join("epub.wasm"), []).unwrap();
+    let package = root.join("epub");
+    std::fs::create_dir_all(&package).unwrap();
+    std::fs::write(package.join("plugin.wasm"), []).unwrap();
     std::fs::write(
-        root.join("epub.json"),
+        package.join("manifest.json"),
         r#"
         {
           "manifest_version": 1,
@@ -291,7 +288,6 @@ fn registry_loads_format_plugin_as_independent_kind() {
           },
           "runtime": {
             "type": "extism",
-            "wasm": "epub.wasm",
             "wasi": false,
             "plugin_api": "asset-hub.plugin-api@1"
           },
@@ -329,12 +325,9 @@ fn registry_loads_format_plugin_as_independent_kind() {
         "#,
     )
     .unwrap();
-    write_empty_wasm_lock(&root, "epub");
+    write_empty_wasm_lock(&package, "epub");
 
-    let config = KindRegistryConfig {
-        plugin_manifests: vec![root.join("epub.json")],
-    };
-    let (registry, _, action_registry) = registries(&config).unwrap();
+    let (registry, _, action_registry) = registries(&root).unwrap();
     let epub = registry
         .get(&ResourceKind::try_new("azvs:epub").unwrap())
         .unwrap();
@@ -357,10 +350,11 @@ fn registry_loads_format_plugin_as_independent_kind() {
 #[test]
 fn registry_loads_plugin_manifest_kind_extensions() {
     let root = unique_temp_path("plugin-extension");
-    std::fs::create_dir_all(&root).unwrap();
-    std::fs::write(root.join("mp4-tools.wasm"), []).unwrap();
+    let package = root.join("mp4-tools");
+    std::fs::create_dir_all(&package).unwrap();
+    std::fs::write(package.join("plugin.wasm"), []).unwrap();
     std::fs::write(
-        root.join("mp4-tools.json"),
+        package.join("manifest.json"),
         r#"
         {
           "manifest_version": 1,
@@ -373,7 +367,6 @@ fn registry_loads_plugin_manifest_kind_extensions() {
           },
           "runtime": {
             "type": "extism",
-            "wasm": "mp4-tools.wasm",
             "wasi": false,
             "plugin_api": "asset-hub.plugin-api@1"
           },
@@ -412,12 +405,9 @@ fn registry_loads_plugin_manifest_kind_extensions() {
         "#,
     )
     .unwrap();
-    write_empty_wasm_lock(&root, "mp4-tools");
+    write_empty_wasm_lock(&package, "mp4-tools");
 
-    let config = KindRegistryConfig {
-        plugin_manifests: vec![root.join("mp4-tools.json")],
-    };
-    let (registry, _, action_registry) = registries(&config).unwrap();
+    let (registry, _, action_registry) = registries(&root).unwrap();
     let video = registry
         .get(&ResourceKind::try_new("test:mp4").unwrap())
         .unwrap();
@@ -467,9 +457,10 @@ fn registry_rejects_duplicate_kinds() {
 #[test]
 fn registry_rejects_duplicate_global_action_ids() {
     let root = unique_temp_path("duplicate-action");
-    std::fs::create_dir_all(&root).unwrap();
+    let package = root.join("duplicate-download");
+    std::fs::create_dir_all(&package).unwrap();
     std::fs::write(
-        root.join("duplicate-download.json"),
+        package.join("manifest.json"),
         r#"
         {
           "manifest_version": 1,
@@ -507,11 +498,9 @@ fn registry_rejects_duplicate_global_action_ids() {
         "#,
     )
     .unwrap();
+    write_builtin_lock(&package, "duplicate-download");
 
-    let error = action_registry(&KindRegistryConfig {
-        plugin_manifests: vec![root.join("duplicate-download.json")],
-    })
-    .unwrap_err();
+    let error = action_registry(&root).unwrap_err();
 
     assert!(
         error
@@ -529,9 +518,23 @@ fn write_empty_wasm_lock(root: &std::path::Path, plugin_id: &str) {
             r#"{{
               "manifest_version": 1,
               "plugin_id": "{plugin_id}",
-              "runtime": {{
-                "wasm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              "integrity": {{
+                "plugin.wasm": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
               }}
+            }}"#
+        ),
+    )
+    .unwrap();
+}
+
+fn write_builtin_lock(root: &std::path::Path, plugin_id: &str) {
+    std::fs::write(
+        root.join("manifest.lock.json"),
+        format!(
+            r#"{{
+              "manifest_version": 1,
+              "plugin_id": "{plugin_id}",
+              "integrity": {{}}
             }}"#
         ),
     )

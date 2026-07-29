@@ -20,7 +20,26 @@ versions are not supported or documented as compatibility targets.
 
 ## Manifest version
 
-Manifest V1 is the only accepted authoring format. The host rejects other versions.
+Manifest V1 is the only accepted authoring format. The host rejects other versions. Package
+entries are convention-based: Extism uses `plugin.wasm`, and an optional Web UI uses root
+`index.html`; neither path is configurable in the Manifest. The host generates a missing package
+lock on first startup and only verifies an existing lock thereafter. The generated lock uses one
+flat path-to-digest map without runtime or Web groups:
+
+```json
+{
+  "manifest_version": 1,
+  "plugin_id": "example.plugin",
+  "integrity": {
+    "plugin.wasm": "<sha256>",
+    "index.html": "<sha256>",
+    "assets/app.js": "<sha256>"
+  }
+}
+```
+
+Keys are paths relative to the plugin package. `manifest.json` and `manifest.lock.json` are metadata
+and are not included in `integrity`.
 
 ## Plugin API version
 
@@ -69,5 +88,5 @@ For every protocol change:
 1. Classify the change against the three surfaces and bump only the affected versions.
 2. Update Manifest Serde and host-validation tests when relevant.
 3. Replace the JSON golden fixtures with the new current wire contract.
-4. Build bundled plugins against the new Rust crate and verify their sealed packages.
+4. Build bundled plugins against the new Rust crate and verify their generated package locks.
 5. Document the exact Manifest and Plugin API versions accepted by the host.

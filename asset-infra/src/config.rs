@@ -5,12 +5,10 @@ use std::path::{Path, PathBuf};
 
 mod blob_config;
 mod database_config;
-mod kind_registry_config;
 mod plugin_host_config;
 
 pub use blob_config::{BlobBackend, BlobConfig, LocalBlobConfig, LocalBlobSyncConfig};
 pub use database_config::{DatabaseBackend, DatabaseConfig, SqliteDatabaseConfig};
-pub use kind_registry_config::KindRegistryConfig;
 pub use plugin_host_config::{PluginHostConfig, PluginPermissionGrants};
 
 /// 默认配置文件名。
@@ -23,6 +21,8 @@ const DEFAULT_LOCAL_SYNC_DEBOUNCE_MILLISECONDS: u64 = 1_000;
 const DEFAULT_LOCAL_SYNC_INTERVAL_SECONDS: u64 = 30 * 60;
 /// SQLite 数据库在本地 Blob 存储根目录中的固定相对路径。
 const SQLITE_DATABASE_RELATIVE_PATH: &str = ".asset-hub/asset-hub.sqlite";
+/// 插件安装目录在本地 Blob 根目录中的固定相对路径。
+const PLUGIN_PACKAGES_RELATIVE_PATH: &str = ".asset-hub/plugins";
 /// 默认 SQLite 连接池最大连接数。
 const DEFAULT_SQLITE_MAX_CONNECTIONS: u32 = 5;
 /// 默认单次插件动作可处理的资源内容最大字节数。
@@ -57,8 +57,6 @@ pub struct AssetInfraConfig {
     pub database: DatabaseConfig,
     /// 对象存储配置。
     pub blob: BlobConfig,
-    /// 资源类型注册表配置。
-    pub kind: KindRegistryConfig,
     /// 插件执行预算和宿主批准的外部权限。
     pub plugin: PluginHostConfig,
 }
@@ -112,8 +110,7 @@ impl AssetInfraConfig {
     /// 归一化配置。
     ///
     /// 当前主要处理路径：本地 Blob 根目录可以在配置中写相对路径，归一化后会基于当前
-    /// 工作目录转换成绝对路径。SQLite 路径始终由归一化后的 Blob 根目录派生；插件
-    /// manifest 路径也会执行相同的绝对路径处理。
+    /// 工作目录转换成绝对路径。SQLite 和插件安装目录始终由归一化后的 Blob 根目录派生。
     pub fn normalized(mut self) -> Result<Self, CoreError> {
         match self.database.backend {
             DatabaseBackend::Sqlite => {
@@ -130,12 +127,6 @@ impl AssetInfraConfig {
                 self.blob.local.sync.validate()?;
             }
         }
-        self.kind.plugin_manifests = self
-            .kind
-            .plugin_manifests
-            .iter()
-            .map(|path| normalize_path(path))
-            .collect::<Result<Vec<_>, _>>()?;
         self.plugin.normalize_and_validate()?;
         Ok(self)
     }
@@ -146,6 +137,13 @@ impl AssetInfraConfig {
     pub fn sqlite_path(&self) -> PathBuf {
         match self.blob.backend {
             BlobBackend::Local => self.blob.local.root.join(SQLITE_DATABASE_RELATIVE_PATH),
+        }
+    }
+
+    /// 返回约定的插件安装目录 `<blob.local.root>/.asset-hub/plugins`。
+    pub fn plugin_packages_path(&self) -> PathBuf {
+        match self.blob.backend {
+            BlobBackend::Local => self.blob.local.root.join(PLUGIN_PACKAGES_RELATIVE_PATH),
         }
     }
 }

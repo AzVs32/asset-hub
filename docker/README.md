@@ -152,19 +152,13 @@ docker compose down -v
 - `azvs-markdown`
 - `azvs-epub`
 
-Manifest 和 WASM 位于容器 `/app/plugins`。配置文件中的绝对路径为：
-
-```toml
-[kind]
-plugin_manifests = [
-  "/app/plugins/azvs-markdown/manifest.json",
-  "/app/plugins/azvs-epub/manifest.json",
-]
-```
+规范插件包位于容器 `/data/.asset-hub/plugins/azvs.markdown` 和
+`/data/.asset-hub/plugins/azvs.epub`，服务启动时自动发现，不需要在配置文件中逐项声明。
+已有持久化卷不会自动获得镜像中新增的初始文件；升级旧部署时需要把新版规范包同步到该目录。
 
 Markdown 和 EPUB 的浏览器资源会在 Docker 构建期间通过 `npm ci && npm run build` 生成。两个
-Wasm 插件也会从源码重新构建，并通过 `asset plugin --verify` 与已封装的 Manifest
-比对；开发者使用 `asset plugin --seal` 自动生成完整性字段，任一产物漂移都会中止镜像构建。
+Wasm 插件也会从源码重新构建并与仓库产物比对。容器首次启动时为无 lock 的插件包生成
+`manifest.lock.json`，后续启动只执行完整性验证。
 
 ## 单独构建镜像
 

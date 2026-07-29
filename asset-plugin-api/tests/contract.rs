@@ -37,7 +37,6 @@ fn manifest_document() -> Value {
         },
         "runtime": {
             "type": "extism",
-            "wasm": "dist/plugin.wasm",
             "plugin_api": asset_plugin_api::PLUGIN_API_VERSION
         },
         "capabilities": {

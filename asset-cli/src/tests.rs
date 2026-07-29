@@ -19,32 +19,19 @@ fn parses_each_top_level_command_group() {
 }
 
 #[test]
-fn parses_plugin_seal_and_verify_paths() {
-    for args in [
-        vec!["asset", "plugin", "--seal", "path/plugin.json"],
-        vec!["asset", "plugin", "--verify", "path/plugin.json"],
-    ] {
-        assert!(matches!(
-            Cli::try_parse_from(args).unwrap().command,
-            Command::Plugin(_)
-        ));
-    }
+fn parses_plugin_verify_path() {
+    assert!(matches!(
+        Cli::try_parse_from(["asset", "plugin", "--verify", "path/plugin.json"])
+            .unwrap()
+            .command,
+        Command::Plugin(_)
+    ));
 }
 
 #[test]
 fn plugin_requires_exactly_one_operation() {
     assert!(Cli::try_parse_from(["asset", "plugin"]).is_err());
-    assert!(
-        Cli::try_parse_from([
-            "asset",
-            "plugin",
-            "--seal",
-            "plugin.json",
-            "--verify",
-            "plugin.json",
-        ])
-        .is_err()
-    );
+    assert!(Cli::try_parse_from(["asset", "plugin", "--seal", "plugin.json"]).is_err());
 }
 
 #[test]

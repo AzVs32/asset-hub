@@ -34,7 +34,6 @@ asset
 │   ├── --disable <USERNAME>
 │   └── --show <USERNAME>
 └── plugin
-    ├── --seal <MANIFEST>
     └── --verify <MANIFEST>
 ```
 
@@ -121,7 +120,8 @@ asset config --show config.toml
 
 数据库和 Blob 存储分别通过 `database.backend` 与 `blob.backend` 选择后端；当前支持并
 默认使用 `sqlite` 与 `local`。SQLite 文件路径不属于可配置项，使用本地 Blob 后端时
-始终由 `blob.local.root` 派生为 `<blob.local.root>/.asset-hub/asset-hub.sqlite`。
+始终由 `blob.local.root` 派生为 `<blob.local.root>/.asset-hub/asset-hub.sqlite`。插件同样从
+`<blob.local.root>/.asset-hub/plugins/<plugin-id>` 自动发现，不存在 `[kind]` 插件路径配置。
 
 # `asset system` 命令
 
@@ -209,22 +209,14 @@ asset user --show alice
 
 # `asset plugin` 命令
 
-`asset plugin` 要求且只允许指定一个操作。
-
-## `asset plugin --seal <MANIFEST>`
-
-读取插件 Manifest，校验插件契约，并计算 Wasm 和 Web 产物的 SHA-256 完整性信息，原子写入
-Manifest 同目录下的 `manifest.lock.json`。该操作会修改文件系统，适用于插件构建和发布阶段。
-
-```bash
-asset plugin --seal path/to/plugin.json
-```
+插件包首次由 Asset Hub 启动加载时自动生成 `manifest.lock.json`，开发者不需要手工 seal。
+已有 lock 时，启动过程只验证而不会覆盖。
 
 ## `asset plugin --verify <MANIFEST>`
 
-读取插件 Manifest 和同目录下的 `manifest.lock.json`，校验插件契约及全部声明产物的完整性，
+读取插件 Manifest 和同目录下的 `manifest.lock.json`，校验插件契约及全部包内产物的完整性，
 但不修改任何文件。该操作适用于 CI、镜像构建和发布验收。
 
 ```bash
-asset plugin --verify path/to/plugin.json
+asset plugin --verify .asset-hub/plugins/example.tools/manifest.json
 ```

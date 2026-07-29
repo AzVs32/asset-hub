@@ -29,7 +29,7 @@ enum Command {
     System(system::SystemCommand),
     /// Manage Asset Hub users.
     User(user::UserCommand),
-    /// Seal and verify Asset Hub plugin packages.
+    /// Verify Asset Hub plugin packages.
     Plugin(plugin::PluginCommand),
 }
 
