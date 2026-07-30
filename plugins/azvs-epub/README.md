@@ -55,7 +55,7 @@ The plugin runtime accepts two private bridge operations on `azvs.epub.render`:
 Prerequisites:
 
 - Rust with the `wasm32-unknown-unknown` target.
-- Node.js 22 and npm 10 (`web/.node-version` pins the tested Node.js release).
+- Node.js 22 (`web/.node-version` pins the tested Node.js release).
 
 Install the Rust WebAssembly target once:
 

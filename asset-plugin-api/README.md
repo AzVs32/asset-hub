@@ -1,92 +1,117 @@
-# Asset Plugin API compatibility policy
+# Asset Plugin API
 
-`asset-plugin-api` contains three independently versioned surfaces. Host/guest runtime contracts
-share one Plugin API version.
+`asset-plugin-api` is the public Rust contract for extending Asset Hub. It
+provides the shared types used to describe a plugin, declare its capabilities,
+exchange action data with the host, and access supported host functions from
+Wasm.
 
-| Surface | Current | Carried by | Changes when |
-| --- | --- | --- | --- |
-| Rust crate | `0.1.0` | Cargo package declaration and `CRATE_VERSION` | The Rust source API changes |
-| Manifest | `1` | `manifest_version` | The authoring document structure or declaration semantics break |
-| Plugin API | `asset-hub.plugin-api@1` | `runtime.plugin_api` | Action JSON, Host functions, or Plugin Frame messages break |
+Use this crate when building an Asset Hub plugin runtime or another tool that
+needs to read and validate the plugin contract. Applications that only consume
+the Asset Hub HTTP API do not need it.
 
-## Rust crate version
+## What It Provides
 
-The Cargo version describes source compatibility for Rust plugin authors. Before `1.0`, a minor
-version may contain source-breaking changes; patch versions remain source compatible. Plugin
-packages should pin the crate version used to build their Wasm artifact. Changing only Rust type
-names or constructors does not require a Manifest or wire-protocol bump when serialized JSON stays
-unchanged. The current contract is intentionally baselined at `0.1.0`; pre-baseline development
-versions are not supported or documented as compatibility targets.
+- Manifest models and validation.
+- Resource and directory action request and response types.
+- Structured views, effects, failures, and diagnostics.
+- Versioned content and directory Host function definitions.
+- Optional Extism guest helpers for Wasm plugins.
 
-## Manifest version
+## Supported Versions
 
-Manifest V1 is the only accepted authoring format. The host rejects other versions. Package
-entries are convention-based: Extism uses `plugin.wasm`, and an optional Web UI uses root
-`index.html`; neither path is configurable in the Manifest. The host generates a missing package
-lock on first startup and only verifies an existing lock thereafter. The generated lock uses one
-flat path-to-digest map without runtime or Web groups:
+Asset Hub versions the Rust library and its serialized contracts separately:
+
+| Surface | Current value | Purpose |
+| --- | --- | --- |
+| Rust crate | `0.1.0` | Rust source API |
+| Manifest | `1` | `manifest.json` document format |
+| Plugin API | `asset-hub.plugin-api@1` | Action JSON, Host functions, and Plugin Frame messages |
+
+Plugins must declare both `manifest_version` and `runtime.plugin_api`. The host
+rejects unsupported contract versions instead of attempting to interpret them.
+
+## Getting Started
+
+Add `asset-plugin-api` to the plugin runtime's `Cargo.toml`. Enable
+`extism-guest` when the Wasm guest needs the provided Host function helpers:
+
+```toml
+[dependencies]
+asset-plugin-api = { path = "<path-to-asset-plugin-api>", features = ["extism-guest"] }
+```
+
+Create a `manifest.json` that identifies the plugin and declares its runtime,
+capabilities, and permissions:
 
 ```json
 {
   "manifest_version": 1,
-  "plugin_id": "example.plugin",
-  "integrity": {
-    "plugin.wasm": "<sha256>",
-    "index.html": "<sha256>",
-    "assets/app.js": "<sha256>"
+  "plugin": {
+    "id": "example.plugin",
+    "name": "Example Plugin",
+    "version": "0.1.0",
+    "publisher": "example"
+  },
+  "runtime": {
+    "type": "extism",
+    "plugin_api": "asset-hub.plugin-api@1"
+  },
+  "capabilities": {
+    "resource_actions": [
+      {
+        "id": "example.plugin.inspect",
+        "label": "Inspect",
+        "handler": "inspect",
+        "applies_to": {
+          "kinds": ["core:resource"]
+        },
+        "views": ["json"]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": ["resource.read"]
   }
 }
 ```
 
-Keys are paths relative to the plugin package. `manifest.json` and `manifest.lock.json` are metadata
-and are not included in `integrity`.
+An Extism plugin package uses `plugin.wasm` as its runtime entry. It may also
+provide an `index.html` Web interface. The action handler exports referenced by
+the Manifest exchange JSON values defined by this crate.
 
-## Plugin API version
+## Rust API
 
-The Plugin API is the single compatibility boundary between Host and executable plugin packages.
-It versions Action handler JSON, Content and Directory Host functions, and Plugin Frame
-`postMessage` messages. The host accepts only `asset-hub.plugin-api@1`, and every Extism plugin
-must declare that value explicitly. A `plugin_frame` view and every message sent through its frame
-bridge carry that same `plugin_api` value.
+The main modules are:
 
-## Action ID convention
+- `manifest`: authoring models, validation, and normalization.
+- `protocol`: resource and directory action wire types.
+- `abi`: versioned Host function definitions and optional guest helpers.
+- `domain`: normalized action definitions.
+- `policy`: plugin execution limit values.
 
-Action IDs are extensible and their naming convention is not enforced by the wire protocol.
-Authors should use `<plugin-id>.<verb>` so globally registered actions remain distinct and their
-owner is clear. For example, the built-in resource download action is
-`core.resource.download`, while bundled plugins contribute actions such as
-`azvs.markdown.render` and `azvs.epub.cover`.
+Common types and version constants are also re-exported from the crate root.
+Generate the Rust API documentation locally with:
 
-Use a stable lowercase ID for protocol calls and keep user-facing text in the action `label`.
-Plugins that expose several subjects may add another segment, such as
-`example.media.image.convert`.
+```bash
+cargo doc -p asset-plugin-api --open
+```
 
-## Content Host functions
+## Compatibility
 
-Non-inline content is represented by an opaque reference. Host function names, signatures, range
-semantics, maximum-read behavior, and handle ownership/lifetime belong to the Plugin API. Content
-references do not carry another ABI version.
+Rust source changes do not require a Manifest or Plugin API version change when
+the serialized contract remains unchanged. Changes to document fields,
+serialized representations, Host function signatures, or frame messages may
+require a corresponding contract version update.
 
-## Directory actions and Host API
+Before upgrading, compare the supported values in this README with the
+`manifest_version` and `runtime.plugin_api` declared by the plugin.
 
-Resource and directory actions share the normalized action shell (ID, label, handler, access,
-executor, views, and UI locations), while keeping target contracts separate. Resource actions own
-content matching, delivery requirements, and `replace_content`; directory actions own kind matching,
-children/resources requirements, and constrained `update` or `create_child` effects.
+## Development
 
-A directory handler receives one aggregate snapshot plus an opaque, call-scoped `directory_ref`.
-It can page direct children through `asset_hub_directory_list_children` and direct resources through
-`asset_hub_directory_list_resources`. The host validates `directory.children.list` and
-`directory.resources.list` independently, caps each page at 100 items, and invalidates the reference
-when the action call ends. The reference cannot select another directory or request a whole subtree.
-These Host functions are versioned by the same Plugin API.
+Run the crate tests from the repository root:
 
-## Release checklist
+```bash
+cargo test -p asset-plugin-api
+```
 
-For every protocol change:
-
-1. Classify the change against the three surfaces and bump only the affected versions.
-2. Update Manifest Serde and host-validation tests when relevant.
-3. Replace the JSON golden fixtures with the new current wire contract.
-4. Build bundled plugins against the new Rust crate and verify their generated package locks.
-5. Document the exact Manifest and Plugin API versions accepted by the host.
+Contract fixtures are stored in `tests/fixtures`.
