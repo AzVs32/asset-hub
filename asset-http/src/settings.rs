@@ -6,7 +6,6 @@ use axum::http::HeaderValue;
 use clap::{ArgAction, Parser};
 
 const DEFAULT_HTTP_ADDR: &str = "127.0.0.1:8080";
-const CONFIG_ENV: &str = "ASSET_HUB_CONFIG";
 const ADDR_ENV: &str = "ASSET_HTTP_ADDR";
 const ENABLE_SWAGGER_ENV: &str = "ASSET_HTTP_ENABLE_SWAGGER";
 const ENABLE_PURGE_ENV: &str = "ASSET_HTTP_ENABLE_PURGE";
@@ -21,7 +20,7 @@ const DEFAULT_SESSION_INACTIVITY_SECS: u64 = 12 * 60 * 60;
 #[command(name = "asset-http", version, about = "Run the Asset Hub HTTP service")]
 struct HttpCli {
     /// Asset Hub TOML configuration file.
-    #[arg(long, env = CONFIG_ENV)]
+    #[arg(long)]
     config: Option<PathBuf>,
 
     /// HTTP listen address.
@@ -33,7 +32,6 @@ struct HttpCli {
         long,
         env = ENABLE_SWAGGER_ENV,
         default_value_t = true,
-        value_parser = parse_bool_value,
         num_args = 0..=1,
         default_missing_value = "true",
         action = ArgAction::Set
@@ -45,7 +43,6 @@ struct HttpCli {
         long,
         env = ENABLE_PURGE_ENV,
         default_value_t = true,
-        value_parser = parse_bool_value,
         num_args = 0..=1,
         default_missing_value = "true",
         action = ArgAction::Set
@@ -65,7 +62,6 @@ struct HttpCli {
         long,
         env = COOKIE_SECURE_ENV,
         default_value_t = false,
-        value_parser = parse_bool_value,
         num_args = 0..=1,
         default_missing_value = "true",
         action = ArgAction::Set
@@ -77,7 +73,7 @@ struct HttpCli {
         long,
         env = SESSION_INACTIVITY_SECS_ENV,
         default_value_t = DEFAULT_SESSION_INACTIVITY_SECS,
-        value_parser = parse_positive_u64_value
+        value_parser = clap::value_parser!(u64).range(1..)
     )]
     session_inactivity_secs: u64,
 }
@@ -120,7 +116,7 @@ impl Default for RouterOptions {
 /// HTTP 应用启动配置。
 ///
 /// 负责读取 HTTP 监听、路由和会话边界配置。业务和基础设施配置由外部 host 处理。
-/// 未通过命令行或 `ASSET_HUB_CONFIG` 指定路径时，由 host 选择默认配置文件。
+/// 未通过命令行 `--config` 指定路径时，由 host 选择默认配置文件。
 pub struct HttpSettings {
     addr: SocketAddr,
     config_path: Option<PathBuf>,
@@ -132,13 +128,16 @@ impl HttpSettings {
     /// 使用 Clap 读取命令行参数和兼容的环境变量。
     ///
     /// - `ASSET_HTTP_ADDR`：监听地址，默认 `127.0.0.1:8080`。
-    /// - `ASSET_HUB_CONFIG`：可选配置文件路径，未设置时使用默认 `config.toml`。
+    /// - `--config`：可选配置文件路径，未指定时使用默认 `config.toml`。
     /// - `ASSET_HTTP_ENABLE_SWAGGER`：是否暴露 Swagger UI，默认 `true`。
     /// - `ASSET_HTTP_ENABLE_PURGE`：是否开放物理删除接口，默认 `true`。
     /// - `ASSET_HTTP_CORS_ALLOWED_ORIGINS`：逗号分隔的显式 origin，不允许 `*`。
     /// - `ASSET_HTTP_REQUEST_TIMEOUT_SECS`：普通请求总超时秒数，默认 `30`；不限制流式上传总时长。
     /// - `ASSET_HTTP_COOKIE_SECURE`：是否为会话 Cookie 添加 Secure，默认 `false`。
     /// - `ASSET_HTTP_SESSION_INACTIVITY_SECS`：会话空闲超时秒数，默认 `43200`。
+    ///
+    /// 布尔环境变量只接受 `true` 或 `false`。命令行布尔选项省略可选值时表示 `true`，
+    /// 显式提供的值同样只接受 `true` 或 `false`。
     pub fn from_cli() -> Self {
         Self::from_cli_args(HttpCli::parse())
     }
@@ -181,25 +180,6 @@ impl HttpSettings {
     pub fn session_options(&self) -> &SessionOptions {
         &self.session_options
     }
-}
-
-fn parse_bool_value(value: &str) -> Result<bool, String> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "1" | "true" | "yes" | "on" => Ok(true),
-        "0" | "false" | "no" | "off" => Ok(false),
-        _ => Err("expected a boolean value (true/false, yes/no, on/off, or 1/0)".to_string()),
-    }
-}
-
-fn parse_positive_u64_value(value: &str) -> Result<u64, String> {
-    let value = value
-        .trim()
-        .parse::<u64>()
-        .map_err(|error| format!("expected a positive integer: {error}"))?;
-    if value == 0 {
-        return Err("value must be greater than zero".to_string());
-    }
-    Ok(value)
 }
 
 fn parse_cors_policy(value: &str) -> Result<CorsPolicy, String> {

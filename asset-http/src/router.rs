@@ -127,19 +127,17 @@ pub fn build_router(
 }
 
 /// 为既有 API 增加由 host 提供的会话存储、登录接口和登录保护。
-pub async fn with_authentication<S>(
+pub fn with_authentication<S>(
     router: Router,
     users: UserService,
     audit: Arc<dyn SecurityAuditRepository>,
     session_store: S,
-    bootstrap_admin: Option<(&str, &str)>,
     session_options: &SessionOptions,
 ) -> Result<Router, Box<dyn std::error::Error>>
 where
     S: SessionStore + Clone,
 {
     let backend = AuthBackend::new(users, audit);
-    backend.initialize(bootstrap_admin).await?;
     let inactivity_seconds = i64::try_from(session_options.inactivity_timeout.as_secs())?;
     let session_layer = SessionManagerLayer::new(session_store)
         .with_secure(session_options.cookie_secure)

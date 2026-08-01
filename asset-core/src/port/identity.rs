@@ -71,9 +71,6 @@ pub trait UserRepository: Send + Sync {
 
     /// 按规范用户名还原完整聚合；不存在时返回 `None`。
     async fn find_by_username(&self, username: &str) -> Result<Option<User>, CoreError>;
-
-    /// 返回持久化用户总数。
-    async fn count(&self) -> Result<u64, CoreError>;
 }
 
 /// 隔离用户服务与具体密码哈希算法或密码库的基础设施端口。

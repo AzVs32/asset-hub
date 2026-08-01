@@ -1,11 +1,15 @@
 use super::*;
+use clap::CommandFactory;
 
 #[test]
-fn parses_boolean_environment_values() {
-    assert!(parse_bool_value("true").unwrap());
-    assert!(parse_bool_value("1").unwrap());
-    assert!(!parse_bool_value("off").unwrap());
-    assert!(parse_bool_value("maybe").is_err());
+fn config_path_has_no_environment_variable_source() {
+    let command = HttpCli::command();
+    let config = command
+        .get_arguments()
+        .find(|argument| argument.get_id() == "config")
+        .unwrap();
+
+    assert!(config.get_env().is_none());
 }
 
 #[test]
@@ -42,6 +46,14 @@ fn clap_parses_http_flags_into_settings() {
         settings.session_options.inactivity_timeout,
         Duration::from_secs(3600)
     );
+}
+
+#[test]
+fn clap_accepts_only_canonical_boolean_values() {
+    assert!(HttpCli::try_parse_from(["asset-http", "--enable-swagger=true"]).is_ok());
+    assert!(HttpCli::try_parse_from(["asset-http", "--enable-swagger=false"]).is_ok());
+    assert!(HttpCli::try_parse_from(["asset-http", "--enable-swagger=yes"]).is_err());
+    assert!(HttpCli::try_parse_from(["asset-http", "--enable-swagger=1"]).is_err());
 }
 
 #[test]

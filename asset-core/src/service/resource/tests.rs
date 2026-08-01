@@ -1033,10 +1033,6 @@ impl UserRepository for SingleUserRepository {
     async fn find_by_username(&self, username: &str) -> Result<Option<User>, CoreError> {
         Ok((self.0.username() == username).then(|| self.0.clone()))
     }
-
-    async fn count(&self) -> Result<u64, CoreError> {
-        Ok(1)
-    }
 }
 
 fn block_on<F: Future>(future: F) -> F::Output {

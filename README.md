@@ -25,18 +25,27 @@ Docker is sufficient when using the Compose deployment.
 
 ## Quick Start
 
-### 1. Start the API
+### 1. Create the First Administrator
 
-On the first startup, provide an administrator username and password:
+Create the first administrator through the trusted local administration CLI. The password is read
+twice from the terminal without being added to the command line:
 
 ```bash
-ASSET_HUB_BOOTSTRAP_ADMIN_USERNAME=admin \
-ASSET_HUB_BOOTSTRAP_ADMIN_PASSWORD='replace-with-a-long-password' \
+cargo run -p asset-cli --bin asset -- user --create admin --admin
+```
+
+Administrators use the root workspace. Omitting `--admin` creates a member whose default workspace
+is `users/<username>`. If you select a non-default configuration with `--config`, pass the same
+path to both `asset` and `asset-http`.
+
+### 2. Start the API
+
+```bash
 cargo run -p asset-http --bin asset-http
 ```
 
-The API listens on `http://127.0.0.1:8080` by default. Bootstrap credentials
-are used only when no users exist.
+The API listens on `http://127.0.0.1:8080` by default. It can start with no users, but nobody can
+log in until an administrator is created with the CLI.
 
 To start with the example configuration:
 
@@ -50,7 +59,7 @@ Run the following command to see all API options:
 cargo run -p asset-http --bin asset-http -- --help
 ```
 
-### 2. Start the Web UI
+### 3. Start the Web UI
 
 In another terminal:
 
@@ -63,7 +72,7 @@ npm run dev
 Open `http://127.0.0.1:5173`. The development server proxies `/api` requests
 to the API at `http://127.0.0.1:8080`.
 
-### 3. Use the Administration CLI
+### 4. Use the Administration CLI
 
 ```bash
 cargo run -p asset-cli --bin asset -- --help
@@ -75,14 +84,13 @@ See [`asset-cli/README.md`](asset-cli/README.md) for usage details.
 
 ## Docker
 
-Create the deployment environment file and set a bootstrap administrator
-password before starting the stack:
+Create the deployment environment file and start the stack:
 
 ```bash
 cp docker/.env.example docker/.env
-# Edit docker/.env before continuing.
 cd docker
 docker compose up -d --build
+docker compose exec api asset --config /conf/config.toml user --create admin --admin
 ```
 
 Open `http://127.0.0.1:8080` after the containers start.

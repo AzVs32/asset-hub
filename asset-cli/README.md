@@ -21,14 +21,14 @@ asset --help
 当前 CLI 已建立以下命令组：
 
 ```text
-asset
+asset [--config <PATH>]
 ├── config
-│   ├── --check [PATH]
-│   └── --show [PATH]
+│   ├── --check
+│   └── --show
 ├── system
 ├── user
 │   ├── --list
-│   ├── --create <USERNAME>
+│   ├── --create <USERNAME> [--admin]
 │   ├── --password <USERNAME>
 │   ├── --enable <USERNAME>
 │   ├── --disable <USERNAME>
@@ -43,6 +43,9 @@ asset
 | `asset system` | 检查和维护本地 Asset Hub 系统 |
 | `asset user` | 管理 Asset Hub 用户 |
 | `asset plugin` | 封装和校验 Asset Hub 插件产物 |
+
+需要读取 Asset Hub 配置的命令统一通过顶层 `--config <PATH>` 指定文件。未指定时尝试读取
+当前目录的 `config.toml`；文件不存在时使用内置默认配置。
 
 ## 查看帮助
 
@@ -93,27 +96,27 @@ asset <group> <command> [OPTIONS]
 
 # `asset config` 命令
 
-## `asset config --check [PATH]`
+## `asset [--config <PATH>] config --check`
 
 读取并校验 Asset Hub 配置，同时完成路径归一化，但不会初始化数据库、对象存储或应用
 运行时。配置有效时输出 `configuration is valid`，配置无效时输出错误并以非零状态退出。
 
 ```bash
 asset config --check
-asset config --check config.toml
+asset --config config.toml config --check
 ```
 
-省略 `PATH` 时尝试读取当前目录的 `config.toml`；文件不存在时校验内置默认配置。显式
-提供 `PATH` 时，该文件必须存在。
+省略 `--config` 时尝试读取当前目录的 `config.toml`；文件不存在时校验内置默认配置。
+显式提供路径时，该文件必须存在。
 
-## `asset config --show [PATH]`
+## `asset [--config <PATH>] config --show`
 
 读取并校验配置，然后以 TOML 输出填充默认值且完成路径归一化后的完整配置。该命令
 同样不会初始化数据库、对象存储或应用运行时。
 
 ```bash
 asset config --show
-asset config --show config.toml
+asset --config config.toml config --show
 ```
 
 `--check` 与 `--show` 互斥，并且执行 `asset config` 时必须选择其中一个。
@@ -132,6 +135,7 @@ asset config --show config.toml
 
 ```bash
 asset system --scan-resource
+asset --config config.toml system --scan-resource
 ```
 
 HTTP 服务启动和周期同步只比较物理文件修改时间与 `ResourceContent.size`；只有新增或发生
@@ -140,8 +144,8 @@ HTTP 服务启动和周期同步只比较物理文件修改时间与 `ResourceCo
 
 # `asset user` 命令
 
-`asset user` 读取当前目录的 `config.toml`（不存在时使用内置默认配置）并初始化本地运行时。
-每次必须且只能选择一个操作。
+`asset user` 使用顶层 `--config` 指定的配置文件；未指定时读取当前目录的 `config.toml`
+（不存在时使用内置默认配置），然后初始化本地运行时。每次必须且只能选择一个操作。
 
 ## `asset user --list`
 
@@ -152,15 +156,19 @@ HTTP 服务启动和周期同步只比较物理文件修改时间与 `ResourceCo
 asset user --list
 ```
 
-## `asset user --create <USERNAME>`
+## `asset user --create <USERNAME> [--admin]`
 
-创建启用状态的普通成员。`UserService` 会将未指定的工作目录设置为
-`users/<username>`。初始密码通过终端隐藏输入并要求二次确认，长度不得少于 4 个字符。
+默认创建启用状态的普通成员；增加 `--admin` 时创建管理员。普通成员的默认工作目录为
+`users/<username>`，管理员的工作目录为根目录 `/`。初始密码通过终端隐藏输入并要求二次
+确认，长度不得少于 4 个字符。
 
 ```bash
 asset user --create alice
+asset user --create admin --admin
+asset --config config.toml user --create admin --admin
 ```
 
+`--admin` 只能与 `--create` 一起使用。首次部署应先用它创建至少一个管理员，再登录 Web。
 该命令会创建用户数据库记录及其工作目录，并写入 `auth.user.create` 安全审计事件。审计事件
 只记录目标用户名，不记录密码。
 
@@ -208,6 +216,9 @@ asset user --show alice
 ```
 
 # `asset plugin` 命令
+
+`asset plugin` 只处理显式给出的插件文件，不读取 Asset Hub 运行配置；同时提供顶层
+`--config` 会报错，以避免参数看似生效但实际被忽略。
 
 插件包首次由 Asset Hub 启动加载时自动生成 `manifest.lock.json`，开发者不需要手工 seal。
 已有 lock 时，启动过程只验证而不会覆盖。

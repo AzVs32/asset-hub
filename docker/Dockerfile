@@ -50,12 +50,12 @@ RUN apt-get update \
     && chown -R asset-hub:asset-hub /app /conf /data
 WORKDIR /app
 COPY --from=api-builder /src/target/release/asset-http /usr/local/bin/asset-http
+COPY --from=api-builder /src/target/release/asset /usr/local/bin/asset
 COPY --from=markdown-web-builder --chown=asset-hub:asset-hub /out/azvs.markdown /data/.asset-hub/plugins/azvs.markdown
 COPY --from=epub-web-builder --chown=asset-hub:asset-hub /out/azvs.epub /data/.asset-hub/plugins/azvs.epub
 COPY --chown=asset-hub:asset-hub docker/config.toml /conf/config.toml
 USER asset-hub
-ENV ASSET_HUB_CONFIG=/conf/config.toml \
-    ASSET_HTTP_ADDR=0.0.0.0:8080 \
+ENV ASSET_HTTP_ADDR=0.0.0.0:8080 \
     ASSET_HTTP_ENABLE_SWAGGER=false \
     ASSET_HTTP_ENABLE_PURGE=false \
     ASSET_HTTP_REQUEST_TIMEOUT_SECS=30 \
@@ -65,6 +65,7 @@ VOLUME ["/conf", "/data"]
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=5 \
     CMD curl --fail --silent --show-error http://127.0.0.1:8080/health
 ENTRYPOINT ["asset-http"]
+CMD ["--config", "/conf/config.toml"]
 
 FROM nginx:1.27-alpine AS web
 COPY --from=web-builder /src/asset-web/dist /usr/share/nginx/html

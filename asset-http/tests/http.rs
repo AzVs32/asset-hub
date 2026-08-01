@@ -1,4 +1,4 @@
-use asset_core::domain::{AccessContext, UserId};
+use asset_core::domain::{AccessContext, UserId, UserRole};
 use asset_http::{
     CorsPolicy, MAX_ACTION_REQUEST_BYTES, MAX_LOGIN_REQUEST_BYTES, RouterOptions, SessionOptions,
     build_router, with_authentication,
@@ -1911,7 +1911,7 @@ fn test_admin_context() -> AccessContext {
 }
 
 #[tokio::test]
-async fn member_access_is_limited_to_the_workspace_subtree() {
+async fn authentication_starts_without_users_and_limits_member_workspace_access() {
     let root = unique_temp_root("authenticated-workspace");
     let config = AssetInfraConfig {
         database: DatabaseConfig {
@@ -1952,18 +1952,17 @@ async fn member_access_is_limited_to_the_workspace_subtree() {
     );
     let session_store = SqliteStore::new(runtime.database_pool());
     session_store.migrate().await.unwrap();
+    let users = runtime.user_service();
     let router = with_authentication(
         base,
-        runtime.user_service(),
+        users.clone(),
         runtime.security_audit_repository(),
         session_store,
-        Some(("admin", "administrator-password")),
         &SessionOptions {
             cookie_secure: false,
             inactivity_timeout: Duration::from_secs(3600),
         },
     )
-    .await
     .unwrap();
     let app = TestApp { router, root };
 
@@ -1981,6 +1980,26 @@ async fn member_access_is_limited_to_the_workspace_subtree() {
     assert_eq!(health["status"], "ready");
     assert_eq!(health["database"]["status"], "ready");
     assert_eq!(health["blob_storage"]["status"], "ready");
+
+    let login_without_users = request_with_cookie(
+        &app,
+        Method::POST,
+        "/auth/login",
+        json!({ "username": "admin", "password": "administrator-password" }),
+        "",
+    )
+    .await;
+    assert_eq!(login_without_users.status(), StatusCode::UNAUTHORIZED);
+
+    users
+        .create(
+            "admin",
+            "administrator-password",
+            UserRole::Administrator,
+            None,
+        )
+        .await
+        .unwrap();
 
     let plugin_asset = request(
         &app,

@@ -19,9 +19,17 @@ pub(crate) struct UserCommand {
     #[arg(long)]
     list: bool,
 
-    /// Create a member with workspace `users/<username>` and prompt for its password.
+    /// Create a user and prompt for its password.
     #[arg(long, value_name = "USERNAME")]
     create: Option<String>,
+
+    /// Create an administrator with access to the root workspace.
+    #[arg(
+        long,
+        requires = "create",
+        conflicts_with_all = ["list", "password", "enable", "disable", "show"]
+    )]
+    admin: bool,
 
     /// Reset a user's password using a hidden interactive prompt.
     #[arg(long, value_name = "USERNAME")]
@@ -48,15 +56,16 @@ pub(crate) async fn run(
     if command.list {
         print_user_list(&users.list().await?);
     } else if let Some(username) = command.create {
+        let role = create_role(command.admin);
         let password = prompt_new_password()?;
         let user = audit::audited(
             audit.as_ref(),
             SecurityAuditEventType::AuthUserCreate,
             Some(&username),
-            users.create(username.clone(), &password, UserRole::Member, None),
+            users.create(username.clone(), &password, role, None),
         )
         .await?;
-        println!("created user `{}`", user.username());
+        println!("created {} `{}`", role_name(role), user.username());
     } else if let Some(username) = command.password {
         let password = prompt_new_password()?;
         let user = audit::audited(
@@ -86,6 +95,14 @@ pub(crate) async fn run(
         unreachable!("clap requires exactly one user operation");
     }
     Ok(())
+}
+
+fn create_role(admin: bool) -> UserRole {
+    if admin {
+        UserRole::Administrator
+    } else {
+        UserRole::Member
+    }
 }
 
 async fn update_status(
@@ -193,6 +210,12 @@ mod tests {
     use super::*;
     use asset_core::domain::User;
     use asset_core::port::DirectoryLocation;
+
+    #[test]
+    fn create_role_follows_admin_flag() {
+        assert_eq!(create_role(false), UserRole::Member);
+        assert_eq!(create_role(true), UserRole::Administrator);
+    }
 
     #[test]
     fn user_list_is_rendered_as_an_aligned_table() {

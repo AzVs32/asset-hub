@@ -25,19 +25,21 @@ Compose 会同时启动两者，对外只暴露 Web 端口。浏览器和 API �
 cp docker/.env.example docker/.env
 ```
 
-编辑 `docker/.env`，至少修改：
-
-```dotenv
-ASSET_HUB_BOOTSTRAP_ADMIN_USERNAME=admin
-ASSET_HUB_BOOTSTRAP_ADMIN_PASSWORD=一个足够长且随机的密码
-```
-
 然后启动：
 
 ```bash
 cd docker
 docker compose up -d --build
 ```
+
+首次登录前，在 API 容器中使用本地管理 CLI 创建管理员：
+
+```bash
+docker compose exec api asset --config /conf/config.toml user --create admin --admin
+```
+
+密码由终端隐藏读取并要求二次确认，不会出现在命令行、Compose 环境变量或 shell 历史中。
+HTTP 服务允许在零用户状态下启动，但创建管理员之前无法登录。
 
 查看状态和日志：
 
@@ -58,20 +60,21 @@ docker compose logs -f api
 docker compose down
 ```
 
-## 首次启动必须配置的内容
+## 首次创建管理员
 
-`docker/.env` 中以下两项在 Compose 启动时必填：
+API 镜像同时包含 `asset-http` 和 `asset`。API 镜像默认以
+`asset-http --config /conf/config.toml` 启动；管理命令也必须显式传入同一路径，因此两个
+可执行程序操作同一个 `/data` 数据域。
 
-| 配置 | 用途 | 要求 |
-| --- | --- | --- |
-| `ASSET_HUB_BOOTSTRAP_ADMIN_USERNAME` | 创建首个管理员 | 3–64 位，仅字母、数字、`.`、`_`、`-` |
-| `ASSET_HUB_BOOTSTRAP_ADMIN_PASSWORD` | 首个管理员密码 | 至少 4 个字符，生产环境应使用随机强密码 |
+```bash
+docker compose exec api asset --config /conf/config.toml user --create admin --admin
+```
 
-只有 `users` 表为空时才会创建初始管理员。数据库已有用户后，这两个值不会覆盖用户、
-重置密码或创建第二个管理员。Compose 为避免空数据库无法登录，仍要求变量存在；首次
-启动完成后可将其替换为新的随机占位值。
+管理员默认拥有根工作区 `/`。不带 `--admin` 时创建普通成员，其默认工作区为
+`users/<username>`。创建操作会写入 `auth.user.create` 安全审计事件。
 
-不要提交 `docker/.env`。该文件已经被 `.gitignore` 排除。
+`docker/.env` 仅保存 Compose 与 HTTP 运行参数，不包含用户凭据。该文件已被 `.gitignore`
+排除，不应提交环境专属配置。
 
 ## 可选环境变量
 
@@ -86,12 +89,16 @@ docker compose down
 | `ASSET_HTTP_SESSION_INACTIVITY_SECS` | `43200` | Session 非活动过期秒数 |
 | `RUST_LOG` | `asset_http=info,tower_http=info` | Rust 日志过滤规则 |
 
+布尔环境变量只接受 `true` 或 `false`。
+
 容器内部已经固定以下运行参数，通常无需修改：
 
 | 配置 | 容器值 | 说明 |
 | --- | --- | --- |
 | `ASSET_HTTP_ADDR` | `0.0.0.0:8080` | API 容器监听地址 |
-| `ASSET_HUB_CONFIG` | `/conf/config.toml` | 容器配置文件路径 |
+
+API 镜像的默认启动参数为 `--config /conf/config.toml`。该路径不是环境变量；覆盖容器
+`command` 时必须保留或显式替换这个参数。
 
 ## 数据和配置文件
 
@@ -176,12 +183,12 @@ docker volume create asset-hub-conf
 docker volume create asset-hub-data
 docker run --rm \
   --name asset-hub-api \
+  -d \
   -p 8080:8080 \
   -v asset-hub-conf:/conf \
   -v asset-hub-data:/data \
-  -e ASSET_HUB_BOOTSTRAP_ADMIN_USERNAME=admin \
-  -e ASSET_HUB_BOOTSTRAP_ADMIN_PASSWORD='替换为强密码' \
   asset-hub-api:local
+docker exec -it asset-hub-api asset --config /conf/config.toml user --create admin --admin
 ```
 
 此方式只提供 API，不包含管理端。完整部署建议使用 Compose。
@@ -242,9 +249,10 @@ docker compose up -d
 - 不要把 API 容器的 `8080` 端口直接发布到公网；Compose 默认只对 Web 容器暴露端口。
 - 使用防火墙限制管理端来源。
 - 定期同时备份 `/conf` 和 `/data`。
-- `/conf/asset-hub.db` 中包含 `security_audit_events` 安全审计表，备份与恢复时必须与业务
-  数据一并处理。
-- 生产编排平台应通过 Secret 注入管理员初始密码，避免写入镜像或 Compose 文件。
+- `/data/.asset-hub/asset-hub.sqlite` 中包含 `security_audit_events` 安全审计表，备份与恢复时
+  必须与 `/data` 中的业务文件和 `/conf` 配置一并处理。
+- 只在受信终端中执行 `asset --config /conf/config.toml user --create <用户名> --admin`，并
+  限制 Docker socket 和容器执行权限；密码由 CLI 隐藏读取，不应写入环境变量或编排文件。
 - 设置日志收集和磁盘/卷容量监控。安全审计事件当前不会自动清理，应按合规要求定期归档
   或删除历史记录，并监控 SQLite 文件增长。
 - 使用 `GET /auth/audit-events?page=1&limit=100`（仅管理员）接入安全事件巡检；重点告警连续
@@ -260,9 +268,9 @@ docker compose up -d
 docker compose logs --tail=200 api
 ```
 
-常见原因包括：初始管理员变量缺失、数据卷不可写、配置路径错误、SQLite migration
-失败、对象存储不可访问或插件 Manifest/WASM 不匹配。`GET /health` 的响应会分别给出
-`database` 和 `blob_storage` 状态。
+常见原因包括：数据卷不可写、配置文件不可读、覆盖容器 `command` 时遗漏 `--config`、
+SQLite migration 失败、对象存储不可访问或插件 Manifest/WASM 不匹配。`GET /health`
+的响应会分别给出 `database` 和 `blob_storage` 状态。
 
 ### 登录后接口返回 403
 

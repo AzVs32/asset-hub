@@ -46,12 +46,12 @@ fn rejects_removed_plugin_operations() {
 }
 
 #[test]
-fn parses_config_check_and_show_with_optional_paths() {
+fn parses_config_check_and_show_with_global_path() {
     for args in [
         vec!["asset", "config", "--check"],
-        vec!["asset", "config", "--check", "custom.toml"],
+        vec!["asset", "--config", "custom.toml", "config", "--check"],
         vec!["asset", "config", "--show"],
-        vec!["asset", "config", "--show", "custom.toml"],
+        vec!["asset", "--config", "custom.toml", "config", "--show"],
     ] {
         assert!(matches!(
             Cli::try_parse_from(args).unwrap().command,
@@ -61,9 +61,30 @@ fn parses_config_check_and_show_with_optional_paths() {
 }
 
 #[test]
+fn parses_one_global_config_path() {
+    let cli = Cli::try_parse_from(["asset", "--config", "custom.toml", "user", "--list"]).unwrap();
+    assert_eq!(cli.config, Some("custom.toml".into()));
+}
+
+#[test]
 fn config_requires_exactly_one_operation() {
     assert!(Cli::try_parse_from(["asset", "config"]).is_err());
     assert!(Cli::try_parse_from(["asset", "config", "--check", "--show"]).is_err());
+}
+
+#[tokio::test]
+async fn config_path_is_rejected_for_plugin_commands() {
+    let cli = Cli::try_parse_from([
+        "asset",
+        "--config",
+        "custom.toml",
+        "plugin",
+        "--verify",
+        "plugin.json",
+    ])
+    .unwrap();
+    let error = run(cli).await.unwrap_err();
+    assert_eq!(error.to_string(), "--config is not used by `asset plugin`");
 }
 
 #[test]
@@ -87,6 +108,7 @@ fn parses_all_user_operations() {
     for args in [
         vec!["asset", "user", "--list"],
         vec!["asset", "user", "--create", "alice"],
+        vec!["asset", "user", "--create", "admin", "--admin"],
         vec!["asset", "user", "--password", "alice"],
         vec!["asset", "user", "--enable", "alice"],
         vec!["asset", "user", "--disable", "alice"],
@@ -97,6 +119,12 @@ fn parses_all_user_operations() {
             Command::User(_)
         ));
     }
+}
+
+#[test]
+fn user_admin_flag_requires_create() {
+    assert!(Cli::try_parse_from(["asset", "user", "--admin"]).is_err());
+    assert!(Cli::try_parse_from(["asset", "user", "--list", "--admin"]).is_err());
 }
 
 #[test]

@@ -97,13 +97,6 @@ impl UserRepository for SqliteIdentityRepository {
     async fn find_by_username(&self, username: &str) -> Result<Option<User>, CoreError> {
         self.find("username", username.to_owned()).await
     }
-    async fn count(&self) -> Result<u64, CoreError> {
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|e| CoreError::repository("user.count", e))?;
-        Ok(count as u64)
-    }
 }
 
 #[async_trait::async_trait]

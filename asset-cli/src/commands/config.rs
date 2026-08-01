@@ -1,7 +1,7 @@
 use crate::CliResult;
 use asset_infra::config::AssetInfraConfig;
 use clap::{ArgGroup, Args};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Debug, Args)]
 #[command(group(
@@ -12,27 +12,27 @@ use std::path::{Path, PathBuf};
 ))]
 pub(crate) struct ConfigCommand {
     /// Validate a configuration file without initializing the application runtime.
-    #[arg(long, value_name = "PATH", num_args = 0..=1)]
-    check: Option<Option<PathBuf>>,
+    #[arg(long)]
+    check: bool,
 
     /// Print the normalized configuration as TOML.
-    #[arg(long, value_name = "PATH", num_args = 0..=1)]
-    show: Option<Option<PathBuf>>,
+    #[arg(long)]
+    show: bool,
 }
 
-pub(crate) fn run(command: ConfigCommand) -> CliResult {
+pub(crate) fn run(command: ConfigCommand, config_path: Option<&Path>) -> CliResult {
     match (command.check, command.show) {
-        (Some(path), None) => {
-            load_normalized_config(path.as_deref())?;
+        (true, false) => {
+            load_normalized_config(config_path)?;
             println!("configuration is valid");
         }
-        (None, Some(path)) => {
+        (false, true) => {
             print!(
                 "{}",
-                toml::to_string_pretty(&load_normalized_config(path.as_deref())?)?
+                toml::to_string_pretty(&load_normalized_config(config_path)?)?
             );
         }
-        (None, None) | (Some(_), Some(_)) => {
+        (false, false) | (true, true) => {
             unreachable!("clap requires exactly one config operation")
         }
     }

@@ -63,23 +63,6 @@ impl AuthBackend {
             login_failures: Arc::new(Mutex::new(LoginFailureCache::default())),
         }
     }
-    pub(crate) async fn initialize(
-        &self,
-        bootstrap: Option<(&str, &str)>,
-    ) -> Result<(), HttpError> {
-        if self.users.count().await? == 0 {
-            let Some((username, password)) = bootstrap else {
-                return Err(HttpError::internal(
-                    "no users exist; set ASSET_HUB_BOOTSTRAP_ADMIN_USERNAME and ASSET_HUB_BOOTSTRAP_ADMIN_PASSWORD for the first startup",
-                ));
-            };
-            self.users
-                .create(username, password, UserRole::Administrator, None)
-                .await?;
-        }
-        Ok(())
-    }
-
     pub(super) fn check_login_allowed(&self, username: &str) -> Result<(), HttpError> {
         let key = login_failure_key(username);
         let mut failures = self

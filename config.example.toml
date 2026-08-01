@@ -1,19 +1,20 @@
 # Asset Hub configuration example.
 #
 # Runtime lookup order:
-# - If ASSET_HUB_CONFIG is set, asset-http reads that file.
-# - Otherwise asset-http tries ./config.toml.
+# - If `--config <PATH>` is provided, asset-http or asset reads that file.
+# - Otherwise the executable tries ./config.toml.
 # - If ./config.toml does not exist, built-in defaults are used.
 #
 # HTTP entrypoint settings are currently environment variables, not TOML:
 # - ASSET_HTTP_ADDR=127.0.0.1:8080
-# - ASSET_HUB_CONFIG=config.toml
 # - ASSET_HTTP_ENABLE_SWAGGER=true
 # - ASSET_HTTP_ENABLE_PURGE=true
 # - ASSET_HTTP_CORS_ALLOWED_ORIGINS=http://127.0.0.1:5173 (explicit origins only)
 # - ASSET_HTTP_REQUEST_TIMEOUT_SECS=30
 # - ASSET_HTTP_COOKIE_SECURE=false (must be true behind public HTTPS)
 # - ASSET_HTTP_SESSION_INACTIVITY_SECS=43200
+# Boolean environment variables accept only `true` or `false`. On the command line, an omitted
+# optional boolean value means `true`; an explicit value must also be `true` or `false`.
 
 [database]
 backend = "sqlite"

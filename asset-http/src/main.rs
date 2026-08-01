@@ -29,11 +29,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         runtime.plugin_web_assets(),
         authorization.clone(),
     );
-    let bootstrap_username = std::env::var("ASSET_HUB_BOOTSTRAP_ADMIN_USERNAME").ok();
-    let bootstrap_password = std::env::var("ASSET_HUB_BOOTSTRAP_ADMIN_PASSWORD").ok();
-    let bootstrap_admin = bootstrap_username
-        .as_deref()
-        .zip(bootstrap_password.as_deref());
     let session_store = SqliteStore::new(runtime.database_pool());
     session_store.migrate().await?;
     tokio::spawn(
@@ -46,10 +41,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         runtime.user_service(),
         runtime.security_audit_repository(),
         session_store,
-        bootstrap_admin,
         settings.session_options(),
-    )
-    .await?;
+    )?;
 
     axum::serve(listener, app).await?;
 

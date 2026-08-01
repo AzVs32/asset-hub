@@ -54,10 +54,6 @@ impl UserRepository for Users {
             .find(|user| user.username() == username)
             .cloned())
     }
-
-    async fn count(&self) -> Result<u64, CoreError> {
-        Ok(self.users.lock().unwrap().len() as u64)
-    }
 }
 
 struct Directories {

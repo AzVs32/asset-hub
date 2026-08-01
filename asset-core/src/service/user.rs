@@ -133,9 +133,6 @@ impl UserService {
         self.repository.save(&user).await?;
         Ok(Some(user))
     }
-    pub async fn count(&self) -> Result<u64, CoreError> {
-        self.repository.count().await
-    }
 }
 
 #[cfg(test)]
@@ -190,10 +187,6 @@ mod tests {
                 .iter()
                 .find(|user| user.username() == username)
                 .cloned())
-        }
-
-        async fn count(&self) -> Result<u64, CoreError> {
-            Ok(self.users.lock().unwrap().len() as u64)
         }
     }
 
