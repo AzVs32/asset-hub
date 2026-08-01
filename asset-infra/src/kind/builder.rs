@@ -6,7 +6,7 @@ use asset_core::domain::ResourceKind;
 use asset_core::port::ResourceKindDefinition;
 use asset_plugin_api::{ResourceActionDefinition, ResourceContentMatcher, ResourceKindCapability};
 
-pub(crate) fn directory_action_registry_from_catalog(
+pub fn directory_action_registry_from_catalog(
     catalog: &PluginCatalog,
 ) -> Result<DefaultDirectoryActionRegistry, CoreError> {
     let mut actions = Vec::new();
@@ -23,7 +23,7 @@ pub(crate) fn directory_action_registry_from_catalog(
     Ok(DefaultDirectoryActionRegistry { actions })
 }
 
-pub(crate) fn registries_from_catalog(
+pub fn registries_from_catalog(
     catalog: &PluginCatalog,
 ) -> Result<
     (

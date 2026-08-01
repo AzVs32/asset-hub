@@ -106,6 +106,17 @@ See [`asset-plugin-api/README.md`](asset-plugin-api/README.md) for the plugin
 authoring contract, package format, compatibility policy, and verification
 workflow.
 
+At startup, `asset-runtime` assembles the verified plugin catalog, kind/action
+registries, Extism executors, and Core services in that order. `asset-infra`
+provides the filesystem verification, Extism, SQLite, OpenDAL, and registry
+adapters but does not compose application services. Plugin lock generation is
+an explicit packaging step; runtime loading is read-only and requires a valid
+`manifest.lock.json`.
+
+See [`asset-infra/README.md`](asset-infra/README.md) and
+[`asset-runtime/README.md`](asset-runtime/README.md) for the adapter/composition
+boundary and startup order.
+
 ## Development Checks
 
 Run the Rust workspace tests:

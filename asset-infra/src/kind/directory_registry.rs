@@ -6,7 +6,7 @@ use asset_plugin_api::DirectoryKindCapability;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone)]
-pub(crate) struct DefaultDirectoryKindRegistry {
+pub struct DefaultDirectoryKindRegistry {
     definitions: Vec<DirectoryKindDefinition>,
     indices: HashMap<DirectoryKind, usize>,
     lineages: HashMap<DirectoryKind, Vec<DirectoryKind>>,

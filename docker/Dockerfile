@@ -54,6 +54,11 @@ COPY --from=api-builder /src/target/release/asset /usr/local/bin/asset
 COPY --from=markdown-web-builder --chown=asset-hub:asset-hub /out/azvs.markdown /data/.asset-hub/plugins/azvs.markdown
 COPY --from=epub-web-builder --chown=asset-hub:asset-hub /out/azvs.epub /data/.asset-hub/plugins/azvs.epub
 COPY --chown=asset-hub:asset-hub docker/config.toml /conf/config.toml
+RUN asset plugin --generate-lock /data/.asset-hub/plugins/azvs.markdown/manifest.json \
+    && asset plugin --verify /data/.asset-hub/plugins/azvs.markdown/manifest.json \
+    && asset plugin --generate-lock /data/.asset-hub/plugins/azvs.epub/manifest.json \
+    && asset plugin --verify /data/.asset-hub/plugins/azvs.epub/manifest.json \
+    && chown asset-hub:asset-hub /data/.asset-hub/plugins/*/manifest.lock.json
 USER asset-hub
 ENV ASSET_HTTP_ADDR=0.0.0.0:8080 \
     ASSET_HTTP_ENABLE_SWAGGER=false \

@@ -38,6 +38,34 @@ pub struct ExtismActionExecutor {
     pub(super) directory_bindings: Arc<Vec<DirectoryActionBinding>>,
 }
 
+/// Host adapters and policy used while compiling catalog action bindings.
+#[derive(Clone)]
+pub struct ExtismHost {
+    directory_query: Arc<dyn DirectoryQuery>,
+    resource_query: Arc<dyn ResourceQuery>,
+    blob_storage: Arc<dyn BlobStorage>,
+    policy: Arc<PluginExecutionPolicy>,
+    grants: PluginPermissionGrants,
+}
+
+impl ExtismHost {
+    pub fn new(
+        directory_query: Arc<dyn DirectoryQuery>,
+        resource_query: Arc<dyn ResourceQuery>,
+        blob_storage: Arc<dyn BlobStorage>,
+        policy: Arc<PluginExecutionPolicy>,
+        grants: PluginPermissionGrants,
+    ) -> Self {
+        Self {
+            directory_query,
+            resource_query,
+            blob_storage,
+            policy,
+            grants,
+        }
+    }
+}
+
 impl std::fmt::Debug for ExtismActionExecutor {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -49,16 +77,19 @@ impl std::fmt::Debug for ExtismActionExecutor {
 
 impl ExtismActionExecutor {
     /// 从插件 manifest 目录创建 Extism 执行器。
-    pub(crate) fn from_catalog(
+    pub fn from_catalog(
         catalog: &PluginCatalog,
         kind_registry: &dyn ResourceKindRegistry,
         directory_kind_registry: &dyn DirectoryKindRegistry,
-        directory_query: Arc<dyn DirectoryQuery>,
-        resource_query: Arc<dyn ResourceQuery>,
-        blob_storage: Arc<dyn BlobStorage>,
-        policy: Arc<PluginExecutionPolicy>,
-        grants: &PluginPermissionGrants,
+        host: ExtismHost,
     ) -> Result<Self, CoreError> {
+        let ExtismHost {
+            directory_query,
+            resource_query,
+            blob_storage,
+            policy,
+            grants,
+        } = host;
         let mut bindings = Vec::new();
         let mut directory_bindings = Vec::new();
 
@@ -77,7 +108,7 @@ impl ExtismActionExecutor {
                     manifest.plugin_id()
                 ))
             })?;
-            validate_external_permissions(manifest.plugin_id(), &manifest.permissions, grants)?;
+            validate_external_permissions(manifest.plugin_id(), &manifest.permissions, &grants)?;
             let host_content = HostContentResolver {
                 storage: blob_storage.clone(),
                 state: Arc::new(Mutex::new(HostContentState::default())),

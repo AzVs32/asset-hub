@@ -2,7 +2,7 @@ use asset_core::{CoreError, port::DirectoryActionRegistry};
 use asset_plugin_api::{DirectoryActionCapability, DirectoryActionDefinition, PluginRuntime};
 
 #[derive(Debug, Clone, Default)]
-pub(crate) struct DefaultDirectoryActionRegistry {
+pub struct DefaultDirectoryActionRegistry {
     pub(super) actions: Vec<DirectoryActionDefinition>,
 }
 

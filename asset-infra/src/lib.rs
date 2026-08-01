@@ -10,40 +10,37 @@ mod plugin_manifest;
 pub mod sqlite;
 pub mod storage;
 
-use action::{DefaultDirectoryActionExecutor, DefaultResourceActionExecutor};
-use asset_core::service::{
-    AuthorizationService, DirectoryService, ResourceService, ResourceServicePorts, UserService,
-};
+/// Shared filesystem boundary for sealing and read-only loading of plugin packages.
+pub mod plugin_package {
+    pub use crate::plugin_manifest::{
+        LoadedPlugin, MAX_PLUGIN_LOCK_BYTES, MAX_PLUGIN_MANIFEST_BYTES, MAX_PLUGIN_WASM_BYTES,
+        MAX_PLUGIN_WEB_BYTES, PluginCatalog, generate_plugin_manifest_lock,
+        load_verified_plugin_package,
+    };
+}
+
+use asset_core::service::ResourceService;
 use asset_core::{
-    CoreError, port::BlobStorage, port::DirectoryActionExecutor, port::DirectoryActionRegistry,
-    port::DirectoryIndex, port::DirectoryKindRegistry, port::DirectoryStorage,
-    port::DirectoryStore, port::ResourceActionExecutor, port::ResourceActionRegistry,
-    port::ResourceKindRegistry, port::ResourceQuery, port::ResourceRepository,
-    port::SecurityAuditRepository, port::StorageScanner,
+    CoreError, port::BlobStorage, port::DirectoryIndex, port::DirectoryQuery,
+    port::DirectoryStorage, port::DirectoryStore, port::ResourceQuery, port::ResourceRepository,
+    port::SecurityAuditRepository, port::StorageScanner, port::UploadSessionRepository,
+    port::UserQuery, port::UserRepository,
 };
-pub use asset_plugin_api::PluginWebAssets;
 use config::{AssetInfraConfig, BlobBackend, DatabaseBackend};
 use directory_index::InMemoryDirectoryIndex;
-use kind::{
-    DefaultDirectoryActionRegistry, DefaultDirectoryKindRegistry, DefaultResourceActionRegistry,
-    DefaultResourceKindRegistry, directory_action_registry_from_catalog, registries_from_catalog,
-};
-use password::Argon2PasswordHasher;
-use plugin::ExtismActionExecutor;
-use plugin_manifest::PluginCatalog;
 use sqlite::{
     SqliteIdentityRepository, SqliteResourceRepository, SqliteSecurityAuditRepository,
     SqliteUploadSessionRepository,
 };
 use sqlx::SqlitePool;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use storage::{FileSystemScanner, LocalStorageSync, OpenDalBlobStorage};
 
-/// 根据配置的后端选型组装基础设施对象。
+/// 根据配置的后端选型初始化具体基础设施适配器。
 ///
-/// 当前支持 SQLite 数据库和本地 Blob 存储。
+/// 当前支持 SQLite 数据库和本地 Blob 存储。插件 catalog、运行时执行器和 Core service
+/// 由 `asset-runtime` 按确定顺序装配。
 pub struct AssetInfrastructure {
     /// 实际生效的基础设施配置。
     config: AssetInfraConfig,
@@ -52,21 +49,10 @@ pub struct AssetInfrastructure {
     directory_index: Arc<InMemoryDirectoryIndex>,
     identity_repository: Arc<SqliteIdentityRepository>,
     security_audit_repository: Arc<SqliteSecurityAuditRepository>,
+    upload_session_repository: Arc<SqliteUploadSessionRepository>,
     /// 对象存储适配器。
     blob_storage: Arc<OpenDalBlobStorage>,
     storage_scanner: Arc<FileSystemScanner>,
-    /// 资源类型注册表。
-    resource_kind_registry: Arc<DefaultResourceKindRegistry>,
-    /// 目录类型注册表。
-    directory_kind_registry: Arc<DefaultDirectoryKindRegistry>,
-    directory_action_registry: Arc<DefaultDirectoryActionRegistry>,
-    directory_action_executor: Arc<DefaultDirectoryActionExecutor>,
-    /// 资源动作注册表。
-    resource_action_registry: Arc<DefaultResourceActionRegistry>,
-    /// 资源动作执行器。
-    resource_action_executor: Arc<DefaultResourceActionExecutor>,
-    plugin_web_assets: PluginWebAssets,
-    resource_service: ResourceService,
 }
 
 impl AssetInfrastructure {
@@ -112,82 +98,15 @@ impl AssetInfrastructure {
         let upload_session_repository = Arc::new(SqliteUploadSessionRepository::new(
             resource_repository.pool().clone(),
         ));
-        let plugin_catalog_started = Instant::now();
-        let plugin_catalog = PluginCatalog::load(&config.plugin_packages_path())?;
-        tracing::info!(
-            elapsed_ms = plugin_catalog_started.elapsed().as_millis(),
-            plugins = plugin_catalog.external_plugin_count(),
-            "plugin artifacts verified"
-        );
-        let (resource_kind_registry, directory_kind_registry, resource_action_registry) =
-            registries_from_catalog(&plugin_catalog)?;
-        let resource_kind_registry = Arc::new(resource_kind_registry);
-        let directory_kind_registry = Arc::new(directory_kind_registry);
-        let resource_action_registry = Arc::new(resource_action_registry);
-        let directory_action_registry =
-            Arc::new(directory_action_registry_from_catalog(&plugin_catalog)?);
-        let plugin_execution_policy = Arc::new(config.plugin.execution_policy()?);
-        let plugin_compile_started = Instant::now();
-        let extism_action_executor = ExtismActionExecutor::from_catalog(
-            &plugin_catalog,
-            resource_kind_registry.as_ref(),
-            directory_kind_registry.as_ref(),
-            directory_index.clone(),
-            resource_repository.clone(),
-            blob_storage.clone(),
-            plugin_execution_policy.clone(),
-            &config.plugin.grants,
-        )?;
-        let directory_action_executor = Arc::new(DefaultDirectoryActionExecutor::new(
-            extism_action_executor.clone(),
-        ));
-        tracing::info!(
-            elapsed_ms = plugin_compile_started.elapsed().as_millis(),
-            "plugins compiled"
-        );
-        let resource_action_executor =
-            Arc::new(DefaultResourceActionExecutor::new(extism_action_executor));
-        let plugin_web_assets = plugin_web_assets_from_catalog(&plugin_catalog)?;
-        let resource_service = ResourceService::new(
-            ResourceServicePorts::new(
-                resource_repository.clone(),
-                resource_repository.clone(),
-                blob_storage.clone(),
-                resource_repository.clone(),
-                directory_index.clone(),
-                blob_storage.clone(),
-                directory_kind_registry.clone(),
-                storage_scanner.clone(),
-                resource_kind_registry.clone(),
-                upload_session_repository.clone(),
-            )
-            .with_actions(
-                resource_action_registry.clone(),
-                resource_action_executor.clone(),
-            )
-            .with_directory_actions(
-                directory_action_registry.clone(),
-                directory_action_executor.clone(),
-            ),
-            plugin_execution_policy.clone(),
-        );
-
         Ok(Self {
             config,
             resource_repository,
             directory_index,
             identity_repository,
             security_audit_repository,
+            upload_session_repository,
             blob_storage,
             storage_scanner,
-            resource_kind_registry,
-            directory_kind_registry,
-            directory_action_registry,
-            directory_action_executor,
-            resource_action_registry,
-            resource_action_executor,
-            plugin_web_assets,
-            resource_service,
         })
     }
 
@@ -213,17 +132,8 @@ impl AssetInfrastructure {
         self.directory_index.clone()
     }
 
-    pub fn directory_service(&self) -> DirectoryService {
-        DirectoryService::new(
-            self.directory_store(),
-            self.directory_index(),
-            self.directory_storage(),
-            self.directory_kind_registry(),
-        )
-        .with_actions(
-            self.directory_action_registry(),
-            self.directory_action_executor(),
-        )
+    pub fn directory_query(&self) -> Arc<dyn DirectoryQuery> {
+        self.directory_index.clone()
     }
 
     /// 返回共享数据库连接池，供会话、用户与授权适配器复用。
@@ -231,17 +141,12 @@ impl AssetInfrastructure {
         self.resource_repository.pool().clone()
     }
 
-    pub fn user_service(&self) -> UserService {
-        UserService::new(
-            self.identity_repository.clone(),
-            self.identity_repository.clone(),
-            Arc::new(Argon2PasswordHasher),
-            self.directory_service(),
-        )
+    pub fn user_repository(&self) -> Arc<dyn UserRepository> {
+        self.identity_repository.clone()
     }
 
-    pub fn authorization_service(&self) -> AuthorizationService {
-        AuthorizationService::new(self.identity_repository.clone(), self.directory_service())
+    pub fn user_query(&self) -> Arc<dyn UserQuery> {
+        self.identity_repository.clone()
     }
 
     pub fn security_audit_repository(&self) -> Arc<dyn SecurityAuditRepository> {
@@ -261,6 +166,10 @@ impl AssetInfrastructure {
         self.storage_scanner.clone()
     }
 
+    pub fn upload_session_repository(&self) -> Arc<dyn UploadSessionRepository> {
+        self.upload_session_repository.clone()
+    }
+
     /// 启动当前 Blob 后端对应的自动存储同步任务。
     pub async fn start_storage_sync(
         &self,
@@ -278,66 +187,4 @@ impl AssetInfrastructure {
             BlobBackend::Local => Ok(None),
         }
     }
-
-    /// 返回资源类型注册表端口对象。
-    pub fn resource_kind_registry(&self) -> Arc<dyn ResourceKindRegistry> {
-        self.resource_kind_registry.clone()
-    }
-
-    /// 返回目录类型注册表端口对象。
-    pub fn directory_kind_registry(&self) -> Arc<dyn DirectoryKindRegistry> {
-        self.directory_kind_registry.clone()
-    }
-
-    pub fn directory_action_registry(&self) -> Arc<dyn DirectoryActionRegistry> {
-        self.directory_action_registry.clone()
-    }
-
-    pub fn directory_action_executor(&self) -> Arc<dyn DirectoryActionExecutor> {
-        self.directory_action_executor.clone()
-    }
-
-    /// 返回资源动作执行器端口对象。
-    pub fn resource_action_executor(&self) -> Arc<dyn ResourceActionExecutor> {
-        self.resource_action_executor.clone()
-    }
-
-    /// 返回全局资源动作注册表端口对象。
-    pub fn resource_action_registry(&self) -> Arc<dyn ResourceActionRegistry> {
-        self.resource_action_registry.clone()
-    }
-
-    /// 返回启动时校验并冻结的插件浏览器静态资源。
-    pub fn plugin_web_assets(&self) -> PluginWebAssets {
-        self.plugin_web_assets.clone()
-    }
-
-    /// 返回共享同一组 StorageKey 锁的资源应用服务。
-    pub fn resource_service(&self) -> ResourceService {
-        self.resource_service.clone()
-    }
-}
-
-fn plugin_web_assets_from_catalog(catalog: &PluginCatalog) -> Result<PluginWebAssets, CoreError> {
-    let mut assets = HashMap::new();
-    for plugin in catalog
-        .plugins()
-        .iter()
-        .filter(|plugin| plugin.manifest_path.is_some())
-    {
-        let manifest = &plugin.manifest;
-        if plugin.web_assets.is_empty() {
-            continue;
-        }
-        if assets
-            .insert(manifest.plugin_id().to_string(), plugin.web_assets.clone())
-            .is_some()
-        {
-            return Err(CoreError::configuration(format!(
-                "duplicate plugin Web root `{}`",
-                manifest.plugin_id()
-            )));
-        }
-    }
-    Ok(assets)
 }

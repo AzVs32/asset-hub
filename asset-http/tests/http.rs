@@ -2449,6 +2449,8 @@ fn install_test_plugin(blob_root: &std::path::Path, source_manifest: &std::path:
         std::fs::copy(source_root.join(file), package_root.join(file)).unwrap();
     }
     copy_test_plugin_web(&source_root.join("dist"), &package_root);
+    asset_infra::plugin_package::generate_plugin_manifest_lock(&package_root.join("manifest.json"))
+        .unwrap();
 }
 
 fn copy_test_plugin_web(source: &std::path::Path, destination: &std::path::Path) {

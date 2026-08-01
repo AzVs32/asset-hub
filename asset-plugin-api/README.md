@@ -79,6 +79,20 @@ An Extism plugin package uses `plugin.wasm` as its runtime entry. It may also
 provide an `index.html` Web interface. The action handler exports referenced by
 the Manifest exchange JSON values defined by this crate.
 
+The host requires a sealed package before startup. After assembling the package
+under a directory whose name equals `plugin.id`, generate and verify its lock:
+
+```bash
+asset plugin --generate-lock path/to/<plugin-id>/manifest.json
+asset plugin --verify path/to/<plugin-id>/manifest.json
+```
+
+Lock generation writes `manifest.lock.json` only when it is absent. Verification
+and runtime loading are read-only and use the same host implementation and limits
+(1 MiB Manifest, 4 MiB lock, 64 MiB Wasm, and 64 MiB total Web assets). Packages
+reject symbolic links and undeclared files. Rebuilds must remove the old lock,
+generate a new one, and verify it before startup.
+
 ## Rust API
 
 The main modules are:

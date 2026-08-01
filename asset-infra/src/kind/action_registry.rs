@@ -6,7 +6,7 @@ use asset_plugin_api::{
 
 /// 默认资源动作注册表。
 #[derive(Debug, Clone)]
-pub(crate) struct DefaultResourceActionRegistry {
+pub struct DefaultResourceActionRegistry {
     pub(super) actions: Vec<ResourceActionDefinition>,
 }
 

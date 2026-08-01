@@ -7,19 +7,23 @@ use asset_plugin_api::{
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-const MAX_PLUGIN_MANIFEST_BYTES: u64 = 1024 * 1024;
-const MAX_PLUGIN_LOCK_BYTES: u64 = 4 * 1024 * 1024;
-const MAX_PLUGIN_WASM_BYTES: usize = 64 * 1024 * 1024;
-const MAX_PLUGIN_WEB_BYTES: usize = 64 * 1024 * 1024;
+/// Maximum accepted serialized Manifest size.
+pub const MAX_PLUGIN_MANIFEST_BYTES: u64 = 1024 * 1024;
+/// Maximum accepted serialized lock size.
+pub const MAX_PLUGIN_LOCK_BYTES: u64 = 4 * 1024 * 1024;
+/// Maximum accepted Wasm artifact size.
+pub const MAX_PLUGIN_WASM_BYTES: usize = 64 * 1024 * 1024;
+/// Maximum accepted aggregate Web asset size.
+pub const MAX_PLUGIN_WEB_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
-pub(crate) struct LoadedPlugin {
+pub struct LoadedPlugin {
     pub(crate) manifest: PluginManifest,
     pub(crate) manifest_path: Option<PathBuf>,
     pub(crate) wasm: Option<Arc<[u8]>>,
@@ -27,12 +31,17 @@ pub(crate) struct LoadedPlugin {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PluginCatalog {
+pub struct PluginCatalog {
     plugins: Vec<LoadedPlugin>,
 }
 
 impl PluginCatalog {
-    pub(crate) fn load(packages_root: &Path) -> Result<Self, CoreError> {
+    /// Load the built-in catalog and verify every external package.
+    ///
+    /// This operation is read-only. External packages must already contain a valid
+    /// `manifest.lock.json`; use [`generate_plugin_manifest_lock`] explicitly when sealing a
+    /// package.
+    pub fn load(packages_root: &Path) -> Result<Self, CoreError> {
         let mut plugins = Vec::new();
         for content in official_plugins::MANIFESTS {
             let manifest: PluginManifest = serde_json::from_str(content).map_err(|error| {
@@ -48,23 +57,9 @@ impl PluginCatalog {
         }
 
         for package_root in discover_plugin_packages(packages_root)? {
-            let manifest_path = package_root.join(PLUGIN_MANIFEST_FILE_NAME);
-            let manifest = load_plugin_manifest_file(&manifest_path)?;
-            let directory_name = package_root.file_name().and_then(|name| name.to_str());
-            if directory_name != Some(manifest.plugin_id()) {
-                return Err(CoreError::configuration(format!(
-                    "plugin package directory `{}` must match plugin.id `{}`",
-                    package_root.display(),
-                    manifest.plugin_id()
-                )));
-            }
-            let artifacts = validate_loaded_manifest(&manifest, Some(&package_root))?;
-            plugins.push(LoadedPlugin {
-                manifest,
-                manifest_path: Some(manifest_path),
-                wasm: artifacts.wasm,
-                web_assets: artifacts.web_assets,
-            });
+            plugins.push(load_verified_plugin_package(
+                &package_root.join(PLUGIN_MANIFEST_FILE_NAME),
+            )?);
         }
 
         let mut ids = HashSet::new();
@@ -79,16 +74,117 @@ impl PluginCatalog {
         Ok(Self { plugins })
     }
 
-    pub(crate) fn plugins(&self) -> &[LoadedPlugin] {
+    pub fn plugins(&self) -> &[LoadedPlugin] {
         &self.plugins
     }
 
-    pub(crate) fn external_plugin_count(&self) -> usize {
+    pub fn external_plugin_count(&self) -> usize {
         self.plugins
             .iter()
             .filter(|plugin| plugin.manifest_path.is_some())
             .count()
     }
+}
+
+impl LoadedPlugin {
+    pub fn manifest(&self) -> &PluginManifest {
+        &self.manifest
+    }
+
+    pub fn is_external(&self) -> bool {
+        self.manifest_path.is_some()
+    }
+
+    pub fn wasm(&self) -> Option<&Arc<[u8]>> {
+        self.wasm.as_ref()
+    }
+
+    pub fn web_assets(&self) -> &HashMap<PathBuf, Arc<[u8]>> {
+        &self.web_assets
+    }
+}
+
+/// Verify and snapshot one external plugin package without changing it.
+pub fn load_verified_plugin_package(path: &Path) -> Result<LoadedPlugin, CoreError> {
+    let manifest = load_plugin_manifest_file(path)?;
+    validate_package_location(&manifest, path)?;
+    let package_root = path.parent().unwrap_or_else(|| Path::new("."));
+    let artifacts = validate_loaded_manifest(&manifest, Some(package_root))?;
+    Ok(LoadedPlugin {
+        manifest,
+        manifest_path: Some(path.to_path_buf()),
+        wasm: artifacts.wasm,
+        web_assets: artifacts.web_assets,
+    })
+}
+
+/// Generate and atomically install the lock for one unsealed plugin package.
+///
+/// Generation and verification deliberately remain separate: this function refuses to replace an
+/// existing lock, while [`load_verified_plugin_package`] never creates or updates one.
+pub fn generate_plugin_manifest_lock(path: &Path) -> Result<PluginManifest, CoreError> {
+    let manifest = load_plugin_manifest_file(path)?;
+    validate_package_location(&manifest, path)?;
+    let package_root = path.parent().unwrap_or_else(|| Path::new("."));
+    let lock_path = package_root.join(PLUGIN_LOCK_FILE_NAME);
+    match std::fs::symlink_metadata(&lock_path) {
+        Ok(_) => {
+            return Err(CoreError::configuration(format!(
+                "plugin manifest lock `{}` already exists",
+                lock_path.display()
+            )));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(CoreError::configuration(format!(
+                "inspect plugin manifest lock `{}`: {error}",
+                lock_path.display()
+            )));
+        }
+    }
+    let lock = generate_plugin_manifest_lock_value(package_root, &manifest)?;
+    lock.validate_for(&manifest).map_err(|error| {
+        CoreError::configuration(format!(
+            "generated invalid plugin manifest lock `{}`: {error}",
+            lock_path.display()
+        ))
+    })?;
+    if !write_json_atomically(&lock_path, &lock)? {
+        return Err(CoreError::configuration(format!(
+            "plugin manifest lock `{}` was created concurrently",
+            lock_path.display()
+        )));
+    }
+    Ok(manifest)
+}
+
+fn validate_package_location(manifest: &PluginManifest, path: &Path) -> Result<(), CoreError> {
+    if path.file_name().and_then(|name| name.to_str()) != Some(PLUGIN_MANIFEST_FILE_NAME) {
+        return Err(CoreError::configuration(format!(
+            "plugin manifest must be named `{PLUGIN_MANIFEST_FILE_NAME}`"
+        )));
+    }
+    let package_root = path.parent().unwrap_or_else(|| Path::new("."));
+    let package_metadata = std::fs::symlink_metadata(package_root).map_err(|error| {
+        CoreError::configuration(format!(
+            "inspect plugin package `{}`: {error}",
+            package_root.display()
+        ))
+    })?;
+    if package_metadata.file_type().is_symlink() || !package_metadata.is_dir() {
+        return Err(CoreError::configuration(format!(
+            "plugin package `{}` must be a directory and not a symbolic link",
+            package_root.display()
+        )));
+    }
+    if package_root.file_name().and_then(|name| name.to_str()) != Some(manifest.plugin_id()) {
+        return Err(CoreError::configuration(format!(
+            "plugin package directory `{}` must match plugin.id `{}`",
+            package_root.display(),
+            manifest.plugin_id()
+        )));
+    }
+    Ok(())
 }
 
 fn discover_plugin_packages(root: &Path) -> Result<Vec<PathBuf>, CoreError> {
@@ -166,39 +262,6 @@ pub(crate) fn load_plugin_manifest_file(path: &Path) -> Result<PluginManifest, C
     Ok(manifest)
 }
 
-fn load_or_create_plugin_manifest_lock_file(
-    package_root: &Path,
-    manifest: &PluginManifest,
-) -> Result<PluginManifestLock, CoreError> {
-    let path = package_root.join(PLUGIN_LOCK_FILE_NAME);
-    match std::fs::symlink_metadata(&path) {
-        Ok(_) => load_plugin_manifest_lock_file(&path, manifest),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            let lock = generate_plugin_manifest_lock(package_root, manifest)?;
-            lock.validate_for(manifest).map_err(|error| {
-                CoreError::configuration(format!(
-                    "generated invalid plugin manifest lock `{}`: {error}",
-                    path.display()
-                ))
-            })?;
-            if write_json_atomically(&path, &lock)? {
-                tracing::info!(
-                    plugin_id = manifest.plugin_id(),
-                    path = %path.display(),
-                    "plugin manifest lock generated"
-                );
-                Ok(lock)
-            } else {
-                load_plugin_manifest_lock_file(&path, manifest)
-            }
-        }
-        Err(error) => Err(CoreError::configuration(format!(
-            "inspect plugin manifest lock `{}`: {error}",
-            path.display()
-        ))),
-    }
-}
-
 fn load_plugin_manifest_lock_file(
     path: &Path,
     manifest: &PluginManifest,
@@ -231,90 +294,16 @@ fn load_plugin_manifest_lock_file(
     Ok(lock)
 }
 
-fn generate_plugin_manifest_lock(
+fn generate_plugin_manifest_lock_value(
     package_root: &Path,
     manifest: &PluginManifest,
 ) -> Result<PluginManifestLock, CoreError> {
-    let mut artifact_paths = HashSet::new();
-    collect_package_artifact_files(package_root, package_root, &mut artifact_paths)?;
-    let wasm_path = Path::new(PLUGIN_WASM_FILE_NAME);
-    let has_wasm = artifact_paths.contains(wasm_path);
-    match manifest.runtime {
-        PluginRuntime::Builtin if has_wasm => {
-            return Err(CoreError::configuration(format!(
-                "builtin plugin `{}` must not contain `{PLUGIN_WASM_FILE_NAME}`",
-                manifest.plugin_id()
-            )));
-        }
-        PluginRuntime::Extism { .. } if !has_wasm => {
-            return Err(CoreError::configuration(format!(
-                "extism plugin `{}` must contain `{PLUGIN_WASM_FILE_NAME}`",
-                manifest.plugin_id()
-            )));
-        }
-        _ => {}
-    }
-
-    let has_web_assets = artifact_paths.iter().any(|path| path != wasm_path);
-    let has_entry = artifact_paths.contains(Path::new(PLUGIN_WEB_ENTRY_FILE_NAME));
-    if !has_entry && has_web_assets {
-        return Err(CoreError::configuration(format!(
-            "plugin `{}` contains Web assets but `{PLUGIN_WEB_ENTRY_FILE_NAME}` is missing",
-            manifest.plugin_id()
-        )));
-    }
-    if manifest_uses_plugin_frame(manifest) && !has_entry {
-        return Err(CoreError::configuration(format!(
-            "plugin `{}` declares plugin_frame but `{PLUGIN_WEB_ENTRY_FILE_NAME}` is missing",
-            manifest.plugin_id()
-        )));
-    }
-
-    let mut integrity = BTreeMap::new();
-    let mut total_web_bytes = 0usize;
-    let mut paths = artifact_paths.into_iter().collect::<Vec<_>>();
-    paths.sort();
-    for relative_path in paths {
-        let path = package_root.join(&relative_path);
-        let metadata = regular_file_metadata(&path, "plugin artifact")?;
-        if relative_path == wasm_path {
-            if metadata.len() > MAX_PLUGIN_WASM_BYTES as u64 {
-                return Err(CoreError::configuration(format!(
-                    "plugin `{}` Wasm exceeds the {MAX_PLUGIN_WASM_BYTES} byte limit",
-                    manifest.plugin_id()
-                )));
-            }
-        } else {
-            total_web_bytes = total_web_bytes
-                .checked_add(metadata.len() as usize)
-                .ok_or_else(|| {
-                    CoreError::configuration(format!(
-                        "plugin `{}` Web assets exceed the host size limit",
-                        manifest.plugin_id()
-                    ))
-                })?;
-            if total_web_bytes > MAX_PLUGIN_WEB_BYTES {
-                return Err(CoreError::configuration(format!(
-                    "plugin `{}` Web assets exceed the {MAX_PLUGIN_WEB_BYTES} byte limit",
-                    manifest.plugin_id()
-                )));
-            }
-        }
-        integrity.insert(relative_path, digest_file(&path, "plugin artifact")?);
-    }
-
+    let artifacts = inspect_package_artifacts(package_root, manifest)?;
     Ok(PluginManifestLock {
         manifest_version: manifest.manifest_version,
         plugin_id: manifest.plugin_id().to_string(),
-        integrity,
+        integrity: artifacts.integrity,
     })
-}
-
-fn digest_file(path: &Path, label: &str) -> Result<String, CoreError> {
-    let bytes = std::fs::read(path).map_err(|error| {
-        CoreError::configuration(format!("read {label} `{}`: {error}", path.display()))
-    })?;
-    Ok(format!("{:x}", Sha256::digest(bytes)))
 }
 
 /// Installs a complete JSON file without replacing a file created concurrently.
@@ -392,6 +381,7 @@ fn regular_file_metadata(path: &Path, label: &str) -> Result<std::fs::Metadata, 
 struct LoadedArtifacts {
     wasm: Option<Arc<[u8]>>,
     web_assets: HashMap<PathBuf, Arc<[u8]>>,
+    integrity: BTreeMap<PathBuf, String>,
 }
 
 fn validate_loaded_manifest(
@@ -420,30 +410,48 @@ fn validate_loaded_manifest(
     let Some(package_root) = package_root else {
         return Ok(LoadedArtifacts::default());
     };
-    let lock = load_or_create_plugin_manifest_lock_file(package_root, manifest)?;
-    let mut artifacts = LoadedArtifacts::default();
+    let lock = load_plugin_manifest_lock_file(&package_root.join(PLUGIN_LOCK_FILE_NAME), manifest)?;
+    let artifacts = inspect_package_artifacts(package_root, manifest)?;
+    if lock.integrity != artifacts.integrity {
+        let expected_paths = lock.integrity.keys().cloned().collect::<BTreeSet<_>>();
+        let actual_paths = artifacts.integrity.keys().cloned().collect::<BTreeSet<_>>();
+        let missing = expected_paths.difference(&actual_paths).collect::<Vec<_>>();
+        let undeclared = actual_paths.difference(&expected_paths).collect::<Vec<_>>();
+        let changed = expected_paths
+            .intersection(&actual_paths)
+            .filter(|path| lock.integrity.get(*path) != artifacts.integrity.get(*path))
+            .collect::<Vec<_>>();
+        let wasm_detail = if changed
+            .iter()
+            .any(|path| path.as_path() == Path::new(PLUGIN_WASM_FILE_NAME))
+        {
+            "; Wasm digest mismatch"
+        } else {
+            ""
+        };
+        return Err(CoreError::configuration(format!(
+            "plugin `{}` package integrity mismatch: missing={missing:?} undeclared={undeclared:?} changed={changed:?}{wasm_detail}",
+            manifest.plugin_id(),
+        )));
+    }
+    Ok(artifacts)
+}
 
-    let mut actual_paths = HashSet::new();
-    collect_package_artifact_files(package_root, package_root, &mut actual_paths)?;
+fn inspect_package_artifacts(
+    package_root: &Path,
+    manifest: &PluginManifest,
+) -> Result<LoadedArtifacts, CoreError> {
+    let mut artifact_paths = HashSet::new();
+    collect_package_artifact_files(package_root, package_root, &mut artifact_paths)?;
+    validate_artifact_layout(manifest, &artifact_paths)?;
+
     let wasm_path = Path::new(PLUGIN_WASM_FILE_NAME);
-    let has_web_assets = actual_paths.iter().any(|path| path != wasm_path);
-    let has_entry = actual_paths.contains(Path::new(PLUGIN_WEB_ENTRY_FILE_NAME));
-    if has_web_assets && !has_entry {
-        return Err(CoreError::configuration(format!(
-            "plugin `{}` contains Web assets but `{PLUGIN_WEB_ENTRY_FILE_NAME}` is missing",
-            manifest.plugin_id()
-        )));
-    }
-    if manifest_uses_plugin_frame(manifest) && !has_entry {
-        return Err(CoreError::configuration(format!(
-            "plugin `{}` declares plugin_frame but `{PLUGIN_WEB_ENTRY_FILE_NAME}` is missing",
-            manifest.plugin_id()
-        )));
-    }
-
+    let mut artifacts = LoadedArtifacts::default();
     let mut total_web_bytes = 0usize;
-    for (relative_path, expected) in &lock.integrity {
-        let path = package_root.join(relative_path);
+    let mut paths = artifact_paths.into_iter().collect::<Vec<_>>();
+    paths.sort();
+    for relative_path in paths {
+        let path = package_root.join(&relative_path);
         let metadata = regular_file_metadata(&path, "plugin artifact")?;
         if relative_path == wasm_path {
             if metadata.len() > MAX_PLUGIN_WASM_BYTES as u64 {
@@ -475,34 +483,55 @@ fn validate_loaded_manifest(
                 path.display()
             ))
         })?;
-        let actual = format!("{:x}", Sha256::digest(&bytes));
-        if &actual != expected {
-            let detail = if relative_path == wasm_path {
-                format!("Wasm digest mismatch for `{}`", relative_path.display())
-            } else {
-                format!("artifact `{}` digest mismatch", relative_path.display())
-            };
-            return Err(CoreError::configuration(format!(
-                "plugin `{}` {detail}",
-                manifest.plugin_id(),
-            )));
-        }
+        artifacts.integrity.insert(
+            relative_path.clone(),
+            format!("{:x}", Sha256::digest(&bytes)),
+        );
         if relative_path == wasm_path {
             artifacts.wasm = Some(Arc::from(bytes));
         } else {
-            artifacts
-                .web_assets
-                .insert(relative_path.clone(), Arc::from(bytes));
+            artifacts.web_assets.insert(relative_path, Arc::from(bytes));
         }
-        actual_paths.remove(relative_path);
     }
-    if !actual_paths.is_empty() {
+    Ok(artifacts)
+}
+
+fn validate_artifact_layout(
+    manifest: &PluginManifest,
+    artifact_paths: &HashSet<PathBuf>,
+) -> Result<(), CoreError> {
+    let wasm_path = Path::new(PLUGIN_WASM_FILE_NAME);
+    let has_wasm = artifact_paths.contains(wasm_path);
+    match manifest.runtime {
+        PluginRuntime::Builtin if has_wasm => {
+            return Err(CoreError::configuration(format!(
+                "builtin plugin `{}` must not contain `{PLUGIN_WASM_FILE_NAME}`",
+                manifest.plugin_id()
+            )));
+        }
+        PluginRuntime::Extism { .. } if !has_wasm => {
+            return Err(CoreError::configuration(format!(
+                "extism plugin `{}` must contain `{PLUGIN_WASM_FILE_NAME}`",
+                manifest.plugin_id()
+            )));
+        }
+        _ => {}
+    }
+    let has_web_assets = artifact_paths.iter().any(|path| path != wasm_path);
+    let has_entry = artifact_paths.contains(Path::new(PLUGIN_WEB_ENTRY_FILE_NAME));
+    if has_web_assets && !has_entry {
         return Err(CoreError::configuration(format!(
-            "plugin `{}` package contains undeclared artifact files: {actual_paths:?}",
+            "plugin `{}` contains Web assets but `{PLUGIN_WEB_ENTRY_FILE_NAME}` is missing",
             manifest.plugin_id()
         )));
     }
-    Ok(artifacts)
+    if manifest_uses_plugin_frame(manifest) && !has_entry {
+        return Err(CoreError::configuration(format!(
+            "plugin `{}` declares plugin_frame but `{PLUGIN_WEB_ENTRY_FILE_NAME}` is missing",
+            manifest.plugin_id()
+        )));
+    }
+    Ok(())
 }
 
 fn collect_package_artifact_files(

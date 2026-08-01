@@ -164,8 +164,8 @@ docker compose down -v
 已有持久化卷不会自动获得镜像中新增的初始文件；升级旧部署时需要把新版规范包同步到该目录。
 
 Markdown 和 EPUB 的浏览器资源会在 Docker 构建期间通过 `npm ci && npm run build` 生成。两个
-Wasm 插件也会从源码重新构建并与仓库产物比对。容器首次启动时为无 lock 的插件包生成
-`manifest.lock.json`，后续启动只执行完整性验证。
+Wasm 插件也会从源码重新构建并与仓库产物比对。镜像构建会显式生成并验证每个规范包的
+`manifest.lock.json`；容器启动只执行只读完整性验证，不会修改插件包。
 
 ## 单独构建镜像
 

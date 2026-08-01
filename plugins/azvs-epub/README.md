@@ -78,14 +78,16 @@ npm run build
 cd ../../..
 ```
 
-Then assemble a clean, lock-free package:
+Then assemble a clean package and seal it explicitly:
 
 ```bash
 mkdir -p data/.asset-hub/plugins/azvs.epub
 cp plugins/azvs-epub/manifest.json plugins/azvs-epub/plugin.wasm \
   data/.asset-hub/plugins/azvs.epub/
 cp -R plugins/azvs-epub/dist/. data/.asset-hub/plugins/azvs.epub/
+asset plugin --generate-lock data/.asset-hub/plugins/azvs.epub/manifest.json
+asset plugin --verify data/.asset-hub/plugins/azvs.epub/manifest.json
 ```
 
-Asset Hub generates `manifest.lock.json` during the first startup and verifies it on later
-startups. Do not retain an older generated lock when replacing the package artifacts.
+Asset Hub startup requires and verifies `manifest.lock.json` without modifying it. When replacing
+the package artifacts, remove the old lock, generate a new one, and verify it before restarting.

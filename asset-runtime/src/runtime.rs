@@ -1,12 +1,24 @@
 use asset_core::CoreError;
 use asset_core::port::{DirectoryKindRegistry, ResourceKindRegistry, SecurityAuditRepository};
-use asset_core::service::{AuthorizationService, ResourceService, UserService};
+use asset_core::service::{
+    AuthorizationService, DirectoryService, ResourceService, ResourceServicePorts, UserService,
+};
 use asset_infra::AssetInfrastructure;
+use asset_infra::action::{DefaultDirectoryActionExecutor, DefaultResourceActionExecutor};
 use asset_infra::config::AssetInfraConfig;
+use asset_infra::kind::{
+    DefaultDirectoryActionRegistry, DefaultDirectoryKindRegistry, DefaultResourceActionRegistry,
+    DefaultResourceKindRegistry, directory_action_registry_from_catalog, registries_from_catalog,
+};
+use asset_infra::password::Argon2PasswordHasher;
+use asset_infra::plugin::{ExtismActionExecutor, ExtismHost};
+use asset_infra::plugin_package::PluginCatalog;
 use asset_infra::storage::LocalStorageSync;
 use asset_plugin_api::PluginWebAssets;
 use sqlx::SqlitePool;
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 /// 应用运行时。
 ///
@@ -15,6 +27,17 @@ use std::sync::Arc;
 pub struct AssetRuntime {
     /// 已初始化的基础设施组合。
     infrastructure: AssetInfrastructure,
+    _plugin_catalog: PluginCatalog,
+    resource_kind_registry: Arc<DefaultResourceKindRegistry>,
+    directory_kind_registry: Arc<DefaultDirectoryKindRegistry>,
+    _resource_action_registry: Arc<DefaultResourceActionRegistry>,
+    _directory_action_registry: Arc<DefaultDirectoryActionRegistry>,
+    _resource_action_executor: Arc<DefaultResourceActionExecutor>,
+    _directory_action_executor: Arc<DefaultDirectoryActionExecutor>,
+    plugin_web_assets: PluginWebAssets,
+    resource_service: ResourceService,
+    user_service: UserService,
+    authorization_service: AuthorizationService,
     /// 保持自动存储同步监听器与后台任务存活。
     storage_sync: Option<LocalStorageSync>,
 }
@@ -26,15 +49,106 @@ impl AssetRuntime {
     /// [`AssetRuntime::start_storage_sync`]。
     pub async fn new(config: AssetInfraConfig) -> Result<Self, CoreError> {
         let infrastructure = AssetInfrastructure::new(config).await?;
-        let resumed = infrastructure
-            .resource_service()
-            .resume_upload_finalizations()
-            .await?;
+        let catalog_started = Instant::now();
+        let plugin_catalog = PluginCatalog::load(&infrastructure.config().plugin_packages_path())?;
+        tracing::info!(
+            elapsed_ms = catalog_started.elapsed().as_millis(),
+            plugins = plugin_catalog.external_plugin_count(),
+            "plugin artifacts verified"
+        );
+
+        let (resource_kind_registry, directory_kind_registry, resource_action_registry) =
+            registries_from_catalog(&plugin_catalog)?;
+        let resource_kind_registry = Arc::new(resource_kind_registry);
+        let directory_kind_registry = Arc::new(directory_kind_registry);
+        let resource_action_registry = Arc::new(resource_action_registry);
+        let directory_action_registry =
+            Arc::new(directory_action_registry_from_catalog(&plugin_catalog)?);
+        let plugin_execution_policy = Arc::new(infrastructure.config().plugin.execution_policy()?);
+
+        let compile_started = Instant::now();
+        let extism_action_executor = ExtismActionExecutor::from_catalog(
+            &plugin_catalog,
+            resource_kind_registry.as_ref(),
+            directory_kind_registry.as_ref(),
+            ExtismHost::new(
+                infrastructure.directory_query(),
+                infrastructure.resource_query(),
+                infrastructure.blob_storage(),
+                plugin_execution_policy.clone(),
+                infrastructure.config().plugin.grants.clone(),
+            ),
+        )?;
+        let directory_action_executor = Arc::new(DefaultDirectoryActionExecutor::new(
+            extism_action_executor.clone(),
+        ));
+        let resource_action_executor =
+            Arc::new(DefaultResourceActionExecutor::new(extism_action_executor));
+        tracing::info!(
+            elapsed_ms = compile_started.elapsed().as_millis(),
+            "plugins compiled"
+        );
+
+        let directory_service = DirectoryService::new(
+            infrastructure.directory_store(),
+            infrastructure.directory_index(),
+            infrastructure.directory_storage(),
+            directory_kind_registry.clone(),
+        )
+        .with_actions(
+            directory_action_registry.clone(),
+            directory_action_executor.clone(),
+        );
+        let resource_service = ResourceService::new(
+            ResourceServicePorts::new(
+                infrastructure.resource_repository(),
+                infrastructure.resource_query(),
+                infrastructure.blob_storage(),
+                infrastructure.directory_store(),
+                infrastructure.directory_index(),
+                infrastructure.directory_storage(),
+                directory_kind_registry.clone(),
+                infrastructure.storage_scanner(),
+                resource_kind_registry.clone(),
+                infrastructure.upload_session_repository(),
+            )
+            .with_actions(
+                resource_action_registry.clone(),
+                resource_action_executor.clone(),
+            )
+            .with_directory_actions(
+                directory_action_registry.clone(),
+                directory_action_executor.clone(),
+            ),
+            plugin_execution_policy,
+        );
+        let user_service = UserService::new(
+            infrastructure.user_repository(),
+            infrastructure.user_query(),
+            Arc::new(Argon2PasswordHasher),
+            directory_service.clone(),
+        );
+        let authorization_service =
+            AuthorizationService::new(infrastructure.user_repository(), directory_service);
+        let plugin_web_assets = plugin_web_assets_from_catalog(&plugin_catalog)?;
+
+        let resumed = resource_service.resume_upload_finalizations().await?;
         if resumed > 0 {
             tracing::info!(count = resumed, "resumed pending upload finalizations");
         }
         Ok(Self {
             infrastructure,
+            _plugin_catalog: plugin_catalog,
+            resource_kind_registry,
+            directory_kind_registry,
+            _resource_action_registry: resource_action_registry,
+            _directory_action_registry: directory_action_registry,
+            _resource_action_executor: resource_action_executor,
+            _directory_action_executor: directory_action_executor,
+            plugin_web_assets,
+            resource_service,
+            user_service,
+            authorization_service,
             storage_sync: None,
         })
     }
@@ -48,7 +162,7 @@ impl AssetRuntime {
         if self.storage_sync.is_none() {
             self.storage_sync = self
                 .infrastructure
-                .start_storage_sync(self.infrastructure.resource_service())
+                .start_storage_sync(self.resource_service.clone())
                 .await?;
         }
         Ok(())
@@ -61,15 +175,15 @@ impl AssetRuntime {
 
     /// 创建资源应用服务。
     pub fn resource_service(&self) -> ResourceService {
-        self.infrastructure.resource_service()
+        self.resource_service.clone()
     }
 
     pub fn user_service(&self) -> UserService {
-        self.infrastructure.user_service()
+        self.user_service.clone()
     }
 
     pub fn authorization_service(&self) -> AuthorizationService {
-        self.infrastructure.authorization_service()
+        self.authorization_service.clone()
     }
 
     pub fn security_audit_repository(&self) -> Arc<dyn SecurityAuditRepository> {
@@ -83,18 +197,41 @@ impl AssetRuntime {
 
     /// 返回资源类型注册表。
     pub fn resource_kind_registry(&self) -> Arc<dyn ResourceKindRegistry> {
-        self.infrastructure.resource_kind_registry()
+        self.resource_kind_registry.clone()
     }
 
     /// 返回目录类型注册表。
     pub fn directory_kind_registry(&self) -> Arc<dyn DirectoryKindRegistry> {
-        self.infrastructure.directory_kind_registry()
+        self.directory_kind_registry.clone()
     }
 
     /// 返回启动时校验并冻结的插件浏览器静态资源。
     pub fn plugin_web_assets(&self) -> PluginWebAssets {
-        self.infrastructure.plugin_web_assets()
+        self.plugin_web_assets.clone()
     }
+}
+
+fn plugin_web_assets_from_catalog(catalog: &PluginCatalog) -> Result<PluginWebAssets, CoreError> {
+    let mut assets = HashMap::new();
+    for plugin in catalog
+        .plugins()
+        .iter()
+        .filter(|plugin| plugin.is_external())
+    {
+        if plugin.web_assets().is_empty() {
+            continue;
+        }
+        let plugin_id = plugin.manifest().plugin_id();
+        if assets
+            .insert(plugin_id.to_string(), plugin.web_assets().clone())
+            .is_some()
+        {
+            return Err(CoreError::configuration(format!(
+                "duplicate plugin Web root `{plugin_id}`"
+            )));
+        }
+    }
+    Ok(assets)
 }
 
 #[cfg(test)]

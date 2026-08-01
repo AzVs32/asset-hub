@@ -74,17 +74,19 @@ npm run build
 cd ../../..
 ```
 
-Assemble a clean, lock-free canonical package:
+Assemble a clean canonical package and seal it explicitly:
 
 ```bash
 mkdir -p data/.asset-hub/plugins/azvs.markdown
 cp plugins/azvs-markdown/manifest.json plugins/azvs-markdown/plugin.wasm \
   data/.asset-hub/plugins/azvs.markdown/
 cp -R plugins/azvs-markdown/dist/. data/.asset-hub/plugins/azvs.markdown/
+asset plugin --generate-lock data/.asset-hub/plugins/azvs.markdown/manifest.json
+asset plugin --verify data/.asset-hub/plugins/azvs.markdown/manifest.json
 ```
 
-Asset Hub generates `manifest.lock.json` during the first startup and verifies it on later startups.
-Asset Hub discovers the installed package automatically. Its directory name must equal
+Asset Hub startup requires and verifies `manifest.lock.json` without modifying it. Asset Hub
+discovers the installed package automatically. Its directory name must equal
 `plugin.id`; no config entry is required. The source directory keeps rebuild inputs and release
 artifacts, while only the canonical package under `.asset-hub/plugins` is loaded. When replacing
-the package, do not retain a lock generated for older artifacts.
+the package, remove the old lock, generate a new one, and verify it before restarting.

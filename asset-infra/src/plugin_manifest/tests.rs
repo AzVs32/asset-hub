@@ -71,7 +71,32 @@ fn catalog_rejects_a_wasm_digest_mismatch() {
 }
 
 #[test]
-fn catalog_generates_a_missing_lock_once_and_then_verifies_it() {
+fn generation_and_loading_share_the_wasm_size_limit() {
+    let root = unique_temp_path("wasm-limit");
+    let package = create_package(
+        &root,
+        "large.plugin",
+        minimal_extism_manifest("large.plugin"),
+    );
+    let wasm_path = package.join(PLUGIN_WASM_FILE_NAME);
+    std::fs::File::create(&wasm_path)
+        .unwrap()
+        .set_len(MAX_PLUGIN_WASM_BYTES as u64 + 1)
+        .unwrap();
+    let manifest_path = package.join(PLUGIN_MANIFEST_FILE_NAME);
+
+    let generate_error = generate_plugin_manifest_lock(&manifest_path).unwrap_err();
+    write_lock(&package, "large.plugin", Some(&"0".repeat(64)), None);
+    let load_error = load_verified_plugin_package(&manifest_path).unwrap_err();
+
+    let limit = format!("{MAX_PLUGIN_WASM_BYTES} byte limit");
+    assert!(generate_error.to_string().contains(&limit));
+    assert!(load_error.to_string().contains(&limit));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn catalog_requires_an_explicitly_generated_lock_and_then_only_verifies_it() {
     let root = unique_temp_path("generated-lock");
     let package = create_package(
         &root,
@@ -88,6 +113,11 @@ fn catalog_generates_a_missing_lock_once_and_then_verifies_it() {
     std::fs::write(package.join(&temporary_lock_name), b"in progress").unwrap();
     let lock_path = package.join(PLUGIN_LOCK_FILE_NAME);
 
+    let error = PluginCatalog::load(&root).unwrap_err();
+    assert!(error.to_string().contains("manifest.lock.json"));
+    assert!(!lock_path.exists());
+
+    generate_plugin_manifest_lock(&package.join(PLUGIN_MANIFEST_FILE_NAME)).unwrap();
     PluginCatalog::load(&root).unwrap();
 
     let generated = std::fs::read(&lock_path).unwrap();

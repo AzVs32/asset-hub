@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 ///
 /// 当前用于 MVP 阶段。后续插件系统接入后，可以替换为聚合插件定义的 registry 实现。
 #[derive(Debug, Clone)]
-pub(crate) struct DefaultResourceKindRegistry {
+pub struct DefaultResourceKindRegistry {
     pub(super) definitions: Vec<ResourceKindDefinition>,
     indices: HashMap<ResourceKind, usize>,
     pub(super) lineages: HashMap<ResourceKind, Vec<ResourceKind>>,

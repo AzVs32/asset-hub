@@ -29,9 +29,30 @@ fn parses_plugin_verify_path() {
 }
 
 #[test]
+fn parses_plugin_generate_lock_path() {
+    assert!(matches!(
+        Cli::try_parse_from(["asset", "plugin", "--generate-lock", "path/manifest.json"])
+            .unwrap()
+            .command,
+        Command::Plugin(_)
+    ));
+}
+
+#[test]
 fn plugin_requires_exactly_one_operation() {
     assert!(Cli::try_parse_from(["asset", "plugin"]).is_err());
     assert!(Cli::try_parse_from(["asset", "plugin", "--seal", "plugin.json"]).is_err());
+    assert!(
+        Cli::try_parse_from([
+            "asset",
+            "plugin",
+            "--verify",
+            "plugin.json",
+            "--generate-lock",
+            "plugin.json"
+        ])
+        .is_err()
+    );
 }
 
 #[test]

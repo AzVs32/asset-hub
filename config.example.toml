@@ -68,8 +68,9 @@ filesystem_write = []
 # Use `capabilities.kinds` for resource types, `capabilities.directory_kinds` for
 # directory types, `capabilities.resource_actions` for resource actions, and
 # `capabilities.directory_actions` for directory actions.
-# Build the fixed `plugin.wasm` runtime and optional root `index.html` plus Web assets. Asset Hub
-# generates `manifest.lock.json` on first startup and verifies it on later startups.
+# Build the fixed `plugin.wasm` runtime and optional root `index.html` plus Web assets. Before
+# startup, run `asset plugin --generate-lock <package>/manifest.json`; startup only verifies the
+# existing `manifest.lock.json` and never modifies the package.
 #
 # {
 #   "$schema": "https://asset-hub.local/schemas/plugin-manifest-v1.json",
