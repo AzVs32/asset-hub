@@ -1,25 +1,16 @@
-//! 插件 Action 的归一化领域模型。
+//! Host 内部的 Action 注册、匹配、授权与执行模型。
 //!
-//! Manifest 中的 Action capability 经归一化后形成这里的定义，供 Host 进行
-//! Action 注册、匹配、授权和执行。该模块不定义 Host 与插件之间的 JSON 调用协议。
-
-use serde::{Deserialize, Deserializer, Serialize};
+//! 外部 Manifest 由基础设施适配器显式转换为这些定义；本模块不属于插件 SDK，
+//! 也不描述 Host 与插件之间的 JSON 线协议。
 
 /// Action identifier shared by resource and directory targets.
 ///
-/// Action IDs are extensible. Authors are encouraged to use
-/// `<plugin-id>.<verb>` (for example `core.resource.download` or
-/// `azvs.markdown.render`) so independently contributed actions remain globally distinct.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
+/// Action IDs are extensible and globally unique. External Manifest adapters preserve validated
+/// `<plugin-id>.<verb>` identifiers when constructing this value.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ActionId(String);
 
 impl ActionId {
-    /// Built-in download capability contributed by the `core.resource` plugin.
-    pub const CORE_RESOURCE_DOWNLOAD: &'static str = "core.resource.download";
-    /// Built-in ZIP download capability contributed by the `core.directory` plugin.
-    pub const CORE_DIRECTORY_DOWNLOAD: &'static str = "core.directory.download";
-
     pub fn new(value: impl Into<String>) -> Self {
         Self(value.into().trim().to_string())
     }
@@ -54,8 +45,7 @@ impl AsRef<str> for ActionId {
 }
 
 /// Resource action access boundary used by host execution requests.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ActionAccess {
     #[default]
     ReadOnly,
@@ -63,8 +53,7 @@ pub enum ActionAccess {
 }
 
 /// How the host should deliver object content to an action handler.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ResourceActionContentDelivery {
     #[default]
     Auto,
@@ -72,18 +61,8 @@ pub enum ResourceActionContentDelivery {
     Reference,
 }
 
-/// Resource action executor family after manifest capabilities are resolved.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum ActionExecutorKind {
-    #[default]
-    Builtin,
-    Plugin,
-}
-
 /// Optional object content required in addition to the resource snapshot.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResourceActionRequirements {
     pub content: bool,
     pub content_delivery: ResourceActionContentDelivery,
@@ -98,12 +77,12 @@ impl Default for ResourceActionRequirements {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ActionOutputContract {
     pub view: Vec<String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ActionUi {
     pub group: Option<String>,
     pub order: Option<i32>,
@@ -111,71 +90,27 @@ pub struct ActionUi {
 }
 
 /// Content matching rules used by kind auto-detection.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ResourceContentMatcher {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     mime_types: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     extensions: Vec<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ResourceContentMatcherDocument {
-    #[serde(default)]
-    mime_types: Vec<String>,
-    #[serde(default)]
-    extensions: Vec<String>,
-}
-
-impl<'de> Deserialize<'de> for ResourceContentMatcher {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let document = ResourceContentMatcherDocument::deserialize(deserializer)?;
-        if document
-            .mime_types
-            .iter()
-            .chain(&document.extensions)
-            .any(|value| value.trim().is_empty())
-        {
-            return Err(serde::de::Error::custom(
-                "content matcher values must not be empty",
-            ));
-        }
-        Ok(Self::new()
-            .with_mime_types(document.mime_types)
-            .with_extensions(document.extensions))
-    }
 }
 
 /// Resource/action matching rules used by action availability.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ResourceActionAppliesTo {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     kinds: Vec<String>,
-    #[serde(default, flatten)]
     content: ResourceContentMatcher,
 }
 
 /// Target-independent action declaration fields.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActionDefinition {
     id: ActionId,
     label: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     description: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    handler: Option<String>,
-    #[serde(default)]
     access: ActionAccess,
-    #[serde(default)]
-    executor: ActionExecutorKind,
-    #[serde(default)]
     output: ActionOutputContract,
-    #[serde(default)]
     ui: ActionUi,
 }
 
@@ -185,9 +120,7 @@ impl ActionDefinition {
             id: id.into(),
             label: label.into(),
             description: None,
-            handler: None,
             access: ActionAccess::ReadOnly,
-            executor: ActionExecutorKind::Builtin,
             output: ActionOutputContract::default(),
             ui: ActionUi::default(),
         }
@@ -198,18 +131,8 @@ impl ActionDefinition {
         self
     }
 
-    pub fn with_handler(mut self, handler: impl Into<String>) -> Self {
-        self.handler = Some(handler.into());
-        self
-    }
-
     pub fn with_access(mut self, access: ActionAccess) -> Self {
         self.access = access;
-        self
-    }
-
-    pub fn with_executor(mut self, executor: ActionExecutorKind) -> Self {
-        self.executor = executor;
         self
     }
 
@@ -235,16 +158,8 @@ impl ActionDefinition {
         self.description.as_deref()
     }
 
-    pub fn handler(&self) -> Option<&str> {
-        self.handler.as_deref()
-    }
-
     pub fn access(&self) -> ActionAccess {
         self.access
-    }
-
-    pub fn executor(&self) -> ActionExecutorKind {
-        self.executor
     }
 
     pub fn output(&self) -> &ActionOutputContract {
@@ -257,13 +172,10 @@ impl ActionDefinition {
 }
 
 /// Resource action declaration after manifest capabilities are resolved.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResourceActionDefinition {
-    #[serde(flatten)]
     action: ActionDefinition,
-    #[serde(default, skip_serializing_if = "ResourceActionAppliesTo::is_empty")]
     applies_to: ResourceActionAppliesTo,
-    #[serde(default)]
     requires: ResourceActionRequirements,
 }
 
@@ -280,16 +192,8 @@ impl ResourceActionDefinition {
         self.action = self.action.with_description(description);
         self
     }
-    pub fn with_handler(mut self, handler: impl Into<String>) -> Self {
-        self.action = self.action.with_handler(handler);
-        self
-    }
     pub fn with_access(mut self, access: ActionAccess) -> Self {
         self.action = self.action.with_access(access);
-        self
-    }
-    pub fn with_executor(mut self, executor: ActionExecutorKind) -> Self {
-        self.action = self.action.with_executor(executor);
         self
     }
     pub fn with_output(mut self, output: ActionOutputContract) -> Self {
@@ -329,14 +233,8 @@ impl ResourceActionDefinition {
     pub fn description(&self) -> Option<&str> {
         self.action.description()
     }
-    pub fn handler(&self) -> Option<&str> {
-        self.action.handler()
-    }
     pub fn access(&self) -> ActionAccess {
         self.action.access()
-    }
-    pub fn executor(&self) -> ActionExecutorKind {
-        self.action.executor()
     }
     pub fn output(&self) -> &ActionOutputContract {
         self.action.output()
@@ -375,9 +273,8 @@ impl ResourceActionDefinition {
 }
 
 /// Directory/action matching rules.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DirectoryActionAppliesTo {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     kinds: Vec<String>,
 }
 
@@ -405,23 +302,17 @@ impl DirectoryActionAppliesTo {
 }
 
 /// Directory data a handler expects to query through paginated Host APIs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DirectoryActionRequirements {
-    #[serde(default)]
     pub children: bool,
-    #[serde(default)]
     pub resources: bool,
 }
 
 /// Directory action declaration after manifest capabilities are resolved.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirectoryActionDefinition {
-    #[serde(flatten)]
     action: ActionDefinition,
-    #[serde(default, skip_serializing_if = "DirectoryActionAppliesTo::is_empty")]
     applies_to: DirectoryActionAppliesTo,
-    #[serde(default)]
     requires: DirectoryActionRequirements,
 }
 
@@ -437,16 +328,8 @@ impl DirectoryActionDefinition {
         self.action = self.action.with_description(description);
         self
     }
-    pub fn with_handler(mut self, handler: impl Into<String>) -> Self {
-        self.action = self.action.with_handler(handler);
-        self
-    }
     pub fn with_access(mut self, access: ActionAccess) -> Self {
         self.action = self.action.with_access(access);
-        self
-    }
-    pub fn with_executor(mut self, executor: ActionExecutorKind) -> Self {
-        self.action = self.action.with_executor(executor);
         self
     }
     pub fn with_output(mut self, output: ActionOutputContract) -> Self {
@@ -481,14 +364,8 @@ impl DirectoryActionDefinition {
     pub fn description(&self) -> Option<&str> {
         self.action.description()
     }
-    pub fn handler(&self) -> Option<&str> {
-        self.action.handler()
-    }
     pub fn access(&self) -> ActionAccess {
         self.action.access()
-    }
-    pub fn executor(&self) -> ActionExecutorKind {
-        self.action.executor()
     }
     pub fn output(&self) -> &ActionOutputContract {
         self.action.output()
@@ -514,8 +391,6 @@ pub type ResourceAction = ActionId;
 pub type DirectoryAction = ActionId;
 pub type ResourceActionAccess = ActionAccess;
 pub type DirectoryActionAccess = ActionAccess;
-pub type ResourceActionExecutorKind = ActionExecutorKind;
-pub type DirectoryActionExecutorKind = ActionExecutorKind;
 pub type ResourceActionOutputContract = ActionOutputContract;
 pub type DirectoryActionOutputContract = ActionOutputContract;
 pub type ResourceActionUi = ActionUi;

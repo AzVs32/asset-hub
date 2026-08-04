@@ -7,8 +7,8 @@ use asset_infra::config::{
     AssetInfraConfig, BlobConfig, DatabaseConfig, LocalBlobConfig, LocalBlobSyncConfig,
     PluginHostConfig, SqliteDatabaseConfig,
 };
-use asset_plugin_api::PluginWebAssets;
 use asset_runtime::AssetRuntime;
+use asset_runtime::PluginWebAssets;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
 use axum::{Extension, Router};
@@ -51,10 +51,10 @@ async fn resource_kinds_are_listed_and_unsupported_kind_is_rejected() {
         .unwrap();
     assert!(default["parent"].is_null());
     for (kind, source) in [
-        ("core:resource", "plugin:core.resource"),
-        ("core:image", "plugin:core.image"),
-        ("core:document", "plugin:core.document"),
-        ("core:video", "plugin:core.video"),
+        ("core:resource", "builtin:core.resource"),
+        ("core:image", "builtin:core.image"),
+        ("core:document", "builtin:core.document"),
+        ("core:video", "builtin:core.video"),
     ] {
         assert!(
             kinds["items"]
@@ -117,7 +117,7 @@ async fn directory_kinds_and_directory_capabilities_are_exposed() {
         .unwrap();
     assert!(default["parent"].is_null());
     assert_eq!(default["label"], "Directory");
-    assert_eq!(default["source"], "plugin:core.directory");
+    assert_eq!(default["source"], "builtin:core.directory");
     let download = default["actions"]
         .as_array()
         .unwrap()
@@ -125,11 +125,7 @@ async fn directory_kinds_and_directory_capabilities_are_exposed() {
         .find(|action| action["id"] == "core.directory.download")
         .unwrap();
     assert_eq!(download["access"], "read_only");
-    assert_eq!(download["executor"]["type"], "builtin");
-    assert_eq!(
-        download["executor"]["handler"],
-        "builtin.directory.download"
-    );
+    assert!(download.get("executor").is_none());
     assert_eq!(download["output"]["view"], json!(["download"]));
 
     let (status, directory) = json_request(
@@ -294,7 +290,7 @@ async fn core_document_resource_inherits_core_download_action() {
         .iter()
         .find(|kind| kind["kind"] == "core:document")
         .unwrap();
-    assert_eq!(document_kind["source"], "plugin:core.document");
+    assert_eq!(document_kind["source"], "builtin:core.document");
     let actions = document_kind["actions"].as_array().unwrap();
     let download = actions
         .iter()
@@ -302,8 +298,7 @@ async fn core_document_resource_inherits_core_download_action() {
         .unwrap();
     assert_eq!(download["label"], "Download");
     assert_eq!(download["access"], "read_only");
-    assert_eq!(download["executor"]["type"], "builtin");
-    assert_eq!(download["executor"]["handler"], "builtin.resource.download");
+    assert!(download.get("executor").is_none());
     assert_eq!(download["requires"]["content_delivery"], "reference");
     assert_eq!(download["output"]["view"], json!(["download"]));
     assert_eq!(

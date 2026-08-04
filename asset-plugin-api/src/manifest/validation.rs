@@ -4,10 +4,10 @@
 //! 约束。它只验证声明，不读取文件或探测实际运行时产物。
 
 use super::{
-    MANIFEST_VERSION, ManifestActionAccess, PLUGIN_API_VERSION, PLUGIN_LOCK_FILE_NAME,
-    PLUGIN_MANIFEST_FILE_NAME, PLUGIN_WASM_FILE_NAME, PLUGIN_WEB_ENTRY_FILE_NAME, PluginManifest,
-    PluginManifestLock, PluginRuntime,
+    MANIFEST_VERSION, ManifestActionAccess, PLUGIN_LOCK_FILE_NAME, PLUGIN_MANIFEST_FILE_NAME,
+    PLUGIN_WASM_FILE_NAME, PLUGIN_WEB_ENTRY_FILE_NAME, PluginManifest, PluginManifestLock,
 };
+use crate::protocol::PLUGIN_API_VERSION;
 use std::collections::HashSet;
 
 impl PluginManifest {
@@ -27,12 +27,7 @@ impl PluginManifest {
                 "plugin.name, plugin.version and plugin.publisher must not be empty".to_string(),
             );
         }
-        match &self.runtime {
-            PluginRuntime::Builtin => {}
-            PluginRuntime::Extism { plugin_api, .. } => {
-                validate_plugin_api_version(plugin_api)?;
-            }
-        }
+        validate_plugin_api_version(self.runtime.plugin_api())?;
         if self.permissions.network.enabled() && !self.permissions.network.has_scope() {
             return Err("permissions.network must declare an explicit host scope".to_string());
         }
@@ -59,19 +54,10 @@ impl PluginManifestLock {
             ));
         }
         let wasm_path = std::path::Path::new(PLUGIN_WASM_FILE_NAME);
-        let has_wasm = self.integrity.contains_key(wasm_path);
-        match manifest.runtime {
-            PluginRuntime::Builtin if has_wasm => {
-                return Err(format!(
-                    "manifest.lock.json integrity must not contain `{PLUGIN_WASM_FILE_NAME}` for builtin plugins"
-                ));
-            }
-            PluginRuntime::Extism { .. } if !has_wasm => {
-                return Err(format!(
-                    "manifest.lock.json integrity must contain `{PLUGIN_WASM_FILE_NAME}` for extism plugins"
-                ));
-            }
-            _ => {}
+        if !self.integrity.contains_key(wasm_path) {
+            return Err(format!(
+                "manifest.lock.json integrity must contain `{PLUGIN_WASM_FILE_NAME}` for extism plugins"
+            ));
         }
         let has_web_assets = self.integrity.keys().any(|path| path != wasm_path);
         if has_web_assets

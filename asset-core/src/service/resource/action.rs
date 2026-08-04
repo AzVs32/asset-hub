@@ -7,15 +7,15 @@ use super::{ExecuteResourceAction, ResourceActions, ResourceService};
 use crate::CoreError;
 #[cfg(test)]
 use crate::domain::ResourceId;
-use crate::domain::{Resource, ResourceContent, StorageKey};
+use crate::domain::{
+    Resource, ResourceAction, ResourceActionAccess, ResourceActionContentDelivery,
+    ResourceActionDefinition, ResourceActionPolicy, ResourceContent, StorageKey,
+};
 use crate::port::{
     BlobStorage, LocatedResource, RESERVED_BLOB_STORAGE_PREFIX, ResourceActionOutput,
     ResourceActionRequest,
 };
-use asset_plugin_api::{
-    PluginActionEffect, PluginExecutionPolicy, ResourceAction, ResourceActionAccess,
-    ResourceActionContentDelivery, ResourceActionDefinition,
-};
+use asset_plugin_api::protocol::PluginActionEffect;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use bytes::Bytes;
@@ -103,17 +103,31 @@ impl<'a> ResourceActionService<'a> {
 
         // 3. Dispatch the request through the configured action executor.
         let access = action.access();
-        let output = self
-            .execute_resource_action_request(
-                &resource,
-                directory,
-                storage_key.clone(),
-                action_id,
-                &action,
-                input,
-                content,
-            )
-            .await?;
+        let Some(ports) = &self.service.action_ports else {
+            return Err(CoreError::configuration(
+                "resource action executor is not configured",
+            ));
+        };
+        let content_delivery = resource
+            .content()
+            .and_then(|content| {
+                resolved_content_delivery(
+                    &action,
+                    content.size(),
+                    &self.service.resource_action_policy,
+                )
+            })
+            .unwrap_or(ResourceActionContentDelivery::Auto);
+        let request = ResourceActionRequest::new(
+            resource.clone(),
+            directory,
+            storage_key.clone(),
+            action_id,
+            access,
+            input,
+        )
+        .with_content(content_delivery, content);
+        let output = ports.executor.execute(request).await?;
         self.validate_action_output(&action, &output)?;
 
         // 4. Apply write effects after the executor returns, guarded by the action access boundary.
@@ -196,11 +210,11 @@ impl<'a> ResourceActionService<'a> {
         if !should_load_declared_action_content(
             action,
             content_ref,
-            &self.service.plugin_execution_policy,
+            &self.service.resource_action_policy,
         ) {
             return Ok(None);
         }
-        let max_content_bytes = self.service.plugin_execution_policy.max_content_bytes();
+        let max_content_bytes = self.service.resource_action_policy.max_content_bytes();
         if content_ref.size() > max_content_bytes {
             return Err(CoreError::configuration(format!(
                 "plugin actions are limited to {max_content_bytes} bytes of resource content"
@@ -208,45 +222,6 @@ impl<'a> ResourceActionService<'a> {
         }
 
         self.service.blob_storage.get(storage_key).await
-    }
-
-    async fn execute_resource_action_request(
-        &self,
-        resource: &Resource,
-        directory: crate::port::DirectoryLocation,
-        storage_key: StorageKey,
-        action_id: ResourceAction,
-        action: &ResourceActionDefinition,
-        input: serde_json::Value,
-        content: Option<Bytes>,
-    ) -> Result<ResourceActionOutput, CoreError> {
-        let Some(ports) = &self.service.action_ports else {
-            return Err(CoreError::configuration(
-                "resource action executor is not configured",
-            ));
-        };
-        let request = ResourceActionRequest::new(
-            resource.clone(),
-            directory,
-            storage_key,
-            action_id,
-            action.handler(),
-            action.access(),
-            resource
-                .content()
-                .and_then(|content| {
-                    resolved_content_delivery(
-                        action,
-                        content.size(),
-                        &self.service.plugin_execution_policy,
-                    )
-                })
-                .unwrap_or(ResourceActionContentDelivery::Auto),
-            input,
-            content,
-        );
-
-        ports.executor.execute(request).await
     }
 
     async fn apply_action_effects(
@@ -361,7 +336,7 @@ impl<'a> ResourceActionService<'a> {
 pub(super) fn resolved_content_delivery(
     action: &ResourceActionDefinition,
     size: u64,
-    policy: &PluginExecutionPolicy,
+    policy: &ResourceActionPolicy,
 ) -> Option<ResourceActionContentDelivery> {
     if !action.requirements().content {
         return None;
@@ -378,7 +353,7 @@ pub(super) fn resolved_content_delivery(
 fn should_load_declared_action_content(
     action: &ResourceActionDefinition,
     content: &ResourceContent,
-    policy: &PluginExecutionPolicy,
+    policy: &ResourceActionPolicy,
 ) -> bool {
     matches!(
         resolved_content_delivery(action, content.size(), policy),

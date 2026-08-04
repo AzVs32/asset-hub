@@ -1,9 +1,8 @@
-use crate::action::builtin;
-use crate::official_plugins;
+use crate::builtin_catalog::BuiltinCatalog;
 use asset_core::CoreError;
-use asset_plugin_api::{
+use asset_plugin_api::manifest::{
     PLUGIN_LOCK_FILE_NAME, PLUGIN_MANIFEST_FILE_NAME, PLUGIN_WASM_FILE_NAME,
-    PLUGIN_WEB_ENTRY_FILE_NAME, PluginManifest, PluginManifestLock, PluginRuntime,
+    PLUGIN_WEB_ENTRY_FILE_NAME, PluginManifest, PluginManifestLock,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -25,37 +24,25 @@ pub const MAX_PLUGIN_WEB_BYTES: usize = 64 * 1024 * 1024;
 #[derive(Debug, Clone)]
 pub struct LoadedPlugin {
     pub(crate) manifest: PluginManifest,
-    pub(crate) manifest_path: Option<PathBuf>,
-    pub(crate) wasm: Option<Arc<[u8]>>,
+    pub(crate) wasm: Arc<[u8]>,
     pub(crate) web_assets: HashMap<PathBuf, Arc<[u8]>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct PluginCatalog {
+    pub(crate) builtin: BuiltinCatalog,
     plugins: Vec<LoadedPlugin>,
 }
 
 impl PluginCatalog {
-    /// Load the built-in catalog and verify every external package.
+    /// Load the Host-owned built-in catalog and verify every external package.
     ///
     /// This operation is read-only. External packages must already contain a valid
     /// `manifest.lock.json`; use [`generate_plugin_manifest_lock`] explicitly when sealing a
     /// package.
     pub fn load(packages_root: &Path) -> Result<Self, CoreError> {
+        let builtin = BuiltinCatalog::new()?;
         let mut plugins = Vec::new();
-        for content in official_plugins::MANIFESTS {
-            let manifest: PluginManifest = serde_json::from_str(content).map_err(|error| {
-                CoreError::configuration(format!("parse official plugin manifest: {error}"))
-            })?;
-            let artifacts = validate_loaded_manifest(&manifest, None)?;
-            plugins.push(LoadedPlugin {
-                manifest,
-                manifest_path: None,
-                wasm: artifacts.wasm,
-                web_assets: artifacts.web_assets,
-            });
-        }
-
         for package_root in discover_plugin_packages(packages_root)? {
             plugins.push(load_verified_plugin_package(
                 &package_root.join(PLUGIN_MANIFEST_FILE_NAME),
@@ -71,18 +58,15 @@ impl PluginCatalog {
                 )));
             }
         }
-        Ok(Self { plugins })
+        Ok(Self { builtin, plugins })
     }
 
     pub fn plugins(&self) -> &[LoadedPlugin] {
         &self.plugins
     }
 
-    pub fn external_plugin_count(&self) -> usize {
-        self.plugins
-            .iter()
-            .filter(|plugin| plugin.manifest_path.is_some())
-            .count()
+    pub fn plugin_count(&self) -> usize {
+        self.plugins.len()
     }
 }
 
@@ -91,12 +75,8 @@ impl LoadedPlugin {
         &self.manifest
     }
 
-    pub fn is_external(&self) -> bool {
-        self.manifest_path.is_some()
-    }
-
-    pub fn wasm(&self) -> Option<&Arc<[u8]>> {
-        self.wasm.as_ref()
+    pub fn wasm(&self) -> &Arc<[u8]> {
+        &self.wasm
     }
 
     pub fn web_assets(&self) -> &HashMap<PathBuf, Arc<[u8]>> {
@@ -109,10 +89,9 @@ pub fn load_verified_plugin_package(path: &Path) -> Result<LoadedPlugin, CoreErr
     let manifest = load_plugin_manifest_file(path)?;
     validate_package_location(&manifest, path)?;
     let package_root = path.parent().unwrap_or_else(|| Path::new("."));
-    let artifacts = validate_loaded_manifest(&manifest, Some(package_root))?;
+    let artifacts = validate_loaded_manifest(&manifest, package_root)?;
     Ok(LoadedPlugin {
         manifest,
-        manifest_path: Some(path.to_path_buf()),
         wasm: artifacts.wasm,
         web_assets: artifacts.web_assets,
     })
@@ -377,39 +356,23 @@ fn regular_file_metadata(path: &Path, label: &str) -> Result<std::fs::Metadata, 
     Ok(metadata)
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct LoadedArtifacts {
-    wasm: Option<Arc<[u8]>>,
+    wasm: Arc<[u8]>,
     web_assets: HashMap<PathBuf, Arc<[u8]>>,
     integrity: BTreeMap<PathBuf, String>,
 }
 
 fn validate_loaded_manifest(
     manifest: &PluginManifest,
-    package_root: Option<&Path>,
+    package_root: &Path,
 ) -> Result<LoadedArtifacts, CoreError> {
     manifest.validate().map_err(|error| {
-        let source = package_root
-            .map(|path| path.display().to_string())
-            .unwrap_or_else(|| format!("official plugin `{}`", manifest.plugin_id()));
-        CoreError::configuration(format!("invalid plugin manifest `{source}`: {error}"))
+        CoreError::configuration(format!(
+            "invalid plugin manifest `{}`: {error}",
+            package_root.display()
+        ))
     })?;
-
-    if matches!(manifest.runtime, PluginRuntime::Builtin) {
-        for action in &manifest.capabilities.resource_actions {
-            let handler = action.handler();
-            if !builtin::is_builtin_handler(Some(handler)) {
-                return Err(CoreError::configuration(format!(
-                    "plugin `{}` declares unknown builtin handler `{handler}`",
-                    manifest.plugin_id()
-                )));
-            }
-        }
-    }
-
-    let Some(package_root) = package_root else {
-        return Ok(LoadedArtifacts::default());
-    };
     let lock = load_plugin_manifest_lock_file(&package_root.join(PLUGIN_LOCK_FILE_NAME), manifest)?;
     let artifacts = inspect_package_artifacts(package_root, manifest)?;
     if lock.integrity != artifacts.integrity {
@@ -446,7 +409,9 @@ fn inspect_package_artifacts(
     validate_artifact_layout(manifest, &artifact_paths)?;
 
     let wasm_path = Path::new(PLUGIN_WASM_FILE_NAME);
-    let mut artifacts = LoadedArtifacts::default();
+    let mut wasm = None;
+    let mut web_assets = HashMap::new();
+    let mut integrity = BTreeMap::new();
     let mut total_web_bytes = 0usize;
     let mut paths = artifact_paths.into_iter().collect::<Vec<_>>();
     paths.sort();
@@ -483,17 +448,21 @@ fn inspect_package_artifacts(
                 path.display()
             ))
         })?;
-        artifacts.integrity.insert(
+        integrity.insert(
             relative_path.clone(),
             format!("{:x}", Sha256::digest(&bytes)),
         );
         if relative_path == wasm_path {
-            artifacts.wasm = Some(Arc::from(bytes));
+            wasm = Some(Arc::from(bytes));
         } else {
-            artifacts.web_assets.insert(relative_path, Arc::from(bytes));
+            web_assets.insert(relative_path, Arc::from(bytes));
         }
     }
-    Ok(artifacts)
+    Ok(LoadedArtifacts {
+        wasm: wasm.expect("validated external package must contain plugin.wasm"),
+        web_assets,
+        integrity,
+    })
 }
 
 fn validate_artifact_layout(
@@ -501,21 +470,11 @@ fn validate_artifact_layout(
     artifact_paths: &HashSet<PathBuf>,
 ) -> Result<(), CoreError> {
     let wasm_path = Path::new(PLUGIN_WASM_FILE_NAME);
-    let has_wasm = artifact_paths.contains(wasm_path);
-    match manifest.runtime {
-        PluginRuntime::Builtin if has_wasm => {
-            return Err(CoreError::configuration(format!(
-                "builtin plugin `{}` must not contain `{PLUGIN_WASM_FILE_NAME}`",
-                manifest.plugin_id()
-            )));
-        }
-        PluginRuntime::Extism { .. } if !has_wasm => {
-            return Err(CoreError::configuration(format!(
-                "extism plugin `{}` must contain `{PLUGIN_WASM_FILE_NAME}`",
-                manifest.plugin_id()
-            )));
-        }
-        _ => {}
+    if !artifact_paths.contains(wasm_path) {
+        return Err(CoreError::configuration(format!(
+            "extism plugin `{}` must contain `{PLUGIN_WASM_FILE_NAME}`",
+            manifest.plugin_id()
+        )));
     }
     let has_web_assets = artifact_paths.iter().any(|path| path != wasm_path);
     let has_entry = artifact_paths.contains(Path::new(PLUGIN_WEB_ENTRY_FILE_NAME));

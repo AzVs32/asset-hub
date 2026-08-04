@@ -1,24 +1,24 @@
 use super::*;
-use asset_plugin_api::{
+use asset_plugin_api::protocol::{
     PluginActionFailure, PluginDiagnostic, PluginDiagnosticSeverity, diagnostic::codes,
 };
 
 #[test]
 fn plugin_diagnostic_codes_map_to_stable_http_statuses() {
     assert_eq!(
-        plugin_status(asset_plugin_api::diagnostic::codes::INVALID_INPUT),
+        plugin_status(asset_plugin_api::protocol::diagnostic::codes::INVALID_INPUT),
         StatusCode::BAD_REQUEST
     );
     assert_eq!(
-        plugin_status(asset_plugin_api::diagnostic::codes::PERMISSION_DENIED),
+        plugin_status(asset_plugin_api::protocol::diagnostic::codes::PERMISSION_DENIED),
         StatusCode::FORBIDDEN
     );
     assert_eq!(
-        plugin_status(asset_plugin_api::diagnostic::codes::CONTENT_LIMIT_EXCEEDED),
+        plugin_status(asset_plugin_api::protocol::diagnostic::codes::CONTENT_LIMIT_EXCEEDED),
         StatusCode::PAYLOAD_TOO_LARGE
     );
     assert_eq!(
-        plugin_status(asset_plugin_api::diagnostic::codes::TIMEOUT),
+        plugin_status(asset_plugin_api::protocol::diagnostic::codes::TIMEOUT),
         StatusCode::GATEWAY_TIMEOUT
     );
 }

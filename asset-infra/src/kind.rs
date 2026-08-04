@@ -2,6 +2,7 @@ mod action_registry;
 mod builder;
 mod directory_action_registry;
 mod directory_registry;
+pub(crate) mod normalization;
 mod resource_registry;
 
 pub use action_registry::DefaultResourceActionRegistry;

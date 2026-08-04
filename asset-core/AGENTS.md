@@ -9,6 +9,11 @@
 - `service`: application use cases coordinating domain objects and ports.
 - `error`: typed error classification consumed by workspace applications.
 
+Core also owns Host-normalized Action/Kind declarations and the runtime-independent resource Action
+content policy. These are internal application models converted or supplied by adapters; they are
+not plugin SDK types. Extism memory, timeout, concurrency, and ABI budgets remain infrastructure
+policy.
+
 ## Domain rules
 
 MUST:

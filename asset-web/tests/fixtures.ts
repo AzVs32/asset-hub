@@ -8,7 +8,6 @@ export function action(
     label: input.label ?? input.id,
     description: input.description ?? null,
     access: input.access ?? "read_only",
-    executor: input.executor ?? { type: "plugin", handler: "run" },
     requires: input.requires ?? { content: false, contentDelivery: "auto" },
     output: input.output ?? { views: ["json"] },
     ui: input.ui ?? { group: null, order: null, locations: [] },

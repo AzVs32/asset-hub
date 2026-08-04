@@ -1,10 +1,9 @@
 //! Manifest 中的插件能力声明文档。
 //!
-//! 这些类型直接映射 manifest JSON。到归一化 Action 领域定义的转换由同级
-//! `normalization` 模块实现，避免把文档形状与运行时模型视为同一层对象。
+//! 这些类型直接映射外部插件的 manifest JSON。Host 如何注册、匹配和执行这些
+//! 声明不属于 SDK，由 Host 侧适配器完成转换。
 
-use crate::ResourceContentMatcher;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Capabilities contributed by a plugin.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -139,4 +138,104 @@ pub struct ActionUi {
     pub group: Option<String>,
     pub order: Option<i32>,
     pub locations: Vec<String>,
+}
+
+/// Content matching declaration used by external resource-kind capabilities.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ResourceContentMatcher {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    mime_types: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    extensions: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResourceContentMatcherDocument {
+    #[serde(default)]
+    mime_types: Vec<String>,
+    #[serde(default)]
+    extensions: Vec<String>,
+}
+
+impl<'de> Deserialize<'de> for ResourceContentMatcher {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let document = ResourceContentMatcherDocument::deserialize(deserializer)?;
+        if document
+            .mime_types
+            .iter()
+            .chain(&document.extensions)
+            .any(|value| value.trim().is_empty())
+        {
+            return Err(serde::de::Error::custom(
+                "content matcher values must not be empty",
+            ));
+        }
+        Ok(Self::new()
+            .with_mime_types(document.mime_types)
+            .with_extensions(document.extensions))
+    }
+}
+
+impl ResourceContentMatcher {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_mime_types(
+        mut self,
+        mime_types: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.mime_types = mime_types
+            .into_iter()
+            .map(|value| value.into().trim().to_ascii_lowercase())
+            .filter(|value| !value.is_empty())
+            .collect();
+        self
+    }
+
+    pub fn with_extensions(
+        mut self,
+        extensions: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.extensions = extensions
+            .into_iter()
+            .map(normalize_extension)
+            .filter(|value| !value.is_empty())
+            .collect();
+        self
+    }
+
+    pub fn mime_types(&self) -> &[String] {
+        &self.mime_types
+    }
+
+    pub fn extensions(&self) -> &[String] {
+        &self.extensions
+    }
+}
+
+impl ResourceActionCapability {
+    pub fn handler(&self) -> &str {
+        &self.handler
+    }
+}
+
+impl DirectoryActionCapability {
+    pub fn handler(&self) -> &str {
+        &self.handler
+    }
+}
+
+fn normalize_extension(value: impl Into<String>) -> String {
+    let value = value.into().trim().to_ascii_lowercase();
+    if value.is_empty() || value.starts_with('.') {
+        value
+    } else {
+        format!(".{value}")
+    }
 }

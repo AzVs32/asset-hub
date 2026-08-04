@@ -4,11 +4,10 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Runtime used to execute plugin actions.
+/// External runtime used to execute plugin actions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PluginRuntime {
-    Builtin,
     Extism {
         #[serde(default)]
         wasi: bool,
@@ -17,10 +16,9 @@ pub enum PluginRuntime {
 }
 
 impl PluginRuntime {
-    pub fn plugin_api(&self) -> Option<&str> {
+    pub fn plugin_api(&self) -> &str {
         match self {
-            Self::Builtin => None,
-            Self::Extism { plugin_api, .. } => Some(plugin_api),
+            Self::Extism { plugin_api, .. } => plugin_api,
         }
     }
 }

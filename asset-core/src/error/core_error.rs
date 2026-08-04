@@ -1,5 +1,5 @@
 use super::{DirectoryError, ResourceError, UserError};
-use asset_plugin_api::{PluginActionFailure, PluginDiagnostic};
+use asset_plugin_api::protocol::{PluginActionFailure, PluginDiagnostic};
 use thiserror::Error;
 
 /// 核心层对外暴露的统一错误类型。
@@ -146,9 +146,9 @@ impl CoreError {
             plugin,
             action,
             PluginDiagnostic {
-                code: asset_plugin_api::diagnostic::codes::RUNTIME_FAILURE.to_string(),
+                code: asset_plugin_api::protocol::diagnostic::codes::RUNTIME_FAILURE.to_string(),
                 message: message.into(),
-                severity: asset_plugin_api::PluginDiagnosticSeverity::Error,
+                severity: asset_plugin_api::protocol::PluginDiagnosticSeverity::Error,
                 retryable: false,
                 details: None,
             },

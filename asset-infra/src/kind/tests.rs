@@ -3,8 +3,8 @@ use crate::kind::builder::{definition_from_parts, push_definition};
 use crate::plugin_manifest::PluginCatalog;
 use asset_core::CoreError;
 use asset_core::domain::{DirectoryKind, ResourceKind};
+use asset_core::domain::{ResourceActionDefinition, ResourceContentMatcher};
 use asset_core::port::{DirectoryKindRegistry, ResourceActionRegistry, ResourceKindRegistry};
-use asset_plugin_api::{ResourceAction, ResourceActionDefinition, ResourceContentMatcher};
 use std::path::{Path, PathBuf};
 
 fn registries(
@@ -91,7 +91,7 @@ fn registry_rejects_unknown_parents_and_cycles() {
 }
 
 #[test]
-fn registry_includes_official_core_resource_kinds() {
+fn registry_includes_host_builtin_resource_kinds() {
     let (registry, _, action_registry) = registries(&unique_temp_path("no-plugins")).unwrap();
 
     let root = registry
@@ -101,33 +101,33 @@ fn registry_includes_official_core_resource_kinds() {
     assert!(
         actions_for_kind(&registry, &action_registry, root.kind())
             .iter()
-            .any(|action| action.id().as_str() == ResourceAction::CORE_RESOURCE_DOWNLOAD)
+            .any(|action| action.id().as_str() == "core.resource.download")
     );
 
     for (kind, label, source, expected_actions) in [
         (
             "core:resource",
             "Resource",
-            "plugin:core.resource",
-            vec![ResourceAction::CORE_RESOURCE_DOWNLOAD],
+            "builtin:core.resource",
+            vec!["core.resource.download"],
         ),
         (
             "core:image",
             "Image",
-            "plugin:core.image",
-            vec![ResourceAction::CORE_RESOURCE_DOWNLOAD],
+            "builtin:core.image",
+            vec!["core.resource.download"],
         ),
         (
             "core:document",
             "Document",
-            "plugin:core.document",
-            vec![ResourceAction::CORE_RESOURCE_DOWNLOAD],
+            "builtin:core.document",
+            vec!["core.resource.download"],
         ),
         (
             "core:video",
             "Video",
-            "plugin:core.video",
-            vec![ResourceAction::CORE_RESOURCE_DOWNLOAD],
+            "builtin:core.video",
+            vec!["core.resource.download"],
         ),
     ] {
         let definition = registry.get(&ResourceKind::try_new(kind).unwrap()).unwrap();
@@ -166,10 +166,7 @@ fn registry_exposes_actions_as_global_capabilities() {
     let actions = registry.actions();
 
     assert_eq!(actions.len(), 1);
-    assert_eq!(
-        actions[0].id().as_str(),
-        ResourceAction::CORE_RESOURCE_DOWNLOAD
-    );
+    assert_eq!(actions[0].id().as_str(), "core.resource.download");
 }
 
 #[test]
@@ -177,6 +174,7 @@ fn registry_loads_plugin_manifest_kinds() {
     let root = unique_temp_path("plugin-manifest");
     let package = root.join("mindustry");
     std::fs::create_dir_all(&package).unwrap();
+    std::fs::write(package.join("plugin.wasm"), []).unwrap();
     std::fs::write(
         package.join("manifest.json"),
         r#"
@@ -190,7 +188,8 @@ fn registry_loads_plugin_manifest_kinds() {
             "description": "Mindustry test plugin."
           },
           "runtime": {
-            "type": "builtin"
+            "type": "extism",
+            "plugin_api": "asset-hub.plugin-api@1"
           },
           "capabilities": {
             "kinds": [
@@ -211,7 +210,7 @@ fn registry_loads_plugin_manifest_kinds() {
               {
                 "id": "mindustry.download",
                 "label": "Download Mod",
-                "handler": "builtin.resource.download",
+                "handler": "download_mod",
                 "applies_to": {
                   "kinds": ["mindustry:mod"]
                 },
@@ -229,7 +228,7 @@ fn registry_loads_plugin_manifest_kinds() {
         "#,
     )
     .unwrap();
-    write_builtin_lock(&package, "mindustry");
+    write_empty_wasm_lock(&package, "mindustry");
 
     let (registry, directory_registry, action_registry) = registries(&root).unwrap();
     let definition = registry
@@ -257,14 +256,14 @@ fn registry_loads_plugin_manifest_kinds() {
 }
 
 #[test]
-fn directory_registry_includes_official_default_kind() {
+fn directory_registry_includes_host_builtin_default_kind() {
     let (_, registry, _) = registries(&unique_temp_path("no-plugins")).unwrap();
     let default = DirectoryKind::default();
     let definition = registry.get(&default).unwrap();
 
     assert!(definition.parent().is_none());
     assert_eq!(definition.label(), "Directory");
-    assert_eq!(definition.source(), "plugin:core.directory");
+    assert_eq!(definition.source(), "builtin:core.directory");
     assert_eq!(registry.lineage(&default), vec![default]);
 }
 
@@ -416,7 +415,6 @@ fn registry_loads_plugin_manifest_kind_extensions() {
         .find(|action| action.id().as_str() == "mp4-tools:inspect")
         .unwrap();
 
-    assert_eq!(action.handler(), Some("inspect_mp4"));
     assert!(action.content_matcher().is_empty());
     assert!(action.matches_resource(
         "test:mp4",
@@ -459,6 +457,7 @@ fn registry_rejects_duplicate_global_action_ids() {
     let root = unique_temp_path("duplicate-action");
     let package = root.join("duplicate-download");
     std::fs::create_dir_all(&package).unwrap();
+    std::fs::write(package.join("plugin.wasm"), []).unwrap();
     std::fs::write(
         package.join("manifest.json"),
         r#"
@@ -472,7 +471,8 @@ fn registry_rejects_duplicate_global_action_ids() {
             "description": "Duplicate action id test plugin."
           },
           "runtime": {
-            "type": "builtin"
+            "type": "extism",
+            "plugin_api": "asset-hub.plugin-api@1"
           },
           "capabilities": {
             "kinds": [],
@@ -480,7 +480,7 @@ fn registry_rejects_duplicate_global_action_ids() {
               {
                 "id": "core.resource.download",
                 "label": "Duplicate Download",
-                "handler": "builtin.resource.download",
+                "handler": "duplicate_download",
                 "applies_to": {
                   "kinds": ["core:resource"]
                 },
@@ -498,7 +498,7 @@ fn registry_rejects_duplicate_global_action_ids() {
         "#,
     )
     .unwrap();
-    write_builtin_lock(&package, "duplicate-download");
+    write_empty_wasm_lock(&package, "duplicate-download");
 
     let error = action_registry(&root).unwrap_err();
 
@@ -521,20 +521,6 @@ fn write_empty_wasm_lock(root: &std::path::Path, plugin_id: &str) {
               "integrity": {{
                 "plugin.wasm": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
               }}
-            }}"#
-        ),
-    )
-    .unwrap();
-}
-
-fn write_builtin_lock(root: &std::path::Path, plugin_id: &str) {
-    std::fs::write(
-        root.join("manifest.lock.json"),
-        format!(
-            r#"{{
-              "manifest_version": 1,
-              "plugin_id": "{plugin_id}",
-              "integrity": {{}}
             }}"#
         ),
     )

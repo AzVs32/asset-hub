@@ -2,9 +2,10 @@
 
 ## Responsibility
 
-This crate is the only supported contract for external plugin authors. It defines Manifest models,
-normalized action definitions, Host/plugin JSON protocols, Wasm Host ABI helpers, Plugin Frame
-contracts, diagnostics, and execution policy values.
+This crate is the only supported SDK and wire contract for external plugin authors. It defines
+Manifest models, Host/plugin JSON protocols, Wasm Host ABI helpers, Plugin Frame contracts, and
+diagnostics. Host-normalized action/kind models, built-in providers, execution policy, loaded
+package snapshots, and application-facing DTOs belong to Host crates.
 
 Read `asset-plugin-api/README.md` before changing any public or serialized type.
 
@@ -30,14 +31,15 @@ MUST:
 - keep `extism-pdk` optional behind `extism-guest`;
 - use explicit Serde names and validation for wire data;
 - reject unsupported Manifest and Plugin API versions explicitly;
-- preserve compatibility re-exports unless a deliberate breaking release removes them;
-- keep resource and directory action target contracts separate even when they share a normalized
-  shell;
+- expose public items through their canonical `manifest`, `protocol`, or `abi` owner module;
+- keep resource and directory action wire contracts separate;
 - use stable lowercase action IDs and recommend `<plugin-id>.<verb>`.
 
 MUST NOT:
 
-- expose SQLx, OpenDAL, Axum, host filesystem, or internal aggregate implementation types;
+- expose SQLx, OpenDAL, Axum, host filesystem, normalized Host models, built-in identifiers,
+  execution configuration, loaded package assets, or internal aggregate implementation types;
+- add crate-root type re-exports or compatibility module aliases;
 - silently accept unknown protocol versions;
 - change defaulting or optional-field behavior without compatibility tests;
 - couple the public contract to consumer-specific behavior.
@@ -46,7 +48,7 @@ MUST NOT:
 
 - Treat all decoded Manifest, action input/output, diagnostics, effects, and frame messages as
   untrusted.
-- Keep resource limits explicit and serializable.
+- Keep wire and ABI range constraints explicit and validated.
 - Effects describe requested host mutations; plugins never receive authority to apply them directly.
 - Content references and directory references are opaque, scoped handles.
 
@@ -55,7 +57,7 @@ MUST NOT:
 MUST update together as applicable:
 
 - Serde models and validation;
-- normalized domain conversion;
+- Host-side Manifest conversion adapters;
 - JSON golden fixtures in `tests/fixtures`;
 - host-side adapter tests;
 - `asset-plugin-api/README.md` supported-version table and compatibility notes.

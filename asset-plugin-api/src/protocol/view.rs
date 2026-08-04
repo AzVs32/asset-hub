@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::PluginDiagnostic;
+use crate::protocol::PluginDiagnostic;
 
 /// Standard action output.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

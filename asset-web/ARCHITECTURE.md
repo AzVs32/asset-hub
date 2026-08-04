@@ -41,6 +41,8 @@ app/main 负责创建并连接以上所有外层实现。
 
 领域层只使用 TypeScript，不允许导入 React、OpenAPI 或请求库。字段使用前端统一的
 camelCase；snake_case 被限制在 HTTP 适配器中。
+Action 领域模型只包含发现和展示所需的声明，不包含后端私有的 executor 或 handler
+binding。
 
 ### `application`
 

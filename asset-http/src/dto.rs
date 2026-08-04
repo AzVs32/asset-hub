@@ -1,12 +1,12 @@
-use asset_core::domain::{Checksum, DirectoryPath, Resource, ResourceContent};
+use asset_core::domain::{
+    ActionAccess, Checksum, DirectoryActionDefinition, DirectoryPath, Resource,
+    ResourceActionContentDelivery, ResourceActionDefinition, ResourceContent,
+};
 use asset_core::port::{
     DirectoryActionOutput, DirectoryKindDefinition, ResourceActionOutput, ResourceKindDefinition,
 };
 use asset_core::service::{DirectoryActions, ResourceActions};
-use asset_plugin_api::{
-    ActionAccess, ActionExecutorKind, DirectoryActionDefinition, PluginDiagnostic,
-    PluginDiagnosticSeverity, ResourceActionContentDelivery, ResourceActionDefinition,
-};
+use asset_plugin_api::protocol::{PluginDiagnostic, PluginDiagnosticSeverity};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 #[allow(unused_imports)]
@@ -270,8 +270,6 @@ pub(crate) struct ResourceActionDefinitionResponse {
     pub(crate) label: String,
     /// 动作说明。
     pub(crate) description: Option<String>,
-    /// 执行器声明。
-    pub(crate) executor: ResourceActionExecutorResponse,
     /// 访问边界。
     pub(crate) access: String,
     /// 动作所需数据。
@@ -289,7 +287,6 @@ pub(crate) struct DirectoryActionDefinitionResponse {
     pub(crate) id: String,
     pub(crate) label: String,
     pub(crate) description: Option<String>,
-    pub(crate) executor: ResourceActionExecutorResponse,
     pub(crate) access: String,
     pub(crate) requires: DirectoryActionRequirementsResponse,
     pub(crate) output: ResourceActionOutputContractResponse,
@@ -314,10 +311,6 @@ impl From<&DirectoryActionDefinition> for DirectoryActionDefinitionResponse {
             id: action.id().as_str().to_string(),
             label: action.label().to_string(),
             description: action.description().map(str::to_string),
-            executor: ResourceActionExecutorResponse {
-                kind: action_executor_text(action.executor()).to_string(),
-                handler: action.handler().map(str::to_string),
-            },
             access: action_access_text(action.access()).to_string(),
             requires: DirectoryActionRequirementsResponse {
                 children: action.requirements().children,
@@ -336,13 +329,6 @@ impl From<&DirectoryActionDefinition> for DirectoryActionDefinitionResponse {
             },
         }
     }
-}
-
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub(crate) struct ResourceActionExecutorResponse {
-    #[serde(rename = "type")]
-    pub(crate) kind: String,
-    pub(crate) handler: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -386,10 +372,6 @@ impl From<&ResourceActionDefinition> for ResourceActionDefinitionResponse {
             id: action.id().as_str().to_string(),
             label: action.label().to_string(),
             description: action.description().map(str::to_string),
-            executor: ResourceActionExecutorResponse {
-                kind: action_executor_text(action.executor()).to_string(),
-                handler: action.handler().map(str::to_string),
-            },
             access: action_access_text(action.access()).to_string(),
             requires: ResourceActionRequirementsResponse {
                 content: action.requirements().content,
@@ -410,13 +392,6 @@ impl From<&ResourceActionDefinition> for ResourceActionDefinitionResponse {
                 extensions: action.content_matcher().extensions().to_vec(),
             },
         }
-    }
-}
-
-fn action_executor_text(executor: ActionExecutorKind) -> &'static str {
-    match executor {
-        ActionExecutorKind::Builtin => "builtin",
-        ActionExecutorKind::Plugin => "plugin",
     }
 }
 

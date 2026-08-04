@@ -1,13 +1,9 @@
-//! Host 执行插件时采用的资源限制策略。
-//!
-//! 该策略不是插件 handler 的线协议，而是 Host 创建执行环境时使用的受校验配置值对象。
+//! Extism Host 执行外部插件时采用的资源限制策略。
 
-use serde::{Deserialize, Serialize};
 use std::fmt;
 
-/// Limits applied consistently by the action service and the Wasm host.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+/// Limits applied by Extism compilation, calls, and Host ABI adapters.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginExecutionPolicy {
     max_content_bytes: u64,
     max_inline_content_bytes: u64,
@@ -20,7 +16,7 @@ pub struct PluginExecutionPolicy {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InvalidPluginExecutionPolicy(&'static str);
+pub(crate) struct InvalidPluginExecutionPolicy(&'static str);
 
 impl fmt::Display for InvalidPluginExecutionPolicy {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -32,7 +28,7 @@ impl std::error::Error for InvalidPluginExecutionPolicy {}
 
 impl PluginExecutionPolicy {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub(crate) fn new(
         max_content_bytes: u64,
         max_inline_content_bytes: u64,
         max_content_read_bytes: u64,

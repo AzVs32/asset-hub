@@ -6,7 +6,7 @@ use crate::state::HttpState;
 use asset_core::port::{ResourceKindRegistry, SecurityAuditRepository};
 use asset_core::service::ResourceService;
 use asset_core::service::{AuthorizationService, UserService};
-use asset_plugin_api::PluginWebAssets;
+use asset_runtime::PluginWebAssets;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderName, Method, StatusCode};

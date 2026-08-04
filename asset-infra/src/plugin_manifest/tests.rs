@@ -13,7 +13,10 @@ fn rejects_manifest_with_missing_fields() {
             "version": "0.1.0",
             "publisher": "test"
           },
-          "runtime": {"type": "builtin"},
+          "runtime": {
+            "type": "extism",
+            "plugin_api": "asset-hub.plugin-api@1"
+          },
           "permissions": {"allow": ["resource.read"]}
         }
         "#,
@@ -27,16 +30,52 @@ fn rejects_manifest_with_missing_fields() {
 }
 
 #[test]
+fn external_package_rejects_host_owned_builtin_runtime() {
+    let root = unique_temp_path("builtin-runtime");
+    let package = root.join("invalid.builtin");
+    std::fs::create_dir_all(&package).unwrap();
+    std::fs::write(
+        package.join(PLUGIN_MANIFEST_FILE_NAME),
+        r#"
+        {
+          "manifest_version": 1,
+          "plugin": {
+            "id": "invalid.builtin",
+            "name": "Invalid Builtin",
+            "version": "0.1.0",
+            "publisher": "test"
+          },
+          "runtime": {"type": "builtin"},
+          "capabilities": {},
+          "permissions": {"allow": ["resource.read"]}
+        }
+        "#,
+    )
+    .unwrap();
+
+    let error = PluginCatalog::load(&root).unwrap_err();
+
+    assert!(error.to_string().contains("unknown variant `builtin`"));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn catalog_discovers_packages_and_rejects_directory_id_mismatch() {
     let root = unique_temp_path("directory-id");
     let package = root.join("wrong-name");
     std::fs::create_dir_all(&package).unwrap();
     std::fs::write(
         package.join(PLUGIN_MANIFEST_FILE_NAME),
-        minimal_builtin_manifest("actual.name"),
+        minimal_extism_manifest("actual.name"),
     )
     .unwrap();
-    write_lock(&package, "actual.name", None, None);
+    std::fs::write(package.join(PLUGIN_WASM_FILE_NAME), []).unwrap();
+    write_lock(
+        &package,
+        "actual.name",
+        Some("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
+        None,
+    );
 
     let error = PluginCatalog::load(&root).unwrap_err();
 
@@ -195,7 +234,7 @@ fn catalog_keeps_verified_wasm_and_web_snapshots() {
         .iter()
         .find(|plugin| plugin.manifest.plugin_id() == "snapshot.plugin")
         .unwrap();
-    assert_eq!(loaded.wasm.as_deref(), Some(original_wasm.as_slice()));
+    assert_eq!(loaded.wasm.as_ref(), original_wasm);
     assert_eq!(
         loaded.web_assets[Path::new(PLUGIN_WEB_ENTRY_FILE_NAME)].as_ref(),
         original_html
@@ -211,13 +250,15 @@ fn catalog_keeps_verified_wasm_and_web_snapshots() {
 #[test]
 fn catalog_rejects_web_assets_without_root_index() {
     let root = unique_temp_path("missing-index");
-    let package = create_package(
-        &root,
-        "assets.only",
-        minimal_builtin_manifest("assets.only"),
-    );
+    let package = create_package(&root, "assets.only", minimal_extism_manifest("assets.only"));
+    std::fs::write(package.join(PLUGIN_WASM_FILE_NAME), []).unwrap();
     std::fs::write(package.join("viewer.html"), b"viewer").unwrap();
-    write_lock(&package, "assets.only", None, None);
+    write_lock(
+        &package,
+        "assets.only",
+        Some("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
+        None,
+    );
 
     let error = PluginCatalog::load(&root).unwrap_err();
 
@@ -230,18 +271,6 @@ fn create_package(root: &Path, id: &str, manifest: String) -> PathBuf {
     std::fs::create_dir_all(&package).unwrap();
     std::fs::write(package.join(PLUGIN_MANIFEST_FILE_NAME), manifest).unwrap();
     package
-}
-
-fn minimal_builtin_manifest(id: &str) -> String {
-    format!(
-        r#"{{
-          "manifest_version": 1,
-          "plugin": {{"id": "{id}", "name": "Test", "version": "0.1.0", "publisher": "test"}},
-          "runtime": {{"type": "builtin"}},
-          "capabilities": {{"kinds": [], "resource_actions": []}},
-          "permissions": {{"allow": ["resource.read"]}}
-        }}"#
-    )
 }
 
 fn minimal_extism_manifest(id: &str) -> String {

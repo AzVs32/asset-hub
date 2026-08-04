@@ -4,11 +4,13 @@
 
 use crate::{
     CoreError,
-    domain::{DirectoryId, DirectoryKind},
+    domain::{
+        DirectoryAction, DirectoryActionAccess, DirectoryActionDefinition,
+        DirectoryActionRequirements, DirectoryId, DirectoryKind,
+    },
     port::LocatedDirectory,
 };
 use asset_plugin_api::protocol::directory::DirectoryPluginActionOutput;
-use asset_plugin_api::{DirectoryAction, DirectoryActionAccess, DirectoryActionDefinition};
 use async_trait::async_trait;
 use serde_json::Value;
 
@@ -16,9 +18,8 @@ use serde_json::Value;
 pub struct DirectoryActionRequest {
     directory: LocatedDirectory,
     action: DirectoryAction,
-    handler: Option<String>,
     access: DirectoryActionAccess,
-    requirements: asset_plugin_api::DirectoryActionRequirements,
+    requirements: DirectoryActionRequirements,
     input: Value,
 }
 
@@ -26,15 +27,13 @@ impl DirectoryActionRequest {
     pub fn new(
         directory: LocatedDirectory,
         action: DirectoryAction,
-        handler: Option<impl Into<String>>,
         access: DirectoryActionAccess,
-        requirements: asset_plugin_api::DirectoryActionRequirements,
+        requirements: DirectoryActionRequirements,
         input: Value,
     ) -> Self {
         Self {
             directory,
             action,
-            handler: handler.map(Into::into),
             access,
             requirements,
             input,
@@ -46,13 +45,10 @@ impl DirectoryActionRequest {
     pub fn action(&self) -> &DirectoryAction {
         &self.action
     }
-    pub fn handler(&self) -> Option<&str> {
-        self.handler.as_deref()
-    }
     pub fn access(&self) -> DirectoryActionAccess {
         self.access
     }
-    pub fn requirements(&self) -> &asset_plugin_api::DirectoryActionRequirements {
+    pub fn requirements(&self) -> &DirectoryActionRequirements {
         &self.requirements
     }
     pub fn input(&self) -> &Value {

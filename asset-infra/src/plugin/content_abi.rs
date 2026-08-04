@@ -1,11 +1,14 @@
 use asset_core::CoreError;
-use asset_core::domain::{ContentVerificationStatus, StorageKey};
+use asset_core::domain::{
+    ActionAccess, ContentVerificationStatus, ResourceActionContentDelivery, StorageKey,
+};
 use asset_core::port::{BlobStorage, ResourceActionRequest};
-use asset_plugin_api::{
-    PluginActionRequest, PluginChecksum, PluginContentBytes, PluginContentRange,
+use asset_plugin_api::abi::content::PluginContentRange;
+use asset_plugin_api::manifest::PluginPermissions;
+use asset_plugin_api::protocol::{
+    PluginActionAccess, PluginActionRequest, PluginChecksum, PluginContentBytes,
     PluginContentReference, PluginContentReferenceEncoding, PluginContentVerificationStatus,
-    PluginExecutionPolicy, PluginInlineContentEncoding, PluginPermissions, PluginResource,
-    PluginResourceContent,
+    PluginInlineContentEncoding, PluginResource, PluginResourceContent,
 };
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
@@ -16,6 +19,7 @@ use std::sync::{Arc, Mutex};
 
 use super::directory_abi::{HostDirectoryResolver, host_functions as directory_host_functions};
 use super::permissions::manifest_for_plugin;
+use super::policy::PluginExecutionPolicy;
 
 #[derive(Clone)]
 pub(super) struct HostContentResolver {
@@ -148,7 +152,7 @@ impl HostContentResolver {
     ) -> Result<Option<ContentLease>, CoreError> {
         if !matches!(
             request.content_delivery(),
-            asset_plugin_api::ResourceActionContentDelivery::Reference
+            ResourceActionContentDelivery::Reference
         ) {
             return Ok(None);
         }
@@ -306,7 +310,7 @@ pub(super) fn build_payload(
     let content_ref = resource.content();
     let content = if matches!(
         request.content_delivery(),
-        asset_plugin_api::ResourceActionContentDelivery::Reference
+        ResourceActionContentDelivery::Reference
     ) {
         None
     } else {
@@ -317,7 +321,7 @@ pub(super) fn build_payload(
     };
     let content_ref_payload = if matches!(
         request.content_delivery(),
-        asset_plugin_api::ResourceActionContentDelivery::Reference
+        ResourceActionContentDelivery::Reference
     ) {
         content_ref.map(|_| PluginContentReference {
             encoding: PluginContentReferenceEncoding::Handle,
@@ -331,7 +335,10 @@ pub(super) fn build_payload(
 
     PluginActionRequest {
         action: request.action().as_str().to_string(),
-        access: request.access(),
+        access: match request.access() {
+            ActionAccess::ReadOnly => PluginActionAccess::ReadOnly,
+            ActionAccess::ReadWrite => PluginActionAccess::ReadWrite,
+        },
         input: request.input().clone(),
         resource: PluginResource {
             id: resource.id().to_string(),

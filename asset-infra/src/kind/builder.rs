@@ -1,21 +1,29 @@
-use super::directory_action_registry::push_directory_action;
+use super::directory_action_registry::{push_directory_action, push_directory_action_definition};
 use super::*;
 use crate::plugin_manifest::PluginCatalog;
 use asset_core::CoreError;
-use asset_core::domain::ResourceKind;
+use asset_core::domain::{ResourceActionDefinition, ResourceContentMatcher, ResourceKind};
 use asset_core::port::ResourceKindDefinition;
-use asset_plugin_api::{ResourceActionDefinition, ResourceContentMatcher, ResourceKindCapability};
+use asset_plugin_api::manifest::ResourceKindCapability;
+
+use super::normalization::content_matcher;
 
 pub fn directory_action_registry_from_catalog(
     catalog: &PluginCatalog,
 ) -> Result<DefaultDirectoryActionRegistry, CoreError> {
     let mut actions = Vec::new();
+    for action in &catalog.builtin.directory_actions {
+        push_directory_action_definition(
+            &mut actions,
+            action.definition.clone(),
+            "builtin:core.directory",
+        )?;
+    }
     for plugin in catalog.plugins() {
         for action in &plugin.manifest.capabilities.directory_actions {
             push_directory_action(
                 &mut actions,
                 action,
-                &plugin.manifest.runtime,
                 &format!("plugin:{}", plugin.manifest.plugin_id()),
             )?;
         }
@@ -45,36 +53,16 @@ pub(super) fn build_registries_with_catalog(
     catalog: &PluginCatalog,
 ) -> Result<(Vec<ResourceKindDefinition>, Vec<ResourceActionDefinition>), CoreError> {
     let mut definitions = Vec::new();
-    let official_manifests = catalog
-        .plugins()
-        .iter()
-        .filter(|plugin| plugin.manifest_path.is_none())
-        .collect::<Vec<_>>();
-    let plugin_manifests = catalog
-        .plugins()
-        .iter()
-        .filter(|plugin| plugin.manifest_path.is_some())
-        .collect::<Vec<_>>();
-
-    for manifest in &official_manifests {
-        for config_definition in &manifest.manifest.capabilities.kinds {
-            push_definition(
-                &mut definitions,
-                definition_from_manifest_kind(
-                    config_definition,
-                    format!("plugin:{}", manifest.manifest.plugin_id()),
-                )?,
-            )?;
-        }
+    for definition in &catalog.builtin.resource_kinds {
+        push_definition(&mut definitions, definition.clone())?;
     }
-
-    for manifest in &plugin_manifests {
-        for config_definition in &manifest.manifest.capabilities.kinds {
+    for plugin in catalog.plugins() {
+        for config_definition in &plugin.manifest.capabilities.kinds {
             push_definition(
                 &mut definitions,
                 definition_from_manifest_kind(
                     config_definition,
-                    format!("plugin:{}", manifest.manifest.plugin_id()),
+                    format!("plugin:{}", plugin.manifest.plugin_id()),
                 )?,
             )?;
         }
@@ -82,34 +70,22 @@ pub(super) fn build_registries_with_catalog(
     validate_kind_hierarchy(&definitions)?;
 
     let mut actions = Vec::new();
-    for manifest in &official_manifests {
-        for action in &manifest.manifest.capabilities.resource_actions {
-            let action_definitions = action_definitions_with_inherited_content(
-                &definitions,
-                action,
-                &manifest.manifest.runtime,
-            )?;
-            for action_definition in action_definitions {
-                push_action_definition(
-                    &mut actions,
-                    action_definition,
-                    format!("plugin:{}", manifest.manifest.plugin_id()),
-                )?;
-            }
-        }
+    for action in &catalog.builtin.resource_actions {
+        push_action_definition(
+            &mut actions,
+            action.definition.clone(),
+            "builtin:core.resource",
+        )?;
     }
-    for manifest in &plugin_manifests {
-        for action in &manifest.manifest.capabilities.resource_actions {
-            let action_definitions = action_definitions_with_inherited_content(
-                &definitions,
-                action,
-                &manifest.manifest.runtime,
-            )?;
+    for plugin in catalog.plugins() {
+        for action in &plugin.manifest.capabilities.resource_actions {
+            let action_definitions =
+                action_definitions_with_inherited_content(&definitions, action)?;
             for action_definition in action_definitions {
                 push_action_definition(
                     &mut actions,
                     action_definition,
-                    format!("plugin:{}", manifest.manifest.plugin_id()),
+                    format!("plugin:{}", plugin.manifest.plugin_id()),
                 )?;
             }
         }
@@ -146,7 +122,7 @@ pub(super) fn definition_from_manifest_kind(
         label,
         config.parent.as_deref(),
         config.supports_content,
-        config.detect.clone(),
+        content_matcher(&config.detect),
         source,
     )
 }

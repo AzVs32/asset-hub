@@ -1,17 +1,20 @@
 use asset_core::CoreError;
+use asset_core::domain::{ActionAccess, ResourceActionAppliesTo, ResourceContentMatcher};
 use asset_core::port::{
     BlobStorage, DirectoryActionExecutor, DirectoryActionOutput, DirectoryActionRequest,
     DirectoryKindRegistry, DirectoryQuery, ResourceActionExecutor, ResourceActionOutput,
     ResourceActionRequest, ResourceKindDefinition, ResourceKindRegistry, ResourceQuery,
 };
+use asset_plugin_api::manifest::{
+    DirectoryActionCapability, PluginPermission, PluginPermissions, PluginRuntime,
+    ResourceActionCapability,
+};
 use asset_plugin_api::protocol::directory::{
     DirectoryActionEffect, DirectoryPluginActionOutput, PluginDirectory,
     PluginDirectoryActionRequest,
 };
-use asset_plugin_api::{
-    DirectoryActionCapability, PluginActionFailure, PluginActionOutput, PluginActionRequest,
-    PluginExecutionPolicy, PluginPermission, PluginPermissions, PluginRuntime,
-    ResourceActionCapability, ResourceContentMatcher,
+use asset_plugin_api::protocol::{
+    PluginActionAccess, PluginActionFailure, PluginActionOutput, PluginActionRequest,
 };
 use async_trait::async_trait;
 use extism::{CompiledPlugin, Plugin};
@@ -26,7 +29,9 @@ use super::frame_url::resolve_plugin_output_urls;
 use super::permissions::{
     host_diagnostic, validate_external_permissions, verify_content_budget, verify_permissions,
 };
+use super::policy::PluginExecutionPolicy;
 use crate::config::PluginPermissionGrants;
+use crate::kind::normalization::resource_action_applies_to;
 use crate::plugin_manifest::PluginCatalog;
 
 /// Extism 资源动作执行器。
@@ -93,21 +98,10 @@ impl ExtismActionExecutor {
         let mut bindings = Vec::new();
         let mut directory_bindings = Vec::new();
 
-        for loaded_manifest in catalog
-            .plugins()
-            .iter()
-            .filter(|plugin| plugin.manifest_path.is_some())
-        {
+        for loaded_manifest in catalog.plugins() {
             let manifest = &loaded_manifest.manifest;
-            let PluginRuntime::Extism { wasi, .. } = &manifest.runtime else {
-                continue;
-            };
-            let wasm = loaded_manifest.wasm.as_ref().ok_or_else(|| {
-                CoreError::configuration(format!(
-                    "plugin `{}` has no verified Wasm artifact",
-                    manifest.plugin_id()
-                ))
-            })?;
+            let PluginRuntime::Extism { wasi, .. } = &manifest.runtime;
+            let wasm = &loaded_manifest.wasm;
             validate_external_permissions(manifest.plugin_id(), &manifest.permissions, &grants)?;
             let host_content = HostContentResolver {
                 storage: blob_storage.clone(),
@@ -314,10 +308,7 @@ pub(super) fn bind_action(
             .map(|definition| definition.kind().as_str().to_owned())
             .collect()
     };
-    let mut applies_to = action
-        .applies_to
-        .to_definition()
-        .with_kinds(applicable_kinds);
+    let mut applies_to = resource_action_applies_to(action).with_kinds(applicable_kinds);
     if applies_to.content().is_empty() && !action.applies_to.kinds.is_empty() {
         applies_to = applies_to.with_content_matcher(detect_for_action_kinds(
             kind_registry.definitions(),
@@ -373,7 +364,6 @@ impl ResourceActionExecutor for ExtismActionExecutor {
         let Some(binding) = self.bindings.iter().find(|binding| {
             let content = request.resource().content();
             binding.action == request.action().as_str()
-                && request.handler() == Some(binding.handler.as_str())
                 && binding.applies_to.matches_resource(
                     request.resource().kind().as_str(),
                     content.and_then(|content| content.mime_type()),
@@ -469,7 +459,6 @@ impl DirectoryActionExecutor for ExtismActionExecutor {
         let kind = request.directory().directory().kind();
         let Some(binding) = self.directory_bindings.iter().find(|binding| {
             binding.action == request.action().as_str()
-                && request.handler() == Some(binding.handler.as_str())
                 && (binding.kinds.is_empty()
                     || binding
                         .kinds
@@ -487,10 +476,8 @@ impl DirectoryActionExecutor for ExtismActionExecutor {
                 binding.plugin_id, binding.action
             )));
         }
-        if matches!(
-            request.access(),
-            asset_plugin_api::DirectoryActionAccess::ReadWrite
-        ) && !binding.permissions.directory_write()
+        if matches!(request.access(), ActionAccess::ReadWrite)
+            && !binding.permissions.directory_write()
             && !binding.permissions.directory_create_child()
         {
             return Err(CoreError::configuration(format!(
@@ -513,7 +500,7 @@ impl DirectoryActionExecutor for ExtismActionExecutor {
         let directory = request.directory();
         let payload = PluginDirectoryActionRequest {
             action: request.action().as_str().to_string(),
-            access: request.access(),
+            access: plugin_action_access(request.access()),
             input: request.input().clone(),
             directory: PluginDirectory {
                 id: directory.id().to_string(),
@@ -551,10 +538,17 @@ pub(super) struct ActionBinding {
     pub(super) plugin_id: String,
     pub(super) action: String,
     pub(super) handler: String,
-    pub(super) applies_to: asset_plugin_api::ResourceActionAppliesTo,
+    pub(super) applies_to: ResourceActionAppliesTo,
     pub(super) permissions: PluginPermissions,
     pub(super) compiled: Arc<CompiledPlugin>,
     pub(super) host_content: HostContentResolver,
+}
+
+fn plugin_action_access(access: ActionAccess) -> PluginActionAccess {
+    match access {
+        ActionAccess::ReadOnly => PluginActionAccess::ReadOnly,
+        ActionAccess::ReadWrite => PluginActionAccess::ReadWrite,
+    }
 }
 
 #[derive(Clone)]
@@ -697,7 +691,7 @@ pub(super) fn call_extism(
             &binding.plugin_id,
             &binding.action,
             host_diagnostic(
-                asset_plugin_api::diagnostic::codes::INPUT_LIMIT_EXCEEDED,
+                asset_plugin_api::protocol::diagnostic::codes::INPUT_LIMIT_EXCEEDED,
                 format!(
                     "serialized input is {} bytes, limit is {}",
                     input.len(),
@@ -716,7 +710,7 @@ pub(super) fn call_extism(
             &binding.plugin_id,
             &binding.action,
             host_diagnostic(
-                asset_plugin_api::diagnostic::codes::OUTPUT_LIMIT_EXCEEDED,
+                asset_plugin_api::protocol::diagnostic::codes::OUTPUT_LIMIT_EXCEEDED,
                 format!(
                     "plugin output is {} bytes, limit is {}",
                     output.len(),
@@ -731,7 +725,7 @@ pub(super) fn call_extism(
             &binding.plugin_id,
             &binding.action,
             host_diagnostic(
-                asset_plugin_api::diagnostic::codes::INVALID_OUTPUT,
+                asset_plugin_api::protocol::diagnostic::codes::INVALID_OUTPUT,
                 format!("plugin returned invalid JSON: {error}"),
             ),
         )
@@ -742,7 +736,7 @@ pub(super) fn call_extism(
                 &binding.plugin_id,
                 &binding.action,
                 host_diagnostic(
-                    asset_plugin_api::diagnostic::codes::INVALID_OUTPUT,
+                    asset_plugin_api::protocol::diagnostic::codes::INVALID_OUTPUT,
                     format!("plugin returned an invalid failure diagnostic: {error}"),
                 ),
             )
@@ -758,7 +752,7 @@ pub(super) fn call_extism(
             &binding.plugin_id,
             &binding.action,
             host_diagnostic(
-                asset_plugin_api::diagnostic::codes::INVALID_OUTPUT,
+                asset_plugin_api::protocol::diagnostic::codes::INVALID_OUTPUT,
                 format!("plugin returned invalid action output: {error}"),
             ),
         )
@@ -766,7 +760,7 @@ pub(super) fn call_extism(
     if output.effects.iter().any(|effect| {
         matches!(
             effect,
-            asset_plugin_api::PluginActionEffect::ReplaceContent(_)
+            asset_plugin_api::protocol::PluginActionEffect::ReplaceContent(_)
         )
     }) && !binding.permissions.resource_content_replace()
     {
@@ -774,7 +768,7 @@ pub(super) fn call_extism(
             &binding.plugin_id,
             &binding.action,
             host_diagnostic(
-                asset_plugin_api::diagnostic::codes::PERMISSION_DENIED,
+                asset_plugin_api::protocol::diagnostic::codes::PERMISSION_DENIED,
                 "plugin returned replace_content without resource.content.replace permission",
             ),
         ));

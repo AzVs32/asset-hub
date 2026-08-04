@@ -1,6 +1,7 @@
 //! 完整 Manifest 文档的跨字段校验测试。
 
 use super::*;
+use crate::protocol::PLUGIN_API_VERSION;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -52,6 +53,14 @@ fn manifest_requires_current_versions() {
         .as_object_mut()
         .unwrap()
         .remove("plugin_api");
+    assert!(serde_json::from_value::<PluginManifest>(document).is_err());
+}
+
+#[test]
+fn manifest_rejects_host_owned_builtin_runtime() {
+    let mut document = manifest_document();
+    document["runtime"] = serde_json::json!({"type": "builtin"});
+
     assert!(serde_json::from_value::<PluginManifest>(document).is_err());
 }
 

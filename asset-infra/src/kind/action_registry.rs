@@ -1,8 +1,9 @@
 use asset_core::CoreError;
+use asset_core::domain::{ResourceActionDefinition, ResourceContentMatcher};
 use asset_core::port::{ResourceActionRegistry, ResourceKindDefinition};
-use asset_plugin_api::{
-    PluginRuntime, ResourceActionCapability, ResourceActionDefinition, ResourceContentMatcher,
-};
+use asset_plugin_api::manifest::ResourceActionCapability;
+
+use super::normalization::resource_action_definition;
 
 /// 默认资源动作注册表。
 #[derive(Debug, Clone)]
@@ -19,9 +20,8 @@ impl ResourceActionRegistry for DefaultResourceActionRegistry {
 pub(super) fn action_definitions_with_inherited_content(
     definitions: &[ResourceKindDefinition],
     action: &ResourceActionCapability,
-    runtime: &PluginRuntime,
 ) -> Result<Vec<ResourceActionDefinition>, CoreError> {
-    let definition = action.to_definition(runtime);
+    let definition = resource_action_definition(action);
     if !should_inherit_detect_for_action(action) || !definition.content_matcher().is_empty() {
         return Ok(vec![definition]);
     }

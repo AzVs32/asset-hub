@@ -4,12 +4,12 @@
 //! 即使 action 声明为 read_write，也不能直接访问仓储或对象存储。
 
 use crate::CoreError;
-use crate::domain::{Resource, ResourceId, ResourceKind, StorageKey};
-use crate::port::DirectoryLocation;
-use asset_plugin_api::{
-    PluginActionOutput, ResourceAction, ResourceActionAccess, ResourceActionContentDelivery,
-    ResourceActionDefinition,
+use crate::domain::{
+    Resource, ResourceAction, ResourceActionAccess, ResourceActionContentDelivery,
+    ResourceActionDefinition, ResourceId, ResourceKind, StorageKey,
 };
+use crate::port::DirectoryLocation;
+use asset_plugin_api::protocol::PluginActionOutput;
 use async_trait::async_trait;
 use bytes::Bytes;
 use serde_json::Value;
@@ -21,7 +21,6 @@ pub struct ResourceActionRequest {
     directory: DirectoryLocation,
     storage_key: StorageKey,
     action: ResourceAction,
-    handler: Option<String>,
     access: ResourceActionAccess,
     content_delivery: ResourceActionContentDelivery,
     input: Value,
@@ -34,23 +33,29 @@ impl ResourceActionRequest {
         directory: DirectoryLocation,
         storage_key: StorageKey,
         action: ResourceAction,
-        handler: Option<impl Into<String>>,
         access: ResourceActionAccess,
-        content_delivery: ResourceActionContentDelivery,
         input: Value,
-        content: Option<Bytes>,
     ) -> Self {
         Self {
             resource,
             directory,
             storage_key,
             action,
-            handler: handler.map(Into::into),
             access,
-            content_delivery,
+            content_delivery: ResourceActionContentDelivery::Auto,
             input,
-            content,
+            content: None,
         }
+    }
+
+    pub fn with_content(
+        mut self,
+        delivery: ResourceActionContentDelivery,
+        content: Option<Bytes>,
+    ) -> Self {
+        self.content_delivery = delivery;
+        self.content = content;
+        self
     }
 
     pub fn resource(&self) -> &Resource {
@@ -67,10 +72,6 @@ impl ResourceActionRequest {
 
     pub fn action(&self) -> &ResourceAction {
         &self.action
-    }
-
-    pub fn handler(&self) -> Option<&str> {
-        self.handler.as_deref()
     }
 
     pub fn access(&self) -> ResourceActionAccess {

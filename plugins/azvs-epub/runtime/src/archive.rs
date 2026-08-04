@@ -1,5 +1,5 @@
 use super::*;
-use asset_plugin_api::{
+use asset_plugin_api::protocol::{
     MediaView, PluginActionRequest, PluginContentReferenceEncoding, PluginInlineContentEncoding,
     PluginMediaEncoding,
 };
@@ -35,7 +35,7 @@ pub(super) fn epub_content_bytes(input: &PluginActionRequest) -> FnResult<Vec<u8
 
 #[cfg(target_arch = "wasm32")]
 pub(super) fn read_content_reference(reference: &str) -> FnResult<Vec<u8>> {
-    asset_plugin_api::content::guest::read_all(reference, MAX_EPUB_BYTES, READ_CHUNK_BYTES)
+    asset_plugin_api::abi::content::guest::read_all(reference, MAX_EPUB_BYTES, READ_CHUNK_BYTES)
 }
 
 #[cfg(not(target_arch = "wasm32"))]

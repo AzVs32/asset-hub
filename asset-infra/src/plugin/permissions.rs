@@ -1,13 +1,13 @@
 use asset_core::CoreError;
+use asset_core::domain::{ActionAccess, ResourceActionContentDelivery};
 use asset_core::port::ResourceActionRequest;
-use asset_plugin_api::{
-    PluginDiagnostic, PluginDiagnosticSeverity, PluginExecutionPolicy, PluginPermission,
-    PluginPermissions,
-};
+use asset_plugin_api::manifest::{PluginPermission, PluginPermissions};
+use asset_plugin_api::protocol::{PluginDiagnostic, PluginDiagnosticSeverity};
 use extism::{Manifest, Wasm};
 use std::path::{Component, Path};
 
 use super::executor::ActionBinding;
+use super::policy::PluginExecutionPolicy;
 use crate::config::PluginPermissionGrants;
 
 pub(super) fn validate_external_permissions(
@@ -78,10 +78,8 @@ pub(super) fn verify_permissions(
             binding.plugin_id, binding.action
         )));
     }
-    if matches!(
-        request.access(),
-        asset_plugin_api::ResourceActionAccess::ReadWrite
-    ) && !binding.permissions.resource_write()
+    if matches!(request.access(), ActionAccess::ReadWrite)
+        && !binding.permissions.resource_write()
         && !binding.permissions.resource_content_replace()
         && !binding.permissions.resource_derived_asset_write()
     {
@@ -92,7 +90,7 @@ pub(super) fn verify_permissions(
     }
     if !matches!(
         request.content_delivery(),
-        asset_plugin_api::ResourceActionContentDelivery::Auto
+        ResourceActionContentDelivery::Auto
     ) && !binding
         .permissions
         .allows(PluginPermission::ResourceContentRead)
@@ -112,7 +110,7 @@ pub(super) fn verify_content_budget(
 ) -> Result<(), CoreError> {
     if matches!(
         request.content_delivery(),
-        asset_plugin_api::ResourceActionContentDelivery::Auto
+        ResourceActionContentDelivery::Auto
     ) {
         return Ok(());
     }
@@ -131,7 +129,7 @@ pub(super) fn verify_content_budget(
             &binding.plugin_id,
             &binding.action,
             host_diagnostic(
-                asset_plugin_api::diagnostic::codes::CONTENT_LIMIT_EXCEEDED,
+                asset_plugin_api::protocol::diagnostic::codes::CONTENT_LIMIT_EXCEEDED,
                 format!(
                     "resource content is {size} bytes, plugin limit is {}",
                     policy.max_content_bytes()

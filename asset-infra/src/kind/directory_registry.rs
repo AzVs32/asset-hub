@@ -2,7 +2,7 @@ use crate::plugin_manifest::PluginCatalog;
 use asset_core::CoreError;
 use asset_core::domain::DirectoryKind;
 use asset_core::port::{DirectoryKindDefinition, DirectoryKindRegistry};
-use asset_plugin_api::DirectoryKindCapability;
+use asset_plugin_api::manifest::DirectoryKindCapability;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone)]
@@ -77,6 +77,9 @@ pub(super) fn directory_registry_from_catalog(
     catalog: &PluginCatalog,
 ) -> Result<DefaultDirectoryKindRegistry, CoreError> {
     let mut definitions = Vec::new();
+    for definition in &catalog.builtin.directory_kinds {
+        push_definition(&mut definitions, definition.clone())?;
+    }
     for plugin in catalog.plugins() {
         for capability in &plugin.manifest.capabilities.directory_kinds {
             push_definition(

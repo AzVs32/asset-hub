@@ -26,7 +26,53 @@ describe("OpenApiAssetGateway URL boundary", () => {
     expect(gateway.assetUrl("plugins/example/view.html")).toBeNull();
   });
 
-  it("executes handlerless builtin actions through the action endpoint", async () => {
+  it("maps action discovery responses without backend-private bindings", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          items: [
+            {
+              kind: "core:resource",
+              parent: null,
+              ancestors: [],
+              label: "Resource",
+              supports_content: true,
+              source: "builtin:core.resource",
+              detect: null,
+              actions: [
+                {
+                  id: "core.resource.download",
+                  label: "Download",
+                  description: null,
+                  access: "read_only",
+                  requires: { content: true, content_delivery: "reference" },
+                  output: { view: ["download"] },
+                  ui: { group: "open", order: 10, locations: ["resource_detail"] },
+                  applies_to: {
+                    kinds: ["core:resource"],
+                    mime_types: [],
+                    extensions: [],
+                  },
+                },
+              ],
+            },
+          ],
+        }),
+      ),
+    );
+    const absoluteGateway = new OpenApiAssetGateway("http://localhost/api");
+
+    const kinds = await absoluteGateway.listResourceKinds();
+
+    expect(kinds[0]?.actions[0]).toMatchObject({
+      id: "core.resource.download",
+      access: "read_only",
+      output: { views: ["download"] },
+    });
+  });
+
+  it("executes actions without exposing host bindings", async () => {
     const fetchMock = vi.fn(async (_request: Request) =>
       Response.json({
         resource_id: "resource-1",
@@ -40,7 +86,6 @@ describe("OpenApiAssetGateway URL boundary", () => {
     const item = resource([
       action({
         id: "legacy.content",
-        executor: { type: "builtin", handler: null },
         output: { views: [] },
       }),
     ]);

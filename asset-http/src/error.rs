@@ -12,7 +12,7 @@ pub(crate) struct HttpError {
     status: StatusCode,
     message: String,
     diagnostic: Option<Box<HttpDiagnostic>>,
-    diagnostics: Vec<asset_plugin_api::PluginDiagnostic>,
+    diagnostics: Vec<asset_plugin_api::protocol::PluginDiagnostic>,
 }
 
 #[derive(Debug)]
@@ -136,7 +136,7 @@ impl From<CoreError> for HttpError {
 }
 
 fn plugin_status(code: &str) -> StatusCode {
-    use asset_plugin_api::diagnostic::codes;
+    use asset_plugin_api::protocol::diagnostic::codes;
     match code {
         codes::INVALID_INPUT | codes::CONTENT_RANGE_INVALID => StatusCode::BAD_REQUEST,
         codes::PERMISSION_DENIED => StatusCode::FORBIDDEN,

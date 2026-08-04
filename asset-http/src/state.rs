@@ -4,7 +4,7 @@ use asset_core::port::ResourceKindRegistry;
 use asset_core::service::{
     AuthorizationService, ResourceService, SecuredResourceService, WorkspaceScope,
 };
-use asset_plugin_api::PluginWebAssets;
+use asset_runtime::PluginWebAssets;
 use std::sync::Arc;
 
 /// HTTP handler 共享状态。

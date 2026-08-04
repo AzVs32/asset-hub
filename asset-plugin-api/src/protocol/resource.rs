@@ -3,7 +3,7 @@
 //! 这些 DTO 是 Host 调用插件 Resource Action handler 时传递的线协议，不承担
 //! Action 可用性判断、权限决策或持久化等领域职责。
 
-use crate::ResourceActionAccess;
+use crate::protocol::PluginActionAccess;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -11,7 +11,7 @@ use serde_json::Value;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PluginActionRequest {
     pub action: String,
-    pub access: ResourceActionAccess,
+    pub access: PluginActionAccess,
     #[serde(default)]
     pub input: Value,
     pub resource: PluginResource,

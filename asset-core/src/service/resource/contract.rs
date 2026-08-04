@@ -3,8 +3,8 @@
 //! 本模块只描述调用方与资源应用服务交换的数据，不包含仓储或对象存储编排。
 
 use crate::domain::{Checksum, DirectoryPath, ResourceId, ResourceKind};
+use crate::domain::{ResourceAction, ResourceActionDefinition};
 use crate::port::BlobByteStream;
-use asset_plugin_api::{ResourceAction, ResourceActionDefinition};
 
 /// 创建持久化上传会话。
 #[derive(Debug, Clone)]

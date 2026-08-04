@@ -1,5 +1,5 @@
+use crate::plugin::PluginExecutionPolicy;
 use asset_core::CoreError;
-use asset_plugin_api::PluginExecutionPolicy;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 

@@ -4,7 +4,9 @@
 //! 公开输入/输出位于 `contract`，资源生命周期、内容和动作分别由对应模块编排。
 
 use crate::CoreError;
-use crate::domain::{Resource, ResourceKind, StorageKey};
+use crate::domain::{
+    Resource, ResourceActionDefinition, ResourceActionPolicy, ResourceKind, StorageKey,
+};
 use crate::port::{
     BlobStorage, DirectoryActionExecutor, DirectoryActionRegistry, DirectoryIndex,
     DirectoryKindRegistry, DirectoryLocation, DirectoryStorage, DirectoryStore,
@@ -12,7 +14,6 @@ use crate::port::{
     ResourceRepository, StorageScanner, UploadSessionRepository,
 };
 use crate::service::DirectoryService;
-use asset_plugin_api::{PluginExecutionPolicy, ResourceActionDefinition};
 use std::sync::Arc;
 
 mod action;
@@ -53,7 +54,7 @@ pub struct ResourceService {
     storage_scanner: Arc<dyn StorageScanner>,
     kind_registry: Arc<dyn ResourceKindRegistry>,
     action_ports: Option<ResourceActionPorts>,
-    plugin_execution_policy: Arc<PluginExecutionPolicy>,
+    resource_action_policy: Arc<ResourceActionPolicy>,
     storage_key_locks: Arc<StorageKeyLocks>,
     upload_sessions: Arc<dyn UploadSessionRepository>,
     upload_locks: Arc<UploadLocks>,
@@ -142,7 +143,7 @@ impl ResourceService {
     /// 创建资源应用服务。
     pub fn new(
         ports: ResourceServicePorts,
-        plugin_execution_policy: Arc<PluginExecutionPolicy>,
+        resource_action_policy: Arc<ResourceActionPolicy>,
     ) -> Self {
         let ResourceServicePorts {
             repository,
@@ -175,7 +176,7 @@ impl ResourceService {
             storage_scanner,
             kind_registry,
             action_ports,
-            plugin_execution_policy,
+            resource_action_policy,
             storage_key_locks: Arc::new(StorageKeyLocks::default()),
             upload_sessions,
             upload_locks: Arc::new(UploadLocks::default()),

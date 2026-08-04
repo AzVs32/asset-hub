@@ -1,7 +1,7 @@
 use super::*;
-use asset_plugin_api::{
-    JsonView, PluginActionFailure, PluginActionOutput, PluginActionRequest, PluginDiagnostic,
-    PluginFrameView, PluginView,
+use asset_plugin_api::protocol::{
+    JsonView, PLUGIN_API_VERSION, PluginActionFailure, PluginActionOutput, PluginActionRequest,
+    PluginDiagnostic, PluginFrameView, PluginView,
 };
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -23,7 +23,7 @@ pub(super) fn structured_action_result(result: FnResult<String>) -> FnResult<Str
         Ok(output) => Ok(output),
         Err(error) => Ok(serde_json::to_string(&PluginActionFailure::new(
             PluginDiagnostic::error(
-                asset_plugin_api::diagnostic::codes::ACTION_FAILED,
+                asset_plugin_api::protocol::diagnostic::codes::ACTION_FAILED,
                 error.0.to_string(),
             ),
         ))?),
@@ -63,13 +63,13 @@ pub(super) fn render_epub_payload(input: String) -> FnResult<String> {
         Some(_) => return Err(Error::msg("unsupported EPUB operation").into()),
         None => {
             let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&json!({
-                "plugin_api": asset_plugin_api::PLUGIN_API_VERSION,
+                "plugin_api": PLUGIN_API_VERSION,
                 "resource_id": &request.resource.id,
                 "resource_name": &request.resource.name,
                 "action": &request.action,
             }))?);
             PluginActionOutput::new(PluginView::PluginFrame(PluginFrameView {
-                plugin_api: asset_plugin_api::PLUGIN_API_VERSION.to_string(),
+                plugin_api: PLUGIN_API_VERSION.to_string(),
                 title: Some(request.resource.name.clone()),
                 url: format!("index.html#payload={payload}"),
             }))

@@ -1,7 +1,6 @@
 import type { PluginViewKind } from "./plugin";
 
 export type ActionAccess = "read_only" | "read_write";
-export type ActionExecutor = "builtin" | "plugin";
 export type ContentDelivery = "auto" | "inline" | "reference";
 
 export interface ResourceContent {
@@ -17,7 +16,6 @@ export interface ResourceAction {
   label: string;
   description: string | null;
   access: ActionAccess;
-  executor: { type: ActionExecutor; handler: string | null };
   requires: { content: boolean; contentDelivery: ContentDelivery };
   output: { views: PluginViewKind[] };
   ui: { group: string | null; order: number | null; locations: string[] };
@@ -29,7 +27,6 @@ export interface DirectoryAction {
   label: string;
   description: string | null;
   access: ActionAccess;
-  executor: { type: ActionExecutor; handler: string | null };
   requires: { children: boolean; resources: boolean };
   output: { views: PluginViewKind[] };
   ui: { group: string | null; order: number | null; locations: string[] };

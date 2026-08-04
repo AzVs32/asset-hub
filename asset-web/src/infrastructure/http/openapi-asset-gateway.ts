@@ -448,10 +448,6 @@ function mapDirectoryAction(value: ApiDirectoryAction): DirectoryAction {
     label: value.label,
     description: value.description ?? null,
     access: enumValue(value.access, ["read_only", "read_write"]),
-    executor: {
-      type: enumValue(value.executor.type, ["builtin", "plugin"]),
-      handler: value.executor.handler ?? null,
-    },
     requires: { children: value.requires.children, resources: value.requires.resources },
     output: { views: value.output.view.filter(isPluginViewKind) },
     ui: {
@@ -507,10 +503,6 @@ function mapAction(value: ApiAction): ResourceAction {
     label: value.label,
     description: value.description ?? null,
     access: enumValue(value.access, ["read_only", "read_write"]),
-    executor: {
-      type: enumValue(value.executor.type, ["builtin", "plugin"]),
-      handler: value.executor.handler ?? null,
-    },
     requires: {
       content: value.requires.content,
       contentDelivery: enumValue(value.requires.content_delivery, ["auto", "inline", "reference"]),

@@ -70,11 +70,10 @@ fn initial_action_returns_plugin_frame() {
         .unwrap()
         .strip_prefix("index.html#payload=")
         .unwrap();
-    let payload: Value =
-        serde_json::from_slice(&URL_SAFE_NO_PAD.decode(encoded).unwrap()).unwrap();
+    let payload: Value = serde_json::from_slice(&URL_SAFE_NO_PAD.decode(encoded).unwrap()).unwrap();
     assert_eq!(
         payload["plugin_api"],
-        asset_plugin_api::PLUGIN_API_VERSION
+        asset_plugin_api::protocol::PLUGIN_API_VERSION
     );
 }
 

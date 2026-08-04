@@ -1,5 +1,6 @@
 //! Directory aggregate application service.
 
+use crate::domain::{DirectoryAction, DirectoryActionAccess, DirectoryActionDefinition};
 use crate::{
     CoreError,
     domain::{Directory, DirectoryId, DirectoryKind, DirectoryPath},
@@ -10,7 +11,6 @@ use crate::{
     },
 };
 use asset_plugin_api::protocol::directory::DirectoryActionEffect;
-use asset_plugin_api::{DirectoryAction, DirectoryActionAccess, DirectoryActionDefinition};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::str::FromStr;
@@ -209,7 +209,6 @@ impl DirectoryService {
             .execute(DirectoryActionRequest::new(
                 located,
                 command.action.clone(),
-                definition.handler(),
                 definition.access(),
                 definition.requirements().clone(),
                 command.input,

@@ -1,6 +1,5 @@
 use super::*;
-use crate::domain::ResourceKind;
-use asset_plugin_api::{ResourceActionDefinition, ResourceContentMatcher};
+use crate::domain::{ResourceActionDefinition, ResourceContentMatcher, ResourceKind};
 
 struct ActionRegistry(Vec<ResourceActionDefinition>);
 

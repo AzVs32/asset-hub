@@ -4,15 +4,18 @@ use super::permissions::validate_external_permissions;
 use crate::config::PluginPermissionGrants;
 use asset_core::domain::StorageKey;
 use asset_core::port::BlobStorage;
-use asset_plugin_api::{
-    PluginActionOutput, PluginExecutionPolicy, PluginFrameView, PluginPermissions, PluginView,
+use asset_plugin_api::manifest::PluginPermissions;
+use asset_plugin_api::protocol::{
+    PLUGIN_API_VERSION, PluginActionOutput, PluginFrameView, PluginView,
 };
 use std::sync::{Arc, Mutex};
+
+use super::policy::PluginExecutionPolicy;
 
 #[test]
 fn plugin_frame_relative_url_is_resolved_to_plugin_web_route() {
     let mut output = PluginActionOutput::new(PluginView::PluginFrame(PluginFrameView {
-        plugin_api: asset_plugin_api::PLUGIN_API_VERSION.to_string(),
+        plugin_api: PLUGIN_API_VERSION.to_string(),
         title: Some("demo.md".to_string()),
         url: "index.html#payload=abc".to_string(),
     }));

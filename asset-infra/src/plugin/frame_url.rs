@@ -1,19 +1,18 @@
 use asset_core::CoreError;
-use asset_plugin_api::{PluginActionOutput, PluginView};
+use asset_plugin_api::protocol::{PLUGIN_API_VERSION, PluginActionOutput, PluginView};
 
 pub(super) fn resolve_plugin_output_urls(
     output: &mut PluginActionOutput,
     plugin_id: &str,
 ) -> Result<(), CoreError> {
     if let PluginView::PluginFrame(frame) = &mut output.view {
-        if frame.plugin_api != asset_plugin_api::PLUGIN_API_VERSION {
+        if frame.plugin_api != PLUGIN_API_VERSION {
             return Err(CoreError::plugin(
                 plugin_id,
                 "plugin_frame",
                 format!(
                     "plugin_frame requires plugin API `{}`, got `{}`",
-                    asset_plugin_api::PLUGIN_API_VERSION,
-                    frame.plugin_api
+                    PLUGIN_API_VERSION, frame.plugin_api
                 ),
             ));
         }

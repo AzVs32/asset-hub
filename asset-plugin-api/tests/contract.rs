@@ -1,8 +1,9 @@
+use asset_plugin_api::manifest::{MANIFEST_VERSION, PluginManifest};
 use asset_plugin_api::protocol::directory::{
     DirectoryPluginActionOutput, PluginDirectoryActionRequest,
 };
-use asset_plugin_api::{
-    MANIFEST_VERSION, PluginActionFailure, PluginActionOutput, PluginActionRequest, PluginManifest,
+use asset_plugin_api::protocol::{
+    PLUGIN_API_VERSION, PluginActionFailure, PluginActionOutput, PluginActionRequest,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -37,7 +38,7 @@ fn manifest_document() -> Value {
         },
         "runtime": {
             "type": "extism",
-            "plugin_api": asset_plugin_api::PLUGIN_API_VERSION
+            "plugin_api": PLUGIN_API_VERSION
         },
         "capabilities": {
             "resource_actions": [{
@@ -135,10 +136,11 @@ fn manifest_accepts_directory_actions_with_target_specific_requirements() {
     ]);
 
     let manifest = canonical_manifest(&value).unwrap();
-    let action = manifest.capabilities.directory_actions[0].to_definition(&manifest.runtime);
-    assert!(action.requirements().children);
-    assert!(action.requirements().resources);
-    assert_eq!(action.ui().locations, ["directory_toolbar"]);
+    let action = &manifest.capabilities.directory_actions[0];
+    let requirements = action.requires.as_ref().unwrap();
+    assert!(requirements.children);
+    assert!(requirements.resources);
+    assert_eq!(action.ui.as_ref().unwrap().locations, ["directory_toolbar"]);
 }
 
 #[test]
@@ -186,6 +188,7 @@ fn directory_request_and_output_have_separate_wire_effects() {
 
 #[test]
 fn request_and_output_wire_shapes_match_the_current_goldens() {
+    assert_golden_round_trip::<PluginManifest>(include_str!("fixtures/manifest-v1.json"));
     assert_golden_round_trip::<PluginActionRequest>(include_str!(
         "fixtures/action-request-inline-v1.json"
     ));

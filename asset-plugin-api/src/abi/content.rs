@@ -2,7 +2,7 @@
 //!
 //! 本模块定义 Host function 名称、范围值对象，并在 `extism-guest` 特性下提供 guest
 //! 侧安全调用封装。Resource Action 的 JSON 内容引用定义在协议层；二者统一由
-//! `PLUGIN_API_VERSION` 版本化。
+//! [`crate::protocol::PLUGIN_API_VERSION`] 版本化。
 
 use serde::{Deserialize, Deserializer, Serialize};
 

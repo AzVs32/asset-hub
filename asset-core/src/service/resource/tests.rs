@@ -2,8 +2,10 @@ use super::action::resolved_content_delivery;
 use super::content::hex_sha256;
 use super::*;
 use crate::domain::{
-    AccessContext, Checksum, ChecksumKind, ContentVerificationStatus, Directory, DirectoryId,
-    DirectoryPath, ResourceId, UploadId, UploadSession, UploadStatus, User, UserId, UserRole,
+    AccessContext, Checksum, ChecksumKind, ContentVerificationStatus, Directory,
+    DirectoryActionAccess, DirectoryActionDefinition, DirectoryId, DirectoryPath,
+    ResourceActionAccess, ResourceActionDefinition, ResourceActionPolicy, ResourceContentMatcher,
+    ResourceId, UploadId, UploadSession, UploadStatus, User, UserId, UserRole,
 };
 use crate::port::{
     BlobByteStream, DirectoryActionExecutor, DirectoryActionOutput, DirectoryActionRegistry,
@@ -16,10 +18,9 @@ use crate::port::{
 use asset_plugin_api::protocol::directory::{
     DirectoryActionEffect, DirectoryPluginActionOutput, UpdateDirectoryEffect,
 };
-use asset_plugin_api::{
-    DirectoryActionAccess, DirectoryActionDefinition, PluginActionEffect, PluginActionOutput,
-    PluginExecutionPolicy, PluginReplacementEncoding, PluginView, ReplaceContentEffect,
-    ResourceActionAccess, ResourceActionDefinition, ResourceContentMatcher, TextView,
+use asset_plugin_api::protocol::{
+    PluginActionEffect, PluginActionOutput, PluginReplacementEncoding, PluginView,
+    ReplaceContentEffect, TextView,
 };
 use async_trait::async_trait;
 use base64::Engine;
@@ -1085,16 +1086,13 @@ fn service() -> (
         actions: vec![
             ResourceActionDefinition::new("test.document.extract", "Extract document")
                 .with_kinds(["doc:markdown", "core:document"])
-                .with_handler("extract_document")
                 .with_requirements(content_requirements())
                 .with_output(output_contract(["text"])),
             ResourceActionDefinition::new("resource.inspect", "Inspect resource")
                 .with_kinds(["doc:markdown"])
-                .with_handler("inspect_resource")
                 .with_output(output_contract(["json"])),
             ResourceActionDefinition::new("azvs.markdown.render", "Read Markdown")
                 .with_kinds(["core:document"])
-                .with_handler("render_markdown")
                 .with_requirements(content_requirements())
                 .with_output(output_contract(["plugin_frame"]))
                 .with_content_matcher(
@@ -1104,7 +1102,6 @@ fn service() -> (
                 ),
             ResourceActionDefinition::new("azvs.markdown.update", "Edit Markdown")
                 .with_kinds(["core:document"])
-                .with_handler("update_markdown")
                 .with_requirements(content_requirements())
                 .with_access(ResourceActionAccess::ReadWrite)
                 .with_output(output_contract(["text"]))
@@ -1136,14 +1133,13 @@ fn service() -> (
                 actions: vec![
                     DirectoryActionDefinition::new("test.directory.move", "Move directory")
                         .with_kinds(["core:directory"])
-                        .with_handler("move_directory")
                         .with_access(DirectoryActionAccess::ReadWrite)
                         .with_output(output_contract(["text"])),
                 ],
             }),
             Arc::new(StaticDirectoryActionExecutor),
         ),
-        Arc::new(test_plugin_execution_policy()),
+        Arc::new(test_resource_action_policy()),
     );
 
     (service, repository, blob_storage)
@@ -1415,31 +1411,21 @@ fn storage_reconciliation_does_not_delete_resources_after_stream_failure() {
     );
 }
 
-fn content_requirements() -> asset_plugin_api::ResourceActionRequirements {
-    asset_plugin_api::ResourceActionRequirements {
+fn content_requirements() -> crate::domain::ResourceActionRequirements {
+    crate::domain::ResourceActionRequirements {
         content: true,
-        content_delivery: asset_plugin_api::ResourceActionContentDelivery::Inline,
+        content_delivery: crate::domain::ResourceActionContentDelivery::Inline,
     }
 }
 
-fn test_plugin_execution_policy() -> PluginExecutionPolicy {
-    PluginExecutionPolicy::new(
-        64 * 1024 * 1024,
-        4 * 1024 * 1024,
-        4 * 1024 * 1024,
-        8 * 1024 * 1024,
-        8 * 1024 * 1024,
-        8,
-        4096,
-        20,
-    )
-    .unwrap()
+fn test_resource_action_policy() -> ResourceActionPolicy {
+    ResourceActionPolicy::new(64 * 1024 * 1024, 4 * 1024 * 1024).unwrap()
 }
 
 fn output_contract<const N: usize>(
     views: [&str; N],
-) -> asset_plugin_api::ResourceActionOutputContract {
-    asset_plugin_api::ResourceActionOutputContract {
+) -> crate::domain::ResourceActionOutputContract {
+    crate::domain::ResourceActionOutputContract {
         view: views.into_iter().map(str::to_string).collect(),
     }
 }
@@ -1540,8 +1526,8 @@ fn stream_upload_command(
 
 #[test]
 fn action_content_delivery_never_loads_unrequested_content() {
-    use asset_plugin_api::{ResourceActionContentDelivery, ResourceActionRequirements};
-    let policy = test_plugin_execution_policy();
+    use crate::domain::{ResourceActionContentDelivery, ResourceActionRequirements};
+    let policy = test_resource_action_policy();
 
     let without_content = ResourceActionDefinition::new("inspect", "Inspect");
     assert_eq!(
@@ -1613,7 +1599,7 @@ fn service_with_registry(
             kind_registry,
             Arc::new(InMemoryUploadSessionRepository::default()),
         ),
-        Arc::new(test_plugin_execution_policy()),
+        Arc::new(test_resource_action_policy()),
     );
 
     (service, repository, blob_storage)

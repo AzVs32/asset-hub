@@ -1,13 +1,14 @@
-pub mod builtin;
+mod builtin;
 
 use asset_core::CoreError;
 use asset_core::port::{
-    DirectoryActionExecutor, DirectoryActionOutput, DirectoryActionRequest, ResourceActionExecutor,
-    ResourceActionOutput, ResourceActionRequest,
+    DirectoryActionExecutor, DirectoryActionOutput, DirectoryActionRequest, DirectoryKindRegistry,
+    ResourceActionExecutor, ResourceActionOutput, ResourceActionRequest, ResourceKindRegistry,
 };
 use async_trait::async_trait;
 
 use crate::plugin::ExtismActionExecutor;
+use crate::plugin_manifest::PluginCatalog;
 
 /// Default action executor used by Asset Hub infrastructure.
 #[derive(Debug, Clone)]
@@ -17,9 +18,16 @@ pub struct DefaultResourceActionExecutor {
 }
 
 impl DefaultResourceActionExecutor {
-    pub fn new(extism: ExtismActionExecutor) -> Self {
+    pub fn new(
+        catalog: &PluginCatalog,
+        kind_registry: &dyn ResourceKindRegistry,
+        extism: ExtismActionExecutor,
+    ) -> Self {
         Self {
-            builtin: builtin::BuiltinResourceActionExecutor,
+            builtin: builtin::BuiltinResourceActionExecutor::new(
+                &catalog.builtin.resource_actions,
+                kind_registry,
+            ),
             extism,
         }
     }
@@ -31,7 +39,7 @@ impl ResourceActionExecutor for DefaultResourceActionExecutor {
         &self,
         request: ResourceActionRequest,
     ) -> Result<ResourceActionOutput, CoreError> {
-        if builtin::is_builtin_handler(request.handler()) {
+        if self.builtin.supports(&request) {
             return self.builtin.execute(request).await;
         }
 
@@ -46,9 +54,16 @@ pub struct DefaultDirectoryActionExecutor {
 }
 
 impl DefaultDirectoryActionExecutor {
-    pub fn new(extism: ExtismActionExecutor) -> Self {
+    pub fn new(
+        catalog: &PluginCatalog,
+        kind_registry: &dyn DirectoryKindRegistry,
+        extism: ExtismActionExecutor,
+    ) -> Self {
         Self {
-            builtin: builtin::BuiltinDirectoryActionExecutor,
+            builtin: builtin::BuiltinDirectoryActionExecutor::new(
+                &catalog.builtin.directory_actions,
+                kind_registry,
+            ),
             extism,
         }
     }
@@ -60,7 +75,7 @@ impl DirectoryActionExecutor for DefaultDirectoryActionExecutor {
         &self,
         request: DirectoryActionRequest,
     ) -> Result<DirectoryActionOutput, CoreError> {
-        if builtin::is_builtin_directory_handler(request.handler()) {
+        if self.builtin.supports(&request) {
             return self.builtin.execute(request).await;
         }
         DirectoryActionExecutor::execute(&self.extism, request).await

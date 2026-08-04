@@ -32,6 +32,8 @@ behavior by Radix, and formatting/linting by Biome.
 A backend plugin contributes actions through its manifest. The host discovers the available
 actions from each resource response, so adding or changing a plugin does not require editing or
 rebuilding `asset-web` when it uses an existing slot and view kind.
+Action discovery exposes matching, access, output, and UI metadata only; executor selection and
+handler bindings remain private to the backend Host.
 
 Stable slots:
 

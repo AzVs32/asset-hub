@@ -1,4 +1,6 @@
+use crate::PluginWebAssets;
 use asset_core::CoreError;
+use asset_core::domain::ResourceActionPolicy;
 use asset_core::port::{DirectoryKindRegistry, ResourceKindRegistry, SecurityAuditRepository};
 use asset_core::service::{
     AuthorizationService, DirectoryService, ResourceService, ResourceServicePorts, UserService,
@@ -14,7 +16,6 @@ use asset_infra::password::Argon2PasswordHasher;
 use asset_infra::plugin::{ExtismActionExecutor, ExtismHost};
 use asset_infra::plugin_package::PluginCatalog;
 use asset_infra::storage::LocalStorageSync;
-use asset_plugin_api::PluginWebAssets;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -53,7 +54,7 @@ impl AssetRuntime {
         let plugin_catalog = PluginCatalog::load(&infrastructure.config().plugin_packages_path())?;
         tracing::info!(
             elapsed_ms = catalog_started.elapsed().as_millis(),
-            plugins = plugin_catalog.external_plugin_count(),
+            plugins = plugin_catalog.plugin_count(),
             "plugin artifacts verified"
         );
 
@@ -65,6 +66,13 @@ impl AssetRuntime {
         let directory_action_registry =
             Arc::new(directory_action_registry_from_catalog(&plugin_catalog)?);
         let plugin_execution_policy = Arc::new(infrastructure.config().plugin.execution_policy()?);
+        let resource_action_policy = Arc::new(
+            ResourceActionPolicy::new(
+                plugin_execution_policy.max_content_bytes(),
+                plugin_execution_policy.max_inline_content_bytes(),
+            )
+            .map_err(|error| CoreError::configuration(error.to_string()))?,
+        );
 
         let compile_started = Instant::now();
         let extism_action_executor = ExtismActionExecutor::from_catalog(
@@ -80,10 +88,15 @@ impl AssetRuntime {
             ),
         )?;
         let directory_action_executor = Arc::new(DefaultDirectoryActionExecutor::new(
+            &plugin_catalog,
+            directory_kind_registry.as_ref(),
             extism_action_executor.clone(),
         ));
-        let resource_action_executor =
-            Arc::new(DefaultResourceActionExecutor::new(extism_action_executor));
+        let resource_action_executor = Arc::new(DefaultResourceActionExecutor::new(
+            &plugin_catalog,
+            resource_kind_registry.as_ref(),
+            extism_action_executor,
+        ));
         tracing::info!(
             elapsed_ms = compile_started.elapsed().as_millis(),
             "plugins compiled"
@@ -120,7 +133,7 @@ impl AssetRuntime {
                 directory_action_registry.clone(),
                 directory_action_executor.clone(),
             ),
-            plugin_execution_policy,
+            resource_action_policy,
         );
         let user_service = UserService::new(
             infrastructure.user_repository(),
@@ -213,11 +226,7 @@ impl AssetRuntime {
 
 fn plugin_web_assets_from_catalog(catalog: &PluginCatalog) -> Result<PluginWebAssets, CoreError> {
     let mut assets = HashMap::new();
-    for plugin in catalog
-        .plugins()
-        .iter()
-        .filter(|plugin| plugin.is_external())
-    {
+    for plugin in catalog.plugins() {
         if plugin.web_assets().is_empty() {
             continue;
         }

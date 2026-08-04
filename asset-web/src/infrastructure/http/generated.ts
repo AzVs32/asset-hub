@@ -419,7 +419,6 @@ export interface components {
             access: string;
             applies_to: components["schemas"]["DirectoryActionAppliesToResponse"];
             description?: string | null;
-            executor: components["schemas"]["ResourceActionExecutorResponse"];
             id: string;
             label: string;
             output: components["schemas"]["ResourceActionOutputContractResponse"];
@@ -544,8 +543,6 @@ export interface components {
             applies_to: components["schemas"]["ResourceActionAppliesToResponse"];
             /** @description 动作说明。 */
             description?: string | null;
-            /** @description 执行器声明。 */
-            executor: components["schemas"]["ResourceActionExecutorResponse"];
             /** @description 动作 ID。 */
             id: string;
             /** @description 展示名称。 */
@@ -556,10 +553,6 @@ export interface components {
             requires: components["schemas"]["ResourceActionRequirementsResponse"];
             /** @description UI 展示提示。 */
             ui: components["schemas"]["ResourceActionUiResponse"];
-        };
-        ResourceActionExecutorResponse: {
-            handler?: string | null;
-            type: string;
         };
         ResourceActionOutputContractResponse: {
             view: string[];

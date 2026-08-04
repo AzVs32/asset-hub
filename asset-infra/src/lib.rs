@@ -1,9 +1,9 @@
 pub mod action;
+mod builtin_catalog;
 pub mod config;
 mod directory_index;
 pub mod kind;
 pub mod migration;
-mod official_plugins;
 pub mod password;
 pub mod plugin;
 mod plugin_manifest;

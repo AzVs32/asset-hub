@@ -1,27 +1,66 @@
 use asset_core::CoreError;
-use asset_core::domain::Resource;
+use asset_core::domain::{DirectoryAction, Resource, ResourceAction};
 use asset_core::port::{
-    DirectoryActionExecutor, DirectoryActionOutput, DirectoryActionRequest, ResourceActionExecutor,
-    ResourceActionOutput, ResourceActionRequest,
+    DirectoryActionExecutor, DirectoryActionOutput, DirectoryActionRequest, DirectoryKindRegistry,
+    ResourceActionExecutor, ResourceActionOutput, ResourceActionRequest, ResourceKindRegistry,
 };
 use asset_plugin_api::protocol::directory::DirectoryPluginActionOutput;
-use asset_plugin_api::{
-    DirectoryAction, DownloadView, PluginActionOutput, PluginView, ResourceAction,
-};
+use asset_plugin_api::protocol::{DownloadView, PluginActionOutput, PluginView};
 use async_trait::async_trait;
+use std::sync::Arc;
 
-const RESOURCE_DOWNLOAD_HANDLER: &str = "builtin.resource.download";
-const DIRECTORY_DOWNLOAD_HANDLER: &str = "builtin.directory.download";
+use crate::builtin_catalog::{
+    BuiltinDirectoryAction, BuiltinDirectoryHandler, BuiltinResourceAction, BuiltinResourceHandler,
+};
 
-#[derive(Debug, Clone, Copy)]
-pub struct BuiltinResourceActionExecutor;
-
-pub fn is_builtin_handler(handler: Option<&str>) -> bool {
-    matches!(handler, Some(RESOURCE_DOWNLOAD_HANDLER))
+#[derive(Debug, Clone)]
+pub struct BuiltinResourceActionExecutor {
+    bindings: Arc<Vec<BuiltinResourceAction>>,
 }
 
-pub fn is_builtin_directory_handler(handler: Option<&str>) -> bool {
-    matches!(handler, Some(DIRECTORY_DOWNLOAD_HANDLER))
+impl BuiltinResourceActionExecutor {
+    pub(crate) fn new(
+        bindings: &[BuiltinResourceAction],
+        kind_registry: &dyn ResourceKindRegistry,
+    ) -> Self {
+        let bindings = bindings
+            .iter()
+            .map(|binding| {
+                let kinds = kind_registry
+                    .definitions()
+                    .iter()
+                    .filter(|definition| {
+                        binding.definition.kinds().iter().any(|kind| {
+                            kind_registry
+                                .lineage(definition.kind())
+                                .iter()
+                                .any(|candidate| candidate.as_str() == kind)
+                        })
+                    })
+                    .map(|definition| definition.kind().as_str().to_string())
+                    .collect::<Vec<_>>();
+                BuiltinResourceAction {
+                    definition: binding.definition.clone().with_kinds(kinds),
+                    handler: binding.handler,
+                }
+            })
+            .collect();
+        Self {
+            bindings: Arc::new(bindings),
+        }
+    }
+
+    pub(crate) fn supports(&self, request: &ResourceActionRequest) -> bool {
+        let content = request.resource().content();
+        self.bindings.iter().any(|binding| {
+            binding.definition.id() == request.action()
+                && binding.definition.matches_resource(
+                    request.resource().kind().as_str(),
+                    content.and_then(|content| content.mime_type()),
+                    content.map(|_| request.storage_key().as_str()),
+                )
+        })
+    }
 }
 
 #[async_trait]
@@ -30,18 +69,79 @@ impl ResourceActionExecutor for BuiltinResourceActionExecutor {
         &self,
         request: ResourceActionRequest,
     ) -> Result<ResourceActionOutput, CoreError> {
-        execute(
-            request
-                .handler()
-                .ok_or_else(|| CoreError::configuration("built-in action is missing handler"))?,
-            request.resource().clone(),
-            request.action().clone(),
-        )
+        let content = request.resource().content();
+        let binding = self
+            .bindings
+            .iter()
+            .find(|binding| {
+                binding.definition.id() == request.action()
+                    && binding.definition.matches_resource(
+                        request.resource().kind().as_str(),
+                        content.and_then(|content| content.mime_type()),
+                        content.map(|_| request.storage_key().as_str()),
+                    )
+            })
+            .ok_or_else(|| {
+                CoreError::configuration(format!(
+                    "no built-in binding for resource kind `{}` action `{}`",
+                    request.resource().kind(),
+                    request.action()
+                ))
+            })?;
+        match binding.handler {
+            BuiltinResourceHandler::Download => {
+                download(request.resource().clone(), request.action().clone())
+            }
+        }
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct BuiltinDirectoryActionExecutor;
+#[derive(Debug, Clone)]
+pub struct BuiltinDirectoryActionExecutor {
+    bindings: Arc<Vec<BuiltinDirectoryAction>>,
+}
+
+impl BuiltinDirectoryActionExecutor {
+    pub(crate) fn new(
+        bindings: &[BuiltinDirectoryAction],
+        kind_registry: &dyn DirectoryKindRegistry,
+    ) -> Self {
+        let bindings = bindings
+            .iter()
+            .map(|binding| {
+                let kinds = kind_registry
+                    .definitions()
+                    .iter()
+                    .filter(|definition| {
+                        binding.definition.kinds().iter().any(|kind| {
+                            kind_registry
+                                .lineage(definition.kind())
+                                .iter()
+                                .any(|candidate| candidate.as_str() == kind)
+                        })
+                    })
+                    .map(|definition| definition.kind().as_str().to_string())
+                    .collect::<Vec<_>>();
+                BuiltinDirectoryAction {
+                    definition: binding.definition.clone().with_kinds(kinds),
+                    handler: binding.handler,
+                }
+            })
+            .collect();
+        Self {
+            bindings: Arc::new(bindings),
+        }
+    }
+
+    pub(crate) fn supports(&self, request: &DirectoryActionRequest) -> bool {
+        self.bindings.iter().any(|binding| {
+            binding.definition.id() == request.action()
+                && binding
+                    .definition
+                    .matches_directory(request.directory().directory().kind().as_str())
+        })
+    }
+}
 
 #[async_trait]
 impl DirectoryActionExecutor for BuiltinDirectoryActionExecutor {
@@ -49,15 +149,25 @@ impl DirectoryActionExecutor for BuiltinDirectoryActionExecutor {
         &self,
         request: DirectoryActionRequest,
     ) -> Result<DirectoryActionOutput, CoreError> {
-        let handler = request
-            .handler()
-            .ok_or_else(|| CoreError::configuration("built-in action is missing handler"))?;
-        if handler != DIRECTORY_DOWNLOAD_HANDLER {
-            return Err(CoreError::configuration(format!(
-                "unknown built-in directory action handler `{handler}`"
-            )));
+        let binding = self
+            .bindings
+            .iter()
+            .find(|binding| {
+                binding.definition.id() == request.action()
+                    && binding
+                        .definition
+                        .matches_directory(request.directory().directory().kind().as_str())
+            })
+            .ok_or_else(|| {
+                CoreError::configuration(format!(
+                    "no built-in binding for directory kind `{}` action `{}`",
+                    request.directory().directory().kind(),
+                    request.action()
+                ))
+            })?;
+        match binding.handler {
+            BuiltinDirectoryHandler::Download => directory_download(request),
         }
-        directory_download(request)
     }
 }
 
@@ -77,19 +187,6 @@ fn directory_download(request: DirectoryActionRequest) -> Result<DirectoryAction
             filename: Some(filename),
         })),
     ))
-}
-
-fn execute(
-    handler: &str,
-    resource: Resource,
-    action: ResourceAction,
-) -> Result<ResourceActionOutput, CoreError> {
-    match handler {
-        RESOURCE_DOWNLOAD_HANDLER => download(resource, action),
-        _ => Err(CoreError::configuration(format!(
-            "unknown built-in action handler `{handler}`"
-        ))),
-    }
 }
 
 fn download(resource: Resource, action: ResourceAction) -> Result<ResourceActionOutput, CoreError> {

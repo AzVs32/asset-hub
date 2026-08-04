@@ -1,5 +1,5 @@
 use super::*;
-use asset_plugin_api::PluginActionRequest;
+use asset_plugin_api::protocol::PluginActionRequest;
 use extism_pdk::FnResult;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, OnceLock};

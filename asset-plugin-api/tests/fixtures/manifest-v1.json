@@ -1,0 +1,44 @@
+{
+  "manifest_version": 1,
+  "plugin": {
+    "id": "example.plugin",
+    "name": "Example Plugin",
+    "version": "0.1.0",
+    "publisher": "example"
+  },
+  "runtime": {
+    "type": "extism",
+    "wasi": false,
+    "plugin_api": "asset-hub.plugin-api@1"
+  },
+  "capabilities": {
+    "kinds": [],
+    "directory_kinds": [],
+    "resource_actions": [
+      {
+        "id": "example.plugin.action",
+        "label": "Example Action",
+        "handler": "run",
+        "applies_to": {
+          "kinds": [
+            "core:resource"
+          ],
+          "media_types": [],
+          "extensions": []
+        },
+        "access": "read",
+        "views": [
+          "json"
+        ]
+      }
+    ],
+    "directory_actions": []
+  },
+  "permissions": {
+    "allow": [
+      "resource.read"
+    ],
+    "network": false,
+    "filesystem": false
+  }
+}

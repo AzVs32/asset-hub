@@ -12,12 +12,12 @@ use crate::domain::{
     AccessContext, Checksum, DirectoryId, DirectoryKind, DirectoryPath, DirectoryPermission,
     Resource, ResourceId, UploadId, UploadSession,
 };
+use crate::domain::{DirectoryActionAccess, ResourceActionAccess};
 use crate::port::{
     BlobByteStream, DirectoryActionOutput, DirectoryLocation, ListResources, LocatedDirectory,
     LocatedResource, ResourceActionOutput, ResourcePage,
 };
 use crate::service::{AuthorizationService, ExecuteDirectoryAction};
-use asset_plugin_api::{DirectoryActionAccess, ResourceActionAccess};
 use bytes::Bytes;
 use std::collections::VecDeque;
 

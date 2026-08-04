@@ -1,5 +1,5 @@
 use super::*;
-use asset_plugin_api::PLUGIN_LOCK_FILE_NAME;
+use asset_plugin_api::manifest::PLUGIN_LOCK_FILE_NAME;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 

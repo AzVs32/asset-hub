@@ -3,8 +3,7 @@
 //! 该端口描述核心/应用入口如何发现当前运行时支持的资源类型。默认实现可以是内置静态表，
 //! 后续插件系统可以通过同一端口注册和暴露更多 kind。
 
-use crate::domain::ResourceKind;
-use asset_plugin_api::ResourceContentMatcher;
+use crate::domain::{ResourceContentMatcher, ResourceKind};
 use std::collections::HashSet;
 
 /// 资源类型定义。

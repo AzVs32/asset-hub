@@ -9,7 +9,7 @@ fn initial_frame_contains_only_small_routing_payload() {
 
     assert_eq!(
         payload["plugin_api"],
-        asset_plugin_api::PLUGIN_API_VERSION
+        asset_plugin_api::protocol::PLUGIN_API_VERSION
     );
     assert_eq!(payload["resource_id"], resource_json()["id"]);
     assert_eq!(payload["mode"], "read");

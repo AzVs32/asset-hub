@@ -1,9 +1,8 @@
 use super::*;
-use asset_core::domain::ResourceId;
+use asset_core::domain::{ResourceAction, ResourceId};
 use asset_core::port::ResourceActionOutput;
-use asset_plugin_api::{
-    PluginActionOutput, PluginDiagnostic, PluginDiagnosticSeverity, PluginView, ResourceAction,
-    TextView,
+use asset_plugin_api::protocol::{
+    PluginActionOutput, PluginDiagnostic, PluginDiagnosticSeverity, PluginView, TextView,
 };
 use serde_json::json;
 

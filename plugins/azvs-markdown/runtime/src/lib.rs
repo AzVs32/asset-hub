@@ -1,7 +1,8 @@
-use asset_plugin_api::{
-    JsonView, PluginActionEffect, PluginActionFailure, PluginActionOutput, PluginActionRequest,
-    PluginContentReferenceEncoding, PluginDiagnostic, PluginFrameView, PluginInlineContentEncoding,
-    PluginReplacementEncoding, PluginView, ReplaceContentEffect, TextView,
+use asset_plugin_api::protocol::{
+    JsonView, PLUGIN_API_VERSION, PluginActionEffect, PluginActionFailure, PluginActionOutput,
+    PluginActionRequest, PluginContentReferenceEncoding, PluginDiagnostic, PluginFrameView,
+    PluginInlineContentEncoding, PluginReplacementEncoding, PluginView, ReplaceContentEffect,
+    TextView,
 };
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
@@ -28,7 +29,7 @@ fn structured_action_result(result: FnResult<String>) -> FnResult<String> {
         Ok(output) => Ok(output),
         Err(error) => Ok(serde_json::to_string(&PluginActionFailure::new(
             PluginDiagnostic::error(
-                asset_plugin_api::diagnostic::codes::ACTION_FAILED,
+                asset_plugin_api::protocol::diagnostic::codes::ACTION_FAILED,
                 error.0.to_string(),
             ),
         ))?),
@@ -56,13 +57,13 @@ fn update_markdown_payload(input: String) -> FnResult<String> {
 
 fn frame_response(request: &PluginActionRequest, mode: &str) -> FnResult<String> {
     let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&json!({
-        "plugin_api": asset_plugin_api::PLUGIN_API_VERSION,
+        "plugin_api": PLUGIN_API_VERSION,
         "resource_id": request.resource.id,
         "mode": mode,
         "action": request.action,
     }))?);
     let output = PluginActionOutput::new(PluginView::PluginFrame(PluginFrameView {
-        plugin_api: asset_plugin_api::PLUGIN_API_VERSION.to_string(),
+        plugin_api: PLUGIN_API_VERSION.to_string(),
         title: Some(request.resource.name.clone()),
         url: format!("{VIEWER_ENTRYPOINT}#payload={payload}"),
     }));
@@ -215,8 +216,8 @@ fn ensure_content_size(size: u64) -> FnResult<()> {
 
 #[cfg(target_arch = "wasm32")]
 fn read_content_reference_range(reference: &str, offset: u64, length: u64) -> FnResult<Vec<u8>> {
-    let range = asset_plugin_api::PluginContentRange::new(offset, length)?;
-    asset_plugin_api::content::guest::read_range(
+    let range = asset_plugin_api::abi::content::PluginContentRange::new(offset, length)?;
+    asset_plugin_api::abi::content::guest::read_range(
         reference,
         range,
         MAX_MARKDOWN_BYTES,

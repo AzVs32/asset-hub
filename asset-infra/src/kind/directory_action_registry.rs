@@ -1,5 +1,7 @@
-use asset_core::{CoreError, port::DirectoryActionRegistry};
-use asset_plugin_api::{DirectoryActionCapability, DirectoryActionDefinition, PluginRuntime};
+use asset_core::{CoreError, domain::DirectoryActionDefinition, port::DirectoryActionRegistry};
+use asset_plugin_api::manifest::DirectoryActionCapability;
+
+use super::normalization::directory_action_definition;
 
 #[derive(Debug, Clone, Default)]
 pub struct DefaultDirectoryActionRegistry {
@@ -15,10 +17,17 @@ impl DirectoryActionRegistry for DefaultDirectoryActionRegistry {
 pub(super) fn push_directory_action(
     actions: &mut Vec<DirectoryActionDefinition>,
     capability: &DirectoryActionCapability,
-    runtime: &PluginRuntime,
     source: &str,
 ) -> Result<(), CoreError> {
-    let action = capability.to_definition(runtime);
+    let action = directory_action_definition(capability);
+    push_directory_action_definition(actions, action, source)
+}
+
+pub(super) fn push_directory_action_definition(
+    actions: &mut Vec<DirectoryActionDefinition>,
+    action: DirectoryActionDefinition,
+    source: &str,
+) -> Result<(), CoreError> {
     if actions.iter().any(|existing| {
         existing.id() == action.id()
             && (existing.kinds().is_empty()

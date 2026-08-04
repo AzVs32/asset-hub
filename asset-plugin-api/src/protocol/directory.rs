@@ -3,7 +3,7 @@
 //! 本模块只描述目录快照、分页结果和插件可声明的目录副作用。Directory Host ABI
 //! 常量与 guest helper 定义在 [`crate::abi::directory`]。
 
-use crate::{ActionAccess, PluginDiagnostic, PluginView};
+use crate::protocol::{PluginActionAccess, PluginDiagnostic, PluginView};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -11,7 +11,7 @@ use serde_json::Value;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PluginDirectoryActionRequest {
     pub action: String,
-    pub access: ActionAccess,
+    pub access: PluginActionAccess,
     #[serde(default)]
     pub input: Value,
     pub directory: PluginDirectory,
