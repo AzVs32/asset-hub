@@ -7,7 +7,11 @@ use asset_core::domain::{
 use asset_core::port::{DirectoryKindDefinition, ResourceKindDefinition};
 
 const CORE_RESOURCE_DOWNLOAD: &str = "core.resource.download";
+pub(crate) const CORE_RESOURCE_THUMBNAIL: &str = "core.resource.thumbnail";
+pub(crate) const CORE_IMAGE_THUMBNAIL: &str = "core.image.thumbnail";
+pub(crate) const THUMBNAIL_CAPABILITY: &str = "thumbnail";
 const CORE_DIRECTORY_DOWNLOAD: &str = "core.directory.download";
+pub(crate) const CORE_DIRECTORY_THUMBNAIL: &str = "core.directory.thumbnail";
 
 const CORE_RESOURCE_SOURCE: &str = "builtin:core.resource";
 const CORE_DIRECTORY_SOURCE: &str = "builtin:core.directory";
@@ -15,11 +19,14 @@ const CORE_DIRECTORY_SOURCE: &str = "builtin:core.directory";
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum BuiltinResourceHandler {
     Download,
+    ResourceThumbnail,
+    ImageThumbnail,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum BuiltinDirectoryHandler {
     Download,
+    Thumbnail,
 }
 
 #[derive(Debug, Clone)]
@@ -93,41 +100,87 @@ impl BuiltinCatalog {
             CORE_DIRECTORY_SOURCE,
         )];
 
-        let resource_actions = vec![BuiltinResourceAction {
-            definition: ResourceActionDefinition::new(CORE_RESOURCE_DOWNLOAD, "Download")
-                .with_kinds([ResourceKind::DEFAULT])
-                .with_requirements(ResourceActionRequirements {
-                    content: true,
-                    content_delivery: ResourceActionContentDelivery::Reference,
-                })
-                .with_output(ActionOutputContract {
-                    view: vec!["download".to_string()],
-                })
-                .with_ui(ActionDefinitionUi {
-                    group: Some("open".to_string()),
-                    order: Some(10),
-                    locations: vec!["resource_detail".to_string(), "context_menu".to_string()],
-                }),
-            handler: BuiltinResourceHandler::Download,
-        }];
+        let resource_actions = vec![
+            BuiltinResourceAction {
+                definition: ResourceActionDefinition::new(CORE_RESOURCE_DOWNLOAD, "Download")
+                    .with_kinds([ResourceKind::DEFAULT])
+                    .with_requirements(ResourceActionRequirements {
+                        content: true,
+                        content_delivery: ResourceActionContentDelivery::Reference,
+                    })
+                    .with_output(ActionOutputContract {
+                        view: vec!["download".to_string()],
+                    })
+                    .with_ui(ActionDefinitionUi {
+                        group: Some("open".to_string()),
+                        order: Some(10),
+                        locations: vec!["resource_detail".to_string(), "context_menu".to_string()],
+                    }),
+                handler: BuiltinResourceHandler::Download,
+            },
+            BuiltinResourceAction {
+                definition: ResourceActionDefinition::new(CORE_RESOURCE_THUMBNAIL, "Thumbnail")
+                    .with_provides(Some(THUMBNAIL_CAPABILITY))
+                    .with_kinds([ResourceKind::DEFAULT])
+                    .with_output(ActionOutputContract {
+                        view: vec!["media".to_string()],
+                    })
+                    .with_ui(ActionDefinitionUi {
+                        group: Some("preview".to_string()),
+                        order: Some(100),
+                        locations: vec!["resource_list_thumbnail".to_string()],
+                    }),
+                handler: BuiltinResourceHandler::ResourceThumbnail,
+            },
+            BuiltinResourceAction {
+                definition: ResourceActionDefinition::new(CORE_IMAGE_THUMBNAIL, "Image Thumbnail")
+                    .with_provides(Some(THUMBNAIL_CAPABILITY))
+                    .with_kinds(["core:image"])
+                    .with_output(ActionOutputContract {
+                        view: vec!["media".to_string()],
+                    })
+                    .with_ui(ActionDefinitionUi {
+                        group: Some("preview".to_string()),
+                        order: Some(100),
+                        locations: vec!["resource_list_thumbnail".to_string()],
+                    }),
+                handler: BuiltinResourceHandler::ImageThumbnail,
+            },
+        ];
 
-        let directory_actions = vec![BuiltinDirectoryAction {
-            definition: DirectoryActionDefinition::new(CORE_DIRECTORY_DOWNLOAD, "Download")
-                .with_kinds([DirectoryKind::DEFAULT])
-                .with_output(ActionOutputContract {
-                    view: vec!["download".to_string()],
-                })
-                .with_ui(ActionDefinitionUi {
-                    group: Some("open".to_string()),
-                    order: Some(10),
-                    locations: vec![
-                        "directory_toolbar".to_string(),
-                        "directory_context_menu".to_string(),
-                        "directory_detail".to_string(),
-                    ],
-                }),
-            handler: BuiltinDirectoryHandler::Download,
-        }];
+        let directory_actions = vec![
+            BuiltinDirectoryAction {
+                definition: DirectoryActionDefinition::new(CORE_DIRECTORY_DOWNLOAD, "Download")
+                    .with_kinds([DirectoryKind::DEFAULT])
+                    .with_output(ActionOutputContract {
+                        view: vec!["download".to_string()],
+                    })
+                    .with_ui(ActionDefinitionUi {
+                        group: Some("open".to_string()),
+                        order: Some(10),
+                        locations: vec![
+                            "directory_toolbar".to_string(),
+                            "directory_context_menu".to_string(),
+                            "directory_detail".to_string(),
+                        ],
+                    }),
+                handler: BuiltinDirectoryHandler::Download,
+            },
+            BuiltinDirectoryAction {
+                definition: DirectoryActionDefinition::new(CORE_DIRECTORY_THUMBNAIL, "Thumbnail")
+                    .with_provides(Some(THUMBNAIL_CAPABILITY))
+                    .with_kinds([DirectoryKind::DEFAULT])
+                    .with_output(ActionOutputContract {
+                        view: vec!["media".to_string()],
+                    })
+                    .with_ui(ActionDefinitionUi {
+                        group: Some("preview".to_string()),
+                        order: Some(100),
+                        locations: vec!["directory_list_thumbnail".to_string()],
+                    }),
+                handler: BuiltinDirectoryHandler::Thumbnail,
+            },
+        ];
 
         Ok(Self {
             resource_kinds,

@@ -125,6 +125,20 @@ fn manifest_rejects_unknown_fields_at_every_level() {
 }
 
 #[test]
+fn manifest_validates_provided_capability_ids() {
+    let mut document = manifest_document();
+    document["capabilities"]["resource_actions"][0]["provides"] =
+        serde_json::json!("Resource.Thumbnail");
+
+    assert!(
+        serde_json::from_value::<PluginManifest>(document)
+            .unwrap()
+            .validate()
+            .is_err()
+    );
+}
+
+#[test]
 fn manifest_accepts_download_view() {
     let mut document = manifest_document();
     document["capabilities"]["resource_actions"][0]["views"] = serde_json::json!(["download"]);

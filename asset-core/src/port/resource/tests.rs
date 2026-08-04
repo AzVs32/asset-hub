@@ -26,6 +26,50 @@ fn actions_are_selected_from_the_supplied_kind_lineage() {
     assert_eq!(actions[0].id().as_str(), "document.open");
 }
 
+#[test]
+fn a_specific_provider_replaces_the_selected_generic_action() {
+    let registry = ActionRegistry(vec![
+        ResourceActionDefinition::new("core.resource.thumbnail", "Thumbnail")
+            .with_provides(Some("thumbnail"))
+            .with_kinds(["core:resource"]),
+        ResourceActionDefinition::new("azvs.epub.thumbnail", "EPUB Thumbnail")
+            .with_provides(Some("thumbnail"))
+            .with_kinds(["azvs:epub"]),
+    ]);
+    let lineage = vec![
+        ResourceKind::try_new("azvs:epub").unwrap(),
+        ResourceKind::try_new("core:document").unwrap(),
+        ResourceKind::try_new("core:resource").unwrap(),
+    ];
+
+    let actions = registry.actions_for_kinds(&lineage);
+
+    assert_eq!(actions.len(), 1);
+    assert_eq!(actions[0].id().as_str(), "azvs.epub.thumbnail");
+}
+
+#[test]
+fn capability_candidates_keep_fallback_providers_until_resource_filtering() {
+    let registry = ActionRegistry(vec![
+        ResourceActionDefinition::new("core.resource.thumbnail", "Thumbnail")
+            .with_provides(Some("thumbnail"))
+            .with_kinds(["core:resource"]),
+        ResourceActionDefinition::new("azvs.epub.thumbnail", "EPUB Thumbnail")
+            .with_provides(Some("thumbnail"))
+            .with_kinds(["azvs:epub"]),
+    ]);
+    let lineage = vec![
+        ResourceKind::try_new("azvs:epub").unwrap(),
+        ResourceKind::try_new("core:resource").unwrap(),
+    ];
+
+    let candidates = registry.action_candidates_for_kinds(&lineage);
+
+    assert_eq!(candidates.len(), 2);
+    assert_eq!(candidates[0].id().as_str(), "azvs.epub.thumbnail");
+    assert_eq!(candidates[1].id().as_str(), "core.resource.thumbnail");
+}
+
 #[derive(Default)]
 struct KindRegistry {
     definitions: Vec<ResourceKindDefinition>,

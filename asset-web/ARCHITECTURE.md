@@ -172,11 +172,18 @@ ResourceWorkspace
 | `resource_detail` | 详情操作按钮，用户触发 |
 | `context_menu` | 列表行菜单，用户触发 |
 | `resource_list_thumbnail` | 列表缩略图，只读自动执行 |
+| `directory_list_thumbnail` | 目录列表缩略图，只读自动执行 |
 | `resource_detail_panel` | 详情事实区域下方，只读自动执行 |
 | `resource_detail_aside` | 核心编辑器上方，只读自动执行 |
 
 插件只要在 manifest 中声明已有 slot，并返回已有 view kind，就不需要修改前端。完全自定义
 界面通过 `plugin_frame` 加载插件自己的 Web 资源。
+后端会在实际适用性过滤后解析单例能力 provider；例如 EPUB 的
+`azvs.epub.thumbnail` 为 EPUB 提供作用于 Resource Action 的 `thumbnail`。Resource 与
+Directory Action 注册表分别限定该能力的作用域。Host 对图片也遵循相同边界：
+`core.image.thumbnail` 仅适用于 `core:image`；通用 provider 本身始终保持 kind-neutral，
+不根据 MIME 特判图片。相同能力选择 Kind 谱系中最近的 provider，同层冲突会导致 Host
+启动失败，前端只执行后端已经解析出的 provider。
 
 只有以下变化属于前端宿主协议升级：
 

@@ -1,15 +1,18 @@
-use super::directory_action_registry::{push_directory_action, push_directory_action_definition};
+use super::directory_action_registry::{
+    push_directory_action, push_directory_action_definition, validate_directory_action_capabilities,
+};
 use super::*;
 use crate::plugin_manifest::PluginCatalog;
 use asset_core::CoreError;
 use asset_core::domain::{ResourceActionDefinition, ResourceContentMatcher, ResourceKind};
-use asset_core::port::ResourceKindDefinition;
+use asset_core::port::{DirectoryKindRegistry, ResourceKindDefinition};
 use asset_plugin_api::manifest::ResourceKindCapability;
 
 use super::normalization::content_matcher;
 
 pub fn directory_action_registry_from_catalog(
     catalog: &PluginCatalog,
+    kind_registry: &dyn DirectoryKindRegistry,
 ) -> Result<DefaultDirectoryActionRegistry, CoreError> {
     let mut actions = Vec::new();
     for action in &catalog.builtin.directory_actions {
@@ -28,6 +31,7 @@ pub fn directory_action_registry_from_catalog(
             )?;
         }
     }
+    validate_directory_action_capabilities(kind_registry, &actions)?;
     Ok(DefaultDirectoryActionRegistry { actions })
 }
 
@@ -90,6 +94,7 @@ pub(super) fn build_registries_with_catalog(
             }
         }
     }
+    validate_resource_action_capabilities(&definitions, &actions)?;
 
     Ok((definitions, actions))
 }

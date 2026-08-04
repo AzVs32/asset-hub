@@ -367,6 +367,30 @@ impl ResourceService {
             .unwrap_or_default()
     }
 
+    fn action_candidates_for_resource_kind(
+        &self,
+        kind: &ResourceKind,
+    ) -> Vec<ResourceActionDefinition> {
+        let lineage = self.kind_registry.lineage(kind);
+        self.action_ports
+            .as_ref()
+            .map(|ports| ports.registry.action_candidates_for_kinds(&lineage))
+            .unwrap_or_default()
+    }
+
+    fn available_actions_for_resource(&self, resource: &Resource) -> Vec<ResourceActionDefinition> {
+        let applicable = self
+            .action_candidates_for_resource_kind(resource.kind())
+            .into_iter()
+            .filter(|action| resource.content().is_some() || !action.requirements().content)
+            .filter(|action| self.action_matches_resource(action, resource))
+            .collect::<Vec<_>>();
+        self.action_ports
+            .as_ref()
+            .map(|ports| ports.registry.resolve_capability_providers(applicable))
+            .unwrap_or_default()
+    }
+
     /// 返回指定 kind 及其祖先谱系适用的动作定义。
     pub fn describe_kind_actions(&self, kind: &ResourceKind) -> Vec<ResourceActionDefinition> {
         self.actions_for_resource_kind(kind)

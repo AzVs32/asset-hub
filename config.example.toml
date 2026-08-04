@@ -68,6 +68,9 @@ filesystem_write = []
 # Use `capabilities.kinds` for resource types, `capabilities.directory_kinds` for
 # directory types, `capabilities.resource_actions` for resource actions, and
 # `capabilities.directory_actions` for directory actions.
+# A kind-specific action can implement a singleton Host capability with
+# `"provides": "thumbnail"` while retaining its own provider-owned action ID. Resource and
+# directory actions scope that capability independently.
 # Build the fixed `plugin.wasm` runtime and optional root `index.html` plus Web assets. Before
 # startup, run `asset plugin --generate-lock <package>/manifest.json`; startup only verifies the
 # existing `manifest.lock.json` and never modifies the package.

@@ -59,9 +59,10 @@
         }
       },
       {
-        "id": "azvs.epub.cover",
-        "label": "EPUB Cover",
-        "handler": "render_epub_cover",
+        "id": "azvs.epub.thumbnail",
+        "provides": "thumbnail",
+        "label": "EPUB Thumbnail",
+        "handler": "render_epub_thumbnail",
         "applies_to": {
           "kinds": [
             "azvs:epub"

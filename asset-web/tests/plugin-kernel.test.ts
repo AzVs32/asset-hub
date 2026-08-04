@@ -38,10 +38,11 @@ describe("PluginKernel", () => {
     const kernel = new PluginKernel();
     const fallback = action({ id: "media", output: { views: ["media"] } });
     const explicit = action({
-      id: "cover",
+      id: "azvs.epub.thumbnail",
+      provides: "thumbnail",
       ui: { group: null, order: null, locations: [hostSlots.resourceListThumbnail] },
     });
-    expect(kernel.thumbnailAction(resource([fallback, explicit]))?.id).toBe("cover");
+    expect(kernel.thumbnailAction(resource([fallback, explicit]))?.id).toBe("azvs.epub.thumbnail");
   });
 
   it("does not infer a thumbnail action from MIME type or output view", () => {
@@ -56,5 +57,34 @@ describe("PluginKernel", () => {
       verificationError: null,
     };
     expect(kernel.thumbnailAction(item)).toBeNull();
+  });
+
+  it("selects a read-only directory thumbnail provider", () => {
+    const kernel = new PluginKernel();
+    const thumbnail = {
+      id: "core.directory.thumbnail",
+      provides: "thumbnail",
+      label: "Thumbnail",
+      description: null,
+      access: "read_only" as const,
+      requires: { children: false, resources: false },
+      output: { views: ["media" as const] },
+      ui: {
+        group: "preview",
+        order: 100,
+        locations: [hostSlots.directoryListThumbnail],
+      },
+      appliesTo: { kinds: ["core:directory"] },
+    };
+    const directory = {
+      id: "directory-1",
+      path: "books",
+      parentPath: "",
+      name: "books",
+      kind: "core:directory",
+      actions: [thumbnail],
+    };
+
+    expect(kernel.directoryThumbnailAction(directory)?.id).toBe("core.directory.thumbnail");
   });
 });

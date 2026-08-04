@@ -1,10 +1,16 @@
 use super::*;
 use crate::kind::builder::{definition_from_parts, push_definition};
+use crate::kind::directory_action_registry::validate_directory_action_capabilities;
 use crate::plugin_manifest::PluginCatalog;
 use asset_core::CoreError;
-use asset_core::domain::{DirectoryKind, ResourceKind};
-use asset_core::domain::{ResourceActionDefinition, ResourceContentMatcher};
-use asset_core::port::{DirectoryKindRegistry, ResourceActionRegistry, ResourceKindRegistry};
+use asset_core::domain::{
+    ActionOutputContract, ActionUi, DirectoryActionDefinition, DirectoryKind,
+    ResourceActionDefinition, ResourceContentMatcher, ResourceKind,
+};
+use asset_core::port::{
+    DirectoryKindDefinition, DirectoryKindRegistry, ResourceActionRegistry, ResourceKindDefinition,
+    ResourceKindRegistry,
+};
 use std::path::{Path, PathBuf};
 
 fn registries(
@@ -109,25 +115,25 @@ fn registry_includes_host_builtin_resource_kinds() {
             "core:resource",
             "Resource",
             "builtin:core.resource",
-            vec!["core.resource.download"],
+            vec!["core.resource.download", "core.resource.thumbnail"],
         ),
         (
             "core:image",
             "Image",
             "builtin:core.image",
-            vec!["core.resource.download"],
+            vec!["core.resource.download", "core.image.thumbnail"],
         ),
         (
             "core:document",
             "Document",
             "builtin:core.document",
-            vec!["core.resource.download"],
+            vec!["core.resource.download", "core.resource.thumbnail"],
         ),
         (
             "core:video",
             "Video",
             "builtin:core.video",
-            vec!["core.resource.download"],
+            vec!["core.resource.download", "core.resource.thumbnail"],
         ),
     ] {
         let definition = registry.get(&ResourceKind::try_new(kind).unwrap()).unwrap();
@@ -143,7 +149,14 @@ fn registry_includes_host_builtin_resource_kinds() {
                     .any(|definition| definition.id().as_str() == action)
             );
         }
-        assert_eq!(inherited_actions.len(), 1);
+        assert_eq!(inherited_actions.len(), 2);
+        if kind == "core:image" {
+            assert!(
+                inherited_actions
+                    .iter()
+                    .all(|action| action.id().as_str() != "core.resource.thumbnail")
+            );
+        }
     }
 
     let image = registry
@@ -165,8 +178,14 @@ fn registry_exposes_actions_as_global_capabilities() {
     let registry = action_registry(&unique_temp_path("no-plugins")).unwrap();
     let actions = registry.actions();
 
-    assert_eq!(actions.len(), 1);
+    assert_eq!(actions.len(), 3);
     assert_eq!(actions[0].id().as_str(), "core.resource.download");
+    assert_eq!(actions[1].id().as_str(), "core.resource.thumbnail");
+    assert_eq!(actions[2].id().as_str(), "core.image.thumbnail");
+    assert_eq!(
+        actions[2].provides().map(|id| id.as_str()),
+        Some("thumbnail")
+    );
 }
 
 #[test]
@@ -294,6 +313,7 @@ fn registry_loads_format_plugin_as_independent_kind() {
             "kinds": [
               {
                 "kind": "azvs:epub",
+                "parent": "core:document",
                 "label": "EPUB",
                 "supports_content": true,
                 "detect": {
@@ -312,6 +332,20 @@ fn registry_loads_format_plugin_as_independent_kind() {
                 },
                 "access": "read",
                 "views": ["html"]
+              },
+              {
+                "id": "azvs.epub.thumbnail",
+                "provides": "thumbnail",
+                "label": "EPUB Thumbnail",
+                "handler": "render_epub_thumbnail",
+                "applies_to": {
+                  "kinds": ["azvs:epub"]
+                },
+                "access": "read",
+                "views": ["media"],
+                "ui": {
+                  "locations": ["resource_list_thumbnail"]
+                }
               }
             ]
           },
@@ -333,10 +367,21 @@ fn registry_loads_format_plugin_as_independent_kind() {
 
     assert_eq!(epub.label(), "EPUB");
     assert_eq!(epub.source(), "plugin:epub");
+    let actions = actions_for_kind(&registry, &action_registry, epub.kind());
     assert!(
-        actions_for_kind(&registry, &action_registry, epub.kind())
+        actions
             .iter()
             .any(|action| action.id().as_str() == "azvs.epub.render")
+    );
+    assert!(
+        actions
+            .iter()
+            .any(|action| action.id().as_str() == "azvs.epub.thumbnail")
+    );
+    assert!(
+        actions
+            .iter()
+            .all(|action| action.id().as_str() != "core.resource.thumbnail")
     );
     assert!(
         epub.detect()
@@ -509,6 +554,126 @@ fn registry_rejects_duplicate_global_action_ids() {
     );
 
     let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn thumbnail_capabilities_require_a_single_nearest_provider() {
+    let definitions = vec![ResourceKindDefinition::with_source(
+        ResourceKind::default(),
+        "Resource",
+        true,
+        "test",
+    )];
+    let generic = ResourceActionDefinition::new("core.resource.thumbnail", "Thumbnail")
+        .with_provides(Some("thumbnail"))
+        .with_kinds(["core:resource"])
+        .with_output(ActionOutputContract {
+            view: vec!["media".to_string()],
+        })
+        .with_ui(ActionUi {
+            locations: vec!["resource_list_thumbnail".to_string()],
+            ..ActionUi::default()
+        });
+    let competing = ResourceActionDefinition::new("example.resource.thumbnail", "Thumbnail")
+        .with_provides(Some("thumbnail"))
+        .with_kinds(["core:resource"])
+        .with_output(ActionOutputContract {
+            view: vec!["media".to_string()],
+        })
+        .with_ui(ActionUi {
+            locations: vec!["resource_list_thumbnail".to_string()],
+            ..ActionUi::default()
+        });
+    assert!(
+        validate_resource_action_capabilities(&definitions, &[generic.clone(), competing])
+            .unwrap_err()
+            .to_string()
+            .contains("has multiple nearest `thumbnail` providers")
+    );
+    let misplaced = ResourceActionDefinition::new("example.preview", "Preview")
+        .with_kinds(["core:resource"])
+        .with_output(ActionOutputContract {
+            view: vec!["media".to_string()],
+        })
+        .with_ui(ActionUi {
+            locations: vec!["resource_list_thumbnail".to_string()],
+            ..ActionUi::default()
+        });
+    assert!(
+        validate_resource_action_capabilities(&definitions, &[generic, misplaced])
+            .unwrap_err()
+            .to_string()
+            .contains("must pair `resource_list_thumbnail` with capability `thumbnail`")
+    );
+    let unsupported = ResourceActionDefinition::new("example.unsupported", "Unsupported")
+        .with_provides(Some("resource.thumbnail"));
+    assert!(
+        validate_resource_action_capabilities(&definitions, &[unsupported])
+            .unwrap_err()
+            .to_string()
+            .contains("provides unsupported capability `resource.thumbnail`")
+    );
+
+    let generic = DirectoryActionDefinition::new("core.directory.thumbnail", "Thumbnail")
+        .with_provides(Some("thumbnail"))
+        .with_kinds(["core:directory"])
+        .with_output(ActionOutputContract {
+            view: vec!["media".to_string()],
+        })
+        .with_ui(ActionUi {
+            locations: vec!["directory_list_thumbnail".to_string()],
+            ..ActionUi::default()
+        });
+    let competing = DirectoryActionDefinition::new("example.directory.thumbnail", "Thumbnail")
+        .with_provides(Some("thumbnail"))
+        .with_kinds(["core:directory"])
+        .with_output(ActionOutputContract {
+            view: vec!["media".to_string()],
+        })
+        .with_ui(ActionUi {
+            locations: vec!["directory_list_thumbnail".to_string()],
+            ..ActionUi::default()
+        });
+    struct DirectoryKinds(Vec<DirectoryKindDefinition>);
+    impl DirectoryKindRegistry for DirectoryKinds {
+        fn definitions(&self) -> &[DirectoryKindDefinition] {
+            &self.0
+        }
+    }
+    let kinds = DirectoryKinds(vec![DirectoryKindDefinition::with_source(
+        DirectoryKind::default(),
+        "Directory",
+        "test",
+    )]);
+    assert!(
+        validate_directory_action_capabilities(&kinds, &[generic.clone(), competing])
+            .unwrap_err()
+            .to_string()
+            .contains("has multiple nearest `thumbnail` providers")
+    );
+    let misplaced = DirectoryActionDefinition::new("example.preview", "Preview")
+        .with_kinds(["core:directory"])
+        .with_output(ActionOutputContract {
+            view: vec!["media".to_string()],
+        })
+        .with_ui(ActionUi {
+            locations: vec!["directory_list_thumbnail".to_string()],
+            ..ActionUi::default()
+        });
+    assert!(
+        validate_directory_action_capabilities(&kinds, &[generic, misplaced])
+            .unwrap_err()
+            .to_string()
+            .contains("must pair `directory_list_thumbnail` with capability `thumbnail`")
+    );
+    let unsupported = DirectoryActionDefinition::new("example.unsupported", "Unsupported")
+        .with_provides(Some("directory.thumbnail"));
+    assert!(
+        validate_directory_action_capabilities(&kinds, &[unsupported])
+            .unwrap_err()
+            .to_string()
+            .contains("provides unsupported capability `directory.thumbnail`")
+    );
 }
 
 fn write_empty_wasm_lock(root: &std::path::Path, plugin_id: &str) {

@@ -422,6 +422,7 @@ export interface components {
             id: string;
             label: string;
             output: components["schemas"]["ResourceActionOutputContractResponse"];
+            provides?: string | null;
             requires: components["schemas"]["DirectoryActionRequirementsResponse"];
             ui: components["schemas"]["ResourceActionUiResponse"];
         };
@@ -549,6 +550,8 @@ export interface components {
             label: string;
             /** @description 输出约定。 */
             output: components["schemas"]["ResourceActionOutputContractResponse"];
+            /** @description 此 Action 实现的单例 Host 能力。 */
+            provides?: string | null;
             /** @description 动作所需数据。 */
             requires: components["schemas"]["ResourceActionRequirementsResponse"];
             /** @description UI 展示提示。 */

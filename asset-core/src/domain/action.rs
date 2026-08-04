@@ -44,6 +44,44 @@ impl AsRef<str> for ActionId {
     }
 }
 
+/// Semantic singleton capability implemented by one of several action providers.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ActionCapabilityId(String);
+
+impl ActionCapabilityId {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into().trim().to_string())
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl std::fmt::Display for ActionCapabilityId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for ActionCapabilityId {
+    fn from(value: &str) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<String> for ActionCapabilityId {
+    fn from(value: String) -> Self {
+        Self::new(value)
+    }
+}
+
+impl AsRef<str> for ActionCapabilityId {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
 /// Resource action access boundary used by host execution requests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ActionAccess {
@@ -107,6 +145,7 @@ pub struct ResourceActionAppliesTo {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActionDefinition {
     id: ActionId,
+    provides: Option<ActionCapabilityId>,
     label: String,
     description: Option<String>,
     access: ActionAccess,
@@ -118,12 +157,18 @@ impl ActionDefinition {
     pub fn new(id: impl Into<ActionId>, label: impl Into<String>) -> Self {
         Self {
             id: id.into(),
+            provides: None,
             label: label.into(),
             description: None,
             access: ActionAccess::ReadOnly,
             output: ActionOutputContract::default(),
             ui: ActionUi::default(),
         }
+    }
+
+    pub fn with_provides(mut self, provides: Option<impl Into<ActionCapabilityId>>) -> Self {
+        self.provides = provides.map(Into::into);
+        self
     }
 
     pub fn with_description(mut self, description: Option<String>) -> Self {
@@ -148,6 +193,10 @@ impl ActionDefinition {
 
     pub fn id(&self) -> &ActionId {
         &self.id
+    }
+
+    pub fn provides(&self) -> Option<&ActionCapabilityId> {
+        self.provides.as_ref()
     }
 
     pub fn label(&self) -> &str {
@@ -192,6 +241,10 @@ impl ResourceActionDefinition {
         self.action = self.action.with_description(description);
         self
     }
+    pub fn with_provides(mut self, provides: Option<impl Into<ActionCapabilityId>>) -> Self {
+        self.action = self.action.with_provides(provides);
+        self
+    }
     pub fn with_access(mut self, access: ActionAccess) -> Self {
         self.action = self.action.with_access(access);
         self
@@ -226,6 +279,9 @@ impl ResourceActionDefinition {
     }
     pub fn id(&self) -> &ActionId {
         self.action.id()
+    }
+    pub fn provides(&self) -> Option<&ActionCapabilityId> {
+        self.action.provides()
     }
     pub fn label(&self) -> &str {
         self.action.label()
@@ -328,6 +384,10 @@ impl DirectoryActionDefinition {
         self.action = self.action.with_description(description);
         self
     }
+    pub fn with_provides(mut self, provides: Option<impl Into<ActionCapabilityId>>) -> Self {
+        self.action = self.action.with_provides(provides);
+        self
+    }
     pub fn with_access(mut self, access: ActionAccess) -> Self {
         self.action = self.action.with_access(access);
         self
@@ -357,6 +417,9 @@ impl DirectoryActionDefinition {
     }
     pub fn id(&self) -> &ActionId {
         self.action.id()
+    }
+    pub fn provides(&self) -> Option<&ActionCapabilityId> {
+        self.action.provides()
     }
     pub fn label(&self) -> &str {
         self.action.label()

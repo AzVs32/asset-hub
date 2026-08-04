@@ -13,6 +13,7 @@ use asset_plugin_api::protocol::PluginActionOutput;
 use async_trait::async_trait;
 use bytes::Bytes;
 use serde_json::Value;
+use std::collections::HashSet;
 
 /// 执行资源动作的核心请求。
 #[derive(Debug, Clone)]
@@ -144,8 +145,8 @@ pub trait ResourceActionRegistry: Send + Sync {
     /// 返回所有动作定义。多 kind 动作可以按 kind 专门化为同 ID 的上下文定义。
     fn actions(&self) -> &[ResourceActionDefinition];
 
-    /// 按“具体 kind 到祖先 kind”的顺序返回适用动作；同 ID 的更具体定义优先。
-    fn actions_for_kinds(&self, kinds: &[ResourceKind]) -> Vec<ResourceActionDefinition> {
+    /// 按“具体 kind 到祖先 kind”的顺序返回候选动作；同 ID 的更具体定义优先。
+    fn action_candidates_for_kinds(&self, kinds: &[ResourceKind]) -> Vec<ResourceActionDefinition> {
         let mut selected = Vec::new();
         for kind in kinds {
             for action in self.actions().iter().filter(|action| {
@@ -175,5 +176,26 @@ pub trait ResourceActionRegistry: Send + Sync {
             }
         }
         selected
+    }
+
+    /// 从已经按适用性过滤且按 kind 具体程度排序的动作中，为每个单例能力保留最近 provider。
+    fn resolve_capability_providers(
+        &self,
+        actions: Vec<ResourceActionDefinition>,
+    ) -> Vec<ResourceActionDefinition> {
+        let mut provided = HashSet::new();
+        actions
+            .into_iter()
+            .filter(|action| {
+                action
+                    .provides()
+                    .is_none_or(|capability| provided.insert(capability.clone()))
+            })
+            .collect()
+    }
+
+    /// 返回仅按 kind 上下文解析过单例能力 provider 的动作。
+    fn actions_for_kinds(&self, kinds: &[ResourceKind]) -> Vec<ResourceActionDefinition> {
+        self.resolve_capability_providers(self.action_candidates_for_kinds(kinds))
     }
 }

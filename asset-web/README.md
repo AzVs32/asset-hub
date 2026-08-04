@@ -42,11 +42,20 @@ Stable slots:
 | `resource_detail` | User-triggered buttons in the detail action bar |
 | `context_menu` | User-triggered resource row menu items |
 | `resource_list_thumbnail` | Automatically executes a read-only action for list preview |
+| `directory_list_thumbnail` | Automatically executes a read-only action for directory preview |
 | `resource_detail_panel` | Automatically renders read-only output below resource facts |
 | `resource_detail_aside` | Automatically renders read-only output above the core editor |
 
 Actions with no location, or only locations unknown to this host version, remain reachable through
 `resource_detail`. Automatic slots deliberately ignore write actions.
+
+The backend resolves singleton capability providers before returning resource or directory
+actions. For example, `azvs.epub.thumbnail` provides the Resource-scoped `thumbnail` capability
+for EPUB resources.
+`core:image` similarly resolves to the Host-owned `core.image.thumbnail`; other resource kinds
+retain the kind-neutral generic provider. Automatic thumbnail slots accept only the corresponding
+resolved `thumbnail` provider. Resource and directory action registries scope that capability
+independently.
 
 Supported output views are `text`, `markdown`, `html`, `plugin_frame`, `json`, `media`, and
 `download`. Generic outputs are rendered by the host. A plugin

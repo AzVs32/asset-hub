@@ -60,13 +60,7 @@ impl<'a> ResourceActionService<'a> {
             return Ok(ResourceActions::default());
         }
 
-        let available_actions = self
-            .service
-            .actions_for_resource_kind(resource.kind())
-            .into_iter()
-            .filter(|action| resource.content().is_some() || !action.requirements().content)
-            .filter(|action| self.service.action_matches_resource(action, resource))
-            .collect::<Vec<_>>();
+        let available_actions = self.service.available_actions_for_resource(resource);
 
         Ok(ResourceActions::new(available_actions))
     }
@@ -149,14 +143,10 @@ impl<'a> ResourceActionService<'a> {
                 resource.id()
             )));
         }
-        let declared_actions = self.service.actions_for_resource_kind(resource.kind());
+        let declared_actions = self.service.available_actions_for_resource(resource);
         declared_actions
             .into_iter()
-            .find(|action| {
-                action.id().as_str() == action_id.as_str()
-                    && (resource.content().is_some() || !action.requirements().content)
-                    && self.service.action_matches_resource(action, resource)
-            })
+            .find(|action| action.id().as_str() == action_id.as_str())
             .ok_or_else(|| {
                 CoreError::configuration(format!(
                     "resource kind `{}` does not support action `{}`",

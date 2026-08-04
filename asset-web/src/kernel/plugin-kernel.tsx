@@ -43,7 +43,7 @@ export class PluginKernel {
   thumbnailAction(resource: Resource): ResourceAction | null {
     return (
       this.actionsAt(resource, hostSlots.resourceListThumbnail).find(
-        (action) => action.access === "read_only",
+        (action) => action.access === "read_only" && action.provides === "thumbnail",
       ) ?? null
     );
   }
@@ -58,6 +58,14 @@ export class PluginKernel {
           action.ui.locations.every((location) => !knownSlots.has(location as HostSlot))
         );
       }),
+    );
+  }
+
+  directoryThumbnailAction(directory: Directory): DirectoryAction | null {
+    return (
+      this.directoryActionsAt(directory, hostSlots.directoryListThumbnail).find(
+        (action) => action.access === "read_only" && action.provides === "thumbnail",
+      ) ?? null
     );
   }
 }

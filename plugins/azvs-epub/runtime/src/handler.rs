@@ -14,8 +14,8 @@ pub fn render_epub(input: String) -> FnResult<String> {
 }
 
 #[plugin_fn]
-pub fn render_epub_cover(input: String) -> FnResult<String> {
-    structured_action_result(render_epub_cover_payload(input))
+pub fn render_epub_thumbnail(input: String) -> FnResult<String> {
+    structured_action_result(render_epub_thumbnail_payload(input))
 }
 
 pub(super) fn structured_action_result(result: FnResult<String>) -> FnResult<String> {
@@ -79,7 +79,7 @@ pub(super) fn render_epub_payload(input: String) -> FnResult<String> {
     Ok(serde_json::to_string(&output)?)
 }
 
-pub(super) fn render_epub_cover_payload(input: String) -> FnResult<String> {
+pub(super) fn render_epub_thumbnail_payload(input: String) -> FnResult<String> {
     let request: PluginActionRequest = serde_json::from_str(&input)?;
     let key = resource_cache_key(&request);
     let cover = if let Some(cover) = cached_cover(&key) {

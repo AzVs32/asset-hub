@@ -158,6 +158,39 @@ fn resource_and_directory_action_ids_use_separate_namespaces() {
 }
 
 #[test]
+fn manifest_actions_can_provide_singleton_host_capabilities() {
+    let mut value = manifest_document();
+    value["capabilities"]["resource_actions"][0]["provides"] = json!("thumbnail");
+    value["capabilities"]["resource_actions"][0]["views"] = json!(["media"]);
+    value["capabilities"]["resource_actions"][0]["ui"] =
+        json!({"locations": ["resource_list_thumbnail"]});
+    value["capabilities"]["directory_actions"] = json!([{
+        "id": "example.plugin.directory-thumbnail",
+        "provides": "thumbnail",
+        "label": "Directory Thumbnail",
+        "handler": "directory_thumbnail",
+        "views": ["media"],
+        "ui": {"locations": ["directory_list_thumbnail"]}
+    }]);
+    value["permissions"]["allow"] = json!(["resource.read", "directory.read"]);
+
+    let manifest = canonical_manifest(&value).unwrap();
+
+    assert_eq!(
+        manifest.capabilities.resource_actions[0]
+            .provides
+            .as_deref(),
+        Some("thumbnail")
+    );
+    assert_eq!(
+        manifest.capabilities.directory_actions[0]
+            .provides
+            .as_deref(),
+        Some("thumbnail")
+    );
+}
+
+#[test]
 fn directory_request_and_output_have_separate_wire_effects() {
     let request: PluginDirectoryActionRequest = serde_json::from_value(json!({
         "action": "example.plugin.organize",

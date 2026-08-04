@@ -266,6 +266,8 @@ impl ResourceKindResponse {
 pub(crate) struct ResourceActionDefinitionResponse {
     /// 动作 ID。
     pub(crate) id: String,
+    /// 此 Action 实现的单例 Host 能力。
+    pub(crate) provides: Option<String>,
     /// 展示名称。
     pub(crate) label: String,
     /// 动作说明。
@@ -285,6 +287,7 @@ pub(crate) struct ResourceActionDefinitionResponse {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub(crate) struct DirectoryActionDefinitionResponse {
     pub(crate) id: String,
+    pub(crate) provides: Option<String>,
     pub(crate) label: String,
     pub(crate) description: Option<String>,
     pub(crate) access: String,
@@ -309,6 +312,7 @@ impl From<&DirectoryActionDefinition> for DirectoryActionDefinitionResponse {
     fn from(action: &DirectoryActionDefinition) -> Self {
         Self {
             id: action.id().as_str().to_string(),
+            provides: action.provides().map(|id| id.as_str().to_string()),
             label: action.label().to_string(),
             description: action.description().map(str::to_string),
             access: action_access_text(action.access()).to_string(),
@@ -370,6 +374,7 @@ impl From<&ResourceActionDefinition> for ResourceActionDefinitionResponse {
     fn from(action: &ResourceActionDefinition) -> Self {
         Self {
             id: action.id().as_str().to_string(),
+            provides: action.provides().map(|id| id.as_str().to_string()),
             label: action.label().to_string(),
             description: action.description().map(str::to_string),
             access: action_access_text(action.access()).to_string(),

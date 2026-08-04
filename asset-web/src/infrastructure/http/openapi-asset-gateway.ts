@@ -445,6 +445,7 @@ function mapDirectoryKind(value: Schemas["DirectoryKindResponse"]): DirectoryKin
 function mapDirectoryAction(value: ApiDirectoryAction): DirectoryAction {
   return {
     id: value.id,
+    provides: value.provides ?? null,
     label: value.label,
     description: value.description ?? null,
     access: enumValue(value.access, ["read_only", "read_write"]),
@@ -500,6 +501,7 @@ function mapResource(value: ApiResource): Resource {
 function mapAction(value: ApiAction): ResourceAction {
   return {
     id: value.id,
+    provides: value.provides ?? null,
     label: value.label,
     description: value.description ?? null,
     access: enumValue(value.access, ["read_only", "read_write"]),

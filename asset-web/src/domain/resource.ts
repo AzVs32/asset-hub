@@ -13,6 +13,7 @@ export interface ResourceContent {
 
 export interface ResourceAction {
   id: string;
+  provides: string | null;
   label: string;
   description: string | null;
   access: ActionAccess;
@@ -24,6 +25,7 @@ export interface ResourceAction {
 
 export interface DirectoryAction {
   id: string;
+  provides: string | null;
   label: string;
   description: string | null;
   access: ActionAccess;

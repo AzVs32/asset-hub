@@ -127,6 +127,17 @@ async fn directory_kinds_and_directory_capabilities_are_exposed() {
     assert_eq!(download["access"], "read_only");
     assert!(download.get("executor").is_none());
     assert_eq!(download["output"]["view"], json!(["download"]));
+    let thumbnail = default["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|action| action["id"] == "core.directory.thumbnail")
+        .unwrap();
+    assert_eq!(thumbnail["output"]["view"], json!(["media"]));
+    assert_eq!(
+        thumbnail["ui"]["locations"],
+        json!(["directory_list_thumbnail"])
+    );
 
     let (status, directory) = json_request(
         &app,
@@ -142,6 +153,20 @@ async fn directory_kinds_and_directory_capabilities_are_exposed() {
     assert_eq!(status, StatusCode::CREATED, "{directory}");
     assert_eq!(directory["kind"], "core:directory");
     assert!(has_directory_action(&directory, "core.directory.download"));
+    assert!(has_directory_action(&directory, "core.directory.thumbnail"));
+
+    let directory_id = directory["id"].as_str().unwrap();
+    let (status, thumbnail_output) = json_request(
+        &app,
+        Method::POST,
+        &format!("/directories/{directory_id}/actions/core.directory.thumbnail"),
+        json!({ "input": {} }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{thumbnail_output}");
+    assert_eq!(thumbnail_output["view"]["view"], "media");
+    assert_eq!(thumbnail_output["view"]["mime_type"], "image/svg+xml");
+    assert_eq!(thumbnail_output["view"]["encoding"], "base64");
 
     let (status, listing) = empty_json_request(&app, Method::GET, "/directories").await;
     assert_eq!(status, StatusCode::OK);
@@ -154,6 +179,7 @@ async fn directory_kinds_and_directory_capabilities_are_exposed() {
         .unwrap();
     assert_eq!(listed["kind"], "core:directory");
     assert!(has_directory_action(listed, "core.directory.download"));
+    assert!(has_directory_action(listed, "core.directory.thumbnail"));
 
     let (status, error) = json_request(
         &app,
@@ -306,7 +332,16 @@ async fn core_document_resource_inherits_core_download_action() {
         json!(["resource_detail", "context_menu"])
     );
 
-    assert_eq!(actions.len(), 1);
+    let thumbnail = actions
+        .iter()
+        .find(|action| action["id"] == "core.resource.thumbnail")
+        .unwrap();
+    assert_eq!(thumbnail["output"]["view"], json!(["media"]));
+    assert_eq!(
+        thumbnail["ui"]["locations"],
+        json!(["resource_list_thumbnail"])
+    );
+    assert_eq!(actions.len(), 2);
 
     let (status, resource) = stream_upload(
         &app,
@@ -318,12 +353,13 @@ async fn core_document_resource_inherits_core_download_action() {
 
     assert_eq!(status, StatusCode::CREATED);
     assert!(has_action(&resource, "core.resource.download"));
+    assert!(has_action(&resource, "core.resource.thumbnail"));
     assert_eq!(
         resource["actions"]["available_actions"]
             .as_array()
             .unwrap()
             .len(),
-        1
+        2
     );
 
     let resource_id = resource["id"].as_str().unwrap();
@@ -341,6 +377,18 @@ async fn core_document_resource_inherits_core_download_action() {
         format!("/resources/{resource_id}/download")
     );
     assert_eq!(output["view"]["filename"], "book.txt");
+
+    let (status, thumbnail_output) = json_request(
+        &app,
+        Method::POST,
+        &format!("/resources/{resource_id}/actions/core.resource.thumbnail"),
+        json!({ "input": {} }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{thumbnail_output}");
+    assert_eq!(thumbnail_output["view"]["view"], "media");
+    assert_eq!(thumbnail_output["view"]["mime_type"], "image/svg+xml");
+    assert_eq!(thumbnail_output["view"]["encoding"], "base64");
 
     let download = request(
         &app,
@@ -377,6 +425,65 @@ async fn core_document_resource_inherits_core_download_action() {
         inline.headers().get(header::CONTENT_DISPOSITION).unwrap(),
         "inline"
     );
+}
+
+#[tokio::test]
+async fn core_image_thumbnail_reuses_the_authorized_content_url() {
+    let app = test_app("core-image-thumbnail").await;
+    let (status, resource) =
+        stream_upload(&app, "/resources?name=pixel.png", "image/png", b"png-bytes").await;
+
+    assert_eq!(status, StatusCode::CREATED, "{resource}");
+    assert_eq!(resource["kind"], "core:image");
+    assert!(has_action(&resource, "core.image.thumbnail"));
+    assert!(!has_action(&resource, "core.resource.thumbnail"));
+    let resource_id = resource["id"].as_str().unwrap();
+    let (status, output) = json_request(
+        &app,
+        Method::POST,
+        &format!("/resources/{resource_id}/actions/core.image.thumbnail"),
+        json!({ "input": {} }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{output}");
+    assert_eq!(output["view"]["view"], "media");
+    assert_eq!(output["view"]["mime_type"], "image/png");
+    assert_eq!(output["view"]["encoding"], "url");
+    assert_eq!(
+        output["view"]["data"],
+        format!("/resources/{resource_id}/content")
+    );
+}
+
+#[tokio::test]
+async fn generic_resource_thumbnail_does_not_special_case_image_content() {
+    let app = test_app("generic-resource-image-thumbnail").await;
+    let (status, resource) = stream_upload(
+        &app,
+        "/resources?name=pixel.png&kind=core%3Aresource",
+        "image/png",
+        b"png-bytes",
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::CREATED, "{resource}");
+    assert_eq!(resource["kind"], "core:resource");
+    assert!(has_action(&resource, "core.resource.thumbnail"));
+    assert!(!has_action(&resource, "core.image.thumbnail"));
+    let resource_id = resource["id"].as_str().unwrap();
+    let (status, output) = json_request(
+        &app,
+        Method::POST,
+        &format!("/resources/{resource_id}/actions/core.resource.thumbnail"),
+        json!({ "input": {} }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{output}");
+    assert_eq!(output["view"]["view"], "media");
+    assert_eq!(output["view"]["mime_type"], "image/svg+xml");
+    assert_eq!(output["view"]["encoding"], "base64");
 }
 
 #[tokio::test]
@@ -1155,6 +1262,36 @@ async fn upload_detects_most_specific_plugin_kind() {
             .as_str()
             .unwrap()
             .starts_with("/plugins/azvs.markdown/index.html#payload=")
+    );
+}
+
+#[tokio::test]
+async fn epub_thumbnail_provider_is_selected_for_the_resource_capability() {
+    let app = test_app_with_plugin_manifests(
+        "epub-thumbnail-override",
+        vec![PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../plugins/azvs-epub/manifest.json")],
+    )
+    .await;
+    let (status, resource) = stream_upload(
+        &app,
+        "/resources?name=book.epub",
+        "application/epub+zip",
+        b"not-needed-for-action-discovery",
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::CREATED, "{resource}");
+    assert_eq!(resource["kind"], "azvs:epub");
+    let actions = resource["actions"]["available_actions"].as_array().unwrap();
+    let thumbnail = actions
+        .iter()
+        .find(|action| action["id"] == "azvs.epub.thumbnail")
+        .unwrap();
+    assert_eq!(thumbnail["provides"], "thumbnail");
+    assert!(
+        actions
+            .iter()
+            .all(|action| action["id"] != "core.resource.thumbnail")
     );
 }
 

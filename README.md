@@ -14,6 +14,8 @@ filesystem, making it easy to run on a workstation or self-host with Docker.
 - Manage users and workspace access.
 - Upload large files with resumable transfers and checksum verification.
 - Extend resource detection, actions, and views with Wasm and Web plugins.
+- Display kind-neutral resource and directory thumbnails with nearest-kind Host or plugin
+  providers for specialized kinds such as images and EPUB files.
 - Run locally from source or deploy with Docker Compose.
 
 ## Requirements

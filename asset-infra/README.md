@@ -15,6 +15,18 @@ services.
 Built-in kinds and actions are Rust Host definitions with private typed handler bindings. They are
 not parsed through `asset-plugin-api::PluginManifest` and never appear in the external package
 catalog. Every filesystem package is an Extism/Wasm package; `runtime.type = "builtin"` is rejected.
+The Host provides generic `core.resource.thumbnail` and `core.directory.thumbnail` actions.
+The generic resource provider always returns a kind-neutral file thumbnail. The Host-owned
+`core.image.thumbnail` action applies only to `core:image`, returns the authorized image content
+URL, and provides the same `thumbnail` singleton capability as the generic provider.
+The fixed generic artwork lives in `assets/thumbnails/resource.svg` and
+`assets/thumbnails/directory.svg`. `include_str!` embeds both files into the Host binary at compile
+time; deployment does not need to copy them as separate runtime files.
+External actions retain their provider-owned IDs and may provide the Host-recognized `thumbnail`
+capability for a more specific kind. Resource and directory registries scope that capability
+independently. Resource resolution filters content requirements and matchers before selecting the
+nearest provider. Registry startup rejects unsupported capabilities, automatic thumbnail-slot
+actions that do not provide `thumbnail`, and tied nearest providers.
 At the package boundary, infrastructure explicitly converts external Manifest capabilities into
 `asset-core` Action/Kind definitions. Extism handler names remain in private adapter bindings and
 are not copied into Core models.

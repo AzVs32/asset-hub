@@ -52,6 +52,9 @@ impl Default for ResourceKindCapability {
 #[serde(deny_unknown_fields)]
 pub struct ResourceActionCapability {
     pub id: String,
+    /// Optional singleton Host capability implemented by this action provider.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provides: Option<String>,
     pub label: String,
     pub handler: String,
     #[serde(default)]
@@ -70,6 +73,9 @@ pub struct ResourceActionCapability {
 #[serde(deny_unknown_fields)]
 pub struct DirectoryActionCapability {
     pub id: String,
+    /// Optional singleton Host capability implemented by this action provider.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provides: Option<String>,
     pub label: String,
     pub handler: String,
     #[serde(default)]

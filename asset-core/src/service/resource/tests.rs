@@ -1091,6 +1091,21 @@ fn service() -> (
             ResourceActionDefinition::new("resource.inspect", "Inspect resource")
                 .with_kinds(["doc:markdown"])
                 .with_output(output_contract(["json"])),
+            ResourceActionDefinition::new("doc.markdown.thumbnail", "Markdown thumbnail")
+                .with_provides(Some("thumbnail"))
+                .with_kinds(["doc:markdown"])
+                .with_requirements(content_requirements())
+                .with_output(output_contract(["media"])),
+            ResourceActionDefinition::new("test.document.thumbnail", "Document thumbnail")
+                .with_provides(Some("thumbnail"))
+                .with_kinds(["core:document"])
+                .with_content_matcher(
+                    ResourceContentMatcher::new().with_mime_types(["application/pdf"]),
+                )
+                .with_output(output_contract(["media"])),
+            ResourceActionDefinition::new("core.resource.thumbnail", "Thumbnail")
+                .with_provides(Some("thumbnail"))
+                .with_output(output_contract(["media"])),
             ResourceActionDefinition::new("azvs.markdown.render", "Read Markdown")
                 .with_kinds(["core:document"])
                 .with_requirements(content_requirements())
@@ -1657,7 +1672,7 @@ fn resource_without_content_describes_only_actions_without_content_requirements(
         .map(|action| action.id().as_str())
         .collect::<Vec<_>>();
 
-    assert_eq!(ids, vec!["resource.inspect"]);
+    assert_eq!(ids, vec!["resource.inspect", "core.resource.thumbnail"]);
 }
 
 #[test]
@@ -2384,8 +2399,12 @@ fn describe_resource_actions_uses_declared_content_matchers() {
     };
 
     assert!(has_action(&pdf_actions, "test.document.extract"));
+    assert!(has_action(&pdf_actions, "test.document.thumbnail"));
+    assert!(!has_action(&pdf_actions, "core.resource.thumbnail"));
     assert!(!has_action(&pdf_actions, "azvs.markdown.render"));
     assert!(has_action(&text_actions, "test.document.extract"));
+    assert!(!has_action(&text_actions, "test.document.thumbnail"));
+    assert!(has_action(&text_actions, "core.resource.thumbnail"));
     assert!(!has_action(&text_actions, "azvs.markdown.render"));
 }
 

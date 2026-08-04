@@ -5,6 +5,7 @@ export function action(
 ): ResourceAction {
   return {
     id: input.id,
+    provides: input.provides ?? null,
     label: input.label ?? input.id,
     description: input.description ?? null,
     access: input.access ?? "read_only",

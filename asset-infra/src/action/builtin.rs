@@ -5,13 +5,20 @@ use asset_core::port::{
     ResourceActionExecutor, ResourceActionOutput, ResourceActionRequest, ResourceKindRegistry,
 };
 use asset_plugin_api::protocol::directory::DirectoryPluginActionOutput;
-use asset_plugin_api::protocol::{DownloadView, PluginActionOutput, PluginView};
+use asset_plugin_api::protocol::{
+    DownloadView, MediaView, PluginActionOutput, PluginMediaEncoding, PluginView,
+};
 use async_trait::async_trait;
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use std::sync::Arc;
 
 use crate::builtin_catalog::{
     BuiltinDirectoryAction, BuiltinDirectoryHandler, BuiltinResourceAction, BuiltinResourceHandler,
 };
+
+const RESOURCE_THUMBNAIL_SVG: &str = include_str!("../../assets/thumbnails/resource.svg");
+const DIRECTORY_THUMBNAIL_SVG: &str = include_str!("../../assets/thumbnails/directory.svg");
 
 #[derive(Debug, Clone)]
 pub struct BuiltinResourceActionExecutor {
@@ -92,6 +99,12 @@ impl ResourceActionExecutor for BuiltinResourceActionExecutor {
             BuiltinResourceHandler::Download => {
                 download(request.resource().clone(), request.action().clone())
             }
+            BuiltinResourceHandler::ResourceThumbnail => {
+                resource_thumbnail(request.resource().clone(), request.action().clone())
+            }
+            BuiltinResourceHandler::ImageThumbnail => {
+                image_thumbnail(request.resource().clone(), request.action().clone())
+            }
         }
     }
 }
@@ -167,8 +180,28 @@ impl DirectoryActionExecutor for BuiltinDirectoryActionExecutor {
             })?;
         match binding.handler {
             BuiltinDirectoryHandler::Download => directory_download(request),
+            BuiltinDirectoryHandler::Thumbnail => directory_thumbnail(request),
         }
     }
+}
+
+fn directory_thumbnail(
+    request: DirectoryActionRequest,
+) -> Result<DirectoryActionOutput, CoreError> {
+    let directory = request.directory();
+    let view = embedded_svg_thumbnail(
+        Some(if directory.id().is_root() {
+            "Asset Hub"
+        } else {
+            directory.directory().name()
+        }),
+        DIRECTORY_THUMBNAIL_SVG,
+    );
+    Ok(DirectoryActionOutput::new(
+        directory.id(),
+        DirectoryAction::from(request.action().as_str()),
+        DirectoryPluginActionOutput::new(view),
+    ))
 }
 
 fn directory_download(request: DirectoryActionRequest) -> Result<DirectoryActionOutput, CoreError> {
@@ -208,4 +241,49 @@ fn download(resource: Resource, action: ResourceAction) -> Result<ResourceAction
         action,
         PluginActionOutput::new(view),
     ))
+}
+
+fn resource_thumbnail(
+    resource: Resource,
+    action: ResourceAction,
+) -> Result<ResourceActionOutput, CoreError> {
+    let view = embedded_svg_thumbnail(Some(resource.name()), RESOURCE_THUMBNAIL_SVG);
+    Ok(ResourceActionOutput::new(
+        resource.id(),
+        action,
+        PluginActionOutput::new(view),
+    ))
+}
+
+fn image_thumbnail(
+    resource: Resource,
+    action: ResourceAction,
+) -> Result<ResourceActionOutput, CoreError> {
+    let view = match resource
+        .content()
+        .and_then(|content| content.mime_type())
+        .filter(|mime_type| mime_type.starts_with("image/"))
+    {
+        Some(mime_type) => PluginView::Media(MediaView {
+            mime_type: mime_type.to_string(),
+            title: Some(resource.name().to_string()),
+            encoding: PluginMediaEncoding::Url,
+            data: format!("/resources/{}/content", resource.id()),
+        }),
+        None => embedded_svg_thumbnail(Some(resource.name()), RESOURCE_THUMBNAIL_SVG),
+    };
+    Ok(ResourceActionOutput::new(
+        resource.id(),
+        action,
+        PluginActionOutput::new(view),
+    ))
+}
+
+fn embedded_svg_thumbnail(title: Option<&str>, svg: &str) -> PluginView {
+    PluginView::Media(MediaView {
+        mime_type: "image/svg+xml".to_string(),
+        title: title.map(str::to_string),
+        encoding: PluginMediaEncoding::Base64,
+        data: BASE64_STANDARD.encode(svg.as_bytes()),
+    })
 }

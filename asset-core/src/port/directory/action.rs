@@ -13,6 +13,7 @@ use crate::{
 use asset_plugin_api::protocol::directory::DirectoryPluginActionOutput;
 use async_trait::async_trait;
 use serde_json::Value;
+use std::collections::HashSet;
 
 #[derive(Debug, Clone)]
 pub struct DirectoryActionRequest {
@@ -105,8 +106,11 @@ pub trait DirectoryActionRegistry: Send + Sync {
     /// 返回全部目录动作定义。
     fn actions(&self) -> &[DirectoryActionDefinition];
 
-    /// 按具体类型到祖先类型的顺序选择动作；同 ID 的更具体定义优先。
-    fn actions_for_kinds(&self, kinds: &[DirectoryKind]) -> Vec<DirectoryActionDefinition> {
+    /// 按具体类型到祖先类型的顺序返回候选动作；同 ID 的更具体定义优先。
+    fn action_candidates_for_kinds(
+        &self,
+        kinds: &[DirectoryKind],
+    ) -> Vec<DirectoryActionDefinition> {
         let mut selected = Vec::new();
         for kind in kinds {
             for action in self.actions().iter().filter(|action| {
@@ -136,5 +140,59 @@ pub trait DirectoryActionRegistry: Send + Sync {
             }
         }
         selected
+    }
+
+    /// 为每个单例能力保留最接近当前 kind 的 provider。
+    fn resolve_capability_providers(
+        &self,
+        actions: Vec<DirectoryActionDefinition>,
+    ) -> Vec<DirectoryActionDefinition> {
+        let mut provided = HashSet::new();
+        actions
+            .into_iter()
+            .filter(|action| {
+                action
+                    .provides()
+                    .is_none_or(|capability| provided.insert(capability.clone()))
+            })
+            .collect()
+    }
+
+    fn actions_for_kinds(&self, kinds: &[DirectoryKind]) -> Vec<DirectoryActionDefinition> {
+        self.resolve_capability_providers(self.action_candidates_for_kinds(kinds))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Registry(Vec<DirectoryActionDefinition>);
+
+    impl DirectoryActionRegistry for Registry {
+        fn actions(&self) -> &[DirectoryActionDefinition] {
+            &self.0
+        }
+    }
+
+    #[test]
+    fn a_specific_provider_replaces_the_selected_generic_action() {
+        let registry = Registry(vec![
+            DirectoryActionDefinition::new("core.directory.thumbnail", "Thumbnail")
+                .with_provides(Some("thumbnail"))
+                .with_kinds(["core:directory"]),
+            DirectoryActionDefinition::new("example.collection.thumbnail", "Collection Thumbnail")
+                .with_provides(Some("thumbnail"))
+                .with_kinds(["example:collection"]),
+        ]);
+        let lineage = vec![
+            DirectoryKind::try_new("example:collection").unwrap(),
+            DirectoryKind::try_new("core:directory").unwrap(),
+        ];
+
+        let actions = registry.actions_for_kinds(&lineage);
+
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].id().as_str(), "example.collection.thumbnail");
     }
 }

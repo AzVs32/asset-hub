@@ -63,8 +63,10 @@ impl AssetRuntime {
         let resource_kind_registry = Arc::new(resource_kind_registry);
         let directory_kind_registry = Arc::new(directory_kind_registry);
         let resource_action_registry = Arc::new(resource_action_registry);
-        let directory_action_registry =
-            Arc::new(directory_action_registry_from_catalog(&plugin_catalog)?);
+        let directory_action_registry = Arc::new(directory_action_registry_from_catalog(
+            &plugin_catalog,
+            directory_kind_registry.as_ref(),
+        )?);
         let plugin_execution_policy = Arc::new(infrastructure.config().plugin.execution_policy()?);
         let resource_action_policy = Arc::new(
             ResourceActionPolicy::new(

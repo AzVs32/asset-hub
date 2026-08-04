@@ -143,6 +143,13 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
         if !resource_action_ids.insert(action.id.as_str()) {
             return Err(format!("duplicate resource action `{}`", action.id));
         }
+        if let Some(provides) = &action.provides {
+            validate_id(
+                "capabilities.resource_actions[].provides",
+                provides,
+                &['.', ':', '-', '_'],
+            )?;
+        }
         if action.label.trim().is_empty() {
             return Err(format!(
                 "capabilities.resource_actions[`{}`].label must not be empty",
@@ -210,6 +217,13 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
         }
         if !directory_action_ids.insert(action.id.as_str()) {
             return Err(format!("duplicate directory action `{}`", action.id));
+        }
+        if let Some(provides) = &action.provides {
+            validate_id(
+                "capabilities.directory_actions[].provides",
+                provides,
+                &['.', ':', '-', '_'],
+            )?;
         }
         if action.views.is_empty()
             || action

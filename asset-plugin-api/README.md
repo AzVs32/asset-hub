@@ -15,6 +15,7 @@ the Asset Hub HTTP API do not need it.
 
 - Manifest models and validation.
 - Resource and directory action request and response types.
+- Singleton resource and directory capabilities with kind-specific providers.
 - Structured views, effects, failures, and diagnostics.
 - Versioned content and directory Host function definitions.
 - Optional Extism guest helpers for Wasm plugins.
@@ -97,6 +98,35 @@ and runtime loading are read-only and use the same host implementation and limit
 reject symbolic links and undeclared files. Rebuilds must remove the old lock,
 generate a new one, and verify it before startup.
 
+### Providing a singleton Host capability
+
+Resource and directory actions keep provider-owned IDs. An action can implement a singleton Host
+capability by declaring its semantic identifier in `provides`:
+
+```json
+{
+  "id": "example.epub.thumbnail",
+  "provides": "thumbnail",
+  "label": "EPUB Thumbnail",
+  "handler": "render_thumbnail",
+  "applies_to": { "kinds": ["example:epub"] },
+  "access": "read",
+  "views": ["media"]
+}
+```
+
+The Host first filters candidates by content availability, MIME type, extension, and other action
+requirements. It then selects the provider declared for the nearest kind in the resource or
+directory lineage. A less-specific provider remains the fallback when a more-specific provider is
+not actually applicable. Two providers for the same capability at the same nearest kind fail Host
+startup instead of being selected by registration or UI sort order.
+
+The current Host recognizes only the `thumbnail` singleton capability. Resource and directory
+actions use separate registries, so each action type scopes `thumbnail` independently. Providers
+must be read-only, support the `media` view, and declare the matching `resource_list_thumbnail` or
+`directory_list_thumbnail` UI location. The Host rejects unknown capability names. Plugins must
+retain their provider-owned action IDs and must not reuse a `core.*` action ID.
+
 ## Rust API
 
 The main modules are:
@@ -135,6 +165,11 @@ This development line intentionally narrows Manifest `1` in place: older
 documents that declare `runtime.type = "builtin"` are incompatible and must not
 be used as external packages. Built-in capabilities are assembled by the Host
 without a plugin Manifest.
+
+Manifest `1` includes the optional `provides` field on resource and directory actions. Its current
+Host-defined value is the action-type-scoped `thumbnail` capability. This wire-contract change does
+not increase the Manifest version. Existing sealed packages must use `azvs.epub.thumbnail` with
+`"provides": "thumbnail"`, then be rebuilt and resealed.
 
 The responsibility change has these compatibility effects:
 

@@ -85,7 +85,7 @@ mod metadata;
 mod render;
 mod sanitize;
 
-pub use handler::{render_epub, render_epub_cover};
+pub use handler::{render_epub, render_epub_thumbnail};
 
 pub(crate) use archive::*;
 pub(crate) use cache::*;

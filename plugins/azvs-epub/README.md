@@ -32,7 +32,8 @@ during normal browsing but is cleared when Asset Hub restarts.
 - Parent kind: `core:document`
 - Action: `azvs.epub.render`
 - Handler: `render_epub`
-- Cover action: `azvs.epub.cover` (`resource_list_thumbnail`)
+- Thumbnail action: `azvs.epub.thumbnail`, providing the Resource-scoped singleton `thumbnail`
+  capability in `resource_list_thumbnail`
 
 ## Use
 

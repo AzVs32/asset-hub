@@ -268,10 +268,10 @@ function FolderRow({
     : [];
   return (
     <div
-      className={`grid min-h-14 grid-cols-[minmax(0,1fr)_auto] items-center border-b border-slate-100 transition ${selected ? "bg-blue-50 ring-1 ring-inset ring-blue-200" : "bg-slate-50/60 hover:bg-blue-50"}`}
+      className={`grid min-h-20 grid-cols-[minmax(0,1fr)_auto] items-center border-b border-slate-100 transition ${selected ? "bg-blue-50 ring-1 ring-inset ring-blue-200" : "bg-slate-50/60 hover:bg-blue-50"}`}
     >
       <button
-        className="grid min-h-14 w-full grid-cols-[3.5rem_1fr] items-center gap-3 px-5 text-left xl:px-7"
+        className="grid min-w-0 grid-cols-[3.5rem_minmax(0,1fr)] items-center gap-4 px-5 py-3 text-left xl:px-7"
         type="button"
         aria-pressed={directory ? selected : undefined}
         onClick={onSelect ?? onClick}
@@ -283,9 +283,13 @@ function FolderRow({
           }
         }}
       >
-        <span className="grid size-10 place-items-center rounded-xl bg-amber-100 text-amber-700">
-          <Folder size={19} />
-        </span>
+        {directory ? (
+          <DirectoryThumbnail directory={directory} />
+        ) : (
+          <span className="grid size-14 place-items-center rounded-xl bg-amber-100 text-amber-700">
+            <Folder size={19} />
+          </span>
+        )}
         <span className="font-medium text-slate-800">{name}</span>
       </button>
       {actions.length && onAction ? (
@@ -300,6 +304,32 @@ function FolderRow({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function DirectoryThumbnail({ directory }: { directory: Directory }) {
+  const gateway = useGateway();
+  const kernel = usePluginKernel();
+  const action = kernel.directoryThumbnailAction(directory);
+  const execute = () => {
+    if (!action) throw new Error("Directory thumbnail action is unavailable");
+    return gateway.executeDirectoryAction(directory, action);
+  };
+  const result = useQuery({
+    queryKey: ["directory-thumbnail", directory.id, action?.id],
+    queryFn: execute,
+    enabled: Boolean(action),
+    retry: false,
+    staleTime: 5 * 60_000,
+  });
+  const image = result.data
+    ? thumbnailImage(result.data.view, gateway.assetUrl.bind(gateway))
+    : null;
+  if (image) return <img className="size-14 rounded-xl object-cover" src={image} alt="" />;
+  return (
+    <span className="grid size-14 place-items-center rounded-xl bg-amber-100 text-amber-700">
+      <Folder className={result.isPending ? "animate-pulse" : ""} size={19} />
+    </span>
   );
 }
 

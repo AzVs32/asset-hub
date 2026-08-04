@@ -15,6 +15,7 @@ pub(super) fn resource_action_definition(
 ) -> ResourceActionDefinition {
     let mut definition =
         ResourceActionDefinition::new(capability.id.as_str(), capability.label.as_str())
+            .with_provides(capability.provides.clone())
             .with_access(action_access(capability.access))
             .with_applies_to(resource_action_applies_to(capability))
             .with_output(ActionOutputContract {
@@ -44,6 +45,7 @@ pub(super) fn directory_action_definition(
 ) -> DirectoryActionDefinition {
     let mut definition =
         DirectoryActionDefinition::new(capability.id.as_str(), capability.label.as_str())
+            .with_provides(capability.provides.clone())
             .with_access(action_access(capability.access))
             .with_applies_to(
                 DirectoryActionAppliesTo::new().with_kinds(capability.applies_to.kinds.clone()),
