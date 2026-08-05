@@ -10,7 +10,8 @@ use crate::error::HttpError;
 use crate::state::HttpState;
 use asset_core::CoreError;
 use asset_core::domain::{
-    AccessContext, DirectoryId, DirectoryKind, ResourceId, ResourceKind, UploadId, UploadSession,
+    AccessContext, Checksum, DirectoryId, DirectoryKind, ResourceId, ResourceKind, UploadId,
+    UploadSession,
 };
 use asset_core::port::BlobByteStream;
 use asset_core::port::ListResources;
@@ -33,7 +34,9 @@ pub(crate) mod plugin;
 pub(crate) mod resource;
 pub(crate) mod upload;
 
-pub(crate) use content::{download_directory, download_resource_content, get_resource_content};
+pub(crate) use content::{
+    download_directory, download_resource_content, get_resource_content, replace_resource_content,
+};
 pub(crate) use maintenance::{health, purge_disabled};
 pub(crate) use plugin::plugin_web_asset;
 pub(crate) use resource::{

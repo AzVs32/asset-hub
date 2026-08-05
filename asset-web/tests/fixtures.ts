@@ -36,6 +36,7 @@ export function resource(actions: ResourceAction[] = []): Resource {
     actions,
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
+    revision: 1,
     deletedAt: null,
   };
 }

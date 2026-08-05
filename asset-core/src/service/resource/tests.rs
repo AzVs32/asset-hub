@@ -4,16 +4,19 @@ use super::*;
 use crate::domain::{
     AccessContext, Checksum, ChecksumKind, ContentVerificationStatus, Directory,
     DirectoryActionAccess, DirectoryActionDefinition, DirectoryId, DirectoryPath,
-    ResourceActionAccess, ResourceActionDefinition, ResourceActionPolicy, ResourceContentMatcher,
-    ResourceId, UploadId, UploadSession, UploadStatus, User, UserId, UserRole,
+    ResourceActionAccess, ResourceActionDefinition, ResourceActionPolicy,
+    ResourceContentEditPolicy, ResourceContentMatcher, ResourceContentReplacement,
+    ResourceContentReplacementId, ResourceId, UploadId, UploadSession, UploadStatus, User, UserId,
+    UserRole,
 };
 use crate::port::{
     BlobByteStream, DirectoryActionExecutor, DirectoryActionOutput, DirectoryActionRegistry,
     DirectoryActionRequest, DirectoryIndex, DirectoryKindDefinition, DirectoryKindRegistry,
     DirectoryLocation, DirectoryQuery, DirectoryStore, ListResources, LocatedDirectory,
-    LocatedResource, ResourceActionOutput, ResourceActionRequest, ResourceKindDefinition,
-    ResourceKindRegistry, ResourcePage, ScannedStorageEntry, StagedBlob, StoragePrefix,
-    UploadSessionRepository, UserRepository,
+    LocatedResource, ResourceActionOutput, ResourceActionRequest,
+    ResourceContentReplacementRepository, ResourceKindDefinition, ResourceKindRegistry,
+    ResourcePage, ScannedStorageEntry, StagedBlob, StoragePrefix, UploadSessionRepository,
+    UserRepository,
 };
 use asset_plugin_api::protocol::directory::{
     DirectoryActionEffect, DirectoryPluginActionOutput, UpdateDirectoryEffect,
@@ -38,6 +41,46 @@ use tokio::sync::oneshot;
 #[derive(Default)]
 struct InMemoryUploadSessionRepository {
     sessions: Mutex<HashMap<UploadId, UploadSession>>,
+}
+
+#[derive(Default)]
+struct InMemoryContentReplacementRepository {
+    replacements: Mutex<HashMap<ResourceContentReplacementId, ResourceContentReplacement>>,
+}
+
+#[async_trait::async_trait]
+impl ResourceContentReplacementRepository for InMemoryContentReplacementRepository {
+    async fn save(&self, replacement: &ResourceContentReplacement) -> Result<(), CoreError> {
+        let mut replacements = self.replacements.lock().unwrap();
+        if replacements
+            .values()
+            .any(|pending| pending.resource_id() == replacement.resource_id())
+        {
+            return Err(CoreError::conflict(format!(
+                "resource `{}` already has a pending content replacement",
+                replacement.resource_id()
+            )));
+        }
+        replacements.insert(replacement.id(), replacement.clone());
+        Ok(())
+    }
+
+    async fn list_pending(&self) -> Result<Vec<ResourceContentReplacement>, CoreError> {
+        let mut replacements = self
+            .replacements
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        replacements.sort_by_key(|replacement| replacement.id().to_string());
+        Ok(replacements)
+    }
+
+    async fn remove(&self, id: &ResourceContentReplacementId) -> Result<(), CoreError> {
+        self.replacements.lock().unwrap().remove(id);
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
@@ -138,6 +181,7 @@ struct InMemoryResourceRepository {
     resources: Mutex<HashMap<ResourceId, Resource>>,
     directories: Mutex<HashMap<DirectoryId, (Directory, DirectoryPath)>>,
     fail_next_save: Mutex<bool>,
+    fail_next_conditional_save: Mutex<bool>,
     next_save_started: Mutex<Option<oneshot::Sender<()>>>,
     next_save_release: Mutex<Option<oneshot::Receiver<()>>>,
 }
@@ -149,6 +193,7 @@ impl Default for InMemoryResourceRepository {
             resources: Mutex::new(HashMap::new()),
             directories: Mutex::new(HashMap::from([(root.id(), (root, DirectoryPath::root()))])),
             fail_next_save: Mutex::new(false),
+            fail_next_conditional_save: Mutex::new(false),
             next_save_started: Mutex::new(None),
             next_save_release: Mutex::new(None),
         }
@@ -158,6 +203,10 @@ impl Default for InMemoryResourceRepository {
 impl InMemoryResourceRepository {
     fn fail_next_save(&self) {
         *self.fail_next_save.lock().unwrap() = true;
+    }
+
+    fn fail_next_conditional_save(&self) {
+        *self.fail_next_conditional_save.lock().unwrap() = true;
     }
 
     fn find_sync(&self, id: &ResourceId) -> Option<Resource> {
@@ -227,14 +276,28 @@ impl ResourceRepository for InMemoryResourceRepository {
     async fn save_if_unchanged(
         &self,
         resource: &Resource,
-        expected_updated_at: chrono::DateTime<chrono::Utc>,
+        expected_revision: u64,
     ) -> Result<bool, CoreError> {
+        if std::mem::take(&mut *self.fail_next_conditional_save.lock().unwrap()) {
+            return Err(CoreError::repository(
+                "save_if_unchanged",
+                TestError("conditional save failed"),
+            ));
+        }
+        let started = self.next_save_started.lock().unwrap().take();
+        let release = self.next_save_release.lock().unwrap().take();
+        if let Some(started) = started {
+            let _ = started.send(());
+        }
+        if let Some(release) = release {
+            let _ = release.await;
+        }
         {
             let resources = self.resources.lock().unwrap();
             let Some(current) = resources.get(&resource.id()) else {
                 return Ok(false);
             };
-            if current.updated_at() != expected_updated_at {
+            if current.revision() != expected_revision {
                 return Ok(false);
             }
         }
@@ -246,13 +309,13 @@ impl ResourceRepository for InMemoryResourceRepository {
     async fn remove_if_unchanged(
         &self,
         id: &ResourceId,
-        expected_updated_at: chrono::DateTime<chrono::Utc>,
+        expected_revision: u64,
     ) -> Result<bool, CoreError> {
         let mut resources = self.resources.lock().unwrap();
         let Some(current) = resources.get(id) else {
             return Ok(false);
         };
-        if current.updated_at() != expected_updated_at {
+        if current.revision() != expected_revision {
             return Ok(false);
         }
         resources.remove(id);
@@ -935,7 +998,7 @@ impl ResourceActionExecutor for StaticResourceActionExecutor {
         request: ResourceActionRequest,
     ) -> Result<ResourceActionOutput, CoreError> {
         let view = match request.action().as_str() {
-            "test.document.extract" => PluginView::Text(TextView {
+            "test.text.extract" => PluginView::Text(TextView {
                 text: String::from_utf8(
                     request
                         .content()
@@ -944,7 +1007,7 @@ impl ResourceActionExecutor for StaticResourceActionExecutor {
                 )
                 .unwrap(),
             }),
-            "azvs.markdown.update" => {
+            "azvs.markdown.edit" => {
                 let markdown = request
                     .input()
                     .get("markdown")
@@ -1064,17 +1127,13 @@ fn service() -> (
             "Binary",
             true,
         ),
-        ResourceKindDefinition::new(
-            ResourceKind::try_new("core:document").unwrap(),
-            "Document",
-            true,
-        ),
+        ResourceKindDefinition::new(ResourceKind::try_new("core:text").unwrap(), "Text", true),
         ResourceKindDefinition::new(
             ResourceKind::try_new("azvs:markdown").unwrap(),
-            "Markdown Document",
+            "Markdown",
             true,
         )
-        .with_parent(Some(ResourceKind::try_new("core:document").unwrap()))
+        .with_parent(Some(ResourceKind::try_new("core:text").unwrap()))
         .with_detect(
             ResourceContentMatcher::new()
                 .with_mime_types(["text/markdown", "text/x-markdown"])
@@ -1084,8 +1143,8 @@ fn service() -> (
     ]));
     let action_registry = Arc::new(InMemoryResourceActionRegistry {
         actions: vec![
-            ResourceActionDefinition::new("test.document.extract", "Extract document")
-                .with_kinds(["doc:markdown", "core:document"])
+            ResourceActionDefinition::new("test.text.extract", "Extract text")
+                .with_kinds(["doc:markdown", "core:text"])
                 .with_requirements(content_requirements())
                 .with_output(output_contract(["text"])),
             ResourceActionDefinition::new("resource.inspect", "Inspect resource")
@@ -1096,9 +1155,9 @@ fn service() -> (
                 .with_kinds(["doc:markdown"])
                 .with_requirements(content_requirements())
                 .with_output(output_contract(["media"])),
-            ResourceActionDefinition::new("test.document.thumbnail", "Document thumbnail")
+            ResourceActionDefinition::new("test.text.thumbnail", "Text thumbnail")
                 .with_provides(Some("thumbnail"))
-                .with_kinds(["core:document"])
+                .with_kinds(["core:text"])
                 .with_content_matcher(
                     ResourceContentMatcher::new().with_mime_types(["application/pdf"]),
                 )
@@ -1106,8 +1165,9 @@ fn service() -> (
             ResourceActionDefinition::new("core.resource.thumbnail", "Thumbnail")
                 .with_provides(Some("thumbnail"))
                 .with_output(output_contract(["media"])),
-            ResourceActionDefinition::new("azvs.markdown.render", "Read Markdown")
-                .with_kinds(["core:document"])
+            ResourceActionDefinition::new("azvs.markdown.read", "Read Markdown")
+                .with_provides(Some("text_read"))
+                .with_kinds(["core:text"])
                 .with_requirements(content_requirements())
                 .with_output(output_contract(["plugin_frame"]))
                 .with_content_matcher(
@@ -1115,8 +1175,9 @@ fn service() -> (
                         .with_mime_types(["text/markdown", "text/x-markdown"])
                         .with_extensions([".md", ".markdown"]),
                 ),
-            ResourceActionDefinition::new("azvs.markdown.update", "Edit Markdown")
-                .with_kinds(["core:document"])
+            ResourceActionDefinition::new("azvs.markdown.edit", "Edit Markdown")
+                .with_provides(Some("text_edit"))
+                .with_kinds(["core:text"])
                 .with_requirements(content_requirements())
                 .with_access(ResourceActionAccess::ReadWrite)
                 .with_output(output_contract(["text"]))
@@ -1141,6 +1202,7 @@ fn service() -> (
             blob_storage.clone(),
             kind_registry,
             Arc::new(InMemoryUploadSessionRepository::default()),
+            Arc::new(InMemoryContentReplacementRepository::default()),
         )
         .with_actions(action_registry, Arc::new(StaticResourceActionExecutor))
         .with_directory_actions(
@@ -1155,6 +1217,7 @@ fn service() -> (
             Arc::new(StaticDirectoryActionExecutor),
         ),
         Arc::new(test_resource_action_policy()),
+        Arc::new(test_resource_content_edit_policy()),
     );
 
     (service, repository, blob_storage)
@@ -1437,6 +1500,10 @@ fn test_resource_action_policy() -> ResourceActionPolicy {
     ResourceActionPolicy::new(64 * 1024 * 1024, 4 * 1024 * 1024).unwrap()
 }
 
+fn test_resource_content_edit_policy() -> ResourceContentEditPolicy {
+    ResourceContentEditPolicy::new(4 * 1024 * 1024).unwrap()
+}
+
 fn output_contract<const N: usize>(
     views: [&str; N],
 ) -> crate::domain::ResourceActionOutputContract {
@@ -1613,8 +1680,10 @@ fn service_with_registry(
             blob_storage.clone(),
             kind_registry,
             Arc::new(InMemoryUploadSessionRepository::default()),
+            Arc::new(InMemoryContentReplacementRepository::default()),
         ),
         Arc::new(test_resource_action_policy()),
+        Arc::new(test_resource_content_edit_policy()),
     );
 
     (service, repository, blob_storage)
@@ -1690,14 +1759,14 @@ fn resource_without_content_rejects_direct_content_action_execution() {
 
     let error = block_on(service.actions().execute_resource_action(
         &resource.id(),
-        ExecuteResourceAction::new("test.document.extract"),
+        ExecuteResourceAction::new("test.text.extract"),
     ))
     .unwrap_err();
 
     assert!(
         error
             .to_string()
-            .contains("does not support action `test.document.extract`")
+            .contains("does not support action `test.text.extract`")
     );
 }
 
@@ -2269,14 +2338,14 @@ fn execute_content_action_returns_text_for_matching_kind() {
     let resource = block_on(
         service.upload_resource_for_test(
             stream_upload_command("book", key, Bytes::from_static(b"Hello book"))
-                .with_kind(ResourceKind::try_new("core:document").unwrap()),
+                .with_kind(ResourceKind::try_new("core:text").unwrap()),
         ),
     )
     .unwrap();
 
     let output = block_on(service.actions().execute_resource_action(
         &resource.id(),
-        ExecuteResourceAction::new("test.document.extract"),
+        ExecuteResourceAction::new("test.text.extract"),
     ))
     .unwrap()
     .unwrap();
@@ -2296,7 +2365,7 @@ fn execute_write_action_replaces_resource_content() {
     let resource = block_on(
         service.upload_resource_for_test(
             stream_upload_command("note.md", key.clone(), Bytes::from_static(b"# Old"))
-                .with_kind(ResourceKind::try_new("core:document").unwrap())
+                .with_kind(ResourceKind::try_new("core:text").unwrap())
                 .with_mime_type("text/markdown"),
         ),
     )
@@ -2305,14 +2374,14 @@ fn execute_write_action_replaces_resource_content() {
     let output = block_on(
         service.actions().execute_resource_action(
             &resource.id(),
-            ExecuteResourceAction::new("azvs.markdown.update")
+            ExecuteResourceAction::new("azvs.markdown.edit")
                 .with_input(json!({"markdown": "# New\n\nUpdated."})),
         ),
     )
     .unwrap()
     .unwrap();
 
-    assert_eq!(output.action().as_str(), "azvs.markdown.update");
+    assert_eq!(output.action().as_str(), "azvs.markdown.edit");
     let updated = repository.find_sync(&resource.id()).unwrap();
     let content = updated.content().unwrap();
     assert!(blob_storage.contains(&key));
@@ -2336,29 +2405,442 @@ fn execute_write_action_replaces_resource_content() {
 }
 
 #[test]
-fn write_action_scratch_content_uses_reserved_namespace() {
+fn execute_action_rejects_a_stale_caller_snapshot() {
+    let (service, _, blob_storage) = service();
+    let key = StorageKey::new("docs/stale-note.md").unwrap();
+    let resource = block_on(
+        service.upload_resource_for_test(
+            stream_upload_command(
+                "stale-note.md",
+                key.clone(),
+                Bytes::from_static(b"# Current"),
+            )
+            .with_kind(ResourceKind::try_new("core:text").unwrap())
+            .with_mime_type("text/markdown"),
+        ),
+    )
+    .unwrap();
+    let stale = resource.revision() + 1;
+
+    let error = block_on(
+        service.actions().execute_resource_action(
+            &resource.id(),
+            ExecuteResourceAction::new("azvs.markdown.edit")
+                .with_input(json!({"markdown": "# Stale"}))
+                .with_expected_revision(stale),
+        ),
+    )
+    .unwrap_err();
+
+    assert!(matches!(error, CoreError::Conflict { .. }));
+    assert_eq!(
+        blob_storage.get_sync(&key).unwrap(),
+        Bytes::from_static(b"# Current")
+    );
+}
+
+#[test]
+fn streaming_text_replacement_updates_content_and_revision() {
+    let (service, repository, blob_storage) = service();
+    let key = StorageKey::new("docs/streamed.md").unwrap();
+    let resource = block_on(
+        service.upload_resource_for_test(
+            stream_upload_command("streamed.md", key.clone(), Bytes::from_static(b"# Old"))
+                .with_kind(ResourceKind::try_new("core:text").unwrap())
+                .with_mime_type("text/markdown"),
+        ),
+    )
+    .unwrap();
+    let replacement = Bytes::from_static(b"# Streamed\n\nUpdated.");
+    let checksum = Checksum::sha256(hex_sha256(&replacement)).unwrap();
+    let command = ReplaceResourceContent::new(
+        replacement.len() as u64,
+        checksum.clone(),
+        resource.revision(),
+    )
+    .with_mime_type("text/markdown");
+
+    let updated = block_on(service.content().replace_text_content_snapshot(
+        repository.locate_sync(resource.clone()),
+        command,
+        Box::pin(futures_util::stream::once({
+            let replacement = replacement.clone();
+            async move { Ok(replacement) }
+        })),
+    ))
+    .unwrap();
+
+    assert_eq!(updated.revision(), resource.revision() + 1);
+    assert_eq!(updated.content().unwrap().checksum(), Some(&checksum));
+    assert_eq!(blob_storage.get_sync(&key), Some(replacement));
+    assert_eq!(
+        repository.find_sync(&resource.id()).unwrap().revision(),
+        updated.revision()
+    );
+}
+
+#[tokio::test]
+async fn streaming_text_replacement_serializes_with_rename_on_the_same_blob() {
+    let (service, repository, blob_storage) = service();
+    let key = StorageKey::new("docs/concurrent.md").unwrap();
+    let renamed_key = StorageKey::new("docs/renamed.md").unwrap();
+    let resource = service
+        .upload_resource_for_test(
+            stream_upload_command(
+                "concurrent.md",
+                key.clone(),
+                Bytes::from_static(b"# Original"),
+            )
+            .with_kind(ResourceKind::try_new("core:text").unwrap())
+            .with_mime_type("text/markdown"),
+        )
+        .await
+        .unwrap();
+    let replacement = Bytes::from_static(b"# Replacement");
+    let command = ReplaceResourceContent::new(
+        replacement.len() as u64,
+        Checksum::sha256(hex_sha256(&replacement)).unwrap(),
+        resource.revision(),
+    );
+    let (save_started, release_save) = repository.pause_next_save();
+
+    let replacement_service = service.clone();
+    let replacement_snapshot = repository.locate_sync(resource.clone());
+    let replacement_task = tokio::spawn(async move {
+        replacement_service
+            .content()
+            .replace_text_content_snapshot(
+                replacement_snapshot,
+                command,
+                Box::pin(futures_util::stream::once(async move { Ok(replacement) })),
+            )
+            .await
+    });
+    save_started
+        .await
+        .expect("replacement should reach its conditional Resource save");
+
+    let rename_service = service.clone();
+    let rename_snapshot = repository.locate_sync(resource.clone());
+    let rename_task = tokio::spawn(async move {
+        rename_service
+            .commands()
+            .update_resource_snapshot(
+                rename_snapshot,
+                UpdateResource::new().with_name("renamed.md"),
+            )
+            .await
+    });
+    tokio::task::yield_now().await;
+    assert!(
+        !rename_task.is_finished(),
+        "rename must wait while replacement owns the original Blob key"
+    );
+
+    release_save.send(()).unwrap();
+    let updated = replacement_task.await.unwrap().unwrap();
+    let rename_error = rename_task.await.unwrap().unwrap_err();
+
+    assert!(matches!(rename_error, CoreError::Conflict { .. }));
+    assert_eq!(
+        blob_storage.get_sync(&key),
+        Some(Bytes::from_static(b"# Replacement"))
+    );
+    assert!(!blob_storage.contains(&renamed_key));
+    assert_eq!(
+        repository.find_sync(&resource.id()).unwrap().revision(),
+        updated.revision()
+    );
+}
+
+#[test]
+fn streaming_text_replacement_restores_the_original_blob_when_cas_fails() {
+    let (service, repository, blob_storage) = service();
+    let key = StorageKey::new("docs/rollback.md").unwrap();
+    let original = Bytes::from_static(b"# Original");
+    let resource = block_on(
+        service.upload_resource_for_test(
+            stream_upload_command("rollback.md", key.clone(), original.clone())
+                .with_kind(ResourceKind::try_new("core:text").unwrap())
+                .with_mime_type("text/markdown"),
+        ),
+    )
+    .unwrap();
+    let replacement = Bytes::from_static(b"# Replacement");
+    let command = ReplaceResourceContent::new(
+        replacement.len() as u64,
+        Checksum::sha256(hex_sha256(&replacement)).unwrap(),
+        resource.revision(),
+    );
+    repository.fail_next_conditional_save();
+
+    let error = block_on(service.content().replace_text_content_snapshot(
+        repository.locate_sync(resource.clone()),
+        command,
+        Box::pin(futures_util::stream::once(async move { Ok(replacement) })),
+    ))
+    .unwrap_err();
+
+    assert!(matches!(error, CoreError::Repository { .. }));
+    assert_eq!(blob_storage.get_sync(&key), Some(original));
+    assert_eq!(
+        repository.find_sync(&resource.id()).unwrap().revision(),
+        resource.revision()
+    );
+}
+
+#[test]
+fn startup_recovery_rolls_back_a_published_replacement_without_a_resource_commit() {
+    let (service, repository, blob_storage) = service();
+    let target = StorageKey::new("docs/interrupted.md").unwrap();
+    let original = Bytes::from_static(b"# Original");
+    let resource = block_on(
+        service.upload_resource_for_test(
+            stream_upload_command("interrupted.md", target.clone(), original.clone())
+                .with_kind(ResourceKind::try_new("core:text").unwrap())
+                .with_mime_type("text/markdown"),
+        ),
+    )
+    .unwrap();
+    let replacement_bytes = Bytes::from_static(b"# Interrupted replacement");
+    let replacement_content = crate::domain::ResourceContent::verified(
+        replacement_bytes.len() as u64,
+        Checksum::sha256(hex_sha256(&replacement_bytes)).unwrap(),
+    )
+    .with_mime_type("text/markdown")
+    .build()
+    .unwrap();
+    let id = ResourceContentReplacementId::new();
+    let staged = StorageKey::new(format!(".asset-hub/uploads/replacement-{id}")).unwrap();
+    let backup = StorageKey::new(format!(".asset-hub/content-backups/{id}")).unwrap();
+    let pending = ResourceContentReplacement::rehydrate(
+        id,
+        resource.id(),
+        resource.revision(),
+        target.clone(),
+        staged.clone(),
+        backup.clone(),
+        replacement_content,
+    )
+    .unwrap();
+    block_on(service.content_replacements.save(&pending)).unwrap();
+    block_on(blob_storage.put(&staged, replacement_bytes.clone())).unwrap();
+    block_on(blob_storage.move_if_absent(&target, &backup)).unwrap();
+    block_on(blob_storage.put(&target, replacement_bytes)).unwrap();
+
+    assert_eq!(block_on(service.resume_content_replacements()).unwrap(), 1);
+
+    assert_eq!(blob_storage.get_sync(&target), Some(original));
+    assert!(!blob_storage.contains(&backup));
+    assert!(!blob_storage.contains(&staged));
+    assert_eq!(repository.find_sync(&resource.id()).unwrap(), resource);
+    assert!(
+        block_on(service.content_replacements.list_pending())
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn startup_recovery_keeps_a_committed_replacement_and_cleans_internal_blobs() {
+    let (service, repository, blob_storage) = service();
+    let target = StorageKey::new("docs/committed.md").unwrap();
+    let original = Bytes::from_static(b"# Original");
+    let mut resource = block_on(
+        service.upload_resource_for_test(
+            stream_upload_command("committed.md", target.clone(), original)
+                .with_kind(ResourceKind::try_new("core:text").unwrap())
+                .with_mime_type("text/markdown"),
+        ),
+    )
+    .unwrap();
+    let expected_revision = resource.revision();
+    let replacement_bytes = Bytes::from_static(b"# Committed replacement");
+    let replacement_content = crate::domain::ResourceContent::verified(
+        replacement_bytes.len() as u64,
+        Checksum::sha256(hex_sha256(&replacement_bytes)).unwrap(),
+    )
+    .with_mime_type("text/markdown")
+    .build()
+    .unwrap();
+    let id = ResourceContentReplacementId::new();
+    let staged = StorageKey::new(format!(".asset-hub/uploads/replacement-{id}")).unwrap();
+    let backup = StorageKey::new(format!(".asset-hub/content-backups/{id}")).unwrap();
+    let pending = ResourceContentReplacement::rehydrate(
+        id,
+        resource.id(),
+        expected_revision,
+        target.clone(),
+        staged.clone(),
+        backup.clone(),
+        replacement_content.clone(),
+    )
+    .unwrap();
+    block_on(service.content_replacements.save(&pending)).unwrap();
+    block_on(blob_storage.put(&staged, replacement_bytes.clone())).unwrap();
+    block_on(blob_storage.move_if_absent(&target, &backup)).unwrap();
+    block_on(blob_storage.put(&target, replacement_bytes.clone())).unwrap();
+    resource.attach_content(replacement_content).unwrap();
+    block_on(repository.save(&resource)).unwrap();
+
+    assert_eq!(block_on(service.resume_content_replacements()).unwrap(), 1);
+
+    assert_eq!(blob_storage.get_sync(&target), Some(replacement_bytes));
+    assert!(!blob_storage.contains(&backup));
+    assert!(!blob_storage.contains(&staged));
+    assert!(
+        block_on(service.content_replacements.list_pending())
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn streaming_text_replacement_rejects_bad_checksums_and_oversized_content() {
+    let (service, repository, blob_storage) = service();
+    let key = StorageKey::new("docs/validated.md").unwrap();
+    let original = Bytes::from_static(b"# Original");
+    let resource = block_on(
+        service.upload_resource_for_test(
+            stream_upload_command("validated.md", key.clone(), original.clone())
+                .with_kind(ResourceKind::try_new("core:text").unwrap())
+                .with_mime_type("text/markdown"),
+        ),
+    )
+    .unwrap();
+    let replacement = Bytes::from_static(b"changed");
+    let bad_checksum = Checksum::sha256("0".repeat(64)).unwrap();
+    let error = block_on(service.content().replace_text_content_snapshot(
+        repository.locate_sync(resource.clone()),
+        ReplaceResourceContent::new(replacement.len() as u64, bad_checksum, resource.revision()),
+        Box::pin(futures_util::stream::once(async move { Ok(replacement) })),
+    ))
+    .unwrap_err();
+    assert!(matches!(error, CoreError::Conflict { .. }));
+    assert_eq!(blob_storage.get_sync(&key), Some(original.clone()));
+
+    let max = test_resource_content_edit_policy().max_text_bytes();
+    let error = block_on(service.content().replace_text_content_snapshot(
+        repository.locate_sync(resource.clone()),
+        ReplaceResourceContent::new(
+            max + 1,
+            Checksum::sha256("0".repeat(64)).unwrap(),
+            resource.revision(),
+        ),
+        Box::pin(futures_util::stream::empty()),
+    ))
+    .unwrap_err();
+    assert!(matches!(error, CoreError::LimitExceeded { .. }));
+    assert_eq!(blob_storage.get_sync(&key), Some(original));
+}
+
+#[test]
+fn text_edit_capability_is_hidden_above_the_edit_policy() {
+    let (service, _, _) = service();
+    let resource = Resource::builder("large.md")
+        .with_kind(ResourceKind::try_new("core:text").unwrap())
+        .with_content(
+            crate::domain::ResourceContent::verified(
+                test_resource_content_edit_policy().max_text_bytes() + 1,
+                Checksum::sha256("0".repeat(64)).unwrap(),
+            )
+            .with_mime_type("text/markdown")
+            .build()
+            .unwrap(),
+        )
+        .build()
+        .unwrap();
+
+    let actions = service.describe_resource_actions(&resource).unwrap();
+    assert!(actions.available_actions().iter().all(|action| {
+        !action
+            .provides()
+            .is_some_and(|capability| capability.as_str() == "text_edit")
+    }));
+}
+
+#[test]
+fn member_cannot_replace_text_outside_the_workspace() {
+    let (service, _, _) = service();
+    let root = block_on(service.directory_service().root()).unwrap();
+    let workspace = block_on(service.directory_service().create(&root, "workspace")).unwrap();
+    let outside = block_on(service.directory_service().create(&root, "outside")).unwrap();
+    let resource = block_on(
+        service.upload_resource_for_test(
+            stream_upload_command(
+                "outside.md",
+                StorageKey::new("outside/outside.md").unwrap(),
+                Bytes::from_static(b"outside"),
+            )
+            .with_kind(ResourceKind::try_new("core:text").unwrap())
+            .with_mime_type("text/markdown"),
+        ),
+    )
+    .unwrap();
+    assert_eq!(resource.directory_id(), outside.id());
+    let user = User::new("member", "hash", UserRole::Member, workspace.id()).unwrap();
+    let context = AccessContext::member(user.id());
+    let authorization = crate::service::AuthorizationService::new(
+        Arc::new(SingleUserRepository(user)),
+        service.directory_service().clone(),
+    );
+    let replacement = Bytes::from_static(b"denied");
+    let command = ReplaceResourceContent::new(
+        replacement.len() as u64,
+        Checksum::sha256(hex_sha256(&replacement)).unwrap(),
+        resource.revision(),
+    );
+
+    let error = block_on(
+        service
+            .secured(&authorization, &context)
+            .replace_resource_content(
+                &resource.id(),
+                command,
+                Box::pin(futures_util::stream::once(async move { Ok(replacement) })),
+            ),
+    )
+    .unwrap_err();
+    assert!(matches!(error, CoreError::Forbidden { .. }));
+}
+
+#[test]
+fn write_action_cleanup_failure_keeps_a_recoverable_intent() {
     let (service, _repository, blob_storage) = service();
     let key = StorageKey::new("docs/note.md").unwrap();
     let resource = block_on(
         service.upload_resource_for_test(
             stream_upload_command("note.md", key, Bytes::from_static(b"# Old"))
-                .with_kind(ResourceKind::try_new("core:document").unwrap())
+                .with_kind(ResourceKind::try_new("core:text").unwrap())
                 .with_mime_type("text/markdown"),
         ),
     )
     .unwrap();
     blob_storage.fail_next_delete();
 
-    block_on(service.actions().execute_resource_action(
+    let error = block_on(service.actions().execute_resource_action(
         &resource.id(),
-        ExecuteResourceAction::new("azvs.markdown.update").with_input(json!({"markdown": "# New"})),
+        ExecuteResourceAction::new("azvs.markdown.edit").with_input(json!({"markdown": "# New"})),
     ))
-    .unwrap()
-    .unwrap();
+    .unwrap_err();
 
-    assert!(blob_storage.contains_fragment(".asset-hub/action-effects/action-replacements/"));
-    assert!(!blob_storage.contains_fragment("docs/note.md.action-replacements/"));
-    assert!(!blob_storage.contains_fragment("docs/note.md.action-backups/"));
+    assert!(matches!(error, CoreError::Storage { .. }));
+    assert!(blob_storage.contains_fragment(".asset-hub/content-backups/"));
+    assert_eq!(
+        block_on(service.content_replacements.list_pending())
+            .unwrap()
+            .len(),
+        1
+    );
+
+    assert_eq!(block_on(service.resume_content_replacements()).unwrap(), 1);
+    assert!(!blob_storage.contains_fragment(".asset-hub/content-backups/"));
+    assert!(!blob_storage.contains_fragment(".asset-hub/uploads/replacement-"));
+    assert!(
+        block_on(service.content_replacements.list_pending())
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
@@ -2371,7 +2853,7 @@ fn describe_resource_actions_uses_declared_content_matchers() {
                 StorageKey::new("books/book.pdf").unwrap(),
                 Bytes::from_static(b"%PDF-1.4"),
             )
-            .with_kind(ResourceKind::try_new("core:document").unwrap())
+            .with_kind(ResourceKind::try_new("core:text").unwrap())
             .with_mime_type("application/pdf"),
         ),
     )
@@ -2383,7 +2865,7 @@ fn describe_resource_actions_uses_declared_content_matchers() {
                 StorageKey::new("books/book.txt").unwrap(),
                 Bytes::from_static(b"hello"),
             )
-            .with_kind(ResourceKind::try_new("core:document").unwrap())
+            .with_kind(ResourceKind::try_new("core:text").unwrap())
             .with_mime_type("text/plain"),
         ),
     )
@@ -2398,14 +2880,14 @@ fn describe_resource_actions_uses_declared_content_matchers() {
             .any(|action| action.id().as_str() == id)
     };
 
-    assert!(has_action(&pdf_actions, "test.document.extract"));
-    assert!(has_action(&pdf_actions, "test.document.thumbnail"));
+    assert!(has_action(&pdf_actions, "test.text.extract"));
+    assert!(has_action(&pdf_actions, "test.text.thumbnail"));
     assert!(!has_action(&pdf_actions, "core.resource.thumbnail"));
-    assert!(!has_action(&pdf_actions, "azvs.markdown.render"));
-    assert!(has_action(&text_actions, "test.document.extract"));
-    assert!(!has_action(&text_actions, "test.document.thumbnail"));
+    assert!(!has_action(&pdf_actions, "azvs.markdown.read"));
+    assert!(has_action(&text_actions, "test.text.extract"));
+    assert!(!has_action(&text_actions, "test.text.thumbnail"));
     assert!(has_action(&text_actions, "core.resource.thumbnail"));
-    assert!(!has_action(&text_actions, "azvs.markdown.render"));
+    assert!(!has_action(&text_actions, "azvs.markdown.read"));
 }
 
 #[test]

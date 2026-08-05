@@ -5,13 +5,15 @@
 
 use crate::CoreError;
 use crate::domain::{
-    Resource, ResourceActionDefinition, ResourceActionPolicy, ResourceKind, StorageKey,
+    Resource, ResourceActionDefinition, ResourceActionPolicy, ResourceContentEditPolicy,
+    ResourceKind, StorageKey,
 };
 use crate::port::{
     BlobStorage, DirectoryActionExecutor, DirectoryActionRegistry, DirectoryIndex,
     DirectoryKindRegistry, DirectoryLocation, DirectoryStorage, DirectoryStore,
-    ResourceActionExecutor, ResourceActionRegistry, ResourceKindRegistry, ResourceQuery,
-    ResourceRepository, StorageScanner, UploadSessionRepository,
+    ResourceActionExecutor, ResourceActionRegistry, ResourceContentReplacementRepository,
+    ResourceKindRegistry, ResourceQuery, ResourceRepository, StorageScanner,
+    UploadSessionRepository,
 };
 use crate::service::DirectoryService;
 use std::sync::Arc;
@@ -31,7 +33,7 @@ use command::ResourceCommandService;
 use content::ResourceContentService;
 pub use contract::{
     CreateUpload, DirectoryArchiveManifest, DirectoryArchiveResource, ExecuteResourceAction,
-    ResourceActions, ResourceContentStream, UpdateResource,
+    ReplaceResourceContent, ResourceActions, ResourceContentStream, UpdateResource,
 };
 pub use reconciliation::StorageReconciliationReport;
 use reconciliation::StorageReconciliationService;
@@ -55,6 +57,8 @@ pub struct ResourceService {
     kind_registry: Arc<dyn ResourceKindRegistry>,
     action_ports: Option<ResourceActionPorts>,
     resource_action_policy: Arc<ResourceActionPolicy>,
+    resource_content_edit_policy: Arc<ResourceContentEditPolicy>,
+    content_replacements: Arc<dyn ResourceContentReplacementRepository>,
     storage_key_locks: Arc<StorageKeyLocks>,
     upload_sessions: Arc<dyn UploadSessionRepository>,
     upload_locks: Arc<UploadLocks>,
@@ -87,11 +91,13 @@ pub struct ResourceServicePorts {
     storage_scanner: Arc<dyn StorageScanner>,
     kind_registry: Arc<dyn ResourceKindRegistry>,
     upload_sessions: Arc<dyn UploadSessionRepository>,
+    content_replacements: Arc<dyn ResourceContentReplacementRepository>,
     action_ports: Option<ResourceActionPorts>,
     directory_action_ports: Option<DirectoryActionPorts>,
 }
 
 impl ResourceServicePorts {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         repository: Arc<dyn ResourceRepository>,
         query: Arc<dyn ResourceQuery>,
@@ -103,6 +109,7 @@ impl ResourceServicePorts {
         storage_scanner: Arc<dyn StorageScanner>,
         kind_registry: Arc<dyn ResourceKindRegistry>,
         upload_sessions: Arc<dyn UploadSessionRepository>,
+        content_replacements: Arc<dyn ResourceContentReplacementRepository>,
     ) -> Self {
         Self {
             repository,
@@ -115,6 +122,7 @@ impl ResourceServicePorts {
             storage_scanner,
             kind_registry,
             upload_sessions,
+            content_replacements,
             action_ports: None,
             directory_action_ports: None,
         }
@@ -144,6 +152,7 @@ impl ResourceService {
     pub fn new(
         ports: ResourceServicePorts,
         resource_action_policy: Arc<ResourceActionPolicy>,
+        resource_content_edit_policy: Arc<ResourceContentEditPolicy>,
     ) -> Self {
         let ResourceServicePorts {
             repository,
@@ -156,6 +165,7 @@ impl ResourceService {
             storage_scanner,
             kind_registry,
             upload_sessions,
+            content_replacements,
             action_ports,
             directory_action_ports,
         } = ports;
@@ -177,6 +187,8 @@ impl ResourceService {
             kind_registry,
             action_ports,
             resource_action_policy,
+            resource_content_edit_policy,
+            content_replacements,
             storage_key_locks: Arc::new(StorageKeyLocks::default()),
             upload_sessions,
             upload_locks: Arc::new(UploadLocks::default()),
@@ -232,6 +244,11 @@ impl ResourceService {
             self.spawn_upload_finalization(id);
         }
         Ok(count)
+    }
+
+    /// Recover content replacements interrupted between Blob publication and Resource persistence.
+    pub async fn resume_content_replacements(&self) -> Result<usize, CoreError> {
+        self.content().resume_pending_replacements().await
     }
 
     fn spawn_upload_finalization(&self, id: crate::domain::UploadId) {
@@ -384,6 +401,15 @@ impl ResourceService {
             .into_iter()
             .filter(|action| resource.content().is_some() || !action.requirements().content)
             .filter(|action| self.action_matches_resource(action, resource))
+            .filter(|action| {
+                let is_text_edit = action
+                    .provides()
+                    .is_some_and(|capability| capability.as_str() == "text_edit");
+                !is_text_edit
+                    || resource.content().is_some_and(|content| {
+                        content.size() <= self.resource_content_edit_policy.max_text_bytes()
+                    })
+            })
             .collect::<Vec<_>>();
         self.action_ports
             .as_ref()

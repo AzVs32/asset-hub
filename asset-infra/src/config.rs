@@ -6,10 +6,12 @@ use std::path::{Path, PathBuf};
 mod blob_config;
 mod database_config;
 mod plugin_host_config;
+mod resource_edit_config;
 
 pub use blob_config::{BlobBackend, BlobConfig, LocalBlobConfig, LocalBlobSyncConfig};
 pub use database_config::{DatabaseBackend, DatabaseConfig, SqliteDatabaseConfig};
 pub use plugin_host_config::{PluginHostConfig, PluginPermissionGrants};
+pub use resource_edit_config::ResourceEditConfig;
 
 /// 默认配置文件名。
 const DEFAULT_CONFIG_FILE: &str = "config.toml";
@@ -41,6 +43,8 @@ const DEFAULT_PLUGIN_MAX_CONCURRENT_CALLS: usize = 8;
 const DEFAULT_PLUGIN_MEMORY_MAX_PAGES: u32 = 4096;
 /// 默认单次插件调用超时时间，单位为秒。
 const DEFAULT_PLUGIN_TIMEOUT_SECONDS: u64 = 20;
+/// 默认交互式文本编辑最大字节数。
+const DEFAULT_RESOURCE_EDIT_MAX_TEXT_BYTES: u64 = 4 * 1024 * 1024;
 
 /// 基础设施配置。
 ///
@@ -59,6 +63,8 @@ pub struct AssetInfraConfig {
     pub blob: BlobConfig,
     /// 插件执行预算和宿主批准的外部权限。
     pub plugin: PluginHostConfig,
+    /// Host 交互式资源编辑策略。
+    pub resource_edit: ResourceEditConfig,
 }
 
 impl AssetInfraConfig {
@@ -128,6 +134,7 @@ impl AssetInfraConfig {
             }
         }
         self.plugin.normalize_and_validate()?;
+        self.resource_edit.validate()?;
         Ok(self)
     }
 

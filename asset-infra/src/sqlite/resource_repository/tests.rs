@@ -337,7 +337,7 @@ async fn conditional_save_rejects_a_stale_resource_snapshot() {
     let resource = Resource::builder("original").build().unwrap();
     repository.save(&resource).await.unwrap();
 
-    let expected = resource.updated_at();
+    let expected = resource.revision();
     let mut concurrent = resource.clone();
     concurrent.rename("concurrent").unwrap();
     repository.save(&concurrent).await.unwrap();
@@ -403,7 +403,7 @@ async fn conditional_remove_rejects_a_stale_resource_snapshot() {
         .unwrap();
     repository.save(&resource).await.unwrap();
 
-    let expected = resource.updated_at();
+    let expected = resource.revision();
     let mut concurrent = resource.clone();
     concurrent.rename("concurrent").unwrap();
     repository.save(&concurrent).await.unwrap();
@@ -423,7 +423,7 @@ async fn conditional_remove_rejects_a_stale_resource_snapshot() {
     );
     assert!(
         repository
-            .remove_if_unchanged(&resource.id(), concurrent.updated_at())
+            .remove_if_unchanged(&resource.id(), concurrent.revision())
             .await
             .unwrap()
     );

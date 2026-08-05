@@ -108,6 +108,7 @@ impl From<CoreError> for HttpError {
             CoreError::Forbidden { .. } => StatusCode::FORBIDDEN,
             CoreError::NotFound { .. } => StatusCode::NOT_FOUND,
             CoreError::Conflict { .. } => StatusCode::CONFLICT,
+            CoreError::LimitExceeded { .. } => StatusCode::PAYLOAD_TOO_LARGE,
             CoreError::Plugin { diagnostic, .. } => plugin_status(&diagnostic.code),
             CoreError::Storage { .. } | CoreError::Repository { .. } => {
                 StatusCode::INTERNAL_SERVER_ERROR

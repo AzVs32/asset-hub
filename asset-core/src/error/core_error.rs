@@ -64,6 +64,14 @@ pub enum CoreError {
         message: String,
     },
 
+    /// 调用数据超过 Core 所有的业务处理上限。
+    #[error("{resource} is limited to {limit} bytes, received {actual} bytes")]
+    LimitExceeded {
+        resource: &'static str,
+        limit: u64,
+        actual: u64,
+    },
+
     /// 基础设施配置不合法。
     #[error("invalid configuration: {message}")]
     Configuration {
@@ -126,6 +134,14 @@ impl CoreError {
     pub fn conflict(message: impl Into<String>) -> Self {
         Self::Conflict {
             message: message.into(),
+        }
+    }
+
+    pub fn limit_exceeded(resource: &'static str, limit: u64, actual: u64) -> Self {
+        Self::LimitExceeded {
+            resource,
+            limit,
+            actual,
         }
     }
 

@@ -17,7 +17,7 @@
     "kinds": [
       {
         "kind": "azvs:markdown",
-        "parent": "core:document",
+        "parent": "core:text",
         "label": "Markdown",
         "supports_content": true,
         "detect": {
@@ -36,7 +36,8 @@
     ],
     "resource_actions": [
       {
-        "id": "azvs.markdown.render",
+        "id": "azvs.markdown.read",
+        "provides": "text_read",
         "label": "Read Markdown",
         "handler": "render_markdown",
         "applies_to": {
@@ -63,7 +64,8 @@
         }
       },
       {
-        "id": "azvs.markdown.update",
+        "id": "azvs.markdown.edit",
+        "provides": "text_edit",
         "label": "Edit Markdown",
         "handler": "update_markdown",
         "applies_to": {
@@ -96,8 +98,7 @@
     "allow": [
       "resource.read",
       "resource.write",
-      "resource.content.read",
-      "resource.content.replace"
+      "resource.content.read"
     ]
   }
 }

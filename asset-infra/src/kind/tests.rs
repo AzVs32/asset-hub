@@ -124,10 +124,15 @@ fn registry_includes_host_builtin_resource_kinds() {
             vec!["core.resource.download", "core.image.thumbnail"],
         ),
         (
-            "core:document",
-            "Document",
-            "builtin:core.document",
-            vec!["core.resource.download", "core.resource.thumbnail"],
+            "core:text",
+            "Text",
+            "builtin:core.text",
+            vec![
+                "core.resource.download",
+                "core.resource.thumbnail",
+                "core.text.read",
+                "core.text.edit",
+            ],
         ),
         (
             "core:video",
@@ -149,7 +154,10 @@ fn registry_includes_host_builtin_resource_kinds() {
                     .any(|definition| definition.id().as_str() == action)
             );
         }
-        assert_eq!(inherited_actions.len(), 2);
+        assert_eq!(
+            inherited_actions.len(),
+            if kind == "core:text" { 4 } else { 2 }
+        );
         if kind == "core:image" {
             assert!(
                 inherited_actions
@@ -171,6 +179,17 @@ fn registry_includes_host_builtin_resource_kinds() {
         .get(&ResourceKind::try_new("core:resource").unwrap())
         .unwrap();
     assert!(resource.detect().is_empty());
+    let text = registry
+        .get(&ResourceKind::try_new("core:text").unwrap())
+        .unwrap();
+    assert!(
+        text.detect()
+            .matches_content(Some("text/plain; charset=utf-8"), Some("notes/draft.txt"))
+    );
+    assert!(
+        text.detect()
+            .matches_content(Some("application/json"), Some("data/settings.json"))
+    );
 }
 
 #[test]
@@ -178,13 +197,23 @@ fn registry_exposes_actions_as_global_capabilities() {
     let registry = action_registry(&unique_temp_path("no-plugins")).unwrap();
     let actions = registry.actions();
 
-    assert_eq!(actions.len(), 3);
+    assert_eq!(actions.len(), 5);
     assert_eq!(actions[0].id().as_str(), "core.resource.download");
     assert_eq!(actions[1].id().as_str(), "core.resource.thumbnail");
     assert_eq!(actions[2].id().as_str(), "core.image.thumbnail");
     assert_eq!(
         actions[2].provides().map(|id| id.as_str()),
         Some("thumbnail")
+    );
+    assert_eq!(actions[3].id().as_str(), "core.text.read");
+    assert_eq!(
+        actions[3].provides().map(|id| id.as_str()),
+        Some("text_read")
+    );
+    assert_eq!(actions[4].id().as_str(), "core.text.edit");
+    assert_eq!(
+        actions[4].provides().map(|id| id.as_str()),
+        Some("text_edit")
     );
 }
 
@@ -313,7 +342,7 @@ fn registry_loads_format_plugin_as_independent_kind() {
             "kinds": [
               {
                 "kind": "azvs:epub",
-                "parent": "core:document",
+                "parent": "core:resource",
                 "label": "EPUB",
                 "supports_content": true,
                 "detect": {

@@ -45,6 +45,7 @@ export interface Resource {
   actions: ResourceAction[];
   createdAt: string;
   updatedAt: string;
+  revision: number;
   deletedAt: string | null;
 }
 

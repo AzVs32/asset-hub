@@ -65,6 +65,32 @@ impl CreateUpload {
 pub struct ExecuteResourceAction {
     pub(super) action: ResourceAction,
     pub(super) input: serde_json::Value,
+    pub(super) expected_revision: Option<u64>,
+}
+
+/// 流式替换可编辑文本资源的内容。
+#[derive(Debug, Clone)]
+pub struct ReplaceResourceContent {
+    pub(super) expected_size: u64,
+    pub(super) expected_checksum: Checksum,
+    pub(super) expected_revision: u64,
+    pub(super) mime_type: Option<String>,
+}
+
+impl ReplaceResourceContent {
+    pub fn new(expected_size: u64, expected_checksum: Checksum, expected_revision: u64) -> Self {
+        Self {
+            expected_size,
+            expected_checksum,
+            expected_revision,
+            mime_type: None,
+        }
+    }
+
+    pub fn with_mime_type(mut self, mime_type: impl Into<String>) -> Self {
+        self.mime_type = Some(mime_type.into());
+        self
+    }
 }
 
 impl ExecuteResourceAction {
@@ -72,11 +98,18 @@ impl ExecuteResourceAction {
         Self {
             action: action.into(),
             input: serde_json::Value::Object(Default::default()),
+            expected_revision: None,
         }
     }
 
     pub fn with_input(mut self, input: serde_json::Value) -> Self {
         self.input = input;
+        self
+    }
+
+    /// 要求资源仍处于调用方读取到的版本，避免交互式 Action 覆盖并发更新。
+    pub fn with_expected_revision(mut self, expected_revision: u64) -> Self {
+        self.expected_revision = Some(expected_revision);
         self
     }
 }

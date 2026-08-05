@@ -47,6 +47,8 @@ pub struct Resource {
     created_at: DateTime<Utc>,
     /// 资源最后更新时间。
     updated_at: DateTime<Utc>,
+    /// 单调递增的聚合版本，用于乐观并发控制。
+    revision: u64,
     /// 软删除时间；为空表示未删除。
     deleted_at: Option<DateTime<Utc>>,
 }
@@ -73,6 +75,8 @@ pub struct ResourceSnapshot {
     pub created_at: DateTime<Utc>,
     /// 资源最后更新时间。
     pub updated_at: DateTime<Utc>,
+    /// 持久化聚合版本；必须从 1 开始。
+    pub revision: u64,
     /// 软删除时间。
     pub deleted_at: Option<DateTime<Utc>>,
 }
@@ -90,6 +94,12 @@ impl Resource {
     pub fn rehydrate(snapshot: ResourceSnapshot) -> Result<Self, ResourceError> {
         let name = normalize_resource_name(snapshot.name)?;
         let tags = normalize_tags(snapshot.tags)?;
+        if snapshot.revision == 0 {
+            return Err(ResourceError::InvalidFormat {
+                field: "resource.revision",
+                reason: "resource revision must be greater than zero",
+            });
+        }
 
         Ok(Self {
             id: snapshot.id,
@@ -100,6 +110,7 @@ impl Resource {
             content: snapshot.content,
             created_at: snapshot.created_at,
             updated_at: snapshot.updated_at,
+            revision: snapshot.revision,
             deleted_at: snapshot.deleted_at,
         })
     }
@@ -142,6 +153,11 @@ impl Resource {
     /// 返回资源最后更新时间。
     pub fn updated_at(&self) -> DateTime<Utc> {
         self.updated_at
+    }
+
+    /// 返回单调递增的聚合版本。
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     /// 返回资源软删除时间。
@@ -204,6 +220,7 @@ impl Resource {
             let now = Utc::now();
             self.deleted_at = Some(now);
             self.updated_at = now;
+            self.increment_revision();
         }
     }
 
@@ -245,6 +262,14 @@ impl Resource {
     /// 刷新资源更新时间。
     fn touch(&mut self) {
         self.updated_at = Utc::now();
+        self.increment_revision();
+    }
+
+    fn increment_revision(&mut self) {
+        self.revision = self
+            .revision
+            .checked_add(1)
+            .expect("resource revision should not exhaust u64");
     }
 }
 
@@ -346,7 +371,7 @@ impl ResourceBuilder {
         let now = Utc::now();
 
         Ok(Resource {
-            id: self.id.unwrap_or_else(ResourceId::new),
+            id: self.id.unwrap_or_default(),
             name,
             directory_id: self.directory_id,
             kind: self.kind,
@@ -354,6 +379,7 @@ impl ResourceBuilder {
             content: self.content,
             created_at: now,
             updated_at: now,
+            revision: 1,
             deleted_at: None,
         })
     }

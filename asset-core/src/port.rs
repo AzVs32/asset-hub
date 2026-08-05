@@ -25,8 +25,8 @@ pub use directory::{
 pub use identity::{LocatedUser, PasswordHasher, UserQuery, UserRepository};
 pub use resource::{
     ListResources, LocatedResource, ResourceActionExecutor, ResourceActionOutput,
-    ResourceActionRegistry, ResourceActionRequest, ResourceKindDefinition, ResourceKindRegistry,
-    ResourcePage, ResourceQuery, ResourceRepository,
+    ResourceActionRegistry, ResourceActionRequest, ResourceContentReplacementRepository,
+    ResourceKindDefinition, ResourceKindRegistry, ResourcePage, ResourceQuery, ResourceRepository,
 };
 pub use storage::{
     BlobByteStream, BlobStorage, DirectoryStorage, RESERVED_BLOB_STORAGE_PREFIX, ScannedBlob,

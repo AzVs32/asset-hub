@@ -1,32 +1,50 @@
 use asset_core::CoreError;
 use asset_core::domain::{
-    ActionOutputContract, ActionUi as ActionDefinitionUi, DirectoryActionDefinition, DirectoryKind,
-    ResourceActionContentDelivery, ResourceActionDefinition, ResourceActionRequirements,
-    ResourceContentMatcher, ResourceKind,
+    ActionAccess, ActionOutputContract, ActionUi as ActionDefinitionUi, DirectoryActionDefinition,
+    DirectoryKind, ResourceActionContentDelivery, ResourceActionDefinition,
+    ResourceActionRequirements, ResourceContentMatcher, ResourceKind,
 };
 use asset_core::port::{DirectoryKindDefinition, ResourceKindDefinition};
 
+/// Host 内置的资源内容下载 action 稳定 ID。
 const CORE_RESOURCE_DOWNLOAD: &str = "core.resource.download";
-pub(crate) const CORE_RESOURCE_THUMBNAIL: &str = "core.resource.thumbnail";
-pub(crate) const CORE_IMAGE_THUMBNAIL: &str = "core.image.thumbnail";
+/// Host 内置的所有资源类型回退缩略图 provider 稳定 ID。
+const CORE_RESOURCE_THUMBNAIL: &str = "core.resource.thumbnail";
+/// Host 内置的 `core:image` 特化缩略图 provider 稳定 ID。
+const CORE_IMAGE_THUMBNAIL: &str = "core.image.thumbnail";
+/// Host 内置的 `core:text` 纯文本读取 action 稳定 ID。
+const CORE_TEXT_READ: &str = "core.text.read";
+/// Host 内置的 `core:text` 纯文本编辑 action 稳定 ID。
+const CORE_TEXT_EDIT: &str = "core.text.edit";
+/// 按类型层级解析最近缩略图 provider 的单例 capability。
 pub(crate) const THUMBNAIL_CAPABILITY: &str = "thumbnail";
+/// 按类型层级解析最近纯文本读取 provider 的单例 capability。
+pub(crate) const TEXT_READ_CAPABILITY: &str = "text_read";
+/// 按类型层级解析最近纯文本编辑 provider 的单例 capability。
+pub(crate) const TEXT_EDIT_CAPABILITY: &str = "text_edit";
+/// Host 内置的目录归档下载 action 稳定 ID。
 const CORE_DIRECTORY_DOWNLOAD: &str = "core.directory.download";
-pub(crate) const CORE_DIRECTORY_THUMBNAIL: &str = "core.directory.thumbnail";
+/// Host 内置的所有目录类型回退缩略图 provider 稳定 ID。
+const CORE_DIRECTORY_THUMBNAIL: &str = "core.directory.thumbnail";
 
+/// 对外报告的 Host 内置根资源类型来源。
 const CORE_RESOURCE_SOURCE: &str = "builtin:core.resource";
+/// 对外报告的 Host 内置根目录类型来源。
 const CORE_DIRECTORY_SOURCE: &str = "builtin:core.directory";
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum BuiltinResourceHandler {
     Download,
-    ResourceThumbnail,
+    GenericThumbnail,
     ImageThumbnail,
+    TextRead,
+    TextEdit,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum BuiltinDirectoryHandler {
     Download,
-    Thumbnail,
+    GenericThumbnail,
 }
 
 #[derive(Debug, Clone)]
@@ -53,7 +71,7 @@ impl BuiltinCatalog {
     pub(crate) fn new() -> Result<Self, CoreError> {
         let resource_kind = ResourceKind::try_new(ResourceKind::DEFAULT)?;
         let image_kind = ResourceKind::try_new("core:image")?;
-        let document_kind = ResourceKind::try_new("core:document")?;
+        let text_kind = ResourceKind::try_new("core:text")?;
         let video_kind = ResourceKind::try_new("core:video")?;
         let directory_kind = DirectoryKind::default();
 
@@ -73,18 +91,23 @@ impl BuiltinCatalog {
                             ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".avif",
                         ]),
                 ),
-            ResourceKindDefinition::with_source(
-                document_kind,
-                "Document",
-                true,
-                "builtin:core.document",
-            )
-            .with_parent(Some(resource_kind.clone()))
-            .with_detect(
-                ResourceContentMatcher::new()
-                    .with_mime_types(["application/pdf"])
-                    .with_extensions([".pdf"]),
-            ),
+            ResourceKindDefinition::with_source(text_kind, "Text", true, "builtin:core.text")
+                .with_parent(Some(resource_kind.clone()))
+                .with_detect(
+                    ResourceContentMatcher::new()
+                        .with_mime_types([
+                            "text/*",
+                            "application/json",
+                            "application/xml",
+                            "application/toml",
+                            "application/yaml",
+                            "application/x-yaml",
+                        ])
+                        .with_extensions([
+                            ".txt", ".text", ".log", ".csv", ".tsv", ".json", ".xml", ".toml",
+                            ".yaml", ".yml",
+                        ]),
+                ),
             ResourceKindDefinition::with_source(video_kind, "Video", true, "builtin:core.video")
                 .with_parent(Some(resource_kind))
                 .with_detect(
@@ -130,7 +153,7 @@ impl BuiltinCatalog {
                         order: Some(100),
                         locations: vec!["resource_list_thumbnail".to_string()],
                     }),
-                handler: BuiltinResourceHandler::ResourceThumbnail,
+                handler: BuiltinResourceHandler::GenericThumbnail,
             },
             BuiltinResourceAction {
                 definition: ResourceActionDefinition::new(CORE_IMAGE_THUMBNAIL, "Image Thumbnail")
@@ -145,6 +168,43 @@ impl BuiltinCatalog {
                         locations: vec!["resource_list_thumbnail".to_string()],
                     }),
                 handler: BuiltinResourceHandler::ImageThumbnail,
+            },
+            BuiltinResourceAction {
+                definition: ResourceActionDefinition::new(CORE_TEXT_READ, "Read Text")
+                    .with_provides(Some(TEXT_READ_CAPABILITY))
+                    .with_kinds(["core:text"])
+                    .with_requirements(ResourceActionRequirements {
+                        content: true,
+                        content_delivery: ResourceActionContentDelivery::Inline,
+                    })
+                    .with_output(ActionOutputContract {
+                        view: vec!["text".to_string()],
+                    })
+                    .with_ui(ActionDefinitionUi {
+                        group: Some("open".to_string()),
+                        order: Some(50),
+                        locations: vec!["resource_detail".to_string(), "context_menu".to_string()],
+                    }),
+                handler: BuiltinResourceHandler::TextRead,
+            },
+            BuiltinResourceAction {
+                definition: ResourceActionDefinition::new(CORE_TEXT_EDIT, "Edit Text")
+                    .with_provides(Some(TEXT_EDIT_CAPABILITY))
+                    .with_access(ActionAccess::ReadWrite)
+                    .with_kinds(["core:text"])
+                    .with_requirements(ResourceActionRequirements {
+                        content: true,
+                        content_delivery: ResourceActionContentDelivery::Inline,
+                    })
+                    .with_output(ActionOutputContract {
+                        view: vec!["text".to_string()],
+                    })
+                    .with_ui(ActionDefinitionUi {
+                        group: Some("edit".to_string()),
+                        order: Some(50),
+                        locations: vec!["resource_detail".to_string(), "context_menu".to_string()],
+                    }),
+                handler: BuiltinResourceHandler::TextEdit,
             },
         ];
 
@@ -178,7 +238,7 @@ impl BuiltinCatalog {
                         order: Some(100),
                         locations: vec!["directory_list_thumbnail".to_string()],
                     }),
-                handler: BuiltinDirectoryHandler::Thumbnail,
+                handler: BuiltinDirectoryHandler::GenericThumbnail,
             },
         ];
 

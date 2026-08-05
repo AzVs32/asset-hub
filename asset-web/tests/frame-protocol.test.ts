@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseExecuteActionMessage } from "@/plugins/frame-protocol";
+import { parseExecuteActionMessage, parsePluginFrameRequest } from "@/plugins/frame-protocol";
 
 describe("plugin frame messages", () => {
   const pluginApi = "asset-hub.plugin-api@1";
@@ -64,6 +64,52 @@ describe("plugin frame messages", () => {
           input: ["not", "an", "object"],
         },
         pluginApi,
+      ),
+    ).toBeNull();
+  });
+
+  it("accepts text replacement only with valid common fields and string content", () => {
+    expect(
+      parsePluginFrameRequest(
+        {
+          type: "asset-hub:replace-resource-text",
+          plugin_api: pluginApi,
+          request_id: "request-2",
+          resource_id: "resource-1",
+          text: "# Updated",
+        },
+        pluginApi,
+      ),
+    ).toEqual({
+      type: "asset-hub:replace-resource-text",
+      pluginApi,
+      requestId: "request-2",
+      resourceId: "resource-1",
+      text: "# Updated",
+    });
+
+    expect(
+      parsePluginFrameRequest(
+        {
+          type: "asset-hub:replace-resource-text",
+          plugin_api: pluginApi,
+          request_id: "request-2",
+          resource_id: "resource-1",
+          text: { markdown: "not a string" },
+        },
+        pluginApi,
+      ),
+    ).toBeNull();
+    expect(
+      parsePluginFrameRequest(
+        {
+          type: "asset-hub:replace-resource-text",
+          plugin_api: pluginApi,
+          request_id: "request-2",
+          resource_id: "another-resource",
+          text: "# Updated",
+        },
+        "another.plugin-api@1",
       ),
     ).toBeNull();
   });

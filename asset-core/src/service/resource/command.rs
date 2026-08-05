@@ -61,7 +61,7 @@ impl<'a> ResourceCommandService<'a> {
         command: UpdateResource,
     ) -> Result<Resource, CoreError> {
         let (mut resource, mut directory) = located.into_parts();
-        let expected_updated_at = resource.updated_at();
+        let expected_revision = resource.revision();
         let old_storage_key = persisted_content_key(&resource, &directory)?;
         let restoring = resource.is_deleted() && command.restore;
 
@@ -90,6 +90,14 @@ impl<'a> ResourceCommandService<'a> {
             resource.replace_tags(tags)?;
         }
 
+        let new_storage_key = persisted_content_key(&resource, &directory)?;
+        let lock_keys = old_storage_key
+            .iter()
+            .chain(new_storage_key.iter())
+            .cloned()
+            .collect::<Vec<_>>();
+        let _storage_guards = self.service.storage_key_locks.lock_many(&lock_keys).await;
+
         if restoring
             && self
                 .service
@@ -104,7 +112,6 @@ impl<'a> ResourceCommandService<'a> {
             )));
         }
 
-        let new_storage_key = persisted_content_key(&resource, &directory)?;
         let moved_content = match (&old_storage_key, &new_storage_key) {
             (Some(from), Some(to)) if from != to => {
                 self.service.blob_storage.move_if_absent(from, to).await?;
@@ -116,7 +123,7 @@ impl<'a> ResourceCommandService<'a> {
         let saved = self
             .service
             .repository
-            .save_if_unchanged(&resource, expected_updated_at)
+            .save_if_unchanged(&resource, expected_revision)
             .await;
 
         let error = match saved {
@@ -165,11 +172,17 @@ impl<'a> ResourceCommandService<'a> {
         located: LocatedResource,
     ) -> Result<Resource, CoreError> {
         let (mut resource, directory) = located.into_parts();
-        let expected_updated_at = resource.updated_at();
+        let expected_revision = resource.revision();
         let old_storage_key = persisted_content_key(&resource, &directory)?;
 
         resource.soft_delete();
         let new_storage_key = persisted_content_key(&resource, &directory)?;
+        let lock_keys = old_storage_key
+            .iter()
+            .chain(new_storage_key.iter())
+            .cloned()
+            .collect::<Vec<_>>();
+        let _storage_guards = self.service.storage_key_locks.lock_many(&lock_keys).await;
         let moved_content = match (&old_storage_key, &new_storage_key) {
             (Some(from), Some(to)) if from != to => {
                 self.service.blob_storage.move_if_absent(from, to).await?;
@@ -181,7 +194,7 @@ impl<'a> ResourceCommandService<'a> {
         let saved = self
             .service
             .repository
-            .save_if_unchanged(&resource, expected_updated_at)
+            .save_if_unchanged(&resource, expected_revision)
             .await;
         let error = match saved {
             Ok(true) => return Ok(resource),
@@ -230,10 +243,15 @@ impl<'a> ResourceCommandService<'a> {
     ) -> Result<(), CoreError> {
         let (resource, directory) = located.into_parts();
         let storage_key = persisted_content_key(&resource, &directory)?;
+        let _storage_guard = if let Some(storage_key) = &storage_key {
+            Some(self.service.storage_key_locks.lock(storage_key).await)
+        } else {
+            None
+        };
         if !self
             .service
             .repository
-            .remove_if_unchanged(&resource.id(), resource.updated_at())
+            .remove_if_unchanged(&resource.id(), resource.revision())
             .await?
         {
             return Err(CoreError::conflict(format!(

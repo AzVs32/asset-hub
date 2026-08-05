@@ -98,6 +98,71 @@ describe("OpenApiAssetGateway URL boundary", () => {
     expect(request.method).toBe("POST");
   });
 
+  it("sends an optional resource version precondition separately from plugin input", async () => {
+    const fetchMock = vi.fn(async (_request: Request) =>
+      Response.json({
+        resource_id: "resource-1",
+        action: "core.text.edit",
+        diagnostics: [],
+        view: { view: "text", text: "updated" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const absoluteGateway = new OpenApiAssetGateway("http://localhost/api");
+    const edit = action({ id: "core.text.edit", access: "read_write" });
+    const item = resource([edit]);
+
+    await absoluteGateway.executeAction(item, edit.id, { text: "updated" });
+
+    const request = fetchMock.mock.calls[0]?.[0];
+    if (!request) throw new Error("request was not captured");
+    expect(await request.json()).toEqual({
+      input: { text: "updated" },
+      expected_revision: item.revision,
+    });
+  });
+
+  it("streams replacement text outside the action JSON contract", async () => {
+    const item = resource();
+    const capturedRequests: Request[] = [];
+    const capturedBodies: BodyInit[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      capturedRequests.push(new Request(input, init));
+      if (init?.body) capturedBodies.push(init.body);
+      return Response.json({
+        id: item.id,
+        name: item.name,
+        directory: item.directory,
+        kind: item.kind,
+        tags: item.tags,
+        content: {
+          size: 7,
+          mime_type: "video/mp4",
+          verification_status: "verified",
+          checksum: { kind: "sha256", value: "c".repeat(64) },
+          verification_error: null,
+        },
+        actions: { available_actions: [] },
+        created_at: item.createdAt,
+        updated_at: item.updatedAt,
+        revision: item.revision + 1,
+        deleted_at: null,
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const absoluteGateway = new OpenApiAssetGateway("http://localhost/api", hashFile, hashChunk);
+
+    await absoluteGateway.replaceResourceText(item, "updated");
+
+    const request = capturedRequests[0];
+    if (!request) throw new Error("request was not captured");
+    expect(request.method).toBe("PUT");
+    expect(request.headers.get("Content-SHA256")).toBe("c".repeat(64));
+    expect(request.headers.get("If-Match")).toBe(`"${item.revision}"`);
+    expect(capturedBodies[0]).toBeInstanceOf(Blob);
+    expect((capturedBodies[0] as Blob).size).toBe(7);
+  });
+
   it("creates users without submitting a workspace directory", async () => {
     const fetchMock = vi.fn(async (_request: Request) =>
       Response.json(
@@ -296,6 +361,7 @@ describe("OpenApiAssetGateway URL boundary", () => {
             actions: { available_actions: [] },
             created_at: "2026-01-01T00:00:00Z",
             updated_at: "2026-01-01T00:00:00Z",
+            revision: 1,
           },
           { status: 201 },
         ),

@@ -265,7 +265,8 @@ export interface paths {
         };
         /** 读取资源内容。 */
         get: operations["get_resource_content"];
-        put?: never;
+        /** 流式替换资源文本内容。 */
+        put: operations["replace_resource_content"];
         post?: never;
         delete?: never;
         options?: never;
@@ -493,12 +494,18 @@ export interface components {
         /**
          * @description 执行资源动作请求。
          * @example {
+         *       "expected_revision": 7,
          *       "input": {
          *         "mode": "default"
          *       }
          *     }
          */
         ExecuteResourceActionRequest: {
+            /**
+             * Format: int64
+             * @description 可选资源版本前置条件；不匹配时 Host 返回 409，且不执行 Action。
+             */
+            expected_revision?: number | null;
             /** @description 传递给插件 action handler 的 JSON 输入。 */
             input?: unknown;
         };
@@ -668,6 +675,11 @@ export interface components {
             kind: string;
             /** @description 资源展示名。 */
             name: string;
+            /**
+             * Format: int64
+             * @description 单调递增的资源聚合版本。
+             */
+            revision: number;
             /** @description 资源标签。 */
             tags: string[];
             /** @description 资源最后更新时间，RFC3339 格式。 */
@@ -1443,6 +1455,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description 资源版本已变化 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description 插件或服务端错误 */
             500: {
                 headers: {
@@ -1486,6 +1507,95 @@ export interface operations {
             };
             /** @description 资源内容不存在 */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 服务端错误 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    replace_resource_content: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 带双引号的资源 revision */
+                "If-Match": string;
+                /** @description 64 位小写十六进制 SHA-256 */
+                "Content-SHA256": string;
+                /** @description 原始内容字节数 */
+                "Content-Length": number;
+            };
+            path: {
+                /** @description 资源 ID */
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** @description 替换后的原始 UTF-8 文本字节 */
+        requestBody: {
+            content: {
+                "application/octet-stream": string;
+            };
+        };
+        responses: {
+            /** @description 资源内容已替换 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResourceResponse"];
+                };
+            };
+            /** @description 请求头或资源状态无效 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 当前工作区没有写权限 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 资源不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 资源 revision、大小或摘要冲突 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 文本超过 Host 编辑上限 */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };

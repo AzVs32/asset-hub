@@ -29,7 +29,7 @@ during normal browsing but is cleared when Asset Hub restarts.
 ## Resource Kind
 
 - Kind: `azvs:epub`
-- Parent kind: `core:document`
+- Parent kind: `core:resource`
 - Action: `azvs.epub.render`
 - Handler: `render_epub`
 - Thumbnail action: `azvs.epub.thumbnail`, providing the Resource-scoped singleton `thumbnail`

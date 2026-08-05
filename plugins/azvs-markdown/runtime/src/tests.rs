@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn initial_frame_contains_only_small_routing_payload() {
     let output =
-        render_markdown_payload(request_json("azvs.markdown.render", json!({}), None)).unwrap();
+        render_markdown_payload(request_json("azvs.markdown.read", json!({}), None)).unwrap();
     let output: Value = serde_json::from_str(&output).unwrap();
     let payload = decode_frame_payload(&output);
 
@@ -13,7 +13,7 @@ fn initial_frame_contains_only_small_routing_payload() {
     );
     assert_eq!(payload["resource_id"], resource_json()["id"]);
     assert_eq!(payload["mode"], "read");
-    assert_eq!(payload["action"], "azvs.markdown.render");
+    assert_eq!(payload["action"], "azvs.markdown.read");
     assert!(payload.get("markdown").is_none());
     assert!(output["url"].as_str().unwrap().len() < 300);
 }
@@ -21,7 +21,7 @@ fn initial_frame_contains_only_small_routing_payload() {
 #[test]
 fn edit_frame_does_not_require_content() {
     let output =
-        update_markdown_payload(request_json("azvs.markdown.update", json!({}), None)).unwrap();
+        update_markdown_payload(request_json("azvs.markdown.edit", json!({}), None)).unwrap();
     let output: Value = serde_json::from_str(&output).unwrap();
     let payload = decode_frame_payload(&output);
     assert_eq!(payload["mode"], "edit");
@@ -31,7 +31,7 @@ fn edit_frame_does_not_require_content() {
 #[test]
 fn small_markdown_is_returned_directly() {
     let output = render_markdown_payload(request_json(
-        "azvs.markdown.render",
+        "azvs.markdown.read",
         json!({"operation": "load"}),
         Some(b"\xef\xbb\xbf# Title\n\nBody"),
     ))
@@ -46,7 +46,7 @@ fn small_markdown_is_returned_directly() {
 fn large_markdown_uses_bounded_chunks() {
     let markdown = vec![b'a'; CONTENT_CHUNK_BYTES as usize + 17];
     let load = render_markdown_payload(request_json(
-        "azvs.markdown.render",
+        "azvs.markdown.read",
         json!({"operation": "load"}),
         Some(&markdown),
     ))
@@ -56,7 +56,7 @@ fn large_markdown_uses_bounded_chunks() {
     assert_eq!(load["data"]["chunk_size"], CONTENT_CHUNK_BYTES);
 
     let chunk = render_markdown_payload(request_json(
-        "azvs.markdown.render",
+        "azvs.markdown.read",
         json!({"operation": "chunk", "offset": CONTENT_CHUNK_BYTES}),
         Some(&markdown),
     ))
@@ -73,21 +73,18 @@ fn large_markdown_uses_bounded_chunks() {
 }
 
 #[test]
-fn update_markdown_returns_replace_content_effect() {
-    let output = update_markdown_payload(request_json(
-        "azvs.markdown.update",
+fn update_markdown_rejects_legacy_inline_writeback() {
+    let error = update_markdown_payload(request_json(
+        "azvs.markdown.edit",
         json!({"markdown": "# Updated"}),
         None,
     ))
-    .unwrap();
-    let output: Value = serde_json::from_str(&output).unwrap();
-    assert_eq!(output["view"], "text");
-    assert_eq!(output["effects"][0]["type"], "replace_content");
-    assert_eq!(
-        STANDARD
-            .decode(output["effects"][0]["data"].as_str().unwrap())
-            .unwrap(),
-        b"# Updated"
+    .unwrap_err();
+    assert!(
+        error
+            .0
+            .to_string()
+            .contains("unsupported Markdown edit operation")
     );
 }
 
@@ -104,7 +101,7 @@ fn decode_frame_payload(output: &Value) -> Value {
 fn request_json(action: &str, input: Value, content: Option<&[u8]>) -> String {
     let mut request = json!({
         "action": action,
-        "access": if action == "azvs.markdown.update" { "read_write" } else { "read_only" },
+        "access": if action == "azvs.markdown.edit" { "read_write" } else { "read_only" },
         "input": input,
         "resource": resource_json(),
     });

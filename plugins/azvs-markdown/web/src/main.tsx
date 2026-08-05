@@ -54,8 +54,10 @@ type SaveState =
   | { status: "saved"; label: string }
   | { status: "error"; label: string };
 
-type ActionResultMessage = {
-  type: "asset-hub:execute-resource-action-result";
+type HostResultMessage = {
+  type:
+    | "asset-hub:execute-resource-action-result"
+    | "asset-hub:replace-resource-text-result";
   plugin_api: string;
   request_id: string;
   ok: boolean;
@@ -146,7 +148,7 @@ function App() {
 
     setSaveState({ status: "saving", label: "Saving" });
     try {
-      const result = await executeResourceAction(payload, { markdown: source });
+      const result = await replaceResourceText(payload, source);
       if (!result.ok) {
         throw new Error(result.error || "Save failed");
       }
@@ -465,6 +467,31 @@ function executeResourceAction(
   frame: FramePayload,
   input: Record<string, unknown>,
 ): Promise<ExecuteActionResult> {
+  return requestHost(
+    frame,
+    "asset-hub:execute-resource-action",
+    "asset-hub:execute-resource-action-result",
+    { action: frame.action, input },
+  );
+}
+
+function replaceResourceText(frame: FramePayload, text: string): Promise<ExecuteActionResult> {
+  return requestHost(
+    frame,
+    "asset-hub:replace-resource-text",
+    "asset-hub:replace-resource-text-result",
+    { text },
+  );
+}
+
+function requestHost(
+  frame: FramePayload,
+  requestType: "asset-hub:execute-resource-action" | "asset-hub:replace-resource-text",
+  resultType:
+    | "asset-hub:execute-resource-action-result"
+    | "asset-hub:replace-resource-text-result",
+  payload: Record<string, unknown>,
+): Promise<ExecuteActionResult> {
   const requestId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
   return new Promise((resolve) => {
     const timeout = window.setTimeout(() => {
@@ -472,12 +499,12 @@ function executeResourceAction(
       resolve({ ok: false, error: "Markdown request timed out" });
     }, 30000);
 
-    function onMessage(event: MessageEvent<ActionResultMessage>) {
+    function onMessage(event: MessageEvent<HostResultMessage>) {
       if (event.source !== window.parent) return;
       const message = event.data;
       if (
         !message ||
-        message.type !== "asset-hub:execute-resource-action-result" ||
+        message.type !== resultType ||
         message.plugin_api !== frame.plugin_api ||
         message.request_id !== requestId
       ) {
@@ -495,12 +522,11 @@ function executeResourceAction(
     window.addEventListener("message", onMessage);
     window.parent.postMessage(
       {
-        type: "asset-hub:execute-resource-action",
+        type: requestType,
         plugin_api: frame.plugin_api,
         request_id: requestId,
         resource_id: frame.resource_id,
-        action: frame.action,
-        input,
+        ...payload,
       },
       "*",
     );

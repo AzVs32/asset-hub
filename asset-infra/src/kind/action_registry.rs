@@ -4,9 +4,14 @@ use asset_core::port::{ResourceActionRegistry, ResourceKindDefinition};
 use asset_plugin_api::manifest::ResourceActionCapability;
 
 use super::normalization::resource_action_definition;
-use crate::builtin_catalog::THUMBNAIL_CAPABILITY;
+use crate::builtin_catalog::{TEXT_EDIT_CAPABILITY, TEXT_READ_CAPABILITY, THUMBNAIL_CAPABILITY};
 
 const RESOURCE_THUMBNAIL_LOCATION: &str = "resource_list_thumbnail";
+const RESOURCE_CAPABILITIES: &[&str] = &[
+    THUMBNAIL_CAPABILITY,
+    TEXT_READ_CAPABILITY,
+    TEXT_EDIT_CAPABILITY,
+];
 
 /// 默认资源动作注册表。
 #[derive(Debug, Clone)]
@@ -92,7 +97,7 @@ pub(super) fn validate_resource_action_capabilities(
     for action in actions {
         if let Some(capability) = action
             .provides()
-            .filter(|capability| capability.as_str() != THUMBNAIL_CAPABILITY)
+            .filter(|capability| !RESOURCE_CAPABILITIES.contains(&capability.as_str()))
         {
             return Err(CoreError::configuration(format!(
                 "resource action `{}` provides unsupported capability `{capability}`",
@@ -122,29 +127,51 @@ pub(super) fn validate_resource_action_capabilities(
                 action.id()
             )));
         }
+        let provides_text_read = action
+            .provides()
+            .is_some_and(|capability| capability.as_str() == TEXT_READ_CAPABILITY);
+        if provides_text_read && action.access() != ActionAccess::ReadOnly {
+            return Err(CoreError::configuration(format!(
+                "resource text read provider `{}` must be read-only",
+                action.id()
+            )));
+        }
+        let provides_text_edit = action
+            .provides()
+            .is_some_and(|capability| capability.as_str() == TEXT_EDIT_CAPABILITY);
+        if provides_text_edit && action.access() != ActionAccess::ReadWrite {
+            return Err(CoreError::configuration(format!(
+                "resource text edit provider `{}` must be read-write",
+                action.id()
+            )));
+        }
     }
     for definition in definitions {
         let lineage = resource_kind_lineage(definitions, definition);
-        validate_nearest_resource_thumbnail_provider(
-            definition.kind().as_str(),
-            &lineage,
-            actions,
-        )?;
+        for capability in RESOURCE_CAPABILITIES {
+            validate_nearest_resource_capability_provider(
+                definition.kind().as_str(),
+                &lineage,
+                actions,
+                capability,
+            )?;
+        }
     }
     Ok(())
 }
 
-fn validate_nearest_resource_thumbnail_provider(
+fn validate_nearest_resource_capability_provider(
     kind: &str,
     lineage: &[&str],
     actions: &[ResourceActionDefinition],
+    capability: &str,
 ) -> Result<(), CoreError> {
     let mut nearest = None;
     let mut providers = Vec::new();
     for action in actions.iter().filter(|action| {
         action
             .provides()
-            .is_some_and(|capability| capability.as_str() == THUMBNAIL_CAPABILITY)
+            .is_some_and(|provided| provided.as_str() == capability)
     }) {
         let distance = if action.kinds().is_empty() {
             usize::MAX
@@ -174,7 +201,7 @@ fn validate_nearest_resource_thumbnail_provider(
     }
     if providers.len() > 1 {
         return Err(CoreError::configuration(format!(
-            "resource kind `{kind}` has multiple nearest `{THUMBNAIL_CAPABILITY}` providers: {}",
+            "resource kind `{kind}` has multiple nearest `{capability}` providers: {}",
             providers.join(", ")
         )));
     }

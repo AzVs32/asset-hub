@@ -321,12 +321,18 @@ export class OpenApiAssetGateway implements AssetGateway {
     resource: Resource,
     actionId: string,
     input: JsonObject = {},
+    expectedRevision?: number,
   ): Promise<PluginActionOutput> {
     const action = resource.actions.find((candidate) => candidate.id === actionId);
     if (!action) throw new Error(`Action ${actionId} is not available for resource ${resource.id}`);
+    const revision =
+      expectedRevision ?? (action.access === "read_write" ? resource.revision : undefined);
     const result = await this.#client.POST("/resources/{id}/actions/{action}", {
       params: { path: { id: resource.id, action: actionId } },
-      body: { input },
+      body: {
+        input,
+        ...(revision !== undefined ? { expected_revision: revision } : {}),
+      },
     });
     const data = expectData(result);
     return {
@@ -335,6 +341,28 @@ export class OpenApiAssetGateway implements AssetGateway {
       diagnostics: data.diagnostics.map(mapDiagnostic),
       view: parsePluginView(data.view),
     };
+  }
+
+  async replaceResourceText(resource: Resource, text: string): Promise<Resource> {
+    const content = new Blob([text], {
+      type: resource.content?.mimeType || "text/plain; charset=utf-8",
+    });
+    const checksum = await this.#hashChunk(content);
+    const response = await fetch(
+      `${this.#baseUrl}/resources/${encodeURIComponent(resource.id)}/content`,
+      {
+        method: "PUT",
+        credentials: "include",
+        headers: {
+          "Content-Type": content.type,
+          "Content-SHA256": checksum,
+          "If-Match": `"${resource.revision}"`,
+        },
+        body: content,
+      },
+    );
+    if (!response.ok) throw await httpError(response);
+    return mapResource((await response.json()) as ApiResource);
   }
 
   resourceContentUrl(resourceId: string): string {
@@ -494,6 +522,7 @@ function mapResource(value: ApiResource): Resource {
     actions: value.actions.available_actions.map(mapAction),
     createdAt: value.created_at,
     updatedAt: value.updated_at,
+    revision: value.revision,
     deletedAt: value.deleted_at ?? null,
   };
 }

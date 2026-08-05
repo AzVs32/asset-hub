@@ -64,6 +64,7 @@ pub struct UploadSessionSnapshot {
 }
 
 impl UploadSession {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         owner_id: UserId,
         name: impl Into<String>,

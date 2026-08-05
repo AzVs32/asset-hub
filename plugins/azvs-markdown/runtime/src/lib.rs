@@ -1,8 +1,7 @@
 use asset_plugin_api::protocol::{
-    JsonView, PLUGIN_API_VERSION, PluginActionEffect, PluginActionFailure, PluginActionOutput,
-    PluginActionRequest, PluginContentReferenceEncoding, PluginDiagnostic, PluginFrameView,
-    PluginInlineContentEncoding, PluginReplacementEncoding, PluginView, ReplaceContentEffect,
-    TextView,
+    JsonView, PLUGIN_API_VERSION, PluginActionFailure, PluginActionOutput, PluginActionRequest,
+    PluginContentReferenceEncoding, PluginDiagnostic, PluginFrameView,
+    PluginInlineContentEncoding, PluginView,
 };
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
@@ -46,11 +45,11 @@ fn render_markdown_payload(input: String) -> FnResult<String> {
 
 fn update_markdown_payload(input: String) -> FnResult<String> {
     let request: PluginActionRequest = serde_json::from_str(&input)?;
-    if let Some(markdown) = input_markdown(&request.input) {
-        return save_response(&request, markdown);
-    }
     if input_operation(&request.input).is_some() {
         return content_operation_response(&request);
+    }
+    if request.input != json!({}) {
+        return Err(Error::msg("unsupported Markdown edit operation").into());
     }
     frame_response(&request, "edit")
 }
@@ -131,31 +130,8 @@ fn load_content_chunk(request: &PluginActionRequest) -> FnResult<Value> {
     }))
 }
 
-fn save_response(request: &PluginActionRequest, markdown: &str) -> FnResult<String> {
-    let mut output = PluginActionOutput::new(PluginView::Text(TextView {
-        text: "Markdown saved".to_string(),
-    }));
-    output
-        .effects
-        .push(PluginActionEffect::ReplaceContent(ReplaceContentEffect {
-            encoding: PluginReplacementEncoding::Base64,
-            data: STANDARD.encode(markdown.as_bytes()),
-            mime_type: request
-                .resource
-                .content
-                .as_ref()
-                .and_then(|content| content.mime_type.clone())
-                .or_else(|| Some("text/markdown".to_string())),
-        }));
-    Ok(serde_json::to_string(&output)?)
-}
-
 fn input_operation(input: &Value) -> Option<&str> {
     input.get("operation").and_then(Value::as_str)
-}
-
-fn input_markdown(input: &Value) -> Option<&str> {
-    input.get("markdown").and_then(Value::as_str)
 }
 
 fn markdown_content_size(input: &PluginActionRequest) -> FnResult<u64> {

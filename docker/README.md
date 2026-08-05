@@ -119,6 +119,9 @@ backend = "sqlite"
 [database.sqlite]
 max_connections = 5
 
+[resource_edit]
+max_text_bytes = 4194304
+
 [blob]
 backend = "local"
 

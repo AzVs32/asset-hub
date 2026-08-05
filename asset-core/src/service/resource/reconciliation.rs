@@ -119,7 +119,7 @@ impl<'a> StorageReconciliationService<'a> {
                     && self
                         .service
                         .repository
-                        .remove_if_unchanged(&resource.id(), resource.updated_at())
+                        .remove_if_unchanged(&resource.id(), resource.revision())
                         .await?
                 {
                     report.removed_resources += 1;
@@ -247,7 +247,7 @@ impl<'a> StorageReconciliationService<'a> {
                     && self
                         .service
                         .repository
-                        .remove_if_unchanged(&resource.id(), resource.updated_at())
+                        .remove_if_unchanged(&resource.id(), resource.revision())
                         .await?
                 {
                     report.removed_resources += 1;
@@ -333,7 +333,7 @@ impl<'a> StorageReconciliationService<'a> {
             return Ok(());
         }
 
-        let expected_updated_at = resource.updated_at();
+        let expected_revision = resource.revision();
         resource.rename(to_name)?;
         let to_directory = self.service.directories.ensure_path(&to_directory).await?;
         resource.move_to_directory(to_directory.id())?;
@@ -350,7 +350,7 @@ impl<'a> StorageReconciliationService<'a> {
         if !self
             .service
             .repository
-            .save_if_unchanged(&resource, expected_updated_at)
+            .save_if_unchanged(&resource, expected_revision)
             .await?
         {
             return Err(CoreError::conflict(format!(
@@ -410,12 +410,12 @@ impl<'a> StorageReconciliationService<'a> {
             if resource.content() == Some(&content) {
                 return Ok(hash_elapsed);
             }
-            let expected_updated_at = resource.updated_at();
+            let expected_revision = resource.revision();
             resource.attach_content(content)?;
             if !self
                 .service
                 .repository
-                .save_if_unchanged(&resource, expected_updated_at)
+                .save_if_unchanged(&resource, expected_revision)
                 .await?
             {
                 return Err(CoreError::conflict(format!(
@@ -427,7 +427,7 @@ impl<'a> StorageReconciliationService<'a> {
         }
 
         if let Some(mut resource) = self.find_missing_rename_candidate(&content).await? {
-            let expected_updated_at = resource.updated_at();
+            let expected_revision = resource.revision();
             resource.rename(name)?;
             let directory = self.service.directories.ensure_path(&directory).await?;
             resource.move_to_directory(directory.id())?;
@@ -435,7 +435,7 @@ impl<'a> StorageReconciliationService<'a> {
             if !self
                 .service
                 .repository
-                .save_if_unchanged(&resource, expected_updated_at)
+                .save_if_unchanged(&resource, expected_revision)
                 .await?
             {
                 return Err(CoreError::conflict(format!(
@@ -484,12 +484,12 @@ impl<'a> StorageReconciliationService<'a> {
         )?;
         if let Some(located) = self.service.query.find_by_path(&directory, &name).await? {
             let mut resource = located.into_resource();
-            let expected_updated_at = resource.updated_at();
+            let expected_revision = resource.revision();
             resource.attach_content(content)?;
             if !self
                 .service
                 .repository
-                .save_if_unchanged(&resource, expected_updated_at)
+                .save_if_unchanged(&resource, expected_revision)
                 .await?
             {
                 return Err(CoreError::conflict(format!(
@@ -573,7 +573,7 @@ impl<'a> StorageReconciliationService<'a> {
             let resource = located.resource();
             self.service
                 .repository
-                .remove_if_unchanged(&resource.id(), resource.updated_at())
+                .remove_if_unchanged(&resource.id(), resource.revision())
                 .await?;
         }
         Ok(())

@@ -336,6 +336,7 @@ pub(crate) async fn update_resource(
         (status = 200, description = "动作执行结果", body = ResourceActionOutputResponse),
         (status = 400, description = "资源类型不支持该动作或动作未配置", body = crate::dto::ErrorResponse),
         (status = 404, description = "资源不存在", body = crate::dto::ErrorResponse),
+        (status = 409, description = "资源版本已变化", body = crate::dto::ErrorResponse),
         (status = 500, description = "插件或服务端错误", body = crate::dto::ErrorResponse)
     )
 )]
@@ -353,7 +354,10 @@ pub(crate) async fn execute_resource_action(
             HttpError::bad_request(error.body_text())
         }
     })?;
-    let command = ExecuteResourceAction::new(action).with_input(payload.input.clone());
+    let mut command = ExecuteResourceAction::new(action).with_input(payload.input.clone());
+    if let Some(expected_revision) = payload.expected_revision {
+        command = command.with_expected_revision(expected_revision);
+    }
     let Some(output) = state
         .secured(&access.0)
         .execute_resource_action(&id, command)

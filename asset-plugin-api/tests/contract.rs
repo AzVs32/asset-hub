@@ -85,7 +85,7 @@ fn manifest_matchers_are_normalized_by_serde() {
     let mut value = manifest_document();
     value["capabilities"]["kinds"] = json!([{
         "kind": "example:markdown",
-        "parent": "core:document",
+        "parent": "core:text",
         "label": "Markdown",
         "detect": {
             "mime_types": [" Text/Markdown "],

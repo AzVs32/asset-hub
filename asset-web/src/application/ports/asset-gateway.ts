@@ -42,7 +42,9 @@ export interface AssetGateway {
     resource: Resource,
     actionId: string,
     input?: JsonObject,
+    expectedRevision?: number,
   ): Promise<PluginActionOutput>;
+  replaceResourceText(resource: Resource, text: string): Promise<Resource>;
   resourceContentUrl(resourceId: string): string;
   assetUrl(path: string): string | null;
 

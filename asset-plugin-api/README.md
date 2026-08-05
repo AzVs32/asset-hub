@@ -121,11 +121,48 @@ directory lineage. A less-specific provider remains the fallback when a more-spe
 not actually applicable. Two providers for the same capability at the same nearest kind fail Host
 startup instead of being selected by registration or UI sort order.
 
-The current Host recognizes only the `thumbnail` singleton capability. Resource and directory
-actions use separate registries, so each action type scopes `thumbnail` independently. Providers
-must be read-only, support the `media` view, and declare the matching `resource_list_thumbnail` or
-`directory_list_thumbnail` UI location. The Host rejects unknown capability names. Plugins must
-retain their provider-owned action IDs and must not reuse a `core.*` action ID.
+The Host recognizes `thumbnail`, `text_read`, and `text_edit` singleton capabilities for Resource
+actions; Directory actions recognize only `thumbnail`. A `thumbnail` provider must be read-only,
+support the `media` view, and declare the matching `resource_list_thumbnail` or
+`directory_list_thumbnail` UI location. A `text_read` provider must be read-only; a `text_edit`
+provider must be read-write. The Host rejects unknown capability names. Plugins must retain their
+provider-owned action IDs and must not reuse a `core.*` action ID.
+
+### Plugin Frame messages
+
+A `plugin_frame` runs without direct Host authority. It may ask the parent Host to execute an
+action already exposed for the current Resource:
+
+```json
+{
+  "type": "asset-hub:execute-resource-action",
+  "plugin_api": "asset-hub.plugin-api@1",
+  "request_id": "request-1",
+  "resource_id": "01900000-0000-7000-8000-000000000000",
+  "action": "example.plugin.inspect",
+  "input": {}
+}
+```
+
+An iframe opened by the current Resource's resolved, read-write `text_edit` provider may request
+raw UTF-8 text replacement without putting the content in Action JSON:
+
+```json
+{
+  "type": "asset-hub:replace-resource-text",
+  "plugin_api": "asset-hub.plugin-api@1",
+  "request_id": "request-2",
+  "resource_id": "01900000-0000-7000-8000-000000000000",
+  "text": "updated text"
+}
+```
+
+The Host validates the frame source, Plugin API, request/resource identity, resolved capability,
+write access, content policy, authorization, and Resource revision. It then sends the UTF-8 bytes
+through its content-replacement use case; the plugin runtime never receives storage authority.
+Results use the request type plus `-result`, retain `plugin_api` and `request_id`, and contain `ok`,
+`data`, and `error` fields. Unknown messages are ignored. This second message is an additive
+Plugin API `@1` extension; existing Action and result message shapes are unchanged.
 
 ## Rust API
 
@@ -166,10 +203,11 @@ documents that declare `runtime.type = "builtin"` are incompatible and must not
 be used as external packages. Built-in capabilities are assembled by the Host
 without a plugin Manifest.
 
-Manifest `1` includes the optional `provides` field on resource and directory actions. Its current
-Host-defined value is the action-type-scoped `thumbnail` capability. This wire-contract change does
-not increase the Manifest version. Existing sealed packages must use `azvs.epub.thumbnail` with
-`"provides": "thumbnail"`, then be rebuilt and resealed.
+Manifest `1` includes the optional `provides` field on resource and directory actions. The Host
+recognizes Resource-scoped `thumbnail`, `text_read`, and `text_edit` capabilities and the
+Directory-scoped `thumbnail` capability. This wire-contract change does not increase the Manifest
+version. Existing sealed packages must declare a supported capability, then be rebuilt and
+resealed.
 
 The responsibility change has these compatibility effects:
 
@@ -180,8 +218,9 @@ The responsibility change has these compatibility effects:
   `protocol`, and `abi` paths. `PLUGIN_API_VERSION` now belongs to `protocol`.
 - Manifest `1`: breaking for documents that used the Host-only `builtin` value;
   every package now requires an Extism runtime and `plugin.wasm` integrity entry.
-- Plugin API `asset-hub.plugin-api@1`: unchanged; action JSON, Host functions,
-  and Plugin Frame messages retain their existing wire shapes.
+- Plugin API `asset-hub.plugin-api@1`: additively extended with the optional
+  `asset-hub:replace-resource-text` Plugin Frame request and matching result. Existing Action JSON,
+  Host functions, and frame message shapes are unchanged.
 
 Host applications use `asset-core` for normalized Action/Kind and
 runtime-independent Action policy, `asset-infra` for Extism execution policy,

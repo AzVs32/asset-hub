@@ -85,7 +85,8 @@ action 和用户授权能力。Feature 只知道这个接口。
 - `plugin-action-dialog` 承载用户触发的 action 结果。
 - `plugin-output` 统一展示 diagnostics 并进入 view renderer。
 - `renderers` 支持 text、Markdown、HTML、JSON、media、download 和 iframe。
-- `frame-protocol` 校验 iframe 消息，iframe 只能调用当前资源已经暴露的 action。
+- `frame-protocol` 校验 iframe 消息；iframe 只能调用当前资源已经暴露的 action，且只有由
+  当前 `text_edit` provider 打开的读写 frame 才能请求替换当前资源文本。
 
 Markdown 和媒体播放器均按需加载，不进入基础首屏包。
 
@@ -183,7 +184,23 @@ ResourceWorkspace
 Directory Action 注册表分别限定该能力的作用域。Host 对图片也遵循相同边界：
 `core.image.thumbnail` 仅适用于 `core:image`；通用 provider 本身始终保持 kind-neutral，
 不根据 MIME 特判图片。相同能力选择 Kind 谱系中最近的 provider，同层冲突会导致 Host
-启动失败，前端只执行后端已经解析出的 provider。
+启动失败，前端只执行后端已经解析出的 provider。文本能力同样按此规则解析：
+`core.text.read` 和 `core.text.edit` 是 `core:text` 的纯文本回退 provider，而 Markdown
+插件分别以 `azvs.markdown.read` 和 `azvs.markdown.edit` 提供 `text_read` 与 `text_edit`，
+从而在 `azvs:markdown` 上取代 Host 的纯文本界面。
+Host 内建纯文本编辑器只绑定稳定 ID `core.text.edit`，不会假定第三方 `text_edit`
+provider 接受相同输入。Action 只负责能力发现和返回初始文本；保存不再把完整文本塞入
+Action JSON，而是通过 `AssetGateway.replaceResourceText` 将 UTF-8 原始字节流提交到
+`PUT /resources/{id}/content`。请求使用 `Content-SHA256` 做端到端完整性校验，并将打开
+编辑器时的 `Resource.revision` 放入 `If-Match`；Host 检测到资源或其目录位置已经变化时
+返回冲突并恢复原 Blob。`resource_edit.max_text_bytes` 由 Core 同时用于能力发现和执行，
+超限资源不会暴露 `text_edit`。
+
+因此 Action JSON 属于控制面，资源原始内容属于流式数据面。HTTP Action 的 1 MiB 请求
+限制不会再限制文本保存，Blob 数据也不需要经过 JSON 转义或 Base64 膨胀。
+插件 iframe 通过 `asset-hub:replace-resource-text` 消息进入同一个 Gateway；宿主同时校验
+frame 对应的原始 action 是当前资源解析出的读写 `text_edit` provider。保存成功后 frame
+持有响应中的新 revision，以支持同一编辑窗口连续保存。
 
 只有以下变化属于前端宿主协议升级：
 
@@ -197,6 +214,7 @@ Directory Action 注册表分别限定该能力的作用域。Host 对图片也�
 - OpenAPI DTO 不允许穿过 `OpenApiAssetGateway`。
 - 具体插件 id、kind 或 action id 不允许硬编码进宿主组件。
 - 自动 slot 不允许执行 write action。
-- iframe action 必须先在当前 `Resource.actions` 中验证。
+- iframe action 必须先在当前 `Resource.actions` 中验证；文本替换还必须绑定产生当前 frame
+  的读写 `text_edit` action。
 - 外部 URL 不允许作为插件媒体或 iframe 地址加载。
 - 新的后端请求能力先加入 `AssetGateway`，再实现 HTTP adapter，最后由 feature 使用。

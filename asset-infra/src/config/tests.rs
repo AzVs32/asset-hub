@@ -27,6 +27,10 @@ fn empty_config_uses_defaults() {
         config.plugin_packages_path(),
         PathBuf::from("data/.asset-hub/plugins")
     );
+    assert_eq!(
+        config.resource_edit.max_text_bytes,
+        DEFAULT_RESOURCE_EDIT_MAX_TEXT_BYTES
+    );
 }
 
 #[test]
@@ -236,4 +240,28 @@ fn configured_content_limit_is_the_runtime_policy_limit() {
         policy.max_inline_content_bytes(),
         DEFAULT_PLUGIN_MAX_INLINE_CONTENT_BYTES
     );
+}
+
+#[test]
+fn resource_edit_policy_is_independent_and_rejects_zero() {
+    let config = AssetInfraConfig::from_config_str(
+        r#"
+        [resource_edit]
+        max_text_bytes = 2097152
+        "#,
+    )
+    .unwrap()
+    .normalized()
+    .unwrap();
+    assert_eq!(config.resource_edit.max_text_bytes, 2 * 1024 * 1024);
+
+    let invalid = AssetInfraConfig::from_config_str(
+        r#"
+        [resource_edit]
+        max_text_bytes = 0
+        "#,
+    )
+    .unwrap()
+    .normalized();
+    assert!(invalid.is_err());
 }

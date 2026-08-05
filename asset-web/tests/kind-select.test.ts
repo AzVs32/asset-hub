@@ -4,17 +4,17 @@ import { kindTreeOptions } from "@/features/resources/components/kind-select";
 describe("kind tree options", () => {
   it("orders flat kind definitions as an arbitrary-depth tree", () => {
     const options = kindTreeOptions([
-      { kind: "document:markdown", label: "Markdown", parent: "core:document" },
+      { kind: "azvs:markdown", label: "Markdown", parent: "core:text" },
       { kind: "core:resource", label: "Resource", parent: null },
       { kind: "core:image", label: "Image", parent: "core:resource" },
-      { kind: "core:document", label: "Document", parent: "core:resource" },
+      { kind: "core:text", label: "Text", parent: "core:resource" },
     ]);
 
     expect(options.map(({ item }) => item.kind)).toEqual([
       "core:resource",
       "core:image",
-      "core:document",
-      "document:markdown",
+      "core:text",
+      "azvs:markdown",
     ]);
     expect(options.map(({ prefix }) => prefix)).toEqual([
       "",

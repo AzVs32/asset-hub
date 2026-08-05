@@ -1,6 +1,7 @@
 import type { PluginActionOutput } from "@/domain/plugin";
 import type { Resource, ResourceAction } from "@/domain/resource";
 import { Dialog } from "@/shared/ui/dialog";
+import { CoreTextEditor } from "./core-text-editor";
 import { PluginOutput } from "./plugin-output";
 import { actionTitle } from "./renderers/default-renderers";
 
@@ -19,6 +20,13 @@ export function PluginActionDialog({
   onClose: () => void;
   onResourceChanged: () => void | Promise<void>;
 }) {
+  const textEditView =
+    result?.action.id === "core.text.edit" &&
+    result.action.provides === "text_edit" &&
+    result.action.access === "read_write" &&
+    result.output.view.view === "text"
+      ? result.output.view
+      : null;
   return (
     <Dialog
       open={Boolean(result)}
@@ -29,7 +37,14 @@ export function PluginActionDialog({
       description={result ? `${result.action.id} · ${result.output.view.view}` : undefined}
       className="max-w-5xl"
     >
-      {result ? (
+      {result && textEditView ? (
+        <CoreTextEditor
+          resource={result.resource}
+          initialText={textEditView.text}
+          onSaved={onResourceChanged}
+          onClose={onClose}
+        />
+      ) : result ? (
         <PluginOutput
           output={result.output}
           resource={result.resource}

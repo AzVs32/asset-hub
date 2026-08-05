@@ -50,10 +50,6 @@ pub fn build_router(
                 .delete(handlers::soft_delete_resource),
         )
         .route(
-            "/resources/{id}/content",
-            get(handlers::get_resource_content),
-        )
-        .route(
             "/resources/{id}/download",
             get(handlers::download_resource_content),
         )
@@ -95,6 +91,18 @@ pub fn build_router(
                 .layer(DefaultBodyLimit::disable()),
         );
 
+    let resource_content_router = Router::new()
+        .route(
+            "/resources/{id}/content",
+            get(handlers::get_resource_content).put(handlers::replace_resource_content),
+        )
+        .layer(
+            ServiceBuilder::new()
+                .layer(TraceLayer::new_for_http())
+                .layer(cors_layer(options.cors.clone()))
+                .layer(DefaultBodyLimit::disable()),
+        );
+
     let directory_download_router = Router::new()
         .route(
             "/directories/{id}/download",
@@ -117,6 +125,7 @@ pub fn build_router(
                 .layer(cors_layer(options.cors)),
         )
         .merge(upload_router)
+        .merge(resource_content_router)
         .merge(directory_download_router)
         .with_state(HttpState::new_with_plugin_web_assets(
             service,
@@ -184,6 +193,8 @@ fn cors_layer(policy: CorsPolicy) -> CorsLayer {
             HeaderName::from_static("authorization"),
             HeaderName::from_static("upload-offset"),
             HeaderName::from_static("upload-checksum"),
+            HeaderName::from_static("content-sha256"),
+            HeaderName::from_static("if-match"),
         ])
         .expose_headers([
             HeaderName::from_static("upload-offset"),

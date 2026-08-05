@@ -49,6 +49,7 @@ const RESOURCE_SELECT: &str = r#"
         resources.content_json,
         resources.created_at,
         resources.updated_at,
+        resources.revision,
         resources.deleted_at
     FROM resources
     JOIN directory_paths ON directory_paths.id = resources.directory_id
@@ -76,6 +77,7 @@ const RESOURCE_AGGREGATE_SELECT: &str = r#"
         resources.content_json,
         resources.created_at,
         resources.updated_at,
+        resources.revision,
         resources.deleted_at
     FROM resources
 "#;
@@ -171,9 +173,10 @@ impl ResourceRepository for SqliteResourceRepository {
                 content_json,
                 created_at,
                 updated_at,
+                revision,
                 deleted_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 directory_id = excluded.directory_id,
@@ -181,6 +184,7 @@ impl ResourceRepository for SqliteResourceRepository {
                 content_json = excluded.content_json,
                 created_at = excluded.created_at,
                 updated_at = excluded.updated_at,
+                revision = excluded.revision,
                 deleted_at = excluded.deleted_at
             "#,
         )
@@ -191,6 +195,7 @@ impl ResourceRepository for SqliteResourceRepository {
         .bind(content_json)
         .bind(encode_timestamp(resource.created_at()))
         .bind(encode_timestamp(resource.updated_at()))
+        .bind(encode_revision(resource.revision())?)
         .bind(resource.deleted_at().map(encode_timestamp))
         .execute(&mut *transaction)
         .await
@@ -208,7 +213,7 @@ impl ResourceRepository for SqliteResourceRepository {
     async fn save_if_unchanged(
         &self,
         resource: &Resource,
-        expected_updated_at: DateTime<Utc>,
+        expected_revision: u64,
     ) -> Result<bool, CoreError> {
         let content_json = resource
             .content()
@@ -225,8 +230,8 @@ impl ResourceRepository for SqliteResourceRepository {
             r#"
             UPDATE resources SET
                 name = ?, directory_id = ?, kind = ?, content_json = ?,
-                created_at = ?, updated_at = ?, deleted_at = ?
-            WHERE id = ? AND updated_at = ?
+                created_at = ?, updated_at = ?, revision = ?, deleted_at = ?
+            WHERE id = ? AND revision = ?
             "#,
         )
         .bind(resource.name())
@@ -235,9 +240,10 @@ impl ResourceRepository for SqliteResourceRepository {
         .bind(content_json)
         .bind(encode_timestamp(resource.created_at()))
         .bind(encode_timestamp(resource.updated_at()))
+        .bind(encode_revision(resource.revision())?)
         .bind(resource.deleted_at().map(encode_timestamp))
         .bind(resource.id().to_string())
-        .bind(encode_timestamp(expected_updated_at))
+        .bind(encode_revision(expected_revision)?)
         .execute(&mut *transaction)
         .await
         .map_err(|error| CoreError::repository("save_if_unchanged", error))?;
@@ -272,16 +278,16 @@ impl ResourceRepository for SqliteResourceRepository {
     async fn remove_if_unchanged(
         &self,
         id: &ResourceId,
-        expected_updated_at: DateTime<Utc>,
+        expected_revision: u64,
     ) -> Result<bool, CoreError> {
         let mut transaction = self
             .pool
             .begin()
             .await
             .map_err(|error| CoreError::repository("remove_if_unchanged.begin", error))?;
-        let result = sqlx::query("DELETE FROM resources WHERE id = ? AND updated_at = ?")
+        let result = sqlx::query("DELETE FROM resources WHERE id = ? AND revision = ?")
             .bind(id.to_string())
-            .bind(encode_timestamp(expected_updated_at))
+            .bind(encode_revision(expected_revision)?)
             .execute(&mut *transaction)
             .await
             .map_err(|error| CoreError::repository("remove_if_unchanged", error))?;
@@ -584,6 +590,9 @@ fn decode_resource(row: SqliteRow) -> Result<Resource, CoreError> {
     let content = decode_content(column(&row, "content_json")?)?;
     let created_at = decode_timestamp(column(&row, "created_at")?)?;
     let updated_at = decode_timestamp(column(&row, "updated_at")?)?;
+    let revision = column::<i64>(&row, "revision")?;
+    let revision = u64::try_from(revision)
+        .map_err(|error| CoreError::repository("resource.decode_revision", error))?;
     let deleted_at = column::<Option<String>>(&row, "deleted_at")?
         .map(decode_timestamp)
         .transpose()?;
@@ -597,6 +606,7 @@ fn decode_resource(row: SqliteRow) -> Result<Resource, CoreError> {
         content,
         created_at,
         updated_at,
+        revision,
         deleted_at,
     })
     .map_err(CoreError::from)
@@ -716,6 +726,10 @@ fn decode_content(value: Option<String>) -> Result<Option<ResourceContent>, Core
 
 fn encode_timestamp(value: DateTime<Utc>) -> String {
     value.to_rfc3339()
+}
+
+fn encode_revision(value: u64) -> Result<i64, CoreError> {
+    i64::try_from(value).map_err(|error| CoreError::repository("resource.encode_revision", error))
 }
 
 fn decode_timestamp(value: String) -> Result<DateTime<Utc>, CoreError> {

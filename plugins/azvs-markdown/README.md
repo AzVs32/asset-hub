@@ -13,9 +13,10 @@ Extism + React plugin for Asset Hub Markdown document reading and editing.
 ## Contract
 
 - Plugin ID: `azvs.markdown`
-- Parent kind: `core:document`
-- Read action: `azvs.markdown.render` (`render_markdown`)
-- Edit action: `azvs.markdown.update` (`update_markdown`)
+- Parent kind: `core:text`
+- Read action: `azvs.markdown.read` (`render_markdown`)
+- Edit action: `azvs.markdown.edit` (`update_markdown`)
+- Text capabilities: `text_read` and `text_edit`, replacing the `core:text` fallback providers
 - Output view: `plugin_frame`
 
 The initial action returns an Asset Hub `PluginView` frame with a small routing payload:
@@ -38,13 +39,18 @@ validated `postMessage` action bridge:
 - The browser validates the Plugin API, total length, offsets, chunk sizes, completion state,
   Base64, and final UTF-8 before rendering.
 
-The runtime rejects documents larger than 128 MiB. The effective maximum can be lower when the
-host's `plugin.max_content_bytes` policy is lower.
+The runtime rejects read operations for documents larger than 128 MiB. The effective read maximum
+can be lower when the Host's plugin execution policy is lower.
 
-The Rust plugin handles writeback through the existing controlled `replace_content` effect. Saving
-does not write storage directly and remains subject to the host's action-input and plugin-output
-limits. The React UI uses `markdown-it` to render Markdown, shows a title tree in read mode, and
-provides source editing with live preview in edit mode.
+Saving uses the additive Plugin Frame request
+`asset-hub:replace-resource-text`. The Host accepts it only from the frame produced by the current
+Resource's resolved, read-write `text_edit` action, then forwards the text to the same
+revision-guarded streaming content use case as the core editor. The Markdown runtime deliberately
+rejects the former `{ "markdown": "..." }` Action input and no longer returns a
+`replace_content` effect. Consequently, Markdown saves are independent of the 1 MiB Action JSON
+limit and are bounded by `resource_edit.max_text_bytes`; an over-limit Resource does not expose the
+edit action. The React UI uses `markdown-it` to render Markdown, shows a title tree in read mode,
+and provides source editing with live preview in edit mode.
 
 ## Build
 

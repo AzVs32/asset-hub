@@ -22,15 +22,15 @@ pub mod plugin_package {
 use asset_core::service::ResourceService;
 use asset_core::{
     CoreError, port::BlobStorage, port::DirectoryIndex, port::DirectoryQuery,
-    port::DirectoryStorage, port::DirectoryStore, port::ResourceQuery, port::ResourceRepository,
-    port::SecurityAuditRepository, port::StorageScanner, port::UploadSessionRepository,
-    port::UserQuery, port::UserRepository,
+    port::DirectoryStorage, port::DirectoryStore, port::ResourceContentReplacementRepository,
+    port::ResourceQuery, port::ResourceRepository, port::SecurityAuditRepository,
+    port::StorageScanner, port::UploadSessionRepository, port::UserQuery, port::UserRepository,
 };
 use config::{AssetInfraConfig, BlobBackend, DatabaseBackend};
 use directory_index::InMemoryDirectoryIndex;
 use sqlite::{
-    SqliteIdentityRepository, SqliteResourceRepository, SqliteSecurityAuditRepository,
-    SqliteUploadSessionRepository,
+    SqliteIdentityRepository, SqliteResourceContentReplacementRepository, SqliteResourceRepository,
+    SqliteSecurityAuditRepository, SqliteUploadSessionRepository,
 };
 use sqlx::SqlitePool;
 use std::sync::Arc;
@@ -50,6 +50,7 @@ pub struct AssetInfrastructure {
     identity_repository: Arc<SqliteIdentityRepository>,
     security_audit_repository: Arc<SqliteSecurityAuditRepository>,
     upload_session_repository: Arc<SqliteUploadSessionRepository>,
+    content_replacement_repository: Arc<SqliteResourceContentReplacementRepository>,
     /// 对象存储适配器。
     blob_storage: Arc<OpenDalBlobStorage>,
     storage_scanner: Arc<FileSystemScanner>,
@@ -98,6 +99,9 @@ impl AssetInfrastructure {
         let upload_session_repository = Arc::new(SqliteUploadSessionRepository::new(
             resource_repository.pool().clone(),
         ));
+        let content_replacement_repository = Arc::new(
+            SqliteResourceContentReplacementRepository::new(resource_repository.pool().clone()),
+        );
         Ok(Self {
             config,
             resource_repository,
@@ -105,6 +109,7 @@ impl AssetInfrastructure {
             identity_repository,
             security_audit_repository,
             upload_session_repository,
+            content_replacement_repository,
             blob_storage,
             storage_scanner,
         })
@@ -168,6 +173,10 @@ impl AssetInfrastructure {
 
     pub fn upload_session_repository(&self) -> Arc<dyn UploadSessionRepository> {
         self.upload_session_repository.clone()
+    }
+
+    pub fn content_replacement_repository(&self) -> Arc<dyn ResourceContentReplacementRepository> {
+        self.content_replacement_repository.clone()
     }
 
     /// 启动当前 Blob 后端对应的自动存储同步任务。

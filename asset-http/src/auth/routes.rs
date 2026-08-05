@@ -265,6 +265,9 @@ fn security_event_type(method: &Method, path: &str) -> Option<SecurityAuditEvent
         (&Method::PATCH, path) if path.starts_with("/resources/") => {
             Some(SecurityAuditEventType::ResourceUpdate)
         }
+        (&Method::PUT, path) if path.starts_with("/resources/") && path.ends_with("/content") => {
+            Some(SecurityAuditEventType::ResourceUpdate)
+        }
         (&Method::POST, "/directories") => Some(SecurityAuditEventType::DirectoryCreate),
         _ => None,
     }

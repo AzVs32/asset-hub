@@ -11,10 +11,7 @@ use crate::domain::{
     Resource, ResourceAction, ResourceActionAccess, ResourceActionContentDelivery,
     ResourceActionDefinition, ResourceActionPolicy, ResourceContent, StorageKey,
 };
-use crate::port::{
-    BlobStorage, LocatedResource, RESERVED_BLOB_STORAGE_PREFIX, ResourceActionOutput,
-    ResourceActionRequest,
-};
+use crate::port::{LocatedResource, ResourceActionOutput, ResourceActionRequest};
 use asset_plugin_api::protocol::PluginActionEffect;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
@@ -74,6 +71,15 @@ impl<'a> ResourceActionService<'a> {
         resource: LocatedResource,
         command: ExecuteResourceAction,
     ) -> Result<ResourceActionOutput, CoreError> {
+        if command
+            .expected_revision
+            .is_some_and(|expected| expected != resource.resource().revision())
+        {
+            return Err(CoreError::conflict(format!(
+                "resource `{}` changed after the action was opened",
+                resource.resource().id()
+            )));
+        }
         self.execute_declared_resource_action_snapshot(resource, command.action, command.input)
             .await
     }
@@ -250,9 +256,6 @@ impl<'a> ResourceActionService<'a> {
                             ))
                         })?;
                     let checksum = calculate_checksum(data.as_ref())?;
-                    let target_key = storage_key.clone();
-                    let replacement_key = action_scratch_content_key("action-replacements")?;
-                    let backup_key = action_scratch_content_key("action-backups")?;
                     let content = build_verified_content(
                         data.len() as u64,
                         effect
@@ -262,59 +265,10 @@ impl<'a> ResourceActionService<'a> {
                         checksum,
                         None,
                     )?;
-
-                    let expected_updated_at = resource.updated_at();
-                    let previous = self.service.blob_storage.get(&target_key).await?;
                     self.service
-                        .blob_storage
-                        .put(&replacement_key, data.clone())
+                        .content()
+                        .replace_content_bytes_snapshot(resource, storage_key, content, data)
                         .await?;
-                    if let Some(previous) = previous.clone() {
-                        self.service.blob_storage.put(&backup_key, previous).await?;
-                    }
-                    self.service.blob_storage.put(&target_key, data).await?;
-                    resource.attach_content(content)?;
-                    let saved = self
-                        .service
-                        .repository
-                        .save_if_unchanged(resource, expected_updated_at)
-                        .await;
-                    match saved {
-                        // Old versions stay immutable and can be collected after repository-wide
-                        // reachability analysis. Deleting here could race a shared reference.
-                        Ok(true) => {
-                            let _ = self.service.blob_storage.delete(&replacement_key).await;
-                            let _ = self.service.blob_storage.delete(&backup_key).await;
-                        }
-                        Ok(false) => {
-                            restore_replaced_content(
-                                self.service.blob_storage.as_ref(),
-                                &target_key,
-                                &backup_key,
-                                previous,
-                            )
-                            .await;
-                            let _ = self.service.blob_storage.delete(&replacement_key).await;
-                            let _ = self.service.blob_storage.delete(&backup_key).await;
-                            return Err(CoreError::conflict(format!(
-                                "resource `{}` changed while action `{}` was running",
-                                resource.id(),
-                                output.action()
-                            )));
-                        }
-                        Err(error) => {
-                            restore_replaced_content(
-                                self.service.blob_storage.as_ref(),
-                                &target_key,
-                                &backup_key,
-                                previous,
-                            )
-                            .await;
-                            let _ = self.service.blob_storage.delete(&replacement_key).await;
-                            let _ = self.service.blob_storage.delete(&backup_key).await;
-                            return Err(error);
-                        }
-                    }
                 }
             }
         }
@@ -349,26 +303,4 @@ fn should_load_declared_action_content(
         resolved_content_delivery(action, content.size(), policy),
         Some(ResourceActionContentDelivery::Inline)
     )
-}
-
-fn action_scratch_content_key(suffix: &str) -> Result<StorageKey, CoreError> {
-    Ok(StorageKey::new(format!(
-        "{}/action-effects/{suffix}/{}",
-        RESERVED_BLOB_STORAGE_PREFIX,
-        uuid::Uuid::now_v7()
-    ))?)
-}
-
-async fn restore_replaced_content(
-    blob_storage: &dyn BlobStorage,
-    current_key: &StorageKey,
-    backup_key: &StorageKey,
-    previous: Option<Bytes>,
-) {
-    if let Some(previous) = previous {
-        let _ = blob_storage.put(current_key, previous).await;
-    } else {
-        let _ = blob_storage.delete(current_key).await;
-    }
-    let _ = blob_storage.delete(backup_key).await;
 }

@@ -5,7 +5,7 @@
 
 use super::{
     CreateUpload, DirectoryArchiveManifest, DirectoryArchiveResource, ExecuteResourceAction,
-    ResourceContentStream, ResourceService, UpdateResource,
+    ReplaceResourceContent, ResourceContentStream, ResourceService, UpdateResource,
 };
 use crate::CoreError;
 use crate::domain::{
@@ -342,6 +342,24 @@ impl<'a> SecuredResourceService<'a> {
             .content()
             .get_resource_content_stream_snapshot(&resource, range)
             .await
+    }
+    pub async fn replace_resource_content(
+        &self,
+        id: &ResourceId,
+        command: ReplaceResourceContent,
+        data: BlobByteStream,
+    ) -> Result<Option<Resource>, CoreError> {
+        let Some(resource) = self
+            .stored_resource_for(id, DirectoryPermission::Write)
+            .await?
+        else {
+            return Ok(None);
+        };
+        self.service
+            .content()
+            .replace_text_content_snapshot(resource, command, data)
+            .await
+            .map(Some)
     }
     pub async fn execute_resource_action(
         &self,

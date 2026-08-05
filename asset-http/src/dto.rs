@@ -460,6 +460,8 @@ pub(crate) struct ResourceResponse {
     pub(crate) created_at: String,
     /// 资源最后更新时间，RFC3339 格式。
     pub(crate) updated_at: String,
+    /// 单调递增的资源聚合版本。
+    pub(crate) revision: u64,
     /// 软删除时间，RFC3339 格式；为空表示未删除。
     pub(crate) deleted_at: Option<String>,
 }
@@ -533,11 +535,14 @@ pub(crate) struct DirectoryListingResponse {
 /// 执行资源动作请求。
 #[derive(Debug, Deserialize, ToSchema)]
 #[schema(example = json!({
+    "expected_revision": 7,
     "input": {
         "mode": "default"
     }
 }))]
 pub(crate) struct ExecuteResourceActionRequest {
+    /// 可选资源版本前置条件；不匹配时 Host 返回 409，且不执行 Action。
+    pub(crate) expected_revision: Option<u64>,
     /// 传递给插件 action handler 的 JSON 输入。
     #[serde(default)]
     pub(crate) input: Value,
@@ -652,6 +657,7 @@ impl ResourceResponse {
             actions: ResourceActionsResponse::from(actions),
             created_at: resource.created_at().to_rfc3339(),
             updated_at: resource.updated_at().to_rfc3339(),
+            revision: resource.revision(),
             deleted_at: resource.deleted_at().map(|value| value.to_rfc3339()),
         }
     }

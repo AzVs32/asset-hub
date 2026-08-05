@@ -15,6 +15,40 @@ services.
 Built-in kinds and actions are Rust Host definitions with private typed handler bindings. They are
 not parsed through `asset-plugin-api::PluginManifest` and never appear in the external package
 catalog. Every filesystem package is an Extism/Wasm package; `runtime.type = "builtin"` is rejected.
+## Resource kind and capability tree
+
+The following is the complete Resource kind tree assembled by the Host and bundled plugins. The
+annotation after each kind is its definition source. `core:resource` is the default kind.
+
+```text
+core:resource  [builtin:core.resource; default]
+├─ core:image  [builtin:core.image]
+├─ core:text  [builtin:core.text]
+│  └─ azvs:markdown  [plugin:azvs.markdown]
+├─ azvs:epub  [plugin:azvs.epub]
+└─ core:video  [builtin:core.video]
+```
+
+Resource capabilities are singleton providers, not generic action names. For each capability, the
+Host selects the provider declared on the nearest kind in the Resource lineage. A child provider
+therefore replaces, rather than coexists with, its ancestor's provider. The currently supported
+Resource capabilities are `thumbnail`, `text_read`, and `text_edit`.
+
+| Kind | Resolved capability providers | Other available actions |
+| --- | --- | --- |
+| `core:resource` | `thumbnail` → `core.resource.thumbnail` | `core.resource.download` |
+| `core:image` | `thumbnail` → `core.image.thumbnail` | inherits `core.resource.download` |
+| `core:text` | `thumbnail` → `core.resource.thumbnail`; `text_read` → `core.text.read`; `text_edit` → `core.text.edit` | inherits `core.resource.download` |
+| `azvs:markdown` | `thumbnail` → `core.resource.thumbnail`; `text_read` → `azvs.markdown.read`; `text_edit` → `azvs.markdown.edit` | inherits `core.resource.download` |
+| `azvs:epub` | `thumbnail` → `azvs.epub.thumbnail` | inherits `core.resource.download`; `azvs.epub.render` |
+| `core:video` | `thumbnail` → `core.resource.thumbnail` | inherits `core.resource.download` |
+
+`core:text` detects `text/*`, common structured-text MIME types, and common text extensions.
+More-specific descendants such as `azvs:markdown` still win when both definitions match.
+`core:image` detects `image/*` and its declared image extensions; `core:video` detects `video/*` and
+its declared video extensions; `azvs:epub` detects only the MIME types and extensions declared in
+its plugin manifest. `core:document` is not a registered Resource kind.
+
 The Host provides generic `core.resource.thumbnail` and `core.directory.thumbnail` actions.
 The generic resource provider always returns a kind-neutral file thumbnail. The Host-owned
 `core.image.thumbnail` action applies only to `core:image`, returns the authorized image content
@@ -22,11 +56,11 @@ URL, and provides the same `thumbnail` singleton capability as the generic provi
 The fixed generic artwork lives in `assets/thumbnails/resource.svg` and
 `assets/thumbnails/directory.svg`. `include_str!` embeds both files into the Host binary at compile
 time; deployment does not need to copy them as separate runtime files.
-External actions retain their provider-owned IDs and may provide the Host-recognized `thumbnail`
-capability for a more specific kind. Resource and directory registries scope that capability
-independently. Resource resolution filters content requirements and matchers before selecting the
-nearest provider. Registry startup rejects unsupported capabilities, automatic thumbnail-slot
-actions that do not provide `thumbnail`, and tied nearest providers.
+External actions retain their provider-owned IDs and may provide a Host-recognized capability for a
+more specific kind. Resource actions recognize `thumbnail`, `text_read`, and `text_edit`; directory
+actions recognize only `thumbnail`. Resource resolution filters content requirements and matchers
+before selecting the nearest provider. Registry startup rejects unsupported capabilities, automatic
+thumbnail-slot actions that do not provide `thumbnail`, and tied nearest providers.
 At the package boundary, infrastructure explicitly converts external Manifest capabilities into
 `asset-core` Action/Kind definitions. Extism handler names remain in private adapter bindings and
 are not copied into Core models.
@@ -34,6 +68,21 @@ are not copied into Core models.
 Extism memory, timeout, concurrency, serialized input/output, and Host ABI budgets are validated
 in infrastructure policy. Runtime assembly derives the smaller runtime-independent Core resource
 Action content policy from the same configured limits.
+
+Interactive text editing has a separate Host policy because browser editing is not a plugin
+execution budget. `[resource_edit].max_text_bytes` defaults to 4 MiB. Runtime passes that value to
+Core, which uses it both when discovering `text_edit` providers and when validating streamed
+replacement content. Resources above the limit therefore do not advertise `text_edit`.
+
+Resource optimistic concurrency uses a persisted, monotonically increasing `revision`; timestamps
+remain display and ordering metadata.
+
+Content replacement, whether requested by an editor or returned by a write Action, writes a durable
+intent before moving the existing Blob. The intent stores the Resource ID, expected revision,
+target/staging/backup keys, and replacement content metadata.
+Runtime startup resolves every pending intent before upload recovery: a committed Resource keeps
+the published Blob, while an unchanged Resource is restored from its backup. Internal artifacts are
+removed only after the intent has reached a recoverable terminal state.
 
 `plugin_package` is the single public host boundary for package discovery and verification. Both
 the CLI and runtime use it. Its two workflows are intentionally separate:

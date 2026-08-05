@@ -53,7 +53,7 @@ async fn resource_kinds_are_listed_and_unsupported_kind_is_rejected() {
     for (kind, source) in [
         ("core:resource", "builtin:core.resource"),
         ("core:image", "builtin:core.image"),
-        ("core:document", "builtin:core.document"),
+        ("core:text", "builtin:core.text"),
         ("core:video", "builtin:core.video"),
     ] {
         assert!(
@@ -305,19 +305,31 @@ async fn directory_download_action_archives_nested_resources_and_empty_directori
 }
 
 #[tokio::test]
-async fn core_document_resource_inherits_core_download_action() {
-    let app = test_app("core-document-download").await;
+async fn core_text_resource_inherits_generic_actions_and_provides_text_actions() {
+    let app = test_app("core-text-actions").await;
 
     let (status, kinds) = empty_json_request(&app, Method::GET, "/resource-kinds").await;
     assert_eq!(status, StatusCode::OK);
-    let document_kind = kinds["items"]
+    let text_kind = kinds["items"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|kind| kind["kind"] == "core:document")
+        .find(|kind| kind["kind"] == "core:text")
         .unwrap();
-    assert_eq!(document_kind["source"], "builtin:core.document");
-    let actions = document_kind["actions"].as_array().unwrap();
+    assert_eq!(text_kind["source"], "builtin:core.text");
+    assert!(
+        text_kind["detect"]["mime_types"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("text/*"))
+    );
+    assert!(
+        text_kind["detect"]["extensions"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(".txt"))
+    );
+    let actions = text_kind["actions"].as_array().unwrap();
     let download = actions
         .iter()
         .find(|action| action["id"] == "core.resource.download")
@@ -341,25 +353,44 @@ async fn core_document_resource_inherits_core_download_action() {
         thumbnail["ui"]["locations"],
         json!(["resource_list_thumbnail"])
     );
-    assert_eq!(actions.len(), 2);
+    let read = actions
+        .iter()
+        .find(|action| action["id"] == "core.text.read")
+        .unwrap();
+    assert_eq!(read["provides"], "text_read");
+    assert_eq!(read["access"], "read_only");
+    assert_eq!(read["requires"]["content_delivery"], "inline");
+    assert_eq!(read["output"]["view"], json!(["text"]));
+    let edit = actions
+        .iter()
+        .find(|action| action["id"] == "core.text.edit")
+        .unwrap();
+    assert_eq!(edit["provides"], "text_edit");
+    assert_eq!(edit["access"], "read_write");
+    assert_eq!(edit["requires"]["content_delivery"], "inline");
+    assert_eq!(edit["output"]["view"], json!(["text"]));
+    assert_eq!(actions.len(), 4);
 
     let (status, resource) = stream_upload(
         &app,
-        "/resources?name=book.txt&kind=core%3Adocument&directory=books",
+        "/resources?name=book.txt&directory=books",
         "text/plain",
         b"Hello book",
     )
     .await;
 
     assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(resource["kind"], "core:text");
     assert!(has_action(&resource, "core.resource.download"));
     assert!(has_action(&resource, "core.resource.thumbnail"));
+    assert!(has_action(&resource, "core.text.read"));
+    assert!(has_action(&resource, "core.text.edit"));
     assert_eq!(
         resource["actions"]["available_actions"]
             .as_array()
             .unwrap()
             .len(),
-        2
+        4
     );
 
     let resource_id = resource["id"].as_str().unwrap();
@@ -390,6 +421,70 @@ async fn core_document_resource_inherits_core_download_action() {
     assert_eq!(thumbnail_output["view"]["mime_type"], "image/svg+xml");
     assert_eq!(thumbnail_output["view"]["encoding"], "base64");
 
+    let (status, text_output) = json_request(
+        &app,
+        Method::POST,
+        &format!("/resources/{resource_id}/actions/core.text.read"),
+        json!({ "input": {} }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{text_output}");
+    assert_eq!(
+        text_output["view"],
+        json!({ "view": "text", "text": "Hello book" })
+    );
+
+    let (status, edit_output) = json_request(
+        &app,
+        Method::POST,
+        &format!("/resources/{resource_id}/actions/core.text.edit"),
+        json!({ "input": {} }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{edit_output}");
+    assert_eq!(
+        edit_output["view"],
+        json!({ "view": "text", "text": "Hello book" })
+    );
+
+    let updated = b"Updated book";
+    let response = request(
+        &app,
+        Request::builder()
+            .method(Method::PUT)
+            .uri(format!("/resources/{resource_id}/content"))
+            .header(header::CONTENT_TYPE, "text/plain")
+            .header(header::CONTENT_LENGTH, updated.len())
+            .header("Content-SHA256", sha256_hex(updated))
+            .header("If-Match", format!("\"{}\"", resource["revision"]))
+            .body(Body::from(updated.as_slice()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let updated_resource: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), BODY_LIMIT).await.unwrap()).unwrap();
+    assert_eq!(
+        updated_resource["revision"],
+        resource["revision"].as_u64().unwrap() + 1
+    );
+
+    let stale = b"Stale overwrite";
+    let response = request(
+        &app,
+        Request::builder()
+            .method(Method::PUT)
+            .uri(format!("/resources/{resource_id}/content"))
+            .header(header::CONTENT_TYPE, "text/plain")
+            .header(header::CONTENT_LENGTH, stale.len())
+            .header("Content-SHA256", sha256_hex(stale))
+            .header("If-Match", format!("\"{}\"", resource["revision"]))
+            .body(Body::from(stale.as_slice()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+
     let download = request(
         &app,
         Request::builder()
@@ -409,7 +504,7 @@ async fn core_document_resource_inherits_core_download_action() {
         "text/plain"
     );
     let body = to_bytes(download.into_body(), BODY_LIMIT).await.unwrap();
-    assert_eq!(body.as_ref(), b"Hello book");
+    assert_eq!(body.as_ref(), b"Updated book");
 
     let inline = request(
         &app,
@@ -425,6 +520,65 @@ async fn core_document_resource_inherits_core_download_action() {
         inline.headers().get(header::CONTENT_DISPOSITION).unwrap(),
         "inline"
     );
+    let body = to_bytes(inline.into_body(), BODY_LIMIT).await.unwrap();
+    assert_eq!(body.as_ref(), b"Updated book");
+}
+
+#[tokio::test]
+async fn text_content_replacement_streams_beyond_the_action_json_limit_and_enforces_integrity() {
+    let app = test_app("streaming-text-replacement").await;
+    let (status, resource) =
+        stream_upload(&app, "/resources?name=large.txt", "text/plain", b"small").await;
+    assert_eq!(status, StatusCode::CREATED, "{resource}");
+    let id = resource["id"].as_str().unwrap();
+    let content = vec![b'x'; MAX_ACTION_REQUEST_BYTES + 1024];
+    let response = request(
+        &app,
+        Request::builder()
+            .method(Method::PUT)
+            .uri(format!("/resources/{id}/content"))
+            .header(header::CONTENT_TYPE, "text/plain")
+            .header(header::CONTENT_LENGTH, content.len())
+            .header("Content-SHA256", sha256_hex(&content))
+            .header("If-Match", format!("\"{}\"", resource["revision"]))
+            .body(Body::from(content))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let updated: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), BODY_LIMIT).await.unwrap()).unwrap();
+
+    let bad = b"checksum mismatch";
+    let response = request(
+        &app,
+        Request::builder()
+            .method(Method::PUT)
+            .uri(format!("/resources/{id}/content"))
+            .header(header::CONTENT_TYPE, "text/plain")
+            .header(header::CONTENT_LENGTH, bad.len())
+            .header("Content-SHA256", "0".repeat(64))
+            .header("If-Match", format!("\"{}\"", updated["revision"]))
+            .body(Body::from(bad.as_slice()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+
+    let response = request(
+        &app,
+        Request::builder()
+            .method(Method::PUT)
+            .uri(format!("/resources/{id}/content"))
+            .header(header::CONTENT_TYPE, "text/plain")
+            .header(header::CONTENT_LENGTH, 4 * 1024 * 1024 + 1)
+            .header("Content-SHA256", "0".repeat(64))
+            .header("If-Match", format!("\"{}\"", updated["revision"]))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }
 
 #[tokio::test]
@@ -1238,7 +1392,27 @@ async fn upload_detects_most_specific_plugin_kind() {
     assert!(
         actions
             .iter()
-            .any(|action| action["id"] == "azvs.markdown.render")
+            .any(|action| action["id"] == "azvs.markdown.read")
+    );
+    assert!(
+        actions
+            .iter()
+            .any(|action| action["id"] == "azvs.markdown.edit")
+    );
+    let markdown_read = actions
+        .iter()
+        .find(|action| action["id"] == "azvs.markdown.read")
+        .unwrap();
+    assert_eq!(markdown_read["provides"], "text_read");
+    let markdown_edit = actions
+        .iter()
+        .find(|action| action["id"] == "azvs.markdown.edit")
+        .unwrap();
+    assert_eq!(markdown_edit["provides"], "text_edit");
+    assert!(
+        actions
+            .iter()
+            .all(|action| action["id"] != "core.text.read" && action["id"] != "core.text.edit")
     );
     assert!(
         actions
@@ -1250,12 +1424,12 @@ async fn upload_detects_most_specific_plugin_kind() {
     let (status, rendered) = json_request(
         &app,
         Method::POST,
-        &format!("/resources/{resource_id}/actions/azvs.markdown.render"),
+        &format!("/resources/{resource_id}/actions/azvs.markdown.read"),
         json!({ "input": {} }),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{rendered}");
-    assert_eq!(rendered["action"], "azvs.markdown.render");
+    assert_eq!(rendered["action"], "azvs.markdown.read");
     assert_eq!(rendered["view"]["view"], "plugin_frame");
     assert!(
         rendered["view"]["url"]
@@ -1323,7 +1497,7 @@ async fn plugin_reference_content_respects_the_host_content_budget() {
     let (status, error) = json_request(
         &app,
         Method::POST,
-        &format!("/resources/{id}/actions/azvs.markdown.render"),
+        &format!("/resources/{id}/actions/azvs.markdown.read"),
         json!({"input": {}}),
     )
     .await;
@@ -1543,7 +1717,7 @@ async fn kind_filter_includes_all_descendants() {
 
     for (name, kind) in [
         ("generic resource", "core:resource"),
-        ("document.txt", "core:document"),
+        ("note.txt", "core:text"),
         ("image.png", "core:image"),
     ] {
         let uri = format!(
@@ -1564,16 +1738,16 @@ async fn kind_filter_includes_all_descendants() {
 
     let (status, kinds) = empty_json_request(&app, Method::GET, "/resource-kinds").await;
     assert_eq!(status, StatusCode::OK);
-    let document = kinds["items"]
+    let text = kinds["items"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|kind| kind["kind"] == "core:document")
+        .find(|kind| kind["kind"] == "core:text")
         .unwrap();
-    assert_eq!(document["parent"], "core:resource");
-    assert_eq!(document["ancestors"], json!(["core:resource"]));
+    assert_eq!(text["parent"], "core:resource");
+    assert_eq!(text["ancestors"], json!(["core:resource"]));
     assert!(
-        document["actions"]
+        text["actions"]
             .as_array()
             .unwrap()
             .iter()
@@ -1793,6 +1967,7 @@ async fn test_app_at_root(
             ..BlobConfig::default()
         },
         plugin,
+        resource_edit: Default::default(),
     };
     let runtime = AssetRuntime::new(config).await.unwrap();
     let authorization = runtime.authorization_service();
@@ -1828,6 +2003,7 @@ async fn test_app_with_plugin_web_assets(
             ..BlobConfig::default()
         },
         plugin: Default::default(),
+        resource_edit: Default::default(),
     };
     let runtime = AssetRuntime::new(config).await.unwrap();
     let authorization = runtime.authorization_service();
@@ -1854,7 +2030,7 @@ async fn create_text_resource(app: &TestApp, path: &str) -> String {
     let (status, resource) = stream_upload(app, &uri, "text/plain", b"delete me").await;
 
     assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(resource["kind"], "core:resource");
+    assert_eq!(resource["kind"], "core:text");
 
     resource["id"].as_str().unwrap().to_string()
 }
@@ -2061,6 +2237,7 @@ async fn authentication_starts_without_users_and_limits_member_workspace_access(
             ..BlobConfig::default()
         },
         plugin: Default::default(),
+        resource_edit: Default::default(),
     };
     let runtime = AssetRuntime::new(config).await.unwrap();
     assert_eq!(

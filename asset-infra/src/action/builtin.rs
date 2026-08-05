@@ -6,7 +6,7 @@ use asset_core::port::{
 };
 use asset_plugin_api::protocol::directory::DirectoryPluginActionOutput;
 use asset_plugin_api::protocol::{
-    DownloadView, MediaView, PluginActionOutput, PluginMediaEncoding, PluginView,
+    DownloadView, MediaView, PluginActionOutput, PluginMediaEncoding, PluginView, TextView,
 };
 use async_trait::async_trait;
 use base64::Engine;
@@ -99,12 +99,14 @@ impl ResourceActionExecutor for BuiltinResourceActionExecutor {
             BuiltinResourceHandler::Download => {
                 download(request.resource().clone(), request.action().clone())
             }
-            BuiltinResourceHandler::ResourceThumbnail => {
+            BuiltinResourceHandler::GenericThumbnail => {
                 resource_thumbnail(request.resource().clone(), request.action().clone())
             }
             BuiltinResourceHandler::ImageThumbnail => {
                 image_thumbnail(request.resource().clone(), request.action().clone())
             }
+            BuiltinResourceHandler::TextRead => text_read(request),
+            BuiltinResourceHandler::TextEdit => text_edit(request),
         }
     }
 }
@@ -180,7 +182,7 @@ impl DirectoryActionExecutor for BuiltinDirectoryActionExecutor {
             })?;
         match binding.handler {
             BuiltinDirectoryHandler::Download => directory_download(request),
-            BuiltinDirectoryHandler::Thumbnail => directory_thumbnail(request),
+            BuiltinDirectoryHandler::GenericThumbnail => directory_thumbnail(request),
         }
     }
 }
@@ -277,6 +279,39 @@ fn image_thumbnail(
         action,
         PluginActionOutput::new(view),
     ))
+}
+
+fn text_read(request: ResourceActionRequest) -> Result<ResourceActionOutput, CoreError> {
+    Ok(text_output(
+        request.resource().clone(),
+        request.action().clone(),
+        resource_text(&request)?,
+    ))
+}
+
+fn text_edit(request: ResourceActionRequest) -> Result<ResourceActionOutput, CoreError> {
+    Ok(text_output(
+        request.resource().clone(),
+        request.action().clone(),
+        resource_text(&request)?,
+    ))
+}
+
+fn resource_text(request: &ResourceActionRequest) -> Result<String, CoreError> {
+    let content = request.content().ok_or_else(|| {
+        CoreError::configuration("core text actions require inline resource content")
+    })?;
+    std::str::from_utf8(content)
+        .map(|text| text.trim_start_matches('\u{feff}').to_string())
+        .map_err(|_| CoreError::configuration("core text actions require valid UTF-8 content"))
+}
+
+fn text_output(resource: Resource, action: ResourceAction, text: String) -> ResourceActionOutput {
+    ResourceActionOutput::new(
+        resource.id(),
+        action,
+        PluginActionOutput::new(PluginView::Text(TextView { text })),
+    )
 }
 
 fn embedded_svg_thumbnail(title: Option<&str>, svg: &str) -> PluginView {

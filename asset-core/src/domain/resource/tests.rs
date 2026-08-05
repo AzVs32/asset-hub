@@ -68,6 +68,7 @@ fn new_resource_has_default_fields() {
     assert!(resource.content().is_none());
     assert!(resource.tags().is_empty());
     assert_eq!(resource.created_at(), resource.updated_at());
+    assert_eq!(resource.revision(), 1);
 }
 
 #[test]
@@ -94,6 +95,7 @@ fn resource_can_be_rehydrated_from_snapshot() {
         content: None,
         created_at,
         updated_at,
+        revision: 7,
         deleted_at,
     })
     .unwrap();
@@ -104,6 +106,7 @@ fn resource_can_be_rehydrated_from_snapshot() {
     assert_eq!(resource.tags()[0].as_str(), "image");
     assert_eq!(resource.created_at(), created_at);
     assert_eq!(resource.updated_at(), updated_at);
+    assert_eq!(resource.revision(), 7);
     assert_eq!(resource.deleted_at(), deleted_at);
     assert!(resource.is_deleted());
 }
@@ -117,9 +120,11 @@ fn resource_soft_delete_and_restore_update_state() {
 
     resource.soft_delete();
     assert!(resource.is_deleted());
+    assert_eq!(resource.revision(), 2);
 
     resource.restore();
     assert!(!resource.is_deleted());
+    assert_eq!(resource.revision(), 3);
 }
 
 #[test]
