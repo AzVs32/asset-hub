@@ -585,7 +585,8 @@ fn decode_resource(row: SqliteRow) -> Result<Resource, CoreError> {
     let id = decode_id(column(&row, "id")?)?;
     let name = column(&row, "name")?;
     let directory_id = decode_directory_id(column(&row, "directory_id")?)?;
-    let kind = ResourceKind::try_new(column::<String>(&row, "kind")?)?;
+    let kind = ResourceKind::try_new(column::<String>(&row, "kind")?)
+        .map_err(|error| CoreError::repository("resource.decode_kind", error))?;
     let tags = decode_tags(&row)?;
     let content = decode_content(column(&row, "content_json")?)?;
     let created_at = decode_timestamp(column(&row, "created_at")?)?;
@@ -609,12 +610,13 @@ fn decode_resource(row: SqliteRow) -> Result<Resource, CoreError> {
         revision,
         deleted_at,
     })
-    .map_err(CoreError::from)
+    .map_err(|error| CoreError::repository("resource.rehydrate", error))
 }
 
 fn decode_located_resource(row: SqliteRow) -> Result<LocatedResource, CoreError> {
     let directory_id = decode_directory_id(column(&row, "directory_id")?)?;
-    let directory_path = DirectoryPath::from_path(column::<String>(&row, "directory_path")?)?;
+    let directory_path = DirectoryPath::from_path(column::<String>(&row, "directory_path")?)
+        .map_err(|error| CoreError::repository("resource.decode_directory_path", error))?;
     let resource = decode_resource(row)?;
     LocatedResource::new(
         resource,
@@ -702,11 +704,12 @@ fn decode_directory(row: SqliteRow) -> Result<Directory, CoreError> {
             .map(decode_directory_id)
             .transpose()?,
         name: column(&row, "name")?,
-        kind: DirectoryKind::try_new(column::<String>(&row, "kind")?)?,
+        kind: DirectoryKind::try_new(column::<String>(&row, "kind")?)
+            .map_err(|error| CoreError::repository("directory.decode_kind", error))?,
         created_at: decode_timestamp(column(&row, "created_at")?)?,
         updated_at: decode_timestamp(column(&row, "updated_at")?)?,
     })
-    .map_err(CoreError::from)
+    .map_err(|error| CoreError::repository("directory.rehydrate", error))
 }
 
 fn decode_tags(row: &SqliteRow) -> Result<Vec<String>, CoreError> {

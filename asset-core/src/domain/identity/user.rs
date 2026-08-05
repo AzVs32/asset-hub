@@ -7,7 +7,7 @@ crate::gen_id_uuid_v7!(UserId);
 const MAX_USERNAME_LEN: usize = 64;
 
 /// 可用于登录和授权的用户聚合根。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct User {
     id: UserId,
     username: String,
@@ -34,6 +34,7 @@ pub enum UserStatus {
     Disabled,
 }
 
+/// 未校验的用户持久化快照；只能通过 [`User::rehydrate`] 转换为聚合。
 #[derive(Debug, Clone)]
 pub struct UserSnapshot {
     pub id: UserId,
@@ -67,9 +68,20 @@ impl User {
     }
 
     pub fn rehydrate(snapshot: UserSnapshot) -> Result<Self, crate::UserError> {
+        snapshot.try_into()
+    }
+}
+
+impl TryFrom<UserSnapshot> for User {
+    type Error = crate::UserError;
+
+    fn try_from(snapshot: UserSnapshot) -> Result<Self, Self::Error> {
         let username = normalize_username(snapshot.username)?;
         if snapshot.credential_hash.trim().is_empty() {
             return Err(crate::UserError::InvalidCredentialHash);
+        }
+        if snapshot.updated_at < snapshot.created_at {
+            return Err(crate::UserError::InvalidTimestamps);
         }
         Ok(Self {
             id: snapshot.id,
@@ -82,7 +94,9 @@ impl User {
             updated_at: snapshot.updated_at,
         })
     }
+}
 
+impl User {
     pub fn id(&self) -> UserId {
         self.id
     }

@@ -84,7 +84,7 @@ fn resource_can_be_rehydrated_from_snapshot() {
     let id = ResourceId::new();
     let created_at = chrono::Utc::now();
     let updated_at = created_at + chrono::Duration::seconds(5);
-    let deleted_at = Some(updated_at + chrono::Duration::seconds(5));
+    let deleted_at = Some(updated_at);
 
     let resource = Resource::rehydrate(ResourceSnapshot {
         id,
@@ -109,6 +109,31 @@ fn resource_can_be_rehydrated_from_snapshot() {
     assert_eq!(resource.revision(), 7);
     assert_eq!(resource.deleted_at(), deleted_at);
     assert!(resource.is_deleted());
+}
+
+#[test]
+fn resource_rehydration_rejects_inconsistent_timestamps() {
+    let created_at = chrono::Utc::now();
+    let snapshot = ResourceSnapshot {
+        id: ResourceId::new(),
+        name: "image.png".to_owned(),
+        directory_id: DirectoryId::root(),
+        kind: ResourceKind::default(),
+        tags: Vec::new(),
+        content: None,
+        created_at,
+        updated_at: created_at - chrono::Duration::seconds(1),
+        revision: 1,
+        deleted_at: None,
+    };
+
+    assert!(matches!(
+        Resource::rehydrate(snapshot),
+        Err(ResourceError::InvalidFormat {
+            field: "resource.updated_at",
+            ..
+        })
+    ));
 }
 
 #[test]
@@ -292,6 +317,18 @@ fn storage_key_rejects_unsafe_paths() {
 }
 
 #[test]
+fn storage_key_deserialization_applies_path_validation() {
+    assert_eq!(
+        serde_json::from_str::<StorageKey>(r#""assets/image.png""#)
+            .unwrap()
+            .as_str(),
+        "assets/image.png"
+    );
+    assert!(serde_json::from_str::<StorageKey>(r#""/absolute/path""#).is_err());
+    assert!(serde_json::from_str::<StorageKey>(r#""assets/../secret""#).is_err());
+}
+
+#[test]
 fn checksum_validates_sha256_format() {
     let value = "a".repeat(64);
     let checksum = Checksum::sha256(&value).unwrap();
@@ -299,6 +336,49 @@ fn checksum_validates_sha256_format() {
     assert_eq!(checksum.kind(), ChecksumKind::Sha256);
     assert_eq!(checksum.value(), value);
     assert!(Checksum::sha256("not-sha256").is_err());
+}
+
+#[test]
+fn checksum_deserialization_applies_value_validation() {
+    let valid = serde_json::json!({
+        "kind": "sha256",
+        "value": "a".repeat(64),
+    });
+    let checksum: Checksum = serde_json::from_value(valid).unwrap();
+    assert_eq!(checksum.value(), "a".repeat(64));
+
+    let invalid = serde_json::json!({
+        "kind": "sha256",
+        "value": "not-a-checksum",
+    });
+    assert!(serde_json::from_value::<Checksum>(invalid).is_err());
+}
+
+#[test]
+fn resource_content_deserialization_applies_builder_validation() {
+    let invalid_mime = serde_json::json!({
+        "size": 3,
+        "mime_type": "   ",
+        "verification": { "status": "pending" },
+    });
+    assert!(serde_json::from_value::<ResourceContent>(invalid_mime).is_err());
+
+    let invalid_failure = serde_json::json!({
+        "size": 3,
+        "mime_type": null,
+        "verification": { "status": "failed", "error": "" },
+    });
+    assert!(serde_json::from_value::<ResourceContent>(invalid_failure).is_err());
+
+    let invalid_checksum = serde_json::json!({
+        "size": 3,
+        "mime_type": null,
+        "verification": {
+            "status": "verified",
+            "checksum": { "kind": "sha256", "value": "bad" },
+        },
+    });
+    assert!(serde_json::from_value::<ResourceContent>(invalid_checksum).is_err());
 }
 
 #[test]

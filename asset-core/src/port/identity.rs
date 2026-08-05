@@ -16,7 +16,7 @@ pub struct LocatedUser {
 impl LocatedUser {
     pub fn new(user: User, workspace: DirectoryLocation) -> Result<Self, CoreError> {
         if user.workspace_directory_id() != workspace.id() {
-            return Err(CoreError::configuration(
+            return Err(CoreError::invariant(
                 "user workspace does not match its location projection",
             ));
         }

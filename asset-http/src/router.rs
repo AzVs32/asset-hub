@@ -6,7 +6,7 @@ use crate::state::HttpState;
 use asset_core::port::{ResourceKindRegistry, SecurityAuditRepository};
 use asset_core::service::ResourceService;
 use asset_core::service::{AuthorizationService, UserService};
-use asset_runtime::PluginWebAssets;
+use asset_runtime::{PluginWebAssets, UploadFinalizationScheduler};
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderName, Method, StatusCode};
@@ -29,6 +29,7 @@ pub fn build_router(
     options: RouterOptions,
     plugin_web_assets: PluginWebAssets,
     authorization: AuthorizationService,
+    upload_finalizations: UploadFinalizationScheduler,
 ) -> Router {
     let mut router = Router::new()
         .route("/health", get(handlers::health))
@@ -132,6 +133,7 @@ pub fn build_router(
             kind_registry,
             plugin_web_assets,
             authorization,
+            upload_finalizations,
         ))
 }
 

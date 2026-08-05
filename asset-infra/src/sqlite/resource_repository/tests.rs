@@ -133,6 +133,52 @@ async fn sqlite_repository_roundtrips_resource() {
 }
 
 #[tokio::test]
+async fn sqlite_repository_rejects_invalid_persisted_resource_content() {
+    let repository = repository("invalid-content").await;
+    let resource = Resource::builder("invalid.bin").build().unwrap();
+    repository.save(&resource).await.unwrap();
+    sqlx::query(
+        r#"
+        UPDATE resources
+        SET content_json = '{"size":1,"mime_type":null,"verification":{"status":"verified","checksum":{"kind":"sha256","value":"bad"}}}'
+        WHERE id = ?
+        "#,
+    )
+    .bind(resource.id().to_string())
+    .execute(repository.pool())
+    .await
+    .unwrap();
+
+    assert!(matches!(
+        repository.find_by_id(&resource.id()).await,
+        Err(CoreError::Repository {
+            operation: "resource.decode_content",
+            ..
+        })
+    ));
+}
+
+#[tokio::test]
+async fn sqlite_repository_classifies_invalid_resource_snapshot_as_repository_failure() {
+    let repository = repository("invalid-resource-snapshot").await;
+    let resource = Resource::builder("valid.bin").build().unwrap();
+    repository.save(&resource).await.unwrap();
+    sqlx::query("UPDATE resources SET name = '..' WHERE id = ?")
+        .bind(resource.id().to_string())
+        .execute(repository.pool())
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        repository.find_by_id(&resource.id()).await,
+        Err(CoreError::Repository {
+            operation: "resource.rehydrate",
+            ..
+        })
+    ));
+}
+
+#[tokio::test]
 async fn sqlite_repository_updates_tags() {
     let repository = repository("tags").await;
     let mut resource = Resource::builder("image")
@@ -539,6 +585,28 @@ async fn directory_repository_rejects_cycles() {
             .await
             .is_err()
     );
+}
+
+#[tokio::test]
+async fn directory_repository_rejects_invalid_persisted_self_parent() {
+    let repository = repository("directory-self-parent").await;
+    let directory = Directory::new(DirectoryId::root(), "self").unwrap();
+    DirectoryStore::insert(repository.as_ref(), &directory)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE directories SET parent_id = id WHERE id = ?")
+        .bind(directory.id().to_string())
+        .execute(repository.pool())
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        DirectoryStore::load_all(repository.as_ref()).await,
+        Err(CoreError::Repository {
+            operation: "directory.rehydrate",
+            ..
+        })
+    ));
 }
 
 async fn repository(name: &str) -> Arc<SqliteResourceRepository> {

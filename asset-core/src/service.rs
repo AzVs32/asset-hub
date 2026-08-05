@@ -4,7 +4,8 @@
 //! [`SecuredResourceService`] 调用资源用例；未绑定授权上下文的子服务仅在 Core 内部可见。
 //!
 //! 该层不依赖 OpenDAL、sqlx 等具体基础设施实现；调用方需要在应用启动时注入
-//! [`ResourceServicePorts`] 所声明的写仓储、查询、Blob、目录、扫描与运行时适配器。
+//! [`ResourceServicePorts`] 所声明的写仓储、查询、Blob、扫描与运行时适配器，并注入共享
+//! 的 [`DirectoryService`]。
 
 mod authorization;
 mod directory;

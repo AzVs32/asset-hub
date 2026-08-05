@@ -41,7 +41,7 @@ pub struct LocatedDirectory {
 impl LocatedDirectory {
     pub fn new(directory: Directory, location: DirectoryLocation) -> Result<Self, CoreError> {
         if directory.id() != location.id() {
-            return Err(CoreError::configuration(
+            return Err(CoreError::invariant(
                 "directory aggregate does not match its location projection",
             ));
         }

@@ -82,13 +82,14 @@ impl UploadSessionRepository for SqliteUploadSessionRepository {
             r#"
             UPDATE upload_sessions
             SET offset = ?, updated_at = ?
-            WHERE id = ? AND offset = ?
+            WHERE id = ? AND offset = ? AND status = 'uploading' AND ? <= expected_size
             "#,
         )
         .bind(encode_u64(offset)?)
         .bind(Utc::now().to_rfc3339())
         .bind(id.to_string())
         .bind(encode_u64(expected_offset)?)
+        .bind(encode_u64(offset)?)
         .execute(&self.pool)
         .await
         .map_err(|error| CoreError::repository("upload_session.update_offset", error))?;
@@ -109,7 +110,9 @@ impl UploadSessionRepository for SqliteUploadSessionRepository {
             r#"
             UPDATE upload_sessions
             SET status = 'finalizing', failure = NULL, updated_at = ?
-            WHERE id = ? AND status IN ('uploading', 'failed')
+            WHERE id = ?
+              AND status IN ('uploading', 'failed')
+              AND offset = expected_size
             "#,
         )
         .bind(Utc::now().to_rfc3339())
@@ -151,7 +154,11 @@ impl UploadSessionRepository for SqliteUploadSessionRepository {
             r#"
             UPDATE upload_sessions
             SET status = 'completed', failure = NULL, updated_at = ?
-            WHERE id = ? AND status = 'finalizing'
+            WHERE id = ?
+              AND status = 'finalizing'
+              AND offset = expected_size
+              AND actual_checksum_value IS NOT NULL
+              AND actual_checksum_value = expected_checksum_value
             "#,
         )
         .bind(Utc::now().to_rfc3339())
@@ -219,7 +226,7 @@ fn decode_session(row: sqlx::sqlite::SqliteRow) -> Result<UploadSession, CoreErr
             .map(|value| value.with_timezone(&Utc))
             .map_err(|error| CoreError::repository(field, error))
     };
-    Ok(UploadSession::rehydrate(UploadSessionSnapshot {
+    UploadSession::rehydrate(UploadSessionSnapshot {
         id: UploadId::from_uuid(parse_id("upload_session.id", row.get("id"))?),
         resource_id: ResourceId::from_uuid(parse_id(
             "upload_session.resource_id",
@@ -227,22 +234,27 @@ fn decode_session(row: sqlx::sqlite::SqliteRow) -> Result<UploadSession, CoreErr
         )?),
         owner_id: UserId::from_uuid(parse_id("upload_session.owner_id", row.get("owner_id"))?),
         name: row.get("name"),
-        directory: DirectoryPath::from_str(row.get::<String, _>("directory").as_str())?,
-        kind: ResourceKind::from_str(row.get::<String, _>("kind").as_str())?,
+        directory: DirectoryPath::from_str(row.get::<String, _>("directory").as_str())
+            .map_err(|error| CoreError::repository("upload_session.directory", error))?,
+        kind: ResourceKind::from_str(row.get::<String, _>("kind").as_str())
+            .map_err(|error| CoreError::repository("upload_session.kind", error))?,
         tags,
         mime_type: row.get("mime_type"),
         expected_size,
         offset,
         status: decode_status(row.get("status"))?,
-        expected_checksum: Checksum::sha256(row.get::<String, _>("expected_checksum_value"))?,
+        expected_checksum: Checksum::sha256(row.get::<String, _>("expected_checksum_value"))
+            .map_err(|error| CoreError::repository("upload_session.expected_checksum", error))?,
         actual_checksum: row
             .get::<Option<String>, _>("actual_checksum_value")
             .map(Checksum::sha256)
-            .transpose()?,
+            .transpose()
+            .map_err(|error| CoreError::repository("upload_session.actual_checksum", error))?,
         failure: row.get("failure"),
         created_at: timestamp("upload_session.created_at", row.get("created_at"))?,
         updated_at: timestamp("upload_session.updated_at", row.get("updated_at"))?,
-    }))
+    })
+    .map_err(|error| CoreError::repository("upload_session.rehydrate", error))
 }
 
 fn decode_status(value: String) -> Result<UploadStatus, CoreError> {

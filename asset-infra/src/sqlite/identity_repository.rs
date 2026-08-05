@@ -195,7 +195,7 @@ fn decode_user(row: sqlx::sqlite::SqliteRow) -> Result<User, CoreError> {
         created_at: timestamp("created_at")?,
         updated_at: timestamp("updated_at")?,
     })
-    .map_err(Into::into)
+    .map_err(|error| CoreError::repository("user.rehydrate", error))
 }
 
 fn decode_located_user(row: sqlx::sqlite::SqliteRow) -> Result<LocatedUser, CoreError> {
@@ -208,7 +208,8 @@ fn decode_located_user(row: sqlx::sqlite::SqliteRow) -> Result<LocatedUser, Core
     let workspace_path = DirectoryPath::from_path(
         row.try_get::<String, _>("workspace_directory_path")
             .map_err(|error| CoreError::repository("user.decode", error))?,
-    )?;
+    )
+    .map_err(|error| CoreError::repository("user.decode_workspace_path", error))?;
     let user = decode_user(row)?;
     LocatedUser::new(user, DirectoryLocation::new(workspace_id, workspace_path))
 }
@@ -229,18 +230,26 @@ fn parse_role(value: &str) -> Result<UserRole, CoreError> {
     match value {
         "administrator" => Ok(UserRole::Administrator),
         "member" => Ok(UserRole::Member),
-        _ => Err(CoreError::configuration(format!(
-            "unknown user role `{value}`"
-        ))),
+        _ => Err(CoreError::repository(
+            "user.decode_role",
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("unknown user role `{value}`"),
+            ),
+        )),
     }
 }
 fn parse_status(value: &str) -> Result<UserStatus, CoreError> {
     match value {
         "active" => Ok(UserStatus::Active),
         "disabled" => Ok(UserStatus::Disabled),
-        _ => Err(CoreError::configuration(format!(
-            "unknown user status `{value}`"
-        ))),
+        _ => Err(CoreError::repository(
+            "user.decode_status",
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("unknown user status `{value}`"),
+            ),
+        )),
     }
 }
 
@@ -276,5 +285,38 @@ mod tests {
         assert_eq!(users.len(), 1);
         assert_eq!(users[0].user().id(), user.id());
         assert_eq!(users[0].workspace().path().path(), "teams/alice");
+    }
+
+    #[tokio::test]
+    async fn invalid_persisted_user_is_a_repository_failure() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        let directories = SqliteResourceRepository::from_pool(pool.clone());
+        directories.run_migrations().await.unwrap();
+        let repository = SqliteIdentityRepository::new(pool.clone());
+        let user = User::new(
+            "alice",
+            "credential-hash",
+            UserRole::Member,
+            DirectoryId::root(),
+        )
+        .unwrap();
+        repository.create(&user).await.unwrap();
+        sqlx::query("UPDATE users SET username = 'ab' WHERE id = ?")
+            .bind(user.id().to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            repository.find_by_id(&user.id()).await,
+            Err(CoreError::Repository {
+                operation: "user.rehydrate",
+                ..
+            })
+        ));
     }
 }

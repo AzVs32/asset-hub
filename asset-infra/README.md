@@ -77,6 +77,17 @@ replacement content. Resources above the limit therefore do not advertise `text_
 Resource optimistic concurrency uses a persisted, monotonically increasing `revision`; timestamps
 remain display and ordering metadata.
 
+SQLite never deserializes persisted data directly into Resource, Directory, or User aggregates.
+Repository rows first become unchecked snapshots and then pass through Core rehydration; persisted
+Resource content, checksums, and storage keys likewise deserialize through their validating Core
+constructors. Invalid JSON, path-like keys, aggregate timestamps, or other inconsistent rows are
+reported as repository failures and no partially valid domain object is returned.
+
+Persisted upload sessions are rehydrated through the Core aggregate state machine. SQLite
+conditional updates only advance offsets while uploading, only enter finalization after all bytes
+arrive, and only complete a checksummed finalization; inconsistent persisted rows are reported as
+repository failures instead of being exposed as valid sessions.
+
 Content replacement, whether requested by an editor or returned by a write Action, writes a durable
 intent before moving the existing Blob. The intent stores the Resource ID, expected revision,
 target/staging/backup keys, and replacement content metadata.

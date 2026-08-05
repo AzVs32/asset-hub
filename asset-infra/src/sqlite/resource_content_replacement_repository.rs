@@ -82,15 +82,20 @@ fn decode_replacement(
         row.get::<String, _>("replacement_content_json").as_str(),
     )
     .map_err(|error| CoreError::repository("content_replacement.decode_content", error))?;
-    Ok(ResourceContentReplacement::rehydrate(
+    ResourceContentReplacement::rehydrate(
         id,
         resource_id,
         expected_revision,
-        StorageKey::new(row.get::<String, _>("target_key"))?,
-        StorageKey::new(row.get::<String, _>("staged_key"))?,
-        StorageKey::new(row.get::<String, _>("backup_key"))?,
+        decode_storage_key("content_replacement.target_key", row.get("target_key"))?,
+        decode_storage_key("content_replacement.staged_key", row.get("staged_key"))?,
+        decode_storage_key("content_replacement.backup_key", row.get("backup_key"))?,
         content,
-    )?)
+    )
+    .map_err(|error| CoreError::repository("content_replacement.rehydrate", error))
+}
+
+fn decode_storage_key(field: &'static str, value: String) -> Result<StorageKey, CoreError> {
+    StorageKey::new(value).map_err(|error| CoreError::repository(field, error))
 }
 
 fn encode_revision(value: u64) -> Result<i64, CoreError> {
@@ -144,5 +149,52 @@ mod tests {
         repository.remove(&pending.id()).await.unwrap();
         repository.remove(&pending.id()).await.unwrap();
         assert!(repository.list_pending().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn invalid_persisted_replacement_content_is_rejected() {
+        let path = std::env::temp_dir()
+            .join(format!(
+                "asset-hub-invalid-content-replacement-{}",
+                uuid::Uuid::now_v7()
+            ))
+            .join("asset-hub.sqlite");
+        let resources = SqliteResourceRepository::connect(&path, 1).await.unwrap();
+        let repository = SqliteResourceContentReplacementRepository::new(resources.pool().clone());
+        let content = ResourceContent::pending(3).build().unwrap();
+        let resource = Resource::builder("note.txt")
+            .with_content(content.clone())
+            .build()
+            .unwrap();
+        resources.save(&resource).await.unwrap();
+        let pending = ResourceContentReplacement::new(
+            resource.id(),
+            resource.revision(),
+            StorageKey::new("note.txt").unwrap(),
+            StorageKey::new(".asset-hub/uploads/invalid-replacement").unwrap(),
+            StorageKey::new(".asset-hub/content-backups/invalid-replacement").unwrap(),
+            content,
+        )
+        .unwrap();
+        repository.save(&pending).await.unwrap();
+        sqlx::query(
+            r#"
+            UPDATE resource_content_replacements
+            SET replacement_content_json = '{"size":3,"mime_type":" ","verification":{"status":"pending"}}'
+            WHERE id = ?
+            "#,
+        )
+        .bind(pending.id().to_string())
+        .execute(resources.pool())
+        .await
+        .unwrap();
+
+        assert!(matches!(
+            repository.list_pending().await,
+            Err(CoreError::Repository {
+                operation: "content_replacement.decode_content",
+                ..
+            })
+        ));
     }
 }

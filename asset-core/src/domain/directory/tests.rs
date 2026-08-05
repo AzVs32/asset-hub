@@ -108,3 +108,40 @@ fn directory_rejects_self_parent() {
 
     assert!(directory.move_to(directory.id()).is_err());
 }
+
+#[test]
+fn directory_rehydration_rejects_self_parent_and_inconsistent_timestamps() {
+    let id = DirectoryId::new();
+    let created_at = Utc::now();
+    let snapshot = DirectorySnapshot {
+        id,
+        parent_id: Some(id),
+        name: "self".to_owned(),
+        kind: DirectoryKind::default(),
+        created_at,
+        updated_at: created_at,
+    };
+    assert!(matches!(
+        Directory::rehydrate(snapshot),
+        Err(DirectoryError::InvalidFormat {
+            field: "directory.parent_id",
+            ..
+        })
+    ));
+
+    let snapshot = DirectorySnapshot {
+        id: DirectoryId::new(),
+        parent_id: Some(DirectoryId::root()),
+        name: "past".to_owned(),
+        kind: DirectoryKind::default(),
+        created_at,
+        updated_at: created_at - chrono::Duration::seconds(1),
+    };
+    assert!(matches!(
+        Directory::rehydrate(snapshot),
+        Err(DirectoryError::InvalidFormat {
+            field: "directory.updated_at",
+            ..
+        })
+    ));
+}

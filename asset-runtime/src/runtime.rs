@@ -1,4 +1,4 @@
-use crate::PluginWebAssets;
+use crate::{PluginWebAssets, UploadFinalizationScheduler};
 use asset_core::CoreError;
 use asset_core::domain::{ResourceActionPolicy, ResourceContentEditPolicy};
 use asset_core::port::{DirectoryKindRegistry, ResourceKindRegistry, SecurityAuditRepository};
@@ -39,6 +39,7 @@ pub struct AssetRuntime {
     resource_service: ResourceService,
     user_service: UserService,
     authorization_service: AuthorizationService,
+    upload_finalizations: UploadFinalizationScheduler,
     /// 保持自动存储同步监听器与后台任务存活。
     storage_sync: Option<LocalStorageSync>,
 }
@@ -123,10 +124,6 @@ impl AssetRuntime {
                 infrastructure.resource_repository(),
                 infrastructure.resource_query(),
                 infrastructure.blob_storage(),
-                infrastructure.directory_store(),
-                infrastructure.directory_index(),
-                infrastructure.directory_storage(),
-                directory_kind_registry.clone(),
                 infrastructure.storage_scanner(),
                 resource_kind_registry.clone(),
                 infrastructure.upload_session_repository(),
@@ -135,11 +132,8 @@ impl AssetRuntime {
             .with_actions(
                 resource_action_registry.clone(),
                 resource_action_executor.clone(),
-            )
-            .with_directory_actions(
-                directory_action_registry.clone(),
-                directory_action_executor.clone(),
             ),
+            directory_service.clone(),
             resource_action_policy,
             resource_content_edit_policy,
         );
@@ -160,9 +154,14 @@ impl AssetRuntime {
                 "recovered pending content replacements"
             );
         }
-        let resumed = resource_service.resume_upload_finalizations().await?;
+        let pending_finalizations = resource_service.pending_upload_finalizations().await?;
+        let resumed = pending_finalizations.len();
+        let upload_finalizations = UploadFinalizationScheduler::new(resource_service.clone());
+        for id in pending_finalizations {
+            upload_finalizations.schedule(id)?;
+        }
         if resumed > 0 {
-            tracing::info!(count = resumed, "resumed pending upload finalizations");
+            tracing::info!(count = resumed, "scheduled pending upload finalizations");
         }
         Ok(Self {
             infrastructure,
@@ -177,6 +176,7 @@ impl AssetRuntime {
             resource_service,
             user_service,
             authorization_service,
+            upload_finalizations,
             storage_sync: None,
         })
     }
@@ -212,6 +212,10 @@ impl AssetRuntime {
 
     pub fn authorization_service(&self) -> AuthorizationService {
         self.authorization_service.clone()
+    }
+
+    pub fn upload_finalization_scheduler(&self) -> UploadFinalizationScheduler {
+        self.upload_finalizations.clone()
     }
 
     pub fn security_audit_repository(&self) -> Arc<dyn SecurityAuditRepository> {

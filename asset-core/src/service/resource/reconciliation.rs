@@ -617,7 +617,7 @@ impl<'a> StorageReconciliationService<'a> {
             let chunk = chunk?;
             actual_size = actual_size
                 .checked_add(chunk.len() as u64)
-                .ok_or_else(|| CoreError::configuration("blob size exceeds u64"))?;
+                .ok_or_else(|| CoreError::invariant("blob size exceeds u64"))?;
         }
 
         if actual_size != expected_size {

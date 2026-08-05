@@ -29,7 +29,7 @@ impl DirectoryId {
 ///
 /// 聚合只保存自身及直接父目录标识，不加载子树。完整路径、祖先链和后代列表属于查询
 /// 模型，由可重建的 DirectoryIndex 查询投影组合。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Directory {
     id: DirectoryId,
     parent_id: Option<DirectoryId>,
@@ -39,6 +39,7 @@ pub struct Directory {
     updated_at: DateTime<Utc>,
 }
 
+/// 未校验的目录持久化快照；只能通过 [`Directory::rehydrate`] 转换为聚合。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DirectorySnapshot {
     pub id: DirectoryId,
@@ -83,6 +84,14 @@ impl Directory {
     }
 
     pub fn rehydrate(snapshot: DirectorySnapshot) -> Result<Self, DirectoryError> {
+        snapshot.try_into()
+    }
+}
+
+impl TryFrom<DirectorySnapshot> for Directory {
+    type Error = DirectoryError;
+
+    fn try_from(snapshot: DirectorySnapshot) -> Result<Self, Self::Error> {
         if snapshot.id.is_root() {
             if snapshot.parent_id.is_some() || !snapshot.name.is_empty() {
                 return Err(DirectoryError::InvalidFormat {
@@ -97,7 +106,19 @@ impl Directory {
                     reason: "non-root directory must have a parent",
                 });
             }
+            if snapshot.parent_id == Some(snapshot.id) {
+                return Err(DirectoryError::InvalidFormat {
+                    field: "directory.parent_id",
+                    reason: "directory cannot be its own parent",
+                });
+            }
             validate_directory_name(&snapshot.name)?;
+        }
+        if snapshot.updated_at < snapshot.created_at {
+            return Err(DirectoryError::InvalidFormat {
+                field: "directory.updated_at",
+                reason: "updated timestamp cannot precede creation",
+            });
         }
         Ok(Self {
             id: snapshot.id,
@@ -108,7 +129,9 @@ impl Directory {
             updated_at: snapshot.updated_at,
         })
     }
+}
 
+impl Directory {
     pub fn id(&self) -> DirectoryId {
         self.id
     }

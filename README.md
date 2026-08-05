@@ -115,6 +115,10 @@ adapters but does not compose application services. Plugin lock generation is
 an explicit packaging step; runtime loading is read-only and requires a valid
 `manifest.lock.json`.
 
+Runtime assembly creates one shared directory service for resource, user, and authorization
+workflows. It also owns the supervised upload-finalization tasks; Core validates upload state and
+executes finalization business logic without spawning detached work.
+
 See [`asset-infra/README.md`](asset-infra/README.md) and
 [`asset-runtime/README.md`](asset-runtime/README.md) for the adapter/composition
 boundary and startup order.

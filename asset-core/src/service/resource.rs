@@ -9,11 +9,9 @@ use crate::domain::{
     ResourceKind, StorageKey,
 };
 use crate::port::{
-    BlobStorage, DirectoryActionExecutor, DirectoryActionRegistry, DirectoryIndex,
-    DirectoryKindRegistry, DirectoryLocation, DirectoryStorage, DirectoryStore,
-    ResourceActionExecutor, ResourceActionRegistry, ResourceContentReplacementRepository,
-    ResourceKindRegistry, ResourceQuery, ResourceRepository, StorageScanner,
-    UploadSessionRepository,
+    BlobStorage, DirectoryLocation, ResourceActionExecutor, ResourceActionRegistry,
+    ResourceContentReplacementRepository, ResourceKindRegistry, ResourceQuery, ResourceRepository,
+    StorageScanner, UploadSessionRepository,
 };
 use crate::service::DirectoryService;
 use std::sync::Arc;
@@ -70,42 +68,27 @@ struct ResourceActionPorts {
     executor: Arc<dyn ResourceActionExecutor>,
 }
 
-#[derive(Clone)]
-struct DirectoryActionPorts {
-    registry: Arc<dyn DirectoryActionRegistry>,
-    executor: Arc<dyn DirectoryActionExecutor>,
-}
-
 /// `ResourceService` 所需的 Host Port 装配。
 ///
-/// 写模型、读模型、Blob、目录聚合仓储、物理目录、扫描器和 kind 注册表是必选端口；
-/// 动作注册表与执行器必须成对注入，避免出现只有动作声明或只有执行器的半配置状态。
+/// 写模型、读模型、Blob、扫描器和 kind 注册表是必选端口；动作注册表与执行器必须成对
+/// 注入，避免出现只有动作声明或只有执行器的半配置状态。目录能力通过已经装配完成的
+/// [`DirectoryService`] 注入 `ResourceService`，确保所有应用服务共享同一并发边界。
 pub struct ResourceServicePorts {
     repository: Arc<dyn ResourceRepository>,
     query: Arc<dyn ResourceQuery>,
     blob_storage: Arc<dyn BlobStorage>,
-    directory_store: Arc<dyn DirectoryStore>,
-    directory_index: Arc<dyn DirectoryIndex>,
-    directory_storage: Arc<dyn DirectoryStorage>,
-    directory_kind_registry: Arc<dyn DirectoryKindRegistry>,
     storage_scanner: Arc<dyn StorageScanner>,
     kind_registry: Arc<dyn ResourceKindRegistry>,
     upload_sessions: Arc<dyn UploadSessionRepository>,
     content_replacements: Arc<dyn ResourceContentReplacementRepository>,
     action_ports: Option<ResourceActionPorts>,
-    directory_action_ports: Option<DirectoryActionPorts>,
 }
 
 impl ResourceServicePorts {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         repository: Arc<dyn ResourceRepository>,
         query: Arc<dyn ResourceQuery>,
         blob_storage: Arc<dyn BlobStorage>,
-        directory_store: Arc<dyn DirectoryStore>,
-        directory_index: Arc<dyn DirectoryIndex>,
-        directory_storage: Arc<dyn DirectoryStorage>,
-        directory_kind_registry: Arc<dyn DirectoryKindRegistry>,
         storage_scanner: Arc<dyn StorageScanner>,
         kind_registry: Arc<dyn ResourceKindRegistry>,
         upload_sessions: Arc<dyn UploadSessionRepository>,
@@ -115,16 +98,11 @@ impl ResourceServicePorts {
             repository,
             query,
             blob_storage,
-            directory_store,
-            directory_index,
-            directory_storage,
-            directory_kind_registry,
             storage_scanner,
             kind_registry,
             upload_sessions,
             content_replacements,
             action_ports: None,
-            directory_action_ports: None,
         }
     }
 
@@ -136,21 +114,13 @@ impl ResourceServicePorts {
         self.action_ports = Some(ResourceActionPorts { registry, executor });
         self
     }
-
-    pub fn with_directory_actions(
-        mut self,
-        registry: Arc<dyn DirectoryActionRegistry>,
-        executor: Arc<dyn DirectoryActionExecutor>,
-    ) -> Self {
-        self.directory_action_ports = Some(DirectoryActionPorts { registry, executor });
-        self
-    }
 }
 
 impl ResourceService {
     /// 创建资源应用服务。
     pub fn new(
         ports: ResourceServicePorts,
+        directories: DirectoryService,
         resource_action_policy: Arc<ResourceActionPolicy>,
         resource_content_edit_policy: Arc<ResourceContentEditPolicy>,
     ) -> Self {
@@ -158,26 +128,12 @@ impl ResourceService {
             repository,
             query,
             blob_storage,
-            directory_store,
-            directory_index,
-            directory_storage,
-            directory_kind_registry,
             storage_scanner,
             kind_registry,
             upload_sessions,
             content_replacements,
             action_ports,
-            directory_action_ports,
         } = ports;
-        let mut directories = DirectoryService::new(
-            directory_store,
-            directory_index,
-            directory_storage,
-            directory_kind_registry,
-        );
-        if let Some(ports) = directory_action_ports {
-            directories = directories.with_actions(ports.registry, ports.executor);
-        }
         Self {
             repository,
             query,
@@ -236,14 +192,11 @@ impl ResourceService {
         self.blob_storage.health_check().await
     }
 
-    /// 恢复数据库中尚未完成的上传 finalization。
-    pub async fn resume_upload_finalizations(&self) -> Result<usize, CoreError> {
-        let ids = self.upload_sessions.list_finalizing().await?;
-        let count = ids.len();
-        for id in ids {
-            self.spawn_upload_finalization(id);
-        }
-        Ok(count)
+    /// 返回需要由 Runtime 恢复调度的上传 finalization。
+    pub async fn pending_upload_finalizations(
+        &self,
+    ) -> Result<Vec<crate::domain::UploadId>, CoreError> {
+        self.upload_sessions.list_finalizing().await
     }
 
     /// Recover content replacements interrupted between Blob publication and Resource persistence.
@@ -251,22 +204,12 @@ impl ResourceService {
         self.content().resume_pending_replacements().await
     }
 
-    fn spawn_upload_finalization(&self, id: crate::domain::UploadId) {
-        let service = self.clone();
-        tokio::spawn(async move {
-            match service.uploads().finalize(&id).await {
-                Ok(resource) => tracing::info!(
-                    upload_id = %id,
-                    resource_id = %resource.id(),
-                    "upload finalization completed"
-                ),
-                Err(error) => tracing::error!(
-                    upload_id = %id,
-                    error = %error,
-                    "upload finalization failed"
-                ),
-            }
-        });
+    /// 执行单个已经进入 `Finalizing` 状态的上传；任务生命周期由 Runtime 持有。
+    pub async fn finalize_upload(
+        &self,
+        id: &crate::domain::UploadId,
+    ) -> Result<Resource, CoreError> {
+        self.uploads().finalize(id).await
     }
 
     pub async fn locate_resource_directory(
@@ -338,9 +281,10 @@ impl ResourceService {
         let kind = self.validate_registered_kind(kind)?;
         let definition = self.require_kind_definition(&kind)?;
         if !definition.supports_content() {
-            return Err(CoreError::configuration(format!(
-                "resource kind `{kind}` does not support content upload"
-            )));
+            return Err(CoreError::unsupported(
+                "resource kind for content upload",
+                kind.to_string(),
+            ));
         }
         Ok(kind)
     }
@@ -362,18 +306,18 @@ impl ResourceService {
         if self.kind_registry.supports(kind) {
             return Ok(());
         }
-        Err(CoreError::configuration(format!(
-            "unsupported resource kind `{kind}`"
-        )))
+        Err(CoreError::unsupported("resource kind", kind.to_string()))
     }
 
     fn require_kind_definition(
         &self,
         kind: &ResourceKind,
     ) -> Result<&crate::port::ResourceKindDefinition, CoreError> {
-        self.kind_registry
-            .get(kind)
-            .ok_or_else(|| CoreError::configuration(format!("unsupported resource kind `{kind}`")))
+        self.kind_registry.get(kind).ok_or_else(|| {
+            CoreError::invariant(format!(
+                "persisted resource kind `{kind}` is not registered"
+            ))
+        })
     }
 
     fn actions_for_resource_kind(&self, kind: &ResourceKind) -> Vec<ResourceActionDefinition> {

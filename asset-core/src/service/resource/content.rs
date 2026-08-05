@@ -92,7 +92,7 @@ impl<'a> ResourceContentService<'a> {
             return Err(stale_replacement(&resource));
         }
         let current_content = resource.content().cloned().ok_or_else(|| {
-            CoreError::configuration("resource content replacement requires existing content")
+            CoreError::invalid_operation("resource content replacement requires existing content")
         })?;
         let has_text_edit = self
             .service
@@ -104,7 +104,7 @@ impl<'a> ResourceContentService<'a> {
                     .is_some_and(|capability| capability.as_str() == "text_edit")
             });
         if !has_text_edit {
-            return Err(CoreError::configuration(format!(
+            return Err(CoreError::invalid_operation(format!(
                 "resource `{}` is not available for text editing",
                 resource.id()
             )));
@@ -391,7 +391,7 @@ impl<'a> ResourceContentService<'a> {
             .find_located_by_id(&replacement.resource_id())
             .await?
             .ok_or_else(|| {
-                CoreError::configuration(format!(
+                CoreError::invariant(format!(
                     "pending content replacement `{}` references a missing resource",
                     replacement.id()
                 ))
@@ -401,7 +401,7 @@ impl<'a> ResourceContentService<'a> {
         let committed_revision = replacement
             .expected_revision()
             .checked_add(1)
-            .ok_or_else(|| CoreError::configuration("resource revision overflow"))?;
+            .ok_or_else(|| CoreError::invariant("resource revision overflow"))?;
         let committed = current_key == *replacement.target_key()
             && current.revision() == committed_revision
             && current.content() == Some(replacement.replacement_content());
@@ -453,7 +453,7 @@ impl<'a> ResourceContentService<'a> {
             .await?
             .is_none()
         {
-            return Err(CoreError::configuration(format!(
+            return Err(CoreError::invariant(format!(
                 "pending content replacement `{}` has neither its target nor backup Blob",
                 replacement.id()
             )));
@@ -515,7 +515,7 @@ fn limit_replacement_stream(
         let chunk = chunk?;
         received = received
             .checked_add(chunk.len() as u64)
-            .ok_or_else(|| CoreError::configuration("content replacement size overflow"))?;
+            .ok_or_else(|| CoreError::invariant("content replacement size overflow"))?;
         if received > expected_size {
             return Err(CoreError::conflict(
                 "content replacement exceeds its declared size",

@@ -28,6 +28,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         settings.router_options().clone(),
         runtime.plugin_web_assets(),
         authorization.clone(),
+        runtime.upload_finalization_scheduler(),
     );
     let session_store = SqliteStore::new(runtime.database_pool());
     session_store.migrate().await?;

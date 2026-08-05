@@ -117,7 +117,7 @@ pub struct LocatedResource {
 impl LocatedResource {
     pub fn new(resource: Resource, directory: DirectoryLocation) -> Result<Self, CoreError> {
         if resource.directory_id() != directory.id() {
-            return Err(CoreError::configuration(
+            return Err(CoreError::invariant(
                 "resource directory does not match its location projection",
             ));
         }

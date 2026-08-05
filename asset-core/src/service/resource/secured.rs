@@ -122,14 +122,11 @@ impl<'a> SecuredResourceService<'a> {
             .await
     }
     pub async fn complete_upload(&self, id: &UploadId) -> Result<UploadSession, CoreError> {
-        let (session, should_start) = self
+        let (session, _) = self
             .service
             .uploads()
             .request_finalization(self.context.user_id(), id)
             .await?;
-        if should_start {
-            self.service.spawn_upload_finalization(*id);
-        }
         Ok(session)
     }
     pub async fn abort_upload(&self, id: &UploadId) -> Result<(), CoreError> {
@@ -431,7 +428,7 @@ fn directory_archive_path(
         directory_path
             .strip_prefix(root_path)
             .and_then(|suffix| suffix.strip_prefix('/'))
-            .ok_or_else(|| CoreError::configuration("directory left the archive subtree"))?
+            .ok_or_else(|| CoreError::invariant("directory left the archive subtree"))?
     };
     Ok(format!("{archive_root}/{relative}"))
 }

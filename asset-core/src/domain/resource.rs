@@ -29,7 +29,7 @@ crate::gen_id_uuid_v7!(ResourceId);
 ///
 /// `Resource` 负责维护资源基础信息、标签、内容引用和软删除状态。
 /// 外部代码应通过构建器和行为方法修改资源，避免绕过领域规则直接写字段。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Resource {
     /// 资源唯一标识。
     id: ResourceId,
@@ -92,12 +92,35 @@ impl Resource {
     /// 该方法会保留快照中的 ID、时间戳和软删除状态，但仍会重新执行聚合约束校验。
     /// Repository 实现应通过它还原数据库记录，避免绕过领域约束直接构造 `Resource`。
     pub fn rehydrate(snapshot: ResourceSnapshot) -> Result<Self, ResourceError> {
+        snapshot.try_into()
+    }
+}
+
+impl TryFrom<ResourceSnapshot> for Resource {
+    type Error = ResourceError;
+
+    fn try_from(snapshot: ResourceSnapshot) -> Result<Self, Self::Error> {
         let name = normalize_resource_name(snapshot.name)?;
         let tags = normalize_tags(snapshot.tags)?;
         if snapshot.revision == 0 {
             return Err(ResourceError::InvalidFormat {
                 field: "resource.revision",
                 reason: "resource revision must be greater than zero",
+            });
+        }
+        if snapshot.updated_at < snapshot.created_at {
+            return Err(ResourceError::InvalidFormat {
+                field: "resource.updated_at",
+                reason: "updated timestamp cannot precede creation",
+            });
+        }
+        if snapshot
+            .deleted_at
+            .is_some_and(|deleted_at| deleted_at != snapshot.updated_at)
+        {
+            return Err(ResourceError::InvalidFormat {
+                field: "resource.deleted_at",
+                reason: "deleted timestamp must match the last update",
             });
         }
 
@@ -114,7 +137,9 @@ impl Resource {
             deleted_at: snapshot.deleted_at,
         })
     }
+}
 
+impl Resource {
     /// 返回资源唯一标识。
     pub fn id(&self) -> ResourceId {
         self.id

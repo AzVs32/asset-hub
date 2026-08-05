@@ -72,12 +72,27 @@ pub enum CoreError {
         actual: u64,
     },
 
+    /// 调用方请求了 Host 当前不支持的类型、动作或能力。
+    #[error("unsupported {subject}: `{value}`")]
+    Unsupported {
+        subject: &'static str,
+        value: String,
+    },
+
+    /// 请求本身有效，但目标当前状态不允许执行该操作。
+    #[error("invalid operation: {message}")]
+    InvalidOperation { message: String },
+
     /// 基础设施配置不合法。
     #[error("invalid configuration: {message}")]
     Configuration {
         /// 配置错误说明。
         message: String,
     },
+
+    /// Core、持久化投影或受信任适配器违反了内部契约。
+    #[error("internal invariant violated: {message}")]
+    InvariantViolation { message: String },
 
     /// 插件动作执行失败。
     #[error("plugin `{plugin}` action `{action}` failed: {diagnostic}")]
@@ -145,9 +160,28 @@ impl CoreError {
         }
     }
 
+    pub fn unsupported(subject: &'static str, value: impl Into<String>) -> Self {
+        Self::Unsupported {
+            subject,
+            value: value.into(),
+        }
+    }
+
+    pub fn invalid_operation(message: impl Into<String>) -> Self {
+        Self::InvalidOperation {
+            message: message.into(),
+        }
+    }
+
     /// 创建基础设施配置错误。
     pub fn configuration(message: impl Into<String>) -> Self {
         Self::Configuration {
+            message: message.into(),
+        }
+    }
+
+    pub fn invariant(message: impl Into<String>) -> Self {
+        Self::InvariantViolation {
             message: message.into(),
         }
     }

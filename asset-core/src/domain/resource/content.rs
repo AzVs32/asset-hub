@@ -2,7 +2,7 @@ use super::{normalize_required_text, validate_required_text_exact};
 use crate::domain::DirectoryPath;
 use crate::error::ResourceError;
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt;
 use std::str::FromStr;
 
@@ -19,7 +19,7 @@ const MAX_STORAGE_KEY_LEN: usize = 1024;
 ///
 /// 内容本体由外部存储系统管理，本结构保存内容属性，以及最近一次成功协调时观察到的
 /// 物理对象修改时间。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ResourceContent {
     /// 内容字节大小。
     size: u64,
@@ -30,6 +30,39 @@ pub struct ResourceContent {
     /// 最近一次成功协调时观察到的物理存储修改时间。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     modified_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UncheckedResourceContent {
+    size: u64,
+    mime_type: Option<String>,
+    verification: ContentVerification,
+    #[serde(default)]
+    modified_at: Option<DateTime<Utc>>,
+}
+
+impl<'de> Deserialize<'de> for ResourceContent {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let unchecked = UncheckedResourceContent::deserialize(deserializer)?;
+        let mut builder = match unchecked.verification {
+            ContentVerification::Pending => Self::pending(unchecked.size),
+            ContentVerification::Verified { checksum } => Self::verified(unchecked.size, checksum),
+            ContentVerification::Failed { error } => {
+                Self::verification_failed(unchecked.size, error)
+            }
+        };
+        if let Some(mime_type) = unchecked.mime_type {
+            builder = builder.with_mime_type(mime_type);
+        }
+        if let Some(modified_at) = unchecked.modified_at {
+            builder = builder.with_modified_at(modified_at);
+        }
+        builder.build().map_err(serde::de::Error::custom)
+    }
 }
 
 impl ResourceContent {
@@ -85,12 +118,40 @@ impl ResourceContent {
 }
 
 /// 内容校验的完整持久化状态。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum ContentVerification {
     Pending,
     Verified { checksum: Checksum },
     Failed { error: String },
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+enum UncheckedContentVerification {
+    Pending,
+    Verified { checksum: Checksum },
+    Failed { error: String },
+}
+
+impl<'de> Deserialize<'de> for ContentVerification {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match UncheckedContentVerification::deserialize(deserializer)? {
+            UncheckedContentVerification::Pending => Ok(Self::Pending),
+            UncheckedContentVerification::Verified { checksum } => Ok(Self::Verified { checksum }),
+            UncheckedContentVerification::Failed { error } => Ok(Self::Failed {
+                error: normalize_required_text(
+                    "content.verification.error",
+                    &error,
+                    MAX_CONTENT_TEXT_LEN,
+                )
+                .map_err(serde::de::Error::custom)?,
+            }),
+        }
+    }
 }
 
 impl ContentVerification {
@@ -203,7 +264,7 @@ impl ResourceContentBuilder {
 /// 存储键值对象。
 ///
 /// 存储键是面向存储适配器的相对路径或对象键，不允许使用绝对路径和父级路径片段。
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct StorageKey(String);
 
 impl StorageKey {
@@ -281,13 +342,39 @@ impl TryFrom<&str> for StorageKey {
     }
 }
 
+impl<'de> Deserialize<'de> for StorageKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Self::new(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
+
 /// 内容校验和值对象。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Checksum {
     /// 校验和算法类型。
     kind: ChecksumKind,
     /// 校验和值。
     value: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UncheckedChecksum {
+    kind: ChecksumKind,
+    value: String,
+}
+
+impl<'de> Deserialize<'de> for Checksum {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let unchecked = UncheckedChecksum::deserialize(deserializer)?;
+        Self::new(unchecked.kind, unchecked.value).map_err(serde::de::Error::custom)
+    }
 }
 
 impl Checksum {

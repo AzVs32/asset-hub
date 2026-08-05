@@ -144,7 +144,7 @@ impl<'a> ResourceActionService<'a> {
     ) -> Result<ResourceActionDefinition, CoreError> {
         self.service.require_kind_definition(resource.kind())?;
         if resource.is_deleted() {
-            return Err(CoreError::configuration(format!(
+            return Err(CoreError::invalid_operation(format!(
                 "deleted resource `{}` cannot execute actions",
                 resource.id()
             )));
@@ -153,13 +153,7 @@ impl<'a> ResourceActionService<'a> {
         declared_actions
             .into_iter()
             .find(|action| action.id().as_str() == action_id.as_str())
-            .ok_or_else(|| {
-                CoreError::configuration(format!(
-                    "resource kind `{}` does not support action `{}`",
-                    resource.kind(),
-                    action_id
-                ))
-            })
+            .ok_or_else(|| CoreError::unsupported("resource action", action_id.to_string()))
     }
 
     fn validate_action_output(
@@ -174,7 +168,7 @@ impl<'a> ResourceActionService<'a> {
             .iter()
             .any(|declared| declared == actual)
         {
-            return Err(CoreError::configuration(format!(
+            return Err(CoreError::invariant(format!(
                 "action `{}` returned undeclared view `{actual}`",
                 action.id()
             )));
@@ -186,7 +180,7 @@ impl<'a> ResourceActionService<'a> {
             .filter(|effect| matches!(effect, PluginActionEffect::ReplaceContent(_)))
             .count();
         if replacements > 1 {
-            return Err(CoreError::configuration(format!(
+            return Err(CoreError::invariant(format!(
                 "action `{}` returned more than one replace_content effect",
                 action.id()
             )));
@@ -212,9 +206,11 @@ impl<'a> ResourceActionService<'a> {
         }
         let max_content_bytes = self.service.resource_action_policy.max_content_bytes();
         if content_ref.size() > max_content_bytes {
-            return Err(CoreError::configuration(format!(
-                "plugin actions are limited to {max_content_bytes} bytes of resource content"
-            )));
+            return Err(CoreError::limit_exceeded(
+                "plugin action content",
+                max_content_bytes,
+                content_ref.size(),
+            ));
         }
 
         self.service.blob_storage.get(storage_key).await
@@ -231,7 +227,7 @@ impl<'a> ResourceActionService<'a> {
             return Ok(());
         }
         if !matches!(access, ResourceActionAccess::ReadWrite) {
-            return Err(CoreError::configuration(format!(
+            return Err(CoreError::invariant(format!(
                 "action `{}` returned effects without write access",
                 output.action()
             )));
@@ -241,7 +237,7 @@ impl<'a> ResourceActionService<'a> {
             match effect {
                 PluginActionEffect::ReplaceContent(effect) => {
                     let Some(current_content) = resource.content().cloned() else {
-                        return Err(CoreError::configuration(format!(
+                        return Err(CoreError::invariant(format!(
                             "action `{}` cannot replace missing resource content",
                             output.action()
                         )));
@@ -250,7 +246,7 @@ impl<'a> ResourceActionService<'a> {
                         .decode(effect.data.as_bytes())
                         .map(Bytes::from)
                         .map_err(|error| {
-                            CoreError::configuration(format!(
+                            CoreError::invariant(format!(
                                 "action `{}` returned invalid replace_content base64: {error}",
                                 output.action()
                             ))

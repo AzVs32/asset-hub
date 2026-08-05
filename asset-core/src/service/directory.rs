@@ -156,7 +156,7 @@ impl DirectoryService {
     }
 
     pub fn describe_actions(&self, directory: &Directory) -> Result<DirectoryActions, CoreError> {
-        self.ensure_kind_registered(directory.kind())?;
+        self.require_kind_registered(directory.kind())?;
         Ok(DirectoryActions::new(
             self.describe_kind_actions(directory.kind())
                 .into_iter()
@@ -175,12 +175,7 @@ impl DirectoryService {
             .find(|action| {
                 action.id() == action_id && action.matches_directory(directory.kind().as_str())
             })
-            .ok_or_else(|| {
-                CoreError::configuration(format!(
-                    "directory kind `{}` does not support action `{action_id}`",
-                    directory.kind()
-                ))
-            })
+            .ok_or_else(|| CoreError::unsupported("directory action", action_id.to_string()))
     }
 
     pub async fn execute_action(
@@ -246,19 +241,19 @@ impl DirectoryService {
         output: &DirectoryActionOutput,
     ) -> Result<(), CoreError> {
         if output.directory_id() != *directory_id || output.action() != action_id {
-            return Err(CoreError::configuration(format!(
+            return Err(CoreError::invariant(format!(
                 "action `{action_id}` returned an output for a different invocation"
             )));
         }
         let actual = output.output().view.kind();
         if !definition.output().view.iter().any(|view| view == actual) {
-            return Err(CoreError::configuration(format!(
+            return Err(CoreError::invariant(format!(
                 "action `{}` returned undeclared view `{actual}`",
                 definition.id()
             )));
         }
         if output.output().effects.len() > 1 {
-            return Err(CoreError::configuration(format!(
+            return Err(CoreError::invariant(format!(
                 "action `{}` returned more than one directory effect",
                 definition.id()
             )));
@@ -271,7 +266,7 @@ impl DirectoryService {
             .count()
             > 1
         {
-            return Err(CoreError::configuration(format!(
+            return Err(CoreError::invariant(format!(
                 "action `{}` returned more than one directory update effect",
                 definition.id()
             )));
@@ -291,7 +286,7 @@ impl DirectoryService {
             return Ok(());
         }
         if !matches!(access, DirectoryActionAccess::ReadWrite) {
-            return Err(CoreError::configuration(format!(
+            return Err(CoreError::invariant(format!(
                 "action `{}` returned effects without write access",
                 output.action()
             )));
@@ -336,7 +331,7 @@ impl DirectoryService {
             if let Some(parent_id) = &effect.parent_id {
                 command = command.with_parent_id(
                     DirectoryId::from_str(parent_id)
-                        .map_err(|error| CoreError::configuration(error.to_string()))?,
+                        .map_err(|error| CoreError::invariant(error.to_string()))?,
                 );
             }
             if let Some(kind) = &effect.kind {
@@ -397,7 +392,7 @@ impl DirectoryService {
             .index
             .find_by_id(&DirectoryId::root())
             .await?
-            .ok_or_else(|| CoreError::configuration("root directory is missing"))?;
+            .ok_or_else(|| CoreError::invariant("root directory is missing"))?;
         let mut current_path = DirectoryPath::root();
         for name in path.path().split('/').filter(|name| !name.is_empty()) {
             current_path = current_path.child(name)?;
@@ -561,7 +556,7 @@ impl DirectoryService {
         let parent_id = command
             .parent_id
             .or(directory.parent_id())
-            .ok_or_else(|| CoreError::configuration("non-root directory is missing its parent"))?;
+            .ok_or_else(|| CoreError::invariant("non-root directory is missing its parent"))?;
         if self
             .index
             .is_descendant_or_self(&directory.id(), &parent_id)
@@ -681,8 +676,16 @@ impl DirectoryService {
         if self.kind_registry.supports(kind) {
             Ok(())
         } else {
-            Err(CoreError::configuration(format!(
-                "unsupported directory kind `{kind}`"
+            Err(CoreError::unsupported("directory kind", kind.to_string()))
+        }
+    }
+
+    fn require_kind_registered(&self, kind: &DirectoryKind) -> Result<(), CoreError> {
+        if self.kind_registry.supports(kind) {
+            Ok(())
+        } else {
+            Err(CoreError::invariant(format!(
+                "persisted directory kind `{kind}` is not registered"
             )))
         }
     }

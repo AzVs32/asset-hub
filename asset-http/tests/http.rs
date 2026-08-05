@@ -1977,6 +1977,7 @@ async fn test_app_at_root(
         options,
         HashMap::new(),
         authorization,
+        runtime.upload_finalization_scheduler(),
     )
     .layer(Extension(test_admin_context()));
 
@@ -2013,6 +2014,7 @@ async fn test_app_with_plugin_web_assets(
         RouterOptions::default(),
         plugin_web_assets,
         authorization,
+        runtime.upload_finalization_scheduler(),
     )
     .layer(Extension(test_admin_context()));
 
@@ -2258,6 +2260,7 @@ async fn authentication_starts_without_users_and_limits_member_workspace_access(
             )]),
         )]),
         authorization.clone(),
+        runtime.upload_finalization_scheduler(),
     );
     let session_store = SqliteStore::new(runtime.database_pool());
     session_store.migrate().await.unwrap();

@@ -70,7 +70,7 @@ impl<'a> ResourceUploadService<'a> {
             mime_type,
             expected_size,
             expected_checksum,
-        );
+        )?;
         let staged = staged_for(session.id())?;
         self.service
             .blob_storage
@@ -176,7 +176,7 @@ impl<'a> ResourceUploadService<'a> {
         let cleanup_result = self.service.blob_storage.discard_staged(&chunk).await;
         let offset = append_result?;
         cleanup_result?;
-        session.set_offset(offset);
+        session.synchronize_offset(offset)?;
         Ok(session)
     }
 
@@ -211,7 +211,7 @@ impl<'a> ResourceUploadService<'a> {
             ));
         }
         let mut session = session;
-        session.mark_finalizing();
+        session.mark_finalizing()?;
         Ok((session, true))
     }
 
@@ -276,7 +276,7 @@ impl<'a> ResourceUploadService<'a> {
                     .upload_sessions
                     .save_actual_checksum(&id, &checksum)
                     .await?;
-                session.set_actual_checksum(checksum.clone());
+                session.set_actual_checksum(checksum.clone())?;
                 checksum
             }
         };
@@ -458,7 +458,7 @@ impl<'a> ResourceUploadService<'a> {
                     "upload session offset changed concurrently",
                 ));
             }
-            session.set_offset(actual);
+            session.synchronize_offset(actual)?;
         }
         Ok(session)
     }
@@ -484,7 +484,7 @@ fn reject_reserved_storage_key(key: &StorageKey) -> Result<(), CoreError> {
             .as_str()
             .starts_with(&format!("{RESERVED_BLOB_STORAGE_PREFIX}/"))
     {
-        return Err(CoreError::configuration(format!(
+        return Err(CoreError::invalid_operation(format!(
             "storage key `{key}` uses reserved Asset Hub namespace"
         )));
     }
@@ -497,7 +497,7 @@ fn limit_stream(data: BlobByteStream, remaining: u64) -> BlobByteStream {
         let chunk = chunk?;
         received = received
             .checked_add(chunk.len() as u64)
-            .ok_or_else(|| CoreError::configuration("upload size overflow"))?;
+            .ok_or_else(|| CoreError::invariant("upload size overflow"))?;
         if received > remaining {
             return Err(CoreError::conflict(
                 "upload chunk exceeds the declared upload size",

@@ -103,16 +103,18 @@ impl From<CoreError> for HttpError {
             CoreError::Directory(_)
             | CoreError::Resource(_)
             | CoreError::User(_)
-            | CoreError::Configuration { .. } => StatusCode::BAD_REQUEST,
+            | CoreError::Unsupported { .. }
+            | CoreError::InvalidOperation { .. } => StatusCode::BAD_REQUEST,
             CoreError::Unauthenticated => StatusCode::UNAUTHORIZED,
             CoreError::Forbidden { .. } => StatusCode::FORBIDDEN,
             CoreError::NotFound { .. } => StatusCode::NOT_FOUND,
             CoreError::Conflict { .. } => StatusCode::CONFLICT,
             CoreError::LimitExceeded { .. } => StatusCode::PAYLOAD_TOO_LARGE,
             CoreError::Plugin { diagnostic, .. } => plugin_status(&diagnostic.code),
-            CoreError::Storage { .. } | CoreError::Repository { .. } => {
-                StatusCode::INTERNAL_SERVER_ERROR
-            }
+            CoreError::Storage { .. }
+            | CoreError::Repository { .. }
+            | CoreError::Configuration { .. }
+            | CoreError::InvariantViolation { .. } => StatusCode::INTERNAL_SERVER_ERROR,
         };
 
         let diagnostic = match &error {
