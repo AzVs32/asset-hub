@@ -94,9 +94,9 @@ impl ReplaceResourceContent {
 }
 
 impl ExecuteResourceAction {
-    pub fn new(action: impl Into<ResourceAction>) -> Self {
+    pub fn new(action: ResourceAction) -> Self {
         Self {
-            action: action.into(),
+            action,
             input: serde_json::Value::Object(Default::default()),
             expected_revision: None,
         }

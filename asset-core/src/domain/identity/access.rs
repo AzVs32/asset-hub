@@ -28,12 +28,37 @@ impl AccessContext {
     }
 }
 
-/// 资源用例要求的访问级别，用于生成一致的拒绝信息。
+/// 在目录工作区边界内执行的具体业务操作。
 ///
-/// 普通用户在自己的工作区子树内满足全部级别；该枚举不再表示可配置的目录授权。
+/// 当前授权策略只判断目标是否位于用户工作区子树；操作类型用于保留调用意图并生成
+/// 准确的拒绝信息，不表示可配置的权限等级。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DirectoryPermission {
-    Read,
-    Write,
-    Full,
+pub enum DirectoryOperation {
+    ViewDirectory,
+    DownloadDirectory,
+    CreateDirectory,
+    ReadResource,
+    UpdateResource,
+    ReplaceResourceContent,
+    ExecuteDirectoryAction,
+    ExecuteResourceAction,
+    DeleteResource,
+    PurgeResource,
+}
+
+impl DirectoryOperation {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ViewDirectory => "view directory",
+            Self::DownloadDirectory => "download directory",
+            Self::CreateDirectory => "create directory",
+            Self::ReadResource => "read resource",
+            Self::UpdateResource => "update resource",
+            Self::ReplaceResourceContent => "replace resource content",
+            Self::ExecuteDirectoryAction => "execute directory action",
+            Self::ExecuteResourceAction => "execute resource action",
+            Self::DeleteResource => "delete resource",
+            Self::PurgeResource => "purge resource",
+        }
+    }
 }

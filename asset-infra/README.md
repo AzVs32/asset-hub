@@ -74,8 +74,13 @@ execution budget. `[resource_edit].max_text_bytes` defaults to 4 MiB. Runtime pa
 Core, which uses it both when discovering `text_edit` providers and when validating streamed
 replacement content. Resources above the limit therefore do not advertise `text_edit`.
 
-Resource optimistic concurrency uses a persisted, monotonically increasing `revision`; timestamps
-remain display and ordering metadata.
+Resource and Directory optimistic concurrency use persisted, monotonically increasing `revision`
+values; timestamps remain display and ordering metadata. Directory writes compare the expected
+revision atomically in SQLite, including effects applied after a directory Action returns.
+
+Core Action and capability identifiers are validated domain values. Dynamic identifiers reject
+empty, non-canonical, uppercase, or unsupported characters before reaching registries or executors;
+Host-owned static declarations assert the same invariant at construction.
 
 SQLite never deserializes persisted data directly into Resource, Directory, or User aggregates.
 Repository rows first become unchecked snapshots and then pass through Core rehydration; persisted

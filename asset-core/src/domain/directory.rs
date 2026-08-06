@@ -37,6 +37,7 @@ pub struct Directory {
     kind: DirectoryKind,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+    revision: u64,
 }
 
 /// 未校验的目录持久化快照；只能通过 [`Directory::rehydrate`] 转换为聚合。
@@ -48,6 +49,7 @@ pub struct DirectorySnapshot {
     pub kind: DirectoryKind,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub revision: u64,
 }
 
 impl Directory {
@@ -68,6 +70,7 @@ impl Directory {
             kind,
             created_at: now,
             updated_at: now,
+            revision: 1,
         })
     }
 
@@ -80,6 +83,7 @@ impl Directory {
             kind: DirectoryKind::default(),
             created_at: now,
             updated_at: now,
+            revision: 1,
         }
     }
 
@@ -120,6 +124,12 @@ impl TryFrom<DirectorySnapshot> for Directory {
                 reason: "updated timestamp cannot precede creation",
             });
         }
+        if snapshot.revision == 0 {
+            return Err(DirectoryError::InvalidFormat {
+                field: "directory.revision",
+                reason: "directory revision must be greater than zero",
+            });
+        }
         Ok(Self {
             id: snapshot.id,
             parent_id: snapshot.parent_id,
@@ -127,6 +137,7 @@ impl TryFrom<DirectorySnapshot> for Directory {
             kind: snapshot.kind,
             created_at: snapshot.created_at,
             updated_at: snapshot.updated_at,
+            revision: snapshot.revision,
         })
     }
 }
@@ -154,6 +165,10 @@ impl Directory {
 
     pub fn updated_at(&self) -> DateTime<Utc> {
         self.updated_at
+    }
+
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     pub fn rename(&mut self, name: impl Into<String>) -> Result<(), DirectoryError> {
@@ -200,6 +215,10 @@ impl Directory {
 
     fn touch(&mut self) {
         self.updated_at = Utc::now();
+        self.revision = self
+            .revision
+            .checked_add(1)
+            .expect("directory revision should not exhaust u64");
     }
 }
 

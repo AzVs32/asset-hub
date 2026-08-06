@@ -593,8 +593,8 @@ fn thumbnail_capabilities_require_a_single_nearest_provider() {
         true,
         "test",
     )];
-    let generic = ResourceActionDefinition::new("core.resource.thumbnail", "Thumbnail")
-        .with_provides(Some("thumbnail"))
+    let generic = ResourceActionDefinition::new_static("core.resource.thumbnail", "Thumbnail")
+        .with_static_provides(Some("thumbnail"))
         .with_kinds(["core:resource"])
         .with_output(ActionOutputContract {
             view: vec!["media".to_string()],
@@ -603,8 +603,8 @@ fn thumbnail_capabilities_require_a_single_nearest_provider() {
             locations: vec!["resource_list_thumbnail".to_string()],
             ..ActionUi::default()
         });
-    let competing = ResourceActionDefinition::new("example.resource.thumbnail", "Thumbnail")
-        .with_provides(Some("thumbnail"))
+    let competing = ResourceActionDefinition::new_static("example.resource.thumbnail", "Thumbnail")
+        .with_static_provides(Some("thumbnail"))
         .with_kinds(["core:resource"])
         .with_output(ActionOutputContract {
             view: vec!["media".to_string()],
@@ -619,7 +619,7 @@ fn thumbnail_capabilities_require_a_single_nearest_provider() {
             .to_string()
             .contains("has multiple nearest `thumbnail` providers")
     );
-    let misplaced = ResourceActionDefinition::new("example.preview", "Preview")
+    let misplaced = ResourceActionDefinition::new_static("example.preview", "Preview")
         .with_kinds(["core:resource"])
         .with_output(ActionOutputContract {
             view: vec!["media".to_string()],
@@ -634,8 +634,8 @@ fn thumbnail_capabilities_require_a_single_nearest_provider() {
             .to_string()
             .contains("must pair `resource_list_thumbnail` with capability `thumbnail`")
     );
-    let unsupported = ResourceActionDefinition::new("example.unsupported", "Unsupported")
-        .with_provides(Some("resource.thumbnail"));
+    let unsupported = ResourceActionDefinition::new_static("example.unsupported", "Unsupported")
+        .with_static_provides(Some("resource.thumbnail"));
     assert!(
         validate_resource_action_capabilities(&definitions, &[unsupported])
             .unwrap_err()
@@ -643,8 +643,8 @@ fn thumbnail_capabilities_require_a_single_nearest_provider() {
             .contains("provides unsupported capability `resource.thumbnail`")
     );
 
-    let generic = DirectoryActionDefinition::new("core.directory.thumbnail", "Thumbnail")
-        .with_provides(Some("thumbnail"))
+    let generic = DirectoryActionDefinition::new_static("core.directory.thumbnail", "Thumbnail")
+        .with_static_provides(Some("thumbnail"))
         .with_kinds(["core:directory"])
         .with_output(ActionOutputContract {
             view: vec!["media".to_string()],
@@ -653,16 +653,17 @@ fn thumbnail_capabilities_require_a_single_nearest_provider() {
             locations: vec!["directory_list_thumbnail".to_string()],
             ..ActionUi::default()
         });
-    let competing = DirectoryActionDefinition::new("example.directory.thumbnail", "Thumbnail")
-        .with_provides(Some("thumbnail"))
-        .with_kinds(["core:directory"])
-        .with_output(ActionOutputContract {
-            view: vec!["media".to_string()],
-        })
-        .with_ui(ActionUi {
-            locations: vec!["directory_list_thumbnail".to_string()],
-            ..ActionUi::default()
-        });
+    let competing =
+        DirectoryActionDefinition::new_static("example.directory.thumbnail", "Thumbnail")
+            .with_static_provides(Some("thumbnail"))
+            .with_kinds(["core:directory"])
+            .with_output(ActionOutputContract {
+                view: vec!["media".to_string()],
+            })
+            .with_ui(ActionUi {
+                locations: vec!["directory_list_thumbnail".to_string()],
+                ..ActionUi::default()
+            });
     struct DirectoryKinds(Vec<DirectoryKindDefinition>);
     impl DirectoryKindRegistry for DirectoryKinds {
         fn definitions(&self) -> &[DirectoryKindDefinition] {
@@ -680,7 +681,7 @@ fn thumbnail_capabilities_require_a_single_nearest_provider() {
             .to_string()
             .contains("has multiple nearest `thumbnail` providers")
     );
-    let misplaced = DirectoryActionDefinition::new("example.preview", "Preview")
+    let misplaced = DirectoryActionDefinition::new_static("example.preview", "Preview")
         .with_kinds(["core:directory"])
         .with_output(ActionOutputContract {
             view: vec!["media".to_string()],
@@ -695,8 +696,8 @@ fn thumbnail_capabilities_require_a_single_nearest_provider() {
             .to_string()
             .contains("must pair `directory_list_thumbnail` with capability `thumbnail`")
     );
-    let unsupported = DirectoryActionDefinition::new("example.unsupported", "Unsupported")
-        .with_provides(Some("directory.thumbnail"));
+    let unsupported = DirectoryActionDefinition::new_static("example.unsupported", "Unsupported")
+        .with_static_provides(Some("directory.thumbnail"));
     assert!(
         validate_directory_action_capabilities(&kinds, &[unsupported])
             .unwrap_err()

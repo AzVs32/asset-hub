@@ -1,4 +1,5 @@
 use super::*;
+use crate::domain::DirectoryAction;
 
 #[test]
 fn directory_action_cannot_move_a_directory_outside_the_member_workspace() {
@@ -19,8 +20,10 @@ fn directory_action_cannot_move_a_directory_outside_the_member_workspace() {
             .secured(&authorization, &context)
             .execute_directory_action(
                 &inside.id(),
-                crate::service::ExecuteDirectoryAction::new("test.directory.move")
-                    .with_input(serde_json::json!({"parent_id": outside.id().to_string()})),
+                crate::service::ExecuteDirectoryAction::new(DirectoryAction::from_static(
+                    "test.directory.move",
+                ))
+                .with_input(serde_json::json!({"parent_id": outside.id().to_string()})),
             ),
     )
     .unwrap_err();

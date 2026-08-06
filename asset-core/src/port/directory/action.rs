@@ -178,12 +178,15 @@ mod tests {
     #[test]
     fn a_specific_provider_replaces_the_selected_generic_action() {
         let registry = Registry(vec![
-            DirectoryActionDefinition::new("core.directory.thumbnail", "Thumbnail")
-                .with_provides(Some("thumbnail"))
+            DirectoryActionDefinition::new_static("core.directory.thumbnail", "Thumbnail")
+                .with_static_provides(Some("thumbnail"))
                 .with_kinds(["core:directory"]),
-            DirectoryActionDefinition::new("example.collection.thumbnail", "Collection Thumbnail")
-                .with_provides(Some("thumbnail"))
-                .with_kinds(["example:collection"]),
+            DirectoryActionDefinition::new_static(
+                "example.collection.thumbnail",
+                "Collection Thumbnail",
+            )
+            .with_static_provides(Some("thumbnail"))
+            .with_kinds(["example:collection"]),
         ]);
         let lineage = vec![
             DirectoryKind::try_new("example:collection").unwrap(),

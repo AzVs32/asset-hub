@@ -9,10 +9,9 @@ use super::{
 };
 use crate::CoreError;
 use crate::domain::{
-    AccessContext, Checksum, DirectoryId, DirectoryKind, DirectoryPath, DirectoryPermission,
+    AccessContext, Checksum, DirectoryId, DirectoryKind, DirectoryOperation, DirectoryPath,
     Resource, ResourceId, UploadId, UploadSession,
 };
-use crate::domain::{DirectoryActionAccess, ResourceActionAccess};
 use crate::port::{
     BlobByteStream, DirectoryActionOutput, DirectoryLocation, ListResources, LocatedDirectory,
     LocatedResource, ResourceActionOutput, ResourcePage,
@@ -45,18 +44,18 @@ impl<'a> SecuredResourceService<'a> {
     async fn require(
         &self,
         directory: &DirectoryLocation,
-        permission: DirectoryPermission,
+        operation: DirectoryOperation,
     ) -> Result<(), CoreError> {
         self.authorization
-            .require(self.context, directory, permission)
+            .require(self.context, directory, operation)
             .await
     }
     async fn require_resource(
         &self,
         resource: &LocatedResource,
-        permission: DirectoryPermission,
+        operation: DirectoryOperation,
     ) -> Result<(), CoreError> {
-        self.require(resource.directory(), permission).await
+        self.require(resource.directory(), operation).await
     }
     async fn resolve(&self, directory: &DirectoryPath) -> Result<DirectoryPath, CoreError> {
         self.authorization
@@ -67,22 +66,22 @@ impl<'a> SecuredResourceService<'a> {
     async fn resource_for(
         &self,
         id: &ResourceId,
-        permission: DirectoryPermission,
+        operation: DirectoryOperation,
     ) -> Result<Option<LocatedResource>, CoreError> {
         let resource = self.service.commands().find_resource(id).await?;
         if let Some(resource) = &resource {
-            self.require_resource(resource, permission).await?;
+            self.require_resource(resource, operation).await?;
         }
         Ok(resource)
     }
     async fn stored_resource_for(
         &self,
         id: &ResourceId,
-        permission: DirectoryPermission,
+        operation: DirectoryOperation,
     ) -> Result<Option<LocatedResource>, CoreError> {
         let resource = self.service.query.find_located_by_id(id).await?;
         if let Some(resource) = &resource {
-            self.require_resource(resource, permission).await?;
+            self.require_resource(resource, operation).await?;
         }
         Ok(resource)
     }
@@ -139,7 +138,8 @@ impl<'a> SecuredResourceService<'a> {
         &self,
         id: &ResourceId,
     ) -> Result<Option<LocatedResource>, CoreError> {
-        self.resource_for(id, DirectoryPermission::Read).await
+        self.resource_for(id, DirectoryOperation::ReadResource)
+            .await
     }
     pub async fn list_resources(
         &self,
@@ -157,7 +157,8 @@ impl<'a> SecuredResourceService<'a> {
     ) -> Result<Vec<LocatedDirectory>, CoreError> {
         let directory = self.resolve(directory).await?;
         let directory = self.service.directories.resolve_path(&directory).await?;
-        self.require(&directory, DirectoryPermission::Read).await?;
+        self.require(&directory, DirectoryOperation::ViewDirectory)
+            .await?;
         self.service
             .directories
             .list_located_children(&directory.id())
@@ -169,7 +170,7 @@ impl<'a> SecuredResourceService<'a> {
     ) -> Result<LocatedDirectory, CoreError> {
         let path = self.resolve(path).await?;
         let directory = self.service.directories.find_by_path(&path).await?;
-        self.require(directory.location(), DirectoryPermission::Read)
+        self.require(directory.location(), DirectoryOperation::ViewDirectory)
             .await?;
         Ok(directory)
     }
@@ -179,7 +180,7 @@ impl<'a> SecuredResourceService<'a> {
         id: &DirectoryId,
     ) -> Result<DirectoryArchiveManifest, CoreError> {
         let root = self.service.directories.find_by_id(id).await?;
-        self.require(root.location(), DirectoryPermission::Read)
+        self.require(root.location(), DirectoryOperation::DownloadDirectory)
             .await?;
         let archive_root = if root.id().is_root() {
             "asset-hub".to_string()
@@ -255,7 +256,8 @@ impl<'a> SecuredResourceService<'a> {
     ) -> Result<LocatedDirectory, CoreError> {
         let parent = self.resolve(parent).await?;
         let parent = self.service.directories.resolve_path(&parent).await?;
-        self.require(&parent, DirectoryPermission::Write).await?;
+        self.require(&parent, DirectoryOperation::CreateDirectory)
+            .await?;
         let scope_root = self
             .authorization
             .workspace_scope(self.context)
@@ -274,16 +276,14 @@ impl<'a> SecuredResourceService<'a> {
         command: ExecuteDirectoryAction,
     ) -> Result<DirectoryActionOutput, CoreError> {
         let directory = self.service.directories.find_by_id(id).await?;
-        let access = self
-            .service
+        self.service
             .directories
-            .resolve_action(directory.directory(), &command.action)?
-            .access();
-        let permission = match access {
-            DirectoryActionAccess::ReadOnly => DirectoryPermission::Read,
-            DirectoryActionAccess::ReadWrite => DirectoryPermission::Write,
-        };
-        self.require(directory.location(), permission).await?;
+            .resolve_action(directory.directory(), &command.action)?;
+        self.require(
+            directory.location(),
+            DirectoryOperation::ExecuteDirectoryAction,
+        )
+        .await?;
         let scope_root = self
             .authorization
             .workspace_scope(self.context)
@@ -303,7 +303,7 @@ impl<'a> SecuredResourceService<'a> {
         mut command: UpdateResource,
     ) -> Result<Option<Resource>, CoreError> {
         let Some(resource) = self
-            .stored_resource_for(id, DirectoryPermission::Write)
+            .stored_resource_for(id, DirectoryOperation::UpdateResource)
             .await?
         else {
             return Ok(None);
@@ -318,7 +318,10 @@ impl<'a> SecuredResourceService<'a> {
             .map(Some)
     }
     pub async fn get_resource_content(&self, id: &ResourceId) -> Result<Option<Bytes>, CoreError> {
-        let Some(resource) = self.resource_for(id, DirectoryPermission::Read).await? else {
+        let Some(resource) = self
+            .resource_for(id, DirectoryOperation::ReadResource)
+            .await?
+        else {
             return Ok(None);
         };
         self.service
@@ -332,7 +335,10 @@ impl<'a> SecuredResourceService<'a> {
         id: &ResourceId,
         range: Option<(u64, u64)>,
     ) -> Result<Option<ResourceContentStream>, CoreError> {
-        let Some(resource) = self.resource_for(id, DirectoryPermission::Read).await? else {
+        let Some(resource) = self
+            .resource_for(id, DirectoryOperation::ReadResource)
+            .await?
+        else {
             return Ok(None);
         };
         self.service
@@ -347,7 +353,7 @@ impl<'a> SecuredResourceService<'a> {
         data: BlobByteStream,
     ) -> Result<Option<Resource>, CoreError> {
         let Some(resource) = self
-            .stored_resource_for(id, DirectoryPermission::Write)
+            .stored_resource_for(id, DirectoryOperation::ReplaceResourceContent)
             .await?
         else {
             return Ok(None);
@@ -367,16 +373,11 @@ impl<'a> SecuredResourceService<'a> {
         let Some(resource) = resource else {
             return Ok(None);
         };
-        let access = self
-            .service
+        self.service
             .actions()
-            .resolve_declared_resource_action(resource.resource(), &command.action)?
-            .access();
-        let permission = match access {
-            ResourceActionAccess::ReadOnly => DirectoryPermission::Read,
-            ResourceActionAccess::ReadWrite => DirectoryPermission::Write,
-        };
-        self.require_resource(&resource, permission).await?;
+            .resolve_declared_resource_action(resource.resource(), &command.action)?;
+        self.require_resource(&resource, DirectoryOperation::ExecuteResourceAction)
+            .await?;
         self.service
             .actions()
             .execute_resource_action_snapshot(resource, command)
@@ -388,7 +389,7 @@ impl<'a> SecuredResourceService<'a> {
         id: &ResourceId,
     ) -> Result<Option<Resource>, CoreError> {
         let Some(resource) = self
-            .stored_resource_for(id, DirectoryPermission::Write)
+            .stored_resource_for(id, DirectoryOperation::DeleteResource)
             .await?
         else {
             return Ok(None);
@@ -401,7 +402,7 @@ impl<'a> SecuredResourceService<'a> {
     }
     pub async fn remove_resource(&self, id: &ResourceId) -> Result<bool, CoreError> {
         let Some(resource) = self
-            .stored_resource_for(id, DirectoryPermission::Full)
+            .stored_resource_for(id, DirectoryOperation::PurgeResource)
             .await?
         else {
             return Ok(false);

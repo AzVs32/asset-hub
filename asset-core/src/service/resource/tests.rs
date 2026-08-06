@@ -476,7 +476,7 @@ impl DirectoryStore for InMemoryResourceRepository {
     async fn save_if_unchanged(
         &self,
         directory: &Directory,
-        expected_updated_at: chrono::DateTime<chrono::Utc>,
+        expected_revision: u64,
     ) -> Result<bool, CoreError> {
         let current = self
             .directories
@@ -484,7 +484,7 @@ impl DirectoryStore for InMemoryResourceRepository {
             .unwrap()
             .get(&directory.id())
             .cloned();
-        if !current.is_some_and(|(current, _)| current.updated_at() == expected_updated_at) {
+        if !current.is_some_and(|(current, _)| current.revision() == expected_revision) {
             return Ok(false);
         }
         self.insert(directory).await?;
@@ -1143,30 +1143,30 @@ fn service() -> (
     ]));
     let action_registry = Arc::new(InMemoryResourceActionRegistry {
         actions: vec![
-            ResourceActionDefinition::new("test.text.extract", "Extract text")
+            ResourceActionDefinition::new_static("test.text.extract", "Extract text")
                 .with_kinds(["doc:markdown", "core:text"])
                 .with_requirements(content_requirements())
                 .with_output(output_contract(["text"])),
-            ResourceActionDefinition::new("resource.inspect", "Inspect resource")
+            ResourceActionDefinition::new_static("resource.inspect", "Inspect resource")
                 .with_kinds(["doc:markdown"])
                 .with_output(output_contract(["json"])),
-            ResourceActionDefinition::new("doc.markdown.thumbnail", "Markdown thumbnail")
-                .with_provides(Some("thumbnail"))
+            ResourceActionDefinition::new_static("doc.markdown.thumbnail", "Markdown thumbnail")
+                .with_static_provides(Some("thumbnail"))
                 .with_kinds(["doc:markdown"])
                 .with_requirements(content_requirements())
                 .with_output(output_contract(["media"])),
-            ResourceActionDefinition::new("test.text.thumbnail", "Text thumbnail")
-                .with_provides(Some("thumbnail"))
+            ResourceActionDefinition::new_static("test.text.thumbnail", "Text thumbnail")
+                .with_static_provides(Some("thumbnail"))
                 .with_kinds(["core:text"])
                 .with_content_matcher(
                     ResourceContentMatcher::new().with_mime_types(["application/pdf"]),
                 )
                 .with_output(output_contract(["media"])),
-            ResourceActionDefinition::new("core.resource.thumbnail", "Thumbnail")
-                .with_provides(Some("thumbnail"))
+            ResourceActionDefinition::new_static("core.resource.thumbnail", "Thumbnail")
+                .with_static_provides(Some("thumbnail"))
                 .with_output(output_contract(["media"])),
-            ResourceActionDefinition::new("azvs.markdown.read", "Read Markdown")
-                .with_provides(Some("text_read"))
+            ResourceActionDefinition::new_static("azvs.markdown.read", "Read Markdown")
+                .with_static_provides(Some("text_read"))
                 .with_kinds(["core:text"])
                 .with_requirements(content_requirements())
                 .with_output(output_contract(["plugin_frame"]))
@@ -1175,8 +1175,8 @@ fn service() -> (
                         .with_mime_types(["text/markdown", "text/x-markdown"])
                         .with_extensions([".md", ".markdown"]),
                 ),
-            ResourceActionDefinition::new("azvs.markdown.edit", "Edit Markdown")
-                .with_provides(Some("text_edit"))
+            ResourceActionDefinition::new_static("azvs.markdown.edit", "Edit Markdown")
+                .with_static_provides(Some("text_edit"))
                 .with_kinds(["core:text"])
                 .with_requirements(content_requirements())
                 .with_access(ResourceActionAccess::ReadWrite)
@@ -1199,7 +1199,7 @@ fn service() -> (
     .with_actions(
         Arc::new(InMemoryDirectoryActionRegistry {
             actions: vec![
-                DirectoryActionDefinition::new("test.directory.move", "Move directory")
+                DirectoryActionDefinition::new_static("test.directory.move", "Move directory")
                     .with_kinds(["core:directory"])
                     .with_access(DirectoryActionAccess::ReadWrite)
                     .with_output(output_contract(["text"])),

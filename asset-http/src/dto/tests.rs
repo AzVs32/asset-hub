@@ -20,7 +20,7 @@ fn action_output_response_preserves_plugin_diagnostics() {
     });
     let output = ResourceActionOutput::new(
         ResourceId::new(),
-        ResourceAction::from("example.inspect"),
+        ResourceAction::from_static("example.inspect"),
         plugin_output,
     );
 

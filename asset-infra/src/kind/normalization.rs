@@ -1,10 +1,10 @@
 //! External Manifest declarations to Host/Core model conversion.
 
 use asset_core::domain::{
-    ActionAccess, ActionOutputContract, ActionUi as ActionDefinitionUi, DirectoryActionAppliesTo,
-    DirectoryActionDefinition, DirectoryActionRequirements, ResourceActionAppliesTo,
-    ResourceActionContentDelivery, ResourceActionDefinition, ResourceActionRequirements,
-    ResourceContentMatcher,
+    ActionAccess, ActionCapabilityId, ActionId, ActionOutputContract,
+    ActionUi as ActionDefinitionUi, DirectoryActionAppliesTo, DirectoryActionDefinition,
+    DirectoryActionRequirements, ResourceActionAppliesTo, ResourceActionContentDelivery,
+    ResourceActionDefinition, ResourceActionRequirements, ResourceContentMatcher,
 };
 use asset_plugin_api::manifest::{
     ContentDelivery, DirectoryActionCapability, ManifestActionAccess, ResourceActionCapability,
@@ -13,14 +13,16 @@ use asset_plugin_api::manifest::{
 pub(super) fn resource_action_definition(
     capability: &ResourceActionCapability,
 ) -> ResourceActionDefinition {
-    let mut definition =
-        ResourceActionDefinition::new(capability.id.as_str(), capability.label.as_str())
-            .with_provides(capability.provides.clone())
-            .with_access(action_access(capability.access))
-            .with_applies_to(resource_action_applies_to(capability))
-            .with_output(ActionOutputContract {
-                view: capability.views.clone(),
-            });
+    let mut definition = ResourceActionDefinition::new(
+        ActionId::new(capability.id.clone()).expect("validated manifest resource action id"),
+        capability.label.as_str(),
+    )
+    .with_provides(validated_capability_id(capability.provides.as_deref()))
+    .with_access(action_access(capability.access))
+    .with_applies_to(resource_action_applies_to(capability))
+    .with_output(ActionOutputContract {
+        view: capability.views.clone(),
+    });
     if let Some(requirements) = &capability.requires {
         definition = definition.with_requirements(ResourceActionRequirements {
             content: requirements.content,
@@ -43,16 +45,18 @@ pub(super) fn resource_action_definition(
 pub(super) fn directory_action_definition(
     capability: &DirectoryActionCapability,
 ) -> DirectoryActionDefinition {
-    let mut definition =
-        DirectoryActionDefinition::new(capability.id.as_str(), capability.label.as_str())
-            .with_provides(capability.provides.clone())
-            .with_access(action_access(capability.access))
-            .with_applies_to(
-                DirectoryActionAppliesTo::new().with_kinds(capability.applies_to.kinds.clone()),
-            )
-            .with_output(ActionOutputContract {
-                view: capability.views.clone(),
-            });
+    let mut definition = DirectoryActionDefinition::new(
+        ActionId::new(capability.id.clone()).expect("validated manifest directory action id"),
+        capability.label.as_str(),
+    )
+    .with_provides(validated_capability_id(capability.provides.as_deref()))
+    .with_access(action_access(capability.access))
+    .with_applies_to(
+        DirectoryActionAppliesTo::new().with_kinds(capability.applies_to.kinds.clone()),
+    )
+    .with_output(ActionOutputContract {
+        view: capability.views.clone(),
+    });
     if let Some(requirements) = &capability.requires {
         definition = definition.with_requirements(DirectoryActionRequirements {
             children: requirements.children,
@@ -91,6 +95,12 @@ fn action_access(access: ManifestActionAccess) -> ActionAccess {
         ManifestActionAccess::Read => ActionAccess::ReadOnly,
         ManifestActionAccess::Write => ActionAccess::ReadWrite,
     }
+}
+
+fn validated_capability_id(value: Option<&str>) -> Option<ActionCapabilityId> {
+    value.map(|value| {
+        ActionCapabilityId::new(value).expect("validated manifest action capability id")
+    })
 }
 
 fn content_delivery(delivery: ContentDelivery) -> ResourceActionContentDelivery {

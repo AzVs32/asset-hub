@@ -388,7 +388,7 @@ impl ResourceQuery for SqliteResourceRepository {
 impl DirectoryStore for SqliteResourceRepository {
     async fn load_all(&self) -> Result<Vec<Directory>, CoreError> {
         let rows = sqlx::query(
-            "SELECT id, parent_id, name, kind, created_at, updated_at FROM directories",
+            "SELECT id, parent_id, name, kind, created_at, updated_at, revision FROM directories",
         )
         .fetch_all(&self.pool)
         .await
@@ -400,8 +400,8 @@ impl DirectoryStore for SqliteResourceRepository {
         sqlx::query(
             r#"
             INSERT INTO directories (
-                id, parent_id, name, kind, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?)
+                id, parent_id, name, kind, created_at, updated_at, revision
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(directory.id().to_string())
@@ -410,6 +410,7 @@ impl DirectoryStore for SqliteResourceRepository {
         .bind(directory.kind().as_str())
         .bind(encode_timestamp(directory.created_at()))
         .bind(encode_timestamp(directory.updated_at()))
+        .bind(encode_directory_revision(directory.revision())?)
         .execute(&self.pool)
         .await
         .map_err(map_directory_write_error("directory.insert"))?;
@@ -419,7 +420,7 @@ impl DirectoryStore for SqliteResourceRepository {
     async fn save_if_unchanged(
         &self,
         directory: &Directory,
-        expected_updated_at: DateTime<Utc>,
+        expected_revision: u64,
     ) -> Result<bool, CoreError> {
         let mut transaction = self
             .pool
@@ -457,16 +458,17 @@ impl DirectoryStore for SqliteResourceRepository {
         let result = sqlx::query(
             r#"
             UPDATE directories
-            SET parent_id = ?, name = ?, kind = ?, updated_at = ?
-            WHERE id = ? AND updated_at = ?
+            SET parent_id = ?, name = ?, kind = ?, updated_at = ?, revision = ?
+            WHERE id = ? AND revision = ?
             "#,
         )
         .bind(directory.parent_id().map(|id| id.to_string()))
         .bind(directory.name())
         .bind(directory.kind().as_str())
         .bind(encode_timestamp(directory.updated_at()))
+        .bind(encode_directory_revision(directory.revision())?)
         .bind(directory.id().to_string())
-        .bind(encode_timestamp(expected_updated_at))
+        .bind(encode_directory_revision(expected_revision)?)
         .execute(&mut *transaction)
         .await
         .map_err(map_directory_write_error("directory.save_if_unchanged"))?;
@@ -708,6 +710,7 @@ fn decode_directory(row: SqliteRow) -> Result<Directory, CoreError> {
             .map_err(|error| CoreError::repository("directory.decode_kind", error))?,
         created_at: decode_timestamp(column(&row, "created_at")?)?,
         updated_at: decode_timestamp(column(&row, "updated_at")?)?,
+        revision: decode_revision(column(&row, "revision")?)?,
     })
     .map_err(|error| CoreError::repository("directory.rehydrate", error))
 }
@@ -733,6 +736,14 @@ fn encode_timestamp(value: DateTime<Utc>) -> String {
 
 fn encode_revision(value: u64) -> Result<i64, CoreError> {
     i64::try_from(value).map_err(|error| CoreError::repository("resource.encode_revision", error))
+}
+
+fn decode_revision(value: i64) -> Result<u64, CoreError> {
+    u64::try_from(value).map_err(|error| CoreError::repository("directory.decode_revision", error))
+}
+
+fn encode_directory_revision(value: u64) -> Result<i64, CoreError> {
+    i64::try_from(value).map_err(|error| CoreError::repository("directory.encode_revision", error))
 }
 
 fn decode_timestamp(value: String) -> Result<DateTime<Utc>, CoreError> {

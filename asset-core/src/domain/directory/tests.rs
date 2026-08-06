@@ -120,6 +120,7 @@ fn directory_rehydration_rejects_self_parent_and_inconsistent_timestamps() {
         kind: DirectoryKind::default(),
         created_at,
         updated_at: created_at,
+        revision: 1,
     };
     assert!(matches!(
         Directory::rehydrate(snapshot),
@@ -136,6 +137,7 @@ fn directory_rehydration_rejects_self_parent_and_inconsistent_timestamps() {
         kind: DirectoryKind::default(),
         created_at,
         updated_at: created_at - chrono::Duration::seconds(1),
+        revision: 1,
     };
     assert!(matches!(
         Directory::rehydrate(snapshot),
@@ -144,4 +146,37 @@ fn directory_rehydration_rejects_self_parent_and_inconsistent_timestamps() {
             ..
         })
     ));
+
+    let snapshot = DirectorySnapshot {
+        id: DirectoryId::new(),
+        parent_id: Some(DirectoryId::root()),
+        name: "invalid revision".to_owned(),
+        kind: DirectoryKind::default(),
+        created_at,
+        updated_at: created_at,
+        revision: 0,
+    };
+    assert!(matches!(
+        Directory::rehydrate(snapshot),
+        Err(DirectoryError::InvalidFormat {
+            field: "directory.revision",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn directory_mutations_increment_revision_only_when_state_changes() {
+    let mut directory = Directory::new(DirectoryId::root(), "library").unwrap();
+    assert_eq!(directory.revision(), 1);
+
+    directory.rename("library").unwrap();
+    assert_eq!(directory.revision(), 1);
+
+    directory.rename("media").unwrap();
+    assert_eq!(directory.revision(), 2);
+    directory.move_to(DirectoryId::new()).unwrap();
+    assert_eq!(directory.revision(), 3);
+    directory.change_kind(DirectoryKind::try_new("core:collection").unwrap());
+    assert_eq!(directory.revision(), 4);
 }

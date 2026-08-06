@@ -1,18 +1,19 @@
 use super::*;
+use crate::domain::ResourceAction;
 
 #[test]
 fn action_content_delivery_never_loads_unrequested_content() {
     use crate::domain::{ResourceActionContentDelivery, ResourceActionRequirements};
     let policy = test_resource_action_policy();
 
-    let without_content = ResourceActionDefinition::new("inspect", "Inspect");
+    let without_content = ResourceActionDefinition::new_static("inspect", "Inspect");
     assert_eq!(
         resolved_content_delivery(&without_content, 1, &policy),
         None
     );
 
     let required = |delivery| {
-        ResourceActionDefinition::new("inspect", "Inspect").with_requirements(
+        ResourceActionDefinition::new_static("inspect", "Inspect").with_requirements(
             ResourceActionRequirements {
                 content: true,
                 content_delivery: delivery,
@@ -93,7 +94,7 @@ fn resource_without_content_rejects_direct_content_action_execution() {
 
     let error = block_on(service.actions().execute_resource_action(
         &resource.id(),
-        ExecuteResourceAction::new("test.text.extract"),
+        ExecuteResourceAction::new(ResourceAction::from_static("test.text.extract")),
     ))
     .unwrap_err();
 
@@ -120,7 +121,7 @@ fn execute_content_action_returns_text_for_matching_kind() {
 
     let output = block_on(service.actions().execute_resource_action(
         &resource.id(),
-        ExecuteResourceAction::new("test.text.extract"),
+        ExecuteResourceAction::new(ResourceAction::from_static("test.text.extract")),
     ))
     .unwrap()
     .unwrap();
@@ -149,7 +150,7 @@ fn execute_write_action_replaces_resource_content() {
     let output = block_on(
         service.actions().execute_resource_action(
             &resource.id(),
-            ExecuteResourceAction::new("azvs.markdown.edit")
+            ExecuteResourceAction::new(ResourceAction::from_static("azvs.markdown.edit"))
                 .with_input(json!({"markdown": "# New\n\nUpdated."})),
         ),
     )
@@ -200,7 +201,7 @@ fn execute_action_rejects_a_stale_caller_snapshot() {
     let error = block_on(
         service.actions().execute_resource_action(
             &resource.id(),
-            ExecuteResourceAction::new("azvs.markdown.edit")
+            ExecuteResourceAction::new(ResourceAction::from_static("azvs.markdown.edit"))
                 .with_input(json!({"markdown": "# Stale"}))
                 .with_expected_revision(stale),
         ),
@@ -228,10 +229,13 @@ fn write_action_cleanup_failure_keeps_a_recoverable_intent() {
     .unwrap();
     blob_storage.fail_next_delete();
 
-    let error = block_on(service.actions().execute_resource_action(
-        &resource.id(),
-        ExecuteResourceAction::new("azvs.markdown.edit").with_input(json!({"markdown": "# New"})),
-    ))
+    let error = block_on(
+        service.actions().execute_resource_action(
+            &resource.id(),
+            ExecuteResourceAction::new(ResourceAction::from_static("azvs.markdown.edit"))
+                .with_input(json!({"markdown": "# New"})),
+        ),
+    )
     .unwrap_err();
 
     assert!(matches!(error, CoreError::Storage { .. }));

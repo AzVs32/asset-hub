@@ -100,7 +100,8 @@ impl HttpError {
 impl From<CoreError> for HttpError {
     fn from(error: CoreError) -> Self {
         let status = match &error {
-            CoreError::Directory(_)
+            CoreError::ActionId(_)
+            | CoreError::Directory(_)
             | CoreError::Resource(_)
             | CoreError::User(_)
             | CoreError::Unsupported { .. }

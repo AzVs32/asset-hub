@@ -12,8 +12,8 @@ impl ResourceActionRegistry for ActionRegistry {
 #[test]
 fn actions_are_selected_from_the_supplied_kind_lineage() {
     let registry = ActionRegistry(vec![
-        ResourceActionDefinition::new("text.open", "Open").with_kinds(["core:text"]),
-        ResourceActionDefinition::new("image.view", "View").with_kinds(["core:image"]),
+        ResourceActionDefinition::new_static("text.open", "Open").with_kinds(["core:text"]),
+        ResourceActionDefinition::new_static("image.view", "View").with_kinds(["core:image"]),
     ]);
     let lineage = vec![
         ResourceKind::try_new("code:c").unwrap(),
@@ -29,11 +29,11 @@ fn actions_are_selected_from_the_supplied_kind_lineage() {
 #[test]
 fn a_specific_provider_replaces_the_selected_generic_action() {
     let registry = ActionRegistry(vec![
-        ResourceActionDefinition::new("core.resource.thumbnail", "Thumbnail")
-            .with_provides(Some("thumbnail"))
+        ResourceActionDefinition::new_static("core.resource.thumbnail", "Thumbnail")
+            .with_static_provides(Some("thumbnail"))
             .with_kinds(["core:resource"]),
-        ResourceActionDefinition::new("azvs.epub.thumbnail", "EPUB Thumbnail")
-            .with_provides(Some("thumbnail"))
+        ResourceActionDefinition::new_static("azvs.epub.thumbnail", "EPUB Thumbnail")
+            .with_static_provides(Some("thumbnail"))
             .with_kinds(["azvs:epub"]),
     ]);
     let lineage = vec![
@@ -50,11 +50,11 @@ fn a_specific_provider_replaces_the_selected_generic_action() {
 #[test]
 fn capability_candidates_keep_fallback_providers_until_resource_filtering() {
     let registry = ActionRegistry(vec![
-        ResourceActionDefinition::new("core.resource.thumbnail", "Thumbnail")
-            .with_provides(Some("thumbnail"))
+        ResourceActionDefinition::new_static("core.resource.thumbnail", "Thumbnail")
+            .with_static_provides(Some("thumbnail"))
             .with_kinds(["core:resource"]),
-        ResourceActionDefinition::new("azvs.epub.thumbnail", "EPUB Thumbnail")
-            .with_provides(Some("thumbnail"))
+        ResourceActionDefinition::new_static("azvs.epub.thumbnail", "EPUB Thumbnail")
+            .with_static_provides(Some("thumbnail"))
             .with_kinds(["azvs:epub"]),
     ]);
     let lineage = vec![

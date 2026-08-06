@@ -283,10 +283,10 @@ mod tests {
         async fn save_if_unchanged(
             &self,
             directory: &Directory,
-            expected_updated_at: chrono::DateTime<chrono::Utc>,
+            expected_revision: u64,
         ) -> Result<bool, CoreError> {
             let current = self.values.lock().unwrap().get(&directory.id()).cloned();
-            if !current.is_some_and(|(current, _)| current.updated_at() == expected_updated_at) {
+            if !current.is_some_and(|(current, _)| current.revision() == expected_revision) {
                 return Ok(false);
             }
             self.insert(directory).await?;

@@ -1,0 +1,233 @@
+use super::{
+    DirectoryActionPorts, DirectoryActions, DirectoryService, ExecuteDirectoryAction,
+    ExecutedDirectoryAction, UpdateDirectory,
+};
+use crate::{
+    CoreError,
+    domain::{
+        Directory, DirectoryAction, DirectoryActionAccess, DirectoryActionDefinition, DirectoryId,
+        DirectoryKind,
+    },
+    port::{
+        DirectoryActionExecutor, DirectoryActionOutput, DirectoryActionRegistry,
+        DirectoryActionRequest,
+    },
+};
+use asset_plugin_api::protocol::directory::DirectoryActionEffect;
+use std::str::FromStr;
+use std::sync::Arc;
+
+impl DirectoryService {
+    pub fn with_actions(
+        mut self,
+        registry: Arc<dyn DirectoryActionRegistry>,
+        executor: Arc<dyn DirectoryActionExecutor>,
+    ) -> Self {
+        self.action_ports = Some(DirectoryActionPorts { registry, executor });
+        self
+    }
+
+    pub fn describe_kind_actions(&self, kind: &DirectoryKind) -> Vec<DirectoryActionDefinition> {
+        self.action_ports
+            .as_ref()
+            .map(|ports| {
+                ports
+                    .registry
+                    .actions_for_kinds(&self.kind_registry.lineage(kind))
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn describe_actions(&self, directory: &Directory) -> Result<DirectoryActions, CoreError> {
+        self.require_kind_registered(directory.kind())?;
+        Ok(DirectoryActions::new(
+            self.describe_kind_actions(directory.kind())
+                .into_iter()
+                .filter(|action| action.matches_directory(directory.kind().as_str()))
+                .collect(),
+        ))
+    }
+
+    pub fn resolve_action(
+        &self,
+        directory: &Directory,
+        action_id: &DirectoryAction,
+    ) -> Result<DirectoryActionDefinition, CoreError> {
+        self.describe_kind_actions(directory.kind())
+            .into_iter()
+            .find(|action| {
+                action.id() == action_id && action.matches_directory(directory.kind().as_str())
+            })
+            .ok_or_else(|| CoreError::unsupported("directory action", action_id.to_string()))
+    }
+
+    pub async fn execute_action(
+        &self,
+        id: &DirectoryId,
+        command: ExecuteDirectoryAction,
+    ) -> Result<DirectoryActionOutput, CoreError> {
+        let executed = self.invoke_action(id, command).await?;
+        self.apply_executed_action(&executed, None).await?;
+        Ok(executed.into_output())
+    }
+
+    pub(crate) async fn invoke_action(
+        &self,
+        id: &DirectoryId,
+        command: ExecuteDirectoryAction,
+    ) -> Result<ExecutedDirectoryAction, CoreError> {
+        let located = self.find_by_id(id).await?;
+        let expected_revision = located.directory().revision();
+        let definition = self.resolve_action(located.directory(), &command.action)?;
+        let ports = self.action_ports.as_ref().ok_or_else(|| {
+            CoreError::configuration("directory action executor is not configured")
+        })?;
+        let output = ports
+            .executor
+            .execute(DirectoryActionRequest::new(
+                located,
+                command.action.clone(),
+                definition.access(),
+                definition.requirements().clone(),
+                command.input,
+            ))
+            .await?;
+        self.validate_action_output(id, &command.action, &definition, &output)?;
+        Ok(ExecutedDirectoryAction {
+            directory_id: *id,
+            expected_revision,
+            access: definition.access(),
+            output,
+        })
+    }
+
+    pub(crate) async fn apply_executed_action(
+        &self,
+        executed: &ExecutedDirectoryAction,
+        required_parent_ancestor: Option<DirectoryId>,
+    ) -> Result<(), CoreError> {
+        self.apply_action_effects(
+            &executed.directory_id,
+            executed.expected_revision,
+            executed.access,
+            &executed.output,
+            required_parent_ancestor,
+        )
+        .await
+    }
+
+    fn validate_action_output(
+        &self,
+        directory_id: &DirectoryId,
+        action_id: &DirectoryAction,
+        definition: &DirectoryActionDefinition,
+        output: &DirectoryActionOutput,
+    ) -> Result<(), CoreError> {
+        if output.directory_id() != *directory_id || output.action() != action_id {
+            return Err(CoreError::invariant(format!(
+                "action `{action_id}` returned an output for a different invocation"
+            )));
+        }
+        let actual = output.output().view.kind();
+        if !definition.output().view.iter().any(|view| view == actual) {
+            return Err(CoreError::invariant(format!(
+                "action `{}` returned undeclared view `{actual}`",
+                definition.id()
+            )));
+        }
+        if output.output().effects.len() > 1 {
+            return Err(CoreError::invariant(format!(
+                "action `{}` returned more than one directory effect",
+                definition.id()
+            )));
+        }
+        if output
+            .output()
+            .effects
+            .iter()
+            .filter(|effect| matches!(effect, DirectoryActionEffect::Update(_)))
+            .count()
+            > 1
+        {
+            return Err(CoreError::invariant(format!(
+                "action `{}` returned more than one directory update effect",
+                definition.id()
+            )));
+        }
+        Ok(())
+    }
+
+    async fn apply_action_effects(
+        &self,
+        id: &DirectoryId,
+        expected_revision: u64,
+        access: DirectoryActionAccess,
+        output: &DirectoryActionOutput,
+        required_parent_ancestor: Option<DirectoryId>,
+    ) -> Result<(), CoreError> {
+        if output.output().effects.is_empty() {
+            return Ok(());
+        }
+        if !matches!(access, DirectoryActionAccess::ReadWrite) {
+            return Err(CoreError::invariant(format!(
+                "action `{}` returned effects without write access",
+                output.action()
+            )));
+        }
+        for effect in output
+            .output()
+            .effects
+            .iter()
+            .filter_map(|effect| match effect {
+                DirectoryActionEffect::CreateChild(effect) => Some(effect),
+                DirectoryActionEffect::Update(_) => None,
+            })
+        {
+            let kind = effect
+                .kind
+                .as_ref()
+                .map(|kind| DirectoryKind::try_new(kind.clone()))
+                .transpose()?
+                .unwrap_or_default();
+            self.create_with_kind_guarded(
+                id,
+                effect.name.clone(),
+                kind,
+                Some(expected_revision),
+                required_parent_ancestor,
+            )
+            .await?;
+        }
+        if let Some(effect) = output
+            .output()
+            .effects
+            .iter()
+            .find_map(|effect| match effect {
+                DirectoryActionEffect::Update(effect) => Some(effect),
+                DirectoryActionEffect::CreateChild(_) => None,
+            })
+        {
+            let mut command = UpdateDirectory::new();
+            if let Some(name) = &effect.name {
+                command = command.with_name(name.clone());
+            }
+            if let Some(parent_id) = &effect.parent_id {
+                command = command.with_parent_id(
+                    DirectoryId::from_str(parent_id)
+                        .map_err(|error| CoreError::invariant(error.to_string()))?,
+                );
+            }
+            if let Some(kind) = &effect.kind {
+                command = command.with_kind(DirectoryKind::try_new(kind.clone())?);
+            }
+            self.update_expected(
+                id,
+                command,
+                Some(expected_revision),
+                required_parent_ancestor,
+            )
+            .await?;
+        }
+        Ok(())
+    }
+}

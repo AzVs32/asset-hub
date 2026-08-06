@@ -137,7 +137,7 @@ impl DirectoryStore for Directories {
     async fn save_if_unchanged(
         &self,
         _directory: &Directory,
-        _expected_updated_at: chrono::DateTime<chrono::Utc>,
+        _expected_revision: u64,
     ) -> Result<bool, CoreError> {
         Ok(true)
     }
@@ -240,7 +240,7 @@ fn authorization(users: Users, directories: Arc<Directories>) -> AuthorizationSe
 }
 
 #[tokio::test]
-async fn member_has_full_access_only_inside_workspace_subtree() {
+async fn member_operations_are_allowed_only_inside_workspace_subtree() {
     let directories = Arc::new(Directories::new(&[
         "users",
         "users/alice",
@@ -253,23 +253,25 @@ async fn member_has_full_access_only_inside_workspace_subtree() {
     let actor = AccessContext::member(user.id());
     let service = authorization(Users::with_user(user), directories.clone());
 
-    for permission in [
-        DirectoryPermission::Read,
-        DirectoryPermission::Write,
-        DirectoryPermission::Full,
+    for operation in [
+        DirectoryOperation::ViewDirectory,
+        DirectoryOperation::DownloadDirectory,
+        DirectoryOperation::CreateDirectory,
+        DirectoryOperation::ReadResource,
+        DirectoryOperation::UpdateResource,
+        DirectoryOperation::ReplaceResourceContent,
+        DirectoryOperation::ExecuteDirectoryAction,
+        DirectoryOperation::ExecuteResourceAction,
+        DirectoryOperation::DeleteResource,
+        DirectoryOperation::PurgeResource,
     ] {
-        assert!(
-            service
-                .require(&actor, &workspace, permission)
-                .await
-                .is_ok()
-        );
+        assert!(service.require(&actor, &workspace, operation).await.is_ok());
         assert!(
             service
                 .require(
                     &actor,
                     &directories.reference("users/alice/docs"),
-                    permission,
+                    operation,
                 )
                 .await
                 .is_ok()
@@ -282,7 +284,7 @@ async fn member_has_full_access_only_inside_workspace_subtree() {
                 .require(
                     &actor,
                     &directories.reference(outside),
-                    DirectoryPermission::Read,
+                    DirectoryOperation::ViewDirectory,
                 )
                 .await
                 .is_err()
@@ -308,7 +310,7 @@ async fn root_workspace_contains_every_user_directory() {
             .require(
                 &actor,
                 &directories.reference("any/directory"),
-                DirectoryPermission::Full,
+                DirectoryOperation::PurgeResource,
             )
             .await
             .is_ok()
@@ -326,7 +328,7 @@ async fn administrator_access_does_not_depend_on_a_workspace() {
             .require(
                 &actor,
                 &directories.reference("any/directory"),
-                DirectoryPermission::Full,
+                DirectoryOperation::PurgeResource,
             )
             .await
             .is_ok()

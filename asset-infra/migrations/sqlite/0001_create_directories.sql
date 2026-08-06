@@ -4,6 +4,7 @@ CREATE TABLE directories (
     parent_id TEXT,
     name TEXT NOT NULL,
     kind TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
 

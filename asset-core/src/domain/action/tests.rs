@@ -29,7 +29,7 @@ fn matcher_construction_preserves_normalized_invariants() {
 
 #[test]
 fn directory_actions_share_the_common_shell_but_keep_directory_contracts() {
-    let action = DirectoryActionDefinition::new("example.collection.organize", "Organize")
+    let action = DirectoryActionDefinition::new_static("example.collection.organize", "Organize")
         .with_access(ActionAccess::ReadWrite)
         .with_kinds(["example:collection"])
         .with_requirements(DirectoryActionRequirements {
@@ -41,4 +41,34 @@ fn directory_actions_share_the_common_shell_but_keep_directory_contracts() {
     assert!(!action.matches_directory("core:directory"));
     assert_eq!(action.access(), ActionAccess::ReadWrite);
     assert!(action.requirements().children);
+}
+
+#[test]
+fn action_ids_reject_blank_non_canonical_and_invalid_values() {
+    assert!(matches!(
+        ActionId::new(""),
+        Err(ActionIdError::Blank { .. })
+    ));
+    assert!(matches!(
+        ActionId::new(" example.inspect"),
+        Err(ActionIdError::NonCanonical { .. })
+    ));
+    assert!(matches!(
+        ActionId::new("Example.inspect"),
+        Err(ActionIdError::InvalidFormat { .. })
+    ));
+    assert_eq!(
+        ActionId::new("example:resource.inspect").unwrap().as_str(),
+        "example:resource.inspect"
+    );
+}
+
+#[test]
+fn capability_ids_use_the_narrower_capability_format() {
+    assert!(ActionCapabilityId::new("thumbnail").is_ok());
+    assert!(ActionCapabilityId::new("text_read.v2").is_ok());
+    assert!(matches!(
+        ActionCapabilityId::new("resource:thumbnail"),
+        Err(ActionIdError::InvalidFormat { .. })
+    ));
 }

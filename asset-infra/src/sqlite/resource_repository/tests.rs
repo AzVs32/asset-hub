@@ -418,7 +418,7 @@ async fn directory_store_rejects_a_stale_aggregate_snapshot() {
         )
         .await
         .unwrap();
-    let expected = located.directory().updated_at();
+    let expected = located.directory().revision();
     let mut stale = located.directory().clone();
 
     directories.rename(&located.id(), "current").await.unwrap();

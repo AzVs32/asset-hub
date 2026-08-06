@@ -4,7 +4,6 @@ use crate::{
     CoreError,
     domain::{Directory, DirectoryId, DirectoryPath},
 };
-use chrono::{DateTime, Utc};
 
 /// A directory's stable identity and current path projection.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,13 +86,13 @@ pub trait DirectoryStore: Send + Sync {
     /// 插入一个新目录聚合；ID 或同级名称冲突应返回 `CoreError::Conflict`。
     async fn insert(&self, directory: &Directory) -> Result<(), CoreError>;
 
-    /// 仅当持久化版本仍等于 `expected_updated_at` 时原子保存聚合。
+    /// 仅当持久化版本仍等于 `expected_revision` 时原子保存聚合。
     ///
     /// 保存成功返回 `true`；记录不存在或版本已变化返回 `false`。
     async fn save_if_unchanged(
         &self,
         directory: &Directory,
-        expected_updated_at: DateTime<Utc>,
+        expected_revision: u64,
     ) -> Result<bool, CoreError>;
 
     /// 仅当目录不存在子目录和资源时原子删除；实际删除返回 `true`。

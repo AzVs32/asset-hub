@@ -1,6 +1,6 @@
 use crate::{
     CoreError,
-    domain::{AccessContext, DirectoryPath, DirectoryPermission},
+    domain::{AccessContext, DirectoryOperation, DirectoryPath},
     port::{DirectoryLocation, UserRepository},
     service::DirectoryService,
 };
@@ -36,7 +36,7 @@ impl WorkspaceScope {
             .strip_prefix(self.root.path().path())
             .and_then(|suffix| suffix.strip_prefix('/'))
         else {
-            return Err(CoreError::forbidden("read", directory.path()));
+            return Err(CoreError::forbidden("view directory", directory.path()));
         };
         DirectoryPath::from_path(relative).map_err(Into::into)
     }
@@ -60,7 +60,7 @@ impl AuthorizationService {
         &self,
         context: &AccessContext,
         directory: &DirectoryLocation,
-        permission: DirectoryPermission,
+        operation: DirectoryOperation,
     ) -> Result<(), CoreError> {
         let scope = self.workspace_scope(context).await?;
         if self
@@ -71,7 +71,7 @@ impl AuthorizationService {
             return Ok(());
         }
         Err(CoreError::forbidden(
-            permission_action(permission),
+            operation.as_str(),
             directory.path().path(),
         ))
     }
@@ -96,14 +96,6 @@ impl AuthorizationService {
                 .locate_by_id(&user.workspace_directory_id())
                 .await?,
         })
-    }
-}
-
-fn permission_action(permission: DirectoryPermission) -> &'static str {
-    match permission {
-        DirectoryPermission::Read => "read",
-        DirectoryPermission::Write => "write",
-        DirectoryPermission::Full => "full",
     }
 }
 

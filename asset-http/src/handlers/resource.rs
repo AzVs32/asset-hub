@@ -224,7 +224,10 @@ pub(crate) async fn execute_directory_action(
         .secured(&access.0)
         .execute_directory_action(
             &id,
-            ExecuteDirectoryAction::new(action).with_input(payload.input),
+            ExecuteDirectoryAction::new(
+                asset_core::domain::ActionId::new(action).map_err(CoreError::from)?,
+            )
+            .with_input(payload.input),
         )
         .await?;
     Ok(Json(DirectoryActionOutputResponse::from(&output)))
@@ -354,7 +357,10 @@ pub(crate) async fn execute_resource_action(
             HttpError::bad_request(error.body_text())
         }
     })?;
-    let mut command = ExecuteResourceAction::new(action).with_input(payload.input.clone());
+    let mut command = ExecuteResourceAction::new(
+        asset_core::domain::ActionId::new(action).map_err(CoreError::from)?,
+    )
+    .with_input(payload.input.clone());
     if let Some(expected_revision) = payload.expected_revision {
         command = command.with_expected_revision(expected_revision);
     }

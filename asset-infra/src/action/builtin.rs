@@ -201,7 +201,7 @@ fn directory_thumbnail(
     );
     Ok(DirectoryActionOutput::new(
         directory.id(),
-        DirectoryAction::from(request.action().as_str()),
+        DirectoryAction::new(request.action().as_str()).map_err(CoreError::from)?,
         DirectoryPluginActionOutput::new(view),
     ))
 }
@@ -215,7 +215,7 @@ fn directory_download(request: DirectoryActionRequest) -> Result<DirectoryAction
     };
     Ok(DirectoryActionOutput::new(
         directory.id(),
-        DirectoryAction::from(request.action().as_str()),
+        DirectoryAction::new(request.action().as_str()).map_err(CoreError::from)?,
         DirectoryPluginActionOutput::new(PluginView::Download(DownloadView {
             url: format!("/directories/{}/download", directory.id()),
             mime_type: Some("application/zip".to_string()),
