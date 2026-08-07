@@ -12,7 +12,6 @@ pub struct CreateUpload {
     pub(super) name: String,
     pub(super) kind: Option<ResourceKind>,
     pub(super) directory: DirectoryPath,
-    pub(super) tags: Vec<String>,
     pub(super) mime_type: Option<String>,
     pub(super) expected_size: u64,
     pub(super) expected_checksum: Checksum,
@@ -24,7 +23,6 @@ impl CreateUpload {
             name: name.into(),
             kind: None,
             directory: DirectoryPath::root(),
-            tags: Vec::new(),
             mime_type: None,
             expected_size,
             expected_checksum,
@@ -38,15 +36,6 @@ impl CreateUpload {
 
     pub fn with_directory(mut self, directory: DirectoryPath) -> Self {
         self.directory = directory;
-        self
-    }
-
-    pub fn with_tags<U, I>(mut self, tags: I) -> Self
-    where
-        U: Into<String>,
-        I: IntoIterator<Item = U>,
-    {
-        self.tags = tags.into_iter().map(Into::into).collect();
         self
     }
 
@@ -120,7 +109,6 @@ pub struct UpdateResource {
     pub(super) name: Option<String>,
     pub(super) directory: Option<DirectoryPath>,
     pub(super) kind: Option<ResourceKind>,
-    pub(super) tags: Option<Vec<String>>,
     pub(super) restore: bool,
 }
 
@@ -141,15 +129,6 @@ impl UpdateResource {
 
     pub fn with_kind(mut self, kind: ResourceKind) -> Self {
         self.kind = Some(kind);
-        self
-    }
-
-    pub fn with_tags<T, I>(mut self, tags: I) -> Self
-    where
-        T: Into<String>,
-        I: IntoIterator<Item = T>,
-    {
-        self.tags = Some(tags.into_iter().map(Into::into).collect());
         self
     }
 

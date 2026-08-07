@@ -40,7 +40,6 @@ export interface Resource {
   name: string;
   directory: string;
   kind: string;
-  tags: string[];
   content: ResourceContent | null;
   actions: ResourceAction[];
   createdAt: string;
@@ -97,7 +96,6 @@ export interface ResourceFilters {
   page: number;
   limit: number;
   query: string;
-  tag: string;
   kind: string;
   includeDeleted: boolean;
 }
@@ -106,7 +104,6 @@ export interface ResourceDraft {
   name: string;
   directory: string;
   kind: string;
-  tags: string;
 }
 
 export interface UploadDraft {
@@ -114,7 +111,6 @@ export interface UploadDraft {
   name: string;
   directory: string;
   kind: string;
-  tags: string;
 }
 
 export interface UploadProgress {

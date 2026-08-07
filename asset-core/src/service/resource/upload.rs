@@ -29,7 +29,6 @@ impl<'a> ResourceUploadService<'a> {
             name,
             kind,
             directory,
-            tags,
             mime_type,
             expected_size,
             expected_checksum,
@@ -42,13 +41,7 @@ impl<'a> ResourceUploadService<'a> {
             Some(storage_key.as_str()),
         )?;
         let directory = self.service.directories.ensure_path(&directory).await?;
-        build_resource(
-            name.clone(),
-            directory.id(),
-            Some(kind.clone()),
-            tags.clone(),
-        )
-        .build()?;
+        build_resource(name.clone(), directory.id(), Some(kind.clone())).build()?;
         if self
             .service
             .query
@@ -66,7 +59,6 @@ impl<'a> ResourceUploadService<'a> {
             name,
             directory.path().clone(),
             kind,
-            tags,
             mime_type,
             expected_size,
             expected_checksum,
@@ -296,7 +288,6 @@ impl<'a> ResourceUploadService<'a> {
             session.name().to_string(),
             directory.id(),
             Some(session.kind().clone()),
-            session.tags().to_vec(),
         )
         .with_id(session.resource_id())
         .build()?;

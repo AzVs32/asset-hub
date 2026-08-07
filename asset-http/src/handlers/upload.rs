@@ -24,8 +24,7 @@ pub(crate) async fn create_upload(
     let request = parse_json_payload(payload)?;
     let expected_checksum = asset_core::domain::Checksum::sha256(request.expected_sha256)?;
     let mut command = CreateUpload::new(request.name, request.size, expected_checksum)
-        .with_directory(request.directory)
-        .with_tags(request.tags);
+        .with_directory(request.directory);
     if let Some(kind) = request.kind {
         command = command.with_kind(parse_kind(kind)?);
     }

@@ -133,7 +133,6 @@ fn request_json(input: Value) -> String {
             "directory": "books",
             "name": "book.epub",
             "kind": "azvs:epub",
-            "tags": [],
             "content": {
                 "size": 1,
                 "mime_type": "application/epub+zip",

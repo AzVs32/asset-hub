@@ -12,7 +12,6 @@ pub struct ListResources {
     limit: u32,
     offset: u64,
     kinds: Vec<ResourceKind>,
-    tag: Option<String>,
     q: Option<String>,
     directory: Option<DirectoryPath>,
     directory_id: Option<DirectoryId>,
@@ -25,7 +24,6 @@ impl ListResources {
             limit,
             offset,
             kinds: Vec::new(),
-            tag: None,
             q: None,
             directory: None,
             directory_id: None,
@@ -40,11 +38,6 @@ impl ListResources {
 
     pub fn with_kinds(mut self, kinds: Vec<ResourceKind>) -> Self {
         self.kinds = kinds;
-        self
-    }
-
-    pub fn with_tag(mut self, tag: impl Into<String>) -> Self {
-        self.tag = Some(tag.into());
         self
     }
 
@@ -84,10 +77,6 @@ impl ListResources {
 
     pub fn kinds(&self) -> &[ResourceKind] {
         &self.kinds
-    }
-
-    pub fn tag(&self) -> Option<&str> {
-        self.tag.as_deref()
     }
 
     pub fn q(&self) -> Option<&str> {

@@ -26,7 +26,7 @@ pub use identity::{
 pub use resource::{
     Checksum, ChecksumKind, ContentVerification, ContentVerificationStatus, Resource,
     ResourceBuilder, ResourceContent, ResourceContentBuilder, ResourceId, ResourceKind,
-    ResourceSnapshot, ResourceTag, StorageKey,
+    ResourceSnapshot, StorageKey,
 };
 pub use resource_action_policy::{InvalidResourceActionPolicy, ResourceActionPolicy};
 pub use resource_content_edit_policy::{

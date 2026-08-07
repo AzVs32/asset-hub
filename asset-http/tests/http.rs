@@ -1661,26 +1661,26 @@ async fn cors_policy_adds_allowed_origin_header() {
 }
 
 #[tokio::test]
-async fn list_resources_filters_by_kind_tag_and_query() {
+async fn list_resources_filters_by_kind_and_query() {
     let app = test_app("list-resources").await;
 
     let (first_status, first) = stream_upload(
         &app,
-        "/resources?name=alpha%20document&directory=&kind=core%3Aresource&tags_json=%5B%22alpha%22%2C%22docs%22%5D",
+        "/resources?name=alpha%20document&directory=&kind=core%3Aresource",
         "application/octet-stream",
         b"alpha document",
     )
     .await;
     let (second_status, second) = stream_upload(
         &app,
-        "/resources?name=beta%20image&directory=&kind=core%3Aresource&tags_json=%5B%22beta%22%2C%22media%22%5D",
+        "/resources?name=beta%20image&directory=&kind=core%3Aresource",
         "application/octet-stream",
         b"beta image",
     )
     .await;
     let (third_status, third) = stream_upload(
         &app,
-        "/resources?name=alpha%20image&directory=&kind=core%3Aresource&tags_json=%5B%22alpha%22%2C%22media%22%5D",
+        "/resources?name=alpha%20image&directory=&kind=core%3Aresource",
         "application/octet-stream",
         b"alpha image",
     )
@@ -1699,7 +1699,7 @@ async fn list_resources_filters_by_kind_tag_and_query() {
     let (status, page) = empty_json_request(
         &app,
         Method::GET,
-        "/resources?kind=core%3Aresource&tag=alpha&q=image&page=1&limit=10",
+        "/resources?kind=core%3Aresource&q=alpha%20image&page=1&limit=10",
     )
     .await;
 
@@ -1770,8 +1770,7 @@ async fn update_resource_changes_fields_and_restores_soft_deleted_resource() {
         json!({
             "name": "updated.txt",
             "directory": "archive",
-            "kind": "core:resource",
-            "tags": ["updated"]
+            "kind": "core:resource"
         }),
     )
     .await;
@@ -1781,7 +1780,6 @@ async fn update_resource_changes_fields_and_restores_soft_deleted_resource() {
     assert_eq!(updated["directory"], "archive");
     assert_eq!(updated["kind"], "core:resource");
     assert!(updated.get("status").is_none());
-    assert_eq!(updated["tags"], json!(["updated"]));
     assert!(!old_blob_path.exists());
     assert_eq!(std::fs::read(&new_blob_path).unwrap(), b"delete me");
 
@@ -2070,14 +2068,10 @@ async fn resumable_upload_with_expected_checksum(
         .filter_map(|pair| pair.split_once('='))
         .map(|(key, value)| (key, percent_decode(value)))
         .collect::<HashMap<_, _>>();
-    let tags = parameters
-        .get("tags_json")
-        .map_or_else(|| json!([]), |value| serde_json::from_str(value).unwrap());
     let create_body = json!({
         "name": parameters.get("name").cloned().unwrap_or_default(),
         "directory": parameters.get("directory").cloned().unwrap_or_default(),
         "kind": parameters.get("kind").cloned(),
-        "tags": tags,
         "mime_type": content_type,
         "size": data.len(),
         "expected_sha256": expected_sha256,

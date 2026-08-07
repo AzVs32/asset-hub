@@ -34,7 +34,7 @@ app/main 负责创建并连接以上所有外层实现。
 
 定义前端内部稳定的业务语言：
 
-- `Resource`、`ResourceAction`、`ResourceKind`；`tags` 是 Resource 的直接字段。
+- `Resource`、`ResourceAction`、`ResourceKind`。
 - 登录用户、受管用户和目录授权。
 - 插件 view 与 action output 的联合类型。
 - 资源草稿、目录规范化、面包屑等无副作用规则。
@@ -130,7 +130,7 @@ main.tsx
 
 | 状态 | 归属 |
 | --- | --- |
-| 当前目录、搜索、kind、tag、分页、选中资源 | URL search params |
+| 当前目录、搜索、kind、分页、选中资源 | URL search params |
 | 资源、目录、kind、用户、授权、session | TanStack Query server cache |
 | 创建、编辑、上传表单 | React Hook Form/local component state |
 | 当前登录用户读取 | Session context |
@@ -151,8 +151,6 @@ ResourceWorkspace
   → TanStack Query 更新缓存
   → React 重新渲染
 ```
-
-编辑资源时直接发送 `tags`；提供 `tags` 时会替换完整标签列表。
 
 ## 5. 插件执行链路
 

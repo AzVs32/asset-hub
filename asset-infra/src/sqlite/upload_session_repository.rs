@@ -22,15 +22,13 @@ impl SqliteUploadSessionRepository {
 #[async_trait::async_trait]
 impl UploadSessionRepository for SqliteUploadSessionRepository {
     async fn save(&self, session: &UploadSession) -> Result<(), CoreError> {
-        let tags = serde_json::to_string(session.tags())
-            .map_err(|error| CoreError::repository("upload_session.encode_tags", error))?;
         sqlx::query(
             r#"
             INSERT INTO upload_sessions (
-                id, resource_id, owner_id, name, directory, kind, tags_json, mime_type,
+                id, resource_id, owner_id, name, directory, kind, mime_type,
                 expected_size, offset, status, expected_checksum_value, actual_checksum_value,
                 failure, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(session.id().to_string())
@@ -39,7 +37,6 @@ impl UploadSessionRepository for SqliteUploadSessionRepository {
         .bind(session.name())
         .bind(session.directory().path())
         .bind(session.kind().as_str())
-        .bind(tags)
         .bind(session.mime_type())
         .bind(encode_u64(session.expected_size())?)
         .bind(encode_u64(session.offset())?)
@@ -58,7 +55,7 @@ impl UploadSessionRepository for SqliteUploadSessionRepository {
     async fn find_by_id(&self, id: &UploadId) -> Result<Option<UploadSession>, CoreError> {
         let row = sqlx::query(
             r#"
-            SELECT id, resource_id, owner_id, name, directory, kind, tags_json, mime_type,
+            SELECT id, resource_id, owner_id, name, directory, kind, mime_type,
                    expected_size, offset, status, expected_checksum_value, actual_checksum_value,
                    failure, created_at, updated_at
             FROM upload_sessions
@@ -219,8 +216,6 @@ fn decode_session(row: sqlx::sqlite::SqliteRow) -> Result<UploadSession, CoreErr
     };
     let expected_size = decode_u64("upload_session.expected_size", row.get("expected_size"))?;
     let offset = decode_u64("upload_session.offset", row.get("offset"))?;
-    let tags = serde_json::from_str::<Vec<String>>(row.get("tags_json"))
-        .map_err(|error| CoreError::repository("upload_session.decode_tags", error))?;
     let timestamp = |field: &'static str, value: String| {
         DateTime::parse_from_rfc3339(&value)
             .map(|value| value.with_timezone(&Utc))
@@ -238,7 +233,6 @@ fn decode_session(row: sqlx::sqlite::SqliteRow) -> Result<UploadSession, CoreErr
             .map_err(|error| CoreError::repository("upload_session.directory", error))?,
         kind: ResourceKind::from_str(row.get::<String, _>("kind").as_str())
             .map_err(|error| CoreError::repository("upload_session.kind", error))?,
-        tags,
         mime_type: row.get("mime_type"),
         expected_size,
         offset,

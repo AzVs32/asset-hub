@@ -1,8 +1,7 @@
-//! 资源聚合及其内容、类型、标签值对象。
+//! 资源聚合及其内容、类型值对象。
 
 mod content;
 mod kind;
-mod tag;
 
 use crate::domain::DirectoryId;
 use crate::error::ResourceError;
@@ -14,7 +13,6 @@ pub use content::{
     ResourceContentBuilder, StorageKey,
 };
 pub use kind::ResourceKind;
-pub use tag::ResourceTag;
 
 /// 资源名称允许的最大字符数。
 const MAX_RESOURCE_NAME_LEN: usize = 255;
@@ -27,7 +25,7 @@ crate::gen_id_uuid_v7!(ResourceId);
 
 /// 资源聚合根。
 ///
-/// `Resource` 负责维护资源基础信息、标签、内容引用和软删除状态。
+/// `Resource` 负责维护资源基础信息、内容引用和软删除状态。
 /// 外部代码应通过构建器和行为方法修改资源，避免绕过领域规则直接写字段。
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Resource {
@@ -39,8 +37,6 @@ pub struct Resource {
     directory_id: DirectoryId,
     /// 资源类型，用于区分图片、文档、音频等不同业务资源。
     kind: ResourceKind,
-    /// 去重并按稳定字典序排列的资源标签集合。
-    tags: Vec<ResourceTag>,
     /// 资源内容引用；资源可以不包含对象内容。
     content: Option<ResourceContent>,
     /// 资源创建时间。
@@ -67,8 +63,6 @@ pub struct ResourceSnapshot {
     pub directory_id: DirectoryId,
     /// 资源类型。
     pub kind: ResourceKind,
-    /// 资源标签；从持久化边界进入时会重新归一化和校验。
-    pub tags: Vec<String>,
     /// 资源内容引用。
     pub content: Option<ResourceContent>,
     /// 资源创建时间。
@@ -101,7 +95,6 @@ impl TryFrom<ResourceSnapshot> for Resource {
 
     fn try_from(snapshot: ResourceSnapshot) -> Result<Self, Self::Error> {
         let name = normalize_resource_name(snapshot.name)?;
-        let tags = normalize_tags(snapshot.tags)?;
         if snapshot.revision == 0 {
             return Err(ResourceError::InvalidFormat {
                 field: "resource.revision",
@@ -129,7 +122,6 @@ impl TryFrom<ResourceSnapshot> for Resource {
             name,
             directory_id: snapshot.directory_id,
             kind: snapshot.kind,
-            tags,
             content: snapshot.content,
             created_at: snapshot.created_at,
             updated_at: snapshot.updated_at,
@@ -158,11 +150,6 @@ impl Resource {
     /// 返回资源类型。
     pub fn kind(&self) -> &ResourceKind {
         &self.kind
-    }
-
-    /// 返回资源标签。
-    pub fn tags(&self) -> &[ResourceTag] {
-        &self.tags
     }
 
     /// 返回资源内容引用。
@@ -239,7 +226,7 @@ impl Resource {
 
     /// 软删除资源。
     ///
-    /// 软删除会记录 `deleted_at` 并刷新 `updated_at`，不会清除内容引用或标签。
+    /// 软删除会记录 `deleted_at` 并刷新 `updated_at`，不会清除内容引用。
     pub fn soft_delete(&mut self) {
         if self.deleted_at.is_none() {
             let now = Utc::now();
@@ -254,17 +241,6 @@ impl Resource {
         if self.deleted_at.take().is_some() {
             self.touch();
         }
-    }
-
-    /// 替换全部资源标签；标签会被归一化、去重并按稳定字典序排列。
-    pub fn replace_tags(&mut self, tags: Vec<String>) -> Result<(), ResourceError> {
-        self.ensure_not_deleted()?;
-        let tags = normalize_tags(tags)?;
-        if self.tags != tags {
-            self.tags = tags;
-            self.touch();
-        }
-        Ok(())
     }
 
     /// 绑定或替换资源内容引用。
@@ -310,22 +286,9 @@ fn normalize_resource_name(value: String) -> Result<String, ResourceError> {
     Ok(name)
 }
 
-fn normalize_tags(tags: Vec<String>) -> Result<Vec<ResourceTag>, ResourceError> {
-    let mut normalized = Vec::with_capacity(tags.len());
-    for tag in tags {
-        let tag = ResourceTag::try_new(tag)?;
-        if !normalized.contains(&tag) {
-            normalized.push(tag);
-        }
-    }
-    normalized.sort_unstable_by(|left, right| left.as_str().cmp(right.as_str()));
-
-    Ok(normalized)
-}
-
 /// 资源构建器。
 ///
-/// 用于统一创建包含可选标签和内容引用的 `Resource`。
+/// 用于统一创建包含可选内容引用的 `Resource`。
 #[derive(Debug, Clone)]
 pub struct ResourceBuilder {
     /// 由持久化工作流预先分配的资源 ID。
@@ -336,8 +299,6 @@ pub struct ResourceBuilder {
     kind: ResourceKind,
     /// 初始逻辑目录。
     directory_id: DirectoryId,
-    /// 初始资源标签。
-    tags: Vec<String>,
     /// 初始内容引用。
     content: Option<ResourceContent>,
 }
@@ -350,7 +311,6 @@ impl ResourceBuilder {
             name: name.into(),
             kind: ResourceKind::default(),
             directory_id: DirectoryId::root(),
-            tags: Vec::new(),
             content: None,
         }
     }
@@ -373,16 +333,6 @@ impl ResourceBuilder {
         self
     }
 
-    /// 设置初始资源标签。
-    pub fn with_tags<T, I>(mut self, tags: I) -> Self
-    where
-        T: Into<String>,
-        I: IntoIterator<Item = T>,
-    {
-        self.tags = tags.into_iter().map(Into::into).collect();
-        self
-    }
-
     /// 设置初始内容引用。
     pub fn with_content(mut self, content: ResourceContent) -> Self {
         self.content = Some(content);
@@ -392,7 +342,6 @@ impl ResourceBuilder {
     /// 完成构建并执行领域校验。
     pub fn build(self) -> Result<Resource, ResourceError> {
         let name = normalize_resource_name(self.name)?;
-        let tags = normalize_tags(self.tags)?;
         let now = Utc::now();
 
         Ok(Resource {
@@ -400,7 +349,6 @@ impl ResourceBuilder {
             name,
             directory_id: self.directory_id,
             kind: self.kind,
-            tags,
             content: self.content,
             created_at: now,
             updated_at: now,

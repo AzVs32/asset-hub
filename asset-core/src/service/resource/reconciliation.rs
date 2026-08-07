@@ -164,7 +164,6 @@ impl<'a> StorageReconciliationService<'a> {
             name,
             self.service.directories.ensure_path(&directory).await?.id(),
             Some(kind),
-            Vec::new(),
         )
         .with_content(content)
         .build()?;
@@ -455,7 +454,6 @@ impl<'a> StorageReconciliationService<'a> {
             name,
             self.service.directories.ensure_path(&directory).await?.id(),
             Some(kind),
-            Vec::new(),
         )
         .with_content(content)
         .build()?;
@@ -509,7 +507,6 @@ impl<'a> StorageReconciliationService<'a> {
             name,
             self.service.directories.ensure_path(&directory).await?.id(),
             Some(kind),
-            Vec::new(),
         )
         .with_content(content)
         .build()?;

@@ -32,7 +32,6 @@ pub struct UploadSession {
     name: String,
     directory: DirectoryPath,
     kind: ResourceKind,
-    tags: Vec<String>,
     mime_type: Option<String>,
     expected_size: u64,
     offset: u64,
@@ -52,7 +51,6 @@ pub struct UploadSessionSnapshot {
     pub name: String,
     pub directory: DirectoryPath,
     pub kind: ResourceKind,
-    pub tags: Vec<String>,
     pub mime_type: Option<String>,
     pub expected_size: u64,
     pub offset: u64,
@@ -71,7 +69,6 @@ impl UploadSession {
         name: impl Into<String>,
         directory: DirectoryPath,
         kind: ResourceKind,
-        tags: Vec<String>,
         mime_type: Option<String>,
         expected_size: u64,
         expected_checksum: Checksum,
@@ -84,7 +81,6 @@ impl UploadSession {
             name: name.into(),
             directory,
             kind,
-            tags,
             mime_type,
             expected_size,
             offset: 0,
@@ -100,7 +96,6 @@ impl UploadSession {
     pub fn rehydrate(snapshot: UploadSessionSnapshot) -> Result<Self, ResourceError> {
         Resource::builder(snapshot.name.clone())
             .with_kind(snapshot.kind.clone())
-            .with_tags(snapshot.tags.clone())
             .build()?;
         if let Some(mime_type) = &snapshot.mime_type {
             ResourceContent::pending(snapshot.expected_size)
@@ -116,7 +111,6 @@ impl UploadSession {
             name: snapshot.name,
             directory: snapshot.directory,
             kind: snapshot.kind,
-            tags: snapshot.tags,
             mime_type: snapshot.mime_type,
             expected_size: snapshot.expected_size,
             offset: snapshot.offset,
@@ -146,9 +140,6 @@ impl UploadSession {
     }
     pub fn kind(&self) -> &ResourceKind {
         &self.kind
-    }
-    pub fn tags(&self) -> &[String] {
-        &self.tags
     }
     pub fn mime_type(&self) -> Option<&str> {
         self.mime_type.as_deref()
@@ -334,7 +325,6 @@ mod tests {
             "asset.bin",
             DirectoryPath::root(),
             ResourceKind::default(),
-            Vec::new(),
             None,
             expected_size,
             checksum('a'),
@@ -373,7 +363,6 @@ mod tests {
             name: session.name().to_string(),
             directory: session.directory().clone(),
             kind: session.kind().clone(),
-            tags: session.tags().to_vec(),
             mime_type: None,
             expected_size: 4,
             offset: 4,

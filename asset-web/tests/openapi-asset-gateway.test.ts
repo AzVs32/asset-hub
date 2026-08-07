@@ -134,7 +134,6 @@ describe("OpenApiAssetGateway URL boundary", () => {
         name: item.name,
         directory: item.directory,
         kind: item.kind,
-        tags: item.tags,
         content: {
           size: 7,
           mime_type: "video/mp4",
@@ -223,7 +222,6 @@ describe("OpenApiAssetGateway URL boundary", () => {
         name: " draft  01.txt ",
         directory: " library /project A ",
         kind: "core:resource",
-        tags: "",
       },
       (event) => progress.push(event),
     );
@@ -277,7 +275,6 @@ describe("OpenApiAssetGateway URL boundary", () => {
       name: "retry.txt",
       directory: "uploads",
       kind: "core:resource",
-      tags: "",
     });
 
     const patchRequests = fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH");
@@ -297,7 +294,6 @@ describe("OpenApiAssetGateway URL boundary", () => {
       name: "resume.txt",
       directory: "uploads",
       kind: "core:resource",
-      tags: "",
     };
     const failedFetch = vi
       .fn()
@@ -356,7 +352,6 @@ describe("OpenApiAssetGateway URL boundary", () => {
             name: "resume.txt",
             directory: "uploads",
             kind: "core:resource",
-            tags: [],
             content: null,
             actions: { available_actions: [] },
             created_at: "2026-01-01T00:00:00Z",
@@ -385,7 +380,6 @@ describe("OpenApiAssetGateway URL boundary", () => {
       name: "same.txt",
       directory: "uploads",
       kind: "core:resource",
-      tags: "",
     };
     const firstFetch = vi
       .fn()

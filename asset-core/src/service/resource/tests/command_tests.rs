@@ -7,7 +7,6 @@ fn update_resource_rejects_a_stale_authorized_snapshot() {
         "original".to_string(),
         DirectoryId::root(),
         Some(ResourceKind::try_new("doc:markdown").unwrap()),
-        Vec::new(),
     )
     .build()
     .unwrap();
@@ -97,7 +96,7 @@ fn soft_delete_rolls_blob_back_when_resource_snapshot_is_stale() {
     let trash_key = StorageKey::new(format!(".asset-hub/trash/{}", resource.id())).unwrap();
     let mut concurrent = resource;
     concurrent
-        .replace_tags(vec!["concurrent".to_owned()])
+        .change_kind(ResourceKind::try_new("core:image").unwrap())
         .unwrap();
     block_on(repository.save(&concurrent)).unwrap();
 

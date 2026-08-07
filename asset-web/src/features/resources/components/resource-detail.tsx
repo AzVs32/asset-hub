@@ -26,7 +26,6 @@ const draftSchema = z.object({
   name: z.string().refine((value) => value.trim().length > 0, "Name is required"),
   directory: z.string(),
   kind: z.string().trim().min(1),
-  tags: z.string(),
 });
 
 export function ResourceDetail({
@@ -194,11 +193,6 @@ function Detail({
               {...form.register("kind")}
             />
           </Field>
-          <div className="sm:col-span-2">
-            <Field label="Tags">
-              <Input disabled={Boolean(resource.deletedAt)} {...form.register("tags")} />
-            </Field>
-          </div>
         </form>
 
         <section className="grid grid-cols-2 gap-x-4 rounded-2xl border border-slate-200 bg-white p-4 text-sm">

@@ -12,7 +12,6 @@ interface UploadForm {
   name: string;
   directory: string;
   kind: string;
-  tags: string;
 }
 
 export function UploadResourceDialog({
@@ -33,10 +32,10 @@ export function UploadResourceDialog({
   onUpload: (draft: UploadDraft) => Promise<unknown>;
 }) {
   const form = useForm<UploadForm>({
-    defaultValues: { name: "", directory, kind: "", tags: "" },
+    defaultValues: { name: "", directory, kind: "" },
   });
   React.useEffect(() => {
-    if (open) form.reset({ name: "", directory, kind: "", tags: "" });
+    if (open) form.reset({ name: "", directory, kind: "" });
   }, [directory, form, open]);
   const file = form.watch("file")?.item(0);
 
@@ -59,7 +58,6 @@ export function UploadResourceDialog({
             name: input.name,
             directory: input.directory,
             kind: input.kind,
-            tags: input.tags,
           });
           onOpenChange(false);
         })}
@@ -83,9 +81,6 @@ export function UploadResourceDialog({
             isKindDisabled={(kind) => !kinds.find((item) => item.kind === kind)?.supportsContent}
             {...form.register("kind")}
           />
-        </Field>
-        <Field label="Tags">
-          <Input {...form.register("tags")} />
         </Field>
         {pending && progress ? <UploadProgressView progress={progress} /> : null}
         <div className="flex justify-end gap-2 border-t border-slate-100 pt-4 sm:col-span-2">

@@ -161,8 +161,7 @@ The Host validates the frame source, Plugin API, request/resource identity, reso
 write access, content policy, authorization, and Resource revision. It then sends the UTF-8 bytes
 through its content-replacement use case; the plugin runtime never receives storage authority.
 Results use the request type plus `-result`, retain `plugin_api` and `request_id`, and contain `ok`,
-`data`, and `error` fields. Unknown messages are ignored. This second message is an additive
-Plugin API `@1` extension; existing Action and result message shapes are unchanged.
+`data`, and `error` fields. Unknown messages are ignored.
 
 ## Rust API
 
@@ -218,9 +217,9 @@ The responsibility change has these compatibility effects:
   `protocol`, and `abi` paths. `PLUGIN_API_VERSION` now belongs to `protocol`.
 - Manifest `1`: breaking for documents that used the Host-only `builtin` value;
   every package now requires an Extism runtime and `plugin.wasm` integrity entry.
-- Plugin API `asset-hub.plugin-api@1`: additively extended with the optional
-  `asset-hub:replace-resource-text` Plugin Frame request and matching result. Existing Action JSON,
-  Host functions, and frame message shapes are unchanged.
+- Plugin API `asset-hub.plugin-api@1`: `PluginResource.tags` was removed from Resource Action
+  requests without changing the version discriminator. Existing plugins must be rebuilt against
+  the current contract.
 
 Host applications use `asset-core` for normalized Action/Kind and
 runtime-independent Action policy, `asset-infra` for Extism execution policy,

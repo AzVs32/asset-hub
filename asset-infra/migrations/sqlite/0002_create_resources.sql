@@ -30,20 +30,6 @@ CREATE TABLE resource_content_replacements (
 CREATE INDEX idx_resource_content_replacements_resource
 ON resource_content_replacements(resource_id);
 
-CREATE TABLE tags (
-    id INTEGER PRIMARY KEY,
-    name TEXT NOT NULL COLLATE BINARY UNIQUE,
-    CHECK (length(name) > 0 AND length(name) <= 64)
-);
-
-CREATE TABLE resource_tags (
-    resource_id TEXT NOT NULL,
-    tag_id INTEGER NOT NULL,
-    PRIMARY KEY (resource_id, tag_id),
-    FOREIGN KEY (resource_id) REFERENCES resources(id) ON DELETE CASCADE,
-    FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
-) WITHOUT ROWID;
-
 CREATE INDEX idx_resources_kind
 ON resources(kind);
 
@@ -59,6 +45,3 @@ WHERE deleted_at IS NULL;
 
 CREATE INDEX idx_resources_updated_at
 ON resources(updated_at);
-
-CREATE INDEX idx_resource_tags_tag_id
-ON resource_tags(tag_id, resource_id);

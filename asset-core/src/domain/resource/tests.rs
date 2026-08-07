@@ -66,7 +66,6 @@ fn new_resource_has_default_fields() {
     assert!(resource.directory_id().is_root());
     assert!(!resource.is_deleted());
     assert!(resource.content().is_none());
-    assert!(resource.tags().is_empty());
     assert_eq!(resource.created_at(), resource.updated_at());
     assert_eq!(resource.revision(), 1);
 }
@@ -91,7 +90,6 @@ fn resource_can_be_rehydrated_from_snapshot() {
         name: " restored image ".to_string(),
         directory_id: DirectoryId::new(),
         kind: ResourceKind::try_new("core:image").unwrap(),
-        tags: vec![" image ".to_owned()],
         content: None,
         created_at,
         updated_at,
@@ -103,7 +101,6 @@ fn resource_can_be_rehydrated_from_snapshot() {
     assert_eq!(resource.id(), id);
     assert_eq!(resource.name(), " restored image ");
     assert!(resource.kind().is("core:image"));
-    assert_eq!(resource.tags()[0].as_str(), "image");
     assert_eq!(resource.created_at(), created_at);
     assert_eq!(resource.updated_at(), updated_at);
     assert_eq!(resource.revision(), 7);
@@ -119,7 +116,6 @@ fn resource_rehydration_rejects_inconsistent_timestamps() {
         name: "image.png".to_owned(),
         directory_id: DirectoryId::root(),
         kind: ResourceKind::default(),
-        tags: Vec::new(),
         content: None,
         created_at,
         updated_at: created_at - chrono::Duration::seconds(1),
@@ -153,7 +149,7 @@ fn resource_soft_delete_and_restore_update_state() {
 }
 
 #[test]
-fn resource_builder_accepts_tags_and_content() {
+fn resource_builder_accepts_content() {
     let checksum = Checksum::sha256("a".repeat(64)).unwrap();
     let modified_at = chrono::DateTime::parse_from_rfc3339("2026-07-23T03:00:00Z")
         .unwrap()
@@ -166,7 +162,6 @@ fn resource_builder_accepts_tags_and_content() {
 
     let resource = Resource::builder("image")
         .with_kind(ResourceKind::try_new("core:image").unwrap())
-        .with_tags(["rust", "asset"])
         .with_content(content)
         .build()
         .unwrap();
@@ -175,14 +170,6 @@ fn resource_builder_accepts_tags_and_content() {
     assert_eq!(content.mime_type(), Some("image/png"));
     assert_eq!(content.checksum(), Some(&checksum));
     assert_eq!(content.modified_at(), Some(modified_at));
-    assert_eq!(
-        resource
-            .tags()
-            .iter()
-            .map(ResourceTag::as_str)
-            .collect::<Vec<_>>(),
-        vec!["asset", "rust"]
-    );
 }
 
 #[test]
@@ -265,30 +252,6 @@ fn deleted_resource_rejects_mutations() {
         ),
         Err(ResourceError::DeletedResource)
     );
-}
-
-#[test]
-fn tags_can_be_replaced() {
-    let mut resource = Resource::builder("image")
-        .with_kind(ResourceKind::try_new("core:image").unwrap())
-        .with_tags([" image ", "cover", "image"])
-        .build()
-        .unwrap();
-
-    assert_eq!(resource.tags().len(), 2);
-    assert_eq!(resource.tags()[0].as_str(), "cover");
-    assert_eq!(resource.tags()[1].as_str(), "image");
-    resource.replace_tags(vec!["document".to_owned()]).unwrap();
-
-    assert_eq!(resource.tags()[0].as_str(), "document");
-}
-
-#[test]
-fn resource_tags_do_not_have_a_count_limit() {
-    let tags = (0..100).map(|index| format!("tag-{index}"));
-    let resource = Resource::builder("tagged").with_tags(tags).build().unwrap();
-
-    assert_eq!(resource.tags().len(), 100);
 }
 
 #[test]

@@ -10,7 +10,7 @@ filesystem, making it easy to run on a workstation or self-host with Docker.
 
 ## Features
 
-- Organize assets in directories with metadata and tags.
+- Organize assets in directories with metadata and content references.
 - Manage users and workspace access.
 - Upload large files with resumable transfers and checksum verification.
 - Extend resource detection, actions, and views with Wasm and Web plugins.

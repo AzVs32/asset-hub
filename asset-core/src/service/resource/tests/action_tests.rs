@@ -61,7 +61,6 @@ fn resource_without_content_describes_only_actions_without_content_requirements(
         "contentless".to_string(),
         DirectoryId::root(),
         Some(ResourceKind::try_new("doc:markdown").unwrap()),
-        Vec::new(),
     )
     .build()
     .unwrap();
@@ -86,7 +85,6 @@ fn resource_without_content_rejects_direct_content_action_execution() {
         "contentless".to_string(),
         DirectoryId::root(),
         Some(ResourceKind::try_new("doc:markdown").unwrap()),
-        Vec::new(),
     )
     .build()
     .unwrap();

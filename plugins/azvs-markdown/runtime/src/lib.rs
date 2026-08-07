@@ -1,7 +1,7 @@
 use asset_plugin_api::protocol::{
     JsonView, PLUGIN_API_VERSION, PluginActionFailure, PluginActionOutput, PluginActionRequest,
-    PluginContentReferenceEncoding, PluginDiagnostic, PluginFrameView,
-    PluginInlineContentEncoding, PluginView,
+    PluginContentReferenceEncoding, PluginDiagnostic, PluginFrameView, PluginInlineContentEncoding,
+    PluginView,
 };
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};

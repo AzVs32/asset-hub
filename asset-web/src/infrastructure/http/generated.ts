@@ -385,7 +385,6 @@ export interface components {
             name: string;
             /** Format: int64 */
             size: number;
-            tags?: string[];
         };
         CreateUserRequest: {
             is_admin?: boolean;
@@ -664,8 +663,6 @@ export interface components {
              * @description 单调递增的资源聚合版本。
              */
             revision: number;
-            /** @description 资源标签。 */
-            tags: string[];
             /** @description 资源最后更新时间，RFC3339 格式。 */
             updated_at: string;
         };
@@ -673,11 +670,7 @@ export interface components {
          * @description 更新资源请求。
          * @example {
          *       "name": "renamed.txt",
-         *       "kind": "core:resource",
-         *       "tags": [
-         *         "demo",
-         *         "updated"
-         *       ]
+         *       "kind": "core:resource"
          *     }
          */
         UpdateResourceRequest: {
@@ -689,8 +682,6 @@ export interface components {
             name?: string | null;
             /** @description 是否恢复软删除资源。 */
             restore?: boolean | null;
-            /** @description 可选资源标签；提供时替换全部标签，空数组表示清空。 */
-            tags?: string[] | null;
         };
         UpdateUserStatusRequest: {
             status: string;
@@ -892,8 +883,6 @@ export interface operations {
                 limit?: number;
                 /** @description 可选资源类型过滤。 */
                 kind?: string;
-                /** @description 可选标签过滤。 */
-                tag?: string;
                 /** @description 可选名称模糊搜索关键字。 */
                 q?: string;
                 /** @description 是否包含软删除资源。 */
@@ -1158,8 +1147,6 @@ export interface operations {
                 limit?: number;
                 /** @description 可选资源类型过滤。 */
                 kind?: string;
-                /** @description 可选标签过滤。 */
-                tag?: string;
                 /** @description 可选名称模糊搜索关键字。 */
                 q?: string;
                 /** @description 相对于当前用户可见根目录的过滤路径；根目录为空字符串。 */

@@ -123,7 +123,7 @@ export function ResourceList({
         </div>
       </header>
 
-      <div className="grid gap-3 border-b border-slate-200 bg-slate-50/80 p-4 md:grid-cols-2 xl:grid-cols-[minmax(180px,1fr)_minmax(160px,220px)_minmax(120px,180px)_auto]">
+      <div className="grid gap-3 border-b border-slate-200 bg-slate-50/80 p-4 md:grid-cols-2 xl:grid-cols-[minmax(180px,1fr)_minmax(160px,220px)_auto]">
         <div className="relative">
           <Search className="absolute left-3 top-3 text-slate-400" size={16} />
           <Input
@@ -140,12 +140,6 @@ export function ResourceList({
           emptyOption={{ label: "All kinds" }}
           value={filters.kind}
           onChange={(event) => onFilters({ kind: event.target.value, page: 1 })}
-        />
-        <Input
-          aria-label="Tag"
-          placeholder="Filter by tag"
-          value={filters.tag}
-          onChange={(event) => onFilters({ tag: event.target.value, page: 1 })}
         />
         <Toggle
           label="Deleted"

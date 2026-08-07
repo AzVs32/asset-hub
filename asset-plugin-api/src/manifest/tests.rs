@@ -42,13 +42,15 @@ fn manifest_requires_current_versions() {
             .is_err()
     );
     document["manifest_version"] = serde_json::json!(MANIFEST_VERSION);
-    document["runtime"]["plugin_api"] = serde_json::json!("asset-hub.plugin-api@2");
-    assert!(
-        serde_json::from_value::<PluginManifest>(document.clone())
-            .unwrap()
-            .validate()
-            .is_err()
-    );
+    for unsupported in ["asset-hub.plugin-api@2", "asset-hub.plugin-api@3"] {
+        document["runtime"]["plugin_api"] = serde_json::json!(unsupported);
+        assert!(
+            serde_json::from_value::<PluginManifest>(document.clone())
+                .unwrap()
+                .validate()
+                .is_err()
+        );
+    }
     document["runtime"]
         .as_object_mut()
         .unwrap()

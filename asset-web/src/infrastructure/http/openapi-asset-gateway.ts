@@ -109,7 +109,6 @@ export class OpenApiAssetGateway implements AssetGateway {
       page: filters.page,
       limit: filters.limit,
       ...(filters.kind ? { kind: filters.kind } : {}),
-      ...(filters.tag.trim() ? { tag: filters.tag.trim() } : {}),
       ...(filters.query.trim() ? { q: filters.query.trim() } : {}),
       ...(filters.includeDeleted ? { include_deleted: true } : {}),
     };
@@ -172,7 +171,6 @@ export class OpenApiAssetGateway implements AssetGateway {
       name: draft.name.length > 0 ? draft.name : file.name,
       directory: normalizeDirectory(draft.directory),
       ...(draft.kind.trim() ? { kind: draft.kind.trim() } : {}),
-      tags: splitTags(draft.tags),
       mime_type: file.type || "application/octet-stream",
       size: file.size,
       expected_sha256: expectedSha256,
@@ -509,7 +507,6 @@ function mapResource(value: ApiResource): Resource {
     name: value.name,
     directory: value.directory,
     kind: value.kind,
-    tags: value.tags,
     content: value.content
       ? {
           size: value.content.size,
@@ -567,19 +564,7 @@ function resourceBody(draft: ResourceDraft): Schemas["UpdateResourceRequest"] {
     name: draft.name,
     directory: normalizeDirectory(draft.directory),
     kind: draft.kind,
-    tags: splitTags(draft.tags),
   };
-}
-
-function splitTags(value: string): string[] {
-  return [
-    ...new Set(
-      value
-        .split(",")
-        .map((tag) => tag.trim())
-        .filter(Boolean),
-    ),
-  ];
 }
 
 function uploadOffset(response: Response): number {

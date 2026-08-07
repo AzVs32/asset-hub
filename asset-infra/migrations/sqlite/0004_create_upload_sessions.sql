@@ -12,8 +12,6 @@ CREATE TABLE upload_sessions (
     directory TEXT NOT NULL,
     -- 最终 Resource 使用的已注册资源类型。
     kind TEXT NOT NULL,
-    -- 最终 Resource 的标签，以 JSON 数组持久化。
-    tags_json TEXT NOT NULL,
     -- 客户端声明的 MIME 类型；未提供时允许为空。
     mime_type TEXT,
     -- 客户端声明的文件总字节数，仅用于完整性校验，不作为上传大小上限。

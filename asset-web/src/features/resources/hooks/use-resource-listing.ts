@@ -18,7 +18,6 @@ export function useResourceListing() {
       page: positiveInteger(searchParams.get("page"), 1),
       limit: 30,
       query: searchParams.get("q") ?? "",
-      tag: searchParams.get("tag") ?? "",
       kind: searchParams.get("kind") ?? "",
       includeDeleted: searchParams.get("deleted") === "1",
     }),
@@ -53,7 +52,6 @@ export function useResourceListing() {
           const next = new URLSearchParams(current);
           const merged = { ...filters, ...patch };
           setOrDelete(next, "q", merged.query);
-          setOrDelete(next, "tag", merged.tag);
           setOrDelete(next, "kind", merged.kind);
           setOrDelete(next, "page", merged.page === 1 ? "" : String(merged.page));
           setOrDelete(next, "deleted", merged.includeDeleted ? "1" : "");

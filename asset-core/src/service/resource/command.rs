@@ -86,10 +86,6 @@ impl<'a> ResourceCommandService<'a> {
             resource.change_kind(self.service.validate_registered_kind(Some(kind))?)?;
         }
 
-        if let Some(tags) = command.tags {
-            resource.replace_tags(tags)?;
-        }
-
         let new_storage_key = persisted_content_key(&resource, &directory)?;
         let lock_keys = old_storage_key
             .iter()
@@ -297,11 +293,8 @@ pub(super) fn build_resource(
     name: String,
     directory_id: DirectoryId,
     kind: Option<ResourceKind>,
-    tags: Vec<String>,
 ) -> crate::domain::ResourceBuilder {
-    let mut builder = Resource::builder(name)
-        .with_directory_id(directory_id)
-        .with_tags(tags);
+    let mut builder = Resource::builder(name).with_directory_id(directory_id);
     if let Some(kind) = kind {
         builder = builder.with_kind(kind);
     }

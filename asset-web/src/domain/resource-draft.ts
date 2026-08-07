@@ -5,7 +5,6 @@ export function draftFromResource(resource: Resource): ResourceDraft {
     name: resource.name,
     directory: resource.directory,
     kind: resource.kind,
-    tags: resource.tags.join(", "),
   };
 }
 

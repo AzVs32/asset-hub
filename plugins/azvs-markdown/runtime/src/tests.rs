@@ -120,7 +120,6 @@ fn resource_json() -> Value {
         "directory": "documents",
         "name": "demo.md",
         "kind": "azvs:markdown",
-        "tags": [],
         "content": {
             "size": 4,
             "mime_type": "text/markdown",

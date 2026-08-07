@@ -345,11 +345,6 @@ pub(super) fn build_payload(
             directory: request.directory().path().to_string(),
             name: resource.name().to_string(),
             kind: resource.kind().as_str().to_string(),
-            tags: resource
-                .tags()
-                .iter()
-                .map(|tag| tag.as_str().to_owned())
-                .collect(),
             content: content_ref.map(|content| PluginResourceContent {
                 size: content.size(),
                 mime_type: content.mime_type().map(str::to_string),

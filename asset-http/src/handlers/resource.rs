@@ -81,10 +81,6 @@ pub(crate) async fn list_resources(
         command = command.with_kind(parse_kind(kind)?);
     }
 
-    if let Some(tag) = query.tag {
-        command = command.with_tag(tag);
-    }
-
     if let Some(q) = query.q {
         command = command.with_q(q);
     }
@@ -131,10 +127,6 @@ pub(crate) async fn list_directory(
 
     if let Some(kind) = query.kind {
         resources_query = resources_query.with_kind(parse_kind(kind)?);
-    }
-
-    if let Some(tag) = query.tag {
-        resources_query = resources_query.with_tag(tag);
     }
 
     if let Some(q) = query.q {
@@ -303,10 +295,6 @@ pub(crate) async fn update_resource(
 
     if let Some(directory) = payload.directory {
         command = command.with_directory(directory);
-    }
-
-    if let Some(tags) = payload.tags {
-        command = command.with_tags(tags);
     }
 
     if let Some(restore) = payload.restore {

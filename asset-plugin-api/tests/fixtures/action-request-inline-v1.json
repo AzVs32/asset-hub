@@ -9,9 +9,6 @@
     "directory": "documents",
     "name": "notes.md",
     "kind": "core:text",
-    "tags": [
-      "docs"
-    ],
     "content": {
       "size": 5,
       "mime_type": "text/markdown",

@@ -396,11 +396,6 @@ impl ResourceQuery for InMemoryResourceRepository {
             .values()
             .filter(|resource| query.include_deleted() || !resource.is_deleted())
             .filter(|resource| query.kinds().is_empty() || query.kinds().contains(resource.kind()))
-            .filter(|resource| {
-                query
-                    .tag()
-                    .is_none_or(|tag| resource.tags().iter().any(|value| value.as_str() == tag))
-            })
             .filter(|resource| query.q().is_none_or(|q| resource.name().contains(q)))
             .filter(|resource| {
                 query
@@ -1253,7 +1248,6 @@ struct TestUpload {
     name: String,
     kind: Option<ResourceKind>,
     directory: DirectoryPath,
-    tags: Vec<String>,
     content: BlobByteStream,
     mime_type: Option<String>,
 }
@@ -1264,7 +1258,6 @@ impl TestUpload {
             name: name.into(),
             kind: None,
             directory: DirectoryPath::root(),
-            tags: Vec::new(),
             content,
             mime_type: None,
         }
@@ -1292,7 +1285,6 @@ impl ResourceService {
             name,
             kind,
             directory,
-            tags,
             mut content,
             mime_type,
         } = draft;
@@ -1303,8 +1295,7 @@ impl ResourceService {
         let owner = UserId::new();
         let expected_checksum = Checksum::sha256(hex_sha256(&bytes)).unwrap();
         let mut command = CreateUpload::new(name, bytes.len() as u64, expected_checksum.clone())
-            .with_directory(directory)
-            .with_tags(tags);
+            .with_directory(directory);
         if let Some(kind) = kind {
             command = command.with_kind(kind);
         }

@@ -10,7 +10,7 @@ use asset_core::port::{
 };
 use chrono::{DateTime, Utc};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow};
-use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool, Transaction};
+use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 use std::path::Path;
 
 const RESOURCE_SELECT: &str = r#"
@@ -33,19 +33,6 @@ const RESOURCE_SELECT: &str = r#"
         resources.directory_id,
         directory_paths.path AS directory_path,
         resources.kind,
-        COALESCE(
-            (
-                SELECT json_group_array(tag)
-                FROM (
-                    SELECT tags.name AS tag
-                    FROM resource_tags
-                    JOIN tags ON tags.id = resource_tags.tag_id
-                    WHERE resource_tags.resource_id = resources.id
-                    ORDER BY tags.name COLLATE BINARY
-                )
-            ),
-            '[]'
-        ) AS tags_json,
         resources.content_json,
         resources.created_at,
         resources.updated_at,
@@ -61,19 +48,6 @@ const RESOURCE_AGGREGATE_SELECT: &str = r#"
         resources.name,
         resources.directory_id,
         resources.kind,
-        COALESCE(
-            (
-                SELECT json_group_array(tag)
-                FROM (
-                    SELECT tags.name AS tag
-                    FROM resource_tags
-                    JOIN tags ON tags.id = resource_tags.tag_id
-                    WHERE resource_tags.resource_id = resources.id
-                    ORDER BY tags.name COLLATE BINARY
-                )
-            ),
-            '[]'
-        ) AS tags_json,
         resources.content_json,
         resources.created_at,
         resources.updated_at,
@@ -158,11 +132,6 @@ impl ResourceRepository for SqliteResourceRepository {
             .transpose()
             .map_err(|error| CoreError::repository("resource.encode_content", error))?;
 
-        let mut transaction = self
-            .pool
-            .begin()
-            .await
-            .map_err(|error| CoreError::repository("save.begin", error))?;
         sqlx::query(
             r#"
             INSERT INTO resources (
@@ -197,15 +166,9 @@ impl ResourceRepository for SqliteResourceRepository {
         .bind(encode_timestamp(resource.updated_at()))
         .bind(encode_revision(resource.revision())?)
         .bind(resource.deleted_at().map(encode_timestamp))
-        .execute(&mut *transaction)
+        .execute(&self.pool)
         .await
         .map_err(|error| CoreError::repository("save", error))?;
-
-        sync_tags(&mut transaction, resource).await?;
-        transaction
-            .commit()
-            .await
-            .map_err(|error| CoreError::repository("save.commit", error))?;
 
         Ok(())
     }
@@ -221,11 +184,6 @@ impl ResourceRepository for SqliteResourceRepository {
             .transpose()
             .map_err(|error| CoreError::repository("resource.encode_content", error))?;
 
-        let mut transaction = self
-            .pool
-            .begin()
-            .await
-            .map_err(|error| CoreError::repository("save_if_unchanged.begin", error))?;
         let result = sqlx::query(
             r#"
             UPDATE resources SET
@@ -244,24 +202,10 @@ impl ResourceRepository for SqliteResourceRepository {
         .bind(resource.deleted_at().map(encode_timestamp))
         .bind(resource.id().to_string())
         .bind(encode_revision(expected_revision)?)
-        .execute(&mut *transaction)
+        .execute(&self.pool)
         .await
         .map_err(|error| CoreError::repository("save_if_unchanged", error))?;
-
-        if result.rows_affected() == 0 {
-            transaction
-                .rollback()
-                .await
-                .map_err(|error| CoreError::repository("save_if_unchanged.rollback", error))?;
-            return Ok(false);
-        }
-
-        sync_tags(&mut transaction, resource).await?;
-        transaction
-            .commit()
-            .await
-            .map_err(|error| CoreError::repository("save_if_unchanged.commit", error))?;
-        Ok(true)
+        Ok(result.rows_affected() == 1)
     }
 
     async fn find_by_id(&self, id: &ResourceId) -> Result<Option<Resource>, CoreError> {
@@ -280,45 +224,22 @@ impl ResourceRepository for SqliteResourceRepository {
         id: &ResourceId,
         expected_revision: u64,
     ) -> Result<bool, CoreError> {
-        let mut transaction = self
-            .pool
-            .begin()
-            .await
-            .map_err(|error| CoreError::repository("remove_if_unchanged.begin", error))?;
         let result = sqlx::query("DELETE FROM resources WHERE id = ? AND revision = ?")
             .bind(id.to_string())
             .bind(encode_revision(expected_revision)?)
-            .execute(&mut *transaction)
+            .execute(&self.pool)
             .await
             .map_err(|error| CoreError::repository("remove_if_unchanged", error))?;
-
-        if result.rows_affected() == 1 {
-            delete_orphan_tags(&mut transaction).await?;
-        }
-        transaction
-            .commit()
-            .await
-            .map_err(|error| CoreError::repository("remove_if_unchanged.commit", error))?;
 
         Ok(result.rows_affected() == 1)
     }
 
     async fn remove(&self, id: &ResourceId) -> Result<(), CoreError> {
-        let mut transaction = self
-            .pool
-            .begin()
-            .await
-            .map_err(|error| CoreError::repository("remove.begin", error))?;
         sqlx::query("DELETE FROM resources WHERE id = ?")
             .bind(id.to_string())
-            .execute(&mut *transaction)
+            .execute(&self.pool)
             .await
             .map_err(|error| CoreError::repository("remove", error))?;
-        delete_orphan_tags(&mut transaction).await?;
-        transaction
-            .commit()
-            .await
-            .map_err(|error| CoreError::repository("remove.commit", error))?;
 
         Ok(())
     }
@@ -543,16 +464,6 @@ fn push_list_where<'a>(builder: &mut QueryBuilder<'a, Sqlite>, query: &'a ListRe
         separated.push_unseparated(")");
     }
 
-    if let Some(tag) = query.tag() {
-        push_condition_prefix(builder, &mut has_where);
-        builder.push(
-            "EXISTS (SELECT 1 FROM resource_tags JOIN tags ON tags.id = resource_tags.tag_id \
-             WHERE resource_tags.resource_id = resources.id AND tags.name = ",
-        );
-        builder.push_bind(tag);
-        builder.push(")");
-    }
-
     if let Some(q) = query.q() {
         push_condition_prefix(builder, &mut has_where);
         builder.push("resources.name LIKE ");
@@ -589,7 +500,6 @@ fn decode_resource(row: SqliteRow) -> Result<Resource, CoreError> {
     let directory_id = decode_directory_id(column(&row, "directory_id")?)?;
     let kind = ResourceKind::try_new(column::<String>(&row, "kind")?)
         .map_err(|error| CoreError::repository("resource.decode_kind", error))?;
-    let tags = decode_tags(&row)?;
     let content = decode_content(column(&row, "content_json")?)?;
     let created_at = decode_timestamp(column(&row, "created_at")?)?;
     let updated_at = decode_timestamp(column(&row, "updated_at")?)?;
@@ -605,7 +515,6 @@ fn decode_resource(row: SqliteRow) -> Result<Resource, CoreError> {
         name,
         directory_id,
         kind,
-        tags,
         content,
         created_at,
         updated_at,
@@ -624,59 +533,6 @@ fn decode_located_resource(row: SqliteRow) -> Result<LocatedResource, CoreError>
         resource,
         DirectoryLocation::new(directory_id, directory_path),
     )
-}
-
-async fn sync_tags(
-    transaction: &mut Transaction<'_, Sqlite>,
-    resource: &Resource,
-) -> Result<(), CoreError> {
-    let resource_id = resource.id().to_string();
-    sqlx::query("DELETE FROM resource_tags WHERE resource_id = ?")
-        .bind(&resource_id)
-        .execute(&mut **transaction)
-        .await
-        .map_err(|error| CoreError::repository("resource.clear_tags", error))?;
-
-    for tag in resource.tags() {
-        sqlx::query("INSERT INTO tags (name) VALUES (?) ON CONFLICT(name) DO NOTHING")
-            .bind(tag.as_str())
-            .execute(&mut **transaction)
-            .await
-            .map_err(|error| CoreError::repository("resource.ensure_tag", error))?;
-        sqlx::query(
-            r#"
-            INSERT INTO resource_tags (resource_id, tag_id)
-            SELECT ?, id FROM tags WHERE name = ?
-            "#,
-        )
-        .bind(&resource_id)
-        .bind(tag.as_str())
-        .execute(&mut **transaction)
-        .await
-        .map_err(|error| CoreError::repository("resource.save_tag", error))?;
-    }
-
-    delete_orphan_tags(transaction).await?;
-
-    Ok(())
-}
-
-async fn delete_orphan_tags(transaction: &mut Transaction<'_, Sqlite>) -> Result<(), CoreError> {
-    sqlx::query(
-        r#"
-        DELETE FROM tags
-        WHERE NOT EXISTS (
-            SELECT 1
-            FROM resource_tags
-            WHERE resource_tags.tag_id = tags.id
-        )
-        "#,
-    )
-    .execute(&mut **transaction)
-    .await
-    .map_err(|error| CoreError::repository("resource.delete_orphan_tags", error))?;
-
-    Ok(())
 }
 
 fn column<T>(row: &SqliteRow, name: &'static str) -> Result<T, CoreError>
@@ -713,12 +569,6 @@ fn decode_directory(row: SqliteRow) -> Result<Directory, CoreError> {
         revision: decode_revision(column(&row, "revision")?)?,
     })
     .map_err(|error| CoreError::repository("directory.rehydrate", error))
-}
-
-fn decode_tags(row: &SqliteRow) -> Result<Vec<String>, CoreError> {
-    let tags_json: String = column(row, "tags_json")?;
-    serde_json::from_str::<Vec<String>>(&tags_json)
-        .map_err(|error| CoreError::repository("resource.decode_tags", error))
 }
 
 fn decode_content(value: Option<String>) -> Result<Option<ResourceContent>, CoreError> {

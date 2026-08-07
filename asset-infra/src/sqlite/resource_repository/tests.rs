@@ -2,7 +2,7 @@ use super::*;
 use asset_core::domain::{Checksum, ResourceContent, StorageKey};
 use asset_core::port::{
     DirectoryKindDefinition, DirectoryKindRegistry, DirectoryStorage, DirectoryStore,
-    ListResources, ResourceRepository,
+    ResourceRepository,
 };
 use asset_core::service::{DirectoryService, UpdateDirectory};
 use std::path::PathBuf;
@@ -89,7 +89,6 @@ async fn sqlite_repository_roundtrips_resource() {
     let resource = Resource::builder("image.png")
         .with_directory_id(assets.id())
         .with_kind(ResourceKind::try_new("core:image").unwrap())
-        .with_tags(["rust", "asset"])
         .with_content(content)
         .build()
         .unwrap();
@@ -107,14 +106,6 @@ async fn sqlite_repository_roundtrips_resource() {
     assert_eq!(restored.name(), "image.png");
     assert!(restored.kind().is("core:image"));
     assert_eq!(
-        restored
-            .tags()
-            .iter()
-            .map(|tag| tag.as_str())
-            .collect::<Vec<_>>(),
-        vec!["asset", "rust"]
-    );
-    assert_eq!(
         resource_storage_key(&repository, &restored).await.as_str(),
         "assets/image.png"
     );
@@ -122,14 +113,6 @@ async fn sqlite_repository_roundtrips_resource() {
     assert_eq!(restored_content.mime_type(), Some("image/png"));
     assert_eq!(restored_content.checksum(), Some(&checksum));
     assert_eq!(restored_content.modified_at(), Some(modified_at));
-
-    let tag_rows: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM resource_tags WHERE resource_id = ?")
-            .bind(resource.id().to_string())
-            .fetch_one(repository.pool())
-            .await
-            .unwrap();
-    assert_eq!(tag_rows, 2);
 }
 
 #[tokio::test]
@@ -179,34 +162,6 @@ async fn sqlite_repository_classifies_invalid_resource_snapshot_as_repository_fa
 }
 
 #[tokio::test]
-async fn sqlite_repository_updates_tags() {
-    let repository = repository("tags").await;
-    let mut resource = Resource::builder("image")
-        .with_kind(ResourceKind::try_new("core:image").unwrap())
-        .with_tags(["image", "cover"])
-        .build()
-        .unwrap();
-
-    repository.save(&resource).await.unwrap();
-    assert_eq!(
-        repository
-            .find_by_path(&DirectoryPath::root(), resource.name())
-            .await
-            .unwrap()
-            .map(|found| found.resource().id()),
-        Some(resource.id())
-    );
-    resource.replace_tags(vec!["document".to_owned()]).unwrap();
-    repository.save(&resource).await.unwrap();
-    let restored = repository
-        .find_by_id(&resource.id())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(restored.tags()[0].as_str(), "document");
-}
-
-#[tokio::test]
 async fn sqlite_path_lookup_ignores_soft_deleted_resource_and_finds_replacement() {
     let repository = repository("replace-soft-deleted-path").await;
     let directories = directory_service(repository.clone()).await;
@@ -244,106 +199,6 @@ async fn sqlite_path_lookup_ignores_soft_deleted_resource_and_finds_replacement(
             .map(|resource| resource.resource().id()),
         Some(replacement.id())
     );
-}
-
-#[tokio::test]
-async fn sqlite_repository_filters_tags_through_relational_index() {
-    let repository = repository("tag-filter").await;
-    let rust = Resource::builder("rust")
-        .with_tags(["rust", "asset"])
-        .build()
-        .unwrap();
-    let other = Resource::builder("other").build().unwrap();
-    repository.save(&rust).await.unwrap();
-    repository.save(&other).await.unwrap();
-
-    let page = repository
-        .list(&ListResources::new(20, 0).with_tag("rust"))
-        .await
-        .unwrap();
-
-    assert_eq!(page.total, 1);
-    assert_eq!(page.items[0].resource().id(), rust.id());
-}
-
-#[tokio::test]
-async fn sqlite_repository_reuses_tag_dictionary_entries_and_cleans_orphans() {
-    let repository = repository("tag-dictionary").await;
-    let mut first = Resource::builder("first")
-        .with_tags(["shared", "first-only"])
-        .build()
-        .unwrap();
-    let second = Resource::builder("second")
-        .with_tags(["shared", "second-only"])
-        .build()
-        .unwrap();
-
-    repository.save(&first).await.unwrap();
-    repository.save(&second).await.unwrap();
-
-    let shared_dictionary_rows: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM tags WHERE name = 'shared'")
-            .fetch_one(repository.pool())
-            .await
-            .unwrap();
-    let shared_relations: i64 = sqlx::query_scalar(
-        r#"
-        SELECT COUNT(*)
-        FROM resource_tags
-        JOIN tags ON tags.id = resource_tags.tag_id
-        WHERE tags.name = 'shared'
-        "#,
-    )
-    .fetch_one(repository.pool())
-    .await
-    .unwrap();
-    assert_eq!(shared_dictionary_rows, 1);
-    assert_eq!(shared_relations, 2);
-
-    first.replace_tags(vec!["first-only".to_owned()]).unwrap();
-    repository.save(&first).await.unwrap();
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tags WHERE name = 'shared'")
-            .fetch_one(repository.pool())
-            .await
-            .unwrap(),
-        1
-    );
-
-    repository.remove(&second.id()).await.unwrap();
-    let remaining_tags: Vec<String> = sqlx::query_scalar("SELECT name FROM tags ORDER BY name")
-        .fetch_all(repository.pool())
-        .await
-        .unwrap();
-    assert_eq!(remaining_tags, vec!["first-only"]);
-
-    repository.remove(&first.id()).await.unwrap();
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tags")
-            .fetch_one(repository.pool())
-            .await
-            .unwrap(),
-        0
-    );
-}
-
-#[tokio::test]
-async fn sqlite_repository_roundtrips_more_than_sixty_four_tags() {
-    let repository = repository("unbounded-tags").await;
-    let resource = Resource::builder("tagged")
-        .with_tags((0..100).map(|index| format!("tag-{index}")))
-        .build()
-        .unwrap();
-
-    repository.save(&resource).await.unwrap();
-    let restored = repository
-        .find_by_id(&resource.id())
-        .await
-        .unwrap()
-        .unwrap();
-
-    assert_eq!(restored.tags().len(), 100);
-    assert_eq!(restored.tags()[99].as_str(), "tag-99");
 }
 
 #[tokio::test]
@@ -443,10 +298,7 @@ async fn directory_store_rejects_a_stale_aggregate_snapshot() {
 #[tokio::test]
 async fn conditional_remove_rejects_a_stale_resource_snapshot() {
     let repository = repository("conditional-remove").await;
-    let resource = Resource::builder("original")
-        .with_tags(["conditional"])
-        .build()
-        .unwrap();
+    let resource = Resource::builder("original").build().unwrap();
     repository.save(&resource).await.unwrap();
 
     let expected = resource.revision();
@@ -460,13 +312,6 @@ async fn conditional_remove_rejects_a_stale_resource_snapshot() {
             .await
             .unwrap()
     );
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tags WHERE name = 'conditional'")
-            .fetch_one(repository.pool())
-            .await
-            .unwrap(),
-        1
-    );
     assert!(
         repository
             .remove_if_unchanged(&resource.id(), concurrent.revision())
@@ -479,13 +324,6 @@ async fn conditional_remove_rejects_a_stale_resource_snapshot() {
             .await
             .unwrap()
             .is_none()
-    );
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tags")
-            .fetch_one(repository.pool())
-            .await
-            .unwrap(),
-        0
     );
 }
 

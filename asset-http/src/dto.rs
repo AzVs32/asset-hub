@@ -42,8 +42,6 @@ pub(crate) struct ListResourcesQuery {
     pub(crate) limit: Option<u32>,
     /// 可选资源类型过滤。
     pub(crate) kind: Option<String>,
-    /// 可选标签过滤。
-    pub(crate) tag: Option<String>,
     /// 可选名称模糊搜索关键字。
     pub(crate) q: Option<String>,
     /// 相对于当前用户可见根目录的过滤路径；根目录为空字符串。
@@ -66,8 +64,6 @@ pub(crate) struct ListDirectoryQuery {
     pub(crate) limit: Option<u32>,
     /// 可选资源类型过滤。
     pub(crate) kind: Option<String>,
-    /// 可选标签过滤。
-    pub(crate) tag: Option<String>,
     /// 可选名称模糊搜索关键字。
     pub(crate) q: Option<String>,
     /// 是否包含软删除资源。
@@ -79,8 +75,7 @@ pub(crate) struct ListDirectoryQuery {
 #[serde(deny_unknown_fields)]
 #[schema(example = json!({
     "name": "renamed.txt",
-    "kind": "core:resource",
-    "tags": ["demo", "updated"]
+    "kind": "core:resource"
 }))]
 pub(crate) struct UpdateResourceRequest {
     /// 可选新资源展示名。
@@ -90,8 +85,6 @@ pub(crate) struct UpdateResourceRequest {
     /// 相对于当前用户可见根目录的新路径；根目录为空字符串。
     #[schema(value_type = Option<String>)]
     pub(crate) directory: Option<DirectoryPath>,
-    /// 可选资源标签；提供时替换全部标签，空数组表示清空。
-    pub(crate) tags: Option<Vec<String>>,
     /// 是否恢复软删除资源。
     pub(crate) restore: Option<bool>,
 }
@@ -105,8 +98,6 @@ pub(crate) struct CreateUploadRequest {
     #[schema(value_type = String)]
     pub(crate) directory: DirectoryPath,
     pub(crate) kind: Option<String>,
-    #[serde(default)]
-    pub(crate) tags: Vec<String>,
     pub(crate) mime_type: Option<String>,
     pub(crate) size: u64,
     /// 客户端对完整本地文件增量计算出的 SHA-256。
@@ -450,8 +441,6 @@ pub(crate) struct ResourceResponse {
     pub(crate) directory: DirectoryPath,
     /// 资源类型。
     pub(crate) kind: String,
-    /// 资源标签。
-    pub(crate) tags: Vec<String>,
     /// 资源内容引用。
     pub(crate) content: Option<ResourceContentResponse>,
     /// 当前资源允许的操作。
@@ -648,11 +637,6 @@ impl ResourceResponse {
             name: resource.name().to_string(),
             directory,
             kind: resource.kind().as_str().to_string(),
-            tags: resource
-                .tags()
-                .iter()
-                .map(|tag| tag.as_str().to_owned())
-                .collect(),
             content: resource.content().map(ResourceContentResponse::from),
             actions: ResourceActionsResponse::from(actions),
             created_at: resource.created_at().to_rfc3339(),
