@@ -6,13 +6,6 @@ use axum::http::HeaderValue;
 use clap::{ArgAction, Parser};
 
 const DEFAULT_HTTP_ADDR: &str = "127.0.0.1:8080";
-const ADDR_ENV: &str = "ASSET_HTTP_ADDR";
-const ENABLE_SWAGGER_ENV: &str = "ASSET_HTTP_ENABLE_SWAGGER";
-const ENABLE_PURGE_ENV: &str = "ASSET_HTTP_ENABLE_PURGE";
-const CORS_ALLOWED_ORIGINS_ENV: &str = "ASSET_HTTP_CORS_ALLOWED_ORIGINS";
-const REQUEST_TIMEOUT_SECS_ENV: &str = "ASSET_HTTP_REQUEST_TIMEOUT_SECS";
-const COOKIE_SECURE_ENV: &str = "ASSET_HTTP_COOKIE_SECURE";
-const SESSION_INACTIVITY_SECS_ENV: &str = "ASSET_HTTP_SESSION_INACTIVITY_SECS";
 const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 30;
 const DEFAULT_SESSION_INACTIVITY_SECS: u64 = 12 * 60 * 60;
 pub(crate) const DEFAULT_SESSION_SQLITE_PATH: &str = "data/.asset-hub/http-session.sqlite";
@@ -25,13 +18,12 @@ struct HttpCli {
     config: Option<PathBuf>,
 
     /// HTTP listen address.
-    #[arg(long, env = ADDR_ENV, default_value = DEFAULT_HTTP_ADDR)]
+    #[arg(long, default_value = DEFAULT_HTTP_ADDR)]
     addr: SocketAddr,
 
     /// Enable Swagger UI and the OpenAPI document.
     #[arg(
         long,
-        env = ENABLE_SWAGGER_ENV,
         default_value_t = true,
         num_args = 0..=1,
         default_missing_value = "true",
@@ -42,7 +34,6 @@ struct HttpCli {
     /// Enable the permanent resource purge endpoint.
     #[arg(
         long,
-        env = ENABLE_PURGE_ENV,
         default_value_t = true,
         num_args = 0..=1,
         default_missing_value = "true",
@@ -51,17 +42,16 @@ struct HttpCli {
     enable_purge: bool,
 
     /// Comma-separated explicit CORS origins.
-    #[arg(long, env = CORS_ALLOWED_ORIGINS_ENV, value_parser = parse_cors_policy)]
+    #[arg(long, value_parser = parse_cors_policy)]
     cors_allowed_origins: Option<CorsPolicy>,
 
     /// HTTP request timeout in seconds. Streaming uploads are exempt from the total timeout.
-    #[arg(long, env = REQUEST_TIMEOUT_SECS_ENV, default_value_t = DEFAULT_REQUEST_TIMEOUT_SECS)]
+    #[arg(long, default_value_t = DEFAULT_REQUEST_TIMEOUT_SECS)]
     request_timeout_secs: u64,
 
     /// Mark session cookies as Secure.
     #[arg(
         long,
-        env = COOKIE_SECURE_ENV,
         default_value_t = false,
         num_args = 0..=1,
         default_missing_value = "true",
@@ -72,7 +62,6 @@ struct HttpCli {
     /// Session inactivity timeout in seconds.
     #[arg(
         long,
-        env = SESSION_INACTIVITY_SECS_ENV,
         default_value_t = DEFAULT_SESSION_INACTIVITY_SECS,
         value_parser = clap::value_parser!(u64).range(1..)
     )]
@@ -126,19 +115,18 @@ pub struct HttpSettings {
 }
 
 impl HttpSettings {
-    /// 使用 Clap 读取命令行参数和兼容的环境变量。
+    /// 使用 Clap 读取命令行参数。
     ///
-    /// - `ASSET_HTTP_ADDR`：监听地址，默认 `127.0.0.1:8080`。
+    /// - `--addr`：监听地址，默认 `127.0.0.1:8080`。
     /// - `--config`：可选配置文件路径，未指定时使用默认 `config.toml`。
-    /// - `ASSET_HTTP_ENABLE_SWAGGER`：是否暴露 Swagger UI，默认 `true`。
-    /// - `ASSET_HTTP_ENABLE_PURGE`：是否开放物理删除接口，默认 `true`。
-    /// - `ASSET_HTTP_CORS_ALLOWED_ORIGINS`：逗号分隔的显式 origin，不允许 `*`。
-    /// - `ASSET_HTTP_REQUEST_TIMEOUT_SECS`：普通请求总超时秒数，默认 `30`；不限制流式上传总时长。
-    /// - `ASSET_HTTP_COOKIE_SECURE`：是否为会话 Cookie 添加 Secure，默认 `false`。
-    /// - `ASSET_HTTP_SESSION_INACTIVITY_SECS`：会话空闲超时秒数，默认 `43200`。
+    /// - `--enable-swagger`：是否暴露 Swagger UI，默认 `true`。
+    /// - `--enable-purge`：是否开放物理删除接口，默认 `true`。
+    /// - `--cors-allowed-origins`：逗号分隔的显式 origin，不允许 `*`。
+    /// - `--request-timeout-secs`：普通请求总超时秒数，默认 `30`；不限制流式上传总时长。
+    /// - `--cookie-secure`：是否为会话 Cookie 添加 Secure，默认 `false`。
+    /// - `--session-inactivity-secs`：会话空闲超时秒数，默认 `43200`。
     ///
-    /// 布尔环境变量只接受 `true` 或 `false`。命令行布尔选项省略可选值时表示 `true`，
-    /// 显式提供的值同样只接受 `true` 或 `false`。
+    /// 布尔选项省略可选值时表示 `true`，显式提供的值只接受 `true` 或 `false`。
     pub fn from_cli() -> Self {
         Self::from_cli_args(HttpCli::parse())
     }

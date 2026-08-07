@@ -1595,7 +1595,7 @@ async fn disabled_purge_endpoint_returns_forbidden() {
         error["error"]
             .as_str()
             .unwrap()
-            .contains("ASSET_HTTP_ENABLE_PURGE")
+            .contains("--enable-purge=false")
     );
 }
 

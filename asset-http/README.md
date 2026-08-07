@@ -13,12 +13,12 @@ part of this HTTP authentication-session store.
 The executable uses the fixed relative path `data/.asset-hub/http-session.sqlite`, resolved from
 its working directory. Its pool size is fixed at 5 connections and expired sessions are deleted
 once per hour. These adapter implementation details are intentionally absent from `config.toml`,
-CLI flags, and environment variables. Cookie policy remains configurable with:
+CLI flags and environment variables. Cookie policy remains configurable with:
 
-| Environment variable | Default | Purpose |
+| CLI option | Default | Purpose |
 | --- | --- | --- |
-| `ASSET_HTTP_SESSION_INACTIVITY_SECS` | `43200` | Cookie session inactivity expiry |
-| `ASSET_HTTP_COOKIE_SECURE` | `false` | Require HTTPS when sending the session cookie |
+| `--session-inactivity-secs` | `43200` | Cookie session inactivity expiry |
+| `--cookie-secure` | `false` | Require HTTPS when sending the session cookie |
 
 The SQLite adapter creates its parent directory, initializes the `http_sessions` table through the
 store migration API, owns the expired-session cleanup task, and contributes an independent

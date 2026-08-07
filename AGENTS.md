@@ -36,7 +36,6 @@ The important aggregates are:
 - `asset-cli`: administration commands and CLI executable.
 - `asset-web`: React host using domain/application/adapter boundaries.
 - `plugins`: bundled external plugins that consume `asset-plugin-api`.
-- `docker`: production image and local Compose assembly.
 
 ## Dependency rules
 

@@ -56,6 +56,6 @@ pub(crate) async fn health(
 /// 物理删除接口已被启动配置禁用。
 pub(crate) async fn purge_disabled() -> Result<StatusCode, HttpError> {
     Err(HttpError::forbidden(
-        "resource purge endpoint is disabled by ASSET_HTTP_ENABLE_PURGE",
+        "resource purge endpoint is disabled by --enable-purge=false",
     ))
 }

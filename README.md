@@ -6,7 +6,7 @@ Web interface, an administration CLI, and a plugin system for supporting
 additional resource formats and actions.
 
 The project currently stores metadata in SQLite and asset files on the local
-filesystem, making it easy to run on a workstation or self-host with Docker.
+filesystem, making it easy to run directly on a workstation.
 
 ## Features
 
@@ -16,14 +16,12 @@ filesystem, making it easy to run on a workstation or self-host with Docker.
 - Extend resource detection, actions, and views with Wasm and Web plugins.
 - Display kind-neutral resource and directory thumbnails with nearest-kind Host or plugin
   providers for specialized kinds such as images and EPUB files.
-- Run locally from source or deploy with Docker Compose.
+- Run the API, administration CLI, and Web development server directly from source.
 
 ## Requirements
 
 - Rust 1.97.1, pinned by `rust-toolchain.toml`.
 - Node.js 22.22.2, pinned by `.node-version` and `.nvmrc`.
-
-Docker is sufficient when using the Compose deployment.
 
 ## Quick Start
 
@@ -83,21 +81,6 @@ cargo run -p asset-cli --bin asset -- --help
 The CLI provides configuration inspection, user management, system
 maintenance, and plugin commands.
 See [`asset-cli/README.md`](asset-cli/README.md) for usage details.
-
-## Docker
-
-Create the deployment environment file and start the stack:
-
-```bash
-cp docker/.env.example docker/.env
-cd docker
-docker compose up -d --build
-docker compose exec api asset --config /conf/config.toml user --create admin --admin
-```
-
-Open `http://127.0.0.1:8080` after the containers start.
-
-See [`docker/README.md`](docker/README.md) for usage details.
 
 ## Plugins
 

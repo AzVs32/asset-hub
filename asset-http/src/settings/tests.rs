@@ -2,14 +2,9 @@ use super::*;
 use clap::CommandFactory;
 
 #[test]
-fn config_path_has_no_environment_variable_source() {
-    let command = HttpCli::command();
-    let config = command
-        .get_arguments()
-        .find(|argument| argument.get_id() == "config")
-        .unwrap();
-
-    assert!(config.get_env().is_none());
+fn http_cli_arguments_have_no_environment_variable_sources() {
+    let help = HttpCli::command().render_help().to_string();
+    assert!(!help.contains("[env:"));
 }
 
 #[test]
