@@ -144,7 +144,6 @@ dependencies = [
  "asset-infra",
  "asset-plugin-api",
  "asset-runtime",
- "async-trait",
  "clap",
  "comfy-table",
  "rpassword",

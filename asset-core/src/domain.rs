@@ -1,5 +1,4 @@
 mod action;
-mod audit;
 mod directory;
 mod identity;
 mod resource;
@@ -16,10 +15,6 @@ pub use action::{
     ResourceActionAppliesTo, ResourceActionContentDelivery, ResourceActionDefinition,
     ResourceActionOutputContract, ResourceActionRequirements, ResourceActionUi,
     ResourceContentMatcher,
-};
-pub use audit::{
-    NewSecurityAuditEvent, SecurityAuditActor, SecurityAuditEvent, SecurityAuditEventType,
-    SecurityAuditOutcome, SecurityAuditSource,
 };
 pub use directory::{
     Directory, DirectoryId, DirectoryKind, DirectoryPath, DirectorySnapshot,

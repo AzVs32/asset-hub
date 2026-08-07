@@ -1,7 +1,7 @@
 use crate::{PluginWebAssets, UploadFinalizationScheduler};
 use asset_core::CoreError;
 use asset_core::domain::{ResourceActionPolicy, ResourceContentEditPolicy};
-use asset_core::port::{DirectoryKindRegistry, ResourceKindRegistry, SecurityAuditRepository};
+use asset_core::port::{DirectoryKindRegistry, ResourceKindRegistry};
 use asset_core::service::{
     AuthorizationService, DirectoryService, ResourceService, ResourceServicePorts, UserService,
 };
@@ -216,10 +216,6 @@ impl AssetRuntime {
 
     pub fn upload_finalization_scheduler(&self) -> UploadFinalizationScheduler {
         self.upload_finalizations.clone()
-    }
-
-    pub fn security_audit_repository(&self) -> Arc<dyn SecurityAuditRepository> {
-        self.infrastructure.security_audit_repository()
     }
 
     /// 返回由基础设施统一创建的数据库连接池。

@@ -48,7 +48,7 @@ MUST:
 - keep external plugin contracts in `asset-plugin-api`;
 - use `ResourceService::secured` or an equivalently authorization-bound core use case for
   user-scoped or untrusted resource mutations; trusted local maintenance commands must remain
-  explicit administrative operations and preserve audit behavior;
+  explicit administrative operations;
 - preserve a single composition root for each executable surface.
 
 MUST NOT:

@@ -22,6 +22,3 @@ comfy-table.workspace = true
 rpassword.workspace = true
 tokio.workspace = true
 toml.workspace = true
-
-[dev-dependencies]
-async-trait.workspace = true

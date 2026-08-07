@@ -4,22 +4,6 @@
  */
 
 export interface paths {
-    "/auth/audit-events": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["list_security_audit_events"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/auth/login": {
         parameters: {
             query?: never;
@@ -685,16 +669,6 @@ export interface components {
             /** @description 资源最后更新时间，RFC3339 格式。 */
             updated_at: string;
         };
-        SecurityAuditEventResponse: {
-            actor_user_id?: string | null;
-            event_type: string;
-            /** Format: int64 */
-            id: number;
-            occurred_at: string;
-            outcome: string;
-            source: string;
-            target?: string | null;
-        };
         /**
          * @description 更新资源请求。
          * @example {
@@ -743,34 +717,6 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    list_security_audit_events: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                page: number | null;
-                limit: number | null;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SecurityAuditEventResponse"][];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
     login: {
         parameters: {
             query?: never;

@@ -40,7 +40,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = with_authentication(
         app,
         runtime.user_service(),
-        runtime.security_audit_repository(),
         session_store,
         settings.session_options(),
     )?;

@@ -1,10 +1,7 @@
-use crate::{CliResult, audit};
-use asset_core::domain::SecurityAuditEventType;
-use asset_core::port::SecurityAuditRepository;
+use crate::CliResult;
 use asset_core::service::ResourceService;
 use clap::{ArgGroup, Args};
 use std::io::Write;
-use std::sync::Arc;
 use std::time::Duration;
 
 #[derive(Debug, Args)]
@@ -20,21 +17,11 @@ pub(crate) struct SystemCommand {
     scan_resource: bool,
 }
 
-pub(crate) async fn run(
-    command: SystemCommand,
-    service: ResourceService,
-    audit_repository: Arc<dyn SecurityAuditRepository>,
-) -> CliResult {
+pub(crate) async fn run(command: SystemCommand, service: ResourceService) -> CliResult {
     if command.scan_resource {
         println!("verifying all stored resources with SHA-256...");
         std::io::stdout().flush()?;
-        let report = audit::audited(
-            audit_repository.as_ref(),
-            SecurityAuditEventType::ResourceScan,
-            None,
-            service.scan_resources(),
-        )
-        .await?;
+        let report = service.scan_resources().await?;
         println!(
             "verified {} resources ({} hashed, {} directories) in {}",
             report.files,

@@ -1,11 +1,10 @@
-use crate::{CliResult, audit};
+use crate::CliResult;
 use anyhow::{Context, bail};
-use asset_core::domain::{DirectoryPath, SecurityAuditEventType, UserRole, UserStatus};
-use asset_core::port::{LocatedUser, SecurityAuditRepository};
+use asset_core::domain::{DirectoryPath, UserRole, UserStatus};
+use asset_core::port::LocatedUser;
 use asset_core::service::UserService;
 use clap::{ArgGroup, Args};
 use comfy_table::{Table, presets::UTF8_FULL};
-use std::sync::Arc;
 
 #[derive(Debug, Args)]
 #[command(group(
@@ -48,43 +47,25 @@ pub(crate) struct UserCommand {
     show: Option<String>,
 }
 
-pub(crate) async fn run(
-    command: UserCommand,
-    users: UserService,
-    audit: Arc<dyn SecurityAuditRepository>,
-) -> CliResult {
+pub(crate) async fn run(command: UserCommand, users: UserService) -> CliResult {
     if command.list {
         print_user_list(&users.list().await?);
     } else if let Some(username) = command.create {
         let role = create_role(command.admin);
         let password = prompt_new_password()?;
-        let user = audit::audited(
-            audit.as_ref(),
-            SecurityAuditEventType::AuthUserCreate,
-            Some(&username),
-            users.create(username.clone(), &password, role, None),
-        )
-        .await?;
+        let user = users.create(username, &password, role, None).await?;
         println!("created {} `{}`", role_name(role), user.username());
     } else if let Some(username) = command.password {
         let password = prompt_new_password()?;
-        let user = audit::audited(
-            audit.as_ref(),
-            SecurityAuditEventType::AuthUserPassword,
-            Some(&username),
-            async {
-                users
-                    .update_password(&username, &password)
-                    .await?
-                    .ok_or_else(|| asset_core::CoreError::not_found("user", &username))
-            },
-        )
-        .await?;
+        let user = users
+            .update_password(&username, &password)
+            .await?
+            .ok_or_else(|| asset_core::CoreError::not_found("user", &username))?;
         println!("updated password for user `{}`", user.username());
     } else if let Some(username) = command.enable {
-        update_status(&users, audit.as_ref(), &username, UserStatus::Active).await?;
+        update_status(&users, &username, UserStatus::Active).await?;
     } else if let Some(username) = command.disable {
-        update_status(&users, audit.as_ref(), &username, UserStatus::Disabled).await?;
+        update_status(&users, &username, UserStatus::Disabled).await?;
     } else if let Some(username) = command.show {
         let user = users
             .find_located_by_username(&username)
@@ -105,28 +86,15 @@ fn create_role(admin: bool) -> UserRole {
     }
 }
 
-async fn update_status(
-    users: &UserService,
-    audit: &dyn SecurityAuditRepository,
-    username: &str,
-    status: UserStatus,
-) -> CliResult {
-    let user = audit::audited(
-        audit,
-        SecurityAuditEventType::AuthUserStatus,
-        Some(username),
-        async {
-            let user = users
-                .find_by_username(username)
-                .await?
-                .ok_or_else(|| asset_core::CoreError::not_found("user", username))?;
-            users
-                .update_status(&user.id(), status)
-                .await?
-                .ok_or_else(|| asset_core::CoreError::not_found("user", username))
-        },
-    )
-    .await?;
+async fn update_status(users: &UserService, username: &str, status: UserStatus) -> CliResult {
+    let user = users
+        .find_by_username(username)
+        .await?
+        .ok_or_else(|| asset_core::CoreError::not_found("user", username))?;
+    let user = users
+        .update_status(&user.id(), status)
+        .await?
+        .ok_or_else(|| asset_core::CoreError::not_found("user", username))?;
     println!(
         "{} user `{}`",
         match status {

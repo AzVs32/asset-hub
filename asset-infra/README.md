@@ -2,7 +2,7 @@
 
 `asset-infra` contains concrete adapters for the host side of Asset Hub. It initializes the current
 SQLite database, local OpenDAL blob storage, filesystem scanner/synchronizer, directory index,
-identity/audit/upload repositories, the Host-owned built-in capability catalog, Extism executor,
+identity/upload repositories, the Host-owned built-in capability catalog, Extism executor,
 registries, and plugin package filesystem adapter.
 
 It does not assemble Core services or decide application startup order. `AssetInfrastructure::new`

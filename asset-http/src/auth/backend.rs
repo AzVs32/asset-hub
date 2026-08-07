@@ -51,15 +51,13 @@ pub(crate) struct Credentials {
 #[derive(Clone)]
 pub(crate) struct AuthBackend {
     pub(super) users: UserService,
-    pub(super) audit: Arc<dyn SecurityAuditRepository>,
     pub(super) login_failures: Arc<Mutex<LoginFailureCache>>,
 }
 
 impl AuthBackend {
-    pub(crate) fn new(users: UserService, audit: Arc<dyn SecurityAuditRepository>) -> Self {
+    pub(crate) fn new(users: UserService) -> Self {
         Self {
             users,
-            audit,
             login_failures: Arc::new(Mutex::new(LoginFailureCache::default())),
         }
     }
@@ -89,12 +87,6 @@ impl AuthBackend {
             .map_err(|_| HttpError::internal("login rate limiter is unavailable"))?;
         failures.record(key, succeeded);
         Ok(())
-    }
-
-    pub(super) async fn record_audit(&self, event: NewSecurityAuditEvent) {
-        if let Err(error) = self.audit.record(&event).await {
-            tracing::error!(error = %error, "write security audit event");
-        }
     }
 }
 

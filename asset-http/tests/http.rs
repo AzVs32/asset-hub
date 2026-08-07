@@ -1858,7 +1858,6 @@ async fn openapi_exposes_current_http_contract() {
     assert!(document["paths"].get("/auth/login").is_some());
     assert!(document["paths"].get("/auth/users/{id}").is_some());
     assert!(document["paths"].get("/scan").is_none());
-    assert!(document["paths"].get("/audit").is_none());
     assert!(document["paths"].get("/auth/directory-grants").is_none());
     assert!(
         document["components"]["schemas"]["AuthenticatedUser"]["properties"]
@@ -2268,7 +2267,6 @@ async fn authentication_starts_without_users_and_limits_member_workspace_access(
     let router = with_authentication(
         base,
         users.clone(),
-        runtime.security_audit_repository(),
         session_store,
         &SessionOptions {
             cookie_secure: false,
@@ -2595,31 +2593,6 @@ async fn authentication_starts_without_users_and_limits_member_workspace_access(
     let stale_session =
         request_with_cookie(&app, Method::GET, "/auth/me", json!({}), &alice_cookie).await;
     assert_eq!(stale_session.status(), StatusCode::UNAUTHORIZED);
-
-    let audit_events = request_with_cookie(
-        &app,
-        Method::GET,
-        "/auth/audit-events?limit=500",
-        json!({}),
-        &admin_cookie,
-    )
-    .await;
-    assert_eq!(audit_events.status(), StatusCode::OK);
-    let audit_events = response_json(audit_events).await;
-    let events = audit_events.as_array().unwrap();
-    assert!(events.iter().any(|event| {
-        event["event_type"] == "auth.login"
-            && event["source"] == "http"
-            && event["outcome"] == "failure"
-            && event["target"] == "admin"
-            && event["actor_user_id"].is_null()
-    }));
-    assert!(events.iter().any(|event| {
-        event["event_type"] == "auth.user.status"
-            && event["source"] == "http"
-            && event["actor_user_id"].is_string()
-            && event["outcome"] == "success"
-    }));
 }
 
 async fn login_with_password(app: &TestApp, username: &str, password: &str) -> (String, Value) {

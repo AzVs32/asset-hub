@@ -71,7 +71,7 @@ docker compose exec api asset --config /conf/config.toml user --create admin --a
 ```
 
 管理员默认拥有根工作区 `/`。不带 `--admin` 时创建普通成员，其默认工作区为
-`users/<username>`。创建操作会写入 `auth.user.create` 安全审计事件。
+`users/<username>`。
 
 `docker/.env` 仅保存 Compose 与 HTTP 运行参数，不包含用户凭据。该文件已被 `.gitignore`
 排除，不应提交环境专属配置。
@@ -252,14 +252,9 @@ docker compose up -d
 - 不要把 API 容器的 `8080` 端口直接发布到公网；Compose 默认只对 Web 容器暴露端口。
 - 使用防火墙限制管理端来源。
 - 定期同时备份 `/conf` 和 `/data`。
-- `/data/.asset-hub/asset-hub.sqlite` 中包含 `security_audit_events` 安全审计表，备份与恢复时
-  必须与 `/data` 中的业务文件和 `/conf` 配置一并处理。
 - 只在受信终端中执行 `asset --config /conf/config.toml user --create <用户名> --admin`，并
   限制 Docker socket 和容器执行权限；密码由 CLI 隐藏读取，不应写入环境变量或编排文件。
-- 设置日志收集和磁盘/卷容量监控。安全审计事件当前不会自动清理，应按合规要求定期归档
-  或删除历史记录，并监控 SQLite 文件增长。
-- 使用 `GET /auth/audit-events?page=1&limit=100`（仅管理员）接入安全事件巡检；重点告警连续
-  登录失败、登录限流、权限拒绝及管理操作。
+- 设置日志收集和磁盘/卷容量监控。
 - 将 `GET /health` 用作 readiness 探针。该接口同时检查 SQLite 和对象存储，任一依赖异常
   都会返回 HTTP 503；它不等同于只判断进程存活的 liveness 探针。
 

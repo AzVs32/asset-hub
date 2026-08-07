@@ -4,19 +4,17 @@
 //! - 目录持久化与查询：`DirectoryStore`、`DirectoryQuery`、`DirectoryIndex`
 //! - 内容存储：`BlobStorage`、`DirectoryStorage`、`StorageScanner`
 //! - 运行时注册与执行：kind/action registry、action executor
-//! - 身份与审计：用户仓储、密码哈希、安全审计仓储
+//! - 身份：用户仓储、密码哈希
 //!
 //! Port 只描述 Core 所需语义；OpenDAL、sqlx、Wasm runtime 等具体类型只能出现在
 //! infrastructure adapter 中。所有公开端口统一从本模块 re-export。
 
-mod audit;
 mod directory;
 mod identity;
 mod resource;
 mod storage;
 mod upload;
 
-pub use audit::SecurityAuditRepository;
 pub use directory::{
     DirectoryActionExecutor, DirectoryActionOutput, DirectoryActionRegistry,
     DirectoryActionRequest, DirectoryIndex, DirectoryKindDefinition, DirectoryKindRegistry,

@@ -47,9 +47,3 @@ pub(crate) struct UpdateUserStatusRequest {
     #[schema(value_type = String)]
     pub(super) status: UserStatus,
 }
-
-#[derive(Deserialize, utoipa::IntoParams)]
-pub(crate) struct SecurityAuditQuery {
-    pub(super) page: Option<u32>,
-    pub(super) limit: Option<u32>,
-}

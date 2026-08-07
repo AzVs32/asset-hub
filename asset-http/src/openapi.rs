@@ -37,7 +37,6 @@ impl Modify for CookieSecurity {
         auth::routes::create_user,
         auth::routes::list_users,
         auth::routes::update_user_status,
-        auth::routes::list_security_audit_events,
         handlers::maintenance::health,
         handlers::resource::list_resource_kinds,
         handlers::resource::list_directory_kinds,
@@ -94,7 +93,6 @@ impl Modify for CookieSecurity {
             ,auth::Credentials
             ,auth::MeResponse
             ,auth::CreateUserRequest
-            ,crate::audit::SecurityAuditEventResponse
             ,auth::ManagedUserResponse
             ,auth::UpdateUserStatusRequest
         )

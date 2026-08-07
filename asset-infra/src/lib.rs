@@ -23,14 +23,14 @@ use asset_core::service::ResourceService;
 use asset_core::{
     CoreError, port::BlobStorage, port::DirectoryIndex, port::DirectoryQuery,
     port::DirectoryStorage, port::DirectoryStore, port::ResourceContentReplacementRepository,
-    port::ResourceQuery, port::ResourceRepository, port::SecurityAuditRepository,
-    port::StorageScanner, port::UploadSessionRepository, port::UserQuery, port::UserRepository,
+    port::ResourceQuery, port::ResourceRepository, port::StorageScanner,
+    port::UploadSessionRepository, port::UserQuery, port::UserRepository,
 };
 use config::{AssetInfraConfig, BlobBackend, DatabaseBackend};
 use directory_index::InMemoryDirectoryIndex;
 use sqlite::{
     SqliteIdentityRepository, SqliteResourceContentReplacementRepository, SqliteResourceRepository,
-    SqliteSecurityAuditRepository, SqliteUploadSessionRepository,
+    SqliteUploadSessionRepository,
 };
 use sqlx::SqlitePool;
 use std::sync::Arc;
@@ -48,7 +48,6 @@ pub struct AssetInfrastructure {
     resource_repository: Arc<SqliteResourceRepository>,
     directory_index: Arc<InMemoryDirectoryIndex>,
     identity_repository: Arc<SqliteIdentityRepository>,
-    security_audit_repository: Arc<SqliteSecurityAuditRepository>,
     upload_session_repository: Arc<SqliteUploadSessionRepository>,
     content_replacement_repository: Arc<SqliteResourceContentReplacementRepository>,
     /// 对象存储适配器。
@@ -93,9 +92,6 @@ impl AssetInfrastructure {
         let identity_repository = Arc::new(SqliteIdentityRepository::new(
             resource_repository.pool().clone(),
         ));
-        let security_audit_repository = Arc::new(SqliteSecurityAuditRepository::new(
-            resource_repository.pool().clone(),
-        ));
         let upload_session_repository = Arc::new(SqliteUploadSessionRepository::new(
             resource_repository.pool().clone(),
         ));
@@ -107,7 +103,6 @@ impl AssetInfrastructure {
             resource_repository,
             directory_index,
             identity_repository,
-            security_audit_repository,
             upload_session_repository,
             content_replacement_repository,
             blob_storage,
@@ -152,10 +147,6 @@ impl AssetInfrastructure {
 
     pub fn user_query(&self) -> Arc<dyn UserQuery> {
         self.identity_repository.clone()
-    }
-
-    pub fn security_audit_repository(&self) -> Arc<dyn SecurityAuditRepository> {
-        self.security_audit_repository.clone()
     }
 
     /// 返回对象存储端口对象。

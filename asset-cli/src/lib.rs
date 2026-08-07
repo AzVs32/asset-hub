@@ -3,7 +3,6 @@ use asset_runtime::AssetRuntime;
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 
-mod audit;
 mod commands;
 
 use commands::{config, plugin, system, user};
@@ -44,21 +43,11 @@ pub async fn run(cli: Cli) -> CliResult {
         Command::Config(command) => config::run(command, config_path),
         Command::System(command) => {
             let runtime = maintenance_runtime(config_path).await?;
-            system::run(
-                command,
-                runtime.resource_service(),
-                runtime.security_audit_repository(),
-            )
-            .await
+            system::run(command, runtime.resource_service()).await
         }
         Command::User(command) => {
             let runtime = maintenance_runtime(config_path).await?;
-            user::run(
-                command,
-                runtime.user_service(),
-                runtime.security_audit_repository(),
-            )
-            .await
+            user::run(command, runtime.user_service()).await
         }
         Command::Plugin(command) => {
             if config_path.is_some() {

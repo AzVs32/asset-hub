@@ -74,8 +74,7 @@ asset plugin --help
 3. 参数、选项及默认值。
 4. 是否读取配置或初始化运行时。
 5. 是否修改数据库、对象存储或文件系统。
-6. 是否写入安全审计事件。
-7. 至少一个可直接运行的示例。
+6. 至少一个可直接运行的示例。
 
 建议使用以下格式：
 
@@ -92,7 +91,7 @@ asset <group> <command> [OPTIONS]
 
 参数：说明参数、默认值和约束。
 
-副作用：说明会修改哪些数据，以及是否记录安全审计事件。
+副作用：说明会修改哪些数据。
 ````
 
 # `asset config` 命令
@@ -140,8 +139,7 @@ asset --config config.toml system --scan-resource
 ```
 
 HTTP 服务启动和周期同步只比较物理文件修改时间与 `ResourceContent.size`；只有新增或发生
-变化的文件才重新计算 SHA-256。扫描成功或失败后会写入 `resource.scan` 安全审计事件；
-该事件不包含资源内容或文件路径。
+变化的文件才重新计算 SHA-256。
 
 # `asset user` 命令
 
@@ -151,7 +149,7 @@ HTTP 服务启动和周期同步只比较物理文件修改时间与 `ResourceCo
 ## `asset user --list`
 
 按用户名列出全部用户，以表格展示用户名、角色、状态、工作目录和用户 ID。该命令不会输出
-密码哈希，也不会写入安全审计事件。
+密码哈希。
 
 ```bash
 asset user --list
@@ -170,8 +168,7 @@ asset --config config.toml user --create admin --admin
 ```
 
 `--admin` 只能与 `--create` 一起使用。首次部署应先用它创建至少一个管理员，再登录 Web。
-该命令会创建用户数据库记录及其工作目录，并写入 `auth.user.create` 安全审计事件。审计事件
-只记录目标用户名，不记录密码。
+该命令会创建用户数据库记录及其工作目录。
 
 ## `asset user --password <USERNAME>`
 
@@ -182,9 +179,8 @@ asset --config config.toml user --create admin --admin
 asset user --password alice
 ```
 
-该命令会更新用户数据库记录并写入 `auth.user.password` 安全审计事件。密码不会作为命令参数
-传递，因此不会进入 shell 历史、进程参数列表或审计记录。密码更新会改变会话认证哈希，使
-已有会话在后续校验时失效。
+该命令会更新用户数据库记录。密码不会作为命令参数传递，因此不会进入 shell 历史或进程
+参数列表。密码更新会改变会话认证哈希，使已有会话在后续校验时失效。
 
 ## `asset user --enable <USERNAME>`
 
@@ -194,7 +190,7 @@ asset user --password alice
 asset user --enable alice
 ```
 
-该命令会更新用户状态并写入 `auth.user.status` 安全审计事件。
+该命令会更新用户状态。
 
 ## `asset user --disable <USERNAME>`
 
@@ -205,12 +201,12 @@ asset user --enable alice
 asset user --disable alice
 ```
 
-该命令会更新用户状态并写入 `auth.user.status` 安全审计事件。
+该命令会更新用户状态。
 
 ## `asset user --show <USERNAME>`
 
 展示指定用户的用户名、ID、角色、状态、工作目录及创建和更新时间。该命令不会输出任何密码
-信息，也不会写入安全审计事件。用户不存在时命令以非零状态退出。
+信息。用户不存在时命令以非零状态退出。
 
 ```bash
 asset user --show alice

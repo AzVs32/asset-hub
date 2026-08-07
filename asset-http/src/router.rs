@@ -3,7 +3,7 @@ use crate::handlers;
 use crate::openapi::ApiDoc;
 use crate::settings::{CorsPolicy, RouterOptions, SessionOptions};
 use crate::state::HttpState;
-use asset_core::port::{ResourceKindRegistry, SecurityAuditRepository};
+use asset_core::port::ResourceKindRegistry;
 use asset_core::service::ResourceService;
 use asset_core::service::{AuthorizationService, UserService};
 use asset_runtime::{PluginWebAssets, UploadFinalizationScheduler};
@@ -141,14 +141,13 @@ pub fn build_router(
 pub fn with_authentication<S>(
     router: Router,
     users: UserService,
-    audit: Arc<dyn SecurityAuditRepository>,
     session_store: S,
     session_options: &SessionOptions,
 ) -> Result<Router, Box<dyn std::error::Error>>
 where
     S: SessionStore + Clone,
 {
-    let backend = AuthBackend::new(users, audit);
+    let backend = AuthBackend::new(users);
     let inactivity_seconds = i64::try_from(session_options.inactivity_timeout.as_secs())?;
     let session_layer = SessionManagerLayer::new(session_store)
         .with_secure(session_options.cookie_secure)
@@ -168,17 +167,13 @@ where
         )
         .route("/auth/logout", post(auth::logout))
         .route("/auth/me", get(auth::me))
-        .route("/auth/audit-events", get(auth::list_security_audit_events))
         .route("/auth/users", get(auth::list_users).post(auth::create_user))
         .route(
             "/auth/users/{id}",
             axum::routing::patch(auth::update_user_status),
         );
 
-    Ok(protected
-        .merge(public)
-        .layer(middleware::from_fn(auth::audit_request))
-        .layer(auth_layer))
+    Ok(protected.merge(public).layer(auth_layer))
 }
 
 fn cors_layer(policy: CorsPolicy) -> CorsLayer {
