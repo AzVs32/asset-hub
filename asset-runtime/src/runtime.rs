@@ -16,7 +16,6 @@ use asset_infra::password::Argon2PasswordHasher;
 use asset_infra::plugin::{ExtismActionExecutor, ExtismHost};
 use asset_infra::plugin_package::PluginCatalog;
 use asset_infra::storage::LocalStorageSync;
-use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
@@ -216,11 +215,6 @@ impl AssetRuntime {
 
     pub fn upload_finalization_scheduler(&self) -> UploadFinalizationScheduler {
         self.upload_finalizations.clone()
-    }
-
-    /// 返回由基础设施统一创建的数据库连接池。
-    pub fn database_pool(&self) -> SqlitePool {
-        self.infrastructure.database_pool()
     }
 
     /// 返回资源类型注册表。

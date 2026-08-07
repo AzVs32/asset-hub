@@ -1,8 +1,6 @@
-use asset_http::{HttpSettings, build_router, with_authentication};
+use asset_http::{HttpSessionRuntime, HttpSettings, build_router, with_authentication};
 use asset_infra::config::AssetInfraConfig;
 use asset_runtime::AssetRuntime;
-use tower_sessions::session_store::ExpiredDeletion;
-use tower_sessions_sqlx_store::SqliteStore;
 use tracing::info;
 
 #[tokio::main]
@@ -16,6 +14,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let mut runtime = AssetRuntime::new(config).await?;
     runtime.start_storage_sync().await?;
+    let session_runtime = HttpSessionRuntime::new().await?;
     let listener = tokio::net::TcpListener::bind(settings.addr()).await?;
 
     info!(addr = %settings.addr(), "asset-http listening");
@@ -30,17 +29,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         authorization.clone(),
         runtime.upload_finalization_scheduler(),
     );
-    let session_store = SqliteStore::new(runtime.database_pool());
-    session_store.migrate().await?;
-    tokio::spawn(
-        session_store
-            .clone()
-            .continuously_delete_expired(std::time::Duration::from_secs(60 * 60)),
-    );
     let app = with_authentication(
         app,
         runtime.user_service(),
-        session_store,
+        session_runtime.store(),
+        session_runtime.health(),
         settings.session_options(),
     )?;
 

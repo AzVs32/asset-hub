@@ -32,7 +32,6 @@ use sqlite::{
     SqliteIdentityRepository, SqliteResourceContentReplacementRepository, SqliteResourceRepository,
     SqliteUploadSessionRepository,
 };
-use sqlx::SqlitePool;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use storage::{FileSystemScanner, LocalStorageSync, OpenDalBlobStorage};
@@ -134,11 +133,6 @@ impl AssetInfrastructure {
 
     pub fn directory_query(&self) -> Arc<dyn DirectoryQuery> {
         self.directory_index.clone()
-    }
-
-    /// 返回共享数据库连接池，供会话、用户与授权适配器复用。
-    pub fn database_pool(&self) -> SqlitePool {
-        self.resource_repository.pool().clone()
     }
 
     pub fn user_repository(&self) -> Arc<dyn UserRepository> {

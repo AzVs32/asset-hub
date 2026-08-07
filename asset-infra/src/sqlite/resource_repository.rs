@@ -105,7 +105,7 @@ impl SqliteResourceRepository {
     }
 
     /// 返回内部 SQLite 连接池。
-    pub fn pool(&self) -> &SqlitePool {
+    pub(crate) fn pool(&self) -> &SqlitePool {
         &self.pool
     }
 

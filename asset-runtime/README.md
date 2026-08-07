@@ -4,6 +4,10 @@
 configuration and creates one `AssetRuntime`; the runtime remains independent of HTTP routing, CLI
 parsing, and presentation policy.
 
+Concrete business database pools remain private to `asset-infra`. HTTP authentication sessions are
+initialized and owned by `asset-http` through a separate store, pool, schema, and lifecycle; they are
+not part of runtime assembly.
+
 Construction has a deterministic order:
 
 1. initialize concrete database, storage, index, and repository adapters through

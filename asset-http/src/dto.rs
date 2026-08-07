@@ -144,6 +144,8 @@ pub(crate) struct HealthResponse {
     /// 服务状态。
     pub(crate) status: String,
     pub(crate) database: HealthComponentResponse,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) session_store: Option<HealthComponentResponse>,
     pub(crate) blob_storage: HealthComponentResponse,
 }
 
@@ -407,9 +409,14 @@ fn content_delivery_text(delivery: ResourceActionContentDelivery) -> &'static st
 }
 
 impl HealthResponse {
-    pub(crate) fn new(database_ready: bool, blob_storage_ready: bool) -> Self {
+    pub(crate) fn new(
+        database_ready: bool,
+        blob_storage_ready: bool,
+        session_store_ready: Option<bool>,
+    ) -> Self {
+        let session_ready = session_store_ready.unwrap_or(true);
         Self {
-            status: if database_ready && blob_storage_ready {
+            status: if database_ready && blob_storage_ready && session_ready {
                 "ready"
             } else {
                 "unavailable"
@@ -418,6 +425,9 @@ impl HealthResponse {
             database: HealthComponentResponse {
                 status: component_status(database_ready),
             },
+            session_store: session_store_ready.map(|ready| HealthComponentResponse {
+                status: component_status(ready),
+            }),
             blob_storage: HealthComponentResponse {
                 status: component_status(blob_storage_ready),
             },

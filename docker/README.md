@@ -109,6 +109,12 @@ asset-hub-conf  -> /conf  配置文件
 asset-hub-data  -> /data  SQLite、系统内部数据和上传文件内容
 ```
 
+业务 SQLite 固定为 `/data/.asset-hub/asset-hub.sqlite`。HTTP 登录 Session 使用容器工作
+目录下的 `data/.asset-hub/http-session.sqlite`，即容器内
+`/app/data/.asset-hub/http-session.sqlite`；它不挂载到命名卷，重新创建容器后用户需要
+重新登录。两者仍使用不同文件、连接池和 schema，HTTP 服务不会从 `asset-runtime`
+获取业务数据库连接。
+
 默认容器配置位于 [config.toml](config.toml)，首次创建 `asset-hub-conf` 卷时会复制到
 `/conf/config.toml`：
 
@@ -138,7 +144,8 @@ SQLite 路径不能单独配置，使用本地 Blob 后端时始终为
 `<blob.local.root>/.asset-hub/asset-hub.sqlite`。`/data` 是用户文件根目录；`.asset-hub`
 是系统保留目录，保存 SQLite 和 action 临时区，
 扫描导入会跳过它。不要把 `/data/.asset-hub` 与 `/data` 里的用户文件拆开备份，两者共同
-组成一次完整的 Asset Hub 状态。
+组成一次完整的 Asset Hub 业务状态。HTTP 登录 Session 是未导出的可丢弃运行状态，
+不属于业务备份。
 
 查看卷位置：
 

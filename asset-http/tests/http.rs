@@ -1,7 +1,7 @@
 use asset_core::domain::{AccessContext, UserId, UserRole};
 use asset_http::{
-    CorsPolicy, MAX_ACTION_REQUEST_BYTES, MAX_LOGIN_REQUEST_BYTES, RouterOptions, SessionOptions,
-    build_router, with_authentication,
+    CorsPolicy, HttpSessionRuntime, MAX_ACTION_REQUEST_BYTES, MAX_LOGIN_REQUEST_BYTES,
+    RouterOptions, SessionOptions, build_router, with_authentication,
 };
 use asset_infra::config::{
     AssetInfraConfig, BlobConfig, DatabaseConfig, LocalBlobConfig, LocalBlobSyncConfig,
@@ -22,7 +22,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tower::ServiceExt;
-use tower_sessions_sqlx_store::SqliteStore;
+use tower_sessions_sqlx_store::sqlx::sqlite::SqliteConnectOptions;
+use tower_sessions_sqlx_store::sqlx::{SqlitePool, query_scalar};
 
 const BODY_LIMIT: usize = 1024 * 1024;
 
@@ -2234,12 +2235,35 @@ async fn authentication_starts_without_users_and_limits_member_workspace_access(
         plugin: Default::default(),
         resource_edit: Default::default(),
     };
+    let business_database = root.join("blob/.asset-hub/asset-hub.sqlite");
+    let session_database = root.join("session/http-session.sqlite");
     let runtime = AssetRuntime::new(config).await.unwrap();
-    assert_eq!(
-        runtime.database_pool().options().get_max_connections(),
-        1,
-        "HTTP sessions must reuse the configured infrastructure pool",
-    );
+    let session_runtime = HttpSessionRuntime::open(&session_database).await.unwrap();
+
+    let business_pool =
+        SqlitePool::connect_with(SqliteConnectOptions::new().filename(&business_database))
+            .await
+            .unwrap();
+    let session_pool =
+        SqlitePool::connect_with(SqliteConnectOptions::new().filename(&session_database))
+            .await
+            .unwrap();
+    let business_tables = query_scalar::<_, String>(
+        "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
+    )
+    .fetch_all(&business_pool)
+    .await
+    .unwrap();
+    let session_tables = query_scalar::<_, String>(
+        "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
+    )
+    .fetch_all(&session_pool)
+    .await
+    .unwrap();
+    assert!(business_tables.iter().any(|table| table == "resources"));
+    assert!(!business_tables.iter().any(|table| table == "http_sessions"));
+    assert!(session_tables.iter().any(|table| table == "http_sessions"));
+    assert!(!session_tables.iter().any(|table| table == "resources"));
     let authorization = runtime.authorization_service();
     let base = build_router(
         runtime.resource_service(),
@@ -2255,13 +2279,12 @@ async fn authentication_starts_without_users_and_limits_member_workspace_access(
         authorization.clone(),
         runtime.upload_finalization_scheduler(),
     );
-    let session_store = SqliteStore::new(runtime.database_pool());
-    session_store.migrate().await.unwrap();
     let users = runtime.user_service();
     let router = with_authentication(
         base,
         users.clone(),
-        session_store,
+        session_runtime.store(),
+        session_runtime.health(),
         &SessionOptions {
             cookie_secure: false,
             inactivity_timeout: Duration::from_secs(3600),
@@ -2283,6 +2306,7 @@ async fn authentication_starts_without_users_and_limits_member_workspace_access(
     let health = response_json(health).await;
     assert_eq!(health["status"], "ready");
     assert_eq!(health["database"]["status"], "ready");
+    assert_eq!(health["session_store"]["status"], "ready");
     assert_eq!(health["blob_storage"]["status"], "ready");
 
     let login_without_users = request_with_cookie(

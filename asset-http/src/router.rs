@@ -1,6 +1,7 @@
 use crate::auth::{self, AuthBackend};
 use crate::handlers;
 use crate::openapi::ApiDoc;
+use crate::session_store::SessionStoreHealth;
 use crate::settings::{CorsPolicy, RouterOptions, SessionOptions};
 use crate::state::HttpState;
 use asset_core::port::ResourceKindRegistry;
@@ -142,6 +143,7 @@ pub fn with_authentication<S>(
     router: Router,
     users: UserService,
     session_store: S,
+    session_health: SessionStoreHealth,
     session_options: &SessionOptions,
 ) -> Result<Router, Box<dyn std::error::Error>>
 where
@@ -173,7 +175,10 @@ where
             axum::routing::patch(auth::update_user_status),
         );
 
-    Ok(protected.merge(public).layer(auth_layer))
+    Ok(protected
+        .merge(public)
+        .layer(auth_layer)
+        .layer(axum::Extension(session_health)))
 }
 
 fn cors_layer(policy: CorsPolicy) -> CorsLayer {

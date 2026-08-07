@@ -15,6 +15,7 @@ const COOKIE_SECURE_ENV: &str = "ASSET_HTTP_COOKIE_SECURE";
 const SESSION_INACTIVITY_SECS_ENV: &str = "ASSET_HTTP_SESSION_INACTIVITY_SECS";
 const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 30;
 const DEFAULT_SESSION_INACTIVITY_SECS: u64 = 12 * 60 * 60;
+pub(crate) const DEFAULT_SESSION_SQLITE_PATH: &str = "data/.asset-hub/http-session.sqlite";
 
 #[derive(Debug, Parser)]
 #[command(name = "asset-http", version, about = "Run the Asset Hub HTTP service")]
@@ -153,7 +154,6 @@ impl HttpSettings {
             cookie_secure: cli.cookie_secure,
             inactivity_timeout: Duration::from_secs(cli.session_inactivity_secs),
         };
-
         Self {
             addr: cli.addr,
             config_path: cli.config,

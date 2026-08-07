@@ -31,9 +31,9 @@ MUST NOT:
 
 ## Backend evolution
 
-The runtime currently exposes SQLite-specific pool access for a caller-owned session store. Backend
-expansion therefore requires an intentional abstraction for consumers of that concrete pool; adding
-only another database migration or repository is incomplete.
+The runtime does not expose concrete database pools. Application surfaces own their transport-local
+infrastructure, including HTTP authentication-session storage, and must inject only stable Core
+services or surface-local abstractions across this boundary.
 
 ## Tests
 

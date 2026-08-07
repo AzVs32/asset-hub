@@ -5,6 +5,10 @@ SQLite database, local OpenDAL blob storage, filesystem scanner/synchronizer, di
 identity/upload repositories, the Host-owned built-in capability catalog, Extism executor,
 registries, and plugin package filesystem adapter.
 
+Its business database schema does not contain HTTP authentication sessions. That surface-local
+state is stored and migrated independently by `asset-http`; infrastructure database pools are not
+exposed through `asset-runtime`.
+
 It does not assemble Core services or decide application startup order. `AssetInfrastructure::new`
 normalizes already-loaded configuration and initializes only the database, storage, index, and
 repository adapters. `asset-runtime` consumes these ports and composes the plugin host and Core

@@ -10,5 +10,3 @@ asset-core.workspace = true
 asset-infra.workspace = true
 tracing.workspace = true
 tokio.workspace = true
-
-sqlx.workspace = true
