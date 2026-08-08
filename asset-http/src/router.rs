@@ -4,10 +4,9 @@ use crate::openapi::ApiDoc;
 use crate::session_store::SessionStoreHealth;
 use crate::settings::{CorsPolicy, RouterOptions, SessionOptions};
 use crate::state::HttpState;
-use asset_core::port::ResourceKindRegistry;
 use asset_core::service::ResourceService;
 use asset_core::service::{AuthorizationService, UserService};
-use asset_runtime::{PluginWebAssets, UploadFinalizationScheduler};
+use asset_runtime::{PluginWebAssets, UploadFinalizationDispatcher};
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderName, Method, StatusCode};
@@ -26,11 +25,10 @@ use utoipa_swagger_ui::SwaggerUi;
 /// 使用显式边界配置和插件 web 根目录构建 HTTP 路由。
 pub fn build_router(
     service: ResourceService,
-    kind_registry: Arc<dyn ResourceKindRegistry>,
     options: RouterOptions,
     plugin_web_assets: PluginWebAssets,
     authorization: AuthorizationService,
-    upload_finalizations: UploadFinalizationScheduler,
+    upload_finalizations: Arc<dyn UploadFinalizationDispatcher>,
 ) -> Router {
     let mut router = Router::new()
         .route("/health", get(handlers::health))
@@ -131,7 +129,6 @@ pub fn build_router(
         .merge(directory_download_router)
         .with_state(HttpState::new_with_plugin_web_assets(
             service,
-            kind_registry,
             plugin_web_assets,
             authorization,
             upload_finalizations,

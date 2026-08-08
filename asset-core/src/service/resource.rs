@@ -155,6 +155,18 @@ impl ResourceService {
         &self.directories
     }
 
+    /// 返回当前 Host 已注册并冻结的资源类型定义。
+    ///
+    /// Application Surface 通过本服务查询类型能力，不需要直接依赖注册表 Port。
+    pub fn kind_definitions(&self) -> &[crate::port::ResourceKindDefinition] {
+        self.kind_registry.definitions()
+    }
+
+    /// 从指定资源类型开始返回自身及其祖先谱系。
+    pub fn kind_lineage(&self, kind: &ResourceKind) -> Vec<ResourceKind> {
+        self.kind_registry.lineage(kind)
+    }
+
     fn commands(&self) -> ResourceCommandService<'_> {
         ResourceCommandService::new(self)
     }

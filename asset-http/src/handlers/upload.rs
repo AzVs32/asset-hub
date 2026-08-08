@@ -108,7 +108,7 @@ pub(crate) async fn complete_upload(
 ) -> Result<(StatusCode, Json<UploadSessionResponse>), HttpError> {
     let id = parse_upload_id(&id)?;
     let session = state.secured(&access.0).complete_upload(&id).await?;
-    state.schedule_upload_finalization(id)?;
+    state.dispatch_upload_finalization(id)?;
     Ok((StatusCode::ACCEPTED, Json(session_response(&session))))
 }
 

@@ -2,7 +2,7 @@ mod runtime;
 mod upload_finalization;
 
 pub use runtime::AssetRuntime;
-pub use upload_finalization::UploadFinalizationScheduler;
+pub use upload_finalization::UploadFinalizationDispatcher;
 
 use std::collections::HashMap;
 use std::path::PathBuf;

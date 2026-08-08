@@ -17,13 +17,20 @@ type FinalizationResult = Result<asset_core::domain::Resource, CoreError>;
 // 则只能从 JoinError 中取得任务 ID，因此监督器还需要维护任务 ID 到上传 ID 的映射。
 type CompletedTask = Result<(TaskId, (UploadId, FinalizationResult)), JoinError>;
 
-/// Runtime 持有的上传最终化调度句柄。
+/// Application Surface 提交上传最终化工作的窄 Host capability。
+///
+/// 调用方只知道“提交最终化”，不依赖 Runtime 使用的队列、监督器或任务实现。
+pub trait UploadFinalizationDispatcher: Send + Sync {
+    fn dispatch(&self, id: UploadId) -> Result<(), CoreError>;
+}
+
+/// Runtime 持有的上传最终化调度器。
 ///
 /// 句柄的 clone 只是共享同一个监督器，并不会创建新的后台消费者。最后一个句柄释放时，
 /// 监督器会被取消；监督器持有的所有子任务也会随之取消，因此不会遗留脱离 Runtime
 /// 生命周期的关键最终化任务。
 #[derive(Clone)]
-pub struct UploadFinalizationScheduler {
+pub(crate) struct UploadFinalizationScheduler {
     inner: Arc<SchedulerInner>,
 }
 
@@ -37,7 +44,7 @@ struct SchedulerInner {
 }
 
 impl UploadFinalizationScheduler {
-    pub fn new(service: ResourceService) -> Self {
+    pub(crate) fn new(service: ResourceService) -> Self {
         // 调度接口是同步方法，因此使用无界 channel 将“提交请求”和“执行最终化”解耦。
         // receiver 只交给下面启动的唯一监督器，所有 scheduler clone 都复用这个队列。
         let (sender, receiver) = mpsc::unbounded_channel();
@@ -57,7 +64,7 @@ impl UploadFinalizationScheduler {
     /// 同一 ID 在请求已入队但尚未完成期间只会保留一份；最终化成功或失败后，
     /// ID 会从 scheduled 中移除，后续调用即可再次尝试。发送失败时要撤销预先
     /// 占用的集合项，避免监督器已停止后该 ID 永久处于“已调度”状态。
-    pub fn schedule(&self, id: UploadId) -> Result<(), CoreError> {
+    fn schedule(&self, id: UploadId) -> Result<(), CoreError> {
         let mut scheduled = lock(&self.inner.scheduled);
         // 先占位再发送，保证并发调用不会为同一个上传创建多个子任务。
         if !scheduled.insert(id) {
@@ -71,6 +78,12 @@ impl UploadFinalizationScheduler {
             ));
         }
         Ok(())
+    }
+}
+
+impl UploadFinalizationDispatcher for UploadFinalizationScheduler {
+    fn dispatch(&self, id: UploadId) -> Result<(), CoreError> {
+        self.schedule(id)
     }
 }
 

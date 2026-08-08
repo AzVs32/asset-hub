@@ -19,7 +19,6 @@ pub mod plugin_package {
     };
 }
 
-use asset_core::service::ResourceService;
 use asset_core::{
     CoreError, port::BlobStorage, port::DirectoryIndex, port::DirectoryQuery,
     port::DirectoryStorage, port::DirectoryStore, port::ResourceContentReplacementRepository,
@@ -33,8 +32,8 @@ use sqlite::{
     SqliteUploadSessionRepository,
 };
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-use storage::{FileSystemScanner, LocalStorageSync, OpenDalBlobStorage};
+use std::time::Instant;
+use storage::{FileSystemScanner, OpenDalBlobStorage};
 
 /// 根据配置的后端选型初始化具体基础设施适配器。
 ///
@@ -162,23 +161,5 @@ impl AssetInfrastructure {
 
     pub fn content_replacement_repository(&self) -> Arc<dyn ResourceContentReplacementRepository> {
         self.content_replacement_repository.clone()
-    }
-
-    /// 启动当前 Blob 后端对应的自动存储同步任务。
-    pub async fn start_storage_sync(
-        &self,
-        service: ResourceService,
-    ) -> Result<Option<LocalStorageSync>, CoreError> {
-        match self.config.blob.backend {
-            BlobBackend::Local if self.config.blob.local.sync.enabled => LocalStorageSync::start(
-                self.config.blob.local.root.clone(),
-                Duration::from_millis(self.config.blob.local.sync.debounce_milliseconds),
-                Duration::from_secs(self.config.blob.local.sync.reconcile_interval_seconds),
-                service,
-            )
-            .await
-            .map(Some),
-            BlobBackend::Local => Ok(None),
-        }
     }
 }

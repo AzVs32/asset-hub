@@ -13,8 +13,8 @@ fn duplicate_ids_are_coalesced_before_the_supervisor_queue() {
     };
     let id = UploadId::new();
 
-    scheduler.schedule(id).unwrap();
-    scheduler.schedule(id).unwrap();
+    scheduler.dispatch(id).unwrap();
+    scheduler.dispatch(id).unwrap();
 
     assert_eq!(receiver.try_recv().unwrap(), id);
     assert!(matches!(

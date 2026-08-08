@@ -19,16 +19,10 @@ pub(crate) async fn list_resource_kinds(
 ) -> Json<ResourceKindsResponse> {
     Json(ResourceKindsResponse {
         items: state
-            .kind_registry()
-            .definitions()
+            .service()
+            .kind_definitions()
             .iter()
-            .map(|definition| {
-                ResourceKindResponse::from_definition(
-                    definition,
-                    state.kind_registry(),
-                    state.service(),
-                )
-            })
+            .map(|definition| ResourceKindResponse::from_definition(definition, state.service()))
             .collect(),
     })
 }

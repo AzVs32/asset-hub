@@ -1971,11 +1971,10 @@ async fn test_app_at_root(
     let authorization = runtime.authorization_service();
     let router = build_router(
         runtime.resource_service(),
-        runtime.resource_kind_registry(),
         options,
         HashMap::new(),
         authorization,
-        runtime.upload_finalization_scheduler(),
+        runtime.upload_finalization_dispatcher(),
     )
     .layer(Extension(test_admin_context()));
 
@@ -2008,11 +2007,10 @@ async fn test_app_with_plugin_web_assets(
     let authorization = runtime.authorization_service();
     let router = build_router(
         runtime.resource_service(),
-        runtime.resource_kind_registry(),
         RouterOptions::default(),
         plugin_web_assets,
         authorization,
-        runtime.upload_finalization_scheduler(),
+        runtime.upload_finalization_dispatcher(),
     )
     .layer(Extension(test_admin_context()));
 
@@ -2267,7 +2265,6 @@ async fn authentication_starts_without_users_and_limits_member_workspace_access(
     let authorization = runtime.authorization_service();
     let base = build_router(
         runtime.resource_service(),
-        runtime.resource_kind_registry(),
         RouterOptions::default(),
         HashMap::from([(
             "azvs.markdown".to_string(),
@@ -2277,7 +2274,7 @@ async fn authentication_starts_without_users_and_limits_member_workspace_access(
             )]),
         )]),
         authorization.clone(),
-        runtime.upload_finalization_scheduler(),
+        runtime.upload_finalization_dispatcher(),
     );
     let users = runtime.user_service();
     let router = with_authentication(

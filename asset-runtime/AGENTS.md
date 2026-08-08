@@ -13,8 +13,8 @@ transport routing, argument parsing, presentation logic, and surface-specific li
 MUST:
 
 - accept already-loaded infrastructure configuration from the caller;
-- construct `AssetInfrastructure` and expose stable Core services/registries needed by application
-  surfaces;
+- construct `AssetInfrastructure`, inject its ports into stable Core services, and expose those
+  application services rather than the underlying registries;
 - explicitly own long-lived synchronization guards/tasks;
 - keep startup ordering deterministic, including upload-finalization recovery;
 - make optional background services idempotent to start when the runtime contract promises that
@@ -27,6 +27,8 @@ MUST NOT:
   application surface;
 - contain business workflows that belong in `asset-core::service`;
 - expose more concrete infrastructure than callers genuinely need;
+- retain construction-only catalogs, registries, executors, or the complete infrastructure
+  aggregate after their owned ports and handlers have been injected;
 - spawn detached critical tasks whose lifetime or failure cannot be observed/owned.
 
 ## Backend evolution

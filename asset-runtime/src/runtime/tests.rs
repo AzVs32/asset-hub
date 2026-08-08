@@ -1,5 +1,8 @@
 use super::*;
-use asset_core::domain::{DirectoryPath, Resource};
+use asset_core::domain::{
+    AccessContext, DirectoryKind, DirectoryPath, Resource, ResourceKind, UserId,
+};
+use asset_core::port::ListResources;
 use asset_infra::config::{
     BlobConfig, DatabaseConfig, LocalBlobConfig, LocalBlobSyncConfig, SqliteDatabaseConfig,
 };
@@ -11,14 +14,8 @@ async fn wait_for_resource(
     name: &str,
 ) -> Option<Resource> {
     for _ in 0..100 {
-        if let Some(resource) = runtime
-            .infrastructure
-            .resource_query()
-            .find_by_path(directory, name)
-            .await
-            .unwrap()
-        {
-            return Some(resource.into_resource());
+        if let Some(resource) = find_resource(runtime, directory, name).await {
+            return Some(resource);
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
@@ -27,19 +24,44 @@ async fn wait_for_resource(
 
 async fn wait_until_absent(runtime: &AssetRuntime, directory: &DirectoryPath, name: &str) {
     for _ in 0..100 {
-        if runtime
-            .infrastructure
-            .resource_query()
-            .find_by_path(directory, name)
-            .await
-            .unwrap()
-            .is_none()
-        {
+        if find_resource(runtime, directory, name).await.is_none() {
             return;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     panic!("resource `{directory}/{name}` was not removed by automatic synchronization");
+}
+
+async fn find_resource(
+    runtime: &AssetRuntime,
+    directory: &DirectoryPath,
+    name: &str,
+) -> Option<Resource> {
+    let service = runtime.resource_service();
+    let authorization = runtime.authorization_service();
+    let context = AccessContext::administrator(UserId::new());
+    let page = service
+        .secured(&authorization, &context)
+        .list_resources(ListResources::new(100, 0).with_directory(directory.clone()))
+        .await
+        .ok()?;
+    page.items
+        .into_iter()
+        .find(|located| located.resource().name() == name)
+        .map(|located| located.into_resource())
+}
+
+async fn root_directory_paths(runtime: &AssetRuntime) -> Vec<DirectoryPath> {
+    let service = runtime.resource_service();
+    let directories = service.directory_service();
+    let root = directories.root().await.unwrap();
+    directories
+        .list_children(&root)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|directory| directory.path().clone())
+        .collect()
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -71,6 +93,20 @@ async fn local_storage_changes_are_synchronized_automatically() {
         ..AssetInfraConfig::default()
     };
     let mut runtime = AssetRuntime::new(config).await.unwrap();
+    let service = runtime.resource_service();
+    assert!(!service.kind_definitions().is_empty());
+    assert!(
+        !service
+            .describe_kind_actions(&ResourceKind::default())
+            .is_empty()
+    );
+    assert!(!service.directory_service().kind_definitions().is_empty());
+    assert!(
+        !service
+            .directory_service()
+            .describe_kind_actions(&DirectoryKind::default())
+            .is_empty()
+    );
     runtime.start_storage_sync().await.unwrap();
     let directory = DirectoryPath::from_path("documents").unwrap();
     let directory_path = root.join("documents");
@@ -83,21 +119,17 @@ async fn local_storage_changes_are_synchronized_automatically() {
     std::fs::write(directory_path.join("note.txt"), b"second version").unwrap();
     let mut updated = None;
     for _ in 0..100 {
-        let resource = runtime
-            .infrastructure
-            .resource_query()
-            .find_by_path(&directory, "note.txt")
+        let resource = find_resource(&runtime, &directory, "note.txt")
             .await
-            .unwrap()
             .unwrap();
-        if resource.resource().content().unwrap().size() == 14 {
+        if resource.content().unwrap().size() == 14 {
             updated = Some(resource);
             break;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     let updated = updated.expect("modified file should update Resource content");
-    assert_eq!(updated.resource().id(), first.id());
+    assert_eq!(updated.id(), first.id());
 
     std::fs::rename(
         directory_path.join("note.txt"),
@@ -116,14 +148,10 @@ async fn local_storage_changes_are_synchronized_automatically() {
     std::fs::create_dir(&empty_directory).unwrap();
     let mut directory_created = false;
     for _ in 0..100 {
-        if runtime
-            .infrastructure
-            .directory_index()
-            .list_children(&asset_core::domain::DirectoryId::root())
+        if root_directory_paths(&runtime)
             .await
-            .unwrap()
             .iter()
-            .any(|directory| directory.path().path() == "empty")
+            .any(|path| path.path() == "empty")
         {
             directory_created = true;
             break;
@@ -134,14 +162,10 @@ async fn local_storage_changes_are_synchronized_automatically() {
     std::fs::remove_dir(&empty_directory).unwrap();
     let mut directory_removed = false;
     for _ in 0..100 {
-        if runtime
-            .infrastructure
-            .directory_index()
-            .list_children(&asset_core::domain::DirectoryId::root())
+        if root_directory_paths(&runtime)
             .await
-            .unwrap()
             .iter()
-            .all(|directory| directory.path().path() != "empty")
+            .all(|path| path.path() != "empty")
         {
             directory_removed = true;
             break;

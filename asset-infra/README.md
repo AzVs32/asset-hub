@@ -12,7 +12,11 @@ exposed through `asset-runtime`.
 It does not assemble Core services or decide application startup order. `AssetInfrastructure::new`
 normalizes already-loaded configuration and initializes only the database, storage, index, and
 repository adapters. `asset-runtime` consumes these ports and composes the plugin host and Core
-services.
+services; after injection, the `AssetInfrastructure` aggregate itself is construction-only.
+
+`LocalStorageSync` still implements the local filesystem watcher and event-to-reconciliation
+driving adapter. `asset-runtime` starts it with `ResourceService` and owns its lifetime;
+`AssetInfrastructure` no longer accepts a Core service or starts background work.
 
 ## Plugin package boundary
 

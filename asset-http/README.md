@@ -3,6 +3,11 @@
 `asset-http` is the Axum transport and the composition root for HTTP-only policy. It owns routing,
 cookie authentication, OpenAPI, request limits, CORS, and the authentication-session store.
 
+Business handlers receive Core application services. Resource and Directory kind definitions are
+queried through `ResourceService`/`DirectoryService`, not through kind-registry Ports obtained from
+`AssetRuntime`. Upload completion receives the narrow `UploadFinalizationDispatcher` Host
+capability; HTTP does not depend on the concrete Runtime scheduler or supervisor.
+
 ## Session storage boundary
 
 HTTP login sessions use a dedicated SQLite file and connection pool. The store never receives a

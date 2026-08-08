@@ -1,10 +1,9 @@
 use asset_core::CoreError;
 use asset_core::domain::AccessContext;
-use asset_core::port::ResourceKindRegistry;
 use asset_core::service::{
     AuthorizationService, ResourceService, SecuredResourceService, WorkspaceScope,
 };
-use asset_runtime::{PluginWebAssets, UploadFinalizationScheduler};
+use asset_runtime::{PluginWebAssets, UploadFinalizationDispatcher};
 use std::sync::Arc;
 
 /// HTTP handler 共享状态。
@@ -13,23 +12,20 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub(crate) struct HttpState {
     service: ResourceService,
-    kind_registry: Arc<dyn ResourceKindRegistry>,
     plugin_web_assets: Arc<PluginWebAssets>,
     authorization: AuthorizationService,
-    upload_finalizations: UploadFinalizationScheduler,
+    upload_finalizations: Arc<dyn UploadFinalizationDispatcher>,
 }
 
 impl HttpState {
     pub(crate) fn new_with_plugin_web_assets(
         service: ResourceService,
-        kind_registry: Arc<dyn ResourceKindRegistry>,
         plugin_web_assets: PluginWebAssets,
         authorization: AuthorizationService,
-        upload_finalizations: UploadFinalizationScheduler,
+        upload_finalizations: Arc<dyn UploadFinalizationDispatcher>,
     ) -> Self {
         Self {
             service,
-            kind_registry,
             plugin_web_assets: Arc::new(plugin_web_assets),
             authorization,
             upload_finalizations,
@@ -40,11 +36,11 @@ impl HttpState {
         self.service.secured(&self.authorization, context)
     }
 
-    pub(crate) fn schedule_upload_finalization(
+    pub(crate) fn dispatch_upload_finalization(
         &self,
         id: asset_core::domain::UploadId,
     ) -> Result<(), CoreError> {
-        self.upload_finalizations.schedule(id)
+        self.upload_finalizations.dispatch(id)
     }
 
     pub(crate) async fn workspace(
@@ -57,11 +53,6 @@ impl HttpState {
     /// 返回资源应用服务。
     pub(crate) fn service(&self) -> &ResourceService {
         &self.service
-    }
-
-    /// 返回资源类型注册表。
-    pub(crate) fn kind_registry(&self) -> &dyn ResourceKindRegistry {
-        self.kind_registry.as_ref()
     }
 
     pub(crate) fn plugin_web_asset(

@@ -11,23 +11,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = match settings.config_path() {
         Some(path) => AssetInfraConfig::from_config_file(path)?,
         None => AssetInfraConfig::from_default_config_file()?,
-    };
+    }
+    .normalized()?;
+    info!(config = ?config, "asset-http config");
     let mut runtime = AssetRuntime::new(config).await?;
     runtime.start_storage_sync().await?;
     let session_runtime = HttpSessionRuntime::new().await?;
     let listener = tokio::net::TcpListener::bind(settings.addr()).await?;
 
     info!(addr = %settings.addr(), "asset-http listening");
-    info!(config = ?runtime.config(), "asset-http config");
-
     let authorization = runtime.authorization_service();
     let app = build_router(
         runtime.resource_service(),
-        runtime.resource_kind_registry(),
         settings.router_options().clone(),
         runtime.plugin_web_assets(),
         authorization.clone(),
-        runtime.upload_finalization_scheduler(),
+        runtime.upload_finalization_dispatcher(),
     );
     let app = with_authentication(
         app,

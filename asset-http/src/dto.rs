@@ -226,14 +226,13 @@ pub(crate) struct ResourceKindResponse {
 impl ResourceKindResponse {
     pub(crate) fn from_definition(
         definition: &ResourceKindDefinition,
-        registry: &dyn asset_core::port::ResourceKindRegistry,
         service: &asset_core::service::ResourceService,
     ) -> Self {
         Self {
             kind: definition.kind().as_str().to_string(),
             parent: definition.parent().map(|parent| parent.as_str().to_owned()),
-            ancestors: registry
-                .lineage(definition.kind())
+            ancestors: service
+                .kind_lineage(definition.kind())
                 .into_iter()
                 .skip(1)
                 .map(|kind| kind.as_str().to_owned())
