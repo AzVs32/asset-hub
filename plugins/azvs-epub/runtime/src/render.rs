@@ -56,8 +56,8 @@ pub(super) fn rewrite_chapter_html(
     let mut embedded_bytes = 0_u64;
     let rewritten = rewrite_str(
         raw,
-        RewriteStrSettings {
-            element_content_handlers: vec![element!("*", |element| {
+        RewriteStrSettings::new()
+            .append_element_content_handler(element!("*", |element| {
                 let tag = element.tag_name().to_ascii_lowercase();
                 if tag == "head" {
                     element.remove();
@@ -124,10 +124,8 @@ pub(super) fn rewrite_chapter_html(
                     }
                 }
                 Ok(())
-            })],
-            strict: true,
-            ..RewriteStrSettings::new()
-        },
+            }))
+            .with_strict(true),
     )
     .map_err(|error| Error::msg(format!("unable to parse chapter HTML: {error}")))?;
     Ok(rewritten)

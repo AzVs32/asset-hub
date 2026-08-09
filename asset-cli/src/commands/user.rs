@@ -123,7 +123,7 @@ fn print_user_list(users: &[LocatedUser]) {
 
 fn user_table(users: &[LocatedUser]) -> Table {
     let mut table = Table::new();
-    table.load_preset(UTF8_FULL);
+    table.load_style(UTF8_FULL);
     table.set_header(["USERNAME", "ROLE", "STATUS", "WORKSPACE", "ID"]);
     for located in users {
         let user = located.user();

@@ -12,7 +12,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 /// 基于 OpenDAL `Operator` 的对象存储适配器。
 ///
-/// 当前本地后端直接使用文件系统 API，避免 OpenDAL 0.57 的高层路径归一化裁掉对象键
+/// 当前本地后端直接使用文件系统 API，避免 OpenDAL 高层对象路径归一化裁掉对象键
 /// 首尾空白。S3 本身允许对象键包含空格，但未来接入时必须同样使用可保留原始键的访问
 /// 方式并通过契约测试，不能只替换 `Operator` builder。
 #[derive(Clone)]
@@ -31,9 +31,8 @@ impl OpenDalBlobStorage {
         }
         let root_text = root.to_string_lossy();
         let builder = Fs::default().root(root_text.as_ref());
-        let operator = Operator::new(builder)
-            .map_err(|error| CoreError::storage("fs.build", error))?
-            .finish();
+        let operator =
+            Operator::new(builder).map_err(|error| CoreError::storage("fs.build", error))?;
 
         Ok(Self {
             operator,

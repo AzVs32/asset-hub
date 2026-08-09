@@ -212,16 +212,10 @@ fn catalog_keeps_verified_wasm_and_web_snapshots() {
     std::fs::write(package.join(PLUGIN_WEB_ENTRY_FILE_NAME), original_html).unwrap();
     std::fs::create_dir(package.join("static-files")).unwrap();
     std::fs::write(package.join("static-files/app.js"), b"export {};").unwrap();
-    let wasm_digest = format!("{:x}", Sha256::digest(original_wasm));
+    let wasm_digest = sha256_hex(original_wasm);
     let web = HashMap::from([
-        (
-            PLUGIN_WEB_ENTRY_FILE_NAME,
-            format!("{:x}", Sha256::digest(original_html)),
-        ),
-        (
-            "static-files/app.js",
-            format!("{:x}", Sha256::digest(b"export {};")),
-        ),
+        (PLUGIN_WEB_ENTRY_FILE_NAME, sha256_hex(original_html)),
+        ("static-files/app.js", sha256_hex(b"export {};")),
     ]);
     write_lock(&package, "snapshot.plugin", Some(&wasm_digest), Some(&web));
 

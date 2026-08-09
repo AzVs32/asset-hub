@@ -2730,7 +2730,14 @@ fn has_action(resource: &Value, id: &str) -> bool {
 }
 
 fn sha256_hex(data: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(data))
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let digest = Sha256::digest(data);
+    let mut output = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
 }
 
 fn has_directory_action(directory: &Value, id: &str) -> bool {

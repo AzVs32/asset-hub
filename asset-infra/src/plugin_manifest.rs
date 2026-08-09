@@ -448,10 +448,7 @@ fn inspect_package_artifacts(
                 path.display()
             ))
         })?;
-        integrity.insert(
-            relative_path.clone(),
-            format!("{:x}", Sha256::digest(&bytes)),
-        );
+        integrity.insert(relative_path.clone(), sha256_hex(&bytes));
         if relative_path == wasm_path {
             wasm = Some(Arc::from(bytes));
         } else {
@@ -463,6 +460,17 @@ fn inspect_package_artifacts(
         web_assets,
         integrity,
     })
+}
+
+fn sha256_hex(data: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let digest = Sha256::digest(data);
+    let mut output = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
 }
 
 fn validate_artifact_layout(

@@ -13,7 +13,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None => AssetInfraConfig::from_default_config_file()?,
     }
     .normalized()?;
-    info!(config = ?config, "asset-http config");
+    // info!(config = ?config, "asset-http config");
     let mut runtime = AssetRuntime::new(config).await?;
     runtime.start_storage_sync().await?;
     let session_runtime = HttpSessionRuntime::new().await?;
