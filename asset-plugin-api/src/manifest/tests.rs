@@ -42,7 +42,7 @@ fn manifest_requires_current_versions() {
             .is_err()
     );
     document["manifest_version"] = serde_json::json!(MANIFEST_VERSION);
-    for unsupported in ["asset-hub.plugin-api@1", "asset-hub.plugin-api@3"] {
+    for unsupported in ["asset-hub.plugin-api@1", "asset-hub.plugin-api@4"] {
         document["runtime"]["plugin_api"] = serde_json::json!(unsupported);
         assert!(
             serde_json::from_value::<PluginManifest>(document.clone())

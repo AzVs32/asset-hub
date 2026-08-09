@@ -85,8 +85,9 @@ action 和用户授权能力。Feature 只知道这个接口。
 - `plugin-action-dialog` 承载用户触发的 action 结果。
 - `plugin-output` 统一展示 diagnostics 并进入 view renderer。
 - `renderers` 支持 text、Markdown、HTML、JSON、media、download 和 iframe。
-- `frame-protocol` 校验 iframe 消息；iframe 只能调用当前资源已经暴露的 action，且只有由
-  当前 `text_edit` provider 打开的读写 frame 才能请求替换当前资源文本。
+- `frame-host` 通过 Penpal 暴露窄能力接口；公共 Web SDK 隐藏传输细节。iframe 只能调用当前
+  资源已经暴露的 action，且只有由当前 `text_edit` provider 打开的读写 frame 才能请求替换
+  当前资源文本。
 
 Markdown 和媒体播放器均按需加载，不进入基础首屏包。
 
@@ -203,15 +204,15 @@ Action JSON，而是通过 `AssetGateway.replaceResourceText` 将 UTF-8 原始�
 
 因此 Action JSON 属于控制面，资源原始内容属于流式数据面。HTTP Action 的 1 MiB 请求
 限制不会再限制文本保存，Blob 数据也不需要经过 JSON 转义或 Base64 膨胀。
-插件 iframe 通过 `asset-hub:replace-resource-text` 消息进入同一个 Gateway；宿主同时校验
-frame 对应的原始 action 是当前资源解析出的读写 `text_edit` provider。保存成功后 frame
+插件 iframe 通过 Web SDK 的 `replaceResourceText` 进入同一个 Gateway；宿主同时校验
+frame 对应的原始 action 是当前资源解析出的读写 `text_edit` provider。保存成功后宿主连接
 持有响应中的新 revision，以支持同一编辑窗口连续保存。
 
 只有以下变化属于前端宿主协议升级：
 
 - 增加一种全新的 view kind。
 - 增加具有新布局语义的宿主 slot。
-- 升级 iframe message protocol 的主版本。
+- 升级 Plugin Frame Web SDK 协议的主版本。
 
 ## 6. 必须维持的边界
 

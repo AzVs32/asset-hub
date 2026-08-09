@@ -30,8 +30,8 @@ The initial action returns an Asset Hub `PluginView` frame with a small routing 
 ```
 
 The URL payload contains only `plugin_api`, `resource_id`, `mode`, and `action`; document content is
-never copied into the iframe URL. After loading, the frame requests content through Asset Hub's
-validated `postMessage` action bridge:
+never copied into the iframe URL. After loading, the frame connects through
+`@asset-hub/plugin-web-sdk` and requests content through its validated Action bridge:
 
 - `{"operation":"load"}` returns UTF-8 Markdown directly up to 512 KiB.
 - Larger documents return transfer details and are fetched with sequential
@@ -42,8 +42,7 @@ validated `postMessage` action bridge:
 The runtime rejects read operations for documents larger than 128 MiB. The effective read maximum
 can be lower when the Host's plugin execution policy is lower.
 
-Saving uses the additive Plugin Frame request
-`asset-hub:replace-resource-text`. The Host accepts it only from the frame produced by the current
+Saving uses the Web SDK's `replaceResourceText`. The Host accepts it only from the frame produced by the current
 Resource's resolved, write `text_edit` action, then forwards the text to the same
 revision-guarded streaming content use case as the core editor. The Markdown runtime deliberately
 rejects the former `{ "markdown": "..." }` Action input and no longer returns a

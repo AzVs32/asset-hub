@@ -28,7 +28,7 @@ Asset Hub versions the Rust library and its serialized contracts separately:
 | --- | --- | --- |
 | Rust crate | `0.2.0` | Rust source API |
 | Manifest | `2` | external Extism/Wasm `manifest.json` document format |
-| Plugin API | `asset-hub.plugin-api@2` | Action JSON, Host functions, and Plugin Frame messages |
+| Plugin API | `asset-hub.plugin-api@3` | Action JSON, Host functions, and Plugin Frame Web SDK |
 
 Plugins must declare both `manifest_version` and `runtime.plugin_api`. The host
 rejects unsupported contract versions instead of attempting to interpret them.
@@ -59,7 +59,7 @@ capabilities, and permissions:
   },
   "runtime": {
     "type": "extism",
-    "plugin_api": "asset-hub.plugin-api@2"
+    "plugin_api": "asset-hub.plugin-api@3"
   },
   "capabilities": {
     "resource_kinds": [
@@ -142,40 +142,32 @@ ancestor provider for the same capability. An omitted label is rejected when no 
 exists. Declaring `label` explicitly remains the way to override the inherited wording. Directory
 action labels remain required.
 
-### Plugin Frame messages
+### Plugin Frame Web SDK
 
-A `plugin_frame` runs without direct Host authority. It may ask the parent Host to execute an
-action already exposed for the current Resource:
+The public browser SDK lives in [`web`](web) and hides the Penpal transport used by the Host. A
+bundled Web application imports `@asset-hub/plugin-web-sdk`; a plain `index.html` can copy and load
+the self-contained `asset-hub-plugin.global.js` build without React, npm, or another framework.
 
-```json
-{
-  "type": "asset-hub:execute-resource-action",
-  "plugin_api": "asset-hub.plugin-api@2",
-  "request_id": "request-1",
-  "resource_id": "01900000-0000-7000-8000-000000000000",
-  "action": "example.plugin.inspect",
-  "input": {}
-}
+```ts
+import { connectAssetHubFrame } from "@asset-hub/plugin-web-sdk";
+
+const host = await connectAssetHubFrame();
+const output = await host.executeResourceAction("example.plugin.inspect", {});
 ```
 
-An iframe opened by the current Resource's resolved, write `text_edit` provider may request
-raw UTF-8 text replacement without putting the content in Action JSON:
+The returned client exposes only:
 
-```json
-{
-  "type": "asset-hub:replace-resource-text",
-  "plugin_api": "asset-hub.plugin-api@2",
-  "request_id": "request-2",
-  "resource_id": "01900000-0000-7000-8000-000000000000",
-  "text": "updated text"
-}
-```
+- `executeResourceAction(action, input?)`, which can call an Action already exposed for the current
+  Resource;
+- `replaceResourceText(text)`, which is accepted only from the frame created by the current
+  Resource's resolved, write `text_edit` provider;
+- `disconnect()`, which releases the frame connection.
 
-The Host validates the frame source, Plugin API, request/resource identity, resolved capability,
-write access, content policy, authorization, and Resource revision. It then sends the UTF-8 bytes
-through its content-replacement use case; the plugin runtime never receives storage authority.
-Results use the request type plus `-result`, retain `plugin_api` and `request_id`, and contain `ok`,
-`data`, and `error` fields. Unknown messages are ignored.
+SDK method calls no longer supply Resource identity or request IDs. The Host binds the connection to
+the Resource and originating Action that created the frame, while Penpal owns request correlation,
+timeouts, errors, and connection cleanup. The Host still validates method arguments, available
+Actions, resolved capability, write access, content policy, authorization, and Resource revision.
+The plugin runtime and browser frame never receive storage authority.
 
 ## Rust API
 
@@ -211,11 +203,22 @@ cargo doc -p asset-plugin-api --open
 
 ## Compatibility
 
-Version 2 is intentionally incompatible with version 1. Existing packages must update their
-Manifest and runtime together, rebuild `plugin.wasm`, remove the old lock, and reseal the package.
-The Host rejects version 1 packages instead of translating them.
+Version 3 is intentionally incompatible with version 2. Existing packages must update their
+Manifest and runtime together, migrate Plugin Frame code to the Web SDK, rebuild package artifacts,
+remove the old lock, and reseal the package. The Host rejects version 2 packages instead of
+translating them.
 
-The principal version 2 changes are:
+The principal version 3 changes are:
+
+- Plugin Frames use the Asset Hub Web Plugin SDK backed by Penpal instead of the former public,
+  hand-authored `window.postMessage` envelopes.
+- Frame calls are bound to the Resource and originating Action by the Host; callers no longer send
+  `plugin_api`, `request_id`, or `resource_id` with each operation.
+- Frame calls use Promise results and errors, with connection and method timeouts owned by the SDK.
+- The SDK includes both an ESM build and a self-contained browser global build for plain HTML
+  plugins.
+
+Version 2 was intentionally incompatible with version 1. Its principal changes were:
 
 - Resource kinds use `capabilities.resource_kinds`; Directory kinds remain in
   `capabilities.directory_kinds`. Kind IDs are canonical lowercase `namespace:name` values.

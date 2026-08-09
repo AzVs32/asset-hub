@@ -1,8 +1,13 @@
+import { connect, WindowMessenger } from "penpal";
 import React from "react";
 import type { PluginView, ResourceActionOutput } from "@/domain/plugin";
 import type { ResourceAction } from "@/domain/resource";
 import type { PluginKernel, PluginViewRendererProps } from "@/kernel/plugin-kernel";
-import { parsePluginFrameRequest } from "../frame-protocol";
+import {
+  createPluginFrameHostBridge,
+  pluginFrameApiVersion,
+  pluginFrameChannel,
+} from "../frame-host";
 
 const MarkdownRenderer = React.lazy(() => import("./markdown-renderer"));
 const MediaRenderer = React.lazy(() => import("./media-renderer"));
@@ -79,96 +84,49 @@ function PluginFrameView({
   onResourceChanged,
 }: PluginViewRendererProps & { view: Extract<PluginView, { view: "plugin_frame" }> }) {
   const ref = React.useRef<HTMLIFrameElement>(null);
-  const [frameResource, setFrameResource] = React.useState(resource);
   const source = pluginFrameUrl(view.url, gateway.assetUrl.bind(gateway));
-
-  React.useEffect(() => {
-    setFrameResource((current) =>
-      current.id !== resource.id || resource.revision > current.revision ? resource : current,
-    );
-  }, [resource]);
-
-  React.useEffect(() => {
-    async function receive(event: MessageEvent) {
-      if (event.source !== ref.current?.contentWindow) return;
-      const message = parsePluginFrameRequest(event.data, view.plugin_api);
-      if (!message || !source || message.resourceId !== frameResource.id) return;
-      if (message.type === "asset-hub:replace-resource-text") {
-        const editAction = frameResource.actions.find(
-          (candidate) =>
-            output.resourceId === frameResource.id &&
-            candidate.id === output.action &&
-            candidate.provides === "text_edit" &&
-            candidate.access === "write",
-        );
-        if (!editAction) {
-          postResult(
-            ref.current,
-            message.type,
-            view.plugin_api,
-            message.requestId,
-            null,
-            "Text editing is not available from this frame.",
-          );
-          return;
-        }
-        try {
-          const updated = await gateway.replaceResourceText(frameResource, message.text);
-          setFrameResource(updated);
-          postResult(ref.current, message.type, view.plugin_api, message.requestId, null, null);
-          await onResourceChanged?.();
-        } catch (cause) {
-          postResult(
-            ref.current,
-            message.type,
-            view.plugin_api,
-            message.requestId,
-            null,
-            cause instanceof Error ? cause.message : "Content replacement failed",
-          );
-        }
-        return;
-      }
-      const action = frameResource.actions.find((candidate) => candidate.id === message.action);
-      if (!action) {
-        postResult(
-          ref.current,
-          message.type,
-          view.plugin_api,
-          message.requestId,
-          null,
-          `Action ${message.action} is not available.`,
-        );
-        return;
-      }
-      try {
-        const result = await gateway.executeAction(frameResource, action.id, message.input ?? {});
-        postResult(ref.current, message.type, view.plugin_api, message.requestId, result, null);
-        if (action.access === "write") await onResourceChanged?.();
-      } catch (cause) {
-        postResult(
-          ref.current,
-          message.type,
-          view.plugin_api,
-          message.requestId,
-          null,
-          cause instanceof Error ? cause.message : "Action failed",
-        );
-      }
+  const onResourceChangedRef = React.useRef(onResourceChanged);
+  const resourceRef = React.useRef(resource);
+  onResourceChangedRef.current = onResourceChanged;
+  resourceRef.current = resource;
+  const selectedResourceId = resource.id;
+  const bridge = React.useMemo(() => {
+    const initialResource = resourceRef.current;
+    if (initialResource.id !== selectedResourceId) {
+      throw new Error("The plugin frame Resource changed during connection setup.");
     }
-    window.addEventListener("message", receive);
-    return () => window.removeEventListener("message", receive);
-  }, [
-    frameResource,
-    gateway,
-    onResourceChanged,
-    output.action,
-    output.resourceId,
-    source,
-    view.plugin_api,
-  ]);
+    return createPluginFrameHostBridge({
+      resource: initialResource,
+      frameResourceId: output.resourceId,
+      frameActionId: output.action,
+      gateway,
+      onResourceChanged: () => onResourceChangedRef.current?.(),
+    });
+  }, [gateway, output.action, output.resourceId, selectedResourceId]);
+
+  React.useEffect(() => {
+    bridge.updateResource(resource);
+  }, [bridge, resource]);
+
+  React.useEffect(() => {
+    const remoteWindow = ref.current?.contentWindow;
+    if (!source || !remoteWindow || view.plugin_api !== pluginFrameApiVersion) return;
+    const messenger = new WindowMessenger({
+      remoteWindow,
+      // The sandbox intentionally creates an opaque origin. Penpal still binds this exact Window.
+      allowedOrigins: ["*"],
+    });
+    const connection = connect({
+      messenger,
+      channel: pluginFrameChannel,
+      methods: bridge.methods,
+    });
+    return () => connection.destroy();
+  }, [bridge, source, view.plugin_api]);
 
   if (!source) return <PluginError message="The plugin returned an invalid frame URL." />;
+  if (view.plugin_api !== pluginFrameApiVersion)
+    return <PluginError message={`Unsupported Plugin Frame API: ${view.plugin_api}`} />;
   return (
     <iframe
       ref={ref}
@@ -191,27 +149,6 @@ function PluginError({ message }: { message: string }) {
 function pluginFrameUrl(value: string, resolveUrl: (url: string) => string | null): string | null {
   if (!/^\/plugins\/[a-z0-9._-]+\/(?!.*(?:^|\/)\.\.(?:\/|$))/.test(value)) return null;
   return resolveUrl(value);
-}
-
-function postResult(
-  frame: HTMLIFrameElement | null,
-  requestType: "asset-hub:execute-resource-action" | "asset-hub:replace-resource-text",
-  pluginApi: string,
-  requestId: string,
-  data: unknown,
-  error: string | null,
-) {
-  frame?.contentWindow?.postMessage(
-    {
-      type: `${requestType}-result`,
-      plugin_api: pluginApi,
-      request_id: requestId,
-      ok: error === null,
-      data,
-      error,
-    },
-    "*",
-  );
 }
 
 function htmlWithoutNetwork(html: string): string {

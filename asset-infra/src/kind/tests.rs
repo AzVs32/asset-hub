@@ -156,7 +156,7 @@ fn registry_rejects_duplicate_global_action_ids() {
           },
           "runtime": {
             "type": "extism",
-            "plugin_api": "asset-hub.plugin-api@2"
+            "plugin_api": "asset-hub.plugin-api@3"
           },
           "capabilities": {
             "resource_kinds": [],

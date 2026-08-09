@@ -63,7 +63,9 @@ Supported output views are `text`, `markdown`, `html`, `plugin_frame`, `json`, `
 `download`. Generic outputs are rendered by the host. A plugin
 that needs its own application UI returns `plugin_frame` with a verified `/plugins/<id>/...` path;
 the frame runs with `sandbox="allow-scripts"` and can request only actions already exposed for the
-current resource through the versioned `postMessage` protocol. A frame produced by the current
+current resource through the versioned Asset Hub Web Plugin SDK. The SDK hides its Penpal transport
+and is available as both an ESM package and a self-contained script for plain `index.html` plugins.
+A frame produced by the current
 write `text_edit` provider may also request raw text replacement; the Host binds it to that
 resource and sends the content through the same revision-guarded streaming use case as the core
 text editor.

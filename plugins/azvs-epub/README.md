@@ -42,9 +42,10 @@ Asset Hub automatically loads a canonical package installed at
 
 Upload an EPUB as kind `azvs:epub`. The resource detail panel will show a `Read` action.
 
-The first action call returns a `plugin_frame`. The React reader requests a book index and the first
-chapter through the Asset Hub frame bridge. Additional chapters are fetched on demand and cached by
-the reader and Wasm runtime. Book content has no direct network access.
+The first action call returns a `plugin_frame`. The React reader connects through
+`@asset-hub/plugin-web-sdk`, then requests a book index and the first chapter through the Asset Hub
+frame bridge. Additional chapters are fetched on demand and cached by the reader and Wasm runtime.
+Book content has no direct network access.
 
 The plugin runtime accepts two private bridge operations on `azvs.epub.render`:
 

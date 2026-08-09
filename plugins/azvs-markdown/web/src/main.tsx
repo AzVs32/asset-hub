@@ -1,5 +1,12 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
+import {
+  PLUGIN_API_VERSION,
+  connectAssetHubFrame,
+  type AssetHubFrameClient,
+  type JsonObject,
+  type ResourceActionOutput,
+} from "@asset-hub/plugin-web-sdk";
 import MarkdownIt from "markdown-it";
 import {
   Check,
@@ -53,22 +60,6 @@ type SaveState =
   | { status: "saving"; label: string }
   | { status: "saved"; label: string }
   | { status: "error"; label: string };
-
-type HostResultMessage = {
-  type:
-    | "asset-hub:execute-resource-action-result"
-    | "asset-hub:replace-resource-text-result";
-  plugin_api: string;
-  request_id: string;
-  ok: boolean;
-  data?: {
-    view?: {
-      view?: string;
-      data?: unknown;
-    };
-  };
-  error?: string | null;
-};
 
 type MarkdownToken = {
   type: string;
@@ -148,10 +139,7 @@ function App() {
 
     setSaveState({ status: "saving", label: "Saving" });
     try {
-      const result = await replaceResourceText(payload, source);
-      if (!result.ok) {
-        throw new Error(result.error || "Save failed");
-      }
+      await replaceResourceText(source);
       setSaveState({ status: "saved", label: "Saved" });
     } catch (error) {
       setSaveState({
@@ -281,8 +269,7 @@ function readPayload(): FramePayload | null {
     const bytes = Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
     const value = JSON.parse(new TextDecoder().decode(bytes)) as Partial<FramePayload>;
     if (
-      typeof value.plugin_api !== "string"
-      || !value.plugin_api
+      value.plugin_api !== PLUGIN_API_VERSION
       || typeof value.resource_id !== "string"
       || (value.mode !== "read" && value.mode !== "edit")
       || typeof value.action !== "string"
@@ -336,12 +323,11 @@ async function loadMarkdown(payload: FramePayload): Promise<{ resourceName: stri
 }
 
 function jsonViewData<T>(
-  result: ExecuteActionResult,
+  result: ResourceActionOutput,
   validate: (value: unknown) => value is T,
   invalidMessage: string,
 ): T {
-  if (!result.ok) throw new Error(result.error || "Markdown action failed");
-  if (result.view?.view !== "json" || !validate(result.view.data)) {
+  if (result.view.view !== "json" || !validate(result.view.data)) {
     throw new Error(invalidMessage);
   }
   return result.view.data;
@@ -465,81 +451,20 @@ function slugify(value: string): string {
 
 function executeResourceAction(
   frame: FramePayload,
-  input: Record<string, unknown>,
-): Promise<ExecuteActionResult> {
-  return requestHost(
-    frame,
-    "asset-hub:execute-resource-action",
-    "asset-hub:execute-resource-action-result",
-    { action: frame.action, input },
-  );
+  input: JsonObject,
+): Promise<ResourceActionOutput> {
+  return frameHost().then((host) => host.executeResourceAction(frame.action, input));
 }
 
-function replaceResourceText(frame: FramePayload, text: string): Promise<ExecuteActionResult> {
-  return requestHost(
-    frame,
-    "asset-hub:replace-resource-text",
-    "asset-hub:replace-resource-text-result",
-    { text },
-  );
+function replaceResourceText(text: string): Promise<void> {
+  return frameHost().then((host) => host.replaceResourceText(text));
 }
 
-function requestHost(
-  frame: FramePayload,
-  requestType: "asset-hub:execute-resource-action" | "asset-hub:replace-resource-text",
-  resultType:
-    | "asset-hub:execute-resource-action-result"
-    | "asset-hub:replace-resource-text-result",
-  payload: Record<string, unknown>,
-): Promise<ExecuteActionResult> {
-  const requestId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
-  return new Promise((resolve) => {
-    const timeout = window.setTimeout(() => {
-      window.removeEventListener("message", onMessage);
-      resolve({ ok: false, error: "Markdown request timed out" });
-    }, 30000);
+let frameHostPromise: Promise<AssetHubFrameClient> | null = null;
 
-    function onMessage(event: MessageEvent<HostResultMessage>) {
-      if (event.source !== window.parent) return;
-      const message = event.data;
-      if (
-        !message ||
-        message.type !== resultType ||
-        message.plugin_api !== frame.plugin_api ||
-        message.request_id !== requestId
-      ) {
-        return;
-      }
-      window.clearTimeout(timeout);
-      window.removeEventListener("message", onMessage);
-      resolve({
-        ok: Boolean(message.ok),
-        view: message.data?.view,
-        error: message.error,
-      });
-    }
-
-    window.addEventListener("message", onMessage);
-    window.parent.postMessage(
-      {
-        type: requestType,
-        plugin_api: frame.plugin_api,
-        request_id: requestId,
-        resource_id: frame.resource_id,
-        ...payload,
-      },
-      "*",
-    );
-  });
+function frameHost(): Promise<AssetHubFrameClient> {
+  frameHostPromise ??= connectAssetHubFrame();
+  return frameHostPromise;
 }
-
-type ExecuteActionResult = {
-  ok: boolean;
-  view?: {
-    view?: string;
-    data?: unknown;
-  };
-  error?: string | null;
-};
 
 createRoot(document.getElementById("root")!).render(<App />);

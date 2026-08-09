@@ -34,6 +34,7 @@
     "lucide-react": "^1.25.0",
     "media-chrome": "^4.19.2",
     "openapi-fetch": "^0.17.0",
+    "penpal": "^7.0.6",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-hook-form": "^7.81.0",

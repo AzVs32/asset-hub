@@ -4,7 +4,7 @@
 //! 可用，也不执行插件声明的副作用。
 
 /// Current and only supported Host/plugin wire and ABI version.
-pub const PLUGIN_API_VERSION: &str = "asset-hub.plugin-api@2";
+pub const PLUGIN_API_VERSION: &str = "asset-hub.plugin-api@3";
 
 mod access;
 pub mod diagnostic;

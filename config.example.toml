@@ -84,7 +84,7 @@ filesystem_write = []
 #   },
 #   "runtime": {
 #     "type": "extism",
-#     "plugin_api": "asset-hub.plugin-api@2"
+#     "plugin_api": "asset-hub.plugin-api@3"
 #   },
 #   "capabilities": {
 #     "resource_kinds": [

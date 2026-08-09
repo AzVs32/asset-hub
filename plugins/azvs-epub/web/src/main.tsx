@@ -1,6 +1,12 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import {
+  PLUGIN_API_VERSION,
+  connectAssetHubFrame,
+  type AssetHubFrameClient,
+  type JsonObject,
+} from "@asset-hub/plugin-web-sdk";
+import {
   BookOpen,
   ChevronLeft,
   ChevronRight,
@@ -34,20 +40,6 @@ type Book = {
   cover: string | null;
   chapters: ChapterSummary[];
   initial_chapter: ChapterContent | null;
-};
-
-type ActionResultMessage = {
-  type: "asset-hub:execute-resource-action-result";
-  plugin_api: string;
-  request_id: string;
-  ok: boolean;
-  data?: {
-    view?: {
-      view?: string;
-      data?: unknown;
-    };
-  };
-  error?: string | null;
 };
 
 const payload = readPayload();
@@ -378,8 +370,7 @@ function readPayload(): FramePayload | null {
     const bytes = Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
     const value = JSON.parse(new TextDecoder().decode(bytes)) as Partial<FramePayload>;
     if (
-      typeof value.plugin_api !== "string"
-      || !value.plugin_api
+      value.plugin_api !== PLUGIN_API_VERSION
       || !value.resource_id
       || !value.resource_name
       || !value.action
@@ -392,52 +383,23 @@ function readPayload(): FramePayload | null {
 
 function executeEpubAction<T>(
   frame: FramePayload,
-  input: Record<string, unknown>,
+  input: JsonObject,
   validate: (value: unknown) => value is T,
 ): Promise<T> {
-  const requestId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
-  return new Promise((resolve, reject) => {
-    const timeout = window.setTimeout(() => {
-      window.removeEventListener("message", onMessage);
-      reject(new Error("EPUB request timed out"));
-    }, 30000);
-
-    function onMessage(event: MessageEvent<ActionResultMessage>) {
-      if (event.source !== window.parent) return;
-      const message = event.data;
-      if (
-        !message ||
-        message.type !== "asset-hub:execute-resource-action-result" ||
-        message.plugin_api !== frame.plugin_api ||
-        message.request_id !== requestId
-      ) return;
-      window.clearTimeout(timeout);
-      window.removeEventListener("message", onMessage);
-      if (!message.ok) {
-        reject(new Error(message.error || "EPUB action failed"));
-        return;
-      }
-      const view = message.data?.view;
-      if (view?.view !== "json" || !validate(view.data)) {
-        reject(new Error("EPUB plugin returned an invalid payload"));
-        return;
-      }
-      resolve(view.data);
+  return frameHost().then(async (host) => {
+    const output = await host.executeResourceAction(frame.action, input);
+    if (output.view.view !== "json" || !validate(output.view.data)) {
+      throw new Error("EPUB plugin returned an invalid payload");
     }
-
-    window.addEventListener("message", onMessage);
-    window.parent.postMessage(
-      {
-        type: "asset-hub:execute-resource-action",
-        plugin_api: frame.plugin_api,
-        request_id: requestId,
-        resource_id: frame.resource_id,
-        action: frame.action,
-        input,
-      },
-      "*",
-    );
+    return output.view.data;
   });
+}
+
+let frameHostPromise: Promise<AssetHubFrameClient> | null = null;
+
+function frameHost(): Promise<AssetHubFrameClient> {
+  frameHostPromise ??= connectAssetHubFrame();
+  return frameHostPromise;
 }
 
 function isChapterSummary(value: unknown): value is ChapterSummary {
