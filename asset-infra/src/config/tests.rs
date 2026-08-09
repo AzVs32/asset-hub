@@ -34,23 +34,6 @@ fn empty_config_uses_defaults() {
 }
 
 #[test]
-fn partial_config_keeps_missing_defaults() {
-    let config = AssetInfraConfig::from_config_str(
-        r#"
-        [blob.local]
-        root = "tmp/blob"
-        "#,
-    )
-    .unwrap();
-
-    assert_eq!(config.blob.local.root, PathBuf::from("tmp/blob"));
-    assert_eq!(
-        config.sqlite_path(),
-        PathBuf::from("tmp/blob/.asset-hub/asset-hub.sqlite")
-    );
-}
-
-#[test]
 fn optional_missing_config_file_uses_defaults() {
     let config = AssetInfraConfig::from_optional_config_file(
         std::env::temp_dir().join("asset-hub-missing-config.toml"),

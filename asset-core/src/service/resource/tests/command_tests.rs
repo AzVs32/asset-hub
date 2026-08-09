@@ -31,59 +31,6 @@ fn update_resource_rejects_a_stale_authorized_snapshot() {
 }
 
 #[test]
-fn soft_delete_resource_moves_blob_to_trash_and_hides_content_read() {
-    let (service, repository, blob_storage) = service();
-    let key = StorageKey::new("assets/image.png").unwrap();
-    let data = Bytes::from_static(b"image bytes");
-    let resource = block_on(service.upload_resource_for_test(stream_upload_command(
-        "image",
-        key.clone(),
-        data.clone(),
-    )))
-    .unwrap();
-    let trash_key = StorageKey::new(format!(".asset-hub/trash/{}", resource.id())).unwrap();
-
-    let deleted = block_on(service.commands().soft_delete_resource(&resource.id()))
-        .unwrap()
-        .unwrap();
-    let content = block_on(service.content().get_resource_content(&resource.id())).unwrap();
-
-    assert!(deleted.is_deleted());
-    assert!(repository.find_sync(&resource.id()).unwrap().is_deleted());
-    assert!(!blob_storage.contains(&key));
-    assert_eq!(blob_storage.get_sync(&trash_key), Some(data));
-    assert!(content.is_none());
-}
-
-#[test]
-fn restoring_soft_deleted_resource_moves_blob_back_from_trash() {
-    let (service, repository, blob_storage) = service();
-    let key = StorageKey::new("assets/restored.png").unwrap();
-    let data = Bytes::from_static(b"restored bytes");
-    let resource = block_on(service.upload_resource_for_test(stream_upload_command(
-        "restored",
-        key.clone(),
-        data.clone(),
-    )))
-    .unwrap();
-    let trash_key = StorageKey::new(format!(".asset-hub/trash/{}", resource.id())).unwrap();
-    let deleted = block_on(service.commands().soft_delete_resource(&resource.id()))
-        .unwrap()
-        .unwrap();
-    let deleted_revision = deleted.revision();
-
-    let restored = block_on(service.commands().update_resource_snapshot(
-        repository.locate_sync(deleted),
-        UpdateResource::new(deleted_revision).with_restore(true),
-    ))
-    .unwrap();
-
-    assert!(!restored.is_deleted());
-    assert_eq!(blob_storage.get_sync(&key), Some(data));
-    assert!(!blob_storage.contains(&trash_key));
-}
-
-#[test]
 fn soft_delete_rolls_blob_back_when_resource_snapshot_is_stale() {
     let (service, repository, blob_storage) = service();
     let key = StorageKey::new("assets/concurrent-delete.png").unwrap();
@@ -113,23 +60,6 @@ fn soft_delete_rolls_blob_back_when_resource_snapshot_is_stale() {
     assert_eq!(blob_storage.get_sync(&key), Some(data));
     assert!(!blob_storage.contains(&trash_key));
     assert!(!repository.find_sync(&concurrent.id()).unwrap().is_deleted());
-}
-
-#[test]
-fn remove_resource_deletes_blob_and_repository_record() {
-    let (service, repository, blob_storage) = service();
-    let key = StorageKey::new("assets/image.png").unwrap();
-    let resource = block_on(service.upload_resource_for_test(stream_upload_command(
-        "image",
-        key.clone(),
-        Bytes::from_static(b"image bytes"),
-    )))
-    .unwrap();
-
-    assert!(block_on(service.commands().remove_resource(&resource.id())).unwrap());
-    assert!(repository.find_sync(&resource.id()).is_none());
-    assert!(!blob_storage.contains(&key));
-    assert!(!block_on(service.commands().remove_resource(&resource.id())).unwrap());
 }
 
 #[test]

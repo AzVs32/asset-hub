@@ -71,6 +71,30 @@ Treat the following as facts until the implementation and documentation are chan
 - plugin runtime: Extism/Wasm;
 - root directory ID: nil UUID `00000000-0000-0000-0000-000000000000`.
 
+## Test value policy
+
+Tests should protect behavior with meaningful regression risk, not mirror implementation structure or
+maximize line coverage.
+
+Prefer tests for:
+
+- pure parsing, normalization, state-transition, path, ID, and naming rules;
+- authorization boundaries, optimistic concurrency, recovery, compensation, and failure ordering;
+- a small representative set of migration and repository guarantees;
+- public HTTP, OpenAPI, Plugin API, Manifest, ABI, and frame-protocol compatibility boundaries.
+
+Avoid or remove tests that only cover:
+
+- getters, setters, builder field assignment, defaults already exercised by a higher-value test, or
+  direct DTO field copying;
+- framework-generated CLI parsing and ordinary CRUD success paths already covered at another layer;
+- repeated permutations added only for coverage;
+- unstable presentation details while a feature is still changing rapidly.
+
+Before adding a test, identify the invariant, compatibility boundary, or concrete regression it protects.
+Prefer one test at the layer that owns the behavior over duplicate assertions across Core, adapters, HTTP,
+CLI, and Web.
+
 ## Validation
 
 After making changes:

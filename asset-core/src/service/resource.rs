@@ -233,12 +233,6 @@ impl ResourceService {
             .await
     }
 
-    #[cfg(test)]
-    async fn storage_key(&self, resource: &Resource) -> Result<StorageKey, CoreError> {
-        let directory = self.locate_resource_directory(resource).await?;
-        StorageKey::from_resource_path(directory.path(), resource.name()).map_err(Into::into)
-    }
-
     /// 使用大小与修改时间增量协调对象存储。
     pub async fn reconcile_storage(&self) -> Result<StorageReconciliationReport, CoreError> {
         self.reconciliation().reconcile_storage(false).await

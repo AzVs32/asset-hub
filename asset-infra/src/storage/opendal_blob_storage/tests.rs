@@ -2,21 +2,6 @@ use super::*;
 use std::path::PathBuf;
 
 #[tokio::test]
-async fn fs_storage_roundtrips_blob_content() {
-    let storage = storage("fs-roundtrip");
-    let key = StorageKey::new("assets/image.png").unwrap();
-    let data = Bytes::from_static(b"image bytes");
-
-    storage.put(&key, data.clone()).await.unwrap();
-
-    assert_eq!(storage.get(&key).await.unwrap(), Some(data));
-
-    storage.delete(&key).await.unwrap();
-
-    assert_eq!(storage.get(&key).await.unwrap(), None);
-}
-
-#[tokio::test]
 async fn fs_storage_preserves_spaces_in_the_physical_path() {
     let (storage, root) = storage_with_root("fs-path-spaces");
     let key = StorageKey::new(" library / project A / design  01.md ").unwrap();

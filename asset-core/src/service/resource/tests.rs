@@ -2,9 +2,9 @@ use super::action::resolved_content_delivery;
 use super::content::hex_sha256;
 use super::*;
 use crate::domain::{
-    AccessContext, ActionAccess, Checksum, ChecksumKind, ContentVerificationStatus,
-    DefinitionOrigin, Directory, DirectoryActionDefinition, DirectoryId, DirectoryKindDefinition,
-    DirectoryPath, ResourceActionDefinition, ResourceActionPolicy, ResourceContentEditPolicy,
+    AccessContext, ActionAccess, Checksum, ContentVerificationStatus, DefinitionOrigin, Directory,
+    DirectoryActionDefinition, DirectoryId, DirectoryKindDefinition, DirectoryPath,
+    ResourceActionDefinition, ResourceActionPolicy, ResourceContentEditPolicy,
     ResourceContentMatcher, ResourceContentReplacement, ResourceContentReplacementId, ResourceId,
     UploadId, UploadSession, UploadStatus, User, UserId, UserRole,
 };
@@ -1363,39 +1363,6 @@ fn stream_upload_command(
     let stream = futures_util::stream::once(async move { Ok(data) });
     TestUpload::new(name, Box::pin(stream))
         .with_directory(DirectoryPath::from_path(directory).unwrap())
-}
-
-fn service_with_registry(
-    kind_registry: Arc<dyn ResourceKindRegistry>,
-) -> (
-    ResourceService,
-    Arc<InMemoryResourceRepository>,
-    Arc<InMemoryBlobStorage>,
-) {
-    let repository = Arc::new(InMemoryResourceRepository::default());
-    let blob_storage = Arc::new(InMemoryBlobStorage::default());
-    let directories = DirectoryService::new(
-        repository.clone(),
-        repository.clone(),
-        blob_storage.clone(),
-        Arc::new(InMemoryDirectoryKindRegistry::default()),
-    );
-    let service = ResourceService::new(
-        ResourceServicePorts::new(
-            repository.clone(),
-            repository.clone(),
-            blob_storage.clone(),
-            blob_storage.clone(),
-            kind_registry,
-            Arc::new(InMemoryUploadSessionRepository::default()),
-            Arc::new(InMemoryContentReplacementRepository::default()),
-        ),
-        directories,
-        Arc::new(test_resource_action_policy()),
-        Arc::new(test_resource_content_edit_policy()),
-    );
-
-    (service, repository, blob_storage)
 }
 
 mod action_tests;

@@ -1,7 +1,5 @@
 use super::*;
-use asset_core::domain::{
-    Checksum, DefinitionOrigin, DirectoryKindDefinition, ResourceContent, StorageKey,
-};
+use asset_core::domain::{DefinitionOrigin, DirectoryKindDefinition, StorageKey};
 use asset_core::port::{
     DirectoryKindRegistry, DirectoryRepository, DirectoryStorage, ResourceRepository,
 };
@@ -70,52 +68,6 @@ async fn resource_storage_key(
         .await
         .unwrap();
     StorageKey::from_resource_path(directory.path(), resource.name()).unwrap()
-}
-
-#[tokio::test]
-async fn sqlite_repository_roundtrips_resource() {
-    let repository = repository("roundtrip").await;
-    let directories = directory_service(repository.clone()).await;
-    let checksum = Checksum::sha256("a".repeat(64)).unwrap();
-    let modified_at = chrono::DateTime::parse_from_rfc3339("2026-07-23T03:00:00Z")
-        .unwrap()
-        .with_timezone(&chrono::Utc);
-    let content = ResourceContent::verified(42, checksum.clone())
-        .with_mime_type("image/png")
-        .with_modified_at(modified_at)
-        .build()
-        .unwrap();
-    let assets = directories
-        .ensure_path(&DirectoryPath::from_path("assets").unwrap())
-        .await
-        .unwrap();
-    let resource = Resource::builder("image.png")
-        .with_directory_id(assets.id())
-        .with_kind(ResourceKind::try_new("core:image").unwrap())
-        .with_content(content)
-        .build()
-        .unwrap();
-
-    repository.save(&resource).await.unwrap();
-
-    let restored = repository
-        .find_by_id(&resource.id())
-        .await
-        .unwrap()
-        .unwrap();
-    let restored_content = restored.content().unwrap();
-
-    assert_eq!(restored.id(), resource.id());
-    assert_eq!(restored.name(), "image.png");
-    assert!(restored.kind().is("core:image"));
-    assert_eq!(
-        resource_storage_key(&repository, &restored).await.as_str(),
-        "assets/image.png"
-    );
-    assert_eq!(restored_content.size(), 42);
-    assert_eq!(restored_content.mime_type(), Some("image/png"));
-    assert_eq!(restored_content.checksum(), Some(&checksum));
-    assert_eq!(restored_content.modified_at(), Some(modified_at));
 }
 
 #[tokio::test]
@@ -201,37 +153,6 @@ async fn sqlite_path_lookup_ignores_soft_deleted_resource_and_finds_replacement(
             .unwrap()
             .map(|resource| resource.resource().id()),
         Some(replacement.id())
-    );
-}
-
-#[tokio::test]
-async fn sqlite_repository_upserts_and_removes_resource() {
-    let repository = repository("upsert-remove").await;
-    let mut resource = Resource::builder("image")
-        .with_kind(ResourceKind::try_new("core:image").unwrap())
-        .build()
-        .unwrap();
-
-    repository.save(&resource).await.unwrap();
-    resource.rename("renamed image").unwrap();
-    repository.save(&resource).await.unwrap();
-
-    let restored = repository
-        .find_by_id(&resource.id())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(restored.name(), "renamed image");
-
-    repository.remove(&resource.id()).await.unwrap();
-    repository.remove(&resource.id()).await.unwrap();
-
-    assert!(
-        repository
-            .find_by_id(&resource.id())
-            .await
-            .unwrap()
-            .is_none()
     );
 }
 

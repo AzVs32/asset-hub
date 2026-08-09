@@ -10,8 +10,3 @@ pub fn verify_manifest(path: &Path) -> Result<PluginManifest, CoreError> {
 pub fn generate_lock(path: &Path) -> Result<PluginManifest, CoreError> {
     generate_plugin_manifest_lock(path)
 }
-
-#[cfg(test)]
-mod tests {
-    include!("tests.rs");
-}

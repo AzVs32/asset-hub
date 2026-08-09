@@ -53,63 +53,6 @@ fn empty_repository_startup_recovers_metadata_before_checksum_verification() {
     assert_eq!(resumed.pending_verification_keys(), &[second_key]);
 }
 
-#[test]
-fn get_resource_content_reads_existing_blob() {
-    let (service, _, _) = service();
-    let key = StorageKey::new("assets/image.png").unwrap();
-    let data = Bytes::from_static(b"image bytes");
-    let resource = block_on(service.upload_resource_for_test(stream_upload_command(
-        "image",
-        key,
-        data.clone(),
-    )))
-    .unwrap();
-
-    let content = block_on(service.content().get_resource_content(&resource.id())).unwrap();
-
-    assert_eq!(content, Some(data));
-}
-
-#[test]
-fn streaming_text_replacement_updates_content_and_revision() {
-    let (service, repository, blob_storage) = service();
-    let key = StorageKey::new("docs/streamed.md").unwrap();
-    let resource = block_on(
-        service.upload_resource_for_test(
-            stream_upload_command("streamed.md", key.clone(), Bytes::from_static(b"# Old"))
-                .with_kind(ResourceKind::try_new("core:text").unwrap())
-                .with_mime_type("text/markdown"),
-        ),
-    )
-    .unwrap();
-    let replacement = Bytes::from_static(b"# Streamed\n\nUpdated.");
-    let checksum = Checksum::sha256(hex_sha256(&replacement)).unwrap();
-    let command = ReplaceResourceContent::new(
-        replacement.len() as u64,
-        checksum.clone(),
-        resource.revision(),
-    )
-    .with_mime_type("text/markdown");
-
-    let updated = block_on(service.content().replace_text_content_snapshot(
-        repository.locate_sync(resource.clone()),
-        command,
-        Box::pin(futures_util::stream::once({
-            let replacement = replacement.clone();
-            async move { Ok(replacement) }
-        })),
-    ))
-    .unwrap();
-
-    assert_eq!(updated.revision(), resource.revision() + 1);
-    assert_eq!(updated.content().unwrap().checksum(), Some(&checksum));
-    assert_eq!(blob_storage.get_sync(&key), Some(replacement));
-    assert_eq!(
-        repository.find_sync(&resource.id()).unwrap().revision(),
-        updated.revision()
-    );
-}
-
 #[tokio::test]
 async fn streaming_text_replacement_serializes_with_rename_on_the_same_blob() {
     let (service, repository, blob_storage) = service();

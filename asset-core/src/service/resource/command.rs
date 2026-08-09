@@ -150,25 +150,6 @@ impl<'a> ResourceCommandService<'a> {
         Err(error)
     }
 
-    /// 软删除资源。
-    ///
-    /// 软删除会将对象内容移动到 Asset Hub 内部回收站，再更新资源聚合状态。原逻辑路径
-    /// 会被释放，因此可以创建同目录、同名的新资源；恢复时内容会从回收站移回逻辑路径。
-    ///
-    /// 找不到资源时返回 `Ok(None)`；找到资源时返回保存后的资源状态。重复软删除同一资源是
-    /// 幂等的，领域模型不会反复刷新删除时间。
-    #[cfg(test)]
-    pub(crate) async fn soft_delete_resource(
-        &self,
-        id: &ResourceId,
-    ) -> Result<Option<Resource>, CoreError> {
-        let Some(resource) = self.service.query.find_located_by_id(id).await? else {
-            return Ok(None);
-        };
-
-        self.soft_delete_resource_snapshot(resource).await.map(Some)
-    }
-
     pub(crate) async fn soft_delete_resource_snapshot(
         &self,
         located: LocatedResource,
@@ -218,25 +199,6 @@ impl<'a> ResourceCommandService<'a> {
         }
 
         Err(error)
-    }
-
-    /// 物理移除资源及其对象内容。
-    ///
-    /// 该 usecase 用于维护任务或明确需要硬删除的场景，不是默认业务删除入口。
-    ///
-    /// 执行顺序是先按版本原子移除资源记录，再删除对象内容。这样并发更新不会导致新版本
-    /// 引用的对象被误删；对象删除失败时，后续协调任务可发现并清理孤立对象。
-    ///
-    /// 返回值表示是否找到并尝试移除了资源：资源不存在时返回 `Ok(false)`，找到并完成移除时
-    /// 返回 `Ok(true)`。
-    #[cfg(test)]
-    pub(crate) async fn remove_resource(&self, id: &ResourceId) -> Result<bool, CoreError> {
-        let Some(resource) = self.service.query.find_located_by_id(id).await? else {
-            return Ok(false);
-        };
-
-        self.remove_resource_snapshot(resource).await?;
-        Ok(true)
     }
 
     pub(crate) async fn remove_resource_snapshot(

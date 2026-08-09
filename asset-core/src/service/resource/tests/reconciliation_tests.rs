@@ -73,46 +73,6 @@ fn startup_reconciliation_hashes_only_new_or_changed_files() {
 }
 
 #[test]
-fn storage_reconciliation_preserves_spaces_in_discovered_paths() {
-    let (service, repository, blob_storage) = service();
-    let directory = DirectoryPath::from_path(" external files / project A ").unwrap();
-    let name = " draft  01.txt ";
-    let key = StorageKey::new(" external files / project A / draft  01.txt ").unwrap();
-    block_on(blob_storage.ensure_directory(&directory)).unwrap();
-    block_on(blob_storage.put(&key, Bytes::from_static(b"draft"))).unwrap();
-
-    block_on(service.reconcile_storage()).unwrap();
-
-    let resource = block_on(ResourceQuery::find_by_path(
-        repository.as_ref(),
-        &directory,
-        name,
-    ))
-    .unwrap()
-    .unwrap();
-    assert_eq!(resource.resource().name(), name);
-    assert_eq!(
-        block_on(service.locate_resource_directory(resource.resource()))
-            .unwrap()
-            .path(),
-        &directory
-    );
-    assert_eq!(
-        block_on(service.storage_key(resource.resource())).unwrap(),
-        key
-    );
-    assert_eq!(
-        block_on(
-            service
-                .content()
-                .get_resource_content(&resource.resource().id())
-        )
-        .unwrap(),
-        Some(Bytes::from_static(b"draft"))
-    );
-}
-
-#[test]
 fn storage_reconciliation_preserves_resource_id_on_file_rename() {
     let (service, repository, blob_storage) = service();
     let from_directory = DirectoryPath::from_path("incoming").unwrap();

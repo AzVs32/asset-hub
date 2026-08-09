@@ -4,8 +4,6 @@
 
 use super::{ReplaceResourceContent, ResourceContentStream, ResourceService};
 use crate::CoreError;
-#[cfg(test)]
-use crate::domain::ResourceId;
 use crate::domain::{
     Checksum, ChecksumKind, Resource, ResourceContent, ResourceContentReplacement,
     ResourceContentReplacementId, StorageKey,
@@ -24,17 +22,6 @@ pub(super) struct ResourceContentService<'a> {
 impl<'a> ResourceContentService<'a> {
     pub(super) fn new(service: &'a ResourceService) -> Self {
         Self { service }
-    }
-
-    #[cfg(test)]
-    pub(crate) async fn get_resource_content(
-        &self,
-        id: &ResourceId,
-    ) -> Result<Option<Bytes>, CoreError> {
-        let Some(resource) = self.service.query.find_located_by_id(id).await? else {
-            return Ok(None);
-        };
-        self.get_resource_content_snapshot(&resource).await
     }
 
     pub(crate) async fn get_resource_content_snapshot(

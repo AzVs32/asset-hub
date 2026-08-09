@@ -51,60 +51,6 @@ fn resource_kind_serde_requires_canonical_input() {
 }
 
 #[test]
-fn new_resource_has_default_fields() {
-    let resource = Resource::builder(" Design Doc ")
-        .with_kind(ResourceKind::try_new("doc:markdown").unwrap())
-        .build()
-        .unwrap();
-
-    assert_eq!(resource.name(), " Design Doc ");
-    assert_eq!(resource.kind().as_str(), "doc:markdown");
-    assert!(resource.directory_id().is_root());
-    assert!(!resource.is_deleted());
-    assert!(resource.content().is_none());
-    assert_eq!(resource.created_at(), resource.updated_at());
-    assert_eq!(resource.revision(), 1);
-}
-
-#[test]
-fn resource_builder_uses_default_kind() {
-    let resource = Resource::builder("generic resource").build().unwrap();
-
-    assert!(resource.kind().is(ResourceKind::DEFAULT));
-    assert_eq!(resource.kind().as_str(), ResourceKind::DEFAULT);
-}
-
-#[test]
-fn resource_can_be_rehydrated_from_snapshot() {
-    let id = ResourceId::new();
-    let created_at = chrono::Utc::now();
-    let updated_at = created_at + chrono::Duration::seconds(5);
-    let deleted_at = Some(updated_at);
-
-    let resource = Resource::rehydrate(ResourceSnapshot {
-        id,
-        name: " restored image ".to_string(),
-        directory_id: DirectoryId::new(),
-        kind: ResourceKind::try_new("core:image").unwrap(),
-        content: None,
-        created_at,
-        updated_at,
-        revision: 7,
-        deleted_at,
-    })
-    .unwrap();
-
-    assert_eq!(resource.id(), id);
-    assert_eq!(resource.name(), " restored image ");
-    assert!(resource.kind().is("core:image"));
-    assert_eq!(resource.created_at(), created_at);
-    assert_eq!(resource.updated_at(), updated_at);
-    assert_eq!(resource.revision(), 7);
-    assert_eq!(resource.deleted_at(), deleted_at);
-    assert!(resource.is_deleted());
-}
-
-#[test]
 fn resource_rehydration_rejects_inconsistent_timestamps() {
     let created_at = chrono::Utc::now();
     let snapshot = ResourceSnapshot {
@@ -145,30 +91,6 @@ fn resource_soft_delete_and_restore_update_state() {
 }
 
 #[test]
-fn resource_builder_accepts_content() {
-    let checksum = Checksum::sha256("a".repeat(64)).unwrap();
-    let modified_at = chrono::DateTime::parse_from_rfc3339("2026-07-23T03:00:00Z")
-        .unwrap()
-        .with_timezone(&chrono::Utc);
-    let content = ResourceContent::verified(42, checksum.clone())
-        .with_mime_type(" image/png ")
-        .with_modified_at(modified_at)
-        .build()
-        .unwrap();
-
-    let resource = Resource::builder("image")
-        .with_kind(ResourceKind::try_new("core:image").unwrap())
-        .with_content(content)
-        .build()
-        .unwrap();
-
-    let content = resource.content().unwrap();
-    assert_eq!(content.mime_type(), Some("image/png"));
-    assert_eq!(content.checksum(), Some(&checksum));
-    assert_eq!(content.modified_at(), Some(modified_at));
-}
-
-#[test]
 fn resource_content_supports_explicit_pending_and_failed_verification() {
     let pending = ResourceContent::pending(42)
         .with_mime_type("application/octet-stream")
@@ -190,22 +112,6 @@ fn resource_content_supports_explicit_pending_and_failed_verification() {
     );
     assert_eq!(failed.checksum(), None);
     assert_eq!(failed.verification_error(), Some("storage read failed"));
-}
-
-#[test]
-fn resource_tracks_its_directory_by_id() {
-    let directory_id = DirectoryId::new();
-    let resource = Resource::builder("readme.md")
-        .with_directory_id(directory_id)
-        .with_content(
-            ResourceContent::verified(42, Checksum::sha256("a".repeat(64)).unwrap())
-                .build()
-                .unwrap(),
-        )
-        .build()
-        .unwrap();
-
-    assert_eq!(resource.directory_id(), directory_id);
 }
 
 #[test]
@@ -346,15 +252,4 @@ fn checksum_kind_uses_canonical_boundary_text() {
     assert_eq!(ChecksumKind::Sha256.to_string(), "sha256");
     assert_eq!("sha256".parse(), Ok(ChecksumKind::Sha256));
     assert!("md5".parse::<ChecksumKind>().is_err());
-}
-
-#[test]
-fn content_stores_one_typed_checksum() {
-    let checksum = Checksum::sha256("a".repeat(64)).unwrap();
-    let content = ResourceContent::verified(1, checksum.clone())
-        .build()
-        .unwrap();
-
-    assert_eq!(content.checksum(), Some(&checksum));
-    assert_eq!(content.checksum().unwrap().kind(), ChecksumKind::Sha256);
 }

@@ -739,6 +739,3 @@ impl From<&Checksum> for ChecksumResponse {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;
