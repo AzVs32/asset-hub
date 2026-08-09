@@ -9,7 +9,7 @@ use serde_json::Value;
 
 /// Action request passed from host to a plugin handler.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PluginActionRequest {
+pub struct PluginResourceActionRequest {
     pub action: String,
     pub access: PluginActionAccess,
     #[serde(default)]
@@ -28,6 +28,7 @@ pub struct PluginResource {
     pub directory: String,
     pub name: String,
     pub kind: String,
+    pub revision: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content: Option<PluginResourceContent>,
     pub created_at: String,

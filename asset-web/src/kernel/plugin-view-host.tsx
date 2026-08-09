@@ -1,5 +1,5 @@
 import type { AssetGateway } from "@/application/ports/asset-gateway";
-import type { PluginActionOutput } from "@/domain/plugin";
+import type { ResourceActionOutput } from "@/domain/plugin";
 import type { Resource } from "@/domain/resource";
 import { usePluginKernel } from "./plugin-kernel";
 
@@ -9,7 +9,7 @@ export function PluginViewHost({
   gateway,
   onResourceChanged,
 }: {
-  output: PluginActionOutput;
+  output: ResourceActionOutput;
   resource: Resource;
   gateway: AssetGateway;
   onResourceChanged?: (() => void | Promise<void>) | undefined;

@@ -1,9 +1,13 @@
 use asset_core::CoreError;
-use asset_core::domain::{ActionAccess, ResourceActionDefinition, ResourceContentMatcher};
-use asset_core::port::{ResourceActionRegistry, ResourceKindDefinition};
+use asset_core::domain::{
+    ActionAccess, DefinitionOrigin, ResourceActionDefinition, ResourceContentMatcher,
+    ResourceKindDefinition,
+};
+use asset_core::port::ResourceActionRegistry;
 use asset_plugin_api::manifest::ResourceActionCapability;
 
 use super::normalization::resource_action_definition;
+use super::validation::ensure_unique_scoped_action;
 use crate::builtin_catalog::{TEXT_EDIT_CAPABILITY, TEXT_READ_CAPABILITY, THUMBNAIL_CAPABILITY};
 
 const RESOURCE_THUMBNAIL_LOCATION: &str = "resource_list_thumbnail";
@@ -28,8 +32,9 @@ impl ResourceActionRegistry for DefaultResourceActionRegistry {
 pub(super) fn action_definitions_with_inherited_content(
     definitions: &[ResourceKindDefinition],
     action: &ResourceActionCapability,
+    origin: DefinitionOrigin,
 ) -> Result<Vec<ResourceActionDefinition>, CoreError> {
-    let definition = resource_action_definition(action);
+    let definition = resource_action_definition(action, origin);
     if !should_inherit_detect_for_action(action) || !definition.content_matcher().is_empty() {
         return Ok(vec![definition]);
     }
@@ -56,7 +61,7 @@ pub(super) fn detect_for_kind(
 ) -> Result<ResourceContentMatcher, CoreError> {
     definitions
         .iter()
-        .find(|definition| definition.kind().as_str().eq_ignore_ascii_case(kind))
+        .find(|definition| definition.kind().as_str() == kind)
         .map(|definition| definition.detect().clone())
         .ok_or_else(|| {
             CoreError::configuration(format!("resource action references unknown kind `{kind}`"))
@@ -69,22 +74,15 @@ pub(super) fn push_action_definition(
     source: impl Into<String>,
 ) -> Result<(), CoreError> {
     let source = source.into();
-    if actions.iter().any(|existing| {
-        existing.id().as_str() == action.id().as_str()
-            && (existing.kinds().is_empty()
-                || action.kinds().is_empty()
-                || existing.kinds().iter().any(|kind| {
-                    action
-                        .kinds()
-                        .iter()
-                        .any(|candidate| candidate.eq_ignore_ascii_case(kind))
-                }))
-    }) {
-        return Err(CoreError::configuration(format!(
-            "duplicate global resource action `{}` from {source}",
-            action.id()
-        )));
-    }
+    ensure_unique_scoped_action(
+        "resource",
+        action.id().as_str(),
+        action.kinds(),
+        &source,
+        actions
+            .iter()
+            .map(|existing| (existing.id().as_str(), existing.kinds())),
+    )?;
 
     actions.push(action);
     Ok(())
@@ -119,8 +117,8 @@ pub(super) fn validate_resource_action_capabilities(
             )));
         }
         if provides_thumbnail
-            && (action.access() != ActionAccess::ReadOnly
-                || !action.output().view.iter().any(|view| view == "media"))
+            && (action.access() != ActionAccess::Read
+                || !action.output().views.iter().any(|view| view == "media"))
         {
             return Err(CoreError::configuration(format!(
                 "resource thumbnail provider `{}` must be read-only and support the `media` view",
@@ -130,7 +128,7 @@ pub(super) fn validate_resource_action_capabilities(
         let provides_text_read = action
             .provides()
             .is_some_and(|capability| capability.as_str() == TEXT_READ_CAPABILITY);
-        if provides_text_read && action.access() != ActionAccess::ReadOnly {
+        if provides_text_read && action.access() != ActionAccess::Read {
             return Err(CoreError::configuration(format!(
                 "resource text read provider `{}` must be read-only",
                 action.id()
@@ -139,9 +137,9 @@ pub(super) fn validate_resource_action_capabilities(
         let provides_text_edit = action
             .provides()
             .is_some_and(|capability| capability.as_str() == TEXT_EDIT_CAPABILITY);
-        if provides_text_edit && action.access() != ActionAccess::ReadWrite {
+        if provides_text_edit && action.access() != ActionAccess::Write {
             return Err(CoreError::configuration(format!(
-                "resource text edit provider `{}` must be read-write",
+                "resource text edit provider `{}` must have write access",
                 action.id()
             )));
         }

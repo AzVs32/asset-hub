@@ -1,13 +1,13 @@
 import ReactMarkdown from "react-markdown";
 import { useGateway } from "@/application/ports/gateway-context";
-import type { DirectoryPluginActionOutput, PluginView } from "@/domain/plugin";
+import type { DirectoryActionOutput, PluginView } from "@/domain/plugin";
 import type { Directory, DirectoryAction } from "@/domain/resource";
 import { Dialog } from "@/shared/ui/dialog";
 
 export interface DirectoryActionResult {
   directory: Directory;
   action: DirectoryAction;
-  output: DirectoryPluginActionOutput;
+  output: DirectoryActionOutput;
 }
 
 export function DirectoryActionDialog({

@@ -1,5 +1,5 @@
 import React from "react";
-import type { PluginActionOutput, PluginView } from "@/domain/plugin";
+import type { PluginView, ResourceActionOutput } from "@/domain/plugin";
 import type { ResourceAction } from "@/domain/resource";
 import type { PluginKernel, PluginViewRendererProps } from "@/kernel/plugin-kernel";
 import { parsePluginFrameRequest } from "../frame-protocol";
@@ -99,7 +99,7 @@ function PluginFrameView({
             output.resourceId === frameResource.id &&
             candidate.id === output.action &&
             candidate.provides === "text_edit" &&
-            candidate.access === "read_write",
+            candidate.access === "write",
         );
         if (!editAction) {
           postResult(
@@ -144,7 +144,7 @@ function PluginFrameView({
       try {
         const result = await gateway.executeAction(frameResource, action.id, message.input ?? {});
         postResult(ref.current, message.type, view.plugin_api, message.requestId, result, null);
-        if (action.access === "read_write") await onResourceChanged?.();
+        if (action.access === "write") await onResourceChanged?.();
       } catch (cause) {
         postResult(
           ref.current,
@@ -220,7 +220,7 @@ function htmlWithoutNetwork(html: string): string {
   return `<meta http-equiv="Content-Security-Policy" content="${policy}">${html}`;
 }
 
-export function actionTitle(action: ResourceAction, output: PluginActionOutput): string {
+export function actionTitle(action: ResourceAction, output: ResourceActionOutput): string {
   const view = output.view;
   if ((view.view === "html" || view.view === "plugin_frame" || view.view === "media") && view.title)
     return view.title;

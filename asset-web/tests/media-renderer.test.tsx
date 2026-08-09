@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { AssetGateway } from "@/application/ports/asset-gateway";
-import type { PluginActionOutput, PluginView } from "@/domain/plugin";
+import type { PluginView, ResourceActionOutput } from "@/domain/plugin";
 import DownloadRenderer from "@/plugins/renderers/download-renderer";
 import MediaRenderer from "@/plugins/renderers/media-renderer";
 import { resource } from "./fixtures";
@@ -44,7 +44,7 @@ describe("MediaRenderer", () => {
 });
 
 function renderView(view: PluginView, Renderer: typeof MediaRenderer | typeof DownloadRenderer) {
-  const output: PluginActionOutput = {
+  const output: ResourceActionOutput = {
     resourceId: "resource-1",
     action: "test.action",
     view,

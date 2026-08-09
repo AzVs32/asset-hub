@@ -1,20 +1,20 @@
 import { render, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { AssetGateway } from "@/application/ports/asset-gateway";
-import type { PluginActionOutput } from "@/domain/plugin";
+import type { ResourceActionOutput } from "@/domain/plugin";
 import { PluginKernel, PluginKernelProvider } from "@/kernel/plugin-kernel";
 import { PluginViewHost } from "@/kernel/plugin-view-host";
 import { registerDefaultViewRenderers } from "@/plugins/renderers/default-renderers";
 import { action, resource } from "./fixtures";
 
-const pluginApi = "asset-hub.plugin-api@1";
+const pluginApi = "asset-hub.plugin-api@2";
 
 describe("PluginFrameView", () => {
   it("replaces text through the host and advances the frame revision", async () => {
     const edit = action({
       id: "azvs.markdown.edit",
       provides: "text_edit",
-      access: "read_write",
+      access: "write",
     });
     const initial = resource([edit]);
     const revised = { ...initial, revision: 2 };
@@ -53,7 +53,7 @@ describe("PluginFrameView", () => {
     const edit = action({
       id: "azvs.markdown.edit",
       provides: "text_edit",
-      access: "read_write",
+      access: "write",
     });
     const replaceResourceText = vi.fn();
     const { frame, postMessage } = renderFrame(resource([read, edit]), pluginOutput(read.id), {
@@ -79,7 +79,7 @@ describe("PluginFrameView", () => {
 
 function renderFrame(
   item: ReturnType<typeof resource>,
-  output: PluginActionOutput,
+  output: ResourceActionOutput,
   gatewayMethods: Partial<AssetGateway>,
   onResourceChanged = vi.fn(),
 ) {
@@ -106,7 +106,7 @@ function renderFrame(
   return { frame, postMessage };
 }
 
-function pluginOutput(actionId: string): PluginActionOutput {
+function pluginOutput(actionId: string): ResourceActionOutput {
   return {
     resourceId: "resource-1",
     action: actionId,

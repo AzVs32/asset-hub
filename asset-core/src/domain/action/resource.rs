@@ -2,6 +2,7 @@ use super::common::{
     ActionAccess, ActionCapabilityId, ActionDefinition, ActionId, ActionOutputContract, ActionUi,
 };
 use super::matcher::{ResourceContentMatcher, normalize_kinds};
+use crate::domain::DefinitionOrigin;
 
 /// How the host should deliver object content to an action handler.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -88,12 +89,7 @@ impl ResourceActionAppliesTo {
         mime_type: Option<&str>,
         storage_key: Option<&str>,
     ) -> bool {
-        if !self.kinds.is_empty()
-            && !self
-                .kinds
-                .iter()
-                .any(|expected| expected.eq_ignore_ascii_case(kind))
-        {
+        if !self.kinds.is_empty() && !self.kinds.iter().any(|expected| expected == kind) {
             return false;
         }
 
@@ -109,17 +105,63 @@ pub struct ResourceActionDefinition {
     requires: ResourceActionRequirements,
 }
 
+/// Resource-scoped action identity. Directory action IDs use a distinct type even when their
+/// serialized text happens to be equal.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ResourceActionId(ActionId);
+
+impl ResourceActionId {
+    pub fn new(value: impl Into<String>) -> Result<Self, super::common::ActionIdError> {
+        ActionId::new(value).map(Self)
+    }
+
+    pub fn from_static(value: &'static str) -> Self {
+        Self(ActionId::from_static(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl std::fmt::Display for ResourceActionId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+impl std::str::FromStr for ResourceActionId {
+    type Err = super::common::ActionIdError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::new(value)
+    }
+}
+
+impl TryFrom<String> for ResourceActionId {
+    type Error = super::common::ActionIdError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
 impl ResourceActionDefinition {
-    pub fn new(id: ActionId, label: impl Into<String>) -> Self {
+    pub fn new(id: ActionId, label: impl Into<String>, origin: DefinitionOrigin) -> Self {
         Self {
-            action: ActionDefinition::new(id, label),
+            action: ActionDefinition::new(id, label, origin),
             applies_to: ResourceActionAppliesTo::default(),
             requires: ResourceActionRequirements::default(),
         }
     }
 
     pub fn new_static(id: &'static str, label: impl Into<String>) -> Self {
-        Self::new(ActionId::from_static(id), label)
+        let origin = id.rsplit_once('.').map_or(id, |(namespace, _)| namespace);
+        Self::new(
+            ActionId::from_static(id),
+            label,
+            DefinitionOrigin::builtin_static(origin),
+        )
     }
 
     pub fn with_description(mut self, description: Option<String>) -> Self {
@@ -169,6 +211,9 @@ impl ResourceActionDefinition {
     pub fn id(&self) -> &ActionId {
         self.action.id()
     }
+    pub fn origin(&self) -> &DefinitionOrigin {
+        self.action.origin()
+    }
     pub fn provides(&self) -> Option<&ActionCapabilityId> {
         self.action.provides()
     }
@@ -212,8 +257,3 @@ impl ResourceActionDefinition {
             .matches_resource(kind, mime_type, storage_key)
     }
 }
-
-pub type ResourceAction = ActionId;
-pub type ResourceActionAccess = ActionAccess;
-pub type ResourceActionOutputContract = ActionOutputContract;
-pub type ResourceActionUi = ActionUi;

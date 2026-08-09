@@ -9,7 +9,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PluginCapabilities {
-    pub kinds: Vec<ResourceKindCapability>,
+    pub resource_kinds: Vec<ResourceKindCapability>,
     pub directory_kinds: Vec<DirectoryKindCapability>,
     pub resource_actions: Vec<ResourceActionCapability>,
     pub directory_actions: Vec<DirectoryActionCapability>,
@@ -56,14 +56,16 @@ pub struct ResourceActionCapability {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provides: Option<String>,
     pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub handler: String,
     #[serde(default)]
-    pub applies_to: ActionAppliesTo,
+    pub applies_to: ResourceActionAppliesToCapability,
     #[serde(default)]
     pub access: ManifestActionAccess,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requires: Option<ActionRequirements>,
-    pub views: Vec<String>,
+    pub output: ActionOutputCapability,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ui: Option<ActionUi>,
 }
@@ -77,6 +79,8 @@ pub struct DirectoryActionCapability {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provides: Option<String>,
     pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub handler: String,
     #[serde(default)]
     pub applies_to: DirectoryActionAppliesToCapability,
@@ -84,7 +88,7 @@ pub struct DirectoryActionCapability {
     pub access: ManifestActionAccess,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requires: Option<DirectoryActionRequirementsCapability>,
-    pub views: Vec<String>,
+    pub output: ActionOutputCapability,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ui: Option<ActionUi>,
 }
@@ -102,6 +106,13 @@ pub struct DirectoryActionRequirementsCapability {
     pub resources: bool,
 }
 
+/// Views an action is allowed to return.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ActionOutputCapability {
+    pub views: Vec<String>,
+}
+
 /// Manifest-level action access declaration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -114,9 +125,9 @@ pub enum ManifestActionAccess {
 /// Resource/action matching declaration.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct ActionAppliesTo {
+pub struct ResourceActionAppliesToCapability {
     pub kinds: Vec<String>,
-    pub media_types: Vec<String>,
+    pub mime_types: Vec<String>,
     pub extensions: Vec<String>,
 }
 

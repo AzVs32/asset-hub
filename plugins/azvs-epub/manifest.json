@@ -1,6 +1,6 @@
 {
-  "$schema": "https://asset-hub.local/schemas/plugin-manifest-v1.json",
-  "manifest_version": 1,
+  "$schema": "https://asset-hub.local/schemas/plugin-manifest-v2.json",
+  "manifest_version": 2,
   "plugin": {
     "id": "azvs.epub",
     "name": "AzVs EPUB",
@@ -11,10 +11,10 @@
   "runtime": {
     "type": "extism",
     "wasi": false,
-    "plugin_api": "asset-hub.plugin-api@1"
+    "plugin_api": "asset-hub.plugin-api@2"
   },
   "capabilities": {
-    "kinds": [
+    "resource_kinds": [
       {
         "kind": "azvs:epub",
         "parent": "core:resource",
@@ -34,6 +34,7 @@
       {
         "id": "azvs.epub.render",
         "label": "Read EPUB",
+        "description": "Open the EPUB reader.",
         "handler": "render_epub",
         "applies_to": {
           "kinds": [
@@ -45,10 +46,12 @@
           "content": true,
           "content_delivery": "reference"
         },
-        "views": [
-          "plugin_frame",
-          "json"
-        ],
+        "output": {
+          "views": [
+            "plugin_frame",
+            "json"
+          ]
+        },
         "ui": {
           "group": "open",
           "order": 70,
@@ -62,6 +65,7 @@
         "id": "azvs.epub.thumbnail",
         "provides": "thumbnail",
         "label": "EPUB Thumbnail",
+        "description": "Extract an EPUB cover thumbnail.",
         "handler": "render_epub_thumbnail",
         "applies_to": {
           "kinds": [
@@ -73,10 +77,12 @@
           "content": true,
           "content_delivery": "reference"
         },
-        "views": [
-          "media",
-          "json"
-        ],
+        "output": {
+          "views": [
+            "media",
+            "json"
+          ]
+        },
         "ui": {
           "group": "preview",
           "order": 10,

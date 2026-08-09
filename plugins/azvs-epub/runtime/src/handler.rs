@@ -1,7 +1,7 @@
 use super::*;
 use asset_plugin_api::protocol::{
-    JsonView, PLUGIN_API_VERSION, PluginActionFailure, PluginActionOutput, PluginActionRequest,
-    PluginDiagnostic, PluginFrameView, PluginView,
+    JsonView, PLUGIN_API_VERSION, PluginActionFailure, PluginDiagnostic, PluginFrameView,
+    PluginResourceActionOutput, PluginResourceActionRequest, PluginView,
 };
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -31,7 +31,7 @@ pub(super) fn structured_action_result(result: FnResult<String>) -> FnResult<Str
 }
 
 pub(super) fn render_epub_payload(input: String) -> FnResult<String> {
-    let request: PluginActionRequest = serde_json::from_str(&input)?;
+    let request: PluginResourceActionRequest = serde_json::from_str(&input)?;
     let operation = request
         .input
         .get("operation")
@@ -43,7 +43,7 @@ pub(super) fn render_epub_payload(input: String) -> FnResult<String> {
             if !index.chapters.is_empty() {
                 index.initial_chapter = render_chapter(&book, 0).ok();
             }
-            PluginActionOutput::new(PluginView::Json(JsonView {
+            PluginResourceActionOutput::new(PluginView::Json(JsonView {
                 data: serde_json::to_value(index)?,
             }))
         }
@@ -56,7 +56,7 @@ pub(super) fn render_epub_payload(input: String) -> FnResult<String> {
                 .ok_or_else(|| Error::msg("missing or invalid chapter index"))?;
             let book = load_cached_book(&request)?;
             let chapter = render_chapter(&book, index)?;
-            PluginActionOutput::new(PluginView::Json(JsonView {
+            PluginResourceActionOutput::new(PluginView::Json(JsonView {
                 data: serde_json::to_value(chapter)?,
             }))
         }
@@ -68,7 +68,7 @@ pub(super) fn render_epub_payload(input: String) -> FnResult<String> {
                 "resource_name": &request.resource.name,
                 "action": &request.action,
             }))?);
-            PluginActionOutput::new(PluginView::PluginFrame(PluginFrameView {
+            PluginResourceActionOutput::new(PluginView::PluginFrame(PluginFrameView {
                 plugin_api: PLUGIN_API_VERSION.to_string(),
                 title: Some(request.resource.name.clone()),
                 url: format!("index.html#payload={payload}"),
@@ -80,7 +80,7 @@ pub(super) fn render_epub_payload(input: String) -> FnResult<String> {
 }
 
 pub(super) fn render_epub_thumbnail_payload(input: String) -> FnResult<String> {
-    let request: PluginActionRequest = serde_json::from_str(&input)?;
+    let request: PluginResourceActionRequest = serde_json::from_str(&input)?;
     let key = resource_cache_key(&request);
     let cover = if let Some(cover) = cached_cover(&key) {
         cover
@@ -98,5 +98,7 @@ pub(super) fn render_epub_thumbnail_payload(input: String) -> FnResult<String> {
             data: serde_json::Value::Null,
         }),
     };
-    Ok(serde_json::to_string(&PluginActionOutput::new(view))?)
+    Ok(serde_json::to_string(&PluginResourceActionOutput::new(
+        view,
+    ))?)
 }

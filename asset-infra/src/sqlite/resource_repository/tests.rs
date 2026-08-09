@@ -1,8 +1,9 @@
 use super::*;
-use asset_core::domain::{Checksum, ResourceContent, StorageKey};
+use asset_core::domain::{
+    Checksum, DefinitionOrigin, DirectoryKindDefinition, ResourceContent, StorageKey,
+};
 use asset_core::port::{
-    DirectoryKindDefinition, DirectoryKindRegistry, DirectoryStorage, DirectoryStore,
-    ResourceRepository,
+    DirectoryKindRegistry, DirectoryRepository, DirectoryStorage, ResourceRepository,
 };
 use asset_core::service::{DirectoryService, UpdateDirectory};
 use std::path::PathBuf;
@@ -28,10 +29,10 @@ struct TestDirectoryKinds(Vec<DirectoryKindDefinition>);
 
 impl Default for TestDirectoryKinds {
     fn default() -> Self {
-        Self(vec![DirectoryKindDefinition::with_source(
+        Self(vec![DirectoryKindDefinition::new(
             DirectoryKind::default(),
             "Directory",
-            "test",
+            DefinitionOrigin::builtin_static("test"),
         )])
     }
 }
@@ -45,7 +46,9 @@ impl DirectoryKindRegistry for TestDirectoryKinds {
 async fn directory_service(repository: Arc<SqliteResourceRepository>) -> DirectoryService {
     let index = Arc::new(
         crate::directory_index::InMemoryDirectoryIndex::from_directories(
-            DirectoryStore::load_all(repository.as_ref()).await.unwrap(),
+            DirectoryRepository::load_all(repository.as_ref())
+                .await
+                .unwrap(),
         )
         .unwrap(),
     );
@@ -262,7 +265,7 @@ async fn conditional_save_rejects_a_stale_resource_snapshot() {
 }
 
 #[tokio::test]
-async fn directory_store_rejects_a_stale_aggregate_snapshot() {
+async fn directory_repository_rejects_a_stale_aggregate_snapshot() {
     let repository = repository("conditional-directory-save").await;
     let directories = directory_service(repository.clone()).await;
     let located = directories
@@ -280,7 +283,7 @@ async fn directory_store_rejects_a_stale_aggregate_snapshot() {
     stale.rename("stale").unwrap();
 
     assert!(
-        !DirectoryStore::save_if_unchanged(repository.as_ref(), &stale, expected)
+        !DirectoryRepository::save_if_unchanged(repository.as_ref(), &stale, expected)
             .await
             .unwrap()
     );
@@ -418,7 +421,15 @@ async fn directory_repository_rejects_cycles() {
         directories
             .update(
                 &parent.id(),
-                UpdateDirectory::new().with_parent_id(child.id())
+                UpdateDirectory::new(
+                    directories
+                        .find_by_id(&parent.id())
+                        .await
+                        .unwrap()
+                        .directory()
+                        .revision(),
+                )
+                .with_parent_id(child.id())
             )
             .await
             .is_err()
@@ -429,7 +440,7 @@ async fn directory_repository_rejects_cycles() {
 async fn directory_repository_rejects_invalid_persisted_self_parent() {
     let repository = repository("directory-self-parent").await;
     let directory = Directory::new(DirectoryId::root(), "self").unwrap();
-    DirectoryStore::insert(repository.as_ref(), &directory)
+    DirectoryRepository::insert(repository.as_ref(), &directory)
         .await
         .unwrap();
     sqlx::query("UPDATE directories SET parent_id = id WHERE id = ?")
@@ -439,7 +450,7 @@ async fn directory_repository_rejects_invalid_persisted_self_parent() {
         .unwrap();
 
     assert!(matches!(
-        DirectoryStore::load_all(repository.as_ref()).await,
+        DirectoryRepository::load_all(repository.as_ref()).await,
         Err(CoreError::Repository {
             operation: "directory.rehydrate",
             ..

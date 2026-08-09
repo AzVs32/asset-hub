@@ -10,16 +10,16 @@ use crate::protocol::PluginDiagnostic;
 
 /// Standard action output.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PluginActionOutput {
+pub struct PluginResourceActionOutput {
     #[serde(flatten)]
     pub view: PluginView,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub effects: Vec<PluginActionEffect>,
+    pub effects: Vec<PluginResourceActionEffect>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<PluginDiagnostic>,
 }
 
-impl PluginActionOutput {
+impl PluginResourceActionOutput {
     pub fn new(view: PluginView) -> Self {
         Self {
             view,
@@ -46,7 +46,7 @@ impl PluginView {
 /// Side effects requested by a plugin action.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum PluginActionEffect {
+pub enum PluginResourceActionEffect {
     ReplaceContent(ReplaceContentEffect),
 }
 

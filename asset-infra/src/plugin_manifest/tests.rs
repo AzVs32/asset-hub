@@ -1,4 +1,5 @@
 use super::*;
+use asset_plugin_api::manifest::MANIFEST_VERSION;
 
 #[test]
 fn rejects_manifest_with_missing_fields() {
@@ -15,7 +16,7 @@ fn rejects_manifest_with_missing_fields() {
           },
           "runtime": {
             "type": "extism",
-            "plugin_api": "asset-hub.plugin-api@1"
+            "plugin_api": "asset-hub.plugin-api@2"
           },
           "permissions": {"allow": ["resource.read"]}
         }
@@ -38,7 +39,7 @@ fn external_package_rejects_host_owned_builtin_runtime() {
         package.join(PLUGIN_MANIFEST_FILE_NAME),
         r#"
         {
-          "manifest_version": 1,
+          "manifest_version": 2,
           "plugin": {
             "id": "invalid.builtin",
             "name": "Invalid Builtin",
@@ -161,7 +162,7 @@ fn catalog_requires_an_explicitly_generated_lock_and_then_only_verifies_it() {
 
     let generated = std::fs::read(&lock_path).unwrap();
     let lock: PluginManifestLock = serde_json::from_slice(&generated).unwrap();
-    assert_eq!(lock.manifest_version, 1);
+    assert_eq!(lock.manifest_version, MANIFEST_VERSION);
     assert_eq!(lock.plugin_id, "generated.lock");
     assert!(
         lock.integrity
@@ -270,12 +271,12 @@ fn create_package(root: &Path, id: &str, manifest: String) -> PathBuf {
 fn minimal_extism_manifest(id: &str) -> String {
     format!(
         r#"{{
-          "manifest_version": 1,
+          "manifest_version": 2,
           "plugin": {{"id": "{id}", "name": "Test", "version": "0.1.0", "publisher": "test"}},
           "runtime": {{
-            "type": "extism", "wasi": false, "plugin_api": "asset-hub.plugin-api@1"
+            "type": "extism", "wasi": false, "plugin_api": "asset-hub.plugin-api@2"
           }},
-          "capabilities": {{"kinds": [], "resource_actions": []}},
+          "capabilities": {{"resource_kinds": [], "resource_actions": []}},
           "permissions": {{"allow": ["resource.read"]}}
         }}"#
     )
@@ -297,7 +298,7 @@ fn write_lock(
     std::fs::write(
         root.join(PLUGIN_LOCK_FILE_NAME),
         serde_json::to_vec(&serde_json::json!({
-            "manifest_version": 1,
+            "manifest_version": 2,
             "plugin_id": plugin_id,
             "integrity": integrity,
         }))

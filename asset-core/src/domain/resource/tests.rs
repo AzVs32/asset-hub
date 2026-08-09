@@ -1,16 +1,14 @@
 use super::*;
-use crate::domain::DirectoryId;
+use crate::domain::{DirectoryId, KindIdError};
 use crate::error::ResourceError;
 
 #[test]
 fn resource_kind_matches_directory_kind_naming_rules() {
-    let kind = ResourceKind::try_new(" AzVs.Game:Markdown_V2 ").unwrap();
+    let kind = ResourceKind::try_new("azvs.game:markdown_v2").unwrap();
 
     assert_eq!(kind.as_str(), "azvs.game:markdown_v2");
-    assert_eq!(
-        ResourceKind::try_new(" Core:Image ").unwrap().as_str(),
-        "core:image"
-    );
+    assert!(ResourceKind::try_new(" AzVs.Game:Markdown_V2 ").is_err());
+    assert!(ResourceKind::try_new(" Core:Image ").is_err());
 }
 
 #[test]
@@ -38,16 +36,14 @@ fn resource_kind_is_limited_to_256_characters() {
     assert!(ResourceKind::try_new(max_length).is_ok());
     assert!(matches!(
         ResourceKind::try_new(too_long),
-        Err(ResourceError::TooLong {
-            field: "resource.kind",
-            max: 256,
-        })
+        Err(KindIdError::TooLong { max: 256 })
     ));
 }
 
 #[test]
-fn resource_kind_serde_normalizes_and_validates_input() {
-    let kind: ResourceKind = serde_json::from_str(r#"" Core:Image ""#).unwrap();
+fn resource_kind_serde_requires_canonical_input() {
+    assert!(serde_json::from_str::<ResourceKind>(r#"" Core:Image ""#).is_err());
+    let kind: ResourceKind = serde_json::from_str(r#""core:image""#).unwrap();
 
     assert_eq!(kind.as_str(), "core:image");
     assert_eq!(serde_json::to_string(&kind).unwrap(), r#""core:image""#);

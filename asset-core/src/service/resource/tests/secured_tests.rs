@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::DirectoryAction;
+use crate::domain::DirectoryActionId;
 
 #[test]
 fn directory_action_cannot_move_a_directory_outside_the_member_workspace() {
@@ -14,15 +14,37 @@ fn directory_action_cannot_move_a_directory_outside_the_member_workspace() {
         Arc::new(SingleUserRepository(user)),
         service.directory_service().clone(),
     );
+    let inside_revision = block_on(service.directory_service().find_by_id(&inside.id()))
+        .unwrap()
+        .directory()
+        .revision();
 
     let error = block_on(
         service
+            .directory_service()
             .secured(&authorization, &context)
-            .execute_directory_action(
+            .execute_action(
                 &inside.id(),
-                crate::service::ExecuteDirectoryAction::new(DirectoryAction::from_static(
-                    "test.directory.move",
-                ))
+                crate::service::ExecuteDirectoryAction::new(
+                    DirectoryActionId::from_static("test.directory.move"),
+                    None,
+                )
+                .with_input(serde_json::json!({"parent_id": outside.id().to_string()})),
+            ),
+    )
+    .unwrap_err();
+    assert!(matches!(error, CoreError::InvalidOperation { .. }));
+
+    let error = block_on(
+        service
+            .directory_service()
+            .secured(&authorization, &context)
+            .execute_action(
+                &inside.id(),
+                crate::service::ExecuteDirectoryAction::new(
+                    DirectoryActionId::from_static("test.directory.move"),
+                    Some(inside_revision),
+                )
                 .with_input(serde_json::json!({"parent_id": outside.id().to_string()})),
             ),
     )

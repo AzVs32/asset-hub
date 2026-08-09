@@ -1,7 +1,8 @@
 use asset_core::CoreError;
 use asset_core::domain::AccessContext;
 use asset_core::service::{
-    AuthorizationService, ResourceService, SecuredResourceService, WorkspaceScope,
+    AuthorizationService, ResourceService, SecuredDirectoryService, SecuredResourceService,
+    WorkspaceScope,
 };
 use asset_runtime::{PluginWebAssets, UploadFinalizationDispatcher};
 use std::sync::Arc;
@@ -34,6 +35,15 @@ impl HttpState {
 
     pub(crate) fn secured<'a>(&'a self, context: &'a AccessContext) -> SecuredResourceService<'a> {
         self.service.secured(&self.authorization, context)
+    }
+
+    pub(crate) fn secured_directories<'a>(
+        &'a self,
+        context: &'a AccessContext,
+    ) -> SecuredDirectoryService<'a> {
+        self.service
+            .directory_service()
+            .secured(&self.authorization, context)
     }
 
     pub(crate) fn dispatch_upload_finalization(

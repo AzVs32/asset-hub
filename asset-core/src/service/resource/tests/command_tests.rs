@@ -12,13 +12,14 @@ fn update_resource_rejects_a_stale_authorized_snapshot() {
     .unwrap();
     block_on(repository.save(&resource)).unwrap();
     let stale = resource.clone();
+    let stale_revision = stale.revision();
     let mut concurrent = resource;
     concurrent.rename("concurrent").unwrap();
     block_on(repository.save(&concurrent)).unwrap();
 
     let error = block_on(service.commands().update_resource_snapshot(
         repository.locate_sync(stale),
-        UpdateResource::new().with_name("stale"),
+        UpdateResource::new(stale_revision).with_name("stale"),
     ))
     .unwrap_err();
 
@@ -69,10 +70,11 @@ fn restoring_soft_deleted_resource_moves_blob_back_from_trash() {
     let deleted = block_on(service.commands().soft_delete_resource(&resource.id()))
         .unwrap()
         .unwrap();
+    let deleted_revision = deleted.revision();
 
     let restored = block_on(service.commands().update_resource_snapshot(
         repository.locate_sync(deleted),
-        UpdateResource::new().with_restore(true),
+        UpdateResource::new(deleted_revision).with_restore(true),
     ))
     .unwrap();
 

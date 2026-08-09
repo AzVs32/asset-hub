@@ -29,7 +29,7 @@ impl DirectoryService {
                 continue;
             }
             let directory = Directory::new(parent.id(), name)?;
-            self.store.insert(&directory).await?;
+            self.repository.insert(&directory).await?;
             self.update_index(directory.clone()).await?;
             parent = LocatedDirectory::new(
                 directory.clone(),
@@ -111,7 +111,7 @@ impl DirectoryService {
             ));
         }
         self.storage.ensure_directory(&path).await?;
-        self.store.insert(&directory).await?;
+        self.repository.insert(&directory).await?;
         self.update_index(directory.clone()).await?;
         LocatedDirectory::new(
             directory.clone(),
@@ -124,14 +124,13 @@ impl DirectoryService {
         id: &DirectoryId,
         command: UpdateDirectory,
     ) -> Result<LocatedDirectory, CoreError> {
-        self.update_expected(id, command, None, None).await
+        self.update_expected(id, command, None).await
     }
 
     pub(super) async fn update_expected(
         &self,
         id: &DirectoryId,
         command: UpdateDirectory,
-        action_expected: Option<u64>,
         required_parent_ancestor: Option<DirectoryId>,
     ) -> Result<LocatedDirectory, CoreError> {
         let _guard = self.mutation_lock.lock().await;
@@ -142,10 +141,8 @@ impl DirectoryService {
             .ok_or_else(|| CoreError::not_found("directory", id.to_string()))?;
         let (mut directory, from) = located.into_parts();
         let expected_revision = directory.revision();
-        if action_expected.is_some_and(|expected| expected != expected_revision) {
-            return Err(CoreError::conflict(format!(
-                "directory `{id}` changed while its action was executing"
-            )));
+        if command.expected_revision != expected_revision {
+            return Err(CoreError::revision_conflict("directory", id.to_string()));
         }
 
         if directory.id().is_root()
@@ -214,7 +211,7 @@ impl DirectoryService {
                 .await?;
         }
         let saved = self
-            .store
+            .repository
             .save_if_unchanged(&directory, expected_revision)
             .await;
         let error = match saved {
@@ -243,9 +240,13 @@ impl DirectoryService {
         id: &DirectoryId,
         name: impl Into<String>,
     ) -> Result<DirectoryLocation, CoreError> {
-        self.update(id, UpdateDirectory::new().with_name(name))
-            .await
-            .map(|directory| directory.location().clone())
+        let current = self.find_by_id(id).await?;
+        self.update(
+            id,
+            UpdateDirectory::new(current.directory().revision()).with_name(name),
+        )
+        .await
+        .map(|directory| directory.location().clone())
     }
 
     pub async fn move_to(
@@ -253,9 +254,13 @@ impl DirectoryService {
         id: &DirectoryId,
         parent_id: &DirectoryId,
     ) -> Result<DirectoryLocation, CoreError> {
-        self.update(id, UpdateDirectory::new().with_parent_id(*parent_id))
-            .await
-            .map(|directory| directory.location().clone())
+        let current = self.find_by_id(id).await?;
+        self.update(
+            id,
+            UpdateDirectory::new(current.directory().revision()).with_parent_id(*parent_id),
+        )
+        .await
+        .map(|directory| directory.location().clone())
     }
 
     pub async fn change_kind(
@@ -263,16 +268,40 @@ impl DirectoryService {
         id: &DirectoryId,
         kind: DirectoryKind,
     ) -> Result<LocatedDirectory, CoreError> {
-        self.update(id, UpdateDirectory::new().with_kind(kind))
-            .await
+        let current = self.find_by_id(id).await?;
+        self.update(
+            id,
+            UpdateDirectory::new(current.directory().revision()).with_kind(kind),
+        )
+        .await
     }
 
-    pub async fn remove_if_empty(&self, directory: &DirectoryLocation) -> Result<bool, CoreError> {
+    pub async fn remove_if_empty(
+        &self,
+        directory: &DirectoryLocation,
+        caller_revision: Option<u64>,
+    ) -> Result<bool, CoreError> {
         if directory.id().is_root() {
             return Ok(false);
         }
         let _guard = self.mutation_lock.lock().await;
-        if self.store.remove_if_empty(&directory.id()).await? {
+        let current = self
+            .index
+            .find_by_id(&directory.id())
+            .await?
+            .ok_or_else(|| CoreError::not_found("directory", directory.id().to_string()))?;
+        let revision = current.directory().revision();
+        if caller_revision.is_some_and(|expected| expected != revision) {
+            return Err(CoreError::revision_conflict(
+                "directory",
+                directory.id().to_string(),
+            ));
+        }
+        if self
+            .repository
+            .remove_if_empty(&directory.id(), revision)
+            .await?
+        {
             self.index.remove(&directory.id()).await?;
             return Ok(true);
         }

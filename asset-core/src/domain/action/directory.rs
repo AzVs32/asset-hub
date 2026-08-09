@@ -2,6 +2,7 @@ use super::common::{
     ActionAccess, ActionCapabilityId, ActionDefinition, ActionId, ActionOutputContract, ActionUi,
 };
 use super::matcher::normalize_kinds;
+use crate::domain::DefinitionOrigin;
 
 /// Directory/action matching rules.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -24,11 +25,7 @@ impl DirectoryActionAppliesTo {
         self.kinds.is_empty()
     }
     pub fn matches(&self, kind: &str) -> bool {
-        self.kinds.is_empty()
-            || self
-                .kinds
-                .iter()
-                .any(|expected| expected.eq_ignore_ascii_case(kind))
+        self.kinds.is_empty() || self.kinds.iter().any(|expected| expected == kind)
     }
 }
 
@@ -47,16 +44,61 @@ pub struct DirectoryActionDefinition {
     requires: DirectoryActionRequirements,
 }
 
+/// Directory-scoped action identity.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DirectoryActionId(ActionId);
+
+impl DirectoryActionId {
+    pub fn new(value: impl Into<String>) -> Result<Self, super::common::ActionIdError> {
+        ActionId::new(value).map(Self)
+    }
+
+    pub fn from_static(value: &'static str) -> Self {
+        Self(ActionId::from_static(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl std::fmt::Display for DirectoryActionId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+impl std::str::FromStr for DirectoryActionId {
+    type Err = super::common::ActionIdError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::new(value)
+    }
+}
+
+impl TryFrom<String> for DirectoryActionId {
+    type Error = super::common::ActionIdError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
 impl DirectoryActionDefinition {
-    pub fn new(id: ActionId, label: impl Into<String>) -> Self {
+    pub fn new(id: ActionId, label: impl Into<String>, origin: DefinitionOrigin) -> Self {
         Self {
-            action: ActionDefinition::new(id, label),
+            action: ActionDefinition::new(id, label, origin),
             applies_to: DirectoryActionAppliesTo::default(),
             requires: DirectoryActionRequirements::default(),
         }
     }
     pub fn new_static(id: &'static str, label: impl Into<String>) -> Self {
-        Self::new(ActionId::from_static(id), label)
+        let origin = id.rsplit_once('.').map_or(id, |(namespace, _)| namespace);
+        Self::new(
+            ActionId::from_static(id),
+            label,
+            DefinitionOrigin::builtin_static(origin),
+        )
     }
     pub fn with_description(mut self, description: Option<String>) -> Self {
         self.action = self.action.with_description(description);
@@ -100,6 +142,9 @@ impl DirectoryActionDefinition {
     pub fn id(&self) -> &ActionId {
         self.action.id()
     }
+    pub fn origin(&self) -> &DefinitionOrigin {
+        self.action.origin()
+    }
     pub fn provides(&self) -> Option<&ActionCapabilityId> {
         self.action.provides()
     }
@@ -131,8 +176,3 @@ impl DirectoryActionDefinition {
         self.applies_to.matches(kind)
     }
 }
-
-pub type DirectoryAction = ActionId;
-pub type DirectoryActionAccess = ActionAccess;
-pub type DirectoryActionOutputContract = ActionOutputContract;
-pub type DirectoryActionUi = ActionUi;

@@ -79,7 +79,7 @@ impl LocatedDirectory {
 ///
 /// 适配器只持久化聚合本身；完整路径和目录树属于可重建查询投影，不在此保存。
 #[async_trait::async_trait]
-pub trait DirectoryStore: Send + Sync {
+pub trait DirectoryRepository: Send + Sync {
     /// 加载全部目录聚合，用于启动时重建查询索引。
     async fn load_all(&self) -> Result<Vec<Directory>, CoreError>;
 
@@ -96,7 +96,11 @@ pub trait DirectoryStore: Send + Sync {
     ) -> Result<bool, CoreError>;
 
     /// 仅当目录不存在子目录和资源时原子删除；实际删除返回 `true`。
-    async fn remove_if_empty(&self, id: &DirectoryId) -> Result<bool, CoreError>;
+    async fn remove_if_empty(
+        &self,
+        id: &DirectoryId,
+        expected_revision: u64,
+    ) -> Result<bool, CoreError>;
 }
 
 /// 目录树的只读查询投影端口。
@@ -127,7 +131,7 @@ pub trait DirectoryQuery: Send + Sync {
     ) -> Result<bool, CoreError>;
 }
 
-/// 可从 `DirectoryStore` 完整重建的目录查询索引端口。
+/// 可从 `DirectoryRepository` 完整重建的目录查询索引端口。
 ///
 /// Service 只在持久化写入成功后更新该索引，因此实现不应把它视为权威数据源。
 #[async_trait::async_trait]

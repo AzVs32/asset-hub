@@ -6,7 +6,7 @@ use asset_core::domain::StorageKey;
 use asset_core::port::BlobStorage;
 use asset_plugin_api::manifest::PluginPermissions;
 use asset_plugin_api::protocol::{
-    PLUGIN_API_VERSION, PluginActionOutput, PluginFrameView, PluginView,
+    PLUGIN_API_VERSION, PluginFrameView, PluginResourceActionOutput, PluginView,
 };
 use std::sync::{Arc, Mutex};
 
@@ -14,7 +14,7 @@ use super::policy::PluginExecutionPolicy;
 
 #[test]
 fn plugin_frame_relative_url_is_resolved_to_plugin_web_route() {
-    let mut output = PluginActionOutput::new(PluginView::PluginFrame(PluginFrameView {
+    let mut output = PluginResourceActionOutput::new(PluginView::PluginFrame(PluginFrameView {
         plugin_api: PLUGIN_API_VERSION.to_string(),
         title: Some("demo.md".to_string()),
         url: "index.html#payload=abc".to_string(),
@@ -30,7 +30,7 @@ fn plugin_frame_relative_url_is_resolved_to_plugin_web_route() {
 
 #[test]
 fn plugin_frame_rejects_a_different_plugin_api() {
-    let mut output = PluginActionOutput::new(PluginView::PluginFrame(PluginFrameView {
+    let mut output = PluginResourceActionOutput::new(PluginView::PluginFrame(PluginFrameView {
         plugin_api: "asset-hub.plugin-api@3".to_string(),
         title: None,
         url: "index.html".to_string(),

@@ -1,11 +1,12 @@
 use asset_core::{
     CoreError,
-    domain::{ActionAccess, DirectoryActionDefinition},
+    domain::{ActionAccess, DefinitionOrigin, DirectoryActionDefinition},
     port::{DirectoryActionRegistry, DirectoryKindRegistry},
 };
 use asset_plugin_api::manifest::DirectoryActionCapability;
 
 use super::normalization::directory_action_definition;
+use super::validation::ensure_unique_scoped_action;
 use crate::builtin_catalog::THUMBNAIL_CAPABILITY;
 
 const DIRECTORY_THUMBNAIL_LOCATION: &str = "directory_list_thumbnail";
@@ -24,10 +25,11 @@ impl DirectoryActionRegistry for DefaultDirectoryActionRegistry {
 pub(super) fn push_directory_action(
     actions: &mut Vec<DirectoryActionDefinition>,
     capability: &DirectoryActionCapability,
-    source: &str,
+    origin: DefinitionOrigin,
 ) -> Result<(), CoreError> {
-    let action = directory_action_definition(capability);
-    push_directory_action_definition(actions, action, source)
+    let source = origin.to_string();
+    let action = directory_action_definition(capability, origin);
+    push_directory_action_definition(actions, action, &source)
 }
 
 pub(super) fn push_directory_action_definition(
@@ -35,22 +37,15 @@ pub(super) fn push_directory_action_definition(
     action: DirectoryActionDefinition,
     source: &str,
 ) -> Result<(), CoreError> {
-    if actions.iter().any(|existing| {
-        existing.id() == action.id()
-            && (existing.kinds().is_empty()
-                || action.kinds().is_empty()
-                || existing.kinds().iter().any(|kind| {
-                    action
-                        .kinds()
-                        .iter()
-                        .any(|candidate| candidate.eq_ignore_ascii_case(kind))
-                }))
-    }) {
-        return Err(CoreError::configuration(format!(
-            "duplicate global directory action `{}` from {source}",
-            action.id()
-        )));
-    }
+    ensure_unique_scoped_action(
+        "directory",
+        action.id().as_str(),
+        action.kinds(),
+        source,
+        actions
+            .iter()
+            .map(|existing| (existing.id().as_str(), existing.kinds())),
+    )?;
     actions.push(action);
     Ok(())
 }
@@ -84,8 +79,8 @@ pub(super) fn validate_directory_action_capabilities(
             )));
         }
         if provides_thumbnail
-            && (action.access() != ActionAccess::ReadOnly
-                || !action.output().view.iter().any(|view| view == "media"))
+            && (action.access() != ActionAccess::Read
+                || !action.output().views.iter().any(|view| view == "media"))
         {
             return Err(CoreError::configuration(format!(
                 "directory thumbnail provider `{}` must be read-only and support the `media` view",

@@ -6,9 +6,9 @@ use asset_core::port::{BlobStorage, ResourceActionRequest};
 use asset_plugin_api::abi::content::PluginContentRange;
 use asset_plugin_api::manifest::PluginPermissions;
 use asset_plugin_api::protocol::{
-    PluginActionAccess, PluginActionRequest, PluginChecksum, PluginContentBytes,
-    PluginContentReference, PluginContentReferenceEncoding, PluginContentVerificationStatus,
-    PluginInlineContentEncoding, PluginResource, PluginResourceContent,
+    PluginActionAccess, PluginChecksum, PluginContentBytes, PluginContentReference,
+    PluginContentReferenceEncoding, PluginContentVerificationStatus, PluginInlineContentEncoding,
+    PluginResource, PluginResourceActionRequest, PluginResourceContent,
 };
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
@@ -305,7 +305,7 @@ impl Drop for ContentLease {
 pub(super) fn build_payload(
     request: &ResourceActionRequest,
     content_reference: Option<&str>,
-) -> PluginActionRequest {
+) -> PluginResourceActionRequest {
     let resource = request.resource();
     let content_ref = resource.content();
     let content = if matches!(
@@ -333,11 +333,11 @@ pub(super) fn build_payload(
         None
     };
 
-    PluginActionRequest {
+    PluginResourceActionRequest {
         action: request.action().as_str().to_string(),
         access: match request.access() {
-            ActionAccess::ReadOnly => PluginActionAccess::ReadOnly,
-            ActionAccess::ReadWrite => PluginActionAccess::ReadWrite,
+            ActionAccess::Read => PluginActionAccess::Read,
+            ActionAccess::Write => PluginActionAccess::Write,
         },
         input: request.input().clone(),
         resource: PluginResource {
@@ -345,6 +345,7 @@ pub(super) fn build_payload(
             directory: request.directory().path().to_string(),
             name: resource.name().to_string(),
             kind: resource.kind().as_str().to_string(),
+            revision: resource.revision(),
             content: content_ref.map(|content| PluginResourceContent {
                 size: content.size(),
                 mime_type: content.mime_type().map(str::to_string),

@@ -1,14 +1,14 @@
 use super::*;
-use asset_core::domain::{ResourceAction, ResourceId};
+use asset_core::domain::{ResourceActionId, ResourceId};
 use asset_core::port::ResourceActionOutput;
 use asset_plugin_api::protocol::{
-    PluginActionOutput, PluginDiagnostic, PluginDiagnosticSeverity, PluginView, TextView,
+    PluginDiagnostic, PluginDiagnosticSeverity, PluginResourceActionOutput, PluginView, TextView,
 };
 use serde_json::json;
 
 #[test]
 fn action_output_response_preserves_plugin_diagnostics() {
-    let mut plugin_output = PluginActionOutput::new(PluginView::Text(TextView {
+    let mut plugin_output = PluginResourceActionOutput::new(PluginView::Text(TextView {
         text: "done".to_string(),
     }));
     plugin_output.diagnostics.push(PluginDiagnostic {
@@ -20,7 +20,7 @@ fn action_output_response_preserves_plugin_diagnostics() {
     });
     let output = ResourceActionOutput::new(
         ResourceId::new(),
-        ResourceAction::from_static("example.inspect"),
+        ResourceActionId::from_static("example.inspect"),
         plugin_output,
     );
 

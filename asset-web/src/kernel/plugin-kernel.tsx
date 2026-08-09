@@ -1,12 +1,12 @@
 import React from "react";
 import type { AssetGateway } from "@/application/ports/asset-gateway";
-import type { PluginActionOutput, PluginView, PluginViewKind } from "@/domain/plugin";
+import type { PluginView, PluginViewKind, ResourceActionOutput } from "@/domain/plugin";
 import type { Directory, DirectoryAction, Resource, ResourceAction } from "@/domain/resource";
 import { type HostSlot, hostSlots } from "./slots";
 
 export interface PluginViewRendererProps {
   view: PluginView;
-  output: PluginActionOutput;
+  output: ResourceActionOutput;
   resource: Resource;
   gateway: AssetGateway;
   onResourceChanged?: (() => void | Promise<void>) | undefined;
@@ -43,7 +43,7 @@ export class PluginKernel {
   thumbnailAction(resource: Resource): ResourceAction | null {
     return (
       this.actionsAt(resource, hostSlots.resourceListThumbnail).find(
-        (action) => action.access === "read_only" && action.provides === "thumbnail",
+        (action) => action.access === "read" && action.provides === "thumbnail",
       ) ?? null
     );
   }
@@ -64,7 +64,7 @@ export class PluginKernel {
   directoryThumbnailAction(directory: Directory): DirectoryAction | null {
     return (
       this.directoryActionsAt(directory, hostSlots.directoryListThumbnail).find(
-        (action) => action.access === "read_only" && action.provides === "thumbnail",
+        (action) => action.access === "read" && action.provides === "thumbnail",
       ) ?? null
     );
   }

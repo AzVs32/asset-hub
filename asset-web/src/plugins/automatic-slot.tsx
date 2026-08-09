@@ -16,9 +16,7 @@ export function AutomaticSlot({
   onResourceChanged?: (() => void | Promise<void>) | undefined;
 }) {
   const kernel = usePluginKernel();
-  const actions = kernel
-    .actionsAt(resource, slot)
-    .filter((action) => action.access === "read_only");
+  const actions = kernel.actionsAt(resource, slot).filter((action) => action.access === "read");
   if (!actions.length) return null;
   return (
     <div className="grid gap-4" data-plugin-slot={slot}>

@@ -5,8 +5,8 @@ use asset_core::domain::{
     ResourceContent, ResourceId, ResourceKind, ResourceSnapshot,
 };
 use asset_core::port::{
-    DirectoryLocation, DirectoryStore, ListResources, LocatedResource, ResourcePage, ResourceQuery,
-    ResourceRepository,
+    DirectoryLocation, DirectoryRepository, ListResources, LocatedResource, ResourcePage,
+    ResourceQuery, ResourceRepository,
 };
 use chrono::{DateTime, Utc};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow};
@@ -306,7 +306,7 @@ impl ResourceQuery for SqliteResourceRepository {
 }
 
 #[async_trait::async_trait]
-impl DirectoryStore for SqliteResourceRepository {
+impl DirectoryRepository for SqliteResourceRepository {
     async fn load_all(&self) -> Result<Vec<Directory>, CoreError> {
         let rows = sqlx::query(
             "SELECT id, parent_id, name, kind, created_at, updated_at, revision FROM directories",
@@ -400,19 +400,24 @@ impl DirectoryStore for SqliteResourceRepository {
         Ok(result.rows_affected() == 1)
     }
 
-    async fn remove_if_empty(&self, id: &DirectoryId) -> Result<bool, CoreError> {
+    async fn remove_if_empty(
+        &self,
+        id: &DirectoryId,
+        expected_revision: u64,
+    ) -> Result<bool, CoreError> {
         if id.is_root() {
             return Ok(false);
         }
         let result = sqlx::query(
             r#"
             DELETE FROM directories
-            WHERE id = ?
+            WHERE id = ? AND revision = ?
               AND NOT EXISTS (SELECT 1 FROM directories child WHERE child.parent_id = directories.id)
               AND NOT EXISTS (SELECT 1 FROM resources WHERE resources.directory_id = directories.id)
             "#,
         )
         .bind(id.to_string())
+        .bind(encode_directory_revision(expected_revision)?)
         .execute(&self.pool)
         .await
         .map_err(|error| CoreError::repository("directory.remove_if_empty", error))?;

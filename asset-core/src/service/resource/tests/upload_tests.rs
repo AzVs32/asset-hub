@@ -149,6 +149,7 @@ fn stream_upload_rejects_unsupported_kind() {
             ResourceKind::default(),
             "Unknown",
             true,
+            crate::domain::DefinitionOrigin::builtin_static("test"),
         )]),
     ));
 

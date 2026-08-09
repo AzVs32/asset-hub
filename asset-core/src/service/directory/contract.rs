@@ -1,5 +1,5 @@
 use crate::domain::{
-    DirectoryAction, DirectoryActionAccess, DirectoryActionDefinition, DirectoryId, DirectoryKind,
+    ActionAccess, DirectoryActionDefinition, DirectoryActionId, DirectoryId, DirectoryKind,
 };
 use crate::port::DirectoryActionOutput;
 use serde_json::Value;
@@ -7,14 +7,18 @@ use serde_json::Value;
 /// A partial update to a directory aggregate.
 #[derive(Debug, Clone, Default)]
 pub struct UpdateDirectory {
+    pub(super) expected_revision: u64,
     pub(super) name: Option<String>,
     pub(super) parent_id: Option<DirectoryId>,
     pub(super) kind: Option<DirectoryKind>,
 }
 
 impl UpdateDirectory {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(expected_revision: u64) -> Self {
+        Self {
+            expected_revision,
+            ..Self::default()
+        }
     }
 
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
@@ -35,15 +39,17 @@ impl UpdateDirectory {
 
 #[derive(Debug, Clone)]
 pub struct ExecuteDirectoryAction {
-    pub action: DirectoryAction,
+    pub action: DirectoryActionId,
     pub input: Value,
+    pub expected_revision: Option<u64>,
 }
 
 impl ExecuteDirectoryAction {
-    pub fn new(action: DirectoryAction) -> Self {
+    pub fn new(action: DirectoryActionId, expected_revision: Option<u64>) -> Self {
         Self {
             action,
-            input: Value::Null,
+            input: Value::Object(Default::default()),
+            expected_revision,
         }
     }
 
@@ -71,7 +77,7 @@ impl DirectoryActions {
 pub(crate) struct ExecutedDirectoryAction {
     pub(super) directory_id: DirectoryId,
     pub(super) expected_revision: u64,
-    pub(super) access: DirectoryActionAccess,
+    pub(super) access: ActionAccess,
     pub(super) output: DirectoryActionOutput,
 }
 

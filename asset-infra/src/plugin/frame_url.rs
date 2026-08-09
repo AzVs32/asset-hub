@@ -1,8 +1,8 @@
 use asset_core::CoreError;
-use asset_plugin_api::protocol::{PLUGIN_API_VERSION, PluginActionOutput, PluginView};
+use asset_plugin_api::protocol::{PLUGIN_API_VERSION, PluginResourceActionOutput, PluginView};
 
 pub(super) fn resolve_plugin_output_urls(
-    output: &mut PluginActionOutput,
+    output: &mut PluginResourceActionOutput,
     plugin_id: &str,
 ) -> Result<(), CoreError> {
     if let PluginView::PluginFrame(frame) = &mut output.view {

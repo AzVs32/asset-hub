@@ -487,10 +487,7 @@ impl<'a> ResourceContentService<'a> {
 }
 
 fn stale_replacement(resource: &Resource) -> CoreError {
-    CoreError::conflict(format!(
-        "resource `{}` changed after the editor was opened",
-        resource.id()
-    ))
+    CoreError::revision_conflict("resource", resource.id().to_string())
 }
 
 fn replacement_staging_key(id: ResourceContentReplacementId) -> Result<StorageKey, CoreError> {

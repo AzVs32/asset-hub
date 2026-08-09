@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parseExecuteActionMessage, parsePluginFrameRequest } from "@/plugins/frame-protocol";
 
 describe("plugin frame messages", () => {
-  const pluginApi = "asset-hub.plugin-api@1";
+  const pluginApi = "asset-hub.plugin-api@2";
 
   it("accepts a bounded action request", () => {
     expect(
@@ -36,7 +36,7 @@ describe("plugin frame messages", () => {
       parseExecuteActionMessage(
         {
           type: "asset-hub:execute-resource-action",
-          plugin_api: "asset-hub.plugin-api@1",
+          plugin_api: "asset-hub.plugin-api@2",
         },
         pluginApi,
       ),

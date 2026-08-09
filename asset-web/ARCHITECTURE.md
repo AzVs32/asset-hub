@@ -152,6 +152,13 @@ ResourceWorkspace
   → React 重新渲染
 ```
 
+Resource 与 Directory action 都是扁平数组，使用 `read` / `write` access 和
+`output.views`；Kind 与 Action 的 `origin` 明确区分 Host 内建定义和插件定义。
+Directory 在 Domain 和 Gateway 中始终以稳定 UUID 标识，path 仅用于导航与显示。目录写入
+以及 `write` Action 执行携带当前 revision，过期页面不能覆盖已经提交的并发修改；`read`
+Action 默认读取最新授权快照，不会因为缩略图或预览缓存较旧而产生无意义的 409。稳定错误码
+`concurrency.revision_conflict` 会触发相关 query invalidation，并提示用户已加载最新版本。
+
 ## 5. 插件执行链路
 
 ```text
@@ -213,6 +220,6 @@ frame 对应的原始 action 是当前资源解析出的读写 `text_edit` provi
 - 具体插件 id、kind 或 action id 不允许硬编码进宿主组件。
 - 自动 slot 不允许执行 write action。
 - iframe action 必须先在当前 `Resource.actions` 中验证；文本替换还必须绑定产生当前 frame
-  的读写 `text_edit` action。
+  的 `write` `text_edit` action。
 - 外部 URL 不允许作为插件媒体或 iframe 地址加载。
 - 新的后端请求能力先加入 `AssetGateway`，再实现 HTTP adapter，最后由 feature 使用。

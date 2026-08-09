@@ -3,7 +3,7 @@
 //! 本模块只描述调用方与资源应用服务交换的数据，不包含仓储或对象存储编排。
 
 use crate::domain::{Checksum, DirectoryPath, ResourceId, ResourceKind};
-use crate::domain::{ResourceAction, ResourceActionDefinition};
+use crate::domain::{ResourceActionDefinition, ResourceActionId};
 use crate::port::BlobByteStream;
 
 /// 创建持久化上传会话。
@@ -52,7 +52,7 @@ impl CreateUpload {
 /// 执行资源动作。
 #[derive(Debug, Clone)]
 pub struct ExecuteResourceAction {
-    pub(super) action: ResourceAction,
+    pub(super) action: ResourceActionId,
     pub(super) input: serde_json::Value,
     pub(super) expected_revision: Option<u64>,
 }
@@ -83,11 +83,11 @@ impl ReplaceResourceContent {
 }
 
 impl ExecuteResourceAction {
-    pub fn new(action: ResourceAction) -> Self {
+    pub fn new(action: ResourceActionId, expected_revision: Option<u64>) -> Self {
         Self {
             action,
             input: serde_json::Value::Object(Default::default()),
-            expected_revision: None,
+            expected_revision,
         }
     }
 
@@ -95,17 +95,12 @@ impl ExecuteResourceAction {
         self.input = input;
         self
     }
-
-    /// 要求资源仍处于调用方读取到的版本，避免交互式 Action 覆盖并发更新。
-    pub fn with_expected_revision(mut self, expected_revision: u64) -> Self {
-        self.expected_revision = Some(expected_revision);
-        self
-    }
 }
 
 /// 更新资源聚合。
 #[derive(Debug, Clone, Default)]
 pub struct UpdateResource {
+    pub(super) expected_revision: u64,
     pub(super) name: Option<String>,
     pub(super) directory: Option<DirectoryPath>,
     pub(super) kind: Option<ResourceKind>,
@@ -113,8 +108,11 @@ pub struct UpdateResource {
 }
 
 impl UpdateResource {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(expected_revision: u64) -> Self {
+        Self {
+            expected_revision,
+            ..Self::default()
+        }
     }
 
     pub fn with_name(mut self, name: impl Into<String>) -> Self {

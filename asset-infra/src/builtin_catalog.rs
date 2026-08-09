@@ -1,10 +1,10 @@
 use asset_core::CoreError;
 use asset_core::domain::{
-    ActionAccess, ActionOutputContract, ActionUi as ActionDefinitionUi, DirectoryActionDefinition,
-    DirectoryKind, ResourceActionContentDelivery, ResourceActionDefinition,
-    ResourceActionRequirements, ResourceContentMatcher, ResourceKind,
+    ActionAccess, ActionOutputContract, ActionUi as ActionDefinitionUi, DefinitionOrigin,
+    DirectoryActionDefinition, DirectoryKind, DirectoryKindDefinition,
+    ResourceActionContentDelivery, ResourceActionDefinition, ResourceActionRequirements,
+    ResourceContentMatcher, ResourceKind, ResourceKindDefinition,
 };
-use asset_core::port::{DirectoryKindDefinition, ResourceKindDefinition};
 
 /// Host 内置的资源内容下载 action 稳定 ID。
 const CORE_RESOURCE_DOWNLOAD: &str = "core.resource.download";
@@ -28,9 +28,9 @@ const CORE_DIRECTORY_DOWNLOAD: &str = "core.directory.download";
 const CORE_DIRECTORY_THUMBNAIL: &str = "core.directory.thumbnail";
 
 /// 对外报告的 Host 内置根资源类型来源。
-const CORE_RESOURCE_SOURCE: &str = "builtin:core.resource";
+const CORE_RESOURCE_SOURCE: &str = "core.resource";
 /// 对外报告的 Host 内置根目录类型来源。
-const CORE_DIRECTORY_SOURCE: &str = "builtin:core.directory";
+const CORE_DIRECTORY_SOURCE: &str = "core.directory";
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum BuiltinResourceHandler {
@@ -76,51 +76,66 @@ impl BuiltinCatalog {
         let directory_kind = DirectoryKind::default();
 
         let resource_kinds = vec![
-            ResourceKindDefinition::with_source(
+            ResourceKindDefinition::new(
                 resource_kind.clone(),
                 "Resource",
                 true,
-                CORE_RESOURCE_SOURCE,
+                DefinitionOrigin::builtin_static(CORE_RESOURCE_SOURCE),
             ),
-            ResourceKindDefinition::with_source(image_kind, "Image", true, "builtin:core.image")
-                .with_parent(Some(resource_kind.clone()))
-                .with_detect(
-                    ResourceContentMatcher::new()
-                        .with_mime_types(["image/*"])
-                        .with_extensions([
-                            ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".avif",
-                        ]),
-                ),
-            ResourceKindDefinition::with_source(text_kind, "Text", true, "builtin:core.text")
-                .with_parent(Some(resource_kind.clone()))
-                .with_detect(
-                    ResourceContentMatcher::new()
-                        .with_mime_types([
-                            "text/*",
-                            "application/json",
-                            "application/xml",
-                            "application/toml",
-                            "application/yaml",
-                            "application/x-yaml",
-                        ])
-                        .with_extensions([
-                            ".txt", ".text", ".log", ".csv", ".tsv", ".json", ".xml", ".toml",
-                            ".yaml", ".yml",
-                        ]),
-                ),
-            ResourceKindDefinition::with_source(video_kind, "Video", true, "builtin:core.video")
-                .with_parent(Some(resource_kind))
-                .with_detect(
-                    ResourceContentMatcher::new()
-                        .with_mime_types(["video/*"])
-                        .with_extensions([".mp4", ".webm", ".mov", ".m4v", ".ogv"]),
-                ),
+            ResourceKindDefinition::new(
+                image_kind,
+                "Image",
+                true,
+                DefinitionOrigin::builtin_static("core.image"),
+            )
+            .with_parent(Some(resource_kind.clone()))
+            .with_detect(
+                ResourceContentMatcher::new()
+                    .with_mime_types(["image/*"])
+                    .with_extensions([
+                        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".avif",
+                    ]),
+            ),
+            ResourceKindDefinition::new(
+                text_kind,
+                "Text",
+                true,
+                DefinitionOrigin::builtin_static("core.text"),
+            )
+            .with_parent(Some(resource_kind.clone()))
+            .with_detect(
+                ResourceContentMatcher::new()
+                    .with_mime_types([
+                        "text/*",
+                        "application/json",
+                        "application/xml",
+                        "application/toml",
+                        "application/yaml",
+                        "application/x-yaml",
+                    ])
+                    .with_extensions([
+                        ".txt", ".text", ".log", ".csv", ".tsv", ".json", ".xml", ".toml", ".yaml",
+                        ".yml",
+                    ]),
+            ),
+            ResourceKindDefinition::new(
+                video_kind,
+                "Video",
+                true,
+                DefinitionOrigin::builtin_static("core.video"),
+            )
+            .with_parent(Some(resource_kind))
+            .with_detect(
+                ResourceContentMatcher::new()
+                    .with_mime_types(["video/*"])
+                    .with_extensions([".mp4", ".webm", ".mov", ".m4v", ".ogv"]),
+            ),
         ];
 
-        let directory_kinds = vec![DirectoryKindDefinition::with_source(
+        let directory_kinds = vec![DirectoryKindDefinition::new(
             directory_kind,
             "Directory",
-            CORE_DIRECTORY_SOURCE,
+            DefinitionOrigin::builtin_static(CORE_DIRECTORY_SOURCE),
         )];
 
         let resource_actions = vec![
@@ -135,7 +150,7 @@ impl BuiltinCatalog {
                     content_delivery: ResourceActionContentDelivery::Reference,
                 })
                 .with_output(ActionOutputContract {
-                    view: vec!["download".to_string()],
+                    views: vec!["download".to_string()],
                 })
                 .with_ui(ActionDefinitionUi {
                     group: Some("open".to_string()),
@@ -152,7 +167,7 @@ impl BuiltinCatalog {
                 .with_static_provides(Some(THUMBNAIL_CAPABILITY))
                 .with_kinds([ResourceKind::DEFAULT])
                 .with_output(ActionOutputContract {
-                    view: vec!["media".to_string()],
+                    views: vec!["media".to_string()],
                 })
                 .with_ui(ActionDefinitionUi {
                     group: Some("preview".to_string()),
@@ -169,7 +184,7 @@ impl BuiltinCatalog {
                 .with_static_provides(Some(THUMBNAIL_CAPABILITY))
                 .with_kinds(["core:image"])
                 .with_output(ActionOutputContract {
-                    view: vec!["media".to_string()],
+                    views: vec!["media".to_string()],
                 })
                 .with_ui(ActionDefinitionUi {
                     group: Some("preview".to_string()),
@@ -187,7 +202,7 @@ impl BuiltinCatalog {
                         content_delivery: ResourceActionContentDelivery::Inline,
                     })
                     .with_output(ActionOutputContract {
-                        view: vec!["text".to_string()],
+                        views: vec!["text".to_string()],
                     })
                     .with_ui(ActionDefinitionUi {
                         group: Some("open".to_string()),
@@ -199,14 +214,14 @@ impl BuiltinCatalog {
             BuiltinResourceAction {
                 definition: ResourceActionDefinition::new_static(CORE_TEXT_EDIT, "Edit Text")
                     .with_static_provides(Some(TEXT_EDIT_CAPABILITY))
-                    .with_access(ActionAccess::ReadWrite)
+                    .with_access(ActionAccess::Write)
                     .with_kinds(["core:text"])
                     .with_requirements(ResourceActionRequirements {
                         content: true,
                         content_delivery: ResourceActionContentDelivery::Inline,
                     })
                     .with_output(ActionOutputContract {
-                        view: vec!["text".to_string()],
+                        views: vec!["text".to_string()],
                     })
                     .with_ui(ActionDefinitionUi {
                         group: Some("edit".to_string()),
@@ -225,7 +240,7 @@ impl BuiltinCatalog {
                 )
                 .with_kinds([DirectoryKind::DEFAULT])
                 .with_output(ActionOutputContract {
-                    view: vec!["download".to_string()],
+                    views: vec!["download".to_string()],
                 })
                 .with_ui(ActionDefinitionUi {
                     group: Some("open".to_string()),
@@ -246,7 +261,7 @@ impl BuiltinCatalog {
                 .with_static_provides(Some(THUMBNAIL_CAPABILITY))
                 .with_kinds([DirectoryKind::DEFAULT])
                 .with_output(ActionOutputContract {
-                    view: vec!["media".to_string()],
+                    views: vec!["media".to_string()],
                 })
                 .with_ui(ActionDefinitionUi {
                     group: Some("preview".to_string()),

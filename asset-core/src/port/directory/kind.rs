@@ -1,52 +1,7 @@
 //! 目录类型注册表端口。
 
-use crate::domain::DirectoryKind;
+use crate::domain::{DirectoryKind, DirectoryKindDefinition};
 use std::collections::HashSet;
-
-/// 目录类型定义。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DirectoryKindDefinition {
-    kind: DirectoryKind,
-    parent: Option<DirectoryKind>,
-    label: String,
-    source: String,
-}
-
-impl DirectoryKindDefinition {
-    pub fn with_source(
-        kind: DirectoryKind,
-        label: impl Into<String>,
-        source: impl Into<String>,
-    ) -> Self {
-        Self {
-            kind,
-            parent: None,
-            label: label.into(),
-            source: source.into(),
-        }
-    }
-
-    pub fn with_parent(mut self, parent: Option<DirectoryKind>) -> Self {
-        self.parent = parent;
-        self
-    }
-
-    pub fn kind(&self) -> &DirectoryKind {
-        &self.kind
-    }
-
-    pub fn parent(&self) -> Option<&DirectoryKind> {
-        self.parent.as_ref()
-    }
-
-    pub fn label(&self) -> &str {
-        &self.label
-    }
-
-    pub fn source(&self) -> &str {
-        &self.source
-    }
-}
 
 /// 当前运行时支持的目录类型注册表端口。
 ///

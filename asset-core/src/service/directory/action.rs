@@ -2,10 +2,11 @@ use super::{
     DirectoryActionPorts, DirectoryActions, DirectoryService, ExecuteDirectoryAction,
     ExecutedDirectoryAction, UpdateDirectory,
 };
+use crate::service::validate_action_revision;
 use crate::{
     CoreError,
     domain::{
-        Directory, DirectoryAction, DirectoryActionAccess, DirectoryActionDefinition, DirectoryId,
+        ActionAccess, Directory, DirectoryActionDefinition, DirectoryActionId, DirectoryId,
         DirectoryKind,
     },
     port::{
@@ -51,12 +52,13 @@ impl DirectoryService {
     pub fn resolve_action(
         &self,
         directory: &Directory,
-        action_id: &DirectoryAction,
+        action_id: &DirectoryActionId,
     ) -> Result<DirectoryActionDefinition, CoreError> {
         self.describe_kind_actions(directory.kind())
             .into_iter()
             .find(|action| {
-                action.id() == action_id && action.matches_directory(directory.kind().as_str())
+                action.id().as_str() == action_id.as_str()
+                    && action.matches_directory(directory.kind().as_str())
             })
             .ok_or_else(|| CoreError::unsupported("directory action", action_id.to_string()))
     }
@@ -79,6 +81,13 @@ impl DirectoryService {
         let located = self.find_by_id(id).await?;
         let expected_revision = located.directory().revision();
         let definition = self.resolve_action(located.directory(), &command.action)?;
+        validate_action_revision(
+            definition.access(),
+            command.expected_revision,
+            expected_revision,
+            "directory",
+            id.to_string(),
+        )?;
         let ports = self.action_ports.as_ref().ok_or_else(|| {
             CoreError::configuration("directory action executor is not configured")
         })?;
@@ -119,7 +128,7 @@ impl DirectoryService {
     fn validate_action_output(
         &self,
         directory_id: &DirectoryId,
-        action_id: &DirectoryAction,
+        action_id: &DirectoryActionId,
         definition: &DirectoryActionDefinition,
         output: &DirectoryActionOutput,
     ) -> Result<(), CoreError> {
@@ -129,7 +138,7 @@ impl DirectoryService {
             )));
         }
         let actual = output.output().view.kind();
-        if !definition.output().view.iter().any(|view| view == actual) {
+        if !definition.output().views.iter().any(|view| view == actual) {
             return Err(CoreError::invariant(format!(
                 "action `{}` returned undeclared view `{actual}`",
                 definition.id()
@@ -141,19 +150,6 @@ impl DirectoryService {
                 definition.id()
             )));
         }
-        if output
-            .output()
-            .effects
-            .iter()
-            .filter(|effect| matches!(effect, DirectoryActionEffect::Update(_)))
-            .count()
-            > 1
-        {
-            return Err(CoreError::invariant(format!(
-                "action `{}` returned more than one directory update effect",
-                definition.id()
-            )));
-        }
         Ok(())
     }
 
@@ -161,14 +157,14 @@ impl DirectoryService {
         &self,
         id: &DirectoryId,
         expected_revision: u64,
-        access: DirectoryActionAccess,
+        access: ActionAccess,
         output: &DirectoryActionOutput,
         required_parent_ancestor: Option<DirectoryId>,
     ) -> Result<(), CoreError> {
         if output.output().effects.is_empty() {
             return Ok(());
         }
-        if !matches!(access, DirectoryActionAccess::ReadWrite) {
+        if !matches!(access, ActionAccess::Write) {
             return Err(CoreError::invariant(format!(
                 "action `{}` returned effects without write access",
                 output.action()
@@ -207,7 +203,7 @@ impl DirectoryService {
                 DirectoryActionEffect::CreateChild(_) => None,
             })
         {
-            let mut command = UpdateDirectory::new();
+            let mut command = UpdateDirectory::new(expected_revision);
             if let Some(name) = &effect.name {
                 command = command.with_name(name.clone());
             }
@@ -220,13 +216,8 @@ impl DirectoryService {
             if let Some(kind) = &effect.kind {
                 command = command.with_kind(DirectoryKind::try_new(kind.clone())?);
             }
-            self.update_expected(
-                id,
-                command,
-                Some(expected_revision),
-                required_parent_ancestor,
-            )
-            .await?;
+            self.update_expected(id, command, required_parent_ancestor)
+                .await?;
         }
         Ok(())
     }

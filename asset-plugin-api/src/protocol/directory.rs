@@ -27,12 +27,13 @@ pub struct PluginDirectory {
     pub path: String,
     pub name: String,
     pub kind: String,
+    pub revision: u64,
     pub created_at: String,
     pub updated_at: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct DirectoryPluginActionOutput {
+pub struct PluginDirectoryActionOutput {
     #[serde(flatten)]
     pub view: PluginView,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -41,7 +42,7 @@ pub struct DirectoryPluginActionOutput {
     pub diagnostics: Vec<PluginDiagnostic>,
 }
 
-impl DirectoryPluginActionOutput {
+impl PluginDirectoryActionOutput {
     pub fn new(view: PluginView) -> Self {
         Self {
             view,

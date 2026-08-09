@@ -1,7 +1,8 @@
+use super::validation::validate_hierarchy;
 use asset_core::CoreError;
-use asset_core::domain::ResourceKind;
-use asset_core::port::{ResourceKindDefinition, ResourceKindRegistry};
-use std::collections::{HashMap, HashSet};
+use asset_core::domain::{ResourceKind, ResourceKindDefinition};
+use asset_core::port::ResourceKindRegistry;
+use std::collections::HashMap;
 
 /// 默认内置资源类型注册表。
 ///
@@ -60,35 +61,18 @@ impl DefaultResourceKindRegistry {
 pub(super) fn validate_kind_hierarchy(
     definitions: &[ResourceKindDefinition],
 ) -> Result<(), CoreError> {
-    let parents = definitions
-        .iter()
-        .map(|definition| {
-            (
-                definition.kind().as_str(),
-                definition.parent().map(|parent| parent.as_str()),
-            )
-        })
-        .collect::<HashMap<_, _>>();
-
-    for definition in definitions {
-        let mut current = Some(definition.kind().as_str());
-        let mut visited = HashSet::new();
-        while let Some(kind) = current {
-            if !visited.insert(kind) {
-                return Err(CoreError::configuration(format!(
-                    "resource kind hierarchy contains a cycle at `{kind}`"
-                )));
-            }
-            let Some(parent) = parents.get(kind) else {
-                return Err(CoreError::configuration(format!(
-                    "resource kind `{}` references unknown parent `{kind}`",
-                    definition.kind()
-                )));
-            };
-            current = *parent;
-        }
-    }
-    Ok(())
+    validate_hierarchy(
+        "resource",
+        definitions
+            .iter()
+            .map(|definition| {
+                (
+                    definition.kind().as_str(),
+                    definition.parent().map(|parent| parent.as_str()),
+                )
+            })
+            .collect(),
+    )
 }
 
 impl ResourceKindRegistry for DefaultResourceKindRegistry {

@@ -13,14 +13,13 @@ pub use common::{
     ActionOutputContract, ActionUi,
 };
 pub use directory::{
-    DirectoryAction, DirectoryActionAccess, DirectoryActionAppliesTo, DirectoryActionDefinition,
-    DirectoryActionOutputContract, DirectoryActionRequirements, DirectoryActionUi,
+    DirectoryActionAppliesTo, DirectoryActionDefinition, DirectoryActionId,
+    DirectoryActionRequirements,
 };
 pub use matcher::ResourceContentMatcher;
 pub use resource::{
-    ResourceAction, ResourceActionAccess, ResourceActionAppliesTo, ResourceActionContentDelivery,
-    ResourceActionDefinition, ResourceActionOutputContract, ResourceActionRequirements,
-    ResourceActionUi,
+    ResourceActionAppliesTo, ResourceActionContentDelivery, ResourceActionDefinition,
+    ResourceActionId, ResourceActionRequirements,
 };
 
 #[cfg(test)]

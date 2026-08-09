@@ -590,7 +590,10 @@ impl<'a> StorageReconciliationService<'a> {
         stored.sort_by_key(|directory| Reverse(directory.path().path().matches('/').count()));
         for directory in stored {
             if !physical_directories.contains(directory.path()) {
-                self.service.directories.remove_if_empty(&directory).await?;
+                self.service
+                    .directories
+                    .remove_if_empty(&directory, None)
+                    .await?;
             }
         }
         Ok(())

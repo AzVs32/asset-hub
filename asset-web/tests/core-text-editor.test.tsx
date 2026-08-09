@@ -17,7 +17,7 @@ describe("CoreTextEditor", () => {
     const onClose = vi.fn();
     const textAction = action({
       id: "core.text.edit",
-      access: "read_write",
+      access: "write",
       provides: "text_edit",
     });
 
@@ -50,7 +50,7 @@ describe("CoreTextEditor", () => {
   it("does not impose the core editor protocol on plugin-owned text edit providers", () => {
     const pluginAction = action({
       id: "example.text.edit",
-      access: "read_write",
+      access: "write",
       provides: "text_edit",
     });
     const item = resource([pluginAction]);

@@ -1,8 +1,11 @@
 use super::*;
-use crate::domain::{Directory, DirectoryId, DirectoryKind, DirectoryPath, User, UserId, UserRole};
+use crate::domain::{
+    DefinitionOrigin, Directory, DirectoryId, DirectoryKind, DirectoryKindDefinition,
+    DirectoryPath, User, UserId, UserRole,
+};
 use crate::port::{
-    DirectoryIndex, DirectoryKindDefinition, DirectoryKindRegistry, DirectoryLocation,
-    DirectoryQuery, DirectoryStorage, DirectoryStore, LocatedDirectory,
+    DirectoryIndex, DirectoryKindRegistry, DirectoryLocation, DirectoryQuery, DirectoryRepository,
+    DirectoryStorage, LocatedDirectory,
 };
 use async_trait::async_trait;
 use std::{collections::HashMap, sync::Mutex};
@@ -121,7 +124,7 @@ impl DirectoryStorage for Directories {
 }
 
 #[async_trait]
-impl DirectoryStore for Directories {
+impl DirectoryRepository for Directories {
     async fn load_all(&self) -> Result<Vec<Directory>, CoreError> {
         Ok(self
             .values
@@ -141,7 +144,11 @@ impl DirectoryStore for Directories {
     ) -> Result<bool, CoreError> {
         Ok(true)
     }
-    async fn remove_if_empty(&self, _id: &DirectoryId) -> Result<bool, CoreError> {
+    async fn remove_if_empty(
+        &self,
+        _id: &DirectoryId,
+        _expected_revision: u64,
+    ) -> Result<bool, CoreError> {
         Ok(false)
     }
 }
@@ -213,10 +220,10 @@ struct DirectoryKinds(Vec<DirectoryKindDefinition>);
 
 impl Default for DirectoryKinds {
     fn default() -> Self {
-        Self(vec![DirectoryKindDefinition::with_source(
+        Self(vec![DirectoryKindDefinition::new(
             DirectoryKind::default(),
             "Directory",
-            "test",
+            DefinitionOrigin::builtin_static("test"),
         )])
     }
 }

@@ -8,7 +8,7 @@ use asset_core::service::{
 use asset_infra::AssetInfrastructure;
 use asset_infra::action::{DefaultDirectoryActionExecutor, DefaultResourceActionExecutor};
 use asset_infra::config::{AssetInfraConfig, BlobBackend};
-use asset_infra::kind::{directory_action_registry_from_catalog, registries_from_catalog};
+use asset_infra::kind::build_capability_catalogs;
 use asset_infra::password::Argon2PasswordHasher;
 use asset_infra::plugin::{ExtismActionExecutor, ExtismHost};
 use asset_infra::plugin_package::PluginCatalog;
@@ -69,15 +69,11 @@ impl AssetRuntime {
             "plugin artifacts verified"
         );
 
-        let (resource_kind_registry, directory_kind_registry, resource_action_registry) =
-            registries_from_catalog(&plugin_catalog)?;
-        let resource_kind_registry = Arc::new(resource_kind_registry);
-        let directory_kind_registry = Arc::new(directory_kind_registry);
-        let resource_action_registry = Arc::new(resource_action_registry);
-        let directory_action_registry = Arc::new(directory_action_registry_from_catalog(
-            &plugin_catalog,
-            directory_kind_registry.as_ref(),
-        )?);
+        let capability_catalogs = build_capability_catalogs(&plugin_catalog)?;
+        let resource_kind_registry = Arc::new(capability_catalogs.resource_kinds);
+        let directory_kind_registry = Arc::new(capability_catalogs.directory_kinds);
+        let resource_action_registry = Arc::new(capability_catalogs.resource_actions);
+        let directory_action_registry = Arc::new(capability_catalogs.directory_actions);
         let plugin_execution_policy = Arc::new(config.plugin.execution_policy()?);
         let resource_action_policy = Arc::new(
             ResourceActionPolicy::new(
@@ -120,7 +116,7 @@ impl AssetRuntime {
         );
 
         let directory_service = DirectoryService::new(
-            infrastructure.directory_store(),
+            infrastructure.directory_repository(),
             infrastructure.directory_index(),
             infrastructure.directory_storage(),
             directory_kind_registry,

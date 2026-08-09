@@ -26,6 +26,7 @@ use tower_sessions_sqlx_store::sqlx::sqlite::SqliteConnectOptions;
 use tower_sessions_sqlx_store::sqlx::{SqlitePool, query_scalar};
 
 const BODY_LIMIT: usize = 1024 * 1024;
+const ROOT_DIRECTORY_ID: &str = "00000000-0000-0000-0000-000000000000";
 
 struct TestApp {
     router: Router,
@@ -58,11 +59,11 @@ async fn resource_kinds_are_listed_and_unsupported_kind_is_rejected() {
         ("core:video", "builtin:core.video"),
     ] {
         assert!(
-            kinds["items"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|item| item["kind"] == kind && item["source"] == source),
+            kinds["items"].as_array().unwrap().iter().any(|item| {
+                item["kind"] == kind
+                    && item["origin"]
+                        == json!({"kind": "builtin", "id": source.trim_start_matches("builtin:")})
+            }),
             "missing {kind}"
         );
     }
@@ -118,23 +119,26 @@ async fn directory_kinds_and_directory_capabilities_are_exposed() {
         .unwrap();
     assert!(default["parent"].is_null());
     assert_eq!(default["label"], "Directory");
-    assert_eq!(default["source"], "builtin:core.directory");
+    assert_eq!(
+        default["origin"],
+        json!({"kind": "builtin", "id": "core.directory"})
+    );
     let download = default["actions"]
         .as_array()
         .unwrap()
         .iter()
         .find(|action| action["id"] == "core.directory.download")
         .unwrap();
-    assert_eq!(download["access"], "read_only");
+    assert_eq!(download["access"], "read");
     assert!(download.get("executor").is_none());
-    assert_eq!(download["output"]["view"], json!(["download"]));
+    assert_eq!(download["output"]["views"], json!(["download"]));
     let thumbnail = default["actions"]
         .as_array()
         .unwrap()
         .iter()
         .find(|action| action["id"] == "core.directory.thumbnail")
         .unwrap();
-    assert_eq!(thumbnail["output"]["view"], json!(["media"]));
+    assert_eq!(thumbnail["output"]["views"], json!(["media"]));
     assert_eq!(
         thumbnail["ui"]["locations"],
         json!(["directory_list_thumbnail"])
@@ -145,7 +149,7 @@ async fn directory_kinds_and_directory_capabilities_are_exposed() {
         Method::POST,
         "/directories",
         json!({
-            "parent_path": "",
+            "parent_id": ROOT_DIRECTORY_ID,
             "name": "typed",
             "kind": "core:directory"
         }),
@@ -187,7 +191,7 @@ async fn directory_kinds_and_directory_capabilities_are_exposed() {
         Method::POST,
         "/directories",
         json!({
-            "parent_path": "",
+            "parent_id": ROOT_DIRECTORY_ID,
             "name": "unsupported",
             "kind": "plugin:not-installed"
         }),
@@ -209,7 +213,7 @@ async fn directory_download_action_archives_nested_resources_and_empty_directori
         &app,
         Method::POST,
         "/directories",
-        json!({"parent_path": "", "name": "bundle"}),
+        json!({"parent_id": ROOT_DIRECTORY_ID, "name": "bundle"}),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{directory}");
@@ -219,7 +223,7 @@ async fn directory_download_action_archives_nested_resources_and_empty_directori
         &app,
         Method::POST,
         "/directories",
-        json!({"parent_path": "bundle", "name": "empty"}),
+        json!({"parent_id": directory_id, "name": "empty"}),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
@@ -244,7 +248,7 @@ async fn directory_download_action_archives_nested_resources_and_empty_directori
         &app,
         Method::POST,
         &format!("/directories/{directory_id}/actions/core.directory.download"),
-        json!({"input": {}}),
+        json!({"expected_revision": directory["revision"], "input": {}}),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{output}");
@@ -317,7 +321,10 @@ async fn core_text_resource_inherits_generic_actions_and_provides_text_actions()
         .iter()
         .find(|kind| kind["kind"] == "core:text")
         .unwrap();
-    assert_eq!(text_kind["source"], "builtin:core.text");
+    assert_eq!(
+        text_kind["origin"],
+        json!({"kind": "builtin", "id": "core.text"})
+    );
     assert!(
         text_kind["detect"]["mime_types"]
             .as_array()
@@ -336,10 +343,10 @@ async fn core_text_resource_inherits_generic_actions_and_provides_text_actions()
         .find(|action| action["id"] == "core.resource.download")
         .unwrap();
     assert_eq!(download["label"], "Download");
-    assert_eq!(download["access"], "read_only");
+    assert_eq!(download["access"], "read");
     assert!(download.get("executor").is_none());
     assert_eq!(download["requires"]["content_delivery"], "reference");
-    assert_eq!(download["output"]["view"], json!(["download"]));
+    assert_eq!(download["output"]["views"], json!(["download"]));
     assert_eq!(
         download["ui"]["locations"],
         json!(["resource_detail", "context_menu"])
@@ -349,7 +356,7 @@ async fn core_text_resource_inherits_generic_actions_and_provides_text_actions()
         .iter()
         .find(|action| action["id"] == "core.resource.thumbnail")
         .unwrap();
-    assert_eq!(thumbnail["output"]["view"], json!(["media"]));
+    assert_eq!(thumbnail["output"]["views"], json!(["media"]));
     assert_eq!(
         thumbnail["ui"]["locations"],
         json!(["resource_list_thumbnail"])
@@ -359,17 +366,17 @@ async fn core_text_resource_inherits_generic_actions_and_provides_text_actions()
         .find(|action| action["id"] == "core.text.read")
         .unwrap();
     assert_eq!(read["provides"], "text_read");
-    assert_eq!(read["access"], "read_only");
+    assert_eq!(read["access"], "read");
     assert_eq!(read["requires"]["content_delivery"], "inline");
-    assert_eq!(read["output"]["view"], json!(["text"]));
+    assert_eq!(read["output"]["views"], json!(["text"]));
     let edit = actions
         .iter()
         .find(|action| action["id"] == "core.text.edit")
         .unwrap();
     assert_eq!(edit["provides"], "text_edit");
-    assert_eq!(edit["access"], "read_write");
+    assert_eq!(edit["access"], "write");
     assert_eq!(edit["requires"]["content_delivery"], "inline");
-    assert_eq!(edit["output"]["view"], json!(["text"]));
+    assert_eq!(edit["output"]["views"], json!(["text"]));
     assert_eq!(actions.len(), 4);
 
     let (status, resource) = stream_upload(
@@ -386,13 +393,7 @@ async fn core_text_resource_inherits_generic_actions_and_provides_text_actions()
     assert!(has_action(&resource, "core.resource.thumbnail"));
     assert!(has_action(&resource, "core.text.read"));
     assert!(has_action(&resource, "core.text.edit"));
-    assert_eq!(
-        resource["actions"]["available_actions"]
-            .as_array()
-            .unwrap()
-            .len(),
-        4
-    );
+    assert_eq!(resource["actions"].as_array().unwrap().len(), 4);
 
     let resource_id = resource["id"].as_str().unwrap();
     let (status, output) = json_request(
@@ -434,12 +435,36 @@ async fn core_text_resource_inherits_generic_actions_and_provides_text_actions()
         text_output["view"],
         json!({ "view": "text", "text": "Hello book" })
     );
+    let (status, conflict) = json_request(
+        &app,
+        Method::POST,
+        &format!("/resources/{resource_id}/actions/core.text.read"),
+        json!({ "expected_revision": resource["revision"].as_u64().unwrap() + 1, "input": {} }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(conflict["code"], "concurrency.revision_conflict");
+
+    let (status, error) = json_request(
+        &app,
+        Method::POST,
+        &format!("/resources/{resource_id}/actions/core.text.edit"),
+        json!({ "input": {} }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        error["error"]
+            .as_str()
+            .unwrap()
+            .contains("expected_revision")
+    );
 
     let (status, edit_output) = json_request(
         &app,
         Method::POST,
         &format!("/resources/{resource_id}/actions/core.text.edit"),
-        json!({ "input": {} }),
+        json!({ "expected_revision": resource["revision"], "input": {} }),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{edit_output}");
@@ -597,7 +622,7 @@ async fn core_image_thumbnail_reuses_the_authorized_content_url() {
         &app,
         Method::POST,
         &format!("/resources/{resource_id}/actions/core.image.thumbnail"),
-        json!({ "input": {} }),
+        json!({ "expected_revision": resource["revision"], "input": {} }),
     )
     .await;
 
@@ -631,7 +656,7 @@ async fn generic_resource_thumbnail_does_not_special_case_image_content() {
         &app,
         Method::POST,
         &format!("/resources/{resource_id}/actions/core.resource.thumbnail"),
-        json!({ "input": {} }),
+        json!({ "expected_revision": resource["revision"], "input": {} }),
     )
     .await;
 
@@ -1052,11 +1077,11 @@ async fn stream_upload_preserves_spaces_in_names_and_physical_paths() {
 async fn empty_directories_create_physical_directories() {
     let app = test_app("physical-directories").await;
 
-    let (status, _) = json_request(
+    let (status, projects) = json_request(
         &app,
         Method::POST,
         "/directories",
-        json!({ "parent_path": "", "name": "projects" }),
+        json!({ "parent_id": ROOT_DIRECTORY_ID, "name": "projects" }),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
@@ -1065,7 +1090,7 @@ async fn empty_directories_create_physical_directories() {
         &app,
         Method::POST,
         "/directories",
-        json!({ "parent_path": "projects", "name": "empty" }),
+        json!({ "parent_id": projects["id"], "name": "empty" }),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
@@ -1076,10 +1101,95 @@ async fn empty_directories_create_physical_directories() {
         &app,
         Method::POST,
         "/directories",
-        json!({ "parent_path": "", "name": ".asset-hub" }),
+        json!({ "parent_id": ROOT_DIRECTORY_ID, "name": ".asset-hub" }),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn directory_crud_uses_stable_ids_and_revision_preconditions() {
+    let app = test_app("directory-crud").await;
+    let (status, created) = json_request(
+        &app,
+        Method::POST,
+        "/directories",
+        json!({ "parent_id": ROOT_DIRECTORY_ID, "name": "drafts" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let id = created["id"].as_str().unwrap();
+
+    let (status, found) =
+        empty_json_request(&app, Method::GET, &format!("/directories/{id}")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(found["id"], created["id"]);
+
+    let (status, renamed) = json_request(
+        &app,
+        Method::PATCH,
+        &format!("/directories/{id}"),
+        json!({
+            "expected_revision": found["revision"],
+            "name": "published"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{renamed}");
+    assert_eq!(renamed["id"], created["id"]);
+    assert_eq!(renamed["path"], "published");
+    assert!(renamed["revision"].as_u64() > found["revision"].as_u64());
+
+    let (status, _) = json_request(
+        &app,
+        Method::PATCH,
+        &format!("/directories/{id}"),
+        json!({ "expected_revision": found["revision"], "name": "stale" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    let (status, child) = json_request(
+        &app,
+        Method::POST,
+        "/directories",
+        json!({ "parent_id": id, "name": "child" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{child}");
+    let child_id = child["id"].as_str().unwrap();
+
+    let (status, _) = empty_json_request(
+        &app,
+        Method::DELETE,
+        &format!(
+            "/directories/{id}?expected_revision={}",
+            renamed["revision"]
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    let (status, _) = empty_json_request(
+        &app,
+        Method::DELETE,
+        &format!(
+            "/directories/{child_id}?expected_revision={}",
+            child["revision"]
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = empty_json_request(
+        &app,
+        Method::DELETE,
+        &format!(
+            "/directories/{id}?expected_revision={}",
+            renamed["revision"]
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
 }
 
 #[tokio::test]
@@ -1389,7 +1499,7 @@ async fn upload_detects_most_specific_plugin_kind() {
 
     assert_eq!(status, StatusCode::CREATED, "{resource}");
     assert_eq!(resource["kind"], "azvs:markdown");
-    let actions = resource["actions"]["available_actions"].as_array().unwrap();
+    let actions = resource["actions"].as_array().unwrap();
     assert!(
         actions
             .iter()
@@ -1426,7 +1536,7 @@ async fn upload_detects_most_specific_plugin_kind() {
         &app,
         Method::POST,
         &format!("/resources/{resource_id}/actions/azvs.markdown.read"),
-        json!({ "input": {} }),
+        json!({ "expected_revision": resource["revision"], "input": {} }),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{rendered}");
@@ -1457,7 +1567,7 @@ async fn epub_thumbnail_provider_is_selected_for_the_resource_capability() {
 
     assert_eq!(status, StatusCode::CREATED, "{resource}");
     assert_eq!(resource["kind"], "azvs:epub");
-    let actions = resource["actions"]["available_actions"].as_array().unwrap();
+    let actions = resource["actions"].as_array().unwrap();
     let thumbnail = actions
         .iter()
         .find(|action| action["id"] == "azvs.epub.thumbnail")
@@ -1499,7 +1609,7 @@ async fn plugin_reference_content_respects_the_host_content_budget() {
         &app,
         Method::POST,
         &format!("/resources/{id}/actions/azvs.markdown.read"),
-        json!({"input": {}}),
+        json!({"expected_revision": resource["revision"], "input": {}}),
     )
     .await;
     assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
@@ -1519,9 +1629,29 @@ async fn soft_delete_hides_content_and_purge_removes_resource() {
     let id = create_text_resource(&app, "delete/me.txt").await;
     let original_blob_path = app.root.join("blob/delete/me.txt");
     let trash_blob_path = app.root.join(format!("blob/.asset-hub/trash/{id}"));
+    let (status, current) =
+        empty_json_request(&app, Method::GET, &format!("/resources/{id}")).await;
+    assert_eq!(status, StatusCode::OK);
+    let revision = current["revision"].as_u64().unwrap();
+    let (status, conflict) = empty_json_request(
+        &app,
+        Method::DELETE,
+        &format!(
+            "/resources/{id}?expected_revision={}",
+            revision.saturating_sub(1)
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(conflict["code"], "concurrency.revision_conflict");
+    assert!(original_blob_path.exists());
 
-    let (status, deleted) =
-        empty_json_request(&app, Method::DELETE, &format!("/resources/{id}")).await;
+    let (status, deleted) = empty_json_request(
+        &app,
+        Method::DELETE,
+        &format!("/resources/{id}?expected_revision={revision}"),
+    )
+    .await;
 
     assert_eq!(status, StatusCode::OK);
     assert!(deleted["deleted_at"].is_string());
@@ -1540,7 +1670,7 @@ async fn soft_delete_hides_content_and_purge_removes_resource() {
         &app,
         Method::PATCH,
         &format!("/resources/{id}"),
-        json!({ "restore": true }),
+        json!({ "expected_revision": deleted["revision"], "restore": true }),
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT);
@@ -1763,12 +1893,16 @@ async fn update_resource_changes_fields_and_restores_soft_deleted_resource() {
     let old_blob_path = app.root.join("blob/update/me.txt");
     let new_blob_path = app.root.join("blob/archive/updated.txt");
     assert_eq!(std::fs::read(&old_blob_path).unwrap(), b"delete me");
+    let (status, current) =
+        empty_json_request(&app, Method::GET, &format!("/resources/{id}")).await;
+    assert_eq!(status, StatusCode::OK);
 
     let (status, updated) = json_request(
         &app,
         Method::PATCH,
         &format!("/resources/{id}"),
         json!({
+            "expected_revision": current["revision"],
             "name": "updated.txt",
             "directory": "archive",
             "kind": "core:resource"
@@ -1784,7 +1918,15 @@ async fn update_resource_changes_fields_and_restores_soft_deleted_resource() {
     assert!(!old_blob_path.exists());
     assert_eq!(std::fs::read(&new_blob_path).unwrap(), b"delete me");
 
-    let (status, _) = empty_json_request(&app, Method::DELETE, &format!("/resources/{id}")).await;
+    let (status, deleted) = empty_json_request(
+        &app,
+        Method::DELETE,
+        &format!(
+            "/resources/{id}?expected_revision={}",
+            updated["revision"].as_u64().unwrap()
+        ),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     let trash_blob_path = app.root.join(format!("blob/.asset-hub/trash/{id}"));
     assert!(!new_blob_path.exists());
@@ -1797,7 +1939,7 @@ async fn update_resource_changes_fields_and_restores_soft_deleted_resource() {
         &app,
         Method::PATCH,
         &format!("/resources/{id}"),
-        json!({"restore": true}),
+        json!({"expected_revision": deleted["revision"], "restore": true}),
     )
     .await;
 
@@ -2471,11 +2613,15 @@ async fn authentication_starts_without_users_and_limits_member_workspace_access(
     let (alice_cookie, login) = login_with_password(&app, "alice", "alice-secure-password").await;
     assert!(login["user"].get("workspace_directory").is_none());
     assert!(app.root.join("blob/teams/alice").is_dir());
+    let alice_root =
+        request_with_cookie(&app, Method::GET, "/directories", json!({}), &alice_cookie).await;
+    assert_eq!(alice_root.status(), StatusCode::OK);
+    let alice_root = response_json(alice_root).await;
     let folder = request_with_cookie(
         &app,
         Method::POST,
         "/directories",
-        json!({ "parent_path": "", "name": "empty-folder" }),
+        json!({ "parent_id": alice_root["directory"]["id"], "name": "empty-folder" }),
         &alice_cookie,
     )
     .await;
@@ -2499,7 +2645,7 @@ async fn authentication_starts_without_users_and_limits_member_workspace_access(
         &app,
         Method::POST,
         "/directories",
-        json!({ "parent_path": "../bob", "name": "invalid" }),
+        json!({ "parent_id": "not-a-directory-id", "name": "invalid" }),
         &alice_cookie,
     )
     .await;
@@ -2724,7 +2870,7 @@ async fn response_json(response: axum::response::Response) -> Value {
 }
 
 fn has_action(resource: &Value, id: &str) -> bool {
-    resource["actions"]["available_actions"]
+    resource["actions"]
         .as_array()
         .is_some_and(|actions| actions.iter().any(|action| action["id"] == id))
 }
@@ -2741,7 +2887,7 @@ fn sha256_hex(data: &[u8]) -> String {
 }
 
 fn has_directory_action(directory: &Value, id: &str) -> bool {
-    directory["actions"]["available_actions"]
+    directory["actions"]
         .as_array()
         .is_some_and(|actions| actions.iter().any(|action| action["id"] == id))
 }

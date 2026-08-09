@@ -9,14 +9,14 @@ use super::{
 };
 use crate::CoreError;
 use crate::domain::{
-    AccessContext, Checksum, DirectoryId, DirectoryKind, DirectoryOperation, DirectoryPath,
-    Resource, ResourceId, UploadId, UploadSession,
+    AccessContext, Checksum, DirectoryId, DirectoryOperation, DirectoryPath, Resource, ResourceId,
+    UploadId, UploadSession,
 };
 use crate::port::{
-    BlobByteStream, DirectoryActionOutput, DirectoryLocation, ListResources, LocatedDirectory,
-    LocatedResource, ResourceActionOutput, ResourcePage,
+    BlobByteStream, DirectoryLocation, ListResources, LocatedResource, ResourceActionOutput,
+    ResourcePage,
 };
-use crate::service::{AuthorizationService, ExecuteDirectoryAction};
+use crate::service::AuthorizationService;
 use bytes::Bytes;
 use std::collections::VecDeque;
 
@@ -151,30 +151,6 @@ impl<'a> SecuredResourceService<'a> {
         query = query.with_directory_id(directory.id());
         self.service.commands().list_resources(query).await
     }
-    pub async fn list_directories(
-        &self,
-        directory: &DirectoryPath,
-    ) -> Result<Vec<LocatedDirectory>, CoreError> {
-        let directory = self.resolve(directory).await?;
-        let directory = self.service.directories.resolve_path(&directory).await?;
-        self.require(&directory, DirectoryOperation::ViewDirectory)
-            .await?;
-        self.service
-            .directories
-            .list_located_children(&directory.id())
-            .await
-    }
-    pub async fn find_directory(
-        &self,
-        path: &DirectoryPath,
-    ) -> Result<LocatedDirectory, CoreError> {
-        let path = self.resolve(path).await?;
-        let directory = self.service.directories.find_by_path(&path).await?;
-        self.require(directory.location(), DirectoryOperation::ViewDirectory)
-            .await?;
-        Ok(directory)
-    }
-
     pub async fn directory_archive_manifest(
         &self,
         id: &DirectoryId,
@@ -247,55 +223,6 @@ impl<'a> SecuredResourceService<'a> {
             directories,
             resources,
         ))
-    }
-    pub async fn create_directory(
-        &self,
-        parent: &DirectoryPath,
-        name: impl Into<String>,
-        kind: DirectoryKind,
-    ) -> Result<LocatedDirectory, CoreError> {
-        let parent = self.resolve(parent).await?;
-        let parent = self.service.directories.resolve_path(&parent).await?;
-        self.require(&parent, DirectoryOperation::CreateDirectory)
-            .await?;
-        let scope_root = self
-            .authorization
-            .workspace_scope(self.context)
-            .await?
-            .root()
-            .id();
-        self.service
-            .directories
-            .create_with_kind_in_scope(&parent, name, kind, scope_root)
-            .await
-    }
-
-    pub async fn execute_directory_action(
-        &self,
-        id: &DirectoryId,
-        command: ExecuteDirectoryAction,
-    ) -> Result<DirectoryActionOutput, CoreError> {
-        let directory = self.service.directories.find_by_id(id).await?;
-        self.service
-            .directories
-            .resolve_action(directory.directory(), &command.action)?;
-        self.require(
-            directory.location(),
-            DirectoryOperation::ExecuteDirectoryAction,
-        )
-        .await?;
-        let scope_root = self
-            .authorization
-            .workspace_scope(self.context)
-            .await?
-            .root()
-            .id();
-        let executed = self.service.directories.invoke_action(id, command).await?;
-        self.service
-            .directories
-            .apply_executed_action(&executed, Some(scope_root))
-            .await?;
-        Ok(executed.into_output())
     }
     pub async fn update_resource(
         &self,
@@ -387,6 +314,7 @@ impl<'a> SecuredResourceService<'a> {
     pub async fn soft_delete_resource(
         &self,
         id: &ResourceId,
+        expected_revision: u64,
     ) -> Result<Option<Resource>, CoreError> {
         let Some(resource) = self
             .stored_resource_for(id, DirectoryOperation::DeleteResource)
@@ -394,6 +322,9 @@ impl<'a> SecuredResourceService<'a> {
         else {
             return Ok(None);
         };
+        if resource.resource().revision() != expected_revision {
+            return Err(CoreError::revision_conflict("resource", id.to_string()));
+        }
         self.service
             .commands()
             .soft_delete_resource_snapshot(resource)

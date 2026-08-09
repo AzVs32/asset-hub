@@ -4,14 +4,15 @@ import type { AssetGateway } from "@/application/ports/asset-gateway";
 import type { CurrentUser, ManagedUser, UserStatus } from "@/domain/auth";
 import { normalizeDirectory } from "@/domain/directory-path";
 import type {
-  DirectoryPluginActionOutput,
+  DirectoryActionOutput,
   JsonObject,
-  PluginActionOutput,
   PluginDiagnostic,
+  ResourceActionOutput,
 } from "@/domain/plugin";
 import type {
   Directory,
   DirectoryAction,
+  DirectoryDraft,
   DirectoryKind,
   DirectoryListing,
   Resource,
@@ -30,7 +31,7 @@ import {
   type FileSha256,
 } from "./file-sha256";
 import type { components, paths } from "./generated";
-import { HttpError, httpError } from "./http-error";
+import { applicationError, HttpError, httpError } from "./http-error";
 import { isPluginViewKind, parsePluginView } from "./plugin-view-schema";
 
 type Schemas = components["schemas"];
@@ -135,25 +136,28 @@ export class OpenApiAssetGateway implements AssetGateway {
     return mapResource(expectData(result));
   }
 
-  async updateResource(id: string, draft: ResourceDraft): Promise<Resource> {
+  async updateResource(resource: Resource, draft: ResourceDraft): Promise<Resource> {
     const result = await this.#client.PATCH("/resources/{id}", {
-      params: { path: { id } },
-      body: resourceBody(draft),
+      params: { path: { id: resource.id } },
+      body: resourceBody(draft, resource.revision),
     });
     return mapResource(expectData(result));
   }
 
-  async restoreResource(id: string): Promise<Resource> {
+  async restoreResource(resource: Resource): Promise<Resource> {
     const result = await this.#client.PATCH("/resources/{id}", {
-      params: { path: { id } },
-      body: { restore: true },
+      params: { path: { id: resource.id } },
+      body: { expected_revision: resource.revision, restore: true },
     });
     return mapResource(expectData(result));
   }
 
-  async deleteResource(id: string): Promise<Resource> {
+  async deleteResource(resource: Resource): Promise<Resource> {
     const result = await this.#client.DELETE("/resources/{id}", {
-      params: { path: { id } },
+      params: {
+        path: { id: resource.id },
+        query: { expected_revision: resource.revision },
+      },
     });
     return mapResource(expectData(result));
   }
@@ -287,24 +291,58 @@ export class OpenApiAssetGateway implements AssetGateway {
     }
   }
 
-  async createDirectory(parentPath: string, name: string, kind?: string): Promise<Directory> {
-    const result = await this.#client.POST("/directories", {
-      body: { parent_path: parentPath, name, ...(kind ? { kind } : {}) },
+  async findDirectory(id: string): Promise<Directory> {
+    const result = await this.#client.GET("/directories/{id}", {
+      params: { path: { id } },
     });
     return mapDirectory(expectData(result));
+  }
+
+  async createDirectory(parent: Directory, name: string, kind?: string): Promise<Directory> {
+    const result = await this.#client.POST("/directories", {
+      body: { parent_id: parent.id, name, ...(kind ? { kind } : {}) },
+    });
+    return mapDirectory(expectData(result));
+  }
+
+  async updateDirectory(directory: Directory, draft: DirectoryDraft): Promise<Directory> {
+    const result = await this.#client.PATCH("/directories/{id}", {
+      params: { path: { id: directory.id } },
+      body: {
+        expected_revision: directory.revision,
+        name: draft.name,
+        parent_id: draft.parentId,
+        kind: draft.kind,
+      },
+    });
+    return mapDirectory(expectData(result));
+  }
+
+  async deleteDirectory(directory: Directory): Promise<void> {
+    expectSuccess(
+      await this.#client.DELETE("/directories/{id}", {
+        params: {
+          path: { id: directory.id },
+          query: { expected_revision: directory.revision },
+        },
+      }),
+    );
   }
 
   async executeDirectoryAction(
     directory: Directory,
     action: DirectoryAction,
     input: JsonObject = {},
-  ): Promise<DirectoryPluginActionOutput> {
+  ): Promise<DirectoryActionOutput> {
     if (!directory.actions.some((candidate) => candidate.id === action.id)) {
       throw new Error(`Action ${action.id} is not available for directory ${directory.id}`);
     }
     const result = await this.#client.POST("/directories/{id}/actions/{action}", {
       params: { path: { id: directory.id, action: action.id } },
-      body: { input },
+      body: {
+        input,
+        ...(action.access === "write" ? { expected_revision: directory.revision } : {}),
+      },
     });
     const data = expectData(result);
     return {
@@ -320,16 +358,16 @@ export class OpenApiAssetGateway implements AssetGateway {
     actionId: string,
     input: JsonObject = {},
     expectedRevision?: number,
-  ): Promise<PluginActionOutput> {
+  ): Promise<ResourceActionOutput> {
     const action = resource.actions.find((candidate) => candidate.id === actionId);
     if (!action) throw new Error(`Action ${actionId} is not available for resource ${resource.id}`);
     const revision =
-      expectedRevision ?? (action.access === "read_write" ? resource.revision : undefined);
+      expectedRevision ?? (action.access === "write" ? resource.revision : undefined);
     const result = await this.#client.POST("/resources/{id}/actions/{action}", {
       params: { path: { id: resource.id, action: actionId } },
       body: {
         input,
-        ...(revision !== undefined ? { expected_revision: revision } : {}),
+        ...(revision === undefined ? {} : { expected_revision: revision }),
       },
     });
     const data = expectData(result);
@@ -410,20 +448,24 @@ function expectSuccess(result: FetchResult<unknown>): void {
   throw apiResultError(result);
 }
 
-function apiResultError(result: FetchResult<unknown>): HttpError {
+function apiResultError(result: FetchResult<unknown>): Error {
   const error = result.error;
   if (error && typeof error === "object" && "error" in error) {
     const document = error as { error?: unknown; code?: unknown; details?: unknown };
-    return new HttpError(
-      typeof document.error === "string" ? document.error : result.response.statusText,
-      result.response.status,
-      typeof document.code === "string" ? document.code : null,
-      document.details,
+    return applicationError(
+      new HttpError(
+        typeof document.error === "string" ? document.error : result.response.statusText,
+        result.response.status,
+        typeof document.code === "string" ? document.code : null,
+        document.details,
+      ),
     );
   }
-  return new HttpError(
-    result.response.statusText || `HTTP ${result.response.status}`,
-    result.response.status,
+  return applicationError(
+    new HttpError(
+      result.response.statusText || `HTTP ${result.response.status}`,
+      result.response.status,
+    ),
   );
 }
 
@@ -449,11 +491,15 @@ function mapManagedUser(value: Schemas["ManagedUserResponse"]): ManagedUser {
 function mapDirectory(value: Schemas["DirectoryResponse"]): Directory {
   return {
     id: value.id,
+    parentId: value.parent_id ?? null,
     path: value.path,
     parentPath: value.parent_path,
     name: value.name,
     kind: value.kind,
-    actions: value.actions.available_actions.map(mapDirectoryAction),
+    actions: value.actions.map(mapDirectoryAction),
+    createdAt: value.created_at,
+    updatedAt: value.updated_at,
+    revision: value.revision,
   };
 }
 
@@ -463,7 +509,7 @@ function mapDirectoryKind(value: Schemas["DirectoryKindResponse"]): DirectoryKin
     parent: value.parent ?? null,
     ancestors: value.ancestors,
     label: value.label,
-    source: value.source,
+    origin: mapOrigin(value.origin),
     actions: value.actions.map(mapDirectoryAction),
   };
 }
@@ -471,12 +517,13 @@ function mapDirectoryKind(value: Schemas["DirectoryKindResponse"]): DirectoryKin
 function mapDirectoryAction(value: ApiDirectoryAction): DirectoryAction {
   return {
     id: value.id,
+    origin: mapOrigin(value.origin),
     provides: value.provides ?? null,
     label: value.label,
     description: value.description ?? null,
-    access: enumValue(value.access, ["read_only", "read_write"]),
+    access: enumValue(value.access, ["read", "write"]),
     requires: { children: value.requires.children, resources: value.requires.resources },
-    output: { views: value.output.view.filter(isPluginViewKind) },
+    output: { views: value.output.views.filter(isPluginViewKind) },
     ui: {
       group: value.ui.group ?? null,
       order: value.ui.order ?? null,
@@ -493,7 +540,7 @@ function mapKind(value: ApiKind): ResourceKind {
     ancestors: value.ancestors,
     label: value.label,
     supportsContent: value.supports_content,
-    source: value.source,
+    origin: mapOrigin(value.origin),
     actions: value.actions.map(mapAction),
     detect: value.detect
       ? { mimeTypes: value.detect.mime_types, extensions: value.detect.extensions }
@@ -516,7 +563,7 @@ function mapResource(value: ApiResource): Resource {
           verificationError: value.content.verification_error ?? null,
         }
       : null,
-    actions: value.actions.available_actions.map(mapAction),
+    actions: value.actions.map(mapAction),
     createdAt: value.created_at,
     updatedAt: value.updated_at,
     revision: value.revision,
@@ -527,15 +574,16 @@ function mapResource(value: ApiResource): Resource {
 function mapAction(value: ApiAction): ResourceAction {
   return {
     id: value.id,
+    origin: mapOrigin(value.origin),
     provides: value.provides ?? null,
     label: value.label,
     description: value.description ?? null,
-    access: enumValue(value.access, ["read_only", "read_write"]),
+    access: enumValue(value.access, ["read", "write"]),
     requires: {
       content: value.requires.content,
       contentDelivery: enumValue(value.requires.content_delivery, ["auto", "inline", "reference"]),
     },
-    output: { views: value.output.view.filter(isPluginViewKind) },
+    output: { views: value.output.views.filter(isPluginViewKind) },
     ui: {
       group: value.ui.group ?? null,
       order: value.ui.order ?? null,
@@ -559,8 +607,21 @@ function mapDiagnostic(value: Schemas["PluginDiagnosticResponse"]): PluginDiagno
   };
 }
 
-function resourceBody(draft: ResourceDraft): Schemas["UpdateResourceRequest"] {
+function mapOrigin(
+  value: Schemas["DefinitionOriginResponse"],
+): import("@/domain/resource").DefinitionOrigin {
   return {
+    kind: enumValue(value.kind, ["builtin", "plugin"]),
+    id: value.id,
+  };
+}
+
+function resourceBody(
+  draft: ResourceDraft,
+  expectedRevision: number,
+): Schemas["UpdateResourceRequest"] {
+  return {
+    expected_revision: expectedRevision,
     name: draft.name,
     directory: normalizeDirectory(draft.directory),
     kind: draft.kind,

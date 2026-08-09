@@ -5,14 +5,13 @@
 use super::content::{build_verified_content, calculate_checksum};
 use super::{ExecuteResourceAction, ResourceActions, ResourceService};
 use crate::CoreError;
-#[cfg(test)]
-use crate::domain::ResourceId;
 use crate::domain::{
-    Resource, ResourceAction, ResourceActionAccess, ResourceActionContentDelivery,
-    ResourceActionDefinition, ResourceActionPolicy, ResourceContent, StorageKey,
+    ActionAccess, Resource, ResourceActionContentDelivery, ResourceActionDefinition,
+    ResourceActionId, ResourceActionPolicy, ResourceContent, ResourceId, StorageKey,
 };
 use crate::port::{LocatedResource, ResourceActionOutput, ResourceActionRequest};
-use asset_plugin_api::protocol::PluginActionEffect;
+use crate::service::validate_action_revision;
+use asset_plugin_api::protocol::PluginResourceActionEffect;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use bytes::Bytes;
@@ -71,37 +70,40 @@ impl<'a> ResourceActionService<'a> {
         resource: LocatedResource,
         command: ExecuteResourceAction,
     ) -> Result<ResourceActionOutput, CoreError> {
-        if command
-            .expected_revision
-            .is_some_and(|expected| expected != resource.resource().revision())
-        {
-            return Err(CoreError::conflict(format!(
-                "resource `{}` changed after the action was opened",
-                resource.resource().id()
-            )));
-        }
-        self.execute_declared_resource_action_snapshot(resource, command.action, command.input)
-            .await
+        let definition =
+            self.resolve_declared_resource_action(resource.resource(), &command.action)?;
+        validate_action_revision(
+            definition.access(),
+            command.expected_revision,
+            resource.resource().revision(),
+            "resource",
+            resource.resource().id().to_string(),
+        )?;
+        self.execute_declared_resource_action_snapshot(
+            resource,
+            command.action,
+            command.input,
+            definition,
+        )
+        .await
     }
 
     pub(super) async fn execute_declared_resource_action_snapshot(
         &self,
         located: LocatedResource,
-        action_id: ResourceAction,
+        action_id: ResourceActionId,
         input: serde_json::Value,
+        action: ResourceActionDefinition,
     ) -> Result<ResourceActionOutput, CoreError> {
         let (mut resource, directory) = located.into_parts();
-        // 1. Resolve the action from the resource kind/global action registry before touching
-        //    content or plugin runtime state.
-        let action = self.resolve_declared_resource_action(&resource, &action_id)?;
-
-        // 2. Load content only when the action contract says the executor should receive it.
+        // 1. Load content only when the resolved action contract says the executor should receive
+        //    it. Resolution and revision validation happened before touching runtime state.
         let storage_key = StorageKey::from_resource_path(directory.path(), resource.name())?;
         let content = self
             .load_declared_resource_action_content(&resource, &storage_key, &action)
             .await?;
 
-        // 3. Dispatch the request through the configured action executor.
+        // 2. Dispatch the request through the configured action executor.
         let access = action.access();
         let Some(ports) = &self.service.action_ports else {
             return Err(CoreError::configuration(
@@ -122,15 +124,15 @@ impl<'a> ResourceActionService<'a> {
             resource.clone(),
             directory,
             storage_key.clone(),
-            action_id,
+            action_id.clone(),
             access,
             input,
         )
         .with_content(content_delivery, content);
         let output = ports.executor.execute(request).await?;
-        self.validate_action_output(&action, &output)?;
+        self.validate_action_output(resource.id(), &action_id, &action, &output)?;
 
-        // 4. Apply write effects after the executor returns, guarded by the action access boundary.
+        // 3. Apply write effects after the executor returns, guarded by the action access boundary.
         self.apply_action_effects(&mut resource, &storage_key, &output, access)
             .await?;
 
@@ -140,7 +142,7 @@ impl<'a> ResourceActionService<'a> {
     pub(super) fn resolve_declared_resource_action(
         &self,
         resource: &Resource,
-        action_id: &ResourceAction,
+        action_id: &ResourceActionId,
     ) -> Result<ResourceActionDefinition, CoreError> {
         self.service.require_kind_definition(resource.kind())?;
         if resource.is_deleted() {
@@ -158,13 +160,20 @@ impl<'a> ResourceActionService<'a> {
 
     fn validate_action_output(
         &self,
+        resource_id: ResourceId,
+        action_id: &ResourceActionId,
         action: &ResourceActionDefinition,
         output: &ResourceActionOutput,
     ) -> Result<(), CoreError> {
+        if output.resource_id() != resource_id || output.action() != action_id {
+            return Err(CoreError::invariant(format!(
+                "action `{action_id}` returned an output for a different invocation"
+            )));
+        }
         let actual = output.output().view.kind();
         if !action
             .output()
-            .view
+            .views
             .iter()
             .any(|declared| declared == actual)
         {
@@ -177,7 +186,7 @@ impl<'a> ResourceActionService<'a> {
             .output()
             .effects
             .iter()
-            .filter(|effect| matches!(effect, PluginActionEffect::ReplaceContent(_)))
+            .filter(|effect| matches!(effect, PluginResourceActionEffect::ReplaceContent(_)))
             .count();
         if replacements > 1 {
             return Err(CoreError::invariant(format!(
@@ -221,12 +230,12 @@ impl<'a> ResourceActionService<'a> {
         resource: &mut Resource,
         storage_key: &StorageKey,
         output: &ResourceActionOutput,
-        access: ResourceActionAccess,
+        access: ActionAccess,
     ) -> Result<(), CoreError> {
         if output.output().effects.is_empty() {
             return Ok(());
         }
-        if !matches!(access, ResourceActionAccess::ReadWrite) {
+        if !matches!(access, ActionAccess::Write) {
             return Err(CoreError::invariant(format!(
                 "action `{}` returned effects without write access",
                 output.action()
@@ -235,7 +244,7 @@ impl<'a> ResourceActionService<'a> {
 
         for effect in &output.output().effects {
             match effect {
-                PluginActionEffect::ReplaceContent(effect) => {
+                PluginResourceActionEffect::ReplaceContent(effect) => {
                     let Some(current_content) = resource.content().cloned() else {
                         return Err(CoreError::invariant(format!(
                             "action `{}` cannot replace missing resource content",

@@ -44,7 +44,7 @@ can be lower when the Host's plugin execution policy is lower.
 
 Saving uses the additive Plugin Frame request
 `asset-hub:replace-resource-text`. The Host accepts it only from the frame produced by the current
-Resource's resolved, read-write `text_edit` action, then forwards the text to the same
+Resource's resolved, write `text_edit` action, then forwards the text to the same
 revision-guarded streaming content use case as the core editor. The Markdown runtime deliberately
 rejects the former `{ "markdown": "..." }` Action input and no longer returns a
 `replace_content` effect. Consequently, Markdown saves are independent of the 1 MiB Action JSON

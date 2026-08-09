@@ -2,27 +2,25 @@ use super::action::resolved_content_delivery;
 use super::content::hex_sha256;
 use super::*;
 use crate::domain::{
-    AccessContext, Checksum, ChecksumKind, ContentVerificationStatus, Directory,
-    DirectoryActionAccess, DirectoryActionDefinition, DirectoryId, DirectoryPath,
-    ResourceActionAccess, ResourceActionDefinition, ResourceActionPolicy,
-    ResourceContentEditPolicy, ResourceContentMatcher, ResourceContentReplacement,
-    ResourceContentReplacementId, ResourceId, UploadId, UploadSession, UploadStatus, User, UserId,
-    UserRole,
+    AccessContext, ActionAccess, Checksum, ChecksumKind, ContentVerificationStatus,
+    DefinitionOrigin, Directory, DirectoryActionDefinition, DirectoryId, DirectoryKindDefinition,
+    DirectoryPath, ResourceActionDefinition, ResourceActionPolicy, ResourceContentEditPolicy,
+    ResourceContentMatcher, ResourceContentReplacement, ResourceContentReplacementId, ResourceId,
+    UploadId, UploadSession, UploadStatus, User, UserId, UserRole,
 };
 use crate::port::{
     BlobByteStream, DirectoryActionExecutor, DirectoryActionOutput, DirectoryActionRegistry,
-    DirectoryActionRequest, DirectoryIndex, DirectoryKindDefinition, DirectoryKindRegistry,
-    DirectoryLocation, DirectoryQuery, DirectoryStorage, DirectoryStore, ListResources,
-    LocatedDirectory, LocatedResource, ResourceActionOutput, ResourceActionRequest,
-    ResourceContentReplacementRepository, ResourceKindDefinition, ResourceKindRegistry,
-    ResourcePage, ScannedStorageEntry, StagedBlob, StoragePrefix, UploadSessionRepository,
-    UserRepository,
+    DirectoryActionRequest, DirectoryIndex, DirectoryKindRegistry, DirectoryLocation,
+    DirectoryQuery, DirectoryRepository, DirectoryStorage, ListResources, LocatedDirectory,
+    LocatedResource, ResourceActionOutput, ResourceActionRequest,
+    ResourceContentReplacementRepository, ResourceKindRegistry, ResourcePage, ScannedStorageEntry,
+    StagedBlob, StoragePrefix, UploadSessionRepository, UserRepository,
 };
 use asset_plugin_api::protocol::directory::{
-    DirectoryActionEffect, DirectoryPluginActionOutput, UpdateDirectoryEffect,
+    DirectoryActionEffect, PluginDirectoryActionOutput, UpdateDirectoryEffect,
 };
 use asset_plugin_api::protocol::{
-    PluginActionEffect, PluginActionOutput, PluginReplacementEncoding, PluginView,
+    PluginReplacementEncoding, PluginResourceActionEffect, PluginResourceActionOutput, PluginView,
     ReplaceContentEffect, TextView,
 };
 use async_trait::async_trait;
@@ -438,7 +436,7 @@ impl ResourceQuery for InMemoryResourceRepository {
 }
 
 #[async_trait::async_trait]
-impl DirectoryStore for InMemoryResourceRepository {
+impl DirectoryRepository for InMemoryResourceRepository {
     async fn load_all(&self) -> Result<Vec<Directory>, CoreError> {
         Ok(self
             .directories
@@ -486,8 +484,18 @@ impl DirectoryStore for InMemoryResourceRepository {
         Ok(true)
     }
 
-    async fn remove_if_empty(&self, id: &DirectoryId) -> Result<bool, CoreError> {
+    async fn remove_if_empty(
+        &self,
+        id: &DirectoryId,
+        expected_revision: u64,
+    ) -> Result<bool, CoreError> {
         let mut directories = self.directories.lock().unwrap();
+        if !directories
+            .get(id)
+            .is_some_and(|(directory, _)| directory.revision() == expected_revision)
+        {
+            return Ok(false);
+        }
         if id.is_root()
             || directories
                 .values()
@@ -619,10 +627,10 @@ struct InMemoryDirectoryKindRegistry {
 impl Default for InMemoryDirectoryKindRegistry {
     fn default() -> Self {
         Self {
-            definitions: vec![DirectoryKindDefinition::with_source(
+            definitions: vec![DirectoryKindDefinition::new(
                 crate::domain::DirectoryKind::default(),
                 "Directory",
-                "test",
+                DefinitionOrigin::builtin_static("test"),
             )],
         }
     }
@@ -1009,16 +1017,18 @@ impl ResourceActionExecutor for StaticResourceActionExecutor {
                     .and_then(|value| value.as_str())
                     .unwrap_or_default()
                     .to_string();
-                let mut output = PluginActionOutput::new(PluginView::Text(TextView {
+                let mut output = PluginResourceActionOutput::new(PluginView::Text(TextView {
                     text: "saved".to_string(),
                 }));
                 output
                     .effects
-                    .push(PluginActionEffect::ReplaceContent(ReplaceContentEffect {
-                        encoding: PluginReplacementEncoding::Base64,
-                        data: STANDARD.encode(markdown),
-                        mime_type: Some("text/markdown".to_string()),
-                    }));
+                    .push(PluginResourceActionEffect::ReplaceContent(
+                        ReplaceContentEffect {
+                            encoding: PluginReplacementEncoding::Base64,
+                            data: STANDARD.encode(markdown),
+                            mime_type: Some("text/markdown".to_string()),
+                        },
+                    ));
 
                 return Ok(ResourceActionOutput::new(
                     request.resource().id(),
@@ -1036,7 +1046,7 @@ impl ResourceActionExecutor for StaticResourceActionExecutor {
         Ok(ResourceActionOutput::new(
             request.resource().id(),
             request.action().clone(),
-            PluginActionOutput::new(view),
+            PluginResourceActionOutput::new(view),
         ))
     }
 }
@@ -1055,7 +1065,7 @@ impl DirectoryActionExecutor for StaticDirectoryActionExecutor {
             .get("parent_id")
             .and_then(serde_json::Value::as_str)
             .map(str::to_string);
-        let mut output = DirectoryPluginActionOutput::new(PluginView::Text(TextView {
+        let mut output = PluginDirectoryActionOutput::new(PluginView::Text(TextView {
             text: "updated".to_string(),
         }));
         output
@@ -1110,23 +1120,41 @@ fn service() -> (
     Arc<InMemoryBlobStorage>,
 ) {
     let kind_registry = Arc::new(InMemoryResourceKindRegistry::with_definitions(vec![
-        ResourceKindDefinition::new(ResourceKind::default(), "Resource", true),
+        ResourceKindDefinition::new(
+            ResourceKind::default(),
+            "Resource",
+            true,
+            DefinitionOrigin::builtin_static("test"),
+        ),
         ResourceKindDefinition::new(
             ResourceKind::try_new("doc:markdown").unwrap(),
             "Markdown",
             false,
+            DefinitionOrigin::builtin_static("test"),
         ),
-        ResourceKindDefinition::new(ResourceKind::try_new("core:image").unwrap(), "Image", true),
+        ResourceKindDefinition::new(
+            ResourceKind::try_new("core:image").unwrap(),
+            "Image",
+            true,
+            DefinitionOrigin::builtin_static("test"),
+        ),
         ResourceKindDefinition::new(
             ResourceKind::try_new("asset:binary").unwrap(),
             "Binary",
             true,
+            DefinitionOrigin::builtin_static("test"),
         ),
-        ResourceKindDefinition::new(ResourceKind::try_new("core:text").unwrap(), "Text", true),
+        ResourceKindDefinition::new(
+            ResourceKind::try_new("core:text").unwrap(),
+            "Text",
+            true,
+            DefinitionOrigin::builtin_static("test"),
+        ),
         ResourceKindDefinition::new(
             ResourceKind::try_new("azvs:markdown").unwrap(),
             "Markdown",
             true,
+            DefinitionOrigin::builtin_static("test"),
         )
         .with_parent(Some(ResourceKind::try_new("core:text").unwrap()))
         .with_detect(
@@ -1134,7 +1162,12 @@ fn service() -> (
                 .with_mime_types(["text/markdown", "text/x-markdown"])
                 .with_extensions([".md", ".markdown"]),
         ),
-        ResourceKindDefinition::new(ResourceKind::try_new("core:video").unwrap(), "Video", true),
+        ResourceKindDefinition::new(
+            ResourceKind::try_new("core:video").unwrap(),
+            "Video",
+            true,
+            DefinitionOrigin::builtin_static("test"),
+        ),
     ]));
     let action_registry = Arc::new(InMemoryResourceActionRegistry {
         actions: vec![
@@ -1174,7 +1207,7 @@ fn service() -> (
                 .with_static_provides(Some("text_edit"))
                 .with_kinds(["core:text"])
                 .with_requirements(content_requirements())
-                .with_access(ResourceActionAccess::ReadWrite)
+                .with_access(ActionAccess::Write)
                 .with_output(output_contract(["text"]))
                 .with_content_matcher(
                     ResourceContentMatcher::new()
@@ -1196,7 +1229,7 @@ fn service() -> (
             actions: vec![
                 DirectoryActionDefinition::new_static("test.directory.move", "Move directory")
                     .with_kinds(["core:directory"])
-                    .with_access(DirectoryActionAccess::ReadWrite)
+                    .with_access(ActionAccess::Write)
                     .with_output(output_contract(["text"])),
             ],
         }),
@@ -1236,11 +1269,9 @@ fn test_resource_content_edit_policy() -> ResourceContentEditPolicy {
     ResourceContentEditPolicy::new(4 * 1024 * 1024).unwrap()
 }
 
-fn output_contract<const N: usize>(
-    views: [&str; N],
-) -> crate::domain::ResourceActionOutputContract {
-    crate::domain::ResourceActionOutputContract {
-        view: views.into_iter().map(str::to_string).collect(),
+fn output_contract<const N: usize>(views: [&str; N]) -> crate::domain::ActionOutputContract {
+    crate::domain::ActionOutputContract {
+        views: views.into_iter().map(str::to_string).collect(),
     }
 }
 

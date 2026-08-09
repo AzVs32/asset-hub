@@ -62,6 +62,12 @@ impl<'a> ResourceCommandService<'a> {
     ) -> Result<Resource, CoreError> {
         let (mut resource, mut directory) = located.into_parts();
         let expected_revision = resource.revision();
+        if command.expected_revision != expected_revision {
+            return Err(CoreError::revision_conflict(
+                "resource",
+                resource.id().to_string(),
+            ));
+        }
         let old_storage_key = persisted_content_key(&resource, &directory)?;
         let restoring = resource.is_deleted() && command.restore;
 

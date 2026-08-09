@@ -1,7 +1,7 @@
 use asset_plugin_api::protocol::{
-    JsonView, PLUGIN_API_VERSION, PluginActionFailure, PluginActionOutput, PluginActionRequest,
-    PluginContentReferenceEncoding, PluginDiagnostic, PluginFrameView, PluginInlineContentEncoding,
-    PluginView,
+    JsonView, PLUGIN_API_VERSION, PluginActionFailure, PluginContentReferenceEncoding,
+    PluginDiagnostic, PluginFrameView, PluginInlineContentEncoding, PluginResourceActionOutput,
+    PluginResourceActionRequest, PluginView,
 };
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
@@ -36,7 +36,7 @@ fn structured_action_result(result: FnResult<String>) -> FnResult<String> {
 }
 
 fn render_markdown_payload(input: String) -> FnResult<String> {
-    let request: PluginActionRequest = serde_json::from_str(&input)?;
+    let request: PluginResourceActionRequest = serde_json::from_str(&input)?;
     if input_operation(&request.input).is_some() {
         return content_operation_response(&request);
     }
@@ -44,7 +44,7 @@ fn render_markdown_payload(input: String) -> FnResult<String> {
 }
 
 fn update_markdown_payload(input: String) -> FnResult<String> {
-    let request: PluginActionRequest = serde_json::from_str(&input)?;
+    let request: PluginResourceActionRequest = serde_json::from_str(&input)?;
     if input_operation(&request.input).is_some() {
         return content_operation_response(&request);
     }
@@ -54,14 +54,14 @@ fn update_markdown_payload(input: String) -> FnResult<String> {
     frame_response(&request, "edit")
 }
 
-fn frame_response(request: &PluginActionRequest, mode: &str) -> FnResult<String> {
+fn frame_response(request: &PluginResourceActionRequest, mode: &str) -> FnResult<String> {
     let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&json!({
         "plugin_api": PLUGIN_API_VERSION,
         "resource_id": request.resource.id,
         "mode": mode,
         "action": request.action,
     }))?);
-    let output = PluginActionOutput::new(PluginView::PluginFrame(PluginFrameView {
+    let output = PluginResourceActionOutput::new(PluginView::PluginFrame(PluginFrameView {
         plugin_api: PLUGIN_API_VERSION.to_string(),
         title: Some(request.resource.name.clone()),
         url: format!("{VIEWER_ENTRYPOINT}#payload={payload}"),
@@ -69,18 +69,18 @@ fn frame_response(request: &PluginActionRequest, mode: &str) -> FnResult<String>
     Ok(serde_json::to_string(&output)?)
 }
 
-fn content_operation_response(request: &PluginActionRequest) -> FnResult<String> {
+fn content_operation_response(request: &PluginResourceActionRequest) -> FnResult<String> {
     let data = match input_operation(&request.input) {
         Some("load") => load_content(request)?,
         Some("chunk") => load_content_chunk(request)?,
         Some(_) => return Err(Error::msg("unsupported Markdown content operation").into()),
         None => return Err(Error::msg("missing Markdown content operation").into()),
     };
-    let output = PluginActionOutput::new(PluginView::Json(JsonView { data }));
+    let output = PluginResourceActionOutput::new(PluginView::Json(JsonView { data }));
     Ok(serde_json::to_string(&output)?)
 }
 
-fn load_content(request: &PluginActionRequest) -> FnResult<Value> {
+fn load_content(request: &PluginResourceActionRequest) -> FnResult<Value> {
     let byte_length = markdown_content_size(request)?;
     ensure_content_size(byte_length)?;
     if byte_length <= SMALL_TEXT_BYTES {
@@ -105,7 +105,7 @@ fn load_content(request: &PluginActionRequest) -> FnResult<Value> {
     }))
 }
 
-fn load_content_chunk(request: &PluginActionRequest) -> FnResult<Value> {
+fn load_content_chunk(request: &PluginResourceActionRequest) -> FnResult<Value> {
     let offset = request
         .input
         .get("offset")
@@ -134,7 +134,7 @@ fn input_operation(input: &Value) -> Option<&str> {
     input.get("operation").and_then(Value::as_str)
 }
 
-fn markdown_content_size(input: &PluginActionRequest) -> FnResult<u64> {
+fn markdown_content_size(input: &PluginResourceActionRequest) -> FnResult<u64> {
     if let Some(content) = &input.content {
         if content.encoding != PluginInlineContentEncoding::Base64 {
             return Err(Error::msg("unsupported content encoding").into());
@@ -156,13 +156,13 @@ fn markdown_content_size(input: &PluginActionRequest) -> FnResult<u64> {
         .ok_or_else(|| Error::msg("missing Markdown content description").into())
 }
 
-fn markdown_content_bytes(input: &PluginActionRequest) -> FnResult<Vec<u8>> {
+fn markdown_content_bytes(input: &PluginResourceActionRequest) -> FnResult<Vec<u8>> {
     let size = markdown_content_size(input)?;
     markdown_content_range(input, 0, size)
 }
 
 fn markdown_content_range(
-    input: &PluginActionRequest,
+    input: &PluginResourceActionRequest,
     offset: u64,
     length: u64,
 ) -> FnResult<Vec<u8>> {

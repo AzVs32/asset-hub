@@ -10,7 +10,8 @@ fn action_applies_to_matches_kind_mime_and_extension() {
         .with_extensions(["mp4"]);
 
     assert!(applies_to.matches_resource("core:video", Some("video/mp4"), Some("demo.bin")));
-    assert!(applies_to.matches_resource("CORE:VIDEO", None, Some("demo.mp4")));
+    assert!(applies_to.matches_resource("core:video", None, Some("demo.mp4")));
+    assert!(!applies_to.matches_resource("CORE:VIDEO", None, Some("demo.mp4")));
     assert!(!applies_to.matches_resource("core:image", Some("video/mp4"), Some("demo.mp4")));
     assert!(!applies_to.matches_resource("core:video", Some("application/pdf"), Some("demo.pdf")));
 }
@@ -30,16 +31,17 @@ fn matcher_construction_preserves_normalized_invariants() {
 #[test]
 fn directory_actions_share_the_common_shell_but_keep_directory_contracts() {
     let action = DirectoryActionDefinition::new_static("example.collection.organize", "Organize")
-        .with_access(ActionAccess::ReadWrite)
+        .with_access(ActionAccess::Write)
         .with_kinds(["example:collection"])
         .with_requirements(DirectoryActionRequirements {
             children: true,
             resources: true,
         });
 
-    assert!(action.matches_directory("EXAMPLE:COLLECTION"));
+    assert!(action.matches_directory("example:collection"));
+    assert!(!action.matches_directory("EXAMPLE:COLLECTION"));
     assert!(!action.matches_directory("core:directory"));
-    assert_eq!(action.access(), ActionAccess::ReadWrite);
+    assert_eq!(action.access(), ActionAccess::Write);
     assert!(action.requirements().children);
 }
 
@@ -57,9 +59,10 @@ fn action_ids_reject_blank_non_canonical_and_invalid_values() {
         ActionId::new("Example.inspect"),
         Err(ActionIdError::InvalidFormat { .. })
     ));
+    assert!(ActionId::new("example:resource.inspect").is_err());
     assert_eq!(
-        ActionId::new("example:resource.inspect").unwrap().as_str(),
-        "example:resource.inspect"
+        ActionId::new("example.resource.inspect").unwrap().as_str(),
+        "example.resource.inspect"
     );
 }
 

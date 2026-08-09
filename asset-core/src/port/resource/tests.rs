@@ -1,5 +1,8 @@
 use super::*;
-use crate::domain::{ResourceActionDefinition, ResourceContentMatcher, ResourceKind};
+use crate::domain::{
+    DefinitionOrigin, ResourceActionDefinition, ResourceContentMatcher, ResourceKind,
+    ResourceKindDefinition,
+};
 
 struct ActionRegistry(Vec<ResourceActionDefinition>);
 
@@ -88,20 +91,52 @@ fn kind_detection_uses_only_kind_matchers() {
                 ResourceKind::try_new("core:image").unwrap(),
                 "Image",
                 true,
+                DefinitionOrigin::builtin_static("test"),
             )
             .with_detect(ResourceContentMatcher::new().with_extensions([".png"])),
             ResourceKindDefinition::new(
                 ResourceKind::try_new("core:resource").unwrap(),
                 "File",
                 true,
+                DefinitionOrigin::builtin_static("test"),
             ),
         ],
     };
 
     assert_eq!(
-        registry.detect_content_kind(None, Some("images/demo.png")),
+        registry
+            .detect_content_kind(None, Some("images/demo.png"))
+            .unwrap(),
         Some(ResourceKind::try_new("core:image").unwrap())
     );
+}
+
+#[test]
+fn kind_detection_rejects_equally_specific_matches() {
+    let registry = KindRegistry {
+        definitions: vec![
+            ResourceKindDefinition::new(
+                ResourceKind::try_new("example:first").unwrap(),
+                "First",
+                true,
+                DefinitionOrigin::plugin_static("example.first"),
+            )
+            .with_detect(ResourceContentMatcher::new().with_extensions([".demo"])),
+            ResourceKindDefinition::new(
+                ResourceKind::try_new("example:second").unwrap(),
+                "Second",
+                true,
+                DefinitionOrigin::plugin_static("example.second"),
+            )
+            .with_detect(ResourceContentMatcher::new().with_extensions([".demo"])),
+        ],
+    };
+
+    let error = registry
+        .detect_content_kind(None, Some("asset.demo"))
+        .unwrap_err();
+
+    assert!(error.to_string().contains("example:first, example:second"));
 }
 
 #[test]
@@ -111,18 +146,36 @@ fn supports_arbitrary_depth_lineage_inheritance_and_leaf_detection() {
     let c = ResourceKind::try_new("code:c").unwrap();
     let registry = KindRegistry {
         definitions: vec![
-            ResourceKindDefinition::new(text.clone(), "Text", true),
-            ResourceKindDefinition::new(code.clone(), "Code", true).with_parent(Some(text.clone())),
-            ResourceKindDefinition::new(c.clone(), "C", true)
-                .with_parent(Some(code.clone()))
-                .with_detect(ResourceContentMatcher::new().with_extensions([".c", ".h"])),
+            ResourceKindDefinition::new(
+                text.clone(),
+                "Text",
+                true,
+                DefinitionOrigin::builtin_static("test"),
+            ),
+            ResourceKindDefinition::new(
+                code.clone(),
+                "Code",
+                true,
+                DefinitionOrigin::builtin_static("test"),
+            )
+            .with_parent(Some(text.clone())),
+            ResourceKindDefinition::new(
+                c.clone(),
+                "C",
+                true,
+                DefinitionOrigin::builtin_static("test"),
+            )
+            .with_parent(Some(code.clone()))
+            .with_detect(ResourceContentMatcher::new().with_extensions([".c", ".h"])),
         ],
     };
 
     assert_eq!(registry.lineage(&c), vec![c.clone(), code.clone(), text]);
     assert!(registry.descendants(&code).contains(&c));
     assert_eq!(
-        registry.detect_content_kind(Some("text/plain"), Some("src/main.c")),
+        registry
+            .detect_content_kind(Some("text/plain"), Some("src/main.c"))
+            .unwrap(),
         Some(c)
     );
 }

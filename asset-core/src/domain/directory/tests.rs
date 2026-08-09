@@ -1,4 +1,5 @@
 use super::*;
+use crate::domain::KindIdError;
 use crate::error::DirectoryError;
 
 #[test]
@@ -9,10 +10,7 @@ fn directory_kind_is_limited_to_256_characters() {
     assert!(DirectoryKind::try_new(max_length).is_ok());
     assert!(matches!(
         DirectoryKind::try_new(too_long),
-        Err(DirectoryError::TooLong {
-            field: "directory.kind",
-            max: 256,
-        })
+        Err(KindIdError::TooLong { max: 256 })
     ));
 }
 

@@ -4,13 +4,11 @@ use crate::kind::directory_action_registry::validate_directory_action_capabiliti
 use crate::plugin_manifest::PluginCatalog;
 use asset_core::CoreError;
 use asset_core::domain::{
-    ActionOutputContract, ActionUi, DirectoryActionDefinition, DirectoryKind,
-    ResourceActionDefinition, ResourceContentMatcher, ResourceKind,
+    ActionOutputContract, ActionUi, DefinitionOrigin, DirectoryActionDefinition, DirectoryKind,
+    DirectoryKindDefinition, ResourceActionDefinition, ResourceContentMatcher, ResourceKind,
+    ResourceKindDefinition,
 };
-use asset_core::port::{
-    DirectoryKindDefinition, DirectoryKindRegistry, ResourceActionRegistry, ResourceKindDefinition,
-    ResourceKindRegistry,
-};
+use asset_core::port::{DirectoryKindRegistry, ResourceActionRegistry, ResourceKindRegistry};
 use std::path::{Path, PathBuf};
 
 fn registries(
@@ -24,7 +22,12 @@ fn registries(
     CoreError,
 > {
     let catalog = PluginCatalog::load(packages_root)?;
-    registries_from_catalog(&catalog)
+    let catalogs = build_capability_catalogs(&catalog)?;
+    Ok((
+        catalogs.resource_kinds,
+        catalogs.directory_kinds,
+        catalogs.resource_actions,
+    ))
 }
 
 fn kind_registry(packages_root: &Path) -> Result<DefaultResourceKindRegistry, CoreError> {
@@ -57,7 +60,7 @@ fn registry_rejects_unknown_parents_and_cycles() {
             Some("core:missing"),
             true,
             ResourceContentMatcher::default(),
-            "test",
+            DefinitionOrigin::builtin_static("test"),
         )
         .unwrap(),
     ];
@@ -75,7 +78,7 @@ fn registry_rejects_unknown_parents_and_cycles() {
             Some("code:b"),
             true,
             ResourceContentMatcher::default(),
-            "test",
+            DefinitionOrigin::builtin_static("test"),
         )
         .unwrap(),
         definition_from_parts(
@@ -84,7 +87,7 @@ fn registry_rejects_unknown_parents_and_cycles() {
             Some("code:a"),
             true,
             ResourceContentMatcher::default(),
-            "test",
+            DefinitionOrigin::builtin_static("test"),
         )
         .unwrap(),
     ];
@@ -144,7 +147,7 @@ fn registry_includes_host_builtin_resource_kinds() {
         let definition = registry.get(&ResourceKind::try_new(kind).unwrap()).unwrap();
 
         assert_eq!(definition.label(), label);
-        assert_eq!(definition.source(), source);
+        assert_eq!(definition.origin().to_string(), source);
         assert!(definition.supports_content());
         let inherited_actions = actions_for_kind(&registry, &action_registry, definition.kind());
         for action in expected_actions {
@@ -227,7 +230,7 @@ fn registry_loads_plugin_manifest_kinds() {
         package.join("manifest.json"),
         r#"
         {
-          "manifest_version": 1,
+          "manifest_version": 2,
           "plugin": {
             "id": "mindustry",
             "name": "Mindustry",
@@ -237,10 +240,10 @@ fn registry_loads_plugin_manifest_kinds() {
           },
           "runtime": {
             "type": "extism",
-            "plugin_api": "asset-hub.plugin-api@1"
+            "plugin_api": "asset-hub.plugin-api@2"
           },
           "capabilities": {
-            "kinds": [
+            "resource_kinds": [
               {
                 "kind": "mindustry:mod",
                 "label": "Mindustry Mod",
@@ -263,7 +266,7 @@ fn registry_loads_plugin_manifest_kinds() {
                   "kinds": ["mindustry:mod"]
                 },
                 "access": "read",
-                "views": ["download"]
+                "output": {"views": ["download"]}
               }
             ]
           },
@@ -284,7 +287,7 @@ fn registry_loads_plugin_manifest_kinds() {
         .unwrap();
 
     assert_eq!(definition.label(), "Mindustry Mod");
-    assert_eq!(definition.source(), "plugin:mindustry");
+    assert_eq!(definition.origin().to_string(), "plugin:mindustry");
     let directory_definition = directory_registry
         .get(&DirectoryKind::try_new("mindustry:workspace").unwrap())
         .unwrap();
@@ -293,7 +296,10 @@ fn registry_loads_plugin_manifest_kinds() {
         directory_definition.parent(),
         Some(&DirectoryKind::default())
     );
-    assert_eq!(directory_definition.source(), "plugin:mindustry");
+    assert_eq!(
+        directory_definition.origin().to_string(),
+        "plugin:mindustry"
+    );
     assert!(
         actions_for_kind(&registry, &action_registry, definition.kind())
             .iter()
@@ -311,7 +317,7 @@ fn directory_registry_includes_host_builtin_default_kind() {
 
     assert!(definition.parent().is_none());
     assert_eq!(definition.label(), "Directory");
-    assert_eq!(definition.source(), "builtin:core.directory");
+    assert_eq!(definition.origin().to_string(), "builtin:core.directory");
     assert_eq!(registry.lineage(&default), vec![default]);
 }
 
@@ -325,7 +331,7 @@ fn registry_loads_format_plugin_as_independent_kind() {
         package.join("manifest.json"),
         r#"
         {
-          "manifest_version": 1,
+          "manifest_version": 2,
           "plugin": {
             "id": "epub",
             "name": "EPUB",
@@ -336,10 +342,10 @@ fn registry_loads_format_plugin_as_independent_kind() {
           "runtime": {
             "type": "extism",
             "wasi": false,
-            "plugin_api": "asset-hub.plugin-api@1"
+            "plugin_api": "asset-hub.plugin-api@2"
           },
           "capabilities": {
-            "kinds": [
+            "resource_kinds": [
               {
                 "kind": "azvs:epub",
                 "parent": "core:resource",
@@ -360,7 +366,7 @@ fn registry_loads_format_plugin_as_independent_kind() {
                   "kinds": ["azvs:epub"]
                 },
                 "access": "read",
-                "views": ["html"]
+                "output": {"views": ["html"]}
               },
               {
                 "id": "azvs.epub.thumbnail",
@@ -371,7 +377,7 @@ fn registry_loads_format_plugin_as_independent_kind() {
                   "kinds": ["azvs:epub"]
                 },
                 "access": "read",
-                "views": ["media"],
+                "output": {"views": ["media"]},
                 "ui": {
                   "locations": ["resource_list_thumbnail"]
                 }
@@ -395,7 +401,7 @@ fn registry_loads_format_plugin_as_independent_kind() {
         .unwrap();
 
     assert_eq!(epub.label(), "EPUB");
-    assert_eq!(epub.source(), "plugin:epub");
+    assert_eq!(epub.origin().to_string(), "plugin:epub");
     let actions = actions_for_kind(&registry, &action_registry, epub.kind());
     assert!(
         actions
@@ -430,7 +436,7 @@ fn registry_loads_plugin_manifest_kind_extensions() {
         package.join("manifest.json"),
         r#"
         {
-          "manifest_version": 1,
+          "manifest_version": 2,
           "plugin": {
             "id": "mp4-tools",
             "name": "MP4 Tools",
@@ -441,10 +447,10 @@ fn registry_loads_plugin_manifest_kind_extensions() {
           "runtime": {
             "type": "extism",
             "wasi": false,
-            "plugin_api": "asset-hub.plugin-api@1"
+            "plugin_api": "asset-hub.plugin-api@2"
           },
           "capabilities": {
-            "kinds": [
+            "resource_kinds": [
               {
                 "kind": "test:mp4",
                 "parent": "core:video",
@@ -458,14 +464,14 @@ fn registry_loads_plugin_manifest_kind_extensions() {
             ],
             "resource_actions": [
               {
-                "id": "mp4-tools:inspect",
+                "id": "mp4-tools.inspect",
                 "label": "Inspect MP4",
                 "handler": "inspect_mp4",
                 "applies_to": {
                   "kinds": ["test:mp4"]
                 },
                 "access": "read",
-                "views": ["json"]
+                "output": {"views": ["json"]}
               }
             ]
           },
@@ -486,7 +492,7 @@ fn registry_loads_plugin_manifest_kind_extensions() {
         .unwrap();
     let action = actions_for_kind(&registry, &action_registry, video.kind())
         .into_iter()
-        .find(|action| action.id().as_str() == "mp4-tools:inspect")
+        .find(|action| action.id().as_str() == "mp4-tools.inspect")
         .unwrap();
 
     assert!(action.content_matcher().is_empty());
@@ -517,7 +523,7 @@ fn registry_rejects_duplicate_kinds() {
         None,
         true,
         ResourceContentMatcher::default(),
-        "test",
+        DefinitionOrigin::builtin_static("test"),
     )
     .unwrap();
     push_definition(&mut definitions, definition.clone()).unwrap();
@@ -536,7 +542,7 @@ fn registry_rejects_duplicate_global_action_ids() {
         package.join("manifest.json"),
         r#"
         {
-          "manifest_version": 1,
+          "manifest_version": 2,
           "plugin": {
             "id": "duplicate-download",
             "name": "Duplicate Preview",
@@ -546,10 +552,10 @@ fn registry_rejects_duplicate_global_action_ids() {
           },
           "runtime": {
             "type": "extism",
-            "plugin_api": "asset-hub.plugin-api@1"
+            "plugin_api": "asset-hub.plugin-api@2"
           },
           "capabilities": {
-            "kinds": [],
+            "resource_kinds": [],
             "resource_actions": [
               {
                 "id": "core.resource.download",
@@ -559,7 +565,7 @@ fn registry_rejects_duplicate_global_action_ids() {
                   "kinds": ["core:resource"]
                 },
                 "access": "read",
-                "views": ["download"]
+                "output": {"views": ["download"]}
               }
             ]
           },
@@ -587,17 +593,17 @@ fn registry_rejects_duplicate_global_action_ids() {
 
 #[test]
 fn thumbnail_capabilities_require_a_single_nearest_provider() {
-    let definitions = vec![ResourceKindDefinition::with_source(
+    let definitions = vec![ResourceKindDefinition::new(
         ResourceKind::default(),
         "Resource",
         true,
-        "test",
+        DefinitionOrigin::builtin_static("test"),
     )];
     let generic = ResourceActionDefinition::new_static("core.resource.thumbnail", "Thumbnail")
         .with_static_provides(Some("thumbnail"))
         .with_kinds(["core:resource"])
         .with_output(ActionOutputContract {
-            view: vec!["media".to_string()],
+            views: vec!["media".to_string()],
         })
         .with_ui(ActionUi {
             locations: vec!["resource_list_thumbnail".to_string()],
@@ -607,7 +613,7 @@ fn thumbnail_capabilities_require_a_single_nearest_provider() {
         .with_static_provides(Some("thumbnail"))
         .with_kinds(["core:resource"])
         .with_output(ActionOutputContract {
-            view: vec!["media".to_string()],
+            views: vec!["media".to_string()],
         })
         .with_ui(ActionUi {
             locations: vec!["resource_list_thumbnail".to_string()],
@@ -622,7 +628,7 @@ fn thumbnail_capabilities_require_a_single_nearest_provider() {
     let misplaced = ResourceActionDefinition::new_static("example.preview", "Preview")
         .with_kinds(["core:resource"])
         .with_output(ActionOutputContract {
-            view: vec!["media".to_string()],
+            views: vec!["media".to_string()],
         })
         .with_ui(ActionUi {
             locations: vec!["resource_list_thumbnail".to_string()],
@@ -647,7 +653,7 @@ fn thumbnail_capabilities_require_a_single_nearest_provider() {
         .with_static_provides(Some("thumbnail"))
         .with_kinds(["core:directory"])
         .with_output(ActionOutputContract {
-            view: vec!["media".to_string()],
+            views: vec!["media".to_string()],
         })
         .with_ui(ActionUi {
             locations: vec!["directory_list_thumbnail".to_string()],
@@ -658,7 +664,7 @@ fn thumbnail_capabilities_require_a_single_nearest_provider() {
             .with_static_provides(Some("thumbnail"))
             .with_kinds(["core:directory"])
             .with_output(ActionOutputContract {
-                view: vec!["media".to_string()],
+                views: vec!["media".to_string()],
             })
             .with_ui(ActionUi {
                 locations: vec!["directory_list_thumbnail".to_string()],
@@ -670,10 +676,10 @@ fn thumbnail_capabilities_require_a_single_nearest_provider() {
             &self.0
         }
     }
-    let kinds = DirectoryKinds(vec![DirectoryKindDefinition::with_source(
+    let kinds = DirectoryKinds(vec![DirectoryKindDefinition::new(
         DirectoryKind::default(),
         "Directory",
-        "test",
+        DefinitionOrigin::builtin_static("test"),
     )]);
     assert!(
         validate_directory_action_capabilities(&kinds, &[generic.clone(), competing])
@@ -684,7 +690,7 @@ fn thumbnail_capabilities_require_a_single_nearest_provider() {
     let misplaced = DirectoryActionDefinition::new_static("example.preview", "Preview")
         .with_kinds(["core:directory"])
         .with_output(ActionOutputContract {
-            view: vec!["media".to_string()],
+            views: vec!["media".to_string()],
         })
         .with_ui(ActionUi {
             locations: vec!["directory_list_thumbnail".to_string()],
@@ -711,7 +717,7 @@ fn write_empty_wasm_lock(root: &std::path::Path, plugin_id: &str) {
         root.join("manifest.lock.json"),
         format!(
             r#"{{
-              "manifest_version": 1,
+              "manifest_version": 2,
               "plugin_id": "{plugin_id}",
               "integrity": {{
                 "plugin.wasm": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"

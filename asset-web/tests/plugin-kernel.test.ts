@@ -63,10 +63,11 @@ describe("PluginKernel", () => {
     const kernel = new PluginKernel();
     const thumbnail = {
       id: "core.directory.thumbnail",
+      origin: { kind: "builtin" as const, id: "core.directory" },
       provides: "thumbnail",
       label: "Thumbnail",
       description: null,
-      access: "read_only" as const,
+      access: "read" as const,
       requires: { children: false, resources: false },
       output: { views: ["media" as const] },
       ui: {
@@ -78,11 +79,15 @@ describe("PluginKernel", () => {
     };
     const directory = {
       id: "directory-1",
+      parentId: null,
       path: "books",
       parentPath: "",
       name: "books",
       kind: "core:directory",
       actions: [thumbnail],
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+      revision: 1,
     };
 
     expect(kernel.directoryThumbnailAction(directory)?.id).toBe("core.directory.thumbnail");

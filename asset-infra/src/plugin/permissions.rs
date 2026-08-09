@@ -78,7 +78,7 @@ pub(super) fn verify_permissions(
             binding.plugin_id, binding.action
         )));
     }
-    if matches!(request.access(), ActionAccess::ReadWrite)
+    if matches!(request.access(), ActionAccess::Write)
         && !binding.permissions.resource_write()
         && !binding.permissions.resource_content_replace()
         && !binding.permissions.resource_derived_asset_write()

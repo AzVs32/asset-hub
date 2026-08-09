@@ -8,7 +8,7 @@ mod replacement;
 pub use action::{
     ResourceActionExecutor, ResourceActionOutput, ResourceActionRegistry, ResourceActionRequest,
 };
-pub use kind::{ResourceKindDefinition, ResourceKindRegistry};
+pub use kind::ResourceKindRegistry;
 pub use persistence::{
     ListResources, LocatedResource, ResourcePage, ResourceQuery, ResourceRepository,
 };

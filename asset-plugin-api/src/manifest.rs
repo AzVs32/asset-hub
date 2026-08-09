@@ -13,10 +13,11 @@ mod runtime;
 mod validation;
 
 pub use capability::{
-    ActionAppliesTo, ActionRequirements, ActionUi, ContentDelivery,
+    ActionOutputCapability, ActionRequirements, ActionUi, ContentDelivery,
     DirectoryActionAppliesToCapability, DirectoryActionCapability,
     DirectoryActionRequirementsCapability, DirectoryKindCapability, ManifestActionAccess,
-    PluginCapabilities, ResourceActionCapability, ResourceContentMatcher, ResourceKindCapability,
+    PluginCapabilities, ResourceActionAppliesToCapability, ResourceActionCapability,
+    ResourceContentMatcher, ResourceKindCapability,
 };
 pub use descriptor::PluginDescriptor;
 pub use document::{

@@ -24,7 +24,7 @@ fn manifest_document() -> serde_json::Value {
                 "label": "Example Action",
                 "handler": "run",
                 "applies_to": {"kinds": ["core:resource"]},
-                "views": ["json"]
+                "output": {"views": ["json"]}
             }]
         },
         "permissions": {"allow": ["resource.read"]}
@@ -42,7 +42,7 @@ fn manifest_requires_current_versions() {
             .is_err()
     );
     document["manifest_version"] = serde_json::json!(MANIFEST_VERSION);
-    for unsupported in ["asset-hub.plugin-api@2", "asset-hub.plugin-api@3"] {
+    for unsupported in ["asset-hub.plugin-api@1", "asset-hub.plugin-api@3"] {
         document["runtime"]["plugin_api"] = serde_json::json!(unsupported);
         assert!(
             serde_json::from_value::<PluginManifest>(document.clone())
@@ -56,6 +56,16 @@ fn manifest_requires_current_versions() {
         .unwrap()
         .remove("plugin_api");
     assert!(serde_json::from_value::<PluginManifest>(document).is_err());
+}
+
+#[test]
+fn manifest_rejects_non_canonical_plugin_owner_ids() {
+    for id in ["Example.Plugin", "example..plugin", ".example"] {
+        let mut document = manifest_document();
+        document["plugin"]["id"] = serde_json::json!(id);
+        let manifest = serde_json::from_value::<PluginManifest>(document).unwrap();
+        assert!(manifest.validate().is_err(), "`{id}` must be rejected");
+    }
 }
 
 #[test]
@@ -143,7 +153,8 @@ fn manifest_validates_provided_capability_ids() {
 #[test]
 fn manifest_accepts_download_view() {
     let mut document = manifest_document();
-    document["capabilities"]["resource_actions"][0]["views"] = serde_json::json!(["download"]);
+    document["capabilities"]["resource_actions"][0]["output"]["views"] =
+        serde_json::json!(["download"]);
     serde_json::from_value::<PluginManifest>(document)
         .unwrap()
         .validate()

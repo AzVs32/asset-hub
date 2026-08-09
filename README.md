@@ -11,6 +11,7 @@ filesystem, making it easy to run directly on a workstation.
 ## Features
 
 - Organize assets in directories with metadata and content references.
+- Address directories by stable UUID and protect Resource and Directory mutations with revisions.
 - Manage users and workspace access.
 - Upload large files with resumable transfers and checksum verification.
 - Extend resource detection, actions, and views with Wasm and Web plugins.
@@ -101,6 +102,9 @@ an explicit packaging step; runtime loading is read-only and requires a valid
 Runtime assembly creates one shared directory service for resource, user, and authorization
 workflows. It also owns the supervised upload-finalization tasks; Core validates upload state and
 executes finalization business logic without spawning detached work.
+Resource and Directory kinds/actions use parallel typed contracts: canonical kind/action IDs,
+typed built-in or plugin origins, flattened discovered actions, declared output views, and strict
+aggregate-identity validation for action effects.
 
 See [`asset-infra/README.md`](asset-infra/README.md) and
 [`asset-runtime/README.md`](asset-runtime/README.md) for the adapter/composition

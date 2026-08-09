@@ -126,13 +126,14 @@ fn chapter_title_ignores_placeholders_and_uses_leading_bold_text() {
 fn request_json(input: Value) -> String {
     json!({
         "action": "azvs.epub.render",
-        "access": "read_only",
+        "access": "read",
         "input": input,
         "resource": {
             "id": "01900000-0000-7000-8000-000000000000",
             "directory": "books",
             "name": "book.epub",
             "kind": "azvs:epub",
+            "revision": 1,
             "content": {
                 "size": 1,
                 "mime_type": "application/epub+zip",

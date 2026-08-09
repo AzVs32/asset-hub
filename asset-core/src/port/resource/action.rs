@@ -1,15 +1,15 @@
 //! 资源动作注册与执行端口。
 //!
 //! 该端口隔离核心服务与插件运行时。插件只能收到核心构造的资源快照、可选对象内容和调用输入；
-//! 即使 action 声明为 read_write，也不能直接访问仓储或对象存储。
+//! 即使 action 声明为 write，也不能直接访问仓储或对象存储。
 
 use crate::CoreError;
 use crate::domain::{
-    Resource, ResourceAction, ResourceActionAccess, ResourceActionContentDelivery,
-    ResourceActionDefinition, ResourceId, ResourceKind, StorageKey,
+    ActionAccess, Resource, ResourceActionContentDelivery, ResourceActionDefinition,
+    ResourceActionId, ResourceId, ResourceKind, StorageKey,
 };
 use crate::port::DirectoryLocation;
-use asset_plugin_api::protocol::PluginActionOutput;
+use asset_plugin_api::protocol::PluginResourceActionOutput;
 use async_trait::async_trait;
 use bytes::Bytes;
 use serde_json::Value;
@@ -21,8 +21,8 @@ pub struct ResourceActionRequest {
     resource: Resource,
     directory: DirectoryLocation,
     storage_key: StorageKey,
-    action: ResourceAction,
-    access: ResourceActionAccess,
+    action: ResourceActionId,
+    access: ActionAccess,
     content_delivery: ResourceActionContentDelivery,
     input: Value,
     content: Option<Bytes>,
@@ -33,8 +33,8 @@ impl ResourceActionRequest {
         resource: Resource,
         directory: DirectoryLocation,
         storage_key: StorageKey,
-        action: ResourceAction,
-        access: ResourceActionAccess,
+        action: ResourceActionId,
+        access: ActionAccess,
         input: Value,
     ) -> Self {
         Self {
@@ -71,11 +71,11 @@ impl ResourceActionRequest {
         &self.storage_key
     }
 
-    pub fn action(&self) -> &ResourceAction {
+    pub fn action(&self) -> &ResourceActionId {
         &self.action
     }
 
-    pub fn access(&self) -> ResourceActionAccess {
+    pub fn access(&self) -> ActionAccess {
         self.access
     }
 
@@ -96,15 +96,15 @@ impl ResourceActionRequest {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResourceActionOutput {
     resource_id: ResourceId,
-    action: ResourceAction,
-    output: PluginActionOutput,
+    action: ResourceActionId,
+    output: PluginResourceActionOutput,
 }
 
 impl ResourceActionOutput {
     pub fn new(
         resource_id: ResourceId,
-        action: ResourceAction,
-        output: PluginActionOutput,
+        action: ResourceActionId,
+        output: PluginResourceActionOutput,
     ) -> Self {
         Self {
             resource_id,
@@ -117,11 +117,11 @@ impl ResourceActionOutput {
         self.resource_id
     }
 
-    pub fn action(&self) -> &ResourceAction {
+    pub fn action(&self) -> &ResourceActionId {
         &self.action
     }
 
-    pub fn output(&self) -> &PluginActionOutput {
+    pub fn output(&self) -> &PluginResourceActionOutput {
         &self.output
     }
 }
@@ -153,7 +153,7 @@ pub trait ResourceActionRegistry: Send + Sync {
                 action
                     .kinds()
                     .iter()
-                    .any(|expected| expected.eq_ignore_ascii_case(kind.as_str()))
+                    .any(|expected| expected == kind.as_str())
             }) {
                 if !selected
                     .iter()

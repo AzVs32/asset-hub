@@ -1,8 +1,9 @@
 import type { CurrentUser, ManagedUser, UserStatus } from "@/domain/auth";
-import type { DirectoryPluginActionOutput, JsonObject, PluginActionOutput } from "@/domain/plugin";
+import type { DirectoryActionOutput, JsonObject, ResourceActionOutput } from "@/domain/plugin";
 import type {
   Directory,
   DirectoryAction,
+  DirectoryDraft,
   DirectoryKind,
   DirectoryListing,
   Resource,
@@ -23,27 +24,30 @@ export interface AssetGateway {
   listDirectoryKinds(): Promise<DirectoryKind[]>;
   listDirectory(filters: ResourceFilters, signal?: AbortSignal): Promise<DirectoryListing>;
   findResource(id: string): Promise<Resource>;
-  updateResource(id: string, draft: ResourceDraft): Promise<Resource>;
-  restoreResource(id: string): Promise<Resource>;
-  deleteResource(id: string): Promise<Resource>;
+  updateResource(resource: Resource, draft: ResourceDraft): Promise<Resource>;
+  restoreResource(resource: Resource): Promise<Resource>;
+  deleteResource(resource: Resource): Promise<Resource>;
   uploadResource(
     draft: UploadDraft,
     onProgress?: (progress: UploadProgress) => void,
   ): Promise<UploadReceipt>;
   waitForUpload(id: string): Promise<Resource>;
-  createDirectory(parentPath: string, name: string, kind?: string): Promise<Directory>;
+  findDirectory(id: string): Promise<Directory>;
+  createDirectory(parent: Directory, name: string, kind?: string): Promise<Directory>;
+  updateDirectory(directory: Directory, draft: DirectoryDraft): Promise<Directory>;
+  deleteDirectory(directory: Directory): Promise<void>;
   executeDirectoryAction(
     directory: Directory,
     action: DirectoryAction,
     input?: JsonObject,
-  ): Promise<DirectoryPluginActionOutput>;
+  ): Promise<DirectoryActionOutput>;
 
   executeAction(
     resource: Resource,
     actionId: string,
     input?: JsonObject,
     expectedRevision?: number,
-  ): Promise<PluginActionOutput>;
+  ): Promise<ResourceActionOutput>;
   replaceResourceText(resource: Resource, text: string): Promise<Resource>;
   resourceContentUrl(resourceId: string): string;
   assetUrl(path: string): string | null;

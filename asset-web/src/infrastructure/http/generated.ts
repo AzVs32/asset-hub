@@ -102,6 +102,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/directories/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 按稳定 ID 查询目录。 */
+        get: operations["find_directory"];
+        put?: never;
+        post?: never;
+        /** 删除空目录。根目录和非空目录不可删除。 */
+        delete: operations["delete_directory"];
+        options?: never;
+        head?: never;
+        /** 以乐观并发方式更新目录元数据或父目录。 */
+        patch: operations["update_directory"];
+        trace?: never;
+    };
     "/directories/{id}/actions/{action}": {
         parameters: {
             query?: never;
@@ -372,8 +391,8 @@ export interface components {
             kind?: string | null;
             /** @description 新目录名称，只允许单个路径段。 */
             name: string;
-            /** @description 相对于当前用户可见根目录的父路径；根目录为空字符串。 */
-            parent_path?: string;
+            /** @description Stable parent Directory ID. */
+            parent_id: string;
         };
         /** @description 创建断点续传会话。 */
         CreateUploadRequest: {
@@ -396,6 +415,10 @@ export interface components {
             password: string;
             username: string;
         };
+        DefinitionOriginResponse: {
+            id: string;
+            kind: string;
+        };
         DirectoryActionAppliesToResponse: {
             kinds: string[];
         };
@@ -405,6 +428,7 @@ export interface components {
             description?: string | null;
             id: string;
             label: string;
+            origin: components["schemas"]["DefinitionOriginResponse"];
             output: components["schemas"]["ResourceActionOutputContractResponse"];
             provides?: string | null;
             requires: components["schemas"]["DirectoryActionRequirementsResponse"];
@@ -420,16 +444,13 @@ export interface components {
             children: boolean;
             resources: boolean;
         };
-        DirectoryActionsResponse: {
-            available_actions: components["schemas"]["DirectoryActionDefinitionResponse"][];
-        };
         DirectoryKindResponse: {
             actions: components["schemas"]["DirectoryActionDefinitionResponse"][];
             ancestors: string[];
             kind: string;
             label: string;
+            origin: components["schemas"]["DefinitionOriginResponse"];
             parent?: string | null;
-            source: string;
         };
         DirectoryKindsResponse: {
             items: components["schemas"]["DirectoryKindResponse"][];
@@ -447,16 +468,21 @@ export interface components {
         };
         /** @description 逻辑目录响应。 */
         DirectoryResponse: {
-            actions: components["schemas"]["DirectoryActionsResponse"];
+            actions: components["schemas"]["DirectoryActionDefinitionResponse"][];
+            created_at: string;
             /** @description 稳定目录标识；目录移动或重命名后保持不变。 */
             id: string;
             kind: string;
             /** @description 当前目录名。 */
             name: string;
+            parent_id?: string | null;
             /** @description 相对于当前用户可见根目录的父路径。 */
             parent_path: string;
             /** @description 相对于当前用户可见根目录的路径。 */
             path: string;
+            /** Format: int64 */
+            revision: number;
+            updated_at: string;
         };
         /** @description 统一 HTTP 错误响应。 */
         ErrorResponse: {
@@ -472,6 +498,11 @@ export interface components {
             retryable?: boolean | null;
         };
         ExecuteDirectoryActionRequest: {
+            /**
+             * Format: int64
+             * @description Optional for read actions and required for write actions.
+             */
+            expected_revision?: number | null;
             input?: unknown;
         };
         /**
@@ -486,7 +517,7 @@ export interface components {
         ExecuteResourceActionRequest: {
             /**
              * Format: int64
-             * @description 可选资源版本前置条件；不匹配时 Host 返回 409，且不执行 Action。
+             * @description Optional for read actions and required for write actions.
              */
             expected_revision?: number | null;
             /** @description 传递给插件 action handler 的 JSON 输入。 */
@@ -499,6 +530,7 @@ export interface components {
         HealthResponse: {
             blob_storage: components["schemas"]["HealthComponentResponse"];
             database: components["schemas"]["HealthComponentResponse"];
+            session_store?: null | components["schemas"]["HealthComponentResponse"];
             /** @description 服务状态。 */
             status: string;
         };
@@ -538,6 +570,7 @@ export interface components {
             id: string;
             /** @description 展示名称。 */
             label: string;
+            origin: components["schemas"]["DefinitionOriginResponse"];
             /** @description 输出约定。 */
             output: components["schemas"]["ResourceActionOutputContractResponse"];
             /** @description 此 Action 实现的单例 Host 能力。 */
@@ -548,7 +581,7 @@ export interface components {
             ui: components["schemas"]["ResourceActionUiResponse"];
         };
         ResourceActionOutputContractResponse: {
-            view: string[];
+            views: string[];
         };
         /** @description 执行资源动作响应。 */
         ResourceActionOutputResponse: {
@@ -570,11 +603,6 @@ export interface components {
             locations: string[];
             /** Format: int32 */
             order?: number | null;
-        };
-        /** @description 资源允许的操作集合。 */
-        ResourceActionsResponse: {
-            /** @description 当前资源允许的动作。 */
-            available_actions: components["schemas"]["ResourceActionDefinitionResponse"][];
         };
         /** @description 内容匹配条件。 */
         ResourceContentMatcherResponse: {
@@ -609,10 +637,10 @@ export interface components {
             kind: string;
             /** @description 展示名称。 */
             label: string;
+            /** @description 定义来源：`builtin`、`config` 或 `plugin:<id>`。 */
+            origin: components["schemas"]["DefinitionOriginResponse"];
             /** @description 直接父类型；根类型为 null。 */
             parent?: string | null;
-            /** @description 定义来源：`builtin`、`config` 或 `plugin:<id>`。 */
-            source: string;
             /** @description 是否允许上传文件内容。 */
             supports_content: boolean;
         };
@@ -644,7 +672,7 @@ export interface components {
         /** @description 资源响应。 */
         ResourceResponse: {
             /** @description 当前资源允许的操作。 */
-            actions: components["schemas"]["ResourceActionsResponse"];
+            actions: components["schemas"]["ResourceActionDefinitionResponse"][];
             content?: null | components["schemas"]["ResourceContentResponse"];
             /** @description 资源创建时间，RFC3339 格式。 */
             created_at: string;
@@ -666,6 +694,13 @@ export interface components {
             /** @description 资源最后更新时间，RFC3339 格式。 */
             updated_at: string;
         };
+        UpdateDirectoryRequest: {
+            /** Format: int64 */
+            expected_revision: number;
+            kind?: string | null;
+            name?: string | null;
+            parent_id?: string | null;
+        };
         /**
          * @description 更新资源请求。
          * @example {
@@ -676,6 +711,11 @@ export interface components {
         UpdateResourceRequest: {
             /** @description 相对于当前用户可见根目录的新路径；根目录为空字符串。 */
             directory?: string | null;
+            /**
+             * Format: int64
+             * @description Required optimistic-concurrency precondition.
+             */
+            expected_revision: number;
             /** @description 可选新资源类型。 */
             kind?: string | null;
             /** @description 可选新资源展示名。 */
@@ -965,6 +1005,178 @@ export interface operations {
             };
         };
     };
+    find_directory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 目录 ID */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 目录详情 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DirectoryResponse"];
+                };
+            };
+            /** @description 目录 ID 无效 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 没有目录读取权限 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 目录不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    delete_directory: {
+        parameters: {
+            query: {
+                expected_revision: number;
+            };
+            header?: never;
+            path: {
+                /** @description 目录 ID */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 空目录已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 目录 ID 无效 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 没有目录删除权限 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 目录不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 目录非空或版本已变化 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    update_directory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 目录 ID */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateDirectoryRequest"];
+            };
+        };
+        responses: {
+            /** @description 目录已更新 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DirectoryResponse"];
+                };
+            };
+            /** @description 请求参数无效 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 没有目录写权限 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 目录或父目录不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 目录版本冲突或目标位置冲突 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     execute_directory_action: {
         parameters: {
             query?: never;
@@ -1107,7 +1319,7 @@ export interface operations {
                     "application/json": components["schemas"]["HealthResponse"];
                 };
             };
-            /** @description 数据库或对象存储不可用 */
+            /** @description 数据库、Session 存储或对象存储不可用 */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -1241,7 +1453,9 @@ export interface operations {
     };
     soft_delete_resource: {
         parameters: {
-            query?: never;
+            query: {
+                expected_revision: number;
+            };
             header?: never;
             path: {
                 /** @description 资源 ID */
@@ -1271,6 +1485,15 @@ export interface operations {
             };
             /** @description 资源不存在 */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 资源版本已变化 */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

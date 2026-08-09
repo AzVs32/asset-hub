@@ -13,7 +13,10 @@ mod resource;
 mod user;
 
 pub use authorization::{AuthorizationService, WorkspaceScope};
-pub use directory::{DirectoryActions, DirectoryService, ExecuteDirectoryAction, UpdateDirectory};
+pub use directory::{
+    DirectoryActions, DirectoryService, ExecuteDirectoryAction, SecuredDirectoryService,
+    UpdateDirectory,
+};
 pub use user::UserService;
 
 pub use resource::{
@@ -21,3 +24,27 @@ pub use resource::{
     ResourceContentStream, ResourceService, ResourceServicePorts, SecuredResourceService,
     StorageReconciliationReport, UpdateResource,
 };
+
+use crate::{CoreError, domain::ActionAccess};
+
+/// Enforce optimistic concurrency only when the action contract needs it.
+///
+/// Write actions always require a caller revision. Read actions may omit it to operate on the
+/// latest authorized snapshot; when supplied, it remains an explicit consistency precondition.
+fn validate_action_revision(
+    access: ActionAccess,
+    expected_revision: Option<u64>,
+    actual_revision: u64,
+    aggregate: &'static str,
+    id: impl Into<String>,
+) -> Result<(), CoreError> {
+    if access == ActionAccess::Write && expected_revision.is_none() {
+        return Err(CoreError::invalid_operation(
+            "expected_revision is required for write actions",
+        ));
+    }
+    if expected_revision.is_some_and(|expected| expected != actual_revision) {
+        return Err(CoreError::revision_conflict(aggregate, id));
+    }
+    Ok(())
+}

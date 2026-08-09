@@ -26,7 +26,7 @@ catalog. Every filesystem package is an Extism/Wasm package; `runtime.type = "bu
 ## Resource kind and capability tree
 
 The following is the complete Resource kind tree assembled by the Host and bundled plugins. The
-annotation after each kind is its definition source. `core:resource` is the default kind.
+annotation after each kind is its typed definition origin. `core:resource` is the default kind.
 
 ```text
 core:resource  [builtin:core.resource; default]
@@ -89,6 +89,18 @@ revision atomically in SQLite, including effects applied after a directory Actio
 Core Action and capability identifiers are validated domain values. Dynamic identifiers reject
 empty, non-canonical, uppercase, or unsupported characters before reaching registries or executors;
 Host-owned static declarations assert the same invariant at construction.
+Resource Kind IDs use lowercase `namespace:name`; Resource and Directory Action IDs use lowercase
+dot-separated provider names such as `azvs.markdown.read`. Runtime constructs all four registries
+as one validated capability-catalog unit, rejects duplicate IDs and invalid scopes before serving,
+and reports ambiguous content-kind detection instead of selecting by registration order.
+Definition origins also carry validated lowercase dot-separated owner IDs rather than unchecked
+strings.
+
+Plugin loading intentionally remains atomic and fail-fast. Package verification, cross-plugin
+capability conflict checks, Wasm compilation, executor bindings, and verified Web snapshots all
+describe one runtime generation. Silently skipping a package in only one phase would expose a
+partially assembled catalog, so a broken or conflicting package prevents that generation from
+starting and must be fixed or removed explicitly.
 
 SQLite never deserializes persisted data directly into Resource, Directory, or User aggregates.
 Repository rows first become unchecked snapshots and then pass through Core rehydration; persisted

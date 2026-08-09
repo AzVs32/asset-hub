@@ -4,7 +4,7 @@
 //! 可用，也不执行插件声明的副作用。
 
 /// Current and only supported Host/plugin wire and ABI version.
-pub const PLUGIN_API_VERSION: &str = "asset-hub.plugin-api@1";
+pub const PLUGIN_API_VERSION: &str = "asset-hub.plugin-api@2";
 
 mod access;
 pub mod diagnostic;
@@ -15,17 +15,18 @@ pub mod view;
 pub use access::PluginActionAccess;
 pub use diagnostic::{PluginActionFailure, PluginDiagnostic, PluginDiagnosticSeverity};
 pub use directory::{
-    CreateChildDirectoryEffect, DirectoryActionEffect, DirectoryPluginActionOutput,
-    PluginDirectory, PluginDirectoryActionRequest, PluginDirectoryChild, PluginDirectoryPage,
-    PluginDirectoryResource, PluginDirectoryResourcePage, UpdateDirectoryEffect,
+    CreateChildDirectoryEffect, DirectoryActionEffect, PluginDirectory,
+    PluginDirectoryActionOutput, PluginDirectoryActionRequest, PluginDirectoryChild,
+    PluginDirectoryPage, PluginDirectoryResource, PluginDirectoryResourcePage,
+    UpdateDirectoryEffect,
 };
 pub use resource::{
-    PluginActionRequest, PluginChecksum, PluginContentBytes, PluginContentReference,
-    PluginContentReferenceEncoding, PluginContentVerificationStatus, PluginInlineContentEncoding,
-    PluginResource, PluginResourceContent,
+    PluginChecksum, PluginContentBytes, PluginContentReference, PluginContentReferenceEncoding,
+    PluginContentVerificationStatus, PluginInlineContentEncoding, PluginResource,
+    PluginResourceActionRequest, PluginResourceContent,
 };
 pub use view::{
-    DownloadView, HtmlView, JsonView, MarkdownView, MediaView, PluginActionEffect,
-    PluginActionOutput, PluginFrameView, PluginMediaEncoding, PluginReplacementEncoding,
-    PluginView, ReplaceContentEffect, TextView,
+    DownloadView, HtmlView, JsonView, MarkdownView, MediaView, PluginFrameView,
+    PluginMediaEncoding, PluginReplacementEncoding, PluginResourceActionEffect,
+    PluginResourceActionOutput, PluginView, ReplaceContentEffect, TextView,
 };

@@ -1,10 +1,10 @@
 use crate::dto::{
     BinaryContent, CreateDirectoryRequest, CreateUploadRequest, DirectoryActionOutputResponse,
     DirectoryKindResponse, DirectoryKindsResponse, DirectoryListingResponse, DirectoryResponse,
-    ExecuteDirectoryActionRequest, ExecuteResourceActionRequest, HealthResponse,
-    ListDirectoryQuery, ListResourcesQuery, ResourceActionOutputResponse, ResourceKindResponse,
-    ResourceKindsResponse, ResourcePageResponse, ResourceResponse, UpdateResourceRequest,
-    UploadSessionResponse,
+    ExecuteDirectoryActionRequest, ExecuteResourceActionRequest, ExpectedRevisionQuery,
+    HealthResponse, ListDirectoryQuery, ListResourcesQuery, ResourceActionOutputResponse,
+    ResourceKindResponse, ResourceKindsResponse, ResourcePageResponse, ResourceResponse,
+    UpdateDirectoryRequest, UpdateResourceRequest, UploadSessionResponse,
 };
 use crate::error::HttpError;
 use crate::state::HttpState;
@@ -16,7 +16,7 @@ use asset_core::domain::{
 use asset_core::port::BlobByteStream;
 use asset_core::port::ListResources;
 use asset_core::service::{
-    CreateUpload, ExecuteDirectoryAction, ExecuteResourceAction, UpdateResource,
+    CreateUpload, ExecuteDirectoryAction, ExecuteResourceAction, UpdateDirectory, UpdateResource,
 };
 use axum::Json;
 use axum::body::Body;
@@ -40,9 +40,10 @@ pub(crate) use content::{
 pub(crate) use maintenance::{health, purge_disabled};
 pub(crate) use plugin::plugin_web_asset;
 pub(crate) use resource::{
-    MAX_ACTION_REQUEST_BYTES, create_directory, execute_directory_action, execute_resource_action,
-    find_resource, list_directory, list_directory_kinds, list_resource_kinds, list_resources,
-    remove_resource, soft_delete_resource, update_resource,
+    MAX_ACTION_REQUEST_BYTES, create_directory, delete_directory, execute_directory_action,
+    execute_resource_action, find_directory, find_resource, list_directory, list_directory_kinds,
+    list_resource_kinds, list_resources, remove_resource, soft_delete_resource, update_directory,
+    update_resource,
 };
 pub(crate) use upload::{
     abort_upload, append_upload, complete_upload, create_upload, upload_status,

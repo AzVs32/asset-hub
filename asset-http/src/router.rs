@@ -42,6 +42,12 @@ pub fn build_router(
             "/directories",
             get(handlers::list_directory).post(handlers::create_directory),
         )
+        .route(
+            "/directories/{id}",
+            get(handlers::find_directory)
+                .patch(handlers::update_directory)
+                .delete(handlers::delete_directory),
+        )
         .route("/resources", get(handlers::list_resources))
         .route(
             "/resources/{id}",

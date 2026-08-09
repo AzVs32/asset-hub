@@ -21,7 +21,7 @@ pub mod plugin_package {
 
 use asset_core::{
     CoreError, port::BlobStorage, port::DirectoryIndex, port::DirectoryQuery,
-    port::DirectoryStorage, port::DirectoryStore, port::ResourceContentReplacementRepository,
+    port::DirectoryRepository, port::DirectoryStorage, port::ResourceContentReplacementRepository,
     port::ResourceQuery, port::ResourceRepository, port::StorageScanner,
     port::UploadSessionRepository, port::UserQuery, port::UserRepository,
 };
@@ -122,7 +122,7 @@ impl AssetInfrastructure {
         self.resource_repository.clone()
     }
 
-    pub fn directory_store(&self) -> Arc<dyn DirectoryStore> {
+    pub fn directory_repository(&self) -> Arc<dyn DirectoryRepository> {
         self.resource_repository.clone()
     }
 

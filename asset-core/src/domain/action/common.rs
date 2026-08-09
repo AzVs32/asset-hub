@@ -1,3 +1,4 @@
+use crate::domain::DefinitionOrigin;
 use std::str::FromStr;
 use thiserror::Error;
 
@@ -20,7 +21,14 @@ pub struct ActionId(String);
 
 impl ActionId {
     pub fn new(value: impl Into<String>) -> Result<Self, ActionIdError> {
-        validate_id("action id", value.into(), &['.', ':', '-', '_']).map(Self)
+        let value = validate_id("action id", value.into(), &['.', '-', '_'])?;
+        if !value.split('.').all(valid_action_segment) || !value.contains('.') {
+            return Err(ActionIdError::InvalidFormat {
+                kind: "action id",
+                value,
+            });
+        }
+        Ok(Self(value))
     }
 
     pub fn as_str(&self) -> &str {
@@ -30,6 +38,15 @@ impl ActionId {
     pub fn from_static(value: &'static str) -> Self {
         Self::new(value).expect("static action id must be valid")
     }
+}
+
+fn valid_action_segment(segment: &str) -> bool {
+    !segment.is_empty()
+        && segment.chars().all(|character| {
+            character.is_ascii_lowercase()
+                || character.is_ascii_digit()
+                || matches!(character, '-' | '_')
+        })
 }
 
 impl std::fmt::Display for ActionId {
@@ -147,13 +164,13 @@ fn validate_id(
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ActionAccess {
     #[default]
-    ReadOnly,
-    ReadWrite,
+    Read,
+    Write,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ActionOutputContract {
-    pub view: Vec<String>,
+    pub views: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -167,6 +184,7 @@ pub struct ActionUi {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActionDefinition {
     id: ActionId,
+    origin: DefinitionOrigin,
     provides: Option<ActionCapabilityId>,
     label: String,
     description: Option<String>,
@@ -176,20 +194,25 @@ pub struct ActionDefinition {
 }
 
 impl ActionDefinition {
-    pub fn new(id: ActionId, label: impl Into<String>) -> Self {
+    pub fn new(id: ActionId, label: impl Into<String>, origin: DefinitionOrigin) -> Self {
         Self {
             id,
+            origin,
             provides: None,
             label: label.into(),
             description: None,
-            access: ActionAccess::ReadOnly,
+            access: ActionAccess::Read,
             output: ActionOutputContract::default(),
             ui: ActionUi::default(),
         }
     }
 
-    pub fn new_static(id: &'static str, label: impl Into<String>) -> Self {
-        Self::new(ActionId::from_static(id), label)
+    pub fn new_static(
+        id: &'static str,
+        label: impl Into<String>,
+        origin: DefinitionOrigin,
+    ) -> Self {
+        Self::new(ActionId::from_static(id), label, origin)
     }
 
     pub fn with_provides(mut self, provides: Option<ActionCapabilityId>) -> Self {
@@ -224,6 +247,10 @@ impl ActionDefinition {
 
     pub fn id(&self) -> &ActionId {
         &self.id
+    }
+
+    pub fn origin(&self) -> &DefinitionOrigin {
+        &self.origin
     }
 
     pub fn provides(&self) -> Option<&ActionCapabilityId> {

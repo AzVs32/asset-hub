@@ -101,6 +101,8 @@ impl From<CoreError> for HttpError {
     fn from(error: CoreError) -> Self {
         let status = match &error {
             CoreError::ActionId(_)
+            | CoreError::DefinitionOriginId(_)
+            | CoreError::KindId(_)
             | CoreError::Directory(_)
             | CoreError::Resource(_)
             | CoreError::User(_)
@@ -109,7 +111,7 @@ impl From<CoreError> for HttpError {
             CoreError::Unauthenticated => StatusCode::UNAUTHORIZED,
             CoreError::Forbidden { .. } => StatusCode::FORBIDDEN,
             CoreError::NotFound { .. } => StatusCode::NOT_FOUND,
-            CoreError::Conflict { .. } => StatusCode::CONFLICT,
+            CoreError::Conflict { .. } | CoreError::RevisionConflict { .. } => StatusCode::CONFLICT,
             CoreError::LimitExceeded { .. } => StatusCode::PAYLOAD_TOO_LARGE,
             CoreError::Plugin { diagnostic, .. } => plugin_status(&diagnostic.code),
             CoreError::Storage { .. }
@@ -123,6 +125,11 @@ impl From<CoreError> for HttpError {
                 code: diagnostic.code.clone(),
                 retryable: diagnostic.retryable,
                 details: diagnostic.details.clone(),
+            })),
+            CoreError::RevisionConflict { .. } => Some(Box::new(HttpDiagnostic {
+                code: "concurrency.revision_conflict".to_string(),
+                retryable: true,
+                details: None,
             })),
             _ => None,
         };

@@ -1,6 +1,6 @@
 {
   "action": "example.plugin.inspect",
-  "access": "read_only",
+  "access": "read",
   "input": {
     "mode": "summary"
   },
@@ -9,6 +9,7 @@
     "directory": "documents",
     "name": "notes.md",
     "kind": "core:text",
+    "revision": 7,
     "content": {
       "size": 5,
       "mime_type": "text/markdown",

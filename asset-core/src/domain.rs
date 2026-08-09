@@ -1,6 +1,8 @@
 mod action;
+mod definition;
 mod directory;
 mod identity;
+mod kind;
 mod resource;
 mod resource_action_policy;
 mod resource_content_edit_policy;
@@ -9,12 +11,14 @@ mod upload;
 
 pub use action::{
     ActionAccess, ActionCapabilityId, ActionDefinition, ActionId, ActionIdError,
-    ActionOutputContract, ActionUi, DirectoryAction, DirectoryActionAccess,
-    DirectoryActionAppliesTo, DirectoryActionDefinition, DirectoryActionOutputContract,
-    DirectoryActionRequirements, DirectoryActionUi, ResourceAction, ResourceActionAccess,
-    ResourceActionAppliesTo, ResourceActionContentDelivery, ResourceActionDefinition,
-    ResourceActionOutputContract, ResourceActionRequirements, ResourceActionUi,
-    ResourceContentMatcher,
+    ActionOutputContract, ActionUi, DirectoryActionAppliesTo, DirectoryActionDefinition,
+    DirectoryActionId, DirectoryActionRequirements, ResourceActionAppliesTo,
+    ResourceActionContentDelivery, ResourceActionDefinition, ResourceActionId,
+    ResourceActionRequirements, ResourceContentMatcher,
+};
+pub use definition::{
+    DefinitionOrigin, DefinitionOriginId, DefinitionOriginIdError, DirectoryKindDefinition,
+    ResourceKindDefinition,
 };
 pub use directory::{
     Directory, DirectoryId, DirectoryKind, DirectoryPath, DirectorySnapshot,
@@ -23,6 +27,7 @@ pub use directory::{
 pub use identity::{
     AccessContext, DirectoryOperation, User, UserId, UserRole, UserSnapshot, UserStatus,
 };
+pub use kind::{KindId, KindIdError};
 pub use resource::{
     Checksum, ChecksumKind, ContentVerification, ContentVerificationStatus, Resource,
     ResourceBuilder, ResourceContent, ResourceContentBuilder, ResourceId, ResourceKind,

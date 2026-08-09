@@ -211,7 +211,7 @@ function Detail({
                 : "—"
             }
           />
-          <Fact label="Kind source" value={kind?.source ?? "—"} />
+          <Fact label="Kind origin" value={kind ? `${kind.origin.kind}:${kind.origin.id}` : "—"} />
           <Fact
             label="Content"
             value={
@@ -250,7 +250,7 @@ function Fact({ label, value, wide = false }: { label: string; value: string; wi
 }
 
 function ActionIcon({ action }: { action: ResourceAction }) {
-  if (action.access === "read_write") return <Pencil size={15} />;
+  if (action.access === "write") return <Pencil size={15} />;
   if (action.output.views.includes("download")) return <Download size={15} />;
   if (action.output.views.includes("media") || action.output.views.includes("plugin_frame"))
     return <Eye size={15} />;

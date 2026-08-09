@@ -1,11 +1,10 @@
 use asset_core::domain::{
-    ActionAccess, Checksum, DirectoryActionDefinition, DirectoryPath, Resource,
-    ResourceActionContentDelivery, ResourceActionDefinition, ResourceContent,
+    ActionAccess, Checksum, DefinitionOrigin, DirectoryActionDefinition, DirectoryKindDefinition,
+    DirectoryPath, Resource, ResourceActionContentDelivery, ResourceActionDefinition,
+    ResourceContent, ResourceKindDefinition,
 };
-use asset_core::port::{
-    DirectoryActionOutput, DirectoryKindDefinition, ResourceActionOutput, ResourceKindDefinition,
-};
-use asset_core::service::{DirectoryActions, ResourceActions};
+use asset_core::port::{DirectoryActionOutput, ResourceActionOutput};
+use asset_core::service::ResourceActions;
 use asset_plugin_api::protocol::{PluginDiagnostic, PluginDiagnosticSeverity};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -22,10 +21,8 @@ pub(crate) struct BinaryContent(Vec<u8>);
 /// 创建逻辑目录请求。
 #[derive(Debug, Deserialize, ToSchema)]
 pub(crate) struct CreateDirectoryRequest {
-    /// 相对于当前用户可见根目录的父路径；根目录为空字符串。
-    #[serde(default)]
-    #[schema(value_type = String)]
-    pub(crate) parent_path: DirectoryPath,
+    /// Stable parent Directory ID.
+    pub(crate) parent_id: String,
     /// 新目录名称，只允许单个路径段。
     pub(crate) name: String,
     /// 可选目录类型。
@@ -78,6 +75,8 @@ pub(crate) struct ListDirectoryQuery {
     "kind": "core:resource"
 }))]
 pub(crate) struct UpdateResourceRequest {
+    /// Required optimistic-concurrency precondition.
+    pub(crate) expected_revision: u64,
     /// 可选新资源展示名。
     pub(crate) name: Option<String>,
     /// 可选新资源类型。
@@ -87,6 +86,21 @@ pub(crate) struct UpdateResourceRequest {
     pub(crate) directory: Option<DirectoryPath>,
     /// 是否恢复软删除资源。
     pub(crate) restore: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct UpdateDirectoryRequest {
+    pub(crate) expected_revision: u64,
+    pub(crate) name: Option<String>,
+    pub(crate) parent_id: Option<String>,
+    pub(crate) kind: Option<String>,
+}
+
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct ExpectedRevisionQuery {
+    pub(crate) expected_revision: u64,
 }
 
 /// 创建断点续传会话。
@@ -173,7 +187,7 @@ pub(crate) struct DirectoryKindResponse {
     pub(crate) ancestors: Vec<String>,
     pub(crate) label: String,
     pub(crate) actions: Vec<DirectoryActionDefinitionResponse>,
-    pub(crate) source: String,
+    pub(crate) origin: DefinitionOriginResponse,
 }
 
 impl DirectoryKindResponse {
@@ -196,7 +210,7 @@ impl DirectoryKindResponse {
                 .iter()
                 .map(DirectoryActionDefinitionResponse::from)
                 .collect(),
-            source: definition.source().to_string(),
+            origin: DefinitionOriginResponse::from(definition.origin()),
         }
     }
 }
@@ -220,7 +234,7 @@ pub(crate) struct ResourceKindResponse {
     /// kind 支持的动作。
     pub(crate) actions: Vec<ResourceActionDefinitionResponse>,
     /// 定义来源：`builtin`、`config` 或 `plugin:<id>`。
-    pub(crate) source: String,
+    pub(crate) origin: DefinitionOriginResponse,
 }
 
 impl ResourceKindResponse {
@@ -248,7 +262,22 @@ impl ResourceKindResponse {
                 .iter()
                 .map(ResourceActionDefinitionResponse::from)
                 .collect(),
-            source: definition.source().to_string(),
+            origin: DefinitionOriginResponse::from(definition.origin()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub(crate) struct DefinitionOriginResponse {
+    pub(crate) kind: String,
+    pub(crate) id: String,
+}
+
+impl From<&DefinitionOrigin> for DefinitionOriginResponse {
+    fn from(origin: &DefinitionOrigin) -> Self {
+        Self {
+            kind: origin.kind().to_string(),
+            id: origin.id().to_string(),
         }
     }
 }
@@ -258,6 +287,7 @@ impl ResourceKindResponse {
 pub(crate) struct ResourceActionDefinitionResponse {
     /// 动作 ID。
     pub(crate) id: String,
+    pub(crate) origin: DefinitionOriginResponse,
     /// 此 Action 实现的单例 Host 能力。
     pub(crate) provides: Option<String>,
     /// 展示名称。
@@ -279,6 +309,7 @@ pub(crate) struct ResourceActionDefinitionResponse {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub(crate) struct DirectoryActionDefinitionResponse {
     pub(crate) id: String,
+    pub(crate) origin: DefinitionOriginResponse,
     pub(crate) provides: Option<String>,
     pub(crate) label: String,
     pub(crate) description: Option<String>,
@@ -304,6 +335,7 @@ impl From<&DirectoryActionDefinition> for DirectoryActionDefinitionResponse {
     fn from(action: &DirectoryActionDefinition) -> Self {
         Self {
             id: action.id().as_str().to_string(),
+            origin: DefinitionOriginResponse::from(action.origin()),
             provides: action.provides().map(|id| id.as_str().to_string()),
             label: action.label().to_string(),
             description: action.description().map(str::to_string),
@@ -313,7 +345,7 @@ impl From<&DirectoryActionDefinition> for DirectoryActionDefinitionResponse {
                 resources: action.requirements().resources,
             },
             output: ResourceActionOutputContractResponse {
-                view: action.output().view.clone(),
+                views: action.output().views.clone(),
             },
             ui: ResourceActionUiResponse {
                 group: action.ui().group.clone(),
@@ -335,7 +367,7 @@ pub(crate) struct ResourceActionRequirementsResponse {
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub(crate) struct ResourceActionOutputContractResponse {
-    pub(crate) view: Vec<String>,
+    pub(crate) views: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -366,6 +398,7 @@ impl From<&ResourceActionDefinition> for ResourceActionDefinitionResponse {
     fn from(action: &ResourceActionDefinition) -> Self {
         Self {
             id: action.id().as_str().to_string(),
+            origin: DefinitionOriginResponse::from(action.origin()),
             provides: action.provides().map(|id| id.as_str().to_string()),
             label: action.label().to_string(),
             description: action.description().map(str::to_string),
@@ -376,7 +409,7 @@ impl From<&ResourceActionDefinition> for ResourceActionDefinitionResponse {
                     .to_string(),
             },
             output: ResourceActionOutputContractResponse {
-                view: action.output().view.clone(),
+                views: action.output().views.clone(),
             },
             ui: ResourceActionUiResponse {
                 group: action.ui().group.clone(),
@@ -394,8 +427,8 @@ impl From<&ResourceActionDefinition> for ResourceActionDefinitionResponse {
 
 fn action_access_text(access: ActionAccess) -> &'static str {
     match access {
-        ActionAccess::ReadOnly => "read_only",
-        ActionAccess::ReadWrite => "read_write",
+        ActionAccess::Read => "read",
+        ActionAccess::Write => "write",
     }
 }
 
@@ -453,7 +486,7 @@ pub(crate) struct ResourceResponse {
     /// 资源内容引用。
     pub(crate) content: Option<ResourceContentResponse>,
     /// 当前资源允许的操作。
-    pub(crate) actions: ResourceActionsResponse,
+    pub(crate) actions: Vec<ResourceActionDefinitionResponse>,
     /// 资源创建时间，RFC3339 格式。
     pub(crate) created_at: String,
     /// 资源最后更新时间，RFC3339 格式。
@@ -462,13 +495,6 @@ pub(crate) struct ResourceResponse {
     pub(crate) revision: u64,
     /// 软删除时间，RFC3339 格式；为空表示未删除。
     pub(crate) deleted_at: Option<String>,
-}
-
-/// 资源允许的操作集合。
-#[derive(Debug, Serialize, ToSchema)]
-pub(crate) struct ResourceActionsResponse {
-    /// 当前资源允许的动作。
-    pub(crate) available_actions: Vec<ResourceActionDefinitionResponse>,
 }
 
 /// 资源分页响应。
@@ -489,6 +515,7 @@ pub(crate) struct ResourcePageResponse {
 pub(crate) struct DirectoryResponse {
     /// 稳定目录标识；目录移动或重命名后保持不变。
     pub(crate) id: String,
+    pub(crate) parent_id: Option<String>,
     /// 相对于当前用户可见根目录的路径。
     pub(crate) path: String,
     /// 相对于当前用户可见根目录的父路径。
@@ -496,24 +523,10 @@ pub(crate) struct DirectoryResponse {
     /// 当前目录名。
     pub(crate) name: String,
     pub(crate) kind: String,
-    pub(crate) actions: DirectoryActionsResponse,
-}
-
-#[derive(Debug, Serialize, ToSchema)]
-pub(crate) struct DirectoryActionsResponse {
-    pub(crate) available_actions: Vec<DirectoryActionDefinitionResponse>,
-}
-
-impl From<DirectoryActions> for DirectoryActionsResponse {
-    fn from(actions: DirectoryActions) -> Self {
-        Self {
-            available_actions: actions
-                .available_actions()
-                .iter()
-                .map(DirectoryActionDefinitionResponse::from)
-                .collect(),
-        }
-    }
+    pub(crate) actions: Vec<DirectoryActionDefinitionResponse>,
+    pub(crate) created_at: String,
+    pub(crate) updated_at: String,
+    pub(crate) revision: u64,
 }
 
 /// 目录浏览响应。
@@ -539,7 +552,7 @@ pub(crate) struct DirectoryListingResponse {
     }
 }))]
 pub(crate) struct ExecuteResourceActionRequest {
-    /// 可选资源版本前置条件；不匹配时 Host 返回 409，且不执行 Action。
+    /// Optional for read actions and required for write actions.
     pub(crate) expected_revision: Option<u64>,
     /// 传递给插件 action handler 的 JSON 输入。
     #[serde(default)]
@@ -548,6 +561,8 @@ pub(crate) struct ExecuteResourceActionRequest {
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub(crate) struct ExecuteDirectoryActionRequest {
+    /// Optional for read actions and required for write actions.
+    pub(crate) expected_revision: Option<u64>,
     #[serde(default)]
     pub(crate) input: Value,
 }
@@ -647,23 +662,15 @@ impl ResourceResponse {
             directory,
             kind: resource.kind().as_str().to_string(),
             content: resource.content().map(ResourceContentResponse::from),
-            actions: ResourceActionsResponse::from(actions),
-            created_at: resource.created_at().to_rfc3339(),
-            updated_at: resource.updated_at().to_rfc3339(),
-            revision: resource.revision(),
-            deleted_at: resource.deleted_at().map(|value| value.to_rfc3339()),
-        }
-    }
-}
-
-impl From<ResourceActions> for ResourceActionsResponse {
-    fn from(actions: ResourceActions) -> Self {
-        Self {
-            available_actions: actions
+            actions: actions
                 .available_actions()
                 .iter()
                 .map(ResourceActionDefinitionResponse::from)
                 .collect(),
+            created_at: resource.created_at().to_rfc3339(),
+            updated_at: resource.updated_at().to_rfc3339(),
+            revision: resource.revision(),
+            deleted_at: resource.deleted_at().map(|value| value.to_rfc3339()),
         }
     }
 }

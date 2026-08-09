@@ -101,7 +101,7 @@ fn decode_frame_payload(output: &Value) -> Value {
 fn request_json(action: &str, input: Value, content: Option<&[u8]>) -> String {
     let mut request = json!({
         "action": action,
-        "access": if action == "azvs.markdown.edit" { "read_write" } else { "read_only" },
+        "access": if action == "azvs.markdown.edit" { "write" } else { "read" },
         "input": input,
         "resource": resource_json(),
     });
@@ -120,6 +120,7 @@ fn resource_json() -> Value {
         "directory": "documents",
         "name": "demo.md",
         "kind": "azvs:markdown",
+        "revision": 1,
         "content": {
             "size": 4,
             "mime_type": "text/markdown",

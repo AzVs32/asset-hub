@@ -1,9 +1,10 @@
 use asset_plugin_api::manifest::{MANIFEST_VERSION, PluginManifest};
 use asset_plugin_api::protocol::directory::{
-    DirectoryPluginActionOutput, PluginDirectoryActionRequest,
+    PluginDirectoryActionOutput, PluginDirectoryActionRequest,
 };
 use asset_plugin_api::protocol::{
-    PLUGIN_API_VERSION, PluginActionFailure, PluginActionOutput, PluginActionRequest,
+    PLUGIN_API_VERSION, PluginActionFailure, PluginResourceActionOutput,
+    PluginResourceActionRequest,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -46,7 +47,7 @@ fn manifest_document() -> Value {
                 "label": "Example Action",
                 "handler": "run",
                 "applies_to": {"kinds": ["core:resource"]},
-                "views": ["json"]
+                "output": {"views": ["json"]}
             }]
         },
         "permissions": {"allow": ["resource.read"]}
@@ -69,7 +70,8 @@ fn host_rejects_canonical_manifest_violations() {
         },
         {
             let mut value = template.clone();
-            value["capabilities"]["resource_actions"][0]["views"] = json!(["json", "json"]);
+            value["capabilities"]["resource_actions"][0]["output"]["views"] =
+                json!(["json", "json"]);
             value
         },
     ];
@@ -83,7 +85,7 @@ fn host_rejects_canonical_manifest_violations() {
 #[test]
 fn manifest_matchers_are_normalized_by_serde() {
     let mut value = manifest_document();
-    value["capabilities"]["kinds"] = json!([{
+    value["capabilities"]["resource_kinds"] = json!([{
         "kind": "example:markdown",
         "parent": "core:text",
         "label": "Markdown",
@@ -94,7 +96,7 @@ fn manifest_matchers_are_normalized_by_serde() {
     }]);
 
     let manifest = canonical_manifest(&value).unwrap();
-    let matcher = &manifest.capabilities.kinds[0].detect;
+    let matcher = &manifest.capabilities.resource_kinds[0].detect;
     assert_eq!(matcher.mime_types(), ["text/markdown"]);
     assert_eq!(matcher.extensions(), [".md"]);
 }
@@ -124,7 +126,7 @@ fn manifest_accepts_directory_actions_with_target_specific_requirements() {
         "applies_to": {"kinds": ["example:collection"]},
         "access": "write",
         "requires": {"children": true, "resources": true},
-        "views": ["json"],
+        "output": {"views": ["json"]},
         "ui": {"locations": ["directory_toolbar"]}
     }]);
     value["permissions"]["allow"] = json!([
@@ -150,7 +152,7 @@ fn resource_and_directory_action_ids_use_separate_namespaces() {
         "id": "example.plugin.action",
         "label": "Directory Action",
         "handler": "run_for_directory",
-        "views": ["json"]
+        "output": {"views": ["json"]}
     }]);
     value["permissions"]["allow"] = json!(["resource.read", "directory.read"]);
 
@@ -161,7 +163,7 @@ fn resource_and_directory_action_ids_use_separate_namespaces() {
 fn manifest_actions_can_provide_singleton_host_capabilities() {
     let mut value = manifest_document();
     value["capabilities"]["resource_actions"][0]["provides"] = json!("thumbnail");
-    value["capabilities"]["resource_actions"][0]["views"] = json!(["media"]);
+    value["capabilities"]["resource_actions"][0]["output"]["views"] = json!(["media"]);
     value["capabilities"]["resource_actions"][0]["ui"] =
         json!({"locations": ["resource_list_thumbnail"]});
     value["capabilities"]["directory_actions"] = json!([{
@@ -169,7 +171,7 @@ fn manifest_actions_can_provide_singleton_host_capabilities() {
         "provides": "thumbnail",
         "label": "Directory Thumbnail",
         "handler": "directory_thumbnail",
-        "views": ["media"],
+        "output": {"views": ["media"]},
         "ui": {"locations": ["directory_list_thumbnail"]}
     }]);
     value["permissions"]["allow"] = json!(["resource.read", "directory.read"]);
@@ -194,7 +196,7 @@ fn manifest_actions_can_provide_singleton_host_capabilities() {
 fn directory_request_and_output_have_separate_wire_effects() {
     let request: PluginDirectoryActionRequest = serde_json::from_value(json!({
         "action": "example.plugin.organize",
-        "access": "read_write",
+        "access": "write",
         "input": {},
         "directory": {
             "id": "01900000-0000-7000-8000-000000000001",
@@ -202,6 +204,7 @@ fn directory_request_and_output_have_separate_wire_effects() {
             "path": "library",
             "name": "library",
             "kind": "example:collection",
+            "revision": 3,
             "created_at": "2026-07-28T00:00:00Z",
             "updated_at": "2026-07-28T00:00:00Z"
         },
@@ -210,7 +213,7 @@ fn directory_request_and_output_have_separate_wire_effects() {
     .unwrap();
     assert_eq!(request.directory.path, "library");
 
-    let output: DirectoryPluginActionOutput = serde_json::from_value(json!({
+    let output: PluginDirectoryActionOutput = serde_json::from_value(json!({
         "view": "json",
         "data": {"organized": true},
         "effects": [{"type": "create_child", "name": "covers", "kind": "core:directory"}]
@@ -221,39 +224,41 @@ fn directory_request_and_output_have_separate_wire_effects() {
 
 #[test]
 fn request_and_output_wire_shapes_match_the_current_goldens() {
-    assert_golden_round_trip::<PluginManifest>(include_str!("fixtures/manifest-v1.json"));
-    assert_golden_round_trip::<PluginActionRequest>(include_str!(
-        "fixtures/action-request-inline-v1.json"
+    assert_golden_round_trip::<PluginManifest>(include_str!("fixtures/manifest-v2.json"));
+    assert_golden_round_trip::<PluginResourceActionRequest>(include_str!(
+        "fixtures/action-request-inline-v2.json"
     ));
-    assert_golden_round_trip::<PluginActionRequest>(include_str!(
-        "fixtures/action-request-reference-v1.json"
+    assert_golden_round_trip::<PluginResourceActionRequest>(include_str!(
+        "fixtures/action-request-reference-v2.json"
     ));
-    assert_golden_round_trip::<PluginActionOutput>(include_str!("fixtures/action-output-v1.json"));
-    assert_golden_round_trip::<PluginActionOutput>(include_str!(
-        "fixtures/action-output-download-v1.json"
+    assert_golden_round_trip::<PluginResourceActionOutput>(include_str!(
+        "fixtures/action-output-v2.json"
+    ));
+    assert_golden_round_trip::<PluginResourceActionOutput>(include_str!(
+        "fixtures/action-output-download-v2.json"
     ));
     assert_golden_round_trip::<PluginActionFailure>(include_str!(
-        "fixtures/action-failure-v1.json"
+        "fixtures/action-failure-v2.json"
     ));
 }
 
 #[test]
 fn context_specific_encodings_reject_invalid_wire_combinations() {
     let mut request: Value =
-        serde_json::from_str(include_str!("fixtures/action-request-inline-v1.json")).unwrap();
+        serde_json::from_str(include_str!("fixtures/action-request-inline-v2.json")).unwrap();
     request["content"]["encoding"] = json!("handle");
-    assert!(serde_json::from_value::<PluginActionRequest>(request).is_err());
+    assert!(serde_json::from_value::<PluginResourceActionRequest>(request).is_err());
 
     let mut output: Value =
-        serde_json::from_str(include_str!("fixtures/action-output-v1.json")).unwrap();
+        serde_json::from_str(include_str!("fixtures/action-output-v2.json")).unwrap();
     output["effects"][0]["encoding"] = json!("url");
-    assert!(serde_json::from_value::<PluginActionOutput>(output).is_err());
+    assert!(serde_json::from_value::<PluginResourceActionOutput>(output).is_err());
 
     let mut output: Value =
-        serde_json::from_str(include_str!("fixtures/action-output-v1.json")).unwrap();
+        serde_json::from_str(include_str!("fixtures/action-output-v2.json")).unwrap();
     output["effects"][0]["checksum"] = json!({
         "kind": "sha256",
         "value": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
     });
-    assert!(serde_json::from_value::<PluginActionOutput>(output).is_err());
+    assert!(serde_json::from_value::<PluginResourceActionOutput>(output).is_err());
 }

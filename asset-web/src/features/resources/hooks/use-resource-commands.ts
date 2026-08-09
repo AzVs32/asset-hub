@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import React from "react";
 import { toast } from "sonner";
+import { ConcurrentModificationError } from "@/application/errors";
 import { useGateway } from "@/application/ports/gateway-context";
 import { queryKeys } from "@/application/queries/keys";
 import type {
@@ -34,16 +35,23 @@ export function useResourceCommands() {
     },
     [queryClient],
   );
+  const handleMutationError = React.useCallback(
+    async (error: unknown) => {
+      if (error instanceof ConcurrentModificationError) await refresh();
+      notifyError(error);
+    },
+    [refresh],
+  );
 
   const update = useMutation({
-    mutationFn: ({ id, draft }: { id: string; draft: ResourceDraft }) =>
-      gateway.updateResource(id, draft),
+    mutationFn: ({ resource, draft }: { resource: Resource; draft: ResourceDraft }) =>
+      gateway.updateResource(resource, draft),
     onSuccess: async (resource) => {
       toast.success("Resource saved");
       queryClient.setQueryData(queryKeys.resource(resource.id), resource);
       await refresh(resource.id);
     },
-    onError: notifyError,
+    onError: handleMutationError,
   });
   const upload = useMutation({
     mutationFn: (draft: UploadDraft) => gateway.uploadResource(draft, setUploadProgress),
@@ -69,33 +77,33 @@ export function useResourceCommands() {
     },
     onError: (error) => {
       setUploadProgress(null);
-      notifyError(error);
+      void handleMutationError(error);
     },
   });
   const remove = useMutation({
-    mutationFn: (resource: Resource) => gateway.deleteResource(resource.id),
+    mutationFn: (resource: Resource) => gateway.deleteResource(resource),
     onSuccess: async (resource) => {
       toast.success(`${resource.name} moved to deleted resources`);
       await refresh(resource.id);
     },
-    onError: notifyError,
+    onError: handleMutationError,
   });
   const restore = useMutation({
-    mutationFn: (resource: Resource) => gateway.restoreResource(resource.id),
+    mutationFn: (resource: Resource) => gateway.restoreResource(resource),
     onSuccess: async (resource) => {
       toast.success(`${resource.name} restored`);
       await refresh(resource.id);
     },
-    onError: notifyError,
+    onError: handleMutationError,
   });
   const createFolder = useMutation({
-    mutationFn: ({ parent, name, kind }: { parent: string; name: string; kind?: string }) =>
+    mutationFn: ({ parent, name, kind }: { parent: Directory; name: string; kind?: string }) =>
       gateway.createDirectory(parent, name, kind),
     onSuccess: async () => {
       toast.success("Folder created");
       await refresh();
     },
-    onError: notifyError,
+    onError: handleMutationError,
   });
   const execute = useMutation({
     mutationFn: async ({ resource, action }: { resource: Resource; action: ResourceAction }) => ({
@@ -105,9 +113,9 @@ export function useResourceCommands() {
     }),
     onSuccess: async (result) => {
       setActionResult(result);
-      if (result.action.access === "read_write") await refresh(result.resource.id);
+      if (result.action.access === "write") await refresh(result.resource.id);
     },
-    onError: notifyError,
+    onError: handleMutationError,
   });
   const executeDirectory = useMutation({
     mutationFn: async ({
@@ -123,9 +131,9 @@ export function useResourceCommands() {
     }),
     onSuccess: async (result) => {
       setDirectoryActionResult(result);
-      if (result.action.access === "read_write") await refresh();
+      if (result.action.access === "write") await refresh();
     },
-    onError: notifyError,
+    onError: handleMutationError,
   });
 
   return {

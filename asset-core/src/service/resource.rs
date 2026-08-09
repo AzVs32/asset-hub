@@ -6,7 +6,7 @@
 use crate::CoreError;
 use crate::domain::{
     Resource, ResourceActionDefinition, ResourceActionPolicy, ResourceContentEditPolicy,
-    ResourceKind, StorageKey,
+    ResourceKind, ResourceKindDefinition, StorageKey,
 };
 use crate::port::{
     BlobStorage, DirectoryLocation, ResourceActionExecutor, ResourceActionRegistry,
@@ -158,7 +158,7 @@ impl ResourceService {
     /// 返回当前 Host 已注册并冻结的资源类型定义。
     ///
     /// Application Surface 通过本服务查询类型能力，不需要直接依赖注册表 Port。
-    pub fn kind_definitions(&self) -> &[crate::port::ResourceKindDefinition] {
+    pub fn kind_definitions(&self) -> &[ResourceKindDefinition] {
         self.kind_registry.definitions()
     }
 
@@ -307,10 +307,12 @@ impl ResourceService {
         mime_type: Option<&str>,
         storage_key: Option<&str>,
     ) -> Result<ResourceKind, CoreError> {
-        let kind = kind.or_else(|| {
-            self.kind_registry
-                .detect_content_kind(mime_type, storage_key)
-        });
+        let kind = match kind {
+            Some(kind) => Some(kind),
+            None => self
+                .kind_registry
+                .detect_content_kind(mime_type, storage_key)?,
+        };
         self.validate_content_kind(kind)
     }
 
@@ -324,7 +326,7 @@ impl ResourceService {
     fn require_kind_definition(
         &self,
         kind: &ResourceKind,
-    ) -> Result<&crate::port::ResourceKindDefinition, CoreError> {
+    ) -> Result<&ResourceKindDefinition, CoreError> {
         self.kind_registry.get(kind).ok_or_else(|| {
             CoreError::invariant(format!(
                 "persisted resource kind `{kind}` is not registered"

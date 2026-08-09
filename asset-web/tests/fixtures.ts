@@ -5,10 +5,11 @@ export function action(
 ): ResourceAction {
   return {
     id: input.id,
+    origin: input.origin ?? { kind: "builtin", id: "test" },
     provides: input.provides ?? null,
     label: input.label ?? input.id,
     description: input.description ?? null,
-    access: input.access ?? "read_only",
+    access: input.access ?? "read",
     requires: input.requires ?? { content: false, contentDelivery: "auto" },
     output: input.output ?? { views: ["json"] },
     ui: input.ui ?? { group: null, order: null, locations: [] },

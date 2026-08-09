@@ -1,9 +1,10 @@
+use super::validation::{ensure_unique_id, validate_hierarchy as validate_kind_hierarchy};
 use crate::plugin_manifest::PluginCatalog;
 use asset_core::CoreError;
-use asset_core::domain::DirectoryKind;
-use asset_core::port::{DirectoryKindDefinition, DirectoryKindRegistry};
+use asset_core::domain::{DefinitionOrigin, DirectoryKind, DirectoryKindDefinition};
+use asset_core::port::DirectoryKindRegistry;
 use asset_plugin_api::manifest::DirectoryKindCapability;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct DefaultDirectoryKindRegistry {
@@ -86,7 +87,7 @@ pub(super) fn directory_registry_from_catalog(
                 &mut definitions,
                 definition_from_manifest(
                     capability,
-                    format!("plugin:{}", plugin.manifest.plugin_id()),
+                    DefinitionOrigin::plugin(plugin.manifest.plugin_id())?,
                 )?,
             )?;
         }
@@ -97,71 +98,48 @@ pub(super) fn directory_registry_from_catalog(
 
 fn definition_from_manifest(
     capability: &DirectoryKindCapability,
-    source: impl Into<String>,
+    origin: DefinitionOrigin,
 ) -> Result<DirectoryKindDefinition, CoreError> {
     let label = capability
         .label
         .as_deref()
         .unwrap_or(capability.kind.as_str());
-    Ok(DirectoryKindDefinition::with_source(
-        DirectoryKind::try_new(&capability.kind)?,
-        label,
-        source,
+    Ok(
+        DirectoryKindDefinition::new(DirectoryKind::try_new(&capability.kind)?, label, origin)
+            .with_parent(
+                capability
+                    .parent
+                    .as_deref()
+                    .map(DirectoryKind::try_new)
+                    .transpose()?,
+            ),
     )
-    .with_parent(
-        capability
-            .parent
-            .as_deref()
-            .map(DirectoryKind::try_new)
-            .transpose()?,
-    ))
 }
 
 fn push_definition(
     definitions: &mut Vec<DirectoryKindDefinition>,
     definition: DirectoryKindDefinition,
 ) -> Result<(), CoreError> {
-    if definitions
-        .iter()
-        .any(|existing| existing.kind() == definition.kind())
-    {
-        return Err(CoreError::configuration(format!(
-            "duplicate directory kind `{}`",
-            definition.kind()
-        )));
-    }
+    ensure_unique_id(
+        "directory kind",
+        definition.kind().as_str(),
+        definitions.iter().map(|existing| existing.kind().as_str()),
+    )?;
     definitions.push(definition);
     Ok(())
 }
 
 fn validate_hierarchy(definitions: &[DirectoryKindDefinition]) -> Result<(), CoreError> {
-    let parents = definitions
-        .iter()
-        .map(|definition| {
-            (
-                definition.kind().as_str(),
-                definition.parent().map(DirectoryKind::as_str),
-            )
-        })
-        .collect::<HashMap<_, _>>();
-
-    for definition in definitions {
-        let mut current = Some(definition.kind().as_str());
-        let mut visited = HashSet::new();
-        while let Some(kind) = current {
-            if !visited.insert(kind) {
-                return Err(CoreError::configuration(format!(
-                    "directory kind hierarchy contains a cycle at `{kind}`"
-                )));
-            }
-            let Some(parent) = parents.get(kind) else {
-                return Err(CoreError::configuration(format!(
-                    "directory kind `{}` references unknown parent `{kind}`",
-                    definition.kind()
-                )));
-            };
-            current = *parent;
-        }
-    }
-    Ok(())
+    validate_kind_hierarchy(
+        "directory",
+        definitions
+            .iter()
+            .map(|definition| {
+                (
+                    definition.kind().as_str(),
+                    definition.parent().map(DirectoryKind::as_str),
+                )
+            })
+            .collect(),
+    )
 }

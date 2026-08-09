@@ -3,89 +3,11 @@
 //! 该端口描述核心/应用入口如何发现当前运行时支持的资源类型。默认实现可以是内置静态表，
 //! 后续插件系统可以通过同一端口注册和暴露更多 kind。
 
-use crate::domain::{ResourceContentMatcher, ResourceKind};
+use crate::{
+    CoreError,
+    domain::{ResourceContentMatcher, ResourceKind, ResourceKindDefinition},
+};
 use std::collections::HashSet;
-
-/// 资源类型定义。
-#[derive(Debug, Clone, PartialEq)]
-pub struct ResourceKindDefinition {
-    /// 资源类型值，例如 `core:resource`、`mindustry:mod`。
-    kind: ResourceKind,
-    /// 可选父资源类型。父级能力会被后代继承。
-    parent: Option<ResourceKind>,
-    /// 展示名称。
-    label: String,
-    /// 是否支持对象内容。
-    supports_content: bool,
-    /// 文件自动识别规则。
-    detect: ResourceContentMatcher,
-    /// 定义来源，例如 `builtin`、`config` 或 `plugin:<id>`。
-    source: String,
-}
-
-impl ResourceKindDefinition {
-    /// 创建资源类型定义。
-    pub fn new(kind: ResourceKind, label: impl Into<String>, supports_content: bool) -> Self {
-        Self::with_source(kind, label, supports_content, "builtin")
-    }
-
-    /// 创建带来源的资源类型定义。
-    pub fn with_source(
-        kind: ResourceKind,
-        label: impl Into<String>,
-        supports_content: bool,
-        source: impl Into<String>,
-    ) -> Self {
-        Self {
-            kind,
-            parent: None,
-            label: label.into(),
-            supports_content,
-            detect: ResourceContentMatcher::default(),
-            source: source.into(),
-        }
-    }
-
-    pub fn with_parent(mut self, parent: Option<ResourceKind>) -> Self {
-        self.parent = parent;
-        self
-    }
-
-    /// 设置文件自动识别规则。
-    pub fn with_detect(mut self, detect: ResourceContentMatcher) -> Self {
-        self.detect = detect;
-        self
-    }
-
-    /// 返回资源类型。
-    pub fn kind(&self) -> &ResourceKind {
-        &self.kind
-    }
-
-    pub fn parent(&self) -> Option<&ResourceKind> {
-        self.parent.as_ref()
-    }
-
-    /// 返回展示名称。
-    pub fn label(&self) -> &str {
-        &self.label
-    }
-
-    /// 返回是否支持对象内容。
-    pub fn supports_content(&self) -> bool {
-        self.supports_content
-    }
-
-    /// 返回文件自动识别规则。
-    pub fn detect(&self) -> &ResourceContentMatcher {
-        &self.detect
-    }
-
-    /// 返回定义来源。
-    pub fn source(&self) -> &str {
-        &self.source
-    }
-}
 
 /// 资源类型注册表端口。
 ///
@@ -146,8 +68,9 @@ pub trait ResourceKindRegistry: Send + Sync {
         &self,
         mime_type: Option<&str>,
         storage_key: Option<&str>,
-    ) -> Option<ResourceKind> {
+    ) -> Result<Option<ResourceKind>, CoreError> {
         let mut best: Option<(ResourceKind, u8, usize)> = None;
+        let mut ambiguous = Vec::new();
 
         for definition in self
             .definitions()
@@ -161,14 +84,33 @@ pub trait ResourceKindRegistry: Send + Sync {
             }
 
             let depth = self.lineage(definition.kind()).len();
-            if best.as_ref().is_none_or(|(_, best_score, best_depth)| {
-                score > *best_score || (score == *best_score && depth > *best_depth)
-            }) {
-                best = Some((definition.kind().clone(), score, depth));
+            match &best {
+                None => best = Some((definition.kind().clone(), score, depth)),
+                Some((_, best_score, best_depth))
+                    if score > *best_score || (score == *best_score && depth > *best_depth) =>
+                {
+                    best = Some((definition.kind().clone(), score, depth));
+                    ambiguous.clear();
+                }
+                Some((best_kind, best_score, best_depth))
+                    if score == *best_score && depth == *best_depth =>
+                {
+                    if ambiguous.is_empty() {
+                        ambiguous.push(best_kind.to_string());
+                    }
+                    ambiguous.push(definition.kind().to_string());
+                }
+                Some(_) => {}
             }
         }
-
-        best.map(|(kind, _, _)| kind)
+        if !ambiguous.is_empty() {
+            ambiguous.sort();
+            return Err(CoreError::configuration(format!(
+                "content kind detection is ambiguous between: {}",
+                ambiguous.join(", ")
+            )));
+        }
+        Ok(best.map(|(kind, _, _)| kind))
     }
 }
 

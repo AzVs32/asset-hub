@@ -7,7 +7,7 @@ mod persistence;
 pub use action::{
     DirectoryActionExecutor, DirectoryActionOutput, DirectoryActionRegistry, DirectoryActionRequest,
 };
-pub use kind::{DirectoryKindDefinition, DirectoryKindRegistry};
+pub use kind::DirectoryKindRegistry;
 pub use persistence::{
-    DirectoryIndex, DirectoryLocation, DirectoryQuery, DirectoryStore, LocatedDirectory,
+    DirectoryIndex, DirectoryLocation, DirectoryQuery, DirectoryRepository, LocatedDirectory,
 };

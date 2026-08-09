@@ -61,7 +61,7 @@ export function DirectoryDetail({
           <Fact label="Path" value={directory.path || "/"} wide />
           <Fact label="Parent" value={directory.parentPath || "/"} wide />
           <Fact label="Kind" value={directory.kind} />
-          <Fact label="Kind source" value={kind?.source ?? "-"} />
+          <Fact label="Kind origin" value={kind ? `${kind.origin.kind}:${kind.origin.id}` : "-"} />
           <Fact
             label="Actions"
             value={directory.actions.map((action) => action.id).join(", ") || "-"}

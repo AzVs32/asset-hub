@@ -53,10 +53,10 @@ fn generation_refuses_to_replace_an_existing_lock() {
 
 fn draft_manifest() -> &'static str {
     r#"{
-      "manifest_version": 1,
+      "manifest_version": 2,
       "plugin": {"id": "test.plugin", "name": "Test", "version": "0.1.0", "publisher": "test"},
-      "runtime": {"type": "extism", "plugin_api": "asset-hub.plugin-api@1"},
-      "capabilities": {"kinds": [], "resource_actions": []},
+      "runtime": {"type": "extism", "plugin_api": "asset-hub.plugin-api@2"},
+      "capabilities": {"resource_kinds": [], "resource_actions": []},
       "permissions": {
         "allow": ["resource.read"],
         "network": false,

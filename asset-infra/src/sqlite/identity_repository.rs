@@ -258,7 +258,7 @@ mod tests {
     use super::*;
     use crate::sqlite::SqliteResourceRepository;
     use asset_core::domain::Directory;
-    use asset_core::port::{DirectoryStore, UserQuery, UserRepository};
+    use asset_core::port::{DirectoryRepository, UserQuery, UserRepository};
     use sqlx::sqlite::SqlitePoolOptions;
 
     #[tokio::test]
@@ -271,9 +271,11 @@ mod tests {
         let directories = SqliteResourceRepository::from_pool(pool.clone());
         directories.run_migrations().await.unwrap();
         let teams = Directory::new(DirectoryId::root(), "teams").unwrap();
-        DirectoryStore::insert(&directories, &teams).await.unwrap();
+        DirectoryRepository::insert(&directories, &teams)
+            .await
+            .unwrap();
         let workspace = Directory::new(teams.id(), "alice").unwrap();
-        DirectoryStore::insert(&directories, &workspace)
+        DirectoryRepository::insert(&directories, &workspace)
             .await
             .unwrap();
         let repository = SqliteIdentityRepository::new(pool);

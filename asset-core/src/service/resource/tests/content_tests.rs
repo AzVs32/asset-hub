@@ -153,12 +153,13 @@ async fn streaming_text_replacement_serializes_with_rename_on_the_same_blob() {
 
     let rename_service = service.clone();
     let rename_snapshot = repository.locate_sync(resource.clone());
+    let rename_revision = rename_snapshot.resource().revision();
     let rename_task = tokio::spawn(async move {
         rename_service
             .commands()
             .update_resource_snapshot(
                 rename_snapshot,
-                UpdateResource::new().with_name("renamed.md"),
+                UpdateResource::new(rename_revision).with_name("renamed.md"),
             )
             .await
     });

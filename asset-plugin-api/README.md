@@ -26,9 +26,9 @@ Asset Hub versions the Rust library and its serialized contracts separately:
 
 | Surface | Current value | Purpose |
 | --- | --- | --- |
-| Rust crate | `0.1.0` | Rust source API |
-| Manifest | `1` | external Extism/Wasm `manifest.json` document format |
-| Plugin API | `asset-hub.plugin-api@1` | Action JSON, Host functions, and Plugin Frame messages |
+| Rust crate | `0.2.0` | Rust source API |
+| Manifest | `2` | external Extism/Wasm `manifest.json` document format |
+| Plugin API | `asset-hub.plugin-api@2` | Action JSON, Host functions, and Plugin Frame messages |
 
 Plugins must declare both `manifest_version` and `runtime.plugin_api`. The host
 rejects unsupported contract versions instead of attempting to interpret them.
@@ -50,7 +50,7 @@ capabilities, and permissions:
 
 ```json
 {
-  "manifest_version": 1,
+  "manifest_version": 2,
   "plugin": {
     "id": "example.plugin",
     "name": "Example Plugin",
@@ -59,18 +59,26 @@ capabilities, and permissions:
   },
   "runtime": {
     "type": "extism",
-    "plugin_api": "asset-hub.plugin-api@1"
+    "plugin_api": "asset-hub.plugin-api@2"
   },
   "capabilities": {
+    "resource_kinds": [
+      {
+        "kind": "example:document",
+        "label": "Document",
+        "supports_content": true
+      }
+    ],
     "resource_actions": [
       {
         "id": "example.plugin.inspect",
         "label": "Inspect",
+        "description": "Inspect this document",
         "handler": "inspect",
         "applies_to": {
-          "kinds": ["core:resource"]
+          "kinds": ["example:document"]
         },
-        "views": ["json"]
+        "output": { "views": ["json"] }
       }
     ]
   },
@@ -111,7 +119,7 @@ capability by declaring its semantic identifier in `provides`:
   "handler": "render_thumbnail",
   "applies_to": { "kinds": ["example:epub"] },
   "access": "read",
-  "views": ["media"]
+  "output": { "views": ["media"] }
 }
 ```
 
@@ -125,7 +133,7 @@ The Host recognizes `thumbnail`, `text_read`, and `text_edit` singleton capabili
 actions; Directory actions recognize only `thumbnail`. A `thumbnail` provider must be read-only,
 support the `media` view, and declare the matching `resource_list_thumbnail` or
 `directory_list_thumbnail` UI location. A `text_read` provider must be read-only; a `text_edit`
-provider must be read-write. The Host rejects unknown capability names. Plugins must retain their
+provider must be write. The Host rejects unknown capability names. Plugins must retain their
 provider-owned action IDs and must not reuse a `core.*` action ID.
 
 ### Plugin Frame messages
@@ -136,7 +144,7 @@ action already exposed for the current Resource:
 ```json
 {
   "type": "asset-hub:execute-resource-action",
-  "plugin_api": "asset-hub.plugin-api@1",
+  "plugin_api": "asset-hub.plugin-api@2",
   "request_id": "request-1",
   "resource_id": "01900000-0000-7000-8000-000000000000",
   "action": "example.plugin.inspect",
@@ -144,13 +152,13 @@ action already exposed for the current Resource:
 }
 ```
 
-An iframe opened by the current Resource's resolved, read-write `text_edit` provider may request
+An iframe opened by the current Resource's resolved, write `text_edit` provider may request
 raw UTF-8 text replacement without putting the content in Action JSON:
 
 ```json
 {
   "type": "asset-hub:replace-resource-text",
-  "plugin_api": "asset-hub.plugin-api@1",
+  "plugin_api": "asset-hub.plugin-api@2",
   "request_id": "request-2",
   "resource_id": "01900000-0000-7000-8000-000000000000",
   "text": "updated text"
@@ -178,7 +186,7 @@ explicit imports:
 ```rust
 use asset_plugin_api::manifest::PluginManifest;
 use asset_plugin_api::protocol::{
-    PLUGIN_API_VERSION, PluginActionRequest, PluginActionOutput,
+    PLUGIN_API_VERSION, PluginResourceActionRequest, PluginResourceActionOutput,
 };
 use asset_plugin_api::abi::content::guest;
 ```
@@ -197,29 +205,24 @@ cargo doc -p asset-plugin-api --open
 
 ## Compatibility
 
-This development line intentionally narrows Manifest `1` in place: older
-documents that declare `runtime.type = "builtin"` are incompatible and must not
-be used as external packages. Built-in capabilities are assembled by the Host
-without a plugin Manifest.
+Version 2 is intentionally incompatible with version 1. Existing packages must update their
+Manifest and runtime together, rebuild `plugin.wasm`, remove the old lock, and reseal the package.
+The Host rejects version 1 packages instead of translating them.
 
-Manifest `1` includes the optional `provides` field on resource and directory actions. The Host
-recognizes Resource-scoped `thumbnail`, `text_read`, and `text_edit` capabilities and the
-Directory-scoped `thumbnail` capability. This wire-contract change does not increase the Manifest
-version. Existing sealed packages must declare a supported capability, then be rebuilt and
-resealed.
+The principal version 2 changes are:
 
-The responsibility change has these compatibility effects:
-
-- Rust API: breaking; `PluginRuntime::Builtin`, Host-normalized Action types,
-  built-in Action identifiers, `PluginExecutionPolicy`, and `PluginWebAssets`
-  were removed. Wire request access is now named `PluginActionAccess`. Root-level
-  type re-exports and compatibility module aliases were removed; use `manifest`,
-  `protocol`, and `abi` paths. `PLUGIN_API_VERSION` now belongs to `protocol`.
-- Manifest `1`: breaking for documents that used the Host-only `builtin` value;
-  every package now requires an Extism runtime and `plugin.wasm` integrity entry.
-- Plugin API `asset-hub.plugin-api@1`: `PluginResource.tags` was removed from Resource Action
-  requests without changing the version discriminator. Existing plugins must be rebuilt against
-  the current contract.
+- Resource kinds use `capabilities.resource_kinds`; Directory kinds remain in
+  `capabilities.directory_kinds`. Kind IDs are canonical lowercase `namespace:name` values.
+- Resource and Directory action contracts use distinct request/output types and canonical
+  dot-separated provider IDs such as `example.plugin.inspect`.
+- Action metadata includes `description`, uses `access: "read" | "write"`, and declares views in
+  `output.views`. Resource MIME matching is declared in `applies_to.mime_types`.
+- Resource and Directory wire snapshots include their current `revision`. Effects are accepted
+  only when their aggregate identity and optimistic-concurrency precondition still match.
+- Host write-Action requests require `expected_revision`; read Actions may omit it and use the
+  latest authorized snapshot, or supply it as an explicit consistency precondition.
+- Built-in capabilities remain Host-owned definitions and cannot be declared with a plugin
+  runtime discriminator.
 
 Host applications use `asset-core` for normalized Action/Kind and
 runtime-independent Action policy, `asset-infra` for Extism execution policy,

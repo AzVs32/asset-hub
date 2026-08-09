@@ -103,7 +103,10 @@ export function ResourceWorkspace() {
           resource={resource}
           kinds={kinds}
           pending={busy}
-          onSave={(draft) => commands.update.mutateAsync({ id: resource?.id ?? "", draft })}
+          onSave={(draft) => {
+            if (!resource) return Promise.reject(new Error("Resource is unavailable"));
+            return commands.update.mutateAsync({ resource, draft });
+          }}
           onAction={(action) => {
             if (resource) commands.execute.mutate({ resource, action });
           }}
@@ -133,13 +136,17 @@ export function ResourceWorkspace() {
         parent={browser.filters.directory}
         kinds={browser.directoryKinds.data ?? []}
         pending={commands.createFolder.isPending}
-        onCreate={(name, kind) =>
-          commands.createFolder.mutateAsync({
-            parent: browser.filters.directory,
+        onCreate={(name, kind) => {
+          const parent = browser.listing.data?.directory;
+          if (!parent || parent.path !== browser.filters.directory) {
+            return Promise.reject(new Error("Parent directory is unavailable"));
+          }
+          return commands.createFolder.mutateAsync({
+            parent,
             name,
             ...(kind ? { kind } : {}),
-          })
-        }
+          });
+        }}
       />
       <PluginActionDialog
         result={commands.actionResult}

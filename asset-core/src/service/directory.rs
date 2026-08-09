@@ -3,16 +3,18 @@
 mod action;
 mod command;
 mod contract;
+mod secured;
 
 pub(crate) use contract::ExecutedDirectoryAction;
 pub use contract::{DirectoryActions, ExecuteDirectoryAction, UpdateDirectory};
+pub use secured::SecuredDirectoryService;
 
 use crate::{
     CoreError,
-    domain::{Directory, DirectoryId, DirectoryKind, DirectoryPath},
+    domain::{Directory, DirectoryId, DirectoryKind, DirectoryKindDefinition, DirectoryPath},
     port::{
         DirectoryActionExecutor, DirectoryActionRegistry, DirectoryIndex, DirectoryKindRegistry,
-        DirectoryLocation, DirectoryStorage, DirectoryStore, LocatedDirectory,
+        DirectoryLocation, DirectoryRepository, DirectoryStorage, LocatedDirectory,
     },
 };
 use std::sync::Arc;
@@ -27,7 +29,7 @@ struct DirectoryActionPorts {
 /// Coordinates directory aggregates, the durable store, the query index, and physical storage.
 #[derive(Clone)]
 pub struct DirectoryService {
-    store: Arc<dyn DirectoryStore>,
+    repository: Arc<dyn DirectoryRepository>,
     index: Arc<dyn DirectoryIndex>,
     storage: Arc<dyn DirectoryStorage>,
     kind_registry: Arc<dyn DirectoryKindRegistry>,
@@ -36,14 +38,22 @@ pub struct DirectoryService {
 }
 
 impl DirectoryService {
+    pub fn secured<'a>(
+        &'a self,
+        authorization: &'a crate::service::AuthorizationService,
+        context: &'a crate::domain::AccessContext,
+    ) -> SecuredDirectoryService<'a> {
+        SecuredDirectoryService::new(self, authorization, context)
+    }
+
     pub fn new(
-        store: Arc<dyn DirectoryStore>,
+        repository: Arc<dyn DirectoryRepository>,
         index: Arc<dyn DirectoryIndex>,
         storage: Arc<dyn DirectoryStorage>,
         kind_registry: Arc<dyn DirectoryKindRegistry>,
     ) -> Self {
         Self {
-            store,
+            repository,
             index,
             storage,
             kind_registry,
@@ -52,7 +62,7 @@ impl DirectoryService {
         }
     }
 
-    pub fn kind_definitions(&self) -> &[crate::port::DirectoryKindDefinition] {
+    pub fn kind_definitions(&self) -> &[DirectoryKindDefinition] {
         self.kind_registry.definitions()
     }
 
@@ -61,7 +71,7 @@ impl DirectoryService {
     }
 
     pub async fn reload_index(&self) -> Result<(), CoreError> {
-        let directories = self.store.load_all().await?;
+        let directories = self.repository.load_all().await?;
         self.index.replace_all(directories).await
     }
 

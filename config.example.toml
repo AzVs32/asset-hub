@@ -61,8 +61,8 @@ filesystem_write = []
 
 # Plugins are discovered from <blob.local.root>/.asset-hub/plugins/<plugin-id>/manifest.json.
 # Restart the service after installing, removing, or changing a plugin package.
-# Plugin manifest example (Manifest V1):
-# Use `capabilities.kinds` for resource types, `capabilities.directory_kinds` for
+# Plugin manifest example (Manifest V2):
+# Use `capabilities.resource_kinds` for resource types, `capabilities.directory_kinds` for
 # directory types, `capabilities.resource_actions` for resource actions, and
 # `capabilities.directory_actions` for directory actions.
 # A kind-specific action can implement a singleton Host capability while retaining its own
@@ -73,8 +73,8 @@ filesystem_write = []
 # existing `manifest.lock.json` and never modifies the package.
 #
 # {
-#   "$schema": "https://asset-hub.local/schemas/plugin-manifest-v1.json",
-#   "manifest_version": 1,
+#   "$schema": "https://asset-hub.local/schemas/plugin-manifest-v2.json",
+#   "manifest_version": 2,
 #   "plugin": {
 #     "id": "example.tools",
 #     "name": "Example Tools",
@@ -84,10 +84,10 @@ filesystem_write = []
 #   },
 #   "runtime": {
 #     "type": "extism",
-#     "plugin_api": "asset-hub.plugin-api@1"
+#     "plugin_api": "asset-hub.plugin-api@2"
 #   },
 #   "capabilities": {
-#     "kinds": [
+#     "resource_kinds": [
 #       {
 #         "kind": "example:document",
 #         "label": "Document",
@@ -98,6 +98,7 @@ filesystem_write = []
 #       {
 #         "id": "example.tools.summarize",
 #         "label": "Summarize",
+#         "description": "Summarize this document",
 #         "handler": "summarize",
 #         "applies_to": {
 #           "kinds": ["example:document"]
@@ -107,7 +108,7 @@ filesystem_write = []
 #           "content": true,
 #           "content_delivery": "reference"
 #         },
-#         "views": ["json"]
+#         "output": { "views": ["json"] }
 #       }
 #     ]
 #   },

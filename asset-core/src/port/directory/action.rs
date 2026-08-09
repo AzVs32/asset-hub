@@ -5,12 +5,12 @@
 use crate::{
     CoreError,
     domain::{
-        DirectoryAction, DirectoryActionAccess, DirectoryActionDefinition,
-        DirectoryActionRequirements, DirectoryId, DirectoryKind,
+        ActionAccess, DirectoryActionDefinition, DirectoryActionId, DirectoryActionRequirements,
+        DirectoryId, DirectoryKind,
     },
     port::LocatedDirectory,
 };
-use asset_plugin_api::protocol::directory::DirectoryPluginActionOutput;
+use asset_plugin_api::protocol::directory::PluginDirectoryActionOutput;
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashSet;
@@ -18,8 +18,8 @@ use std::collections::HashSet;
 #[derive(Debug, Clone)]
 pub struct DirectoryActionRequest {
     directory: LocatedDirectory,
-    action: DirectoryAction,
-    access: DirectoryActionAccess,
+    action: DirectoryActionId,
+    access: ActionAccess,
     requirements: DirectoryActionRequirements,
     input: Value,
 }
@@ -27,8 +27,8 @@ pub struct DirectoryActionRequest {
 impl DirectoryActionRequest {
     pub fn new(
         directory: LocatedDirectory,
-        action: DirectoryAction,
-        access: DirectoryActionAccess,
+        action: DirectoryActionId,
+        access: ActionAccess,
         requirements: DirectoryActionRequirements,
         input: Value,
     ) -> Self {
@@ -43,10 +43,10 @@ impl DirectoryActionRequest {
     pub fn directory(&self) -> &LocatedDirectory {
         &self.directory
     }
-    pub fn action(&self) -> &DirectoryAction {
+    pub fn action(&self) -> &DirectoryActionId {
         &self.action
     }
-    pub fn access(&self) -> DirectoryActionAccess {
+    pub fn access(&self) -> ActionAccess {
         self.access
     }
     pub fn requirements(&self) -> &DirectoryActionRequirements {
@@ -60,15 +60,15 @@ impl DirectoryActionRequest {
 #[derive(Debug, Clone, PartialEq)]
 pub struct DirectoryActionOutput {
     directory_id: DirectoryId,
-    action: DirectoryAction,
-    output: DirectoryPluginActionOutput,
+    action: DirectoryActionId,
+    output: PluginDirectoryActionOutput,
 }
 
 impl DirectoryActionOutput {
     pub fn new(
         directory_id: DirectoryId,
-        action: DirectoryAction,
-        output: DirectoryPluginActionOutput,
+        action: DirectoryActionId,
+        output: PluginDirectoryActionOutput,
     ) -> Self {
         Self {
             directory_id,
@@ -79,10 +79,10 @@ impl DirectoryActionOutput {
     pub fn directory_id(&self) -> DirectoryId {
         self.directory_id
     }
-    pub fn action(&self) -> &DirectoryAction {
+    pub fn action(&self) -> &DirectoryActionId {
         &self.action
     }
-    pub fn output(&self) -> &DirectoryPluginActionOutput {
+    pub fn output(&self) -> &PluginDirectoryActionOutput {
         &self.output
     }
 }
@@ -117,7 +117,7 @@ pub trait DirectoryActionRegistry: Send + Sync {
                 action
                     .kinds()
                     .iter()
-                    .any(|expected| expected.eq_ignore_ascii_case(kind.as_str()))
+                    .any(|expected| expected == kind.as_str())
             }) {
                 if !selected
                     .iter()

@@ -1,19 +1,19 @@
 use super::*;
-use crate::domain::ResourceAction;
+use crate::domain::ResourceActionId;
 
 #[test]
 fn action_content_delivery_never_loads_unrequested_content() {
     use crate::domain::{ResourceActionContentDelivery, ResourceActionRequirements};
     let policy = test_resource_action_policy();
 
-    let without_content = ResourceActionDefinition::new_static("inspect", "Inspect");
+    let without_content = ResourceActionDefinition::new_static("test.inspect", "Inspect");
     assert_eq!(
         resolved_content_delivery(&without_content, 1, &policy),
         None
     );
 
     let required = |delivery| {
-        ResourceActionDefinition::new_static("inspect", "Inspect").with_requirements(
+        ResourceActionDefinition::new_static("test.inspect", "Inspect").with_requirements(
             ResourceActionRequirements {
                 content: true,
                 content_delivery: delivery,
@@ -92,7 +92,7 @@ fn resource_without_content_rejects_direct_content_action_execution() {
 
     let error = block_on(service.actions().execute_resource_action(
         &resource.id(),
-        ExecuteResourceAction::new(ResourceAction::from_static("test.text.extract")),
+        ExecuteResourceAction::new(ResourceActionId::from_static("test.text.extract"), None),
     ))
     .unwrap_err();
 
@@ -119,7 +119,7 @@ fn execute_content_action_returns_text_for_matching_kind() {
 
     let output = block_on(service.actions().execute_resource_action(
         &resource.id(),
-        ExecuteResourceAction::new(ResourceAction::from_static("test.text.extract")),
+        ExecuteResourceAction::new(ResourceActionId::from_static("test.text.extract"), None),
     ))
     .unwrap()
     .unwrap();
@@ -145,11 +145,24 @@ fn execute_write_action_replaces_resource_content() {
     )
     .unwrap();
 
+    let error = block_on(
+        service.actions().execute_resource_action(
+            &resource.id(),
+            ExecuteResourceAction::new(ResourceActionId::from_static("azvs.markdown.edit"), None)
+                .with_input(json!({"markdown": "# Missing revision"})),
+        ),
+    )
+    .unwrap_err();
+    assert!(matches!(error, CoreError::InvalidOperation { .. }));
+
     let output = block_on(
         service.actions().execute_resource_action(
             &resource.id(),
-            ExecuteResourceAction::new(ResourceAction::from_static("azvs.markdown.edit"))
-                .with_input(json!({"markdown": "# New\n\nUpdated."})),
+            ExecuteResourceAction::new(
+                ResourceActionId::from_static("azvs.markdown.edit"),
+                Some(resource.revision()),
+            )
+            .with_input(json!({"markdown": "# New\n\nUpdated."})),
         ),
     )
     .unwrap()
@@ -199,14 +212,16 @@ fn execute_action_rejects_a_stale_caller_snapshot() {
     let error = block_on(
         service.actions().execute_resource_action(
             &resource.id(),
-            ExecuteResourceAction::new(ResourceAction::from_static("azvs.markdown.edit"))
-                .with_input(json!({"markdown": "# Stale"}))
-                .with_expected_revision(stale),
+            ExecuteResourceAction::new(
+                ResourceActionId::from_static("azvs.markdown.edit"),
+                Some(stale),
+            )
+            .with_input(json!({"markdown": "# Stale"})),
         ),
     )
     .unwrap_err();
 
-    assert!(matches!(error, CoreError::Conflict { .. }));
+    assert!(matches!(error, CoreError::RevisionConflict { .. }));
     assert_eq!(
         blob_storage.get_sync(&key).unwrap(),
         Bytes::from_static(b"# Current")
@@ -230,8 +245,11 @@ fn write_action_cleanup_failure_keeps_a_recoverable_intent() {
     let error = block_on(
         service.actions().execute_resource_action(
             &resource.id(),
-            ExecuteResourceAction::new(ResourceAction::from_static("azvs.markdown.edit"))
-                .with_input(json!({"markdown": "# New"})),
+            ExecuteResourceAction::new(
+                ResourceActionId::from_static("azvs.markdown.edit"),
+                Some(resource.revision()),
+            )
+            .with_input(json!({"markdown": "# New"})),
         ),
     )
     .unwrap_err();

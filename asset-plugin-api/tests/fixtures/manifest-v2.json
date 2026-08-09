@@ -1,5 +1,5 @@
 {
-  "manifest_version": 1,
+  "manifest_version": 2,
   "plugin": {
     "id": "example.plugin",
     "name": "Example Plugin",
@@ -9,10 +9,10 @@
   "runtime": {
     "type": "extism",
     "wasi": false,
-    "plugin_api": "asset-hub.plugin-api@1"
+    "plugin_api": "asset-hub.plugin-api@2"
   },
   "capabilities": {
-    "kinds": [],
+    "resource_kinds": [],
     "directory_kinds": [],
     "resource_actions": [
       {
@@ -23,13 +23,15 @@
           "kinds": [
             "core:resource"
           ],
-          "media_types": [],
+          "mime_types": [],
           "extensions": []
         },
         "access": "read",
-        "views": [
-          "json"
-        ]
+        "output": {
+          "views": [
+            "json"
+          ]
+        }
       }
     ],
     "directory_actions": []

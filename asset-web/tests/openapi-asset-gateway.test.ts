@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ConcurrentModificationError } from "@/application/errors";
 import type { BlobSha256, FileSha256 } from "@/infrastructure/http/file-sha256";
 import { OpenApiAssetGateway } from "@/infrastructure/http/openapi-asset-gateway";
 import { action, resource } from "./fixtures";
@@ -38,16 +39,17 @@ describe("OpenApiAssetGateway URL boundary", () => {
               ancestors: [],
               label: "Resource",
               supports_content: true,
-              source: "builtin:core.resource",
+              origin: { kind: "builtin", id: "core.resource" },
               detect: null,
               actions: [
                 {
                   id: "core.resource.download",
+                  origin: { kind: "builtin", id: "core.resource" },
                   label: "Download",
                   description: null,
-                  access: "read_only",
+                  access: "read",
                   requires: { content: true, content_delivery: "reference" },
-                  output: { view: ["download"] },
+                  output: { views: ["download"] },
                   ui: { group: "open", order: 10, locations: ["resource_detail"] },
                   applies_to: {
                     kinds: ["core:resource"],
@@ -67,7 +69,7 @@ describe("OpenApiAssetGateway URL boundary", () => {
 
     expect(kinds[0]?.actions[0]).toMatchObject({
       id: "core.resource.download",
-      access: "read_only",
+      access: "read",
       output: { views: ["download"] },
     });
   });
@@ -96,9 +98,10 @@ describe("OpenApiAssetGateway URL boundary", () => {
     if (!request) throw new Error("request was not captured");
     expect(new URL(request.url).pathname).toBe("/api/resources/resource-1/actions/legacy.content");
     expect(request.method).toBe("POST");
+    expect(await request.json()).toEqual({ input: {} });
   });
 
-  it("sends an optional resource version precondition separately from plugin input", async () => {
+  it("sends the required resource revision separately from plugin input", async () => {
     const fetchMock = vi.fn(async (_request: Request) =>
       Response.json({
         resource_id: "resource-1",
@@ -109,7 +112,7 @@ describe("OpenApiAssetGateway URL boundary", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
     const absoluteGateway = new OpenApiAssetGateway("http://localhost/api");
-    const edit = action({ id: "core.text.edit", access: "read_write" });
+    const edit = action({ id: "core.text.edit", access: "write" });
     const item = resource([edit]);
 
     await absoluteGateway.executeAction(item, edit.id, { text: "updated" });
@@ -120,6 +123,54 @@ describe("OpenApiAssetGateway URL boundary", () => {
       input: { text: "updated" },
       expected_revision: item.revision,
     });
+  });
+
+  it("guards resource deletion with the current revision", async () => {
+    const item = resource();
+    const fetchMock = vi.fn(async (_request: Request) =>
+      Response.json({
+        id: item.id,
+        name: item.name,
+        directory: item.directory,
+        kind: item.kind,
+        content: null,
+        actions: [],
+        created_at: item.createdAt,
+        updated_at: item.updatedAt,
+        revision: item.revision + 1,
+        deleted_at: new Date().toISOString(),
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const absoluteGateway = new OpenApiAssetGateway("http://localhost/api");
+
+    await absoluteGateway.deleteResource(item);
+
+    const request = fetchMock.mock.calls[0]?.[0];
+    if (!request) throw new Error("request was not captured");
+    expect(request.method).toBe("DELETE");
+    expect(new URL(request.url).searchParams.get("expected_revision")).toBe(String(item.revision));
+  });
+
+  it("maps revision conflicts to an application-level refresh error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          {
+            error: "resource changed",
+            code: "concurrency.revision_conflict",
+            retryable: true,
+          },
+          { status: 409 },
+        ),
+      ),
+    );
+    const absoluteGateway = new OpenApiAssetGateway("http://localhost/api");
+
+    await expect(absoluteGateway.deleteResource(resource())).rejects.toBeInstanceOf(
+      ConcurrentModificationError,
+    );
   });
 
   it("streams replacement text outside the action JSON contract", async () => {
@@ -141,7 +192,7 @@ describe("OpenApiAssetGateway URL boundary", () => {
           checksum: { kind: "sha256", value: "c".repeat(64) },
           verification_error: null,
         },
-        actions: { available_actions: [] },
+        actions: [],
         created_at: item.createdAt,
         updated_at: item.updatedAt,
         revision: item.revision + 1,
@@ -353,7 +404,7 @@ describe("OpenApiAssetGateway URL boundary", () => {
             directory: "uploads",
             kind: "core:resource",
             content: null,
-            actions: { available_actions: [] },
+            actions: [],
             created_at: "2026-01-01T00:00:00Z",
             updated_at: "2026-01-01T00:00:00Z",
             revision: 1,

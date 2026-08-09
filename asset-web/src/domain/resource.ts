@@ -1,7 +1,11 @@
 import type { PluginViewKind } from "./plugin";
 
-export type ActionAccess = "read_only" | "read_write";
+export type ActionAccess = "read" | "write";
 export type ContentDelivery = "auto" | "inline" | "reference";
+export interface DefinitionOrigin {
+  kind: "builtin" | "plugin";
+  id: string;
+}
 
 export interface ResourceContent {
   size: number;
@@ -13,6 +17,7 @@ export interface ResourceContent {
 
 export interface ResourceAction {
   id: string;
+  origin: DefinitionOrigin;
   provides: string | null;
   label: string;
   description: string | null;
@@ -25,6 +30,7 @@ export interface ResourceAction {
 
 export interface DirectoryAction {
   id: string;
+  origin: DefinitionOrigin;
   provides: string | null;
   label: string;
   description: string | null;
@@ -54,7 +60,7 @@ export interface ResourceKind {
   ancestors: string[];
   label: string;
   supportsContent: boolean;
-  source: string;
+  origin: DefinitionOrigin;
   actions: ResourceAction[];
   detect: { mimeTypes: string[]; extensions: string[] } | null;
 }
@@ -68,11 +74,15 @@ export interface ResourcePage {
 
 export interface Directory {
   id: string;
+  parentId: string | null;
   path: string;
   parentPath: string;
   name: string;
   kind: string;
   actions: DirectoryAction[];
+  createdAt: string;
+  updatedAt: string;
+  revision: number;
 }
 
 export interface DirectoryKind {
@@ -80,7 +90,7 @@ export interface DirectoryKind {
   parent: string | null;
   ancestors: string[];
   label: string;
-  source: string;
+  origin: DefinitionOrigin;
   actions: DirectoryAction[];
 }
 
@@ -103,6 +113,12 @@ export interface ResourceFilters {
 export interface ResourceDraft {
   name: string;
   directory: string;
+  kind: string;
+}
+
+export interface DirectoryDraft {
+  name: string;
+  parentId: string;
   kind: string;
 }
 

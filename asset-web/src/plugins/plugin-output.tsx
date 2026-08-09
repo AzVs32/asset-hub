@@ -1,5 +1,5 @@
 import { useGateway } from "@/application/ports/gateway-context";
-import type { PluginActionOutput } from "@/domain/plugin";
+import type { ResourceActionOutput } from "@/domain/plugin";
 import type { Resource } from "@/domain/resource";
 import { PluginViewHost } from "@/kernel/plugin-view-host";
 
@@ -8,7 +8,7 @@ export function PluginOutput({
   resource,
   onResourceChanged,
 }: {
-  output: PluginActionOutput;
+  output: ResourceActionOutput;
   resource: Resource;
   onResourceChanged?: (() => void | Promise<void>) | undefined;
 }) {

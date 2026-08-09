@@ -1,5 +1,5 @@
 use super::{DirectoryError, ResourceError, UserError};
-use crate::domain::ActionIdError;
+use crate::domain::{ActionIdError, DefinitionOriginIdError, KindIdError};
 use asset_plugin_api::protocol::{PluginActionFailure, PluginDiagnostic};
 use thiserror::Error;
 
@@ -11,6 +11,12 @@ use thiserror::Error;
 pub enum CoreError {
     #[error(transparent)]
     ActionId(#[from] ActionIdError),
+
+    #[error(transparent)]
+    KindId(#[from] KindIdError),
+
+    #[error(transparent)]
+    DefinitionOriginId(#[from] DefinitionOriginIdError),
 
     /// 目录领域内的业务校验或树结构约束错误。
     #[error(transparent)]
@@ -67,6 +73,10 @@ pub enum CoreError {
         /// 冲突原因。
         message: String,
     },
+
+    /// 调用方基于过期的聚合快照发起了需要一致性的操作。
+    #[error("{aggregate} `{id}` changed after it was read")]
+    RevisionConflict { aggregate: &'static str, id: String },
 
     /// 调用数据超过 Core 所有的业务处理上限。
     #[error("{resource} is limited to {limit} bytes, received {actual} bytes")]
@@ -153,6 +163,13 @@ impl CoreError {
     pub fn conflict(message: impl Into<String>) -> Self {
         Self::Conflict {
             message: message.into(),
+        }
+    }
+
+    pub fn revision_conflict(aggregate: &'static str, id: impl Into<String>) -> Self {
+        Self::RevisionConflict {
+            aggregate,
+            id: id.into(),
         }
     }
 

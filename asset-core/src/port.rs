@@ -1,7 +1,7 @@
 //! Core 依赖的 Host Port。
 //!
 //! - 资源持久化：`ResourceRepository`、`ResourceQuery`
-//! - 目录持久化与查询：`DirectoryStore`、`DirectoryQuery`、`DirectoryIndex`
+//! - 目录持久化与查询：`DirectoryRepository`、`DirectoryQuery`、`DirectoryIndex`
 //! - 内容存储：`BlobStorage`、`DirectoryStorage`、`StorageScanner`
 //! - 运行时注册与执行：kind/action registry、action executor
 //! - 身份：用户仓储、密码哈希
@@ -17,14 +17,14 @@ mod upload;
 
 pub use directory::{
     DirectoryActionExecutor, DirectoryActionOutput, DirectoryActionRegistry,
-    DirectoryActionRequest, DirectoryIndex, DirectoryKindDefinition, DirectoryKindRegistry,
-    DirectoryLocation, DirectoryQuery, DirectoryStore, LocatedDirectory,
+    DirectoryActionRequest, DirectoryIndex, DirectoryKindRegistry, DirectoryLocation,
+    DirectoryQuery, DirectoryRepository, LocatedDirectory,
 };
 pub use identity::{LocatedUser, PasswordHasher, UserQuery, UserRepository};
 pub use resource::{
     ListResources, LocatedResource, ResourceActionExecutor, ResourceActionOutput,
     ResourceActionRegistry, ResourceActionRequest, ResourceContentReplacementRepository,
-    ResourceKindDefinition, ResourceKindRegistry, ResourcePage, ResourceQuery, ResourceRepository,
+    ResourceKindRegistry, ResourcePage, ResourceQuery, ResourceRepository,
 };
 pub use storage::{
     BlobByteStream, BlobStorage, DirectoryStorage, RESERVED_BLOB_STORAGE_PREFIX, ScannedBlob,

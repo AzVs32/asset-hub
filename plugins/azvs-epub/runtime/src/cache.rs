@@ -1,5 +1,5 @@
 use super::*;
-use asset_plugin_api::protocol::PluginActionRequest;
+use asset_plugin_api::protocol::PluginResourceActionRequest;
 use extism_pdk::FnResult;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 static BOOK_CACHE: OnceLock<Mutex<VecDeque<Arc<CachedBook>>>> = OnceLock::new();
 static COVER_CACHE: OnceLock<Mutex<VecDeque<CachedCover>>> = OnceLock::new();
 
-pub(super) fn resource_cache_key(request: &PluginActionRequest) -> String {
+pub(super) fn resource_cache_key(request: &PluginResourceActionRequest) -> String {
     let mut key = format!(
         "{}:{}:{}",
         request.resource.id,
@@ -41,7 +41,7 @@ pub(super) fn cached_book(key: &str) -> Option<Arc<CachedBook>> {
     Some(book)
 }
 
-pub(super) fn load_cached_book(request: &PluginActionRequest) -> FnResult<Arc<CachedBook>> {
+pub(super) fn load_cached_book(request: &PluginResourceActionRequest) -> FnResult<Arc<CachedBook>> {
     let key = resource_cache_key(request);
     if let Some(book) = cached_book(&key) {
         return Ok(book);

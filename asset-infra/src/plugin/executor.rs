@@ -1,20 +1,23 @@
 use asset_core::CoreError;
-use asset_core::domain::{ActionAccess, ResourceActionAppliesTo, ResourceContentMatcher};
+use asset_core::domain::{
+    ActionAccess, ResourceActionAppliesTo, ResourceContentMatcher, ResourceKindDefinition,
+};
 use asset_core::port::{
     BlobStorage, DirectoryActionExecutor, DirectoryActionOutput, DirectoryActionRequest,
     DirectoryKindRegistry, DirectoryQuery, ResourceActionExecutor, ResourceActionOutput,
-    ResourceActionRequest, ResourceKindDefinition, ResourceKindRegistry, ResourceQuery,
+    ResourceActionRequest, ResourceKindRegistry, ResourceQuery,
 };
 use asset_plugin_api::manifest::{
     DirectoryActionCapability, PluginPermission, PluginPermissions, PluginRuntime,
     ResourceActionCapability,
 };
 use asset_plugin_api::protocol::directory::{
-    DirectoryActionEffect, DirectoryPluginActionOutput, PluginDirectory,
+    DirectoryActionEffect, PluginDirectory, PluginDirectoryActionOutput,
     PluginDirectoryActionRequest,
 };
 use asset_plugin_api::protocol::{
-    PluginActionAccess, PluginActionFailure, PluginActionOutput, PluginActionRequest,
+    PluginActionAccess, PluginActionFailure, PluginResourceActionOutput,
+    PluginResourceActionRequest,
 };
 use async_trait::async_trait;
 use extism::{CompiledPlugin, Plugin};
@@ -476,7 +479,7 @@ impl DirectoryActionExecutor for ExtismActionExecutor {
                 binding.plugin_id, binding.action
             )));
         }
-        if matches!(request.access(), ActionAccess::ReadWrite)
+        if matches!(request.access(), ActionAccess::Write)
             && !binding.permissions.directory_write()
             && !binding.permissions.directory_create_child()
         {
@@ -508,6 +511,7 @@ impl DirectoryActionExecutor for ExtismActionExecutor {
                 path: directory.path().path().to_string(),
                 name: directory.directory().name().to_string(),
                 kind: directory.directory().kind().as_str().to_string(),
+                revision: directory.directory().revision(),
                 created_at: directory.directory().created_at().to_rfc3339(),
                 updated_at: directory.directory().updated_at().to_rfc3339(),
             },
@@ -546,8 +550,8 @@ pub(super) struct ActionBinding {
 
 fn plugin_action_access(access: ActionAccess) -> PluginActionAccess {
     match access {
-        ActionAccess::ReadOnly => PluginActionAccess::ReadOnly,
-        ActionAccess::ReadWrite => PluginActionAccess::ReadWrite,
+        ActionAccess::Read => PluginActionAccess::Read,
+        ActionAccess::Write => PluginActionAccess::Write,
     }
 }
 
@@ -566,7 +570,7 @@ fn call_extism_directory(
     binding: DirectoryActionBinding,
     payload: PluginDirectoryActionRequest,
     policy: &PluginExecutionPolicy,
-) -> Result<DirectoryPluginActionOutput, CoreError> {
+) -> Result<PluginDirectoryActionOutput, CoreError> {
     let mut plugin = Plugin::new_from_compiled(&binding.compiled).map_err(|error| {
         CoreError::plugin(
             &binding.plugin_id,
@@ -617,7 +621,7 @@ fn call_extism_directory(
             failure,
         ));
     }
-    let mut output: DirectoryPluginActionOutput =
+    let mut output: PluginDirectoryActionOutput =
         serde_json::from_value(value).map_err(|error| {
             CoreError::plugin(
                 &binding.plugin_id,
@@ -647,10 +651,10 @@ fn call_extism_directory(
 }
 
 fn resolve_plugin_output_urls_for_directory(
-    output: &mut DirectoryPluginActionOutput,
+    output: &mut PluginDirectoryActionOutput,
     plugin_id: &str,
 ) -> Result<(), CoreError> {
-    let mut shared = PluginActionOutput {
+    let mut shared = PluginResourceActionOutput {
         view: output.view.clone(),
         effects: Vec::new(),
         diagnostics: output.diagnostics.clone(),
@@ -673,9 +677,9 @@ impl std::fmt::Debug for ActionBinding {
 
 pub(super) fn call_extism(
     binding: ActionBinding,
-    payload: PluginActionRequest,
+    payload: PluginResourceActionRequest,
     policy: &PluginExecutionPolicy,
-) -> Result<PluginActionOutput, CoreError> {
+) -> Result<PluginResourceActionOutput, CoreError> {
     let mut plugin = Plugin::new_from_compiled(&binding.compiled).map_err(|error| {
         CoreError::plugin(
             &binding.plugin_id,
@@ -747,20 +751,21 @@ pub(super) fn call_extism(
             failure,
         ));
     }
-    let mut output: PluginActionOutput = serde_json::from_value(value).map_err(|error| {
-        CoreError::plugin_diagnostic(
-            &binding.plugin_id,
-            &binding.action,
-            host_diagnostic(
-                asset_plugin_api::protocol::diagnostic::codes::INVALID_OUTPUT,
-                format!("plugin returned invalid action output: {error}"),
-            ),
-        )
-    })?;
+    let mut output: PluginResourceActionOutput =
+        serde_json::from_value(value).map_err(|error| {
+            CoreError::plugin_diagnostic(
+                &binding.plugin_id,
+                &binding.action,
+                host_diagnostic(
+                    asset_plugin_api::protocol::diagnostic::codes::INVALID_OUTPUT,
+                    format!("plugin returned invalid action output: {error}"),
+                ),
+            )
+        })?;
     if output.effects.iter().any(|effect| {
         matches!(
             effect,
-            asset_plugin_api::protocol::PluginActionEffect::ReplaceContent(_)
+            asset_plugin_api::protocol::PluginResourceActionEffect::ReplaceContent(_)
         )
     }) && !binding.permissions.resource_content_replace()
     {

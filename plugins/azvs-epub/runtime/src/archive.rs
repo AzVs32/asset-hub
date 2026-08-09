@@ -1,7 +1,7 @@
 use super::*;
 use asset_plugin_api::protocol::{
-    MediaView, PluginActionRequest, PluginContentReferenceEncoding, PluginInlineContentEncoding,
-    PluginMediaEncoding,
+    MediaView, PluginContentReferenceEncoding, PluginInlineContentEncoding, PluginMediaEncoding,
+    PluginResourceActionRequest,
 };
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
@@ -11,7 +11,7 @@ use std::io::{Cursor, Read};
 use std::sync::Arc;
 use zip::ZipArchive;
 
-pub(super) fn epub_content_bytes(input: &PluginActionRequest) -> FnResult<Vec<u8>> {
+pub(super) fn epub_content_bytes(input: &PluginResourceActionRequest) -> FnResult<Vec<u8>> {
     if let Some(content) = &input.content {
         if content.encoding != PluginInlineContentEncoding::Base64 {
             return Err(Error::msg("unsupported content encoding").into());

@@ -564,16 +564,23 @@ fn is_temporary_lock_file(path: &Path) -> bool {
 }
 
 fn manifest_uses_plugin_frame(manifest: &PluginManifest) -> bool {
-    manifest
-        .capabilities
-        .resource_actions
-        .iter()
-        .any(|action| action.views.iter().any(|view| view == "plugin_frame"))
-        || manifest
-            .capabilities
-            .directory_actions
+    manifest.capabilities.resource_actions.iter().any(|action| {
+        action
+            .output
+            .views
             .iter()
-            .any(|action| action.views.iter().any(|view| view == "plugin_frame"))
+            .any(|view| view == "plugin_frame")
+    }) || manifest
+        .capabilities
+        .directory_actions
+        .iter()
+        .any(|action| {
+            action
+                .output
+                .views
+                .iter()
+                .any(|view| view == "plugin_frame")
+        })
 }
 
 #[cfg(test)]

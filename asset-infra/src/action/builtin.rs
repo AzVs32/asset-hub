@@ -1,12 +1,12 @@
 use asset_core::CoreError;
-use asset_core::domain::{DirectoryAction, Resource, ResourceAction};
+use asset_core::domain::{DirectoryActionId, Resource, ResourceActionId};
 use asset_core::port::{
     DirectoryActionExecutor, DirectoryActionOutput, DirectoryActionRequest, DirectoryKindRegistry,
     ResourceActionExecutor, ResourceActionOutput, ResourceActionRequest, ResourceKindRegistry,
 };
-use asset_plugin_api::protocol::directory::DirectoryPluginActionOutput;
+use asset_plugin_api::protocol::directory::PluginDirectoryActionOutput;
 use asset_plugin_api::protocol::{
-    DownloadView, MediaView, PluginActionOutput, PluginMediaEncoding, PluginView, TextView,
+    DownloadView, MediaView, PluginMediaEncoding, PluginResourceActionOutput, PluginView, TextView,
 };
 use async_trait::async_trait;
 use base64::Engine;
@@ -60,7 +60,7 @@ impl BuiltinResourceActionExecutor {
     pub(crate) fn supports(&self, request: &ResourceActionRequest) -> bool {
         let content = request.resource().content();
         self.bindings.iter().any(|binding| {
-            binding.definition.id() == request.action()
+            binding.definition.id().as_str() == request.action().as_str()
                 && binding.definition.matches_resource(
                     request.resource().kind().as_str(),
                     content.and_then(|content| content.mime_type()),
@@ -81,7 +81,7 @@ impl ResourceActionExecutor for BuiltinResourceActionExecutor {
             .bindings
             .iter()
             .find(|binding| {
-                binding.definition.id() == request.action()
+                binding.definition.id().as_str() == request.action().as_str()
                     && binding.definition.matches_resource(
                         request.resource().kind().as_str(),
                         content.and_then(|content| content.mime_type()),
@@ -150,7 +150,7 @@ impl BuiltinDirectoryActionExecutor {
 
     pub(crate) fn supports(&self, request: &DirectoryActionRequest) -> bool {
         self.bindings.iter().any(|binding| {
-            binding.definition.id() == request.action()
+            binding.definition.id().as_str() == request.action().as_str()
                 && binding
                     .definition
                     .matches_directory(request.directory().directory().kind().as_str())
@@ -168,7 +168,7 @@ impl DirectoryActionExecutor for BuiltinDirectoryActionExecutor {
             .bindings
             .iter()
             .find(|binding| {
-                binding.definition.id() == request.action()
+                binding.definition.id().as_str() == request.action().as_str()
                     && binding
                         .definition
                         .matches_directory(request.directory().directory().kind().as_str())
@@ -201,8 +201,8 @@ fn directory_thumbnail(
     );
     Ok(DirectoryActionOutput::new(
         directory.id(),
-        DirectoryAction::new(request.action().as_str()).map_err(CoreError::from)?,
-        DirectoryPluginActionOutput::new(view),
+        DirectoryActionId::new(request.action().as_str()).map_err(CoreError::from)?,
+        PluginDirectoryActionOutput::new(view),
     ))
 }
 
@@ -215,8 +215,8 @@ fn directory_download(request: DirectoryActionRequest) -> Result<DirectoryAction
     };
     Ok(DirectoryActionOutput::new(
         directory.id(),
-        DirectoryAction::new(request.action().as_str()).map_err(CoreError::from)?,
-        DirectoryPluginActionOutput::new(PluginView::Download(DownloadView {
+        DirectoryActionId::new(request.action().as_str()).map_err(CoreError::from)?,
+        PluginDirectoryActionOutput::new(PluginView::Download(DownloadView {
             url: format!("/directories/{}/download", directory.id()),
             mime_type: Some("application/zip".to_string()),
             filename: Some(filename),
@@ -224,7 +224,10 @@ fn directory_download(request: DirectoryActionRequest) -> Result<DirectoryAction
     ))
 }
 
-fn download(resource: Resource, action: ResourceAction) -> Result<ResourceActionOutput, CoreError> {
+fn download(
+    resource: Resource,
+    action: ResourceActionId,
+) -> Result<ResourceActionOutput, CoreError> {
     let Some(content_ref) = resource.content() else {
         return Err(CoreError::not_found(
             "resource content",
@@ -241,25 +244,25 @@ fn download(resource: Resource, action: ResourceAction) -> Result<ResourceAction
     Ok(ResourceActionOutput::new(
         resource.id(),
         action,
-        PluginActionOutput::new(view),
+        PluginResourceActionOutput::new(view),
     ))
 }
 
 fn resource_thumbnail(
     resource: Resource,
-    action: ResourceAction,
+    action: ResourceActionId,
 ) -> Result<ResourceActionOutput, CoreError> {
     let view = embedded_svg_thumbnail(Some(resource.name()), RESOURCE_THUMBNAIL_SVG);
     Ok(ResourceActionOutput::new(
         resource.id(),
         action,
-        PluginActionOutput::new(view),
+        PluginResourceActionOutput::new(view),
     ))
 }
 
 fn image_thumbnail(
     resource: Resource,
-    action: ResourceAction,
+    action: ResourceActionId,
 ) -> Result<ResourceActionOutput, CoreError> {
     let view = match resource
         .content()
@@ -277,7 +280,7 @@ fn image_thumbnail(
     Ok(ResourceActionOutput::new(
         resource.id(),
         action,
-        PluginActionOutput::new(view),
+        PluginResourceActionOutput::new(view),
     ))
 }
 
@@ -306,11 +309,11 @@ fn resource_text(request: &ResourceActionRequest) -> Result<String, CoreError> {
         .map_err(|_| CoreError::configuration("core text actions require valid UTF-8 content"))
 }
 
-fn text_output(resource: Resource, action: ResourceAction, text: String) -> ResourceActionOutput {
+fn text_output(resource: Resource, action: ResourceActionId, text: String) -> ResourceActionOutput {
     ResourceActionOutput::new(
         resource.id(),
         action,
-        PluginActionOutput::new(PluginView::Text(TextView { text })),
+        PluginResourceActionOutput::new(PluginView::Text(TextView { text })),
     )
 }
 

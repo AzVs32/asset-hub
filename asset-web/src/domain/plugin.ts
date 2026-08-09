@@ -34,14 +34,14 @@ export interface PluginDiagnostic {
   details?: unknown;
 }
 
-export interface PluginActionOutput {
+export interface ResourceActionOutput {
   resourceId: string;
   action: string;
   view: PluginView;
   diagnostics: PluginDiagnostic[];
 }
 
-export interface DirectoryPluginActionOutput {
+export interface DirectoryActionOutput {
   directoryId: string;
   action: string;
   view: PluginView;
