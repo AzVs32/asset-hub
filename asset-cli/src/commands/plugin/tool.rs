@@ -3,10 +3,10 @@ use asset_infra::plugin_package::{generate_plugin_manifest_lock, load_verified_p
 use asset_plugin_api::manifest::PluginManifest;
 use std::path::Path;
 
-pub fn verify_manifest(path: &Path) -> Result<PluginManifest, CoreError> {
-    load_verified_plugin_package(path).map(|package| package.manifest().clone())
+pub fn verify_package(package: &Path) -> Result<PluginManifest, CoreError> {
+    load_verified_plugin_package(package).map(|package| package.manifest().clone())
 }
 
-pub fn generate_lock(path: &Path) -> Result<PluginManifest, CoreError> {
-    generate_plugin_manifest_lock(path)
+pub fn generate_lock(package: &Path) -> Result<PluginManifest, CoreError> {
+    generate_plugin_manifest_lock(package)
 }

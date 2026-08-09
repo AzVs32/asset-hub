@@ -38,7 +38,7 @@ and the sync guard after startup. The caller continues to own its loaded configu
 `AssetInfrastructure` aggregate is released when construction finishes.
 
 Plugin package mutation is not part of runtime startup. Packages must be sealed explicitly through
-`asset plugin --generate-lock` before loading. Business workflows, authorization, compensation,
+`asset plugin --seal` before loading. Business workflows, authorization, compensation,
 and effect application remain in `asset-core`.
 
 `UploadSession` owns its state-transition invariants. Creation and persistence rehydration reject

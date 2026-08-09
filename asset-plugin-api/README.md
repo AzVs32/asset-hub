@@ -96,8 +96,8 @@ The host requires a sealed package before startup. After assembling the package
 under a directory whose name equals `plugin.id`, generate and verify its lock:
 
 ```bash
-asset plugin --generate-lock path/to/<plugin-id>/manifest.json
-asset plugin --verify path/to/<plugin-id>/manifest.json
+asset plugin --seal path/to/<plugin-id>
+asset plugin --verify path/to/<plugin-id>
 ```
 
 Lock generation writes `manifest.lock.json` only when it is absent. Verification

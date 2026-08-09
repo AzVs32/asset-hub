@@ -123,11 +123,9 @@ fn generation_and_loading_share_the_wasm_size_limit() {
         .unwrap()
         .set_len(MAX_PLUGIN_WASM_BYTES as u64 + 1)
         .unwrap();
-    let manifest_path = package.join(PLUGIN_MANIFEST_FILE_NAME);
-
-    let generate_error = generate_plugin_manifest_lock(&manifest_path).unwrap_err();
+    let generate_error = generate_plugin_manifest_lock(&package).unwrap_err();
     write_lock(&package, "large.plugin", Some(&"0".repeat(64)), None);
-    let load_error = load_verified_plugin_package(&manifest_path).unwrap_err();
+    let load_error = load_verified_plugin_package(&package).unwrap_err();
 
     let limit = format!("{MAX_PLUGIN_WASM_BYTES} byte limit");
     assert!(generate_error.to_string().contains(&limit));
@@ -157,7 +155,15 @@ fn catalog_requires_an_explicitly_generated_lock_and_then_only_verifies_it() {
     assert!(error.to_string().contains("manifest.lock.json"));
     assert!(!lock_path.exists());
 
-    generate_plugin_manifest_lock(&package.join(PLUGIN_MANIFEST_FILE_NAME)).unwrap();
+    generate_plugin_manifest_lock(&package).unwrap();
+    load_verified_plugin_package(&package).unwrap();
+    let manifest_path_error =
+        load_verified_plugin_package(&package.join(PLUGIN_MANIFEST_FILE_NAME)).unwrap_err();
+    assert!(
+        manifest_path_error
+            .to_string()
+            .contains("must be a directory")
+    );
     PluginCatalog::load(&root).unwrap();
 
     let generated = std::fs::read(&lock_path).unwrap();

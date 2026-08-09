@@ -1,50 +1,46 @@
 use crate::CliResult;
-use clap::Args;
+use clap::{ArgGroup, Args};
 use std::path::PathBuf;
 
 mod tool;
 
 #[derive(Debug, Args)]
+#[command(group(
+    ArgGroup::new("operation")
+        .required(true)
+        .multiple(false)
+        .args(["seal", "verify"])
+))]
 pub(crate) struct PluginCommand {
+    /// Validate and seal a plugin package by generating its lock.
+    #[arg(long, value_name = "PACKAGE")]
+    seal: Option<PathBuf>,
     /// Verify a sealed plugin package without changing it.
-    #[arg(
-        long,
-        value_name = "MANIFEST",
-        required_unless_present = "generate_lock",
-        conflicts_with = "generate_lock"
-    )]
+    #[arg(long, value_name = "PACKAGE")]
     verify: Option<PathBuf>,
-    /// Generate the lock for an unsealed plugin package.
-    #[arg(
-        long,
-        value_name = "MANIFEST",
-        required_unless_present = "verify",
-        conflicts_with = "verify"
-    )]
-    generate_lock: Option<PathBuf>,
 }
 
 pub(crate) fn run(command: PluginCommand) -> CliResult {
-    match (command.verify, command.generate_lock) {
-        (Some(path), None) => {
-            let plugin = tool::verify_manifest(&path)?;
+    match (command.seal, command.verify) {
+        (None, Some(package)) => {
+            let plugin = tool::verify_package(&package)?;
             println!(
                 "verified plugin `{}` ({})",
                 plugin.plugin_id(),
-                path.display()
+                package.display()
             );
             Ok(())
         }
-        (None, Some(path)) => {
-            let plugin = tool::generate_lock(&path)?;
+        (Some(package), None) => {
+            let plugin = tool::generate_lock(&package)?;
             println!(
-                "generated lock for plugin `{}` ({})",
+                "sealed plugin `{}` ({})",
                 plugin.plugin_id(),
-                path.display()
+                package.display()
             );
             Ok(())
         }
-        (None, None) => anyhow::bail!("one of --verify or --generate-lock is required"),
+        (None, None) => anyhow::bail!("one of --seal or --verify is required"),
         (Some(_), Some(_)) => unreachable!("clap rejects conflicting plugin operations"),
     }
 }

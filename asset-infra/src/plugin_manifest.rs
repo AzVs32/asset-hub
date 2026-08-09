@@ -44,9 +44,7 @@ impl PluginCatalog {
         let builtin = BuiltinCatalog::new()?;
         let mut plugins = Vec::new();
         for package_root in discover_plugin_packages(packages_root)? {
-            plugins.push(load_verified_plugin_package(
-                &package_root.join(PLUGIN_MANIFEST_FILE_NAME),
-            )?);
+            plugins.push(load_verified_plugin_package(&package_root)?);
         }
 
         let mut ids = HashSet::new();
@@ -84,11 +82,11 @@ impl LoadedPlugin {
     }
 }
 
-/// Verify and snapshot one external plugin package without changing it.
-pub fn load_verified_plugin_package(path: &Path) -> Result<LoadedPlugin, CoreError> {
-    let manifest = load_plugin_manifest_file(path)?;
-    validate_package_location(&manifest, path)?;
-    let package_root = path.parent().unwrap_or_else(|| Path::new("."));
+/// Verify and snapshot one external plugin package directory without changing it.
+pub fn load_verified_plugin_package(package_root: &Path) -> Result<LoadedPlugin, CoreError> {
+    validate_package_directory(package_root)?;
+    let manifest = load_plugin_manifest_file(&package_root.join(PLUGIN_MANIFEST_FILE_NAME))?;
+    validate_package_identity(&manifest, package_root)?;
     let artifacts = validate_loaded_manifest(&manifest, package_root)?;
     Ok(LoadedPlugin {
         manifest,
@@ -97,14 +95,14 @@ pub fn load_verified_plugin_package(path: &Path) -> Result<LoadedPlugin, CoreErr
     })
 }
 
-/// Generate and atomically install the lock for one unsealed plugin package.
+/// Generate and atomically install the lock for one unsealed plugin package directory.
 ///
 /// Generation and verification deliberately remain separate: this function refuses to replace an
 /// existing lock, while [`load_verified_plugin_package`] never creates or updates one.
-pub fn generate_plugin_manifest_lock(path: &Path) -> Result<PluginManifest, CoreError> {
-    let manifest = load_plugin_manifest_file(path)?;
-    validate_package_location(&manifest, path)?;
-    let package_root = path.parent().unwrap_or_else(|| Path::new("."));
+pub fn generate_plugin_manifest_lock(package_root: &Path) -> Result<PluginManifest, CoreError> {
+    validate_package_directory(package_root)?;
+    let manifest = load_plugin_manifest_file(&package_root.join(PLUGIN_MANIFEST_FILE_NAME))?;
+    validate_package_identity(&manifest, package_root)?;
     let lock_path = package_root.join(PLUGIN_LOCK_FILE_NAME);
     match std::fs::symlink_metadata(&lock_path) {
         Ok(_) => {
@@ -137,13 +135,7 @@ pub fn generate_plugin_manifest_lock(path: &Path) -> Result<PluginManifest, Core
     Ok(manifest)
 }
 
-fn validate_package_location(manifest: &PluginManifest, path: &Path) -> Result<(), CoreError> {
-    if path.file_name().and_then(|name| name.to_str()) != Some(PLUGIN_MANIFEST_FILE_NAME) {
-        return Err(CoreError::configuration(format!(
-            "plugin manifest must be named `{PLUGIN_MANIFEST_FILE_NAME}`"
-        )));
-    }
-    let package_root = path.parent().unwrap_or_else(|| Path::new("."));
+fn validate_package_directory(package_root: &Path) -> Result<(), CoreError> {
     let package_metadata = std::fs::symlink_metadata(package_root).map_err(|error| {
         CoreError::configuration(format!(
             "inspect plugin package `{}`: {error}",
@@ -156,6 +148,13 @@ fn validate_package_location(manifest: &PluginManifest, path: &Path) -> Result<(
             package_root.display()
         )));
     }
+    Ok(())
+}
+
+fn validate_package_identity(
+    manifest: &PluginManifest,
+    package_root: &Path,
+) -> Result<(), CoreError> {
     if package_root.file_name().and_then(|name| name.to_str()) != Some(manifest.plugin_id()) {
         return Err(CoreError::configuration(format!(
             "plugin package directory `{}` must match plugin.id `{}`",
