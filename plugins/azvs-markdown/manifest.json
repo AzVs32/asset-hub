@@ -38,7 +38,6 @@
       {
         "id": "azvs.markdown.read",
         "provides": "text_read",
-        "label": "Read Markdown",
         "description": "Open Markdown in the plugin reader.",
         "handler": "render_markdown",
         "applies_to": {
@@ -69,7 +68,6 @@
       {
         "id": "azvs.markdown.edit",
         "provides": "text_edit",
-        "label": "Edit Markdown",
         "description": "Edit Markdown through the bounded plugin frame bridge.",
         "handler": "update_markdown",
         "applies_to": {

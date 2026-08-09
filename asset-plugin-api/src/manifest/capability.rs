@@ -55,7 +55,10 @@ pub struct ResourceActionCapability {
     /// Optional singleton Host capability implemented by this action provider.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provides: Option<String>,
-    pub label: String,
+    /// Optional display label. Singleton capability providers inherit the nearest ancestor
+    /// provider's label when omitted; other Resource actions must declare one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub handler: String,

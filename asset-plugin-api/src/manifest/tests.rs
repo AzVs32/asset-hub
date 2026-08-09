@@ -151,6 +151,35 @@ fn manifest_validates_provided_capability_ids() {
 }
 
 #[test]
+fn resource_capability_provider_may_omit_an_inherited_label() {
+    let mut document = manifest_document();
+    let action = &mut document["capabilities"]["resource_actions"][0];
+    action.as_object_mut().unwrap().remove("label");
+    action["provides"] = serde_json::json!("text_read");
+
+    let manifest = serde_json::from_value::<PluginManifest>(document).unwrap();
+    manifest.validate().unwrap();
+    assert!(manifest.capabilities.resource_actions[0].label.is_none());
+}
+
+#[test]
+fn resource_action_without_a_capability_still_requires_a_label() {
+    let mut document = manifest_document();
+    document["capabilities"]["resource_actions"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("label");
+
+    assert!(
+        serde_json::from_value::<PluginManifest>(document)
+            .unwrap()
+            .validate()
+            .unwrap_err()
+            .contains("label is required")
+    );
+}
+
+#[test]
 fn manifest_accepts_download_view() {
     let mut document = manifest_document();
     document["capabilities"]["resource_actions"][0]["output"]["views"] =

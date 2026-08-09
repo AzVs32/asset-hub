@@ -82,6 +82,7 @@ pub(super) fn build_registries_with_catalog(
     validate_kind_hierarchy(&definitions)?;
 
     let mut actions = Vec::new();
+    let mut inherited_action_labels = Vec::new();
     for action in &catalog.builtin.resource_actions {
         push_action_definition(
             &mut actions,
@@ -91,9 +92,11 @@ pub(super) fn build_registries_with_catalog(
     }
     for plugin in catalog.plugins() {
         for action in &plugin.manifest.capabilities.resource_actions {
+            let first_definition = actions.len();
             let action_definitions = action_definitions_with_inherited_content(
                 &definitions,
                 action,
+                action.label.as_deref().unwrap_or(action.id.as_str()),
                 DefinitionOrigin::plugin(plugin.manifest.plugin_id())?,
             )?;
             for action_definition in action_definitions {
@@ -103,8 +106,12 @@ pub(super) fn build_registries_with_catalog(
                     format!("plugin:{}", plugin.manifest.plugin_id()),
                 )?;
             }
+            if action.label.is_none() {
+                inherited_action_labels.extend(first_definition..actions.len());
+            }
         }
     }
+    resolve_inherited_resource_action_labels(&definitions, &mut actions, &inherited_action_labels)?;
     validate_resource_action_capabilities(&definitions, &actions)?;
 
     Ok((definitions, actions))

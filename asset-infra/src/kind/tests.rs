@@ -100,6 +100,42 @@ fn registry_rejects_unknown_parents_and_cycles() {
 }
 
 #[test]
+fn inherited_action_label_requires_an_ancestor_capability_provider() {
+    let definitions = vec![
+        definition_from_parts(
+            "core:resource",
+            "Resource",
+            None,
+            true,
+            ResourceContentMatcher::default(),
+            DefinitionOrigin::builtin_static("core.resource"),
+        )
+        .unwrap(),
+        definition_from_parts(
+            "core:image",
+            "Image",
+            Some("core:resource"),
+            true,
+            ResourceContentMatcher::default(),
+            DefinitionOrigin::builtin_static("core.image"),
+        )
+        .unwrap(),
+    ];
+    let mut actions = vec![
+        ResourceActionDefinition::new_static("example.image.read", "example.image.read")
+            .with_static_provides(Some("text_read"))
+            .with_kinds(["core:image"]),
+    ];
+
+    assert!(
+        resolve_inherited_resource_action_labels(&definitions, &mut actions, &[0])
+            .unwrap_err()
+            .to_string()
+            .contains("no ancestor provider exists")
+    );
+}
+
+#[test]
 fn registry_includes_host_builtin_resource_kinds() {
     let (registry, _, action_registry) = registries(&unique_temp_path("no-plugins")).unwrap();
 
@@ -371,7 +407,6 @@ fn registry_loads_format_plugin_as_independent_kind() {
               {
                 "id": "azvs.epub.thumbnail",
                 "provides": "thumbnail",
-                "label": "EPUB Thumbnail",
                 "handler": "render_epub_thumbnail",
                 "applies_to": {
                   "kinds": ["azvs:epub"]
@@ -412,6 +447,14 @@ fn registry_loads_format_plugin_as_independent_kind() {
         actions
             .iter()
             .any(|action| action.id().as_str() == "azvs.epub.thumbnail")
+    );
+    assert_eq!(
+        actions
+            .iter()
+            .find(|action| action.id().as_str() == "azvs.epub.thumbnail")
+            .unwrap()
+            .label(),
+        "Thumbnail"
     );
     assert!(
         actions

@@ -69,6 +69,10 @@ more specific kind. Resource actions recognize `thumbnail`, `text_read`, and `te
 actions recognize only `thumbnail`. Resource resolution filters content requirements and matchers
 before selecting the nearest provider. Registry startup rejects unsupported capabilities, automatic
 thumbnail-slot actions that do not provide `thumbnail`, and tied nearest providers.
+When a plugin Resource capability provider omits its Manifest label, catalog assembly inherits the
+normalized label from the nearest ancestor provider for that capability; an explicit label remains
+an override, and a missing ancestor is a startup error. The built-in `text_read` and `text_edit`
+labels are `Read` and `Edit`.
 At the package boundary, infrastructure explicitly converts external Manifest capabilities into
 `asset-core` Action/Kind definitions. Extism handler names remain in private adapter bindings and
 are not copied into Core models.

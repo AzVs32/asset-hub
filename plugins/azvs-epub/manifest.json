@@ -33,7 +33,7 @@
     "resource_actions": [
       {
         "id": "azvs.epub.render",
-        "label": "Read EPUB",
+        "label": "Read",
         "description": "Open the EPUB reader.",
         "handler": "render_epub",
         "applies_to": {

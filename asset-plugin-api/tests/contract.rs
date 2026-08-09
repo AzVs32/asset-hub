@@ -193,6 +193,24 @@ fn manifest_actions_can_provide_singleton_host_capabilities() {
 }
 
 #[test]
+fn singleton_resource_provider_label_is_wire_optional() {
+    let mut value = manifest_document();
+    value["capabilities"]["resource_actions"][0]["provides"] = json!("text_read");
+    value["capabilities"]["resource_actions"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("label");
+
+    let manifest = canonical_manifest(&value).unwrap();
+    assert!(manifest.capabilities.resource_actions[0].label.is_none());
+    assert!(
+        serde_json::to_value(manifest).unwrap()["capabilities"]["resource_actions"][0]
+            .get("label")
+            .is_none()
+    );
+}
+
+#[test]
 fn directory_request_and_output_have_separate_wire_effects() {
     let request: PluginDirectoryActionRequest = serde_json::from_value(json!({
         "action": "example.plugin.organize",

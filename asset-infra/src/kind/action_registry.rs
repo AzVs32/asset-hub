@@ -32,10 +32,14 @@ impl ResourceActionRegistry for DefaultResourceActionRegistry {
 pub(super) fn action_definitions_with_inherited_content(
     definitions: &[ResourceKindDefinition],
     action: &ResourceActionCapability,
+    label: &str,
     origin: DefinitionOrigin,
 ) -> Result<Vec<ResourceActionDefinition>, CoreError> {
-    let definition = resource_action_definition(action, origin);
-    if !should_inherit_detect_for_action(action) || !definition.content_matcher().is_empty() {
+    let definition = resource_action_definition(action, label, origin);
+    let split_for_label = action.label.is_none() && action.applies_to.kinds.len() > 1;
+    let inherit_content =
+        should_inherit_detect_for_action(action) && definition.content_matcher().is_empty();
+    if !split_for_label && !inherit_content {
         return Ok(vec![definition]);
     }
     action
@@ -43,12 +47,116 @@ pub(super) fn action_definitions_with_inherited_content(
         .kinds
         .iter()
         .map(|kind| {
-            Ok(definition
-                .clone()
-                .with_kinds([kind.clone()])
-                .with_content_matcher(detect_for_kind(definitions, kind)?))
+            let definition = definition.clone().with_kinds([kind.clone()]);
+            if inherit_content {
+                Ok(definition.with_content_matcher(detect_for_kind(definitions, kind)?))
+            } else {
+                Ok(definition)
+            }
         })
         .collect()
+}
+
+/// Replace omitted plugin labels with the nearest ancestor provider's normalized label.
+pub(super) fn resolve_inherited_resource_action_labels(
+    definitions: &[ResourceKindDefinition],
+    actions: &mut [ResourceActionDefinition],
+    inherited_indices: &[usize],
+) -> Result<(), CoreError> {
+    let mut ordered = inherited_indices.to_vec();
+    ordered.sort_by_key(|index| {
+        action_kind_lineage(definitions, &actions[*index])
+            .map_or(usize::MAX, |lineage| lineage.len())
+    });
+
+    for index in ordered {
+        let action = &actions[index];
+        let capability = action.provides().ok_or_else(|| {
+            CoreError::configuration(format!(
+                "resource action `{}` cannot inherit a label without providing a capability",
+                action.id()
+            ))
+        })?;
+        let lineage = action_kind_lineage(definitions, action)?;
+        let label = inherited_label_from_lineage(actions, index, capability.as_str(), &lineage)?;
+        actions[index] = actions[index].clone().with_label(label);
+    }
+    Ok(())
+}
+
+fn action_kind_lineage<'a>(
+    definitions: &'a [ResourceKindDefinition],
+    action: &ResourceActionDefinition,
+) -> Result<Vec<&'a str>, CoreError> {
+    let [kind] = action.kinds() else {
+        return Err(CoreError::configuration(format!(
+            "resource action `{}` must target exactly one kind to inherit a label",
+            action.id()
+        )));
+    };
+    let definition = definitions
+        .iter()
+        .find(|definition| definition.kind().as_str() == kind)
+        .ok_or_else(|| {
+            CoreError::configuration(format!(
+                "resource action `{}` references unknown kind `{kind}`",
+                action.id()
+            ))
+        })?;
+    Ok(resource_kind_lineage(definitions, definition))
+}
+
+fn inherited_label_from_lineage(
+    actions: &[ResourceActionDefinition],
+    action_index: usize,
+    capability: &str,
+    lineage: &[&str],
+) -> Result<String, CoreError> {
+    for ancestor in lineage.iter().skip(1) {
+        let providers = actions
+            .iter()
+            .enumerate()
+            .filter(|(index, action)| {
+                *index != action_index
+                    && action
+                        .provides()
+                        .is_some_and(|provided| provided.as_str() == capability)
+                    && action.kinds().iter().any(|kind| kind.as_str() == *ancestor)
+            })
+            .map(|(_, action)| action)
+            .collect::<Vec<_>>();
+        match providers.as_slice() {
+            [] => {}
+            [provider] => return Ok(provider.label().to_string()),
+            _ => {
+                return Err(CoreError::configuration(format!(
+                    "resource capability `{capability}` has multiple label providers on ancestor kind `{ancestor}`"
+                )));
+            }
+        }
+    }
+
+    let global = actions
+        .iter()
+        .enumerate()
+        .filter(|(index, action)| {
+            *index != action_index
+                && action
+                    .provides()
+                    .is_some_and(|provided| provided.as_str() == capability)
+                && action.kinds().is_empty()
+        })
+        .map(|(_, action)| action)
+        .collect::<Vec<_>>();
+    match global.as_slice() {
+        [provider] => Ok(provider.label().to_string()),
+        [] => Err(CoreError::configuration(format!(
+            "resource action cannot inherit `{capability}` label because no ancestor provider exists"
+        ))),
+        _ => Err(CoreError::configuration(format!(
+            "resource capability `{capability}` has multiple global label providers"
+        ))),
+    }
 }
 
 pub(super) fn should_inherit_detect_for_action(action: &ResourceActionCapability) -> bool {

@@ -176,6 +176,10 @@ impl ResourceActionDefinition {
         self.action = self.action.with_static_provides(provides);
         self
     }
+    pub fn with_label(mut self, label: impl Into<String>) -> Self {
+        self.action = self.action.with_label(label);
+        self
+    }
     pub fn with_access(mut self, access: ActionAccess) -> Self {
         self.action = self.action.with_access(access);
         self

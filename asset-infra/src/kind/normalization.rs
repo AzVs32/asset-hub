@@ -13,11 +13,12 @@ use asset_plugin_api::manifest::{
 
 pub(super) fn resource_action_definition(
     capability: &ResourceActionCapability,
+    label: &str,
     origin: DefinitionOrigin,
 ) -> ResourceActionDefinition {
     let mut definition = ResourceActionDefinition::new(
         ActionId::new(capability.id.clone()).expect("validated manifest resource action id"),
-        capability.label.as_str(),
+        label,
         origin,
     )
     .with_description(capability.description.clone())

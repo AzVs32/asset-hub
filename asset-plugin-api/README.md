@@ -136,6 +136,12 @@ support the `media` view, and declare the matching `resource_list_thumbnail` or
 provider must be write. The Host rejects unknown capability names. Plugins must retain their
 provider-owned action IDs and must not reuse a `core.*` action ID.
 
+A Resource action normally declares `label`. A singleton capability provider may omit it when the
+action targets a child Resource kind; the Host then inherits the normalized label from the nearest
+ancestor provider for the same capability. An omitted label is rejected when no ancestor provider
+exists. Declaring `label` explicitly remains the way to override the inherited wording. Directory
+action labels remain required.
+
 ### Plugin Frame messages
 
 A `plugin_frame` runs without direct Host authority. It may ask the parent Host to execute an
@@ -217,6 +223,8 @@ The principal version 2 changes are:
   dot-separated provider IDs such as `example.plugin.inspect`.
 - Action metadata includes `description`, uses `access: "read" | "write"`, and declares views in
   `output.views`. Resource MIME matching is declared in `applies_to.mime_types`.
+- A Resource singleton-capability provider may omit `label` to inherit the nearest ancestor
+  provider's normalized label; ordinary Resource actions and Directory actions still require it.
 - Resource and Directory wire snapshots include their current `revision`. Effects are accepted
   only when their aggregate identity and optimistic-concurrency precondition still match.
 - Host write-Action requests require `expected_revision`; read Actions may omit it and use the

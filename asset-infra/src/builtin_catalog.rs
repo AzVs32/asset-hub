@@ -194,7 +194,7 @@ impl BuiltinCatalog {
                 handler: BuiltinResourceHandler::ImageThumbnail,
             },
             BuiltinResourceAction {
-                definition: ResourceActionDefinition::new_static(CORE_TEXT_READ, "Read Text")
+                definition: ResourceActionDefinition::new_static(CORE_TEXT_READ, "Read")
                     .with_static_provides(Some(TEXT_READ_CAPABILITY))
                     .with_kinds(["core:text"])
                     .with_requirements(ResourceActionRequirements {
@@ -212,7 +212,7 @@ impl BuiltinCatalog {
                 handler: BuiltinResourceHandler::TextRead,
             },
             BuiltinResourceAction {
-                definition: ResourceActionDefinition::new_static(CORE_TEXT_EDIT, "Edit Text")
+                definition: ResourceActionDefinition::new_static(CORE_TEXT_EDIT, "Edit")
                     .with_static_provides(Some(TEXT_EDIT_CAPABILITY))
                     .with_access(ActionAccess::Write)
                     .with_kinds(["core:text"])

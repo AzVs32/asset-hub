@@ -142,9 +142,25 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
                 &['.', ':', '-', '_'],
             )?;
         }
-        if action.label.trim().is_empty() {
+        if action
+            .label
+            .as_ref()
+            .is_some_and(|label| label.trim().is_empty())
+        {
             return Err(format!(
                 "capabilities.resource_actions[`{}`].label must not be empty",
+                action.id
+            ));
+        }
+        if action.label.is_none() && action.provides.is_none() {
+            return Err(format!(
+                "capabilities.resource_actions[`{}`].label is required when the action does not provide a capability",
+                action.id
+            ));
+        }
+        if action.label.is_none() && action.applies_to.kinds.is_empty() {
+            return Err(format!(
+                "capabilities.resource_actions[`{}`] cannot inherit a label without an applies_to kind",
                 action.id
             ));
         }

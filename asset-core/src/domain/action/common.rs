@@ -225,6 +225,11 @@ impl ActionDefinition {
         self
     }
 
+    pub fn with_label(mut self, label: impl Into<String>) -> Self {
+        self.label = label.into();
+        self
+    }
+
     pub fn with_description(mut self, description: Option<String>) -> Self {
         self.description = description;
         self

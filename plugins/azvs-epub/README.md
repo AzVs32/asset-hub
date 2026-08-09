@@ -40,7 +40,7 @@ during normal browsing but is cleared when Asset Hub restarts.
 Asset Hub automatically loads a canonical package installed at
 `<blob.local.root>/.asset-hub/plugins/azvs.epub`. Restart Asset Hub after installing or changing it.
 
-Upload an EPUB as kind `azvs:epub`. The resource detail panel will show a `Read EPUB` action.
+Upload an EPUB as kind `azvs:epub`. The resource detail panel will show a `Read` action.
 
 The first action call returns a `plugin_frame`. The React reader requests a book index and the first
 chapter through the Asset Hub frame bridge. Additional chapters are fetched on demand and cached by

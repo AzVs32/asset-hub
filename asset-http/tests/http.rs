@@ -366,6 +366,7 @@ async fn core_text_resource_inherits_generic_actions_and_provides_text_actions()
         .find(|action| action["id"] == "core.text.read")
         .unwrap();
     assert_eq!(read["provides"], "text_read");
+    assert_eq!(read["label"], "Read");
     assert_eq!(read["access"], "read");
     assert_eq!(read["requires"]["content_delivery"], "inline");
     assert_eq!(read["output"]["views"], json!(["text"]));
@@ -374,6 +375,7 @@ async fn core_text_resource_inherits_generic_actions_and_provides_text_actions()
         .find(|action| action["id"] == "core.text.edit")
         .unwrap();
     assert_eq!(edit["provides"], "text_edit");
+    assert_eq!(edit["label"], "Edit");
     assert_eq!(edit["access"], "write");
     assert_eq!(edit["requires"]["content_delivery"], "inline");
     assert_eq!(edit["output"]["views"], json!(["text"]));
@@ -1515,11 +1517,13 @@ async fn upload_detects_most_specific_plugin_kind() {
         .find(|action| action["id"] == "azvs.markdown.read")
         .unwrap();
     assert_eq!(markdown_read["provides"], "text_read");
+    assert_eq!(markdown_read["label"], "Read");
     let markdown_edit = actions
         .iter()
         .find(|action| action["id"] == "azvs.markdown.edit")
         .unwrap();
     assert_eq!(markdown_edit["provides"], "text_edit");
+    assert_eq!(markdown_edit["label"], "Edit");
     assert!(
         actions
             .iter()
@@ -1568,11 +1572,17 @@ async fn epub_thumbnail_provider_is_selected_for_the_resource_capability() {
     assert_eq!(status, StatusCode::CREATED, "{resource}");
     assert_eq!(resource["kind"], "azvs:epub");
     let actions = resource["actions"].as_array().unwrap();
+    let render = actions
+        .iter()
+        .find(|action| action["id"] == "azvs.epub.render")
+        .unwrap();
+    assert_eq!(render["label"], "Read");
     let thumbnail = actions
         .iter()
         .find(|action| action["id"] == "azvs.epub.thumbnail")
         .unwrap();
     assert_eq!(thumbnail["provides"], "thumbnail");
+    assert_eq!(thumbnail["label"], "EPUB Thumbnail");
     assert!(
         actions
             .iter()
