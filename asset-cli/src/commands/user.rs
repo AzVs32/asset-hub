@@ -9,8 +9,8 @@ use comfy_table::{Table, presets::UTF8_FULL};
 #[derive(Debug, Args)]
 #[command(group(
     ArgGroup::new("operation")
-        .required(true)
-        .multiple(false)
+        .required(true)   // 强制要求必须提供该分组中的至少一个参数
+        .multiple(false)  // 强制要求最多只能提供该分组中的一个参数
         .args(["list", "create", "password", "enable", "disable", "show"])
 ))]
 pub(crate) struct UserCommand {
@@ -25,7 +25,7 @@ pub(crate) struct UserCommand {
     /// Create an administrator with access to the root workspace.
     #[arg(
         long,
-        requires = "create",
+        requires = "create",  // 需要配合 --create 使用
         conflicts_with_all = ["list", "password", "enable", "disable", "show"]
     )]
     admin: bool,
@@ -51,21 +51,32 @@ pub(crate) async fn run(command: UserCommand, users: UserService) -> CliResult {
     if command.list {
         print_user_list(&users.list().await?);
     } else if let Some(username) = command.create {
-        let role = create_role(command.admin);
+        let role = command
+            .admin
+            .then_some(UserRole::Administrator)
+            .unwrap_or(UserRole::Member);
         let password = prompt_new_password()?;
-        let user = users.create(username, &password, role, None).await?;
+        let user = users.create(&username, &password, role, None).await?;
         println!("created {} `{}`", role_name(role), user.username());
     } else if let Some(username) = command.password {
         let password = prompt_new_password()?;
         let user = users
-            .update_password(&username, &password)
+            .update_password_by_username(&username, &password)
             .await?
             .ok_or_else(|| asset_core::CoreError::not_found("user", &username))?;
         println!("updated password for user `{}`", user.username());
     } else if let Some(username) = command.enable {
-        update_status(&users, &username, UserStatus::Active).await?;
+        let user = users
+            .update_status_by_username(&username, UserStatus::Active)
+            .await?
+            .ok_or_else(|| asset_core::CoreError::not_found("user", &username))?;
+        println!("enabled user `{}`", user.user().username());
     } else if let Some(username) = command.disable {
-        update_status(&users, &username, UserStatus::Disabled).await?;
+        let user = users
+            .update_status_by_username(&username, UserStatus::Disabled)
+            .await?
+            .ok_or_else(|| asset_core::CoreError::not_found("user", &username))?;
+        println!("disabled user `{}`", user.user().username());
     } else if let Some(username) = command.show {
         let user = users
             .find_located_by_username(&username)
@@ -75,34 +86,6 @@ pub(crate) async fn run(command: UserCommand, users: UserService) -> CliResult {
     } else {
         unreachable!("clap requires exactly one user operation");
     }
-    Ok(())
-}
-
-fn create_role(admin: bool) -> UserRole {
-    if admin {
-        UserRole::Administrator
-    } else {
-        UserRole::Member
-    }
-}
-
-async fn update_status(users: &UserService, username: &str, status: UserStatus) -> CliResult {
-    let user = users
-        .find_by_username(username)
-        .await?
-        .ok_or_else(|| asset_core::CoreError::not_found("user", username))?;
-    let user = users
-        .update_status(&user.id(), status)
-        .await?
-        .ok_or_else(|| asset_core::CoreError::not_found("user", username))?;
-    println!(
-        "{} user `{}`",
-        match status {
-            UserStatus::Active => "enabled",
-            UserStatus::Disabled => "disabled",
-        },
-        user.user().username()
-    );
     Ok(())
 }
 

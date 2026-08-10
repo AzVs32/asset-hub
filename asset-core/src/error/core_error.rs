@@ -29,6 +29,9 @@ pub enum CoreError {
     #[error(transparent)]
     User(#[from] UserError),
 
+    #[error("password must contain at least 4 characters")]
+    WeakPassword,
+
     #[error("authentication failed")]
     Unauthenticated,
 

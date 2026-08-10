@@ -67,7 +67,7 @@ pub(crate) async fn create_user(
         .backend
         .users
         .create(
-            request.username,
+            &request.username,
             &request.password,
             role,
             request.workspace_directory,
@@ -114,7 +114,7 @@ pub(crate) async fn update_user_status(
     let user = session
         .backend
         .users
-        .update_status(&id, request.status)
+        .update_status_by_id(&id, request.status)
         .await?
         .ok_or_else(|| HttpError::not_found(format!("user `{id}` not found")))?;
     Ok(Json(ManagedUserResponse::new(user)))

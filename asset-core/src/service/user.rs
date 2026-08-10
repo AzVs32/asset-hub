@@ -1,5 +1,5 @@
 use crate::{
-    CoreError, UserError,
+    CoreError,
     domain::{DirectoryPath, User, UserId, UserRole, UserStatus},
     port::{LocatedUser, PasswordHasher, UserQuery, UserRepository},
     service::DirectoryService,
@@ -32,27 +32,20 @@ impl UserService {
     }
     pub async fn create(
         &self,
-        username: impl Into<String>,
+        username: &str,
         password: &str,
         role: UserRole,
         workspace_directory: Option<DirectoryPath>,
     ) -> Result<User, CoreError> {
-        if password.len() < MIN_PASSWORD_LEN {
-            return Err(UserError::WeakPassword.into());
-        }
-        let username = username.into();
-        if self
-            .repository
-            .find_by_username(username.trim())
-            .await?
-            .is_some()
-        {
+        Self::validate_password(password)?;
+        let username = username.trim().to_owned();
+        if self.repository.find_by_username(&username).await?.is_some() {
             return Err(CoreError::conflict("username already exists"));
         }
         let workspace_path = match workspace_directory {
             Some(directory) => directory,
             None if role == UserRole::Administrator => DirectoryPath::root(),
-            None => DirectoryPath::from_path(format!("users/{}", username.trim()))?,
+            None => DirectoryPath::from_path(format!("users/{}", &username))?,
         };
         let workspace_directory = self.directories.ensure_path(&workspace_path).await?;
         let user = User::new(
@@ -96,7 +89,7 @@ impl UserService {
     pub async fn list(&self) -> Result<Vec<LocatedUser>, CoreError> {
         self.query.list_located().await
     }
-    pub async fn update_status(
+    pub async fn update_status_by_id(
         &self,
         id: &UserId,
         status: UserStatus,
@@ -109,14 +102,48 @@ impl UserService {
         self.repository.save(&user).await?;
         LocatedUser::new(user, workspace).map(Some)
     }
-    pub async fn update_password(
+
+    pub async fn update_status_by_username(
+        &self,
+        username: &str,
+        status: UserStatus,
+    ) -> Result<Option<LocatedUser>, CoreError> {
+        let Some(located) = self.query.find_located_by_username(username.trim()).await? else {
+            return Ok(None);
+        };
+        let (mut user, workspace) = located.into_parts();
+        user.change_status(status);
+        self.repository.save(&user).await?;
+        LocatedUser::new(user, workspace).map(Some)
+    }
+
+    fn validate_password(password: &str) -> Result<(), CoreError> {
+        if password.len() < MIN_PASSWORD_LEN {
+            return Err(CoreError::WeakPassword);
+        }
+        Ok(())
+    }
+
+    pub async fn update_password_by_id(
+        &self,
+        id: &UserId,
+        password: &str,
+    ) -> Result<Option<User>, CoreError> {
+        Self::validate_password(password)?;
+        let Some(mut user) = self.repository.find_by_id(id).await? else {
+            return Ok(None);
+        };
+        user.change_credential_hash(self.password_hasher.hash(password)?)?;
+        self.repository.save(&user).await?;
+        Ok(Some(user))
+    }
+
+    pub async fn update_password_by_username(
         &self,
         username: &str,
         password: &str,
     ) -> Result<Option<User>, CoreError> {
-        if password.len() < MIN_PASSWORD_LEN {
-            return Err(UserError::WeakPassword.into());
-        }
+        Self::validate_password(password)?;
         let Some(mut user) = self.repository.find_by_username(username.trim()).await? else {
             return Ok(None);
         };

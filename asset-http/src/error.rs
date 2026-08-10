@@ -107,7 +107,8 @@ impl From<CoreError> for HttpError {
             | CoreError::Resource(_)
             | CoreError::User(_)
             | CoreError::Unsupported { .. }
-            | CoreError::InvalidOperation { .. } => StatusCode::BAD_REQUEST,
+            | CoreError::InvalidOperation { .. }
+            | CoreError::WeakPassword => StatusCode::BAD_REQUEST,
             CoreError::Unauthenticated => StatusCode::UNAUTHORIZED,
             CoreError::Forbidden { .. } => StatusCode::FORBIDDEN,
             CoreError::NotFound { .. } => StatusCode::NOT_FOUND,

@@ -8,6 +8,4 @@ pub enum UserError {
     InvalidCredentialHash,
     #[error("user updated timestamp cannot precede creation")]
     InvalidTimestamps,
-    #[error("password must contain at least 4 characters")]
-    WeakPassword,
 }
