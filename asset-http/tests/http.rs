@@ -1,7 +1,7 @@
 use asset_core::domain::{AccessContext, UserId, UserRole};
 use asset_http::{
-    CorsPolicy, HttpSessionRuntime, MAX_ACTION_REQUEST_BYTES, MAX_LOGIN_REQUEST_BYTES,
-    RouterOptions, SessionOptions, build_router, with_authentication,
+    CorsPolicy, HttpSessionRuntime, RouterOptions, SessionOptions, build_router,
+    with_authentication,
 };
 use asset_infra::config::{
     AssetInfraConfig, BlobConfig, DatabaseConfig, LocalBlobConfig, LocalBlobSyncConfig,
@@ -26,6 +26,8 @@ use tower_sessions_sqlx_store::sqlx::sqlite::SqliteConnectOptions;
 use tower_sessions_sqlx_store::sqlx::{SqlitePool, query_scalar};
 
 const BODY_LIMIT: usize = 1024 * 1024;
+const ACTION_REQUEST_LIMIT: usize = 1024 * 1024;
+const LOGIN_REQUEST_LIMIT: usize = 16 * 1024;
 const ROOT_DIRECTORY_ID: &str = "00000000-0000-0000-0000-000000000000";
 
 struct TestApp {
@@ -149,7 +151,7 @@ async fn text_content_replacement_streams_beyond_the_action_json_limit_and_enfor
         stream_upload(&app, "/resources?name=large.txt", "text/plain", b"small").await;
     assert_eq!(status, StatusCode::CREATED, "{resource}");
     let id = resource["id"].as_str().unwrap();
-    let content = vec![b'x'; MAX_ACTION_REQUEST_BYTES + 1024];
+    let content = vec![b'x'; ACTION_REQUEST_LIMIT + 1024];
     let response = request(
         &app,
         Request::builder()
@@ -204,7 +206,7 @@ async fn action_endpoint_has_a_dedicated_request_body_limit() {
     let app = test_app("action-body-limit").await;
     let oversized = format!(
         "{{\"input\":{{\"value\":\"{}\"}}}}",
-        "x".repeat(MAX_ACTION_REQUEST_BYTES)
+        "x".repeat(ACTION_REQUEST_LIMIT)
     );
     let response = request(
         &app,
@@ -221,7 +223,7 @@ async fn action_endpoint_has_a_dedicated_request_body_limit() {
 
     let oversized = format!(
         "{{\"input\":{{\"value\":\"{}\"}}}}",
-        "x".repeat(MAX_ACTION_REQUEST_BYTES)
+        "x".repeat(ACTION_REQUEST_LIMIT)
     );
     let response = request(
         &app,
@@ -1531,7 +1533,7 @@ async fn authentication_starts_without_users_and_limits_member_workspace_access(
         &app,
         Method::POST,
         "/auth/login",
-        json!({ "username": "admin", "password": "x".repeat(MAX_LOGIN_REQUEST_BYTES) }),
+        json!({ "username": "admin", "password": "x".repeat(LOGIN_REQUEST_LIMIT) }),
         "",
     )
     .await;

@@ -11,8 +11,3 @@ mod state;
 pub use router::{build_router, with_authentication};
 pub use session_store::{HttpSessionRuntime, SessionStoreHealth};
 pub use settings::{CorsPolicy, HttpSettings, RouterOptions, SessionOptions};
-
-/// HTTP action request body limit, exported for host-level integration tests.
-pub const MAX_ACTION_REQUEST_BYTES: usize = handlers::MAX_ACTION_REQUEST_BYTES;
-/// HTTP login request body limit, exported for host-level integration tests.
-pub const MAX_LOGIN_REQUEST_BYTES: usize = auth::MAX_LOGIN_REQUEST_BYTES;

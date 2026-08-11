@@ -10,7 +10,7 @@ use std::path::Path;
         .multiple(false)
         .args(["check", "show"])
 ))]
-pub(crate) struct ConfigCommand {
+pub(crate) struct Command {
     /// Validate a configuration file without initializing the application runtime.
     #[arg(long)]
     check: bool,
@@ -20,7 +20,7 @@ pub(crate) struct ConfigCommand {
     show: bool,
 }
 
-pub(crate) fn run(command: ConfigCommand, config_path: Option<&Path>) -> CliResult {
+pub(crate) fn run(command: Command, config_path: Option<&Path>) -> CliResult {
     match (command.check, command.show) {
         (true, false) => {
             load_normalized_config(config_path)?;

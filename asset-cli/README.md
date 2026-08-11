@@ -34,8 +34,8 @@ asset [--config <PATH>]
 │   ├── --disable <USERNAME>
 │   └── --show <USERNAME>
 └── plugin
-    ├── --seal <PACKAGE>
-    └── --verify <PACKAGE>
+    ├── --seal <PLUGIN_ID>
+    └── --verify <PLUGIN_ID>
 ```
 
 | 命令组 | 用途 |
@@ -217,8 +217,9 @@ asset user --show alice
 
 # `asset plugin` 命令
 
-`asset plugin` 只处理显式给出的插件包目录，不读取 Asset Hub 运行配置；同时提供顶层
-`--config` 会报错，以避免参数看似生效但实际被忽略。
+`asset plugin` 使用顶层 `--config` 指定的配置文件；未指定时读取当前目录的 `config.toml`
+（不存在时使用内置默认配置）。命令接收插件 ID，并将其解析为
+`<blob.local.root>/.asset-hub/plugins/<plugin-id>`，无需手动填写插件包路径。
 
 插件包必须在启动 Asset Hub 前显式生成 `manifest.lock.json`。生成 lock 与验证/加载是两个独立
 操作：生成操作只接受尚未存在 lock 的包；CLI 验证和 Runtime 加载均为只读，不会创建或覆盖
@@ -228,21 +229,28 @@ CLI 和 Runtime 共同调用 `asset-infra` 中唯一的包验证实现，因此�
 SHA-256、文件集合和大小限制完全一致：Manifest 最大 1 MiB、lock 最大 4 MiB、Wasm 最大
 64 MiB，Web 资源合计最大 64 MiB。
 
-## `asset plugin --seal <PACKAGE>`
+## `asset [--config <PATH>] plugin --seal <PLUGIN_ID>`
 
 校验插件契约、规范包目录和全部产物规则后，为尚未封装的插件包原子创建
 `manifest.lock.json`。如果 lock 已存在则失败，避免无意中接受被修改的产物。
 
 ```bash
-asset plugin --seal .asset-hub/plugins/example.tools
+asset plugin --seal example.tools
+asset --config config.toml plugin --seal example.tools
 ```
 
-## `asset plugin --verify <PACKAGE>`
+`PLUGIN_ID` 必须是单个插件目录名，不能是绝对路径，也不能包含 `/`、`..` 等路径成分。
+
+## `asset [--config <PATH>] plugin --verify <PLUGIN_ID>`
 
 从插件包目录读取 `manifest.json` 和已有的 `manifest.lock.json`，校验插件契约及全部包内产物的
 完整性，但不修改任何文件。该操作与 Runtime 启动使用同一验证/加载路径，适用于 CI、镜像
 构建和发布验收。
 
 ```bash
-asset plugin --verify .asset-hub/plugins/example.tools
+asset plugin --verify example.tools
+asset --config config.toml plugin --verify example.tools
 ```
+
+`PLUGIN_ID` 使用与 `--seal` 相同的固定目录解析规则。插件命令只读取和校验配置，不会初始化
+数据库、对象存储或完整应用运行时。

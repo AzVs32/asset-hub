@@ -69,7 +69,8 @@ filesystem_write = []
 # provider-owned action ID. Resource actions recognize `thumbnail`, `text_read`, and `text_edit`;
 # directory actions recognize `thumbnail`.
 # Build the fixed `plugin.wasm` runtime and optional root `index.html` plus Web assets. Before
-# startup, run `asset plugin --seal <package>`; startup only verifies the
+# startup, run `asset plugin --seal <plugin-id>`; the CLI resolves the package below the configured
+# Blob root. Startup only verifies the
 # existing `manifest.lock.json` and never modifies the package.
 #
 # {

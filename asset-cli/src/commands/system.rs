@@ -13,13 +13,13 @@ use std::time::Duration;
         .multiple(false)
         .args(["scan_resource"])
 ))]
-pub(crate) struct SystemCommand {
+pub(crate) struct Command {
     /// Fully verify every stored resource and recalculate its SHA-256 checksum.
     #[arg(long)]
     scan_resource: bool,
 }
 
-pub(crate) async fn run(command: SystemCommand, service: ResourceService) -> CliResult {
+pub(crate) async fn run(command: Command, service: ResourceService) -> CliResult {
     if command.scan_resource {
         scan_resources(service).await
     } else {

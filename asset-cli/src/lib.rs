@@ -28,13 +28,13 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Inspect and manage Asset Hub configuration.
-    Config(config::ConfigCommand),
+    Config(config::Command),
     /// Inspect and maintain the local Asset Hub system.
-    System(system::SystemCommand),
+    System(system::Command),
     /// Manage Asset Hub users.
-    User(user::UserCommand),
-    /// Verify Asset Hub plugin packages.
-    Plugin(plugin::PluginCommand),
+    User(user::Command),
+    /// Seal or verify an installed Asset Hub plugin package.
+    Plugin(plugin::Command),
 }
 
 pub async fn run(cli: Cli) -> CliResult {
@@ -50,20 +50,22 @@ pub async fn run(cli: Cli) -> CliResult {
             user::run(command, runtime.user_service()).await
         }
         Command::Plugin(command) => {
-            if config_path.is_some() {
-                anyhow::bail!("--config is not used by `asset plugin`");
-            }
-            plugin::run(command)
+            let config = load_config(config_path)?.normalized()?;
+            plugin::run(command, &config.plugin_packages_path())
         }
     }
 }
 
 async fn maintenance_runtime(config_path: Option<&Path>) -> CliResult<AssetRuntime> {
+    Ok(AssetRuntime::new(load_config(config_path)?).await?)
+}
+
+fn load_config(config_path: Option<&Path>) -> Result<AssetInfraConfig, asset_core::CoreError> {
     let config = match config_path {
         Some(path) => AssetInfraConfig::from_config_file(path)?,
         None => AssetInfraConfig::from_default_config_file()?,
     };
-    Ok(AssetRuntime::new(config).await?)
+    Ok(config)
 }
 
 #[cfg(test)]

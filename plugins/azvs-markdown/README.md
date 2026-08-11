@@ -86,8 +86,8 @@ mkdir -p data/.asset-hub/plugins/azvs.markdown
 cp plugins/azvs-markdown/manifest.json plugins/azvs-markdown/plugin.wasm \
   data/.asset-hub/plugins/azvs.markdown/
 cp -R plugins/azvs-markdown/dist/. data/.asset-hub/plugins/azvs.markdown/
-asset plugin --seal data/.asset-hub/plugins/azvs.markdown
-asset plugin --verify data/.asset-hub/plugins/azvs.markdown
+asset plugin --seal azvs.markdown
+asset plugin --verify azvs.markdown
 ```
 
 Asset Hub startup requires and verifies `manifest.lock.json` without modifying it. Asset Hub

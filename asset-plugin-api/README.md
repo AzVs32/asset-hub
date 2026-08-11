@@ -92,13 +92,16 @@ An Extism plugin package uses `plugin.wasm` as its runtime entry. It may also
 provide an `index.html` Web interface. The action handler exports referenced by
 the Manifest exchange JSON values defined by this crate.
 
-The host requires a sealed package before startup. After assembling the package
-under a directory whose name equals `plugin.id`, generate and verify its lock:
+The host requires a sealed package before startup. After assembling the package under
+`<blob.local.root>/.asset-hub/plugins/<plugin-id>`, generate and verify its lock by plugin ID:
 
 ```bash
-asset plugin --seal path/to/<plugin-id>
-asset plugin --verify path/to/<plugin-id>
+asset plugin --seal <plugin-id>
+asset plugin --verify <plugin-id>
 ```
+
+Use the global `--config <PATH>` option when the package belongs to a non-default Asset Hub
+configuration.
 
 Lock generation writes `manifest.lock.json` only when it is absent. Verification
 and runtime loading are read-only and use the same host implementation and limits

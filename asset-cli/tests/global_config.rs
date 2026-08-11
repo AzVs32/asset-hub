@@ -75,3 +75,70 @@ fn user_commands_honor_the_global_config_argument() {
             .exists()
     );
 }
+
+#[test]
+fn plugin_commands_resolve_plugin_ids_from_the_configured_data_root() {
+    let root = TestRoot::new();
+    let configured_data = root.path().join("configured-data");
+    let package = configured_data
+        .join(".asset-hub/plugins")
+        .join("example.plugin");
+    std::fs::create_dir_all(&package).unwrap();
+    std::fs::write(
+        package.join("manifest.json"),
+        r#"{
+          "manifest_version": 2,
+          "plugin": {
+            "id": "example.plugin",
+            "name": "Example",
+            "version": "0.1.0",
+            "publisher": "test"
+          },
+          "runtime": {
+            "type": "extism",
+            "wasi": false,
+            "plugin_api": "asset-hub.plugin-api@3"
+          },
+          "capabilities": {
+            "resource_kinds": [],
+            "resource_actions": []
+          },
+          "permissions": { "allow": ["resource.read"] }
+        }"#,
+    )
+    .unwrap();
+    std::fs::write(package.join("plugin.wasm"), b"\0asm").unwrap();
+
+    let config = AssetInfraConfig {
+        blob: BlobConfig {
+            local: LocalBlobConfig {
+                root: configured_data.clone(),
+                sync: LocalBlobSyncConfig {
+                    enabled: false,
+                    ..LocalBlobSyncConfig::default()
+                },
+            },
+            ..BlobConfig::default()
+        },
+        ..AssetInfraConfig::default()
+    };
+    let config_path = root.path().join("asset-hub.toml");
+    std::fs::write(&config_path, toml::to_string_pretty(&config).unwrap()).unwrap();
+
+    for operation in ["--seal", "--verify"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_asset"))
+            .arg("--config")
+            .arg(&config_path)
+            .args(["plugin", operation, "example.plugin"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "asset {operation} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    assert!(package.join("manifest.lock.json").is_file());
+    assert!(!configured_data.join(".asset-hub/asset-hub.sqlite").exists());
+}

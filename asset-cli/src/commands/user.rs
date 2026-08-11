@@ -13,7 +13,7 @@ use comfy_table::{Table, presets::UTF8_FULL};
         .multiple(false)  // 强制要求最多只能提供该分组中的一个参数
         .args(["list", "create", "password", "enable", "disable", "show"])
 ))]
-pub(crate) struct UserCommand {
+pub(crate) struct Command {
     /// List all users.
     #[arg(long)]
     list: bool,
@@ -47,7 +47,7 @@ pub(crate) struct UserCommand {
     show: Option<String>,
 }
 
-pub(crate) async fn run(command: UserCommand, users: UserService) -> CliResult {
+pub(crate) async fn run(command: Command, users: UserService) -> CliResult {
     if command.list {
         print_user_list(&users.list().await?);
     } else if let Some(username) = command.create {
