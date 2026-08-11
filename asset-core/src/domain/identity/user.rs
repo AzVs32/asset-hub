@@ -1,8 +1,8 @@
-use std::fmt;
-use std::fmt::Formatter;
 use crate::domain::DirectoryId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::fmt;
+use std::fmt::Formatter;
 
 crate::gen_id_uuid_v7!(UserId);
 
@@ -56,19 +56,6 @@ impl fmt::Display for UserStatus {
     }
 }
 
-/// 未校验的用户持久化快照；只能通过 [`User::rehydrate`] 转换为聚合。
-#[derive(Debug, Clone)]
-pub struct UserSnapshot {
-    pub id: UserId,
-    pub username: String,
-    pub credential_hash: String,
-    pub role: UserRole,
-    pub status: UserStatus,
-    pub workspace_directory_id: DirectoryId,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
 impl User {
     pub fn new(
         username: impl Into<String>,
@@ -77,43 +64,46 @@ impl User {
         workspace_directory_id: DirectoryId,
     ) -> Result<Self, crate::UserError> {
         let now = Utc::now();
-        Self::rehydrate(UserSnapshot {
-            id: UserId::new(),
-            username: username.into(),
-            credential_hash: credential_hash.into(),
+        Self::rehydrate(
+            UserId::new(),
+            username.into(),
+            credential_hash.into(),
             role,
-            status: UserStatus::Active,
+            UserStatus::Active,
             workspace_directory_id,
-            created_at: now,
-            updated_at: now,
-        })
+            now,
+            now,
+        )
     }
 
-    pub fn rehydrate(snapshot: UserSnapshot) -> Result<Self, crate::UserError> {
-        snapshot.try_into()
-    }
-}
-
-impl TryFrom<UserSnapshot> for User {
-    type Error = crate::UserError;
-
-    fn try_from(snapshot: UserSnapshot) -> Result<Self, Self::Error> {
-        let username = normalize_username(snapshot.username)?;
-        if snapshot.credential_hash.trim().is_empty() {
+    /// 从持久化适配器已解析的完整状态还原用户聚合。
+    #[allow(clippy::too_many_arguments)]
+    pub fn rehydrate(
+        id: UserId,
+        username: String,
+        credential_hash: String,
+        role: UserRole,
+        status: UserStatus,
+        workspace_directory_id: DirectoryId,
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
+    ) -> Result<Self, crate::UserError> {
+        let username = normalize_username(username)?;
+        if credential_hash.trim().is_empty() {
             return Err(crate::UserError::InvalidCredentialHash);
         }
-        if snapshot.updated_at < snapshot.created_at {
+        if updated_at < created_at {
             return Err(crate::UserError::InvalidTimestamps);
         }
         Ok(Self {
-            id: snapshot.id,
+            id,
             username,
-            credential_hash: snapshot.credential_hash,
-            role: snapshot.role,
-            status: snapshot.status,
-            workspace_directory_id: snapshot.workspace_directory_id,
-            created_at: snapshot.created_at,
-            updated_at: snapshot.updated_at,
+            credential_hash,
+            role,
+            status,
+            workspace_directory_id,
+            created_at,
+            updated_at,
         })
     }
 }

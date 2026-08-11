@@ -21,17 +21,13 @@ pub use definition::{
     ResourceKindDefinition,
 };
 pub use directory::{
-    Directory, DirectoryId, DirectoryKind, DirectoryPath, DirectorySnapshot,
-    INTERNAL_STORAGE_DIRECTORY_NAME,
+    Directory, DirectoryId, DirectoryKind, DirectoryPath, INTERNAL_STORAGE_DIRECTORY_NAME,
 };
-pub use identity::{
-    AccessContext, DirectoryOperation, User, UserId, UserRole, UserSnapshot, UserStatus,
-};
+pub use identity::{AccessContext, DirectoryOperation, User, UserId, UserRole, UserStatus};
 pub use kind::{KindId, KindIdError};
 pub use resource::{
     Checksum, ChecksumKind, ContentVerification, ContentVerificationStatus, Resource,
-    ResourceBuilder, ResourceContent, ResourceContentBuilder, ResourceId, ResourceKind,
-    ResourceSnapshot, StorageKey,
+    ResourceBuilder, ResourceContent, ResourceContentBuilder, ResourceId, ResourceKind, StorageKey,
 };
 pub use resource_action_policy::{InvalidResourceActionPolicy, ResourceActionPolicy};
 pub use resource_content_edit_policy::{

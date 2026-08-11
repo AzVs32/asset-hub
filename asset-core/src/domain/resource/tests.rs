@@ -53,20 +53,19 @@ fn resource_kind_serde_requires_canonical_input() {
 #[test]
 fn resource_rehydration_rejects_inconsistent_timestamps() {
     let created_at = chrono::Utc::now();
-    let snapshot = ResourceSnapshot {
-        id: ResourceId::new(),
-        name: "image.png".to_owned(),
-        directory_id: DirectoryId::root(),
-        kind: ResourceKind::default(),
-        content: None,
-        created_at,
-        updated_at: created_at - chrono::Duration::seconds(1),
-        revision: 1,
-        deleted_at: None,
-    };
 
     assert!(matches!(
-        Resource::rehydrate(snapshot),
+        Resource::rehydrate(
+            ResourceId::new(),
+            "image.png".to_owned(),
+            DirectoryId::root(),
+            ResourceKind::default(),
+            None,
+            created_at,
+            created_at - chrono::Duration::seconds(1),
+            1,
+            None,
+        ),
         Err(ResourceError::InvalidFormat {
             field: "resource.updated_at",
             ..

@@ -6,7 +6,7 @@ mod kind;
 use crate::domain::DirectoryId;
 use crate::error::ResourceError;
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 pub use content::{
     Checksum, ChecksumKind, ContentVerification, ContentVerificationStatus, ResourceContent,
@@ -49,68 +49,41 @@ pub struct Resource {
     deleted_at: Option<DateTime<Utc>>,
 }
 
-/// 资源聚合快照。
-///
-/// 该结构用于持久化适配器从数据库记录还原 `Resource` 聚合，不作为普通业务创建入口。
-/// 普通业务创建应继续使用 `Resource::builder()`，以便由领域模型分配新 ID 和时间戳。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ResourceSnapshot {
-    /// 资源唯一标识。
-    pub id: ResourceId,
-    /// 资源展示名。
-    pub name: String,
-    /// 资源所在目录的稳定标识。
-    pub directory_id: DirectoryId,
-    /// 资源类型。
-    pub kind: ResourceKind,
-    /// 资源内容引用。
-    pub content: Option<ResourceContent>,
-    /// 资源创建时间。
-    pub created_at: DateTime<Utc>,
-    /// 资源最后更新时间。
-    pub updated_at: DateTime<Utc>,
-    /// 持久化聚合版本；必须从 1 开始。
-    pub revision: u64,
-    /// 软删除时间。
-    pub deleted_at: Option<DateTime<Utc>>,
-}
-
 impl Resource {
     /// 创建资源构建器。
     pub fn builder(name: impl Into<String>) -> ResourceBuilder {
         ResourceBuilder::new(name)
     }
 
-    /// 从持久化快照还原资源聚合。
+    /// 从持久化适配器已解析的完整状态还原资源聚合。
     ///
-    /// 该方法会保留快照中的 ID、时间戳和软删除状态，但仍会重新执行聚合约束校验。
-    /// Repository 实现应通过它还原数据库记录，避免绕过领域约束直接构造 `Resource`。
-    pub fn rehydrate(snapshot: ResourceSnapshot) -> Result<Self, ResourceError> {
-        snapshot.try_into()
-    }
-}
-
-impl TryFrom<ResourceSnapshot> for Resource {
-    type Error = ResourceError;
-
-    fn try_from(snapshot: ResourceSnapshot) -> Result<Self, Self::Error> {
-        let name = normalize_resource_name(snapshot.name)?;
-        if snapshot.revision == 0 {
+    /// 该方法保留原 ID、时间戳和软删除状态，但仍会重新执行聚合约束校验。
+    #[allow(clippy::too_many_arguments)]
+    pub fn rehydrate(
+        id: ResourceId,
+        name: String,
+        directory_id: DirectoryId,
+        kind: ResourceKind,
+        content: Option<ResourceContent>,
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
+        revision: u64,
+        deleted_at: Option<DateTime<Utc>>,
+    ) -> Result<Self, ResourceError> {
+        let name = normalize_resource_name(name)?;
+        if revision == 0 {
             return Err(ResourceError::InvalidFormat {
                 field: "resource.revision",
                 reason: "resource revision must be greater than zero",
             });
         }
-        if snapshot.updated_at < snapshot.created_at {
+        if updated_at < created_at {
             return Err(ResourceError::InvalidFormat {
                 field: "resource.updated_at",
                 reason: "updated timestamp cannot precede creation",
             });
         }
-        if snapshot
-            .deleted_at
-            .is_some_and(|deleted_at| deleted_at != snapshot.updated_at)
-        {
+        if deleted_at.is_some_and(|deleted_at| deleted_at != updated_at) {
             return Err(ResourceError::InvalidFormat {
                 field: "resource.deleted_at",
                 reason: "deleted timestamp must match the last update",
@@ -118,15 +91,15 @@ impl TryFrom<ResourceSnapshot> for Resource {
         }
 
         Ok(Self {
-            id: snapshot.id,
+            id,
             name,
-            directory_id: snapshot.directory_id,
-            kind: snapshot.kind,
-            content: snapshot.content,
-            created_at: snapshot.created_at,
-            updated_at: snapshot.updated_at,
-            revision: snapshot.revision,
-            deleted_at: snapshot.deleted_at,
+            directory_id,
+            kind,
+            content,
+            created_at,
+            updated_at,
+            revision,
+            deleted_at,
         })
     }
 }

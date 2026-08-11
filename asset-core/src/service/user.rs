@@ -45,7 +45,7 @@ impl UserService {
         let workspace_path = match workspace_directory {
             Some(directory) => directory,
             None if role == UserRole::Administrator => DirectoryPath::root(),
-            None => DirectoryPath::from_path(format!("users/{}", &username))?,
+            None => DirectoryPath::from_path(format!("users/{username}"))?,
         };
         let workspace_directory = self.directories.ensure_path(&workspace_path).await?;
         let user = User::new(

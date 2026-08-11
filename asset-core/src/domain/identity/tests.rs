@@ -40,19 +40,18 @@ fn credential_hash_can_be_replaced_but_not_cleared() {
 #[test]
 fn user_rehydration_rejects_inconsistent_timestamps() {
     let created_at = chrono::Utc::now();
-    let snapshot = UserSnapshot {
-        id: UserId::new(),
-        username: "alice".to_owned(),
-        credential_hash: "hash".to_owned(),
-        role: UserRole::Member,
-        status: UserStatus::Active,
-        workspace_directory_id: DirectoryId::root(),
-        created_at,
-        updated_at: created_at - chrono::Duration::seconds(1),
-    };
 
     assert_eq!(
-        User::rehydrate(snapshot),
+        User::rehydrate(
+            UserId::new(),
+            "alice".to_owned(),
+            "hash".to_owned(),
+            UserRole::Member,
+            UserStatus::Active,
+            DirectoryId::root(),
+            created_at,
+            created_at - chrono::Duration::seconds(1),
+        ),
         Err(crate::UserError::InvalidTimestamps)
     );
 }

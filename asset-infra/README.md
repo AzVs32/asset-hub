@@ -107,10 +107,11 @@ partially assembled catalog, so a broken or conflicting package prevents that ge
 starting and must be fixed or removed explicitly.
 
 SQLite never deserializes persisted data directly into Resource, Directory, or User aggregates.
-Repository rows first become unchecked snapshots and then pass through Core rehydration; persisted
-Resource content, checksums, and storage keys likewise deserialize through their validating Core
-constructors. Invalid JSON, path-like keys, aggregate timestamps, or other inconsistent rows are
-reported as repository failures and no partially valid domain object is returned.
+Repository queries first map columns into adapter-owned row structures, parse their database
+representations into Core values, and then call the aggregate rehydration methods. Persisted Resource
+content, checksums, and storage keys likewise deserialize through their validating Core constructors.
+Invalid JSON, path-like keys, aggregate timestamps, or other inconsistent rows are reported as
+repository failures and no partially valid domain object is returned.
 
 Persisted upload sessions are rehydrated through the Core aggregate state machine. SQLite
 conditional updates only advance offsets while uploading, only enter finalization after all bytes

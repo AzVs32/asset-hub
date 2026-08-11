@@ -1,16 +1,16 @@
 use crate::migration;
 use asset_core::CoreError;
 use asset_core::domain::{
-    Directory, DirectoryId, DirectoryKind, DirectoryPath, DirectorySnapshot, Resource,
-    ResourceContent, ResourceId, ResourceKind, ResourceSnapshot,
+    Directory, DirectoryId, DirectoryKind, DirectoryPath, Resource, ResourceContent, ResourceId,
+    ResourceKind,
 };
 use asset_core::port::{
     DirectoryLocation, DirectoryRepository, ListResources, LocatedResource, ResourcePage,
     ResourceQuery, ResourceRepository,
 };
 use chrono::{DateTime, Utc};
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow};
-use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
+use sqlx::{QueryBuilder, Sqlite, SqlitePool};
 use std::path::Path;
 
 const RESOURCE_SELECT: &str = r#"
@@ -55,6 +55,39 @@ const RESOURCE_AGGREGATE_SELECT: &str = r#"
         resources.deleted_at
     FROM resources
 "#;
+
+/// SQLite 资源记录；领域值解析和聚合校验在读取后显式执行。
+#[derive(sqlx::FromRow)]
+struct ResourceRow {
+    id: String,
+    name: String,
+    directory_id: String,
+    kind: String,
+    content_json: Option<String>,
+    created_at: String,
+    updated_at: String,
+    revision: i64,
+    deleted_at: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+struct LocatedResourceRow {
+    #[sqlx(flatten)]
+    resource: ResourceRow,
+    directory_path: String,
+}
+
+/// SQLite 目录记录，与 Core 的目录聚合保持解耦。
+#[derive(sqlx::FromRow)]
+struct DirectoryRow {
+    id: String,
+    parent_id: Option<String>,
+    name: String,
+    kind: String,
+    created_at: String,
+    updated_at: String,
+    revision: i64,
+}
 
 /// SQLite 版本的资源聚合仓储。
 ///
@@ -210,7 +243,7 @@ impl ResourceRepository for SqliteResourceRepository {
 
     async fn find_by_id(&self, id: &ResourceId) -> Result<Option<Resource>, CoreError> {
         let statement = format!("{RESOURCE_AGGREGATE_SELECT} WHERE resources.id = ?");
-        let row = sqlx::query(&statement)
+        let row = sqlx::query_as::<_, ResourceRow>(&statement)
             .bind(id.to_string())
             .fetch_optional(&self.pool)
             .await
@@ -252,7 +285,7 @@ impl ResourceQuery for SqliteResourceRepository {
         id: &ResourceId,
     ) -> Result<Option<LocatedResource>, CoreError> {
         let statement = format!("{RESOURCE_SELECT} WHERE resources.id = ?");
-        let row = sqlx::query(&statement)
+        let row = sqlx::query_as::<_, LocatedResourceRow>(&statement)
             .bind(id.to_string())
             .fetch_optional(&self.pool)
             .await
@@ -270,7 +303,7 @@ impl ResourceQuery for SqliteResourceRepository {
             "{RESOURCE_SELECT} WHERE directory_paths.path = ? AND resources.name = ? \
              AND resources.deleted_at IS NULL"
         );
-        let row = sqlx::query(&statement)
+        let row = sqlx::query_as::<_, LocatedResourceRow>(&statement)
             .bind(directory.path())
             .bind(name)
             .fetch_optional(&self.pool)
@@ -287,7 +320,7 @@ impl ResourceQuery for SqliteResourceRepository {
             .await
             .map_err(|error| CoreError::repository("list.count", error))?;
         let rows = build_list_select_query(query)
-            .build()
+            .build_query_as::<LocatedResourceRow>()
             .fetch_all(&self.pool)
             .await
             .map_err(|error| CoreError::repository("list.select", error))?;
@@ -308,7 +341,7 @@ impl ResourceQuery for SqliteResourceRepository {
 #[async_trait::async_trait]
 impl DirectoryRepository for SqliteResourceRepository {
     async fn load_all(&self) -> Result<Vec<Directory>, CoreError> {
-        let rows = sqlx::query(
+        let rows = sqlx::query_as::<_, DirectoryRow>(
             "SELECT id, parent_id, name, kind, created_at, updated_at, revision FROM directories",
         )
         .fetch_all(&self.pool)
@@ -499,80 +532,78 @@ fn escape_like(value: &str) -> String {
         .replace('_', "\\_")
 }
 
-fn decode_resource(row: SqliteRow) -> Result<Resource, CoreError> {
-    let id = decode_id(column(&row, "id")?)?;
-    let name = column(&row, "name")?;
-    let directory_id = decode_directory_id(column(&row, "directory_id")?)?;
-    let kind = ResourceKind::try_new(column::<String>(&row, "kind")?)
-        .map_err(|error| CoreError::repository("resource.decode_kind", error))?;
-    let content = decode_content(column(&row, "content_json")?)?;
-    let created_at = decode_timestamp(column(&row, "created_at")?)?;
-    let updated_at = decode_timestamp(column(&row, "updated_at")?)?;
-    let revision = column::<i64>(&row, "revision")?;
-    let revision = u64::try_from(revision)
-        .map_err(|error| CoreError::repository("resource.decode_revision", error))?;
-    let deleted_at = column::<Option<String>>(&row, "deleted_at")?
-        .map(decode_timestamp)
-        .transpose()?;
-
-    Resource::rehydrate(ResourceSnapshot {
+fn decode_resource(row: ResourceRow) -> Result<Resource, CoreError> {
+    let ResourceRow {
         id,
         name,
         directory_id,
         kind,
-        content,
+        content_json,
         created_at,
         updated_at,
         revision,
         deleted_at,
-    })
+    } = row;
+    let kind = ResourceKind::try_new(kind)
+        .map_err(|error| CoreError::repository("resource.decode_kind", error))?;
+    let content = decode_content(content_json)?;
+    let revision = u64::try_from(revision)
+        .map_err(|error| CoreError::repository("resource.decode_revision", error))?;
+    let deleted_at = deleted_at
+        .map(|value| decode_timestamp("resource.decode_deleted_at", &value))
+        .transpose()?;
+
+    Resource::rehydrate(
+        decode_id(&id)?,
+        name,
+        decode_directory_id(&directory_id)?,
+        kind,
+        content,
+        decode_timestamp("resource.decode_created_at", &created_at)?,
+        decode_timestamp("resource.decode_updated_at", &updated_at)?,
+        revision,
+        deleted_at,
+    )
     .map_err(|error| CoreError::repository("resource.rehydrate", error))
 }
 
-fn decode_located_resource(row: SqliteRow) -> Result<LocatedResource, CoreError> {
-    let directory_id = decode_directory_id(column(&row, "directory_id")?)?;
-    let directory_path = DirectoryPath::from_path(column::<String>(&row, "directory_path")?)
+fn decode_located_resource(row: LocatedResourceRow) -> Result<LocatedResource, CoreError> {
+    let directory_id = decode_directory_id(&row.resource.directory_id)?;
+    let directory_path = DirectoryPath::from_path(row.directory_path)
         .map_err(|error| CoreError::repository("resource.decode_directory_path", error))?;
-    let resource = decode_resource(row)?;
+    let resource = decode_resource(row.resource)?;
     LocatedResource::new(
         resource,
         DirectoryLocation::new(directory_id, directory_path),
     )
 }
 
-fn column<T>(row: &SqliteRow, name: &'static str) -> Result<T, CoreError>
-where
-    for<'row> T: sqlx::Decode<'row, Sqlite> + sqlx::Type<Sqlite>,
-{
-    row.try_get(name)
-        .map_err(|error| CoreError::repository("resource.decode_row", error))
-}
-
-fn decode_id(value: String) -> Result<ResourceId, CoreError> {
+fn decode_id(value: &str) -> Result<ResourceId, CoreError> {
     value
         .parse()
         .map_err(|error| CoreError::repository("resource.decode_id", error))
 }
 
-fn decode_directory_id(value: String) -> Result<DirectoryId, CoreError> {
+fn decode_directory_id(value: &str) -> Result<DirectoryId, CoreError> {
     value
         .parse()
         .map_err(|error| CoreError::repository("directory.decode_id", error))
 }
 
-fn decode_directory(row: SqliteRow) -> Result<Directory, CoreError> {
-    Directory::rehydrate(DirectorySnapshot {
-        id: decode_directory_id(column(&row, "id")?)?,
-        parent_id: column::<Option<String>>(&row, "parent_id")?
+fn decode_directory(row: DirectoryRow) -> Result<Directory, CoreError> {
+    Directory::rehydrate(
+        decode_directory_id(&row.id)?,
+        row.parent_id
+            .as_deref()
             .map(decode_directory_id)
             .transpose()?,
-        name: column(&row, "name")?,
-        kind: DirectoryKind::try_new(column::<String>(&row, "kind")?)
+        row.name,
+        DirectoryKind::try_new(row.kind)
             .map_err(|error| CoreError::repository("directory.decode_kind", error))?,
-        created_at: decode_timestamp(column(&row, "created_at")?)?,
-        updated_at: decode_timestamp(column(&row, "updated_at")?)?,
-        revision: decode_revision(column(&row, "revision")?)?,
-    })
+        decode_timestamp("directory.decode_created_at", &row.created_at)?,
+        decode_timestamp("directory.decode_updated_at", &row.updated_at)?,
+        decode_revision(row.revision)?,
+    )
     .map_err(|error| CoreError::repository("directory.rehydrate", error))
 }
 
@@ -601,10 +632,10 @@ fn encode_directory_revision(value: u64) -> Result<i64, CoreError> {
     i64::try_from(value).map_err(|error| CoreError::repository("directory.encode_revision", error))
 }
 
-fn decode_timestamp(value: String) -> Result<DateTime<Utc>, CoreError> {
-    DateTime::parse_from_rfc3339(&value)
+fn decode_timestamp(operation: &'static str, value: &str) -> Result<DateTime<Utc>, CoreError> {
+    DateTime::parse_from_rfc3339(value)
         .map(|value| value.with_timezone(&Utc))
-        .map_err(|error| CoreError::repository("resource.decode_timestamp", error))
+        .map_err(|error| CoreError::repository(operation, error))
 }
 
 #[cfg(test)]

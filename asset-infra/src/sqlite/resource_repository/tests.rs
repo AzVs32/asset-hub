@@ -97,7 +97,7 @@ async fn sqlite_repository_rejects_invalid_persisted_resource_content() {
 }
 
 #[tokio::test]
-async fn sqlite_repository_classifies_invalid_resource_snapshot_as_repository_failure() {
+async fn sqlite_repository_classifies_invalid_resource_state_as_repository_failure() {
     let repository = repository("invalid-resource-snapshot").await;
     let resource = Resource::builder("valid.bin").build().unwrap();
     repository.save(&resource).await.unwrap();

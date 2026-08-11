@@ -111,51 +111,48 @@ fn directory_rejects_self_parent() {
 fn directory_rehydration_rejects_self_parent_and_inconsistent_timestamps() {
     let id = DirectoryId::new();
     let created_at = Utc::now();
-    let snapshot = DirectorySnapshot {
-        id,
-        parent_id: Some(id),
-        name: "self".to_owned(),
-        kind: DirectoryKind::default(),
-        created_at,
-        updated_at: created_at,
-        revision: 1,
-    };
     assert!(matches!(
-        Directory::rehydrate(snapshot),
+        Directory::rehydrate(
+            id,
+            Some(id),
+            "self".to_owned(),
+            DirectoryKind::default(),
+            created_at,
+            created_at,
+            1,
+        ),
         Err(DirectoryError::InvalidFormat {
             field: "directory.parent_id",
             ..
         })
     ));
 
-    let snapshot = DirectorySnapshot {
-        id: DirectoryId::new(),
-        parent_id: Some(DirectoryId::root()),
-        name: "past".to_owned(),
-        kind: DirectoryKind::default(),
-        created_at,
-        updated_at: created_at - chrono::Duration::seconds(1),
-        revision: 1,
-    };
     assert!(matches!(
-        Directory::rehydrate(snapshot),
+        Directory::rehydrate(
+            DirectoryId::new(),
+            Some(DirectoryId::root()),
+            "past".to_owned(),
+            DirectoryKind::default(),
+            created_at,
+            created_at - chrono::Duration::seconds(1),
+            1,
+        ),
         Err(DirectoryError::InvalidFormat {
             field: "directory.updated_at",
             ..
         })
     ));
 
-    let snapshot = DirectorySnapshot {
-        id: DirectoryId::new(),
-        parent_id: Some(DirectoryId::root()),
-        name: "invalid revision".to_owned(),
-        kind: DirectoryKind::default(),
-        created_at,
-        updated_at: created_at,
-        revision: 0,
-    };
     assert!(matches!(
-        Directory::rehydrate(snapshot),
+        Directory::rehydrate(
+            DirectoryId::new(),
+            Some(DirectoryId::root()),
+            "invalid revision".to_owned(),
+            DirectoryKind::default(),
+            created_at,
+            created_at,
+            0,
+        ),
         Err(DirectoryError::InvalidFormat {
             field: "directory.revision",
             ..

@@ -5,7 +5,7 @@ mod path;
 
 use crate::error::DirectoryError;
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 pub use kind::DirectoryKind;
 pub use path::{DirectoryPath, INTERNAL_STORAGE_DIRECTORY_NAME};
@@ -40,18 +40,6 @@ pub struct Directory {
     revision: u64,
 }
 
-/// 未校验的目录持久化快照；只能通过 [`Directory::rehydrate`] 转换为聚合。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct DirectorySnapshot {
-    pub id: DirectoryId,
-    pub parent_id: Option<DirectoryId>,
-    pub name: String,
-    pub kind: DirectoryKind,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    pub revision: u64,
-}
-
 impl Directory {
     pub fn new(parent_id: DirectoryId, name: impl Into<String>) -> Result<Self, DirectoryError> {
         Self::new_with_kind(parent_id, name, DirectoryKind::default())
@@ -63,15 +51,15 @@ impl Directory {
         kind: DirectoryKind,
     ) -> Result<Self, DirectoryError> {
         let now = Utc::now();
-        Self::rehydrate(DirectorySnapshot {
-            id: DirectoryId::new(),
-            parent_id: Some(parent_id),
-            name: name.into(),
+        Self::rehydrate(
+            DirectoryId::new(),
+            Some(parent_id),
+            name.into(),
             kind,
-            created_at: now,
-            updated_at: now,
-            revision: 1,
-        })
+            now,
+            now,
+            1,
+        )
     }
 
     pub fn root() -> Self {
@@ -87,57 +75,59 @@ impl Directory {
         }
     }
 
-    pub fn rehydrate(snapshot: DirectorySnapshot) -> Result<Self, DirectoryError> {
-        snapshot.try_into()
-    }
-}
-
-impl TryFrom<DirectorySnapshot> for Directory {
-    type Error = DirectoryError;
-
-    fn try_from(snapshot: DirectorySnapshot) -> Result<Self, Self::Error> {
-        if snapshot.id.is_root() {
-            if snapshot.parent_id.is_some() || !snapshot.name.is_empty() {
+    /// 从持久化适配器已解析的完整状态还原目录聚合。
+    #[allow(clippy::too_many_arguments)]
+    pub fn rehydrate(
+        id: DirectoryId,
+        parent_id: Option<DirectoryId>,
+        name: String,
+        kind: DirectoryKind,
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
+        revision: u64,
+    ) -> Result<Self, DirectoryError> {
+        if id.is_root() {
+            if parent_id.is_some() || !name.is_empty() {
                 return Err(DirectoryError::InvalidFormat {
                     field: "directory.root",
                     reason: "root directory cannot have a parent or name",
                 });
             }
         } else {
-            if snapshot.parent_id.is_none() {
+            if parent_id.is_none() {
                 return Err(DirectoryError::InvalidFormat {
                     field: "directory.parent_id",
                     reason: "non-root directory must have a parent",
                 });
             }
-            if snapshot.parent_id == Some(snapshot.id) {
+            if parent_id == Some(id) {
                 return Err(DirectoryError::InvalidFormat {
                     field: "directory.parent_id",
                     reason: "directory cannot be its own parent",
                 });
             }
-            validate_directory_name(&snapshot.name)?;
+            validate_directory_name(&name)?;
         }
-        if snapshot.updated_at < snapshot.created_at {
+        if updated_at < created_at {
             return Err(DirectoryError::InvalidFormat {
                 field: "directory.updated_at",
                 reason: "updated timestamp cannot precede creation",
             });
         }
-        if snapshot.revision == 0 {
+        if revision == 0 {
             return Err(DirectoryError::InvalidFormat {
                 field: "directory.revision",
                 reason: "directory revision must be greater than zero",
             });
         }
         Ok(Self {
-            id: snapshot.id,
-            parent_id: snapshot.parent_id,
-            name: snapshot.name,
-            kind: snapshot.kind,
-            created_at: snapshot.created_at,
-            updated_at: snapshot.updated_at,
-            revision: snapshot.revision,
+            id,
+            parent_id,
+            name,
+            kind,
+            created_at,
+            updated_at,
+            revision,
         })
     }
 }
