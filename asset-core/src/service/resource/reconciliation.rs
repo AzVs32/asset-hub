@@ -15,11 +15,32 @@ use crate::domain::{
 };
 use crate::port::{
     ListResources, LocatedResource, ScannedBlob, ScannedStorageEntry, StoragePrefix,
+    StorageScanStream,
 };
 use futures_util::StreamExt;
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
+
+/// 完整资源扫描的文件级进度。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResourceScanProgress {
+    /// 正在枚举对象，以确定需要校验的文件总数。
+    Discovering { files: u64 },
+    /// 正在重新计算校验和；`current_file` 为当前处理的对象。
+    Verifying {
+        completed_files: u64,
+        total_files: u64,
+        current_file: Option<StorageKey>,
+    },
+}
+
+type ScanProgressCallback<'a> = dyn Fn(ResourceScanProgress) + Send + Sync + 'a;
+
+struct ScanEntries {
+    stream: StorageScanStream,
+    total_files: Option<u64>,
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StorageReconciliationReport {
@@ -72,7 +93,7 @@ impl<'a> StorageReconciliationService<'a> {
         {
             self.recover_storage_metadata().await
         } else {
-            self.reconcile_storage_inner(false, true).await
+            self.reconcile_storage_inner(false, true, None).await
         }
     }
 
@@ -174,13 +195,23 @@ impl<'a> StorageReconciliationService<'a> {
         &self,
         force_checksum: bool,
     ) -> Result<StorageReconciliationReport, CoreError> {
-        self.reconcile_storage_inner(force_checksum, false).await
+        self.reconcile_storage_inner(force_checksum, false, None)
+            .await
+    }
+
+    pub(super) async fn scan_resources_with_progress(
+        &self,
+        progress: &ScanProgressCallback<'_>,
+    ) -> Result<StorageReconciliationReport, CoreError> {
+        self.reconcile_storage_inner(true, false, Some(progress))
+            .await
     }
 
     async fn reconcile_storage_inner(
         &self,
         force_checksum: bool,
         defer_pending_verification: bool,
+        progress: Option<&ScanProgressCallback<'_>>,
     ) -> Result<StorageReconciliationReport, CoreError> {
         let started = Instant::now();
         let resources = self.all_active_resources().await?;
@@ -188,11 +219,13 @@ impl<'a> StorageReconciliationService<'a> {
         for resource in &resources {
             resources_by_key.insert(resource.storage_key()?, resource.resource());
         }
-        let mut entries = self.service.storage_scanner.scan(&StoragePrefix::root());
+        let mut entries = self.scan_entries(progress).await?;
+        let total_files = entries.total_files.unwrap_or_default();
+        let mut completed_files = 0_u64;
         let mut physical_directories = HashSet::new();
         let mut physical_keys = HashSet::new();
         let mut report = StorageReconciliationReport::default();
-        while let Some(entry) = entries.next().await {
+        while let Some(entry) = entries.stream.next().await {
             match entry? {
                 ScannedStorageEntry::Directory(directory) => {
                     self.service.directories.ensure_path(&directory).await?;
@@ -200,6 +233,13 @@ impl<'a> StorageReconciliationService<'a> {
                     report.directories += 1;
                 }
                 ScannedStorageEntry::Blob(file) => {
+                    if let Some(progress) = progress {
+                        progress(ResourceScanProgress::Verifying {
+                            completed_files,
+                            total_files,
+                            current_file: Some(file.key.clone()),
+                        });
+                    }
                     physical_keys.insert(file.key.clone());
                     report.files += 1;
                     let matching_content = resources_by_key
@@ -216,18 +256,26 @@ impl<'a> StorageReconciliationService<'a> {
                         })
                     {
                         report.pending_verification_keys.push(file.key.clone());
-                        continue;
+                    } else {
+                        let unchanged = !force_checksum
+                            && matching_content.is_some_and(|content| {
+                                content.verification_status() == ContentVerificationStatus::Verified
+                            });
+                        if unchanged {
+                            report.unchanged_files += 1;
+                        } else {
+                            report.hash_elapsed += self.reconcile_changed_blob(&file).await?;
+                            report.hashed_files += 1;
+                        }
                     }
-                    let unchanged = !force_checksum
-                        && matching_content.is_some_and(|content| {
-                            content.verification_status() == ContentVerificationStatus::Verified
+                    completed_files += 1;
+                    if let Some(progress) = progress {
+                        progress(ResourceScanProgress::Verifying {
+                            completed_files,
+                            total_files,
+                            current_file: None,
                         });
-                    if unchanged {
-                        report.unchanged_files += 1;
-                        continue;
                     }
-                    report.hash_elapsed += self.reconcile_changed_blob(&file).await?;
-                    report.hashed_files += 1;
                 }
             }
         }
@@ -266,6 +314,41 @@ impl<'a> StorageReconciliationService<'a> {
         self.reconcile_directories(physical_directories).await?;
         report.elapsed = started.elapsed();
         Ok(report)
+    }
+
+    async fn scan_entries(
+        &self,
+        progress: Option<&ScanProgressCallback<'_>>,
+    ) -> Result<ScanEntries, CoreError> {
+        let mut stream = self.service.storage_scanner.scan(&StoragePrefix::root());
+        let Some(progress) = progress else {
+            return Ok(ScanEntries {
+                stream,
+                total_files: None,
+            });
+        };
+
+        let mut entries = Vec::new();
+        let mut files = 0_u64;
+        progress(ResourceScanProgress::Discovering { files });
+        while let Some(entry) = stream.next().await {
+            let entry = entry?;
+            if matches!(&entry, ScannedStorageEntry::Blob(_)) {
+                files += 1;
+                progress(ResourceScanProgress::Discovering { files });
+            }
+            entries.push(Ok(entry));
+        }
+        progress(ResourceScanProgress::Verifying {
+            completed_files: 0,
+            total_files: files,
+            current_file: None,
+        });
+
+        Ok(ScanEntries {
+            stream: Box::pin(futures_util::stream::iter(entries)),
+            total_files: Some(files),
+        })
     }
 
     pub(super) async fn reconcile_storage_keys(

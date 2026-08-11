@@ -21,8 +21,8 @@ pub use user::UserService;
 
 pub use resource::{
     CreateUpload, ExecuteResourceAction, ReplaceResourceContent, ResourceActions,
-    ResourceContentStream, ResourceService, ResourceServicePorts, SecuredResourceService,
-    StorageReconciliationReport, UpdateResource,
+    ResourceContentStream, ResourceScanProgress, ResourceService, ResourceServicePorts,
+    SecuredResourceService, StorageReconciliationReport, UpdateResource,
 };
 
 use crate::{CoreError, domain::ActionAccess};

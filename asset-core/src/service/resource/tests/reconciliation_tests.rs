@@ -73,6 +73,42 @@ fn startup_reconciliation_hashes_only_new_or_changed_files() {
 }
 
 #[test]
+fn full_scan_reports_file_totals_and_current_file() {
+    let (service, _, blob_storage) = service();
+    let first = StorageKey::new("library/first.txt").unwrap();
+    let second = StorageKey::new("library/second.txt").unwrap();
+    block_on(blob_storage.put(&first, Bytes::from_static(b"first"))).unwrap();
+    block_on(blob_storage.put(&second, Bytes::from_static(b"second"))).unwrap();
+
+    let progress = Arc::new(Mutex::new(Vec::new()));
+    let captured = progress.clone();
+    let report = block_on(service.scan_resources_with_progress(move |state| {
+        captured.lock().unwrap().push(state);
+    }))
+    .unwrap();
+
+    assert_eq!(report.files, 2);
+    let progress = progress.lock().unwrap();
+    assert!(progress.contains(&ResourceScanProgress::Discovering { files: 2 }));
+    assert!(progress.contains(&ResourceScanProgress::Verifying {
+        completed_files: 2,
+        total_files: 2,
+        current_file: None,
+    }));
+    let current_files = progress
+        .iter()
+        .filter_map(|state| match state {
+            ResourceScanProgress::Verifying {
+                current_file: Some(key),
+                ..
+            } => Some(key.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(current_files, vec![first, second]);
+}
+
+#[test]
 fn storage_reconciliation_preserves_resource_id_on_file_rename() {
     let (service, repository, blob_storage) = service();
     let from_directory = DirectoryPath::from_path("incoming").unwrap();

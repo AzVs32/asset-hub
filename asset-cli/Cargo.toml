@@ -19,6 +19,7 @@ asset-runtime.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 comfy-table.workspace = true
+indicatif.workspace = true
 rpassword.workspace = true
 tokio.workspace = true
 toml.workspace = true

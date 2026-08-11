@@ -57,7 +57,7 @@ pub(crate) async fn run(command: UserCommand, users: UserService) -> CliResult {
             .unwrap_or(UserRole::Member);
         let password = prompt_new_password()?;
         let user = users.create(&username, &password, role, None).await?;
-        println!("created {} `{}`", role_name(role), user.username());
+        println!("created {} `{}`", role, user.username());
     } else if let Some(username) = command.password {
         let password = prompt_new_password()?;
         let user = users
@@ -82,7 +82,7 @@ pub(crate) async fn run(command: UserCommand, users: UserService) -> CliResult {
             .find_located_by_username(&username)
             .await?
             .ok_or_else(|| asset_core::CoreError::not_found("user", &username))?;
-        print_user(&user);
+        print_user_info(&user);
     } else {
         unreachable!("clap requires exactly one user operation");
     }
@@ -90,62 +90,49 @@ pub(crate) async fn run(command: UserCommand, users: UserService) -> CliResult {
 }
 
 fn prompt_new_password() -> CliResult<String> {
-    let password = rpassword::prompt_password("Password: ")
+    let make_config = || {
+        rpassword::ConfigBuilder::new()
+            .password_feedback_mask('*')
+            .build()
+    }; // 使用闭包，解决直接rpassword::ConfigBuilder::new()后两次使用的所有权问题。
+    let password = rpassword::prompt_password_with_config("Password: ", make_config())
         .context("failed to read password from the terminal")?;
-    let confirmation = rpassword::prompt_password("Confirm password: ")
+    let confirm = rpassword::prompt_password_with_config("Confirm password: ", make_config())
         .context("failed to read password confirmation from the terminal")?;
-    if password != confirmation {
+    if password != confirm {
         bail!("passwords do not match");
     }
     Ok(password)
 }
 
 fn print_user_list(users: &[LocatedUser]) {
-    println!("{}", user_table(users));
-}
-
-fn user_table(users: &[LocatedUser]) -> Table {
-    let mut table = Table::new();
-    table.load_style(UTF8_FULL);
-    table.set_header(["USERNAME", "ROLE", "STATUS", "WORKSPACE", "ID"]);
+    let mut user_table = Table::new();
+    user_table.load_style(UTF8_FULL);
+    user_table.set_header(["USERNAME", "ROLE", "STATUS", "WORKSPACE", "ID"]);
     for located in users {
         let user = located.user();
         let workspace = located.workspace();
-        table.add_row([
+        user_table.add_row([
             user.username().to_owned(),
-            role_name(user.role()).to_owned(),
-            status_name(user.status()).to_owned(),
+            user.role().to_string(),
+            user.status().to_string(),
             workspace_name(workspace.path()).to_owned(),
             user.id().to_string(),
         ]);
     }
-    table
+    println!("{}", user_table);
 }
 
-fn print_user(located: &LocatedUser) {
+fn print_user_info(located: &LocatedUser) {
     let user = located.user();
     let workspace = located.workspace();
     println!("Username: {}", user.username());
     println!("ID: {}", user.id());
-    println!("Role: {}", role_name(user.role()));
-    println!("Status: {}", status_name(user.status()));
+    println!("Role: {}", user.role());
+    println!("Status: {}", user.status());
     println!("Workspace: {}", workspace_name(workspace.path()));
     println!("Created: {}", user.created_at().to_rfc3339());
     println!("Updated: {}", user.updated_at().to_rfc3339());
-}
-
-fn role_name(role: UserRole) -> &'static str {
-    match role {
-        UserRole::Administrator => "administrator",
-        UserRole::Member => "member",
-    }
-}
-
-fn status_name(status: UserStatus) -> &'static str {
-    match status {
-        UserStatus::Active => "active",
-        UserStatus::Disabled => "disabled",
-    }
 }
 
 fn workspace_name(workspace: &DirectoryPath) -> &str {

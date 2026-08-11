@@ -141,6 +141,9 @@ asset --config config.toml system --scan-resource
 HTTP 服务启动和周期同步只比较物理文件修改时间与 `ResourceContent.size`；只有新增或发生
 变化的文件才重新计算 SHA-256。
 
+在交互式终端中，命令会先显示发现的文件数量；枚举完成后切换为文件进度条，并显示当前
+正在校验的对象路径。每完成一个文件，进度增加 1。
+
 # `asset user` 命令
 
 `asset user` 使用顶层 `--config` 指定的配置文件；未指定时读取当前目录的 `config.toml`

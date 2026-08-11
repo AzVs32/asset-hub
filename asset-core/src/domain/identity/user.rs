@@ -1,3 +1,5 @@
+use std::fmt;
+use std::fmt::Formatter;
 use crate::domain::DirectoryId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -27,11 +29,31 @@ pub enum UserRole {
     Member,
 }
 
+impl fmt::Display for UserRole {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            Self::Administrator => "administrator",
+            Self::Member => "member",
+        };
+        write!(f, "{}", name)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UserStatus {
     Active,
     Disabled,
+}
+
+impl fmt::Display for UserStatus {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let name = match self {
+            Self::Active => "active",
+            Self::Disabled => "disabled",
+        };
+        write!(f, "{}", name)
+    }
 }
 
 /// 未校验的用户持久化快照；只能通过 [`User::rehydrate`] 转换为聚合。

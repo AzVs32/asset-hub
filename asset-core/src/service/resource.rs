@@ -33,8 +33,8 @@ pub use contract::{
     CreateUpload, DirectoryArchiveManifest, DirectoryArchiveResource, ExecuteResourceAction,
     ReplaceResourceContent, ResourceActions, ResourceContentStream, UpdateResource,
 };
-pub use reconciliation::StorageReconciliationReport;
 use reconciliation::StorageReconciliationService;
+pub use reconciliation::{ResourceScanProgress, StorageReconciliationReport};
 pub use secured::SecuredResourceService;
 use storage_key_locks::StorageKeyLocks;
 use upload::ResourceUploadService;
@@ -248,6 +248,16 @@ impl ResourceService {
     /// 完整读取全部对象并重新计算校验和。
     pub async fn scan_resources(&self) -> Result<StorageReconciliationReport, CoreError> {
         self.reconciliation().reconcile_storage(true).await
+    }
+
+    /// 完整读取全部对象并重新计算校验和，同时报告文件级进度。
+    pub async fn scan_resources_with_progress(
+        &self,
+        progress: impl Fn(ResourceScanProgress) + Send + Sync,
+    ) -> Result<StorageReconciliationReport, CoreError> {
+        self.reconciliation()
+            .scan_resources_with_progress(&progress)
+            .await
     }
 
     /// 协调一组发生变化的对象路径。
