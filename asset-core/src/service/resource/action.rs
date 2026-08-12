@@ -122,7 +122,7 @@ impl<'a> ResourceActionService<'a> {
             .unwrap_or(ResourceActionContentDelivery::Auto);
         let request = ResourceActionRequest::new(
             resource.clone(),
-            directory,
+            directory.clone(),
             storage_key.clone(),
             action_id.clone(),
             access,
@@ -133,7 +133,7 @@ impl<'a> ResourceActionService<'a> {
         self.validate_action_output(resource.id(), &action_id, &action, &output)?;
 
         // 3. Apply write effects after the executor returns, guarded by the action access boundary.
-        self.apply_action_effects(&mut resource, &storage_key, &output, access)
+        self.apply_action_effects(&mut resource, &directory, &storage_key, &output, access)
             .await?;
 
         Ok(output)
@@ -170,16 +170,37 @@ impl<'a> ResourceActionService<'a> {
                 "action `{action_id}` returned an output for a different invocation"
             )));
         }
-        let actual = output.output().view.kind();
-        if !action
-            .output()
-            .views
-            .iter()
-            .any(|declared| declared == actual)
-        {
+        if let Some(view) = &output.output().view {
+            let actual = view.kind();
+            if !action
+                .output()
+                .views
+                .iter()
+                .any(|declared| declared == actual)
+            {
+                return Err(CoreError::invariant(format!(
+                    "action `{}` returned undeclared view `{actual}`",
+                    action.id()
+                )));
+            }
+        }
+        if output.output().view.is_none() && output.output().effects.is_empty() {
             return Err(CoreError::invariant(format!(
-                "action `{}` returned undeclared view `{actual}`",
+                "action `{}` returned neither a view nor an effect",
                 action.id()
+            )));
+        }
+        if let Some(effect) = output.output().effects.iter().find(|effect| {
+            !action
+                .output()
+                .effects
+                .iter()
+                .any(|kind| kind == effect.kind())
+        }) {
+            return Err(CoreError::invariant(format!(
+                "action `{}` returned undeclared effect `{}`",
+                action.id(),
+                effect.kind()
             )));
         }
         let replacements = output
@@ -191,6 +212,18 @@ impl<'a> ResourceActionService<'a> {
         if replacements > 1 {
             return Err(CoreError::invariant(format!(
                 "action `{}` returned more than one replace_content effect",
+                action.id()
+            )));
+        }
+        if output
+            .output()
+            .effects
+            .iter()
+            .any(|effect| matches!(effect, PluginResourceActionEffect::Delete))
+            && output.output().effects.len() > 1
+        {
+            return Err(CoreError::invariant(format!(
+                "action `{}` combined delete with another resource effect",
                 action.id()
             )));
         }
@@ -228,6 +261,7 @@ impl<'a> ResourceActionService<'a> {
     async fn apply_action_effects(
         &self,
         resource: &mut Resource,
+        directory: &crate::port::DirectoryLocation,
         storage_key: &StorageKey,
         output: &ResourceActionOutput,
         access: ActionAccess,
@@ -273,6 +307,16 @@ impl<'a> ResourceActionService<'a> {
                     self.service
                         .content()
                         .replace_content_bytes_snapshot(resource, storage_key, content, data)
+                        .await?;
+                }
+                PluginResourceActionEffect::Delete => {
+                    *resource = self
+                        .service
+                        .commands()
+                        .soft_delete_resource_snapshot(LocatedResource::new(
+                            resource.clone(),
+                            directory.clone(),
+                        )?)
                         .await?;
                 }
             }

@@ -75,6 +75,7 @@ const knownSlots = new Set<HostSlot>(Object.values(hostSlots));
 function sortActions<T extends ResourceAction | DirectoryAction>(actions: T[]): T[] {
   return [...actions].sort(
     (left, right) =>
+      Number(left.ui.destructive) - Number(right.ui.destructive) ||
       (left.ui.group ?? "").localeCompare(right.ui.group ?? "") ||
       (left.ui.order ?? 0) - (right.ui.order ?? 0) ||
       left.label.localeCompare(right.label),

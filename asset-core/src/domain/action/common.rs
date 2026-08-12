@@ -171,6 +171,7 @@ pub enum ActionAccess {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ActionOutputContract {
     pub views: Vec<String>,
+    pub effects: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -178,6 +179,9 @@ pub struct ActionUi {
     pub group: Option<String>,
     pub order: Option<i32>,
     pub locations: Vec<String>,
+    pub destructive: bool,
+    /// Confirmation text. `{name}` is replaced with the target's display name by the client.
+    pub confirmation: Option<String>,
 }
 
 /// Target-independent action declaration fields.

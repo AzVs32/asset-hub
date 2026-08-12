@@ -80,14 +80,6 @@ export function useResourceCommands() {
       void handleMutationError(error);
     },
   });
-  const remove = useMutation({
-    mutationFn: (resource: Resource) => gateway.deleteResource(resource),
-    onSuccess: async (resource) => {
-      toast.success(`${resource.name} moved to deleted resources`);
-      await refresh(resource.id);
-    },
-    onError: handleMutationError,
-  });
   const restore = useMutation({
     mutationFn: (resource: Resource) => gateway.restoreResource(resource),
     onSuccess: async (resource) => {
@@ -112,7 +104,10 @@ export function useResourceCommands() {
       output: await gateway.executeAction(resource, action.id),
     }),
     onSuccess: async (result) => {
-      setActionResult(result);
+      if (result.output.view) setActionResult(result);
+      if (result.output.effects.includes("delete")) {
+        toast.success(`${result.resource.name} moved to deleted resources`);
+      }
       if (result.action.access === "write") await refresh(result.resource.id);
     },
     onError: handleMutationError,
@@ -130,7 +125,10 @@ export function useResourceCommands() {
       output: await gateway.executeDirectoryAction(directory, action),
     }),
     onSuccess: async (result) => {
-      setDirectoryActionResult(result);
+      if (result.output.view) setDirectoryActionResult(result);
+      if (result.output.effects.includes("delete")) {
+        toast.success(`${result.directory.name} deleted`);
+      }
       if (result.action.access === "write") await refresh();
     },
     onError: handleMutationError,
@@ -140,7 +138,6 @@ export function useResourceCommands() {
     update,
     upload,
     uploadProgress,
-    remove,
     restore,
     createFolder,
     execute,

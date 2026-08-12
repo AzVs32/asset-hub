@@ -300,11 +300,21 @@ impl<'a> SecuredResourceService<'a> {
         let Some(resource) = resource else {
             return Ok(None);
         };
-        self.service
+        let definition = self
+            .service
             .actions()
             .resolve_declared_resource_action(resource.resource(), &command.action)?;
-        self.require_resource(&resource, DirectoryOperation::ExecuteResourceAction)
-            .await?;
+        let operation = if definition
+            .output()
+            .effects
+            .iter()
+            .any(|effect| effect == "delete")
+        {
+            DirectoryOperation::DeleteResource
+        } else {
+            DirectoryOperation::ExecuteResourceAction
+        };
+        self.require_resource(&resource, operation).await?;
         self.service
             .actions()
             .execute_resource_action_snapshot(resource, command)

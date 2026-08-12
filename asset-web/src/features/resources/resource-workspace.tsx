@@ -3,7 +3,7 @@ import React from "react";
 import { toast } from "sonner";
 import { useGateway } from "@/application/ports/gateway-context";
 import { queryKeys } from "@/application/queries/keys";
-import type { Directory, Resource } from "@/domain/resource";
+import type { Directory, DirectoryAction, Resource, ResourceAction } from "@/domain/resource";
 import { useSession } from "@/features/auth/session-context";
 import { useSignOut } from "@/features/auth/use-sign-out";
 import { DirectoryActionDialog } from "@/plugins/directory-action-dialog";
@@ -51,6 +51,35 @@ export function ResourceWorkspace() {
     browser.selectResource(item.id);
   }
 
+  function runResourceAction(item: Resource, action: ResourceAction) {
+    const target = item.id === resource?.id ? resource : item;
+    if (!confirmAction(action, target.name)) return;
+    commands.execute.mutate(
+      { resource: target, action },
+      {
+        onSuccess: (result) => {
+          if (result.output.effects.includes("delete") && browser.selectedId === target.id) {
+            browser.selectResource(null);
+          }
+        },
+      },
+    );
+  }
+
+  function runDirectoryAction(item: Directory, action: DirectoryAction) {
+    if (!confirmAction(action, item.name)) return;
+    commands.executeDirectory.mutate(
+      { directory: item, action },
+      {
+        onSuccess: (result) => {
+          if (result.output.effects.includes("delete") && browser.selectedDirectoryId === item.id) {
+            browser.selectDirectory(null);
+          }
+        },
+      },
+    );
+  }
+
   async function logout() {
     try {
       await signOut();
@@ -74,15 +103,9 @@ export function ResourceWorkspace() {
         onOpenDirectory={browser.openDirectory}
         onSelect={selectResource}
         onSelectDirectory={(item) => browser.selectDirectory(item.id)}
-        onAction={(item, action) => commands.execute.mutate({ resource: item, action })}
-        onDelete={(item) => {
-          const target = item.id === resource?.id ? resource : item;
-          if (window.confirm(`Delete ${target.name}?`)) commands.remove.mutate(target);
-        }}
+        onAction={runResourceAction}
         onRestore={(item) => commands.restore.mutate(item.id === resource?.id ? resource : item)}
-        onDirectoryAction={(directory, action) =>
-          commands.executeDirectory.mutate({ directory, action })
-        }
+        onDirectoryAction={runDirectoryAction}
         onRefresh={() => void browser.listing.refetch()}
         onUpload={() => setUploadOpen(true)}
         onCreateFolder={() => setFolderOpen(true)}
@@ -153,4 +176,9 @@ export function ResourceWorkspace() {
       ) : null}
     </main>
   );
+}
+
+function confirmAction(action: ResourceAction | DirectoryAction, targetName: string): boolean {
+  const message = action.ui.confirmation;
+  return !message || window.confirm(message.replaceAll("{name}", targetName));
 }

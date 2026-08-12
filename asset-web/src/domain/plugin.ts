@@ -37,13 +37,15 @@ export interface PluginDiagnostic {
 export interface ResourceActionOutput {
   resourceId: string;
   action: string;
-  view: PluginView;
+  view: PluginView | null;
+  effects: import("./resource").ResourceActionEffectKind[];
   diagnostics: PluginDiagnostic[];
 }
 
 export interface DirectoryActionOutput {
   directoryId: string;
   action: string;
-  view: PluginView;
+  view: PluginView | null;
+  effects: import("./resource").DirectoryActionEffectKind[];
   diagnostics: PluginDiagnostic[];
 }

@@ -101,6 +101,7 @@ function PluginFrameView({
       frameActionId: output.action,
       gateway,
       onResourceChanged: () => onResourceChangedRef.current?.(),
+      confirmAction: (message) => window.confirm(message),
     });
   }, [gateway, output.action, output.resourceId, selectedResourceId]);
 
@@ -159,6 +160,7 @@ function htmlWithoutNetwork(html: string): string {
 
 export function actionTitle(action: ResourceAction, output: ResourceActionOutput): string {
   const view = output.view;
+  if (!view) return action.label;
   if ((view.view === "html" || view.view === "plugin_frame" || view.view === "media") && view.title)
     return view.title;
   if (view.view === "download" && view.filename) return view.filename;

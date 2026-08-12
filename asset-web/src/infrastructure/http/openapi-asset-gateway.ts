@@ -32,7 +32,7 @@ import {
 } from "./file-sha256";
 import type { components, paths } from "./generated";
 import { applicationError, HttpError, httpError } from "./http-error";
-import { isPluginViewKind, parsePluginView } from "./plugin-view-schema";
+import { isPluginViewKind, parseOptionalPluginView } from "./plugin-view-schema";
 
 type Schemas = components["schemas"];
 type ApiResource = Schemas["ResourceResponse"];
@@ -148,16 +148,6 @@ export class OpenApiAssetGateway implements AssetGateway {
     const result = await this.#client.PATCH("/resources/{id}", {
       params: { path: { id: resource.id } },
       body: { expected_revision: resource.revision, restore: true },
-    });
-    return mapResource(expectData(result));
-  }
-
-  async deleteResource(resource: Resource): Promise<Resource> {
-    const result = await this.#client.DELETE("/resources/{id}", {
-      params: {
-        path: { id: resource.id },
-        query: { expected_revision: resource.revision },
-      },
     });
     return mapResource(expectData(result));
   }
@@ -318,17 +308,6 @@ export class OpenApiAssetGateway implements AssetGateway {
     return mapDirectory(expectData(result));
   }
 
-  async deleteDirectory(directory: Directory): Promise<void> {
-    expectSuccess(
-      await this.#client.DELETE("/directories/{id}", {
-        params: {
-          path: { id: directory.id },
-          query: { expected_revision: directory.revision },
-        },
-      }),
-    );
-  }
-
   async executeDirectoryAction(
     directory: Directory,
     action: DirectoryAction,
@@ -349,7 +328,8 @@ export class OpenApiAssetGateway implements AssetGateway {
       directoryId: data.directory_id,
       action: data.action,
       diagnostics: data.diagnostics.map(mapDiagnostic),
-      view: parsePluginView(data.view),
+      view: parseOptionalPluginView(data.view),
+      effects: data.effects.map(directoryEffectKind),
     };
   }
 
@@ -375,7 +355,8 @@ export class OpenApiAssetGateway implements AssetGateway {
       resourceId: data.resource_id,
       action: data.action,
       diagnostics: data.diagnostics.map(mapDiagnostic),
-      view: parsePluginView(data.view),
+      view: parseOptionalPluginView(data.view),
+      effects: data.effects.map(resourceEffectKind),
     };
   }
 
@@ -523,11 +504,16 @@ function mapDirectoryAction(value: ApiDirectoryAction): DirectoryAction {
     description: value.description ?? null,
     access: enumValue(value.access, ["read", "write"]),
     requires: { children: value.requires.children, resources: value.requires.resources },
-    output: { views: value.output.views.filter(isPluginViewKind) },
+    output: {
+      views: value.output.views.filter(isPluginViewKind),
+      effects: value.output.effects.map(directoryEffectKind),
+    },
     ui: {
       group: value.ui.group ?? null,
       order: value.ui.order ?? null,
       locations: value.ui.locations,
+      destructive: value.ui.destructive,
+      confirmation: value.ui.confirmation ?? null,
     },
     appliesTo: { kinds: value.applies_to.kinds },
   };
@@ -583,11 +569,16 @@ function mapAction(value: ApiAction): ResourceAction {
       content: value.requires.content,
       contentDelivery: enumValue(value.requires.content_delivery, ["auto", "inline", "reference"]),
     },
-    output: { views: value.output.views.filter(isPluginViewKind) },
+    output: {
+      views: value.output.views.filter(isPluginViewKind),
+      effects: value.output.effects.map(resourceEffectKind),
+    },
     ui: {
       group: value.ui.group ?? null,
       order: value.ui.order ?? null,
       locations: value.ui.locations,
+      destructive: value.ui.destructive,
+      confirmation: value.ui.confirmation ?? null,
     },
     appliesTo: {
       kinds: value.applies_to.kinds,
@@ -595,6 +586,14 @@ function mapAction(value: ApiAction): ResourceAction {
       extensions: value.applies_to.extensions,
     },
   };
+}
+
+function resourceEffectKind(value: string): import("@/domain/resource").ResourceActionEffectKind {
+  return enumValue(value, ["replace_content", "delete"]);
+}
+
+function directoryEffectKind(value: string): import("@/domain/resource").DirectoryActionEffectKind {
+  return enumValue(value, ["update", "create_child", "delete"]);
 }
 
 function mapDiagnostic(value: Schemas["PluginDiagnosticResponse"]): PluginDiagnostic {

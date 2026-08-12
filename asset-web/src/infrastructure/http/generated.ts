@@ -438,6 +438,7 @@ export interface components {
             action: string;
             diagnostics: components["schemas"]["PluginDiagnosticResponse"][];
             directory_id: string;
+            effects: string[];
             view: unknown;
         };
         DirectoryActionRequirementsResponse: {
@@ -581,6 +582,7 @@ export interface components {
             ui: components["schemas"]["ResourceActionUiResponse"];
         };
         ResourceActionOutputContractResponse: {
+            effects: string[];
             views: string[];
         };
         /** @description 执行资源动作响应。 */
@@ -589,6 +591,8 @@ export interface components {
             action: string;
             /** @description 插件返回的非致命诊断信息。 */
             diagnostics: components["schemas"]["PluginDiagnosticResponse"][];
+            /** @description Host 已验证并应用的 effect 类型。 */
+            effects: string[];
             /** @description 资源唯一标识。 */
             resource_id: string;
             /** @description 插件返回的 View。 */
@@ -599,6 +603,8 @@ export interface components {
             content_delivery: string;
         };
         ResourceActionUiResponse: {
+            confirmation?: string | null;
+            destructive: boolean;
             group?: string | null;
             locations: string[];
             /** Format: int32 */

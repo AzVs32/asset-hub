@@ -4,9 +4,11 @@ use asset_core::port::{
     DirectoryActionExecutor, DirectoryActionOutput, DirectoryActionRequest, DirectoryKindRegistry,
     ResourceActionExecutor, ResourceActionOutput, ResourceActionRequest, ResourceKindRegistry,
 };
+use asset_plugin_api::protocol::directory::DirectoryActionEffect;
 use asset_plugin_api::protocol::directory::PluginDirectoryActionOutput;
 use asset_plugin_api::protocol::{
-    DownloadView, MediaView, PluginMediaEncoding, PluginResourceActionOutput, PluginView, TextView,
+    DownloadView, MediaView, PluginMediaEncoding, PluginResourceActionEffect,
+    PluginResourceActionOutput, PluginView, TextView,
 };
 use async_trait::async_trait;
 use base64::Engine;
@@ -96,6 +98,7 @@ impl ResourceActionExecutor for BuiltinResourceActionExecutor {
                 ))
             })?;
         match binding.handler {
+            BuiltinResourceHandler::Delete => resource_delete(request),
             BuiltinResourceHandler::Download => {
                 download(request.resource().clone(), request.action().clone())
             }
@@ -181,10 +184,21 @@ impl DirectoryActionExecutor for BuiltinDirectoryActionExecutor {
                 ))
             })?;
         match binding.handler {
+            BuiltinDirectoryHandler::Delete => directory_delete(request),
             BuiltinDirectoryHandler::Download => directory_download(request),
             BuiltinDirectoryHandler::GenericThumbnail => directory_thumbnail(request),
         }
     }
+}
+
+fn directory_delete(request: DirectoryActionRequest) -> Result<DirectoryActionOutput, CoreError> {
+    let mut output = PluginDirectoryActionOutput::without_view();
+    output.effects.push(DirectoryActionEffect::Delete);
+    Ok(DirectoryActionOutput::new(
+        request.directory().id(),
+        request.action().clone(),
+        output,
+    ))
 }
 
 fn directory_thumbnail(
@@ -245,6 +259,16 @@ fn download(
         resource.id(),
         action,
         PluginResourceActionOutput::new(view),
+    ))
+}
+
+fn resource_delete(request: ResourceActionRequest) -> Result<ResourceActionOutput, CoreError> {
+    let mut output = PluginResourceActionOutput::without_view();
+    output.effects.push(PluginResourceActionEffect::Delete);
+    Ok(ResourceActionOutput::new(
+        request.resource().id(),
+        request.action().clone(),
+        output,
     ))
 }
 

@@ -153,8 +153,10 @@ ResourceWorkspace
   → React 重新渲染
 ```
 
-Resource 与 Directory action 都是扁平数组，使用 `read` / `write` access 和
-`output.views`；Kind 与 Action 的 `origin` 明确区分 Host 内建定义和插件定义。
+Resource 与 Directory action 都是扁平数组，使用 `read` / `write` access，并通过
+`output.views` / `output.effects` 声明可能返回的结果。只产生副作用的 Action 可以不返回
+View；`delete` 就是这种普通 write Action。Kind 与 Action 的 `origin` 明确区分 Host 内建定义
+和插件定义。
 Directory 在 Domain 和 Gateway 中始终以稳定 UUID 标识，path 仅用于导航与显示。目录写入
 以及 `write` Action 执行携带当前 revision，过期页面不能覆盖已经提交的并发修改；`read`
 Action 默认读取最新授权快照，不会因为缩略图或预览缓存较旧而产生无意义的 409。稳定错误码
@@ -184,7 +186,9 @@ Action 默认读取最新授权快照，不会因为缩略图或预览缓存较�
 插件只要在 manifest 中声明已有 slot，并返回已有 view kind，就不需要修改前端。目录 action
 未声明位置或声明了当前宿主未知的位置时，会回退到 `directory_context_menu`；资源 action
 未声明位置或声明了当前宿主未知的位置时，会回退到 `resource_context_menu`。资源详情面板仍由
-宿主提供编辑表单和事实信息，保存由编辑表单触发，删除和恢复由资源行菜单触发；资源详情区
+宿主提供编辑表单和事实信息，保存由编辑表单触发。`core.resource.delete` 和
+`core.directory.delete` 通过对应 Action 菜单发现，并由 Host 在确认后分别进入受权的资源软删除
+和空目录删除用例；已删除资源的恢复仍由资源行菜单提供。资源详情区
 不再提供插件自动插入 slot，插件 action 从对应行菜单触发。完全自定义
 界面通过 `plugin_frame` 加载插件自己的 Web 资源。
 后端会在实际适用性过滤后解析单例能力 provider；例如 EPUB 的
@@ -223,6 +227,7 @@ frame 对应的原始 action 是当前资源解析出的读写 `text_edit` provi
 - 具体插件 id、kind 或 action id 不允许硬编码进宿主组件。
 - 自动缩略图 slot 不允许执行 write action。
 - iframe action 必须先在当前 `Resource.actions` 中验证；文本替换还必须绑定产生当前 frame
-  的 `write` `text_edit` action。
+  的 `write` `text_edit` action，并由插件 Manifest 显式申请 `resource.content.replace`。
+  iframe 调用 destructive Action 前必须经过宿主确认。
 - 外部 URL 不允许作为插件媒体或 iframe 地址加载。
 - 新的后端请求能力先加入 `AssetGateway`，再实现 HTTP adapter，最后由 feature 使用。

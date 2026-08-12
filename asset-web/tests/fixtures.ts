@@ -1,7 +1,8 @@
 import type { Resource, ResourceAction } from "@/domain/resource";
 
 export function action(
-  input: Partial<ResourceAction> & Pick<ResourceAction, "id">,
+  input: Omit<Partial<ResourceAction>, "ui"> &
+    Pick<ResourceAction, "id"> & { ui?: Partial<ResourceAction["ui"]> },
 ): ResourceAction {
   return {
     id: input.id,
@@ -11,8 +12,14 @@ export function action(
     description: input.description ?? null,
     access: input.access ?? "read",
     requires: input.requires ?? { content: false, contentDelivery: "auto" },
-    output: input.output ?? { views: ["json"] },
-    ui: input.ui ?? { group: null, order: null, locations: [] },
+    output: input.output ?? { views: ["json"], effects: [] },
+    ui: {
+      group: input.ui?.group ?? null,
+      order: input.ui?.order ?? null,
+      locations: input.ui?.locations ?? [],
+      destructive: input.ui?.destructive ?? false,
+      confirmation: input.ui?.confirmation ?? null,
+    },
     appliesTo: input.appliesTo ?? { kinds: [], mimeTypes: [], extensions: [] },
   };
 }

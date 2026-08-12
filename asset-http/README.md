@@ -23,6 +23,14 @@ responses contain actions that are actually applicable to that aggregate and con
 small amount of metadata repetition is intentional: aggregate responses remain self-contained and
 clients do not need to join a global catalog before rendering or executing an action.
 
+Action declarations expose the views and effects they may return through `output.views` and
+`output.effects`. The built-in Resource and Directory delete entries are ordinary write Actions
+that declare only the `delete` effect, carry destructive confirmation metadata, and return no View.
+Clients invoke them through the same Resource or Directory action endpoint used by other Actions.
+Core applies the effect through the existing authorized resource soft-delete or empty-directory
+delete use case. The dedicated `DELETE /resources/{id}` and `DELETE /directories/{id}` endpoints
+remain available as direct HTTP use cases.
+
 ## Session storage boundary
 
 HTTP login sessions use a dedicated SQLite file and connection pool. The store never receives a

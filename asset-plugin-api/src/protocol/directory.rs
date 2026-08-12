@@ -34,8 +34,8 @@ pub struct PluginDirectory {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PluginDirectoryActionOutput {
-    #[serde(flatten)]
-    pub view: PluginView,
+    #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
+    pub view: Option<PluginView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<DirectoryActionEffect>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -45,7 +45,15 @@ pub struct PluginDirectoryActionOutput {
 impl PluginDirectoryActionOutput {
     pub fn new(view: PluginView) -> Self {
         Self {
-            view,
+            view: Some(view),
+            effects: Vec::new(),
+            diagnostics: Vec::new(),
+        }
+    }
+
+    pub fn without_view() -> Self {
+        Self {
+            view: None,
             effects: Vec::new(),
             diagnostics: Vec::new(),
         }
@@ -57,6 +65,17 @@ impl PluginDirectoryActionOutput {
 pub enum DirectoryActionEffect {
     Update(UpdateDirectoryEffect),
     CreateChild(CreateChildDirectoryEffect),
+    Delete,
+}
+
+impl DirectoryActionEffect {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Update(_) => "update",
+            Self::CreateChild(_) => "create_child",
+            Self::Delete => "delete",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,4 +124,20 @@ pub struct PluginDirectoryResource {
     pub id: String,
     pub name: String,
     pub kind: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DirectoryActionEffect, PluginDirectoryActionOutput};
+
+    #[test]
+    fn delete_effect_is_bound_to_the_current_directory() {
+        let mut output = PluginDirectoryActionOutput::without_view();
+        output.effects.push(DirectoryActionEffect::Delete);
+
+        assert_eq!(
+            serde_json::to_value(output).unwrap(),
+            serde_json::json!({"effects": [{"type": "delete"}]})
+        );
+    }
 }

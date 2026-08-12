@@ -15,6 +15,7 @@ export function PluginViewHost({
   onResourceChanged?: (() => void | Promise<void>) | undefined;
 }) {
   const kernel = usePluginKernel();
+  if (!output.view) return null;
   const Renderer = kernel.viewRenderer(output.view.view);
   if (!Renderer) {
     return (

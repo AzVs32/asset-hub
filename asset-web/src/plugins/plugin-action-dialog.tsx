@@ -24,7 +24,7 @@ export function PluginActionDialog({
     result?.action.id === "core.text.edit" &&
     result.action.provides === "text_edit" &&
     result.action.access === "write" &&
-    result.output.view.view === "text"
+    result.output.view?.view === "text"
       ? result.output.view
       : null;
   return (
@@ -34,7 +34,9 @@ export function PluginActionDialog({
         if (!open) onClose();
       }}
       title={result ? actionTitle(result.action, result.output) : "Plugin output"}
-      description={result ? `${result.action.id} · ${result.output.view.view}` : undefined}
+      description={
+        result?.output.view ? `${result.action.id} · ${result.output.view.view}` : undefined
+      }
       className="max-w-5xl"
     >
       {result && textEditView ? (

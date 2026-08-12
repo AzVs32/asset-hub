@@ -87,8 +87,8 @@ mkdir -p data/.asset-hub/plugins/azvs.epub
 cp plugins/azvs-epub/manifest.json plugins/azvs-epub/plugin.wasm \
   data/.asset-hub/plugins/azvs.epub/
 cp -R plugins/azvs-epub/dist/. data/.asset-hub/plugins/azvs.epub/
-asset plugin --seal azvs.epub
-asset plugin --verify azvs.epub
+cargo run --bin asset plugin --seal azvs.epub
+cargo run --bin asset plugin --verify azvs.epub
 ```
 
 Asset Hub startup requires and verifies `manifest.lock.json` without modifying it. When replacing

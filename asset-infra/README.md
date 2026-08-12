@@ -44,12 +44,12 @@ Resource capabilities are `thumbnail`, `text_read`, and `text_edit`.
 
 | Kind | Resolved capability providers | Other available actions |
 | --- | --- | --- |
-| `core:resource` | `thumbnail` → `core.resource.thumbnail` | `core.resource.download` |
-| `core:image` | `thumbnail` → `core.image.thumbnail` | inherits `core.resource.download` |
-| `core:text` | `thumbnail` → `core.resource.thumbnail`; `text_read` → `core.text.read`; `text_edit` → `core.text.edit` | inherits `core.resource.download` |
-| `azvs:markdown` | `thumbnail` → `core.resource.thumbnail`; `text_read` → `azvs.markdown.read`; `text_edit` → `azvs.markdown.edit` | inherits `core.resource.download` |
-| `azvs:epub` | `thumbnail` → `azvs.epub.thumbnail` | inherits `core.resource.download`; `azvs.epub.render` |
-| `core:video` | `thumbnail` → `core.resource.thumbnail` | inherits `core.resource.download` |
+| `core:resource` | `thumbnail` → `core.resource.thumbnail` | `core.resource.download`; effect-only action `core.resource.delete` |
+| `core:image` | `thumbnail` → `core.image.thumbnail` | inherits download and delete |
+| `core:text` | `thumbnail` → `core.resource.thumbnail`; `text_read` → `core.text.read`; `text_edit` → `core.text.edit` | inherits download and delete |
+| `azvs:markdown` | `thumbnail` → `core.resource.thumbnail`; `text_read` → `azvs.markdown.read`; `text_edit` → `azvs.markdown.edit` | inherits download and delete |
+| `azvs:epub` | `thumbnail` → `azvs.epub.thumbnail` | inherits download and delete; `azvs.epub.render` |
+| `core:video` | `thumbnail` → `core.resource.thumbnail` | inherits download and delete |
 
 `core:text` detects `text/*`, common structured-text MIME types, and common text extensions.
 More-specific descendants such as `azvs:markdown` still win when both definitions match.
@@ -58,6 +58,13 @@ its declared video extensions; `azvs:epub` detects only the MIME types and exten
 its plugin manifest. `core:document` is not a registered Resource kind.
 
 The Host provides generic `core.resource.thumbnail` and `core.directory.thumbnail` actions.
+It also declares `core.resource.delete` and `core.directory.delete` as ordinary write Actions in
+the same discovery catalogs. Their built-in handlers return no View and request one `delete`
+effect; Core applies it through the secured resource soft-delete or empty-directory-delete use
+case. External plugins may declare and return the same effect only when their Manifest requests
+`resource.delete` or `directory.delete`, the corresponding `[plugin.grants]` switch is enabled,
+and the current user is authorized to delete that aggregate. Delete cannot be combined with a
+different effect in one action output.
 The generic resource provider always returns a kind-neutral file thumbnail. The Host-owned
 `core.image.thumbnail` action applies only to `core:image`, returns the authorized image content
 URL, and provides the same `thumbnail` singleton capability as the generic provider.
@@ -72,7 +79,9 @@ thumbnail-slot actions that do not provide `thumbnail`, and tied nearest provide
 When a plugin Resource capability provider omits its Manifest label, catalog assembly inherits the
 normalized label from the nearest ancestor provider for that capability; an explicit label remains
 an override, and a missing ancestor is a startup error. The built-in `text_read` and `text_edit`
-labels are `Read` and `Edit`.
+labels are `Read` and `Edit`. An external `text_edit` provider must declare write access and the
+specific `resource.content.replace` permission; generic Resource write permissions are not
+accepted.
 At the package boundary, infrastructure explicitly converts external Manifest capabilities into
 `asset-core` Action/Kind definitions. Extism handler names remain in private adapter bindings and
 are not copied into Core models.

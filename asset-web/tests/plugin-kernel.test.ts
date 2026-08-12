@@ -23,6 +23,30 @@ describe("PluginKernel", () => {
     ).toEqual(["earlier", "later"]);
   });
 
+  it("sorts destructive actions after ordinary actions", () => {
+    const kernel = new PluginKernel();
+    const remove = action({
+      id: "core.resource.delete",
+      access: "write",
+      output: { views: [], effects: ["delete"] },
+      ui: {
+        group: "danger",
+        locations: [hostSlots.resourceContextMenu],
+        destructive: true,
+      },
+    });
+    const download = action({
+      id: "core.resource.download",
+      ui: { group: "open", locations: [hostSlots.resourceContextMenu] },
+    });
+
+    expect(
+      kernel
+        .actionsAt(resource([remove, download]), hostSlots.resourceContextMenu)
+        .map((item) => item.id),
+    ).toEqual(["core.resource.download", "core.resource.delete"]);
+  });
+
   it("keeps actions with unknown locations reachable in the resource context menu", () => {
     const kernel = new PluginKernel();
     const unknown = action({
@@ -34,7 +58,7 @@ describe("PluginKernel", () => {
 
   it("uses an explicit thumbnail action before media fallbacks", () => {
     const kernel = new PluginKernel();
-    const fallback = action({ id: "media", output: { views: ["media"] } });
+    const fallback = action({ id: "media", output: { views: ["media"], effects: [] } });
     const explicit = action({
       id: "azvs.epub.thumbnail",
       provides: "thumbnail",
@@ -45,7 +69,7 @@ describe("PluginKernel", () => {
 
   it("does not infer a thumbnail action from MIME type or output view", () => {
     const kernel = new PluginKernel();
-    const media = action({ id: "media", output: { views: ["media"] } });
+    const media = action({ id: "media", output: { views: ["media"], effects: [] } });
     const item = resource([media]);
     item.content = {
       size: 42,
@@ -67,11 +91,13 @@ describe("PluginKernel", () => {
       description: null,
       access: "read" as const,
       requires: { children: false, resources: false },
-      output: { views: ["media" as const] },
+      output: { views: ["media" as const], effects: [] },
       ui: {
         group: "preview",
         order: 100,
         locations: [hostSlots.directoryThumbnail],
+        destructive: false,
+        confirmation: null,
       },
       appliesTo: { kinds: ["core:directory"] },
     };
@@ -109,8 +135,14 @@ describe("PluginKernel", () => {
           description: null,
           access: "read" as const,
           requires: { children: false, resources: false },
-          output: { views: ["json" as const] },
-          ui: { group: null, order: null, locations: ["future_directory_slot"] },
+          output: { views: ["json" as const], effects: [] },
+          ui: {
+            group: null,
+            order: null,
+            locations: ["future_directory_slot"],
+            destructive: false,
+            confirmation: null,
+          },
           appliesTo: { kinds: ["core:directory"] },
         },
       ],

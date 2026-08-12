@@ -180,11 +180,71 @@ fn resource_action_without_a_capability_still_requires_a_label() {
 }
 
 #[test]
+fn text_edit_provider_requires_content_replace_permission() {
+    let mut document = manifest_document();
+    let action = &mut document["capabilities"]["resource_actions"][0];
+    action["provides"] = serde_json::json!("text_edit");
+    action["access"] = serde_json::json!("write");
+
+    let error = serde_json::from_value::<PluginManifest>(document.clone())
+        .unwrap()
+        .validate()
+        .unwrap_err();
+    assert!(error.contains("resource.content.replace"));
+
+    document["permissions"]["allow"] =
+        serde_json::json!(["resource.read", "resource.content.replace"]);
+    serde_json::from_value::<PluginManifest>(document)
+        .unwrap()
+        .validate()
+        .unwrap();
+}
+
+#[test]
 fn manifest_accepts_download_view() {
     let mut document = manifest_document();
     document["capabilities"]["resource_actions"][0]["output"]["views"] =
         serde_json::json!(["download"]);
     serde_json::from_value::<PluginManifest>(document)
+        .unwrap()
+        .validate()
+        .unwrap();
+}
+
+#[test]
+fn delete_effect_requires_write_access_and_the_matching_permission() {
+    let mut resource_document = manifest_document();
+    let action = &mut resource_document["capabilities"]["resource_actions"][0];
+    action["access"] = serde_json::json!("write");
+    action["output"] = serde_json::json!({"effects": ["delete"]});
+    resource_document["permissions"]["allow"] =
+        serde_json::json!(["resource.read", "resource.delete"]);
+    serde_json::from_value::<PluginManifest>(resource_document.clone())
+        .unwrap()
+        .validate()
+        .unwrap();
+
+    resource_document["permissions"]["allow"] = serde_json::json!(["resource.read"]);
+    assert!(
+        serde_json::from_value::<PluginManifest>(resource_document)
+            .unwrap()
+            .validate()
+            .unwrap_err()
+            .contains("resource.delete")
+    );
+
+    let mut directory_document = manifest_document();
+    directory_document["capabilities"]["resource_actions"] = serde_json::json!([]);
+    directory_document["capabilities"]["directory_actions"] = serde_json::json!([{
+        "id": "example.plugin.delete_directory",
+        "label": "Delete directory",
+        "handler": "delete_directory",
+        "access": "write",
+        "output": {"effects": ["delete"]}
+    }]);
+    directory_document["permissions"]["allow"] =
+        serde_json::json!(["directory.read", "directory.delete"]);
+    serde_json::from_value::<PluginManifest>(directory_document)
         .unwrap()
         .validate()
         .unwrap();

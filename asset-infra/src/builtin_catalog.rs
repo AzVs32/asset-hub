@@ -8,6 +8,8 @@ use asset_core::domain::{
 
 /// Host 内置的资源内容下载 action 稳定 ID。
 const CORE_RESOURCE_DOWNLOAD: &str = "core.resource.download";
+/// Host 内置的资源软删除命令稳定 ID。
+const CORE_RESOURCE_DELETE: &str = "core.resource.delete";
 /// Host 内置的所有资源类型回退缩略图 provider 稳定 ID。
 const CORE_RESOURCE_THUMBNAIL: &str = "core.resource.thumbnail";
 /// Host 内置的 `core:image` 特化缩略图 provider 稳定 ID。
@@ -24,6 +26,8 @@ pub(crate) const TEXT_READ_CAPABILITY: &str = "text_read";
 pub(crate) const TEXT_EDIT_CAPABILITY: &str = "text_edit";
 /// Host 内置的目录归档下载 action 稳定 ID。
 const CORE_DIRECTORY_DOWNLOAD: &str = "core.directory.download";
+/// Host 内置的空目录删除命令稳定 ID。
+const CORE_DIRECTORY_DELETE: &str = "core.directory.delete";
 /// Host 内置的所有目录类型回退缩略图 provider 稳定 ID。
 const CORE_DIRECTORY_THUMBNAIL: &str = "core.directory.thumbnail";
 
@@ -34,6 +38,7 @@ const CORE_DIRECTORY_SOURCE: &str = "core.directory";
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum BuiltinResourceHandler {
+    Delete,
     Download,
     GenericThumbnail,
     ImageThumbnail,
@@ -43,6 +48,7 @@ pub(crate) enum BuiltinResourceHandler {
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum BuiltinDirectoryHandler {
+    Delete,
     Download,
     GenericThumbnail,
 }
@@ -151,13 +157,32 @@ impl BuiltinCatalog {
                 })
                 .with_output(ActionOutputContract {
                     views: vec!["download".to_string()],
+                    effects: Vec::new(),
                 })
                 .with_ui(ActionDefinitionUi {
                     group: Some("open".to_string()),
                     order: Some(10),
                     locations: vec!["resource_context_menu".to_string()],
+                    ..ActionDefinitionUi::default()
                 }),
                 handler: BuiltinResourceHandler::Download,
+            },
+            BuiltinResourceAction {
+                definition: ResourceActionDefinition::new_static(CORE_RESOURCE_DELETE, "Delete")
+                    .with_access(ActionAccess::Write)
+                    .with_kinds([ResourceKind::DEFAULT])
+                    .with_output(ActionOutputContract {
+                        views: Vec::new(),
+                        effects: vec!["delete".to_string()],
+                    })
+                    .with_ui(ActionDefinitionUi {
+                        group: Some("danger".to_string()),
+                        order: Some(100),
+                        locations: vec!["resource_context_menu".to_string()],
+                        destructive: true,
+                        confirmation: Some("Delete {name}?".to_string()),
+                    }),
+                handler: BuiltinResourceHandler::Delete,
             },
             BuiltinResourceAction {
                 definition: ResourceActionDefinition::new_static(
@@ -168,11 +193,13 @@ impl BuiltinCatalog {
                 .with_kinds([ResourceKind::DEFAULT])
                 .with_output(ActionOutputContract {
                     views: vec!["media".to_string()],
+                    effects: Vec::new(),
                 })
                 .with_ui(ActionDefinitionUi {
                     group: Some("preview".to_string()),
                     order: Some(100),
                     locations: vec!["resource_thumbnail".to_string()],
+                    ..ActionDefinitionUi::default()
                 }),
                 handler: BuiltinResourceHandler::GenericThumbnail,
             },
@@ -185,11 +212,13 @@ impl BuiltinCatalog {
                 .with_kinds(["core:image"])
                 .with_output(ActionOutputContract {
                     views: vec!["media".to_string()],
+                    effects: Vec::new(),
                 })
                 .with_ui(ActionDefinitionUi {
                     group: Some("preview".to_string()),
                     order: Some(100),
                     locations: vec!["resource_thumbnail".to_string()],
+                    ..ActionDefinitionUi::default()
                 }),
                 handler: BuiltinResourceHandler::ImageThumbnail,
             },
@@ -203,11 +232,13 @@ impl BuiltinCatalog {
                     })
                     .with_output(ActionOutputContract {
                         views: vec!["text".to_string()],
+                        effects: Vec::new(),
                     })
                     .with_ui(ActionDefinitionUi {
                         group: Some("open".to_string()),
                         order: Some(50),
                         locations: vec!["resource_context_menu".to_string()],
+                        ..ActionDefinitionUi::default()
                     }),
                 handler: BuiltinResourceHandler::TextRead,
             },
@@ -222,11 +253,13 @@ impl BuiltinCatalog {
                     })
                     .with_output(ActionOutputContract {
                         views: vec!["text".to_string()],
+                        effects: Vec::new(),
                     })
                     .with_ui(ActionDefinitionUi {
                         group: Some("edit".to_string()),
                         order: Some(50),
                         locations: vec!["resource_context_menu".to_string()],
+                        ..ActionDefinitionUi::default()
                     }),
                 handler: BuiltinResourceHandler::TextEdit,
             },
@@ -241,13 +274,32 @@ impl BuiltinCatalog {
                 .with_kinds([DirectoryKind::DEFAULT])
                 .with_output(ActionOutputContract {
                     views: vec!["download".to_string()],
+                    effects: Vec::new(),
                 })
                 .with_ui(ActionDefinitionUi {
                     group: Some("open".to_string()),
                     order: Some(10),
                     locations: vec!["directory_context_menu".to_string()],
+                    ..ActionDefinitionUi::default()
                 }),
                 handler: BuiltinDirectoryHandler::Download,
+            },
+            BuiltinDirectoryAction {
+                definition: DirectoryActionDefinition::new_static(CORE_DIRECTORY_DELETE, "Delete")
+                    .with_access(ActionAccess::Write)
+                    .with_kinds([DirectoryKind::DEFAULT])
+                    .with_output(ActionOutputContract {
+                        views: Vec::new(),
+                        effects: vec!["delete".to_string()],
+                    })
+                    .with_ui(ActionDefinitionUi {
+                        group: Some("danger".to_string()),
+                        order: Some(100),
+                        locations: vec!["directory_context_menu".to_string()],
+                        destructive: true,
+                        confirmation: Some("Delete empty directory {name}?".to_string()),
+                    }),
+                handler: BuiltinDirectoryHandler::Delete,
             },
             BuiltinDirectoryAction {
                 definition: DirectoryActionDefinition::new_static(
@@ -258,11 +310,13 @@ impl BuiltinCatalog {
                 .with_kinds([DirectoryKind::DEFAULT])
                 .with_output(ActionOutputContract {
                     views: vec!["media".to_string()],
+                    effects: Vec::new(),
                 })
                 .with_ui(ActionDefinitionUi {
                     group: Some("preview".to_string()),
                     order: Some(100),
                     locations: vec!["directory_thumbnail".to_string()],
+                    ..ActionDefinitionUi::default()
                 }),
                 handler: BuiltinDirectoryHandler::GenericThumbnail,
             },

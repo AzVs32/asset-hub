@@ -264,6 +264,7 @@ async fn member_operations_are_allowed_only_inside_workspace_subtree() {
         DirectoryOperation::ViewDirectory,
         DirectoryOperation::DownloadDirectory,
         DirectoryOperation::CreateDirectory,
+        DirectoryOperation::DeleteDirectory,
         DirectoryOperation::ReadResource,
         DirectoryOperation::UpdateResource,
         DirectoryOperation::ReplaceResourceContent,

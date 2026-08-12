@@ -99,7 +99,7 @@
   "permissions": {
     "allow": [
       "resource.read",
-      "resource.write",
+      "resource.content.replace",
       "resource.content.read"
     ]
   }

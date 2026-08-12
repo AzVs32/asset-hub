@@ -78,6 +78,41 @@ describe("Plugin Frame host bridge", () => {
       "Action input must be a JSON object.",
     );
   });
+
+  it("requires host confirmation before a destructive action from a plugin frame", async () => {
+    const remove = action({
+      id: "core.resource.delete",
+      access: "write",
+      output: { views: [], effects: ["delete"] },
+      ui: { destructive: true, confirmation: "Delete Example?" },
+    });
+    const expected: ResourceActionOutput = {
+      resourceId: "resource-1",
+      action: remove.id,
+      diagnostics: [],
+      view: null,
+      effects: ["delete"],
+    };
+    const executeAction = vi.fn().mockResolvedValue(expected);
+    const confirmAction = vi.fn().mockResolvedValue(false);
+    const bridge = createPluginFrameHostBridge({
+      resource: resource([remove]),
+      frameResourceId: "resource-1",
+      frameActionId: "example.frame",
+      gateway: { executeAction } as unknown as AssetGateway,
+      confirmAction,
+    });
+
+    await expect(bridge.methods.executeResourceAction(remove.id, {})).rejects.toThrow(
+      `Action ${remove.id} was not confirmed.`,
+    );
+    expect(executeAction).not.toHaveBeenCalled();
+
+    confirmAction.mockResolvedValueOnce(true);
+    await expect(bridge.methods.executeResourceAction(remove.id, {})).resolves.toBe(expected);
+    expect(confirmAction).toHaveBeenCalledWith("Delete Example?");
+    expect(executeAction).toHaveBeenCalledWith(resource([remove]), remove.id, {});
+  });
 });
 
 function pluginOutput(actionId: string): ResourceActionOutput {
@@ -85,6 +120,7 @@ function pluginOutput(actionId: string): ResourceActionOutput {
     resourceId: "resource-1",
     action: actionId,
     diagnostics: [],
+    effects: [],
     view: {
       view: "plugin_frame",
       plugin_api: "asset-hub.plugin-api@3",

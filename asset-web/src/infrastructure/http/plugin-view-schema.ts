@@ -31,6 +31,10 @@ export function parsePluginView(value: unknown): PluginView {
   return pluginViewSchema.parse(value) as PluginView;
 }
 
+export function parseOptionalPluginView(value: unknown): PluginView | null {
+  return value == null ? null : parsePluginView(value);
+}
+
 export function isPluginViewKind(value: string): value is (typeof pluginViewKinds)[number] {
   return pluginViewKinds.some((kind) => kind === value);
 }

@@ -75,3 +75,22 @@ fn capability_ids_use_the_narrower_capability_format() {
         Err(ActionIdError::InvalidFormat { .. })
     ));
 }
+
+#[test]
+fn effect_only_actions_are_declared_without_a_view() {
+    let action = ResourceActionDefinition::new_static("core.resource.delete", "Delete")
+        .with_access(ActionAccess::Write)
+        .with_output(ActionOutputContract {
+            views: Vec::new(),
+            effects: vec!["delete".to_string()],
+        })
+        .with_ui(ActionUi {
+            destructive: true,
+            confirmation: Some("Delete {name}?".to_string()),
+            ..ActionUi::default()
+        });
+
+    assert!(action.output().views.is_empty());
+    assert_eq!(action.output().effects, ["delete"]);
+    assert!(action.ui().destructive);
+}

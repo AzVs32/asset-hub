@@ -43,7 +43,8 @@ The runtime rejects read operations for documents larger than 128 MiB. The effec
 can be lower when the Host's plugin execution policy is lower.
 
 Saving uses the Web SDK's `replaceResourceText`. The Host accepts it only from the frame produced by the current
-Resource's resolved, write `text_edit` action, then forwards the text to the same
+Resource's resolved, write `text_edit` action, whose Manifest explicitly requests
+`resource.content.replace`, then forwards the text to the same
 revision-guarded streaming content use case as the core editor. The Markdown runtime deliberately
 rejects the former `{ "markdown": "..." }` Action input and no longer returns a
 `replace_content` effect. Consequently, Markdown saves are independent of the 1 MiB Action JSON
@@ -86,8 +87,8 @@ mkdir -p data/.asset-hub/plugins/azvs.markdown
 cp plugins/azvs-markdown/manifest.json plugins/azvs-markdown/plugin.wasm \
   data/.asset-hub/plugins/azvs.markdown/
 cp -R plugins/azvs-markdown/dist/. data/.asset-hub/plugins/azvs.markdown/
-asset plugin --seal azvs.markdown
-asset plugin --verify azvs.markdown
+cargo run --bin asset plugin --seal azvs.markdown
+cargo run --bin asset plugin --verify azvs.markdown
 ```
 
 Asset Hub startup requires and verifies `manifest.lock.json` without modifying it. Asset Hub

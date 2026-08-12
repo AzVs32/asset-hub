@@ -2,6 +2,15 @@ import type { PluginViewKind } from "./plugin";
 
 export type ActionAccess = "read" | "write";
 export type ContentDelivery = "auto" | "inline" | "reference";
+export type ResourceActionEffectKind = "replace_content" | "delete";
+export type DirectoryActionEffectKind = "update" | "create_child" | "delete";
+export interface ActionUi {
+  group: string | null;
+  order: number | null;
+  locations: string[];
+  destructive: boolean;
+  confirmation: string | null;
+}
 export interface DefinitionOrigin {
   kind: "builtin" | "plugin";
   id: string;
@@ -23,8 +32,8 @@ export interface ResourceAction {
   description: string | null;
   access: ActionAccess;
   requires: { content: boolean; contentDelivery: ContentDelivery };
-  output: { views: PluginViewKind[] };
-  ui: { group: string | null; order: number | null; locations: string[] };
+  output: { views: PluginViewKind[]; effects: ResourceActionEffectKind[] };
+  ui: ActionUi;
   appliesTo: { kinds: string[]; mimeTypes: string[]; extensions: string[] };
 }
 
@@ -36,8 +45,8 @@ export interface DirectoryAction {
   description: string | null;
   access: ActionAccess;
   requires: { children: boolean; resources: boolean };
-  output: { views: PluginViewKind[] };
-  ui: { group: string | null; order: number | null; locations: string[] };
+  output: { views: PluginViewKind[]; effects: DirectoryActionEffectKind[] };
+  ui: ActionUi;
   appliesTo: { kinds: string[] };
 }
 

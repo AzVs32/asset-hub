@@ -346,11 +346,14 @@ impl From<&DirectoryActionDefinition> for DirectoryActionDefinitionResponse {
             },
             output: ResourceActionOutputContractResponse {
                 views: action.output().views.clone(),
+                effects: action.output().effects.clone(),
             },
             ui: ResourceActionUiResponse {
                 group: action.ui().group.clone(),
                 order: action.ui().order,
                 locations: action.ui().locations.clone(),
+                destructive: action.ui().destructive,
+                confirmation: action.ui().confirmation.clone(),
             },
             applies_to: DirectoryActionAppliesToResponse {
                 kinds: action.kinds().to_vec(),
@@ -368,6 +371,7 @@ pub(crate) struct ResourceActionRequirementsResponse {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub(crate) struct ResourceActionOutputContractResponse {
     pub(crate) views: Vec<String>,
+    pub(crate) effects: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -375,6 +379,8 @@ pub(crate) struct ResourceActionUiResponse {
     pub(crate) group: Option<String>,
     pub(crate) order: Option<i32>,
     pub(crate) locations: Vec<String>,
+    pub(crate) destructive: bool,
+    pub(crate) confirmation: Option<String>,
 }
 
 /// 内容匹配条件。
@@ -410,11 +416,14 @@ impl From<&ResourceActionDefinition> for ResourceActionDefinitionResponse {
             },
             output: ResourceActionOutputContractResponse {
                 views: action.output().views.clone(),
+                effects: action.output().effects.clone(),
             },
             ui: ResourceActionUiResponse {
                 group: action.ui().group.clone(),
                 order: action.ui().order,
                 locations: action.ui().locations.clone(),
+                destructive: action.ui().destructive,
+                confirmation: action.ui().confirmation.clone(),
             },
             applies_to: ResourceActionAppliesToResponse {
                 kinds: action.applies_to().kinds().to_vec(),
@@ -575,7 +584,9 @@ pub(crate) struct ResourceActionOutputResponse {
     /// 动作 ID。
     pub(crate) action: String,
     /// 插件返回的 View。
-    pub(crate) view: Value,
+    pub(crate) view: Option<Value>,
+    /// Host 已验证并应用的 effect 类型。
+    pub(crate) effects: Vec<String>,
     /// 插件返回的非致命诊断信息。
     pub(crate) diagnostics: Vec<PluginDiagnosticResponse>,
 }
@@ -584,7 +595,8 @@ pub(crate) struct ResourceActionOutputResponse {
 pub(crate) struct DirectoryActionOutputResponse {
     pub(crate) directory_id: String,
     pub(crate) action: String,
-    pub(crate) view: Value,
+    pub(crate) view: Option<Value>,
+    pub(crate) effects: Vec<String>,
     pub(crate) diagnostics: Vec<PluginDiagnosticResponse>,
 }
 
@@ -593,8 +605,17 @@ impl From<&DirectoryActionOutput> for DirectoryActionOutputResponse {
         Self {
             directory_id: output.directory_id().to_string(),
             action: output.action().as_str().to_string(),
-            view: serde_json::to_value(&output.output().view)
-                .expect("plugin view should serialize to JSON"),
+            view: output
+                .output()
+                .view
+                .as_ref()
+                .map(|view| serde_json::to_value(view).expect("plugin view should serialize")),
+            effects: output
+                .output()
+                .effects
+                .iter()
+                .map(|effect| effect.kind().to_string())
+                .collect(),
             diagnostics: output
                 .output()
                 .diagnostics
@@ -638,8 +659,17 @@ impl From<&ResourceActionOutput> for ResourceActionOutputResponse {
         Self {
             resource_id: output.resource_id().to_string(),
             action: output.action().as_str().to_string(),
-            view: serde_json::to_value(&output.output().view)
-                .expect("plugin view should serialize to JSON"),
+            view: output
+                .output()
+                .view
+                .as_ref()
+                .map(|view| serde_json::to_value(view).expect("plugin view should serialize")),
+            effects: output
+                .output()
+                .effects
+                .iter()
+                .map(|effect| effect.kind().to_string())
+                .collect(),
             diagnostics: output
                 .output()
                 .diagnostics

@@ -135,15 +135,49 @@ startup instead of being selected by registration or UI sort order.
 The Host recognizes `thumbnail`, `text_read`, and `text_edit` singleton capabilities for Resource
 actions; Directory actions recognize only `thumbnail`. A `thumbnail` provider must be read-only,
 support the `media` view, and declare the matching `resource_thumbnail` or
-`directory_thumbnail` UI location. A `text_read` provider must be read-only; a `text_edit`
-provider must be write. The Host rejects unknown capability names. Plugins must retain their
-provider-owned action IDs and must not reuse a `core.*` action ID.
+`directory_thumbnail` UI location. A `text_read` provider must be read-only. A `text_edit`
+provider must be write and request `resource.content.replace`; generic `resource.write` and
+`resource.derived_asset.write` permissions are not part of the contract. The Host rejects unknown
+capability names. Plugins must retain their provider-owned action IDs and must not reuse a `core.*`
+action ID.
 
 A Resource action normally declares `label`. A singleton capability provider may omit it when the
 action targets a child Resource kind; the Host then inherits the normalized label from the nearest
 ancestor provider for the same capability. An omitted label is rejected when no ancestor provider
 exists. Declaring `label` explicitly remains the way to override the inherited wording. Directory
 action labels remain required.
+
+### Returning mutation effects
+
+A write Action declares every effect it may return in `output.effects`. An effect-only Action may
+leave `output.views` empty and omit all View fields from its output. Effects request a Host mutation;
+the plugin never receives repository, blob-storage, or filesystem authority.
+
+Resource and Directory deletion use the same `delete` effect shape:
+
+```json
+{
+  "id": "example.plugin.delete",
+  "label": "Delete",
+  "handler": "delete",
+  "access": "write",
+  "output": { "effects": ["delete"] }
+}
+```
+
+The Resource Manifest must allow both `resource.read` and `resource.delete`; a Directory delete
+Action uses `directory.read` and `directory.delete`. A successful effect-only handler returns:
+
+```json
+{ "effects": [{ "type": "delete" }] }
+```
+
+The Host accepts an external delete Action only when the Manifest permission is present and the
+matching `plugin.grants.resource_delete` or `plugin.grants.directory_delete` setting is enabled.
+Execution still requires the current user to have delete permission for the target aggregate.
+Resource deletion uses Host soft-delete semantics; Directory deletion succeeds only for a non-root,
+empty directory. A delete effect cannot be combined with another effect in the same declaration or
+output.
 
 ### Plugin Frame Web SDK
 
@@ -163,7 +197,8 @@ The returned client exposes only:
 - `executeResourceAction(action, input?)`, which can call an Action already exposed for the current
   Resource;
 - `replaceResourceText(text)`, which is accepted only from the frame created by the current
-  Resource's resolved, write `text_edit` provider;
+  Resource's resolved, write `text_edit` provider whose Manifest requests
+  `resource.content.replace`;
 - `disconnect()`, which releases the frame connection.
 
 SDK method calls no longer supply Resource identity or request IDs. The Host binds the connection to
@@ -220,6 +255,8 @@ The principal version 3 changes are:
 - Frame calls use Promise results and errors, with connection and method timeouts owned by the SDK.
 - The SDK includes both an ESM build and a self-contained browser global build for plain HTML
   plugins.
+- Action output contracts declare `output.effects`; effect-only outputs may omit a View. Resource
+  and Directory Actions can request the permission-gated `delete` effect.
 
 Version 2 was intentionally incompatible with version 1. Its principal changes were:
 

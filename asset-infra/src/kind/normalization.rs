@@ -27,6 +27,7 @@ pub(super) fn resource_action_definition(
     .with_applies_to(resource_action_applies_to(capability))
     .with_output(ActionOutputContract {
         views: capability.output.views.clone(),
+        effects: capability.output.effects.clone(),
     });
     if let Some(requirements) = &capability.requires {
         definition = definition.with_requirements(ResourceActionRequirements {
@@ -42,6 +43,22 @@ pub(super) fn resource_action_definition(
             group: ui.group.clone(),
             order: ui.order,
             locations: ui.locations.clone(),
+            ..ActionDefinitionUi::default()
+        });
+    }
+    if capability
+        .output
+        .effects
+        .iter()
+        .any(|effect| effect == "delete")
+    {
+        let ui = definition.ui().clone();
+        definition = definition.with_ui(ActionDefinitionUi {
+            group: ui.group,
+            order: ui.order,
+            locations: ui.locations,
+            destructive: true,
+            confirmation: Some("Delete {name}?".to_string()),
         });
     }
     definition
@@ -64,6 +81,7 @@ pub(super) fn directory_action_definition(
     )
     .with_output(ActionOutputContract {
         views: capability.output.views.clone(),
+        effects: capability.output.effects.clone(),
     });
     if let Some(requirements) = &capability.requires {
         definition = definition.with_requirements(DirectoryActionRequirements {
@@ -76,6 +94,22 @@ pub(super) fn directory_action_definition(
             group: ui.group.clone(),
             order: ui.order,
             locations: ui.locations.clone(),
+            ..ActionDefinitionUi::default()
+        });
+    }
+    if capability
+        .output
+        .effects
+        .iter()
+        .any(|effect| effect == "delete")
+    {
+        let ui = definition.ui().clone();
+        definition = definition.with_ui(ActionDefinitionUi {
+            group: ui.group,
+            order: ui.order,
+            locations: ui.locations,
+            destructive: true,
+            confirmation: Some("Delete empty directory {name}?".to_string()),
         });
     }
     definition

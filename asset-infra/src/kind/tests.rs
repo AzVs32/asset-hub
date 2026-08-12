@@ -208,6 +208,7 @@ fn thumbnail_capabilities_require_a_single_nearest_provider() {
         .with_kinds(["core:resource"])
         .with_output(ActionOutputContract {
             views: vec!["media".to_string()],
+            effects: Vec::new(),
         })
         .with_ui(ActionUi {
             locations: vec!["resource_thumbnail".to_string()],
@@ -218,6 +219,7 @@ fn thumbnail_capabilities_require_a_single_nearest_provider() {
         .with_kinds(["core:resource"])
         .with_output(ActionOutputContract {
             views: vec!["media".to_string()],
+            effects: Vec::new(),
         })
         .with_ui(ActionUi {
             locations: vec!["resource_thumbnail".to_string()],
@@ -233,6 +235,7 @@ fn thumbnail_capabilities_require_a_single_nearest_provider() {
         .with_kinds(["core:resource"])
         .with_output(ActionOutputContract {
             views: vec!["media".to_string()],
+            effects: Vec::new(),
         })
         .with_ui(ActionUi {
             locations: vec!["resource_thumbnail".to_string()],
@@ -258,6 +261,7 @@ fn thumbnail_capabilities_require_a_single_nearest_provider() {
         .with_kinds(["core:directory"])
         .with_output(ActionOutputContract {
             views: vec!["media".to_string()],
+            effects: Vec::new(),
         })
         .with_ui(ActionUi {
             locations: vec!["directory_thumbnail".to_string()],
@@ -269,6 +273,7 @@ fn thumbnail_capabilities_require_a_single_nearest_provider() {
             .with_kinds(["core:directory"])
             .with_output(ActionOutputContract {
                 views: vec!["media".to_string()],
+                effects: Vec::new(),
             })
             .with_ui(ActionUi {
                 locations: vec!["directory_thumbnail".to_string()],
@@ -295,6 +300,7 @@ fn thumbnail_capabilities_require_a_single_nearest_provider() {
         .with_kinds(["core:directory"])
         .with_output(ActionOutputContract {
             views: vec!["media".to_string()],
+            effects: Vec::new(),
         })
         .with_ui(ActionUi {
             locations: vec!["directory_thumbnail".to_string()],

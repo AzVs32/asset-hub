@@ -36,7 +36,7 @@ export function DirectoryActionDialog({
               ))}
             </div>
           ) : null}
-          <DirectoryView view={result.output.view} />
+          {result.output.view ? <DirectoryView view={result.output.view} /> : null}
         </div>
       ) : null}
     </Dialog>

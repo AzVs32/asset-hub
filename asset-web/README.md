@@ -47,13 +47,16 @@ Stable slots:
 Actions with no location, or only locations unknown to this host version, remain reachable through
 `resource_context_menu` for resources and `directory_context_menu` for directories. Automatic
 thumbnail slots deliberately ignore write actions. The detail panel's editing form hosts the
-host-owned Save command; resource row menus host Delete and Restore. Plugin actions are invoked from
-the corresponding row context menu. There are no automatic plugin insertion points in the resource
-detail panel.
+host-owned Save command. `core.resource.delete` and `core.directory.delete` are Host-owned ordinary
+Actions discovered in the corresponding row menus; they carry destructive confirmation metadata,
+return only a `delete` effect, and enter the existing authorized soft-delete/empty-directory-delete
+use cases without returning a fake view. Restore remains a Host row-menu command for deleted
+resources. Plugin actions are invoked from the corresponding row context menu. There are no
+automatic plugin insertion points in the resource detail panel.
 
 The backend resolves singleton capability providers before returning resource or directory
-actions as flat arrays. Each kind/action includes its typed built-in or plugin origin, and actions
-use `read` or `write` access plus an `output.views` contract. For example,
+actions as flat arrays. Each kind/action includes its typed built-in or plugin origin. Actions use
+`read` or `write` access and declare their possible `output.views` and `output.effects`. For example,
 `azvs.epub.thumbnail` provides the Resource-scoped `thumbnail` capability
 for EPUB resources.
 `core:image` similarly resolves to the Host-owned `core.image.thumbnail`; other resource kinds
@@ -68,9 +71,11 @@ the frame runs with `sandbox="allow-scripts"` and can request only actions alrea
 current resource through the versioned Asset Hub Web Plugin SDK. The SDK hides its Penpal transport
 and is available as both an ESM package and a self-contained script for plain `index.html` plugins.
 A frame produced by the current
-write `text_edit` provider may also request raw text replacement; the Host binds it to that
-resource and sends the content through the same revision-guarded streaming use case as the core
-text editor.
+write `text_edit` provider may also request raw text replacement; plugin Manifest validation
+requires that provider to request `resource.content.replace`. The Host binds it to that resource
+and sends the content through the same revision-guarded streaming use case as the core text editor.
+A frame may invoke only Actions exposed for its bound Resource. Destructive Actions,
+including deletion, require a Host confirmation before the Gateway call is made.
 
 Directories are addressed by stable UUID throughout the domain and Gateway. Paths are navigation
 labels only. Directory update/delete and Resource or Directory actions forward the aggregate's

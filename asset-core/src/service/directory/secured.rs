@@ -125,13 +125,20 @@ impl<'a> SecuredDirectoryService<'a> {
         command: ExecuteDirectoryAction,
     ) -> Result<DirectoryActionOutput, CoreError> {
         let directory = self.service.find_by_id(id).await?;
-        self.service
+        let definition = self
+            .service
             .resolve_action(directory.directory(), &command.action)?;
-        self.require(
-            directory.location(),
-            DirectoryOperation::ExecuteDirectoryAction,
-        )
-        .await?;
+        let operation = if definition
+            .output()
+            .effects
+            .iter()
+            .any(|effect| effect == "delete")
+        {
+            DirectoryOperation::DeleteDirectory
+        } else {
+            DirectoryOperation::ExecuteDirectoryAction
+        };
+        self.require(directory.location(), operation).await?;
         let scope_root = self
             .authorization
             .workspace_scope(self.context)

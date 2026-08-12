@@ -48,7 +48,6 @@ export function ResourceList({
   onSelect,
   onSelectDirectory,
   onAction,
-  onDelete,
   onRestore,
   onDirectoryAction,
   onRefresh,
@@ -70,7 +69,6 @@ export function ResourceList({
   onSelect: (resource: Resource) => void;
   onSelectDirectory: (directory: Directory) => void;
   onAction: (resource: Resource, action: ResourceAction) => void;
-  onDelete: (resource: Resource) => void;
   onRestore: (resource: Resource) => void;
   onDirectoryAction: (directory: Directory, action: DirectoryAction) => void;
   onRefresh: () => void;
@@ -186,7 +184,6 @@ export function ResourceList({
             selected={resource.id === selectedId}
             onSelect={() => onSelect(resource)}
             onAction={(action) => onAction(resource, action)}
-            onDelete={() => onDelete(resource)}
             onRestore={() => onRestore(resource)}
           />
         ))}
@@ -275,7 +272,11 @@ function FolderRow({
         <div className="pr-4">
           <ActionMenu>
             {actions.map((action) => (
-              <ActionMenuItem key={action.id} onSelect={() => onAction(action)}>
+              <ActionMenuItem
+                key={action.id}
+                destructive={action.ui.destructive}
+                onSelect={() => onAction(action)}
+              >
                 {action.label}
               </ActionMenuItem>
             ))}
@@ -317,14 +318,12 @@ function ResourceRow({
   selected,
   onSelect,
   onAction,
-  onDelete,
   onRestore,
 }: {
   resource: Resource;
   selected: boolean;
   onSelect: () => void;
   onAction: (action: ResourceAction) => void;
-  onDelete: () => void;
   onRestore: () => void;
 }) {
   const kernel = usePluginKernel();
@@ -368,11 +367,15 @@ function ResourceRow({
           </span>
         ) : null}
         <ActionMenu>
-          <ActionMenuItem onSelect={resource.deletedAt ? onRestore : onDelete}>
-            {resource.deletedAt ? "Restore resource" : "Delete resource"}
-          </ActionMenuItem>
+          {resource.deletedAt ? (
+            <ActionMenuItem onSelect={onRestore}>Restore resource</ActionMenuItem>
+          ) : null}
           {actions.map((action) => (
-            <ActionMenuItem key={action.id} onSelect={() => onAction(action)}>
+            <ActionMenuItem
+              key={action.id}
+              destructive={action.ui.destructive}
+              onSelect={() => onAction(action)}
+            >
               {action.label}
             </ActionMenuItem>
           ))}
@@ -406,9 +409,10 @@ function ResourceThumbnail({ resource }: { resource: Resource }) {
 }
 
 function thumbnailImage(
-  view: import("@/domain/plugin").PluginView,
+  view: import("@/domain/plugin").PluginView | null,
   resolveUrl: (url: string) => string | null,
 ): string | null {
+  if (!view) return null;
   if (view.view === "media" && view.mime_type.startsWith("image/")) {
     return view.encoding === "base64"
       ? `data:${view.mime_type};base64,${view.data}`

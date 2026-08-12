@@ -11,8 +11,8 @@ use crate::protocol::PluginDiagnostic;
 /// Standard action output.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PluginResourceActionOutput {
-    #[serde(flatten)]
-    pub view: PluginView,
+    #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
+    pub view: Option<PluginView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<PluginResourceActionEffect>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -22,7 +22,15 @@ pub struct PluginResourceActionOutput {
 impl PluginResourceActionOutput {
     pub fn new(view: PluginView) -> Self {
         Self {
-            view,
+            view: Some(view),
+            effects: Vec::new(),
+            diagnostics: Vec::new(),
+        }
+    }
+
+    pub fn without_view() -> Self {
+        Self {
+            view: None,
             effects: Vec::new(),
             diagnostics: Vec::new(),
         }
@@ -48,6 +56,16 @@ impl PluginView {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PluginResourceActionEffect {
     ReplaceContent(ReplaceContentEffect),
+    Delete,
+}
+
+impl PluginResourceActionEffect {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::ReplaceContent(_) => "replace_content",
+            Self::Delete => "delete",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -139,7 +157,7 @@ pub struct DownloadView {
 
 #[cfg(test)]
 mod tests {
-    use super::{DownloadView, PluginView};
+    use super::{DownloadView, PluginResourceActionEffect, PluginResourceActionOutput, PluginView};
 
     #[test]
     fn download_view_has_an_explicit_wire_discriminator() {
@@ -158,6 +176,17 @@ mod tests {
                 "mime_type": "application/octet-stream",
                 "filename": "asset.bin"
             })
+        );
+    }
+
+    #[test]
+    fn effect_only_output_omits_view_fields() {
+        let mut output = PluginResourceActionOutput::without_view();
+        output.effects.push(PluginResourceActionEffect::Delete);
+
+        assert_eq!(
+            serde_json::to_value(output).unwrap(),
+            serde_json::json!({"effects": [{"type": "delete"}]})
         );
     }
 }

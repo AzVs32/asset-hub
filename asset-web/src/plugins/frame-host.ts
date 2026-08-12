@@ -21,12 +21,14 @@ export function createPluginFrameHostBridge({
   frameActionId,
   gateway,
   onResourceChanged,
+  confirmAction,
 }: {
   resource: Resource;
   frameResourceId: string;
   frameActionId: string;
   gateway: AssetGateway;
   onResourceChanged?: (() => void | Promise<void>) | undefined;
+  confirmAction?: ((message: string) => boolean | Promise<boolean>) | undefined;
 }): PluginFrameHostBridge {
   let resource = initialResource;
 
@@ -45,6 +47,12 @@ export function createPluginFrameHostBridge({
         const input = parseInput(inputValue);
         const action = current.actions.find((candidate) => candidate.id === actionId);
         if (!action) throw new Error(`Action ${actionId} is not available.`);
+        if (action.ui.confirmation) {
+          const confirmed = await confirmAction?.(
+            action.ui.confirmation.replaceAll("{name}", current.name),
+          );
+          if (!confirmed) throw new Error(`Action ${actionId} was not confirmed.`);
+        }
         const result = await gateway.executeAction(current, action.id, input);
         if (action.access === "write") await onResourceChanged?.();
         return result;

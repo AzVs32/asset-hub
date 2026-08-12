@@ -22,7 +22,7 @@ fn plugin_frame_relative_url_is_resolved_to_plugin_web_route() {
 
     resolve_plugin_output_urls(&mut output, "azvs.markdown").unwrap();
 
-    let PluginView::PluginFrame(frame) = output.view else {
+    let Some(PluginView::PluginFrame(frame)) = output.view else {
         panic!("expected plugin frame");
     };
     assert_eq!(frame.url, "/plugins/azvs.markdown/index.html#payload=abc");
@@ -57,7 +57,7 @@ fn plugin_frame_hash_only_url_defaults_to_index_html() {
 #[test]
 fn external_permissions_require_matching_host_grants() {
     let permissions: PluginPermissions = serde_json::from_value(serde_json::json!({
-        "allow": ["resource.read"],
+        "allow": ["resource.read", "resource.delete", "directory.delete"],
         "network": {"hosts": ["api.example.com"]},
         "filesystem": {"read": ["/srv/plugins/input"], "write": []}
     }))
@@ -72,6 +72,8 @@ fn external_permissions_require_matching_host_grants() {
     assert!(error.to_string().contains("without a matching host grant"));
 
     let grants = PluginPermissionGrants {
+        resource_delete: true,
+        directory_delete: true,
         network_hosts: vec!["api.example.com".to_string()],
         filesystem_read: vec!["/srv/plugins".into()],
         filesystem_write: Vec::new(),

@@ -15,6 +15,16 @@ pub(super) fn validate_external_permissions(
     permissions: &PluginPermissions,
     grants: &PluginPermissionGrants,
 ) -> Result<(), CoreError> {
+    if permissions.resource_delete() && !grants.resource_delete {
+        return Err(CoreError::configuration(format!(
+            "plugin `{plugin_id}` requests resource.delete without a matching host grant"
+        )));
+    }
+    if permissions.directory_delete() && !grants.directory_delete {
+        return Err(CoreError::configuration(format!(
+            "plugin `{plugin_id}` requests directory.delete without a matching host grant"
+        )));
+    }
     for host in permissions.network.hosts() {
         if host.contains('*') || !grants.network_hosts.iter().any(|grant| grant == host) {
             return Err(CoreError::configuration(format!(
@@ -79,9 +89,8 @@ pub(super) fn verify_permissions(
         )));
     }
     if matches!(request.access(), ActionAccess::Write)
-        && !binding.permissions.resource_write()
         && !binding.permissions.resource_content_replace()
-        && !binding.permissions.resource_derived_asset_write()
+        && !binding.permissions.resource_delete()
     {
         return Err(CoreError::configuration(format!(
             "plugin `{}` action `{}` lacks a write permission",

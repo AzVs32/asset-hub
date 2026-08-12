@@ -482,6 +482,7 @@ impl DirectoryActionExecutor for ExtismActionExecutor {
         if matches!(request.access(), ActionAccess::Write)
             && !binding.permissions.directory_write()
             && !binding.permissions.directory_create_child()
+            && !binding.permissions.directory_delete()
         {
             return Err(CoreError::configuration(format!(
                 "plugin `{}` action `{}` lacks a directory write permission",
@@ -537,7 +538,6 @@ impl DirectoryActionExecutor for ExtismActionExecutor {
 }
 
 #[derive(Clone)]
-
 pub(super) struct ActionBinding {
     pub(super) plugin_id: String,
     pub(super) action: String,
@@ -637,6 +637,9 @@ fn call_extism_directory(
             DirectoryActionEffect::CreateChild(_) => binding
                 .permissions
                 .allows(PluginPermission::DirectoryCreateChild),
+            DirectoryActionEffect::Delete => binding
+                .permissions
+                .allows(PluginPermission::DirectoryDelete),
         };
         if !allowed {
             return Err(CoreError::plugin(
@@ -762,21 +765,28 @@ pub(super) fn call_extism(
                 ),
             )
         })?;
-    if output.effects.iter().any(|effect| {
-        matches!(
-            effect,
-            asset_plugin_api::protocol::PluginResourceActionEffect::ReplaceContent(_)
-        )
-    }) && !binding.permissions.resource_content_replace()
-    {
-        return Err(CoreError::plugin_diagnostic(
-            &binding.plugin_id,
-            &binding.action,
-            host_diagnostic(
-                asset_plugin_api::protocol::diagnostic::codes::PERMISSION_DENIED,
-                "plugin returned replace_content without resource.content.replace permission",
-            ),
-        ));
+    for effect in &output.effects {
+        let allowed = match effect {
+            asset_plugin_api::protocol::PluginResourceActionEffect::ReplaceContent(_) => {
+                binding.permissions.resource_content_replace()
+            }
+            asset_plugin_api::protocol::PluginResourceActionEffect::Delete => {
+                binding.permissions.resource_delete()
+            }
+        };
+        if !allowed {
+            return Err(CoreError::plugin_diagnostic(
+                &binding.plugin_id,
+                &binding.action,
+                host_diagnostic(
+                    asset_plugin_api::protocol::diagnostic::codes::PERMISSION_DENIED,
+                    format!(
+                        "plugin returned {} without the required permission",
+                        effect.kind()
+                    ),
+                ),
+            ));
+        }
     }
     resolve_plugin_output_urls(&mut output, &binding.plugin_id)?;
 

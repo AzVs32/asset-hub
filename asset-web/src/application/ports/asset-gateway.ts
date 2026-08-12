@@ -26,7 +26,6 @@ export interface AssetGateway {
   findResource(id: string): Promise<Resource>;
   updateResource(resource: Resource, draft: ResourceDraft): Promise<Resource>;
   restoreResource(resource: Resource): Promise<Resource>;
-  deleteResource(resource: Resource): Promise<Resource>;
   uploadResource(
     draft: UploadDraft,
     onProgress?: (progress: UploadProgress) => void,
@@ -35,7 +34,6 @@ export interface AssetGateway {
   findDirectory(id: string): Promise<Directory>;
   createDirectory(parent: Directory, name: string, kind?: string): Promise<Directory>;
   updateDirectory(directory: Directory, draft: DirectoryDraft): Promise<Directory>;
-  deleteDirectory(directory: Directory): Promise<void>;
   executeDirectoryAction(
     directory: Directory,
     action: DirectoryAction,

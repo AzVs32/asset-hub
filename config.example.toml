@@ -53,6 +53,10 @@ timeout_seconds = 20
 
 [plugin.grants]
 # A Manifest requests external access; the host grants it independently here.
+# Permit external plugins that request the matching delete permission. Built-in delete Actions do
+# not depend on these switches.
+resource_delete = false
+directory_delete = false
 # Requested hosts require exact matches. Wildcards are rejected.
 network_hosts = []
 # Filesystem requests must be absolute paths below one of these normalized roots.

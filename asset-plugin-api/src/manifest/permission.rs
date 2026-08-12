@@ -11,14 +11,12 @@ use std::collections::BTreeSet;
 pub enum PluginPermission {
     #[serde(rename = "resource.read")]
     ResourceRead,
-    #[serde(rename = "resource.write")]
-    ResourceWrite,
+    #[serde(rename = "resource.delete")]
+    ResourceDelete,
     #[serde(rename = "resource.content.read")]
     ResourceContentRead,
     #[serde(rename = "resource.content.replace")]
     ResourceContentReplace,
-    #[serde(rename = "resource.derived_asset.write")]
-    ResourceDerivedAssetWrite,
     #[serde(rename = "directory.read")]
     DirectoryRead,
     #[serde(rename = "directory.children.list")]
@@ -27,6 +25,8 @@ pub enum PluginPermission {
     DirectoryResourcesList,
     #[serde(rename = "directory.write")]
     DirectoryWrite,
+    #[serde(rename = "directory.delete")]
+    DirectoryDelete,
     #[serde(rename = "directory.create_child")]
     DirectoryCreateChild,
 }
@@ -52,8 +52,8 @@ impl PluginPermissions {
         self.allows(PluginPermission::ResourceRead)
     }
 
-    pub fn resource_write(&self) -> bool {
-        self.allows(PluginPermission::ResourceWrite)
+    pub fn resource_delete(&self) -> bool {
+        self.allows(PluginPermission::ResourceDelete)
     }
 
     pub fn resource_content_read(&self) -> bool {
@@ -62,10 +62,6 @@ impl PluginPermissions {
 
     pub fn resource_content_replace(&self) -> bool {
         self.allows(PluginPermission::ResourceContentReplace)
-    }
-
-    pub fn resource_derived_asset_write(&self) -> bool {
-        self.allows(PluginPermission::ResourceDerivedAssetWrite)
     }
 
     pub fn directory_read(&self) -> bool {
@@ -79,6 +75,9 @@ impl PluginPermissions {
     }
     pub fn directory_write(&self) -> bool {
         self.allows(PluginPermission::DirectoryWrite)
+    }
+    pub fn directory_delete(&self) -> bool {
+        self.allows(PluginPermission::DirectoryDelete)
     }
     pub fn directory_create_child(&self) -> bool {
         self.allows(PluginPermission::DirectoryCreateChild)

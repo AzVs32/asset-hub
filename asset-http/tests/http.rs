@@ -42,6 +42,94 @@ impl Drop for TestApp {
 }
 
 #[tokio::test]
+async fn delete_is_discovered_and_executed_as_an_effect_only_action() {
+    let app = test_app("delete-action-effect").await;
+    let (status, directory) = json_request(
+        &app,
+        Method::POST,
+        "/directories",
+        json!({"parent_id": ROOT_DIRECTORY_ID, "name": "empty"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{directory}");
+    let directory_delete = directory["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|action| action["id"] == "core.directory.delete")
+        .unwrap();
+    assert_eq!(directory_delete["output"]["views"], json!([]));
+    assert_eq!(directory_delete["output"]["effects"], json!(["delete"]));
+    assert_eq!(directory_delete["ui"]["destructive"], true);
+
+    let directory_id = directory["id"].as_str().unwrap();
+    let (status, output) = json_request(
+        &app,
+        Method::POST,
+        &format!("/directories/{directory_id}/actions/core.directory.delete"),
+        json!({"expected_revision": directory["revision"], "input": {}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{output}");
+    assert_eq!(output["view"], Value::Null);
+    assert_eq!(output["action"], "core.directory.delete");
+    assert_eq!(output["effects"], json!(["delete"]));
+
+    let (status, _) =
+        empty_json_request(&app, Method::GET, &format!("/directories/{directory_id}")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let (status, root) = empty_json_request(
+        &app,
+        Method::GET,
+        "/directories/00000000-0000-0000-0000-000000000000",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{root}");
+    assert!(
+        root["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|action| action["id"] != "core.directory.delete")
+    );
+
+    let (status, resource) = stream_upload(
+        &app,
+        "/resources?name=delete-me.txt&directory=",
+        "text/plain",
+        b"content",
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{resource}");
+    let resource_delete = resource["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|action| action["id"] == "core.resource.delete")
+        .unwrap();
+    assert_eq!(resource_delete["output"]["views"], json!([]));
+    assert_eq!(resource_delete["output"]["effects"], json!(["delete"]));
+
+    let resource_id = resource["id"].as_str().unwrap();
+    let (status, output) = json_request(
+        &app,
+        Method::POST,
+        &format!("/resources/{resource_id}/actions/core.resource.delete"),
+        json!({"expected_revision": resource["revision"], "input": {}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{output}");
+    assert_eq!(output["view"], Value::Null);
+    assert_eq!(output["action"], "core.resource.delete");
+    assert_eq!(output["effects"], json!(["delete"]));
+
+    let (status, _) =
+        empty_json_request(&app, Method::GET, &format!("/resources/{resource_id}")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn directory_download_action_archives_nested_resources_and_empty_directories() {
     let app = test_app("directory-download").await;
     let (status, directory) = json_request(

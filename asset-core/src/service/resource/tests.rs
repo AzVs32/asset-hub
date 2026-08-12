@@ -1208,7 +1208,7 @@ fn service() -> (
                 .with_kinds(["core:text"])
                 .with_requirements(content_requirements())
                 .with_access(ActionAccess::Write)
-                .with_output(output_contract(["text"]))
+                .with_output(effect_output_contract(["text"], ["replace_content"]))
                 .with_content_matcher(
                     ResourceContentMatcher::new()
                         .with_mime_types(["text/markdown", "text/x-markdown"])
@@ -1230,7 +1230,7 @@ fn service() -> (
                 DirectoryActionDefinition::new_static("test.directory.move", "Move directory")
                     .with_kinds(["core:directory"])
                     .with_access(ActionAccess::Write)
-                    .with_output(output_contract(["text"])),
+                    .with_output(effect_output_contract(["text"], ["update"])),
             ],
         }),
         Arc::new(StaticDirectoryActionExecutor),
@@ -1272,6 +1272,17 @@ fn test_resource_content_edit_policy() -> ResourceContentEditPolicy {
 fn output_contract<const N: usize>(views: [&str; N]) -> crate::domain::ActionOutputContract {
     crate::domain::ActionOutputContract {
         views: views.into_iter().map(str::to_string).collect(),
+        effects: Vec::new(),
+    }
+}
+
+fn effect_output_contract<const V: usize, const E: usize>(
+    views: [&str; V],
+    effects: [&str; E],
+) -> crate::domain::ActionOutputContract {
+    crate::domain::ActionOutputContract {
+        views: views.into_iter().map(str::to_string).collect(),
+        effects: effects.into_iter().map(str::to_string).collect(),
     }
 }
 

@@ -44,7 +44,15 @@ impl DirectoryService {
         Ok(DirectoryActions::new(
             self.describe_kind_actions(directory.kind())
                 .into_iter()
-                .filter(|action| action.matches_directory(directory.kind().as_str()))
+                .filter(|action| {
+                    action.matches_directory(directory.kind().as_str())
+                        && !(directory.id().is_root()
+                            && action
+                                .output()
+                                .effects
+                                .iter()
+                                .any(|effect| effect == "delete"))
+                })
                 .collect(),
         ))
     }
@@ -137,11 +145,32 @@ impl DirectoryService {
                 "action `{action_id}` returned an output for a different invocation"
             )));
         }
-        let actual = output.output().view.kind();
-        if !definition.output().views.iter().any(|view| view == actual) {
+        if let Some(view) = &output.output().view {
+            let actual = view.kind();
+            if !definition.output().views.iter().any(|view| view == actual) {
+                return Err(CoreError::invariant(format!(
+                    "action `{}` returned undeclared view `{actual}`",
+                    definition.id()
+                )));
+            }
+        }
+        if output.output().view.is_none() && output.output().effects.is_empty() {
             return Err(CoreError::invariant(format!(
-                "action `{}` returned undeclared view `{actual}`",
+                "action `{}` returned neither a view nor an effect",
                 definition.id()
+            )));
+        }
+        if let Some(effect) = output.output().effects.iter().find(|effect| {
+            !definition
+                .output()
+                .effects
+                .iter()
+                .any(|kind| kind == effect.kind())
+        }) {
+            return Err(CoreError::invariant(format!(
+                "action `{}` returned undeclared effect `{}`",
+                definition.id(),
+                effect.kind()
             )));
         }
         if output.output().effects.len() > 1 {
@@ -176,7 +205,7 @@ impl DirectoryService {
             .iter()
             .filter_map(|effect| match effect {
                 DirectoryActionEffect::CreateChild(effect) => Some(effect),
-                DirectoryActionEffect::Update(_) => None,
+                DirectoryActionEffect::Update(_) | DirectoryActionEffect::Delete => None,
             })
         {
             let kind = effect
@@ -200,7 +229,7 @@ impl DirectoryService {
             .iter()
             .find_map(|effect| match effect {
                 DirectoryActionEffect::Update(effect) => Some(effect),
-                DirectoryActionEffect::CreateChild(_) => None,
+                DirectoryActionEffect::CreateChild(_) | DirectoryActionEffect::Delete => None,
             })
         {
             let mut command = UpdateDirectory::new(expected_revision);
@@ -218,6 +247,22 @@ impl DirectoryService {
             }
             self.update_expected(id, command, required_parent_ancestor)
                 .await?;
+        }
+        if output
+            .output()
+            .effects
+            .iter()
+            .any(|effect| matches!(effect, DirectoryActionEffect::Delete))
+        {
+            let directory = self.find_by_id(id).await?;
+            if !self
+                .remove_if_empty(directory.location(), Some(expected_revision))
+                .await?
+            {
+                return Err(CoreError::conflict(format!(
+                    "directory `{id}` is not empty"
+                )));
+            }
         }
         Ok(())
     }

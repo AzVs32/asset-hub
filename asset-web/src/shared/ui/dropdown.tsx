@@ -26,13 +26,19 @@ export function ActionMenu({ children }: { children: React.ReactNode }) {
 export function ActionMenuItem({
   children,
   onSelect,
+  destructive = false,
 }: {
   children: React.ReactNode;
   onSelect: () => void;
+  destructive?: boolean;
 }) {
   return (
     <DropdownMenu.Item
-      className="cursor-pointer rounded-lg px-3 py-2 text-sm outline-none hover:bg-slate-100 focus:bg-slate-100"
+      className={
+        destructive
+          ? "cursor-pointer rounded-lg px-3 py-2 text-sm text-red-700 outline-none hover:bg-red-50 focus:bg-red-50"
+          : "cursor-pointer rounded-lg px-3 py-2 text-sm outline-none hover:bg-slate-100 focus:bg-slate-100"
+      }
       onSelect={onSelect}
     >
       {children}

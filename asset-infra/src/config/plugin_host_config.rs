@@ -84,6 +84,8 @@ impl PluginHostConfig {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PluginPermissionGrants {
+    pub resource_delete: bool,
+    pub directory_delete: bool,
     pub network_hosts: Vec<String>,
     pub filesystem_read: Vec<PathBuf>,
     pub filesystem_write: Vec<PathBuf>,

@@ -10,6 +10,9 @@ use super::{
 use crate::protocol::PLUGIN_API_VERSION;
 use std::collections::HashSet;
 
+const RESOURCE_EFFECTS: &[&str] = &["replace_content", "delete"];
+const DIRECTORY_EFFECTS: &[&str] = &["update", "create_child", "delete"];
+
 impl PluginManifest {
     pub fn validate(&self) -> Result<(), String> {
         if self.manifest_version != MANIFEST_VERSION {
@@ -196,9 +199,9 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
                 action.id
             ));
         }
-        if action.output.views.is_empty() {
+        if action.output.views.is_empty() && action.output.effects.is_empty() {
             return Err(format!(
-                "capabilities.resource_actions[`{}`].output.views must not be empty",
+                "capabilities.resource_actions[`{}`].output must declare a view or effect",
                 action.id
             ));
         }
@@ -217,6 +220,64 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
                 ));
             }
         }
+        validate_action_effects(
+            "capabilities.resource_actions",
+            &action.id,
+            &action.output.effects,
+            RESOURCE_EFFECTS,
+        )?;
+        if action
+            .output
+            .effects
+            .iter()
+            .any(|effect| effect == "delete")
+            && action.output.effects.len() > 1
+        {
+            return Err(format!(
+                "capabilities.resource_actions[`{}`] cannot combine delete with another effect",
+                action.id
+            ));
+        }
+        if !action.output.effects.is_empty()
+            && !matches!(action.access, ManifestActionAccess::Write)
+        {
+            return Err(format!(
+                "capabilities.resource_actions[`{}`] declares effects without write access",
+                action.id
+            ));
+        }
+        if action
+            .output
+            .effects
+            .iter()
+            .any(|effect| effect == "replace_content")
+            && !manifest.permissions.resource_content_replace()
+        {
+            return Err(format!(
+                "capabilities.resource_actions[`{}`] declares replace_content without resource.content.replace permission",
+                action.id
+            ));
+        }
+        if action
+            .output
+            .effects
+            .iter()
+            .any(|effect| effect == "delete")
+            && !manifest.permissions.resource_delete()
+        {
+            return Err(format!(
+                "capabilities.resource_actions[`{}`] declares delete without resource.delete permission",
+                action.id
+            ));
+        }
+        if action.provides.as_deref() == Some("text_edit")
+            && !manifest.permissions.resource_content_replace()
+        {
+            return Err(format!(
+                "capabilities.resource_actions[`{}`] provides text_edit without resource.content.replace permission",
+                action.id
+            ));
+        }
         if action
             .requires
             .as_ref()
@@ -229,9 +290,8 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
             ));
         }
         if matches!(action.access, ManifestActionAccess::Write)
-            && !manifest.permissions.resource_write()
             && !manifest.permissions.resource_content_replace()
-            && !manifest.permissions.resource_derived_asset_write()
+            && !manifest.permissions.resource_delete()
         {
             return Err(format!(
                 "capabilities.resource_actions[`{}`] is writable without a write permission",
@@ -273,6 +333,7 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
         if matches!(action.access, ManifestActionAccess::Write)
             && !manifest.permissions.directory_write()
             && !manifest.permissions.directory_create_child()
+            && !manifest.permissions.directory_delete()
         {
             return Err(format!(
                 "capabilities.directory_actions[`{}`] is writable without a write permission",
@@ -301,12 +362,17 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
                 action.id
             ));
         }
-        if action.output.views.is_empty()
-            || action
-                .output
-                .views
-                .iter()
-                .any(|view| !SUPPORTED_VIEWS.contains(&view.as_str()))
+        if action.output.views.is_empty() && action.output.effects.is_empty() {
+            return Err(format!(
+                "directory action `{}` must declare a view or effect",
+                action.id
+            ));
+        }
+        if action
+            .output
+            .views
+            .iter()
+            .any(|view| !SUPPORTED_VIEWS.contains(&view.as_str()))
         {
             return Err(format!(
                 "directory action `{}` must declare only supported views",
@@ -320,9 +386,94 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
                 action.id
             ));
         }
+        validate_action_effects(
+            "capabilities.directory_actions",
+            &action.id,
+            &action.output.effects,
+            DIRECTORY_EFFECTS,
+        )?;
+        if action
+            .output
+            .effects
+            .iter()
+            .any(|effect| effect == "delete")
+            && action.output.effects.len() > 1
+        {
+            return Err(format!(
+                "capabilities.directory_actions[`{}`] cannot combine delete with another effect",
+                action.id
+            ));
+        }
+        if !action.output.effects.is_empty()
+            && !matches!(action.access, ManifestActionAccess::Write)
+        {
+            return Err(format!(
+                "capabilities.directory_actions[`{}`] declares effects without write access",
+                action.id
+            ));
+        }
+        if action
+            .output
+            .effects
+            .iter()
+            .any(|effect| effect == "update")
+            && !manifest.permissions.directory_write()
+        {
+            return Err(format!(
+                "capabilities.directory_actions[`{}`] declares update without directory.write permission",
+                action.id
+            ));
+        }
+        if action
+            .output
+            .effects
+            .iter()
+            .any(|effect| effect == "create_child")
+            && !manifest.permissions.directory_create_child()
+        {
+            return Err(format!(
+                "capabilities.directory_actions[`{}`] declares create_child without directory.create_child permission",
+                action.id
+            ));
+        }
+        if action
+            .output
+            .effects
+            .iter()
+            .any(|effect| effect == "delete")
+            && !manifest.permissions.directory_delete()
+        {
+            return Err(format!(
+                "capabilities.directory_actions[`{}`] declares delete without directory.delete permission",
+                action.id
+            ));
+        }
         for kind in &action.applies_to.kinds {
             validate_kind_id("capabilities.directory_actions[].applies_to.kinds[]", kind)?;
         }
+    }
+    Ok(())
+}
+
+fn validate_action_effects(
+    field: &str,
+    action_id: &str,
+    effects: &[String],
+    supported: &[&str],
+) -> Result<(), String> {
+    let unique = effects.iter().collect::<HashSet<_>>();
+    if unique.len() != effects.len() {
+        return Err(format!(
+            "{field}[`{action_id}`].output.effects must not contain duplicates"
+        ));
+    }
+    if let Some(effect) = effects
+        .iter()
+        .find(|effect| !supported.contains(&effect.as_str()))
+    {
+        return Err(format!(
+            "{field}[`{action_id}`] declares unsupported effect `{effect}`"
+        ));
     }
     Ok(())
 }

@@ -14,6 +14,12 @@ export function StandalonePluginView() {
       const resource = await gateway.findResource(resourceId);
       const action = resource.actions.find((candidate) => candidate.id === actionId);
       if (!action) throw new Error(`Action ${actionId} is not available.`);
+      if (
+        action.ui.confirmation &&
+        !window.confirm(action.ui.confirmation.replaceAll("{name}", resource.name))
+      ) {
+        throw new Error(`Action ${actionId} was not confirmed.`);
+      }
       return { resource, output: await gateway.executeAction(resource, action.id) };
     },
     retry: false,

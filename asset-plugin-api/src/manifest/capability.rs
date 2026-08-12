@@ -109,11 +109,13 @@ pub struct DirectoryActionRequirementsCapability {
     pub resources: bool,
 }
 
-/// Views an action is allowed to return.
+/// Views and effects an action is allowed to return.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ActionOutputCapability {
     pub views: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<String>,
 }
 
 /// Manifest-level action access declaration.

@@ -5,7 +5,7 @@ pub(super) fn resolve_plugin_output_urls(
     output: &mut PluginResourceActionOutput,
     plugin_id: &str,
 ) -> Result<(), CoreError> {
-    if let PluginView::PluginFrame(frame) = &mut output.view {
+    if let Some(PluginView::PluginFrame(frame)) = &mut output.view {
         if frame.plugin_api != PLUGIN_API_VERSION {
             return Err(CoreError::plugin(
                 plugin_id,
