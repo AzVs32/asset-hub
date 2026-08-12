@@ -127,7 +127,7 @@ fn manifest_accepts_directory_actions_with_target_specific_requirements() {
         "access": "write",
         "requires": {"children": true, "resources": true},
         "output": {"views": ["json"]},
-        "ui": {"locations": ["directory_detail"]}
+        "ui": {"locations": ["directory_context_menu"]}
     }]);
     value["permissions"]["allow"] = json!([
         "resource.read",
@@ -142,7 +142,10 @@ fn manifest_accepts_directory_actions_with_target_specific_requirements() {
     let requirements = action.requires.as_ref().unwrap();
     assert!(requirements.children);
     assert!(requirements.resources);
-    assert_eq!(action.ui.as_ref().unwrap().locations, ["directory_detail"]);
+    assert_eq!(
+        action.ui.as_ref().unwrap().locations,
+        ["directory_context_menu"]
+    );
 }
 
 #[test]

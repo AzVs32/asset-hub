@@ -1,21 +1,10 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import {
-  Database,
-  Download,
-  Eye,
-  FileJson,
-  Pencil,
-  Play,
-  RotateCcw,
-  Save,
-  Trash2,
-} from "lucide-react";
+import { Database, Save } from "lucide-react";
 import React from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import type { Resource, ResourceAction, ResourceDraft, ResourceKind } from "@/domain/resource";
+import type { Resource, ResourceDraft, ResourceKind } from "@/domain/resource";
 import { draftFromResource, formatBytes, formatDate } from "@/domain/resource-draft";
-import { usePluginKernel } from "@/kernel/plugin-kernel";
 import { hostSlots } from "@/kernel/slots";
 import { AutomaticSlot } from "@/plugins/automatic-slot";
 import { Button } from "@/shared/ui/button";
@@ -28,25 +17,21 @@ const draftSchema = z.object({
   kind: z.string().trim().min(1),
 });
 
+interface ResourceDetailProps {
+  resource: Resource | null;
+  kinds: ResourceKind[];
+  pending: boolean;
+  onSave: (draft: ResourceDraft) => Promise<unknown>;
+  onResourceChanged: () => void | Promise<void>;
+}
+
 export function ResourceDetail({
   resource,
   kinds,
   pending,
   onSave,
-  onAction,
-  onDelete,
-  onRestore,
   onResourceChanged,
-}: {
-  resource: Resource | null;
-  kinds: ResourceKind[];
-  pending: boolean;
-  onSave: (draft: ResourceDraft) => Promise<unknown>;
-  onAction: (action: ResourceAction) => void;
-  onDelete: () => void;
-  onRestore: () => void;
-  onResourceChanged: () => void | Promise<void>;
-}) {
+}: ResourceDetailProps) {
   if (!resource) {
     return (
       <aside className="grid min-h-72 place-items-center border-l border-slate-200 bg-slate-50/60 text-slate-400">
@@ -63,9 +48,6 @@ export function ResourceDetail({
       kinds={kinds}
       pending={pending}
       onSave={onSave}
-      onAction={onAction}
-      onDelete={onDelete}
-      onRestore={onRestore}
       onResourceChanged={onResourceChanged}
     />
   );
@@ -76,22 +58,14 @@ function Detail({
   kinds,
   pending,
   onSave,
-  onAction,
-  onDelete,
-  onRestore,
   onResourceChanged,
 }: {
   resource: Resource;
   kinds: ResourceKind[];
   pending: boolean;
   onSave: (draft: ResourceDraft) => Promise<unknown>;
-  onAction: (action: ResourceAction) => void;
-  onDelete: () => void;
-  onRestore: () => void;
   onResourceChanged: () => void | Promise<void>;
 }) {
-  const kernel = usePluginKernel();
-  const actions = kernel.actionsAt(resource, hostSlots.resourceDetailActions);
   const displayResource = {
     ...resource,
     directory: resource.directory || "/",
@@ -124,52 +98,6 @@ function Detail({
           ) : null}
         </header>
 
-        <div className="flex flex-wrap gap-2" data-plugin-slot={hostSlots.resourceDetailActions}>
-          <Button
-            size="small"
-            disabled={pending || Boolean(resource.deletedAt) || !form.formState.isDirty}
-            onClick={form.handleSubmit(onSave)}
-          >
-            <Save size={16} />
-            Save
-          </Button>
-          {actions.map((action) => (
-            <Button
-              key={action.id}
-              variant="secondary"
-              size="small"
-              disabled={pending}
-              title={action.description ?? action.id}
-              onClick={() => onAction(action)}
-            >
-              <ActionIcon action={action} />
-              {action.label}
-            </Button>
-          ))}
-          {resource.deletedAt ? (
-            <Button
-              variant="secondary"
-              size="icon"
-              aria-label="Restore resource"
-              disabled={pending}
-              onClick={onRestore}
-            >
-              <RotateCcw size={17} />
-            </Button>
-          ) : (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="text-red-600"
-              aria-label="Delete resource"
-              disabled={pending}
-              onClick={onDelete}
-            >
-              <Trash2 size={17} />
-            </Button>
-          )}
-        </div>
-
         <AutomaticSlot
           slot={hostSlots.resourceDetailAside}
           resource={resource}
@@ -193,6 +121,16 @@ function Detail({
               {...form.register("kind")}
             />
           </Field>
+          <div className="flex justify-end sm:col-span-2">
+            <Button
+              type="submit"
+              size="small"
+              disabled={pending || Boolean(resource.deletedAt) || !form.formState.isDirty}
+            >
+              <Save size={16} />
+              Save
+            </Button>
+          </div>
         </form>
 
         <section className="grid grid-cols-2 gap-x-4 rounded-2xl border border-slate-200 bg-white p-4 text-sm">
@@ -247,13 +185,4 @@ function Fact({ label, value, wide = false }: { label: string; value: string; wi
       <dd className="mt-1 break-words text-slate-700">{value}</dd>
     </div>
   );
-}
-
-function ActionIcon({ action }: { action: ResourceAction }) {
-  if (action.access === "write") return <Pencil size={15} />;
-  if (action.output.views.includes("download")) return <Download size={15} />;
-  if (action.output.views.includes("media") || action.output.views.includes("plugin_frame"))
-    return <Eye size={15} />;
-  if (action.output.views.includes("json")) return <FileJson size={15} />;
-  return <Play size={15} />;
 }

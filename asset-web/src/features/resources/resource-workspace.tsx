@@ -46,13 +46,6 @@ export function ResourceWorkspace() {
     : null;
   const formDirectory = browser.filters.directory || "/";
   const kinds = browser.kinds.data ?? [];
-  const busy =
-    commands.update.isPending ||
-    commands.remove.isPending ||
-    commands.restore.isPending ||
-    commands.execute.isPending ||
-    commands.executeDirectory.isPending;
-
   function selectResource(item: Resource) {
     queryClient.setQueryData(queryKeys.resource(item.id), item);
     browser.selectResource(item.id);
@@ -82,6 +75,11 @@ export function ResourceWorkspace() {
         onSelect={selectResource}
         onSelectDirectory={(item) => browser.selectDirectory(item.id)}
         onAction={(item, action) => commands.execute.mutate({ resource: item, action })}
+        onDelete={(item) => {
+          const target = item.id === resource?.id ? resource : item;
+          if (window.confirm(`Delete ${target.name}?`)) commands.remove.mutate(target);
+        }}
+        onRestore={(item) => commands.restore.mutate(item.id === resource?.id ? resource : item)}
         onDirectoryAction={(directory, action) =>
           commands.executeDirectory.mutate({ directory, action })
         }
@@ -95,27 +93,15 @@ export function ResourceWorkspace() {
         <DirectoryDetail
           directory={directory}
           kind={browser.directoryKinds.data?.find((item) => item.kind === directory.kind) ?? null}
-          pending={busy}
-          onAction={(action) => commands.executeDirectory.mutate({ directory, action })}
         />
       ) : (
         <ResourceDetail
           resource={resource}
           kinds={kinds}
-          pending={busy}
+          pending={commands.update.isPending}
           onSave={(draft) => {
             if (!resource) return Promise.reject(new Error("Resource is unavailable"));
             return commands.update.mutateAsync({ resource, draft });
-          }}
-          onAction={(action) => {
-            if (resource) commands.execute.mutate({ resource, action });
-          }}
-          onDelete={() => {
-            if (resource && window.confirm(`Delete ${resource.name}?`))
-              commands.remove.mutate(resource);
-          }}
-          onRestore={() => {
-            if (resource) commands.restore.mutate(resource);
           }}
           onResourceChanged={() => commands.refresh(resource?.id)}
         />

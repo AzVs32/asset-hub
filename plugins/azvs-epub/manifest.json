@@ -56,8 +56,7 @@
           "group": "open",
           "order": 70,
           "locations": [
-            "resource_detail",
-            "context_menu"
+            "resource_context_menu"
           ]
         }
       },

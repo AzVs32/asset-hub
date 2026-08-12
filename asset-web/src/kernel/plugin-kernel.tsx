@@ -31,7 +31,7 @@ export class PluginKernel {
     return sortActions(
       resource.actions.filter((action) => {
         if (action.ui.locations.includes(slot)) return true;
-        if (slot !== hostSlots.resourceDetailActions) return false;
+        if (slot !== hostSlots.resourceContextMenu) return false;
         return (
           action.ui.locations.length === 0 ||
           action.ui.locations.every((location) => !knownSlots.has(location as HostSlot))
@@ -52,7 +52,7 @@ export class PluginKernel {
     return sortActions(
       directory.actions.filter((action) => {
         if (action.ui.locations.includes(slot)) return true;
-        if (slot !== hostSlots.directoryDetail) return false;
+        if (slot !== hostSlots.directoryContextMenu) return false;
         return (
           action.ui.locations.length === 0 ||
           action.ui.locations.every((location) => !knownSlots.has(location as HostSlot))

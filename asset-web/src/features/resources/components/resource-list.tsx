@@ -48,6 +48,8 @@ export function ResourceList({
   onSelect,
   onSelectDirectory,
   onAction,
+  onDelete,
+  onRestore,
   onDirectoryAction,
   onRefresh,
   onUpload,
@@ -68,6 +70,8 @@ export function ResourceList({
   onSelect: (resource: Resource) => void;
   onSelectDirectory: (directory: Directory) => void;
   onAction: (resource: Resource, action: ResourceAction) => void;
+  onDelete: (resource: Resource) => void;
+  onRestore: (resource: Resource) => void;
   onDirectoryAction: (directory: Directory, action: DirectoryAction) => void;
   onRefresh: () => void;
   onUpload: () => void;
@@ -182,6 +186,8 @@ export function ResourceList({
             selected={resource.id === selectedId}
             onSelect={() => onSelect(resource)}
             onAction={(action) => onAction(resource, action)}
+            onDelete={() => onDelete(resource)}
+            onRestore={() => onRestore(resource)}
           />
         ))}
         {!loading && listing && !listing.folders.length && !listing.resources.items.length ? (
@@ -311,11 +317,15 @@ function ResourceRow({
   selected,
   onSelect,
   onAction,
+  onDelete,
+  onRestore,
 }: {
   resource: Resource;
   selected: boolean;
   onSelect: () => void;
   onAction: (action: ResourceAction) => void;
+  onDelete: () => void;
+  onRestore: () => void;
 }) {
   const kernel = usePluginKernel();
   const actions = kernel.actionsAt(resource, hostSlots.resourceContextMenu);
@@ -357,15 +367,16 @@ function ResourceRow({
             deleted
           </span>
         ) : null}
-        {actions.length ? (
-          <ActionMenu>
-            {actions.map((action) => (
-              <ActionMenuItem key={action.id} onSelect={() => onAction(action)}>
-                {action.label}
-              </ActionMenuItem>
-            ))}
-          </ActionMenu>
-        ) : null}
+        <ActionMenu>
+          <ActionMenuItem onSelect={resource.deletedAt ? onRestore : onDelete}>
+            {resource.deletedAt ? "Restore resource" : "Delete resource"}
+          </ActionMenuItem>
+          {actions.map((action) => (
+            <ActionMenuItem key={action.id} onSelect={() => onAction(action)}>
+              {action.label}
+            </ActionMenuItem>
+          ))}
+        </ActionMenu>
       </div>
     </div>
   );

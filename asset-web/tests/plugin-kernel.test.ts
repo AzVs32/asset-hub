@@ -9,29 +9,27 @@ describe("PluginKernel", () => {
     const later = action({
       id: "later",
       label: "Later",
-      ui: { group: "view", order: 20, locations: [hostSlots.resourceDetailActions] },
+      ui: { group: "view", order: 20, locations: [hostSlots.resourceContextMenu] },
     });
     const earlier = action({
       id: "earlier",
       label: "Earlier",
-      ui: { group: "view", order: 10, locations: [hostSlots.resourceDetailActions] },
+      ui: { group: "view", order: 10, locations: [hostSlots.resourceContextMenu] },
     });
     expect(
       kernel
-        .actionsAt(resource([later, earlier]), hostSlots.resourceDetailActions)
+        .actionsAt(resource([later, earlier]), hostSlots.resourceContextMenu)
         .map((item) => item.id),
     ).toEqual(["earlier", "later"]);
   });
 
-  it("keeps actions with unknown locations reachable in the detail action slot", () => {
+  it("keeps actions with unknown locations reachable in the resource context menu", () => {
     const kernel = new PluginKernel();
     const unknown = action({
       id: "future",
       ui: { group: null, order: null, locations: ["future_slot"] },
     });
-    expect(kernel.actionsAt(resource([unknown]), hostSlots.resourceDetailActions)).toEqual([
-      unknown,
-    ]);
+    expect(kernel.actionsAt(resource([unknown]), hostSlots.resourceContextMenu)).toEqual([unknown]);
   });
 
   it("uses an explicit thumbnail action before media fallbacks", () => {
@@ -93,7 +91,7 @@ describe("PluginKernel", () => {
     expect(kernel.directoryThumbnailAction(directory)?.id).toBe("core.directory.thumbnail");
   });
 
-  it("keeps directory actions with unknown locations reachable in the detail slot", () => {
+  it("keeps directory actions with unknown locations reachable in the context menu", () => {
     const kernel = new PluginKernel();
     const directory = {
       id: "directory-1",
@@ -122,7 +120,7 @@ describe("PluginKernel", () => {
     };
 
     expect(
-      kernel.directoryActionsAt(directory, hostSlots.directoryDetail).map((item) => item.id),
+      kernel.directoryActionsAt(directory, hostSlots.directoryContextMenu).map((item) => item.id),
     ).toEqual(["example.organize"]);
   });
 });

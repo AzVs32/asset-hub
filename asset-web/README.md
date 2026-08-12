@@ -40,17 +40,17 @@ Stable slots:
 | Location | Host behavior |
 | --- | --- |
 | `directory_context_menu` | Entries in a directory row context menu |
-| `directory_detail` | User-triggered buttons in the selected directory detail panel |
 | `directory_thumbnail` | Automatically executes a read-only action for directory preview |
-| `resource_detail` | User-triggered buttons in the detail action bar |
-| `context_menu` | User-triggered resource row menu items |
+| `resource_context_menu` | User-triggered resource row menu items |
 | `resource_thumbnail` | Automatically executes a read-only action for resource preview |
 | `resource_detail_panel` | Automatically renders read-only output below resource facts |
 | `resource_detail_aside` | Automatically renders read-only output above the core editor |
 
 Actions with no location, or only locations unknown to this host version, remain reachable through
-`resource_detail` for resources and `directory_detail` for directories. Automatic slots deliberately
-ignore write actions.
+`resource_context_menu` for resources and `directory_context_menu` for directories. Automatic slots
+deliberately ignore write actions. The detail panel's editing form hosts the host-owned Save command;
+resource row menus host Delete and Restore. Plugin actions are invoked from the corresponding row
+context menu.
 
 The backend resolves singleton capability providers before returning resource or directory
 actions as flat arrays. Each kind/action includes its typed built-in or plugin origin, and actions

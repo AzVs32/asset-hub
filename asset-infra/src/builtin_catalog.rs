@@ -155,7 +155,7 @@ impl BuiltinCatalog {
                 .with_ui(ActionDefinitionUi {
                     group: Some("open".to_string()),
                     order: Some(10),
-                    locations: vec!["resource_detail".to_string(), "context_menu".to_string()],
+                    locations: vec!["resource_context_menu".to_string()],
                 }),
                 handler: BuiltinResourceHandler::Download,
             },
@@ -207,7 +207,7 @@ impl BuiltinCatalog {
                     .with_ui(ActionDefinitionUi {
                         group: Some("open".to_string()),
                         order: Some(50),
-                        locations: vec!["resource_detail".to_string(), "context_menu".to_string()],
+                        locations: vec!["resource_context_menu".to_string()],
                     }),
                 handler: BuiltinResourceHandler::TextRead,
             },
@@ -226,7 +226,7 @@ impl BuiltinCatalog {
                     .with_ui(ActionDefinitionUi {
                         group: Some("edit".to_string()),
                         order: Some(50),
-                        locations: vec!["resource_detail".to_string(), "context_menu".to_string()],
+                        locations: vec!["resource_context_menu".to_string()],
                     }),
                 handler: BuiltinResourceHandler::TextEdit,
             },
@@ -245,10 +245,7 @@ impl BuiltinCatalog {
                 .with_ui(ActionDefinitionUi {
                     group: Some("open".to_string()),
                     order: Some(10),
-                    locations: vec![
-                        "directory_context_menu".to_string(),
-                        "directory_detail".to_string(),
-                    ],
+                    locations: vec!["directory_context_menu".to_string()],
                 }),
                 handler: BuiltinDirectoryHandler::Download,
             },

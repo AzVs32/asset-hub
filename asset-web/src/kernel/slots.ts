@@ -1,11 +1,9 @@
 export const hostSlots = {
-  resourceDetailActions: "resource_detail",
-  resourceContextMenu: "context_menu",
+  resourceContextMenu: "resource_context_menu",
   resourceThumbnail: "resource_thumbnail",
   resourceDetailPanel: "resource_detail_panel",
   resourceDetailAside: "resource_detail_aside",
   directoryContextMenu: "directory_context_menu",
-  directoryDetail: "directory_detail",
   directoryThumbnail: "directory_thumbnail",
 } as const;
 
@@ -22,19 +20,9 @@ export const hostSlotCatalog: ReadonlyArray<{
     description: "Entries in a directory row context menu.",
   },
   {
-    id: hostSlots.directoryDetail,
-    behavior: "action",
-    description: "Actions in the selected directory detail panel.",
-  },
-  {
     id: hostSlots.directoryThumbnail,
     behavior: "automatic_view",
-    description: "Read-only view used as the directory list thumbnail.",
-  },
-  {
-    id: hostSlots.resourceDetailActions,
-    behavior: "action",
-    description: "Buttons in the resource detail action bar.",
+    description: "Read-only view used as the directory thumbnail.",
   },
   {
     id: hostSlots.resourceContextMenu,
@@ -44,7 +32,7 @@ export const hostSlotCatalog: ReadonlyArray<{
   {
     id: hostSlots.resourceThumbnail,
     behavior: "automatic_view",
-    description: "Read-only view used as the resource list thumbnail.",
+    description: "Read-only view used as the resource thumbnail.",
   },
   {
     id: hostSlots.resourceDetailPanel,

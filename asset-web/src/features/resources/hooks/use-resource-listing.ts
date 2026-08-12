@@ -47,18 +47,9 @@ export function useResourceListing() {
   });
   const updateFilters = useCallback(
     (patch: Partial<ResourceFilters>) => {
-      setSearchParams(
-        (current) => {
-          const next = new URLSearchParams(current);
-          const merged = { ...filters, ...patch };
-          setOrDelete(next, "q", merged.query);
-          setOrDelete(next, "kind", merged.kind);
-          setOrDelete(next, "page", merged.page === 1 ? "" : String(merged.page));
-          setOrDelete(next, "deleted", merged.includeDeleted ? "1" : "");
-          return next;
-        },
-        { replace: true },
-      );
+      setSearchParams((current) => searchParamsForFilters(current, filters, patch), {
+        replace: true,
+      });
     },
     [filters, setSearchParams],
   );
@@ -116,6 +107,22 @@ export function useResourceListing() {
     kinds,
     directoryKinds,
   };
+}
+
+export function searchParamsForFilters(
+  current: URLSearchParams,
+  filters: ResourceFilters,
+  patch: Partial<ResourceFilters>,
+): URLSearchParams {
+  const next = new URLSearchParams(current);
+  const merged = { ...filters, ...patch };
+  setOrDelete(next, "q", merged.query);
+  setOrDelete(next, "kind", merged.kind);
+  setOrDelete(next, "page", merged.page === 1 ? "" : String(merged.page));
+  setOrDelete(next, "deleted", merged.includeDeleted ? "1" : "");
+  next.delete("resource");
+  next.delete("folder");
+  return next;
 }
 
 function setOrDelete(params: URLSearchParams, key: string, value: string) {

@@ -1,22 +1,13 @@
-import { Download, Folder, Play } from "lucide-react";
-import type { Directory, DirectoryAction, DirectoryKind } from "@/domain/resource";
-import { usePluginKernel } from "@/kernel/plugin-kernel";
-import { hostSlots } from "@/kernel/slots";
-import { Button } from "@/shared/ui/button";
+import { Folder } from "lucide-react";
+import type { Directory, DirectoryKind } from "@/domain/resource";
 
 export function DirectoryDetail({
   directory,
   kind,
-  pending,
-  onAction,
 }: {
   directory: Directory;
   kind: DirectoryKind | null;
-  pending: boolean;
-  onAction: (action: DirectoryAction) => void;
 }) {
-  const kernel = usePluginKernel();
-  const actions = kernel.directoryActionsAt(directory, hostSlots.directoryDetail);
   return (
     <aside
       className="min-h-0 overflow-auto border-l border-slate-200 bg-slate-50/60"
@@ -34,28 +25,6 @@ export function DirectoryDetail({
             <code className="mt-1 block truncate text-[11px] text-slate-400">{directory.id}</code>
           </div>
         </header>
-
-        {actions.length ? (
-          <div className="flex flex-wrap gap-2" data-plugin-slot={hostSlots.directoryDetail}>
-            {actions.map((action) => (
-              <Button
-                key={action.id}
-                variant="secondary"
-                size="small"
-                disabled={pending}
-                title={action.description ?? action.id}
-                onClick={() => onAction(action)}
-              >
-                {action.output.views.includes("download") ? (
-                  <Download size={15} />
-                ) : (
-                  <Play size={15} />
-                )}
-                {action.label}
-              </Button>
-            ))}
-          </div>
-        ) : null}
 
         <dl className="grid grid-cols-2 gap-x-4 rounded-lg border border-slate-200 bg-white p-4 text-sm">
           <Fact label="Path" value={directory.path || "/"} wide />

@@ -60,8 +60,7 @@
           "group": "open",
           "order": 60,
           "locations": [
-            "resource_detail",
-            "context_menu"
+            "resource_context_menu"
           ]
         }
       },
@@ -91,8 +90,7 @@
           "group": "edit",
           "order": 70,
           "locations": [
-            "resource_detail",
-            "context_menu"
+            "resource_context_menu"
           ]
         }
       }
