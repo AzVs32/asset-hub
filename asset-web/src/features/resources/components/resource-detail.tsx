@@ -5,8 +5,6 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import type { Resource, ResourceDraft, ResourceKind } from "@/domain/resource";
 import { draftFromResource, formatBytes, formatDate } from "@/domain/resource-draft";
-import { hostSlots } from "@/kernel/slots";
-import { AutomaticSlot } from "@/plugins/automatic-slot";
 import { Button } from "@/shared/ui/button";
 import { Field, Input } from "@/shared/ui/field";
 import { KindSelect } from "./kind-select";
@@ -22,16 +20,9 @@ interface ResourceDetailProps {
   kinds: ResourceKind[];
   pending: boolean;
   onSave: (draft: ResourceDraft) => Promise<unknown>;
-  onResourceChanged: () => void | Promise<void>;
 }
 
-export function ResourceDetail({
-  resource,
-  kinds,
-  pending,
-  onSave,
-  onResourceChanged,
-}: ResourceDetailProps) {
+export function ResourceDetail({ resource, kinds, pending, onSave }: ResourceDetailProps) {
   if (!resource) {
     return (
       <aside className="grid min-h-72 place-items-center border-l border-slate-200 bg-slate-50/60 text-slate-400">
@@ -42,15 +33,7 @@ export function ResourceDetail({
       </aside>
     );
   }
-  return (
-    <Detail
-      resource={resource}
-      kinds={kinds}
-      pending={pending}
-      onSave={onSave}
-      onResourceChanged={onResourceChanged}
-    />
-  );
+  return <Detail resource={resource} kinds={kinds} pending={pending} onSave={onSave} />;
 }
 
 function Detail({
@@ -58,13 +41,11 @@ function Detail({
   kinds,
   pending,
   onSave,
-  onResourceChanged,
 }: {
   resource: Resource;
   kinds: ResourceKind[];
   pending: boolean;
   onSave: (draft: ResourceDraft) => Promise<unknown>;
-  onResourceChanged: () => void | Promise<void>;
 }) {
   const displayResource = {
     ...resource,
@@ -97,12 +78,6 @@ function Detail({
             </span>
           ) : null}
         </header>
-
-        <AutomaticSlot
-          slot={hostSlots.resourceDetailAside}
-          resource={resource}
-          onResourceChanged={onResourceChanged}
-        />
 
         <form
           className="grid gap-4 rounded-2xl border border-slate-200 bg-white p-4 sm:grid-cols-2"
@@ -167,12 +142,6 @@ function Detail({
             wide
           />
         </section>
-
-        <AutomaticSlot
-          slot={hostSlots.resourceDetailPanel}
-          resource={resource}
-          onResourceChanged={onResourceChanged}
-        />
       </div>
     </aside>
   );

@@ -103,7 +103,6 @@ export function ResourceWorkspace() {
             if (!resource) return Promise.reject(new Error("Resource is unavailable"));
             return commands.update.mutateAsync({ resource, draft });
           }}
-          onResourceChanged={() => commands.refresh(resource?.id)}
         />
       )}
 

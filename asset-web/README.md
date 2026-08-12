@@ -43,14 +43,13 @@ Stable slots:
 | `directory_thumbnail` | Automatically executes a read-only action for directory preview |
 | `resource_context_menu` | User-triggered resource row menu items |
 | `resource_thumbnail` | Automatically executes a read-only action for resource preview |
-| `resource_detail_panel` | Automatically renders read-only output below resource facts |
-| `resource_detail_aside` | Automatically renders read-only output above the core editor |
 
 Actions with no location, or only locations unknown to this host version, remain reachable through
-`resource_context_menu` for resources and `directory_context_menu` for directories. Automatic slots
-deliberately ignore write actions. The detail panel's editing form hosts the host-owned Save command;
-resource row menus host Delete and Restore. Plugin actions are invoked from the corresponding row
-context menu.
+`resource_context_menu` for resources and `directory_context_menu` for directories. Automatic
+thumbnail slots deliberately ignore write actions. The detail panel's editing form hosts the
+host-owned Save command; resource row menus host Delete and Restore. Plugin actions are invoked from
+the corresponding row context menu. There are no automatic plugin insertion points in the resource
+detail panel.
 
 The backend resolves singleton capability providers before returning resource or directory
 actions as flat arrays. Each kind/action includes its typed built-in or plugin origin, and actions

@@ -82,7 +82,6 @@ action 和用户授权能力。Feature 只知道这个接口。
 
 这是通用插件宿主，而不是具体插件实现：
 
-- `automatic-slot` 自动执行明确放入自动插槽的只读 action。
 - `plugin-action-dialog` 承载用户触发的 action 结果。
 - `plugin-output` 统一展示 diagnostics 并进入 view renderer。
 - `renderers` 支持 text、Markdown、HTML、JSON、media、download 和 iframe。
@@ -166,7 +165,7 @@ Action 默认读取最新授权快照，不会因为缩略图或预览缓存较�
 ```text
 后端 Resource.actions
   → PluginKernel 按 ui.locations 放入 slot
-  → 用户触发或 AutomaticSlot 自动触发只读 action
+  → 用户触发，或宿主专用组件自动触发只读 action（如缩略图）
   → AssetGateway.executeAction
   → Zod 校验 PluginView
   → PluginViewHost 查询 renderer registry
@@ -181,14 +180,12 @@ Action 默认读取最新授权快照，不会因为缩略图或预览缓存较�
 | `directory_thumbnail` | 目录缩略图，只读自动执行 |
 | `resource_context_menu` | 资源行菜单，用户触发 |
 | `resource_thumbnail` | 资源缩略图，只读自动执行 |
-| `resource_detail_panel` | 详情事实区域下方，只读自动执行 |
-| `resource_detail_aside` | 核心编辑器上方，只读自动执行 |
 
 插件只要在 manifest 中声明已有 slot，并返回已有 view kind，就不需要修改前端。目录 action
 未声明位置或声明了当前宿主未知的位置时，会回退到 `directory_context_menu`；资源 action
 未声明位置或声明了当前宿主未知的位置时，会回退到 `resource_context_menu`。资源详情面板仍由
-宿主提供编辑表单和事实信息，保存由编辑表单触发，删除和恢复由资源行菜单触发；插件 action
-也从对应行菜单触发。完全自定义
+宿主提供编辑表单和事实信息，保存由编辑表单触发，删除和恢复由资源行菜单触发；资源详情区
+不再提供插件自动插入 slot，插件 action 从对应行菜单触发。完全自定义
 界面通过 `plugin_frame` 加载插件自己的 Web 资源。
 后端会在实际适用性过滤后解析单例能力 provider；例如 EPUB 的
 `azvs.epub.thumbnail` 为 EPUB 提供作用于 Resource Action 的 `thumbnail`。Resource 与
@@ -224,7 +221,7 @@ frame 对应的原始 action 是当前资源解析出的读写 `text_edit` provi
 - Feature 不允许导入 `infrastructure/http/generated.ts`。
 - OpenAPI DTO 不允许穿过 `OpenApiAssetGateway`。
 - 具体插件 id、kind 或 action id 不允许硬编码进宿主组件。
-- 自动 slot 不允许执行 write action。
+- 自动缩略图 slot 不允许执行 write action。
 - iframe action 必须先在当前 `Resource.actions` 中验证；文本替换还必须绑定产生当前 frame
   的 `write` `text_edit` action。
 - 外部 URL 不允许作为插件媒体或 iframe 地址加载。
