@@ -87,7 +87,7 @@
           "group": "preview",
           "order": 10,
           "locations": [
-            "resource_list_thumbnail"
+            "resource_thumbnail"
           ]
         }
       }

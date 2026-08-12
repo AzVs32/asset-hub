@@ -79,11 +79,6 @@ export function ResourceList({
   const totalPages = Math.max(1, Math.ceil(total / filters.limit));
   const crumbs = breadcrumbs(filters.directory);
   const parent = parentDirectory(filters.directory);
-  const kernel = usePluginKernel();
-  const currentDirectory = listing?.directory;
-  const directoryActions = currentDirectory
-    ? kernel.directoryActionsAt(currentDirectory, hostSlots.directoryToolbar)
-    : [];
 
   return (
     <section className="flex min-h-0 min-w-0 flex-col bg-white" aria-label="Resource workspace">
@@ -163,22 +158,6 @@ export function ResourceList({
             </React.Fragment>
           ))}
         </div>
-        {directoryActions.length ? (
-          <div className="ml-auto flex flex-wrap gap-2">
-            {directoryActions.map((action) => (
-              <Button
-                key={action.id}
-                variant="secondary"
-                size="small"
-                onClick={() => {
-                  if (currentDirectory) onDirectoryAction(currentDirectory, action);
-                }}
-              >
-                {action.label}
-              </Button>
-            ))}
-          </div>
-        ) : null}
       </nav>
 
       <div className="min-h-0 flex-1 overflow-auto">

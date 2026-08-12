@@ -42,7 +42,7 @@ export class PluginKernel {
 
   thumbnailAction(resource: Resource): ResourceAction | null {
     return (
-      this.actionsAt(resource, hostSlots.resourceListThumbnail).find(
+      this.actionsAt(resource, hostSlots.resourceThumbnail).find(
         (action) => action.access === "read" && action.provides === "thumbnail",
       ) ?? null
     );
@@ -52,7 +52,7 @@ export class PluginKernel {
     return sortActions(
       directory.actions.filter((action) => {
         if (action.ui.locations.includes(slot)) return true;
-        if (slot !== hostSlots.directoryToolbar) return false;
+        if (slot !== hostSlots.directoryDetail) return false;
         return (
           action.ui.locations.length === 0 ||
           action.ui.locations.every((location) => !knownSlots.has(location as HostSlot))
@@ -63,7 +63,7 @@ export class PluginKernel {
 
   directoryThumbnailAction(directory: Directory): DirectoryAction | null {
     return (
-      this.directoryActionsAt(directory, hostSlots.directoryListThumbnail).find(
+      this.directoryActionsAt(directory, hostSlots.directoryThumbnail).find(
         (action) => action.access === "read" && action.provides === "thumbnail",
       ) ?? null
     );

@@ -10,7 +10,7 @@ use super::normalization::resource_action_definition;
 use super::validation::ensure_unique_scoped_action;
 use crate::builtin_catalog::{TEXT_EDIT_CAPABILITY, TEXT_READ_CAPABILITY, THUMBNAIL_CAPABILITY};
 
-const RESOURCE_THUMBNAIL_LOCATION: &str = "resource_list_thumbnail";
+const RESOURCE_THUMBNAIL_LOCATION: &str = "resource_thumbnail";
 const RESOURCE_CAPABILITIES: &[&str] = &[
     THUMBNAIL_CAPABILITY,
     TEXT_READ_CAPABILITY,

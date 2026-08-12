@@ -40,7 +40,7 @@ describe("PluginKernel", () => {
     const explicit = action({
       id: "azvs.epub.thumbnail",
       provides: "thumbnail",
-      ui: { group: null, order: null, locations: [hostSlots.resourceListThumbnail] },
+      ui: { group: null, order: null, locations: [hostSlots.resourceThumbnail] },
     });
     expect(kernel.thumbnailAction(resource([fallback, explicit]))?.id).toBe("azvs.epub.thumbnail");
   });
@@ -73,7 +73,7 @@ describe("PluginKernel", () => {
       ui: {
         group: "preview",
         order: 100,
-        locations: [hostSlots.directoryListThumbnail],
+        locations: [hostSlots.directoryThumbnail],
       },
       appliesTo: { kinds: ["core:directory"] },
     };
@@ -91,5 +91,38 @@ describe("PluginKernel", () => {
     };
 
     expect(kernel.directoryThumbnailAction(directory)?.id).toBe("core.directory.thumbnail");
+  });
+
+  it("keeps directory actions with unknown locations reachable in the detail slot", () => {
+    const kernel = new PluginKernel();
+    const directory = {
+      id: "directory-1",
+      parentId: null,
+      path: "books",
+      parentPath: "",
+      name: "books",
+      kind: "core:directory",
+      actions: [
+        {
+          id: "example.organize",
+          origin: { kind: "plugin" as const, id: "example.plugin" },
+          provides: null,
+          label: "Organize",
+          description: null,
+          access: "read" as const,
+          requires: { children: false, resources: false },
+          output: { views: ["json" as const] },
+          ui: { group: null, order: null, locations: ["future_directory_slot"] },
+          appliesTo: { kinds: ["core:directory"] },
+        },
+      ],
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+      revision: 1,
+    };
+
+    expect(
+      kernel.directoryActionsAt(directory, hostSlots.directoryDetail).map((item) => item.id),
+    ).toEqual(["example.organize"]);
   });
 });

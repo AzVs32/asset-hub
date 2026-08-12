@@ -172,7 +172,7 @@ impl BuiltinCatalog {
                 .with_ui(ActionDefinitionUi {
                     group: Some("preview".to_string()),
                     order: Some(100),
-                    locations: vec!["resource_list_thumbnail".to_string()],
+                    locations: vec!["resource_thumbnail".to_string()],
                 }),
                 handler: BuiltinResourceHandler::GenericThumbnail,
             },
@@ -189,7 +189,7 @@ impl BuiltinCatalog {
                 .with_ui(ActionDefinitionUi {
                     group: Some("preview".to_string()),
                     order: Some(100),
-                    locations: vec!["resource_list_thumbnail".to_string()],
+                    locations: vec!["resource_thumbnail".to_string()],
                 }),
                 handler: BuiltinResourceHandler::ImageThumbnail,
             },
@@ -246,7 +246,6 @@ impl BuiltinCatalog {
                     group: Some("open".to_string()),
                     order: Some(10),
                     locations: vec![
-                        "directory_toolbar".to_string(),
                         "directory_context_menu".to_string(),
                         "directory_detail".to_string(),
                     ],
@@ -266,7 +265,7 @@ impl BuiltinCatalog {
                 .with_ui(ActionDefinitionUi {
                     group: Some("preview".to_string()),
                     order: Some(100),
-                    locations: vec!["directory_list_thumbnail".to_string()],
+                    locations: vec!["directory_thumbnail".to_string()],
                 }),
                 handler: BuiltinDirectoryHandler::GenericThumbnail,
             },

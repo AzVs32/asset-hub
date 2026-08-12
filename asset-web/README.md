@@ -39,15 +39,18 @@ Stable slots:
 
 | Location | Host behavior |
 | --- | --- |
+| `directory_context_menu` | Entries in a directory row context menu |
+| `directory_detail` | User-triggered buttons in the selected directory detail panel |
+| `directory_thumbnail` | Automatically executes a read-only action for directory preview |
 | `resource_detail` | User-triggered buttons in the detail action bar |
 | `context_menu` | User-triggered resource row menu items |
-| `resource_list_thumbnail` | Automatically executes a read-only action for list preview |
-| `directory_list_thumbnail` | Automatically executes a read-only action for directory preview |
+| `resource_thumbnail` | Automatically executes a read-only action for resource preview |
 | `resource_detail_panel` | Automatically renders read-only output below resource facts |
 | `resource_detail_aside` | Automatically renders read-only output above the core editor |
 
 Actions with no location, or only locations unknown to this host version, remain reachable through
-`resource_detail`. Automatic slots deliberately ignore write actions.
+`resource_detail` for resources and `directory_detail` for directories. Automatic slots deliberately
+ignore write actions.
 
 The backend resolves singleton capability providers before returning resource or directory
 actions as flat arrays. Each kind/action includes its typed built-in or plugin origin, and actions

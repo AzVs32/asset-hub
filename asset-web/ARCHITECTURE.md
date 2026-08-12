@@ -176,14 +176,18 @@ Action 默认读取最新授权快照，不会因为缩略图或预览缓存较�
 
 | slot | 行为 |
 | --- | --- |
+| `directory_context_menu` | 目录行菜单，用户触发 |
+| `directory_detail` | 选中目录详情面板中的操作按钮，用户触发 |
+| `directory_thumbnail` | 目录缩略图，只读自动执行 |
 | `resource_detail` | 详情操作按钮，用户触发 |
 | `context_menu` | 列表行菜单，用户触发 |
-| `resource_list_thumbnail` | 列表缩略图，只读自动执行 |
-| `directory_list_thumbnail` | 目录列表缩略图，只读自动执行 |
+| `resource_thumbnail` | 资源缩略图，只读自动执行 |
 | `resource_detail_panel` | 详情事实区域下方，只读自动执行 |
 | `resource_detail_aside` | 核心编辑器上方，只读自动执行 |
 
-插件只要在 manifest 中声明已有 slot，并返回已有 view kind，就不需要修改前端。完全自定义
+插件只要在 manifest 中声明已有 slot，并返回已有 view kind，就不需要修改前端。目录 action
+未声明位置或声明了当前宿主未知的位置时，会回退到 `directory_detail`；资源 action
+未声明位置或声明了当前宿主未知的位置时，会回退到 `resource_detail`。完全自定义
 界面通过 `plugin_frame` 加载插件自己的 Web 资源。
 后端会在实际适用性过滤后解析单例能力 provider；例如 EPUB 的
 `azvs.epub.thumbnail` 为 EPUB 提供作用于 Resource Action 的 `thumbnail`。Resource 与

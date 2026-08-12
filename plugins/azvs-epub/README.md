@@ -33,7 +33,7 @@ during normal browsing but is cleared when Asset Hub restarts.
 - Action: `azvs.epub.render`
 - Handler: `render_epub`
 - Thumbnail action: `azvs.epub.thumbnail`, providing the Resource-scoped singleton `thumbnail`
-  capability in `resource_list_thumbnail`
+  capability in `resource_thumbnail`
 
 ## Use
 

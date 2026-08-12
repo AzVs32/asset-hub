@@ -134,8 +134,8 @@ startup instead of being selected by registration or UI sort order.
 
 The Host recognizes `thumbnail`, `text_read`, and `text_edit` singleton capabilities for Resource
 actions; Directory actions recognize only `thumbnail`. A `thumbnail` provider must be read-only,
-support the `media` view, and declare the matching `resource_list_thumbnail` or
-`directory_list_thumbnail` UI location. A `text_read` provider must be read-only; a `text_edit`
+support the `media` view, and declare the matching `resource_thumbnail` or
+`directory_thumbnail` UI location. A `text_read` provider must be read-only; a `text_edit`
 provider must be write. The Host rejects unknown capability names. Plugins must retain their
 provider-owned action IDs and must not reuse a `core.*` action ID.
 

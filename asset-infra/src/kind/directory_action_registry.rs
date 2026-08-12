@@ -9,7 +9,7 @@ use super::normalization::directory_action_definition;
 use super::validation::ensure_unique_scoped_action;
 use crate::builtin_catalog::THUMBNAIL_CAPABILITY;
 
-const DIRECTORY_THUMBNAIL_LOCATION: &str = "directory_list_thumbnail";
+const DIRECTORY_THUMBNAIL_LOCATION: &str = "directory_thumbnail";
 
 #[derive(Debug, Clone, Default)]
 pub struct DefaultDirectoryActionRegistry {

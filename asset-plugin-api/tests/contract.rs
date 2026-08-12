@@ -127,7 +127,7 @@ fn manifest_accepts_directory_actions_with_target_specific_requirements() {
         "access": "write",
         "requires": {"children": true, "resources": true},
         "output": {"views": ["json"]},
-        "ui": {"locations": ["directory_toolbar"]}
+        "ui": {"locations": ["directory_detail"]}
     }]);
     value["permissions"]["allow"] = json!([
         "resource.read",
@@ -142,7 +142,7 @@ fn manifest_accepts_directory_actions_with_target_specific_requirements() {
     let requirements = action.requires.as_ref().unwrap();
     assert!(requirements.children);
     assert!(requirements.resources);
-    assert_eq!(action.ui.as_ref().unwrap().locations, ["directory_toolbar"]);
+    assert_eq!(action.ui.as_ref().unwrap().locations, ["directory_detail"]);
 }
 
 #[test]
@@ -165,14 +165,14 @@ fn manifest_actions_can_provide_singleton_host_capabilities() {
     value["capabilities"]["resource_actions"][0]["provides"] = json!("thumbnail");
     value["capabilities"]["resource_actions"][0]["output"]["views"] = json!(["media"]);
     value["capabilities"]["resource_actions"][0]["ui"] =
-        json!({"locations": ["resource_list_thumbnail"]});
+        json!({"locations": ["resource_thumbnail"]});
     value["capabilities"]["directory_actions"] = json!([{
         "id": "example.plugin.directory-thumbnail",
         "provides": "thumbnail",
         "label": "Directory Thumbnail",
         "handler": "directory_thumbnail",
         "output": {"views": ["media"]},
-        "ui": {"locations": ["directory_list_thumbnail"]}
+        "ui": {"locations": ["directory_thumbnail"]}
     }]);
     value["permissions"]["allow"] = json!(["resource.read", "directory.read"]);
 

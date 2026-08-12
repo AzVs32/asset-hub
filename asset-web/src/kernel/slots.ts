@@ -1,13 +1,12 @@
 export const hostSlots = {
   resourceDetailActions: "resource_detail",
   resourceContextMenu: "context_menu",
-  resourceListThumbnail: "resource_list_thumbnail",
+  resourceThumbnail: "resource_thumbnail",
   resourceDetailPanel: "resource_detail_panel",
   resourceDetailAside: "resource_detail_aside",
-  directoryToolbar: "directory_toolbar",
   directoryContextMenu: "directory_context_menu",
   directoryDetail: "directory_detail",
-  directoryListThumbnail: "directory_list_thumbnail",
+  directoryThumbnail: "directory_thumbnail",
 } as const;
 
 export type HostSlot = (typeof hostSlots)[keyof typeof hostSlots];
@@ -17,11 +16,6 @@ export const hostSlotCatalog: ReadonlyArray<{
   behavior: "action" | "menu" | "automatic_view";
   description: string;
 }> = [
-  {
-    id: hostSlots.directoryToolbar,
-    behavior: "action",
-    description: "Actions for the currently open directory.",
-  },
   {
     id: hostSlots.directoryContextMenu,
     behavior: "menu",
@@ -33,7 +27,7 @@ export const hostSlotCatalog: ReadonlyArray<{
     description: "Actions in the selected directory detail panel.",
   },
   {
-    id: hostSlots.directoryListThumbnail,
+    id: hostSlots.directoryThumbnail,
     behavior: "automatic_view",
     description: "Read-only view used as the directory list thumbnail.",
   },
@@ -48,7 +42,7 @@ export const hostSlotCatalog: ReadonlyArray<{
     description: "Entries in a resource row context menu.",
   },
   {
-    id: hostSlots.resourceListThumbnail,
+    id: hostSlots.resourceThumbnail,
     behavior: "automatic_view",
     description: "Read-only view used as the resource list thumbnail.",
   },

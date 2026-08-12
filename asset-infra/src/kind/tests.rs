@@ -210,7 +210,7 @@ fn thumbnail_capabilities_require_a_single_nearest_provider() {
             views: vec!["media".to_string()],
         })
         .with_ui(ActionUi {
-            locations: vec!["resource_list_thumbnail".to_string()],
+            locations: vec!["resource_thumbnail".to_string()],
             ..ActionUi::default()
         });
     let competing = ResourceActionDefinition::new_static("example.resource.thumbnail", "Thumbnail")
@@ -220,7 +220,7 @@ fn thumbnail_capabilities_require_a_single_nearest_provider() {
             views: vec!["media".to_string()],
         })
         .with_ui(ActionUi {
-            locations: vec!["resource_list_thumbnail".to_string()],
+            locations: vec!["resource_thumbnail".to_string()],
             ..ActionUi::default()
         });
     assert!(
@@ -235,14 +235,14 @@ fn thumbnail_capabilities_require_a_single_nearest_provider() {
             views: vec!["media".to_string()],
         })
         .with_ui(ActionUi {
-            locations: vec!["resource_list_thumbnail".to_string()],
+            locations: vec!["resource_thumbnail".to_string()],
             ..ActionUi::default()
         });
     assert!(
         validate_resource_action_capabilities(&definitions, &[generic, misplaced])
             .unwrap_err()
             .to_string()
-            .contains("must pair `resource_list_thumbnail` with capability `thumbnail`")
+            .contains("must pair `resource_thumbnail` with capability `thumbnail`")
     );
     let unsupported = ResourceActionDefinition::new_static("example.unsupported", "Unsupported")
         .with_static_provides(Some("resource.thumbnail"));
@@ -260,7 +260,7 @@ fn thumbnail_capabilities_require_a_single_nearest_provider() {
             views: vec!["media".to_string()],
         })
         .with_ui(ActionUi {
-            locations: vec!["directory_list_thumbnail".to_string()],
+            locations: vec!["directory_thumbnail".to_string()],
             ..ActionUi::default()
         });
     let competing =
@@ -271,7 +271,7 @@ fn thumbnail_capabilities_require_a_single_nearest_provider() {
                 views: vec!["media".to_string()],
             })
             .with_ui(ActionUi {
-                locations: vec!["directory_list_thumbnail".to_string()],
+                locations: vec!["directory_thumbnail".to_string()],
                 ..ActionUi::default()
             });
     struct DirectoryKinds(Vec<DirectoryKindDefinition>);
@@ -297,14 +297,14 @@ fn thumbnail_capabilities_require_a_single_nearest_provider() {
             views: vec!["media".to_string()],
         })
         .with_ui(ActionUi {
-            locations: vec!["directory_list_thumbnail".to_string()],
+            locations: vec!["directory_thumbnail".to_string()],
             ..ActionUi::default()
         });
     assert!(
         validate_directory_action_capabilities(&kinds, &[generic, misplaced])
             .unwrap_err()
             .to_string()
-            .contains("must pair `directory_list_thumbnail` with capability `thumbnail`")
+            .contains("must pair `directory_thumbnail` with capability `thumbnail`")
     );
     let unsupported = DirectoryActionDefinition::new_static("example.unsupported", "Unsupported")
         .with_static_provides(Some("directory.thumbnail"));
