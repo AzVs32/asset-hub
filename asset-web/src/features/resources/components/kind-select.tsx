@@ -55,9 +55,18 @@ interface KindSelectProps extends Omit<React.SelectHTMLAttributes<HTMLSelectElem
 export const KindSelect = React.forwardRef<HTMLSelectElement, KindSelectProps>(
   ({ kinds, emptyOption, showKind = false, isKindDisabled, className, ...props }, ref) => (
     <select ref={ref} className={cn(controlClass, className)} {...props}>
-      {emptyOption ? <option value={emptyOption.value ?? ""}>{emptyOption.label}</option> : null}
+      {emptyOption ? (
+        <option className="bg-white text-slate-900" value={emptyOption.value ?? ""}>
+          {emptyOption.label}
+        </option>
+      ) : null}
       {kindTreeOptions(kinds).map(({ item, prefix }) => (
-        <option key={item.kind} value={item.kind} disabled={isKindDisabled?.(item.kind)}>
+        <option
+          className="bg-white text-slate-900"
+          key={item.kind}
+          value={item.kind}
+          disabled={isKindDisabled?.(item.kind)}
+        >
           {prefix}
           {item.label}
           {showKind ? ` · ${item.kind}` : ""}

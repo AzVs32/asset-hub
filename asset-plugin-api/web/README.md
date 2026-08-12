@@ -2,7 +2,8 @@
 
 This package is the stable browser boundary for a Web UI returned as an Asset Hub
 `plugin_frame`. It exposes only capabilities that the Host has already bound to the current
-Resource and frame. Penpal is an implementation detail and is bundled into both browser builds.
+Resource or Directory and frame. Penpal is an implementation detail and is bundled into both
+browser builds.
 
 Bundled applications can import the SDK:
 
@@ -30,6 +31,23 @@ assets and use the global build without React, npm, or another framework:
 `replaceResourceText` succeeds only for the frame created by the Resource's current write
 `text_edit` provider. The Host remains responsible for runtime validation, authorization, content
 policy, and optimistic concurrency.
+
+A Directory workspace frame connects through its separate bound client:
+
+```ts
+import { connectAssetHubDirectoryFrame } from "@asset-hub/plugin-web-sdk";
+
+const host = await connectAssetHubDirectoryFrame();
+const output = await host.executeDirectoryAction("example.game.workspace", {
+  operation: "load",
+});
+await host.refreshDirectory();
+await host.navigateToDirectory("games/favorites");
+```
+
+`executeDirectoryAction` accepts only an Action exposed on the bound Directory. Refresh and
+navigation remain Host operations. A Directory plugin owns its iframe's complete UI and does not
+receive the Core workspace's menu, thumbnail, resource-row, or detail slots.
 
 Build and type-check with Node.js 22:
 

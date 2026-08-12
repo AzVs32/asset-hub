@@ -3,9 +3,9 @@ import type { DirectoryActionOutput, JsonObject, ResourceActionOutput } from "@/
 import type {
   Directory,
   DirectoryAction,
-  DirectoryDraft,
   DirectoryKind,
   DirectoryListing,
+  DirectoryPatch,
   Resource,
   ResourceDraft,
   ResourceFilters,
@@ -33,7 +33,7 @@ export interface AssetGateway {
   waitForUpload(id: string): Promise<Resource>;
   findDirectory(id: string): Promise<Directory>;
   createDirectory(parent: Directory, name: string, kind?: string): Promise<Directory>;
-  updateDirectory(directory: Directory, draft: DirectoryDraft): Promise<Directory>;
+  updateDirectory(directory: Directory, patch: DirectoryPatch): Promise<Directory>;
   executeDirectoryAction(
     directory: Directory,
     action: DirectoryAction,

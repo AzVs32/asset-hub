@@ -322,6 +322,76 @@ fn thumbnail_capabilities_require_a_single_nearest_provider() {
     );
 }
 
+#[test]
+fn directory_workspace_capability_is_exclusive_and_frame_only() {
+    struct DirectoryKinds(Vec<DirectoryKindDefinition>);
+    impl DirectoryKindRegistry for DirectoryKinds {
+        fn definitions(&self) -> &[DirectoryKindDefinition] {
+            &self.0
+        }
+    }
+    let kinds = DirectoryKinds(vec![DirectoryKindDefinition::new(
+        DirectoryKind::default(),
+        "Directory",
+        DefinitionOrigin::builtin_static("test"),
+    )]);
+    let workspace = DirectoryActionDefinition::new_static("example.workspace", "Workspace")
+        .with_static_provides(Some("workspace"))
+        .with_kinds(["core:directory"])
+        .with_output(ActionOutputContract {
+            views: vec!["plugin_frame".to_string(), "json".to_string()],
+            effects: Vec::new(),
+        })
+        .with_ui(ActionUi {
+            locations: vec!["directory_workspace".to_string()],
+            ..ActionUi::default()
+        });
+    validate_directory_action_capabilities(&kinds, std::slice::from_ref(&workspace)).unwrap();
+
+    let competing = DirectoryActionDefinition::new_static("other.workspace", "Workspace")
+        .with_static_provides(Some("workspace"))
+        .with_kinds(["core:directory"])
+        .with_output(ActionOutputContract {
+            views: vec!["plugin_frame".to_string()],
+            effects: Vec::new(),
+        })
+        .with_ui(ActionUi {
+            locations: vec!["directory_workspace".to_string()],
+            ..ActionUi::default()
+        });
+    assert!(
+        validate_directory_action_capabilities(&kinds, &[workspace.clone(), competing])
+            .unwrap_err()
+            .to_string()
+            .contains("multiple nearest `workspace` providers")
+    );
+
+    let invalid = workspace.clone().with_output(ActionOutputContract {
+        views: vec!["json".to_string()],
+        effects: Vec::new(),
+    });
+    assert!(
+        validate_directory_action_capabilities(&kinds, &[invalid])
+            .unwrap_err()
+            .to_string()
+            .contains("must be read-only, support `plugin_frame`, declare no effects")
+    );
+
+    let mixed_locations = workspace.with_ui(ActionUi {
+        locations: vec![
+            "directory_workspace".to_string(),
+            "directory_context_menu".to_string(),
+        ],
+        ..ActionUi::default()
+    });
+    assert!(
+        validate_directory_action_capabilities(&kinds, &[mixed_locations])
+            .unwrap_err()
+            .to_string()
+            .contains("use only `directory_workspace`")
+    );
+}
+
 fn write_empty_wasm_lock(root: &std::path::Path, plugin_id: &str) {
     std::fs::write(
         root.join("manifest.lock.json"),

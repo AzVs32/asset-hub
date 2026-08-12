@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AssetGateway } from "@/application/ports/asset-gateway";
 import type { ResourceActionOutput } from "@/domain/plugin";
+import { createDirectoryPluginFrameHostBridge } from "@/plugins/directory-frame-host";
 import { createPluginFrameHostBridge } from "@/plugins/frame-host";
-import { action, resource } from "./fixtures";
+import { action, directory, directoryAction, resource } from "./fixtures";
 
 describe("Plugin Frame host bridge", () => {
   it("replaces text only for the frame's write text_edit provider and advances its revision", async () => {
@@ -112,6 +113,73 @@ describe("Plugin Frame host bridge", () => {
     await expect(bridge.methods.executeResourceAction(remove.id, {})).resolves.toBe(expected);
     expect(confirmAction).toHaveBeenCalledWith("Delete Example?");
     expect(executeAction).toHaveBeenCalledWith(resource([remove]), remove.id, {});
+  });
+});
+
+describe("Directory Plugin Frame host bridge", () => {
+  it("executes only actions exposed by the bound Directory", async () => {
+    const inspect = directoryAction({ id: "example.game.load" });
+    const item = directory([inspect]);
+    const expected = {
+      directoryId: item.id,
+      action: inspect.id,
+      diagnostics: [],
+      view: { view: "json" as const, data: { games: [] } },
+      effects: [],
+    };
+    const executeDirectoryAction = vi.fn().mockResolvedValue(expected);
+    const bridge = createDirectoryPluginFrameHostBridge({
+      directory: item,
+      frameDirectoryId: item.id,
+      gateway: { executeDirectoryAction } as unknown as AssetGateway,
+    });
+
+    await expect(
+      bridge.methods.executeDirectoryAction(inspect.id, { operation: "load" }),
+    ).resolves.toBe(expected);
+    expect(executeDirectoryAction).toHaveBeenCalledWith(item, inspect, { operation: "load" });
+    await expect(bridge.methods.executeDirectoryAction("missing", {})).rejects.toThrow(
+      "Action missing is not available.",
+    );
+  });
+
+  it("keeps navigation, refresh, and destructive confirmation inside the Host boundary", async () => {
+    const remove = directoryAction({
+      id: "core.directory.delete",
+      access: "write",
+      output: { views: [], effects: ["delete"] },
+      ui: { destructive: true, confirmation: "Delete {name}?" },
+    });
+    const item = directory([remove]);
+    const executeDirectoryAction = vi.fn().mockResolvedValue({
+      directoryId: item.id,
+      action: remove.id,
+      diagnostics: [],
+      view: null,
+      effects: ["delete"],
+    });
+    const onDirectoryChanged = vi.fn().mockResolvedValue(undefined);
+    const onNavigate = vi.fn().mockResolvedValue(undefined);
+    const confirmAction = vi.fn().mockResolvedValue(true);
+    const bridge = createDirectoryPluginFrameHostBridge({
+      directory: item,
+      frameDirectoryId: item.id,
+      gateway: { executeDirectoryAction } as unknown as AssetGateway,
+      onDirectoryChanged,
+      onNavigate,
+      confirmAction,
+    });
+
+    await bridge.methods.executeDirectoryAction(remove.id, {});
+    await bridge.methods.refreshDirectory();
+    await bridge.methods.navigateToDirectory("library/games");
+
+    expect(confirmAction).toHaveBeenCalledWith("Delete Library?");
+    expect(onDirectoryChanged).toHaveBeenCalledTimes(2);
+    expect(onNavigate).toHaveBeenCalledWith("library/games");
+    await expect(bridge.methods.navigateToDirectory("../outside")).rejects.toThrow(
+      "Directory path must be a canonical relative path.",
+    );
   });
 });
 

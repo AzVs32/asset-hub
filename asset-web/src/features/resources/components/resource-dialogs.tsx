@@ -49,7 +49,7 @@ export function UploadResourceDialog({
       description="The server can detect the kind from file content and extension."
     >
       <form
-        className="grid gap-4 p-6 sm:grid-cols-2"
+        className="grid gap-4 bg-slate-50/50 p-6 sm:grid-cols-2"
         onSubmit={form.handleSubmit(async (input) => {
           const selected = input.file.item(0);
           if (!selected) return;
@@ -62,8 +62,10 @@ export function UploadResourceDialog({
           onOpenChange(false);
         })}
       >
-        <label className="sm:col-span-2 flex min-h-28 cursor-pointer items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 p-5 text-sm font-semibold text-slate-600 hover:border-blue-400 hover:bg-blue-50">
-          <FileUp size={22} />
+        <label className="sm:col-span-2 flex min-h-32 cursor-pointer items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-slate-300 bg-white p-5 text-sm font-semibold text-slate-600 shadow-sm transition hover:border-indigo-400 hover:bg-indigo-50/50 hover:text-indigo-700">
+          <span className="grid size-11 place-items-center rounded-2xl bg-indigo-50 text-indigo-600">
+            <FileUp size={21} />
+          </span>
           <span>{file?.name ?? "Choose a file"}</span>
           <input className="sr-only" type="file" {...form.register("file", { required: true })} />
         </label>
@@ -83,7 +85,7 @@ export function UploadResourceDialog({
           />
         </Field>
         {pending && progress ? <UploadProgressView progress={progress} /> : null}
-        <div className="flex justify-end gap-2 border-t border-slate-100 pt-4 sm:col-span-2">
+        <div className="flex justify-end gap-2 border-t border-slate-200/70 pt-4 sm:col-span-2">
           <Button variant="secondary" disabled={pending} onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
@@ -113,7 +115,7 @@ function UploadProgressView({ progress }: { progress: UploadProgress }) {
 
   return (
     <div
-      className="grid gap-2 rounded-xl border border-blue-200 bg-blue-50 p-4 sm:col-span-2"
+      className="grid gap-2 rounded-2xl border border-indigo-200 bg-indigo-50 p-4 shadow-sm sm:col-span-2"
       aria-live="polite"
     >
       <div className="flex items-center justify-between gap-3 text-sm font-semibold text-slate-800">
@@ -121,7 +123,7 @@ function UploadProgressView({ progress }: { progress: UploadProgress }) {
         <span>{finalizing ? "File uploaded" : `${percentage}%`}</span>
       </div>
       <div
-        className="h-2.5 overflow-hidden rounded-full bg-blue-100"
+        className="h-2.5 overflow-hidden rounded-full bg-indigo-100"
         role="progressbar"
         aria-label={finalizing ? "Resource publishing progress" : "Upload progress"}
         aria-valuemin={0}
@@ -129,7 +131,7 @@ function UploadProgressView({ progress }: { progress: UploadProgress }) {
         aria-valuenow={finalizing ? undefined : percentage}
       >
         <div
-          className={`h-full rounded-full bg-blue-600 transition-[width] duration-300 ${
+          className={`h-full rounded-full bg-indigo-600 transition-[width] duration-300 ${
             finalizing ? "animate-pulse" : ""
           }`}
           style={{ width: `${percentage}%` }}
@@ -198,7 +200,7 @@ export function CreateFolderDialog({
       description={`Inside /${parent}`}
     >
       <form
-        className="grid gap-5 p-6"
+        className="grid gap-5 bg-slate-50/50 p-6"
         onSubmit={form.handleSubmit(async ({ name, kind }) => {
           await onCreate(name, kind || undefined);
           onOpenChange(false);

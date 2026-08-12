@@ -1,29 +1,41 @@
 import { describe, expect, it } from "vitest";
 import { PluginKernel } from "@/kernel/plugin-kernel";
-import { hostSlots } from "@/kernel/slots";
-import { action, resource } from "./fixtures";
+import { coreDirectoryWorkspaceSlots, directoryWorkspaceOutlet } from "@/kernel/slots";
+import { action, directory, directoryAction, resource } from "./fixtures";
 
 describe("PluginKernel", () => {
-  it("sorts actions placed in a stable host slot", () => {
+  it("sorts actions placed in a CoreDirectoryWorkspace slot", () => {
     const kernel = new PluginKernel();
     const later = action({
       id: "later",
       label: "Later",
-      ui: { group: "view", order: 20, locations: [hostSlots.resourceContextMenu] },
+      ui: {
+        group: "view",
+        order: 20,
+        locations: [coreDirectoryWorkspaceSlots.resourceContextMenu],
+      },
     });
     const earlier = action({
       id: "earlier",
       label: "Earlier",
-      ui: { group: "view", order: 10, locations: [hostSlots.resourceContextMenu] },
+      ui: {
+        group: "view",
+        order: 10,
+        locations: [coreDirectoryWorkspaceSlots.resourceContextMenu],
+      },
     });
+
     expect(
       kernel
-        .actionsAt(resource([later, earlier]), hostSlots.resourceContextMenu)
+        .resourceActionsAtCoreSlot(
+          resource([later, earlier]),
+          coreDirectoryWorkspaceSlots.resourceContextMenu,
+        )
         .map((item) => item.id),
     ).toEqual(["earlier", "later"]);
   });
 
-  it("sorts destructive actions after ordinary actions", () => {
+  it("sorts destructive CoreDirectoryWorkspace actions last", () => {
     const kernel = new PluginKernel();
     const remove = action({
       id: "core.resource.delete",
@@ -31,128 +43,95 @@ describe("PluginKernel", () => {
       output: { views: [], effects: ["delete"] },
       ui: {
         group: "danger",
-        locations: [hostSlots.resourceContextMenu],
+        locations: [coreDirectoryWorkspaceSlots.resourceContextMenu],
         destructive: true,
       },
     });
     const download = action({
       id: "core.resource.download",
-      ui: { group: "open", locations: [hostSlots.resourceContextMenu] },
+      ui: {
+        group: "open",
+        locations: [coreDirectoryWorkspaceSlots.resourceContextMenu],
+      },
     });
 
     expect(
       kernel
-        .actionsAt(resource([remove, download]), hostSlots.resourceContextMenu)
+        .resourceActionsAtCoreSlot(
+          resource([remove, download]),
+          coreDirectoryWorkspaceSlots.resourceContextMenu,
+        )
         .map((item) => item.id),
     ).toEqual(["core.resource.download", "core.resource.delete"]);
   });
 
-  it("keeps actions with unknown locations reachable in the resource context menu", () => {
+  it("keeps unknown Resource locations reachable only in the Core context menu", () => {
     const kernel = new PluginKernel();
     const unknown = action({
       id: "future",
       ui: { group: null, order: null, locations: ["future_slot"] },
     });
-    expect(kernel.actionsAt(resource([unknown]), hostSlots.resourceContextMenu)).toEqual([unknown]);
+
+    expect(
+      kernel.resourceActionsAtCoreSlot(
+        resource([unknown]),
+        coreDirectoryWorkspaceSlots.resourceContextMenu,
+      ),
+    ).toEqual([unknown]);
   });
 
-  it("uses an explicit thumbnail action before media fallbacks", () => {
+  it("uses only the explicit read-only Resource thumbnail provider", () => {
     const kernel = new PluginKernel();
     const fallback = action({ id: "media", output: { views: ["media"], effects: [] } });
     const explicit = action({
       id: "azvs.epub.thumbnail",
       provides: "thumbnail",
-      ui: { group: null, order: null, locations: [hostSlots.resourceThumbnail] },
+      ui: {
+        group: null,
+        order: null,
+        locations: [coreDirectoryWorkspaceSlots.resourceThumbnail],
+      },
     });
+
     expect(kernel.thumbnailAction(resource([fallback, explicit]))?.id).toBe("azvs.epub.thumbnail");
   });
 
-  it("does not infer a thumbnail action from MIME type or output view", () => {
+  it("selects Core Directory thumbnail and context-menu actions", () => {
     const kernel = new PluginKernel();
-    const media = action({ id: "media", output: { views: ["media"], effects: [] } });
-    const item = resource([media]);
-    item.content = {
-      size: 42,
-      mimeType: "image/png",
-      verificationStatus: "verified",
-      checksum: { kind: "sha256", value: "digest" },
-      verificationError: null,
-    };
-    expect(kernel.thumbnailAction(item)).toBeNull();
-  });
-
-  it("selects a read-only directory thumbnail provider", () => {
-    const kernel = new PluginKernel();
-    const thumbnail = {
+    const thumbnail = directoryAction({
       id: "core.directory.thumbnail",
-      origin: { kind: "builtin" as const, id: "core.directory" },
+      origin: { kind: "builtin", id: "core.directory" },
       provides: "thumbnail",
-      label: "Thumbnail",
-      description: null,
-      access: "read" as const,
-      requires: { children: false, resources: false },
-      output: { views: ["media" as const], effects: [] },
-      ui: {
-        group: "preview",
-        order: 100,
-        locations: [hostSlots.directoryThumbnail],
-        destructive: false,
-        confirmation: null,
-      },
-      appliesTo: { kinds: ["core:directory"] },
-    };
-    const directory = {
-      id: "directory-1",
-      parentId: null,
-      path: "books",
-      parentPath: "",
-      name: "books",
-      kind: "core:directory",
-      actions: [thumbnail],
-      createdAt: "2026-01-01T00:00:00Z",
-      updatedAt: "2026-01-01T00:00:00Z",
-      revision: 1,
-    };
+      output: { views: ["media"], effects: [] },
+      ui: { locations: [coreDirectoryWorkspaceSlots.directoryThumbnail] },
+    });
+    const unknown = directoryAction({
+      id: "example.organize",
+      ui: { locations: ["future_directory_slot"] },
+    });
+    const item = directory([thumbnail, unknown]);
 
-    expect(kernel.directoryThumbnailAction(directory)?.id).toBe("core.directory.thumbnail");
+    expect(kernel.directoryThumbnailAction(item)?.id).toBe("core.directory.thumbnail");
+    expect(
+      kernel
+        .directoryActionsAtCoreSlot(item, coreDirectoryWorkspaceSlots.directoryContextMenu)
+        .map((action) => action.id),
+    ).toEqual(["example.organize"]);
   });
 
-  it("keeps directory actions with unknown locations reachable in the context menu", () => {
+  it("hands the entire Directory workspace to one valid workspace provider", () => {
     const kernel = new PluginKernel();
-    const directory = {
-      id: "directory-1",
-      parentId: null,
-      path: "books",
-      parentPath: "",
-      name: "books",
-      kind: "core:directory",
-      actions: [
-        {
-          id: "example.organize",
-          origin: { kind: "plugin" as const, id: "example.plugin" },
-          provides: null,
-          label: "Organize",
-          description: null,
-          access: "read" as const,
-          requires: { children: false, resources: false },
-          output: { views: ["json" as const], effects: [] },
-          ui: {
-            group: null,
-            order: null,
-            locations: ["future_directory_slot"],
-            destructive: false,
-            confirmation: null,
-          },
-          appliesTo: { kinds: ["core:directory"] },
-        },
-      ],
-      createdAt: "2026-01-01T00:00:00Z",
-      updatedAt: "2026-01-01T00:00:00Z",
-      revision: 1,
-    };
+    const workspace = directoryAction({
+      id: "example.game.workspace",
+      provides: "workspace",
+      output: { views: ["plugin_frame", "json"], effects: [] },
+      ui: { locations: [directoryWorkspaceOutlet] },
+    });
+    const item = directory([workspace]);
 
+    expect(kernel.directoryWorkspaceAction(item)).toBe(workspace);
     expect(
-      kernel.directoryActionsAt(directory, hostSlots.directoryContextMenu).map((item) => item.id),
-    ).toEqual(["example.organize"]);
+      kernel.directoryActionsAtCoreSlot(item, coreDirectoryWorkspaceSlots.directoryContextMenu),
+    ).toEqual([]);
   });
 });

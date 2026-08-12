@@ -133,13 +133,36 @@ not actually applicable. Two providers for the same capability at the same neare
 startup instead of being selected by registration or UI sort order.
 
 The Host recognizes `thumbnail`, `text_read`, and `text_edit` singleton capabilities for Resource
-actions; Directory actions recognize only `thumbnail`. A `thumbnail` provider must be read-only,
+actions; Directory actions recognize `thumbnail` and `workspace`. A `thumbnail` provider must be read-only,
 support the `media` view, and declare the matching `resource_thumbnail` or
 `directory_thumbnail` UI location. A `text_read` provider must be read-only. A `text_edit`
 provider must be write and request `resource.content.replace`; generic `resource.write` and
 `resource.derived_asset.write` permissions are not part of the contract. The Host rejects unknown
 capability names. Plugins must retain their provider-owned action IDs and must not reuse a `core.*`
 action ID.
+
+A Directory `workspace` provider is the exclusive owner of the Host's top-level
+`directory_workspace` outlet for the nearest Directory kind. It must be read-only, declare no
+effects, support `plugin_frame`, and use `directory_workspace` as its only Host location. The initial invocation
+must return that frame; the same Action may additionally declare and return `json` for calls made by
+its own frame. When no provider applies, the Host renders `CoreDirectoryWorkspace`. The Core
+workspace owns `directory_context_menu`, `directory_thumbnail`, `resource_context_menu`, and
+`resource_thumbnail`; those locations are not projected into a plugin workspace. A plugin owns and
+implements every layout region or slot inside its iframe.
+
+```json
+{
+  "id": "example.game.workspace",
+  "provides": "workspace",
+  "label": "Game Library",
+  "handler": "render_workspace",
+  "applies_to": { "kinds": ["example:game"] },
+  "access": "read",
+  "requires": { "children": true, "resources": true },
+  "output": { "views": ["plugin_frame", "json"] },
+  "ui": { "locations": ["directory_workspace"] }
+}
+```
 
 A Resource action normally declares `label`. A singleton capability provider may omit it when the
 action targets a child Resource kind; the Host then inherits the normalized label from the nearest
@@ -201,6 +224,21 @@ The returned client exposes only:
   `resource.content.replace`;
 - `disconnect()`, which releases the frame connection.
 
+A Directory frame uses the separate target-bound client:
+
+```ts
+import { connectAssetHubDirectoryFrame } from "@asset-hub/plugin-web-sdk";
+
+const host = await connectAssetHubDirectoryFrame();
+const output = await host.executeDirectoryAction("example.game.workspace", {
+  operation: "load",
+});
+```
+
+It can execute an Action already exposed for the bound Directory, request a Directory refresh, and
+ask the Host to navigate to a canonical relative Directory path. It cannot address a different
+Directory directly or access any `CoreDirectoryWorkspace` slot.
+
 SDK method calls no longer supply Resource identity or request IDs. The Host binds the connection to
 the Resource and originating Action that created the frame, while Penpal owns request correlation,
 timeouts, errors, and connection cleanup. The Host still validates method arguments, available
@@ -257,6 +295,11 @@ The principal version 3 changes are:
   plugins.
 - Action output contracts declare `output.effects`; effect-only outputs may omit a View. Resource
   and Directory Actions can request the permission-gated `delete` effect.
+- Directory kinds may provide one nearest `workspace` capability at the top-level
+  `directory_workspace` outlet; that frame replaces `CoreDirectoryWorkspace` instead of receiving
+  its internal slots.
+- Directory workspace frames use a separate Directory-bound SDK client for exposed Directory
+  Actions, refresh, and canonical Host navigation.
 
 Version 2 was intentionally incompatible with version 1. Its principal changes were:
 

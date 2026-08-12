@@ -12,6 +12,8 @@ use std::collections::HashSet;
 
 const RESOURCE_EFFECTS: &[&str] = &["replace_content", "delete"];
 const DIRECTORY_EFFECTS: &[&str] = &["update", "create_child", "delete"];
+const DIRECTORY_WORKSPACE_CAPABILITY: &str = "workspace";
+const DIRECTORY_WORKSPACE_LOCATION: &str = "directory_workspace";
 
 impl PluginManifest {
     pub fn validate(&self) -> Result<(), String> {
@@ -385,6 +387,26 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
                 "capabilities.directory_actions[`{}`].output.views must not contain duplicates",
                 action.id
             ));
+        }
+        if action.provides.as_deref() == Some(DIRECTORY_WORKSPACE_CAPABILITY) {
+            let owns_only_workspace = action
+                .ui
+                .as_ref()
+                .is_some_and(|ui| ui.locations.as_slice() == [DIRECTORY_WORKSPACE_LOCATION]);
+            if !matches!(action.access, ManifestActionAccess::Read)
+                || !action
+                    .output
+                    .views
+                    .iter()
+                    .any(|view| view == "plugin_frame")
+                || !action.output.effects.is_empty()
+                || !owns_only_workspace
+            {
+                return Err(format!(
+                    "capabilities.directory_actions[`{}`] workspace provider must be read-only, support plugin_frame, declare no effects, and use only directory_workspace",
+                    action.id
+                ));
+            }
         }
         validate_action_effects(
             "capabilities.directory_actions",

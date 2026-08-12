@@ -22,16 +22,16 @@ export function Dialog({
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-slate-950/55 backdrop-blur-sm" />
+        <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-slate-950/60 backdrop-blur-md" />
         <DialogPrimitive.Content
           className={cn(
-            "fixed left-1/2 top-1/2 z-50 max-h-[calc(100vh-2rem)] w-[calc(100%-2rem)] max-w-xl -translate-x-1/2 -translate-y-1/2 overflow-auto rounded-2xl bg-white shadow-2xl",
+            "dialog-surface fixed left-1/2 top-1/2 z-50 max-h-[calc(100vh-2rem)] w-[calc(100%-2rem)] max-w-xl -translate-x-1/2 -translate-y-1/2 overflow-auto rounded-3xl border border-white/70 bg-white shadow-[0_32px_100px_-28px_rgba(15,23,42,0.65)]",
             className,
           )}
         >
-          <header className="sticky top-0 z-10 flex items-start justify-between border-b border-slate-200 bg-white px-6 py-5">
+          <header className="sticky top-0 z-10 flex items-start justify-between border-b border-slate-100 bg-white/95 px-6 py-5 backdrop-blur-xl">
             <div>
-              <DialogPrimitive.Title className="text-xl font-bold text-slate-950">
+              <DialogPrimitive.Title className="text-xl font-bold tracking-[-0.025em] text-slate-950">
                 {title}
               </DialogPrimitive.Title>
               {description ? (

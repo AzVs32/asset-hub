@@ -2,20 +2,15 @@ import { useQuery } from "@tanstack/react-query";
 import {
   ChevronLeft,
   ChevronRight,
-  Database,
   File,
   FileUp,
   Folder,
   FolderPlus,
-  LogOut,
   RefreshCw,
   Search,
-  Users,
 } from "lucide-react";
-import React from "react";
 import { useGateway } from "@/application/ports/gateway-context";
-import type { CurrentUser } from "@/domain/auth";
-import { breadcrumbs, parentDirectory } from "@/domain/directory-path";
+import { parentDirectory } from "@/domain/directory-path";
 import type {
   Directory,
   DirectoryAction,
@@ -27,7 +22,7 @@ import type {
 } from "@/domain/resource";
 import { formatBytes, formatDate } from "@/domain/resource-draft";
 import { usePluginKernel } from "@/kernel/plugin-kernel";
-import { hostSlots } from "@/kernel/slots";
+import { coreDirectoryWorkspaceSlots } from "@/kernel/slots";
 import { Button } from "@/shared/ui/button";
 import { ActionMenu, ActionMenuItem } from "@/shared/ui/dropdown";
 import { Input } from "@/shared/ui/field";
@@ -35,7 +30,6 @@ import { ErrorState, LoadingState } from "@/shared/ui/state";
 import { KindSelect } from "./kind-select";
 
 export function ResourceList({
-  user,
   listing,
   kinds,
   filters,
@@ -53,10 +47,7 @@ export function ResourceList({
   onRefresh,
   onUpload,
   onCreateFolder,
-  onUsers,
-  onLogout,
 }: {
-  user: Pick<CurrentUser, "username" | "isAdmin">;
   listing: DirectoryListing | undefined;
   kinds: ResourceKind[];
   filters: ResourceFilters;
@@ -74,57 +65,48 @@ export function ResourceList({
   onRefresh: () => void;
   onUpload: () => void;
   onCreateFolder: () => void;
-  onUsers: () => void;
-  onLogout: () => void;
 }) {
   const total = listing?.resources.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / filters.limit));
-  const crumbs = breadcrumbs(filters.directory);
   const parent = parentDirectory(filters.directory);
 
   return (
-    <section className="flex min-h-0 min-w-0 flex-col bg-white" aria-label="Resource workspace">
-      <header className="flex min-h-20 flex-wrap items-center justify-between gap-4 border-b border-slate-200 px-5 py-4 xl:px-7">
-        <div className="flex items-center gap-3">
-          <span className="grid size-11 place-items-center rounded-2xl bg-blue-600 text-white">
-            <Database size={21} />
-          </span>
-          <div>
-            <h1 className="font-bold text-slate-950">Asset Hub</h1>
-            <p className="text-xs text-slate-500">
-              {total} resources · {user.username}
-            </p>
-          </div>
+    <section
+      className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-3xl border border-slate-200/80 bg-white shadow-[0_18px_50px_-30px_rgba(15,23,42,0.45)]"
+      aria-label="Resource workspace"
+    >
+      <header className="flex min-h-[4.75rem] flex-wrap items-center justify-between gap-4 border-b border-slate-100 px-5 py-3.5 xl:px-6">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-indigo-500">
+            Directory
+          </p>
+          <h2 className="mt-0.5 text-lg font-bold tracking-[-0.025em] text-slate-950">
+            {listing?.directory.name || "Root"}
+          </h2>
+          <p className="mt-0.5 text-xs font-medium text-slate-400">
+            {listing?.folders.length ?? 0} folders · {total} assets
+          </p>
         </div>
         <div className="flex flex-wrap justify-end gap-2">
           <Button variant="ghost" size="icon" aria-label="Refresh" onClick={onRefresh}>
-            <RefreshCw className={loading ? "animate-spin" : ""} size={18} />
+            <RefreshCw className={loading ? "animate-spin" : ""} size={17} />
           </Button>
-          {user.isAdmin ? (
-            <Button variant="secondary" size="small" onClick={onUsers}>
-              <Users size={16} />
-              Users
-            </Button>
-          ) : null}
           <Button variant="secondary" size="small" onClick={onCreateFolder}>
-            <FolderPlus size={16} />
-            Folder
+            <FolderPlus size={15} />
+            New folder
           </Button>
           <Button size="small" onClick={onUpload}>
-            <FileUp size={16} />
+            <FileUp size={15} />
             Upload
-          </Button>
-          <Button variant="ghost" size="icon" aria-label="Sign out" onClick={onLogout}>
-            <LogOut size={18} />
           </Button>
         </div>
       </header>
 
-      <div className="grid gap-3 border-b border-slate-200 bg-slate-50/80 p-4 md:grid-cols-2 xl:grid-cols-[minmax(180px,1fr)_minmax(160px,220px)_auto]">
+      <div className="grid gap-2.5 border-b border-slate-100 bg-slate-50/70 px-4 py-3 md:grid-cols-2 xl:grid-cols-[minmax(180px,1fr)_minmax(160px,220px)_auto]">
         <div className="relative">
-          <Search className="absolute left-3 top-3 text-slate-400" size={16} />
+          <Search className="absolute left-3.5 top-3 text-slate-400" size={16} />
           <Input
-            className="pl-9"
+            className="bg-white pl-10"
             aria-label="Search resources"
             placeholder="Search resources"
             value={filters.query}
@@ -135,6 +117,7 @@ export function ResourceList({
           aria-label="Resource kind"
           kinds={kinds}
           emptyOption={{ label: "All kinds" }}
+          className="bg-white"
           value={filters.kind}
           onChange={(event) => onFilters({ kind: event.target.value, page: 1 })}
         />
@@ -145,24 +128,7 @@ export function ResourceList({
         />
       </div>
 
-      <nav className="flex min-h-12 flex-wrap items-center gap-3 border-b border-slate-200 px-5 py-2 text-sm xl:px-7">
-        <div className="flex min-w-0 items-center gap-1 overflow-hidden">
-          {crumbs.map((crumb, index) => (
-            <React.Fragment key={crumb.path || "root"}>
-              {index ? <ChevronRight className="shrink-0 text-slate-300" size={15} /> : null}
-              <button
-                className="max-w-48 truncate font-medium text-blue-700 hover:underline"
-                type="button"
-                onClick={() => onOpenDirectory(crumb.path)}
-              >
-                {crumb.label}
-              </button>
-            </React.Fragment>
-          ))}
-        </div>
-      </nav>
-
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div className="min-h-0 flex-1 overflow-auto bg-white p-2">
         {error ? <ErrorState error={error} /> : null}
         {loading && !listing ? <LoadingState label="Loading resources" /> : null}
         {parent !== null ? <FolderRow name=".." onClick={() => onOpenDirectory(parent)} /> : null}
@@ -188,14 +154,19 @@ export function ResourceList({
           />
         ))}
         {!loading && listing && !listing.folders.length && !listing.resources.items.length ? (
-          <div className="grid min-h-52 place-items-center text-sm text-slate-400">
-            This folder is empty
+          <div className="grid min-h-64 place-items-center rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 text-sm text-slate-400">
+            <span className="grid justify-items-center gap-3 font-medium">
+              <span className="grid size-12 place-items-center rounded-2xl bg-white text-slate-300 shadow-sm">
+                <Folder size={21} />
+              </span>
+              This folder is empty
+            </span>
           </div>
         ) : null}
       </div>
 
-      <footer className="flex min-h-16 items-center justify-between border-t border-slate-200 px-5 text-sm text-slate-500 xl:px-7">
-        <span>
+      <footer className="flex min-h-14 items-center justify-between border-t border-slate-100 bg-slate-50/60 px-5 text-xs font-medium text-slate-500 xl:px-6">
+        <span className="rounded-lg bg-white px-2.5 py-1 shadow-sm ring-1 ring-slate-200/70">
           Page {filters.page} of {totalPages}
         </span>
         <div className="flex gap-1">
@@ -240,14 +211,14 @@ function FolderRow({
 }) {
   const kernel = usePluginKernel();
   const actions = directory
-    ? kernel.directoryActionsAt(directory, hostSlots.directoryContextMenu)
+    ? kernel.directoryActionsAtCoreSlot(directory, coreDirectoryWorkspaceSlots.directoryContextMenu)
     : [];
   return (
     <div
-      className={`grid min-h-20 grid-cols-[minmax(0,1fr)_auto] items-center border-b border-slate-100 transition ${selected ? "bg-blue-50 ring-1 ring-inset ring-blue-200" : "bg-slate-50/60 hover:bg-blue-50"}`}
+      className={`group mb-1 grid min-h-[4.25rem] grid-cols-[minmax(0,1fr)_auto] items-center rounded-2xl transition-all ${selected ? "bg-indigo-50 shadow-sm ring-1 ring-inset ring-indigo-200" : "bg-amber-50/35 hover:bg-amber-50/70"}`}
     >
       <button
-        className="grid min-w-0 grid-cols-[3.5rem_minmax(0,1fr)] items-center gap-4 px-5 py-3 text-left xl:px-7"
+        className="grid min-w-0 grid-cols-[3rem_minmax(0,1fr)] items-center gap-3 px-3 py-2.5 text-left"
         type="button"
         aria-pressed={directory ? selected : undefined}
         onClick={onSelect ?? onClick}
@@ -262,14 +233,19 @@ function FolderRow({
         {directory ? (
           <DirectoryThumbnail directory={directory} />
         ) : (
-          <span className="grid size-14 place-items-center rounded-xl bg-amber-100 text-amber-700">
-            <Folder size={19} />
+          <span className="grid size-12 place-items-center rounded-2xl bg-gradient-to-br from-amber-100 to-orange-100 text-amber-700 shadow-sm ring-1 ring-amber-200/70">
+            <Folder size={18} />
           </span>
         )}
-        <span className="font-medium text-slate-800">{name}</span>
+        <span className="min-w-0">
+          <strong className="block truncate text-sm font-semibold text-slate-800">{name}</strong>
+          <span className="mt-0.5 block text-[11px] font-medium text-slate-400">
+            {directory?.kind ?? "Parent directory"}
+          </span>
+        </span>
       </button>
       {actions.length && onAction ? (
-        <div className="pr-4">
+        <div className="pr-2 opacity-60 transition group-hover:opacity-100 group-focus-within:opacity-100">
           <ActionMenu>
             {actions.map((action) => (
               <ActionMenuItem
@@ -305,10 +281,11 @@ function DirectoryThumbnail({ directory }: { directory: Directory }) {
   const image = result.data
     ? thumbnailImage(result.data.view, gateway.assetUrl.bind(gateway))
     : null;
-  if (image) return <img className="size-14 rounded-xl object-cover" src={image} alt="" />;
+  if (image)
+    return <img className="size-12 rounded-2xl object-cover shadow-sm" src={image} alt="" />;
   return (
-    <span className="grid size-14 place-items-center rounded-xl bg-amber-100 text-amber-700">
-      <Folder className={result.isPending ? "animate-pulse" : ""} size={19} />
+    <span className="grid size-12 place-items-center rounded-2xl bg-gradient-to-br from-amber-100 to-orange-100 text-amber-700 shadow-sm ring-1 ring-amber-200/70">
+      <Folder className={result.isPending ? "animate-pulse" : ""} size={18} />
     </span>
   );
 }
@@ -327,59 +304,68 @@ function ResourceRow({
   onRestore: () => void;
 }) {
   const kernel = usePluginKernel();
-  const actions = kernel.actionsAt(resource, hostSlots.resourceContextMenu);
+  const actions = kernel.resourceActionsAtCoreSlot(
+    resource,
+    coreDirectoryWorkspaceSlots.resourceContextMenu,
+  );
   return (
     <div
-      className={`grid min-h-20 grid-cols-[minmax(0,1fr)_auto] items-center border-b border-slate-100 transition ${selected ? "bg-blue-50 ring-1 ring-inset ring-blue-200" : "hover:bg-slate-50"}`}
+      className={`group mb-1 grid min-h-[4.25rem] grid-cols-[minmax(0,1fr)_auto] items-center rounded-2xl transition-all ${selected ? "bg-indigo-50 shadow-sm ring-1 ring-inset ring-indigo-200" : "hover:bg-slate-50"}`}
     >
       <button
-        className="grid min-w-0 grid-cols-[3.5rem_minmax(0,1fr)] items-center gap-4 px-5 py-3 text-left xl:px-7"
+        className="grid min-w-0 grid-cols-[3rem_minmax(0,1fr)] items-center gap-3 px-3 py-2.5 text-left"
         type="button"
         onClick={onSelect}
       >
         <ResourceThumbnail resource={resource} />
         <span className="min-w-0">
-          <strong className="block truncate text-sm text-slate-900">{resource.name}</strong>
-          <span className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
-            <span>{resource.kind}</span>
+          <strong className="block truncate text-sm font-semibold text-slate-900">
+            {resource.name}
+          </strong>
+          <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-medium text-slate-400">
+            <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-slate-500">
+              {resource.kind}
+            </span>
             <span>{formatBytes(resource.content?.size ?? 0)}</span>
             <span>{formatDate(resource.updatedAt)}</span>
           </span>
         </span>
       </button>
-      <div className="flex items-center gap-2 pr-4">
+      <div className="flex items-center gap-2 pr-2">
         {resource.content?.verificationStatus === "pending" ? (
-          <span className="rounded-full bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-700">
+          <span className="rounded-full bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200/60">
             verifying
           </span>
         ) : null}
         {resource.content?.verificationStatus === "failed" ? (
           <span
-            className="rounded-full bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-700"
+            className="rounded-full bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-700 ring-1 ring-rose-200/60"
             title={resource.content.verificationError ?? "Checksum verification failed"}
           >
             verification failed
           </span>
         ) : null}
         {resource.deletedAt ? (
-          <span className="rounded-full bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-700">
+          <span className="rounded-full bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-700 ring-1 ring-rose-200/60">
             deleted
           </span>
         ) : null}
-        <ActionMenu>
-          {resource.deletedAt ? (
-            <ActionMenuItem onSelect={onRestore}>Restore resource</ActionMenuItem>
-          ) : null}
-          {actions.map((action) => (
-            <ActionMenuItem
-              key={action.id}
-              destructive={action.ui.destructive}
-              onSelect={() => onAction(action)}
-            >
-              {action.label}
-            </ActionMenuItem>
-          ))}
-        </ActionMenu>
+        <span className="opacity-60 transition group-hover:opacity-100 group-focus-within:opacity-100">
+          <ActionMenu>
+            {resource.deletedAt ? (
+              <ActionMenuItem onSelect={onRestore}>Restore resource</ActionMenuItem>
+            ) : null}
+            {actions.map((action) => (
+              <ActionMenuItem
+                key={action.id}
+                destructive={action.ui.destructive}
+                onSelect={() => onAction(action)}
+              >
+                {action.label}
+              </ActionMenuItem>
+            ))}
+          </ActionMenu>
+        </span>
       </div>
     </div>
   );
@@ -400,10 +386,12 @@ function ResourceThumbnail({ resource }: { resource: Resource }) {
     ? thumbnailImage(result.data.view, gateway.assetUrl.bind(gateway))
     : null;
   if (image)
-    return <img className="size-14 rounded-xl bg-slate-100 object-cover" src={image} alt="" />;
+    return (
+      <img className="size-12 rounded-2xl bg-slate-100 object-cover shadow-sm" src={image} alt="" />
+    );
   return (
-    <span className="grid size-14 place-items-center rounded-xl border border-dashed border-slate-300 bg-white text-slate-400">
-      <File className={result.isPending ? "animate-pulse" : ""} size={19} />
+    <span className="grid size-12 place-items-center rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-100 text-slate-400 shadow-sm">
+      <File className={result.isPending ? "animate-pulse" : ""} size={18} />
     </span>
   );
 }
@@ -433,9 +421,9 @@ function Toggle({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label className="flex min-h-10 items-center gap-2 text-sm font-medium text-slate-600">
+    <label className="flex min-h-10 cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 transition hover:border-slate-300">
       <input
-        className="size-4 accent-blue-600"
+        className="size-4 rounded accent-indigo-600"
         type="checkbox"
         checked={checked}
         disabled={disabled}

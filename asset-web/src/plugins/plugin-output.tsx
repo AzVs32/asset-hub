@@ -17,12 +17,12 @@ export function PluginOutput({
     <div>
       {output.diagnostics.length ? (
         <section
-          className="grid gap-2 border-b border-amber-200 bg-amber-50 p-4"
+          className="m-4 grid gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm"
           aria-label="Plugin diagnostics"
         >
           {output.diagnostics.map((item) => (
             <p
-              className="text-sm text-amber-950"
+              className="text-sm leading-6 text-amber-950"
               key={`${item.severity}:${item.code}:${item.message}`}
             >
               <strong className="mr-2 uppercase">{item.severity}</strong>

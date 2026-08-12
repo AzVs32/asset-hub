@@ -47,9 +47,22 @@ export interface ResourceActionOutput {
     view: PluginView;
     diagnostics: PluginDiagnostic[];
 }
+export interface DirectoryActionOutput {
+    directoryId: string;
+    action: string;
+    view: PluginView | null;
+    effects: Array<"update" | "create_child" | "delete">;
+    diagnostics: PluginDiagnostic[];
+}
 export interface AssetHubFrameClient {
     executeResourceAction(action: string, input?: JsonObject): Promise<ResourceActionOutput>;
     replaceResourceText(text: string): Promise<void>;
+    disconnect(): void;
+}
+export interface AssetHubDirectoryFrameClient {
+    executeDirectoryAction(action: string, input?: JsonObject): Promise<DirectoryActionOutput>;
+    refreshDirectory(): Promise<void>;
+    navigateToDirectory(path: string): Promise<void>;
     disconnect(): void;
 }
 export interface AssetHubFrameConnectionOptions {
@@ -58,4 +71,6 @@ export interface AssetHubFrameConnectionOptions {
 }
 /** Connects the current plugin iframe to the narrow capability API exposed by its Asset Hub host. */
 export declare function connectAssetHubFrame(options?: AssetHubFrameConnectionOptions): Promise<AssetHubFrameClient>;
+/** Connects a Directory workspace iframe to capabilities bound to its current Directory. */
+export declare function connectAssetHubDirectoryFrame(options?: AssetHubFrameConnectionOptions): Promise<AssetHubDirectoryFrameClient>;
 //# sourceMappingURL=index.d.ts.map

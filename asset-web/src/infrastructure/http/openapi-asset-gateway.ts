@@ -12,9 +12,9 @@ import type {
 import type {
   Directory,
   DirectoryAction,
-  DirectoryDraft,
   DirectoryKind,
   DirectoryListing,
+  DirectoryPatch,
   Resource,
   ResourceAction,
   ResourceDraft,
@@ -295,14 +295,14 @@ export class OpenApiAssetGateway implements AssetGateway {
     return mapDirectory(expectData(result));
   }
 
-  async updateDirectory(directory: Directory, draft: DirectoryDraft): Promise<Directory> {
+  async updateDirectory(directory: Directory, patch: DirectoryPatch): Promise<Directory> {
     const result = await this.#client.PATCH("/directories/{id}", {
       params: { path: { id: directory.id } },
       body: {
         expected_revision: directory.revision,
-        name: draft.name,
-        parent_id: draft.parentId,
-        kind: draft.kind,
+        ...(patch.name !== undefined ? { name: patch.name } : {}),
+        ...(patch.parentId !== undefined ? { parent_id: patch.parentId } : {}),
+        ...(patch.kind !== undefined ? { kind: patch.kind } : {}),
       },
     });
     return mapDirectory(expectData(result));

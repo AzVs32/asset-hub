@@ -14,7 +14,8 @@ export function ActionMenu({ children }: { children: React.ReactNode }) {
       <DropdownMenu.Portal>
         <DropdownMenu.Content
           align="end"
-          className="z-50 min-w-48 rounded-xl border border-slate-200 bg-white p-1 shadow-xl"
+          sideOffset={6}
+          className="z-50 min-w-52 rounded-2xl border border-slate-200/80 bg-white/95 p-1.5 shadow-[0_20px_50px_-18px_rgba(15,23,42,0.35)] backdrop-blur-xl"
         >
           {children}
         </DropdownMenu.Content>
@@ -36,8 +37,8 @@ export function ActionMenuItem({
     <DropdownMenu.Item
       className={
         destructive
-          ? "cursor-pointer rounded-lg px-3 py-2 text-sm text-red-700 outline-none hover:bg-red-50 focus:bg-red-50"
-          : "cursor-pointer rounded-lg px-3 py-2 text-sm outline-none hover:bg-slate-100 focus:bg-slate-100"
+          ? "cursor-pointer rounded-xl px-3 py-2.5 text-sm font-medium text-rose-700 outline-none hover:bg-rose-50 focus:bg-rose-50"
+          : "cursor-pointer rounded-xl px-3 py-2.5 text-sm font-medium text-slate-700 outline-none hover:bg-slate-100 focus:bg-slate-100"
       }
       onSelect={onSelect}
     >

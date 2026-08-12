@@ -249,3 +249,56 @@ fn delete_effect_requires_write_access_and_the_matching_permission() {
         .validate()
         .unwrap();
 }
+
+#[test]
+fn directory_workspace_provider_has_an_exclusive_read_only_frame_contract() {
+    let mut document = manifest_document();
+    document["capabilities"]["resource_actions"] = serde_json::json!([]);
+    document["capabilities"]["directory_actions"] = serde_json::json!([{
+        "id": "example.plugin.workspace",
+        "provides": "workspace",
+        "label": "Custom workspace",
+        "handler": "render_workspace",
+        "applies_to": {"kinds": ["example:collection"]},
+        "access": "read",
+        "requires": {"children": true, "resources": true},
+        "output": {"views": ["plugin_frame", "json"]},
+        "ui": {"locations": ["directory_workspace"]}
+    }]);
+    document["permissions"]["allow"] = serde_json::json!([
+        "directory.read",
+        "directory.children.list",
+        "directory.resources.list"
+    ]);
+
+    serde_json::from_value::<PluginManifest>(document.clone())
+        .unwrap()
+        .validate()
+        .unwrap();
+
+    let mut mixed_locations = document.clone();
+    mixed_locations["capabilities"]["directory_actions"][0]["ui"]["locations"] =
+        serde_json::json!(["directory_workspace", "directory_context_menu"]);
+    assert!(
+        serde_json::from_value::<PluginManifest>(mixed_locations)
+            .unwrap()
+            .validate()
+            .unwrap_err()
+            .contains("use only directory_workspace")
+    );
+
+    document["capabilities"]["directory_actions"][0]["access"] = serde_json::json!("write");
+    document["permissions"]["allow"] = serde_json::json!([
+        "directory.read",
+        "directory.write",
+        "directory.children.list",
+        "directory.resources.list"
+    ]);
+    assert!(
+        serde_json::from_value::<PluginManifest>(document)
+            .unwrap()
+            .validate()
+            .unwrap_err()
+            .contains("workspace provider must be read-only")
+    );
+}

@@ -37,16 +37,19 @@ export function CoreTextEditor({
   }
 
   return (
-    <form className="grid gap-4 p-6" onSubmit={save}>
+    <form className="grid gap-4 bg-slate-50/50 p-6" onSubmit={save}>
       <Textarea
         aria-label="Text content"
-        className="min-h-[50vh] font-mono leading-6"
+        className="min-h-[50vh] bg-white font-mono leading-6 shadow-sm"
         value={text}
         disabled={saving}
         onChange={(event) => setText(event.target.value)}
       />
       {error ? (
-        <p className="text-sm text-red-700" role="alert">
+        <p
+          className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700"
+          role="alert"
+        >
           {error}
         </p>
       ) : null}

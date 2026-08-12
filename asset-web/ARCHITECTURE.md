@@ -7,7 +7,7 @@
 - 领域对象不感知 HTTP、React 或后端 DTO。
 - 功能代码面向 `AssetGateway` 端口，不直接调用 `fetch`。
 - OpenAPI 类型只存在于 HTTP 基础设施适配器内。
-- 插件通过资源 action、稳定插槽和通用 view 协议进入宿主。
+- 插件通过 action、顶层 Directory workspace 交接点和通用 view 协议进入宿主。
 - `main.tsx` 是唯一组装具体实现的 composition root。
 
 依赖方向如下：
@@ -69,14 +69,27 @@ action 和用户授权能力。Feature 只知道这个接口。
 
 ### `kernel`
 
-微内核只管理两件事：
+微内核只管理三件事：
 
 - view kind 到 React renderer 的注册表。
-- resource/directory action 到稳定宿主 slot 的选择、排序和回退。
+- `directory_workspace` 的最近 Kind singleton Provider 选择。
+- `CoreDirectoryWorkspace` 内部 action slot 的选择、排序和回退。
 
 内核不认识 Markdown、EPUB、视频等具体插件。未知 slot 的 Resource action 会回退到
 `resource_context_menu`，未知 slot 的 Directory action 会回退到
 `directory_context_menu`，避免插件 action 因宿主版本较旧而完全不可访问。
+
+`directory_workspace` 是 Host 唯一的顶层 Directory UI 交接点。没有 `workspace` Provider
+时挂载 `CoreDirectoryWorkspace`；存在 Provider 时，Host 不挂载 Core 工作区，而将完整内容
+画布交给插件的内联 `plugin_frame`。`directory_context_menu`、`directory_thumbnail`、
+`resource_context_menu` 和 `resource_thumbnail` 都属于 Core 工作区内部，不会穿透 iframe。
+第三方工作区的内部插槽完全由插件自行定义和实现。
+
+路径面包屑和当前 Directory 的 kind 编辑器属于 Host 外壳，位于 `directory_workspace`
+之外，因此不会随 Core 工作区一起被替换。面包屑与 Asset Hub 标题同处主标题栏；kind
+编辑器位于标题栏和 workspace 之间。非根目录修改 kind 走带 revision 的 Directory 更新
+端口；成功后刷新 listing，新的 kind、Actions 和最近 `workspace` Provider 会一起重新解析。
+根目录沿用 Core 的不可变元数据约束，不能修改 kind。
 
 ### `plugins`
 
@@ -88,6 +101,8 @@ action 和用户授权能力。Feature 只知道这个接口。
 - `frame-host` 通过 Penpal 暴露窄能力接口；公共 Web SDK 隐藏传输细节。iframe 只能调用当前
   资源已经暴露的 action，且只有由当前 `text_edit` provider 打开的读写 frame 才能请求替换
   当前资源文本。
+- `directory-frame-host` 将连接绑定到当前 Directory，只允许执行该 Directory 已暴露的
+  Action、刷新当前 Directory 和请求 Host 导航；不暴露 Core 工作区组件或插槽。
 
 Markdown 和媒体播放器均按需加载，不进入基础首屏包。
 
@@ -151,6 +166,21 @@ ResourceWorkspace
   → DTO 映射为 Resource domain model
   → TanStack Query 更新缓存
   → React 重新渲染
+```
+
+Directory 工作区所有权链路：
+
+```text
+ResourceWorkspace Host shell
+  ├─ Primary header
+  │    ├─ Asset Hub 标题
+  │    └─ 路径面包屑
+  ├─ Directory kind 编辑器
+  └─ DirectoryWorkspaceOutlet
+       ├─ 无 workspace Provider → CoreDirectoryWorkspace
+       │    └─ 四个 Core 内部 action slot
+       └─ 最近 Kind workspace Provider → plugin_frame
+            └─ 插件完全拥有 iframe 内部 UI
 ```
 
 Resource 与 Directory action 都是扁平数组，使用 `read` / `write` access，并通过

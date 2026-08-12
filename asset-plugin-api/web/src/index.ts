@@ -3,6 +3,7 @@ import { CallOptions, connect, WindowMessenger } from "penpal";
 export const PLUGIN_API_VERSION = "asset-hub.plugin-api@3";
 
 const FRAME_CHANNEL = "asset-hub.plugin-frame@3";
+const DIRECTORY_FRAME_CHANNEL = "asset-hub.plugin-directory-frame@3";
 const defaultConnectionTimeoutMs = 10_000;
 const defaultCallTimeoutMs = 30_000;
 
@@ -40,6 +41,14 @@ export interface ResourceActionOutput {
   diagnostics: PluginDiagnostic[];
 }
 
+export interface DirectoryActionOutput {
+  directoryId: string;
+  action: string;
+  view: PluginView | null;
+  effects: Array<"update" | "create_child" | "delete">;
+  diagnostics: PluginDiagnostic[];
+}
+
 interface AssetHubFrameHost extends Record<string, (...args: never[]) => unknown> {
   executeResourceAction(action: string, input?: JsonObject): Promise<ResourceActionOutput>;
   replaceResourceText(text: string): Promise<void>;
@@ -48,6 +57,19 @@ interface AssetHubFrameHost extends Record<string, (...args: never[]) => unknown
 export interface AssetHubFrameClient {
   executeResourceAction(action: string, input?: JsonObject): Promise<ResourceActionOutput>;
   replaceResourceText(text: string): Promise<void>;
+  disconnect(): void;
+}
+
+interface AssetHubDirectoryFrameHost extends Record<string, (...args: never[]) => unknown> {
+  executeDirectoryAction(action: string, input?: JsonObject): Promise<DirectoryActionOutput>;
+  refreshDirectory(): Promise<void>;
+  navigateToDirectory(path: string): Promise<void>;
+}
+
+export interface AssetHubDirectoryFrameClient {
+  executeDirectoryAction(action: string, input?: JsonObject): Promise<DirectoryActionOutput>;
+  refreshDirectory(): Promise<void>;
+  navigateToDirectory(path: string): Promise<void>;
   disconnect(): void;
 }
 
@@ -92,6 +114,53 @@ export async function connectAssetHubFrame(
     },
     replaceResourceText(text) {
       return host.replaceResourceText(text, new CallOptions({ timeout: callTimeoutMs }));
+    },
+    disconnect() {
+      connection.destroy();
+    },
+  };
+}
+
+/** Connects a Directory workspace iframe to capabilities bound to its current Directory. */
+export async function connectAssetHubDirectoryFrame(
+  options: AssetHubFrameConnectionOptions = {},
+): Promise<AssetHubDirectoryFrameClient> {
+  if (window.parent === window) {
+    throw new Error("Asset Hub Directory Plugin Web SDK must run inside a plugin frame.");
+  }
+  const connectionTimeoutMs = positiveTimeout(
+    options.connectionTimeoutMs,
+    defaultConnectionTimeoutMs,
+    "connectionTimeoutMs",
+  );
+  const callTimeoutMs = positiveTimeout(
+    options.callTimeoutMs,
+    defaultCallTimeoutMs,
+    "callTimeoutMs",
+  );
+  const messenger = new WindowMessenger({
+    remoteWindow: window.parent,
+    allowedOrigins: ["*"],
+  });
+  const connection = connect<AssetHubDirectoryFrameHost>({
+    messenger,
+    channel: DIRECTORY_FRAME_CHANNEL,
+    timeout: connectionTimeoutMs,
+  });
+  const host = await connection.promise;
+  return {
+    executeDirectoryAction(action, input) {
+      return host.executeDirectoryAction(
+        action,
+        input ?? {},
+        new CallOptions({ timeout: callTimeoutMs }),
+      );
+    },
+    refreshDirectory() {
+      return host.refreshDirectory(new CallOptions({ timeout: callTimeoutMs }));
+    },
+    navigateToDirectory(path) {
+      return host.navigateToDirectory(path, new CallOptions({ timeout: callTimeoutMs }));
     },
     disconnect() {
       connection.destroy();

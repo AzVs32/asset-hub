@@ -97,6 +97,17 @@ export function useResourceCommands() {
     },
     onError: handleMutationError,
   });
+  const updateDirectoryKind = useMutation({
+    mutationFn: ({ directory, kind }: { directory: Directory; kind: string }) => {
+      if (!directory.parentId) throw new Error("The root directory kind cannot be changed");
+      return gateway.updateDirectory(directory, { kind });
+    },
+    onSuccess: async (directory) => {
+      toast.success(`${directory.name} kind changed`);
+      await refresh();
+    },
+    onError: handleMutationError,
+  });
   const execute = useMutation({
     mutationFn: async ({ resource, action }: { resource: Resource; action: ResourceAction }) => ({
       resource,
@@ -140,6 +151,7 @@ export function useResourceCommands() {
     uploadProgress,
     restore,
     createFolder,
+    updateDirectoryKind,
     execute,
     executeDirectory,
     actionResult,

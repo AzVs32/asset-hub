@@ -2,7 +2,11 @@ import React from "react";
 import type { AssetGateway } from "@/application/ports/asset-gateway";
 import type { PluginView, PluginViewKind, ResourceActionOutput } from "@/domain/plugin";
 import type { Directory, DirectoryAction, Resource, ResourceAction } from "@/domain/resource";
-import { type HostSlot, hostSlots } from "./slots";
+import {
+  type CoreDirectoryWorkspaceSlot,
+  coreDirectoryWorkspaceSlots,
+  directoryWorkspaceOutlet,
+} from "./slots";
 
 export interface PluginViewRendererProps {
   view: PluginView;
@@ -27,14 +31,17 @@ export class PluginKernel {
     return this.#viewRenderers.get(kind) ?? null;
   }
 
-  actionsAt(resource: Resource, slot: HostSlot): ResourceAction[] {
+  resourceActionsAtCoreSlot(
+    resource: Resource,
+    slot: CoreDirectoryWorkspaceSlot,
+  ): ResourceAction[] {
     return sortActions(
       resource.actions.filter((action) => {
         if (action.ui.locations.includes(slot)) return true;
-        if (slot !== hostSlots.resourceContextMenu) return false;
+        if (slot !== coreDirectoryWorkspaceSlots.resourceContextMenu) return false;
         return (
           action.ui.locations.length === 0 ||
-          action.ui.locations.every((location) => !knownSlots.has(location as HostSlot))
+          action.ui.locations.every((location) => !knownHostLocations.has(location))
         );
       }),
     );
@@ -42,20 +49,23 @@ export class PluginKernel {
 
   thumbnailAction(resource: Resource): ResourceAction | null {
     return (
-      this.actionsAt(resource, hostSlots.resourceThumbnail).find(
+      this.resourceActionsAtCoreSlot(resource, coreDirectoryWorkspaceSlots.resourceThumbnail).find(
         (action) => action.access === "read" && action.provides === "thumbnail",
       ) ?? null
     );
   }
 
-  directoryActionsAt(directory: Directory, slot: HostSlot): DirectoryAction[] {
+  directoryActionsAtCoreSlot(
+    directory: Directory,
+    slot: CoreDirectoryWorkspaceSlot,
+  ): DirectoryAction[] {
     return sortActions(
       directory.actions.filter((action) => {
         if (action.ui.locations.includes(slot)) return true;
-        if (slot !== hostSlots.directoryContextMenu) return false;
+        if (slot !== coreDirectoryWorkspaceSlots.directoryContextMenu) return false;
         return (
           action.ui.locations.length === 0 ||
-          action.ui.locations.every((location) => !knownSlots.has(location as HostSlot))
+          action.ui.locations.every((location) => !knownHostLocations.has(location))
         );
       }),
     );
@@ -63,14 +73,31 @@ export class PluginKernel {
 
   directoryThumbnailAction(directory: Directory): DirectoryAction | null {
     return (
-      this.directoryActionsAt(directory, hostSlots.directoryThumbnail).find(
-        (action) => action.access === "read" && action.provides === "thumbnail",
+      this.directoryActionsAtCoreSlot(
+        directory,
+        coreDirectoryWorkspaceSlots.directoryThumbnail,
+      ).find((action) => action.access === "read" && action.provides === "thumbnail") ?? null
+    );
+  }
+
+  directoryWorkspaceAction(directory: Directory): DirectoryAction | null {
+    return (
+      directory.actions.find(
+        (action) =>
+          action.provides === "workspace" &&
+          action.access === "read" &&
+          action.output.views.includes("plugin_frame") &&
+          action.output.effects.length === 0 &&
+          action.ui.locations.includes(directoryWorkspaceOutlet),
       ) ?? null
     );
   }
 }
 
-const knownSlots = new Set<HostSlot>(Object.values(hostSlots));
+const knownHostLocations = new Set<string>([
+  directoryWorkspaceOutlet,
+  ...Object.values(coreDirectoryWorkspaceSlots),
+]);
 
 function sortActions<T extends ResourceAction | DirectoryAction>(actions: T[]): T[] {
   return [...actions].sort(

@@ -3,6 +3,7 @@ import { useGateway } from "@/application/ports/gateway-context";
 import type { DirectoryActionOutput, PluginView } from "@/domain/plugin";
 import type { Directory, DirectoryAction } from "@/domain/resource";
 import { Dialog } from "@/shared/ui/dialog";
+import { DirectoryPluginFrame } from "./directory-plugin-frame";
 
 export interface DirectoryActionResult {
   directory: Directory;
@@ -13,9 +14,13 @@ export interface DirectoryActionResult {
 export function DirectoryActionDialog({
   result,
   onClose,
+  onDirectoryChanged,
+  onNavigate,
 }: {
   result: DirectoryActionResult | null;
   onClose: () => void;
+  onDirectoryChanged?: (() => void | Promise<void>) | undefined;
+  onNavigate?: ((path: string) => void | Promise<void>) | undefined;
 }) {
   return (
     <Dialog
@@ -30,20 +35,37 @@ export function DirectoryActionDialog({
       {result ? (
         <div>
           {result.output.diagnostics.length ? (
-            <div className="border-b border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+            <div className="m-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950 shadow-sm">
               {result.output.diagnostics.map((item) => (
                 <p key={`${item.code}:${item.message}`}>{item.message}</p>
               ))}
             </div>
           ) : null}
-          {result.output.view ? <DirectoryView view={result.output.view} /> : null}
+          {result.output.view ? (
+            <DirectoryView
+              result={result}
+              view={result.output.view}
+              onDirectoryChanged={onDirectoryChanged}
+              onNavigate={onNavigate}
+            />
+          ) : null}
         </div>
       ) : null}
     </Dialog>
   );
 }
 
-function DirectoryView({ view }: { view: PluginView }) {
+function DirectoryView({
+  result,
+  view,
+  onDirectoryChanged,
+  onNavigate,
+}: {
+  result: DirectoryActionResult;
+  view: PluginView;
+  onDirectoryChanged?: (() => void | Promise<void>) | undefined;
+  onNavigate?: ((path: string) => void | Promise<void>) | undefined;
+}) {
   const gateway = useGateway();
   if (view.view === "text")
     return <pre className="whitespace-pre-wrap p-5 text-sm">{view.text}</pre>;
@@ -69,15 +91,17 @@ function DirectoryView({ view }: { view: PluginView }) {
       />
     );
   if (view.view === "plugin_frame") {
-    const source = gateway.assetUrl(view.url);
-    return source ? (
-      <iframe
+    return (
+      <DirectoryPluginFrame
+        directory={result.directory}
+        output={result.output}
+        view={view}
+        gateway={gateway}
+        onDirectoryChanged={onDirectoryChanged}
+        onNavigate={onNavigate}
         className="block h-[70vh] min-h-96 w-full border-0"
-        sandbox="allow-scripts"
-        src={source}
-        title={view.title ?? "Directory plugin"}
       />
-    ) : null;
+    );
   }
   if (view.view === "download") {
     const source = gateway.assetUrl(view.url);

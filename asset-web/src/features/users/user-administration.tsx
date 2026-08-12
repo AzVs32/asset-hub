@@ -63,19 +63,19 @@ export function UserAdministration({
       description="Accounts and automatically assigned workspace boundaries."
       className="max-w-4xl"
     >
-      <div className="grid gap-7 p-6">
+      <div className="grid gap-7 bg-slate-50/50 p-6">
         {users.isPending ? <LoadingState label="Loading users" compact /> : null}
         {users.isError ? <ErrorState error={users.error} compact /> : null}
         <div className="grid gap-2">
           {users.data?.map((user) => (
             <div
-              className="grid items-center gap-3 rounded-xl border border-slate-200 p-3 sm:grid-cols-[minmax(150px,1fr)_7rem_9rem]"
+              className="grid items-center gap-3 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm sm:grid-cols-[minmax(150px,1fr)_7rem_9rem]"
               key={user.id}
             >
               <div className="min-w-0">
                 <strong className="text-sm text-slate-900">{user.username}</strong>
                 {user.id === currentUserId ? (
-                  <span className="ml-2 rounded-full bg-blue-50 px-2 py-0.5 text-[11px] text-blue-700">
+                  <span className="ml-2 rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700 ring-1 ring-indigo-100">
                     You
                   </span>
                 ) : null}
@@ -100,10 +100,13 @@ export function UserAdministration({
         </div>
 
         <form
-          className="grid gap-4 border-t border-slate-200 pt-6 sm:grid-cols-2"
+          className="grid gap-4 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm sm:grid-cols-2"
           onSubmit={newUser.handleSubmit((input) => createUser.mutate(input))}
         >
-          <h3 className="font-semibold text-slate-900 sm:col-span-2">Create user</h3>
+          <div className="sm:col-span-2">
+            <h3 className="font-bold tracking-[-0.02em] text-slate-900">Create user</h3>
+            <p className="mt-1 text-xs text-slate-500">Add an account with its own workspace.</p>
+          </div>
           <Field label="Username">
             <Input {...newUser.register("username", { required: true })} />
           </Field>
@@ -116,7 +119,7 @@ export function UserAdministration({
           </Field>
           <label className="flex items-center gap-2 self-end pb-3 text-sm font-medium text-slate-700">
             <input
-              className="size-4 accent-blue-600"
+              className="size-4 accent-indigo-600"
               type="checkbox"
               {...newUser.register("isAdmin")}
             />

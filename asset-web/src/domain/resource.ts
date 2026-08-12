@@ -125,10 +125,10 @@ export interface ResourceDraft {
   kind: string;
 }
 
-export interface DirectoryDraft {
-  name: string;
-  parentId: string;
-  kind: string;
+export interface DirectoryPatch {
+  name?: string;
+  parentId?: string;
+  kind?: string;
 }
 
 export interface UploadDraft {

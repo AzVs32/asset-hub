@@ -10,6 +10,9 @@ use super::validation::ensure_unique_scoped_action;
 use crate::builtin_catalog::THUMBNAIL_CAPABILITY;
 
 const DIRECTORY_THUMBNAIL_LOCATION: &str = "directory_thumbnail";
+const DIRECTORY_WORKSPACE_LOCATION: &str = "directory_workspace";
+const WORKSPACE_CAPABILITY: &str = "workspace";
+const DIRECTORY_CAPABILITIES: &[&str] = &[THUMBNAIL_CAPABILITY, WORKSPACE_CAPABILITY];
 
 #[derive(Debug, Clone, Default)]
 pub struct DefaultDirectoryActionRegistry {
@@ -57,7 +60,7 @@ pub(super) fn validate_directory_action_capabilities(
     for action in actions {
         if let Some(capability) = action
             .provides()
-            .filter(|capability| capability.as_str() != THUMBNAIL_CAPABILITY)
+            .filter(|capability| !DIRECTORY_CAPABILITIES.contains(&capability.as_str()))
         {
             return Err(CoreError::configuration(format!(
                 "directory action `{}` provides unsupported capability `{capability}`",
@@ -87,32 +90,66 @@ pub(super) fn validate_directory_action_capabilities(
                 action.id()
             )));
         }
+        let in_workspace_slot = action
+            .ui()
+            .locations
+            .iter()
+            .any(|location| location == DIRECTORY_WORKSPACE_LOCATION);
+        let provides_workspace = action
+            .provides()
+            .is_some_and(|capability| capability.as_str() == WORKSPACE_CAPABILITY);
+        if in_workspace_slot != provides_workspace {
+            return Err(CoreError::configuration(format!(
+                "directory action `{}` must pair `{DIRECTORY_WORKSPACE_LOCATION}` with capability `{WORKSPACE_CAPABILITY}`",
+                action.id()
+            )));
+        }
+        if provides_workspace
+            && (action.access() != ActionAccess::Read
+                || !action
+                    .output()
+                    .views
+                    .iter()
+                    .any(|view| view == "plugin_frame")
+                || !action.output().effects.is_empty()
+                || action.ui().locations.as_slice() != [DIRECTORY_WORKSPACE_LOCATION])
+        {
+            return Err(CoreError::configuration(format!(
+                "directory workspace provider `{}` must be read-only, support `plugin_frame`, declare no effects, and use only `{DIRECTORY_WORKSPACE_LOCATION}`",
+                action.id()
+            )));
+        }
     }
     for definition in kinds.definitions() {
-        validate_nearest_directory_thumbnail_provider(
-            definition.kind().as_str(),
-            &kinds
-                .lineage(definition.kind())
-                .iter()
-                .map(|kind| kind.as_str())
-                .collect::<Vec<_>>(),
-            actions,
-        )?;
+        let kind_lineage = kinds.lineage(definition.kind());
+        let lineage = kind_lineage
+            .iter()
+            .map(|kind| kind.as_str())
+            .collect::<Vec<_>>();
+        for capability in DIRECTORY_CAPABILITIES {
+            validate_nearest_directory_capability_provider(
+                definition.kind().as_str(),
+                &lineage,
+                actions,
+                capability,
+            )?;
+        }
     }
     Ok(())
 }
 
-fn validate_nearest_directory_thumbnail_provider(
+fn validate_nearest_directory_capability_provider(
     kind: &str,
     lineage: &[&str],
     actions: &[DirectoryActionDefinition],
+    capability: &str,
 ) -> Result<(), CoreError> {
     let mut nearest = None;
     let mut providers = Vec::new();
     for action in actions.iter().filter(|action| {
         action
             .provides()
-            .is_some_and(|capability| capability.as_str() == THUMBNAIL_CAPABILITY)
+            .is_some_and(|provided| provided.as_str() == capability)
     }) {
         let distance = if action.kinds().is_empty() {
             usize::MAX
@@ -142,7 +179,7 @@ fn validate_nearest_directory_thumbnail_provider(
     }
     if providers.len() > 1 {
         return Err(CoreError::configuration(format!(
-            "directory kind `{kind}` has multiple nearest `{THUMBNAIL_CAPABILITY}` providers: {}",
+            "directory kind `{kind}` has multiple nearest `{capability}` providers: {}",
             providers.join(", ")
         )));
     }

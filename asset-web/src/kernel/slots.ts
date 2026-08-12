@@ -1,35 +1,40 @@
-export const hostSlots = {
+/** The single Host-owned handoff point for an entire Directory workspace. */
+export const directoryWorkspaceOutlet = "directory_workspace" as const;
+
+/** Slots owned by the built-in CoreDirectoryWorkspace implementation only. */
+export const coreDirectoryWorkspaceSlots = {
   resourceContextMenu: "resource_context_menu",
   resourceThumbnail: "resource_thumbnail",
   directoryContextMenu: "directory_context_menu",
   directoryThumbnail: "directory_thumbnail",
 } as const;
 
-export type HostSlot = (typeof hostSlots)[keyof typeof hostSlots];
+export type CoreDirectoryWorkspaceSlot =
+  (typeof coreDirectoryWorkspaceSlots)[keyof typeof coreDirectoryWorkspaceSlots];
 
-export const hostSlotCatalog: ReadonlyArray<{
-  id: HostSlot;
+export const coreDirectoryWorkspaceSlotCatalog: ReadonlyArray<{
+  id: CoreDirectoryWorkspaceSlot;
   behavior: "menu" | "automatic_view";
   description: string;
 }> = [
   {
-    id: hostSlots.directoryContextMenu,
+    id: coreDirectoryWorkspaceSlots.directoryContextMenu,
     behavior: "menu",
-    description: "Entries in a directory row context menu.",
+    description: "Entries in a CoreDirectoryWorkspace directory-row context menu.",
   },
   {
-    id: hostSlots.directoryThumbnail,
+    id: coreDirectoryWorkspaceSlots.directoryThumbnail,
     behavior: "automatic_view",
-    description: "Read-only view used as the directory thumbnail.",
+    description: "Directory thumbnail rendered by CoreDirectoryWorkspace.",
   },
   {
-    id: hostSlots.resourceContextMenu,
+    id: coreDirectoryWorkspaceSlots.resourceContextMenu,
     behavior: "menu",
-    description: "Entries in a resource row context menu.",
+    description: "Entries in a CoreDirectoryWorkspace resource-row context menu.",
   },
   {
-    id: hostSlots.resourceThumbnail,
+    id: coreDirectoryWorkspaceSlots.resourceThumbnail,
     behavior: "automatic_view",
-    description: "Read-only view used as the resource thumbnail.",
+    description: "Resource thumbnail rendered by CoreDirectoryWorkspace.",
   },
 ];

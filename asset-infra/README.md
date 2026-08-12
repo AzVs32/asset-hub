@@ -72,8 +72,10 @@ The fixed generic artwork lives in `assets/thumbnails/resource.svg` and
 `assets/thumbnails/directory.svg`. `include_str!` embeds both files into the Host binary at compile
 time; deployment does not need to copy them as separate runtime files.
 External actions retain their provider-owned IDs and may provide a Host-recognized capability for a
-more specific kind. Resource actions recognize `thumbnail`, `text_read`, and `text_edit`; directory
-actions recognize only `thumbnail`. Resource resolution filters content requirements and matchers
+more specific kind. Resource actions recognize `thumbnail`, `text_read`, and `text_edit`; Directory
+actions recognize `thumbnail` and `workspace`. A Directory `workspace` provider is read-only,
+effect-free, supports `plugin_frame`, and pairs capability `workspace` with the
+exclusive `directory_workspace` location. Resource resolution filters content requirements and matchers
 before selecting the nearest provider. Registry startup rejects unsupported capabilities, automatic
 thumbnail-slot actions that do not provide `thumbnail`, and tied nearest providers.
 When a plugin Resource capability provider omits its Manifest label, catalog assembly inherits the

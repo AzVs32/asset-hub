@@ -412,10 +412,10 @@ var e = class extends Error {
 	#f = ({ data: e }) => {
 		if (this.#r?.(e)) for (let t of this.#a) t(e);
 	};
-}, z = "asset-hub.plugin-api@3", B = "asset-hub.plugin-frame@3", V = 1e4, H = 3e4;
-async function U(e = {}) {
+}, z = "asset-hub.plugin-api@3", B = "asset-hub.plugin-frame@3", V = "asset-hub.plugin-directory-frame@3", H = 1e4, U = 3e4;
+async function W(e = {}) {
 	if (window.parent === window) throw Error("Asset Hub Plugin Web SDK must run inside a plugin frame.");
-	let t = W(e.connectionTimeoutMs, V, "connectionTimeoutMs"), n = W(e.callTimeoutMs, H, "callTimeoutMs"), r = L({
+	let t = K(e.connectionTimeoutMs, H, "connectionTimeoutMs"), n = K(e.callTimeoutMs, U, "callTimeoutMs"), r = L({
 		messenger: new R({
 			remoteWindow: window.parent,
 			allowedOrigins: ["*"]
@@ -436,12 +436,37 @@ async function U(e = {}) {
 		}
 	};
 }
-function W(e, t, n) {
+async function G(e = {}) {
+	if (window.parent === window) throw Error("Asset Hub Directory Plugin Web SDK must run inside a plugin frame.");
+	let t = K(e.connectionTimeoutMs, H, "connectionTimeoutMs"), n = K(e.callTimeoutMs, U, "callTimeoutMs"), r = L({
+		messenger: new R({
+			remoteWindow: window.parent,
+			allowedOrigins: ["*"]
+		}),
+		channel: V,
+		timeout: t
+	}), i = await r.promise;
+	return {
+		executeDirectoryAction(e, t) {
+			return i.executeDirectoryAction(e, t ?? {}, new b({ timeout: n }));
+		},
+		refreshDirectory() {
+			return i.refreshDirectory(new b({ timeout: n }));
+		},
+		navigateToDirectory(e) {
+			return i.navigateToDirectory(e, new b({ timeout: n }));
+		},
+		disconnect() {
+			r.destroy();
+		}
+	};
+}
+function K(e, t, n) {
 	if (e === void 0) return t;
 	if (!Number.isSafeInteger(e) || e <= 0) throw TypeError(`${n} must be a positive safe integer.`);
 	return e;
 }
 //#endregion
-export { z as PLUGIN_API_VERSION, U as connectAssetHubFrame };
+export { z as PLUGIN_API_VERSION, G as connectAssetHubDirectoryFrame, W as connectAssetHubFrame };
 
 //# sourceMappingURL=asset-hub-plugin.js.map
