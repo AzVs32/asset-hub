@@ -4,7 +4,7 @@
   "plugin": {
     "id": "azvs.directory.hello",
     "name": "Hello Directory",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "publisher": "azvs",
     "description": "Minimal Directory workspace plugin with a static greeting."
   },
@@ -22,6 +22,31 @@
       }
     ],
     "directory_actions": [
+      {
+        "id": "azvs.directory.hello.thumbnail",
+        "provides": "thumbnail",
+        "label": "Hello thumbnail",
+        "description": "Display the Hello Directory thumbnail.",
+        "handler": "render_thumbnail",
+        "applies_to": {
+          "kinds": [
+            "azvs:directory.hello"
+          ]
+        },
+        "access": "read",
+        "output": {
+          "views": [
+            "media"
+          ]
+        },
+        "ui": {
+          "group": "preview",
+          "order": 10,
+          "locations": [
+            "directory_thumbnail"
+          ]
+        }
+      },
       {
         "id": "azvs.directory.hello.workspace",
         "provides": "workspace",
@@ -55,4 +80,3 @@
     ]
   }
 }
-

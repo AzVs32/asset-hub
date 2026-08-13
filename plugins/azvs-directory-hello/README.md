@@ -8,15 +8,17 @@ intended as a reference for a Directory Kind that completely owns its internal w
 - Plugin ID: `azvs.directory.hello`
 - Directory Kind: `azvs:directory.hello`
 - Parent Kind: `core:directory`
+- Thumbnail action: `azvs.directory.hello.thumbnail` (`render_thumbnail`)
 - Workspace action: `azvs.directory.hello.workspace` (`render_workspace`)
-- Provided capability: `workspace`
-- Output view: `plugin_frame`
-- UI location: `directory_workspace`
+- Provided capabilities: `thumbnail` and `workspace`
+- Output views: `media` and `plugin_frame`
+- UI locations: `directory_thumbnail` and `directory_workspace`
 - Permission: `directory.read`
 
-The Wasm handler validates the Directory Action request and returns `index.html` as a plugin frame.
-The page is deliberately static: it does not connect to the Directory Frame Bridge, list children,
-read resources, or request any write permission.
+The thumbnail handler returns a self-contained blue SVG and replaces the inherited Core Directory
+thumbnail for `azvs:directory.hello`. The workspace handler validates the Directory Action request
+and returns `index.html` as a plugin frame. The page is deliberately static: it does not connect to
+the Directory Frame Bridge, list children, read resources, or request any write permission.
 
 ## Build
 

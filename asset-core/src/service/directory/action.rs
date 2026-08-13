@@ -40,20 +40,8 @@ impl DirectoryService {
     }
 
     pub fn describe_actions(&self, directory: &Directory) -> Result<DirectoryActions, CoreError> {
-        self.require_kind_registered(directory.kind())?;
         Ok(DirectoryActions::new(
-            self.describe_kind_actions(directory.kind())
-                .into_iter()
-                .filter(|action| {
-                    action.matches_directory(directory.kind().as_str())
-                        && !(directory.id().is_root()
-                            && action
-                                .output()
-                                .effects
-                                .iter()
-                                .any(|effect| effect == "delete"))
-                })
-                .collect(),
+            self.available_actions_for_directory(directory)?,
         ))
     }
 
@@ -62,13 +50,34 @@ impl DirectoryService {
         directory: &Directory,
         action_id: &DirectoryActionId,
     ) -> Result<DirectoryActionDefinition, CoreError> {
-        self.describe_kind_actions(directory.kind())
+        self.available_actions_for_directory(directory)?
             .into_iter()
-            .find(|action| {
-                action.id().as_str() == action_id.as_str()
-                    && action.matches_directory(directory.kind().as_str())
-            })
+            .find(|action| action.id().as_str() == action_id.as_str())
             .ok_or_else(|| CoreError::unsupported("directory action", action_id.to_string()))
+    }
+
+    /// Resolve the authoritative action set for one Directory instance.
+    ///
+    /// `describe_kind_actions` has already selected definitions through the complete kind lineage
+    /// and resolved nearest singleton providers. Rechecking a selected definition against only the
+    /// concrete child kind would incorrectly discard inherited ancestor actions.
+    fn available_actions_for_directory(
+        &self,
+        directory: &Directory,
+    ) -> Result<Vec<DirectoryActionDefinition>, CoreError> {
+        self.require_kind_registered(directory.kind())?;
+        Ok(self
+            .describe_kind_actions(directory.kind())
+            .into_iter()
+            .filter(|action| {
+                !(directory.id().is_root()
+                    && action
+                        .output()
+                        .effects
+                        .iter()
+                        .any(|effect| effect == "delete"))
+            })
+            .collect())
     }
 
     pub async fn execute_action(

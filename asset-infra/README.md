@@ -78,6 +78,9 @@ effect-free, supports `plugin_frame`, and pairs capability `workspace` with the
 exclusive `directory_workspace` location. Resource resolution filters content requirements and matchers
 before selecting the nearest provider. Registry startup rejects unsupported capabilities, automatic
 thumbnail-slot actions that do not provide `thumbnail`, and tied nearest providers.
+Ordinary Resource and Directory actions declared on an ancestor kind are inherited by its
+descendants. Directory action discovery and execution use the same lineage-resolved set, so an
+inherited action does not need to repeat every descendant kind in its declaration.
 When a plugin Resource capability provider omits its Manifest label, catalog assembly inherits the
 normalized label from the nearest ancestor provider for that capability; an explicit label remains
 an override, and a missing ancestor is a startup error. The built-in `text_read` and `text_edit`

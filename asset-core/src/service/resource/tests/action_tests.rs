@@ -1,5 +1,128 @@
 use super::*;
-use crate::domain::ResourceActionId;
+use crate::domain::{
+    ActionOutputContract, ActionUi, DirectoryActionId, DirectoryKind, ResourceActionId,
+};
+
+fn directory_service_with_inherited_actions() -> crate::service::DirectoryService {
+    let repository = Arc::new(InMemoryResourceRepository::default());
+    let storage = Arc::new(InMemoryBlobStorage::default());
+    let core_kind = DirectoryKind::default();
+    let hello_kind = DirectoryKind::try_new("azvs:directory.hello").unwrap();
+    let kinds = Arc::new(InMemoryDirectoryKindRegistry {
+        definitions: vec![
+            DirectoryKindDefinition::new(
+                core_kind.clone(),
+                "Directory",
+                DefinitionOrigin::builtin_static("core.directory"),
+            ),
+            DirectoryKindDefinition::new(
+                hello_kind,
+                "Hello Directory",
+                DefinitionOrigin::plugin("azvs.directory.hello").unwrap(),
+            )
+            .with_parent(Some(core_kind)),
+        ],
+    });
+    let actions = Arc::new(InMemoryDirectoryActionRegistry {
+        actions: vec![
+            DirectoryActionDefinition::new_static("core.directory.download", "Download")
+                .with_kinds([DirectoryKind::DEFAULT]),
+            DirectoryActionDefinition::new_static("core.directory.delete", "Delete")
+                .with_access(ActionAccess::Write)
+                .with_kinds([DirectoryKind::DEFAULT])
+                .with_output(ActionOutputContract {
+                    views: Vec::new(),
+                    effects: vec!["delete".to_string()],
+                }),
+            DirectoryActionDefinition::new_static("core.directory.thumbnail", "Thumbnail")
+                .with_static_provides(Some("thumbnail"))
+                .with_kinds([DirectoryKind::DEFAULT])
+                .with_output(ActionOutputContract {
+                    views: vec!["media".to_string()],
+                    effects: Vec::new(),
+                })
+                .with_ui(ActionUi {
+                    locations: vec!["directory_thumbnail".to_string()],
+                    ..ActionUi::default()
+                }),
+            DirectoryActionDefinition::new_static(
+                "azvs.directory.hello.workspace",
+                "Hello workspace",
+            )
+            .with_static_provides(Some("workspace"))
+            .with_kinds(["azvs:directory.hello"])
+            .with_output(ActionOutputContract {
+                views: vec!["plugin_frame".to_string()],
+                effects: Vec::new(),
+            })
+            .with_ui(ActionUi {
+                locations: vec!["directory_workspace".to_string()],
+                ..ActionUi::default()
+            }),
+        ],
+    });
+
+    crate::service::DirectoryService::new(repository.clone(), repository, storage, kinds)
+        .with_actions(actions, Arc::new(StaticDirectoryActionExecutor))
+}
+
+#[test]
+fn directory_subkind_inherits_ancestor_actions_and_keeps_its_workspace() {
+    let service = directory_service_with_inherited_actions();
+    let directory = Directory::new_with_kind(
+        DirectoryId::root(),
+        "directory_demo",
+        DirectoryKind::try_new("azvs:directory.hello").unwrap(),
+    )
+    .unwrap();
+
+    let actions = service.describe_actions(&directory).unwrap();
+    let ids = actions
+        .available_actions()
+        .iter()
+        .map(|action| action.id().as_str())
+        .collect::<HashSet<_>>();
+
+    assert_eq!(
+        ids,
+        HashSet::from([
+            "azvs.directory.hello.workspace",
+            "core.directory.download",
+            "core.directory.delete",
+            "core.directory.thumbnail",
+        ])
+    );
+    let thumbnail = service
+        .resolve_action(
+            &directory,
+            &DirectoryActionId::from_static("core.directory.thumbnail"),
+        )
+        .unwrap();
+    assert_eq!(thumbnail.kinds(), [DirectoryKind::DEFAULT]);
+}
+
+#[test]
+fn root_directory_delete_is_neither_described_nor_resolvable() {
+    let service = directory_service_with_inherited_actions();
+    let root = Directory::root();
+    let delete = DirectoryActionId::from_static("core.directory.delete");
+
+    assert!(
+        service
+            .describe_actions(&root)
+            .unwrap()
+            .available_actions()
+            .iter()
+            .all(|action| action.id().as_str() != delete.as_str())
+    );
+    assert!(matches!(
+        service.resolve_action(&root, &delete),
+        Err(CoreError::Unsupported {
+            subject: "directory action",
+            ..
+        })
+    ));
+}
 
 #[test]
 fn action_content_delivery_never_loads_unrequested_content() {

@@ -156,7 +156,7 @@ impl BuiltinDirectoryActionExecutor {
             binding.definition.id().as_str() == request.action().as_str()
                 && binding
                     .definition
-                    .matches_directory(request.directory().directory().kind().as_str())
+                    .matches_exact_kind(request.directory().directory().kind().as_str())
         })
     }
 }
@@ -174,7 +174,7 @@ impl DirectoryActionExecutor for BuiltinDirectoryActionExecutor {
                 binding.definition.id().as_str() == request.action().as_str()
                     && binding
                         .definition
-                        .matches_directory(request.directory().directory().kind().as_str())
+                        .matches_exact_kind(request.directory().directory().kind().as_str())
             })
             .ok_or_else(|| {
                 CoreError::configuration(format!(

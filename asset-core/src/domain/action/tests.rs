@@ -38,9 +38,9 @@ fn directory_actions_share_the_common_shell_but_keep_directory_contracts() {
             resources: true,
         });
 
-    assert!(action.matches_directory("example:collection"));
-    assert!(!action.matches_directory("EXAMPLE:COLLECTION"));
-    assert!(!action.matches_directory("core:directory"));
+    assert!(action.matches_exact_kind("example:collection"));
+    assert!(!action.matches_exact_kind("EXAMPLE:COLLECTION"));
+    assert!(!action.matches_exact_kind("core:directory"));
     assert_eq!(action.access(), ActionAccess::Write);
     assert!(action.requirements().children);
 }

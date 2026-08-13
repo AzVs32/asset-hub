@@ -24,7 +24,11 @@ impl DirectoryActionAppliesTo {
     pub fn is_empty(&self) -> bool {
         self.kinds.is_empty()
     }
-    pub fn matches(&self, kind: &str) -> bool {
+    /// Match one exact kind after an adapter has expanded inherited applicability.
+    ///
+    /// Application-level inheritance is resolved from the Directory kind lineage by the action
+    /// registry; this predicate deliberately does not walk that lineage.
+    pub fn matches_exact_kind(&self, kind: &str) -> bool {
         self.kinds.is_empty() || self.kinds.iter().any(|expected| expected == kind)
     }
 }
@@ -172,7 +176,7 @@ impl DirectoryActionDefinition {
     pub fn kinds(&self) -> &[String] {
         self.applies_to.kinds()
     }
-    pub fn matches_directory(&self, kind: &str) -> bool {
-        self.applies_to.matches(kind)
+    pub fn matches_exact_kind(&self, kind: &str) -> bool {
+        self.applies_to.matches_exact_kind(kind)
     }
 }
