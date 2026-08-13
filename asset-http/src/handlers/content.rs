@@ -187,18 +187,19 @@ pub(crate) async fn download_directory(
         .map_err(|error| CoreError::storage("directory.archive.create", error))?;
     let (file, temporary_path) = temporary.into_parts();
     let mut archive = zip::ZipWriter::new(file);
-    let options = SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated)
-        .large_file(true);
+    let directory_options = SimpleFileOptions::default();
 
     for directory in manifest.directories() {
         archive
-            .add_directory(directory, options)
+            .add_directory(directory, directory_options)
             .map_err(|error| CoreError::storage("directory.archive.add_directory", error))?;
     }
     for entry in manifest.resources() {
+        let file_options = SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated)
+            .large_file(entry.content_length() > zip::ZIP64_BYTES_THR);
         archive
-            .start_file(entry.path(), options)
+            .start_file(entry.path(), file_options)
             .map_err(|error| CoreError::storage("directory.archive.start_file", error))?;
         let Some(content) = state
             .secured(&access.0)

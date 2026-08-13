@@ -195,10 +195,11 @@ impl<'a> SecuredResourceService<'a> {
                 let item_count = page.items.len() as u64;
                 resources.extend(page.items.into_iter().filter_map(|located| {
                     let resource = located.resource();
-                    resource.content().map(|_| {
+                    resource.content().map(|content| {
                         DirectoryArchiveResource::new(
                             resource.id(),
                             format!("{archive_path}/{}", resource.name()),
+                            content.size(),
                         )
                     })
                 }));

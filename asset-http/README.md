@@ -31,6 +31,10 @@ Core applies the effect through the existing authorized resource soft-delete or 
 delete use case. The dedicated `DELETE /resources/{id}` and `DELETE /directories/{id}` endpoints
 remain available as direct HTTP use cases.
 
+Directory downloads use ordinary ZIP entries for directories and resources up to 4 GiB. ZIP64 is
+enabled only for an individual resource that exceeds the ZIP32 size limit, keeping ordinary
+downloads compatible with desktop archive tools without removing large-resource support.
+
 ## Session storage boundary
 
 HTTP login sessions use a dedicated SQLite file and connection pool. The store never receives a

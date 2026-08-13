@@ -223,11 +223,16 @@ impl DirectoryArchiveManifest {
 pub struct DirectoryArchiveResource {
     resource_id: ResourceId,
     path: String,
+    content_length: u64,
 }
 
 impl DirectoryArchiveResource {
-    pub(super) fn new(resource_id: ResourceId, path: String) -> Self {
-        Self { resource_id, path }
+    pub(super) fn new(resource_id: ResourceId, path: String, content_length: u64) -> Self {
+        Self {
+            resource_id,
+            path,
+            content_length,
+        }
     }
 
     pub fn resource_id(&self) -> ResourceId {
@@ -236,5 +241,9 @@ impl DirectoryArchiveResource {
 
     pub fn path(&self) -> &str {
         &self.path
+    }
+
+    pub fn content_length(&self) -> u64 {
+        self.content_length
     }
 }

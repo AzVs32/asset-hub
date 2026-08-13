@@ -201,7 +201,28 @@ async fn directory_download_action_archives_nested_resources_and_empty_directori
             .contains("bundle.zip")
     );
     let body = to_bytes(response.into_body(), BODY_LIMIT).await.unwrap();
-    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(body)).unwrap();
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(body.clone())).unwrap();
+    for index in 0..archive.len() {
+        let entry = archive.by_index(index).unwrap();
+        let header_start = entry.header_start() as usize;
+        let name_length = u16::from_le_bytes(
+            body[header_start + 26..header_start + 28]
+                .try_into()
+                .unwrap(),
+        ) as usize;
+        let extra_length = u16::from_le_bytes(
+            body[header_start + 28..header_start + 30]
+                .try_into()
+                .unwrap(),
+        ) as usize;
+        let extra_start = header_start + 30 + name_length;
+        let extra = &body[extra_start..extra_start + extra_length];
+        assert!(
+            !zip_extra_fields(extra).any(|field_id| field_id == 0x0001),
+            "small archive entry `{}` must not require ZIP64",
+            entry.name()
+        );
+    }
     let mut names = (0..archive.len())
         .map(|index| archive.by_index(index).unwrap().name().to_string())
         .collect::<Vec<_>>();
@@ -230,6 +251,16 @@ async fn directory_download_action_archives_nested_resources_and_empty_directori
         .read_to_string(&mut nested)
         .unwrap();
     assert_eq!(nested, "nested-content");
+}
+
+fn zip_extra_fields(mut extra: &[u8]) -> impl Iterator<Item = u16> + '_ {
+    std::iter::from_fn(move || {
+        let header = extra.get(..4)?;
+        let field_id = u16::from_le_bytes(header[..2].try_into().unwrap());
+        let field_length = u16::from_le_bytes(header[2..].try_into().unwrap()) as usize;
+        extra = extra.get(4 + field_length..).unwrap_or_default();
+        Some(field_id)
+    })
 }
 
 #[tokio::test]
