@@ -97,7 +97,7 @@ fn plugin_commands_resolve_plugin_ids_from_the_configured_data_root() {
           "runtime": {
             "type": "extism",
             "wasi": false,
-            "plugin_api": "asset-hub.plugin-api@4"
+            "plugin_api": "asset-hub.plugin-api@5"
           },
           "capabilities": {
             "resource_kinds": [],

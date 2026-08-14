@@ -597,7 +597,7 @@ function resourceEffectKind(value: string): import("@/domain/resource").Resource
 }
 
 function directoryEffectKind(value: string): import("@/domain/resource").DirectoryActionEffectKind {
-  return enumValue(value, ["update", "create_child", "delete"]);
+  return enumValue(value, ["update", "create_child", "create_tree", "delete"]);
 }
 
 function mapDiagnostic(value: Schemas["PluginDiagnosticResponse"]): PluginDiagnostic {

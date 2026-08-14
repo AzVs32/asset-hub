@@ -67,6 +67,7 @@ impl PluginDirectoryActionOutput {
 pub enum DirectoryActionEffect {
     Update(UpdateDirectoryEffect),
     CreateChild(CreateChildDirectoryEffect),
+    CreateTree(CreateDirectoryTreeEffect),
     Delete,
 }
 
@@ -75,6 +76,7 @@ impl DirectoryActionEffect {
         match self {
             Self::Update(_) => "update",
             Self::CreateChild(_) => "create_child",
+            Self::CreateTree(_) => "create_tree",
             Self::Delete => "delete",
         }
     }
@@ -97,6 +99,50 @@ pub struct CreateChildDirectoryEffect {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
+}
+
+/// Creates a bounded set of relative directories and resources below the current Directory.
+///
+/// The Host validates all paths and kinds, applies user authorization, and compensates newly
+/// created entries when a later entry fails. File roles and required structure remain plugin
+/// policy rather than fields in the Manifest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreateDirectoryTreeEffect {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub directories: Vec<CreateTreeDirectory>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resources: Vec<CreateTreeResource>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreateTreeDirectory {
+    /// Canonical, non-empty path relative to the action's current Directory.
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreateTreeResource {
+    /// Canonical Directory path relative to the action's current Directory; empty means current.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub directory: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    pub encoding: CreateTreeResourceEncoding,
+    pub data: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CreateTreeResourceEncoding {
+    Base64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -140,7 +186,11 @@ pub struct PluginDirectoryResource {
 
 #[cfg(test)]
 mod tests {
-    use super::{DirectoryActionEffect, PluginDirectoryActionOutput, PluginDirectoryResourcePage};
+    use super::{
+        CreateDirectoryTreeEffect, CreateTreeDirectory, CreateTreeResource,
+        CreateTreeResourceEncoding, DirectoryActionEffect, PluginDirectoryActionOutput,
+        PluginDirectoryResourcePage,
+    };
 
     #[test]
     fn delete_effect_is_bound_to_the_current_directory() {
@@ -181,6 +231,43 @@ mod tests {
         assert_eq!(
             resource.content_ref.as_ref().unwrap().reference,
             "content:reference:call-scoped"
+        );
+    }
+
+    #[test]
+    fn create_tree_uses_relative_directory_and_resource_entries() {
+        let mut output = PluginDirectoryActionOutput::without_view();
+        output.effects.push(DirectoryActionEffect::CreateTree(
+            CreateDirectoryTreeEffect {
+                directories: vec![CreateTreeDirectory {
+                    path: "game/public".to_string(),
+                    kind: Some("core:directory".to_string()),
+                }],
+                resources: vec![CreateTreeResource {
+                    directory: "game".to_string(),
+                    name: "README.md".to_string(),
+                    kind: Some("core:text".to_string()),
+                    mime_type: Some("text/markdown".to_string()),
+                    encoding: CreateTreeResourceEncoding::Base64,
+                    data: "IyBHYW1l".to_string(),
+                }],
+            },
+        ));
+
+        assert_eq!(
+            serde_json::to_value(output).unwrap(),
+            serde_json::json!({"effects": [{
+                "type": "create_tree",
+                "directories": [{"path": "game/public", "kind": "core:directory"}],
+                "resources": [{
+                    "directory": "game",
+                    "name": "README.md",
+                    "kind": "core:text",
+                    "mime_type": "text/markdown",
+                    "encoding": "base64",
+                    "data": "IyBHYW1l"
+                }]
+            }]})
         );
     }
 }

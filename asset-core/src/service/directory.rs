@@ -140,6 +140,22 @@ impl DirectoryService {
         }
     }
 
+    fn kind_for_new_child(
+        &self,
+        parent_kind: &DirectoryKind,
+        requested_kind: DirectoryKind,
+    ) -> DirectoryKind {
+        if requested_kind == DirectoryKind::default() {
+            self.kind_registry
+                .get(parent_kind)
+                .and_then(DirectoryKindDefinition::default_child_kind)
+                .cloned()
+                .unwrap_or(requested_kind)
+        } else {
+            requested_kind
+        }
+    }
+
     fn ensure_parent_kind_allowed(
         &self,
         child_kind: &DirectoryKind,

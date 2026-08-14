@@ -26,14 +26,19 @@ Asset Hub versions the Rust library and its serialized contracts separately:
 
 | Surface | Current value | Purpose |
 | --- | --- | --- |
-| Rust crate | `0.3.0` | Rust source API |
+| Rust crate | `0.4.0` | Rust source API |
 | Manifest | `3` | external Extism/Wasm `manifest.json` document format |
-| Plugin API | `asset-hub.plugin-api@4` | Action JSON, Host functions, and Plugin Frame Web SDK |
+| Plugin API | `asset-hub.plugin-api@5` | Action JSON, Host functions, and Plugin Frame Web SDK |
 
 Plugins must declare both `manifest_version` and `runtime.plugin_api`. The host
 rejects unsupported contract versions instead of attempting to interpret them.
 The only supported runtime discriminator is `"type": "extism"`; `builtin` is
 not a plugin runtime value and is rejected during deserialization.
+
+Plugin API `@5` is intentionally incompatible with `@4`. It adds the `resource.create`
+permission, the Directory `create_tree` effect, descendant-scoped Directory resource queries, and
+the corresponding `@5` Resource and Directory frame channels. Plugins must be rebuilt against the
+`0.4` Rust/Web SDK and redeclare `runtime.plugin_api` before installation.
 
 ## Getting Started
 
@@ -59,7 +64,7 @@ capabilities, and permissions:
   },
   "runtime": {
     "type": "extism",
-    "plugin_api": "asset-hub.plugin-api@4"
+    "plugin_api": "asset-hub.plugin-api@5"
   },
   "capabilities": {
     "resource_kinds": [
@@ -124,6 +129,21 @@ A Directory Kind may restrict its direct parent using `allowed_parent_kinds`:
   "parent": "core:directory",
   "allowed_parent_kinds": ["plugin:directory:games"],
   "label": "Game"
+}
+```
+
+A parent Kind can assign otherwise-generic direct children automatically with
+`default_child_kind`. The target must be a registered descendant of the declaring Kind and must
+allow that Kind as its direct container. This rule applies when a new child would otherwise be
+`core:directory`, and when an existing Directory is changed to the parent Kind; only direct
+children that are still `core:directory` are reclassified.
+
+```json
+{
+  "kind": "directory:games",
+  "parent": "core:directory",
+  "default_child_kind": "directory:games:item",
+  "label": "Games"
 }
 ```
 
@@ -201,6 +221,10 @@ for eligible Resources; plugins read that handle with the existing
 Action call and are never filesystem paths. A resource that has no readable content handle still
 retains its metadata in the page.
 
+The Directory resource ABI also accepts an optional descendant Directory ID. The Host permits only
+the current Action Directory or one of its descendants, so a library workspace can read role files
+inside its entries without gaining arbitrary workspace access.
+
 A Resource action normally declares `label`. A singleton capability provider may omit it when the
 action targets a child Resource kind; the Host then inherits the normalized label from the nearest
 ancestor provider for the same capability. An omitted label is rejected when no ancestor provider
@@ -238,6 +262,33 @@ Execution still requires the current user to have delete permission for the targ
 Resource deletion uses Host soft-delete semantics; Directory deletion succeeds only for a non-root,
 empty directory. A delete effect cannot be combined with another effect in the same declaration or
 output.
+
+For bounded scaffolding, a Directory Action can declare `create_tree`. The effect contains canonical
+relative Directory paths and base64 Resource snapshots. The Host limits counts and total content,
+validates Kind placement and user authorization, rejects paths outside the current Directory, and
+rolls back entries created earlier in the effect when a later entry fails. Its Manifest must request
+both `directory.create_child` and `resource.create`. Required filenames and template meanings remain
+plugin policy rather than Manifest fields.
+
+```json
+{
+  "effects": [{
+    "type": "create_tree",
+    "directories": [
+      { "path": "game-one", "kind": "directory:games:item" },
+      { "path": "game-one/public", "kind": "core:directory" }
+    ],
+    "resources": [{
+      "directory": "game-one",
+      "name": "README.md",
+      "kind": "core:text",
+      "mime_type": "text/markdown; charset=utf-8",
+      "encoding": "base64",
+      "data": "IyBHYW1lIE9uZQo="
+    }]
+  }]
+}
+```
 
 ### Plugin Frame Web SDK
 

@@ -6,12 +6,13 @@ use serde_json::json;
 #[test]
 fn fine_grained_permissions_round_trip() {
     let permissions: PluginPermissions = serde_json::from_value(json!({
-        "allow": ["resource.read", "resource.delete", "resource.content.read", "resource.content.replace"],
+        "allow": ["resource.read", "resource.create", "resource.delete", "resource.content.read", "resource.content.replace"],
         "network": false,
         "filesystem": false
     }))
     .unwrap();
     assert!(permissions.resource_read());
+    assert!(permissions.resource_create());
     assert!(permissions.resource_content_read());
     assert!(permissions.resource_content_replace());
     assert!(permissions.resource_delete());
@@ -19,6 +20,7 @@ fn fine_grained_permissions_round_trip() {
         serde_json::to_value(permissions).unwrap()["allow"],
         json!([
             "resource.read",
+            "resource.create",
             "resource.delete",
             "resource.content.read",
             "resource.content.replace"

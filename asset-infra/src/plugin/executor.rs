@@ -653,6 +653,12 @@ fn call_extism_directory(
             DirectoryActionEffect::CreateChild(_) => binding
                 .permissions
                 .allows(PluginPermission::DirectoryCreateChild),
+            DirectoryActionEffect::CreateTree(_) => {
+                binding
+                    .permissions
+                    .allows(PluginPermission::DirectoryCreateChild)
+                    && binding.permissions.allows(PluginPermission::ResourceCreate)
+            }
             DirectoryActionEffect::Delete => binding
                 .permissions
                 .allows(PluginPermission::DirectoryDelete),

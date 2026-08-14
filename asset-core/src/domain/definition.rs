@@ -173,6 +173,7 @@ impl ResourceKindDefinition {
 pub struct DirectoryKindDefinition {
     kind: DirectoryKind,
     parent: Option<DirectoryKind>,
+    default_child_kind: Option<DirectoryKind>,
     allowed_parent_kinds: Vec<DirectoryKind>,
     label: String,
     origin: DefinitionOrigin,
@@ -183,6 +184,7 @@ impl DirectoryKindDefinition {
         Self {
             kind,
             parent: None,
+            default_child_kind: None,
             allowed_parent_kinds: Vec::new(),
             label: label.into(),
             origin,
@@ -202,6 +204,11 @@ impl DirectoryKindDefinition {
         self
     }
 
+    pub fn with_default_child_kind(mut self, kind: Option<DirectoryKind>) -> Self {
+        self.default_child_kind = kind;
+        self
+    }
+
     pub fn kind(&self) -> &DirectoryKind {
         &self.kind
     }
@@ -212,6 +219,10 @@ impl DirectoryKindDefinition {
 
     pub fn allowed_parent_kinds(&self) -> &[DirectoryKind] {
         &self.allowed_parent_kinds
+    }
+
+    pub fn default_child_kind(&self) -> Option<&DirectoryKind> {
+        self.default_child_kind.as_ref()
     }
 
     pub fn label(&self) -> &str {

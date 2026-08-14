@@ -16,7 +16,7 @@ fn rejects_manifest_with_missing_fields() {
           },
           "runtime": {
             "type": "extism",
-            "plugin_api": "asset-hub.plugin-api@4"
+            "plugin_api": "asset-hub.plugin-api@5"
           },
           "permissions": {"allow": ["resource.read"]}
         }
@@ -280,7 +280,7 @@ fn minimal_extism_manifest(id: &str) -> String {
           "manifest_version": 3,
           "plugin": {{"id": "{id}", "name": "Test", "version": "0.1.0", "publisher": "test"}},
           "runtime": {{
-            "type": "extism", "wasi": false, "plugin_api": "asset-hub.plugin-api@4"
+            "type": "extism", "wasi": false, "plugin_api": "asset-hub.plugin-api@5"
           }},
           "capabilities": {{"resource_kinds": [], "resource_actions": []}},
           "permissions": {{"allow": ["resource.read"]}}

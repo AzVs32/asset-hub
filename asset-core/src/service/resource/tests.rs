@@ -17,6 +17,7 @@ use crate::port::{
     StagedBlob, StoragePrefix, UploadSessionRepository, UserRepository,
 };
 use asset_plugin_api::protocol::directory::{
+    CreateDirectoryTreeEffect, CreateTreeDirectory, CreateTreeResource, CreateTreeResourceEncoding,
     DirectoryActionEffect, PluginDirectoryActionOutput, UpdateDirectoryEffect,
 };
 use asset_plugin_api::protocol::{
@@ -684,6 +685,7 @@ struct InMemoryBlobStorage {
     objects: Mutex<HashMap<StorageKey, Bytes>>,
     modified_at: Mutex<HashMap<StorageKey, chrono::DateTime<chrono::Utc>>>,
     directories: Mutex<HashSet<DirectoryPath>>,
+    created_staging_keys: Mutex<Vec<StorageKey>>,
     fail_next_delete: Mutex<bool>,
     fail_delete_key: Mutex<Option<StorageKey>>,
     fail_scan_after_entries: Mutex<Option<usize>>,
@@ -696,6 +698,10 @@ impl InMemoryBlobStorage {
 
     fn get_sync(&self, key: &StorageKey) -> Option<Bytes> {
         self.objects.lock().unwrap().get(key).cloned()
+    }
+
+    fn created_staging_keys(&self) -> Vec<StorageKey> {
+        self.created_staging_keys.lock().unwrap().clone()
     }
 
     fn contains_fragment(&self, fragment: &str) -> bool {
@@ -752,6 +758,7 @@ impl BlobStorage for InMemoryBlobStorage {
     }
 
     async fn create_staged(&self, key: &StorageKey) -> Result<StagedBlob, CoreError> {
+        self.created_staging_keys.lock().unwrap().push(key.clone());
         self.objects
             .lock()
             .unwrap()
@@ -1060,6 +1067,49 @@ impl DirectoryActionExecutor for StaticDirectoryActionExecutor {
         &self,
         request: DirectoryActionRequest,
     ) -> Result<DirectoryActionOutput, CoreError> {
+        if request.action().as_str() == "test.directory.scaffold" {
+            let mut output = PluginDirectoryActionOutput::new(PluginView::Text(TextView {
+                text: "created".to_string(),
+            }));
+            output.effects.push(DirectoryActionEffect::CreateTree(
+                CreateDirectoryTreeEffect {
+                    directories: vec![
+                        CreateTreeDirectory {
+                            path: "game-one".to_string(),
+                            kind: Some("core:directory".to_string()),
+                        },
+                        CreateTreeDirectory {
+                            path: "game-one/public".to_string(),
+                            kind: Some("core:directory".to_string()),
+                        },
+                    ],
+                    resources: vec![
+                        CreateTreeResource {
+                            directory: "game-one".to_string(),
+                            name: "README.md".to_string(),
+                            kind: Some("core:text".to_string()),
+                            mime_type: Some("text/markdown".to_string()),
+                            encoding: CreateTreeResourceEncoding::Base64,
+                            data: STANDARD.encode(b"# Game One\n"),
+                        },
+                        CreateTreeResource {
+                            directory: "game-one".to_string(),
+                            name: "HASH.md".to_string(),
+                            kind: Some("core:text".to_string()),
+                            mime_type: Some("text/markdown".to_string()),
+                            encoding: CreateTreeResourceEncoding::Base64,
+                            data: String::new(),
+                        },
+                    ],
+                },
+            ));
+            return Ok(DirectoryActionOutput::new(
+                request.directory().id(),
+                request.action().clone(),
+                output,
+            ));
+        }
+
         let parent_id = request
             .input()
             .get("parent_id")
@@ -1231,6 +1281,13 @@ fn service() -> (
                     .with_kinds(["core:directory"])
                     .with_access(ActionAccess::Write)
                     .with_output(effect_output_contract(["text"], ["update"])),
+                DirectoryActionDefinition::new_static(
+                    "test.directory.scaffold",
+                    "Scaffold directory",
+                )
+                .with_kinds(["core:directory"])
+                .with_access(ActionAccess::Write)
+                .with_output(effect_output_contract(["text"], ["create_tree"])),
             ],
         }),
         Arc::new(StaticDirectoryActionExecutor),

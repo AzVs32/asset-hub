@@ -34,7 +34,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "asset-plugin-api"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "extism-pdk",
  "serde",
@@ -49,7 +49,7 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "azvs-epub-plugin"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "ammonia",
  "asset-plugin-api",

@@ -22,6 +22,9 @@ pub struct DirectoryKindCapability {
     pub kind: String,
     pub parent: Option<String>,
     pub label: Option<String>,
+    /// Kind automatically assigned to otherwise-generic direct child Directories.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_child_kind: Option<String>,
     /// Direct parent Directory kinds accepted by this kind.
     ///
     /// An empty list declares no constraint at this node; the nearest ancestor declaration may

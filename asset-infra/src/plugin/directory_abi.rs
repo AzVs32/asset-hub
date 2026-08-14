@@ -12,6 +12,7 @@ use extism::{Function, PTR, UserData};
 use serde::Deserialize;
 use std::{
     collections::HashMap,
+    str::FromStr,
     sync::{Arc, Mutex},
 };
 
@@ -33,6 +34,8 @@ pub(super) struct HostDirectoryResolver {
 #[serde(deny_unknown_fields)]
 struct PageRequest {
     reference: String,
+    #[serde(default)]
+    directory_id: Option<String>,
     #[serde(default)]
     cursor: Option<String>,
     limit: u32,
@@ -154,16 +157,20 @@ impl HostDirectoryResolver {
             ));
         }
         let (request, offset) = self.page_request(value)?;
+        if request.directory_id.is_some() {
+            return Err(CoreError::configuration(
+                "directory child listing is bound to the action directory",
+            ));
+        }
         let available = self.available_directory(&request.reference)?;
         if !available.children {
             return Err(CoreError::configuration(
                 "directory action did not declare a children requirement",
             ));
         }
-        let directory_id = available.id;
         let mut items = self
             .runtime
-            .block_on(self.directories.list_children(&directory_id))?;
+            .block_on(self.directories.list_children(&available.id))?;
         items.sort_by(|left, right| left.directory().name().cmp(right.directory().name()));
         let total = items.len() as u64;
         let page = items
@@ -208,7 +215,21 @@ impl HostDirectoryResolver {
                 "directory resource content requires resource.read and resource.content.read permissions",
             ));
         }
-        let directory_id = available.id;
+        let directory_id = request
+            .directory_id
+            .as_deref()
+            .map(DirectoryId::from_str)
+            .transpose()
+            .map_err(|error| CoreError::configuration(error.to_string()))?
+            .unwrap_or(available.id);
+        if !self.runtime.block_on(
+            self.directories
+                .is_descendant_or_self(&available.id, &directory_id),
+        )? {
+            return Err(CoreError::configuration(
+                "requested resource directory is outside the action directory subtree",
+            ));
+        }
         let page =
             self.runtime.block_on(self.resources.list(
                 &ListResources::new(request.limit, offset).with_directory_id(directory_id),

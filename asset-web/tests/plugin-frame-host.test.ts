@@ -191,7 +191,7 @@ function pluginOutput(actionId: string): ResourceActionOutput {
     effects: [],
     view: {
       view: "plugin_frame",
-      plugin_api: "asset-hub.plugin-api@4",
+      plugin_api: "asset-hub.plugin-api@5",
       title: "Plugin frame",
       url: "/plugins/example/index.html",
     },

@@ -11,6 +11,8 @@ use std::collections::BTreeSet;
 pub enum PluginPermission {
     #[serde(rename = "resource.read")]
     ResourceRead,
+    #[serde(rename = "resource.create")]
+    ResourceCreate,
     #[serde(rename = "resource.delete")]
     ResourceDelete,
     #[serde(rename = "resource.content.read")]
@@ -50,6 +52,10 @@ impl PluginPermissions {
 
     pub fn resource_read(&self) -> bool {
         self.allows(PluginPermission::ResourceRead)
+    }
+
+    pub fn resource_create(&self) -> bool {
+        self.allows(PluginPermission::ResourceCreate)
     }
 
     pub fn resource_delete(&self) -> bool {

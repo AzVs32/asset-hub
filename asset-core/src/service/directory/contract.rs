@@ -82,6 +82,14 @@ pub(crate) struct ExecutedDirectoryAction {
 }
 
 impl ExecutedDirectoryAction {
+    pub(crate) fn expected_revision(&self) -> u64 {
+        self.expected_revision
+    }
+
+    pub(crate) fn output(&self) -> &DirectoryActionOutput {
+        &self.output
+    }
+
     pub(crate) fn into_output(self) -> DirectoryActionOutput {
         self.output
     }

@@ -28,7 +28,10 @@ impl DirectoryService {
                 parent = existing;
                 continue;
             }
-            let directory = Directory::new(parent.id(), name)?;
+            let kind = self.kind_for_new_child(parent.directory().kind(), DirectoryKind::default());
+            self.ensure_kind_registered(&kind)?;
+            self.ensure_parent_kind_allowed(&kind, parent.directory().kind())?;
+            let directory = Directory::new_with_kind(parent.id(), name, kind)?;
             self.repository.insert(&directory).await?;
             self.update_index(directory.clone()).await?;
             parent = LocatedDirectory::new(
@@ -103,6 +106,8 @@ impl DirectoryService {
                 parent.path().path(),
             ));
         }
+        let kind = self.kind_for_new_child(parent.directory().kind(), kind);
+        self.ensure_kind_registered(&kind)?;
         self.ensure_parent_kind_allowed(&kind, parent.directory().kind())?;
         let directory = Directory::new_with_kind(*parent_id, name, kind)?;
         let path = parent.path().child(directory.name())?;
@@ -191,8 +196,29 @@ impl DirectoryService {
             ));
         }
         self.ensure_parent_kind_allowed(&destination_kind, parent.directory().kind())?;
+        let default_child_kind = command.kind.as_ref().and_then(|_| {
+            self.kind_registry
+                .get(&destination_kind)
+                .and_then(|definition| definition.default_child_kind())
+                .cloned()
+        });
+        let mut child_kind_changes = Vec::new();
         for child in self.index.list_children(&directory.id()).await? {
-            self.ensure_parent_kind_allowed(child.directory().kind(), &destination_kind)?;
+            let desired_kind = if child.directory().kind() == &DirectoryKind::default() {
+                default_child_kind
+                    .clone()
+                    .unwrap_or_else(|| child.directory().kind().clone())
+            } else {
+                child.directory().kind().clone()
+            };
+            self.ensure_kind_registered(&desired_kind)?;
+            self.ensure_parent_kind_allowed(&desired_kind, &destination_kind)?;
+            if desired_kind != *child.directory().kind() {
+                let original = child.directory().clone();
+                let mut updated = original.clone();
+                updated.change_kind(desired_kind);
+                child_kind_changes.push((original, updated));
+            }
         }
         if let Some(kind) = command.kind {
             directory.change_kind(kind);
@@ -209,15 +235,16 @@ impl DirectoryService {
                 "a directory with the same name already exists",
             ));
         }
+        self.persist_child_kind_changes(&child_kind_changes).await?;
         if directory.revision() == expected_revision {
             return LocatedDirectory::new(directory, from);
         }
 
         let moved = destination != *from.path();
-        if moved {
-            self.storage
-                .move_directory(from.path(), &destination)
+        if moved && let Err(error) = self.storage.move_directory(from.path(), &destination).await {
+            self.rollback_child_kind_changes(&child_kind_changes)
                 .await?;
+            return Err(error);
         }
         let saved = self
             .repository
@@ -237,11 +264,78 @@ impl DirectoryService {
             )),
             Err(error) => error,
         };
-        if moved && let Err(rollback) = self.storage.move_directory(&destination, from.path()).await
-        {
+        let child_rollback = self.rollback_child_kind_changes(&child_kind_changes).await;
+        let storage_rollback = if moved {
+            self.storage.move_directory(&destination, from.path()).await
+        } else {
+            Ok(())
+        };
+        if let Err(rollback) = storage_rollback {
             return Err(CoreError::storage("directory.update.rollback", rollback));
         }
+        child_rollback?;
         Err(error)
+    }
+
+    async fn persist_child_kind_changes(
+        &self,
+        changes: &[(Directory, Directory)],
+    ) -> Result<(), CoreError> {
+        let mut persisted = 0;
+        for (original, updated) in changes {
+            match self
+                .repository
+                .save_if_unchanged(updated, original.revision())
+                .await
+            {
+                Ok(true) => persisted += 1,
+                Ok(false) => {
+                    self.rollback_child_kind_changes(&changes[..persisted])
+                        .await?;
+                    return Err(CoreError::conflict(format!(
+                        "directory `{}` changed while its parent kind was being updated",
+                        original.id()
+                    )));
+                }
+                Err(error) => {
+                    self.rollback_child_kind_changes(&changes[..persisted])
+                        .await?;
+                    return Err(error);
+                }
+            }
+        }
+        if !changes.is_empty()
+            && let Err(error) = self.reload_index().await
+        {
+            self.rollback_child_kind_changes(changes).await?;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    async fn rollback_child_kind_changes(
+        &self,
+        changes: &[(Directory, Directory)],
+    ) -> Result<(), CoreError> {
+        for (original, updated) in changes.iter().rev() {
+            let mut restored = updated.clone();
+            restored.change_kind(original.kind().clone());
+            if !self
+                .repository
+                .save_if_unchanged(&restored, updated.revision())
+                .await?
+            {
+                let _ = self.reload_index().await;
+                return Err(CoreError::conflict(format!(
+                    "directory `{}` changed while its automatic kind update was rolling back",
+                    original.id()
+                )));
+            }
+        }
+        if !changes.is_empty() {
+            self.reload_index().await?;
+        }
+        Ok(())
     }
 
     pub async fn rename(

@@ -139,6 +139,24 @@ async fn fs_storage_stages_complete_content_before_atomic_publish() {
 }
 
 #[tokio::test]
+async fn fs_storage_stages_and_publishes_empty_content() {
+    let (storage, root) = storage_with_root("fs-empty-staged-publish");
+    let key = StorageKey::new("games/title/HASH.md").unwrap();
+    let stream: BlobByteStream = Box::pin(futures_util::stream::once(async { Ok(Bytes::new()) }));
+
+    let staged = stage(&storage, stream).await;
+    assert_eq!(staged.bytes_written(), 0);
+
+    storage
+        .publish_staged_if_absent(&staged, &key)
+        .await
+        .unwrap();
+    storage.discard_staged(&staged).await.unwrap();
+
+    assert_eq!(std::fs::read(root.join(key.as_str())).unwrap(), b"");
+}
+
+#[tokio::test]
 async fn fs_storage_preserves_partial_staging_file_after_stream_failure() {
     let (storage, root) = storage_with_root("fs-staged-failure");
     let key = upload_key();

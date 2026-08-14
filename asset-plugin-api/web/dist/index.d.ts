@@ -1,4 +1,4 @@
-export declare const PLUGIN_API_VERSION = "asset-hub.plugin-api@4";
+export declare const PLUGIN_API_VERSION = "asset-hub.plugin-api@5";
 export type JsonPrimitive = boolean | number | string | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | JsonObject;
 export type JsonObject = {
@@ -51,7 +51,7 @@ export interface DirectoryActionOutput {
     directoryId: string;
     action: string;
     view: PluginView | null;
-    effects: Array<"update" | "create_child" | "delete">;
+    effects: Array<"update" | "create_child" | "create_tree" | "delete">;
     diagnostics: PluginDiagnostic[];
 }
 export interface AssetHubFrameClient {

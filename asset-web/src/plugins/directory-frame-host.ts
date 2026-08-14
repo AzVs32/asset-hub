@@ -3,7 +3,7 @@ import { normalizeDirectory } from "@/domain/directory-path";
 import type { DirectoryActionOutput, JsonObject } from "@/domain/plugin";
 import type { Directory } from "@/domain/resource";
 
-export const directoryPluginFrameChannel = "asset-hub.plugin-directory-frame@4";
+export const directoryPluginFrameChannel = "asset-hub.plugin-directory-frame@5";
 
 export interface DirectoryPluginFrameHostMethods
   extends Record<string, (...args: never[]) => unknown> {

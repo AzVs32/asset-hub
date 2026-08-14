@@ -647,7 +647,7 @@ pub(super) fn hex_sha256(data: &[u8]) -> String {
     hex_digest(&hasher.finalize())
 }
 
-fn hex_digest(bytes: &[u8]) -> String {
+pub(super) fn hex_digest(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut output = String::with_capacity(bytes.len() * 2);
     for byte in bytes {

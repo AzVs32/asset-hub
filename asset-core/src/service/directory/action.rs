@@ -132,6 +132,17 @@ impl DirectoryService {
         executed: &ExecutedDirectoryAction,
         required_parent_ancestor: Option<DirectoryId>,
     ) -> Result<(), CoreError> {
+        if executed
+            .output
+            .output()
+            .effects
+            .iter()
+            .any(|effect| matches!(effect, DirectoryActionEffect::CreateTree(_)))
+        {
+            return Err(CoreError::configuration(
+                "create_tree directory effects require the ResourceService composition boundary",
+            ));
+        }
         self.apply_action_effects(
             &executed.directory_id,
             executed.expected_revision,
@@ -214,7 +225,9 @@ impl DirectoryService {
             .iter()
             .filter_map(|effect| match effect {
                 DirectoryActionEffect::CreateChild(effect) => Some(effect),
-                DirectoryActionEffect::Update(_) | DirectoryActionEffect::Delete => None,
+                DirectoryActionEffect::Update(_)
+                | DirectoryActionEffect::CreateTree(_)
+                | DirectoryActionEffect::Delete => None,
             })
         {
             let kind = effect
@@ -238,7 +251,9 @@ impl DirectoryService {
             .iter()
             .find_map(|effect| match effect {
                 DirectoryActionEffect::Update(effect) => Some(effect),
-                DirectoryActionEffect::CreateChild(_) | DirectoryActionEffect::Delete => None,
+                DirectoryActionEffect::CreateChild(_)
+                | DirectoryActionEffect::CreateTree(_)
+                | DirectoryActionEffect::Delete => None,
             })
         {
             let mut command = UpdateDirectory::new(expected_revision);

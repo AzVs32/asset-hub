@@ -943,6 +943,55 @@ async fn plugin_reference_content_respects_the_host_content_budget() {
 }
 
 #[tokio::test]
+async fn games_plugin_creates_a_complete_game_tree_through_http() {
+    let app = test_app_with_plugin_host_config(
+        "games-create-tree",
+        vec![PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../plugins/azvs-games/manifest.json")],
+        PluginHostConfig::default(),
+    )
+    .await;
+    let (status, games) = json_request(
+        &app,
+        Method::POST,
+        "/directories",
+        json!({
+            "parent_id": ROOT_DIRECTORY_ID,
+            "name": "games",
+            "kind": "directory:games"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{games}");
+
+    let directory_id = games["id"].as_str().unwrap();
+    let (status, output) = json_request(
+        &app,
+        Method::POST,
+        &format!("/directories/{directory_id}/actions/azvs.games.create"),
+        json!({
+            "expected_revision": games["revision"],
+            "input": {
+                "name": "game-one",
+                "title": "Game One",
+                "summary": "Created through the Games plugin.",
+                "version": "1.0.0"
+            }
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{output}");
+    assert_eq!(output["effects"], json!(["create_tree"]));
+
+    let game_root = app.root.join("blob/games/game-one");
+    assert!(game_root.join("public").is_dir());
+    assert_eq!(
+        std::fs::read_to_string(game_root.join("README.md")).unwrap(),
+        "# Game One\n\nCreated through the Games plugin.\n\n## Game information\n\n- Directory: `game-one`\n- Version: `1.0.0`\n"
+    );
+    assert_eq!(std::fs::read(game_root.join("HASH.md")).unwrap(), b"");
+}
+
+#[tokio::test]
 async fn soft_delete_hides_content_and_purge_removes_resource() {
     let app = test_app("delete-resource").await;
     let id = create_text_resource(&app, "delete/me.txt").await;

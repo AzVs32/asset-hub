@@ -319,8 +319,8 @@ pub(crate) async fn execute_directory_action(
     let id = parse_directory_id(&id)?;
     let payload = parse_json_payload(payload)?;
     let output = state
-        .secured_directories(&access.0)
-        .execute_action(
+        .secured(&access.0)
+        .execute_directory_action(
             &id,
             ExecuteDirectoryAction::new(
                 asset_core::domain::DirectoryActionId::new(action).map_err(CoreError::from)?,

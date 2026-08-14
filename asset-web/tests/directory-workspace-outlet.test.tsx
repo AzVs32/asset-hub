@@ -41,7 +41,7 @@ describe("DirectoryWorkspaceOutlet", () => {
       effects: [],
       view: {
         view: "plugin_frame",
-        plugin_api: "asset-hub.plugin-api@4",
+        plugin_api: "asset-hub.plugin-api@5",
         title: "Game library",
         url: "/plugins/example.game/index.html",
       },

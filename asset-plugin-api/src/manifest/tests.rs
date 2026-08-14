@@ -42,7 +42,7 @@ fn manifest_requires_current_versions() {
             .is_err()
     );
     document["manifest_version"] = serde_json::json!(MANIFEST_VERSION);
-    for unsupported in ["asset-hub.plugin-api@1", "asset-hub.plugin-api@3"] {
+    for unsupported in ["asset-hub.plugin-api@1", "asset-hub.plugin-api@4"] {
         document["runtime"]["plugin_api"] = serde_json::json!(unsupported);
         assert!(
             serde_json::from_value::<PluginManifest>(document.clone())
@@ -65,6 +65,7 @@ fn manifest_accepts_multi_segment_kind_ids_and_directory_parent_constraints() {
         {
             "kind": "plugin:directory:games",
             "parent": "core:directory",
+            "default_child_kind": "plugin:directory:games:item",
             "label": "Games"
         },
         {
@@ -80,6 +81,12 @@ fn manifest_accepts_multi_segment_kind_ids_and_directory_parent_constraints() {
     assert_eq!(
         manifest.capabilities.directory_kinds[1].allowed_parent_kinds,
         ["plugin:directory:games"]
+    );
+    assert_eq!(
+        manifest.capabilities.directory_kinds[0]
+            .default_child_kind
+            .as_deref(),
+        Some("plugin:directory:games:item")
     );
 }
 
@@ -110,6 +117,39 @@ fn directory_content_access_requires_resource_content_permissions() {
         "directory.resources.list",
         "resource.read",
         "resource.content.read"
+    ]);
+    serde_json::from_value::<PluginManifest>(document)
+        .unwrap()
+        .validate()
+        .unwrap();
+}
+
+#[test]
+fn create_tree_requires_both_directory_and_resource_creation_permissions() {
+    let mut document = manifest_document();
+    document["capabilities"]["resource_actions"] = serde_json::json!([]);
+    document["capabilities"]["directory_actions"] = serde_json::json!([{
+        "id": "example.plugin.scaffold",
+        "label": "Scaffold",
+        "handler": "scaffold",
+        "access": "write",
+        "output": {"effects": ["create_tree"]}
+    }]);
+    document["permissions"]["allow"] =
+        serde_json::json!(["directory.read", "directory.create_child"]);
+
+    assert!(
+        serde_json::from_value::<PluginManifest>(document.clone())
+            .unwrap()
+            .validate()
+            .unwrap_err()
+            .contains("resource.create")
+    );
+
+    document["permissions"]["allow"] = serde_json::json!([
+        "directory.read",
+        "directory.create_child",
+        "resource.create"
     ]);
     serde_json::from_value::<PluginManifest>(document)
         .unwrap()

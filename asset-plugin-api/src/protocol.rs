@@ -4,7 +4,7 @@
 //! 可用，也不执行插件声明的副作用。
 
 /// Current and only supported Host/plugin wire and ABI version.
-pub const PLUGIN_API_VERSION: &str = "asset-hub.plugin-api@4";
+pub const PLUGIN_API_VERSION: &str = "asset-hub.plugin-api@5";
 
 mod access;
 pub mod diagnostic;
@@ -15,7 +15,8 @@ pub mod view;
 pub use access::PluginActionAccess;
 pub use diagnostic::{PluginActionFailure, PluginDiagnostic, PluginDiagnosticSeverity};
 pub use directory::{
-    CreateChildDirectoryEffect, DirectoryActionEffect, PluginDirectory,
+    CreateChildDirectoryEffect, CreateDirectoryTreeEffect, CreateTreeDirectory, CreateTreeResource,
+    CreateTreeResourceEncoding, DirectoryActionEffect, PluginDirectory,
     PluginDirectoryActionOutput, PluginDirectoryActionRequest, PluginDirectoryChild,
     PluginDirectoryPage, PluginDirectoryResource, PluginDirectoryResourcePage,
     UpdateDirectoryEffect,

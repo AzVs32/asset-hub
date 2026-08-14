@@ -73,6 +73,7 @@ fn directory_service_with_placement_rules() -> crate::service::DirectoryService 
     let games = DirectoryKind::try_new("azvs.games:directory").unwrap();
     let item = DirectoryKind::try_new("azvs.games:directory:item").unwrap();
     let special_item = DirectoryKind::try_new("azvs.games:directory:item:special").unwrap();
+    let unrelated = DirectoryKind::try_new("azvs:unrelated").unwrap();
     let kinds = Arc::new(InMemoryDirectoryKindRegistry {
         definitions: vec![
             DirectoryKindDefinition::new(
@@ -85,7 +86,8 @@ fn directory_service_with_placement_rules() -> crate::service::DirectoryService 
                 "Games",
                 DefinitionOrigin::plugin("azvs.games").unwrap(),
             )
-            .with_parent(Some(core)),
+            .with_parent(Some(core))
+            .with_default_child_kind(Some(item.clone())),
             DirectoryKindDefinition::new(
                 item.clone(),
                 "Game Item",
@@ -99,6 +101,12 @@ fn directory_service_with_placement_rules() -> crate::service::DirectoryService 
                 DefinitionOrigin::plugin("azvs.games").unwrap(),
             )
             .with_parent(Some(item)),
+            DirectoryKindDefinition::new(
+                unrelated,
+                "Unrelated",
+                DefinitionOrigin::plugin("azvs.unrelated").unwrap(),
+            )
+            .with_parent(Some(DirectoryKind::default())),
         ],
     });
     crate::service::DirectoryService::new(repository.clone(), repository, storage, kinds)
@@ -112,6 +120,15 @@ fn directory_kind_placement_is_enforced_for_create_move_and_parent_kind_changes(
     let item_kind = DirectoryKind::try_new("azvs.games:directory:item").unwrap();
     let special_item_kind = DirectoryKind::try_new("azvs.games:directory:item:special").unwrap();
     let games = block_on(service.create_with_kind(&root, "games", games_kind)).unwrap();
+
+    let automatic_item = block_on(service.create(games.location(), "automatic-item")).unwrap();
+    assert_eq!(
+        block_on(service.find_by_id(&automatic_item.id()))
+            .unwrap()
+            .directory()
+            .kind(),
+        &item_kind
+    );
 
     assert!(matches!(
         block_on(service.create_with_kind(&root, "outside", item_kind.clone())),
@@ -133,6 +150,43 @@ fn directory_kind_placement_is_enforced_for_create_move_and_parent_kind_changes(
         block_on(service.change_kind(&games.id(), DirectoryKind::default())),
         Err(CoreError::Conflict { .. })
     ));
+}
+
+#[test]
+fn changing_a_directory_to_games_reclassifies_only_generic_direct_children() {
+    let service = directory_service_with_placement_rules();
+    let root = block_on(service.root()).unwrap();
+    let library = block_on(service.create(&root, "library")).unwrap();
+    let generic = block_on(service.create(&library, "generic-game")).unwrap();
+    let unrelated = block_on(service.create_with_kind(
+        &library,
+        "preserved",
+        DirectoryKind::try_new("azvs:unrelated").unwrap(),
+    ))
+    .unwrap();
+
+    block_on(service.change_kind(
+        &library.id(),
+        DirectoryKind::try_new("azvs.games:directory").unwrap(),
+    ))
+    .unwrap();
+
+    assert_eq!(
+        block_on(service.find_by_id(&generic.id()))
+            .unwrap()
+            .directory()
+            .kind()
+            .as_str(),
+        "azvs.games:directory:item"
+    );
+    assert_eq!(
+        block_on(service.find_by_id(&unrelated.id()))
+            .unwrap()
+            .directory()
+            .kind()
+            .as_str(),
+        "azvs:unrelated"
+    );
 }
 
 #[test]

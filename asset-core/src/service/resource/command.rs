@@ -5,10 +5,12 @@
 
 use super::{ResourceService, UpdateResource};
 use crate::CoreError;
-use crate::domain::{DirectoryId, Resource, ResourceId, ResourceKind, StorageKey};
+use crate::domain::{Checksum, DirectoryId, Resource, ResourceId, ResourceKind, StorageKey};
 use crate::port::{
     DirectoryLocation, ListResources, LocatedResource, RESERVED_BLOB_STORAGE_PREFIX, ResourcePage,
 };
+use bytes::Bytes;
+use sha2::{Digest, Sha256};
 
 /// 资源命令服务。
 ///
@@ -37,6 +39,92 @@ impl<'a> ResourceCommandService<'a> {
             .find_located_by_id(id)
             .await?
             .filter(|located| !located.resource().is_deleted()))
+    }
+
+    /// Creates one small Host-generated resource without exposing storage authority to a plugin.
+    pub(crate) async fn create_generated_resource_snapshot(
+        &self,
+        directory: &DirectoryLocation,
+        name: String,
+        kind: Option<ResourceKind>,
+        mime_type: Option<String>,
+        data: Bytes,
+    ) -> Result<LocatedResource, CoreError> {
+        let storage_key = StorageKey::from_resource_path(directory.path(), &name)?;
+        let kind = self.service.resolve_content_kind(
+            kind,
+            mime_type.as_deref(),
+            Some(storage_key.as_str()),
+        )?;
+        let mut resource = build_resource(name.clone(), directory.id(), Some(kind)).build()?;
+        let checksum = Checksum::sha256(super::content::hex_digest(&Sha256::digest(&data)))?;
+        let content =
+            super::content::build_verified_content(data.len() as u64, mime_type, checksum, None)?;
+        resource.attach_content(content)?;
+
+        let _storage_guard = self.service.storage_key_locks.lock(&storage_key).await;
+        if self
+            .service
+            .query
+            .find_by_path(directory.path(), &name)
+            .await?
+            .is_some()
+        {
+            return Err(CoreError::conflict(format!(
+                "resource path `{storage_key}` already exists"
+            )));
+        }
+
+        let staging_key = StorageKey::new(format!(
+            "{RESERVED_BLOB_STORAGE_PREFIX}/uploads/generated-{}",
+            uuid::Uuid::now_v7()
+        ))?;
+        let staging = self
+            .service
+            .blob_storage
+            .create_staged(&staging_key)
+            .await?;
+        let expected_size = data.len() as u64;
+        let staged = match self
+            .service
+            .blob_storage
+            .append_staged(
+                &staging_key,
+                0,
+                Box::pin(futures_util::stream::once(async move { Ok(data) })),
+            )
+            .await
+        {
+            Ok(staged) if staged.bytes_written() == expected_size => staged,
+            Ok(staged) => {
+                let _ = self.service.blob_storage.discard_staged(&staged).await;
+                return Err(CoreError::conflict(format!(
+                    "generated content size mismatch: expected {expected_size}, received {}",
+                    staged.bytes_written()
+                )));
+            }
+            Err(error) => {
+                let _ = self.service.blob_storage.discard_staged(&staging).await;
+                return Err(error);
+            }
+        };
+
+        if let Err(error) = self
+            .service
+            .blob_storage
+            .publish_staged_if_absent(&staged, &storage_key)
+            .await
+        {
+            let _ = self.service.blob_storage.discard_staged(&staged).await;
+            return Err(error);
+        }
+        if let Err(error) = self.service.repository.save(&resource).await {
+            let _ = self.service.blob_storage.delete(&storage_key).await;
+            let _ = self.service.blob_storage.discard_staged(&staged).await;
+            return Err(error);
+        }
+        let _ = self.service.blob_storage.discard_staged(&staged).await;
+        LocatedResource::new(resource, directory.clone())
     }
 
     /// 分页列出资源。

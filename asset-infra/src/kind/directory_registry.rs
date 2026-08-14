@@ -113,6 +113,13 @@ fn definition_from_manifest(
                     .map(DirectoryKind::try_new)
                     .transpose()?,
             )
+            .with_default_child_kind(
+                capability
+                    .default_child_kind
+                    .as_deref()
+                    .map(DirectoryKind::try_new)
+                    .transpose()?,
+            )
             .with_allowed_parent_kinds(
                 capability
                     .allowed_parent_kinds
@@ -150,6 +157,35 @@ pub(super) fn validate_hierarchy(definitions: &[DirectoryKindDefinition]) -> Res
             .collect(),
     )?;
     for definition in definitions {
+        if let Some(default_child_kind) = definition.default_child_kind() {
+            let Some(default_definition) = definitions
+                .iter()
+                .find(|candidate| candidate.kind() == default_child_kind)
+            else {
+                return Err(CoreError::configuration(format!(
+                    "directory kind `{}` declares unknown default child kind `{default_child_kind}`",
+                    definition.kind()
+                )));
+            };
+            if !definition_is_a(definitions, default_child_kind, definition.kind()) {
+                return Err(CoreError::configuration(format!(
+                    "default child kind `{default_child_kind}` must inherit from `{}`",
+                    definition.kind()
+                )));
+            }
+            let allowed_parent_kinds =
+                effective_allowed_parent_kinds(definitions, default_definition);
+            if !allowed_parent_kinds.is_empty()
+                && !allowed_parent_kinds
+                    .iter()
+                    .any(|allowed| definition_is_a(definitions, definition.kind(), allowed))
+            {
+                return Err(CoreError::configuration(format!(
+                    "default child kind `{default_child_kind}` does not allow parent kind `{}`",
+                    definition.kind()
+                )));
+            }
+        }
         for parent in definition.allowed_parent_kinds() {
             if !definitions
                 .iter()
@@ -163,4 +199,40 @@ pub(super) fn validate_hierarchy(definitions: &[DirectoryKindDefinition]) -> Res
         }
     }
     Ok(())
+}
+
+fn definition_is_a(
+    definitions: &[DirectoryKindDefinition],
+    kind: &DirectoryKind,
+    ancestor: &DirectoryKind,
+) -> bool {
+    let mut current = Some(kind);
+    while let Some(kind) = current {
+        if kind == ancestor {
+            return true;
+        }
+        current = definitions
+            .iter()
+            .find(|definition| definition.kind() == kind)
+            .and_then(DirectoryKindDefinition::parent);
+    }
+    false
+}
+
+fn effective_allowed_parent_kinds<'a>(
+    definitions: &'a [DirectoryKindDefinition],
+    definition: &'a DirectoryKindDefinition,
+) -> &'a [DirectoryKind] {
+    let mut current = Some(definition);
+    while let Some(definition) = current {
+        if !definition.allowed_parent_kinds().is_empty() {
+            return definition.allowed_parent_kinds();
+        }
+        current = definition.parent().and_then(|parent| {
+            definitions
+                .iter()
+                .find(|candidate| candidate.kind() == parent)
+        });
+    }
+    &[]
 }

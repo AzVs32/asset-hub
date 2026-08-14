@@ -11,7 +11,7 @@ use crate::protocol::PLUGIN_API_VERSION;
 use std::collections::HashSet;
 
 const RESOURCE_EFFECTS: &[&str] = &["replace_content", "delete"];
-const DIRECTORY_EFFECTS: &[&str] = &["update", "create_child", "delete"];
+const DIRECTORY_EFFECTS: &[&str] = &["update", "create_child", "create_tree", "delete"];
 const DIRECTORY_WORKSPACE_CAPABILITY: &str = "workspace";
 const DIRECTORY_WORKSPACE_LOCATION: &str = "directory_workspace";
 
@@ -133,6 +133,12 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
         }
         if let Some(parent) = &kind.parent {
             validate_kind_id("capabilities.directory_kinds[].parent", parent)?;
+        }
+        if let Some(default_child_kind) = &kind.default_child_kind {
+            validate_kind_id(
+                "capabilities.directory_kinds[].default_child_kind",
+                default_child_kind,
+            )?;
         }
         let mut allowed_parent_kinds = HashSet::new();
         for parent in &kind.allowed_parent_kinds {
@@ -476,6 +482,19 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
         {
             return Err(format!(
                 "capabilities.directory_actions[`{}`] declares create_child without directory.create_child permission",
+                action.id
+            ));
+        }
+        if action
+            .output
+            .effects
+            .iter()
+            .any(|effect| effect == "create_tree")
+            && (!manifest.permissions.directory_create_child()
+                || !manifest.permissions.resource_create())
+        {
+            return Err(format!(
+                "capabilities.directory_actions[`{}`] declares create_tree without directory.create_child and resource.create permissions",
                 action.id
             ));
         }

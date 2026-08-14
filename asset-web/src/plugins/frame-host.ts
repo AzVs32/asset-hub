@@ -2,8 +2,8 @@ import type { AssetGateway } from "@/application/ports/asset-gateway";
 import type { JsonObject, ResourceActionOutput } from "@/domain/plugin";
 import type { Resource } from "@/domain/resource";
 
-export const pluginFrameApiVersion = "asset-hub.plugin-api@4";
-export const pluginFrameChannel = "asset-hub.plugin-frame@4";
+export const pluginFrameApiVersion = "asset-hub.plugin-api@5";
+export const pluginFrameChannel = "asset-hub.plugin-frame@5";
 
 export interface PluginFrameHostMethods extends Record<string, (...args: never[]) => unknown> {
   executeResourceAction(action: unknown, input?: unknown): Promise<ResourceActionOutput>;

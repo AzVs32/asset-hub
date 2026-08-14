@@ -1,9 +1,9 @@
 import { CallOptions, connect, WindowMessenger } from "penpal";
 
-export const PLUGIN_API_VERSION = "asset-hub.plugin-api@4";
+export const PLUGIN_API_VERSION = "asset-hub.plugin-api@5";
 
-const FRAME_CHANNEL = "asset-hub.plugin-frame@4";
-const DIRECTORY_FRAME_CHANNEL = "asset-hub.plugin-directory-frame@4";
+const FRAME_CHANNEL = "asset-hub.plugin-frame@5";
+const DIRECTORY_FRAME_CHANNEL = "asset-hub.plugin-directory-frame@5";
 const defaultConnectionTimeoutMs = 10_000;
 const defaultCallTimeoutMs = 30_000;
 
@@ -45,7 +45,7 @@ export interface DirectoryActionOutput {
   directoryId: string;
   action: string;
   view: PluginView | null;
-  effects: Array<"update" | "create_child" | "delete">;
+  effects: Array<"update" | "create_child" | "create_tree" | "delete">;
   diagnostics: PluginDiagnostic[];
 }
 

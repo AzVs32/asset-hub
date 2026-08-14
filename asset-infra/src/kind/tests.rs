@@ -108,6 +108,61 @@ fn directory_registry_rejects_unknown_allowed_parent_kinds() {
 }
 
 #[test]
+fn directory_registry_rejects_an_unknown_default_child_kind() {
+    let definitions = vec![
+        DirectoryKindDefinition::new(
+            DirectoryKind::try_new("core:directory").unwrap(),
+            "Directory",
+            DefinitionOrigin::builtin_static("core.directory"),
+        )
+        .with_default_child_kind(Some(
+            DirectoryKind::try_new("plugin:directory:missing").unwrap(),
+        )),
+    ];
+
+    assert!(
+        super::directory_registry::validate_hierarchy(&definitions)
+            .unwrap_err()
+            .to_string()
+            .contains("unknown default child kind")
+    );
+}
+
+#[test]
+fn directory_registry_requires_default_children_to_inherit_from_the_parent_kind() {
+    let core = DirectoryKind::try_new("core:directory").unwrap();
+    let games = DirectoryKind::try_new("plugin:directory:games").unwrap();
+    let unrelated = DirectoryKind::try_new("plugin:directory:unrelated").unwrap();
+    let definitions = vec![
+        DirectoryKindDefinition::new(
+            core.clone(),
+            "Directory",
+            DefinitionOrigin::builtin_static("core.directory"),
+        ),
+        DirectoryKindDefinition::new(
+            games.clone(),
+            "Games",
+            DefinitionOrigin::plugin_static("plugin.games"),
+        )
+        .with_parent(Some(core.clone()))
+        .with_default_child_kind(Some(unrelated.clone())),
+        DirectoryKindDefinition::new(
+            unrelated,
+            "Unrelated",
+            DefinitionOrigin::plugin_static("plugin.unrelated"),
+        )
+        .with_parent(Some(core)),
+    ];
+
+    assert!(
+        super::directory_registry::validate_hierarchy(&definitions)
+            .unwrap_err()
+            .to_string()
+            .contains("must inherit")
+    );
+}
+
+#[test]
 fn inherited_action_label_requires_an_ancestor_capability_provider() {
     let definitions = vec![
         definition_from_parts(
@@ -181,7 +236,7 @@ fn registry_rejects_duplicate_global_action_ids() {
           },
           "runtime": {
             "type": "extism",
-            "plugin_api": "asset-hub.plugin-api@4"
+            "plugin_api": "asset-hub.plugin-api@5"
           },
           "capabilities": {
             "resource_kinds": [],
