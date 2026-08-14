@@ -1,4 +1,4 @@
-export declare const PLUGIN_API_VERSION = "asset-hub.plugin-api@3";
+export declare const PLUGIN_API_VERSION = "asset-hub.plugin-api@4";
 export type JsonPrimitive = boolean | number | string | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | JsonObject;
 export type JsonObject = {

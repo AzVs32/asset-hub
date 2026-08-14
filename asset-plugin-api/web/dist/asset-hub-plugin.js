@@ -412,7 +412,7 @@ var e = class extends Error {
 	#f = ({ data: e }) => {
 		if (this.#r?.(e)) for (let t of this.#a) t(e);
 	};
-}, z = "asset-hub.plugin-api@3", B = "asset-hub.plugin-frame@3", V = "asset-hub.plugin-directory-frame@3", H = 1e4, U = 3e4;
+}, z = "asset-hub.plugin-api@4", B = "asset-hub.plugin-frame@4", V = "asset-hub.plugin-directory-frame@4", H = 1e4, U = 3e4;
 async function W(e = {}) {
 	if (window.parent === window) throw Error("Asset Hub Plugin Web SDK must run inside a plugin frame.");
 	let t = K(e.connectionTimeoutMs, H, "connectionTimeoutMs"), n = K(e.callTimeoutMs, U, "callTimeoutMs"), r = L({
