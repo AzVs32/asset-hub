@@ -59,7 +59,7 @@ export function directoryAction(
     label: input.label ?? input.id,
     description: input.description ?? null,
     access: input.access ?? "read",
-    requires: input.requires ?? { children: false, resources: false },
+    requires: input.requires ?? { children: false, resources: "none" },
     output: input.output ?? { views: ["json"], effects: [] },
     ui: {
       group: input.ui?.group ?? null,

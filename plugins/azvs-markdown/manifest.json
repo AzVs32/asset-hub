@@ -1,17 +1,17 @@
 {
-  "$schema": "https://asset-hub.local/schemas/plugin-manifest-v2.json",
-  "manifest_version": 2,
+  "$schema": "https://asset-hub.local/schemas/plugin-manifest-v3.json",
+  "manifest_version": 3,
   "plugin": {
     "id": "azvs.markdown",
     "name": "AzVs Markdown",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "publisher": "azvs",
     "description": "Markdown reader and editor using the Asset Hub Web Plugin SDK."
   },
   "runtime": {
     "type": "extism",
     "wasi": true,
-    "plugin_api": "asset-hub.plugin-api@3"
+    "plugin_api": "asset-hub.plugin-api@4"
   },
   "capabilities": {
     "resource_kinds": [

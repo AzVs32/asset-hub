@@ -12,9 +12,9 @@ mod upload;
 pub use action::{
     ActionAccess, ActionCapabilityId, ActionDefinition, ActionId, ActionIdError,
     ActionOutputContract, ActionUi, DirectoryActionAppliesTo, DirectoryActionDefinition,
-    DirectoryActionId, DirectoryActionRequirements, ResourceActionAppliesTo,
-    ResourceActionContentDelivery, ResourceActionDefinition, ResourceActionId,
-    ResourceActionRequirements, ResourceContentMatcher,
+    DirectoryActionId, DirectoryActionRequirements, DirectoryResourceAccess,
+    ResourceActionAppliesTo, ResourceActionContentDelivery, ResourceActionDefinition,
+    ResourceActionId, ResourceActionRequirements, ResourceContentMatcher,
 };
 pub use definition::{
     DefinitionOrigin, DefinitionOriginId, DefinitionOriginIdError, DirectoryKindDefinition,

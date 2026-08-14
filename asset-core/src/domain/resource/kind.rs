@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 
 /// 资源类型值对象。
 ///
-/// 类型必须使用小写的 `namespace:name` 形式。命名空间和名称只允许包含 ASCII
-/// 字母、数字、`.`、`-` 和 `_`。
+/// 类型必须使用至少两个小写冒号分段。每个分段只允许包含 ASCII 字母、数字、`.`、`-`
+/// 和 `_`；类型继承仍由定义显式声明，不从分段数量推导。
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct ResourceKind(KindId);

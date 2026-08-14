@@ -22,6 +22,12 @@ pub struct DirectoryKindCapability {
     pub kind: String,
     pub parent: Option<String>,
     pub label: Option<String>,
+    /// Direct parent Directory kinds accepted by this kind.
+    ///
+    /// An empty list declares no constraint at this node; the nearest ancestor declaration may
+    /// still supply the effective constraint.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_parent_kinds: Vec<String>,
 }
 
 /// Resource kind contributed by a plugin manifest.
@@ -106,7 +112,17 @@ pub struct DirectoryActionAppliesToCapability {
 #[serde(default, deny_unknown_fields)]
 pub struct DirectoryActionRequirementsCapability {
     pub children: bool,
-    pub resources: bool,
+    pub resources: DirectoryResourceAccess,
+}
+
+/// Resource data exposed to a Directory Action through its call-scoped directory reference.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DirectoryResourceAccess {
+    #[default]
+    None,
+    Metadata,
+    Content,
 }
 
 /// Views and effects an action is allowed to return.

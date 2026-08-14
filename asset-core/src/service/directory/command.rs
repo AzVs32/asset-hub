@@ -103,6 +103,7 @@ impl DirectoryService {
                 parent.path().path(),
             ));
         }
+        self.ensure_parent_kind_allowed(&kind, parent.directory().kind())?;
         let directory = Directory::new_with_kind(*parent_id, name, kind)?;
         let path = parent.path().child(directory.name())?;
         if self.index.find_by_path(&path).await?.is_some() {
@@ -155,13 +156,11 @@ impl DirectoryService {
         {
             return Err(CoreError::forbidden("update directory", from.path().path()));
         }
-        if let Some(kind) = command.kind {
-            self.ensure_kind_registered(&kind)?;
-            directory.change_kind(kind);
-        }
-        if let Some(name) = command.name {
-            directory.rename(name)?;
-        }
+        let destination_kind = command
+            .kind
+            .clone()
+            .unwrap_or_else(|| directory.kind().clone());
+        self.ensure_kind_registered(&destination_kind)?;
         let parent_id = command
             .parent_id
             .or(directory.parent_id())
@@ -175,7 +174,6 @@ impl DirectoryService {
                 "moving the directory would create a cycle",
             ));
         }
-        directory.move_to(parent_id)?;
         let parent = self
             .index
             .find_by_id(&parent_id)
@@ -192,6 +190,17 @@ impl DirectoryService {
                 parent.path().path(),
             ));
         }
+        self.ensure_parent_kind_allowed(&destination_kind, parent.directory().kind())?;
+        for child in self.index.list_children(&directory.id()).await? {
+            self.ensure_parent_kind_allowed(child.directory().kind(), &destination_kind)?;
+        }
+        if let Some(kind) = command.kind {
+            directory.change_kind(kind);
+        }
+        if let Some(name) = command.name {
+            directory.rename(name)?;
+        }
+        directory.move_to(parent_id)?;
         let destination = parent.path().child(directory.name())?;
         if let Some(existing) = self.index.find_by_path(&destination).await?
             && existing.id() != directory.id()

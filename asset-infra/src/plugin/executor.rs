@@ -115,6 +115,7 @@ impl ExtismActionExecutor {
             let host_directories = HostDirectoryResolver::new(
                 directory_query.clone(),
                 resource_query.clone(),
+                host_content.clone(),
                 manifest.permissions.clone(),
             );
             let compiled = compile_plugin(
@@ -168,14 +169,29 @@ impl ExtismActionExecutor {
                         action.id
                     )));
                 }
-                if action
-                    .requires
-                    .as_ref()
-                    .is_some_and(|requires| requires.resources)
-                    && !manifest.permissions.directory_resources_list()
+                if action.requires.as_ref().is_some_and(|requires| {
+                    !matches!(
+                        requires.resources,
+                        asset_plugin_api::manifest::DirectoryResourceAccess::None
+                    )
+                }) && !manifest.permissions.directory_resources_list()
                 {
                     return Err(CoreError::configuration(format!(
                         "plugin `{}` directory action `{}` requires directory.resources.list permission",
+                        manifest.plugin_id(),
+                        action.id
+                    )));
+                }
+                if action.requires.as_ref().is_some_and(|requires| {
+                    matches!(
+                        requires.resources,
+                        asset_plugin_api::manifest::DirectoryResourceAccess::Content
+                    )
+                }) && (!manifest.permissions.resource_read()
+                    || !manifest.permissions.resource_content_read())
+                {
+                    return Err(CoreError::configuration(format!(
+                        "plugin `{}` directory action `{}` requires resource.read and resource.content.read permissions",
                         manifest.plugin_id(),
                         action.id
                     )));

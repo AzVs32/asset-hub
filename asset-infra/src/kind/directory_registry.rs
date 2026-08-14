@@ -112,6 +112,13 @@ fn definition_from_manifest(
                     .as_deref()
                     .map(DirectoryKind::try_new)
                     .transpose()?,
+            )
+            .with_allowed_parent_kinds(
+                capability
+                    .allowed_parent_kinds
+                    .iter()
+                    .map(DirectoryKind::try_new)
+                    .collect::<Result<Vec<_>, _>>()?,
             ),
     )
 }
@@ -129,7 +136,7 @@ fn push_definition(
     Ok(())
 }
 
-fn validate_hierarchy(definitions: &[DirectoryKindDefinition]) -> Result<(), CoreError> {
+pub(super) fn validate_hierarchy(definitions: &[DirectoryKindDefinition]) -> Result<(), CoreError> {
     validate_kind_hierarchy(
         "directory",
         definitions
@@ -141,5 +148,19 @@ fn validate_hierarchy(definitions: &[DirectoryKindDefinition]) -> Result<(), Cor
                 )
             })
             .collect(),
-    )
+    )?;
+    for definition in definitions {
+        for parent in definition.allowed_parent_kinds() {
+            if !definitions
+                .iter()
+                .any(|candidate| candidate.kind() == parent)
+            {
+                return Err(CoreError::configuration(format!(
+                    "directory kind `{}` allows unknown parent kind `{parent}`",
+                    definition.kind()
+                )));
+            }
+        }
+    }
+    Ok(())
 }

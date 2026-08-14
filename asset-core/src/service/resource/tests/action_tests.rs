@@ -66,6 +66,75 @@ fn directory_service_with_inherited_actions() -> crate::service::DirectoryServic
         .with_actions(actions, Arc::new(StaticDirectoryActionExecutor))
 }
 
+fn directory_service_with_placement_rules() -> crate::service::DirectoryService {
+    let repository = Arc::new(InMemoryResourceRepository::default());
+    let storage = Arc::new(InMemoryBlobStorage::default());
+    let core = DirectoryKind::default();
+    let games = DirectoryKind::try_new("azvs.games:directory").unwrap();
+    let item = DirectoryKind::try_new("azvs.games:directory:item").unwrap();
+    let special_item = DirectoryKind::try_new("azvs.games:directory:item:special").unwrap();
+    let kinds = Arc::new(InMemoryDirectoryKindRegistry {
+        definitions: vec![
+            DirectoryKindDefinition::new(
+                core.clone(),
+                "Directory",
+                DefinitionOrigin::builtin_static("core.directory"),
+            ),
+            DirectoryKindDefinition::new(
+                games.clone(),
+                "Games",
+                DefinitionOrigin::plugin("azvs.games").unwrap(),
+            )
+            .with_parent(Some(core)),
+            DirectoryKindDefinition::new(
+                item.clone(),
+                "Game Item",
+                DefinitionOrigin::plugin("azvs.games").unwrap(),
+            )
+            .with_parent(Some(games.clone()))
+            .with_allowed_parent_kinds([games]),
+            DirectoryKindDefinition::new(
+                special_item,
+                "Special Game Item",
+                DefinitionOrigin::plugin("azvs.games").unwrap(),
+            )
+            .with_parent(Some(item)),
+        ],
+    });
+    crate::service::DirectoryService::new(repository.clone(), repository, storage, kinds)
+}
+
+#[test]
+fn directory_kind_placement_is_enforced_for_create_move_and_parent_kind_changes() {
+    let service = directory_service_with_placement_rules();
+    let root = block_on(service.root()).unwrap();
+    let games_kind = DirectoryKind::try_new("azvs.games:directory").unwrap();
+    let item_kind = DirectoryKind::try_new("azvs.games:directory:item").unwrap();
+    let special_item_kind = DirectoryKind::try_new("azvs.games:directory:item:special").unwrap();
+    let games = block_on(service.create_with_kind(&root, "games", games_kind)).unwrap();
+
+    assert!(matches!(
+        block_on(service.create_with_kind(&root, "outside", item_kind.clone())),
+        Err(CoreError::Conflict { .. })
+    ));
+    assert!(matches!(
+        block_on(service.create_with_kind(&root, "special-outside", special_item_kind.clone())),
+        Err(CoreError::Conflict { .. })
+    ));
+
+    let item = block_on(service.create_with_kind(games.location(), "inside", item_kind)).unwrap();
+    block_on(service.create_with_kind(games.location(), "special-inside", special_item_kind))
+        .unwrap();
+    assert!(matches!(
+        block_on(service.move_to(&item.id(), &DirectoryId::root())),
+        Err(CoreError::Conflict { .. })
+    ));
+    assert!(matches!(
+        block_on(service.change_kind(&games.id(), DirectoryKind::default())),
+        Err(CoreError::Conflict { .. })
+    ));
+}
+
 #[test]
 fn directory_subkind_inherits_ancestor_actions_and_keeps_its_workspace() {
     let service = directory_service_with_inherited_actions();

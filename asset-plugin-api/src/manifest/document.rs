@@ -7,7 +7,7 @@ use super::{PluginCapabilities, PluginDescriptor, PluginPermissions, PluginRunti
 use serde::{Deserialize, Serialize};
 
 /// Current and only supported manifest schema version.
-pub const MANIFEST_VERSION: u32 = 2;
+pub const MANIFEST_VERSION: u32 = 3;
 pub const PLUGIN_MANIFEST_FILE_NAME: &str = "manifest.json";
 pub const PLUGIN_LOCK_FILE_NAME: &str = "manifest.lock.json";
 pub const PLUGIN_WASM_FILE_NAME: &str = "plugin.wasm";

@@ -1,5 +1,5 @@
 {
-  "manifest_version": 2,
+  "manifest_version": 3,
   "plugin": {
     "id": "example.plugin",
     "name": "Example Plugin",
@@ -9,7 +9,7 @@
   "runtime": {
     "type": "extism",
     "wasi": false,
-    "plugin_api": "asset-hub.plugin-api@3"
+    "plugin_api": "asset-hub.plugin-api@4"
   },
   "capabilities": {
     "resource_kinds": [],

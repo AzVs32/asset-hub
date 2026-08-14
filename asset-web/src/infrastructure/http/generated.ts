@@ -439,14 +439,15 @@ export interface components {
             diagnostics: components["schemas"]["PluginDiagnosticResponse"][];
             directory_id: string;
             effects: string[];
-            view: unknown;
+            view?: unknown;
         };
         DirectoryActionRequirementsResponse: {
             children: boolean;
-            resources: boolean;
+            resources: components["schemas"]["DirectoryResourceAccessResponse"];
         };
         DirectoryKindResponse: {
             actions: components["schemas"]["DirectoryActionDefinitionResponse"][];
+            allowed_parent_kinds: string[];
             ancestors: string[];
             kind: string;
             label: string;
@@ -467,6 +468,8 @@ export interface components {
             /** @description 当前目录下的资源分页。 */
             resources: components["schemas"]["ResourcePageResponse"];
         };
+        /** @enum {string} */
+        DirectoryResourceAccessResponse: "none" | "metadata" | "content";
         /** @description 逻辑目录响应。 */
         DirectoryResponse: {
             actions: components["schemas"]["DirectoryActionDefinitionResponse"][];
@@ -596,7 +599,7 @@ export interface components {
             /** @description 资源唯一标识。 */
             resource_id: string;
             /** @description 插件返回的 View。 */
-            view: unknown;
+            view?: unknown;
         };
         ResourceActionRequirementsResponse: {
             content: boolean;

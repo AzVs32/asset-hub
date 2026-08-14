@@ -1120,6 +1120,17 @@ async fn openapi_exposes_current_http_contract() {
     assert!(document["paths"].get("/resources/{id}/download").is_some());
     assert!(document["paths"].get("/directory-kinds").is_some());
     assert!(
+        schemas["DirectoryKindResponse"]["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field == "allowed_parent_kinds")
+    );
+    assert_eq!(
+        schemas["DirectoryResourceAccessResponse"]["enum"],
+        serde_json::json!(["none", "metadata", "content"])
+    );
+    assert!(
         document["paths"]
             .get("/directories/{id}/download")
             .is_some()

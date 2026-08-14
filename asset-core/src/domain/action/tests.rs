@@ -35,7 +35,7 @@ fn directory_actions_share_the_common_shell_but_keep_directory_contracts() {
         .with_kinds(["example:collection"])
         .with_requirements(DirectoryActionRequirements {
             children: true,
-            resources: true,
+            resources: DirectoryResourceAccess::Metadata,
         });
 
     assert!(action.matches_exact_kind("example:collection"));

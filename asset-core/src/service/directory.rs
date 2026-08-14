@@ -140,6 +140,36 @@ impl DirectoryService {
         }
     }
 
+    fn ensure_parent_kind_allowed(
+        &self,
+        child_kind: &DirectoryKind,
+        parent_kind: &DirectoryKind,
+    ) -> Result<(), CoreError> {
+        let allowed = self
+            .kind_registry
+            .lineage(child_kind)
+            .into_iter()
+            .find_map(|kind| {
+                let declared = self
+                    .kind_registry
+                    .get(&kind)
+                    .expect("registered kind lineage must contain definitions")
+                    .allowed_parent_kinds();
+                (!declared.is_empty()).then(|| declared.to_vec())
+            })
+            .unwrap_or_default();
+        if allowed.is_empty()
+            || allowed
+                .iter()
+                .any(|kind| self.kind_registry.is_a(parent_kind, kind))
+        {
+            return Ok(());
+        }
+        Err(CoreError::conflict(format!(
+            "directory kind `{child_kind}` does not allow parent kind `{parent_kind}`"
+        )))
+    }
+
     fn require_kind_registered(&self, kind: &DirectoryKind) -> Result<(), CoreError> {
         if self.kind_registry.supports(kind) {
             Ok(())

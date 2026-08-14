@@ -1,12 +1,13 @@
 use asset_core::{
     CoreError,
-    domain::DirectoryId,
+    domain::{DirectoryId, DirectoryResourceAccess, ResourceId, StorageKey},
     port::{DirectoryActionRequest, DirectoryQuery, ListResources, ResourceQuery},
 };
 use asset_plugin_api::manifest::{PluginPermission, PluginPermissions};
 use asset_plugin_api::protocol::directory::{
     PluginDirectoryChild, PluginDirectoryPage, PluginDirectoryResource, PluginDirectoryResourcePage,
 };
+use asset_plugin_api::protocol::{PluginContentReference, PluginContentReferenceEncoding};
 use extism::{Function, PTR, UserData};
 use serde::Deserialize;
 use std::{
@@ -14,12 +15,15 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use super::content_abi::{ContentLease, HostContentResolver, plugin_resource_content};
+
 const MAX_PAGE_SIZE: u32 = 100;
 
 #[derive(Clone)]
 pub(super) struct HostDirectoryResolver {
     directories: Arc<dyn DirectoryQuery>,
     resources: Arc<dyn ResourceQuery>,
+    content: HostContentResolver,
     permissions: PluginPermissions,
     state: Arc<Mutex<HashMap<String, AvailableDirectory>>>,
     runtime: tokio::runtime::Handle,
@@ -34,11 +38,12 @@ struct PageRequest {
     limit: u32,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone)]
 struct AvailableDirectory {
     id: DirectoryId,
     children: bool,
-    resources: bool,
+    resources: DirectoryResourceAccess,
+    content_leases: Arc<Mutex<HashMap<ResourceId, ContentLease>>>,
 }
 
 extism::host_fn!(asset_hub_directory_list_children(user_data: HostDirectoryResolver; request: String) -> String {
@@ -74,11 +79,13 @@ impl HostDirectoryResolver {
     pub(super) fn new(
         directories: Arc<dyn DirectoryQuery>,
         resources: Arc<dyn ResourceQuery>,
+        content: HostContentResolver,
         permissions: PluginPermissions,
     ) -> Self {
         Self {
             directories,
             resources,
+            content,
             permissions,
             state: Arc::new(Mutex::new(HashMap::new())),
             runtime: tokio::runtime::Handle::current(),
@@ -90,6 +97,7 @@ impl HostDirectoryResolver {
         request: &DirectoryActionRequest,
     ) -> Result<DirectoryLease, CoreError> {
         let reference = format!("directory:reference:{}", uuid::Uuid::now_v7());
+        let content_leases = Arc::new(Mutex::new(HashMap::new()));
         self.state
             .lock()
             .map_err(|_| CoreError::configuration("directory host state lock poisoned"))?
@@ -99,11 +107,13 @@ impl HostDirectoryResolver {
                     id: request.directory().id(),
                     children: request.requirements().children,
                     resources: request.requirements().resources,
+                    content_leases: content_leases.clone(),
                 },
             );
         Ok(DirectoryLease {
             state: self.state.clone(),
             reference,
+            content_leases,
         })
     }
 
@@ -112,7 +122,7 @@ impl HostDirectoryResolver {
             .lock()
             .map_err(|_| CoreError::configuration("directory host state lock poisoned"))?
             .get(reference)
-            .copied()
+            .cloned()
             .ok_or_else(|| CoreError::configuration("directory reference is not available"))
     }
 
@@ -186,9 +196,16 @@ impl HostDirectoryResolver {
         }
         let (request, offset) = self.page_request(value)?;
         let available = self.available_directory(&request.reference)?;
-        if !available.resources {
+        if !available.resources.includes_metadata() {
             return Err(CoreError::configuration(
                 "directory action did not declare a resources requirement",
+            ));
+        }
+        if available.resources.includes_content()
+            && (!self.permissions.resource_read() || !self.permissions.resource_content_read())
+        {
+            return Err(CoreError::configuration(
+                "directory resource content requires resource.read and resource.content.read permissions",
             ));
         }
         let directory_id = available.id;
@@ -200,15 +217,68 @@ impl HostDirectoryResolver {
             items: page
                 .items
                 .into_iter()
-                .map(|located| {
+                .map(|located| -> Result<PluginDirectoryResource, CoreError> {
                     let resource = located.resource();
-                    PluginDirectoryResource {
+                    let content_ref = if available.resources.includes_content() {
+                        let existing_reference = {
+                            let leases = available.content_leases.lock().map_err(|_| {
+                                CoreError::configuration(
+                                    "directory content lease map lock poisoned",
+                                )
+                            })?;
+                            leases
+                                .get(&resource.id())
+                                .map(|lease| lease.reference().to_string())
+                        };
+                        if let Some(reference) = existing_reference {
+                            Some(reference)
+                        } else if let Some(content) = resource.content() {
+                            let key = StorageKey::from_resource_path(
+                                located.directory().path(),
+                                resource.name(),
+                            )?;
+                            let Some(lease) =
+                                self.content.register_available(key, content.size())?
+                            else {
+                                return Ok(PluginDirectoryResource {
+                                    id: resource.id().to_string(),
+                                    name: resource.name().to_string(),
+                                    kind: resource.kind().as_str().to_string(),
+                                    revision: resource.revision(),
+                                    content: resource.content().map(plugin_resource_content),
+                                    content_ref: None,
+                                });
+                            };
+                            let reference = lease.reference().to_string();
+                            available
+                                .content_leases
+                                .lock()
+                                .map_err(|_| {
+                                    CoreError::configuration(
+                                        "directory content lease map lock poisoned",
+                                    )
+                                })?
+                                .insert(resource.id(), lease);
+                            Some(reference)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                    Ok(PluginDirectoryResource {
                         id: resource.id().to_string(),
                         name: resource.name().to_string(),
                         kind: resource.kind().as_str().to_string(),
-                    }
+                        revision: resource.revision(),
+                        content: resource.content().map(plugin_resource_content),
+                        content_ref: content_ref.map(|reference| PluginContentReference {
+                            encoding: PluginContentReferenceEncoding::Handle,
+                            reference,
+                        }),
+                    })
                 })
-                .collect(),
+                .collect::<Result<Vec<_>, _>>()?,
             next_cursor: (offset + u64::from(page.limit) < page.total)
                 .then(|| (offset + u64::from(page.limit)).to_string()),
         })
@@ -219,6 +289,7 @@ impl HostDirectoryResolver {
 pub(super) struct DirectoryLease {
     state: Arc<Mutex<HashMap<String, AvailableDirectory>>>,
     reference: String,
+    content_leases: Arc<Mutex<HashMap<ResourceId, ContentLease>>>,
 }
 
 impl DirectoryLease {
@@ -231,6 +302,9 @@ impl Drop for DirectoryLease {
     fn drop(&mut self) {
         if let Ok(mut state) = self.state.lock() {
             state.remove(&self.reference);
+        }
+        if let Ok(mut leases) = self.content_leases.lock() {
+            leases.clear();
         }
     }
 }

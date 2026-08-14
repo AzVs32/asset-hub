@@ -14,7 +14,7 @@ pub use common::{
 };
 pub use directory::{
     DirectoryActionAppliesTo, DirectoryActionDefinition, DirectoryActionId,
-    DirectoryActionRequirements,
+    DirectoryActionRequirements, DirectoryResourceAccess,
 };
 pub use matcher::ResourceContentMatcher;
 pub use resource::{

@@ -33,11 +33,30 @@ impl DirectoryActionAppliesTo {
     }
 }
 
-/// Directory data a handler expects to query through paginated Host APIs.
+/// Resource data exposed to a Directory Action through paginated Host APIs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DirectoryResourceAccess {
+    #[default]
+    None,
+    Metadata,
+    Content,
+}
+
+impl DirectoryResourceAccess {
+    pub fn includes_metadata(self) -> bool {
+        !matches!(self, Self::None)
+    }
+
+    pub fn includes_content(self) -> bool {
+        matches!(self, Self::Content)
+    }
+}
+
+/// Directory data a handler expects to query through call-scoped Host APIs.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DirectoryActionRequirements {
     pub children: bool,
-    pub resources: bool,
+    pub resources: DirectoryResourceAccess,
 }
 
 /// Directory action declaration after manifest capabilities are resolved.

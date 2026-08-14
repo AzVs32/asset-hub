@@ -3,9 +3,9 @@
 use asset_core::domain::{
     ActionAccess, ActionCapabilityId, ActionId, ActionOutputContract,
     ActionUi as ActionDefinitionUi, DefinitionOrigin, DirectoryActionAppliesTo,
-    DirectoryActionDefinition, DirectoryActionRequirements, ResourceActionAppliesTo,
-    ResourceActionContentDelivery, ResourceActionDefinition, ResourceActionRequirements,
-    ResourceContentMatcher,
+    DirectoryActionDefinition, DirectoryActionRequirements, DirectoryResourceAccess,
+    ResourceActionAppliesTo, ResourceActionContentDelivery, ResourceActionDefinition,
+    ResourceActionRequirements, ResourceContentMatcher,
 };
 use asset_plugin_api::manifest::{
     ContentDelivery, DirectoryActionCapability, ManifestActionAccess, ResourceActionCapability,
@@ -86,7 +86,17 @@ pub(super) fn directory_action_definition(
     if let Some(requirements) = &capability.requires {
         definition = definition.with_requirements(DirectoryActionRequirements {
             children: requirements.children,
-            resources: requirements.resources,
+            resources: match requirements.resources {
+                asset_plugin_api::manifest::DirectoryResourceAccess::None => {
+                    DirectoryResourceAccess::None
+                }
+                asset_plugin_api::manifest::DirectoryResourceAccess::Metadata => {
+                    DirectoryResourceAccess::Metadata
+                }
+                asset_plugin_api::manifest::DirectoryResourceAccess::Content => {
+                    DirectoryResourceAccess::Content
+                }
+            },
         });
     }
     if let Some(ui) = &capability.ui {

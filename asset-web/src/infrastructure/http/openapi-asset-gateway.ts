@@ -489,6 +489,7 @@ function mapDirectoryKind(value: Schemas["DirectoryKindResponse"]): DirectoryKin
     kind: value.kind,
     parent: value.parent ?? null,
     ancestors: value.ancestors,
+    allowedParentKinds: value.allowed_parent_kinds,
     label: value.label,
     origin: mapOrigin(value.origin),
     actions: value.actions.map(mapDirectoryAction),
@@ -503,7 +504,10 @@ function mapDirectoryAction(value: ApiDirectoryAction): DirectoryAction {
     label: value.label,
     description: value.description ?? null,
     access: enumValue(value.access, ["read", "write"]),
-    requires: { children: value.requires.children, resources: value.requires.resources },
+    requires: {
+      children: value.requires.children,
+      resources: enumValue(value.requires.resources, ["none", "metadata", "content"]),
+    },
     output: {
       views: value.output.views.filter(isPluginViewKind),
       effects: value.output.effects.map(directoryEffectKind),

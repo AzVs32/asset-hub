@@ -1,17 +1,17 @@
 {
-  "$schema": "https://asset-hub.local/schemas/plugin-manifest-v2.json",
-  "manifest_version": 2,
+  "$schema": "https://asset-hub.local/schemas/plugin-manifest-v3.json",
+  "manifest_version": 3,
   "plugin": {
     "id": "azvs.epub",
     "name": "AzVs EPUB",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "publisher": "azvs",
     "description": "Secure EPUB 2 and EPUB 3 reader with lazy chapters and embedded book resources."
   },
   "runtime": {
     "type": "extism",
     "wasi": false,
-    "plugin_api": "asset-hub.plugin-api@3"
+    "plugin_api": "asset-hub.plugin-api@4"
   },
   "capabilities": {
     "resource_kinds": [

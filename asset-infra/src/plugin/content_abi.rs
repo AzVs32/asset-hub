@@ -1,6 +1,7 @@
 use asset_core::CoreError;
 use asset_core::domain::{
-    ActionAccess, ContentVerificationStatus, ResourceActionContentDelivery, StorageKey,
+    ActionAccess, ContentVerificationStatus, ResourceActionContentDelivery, ResourceContent,
+    StorageKey,
 };
 use asset_core::port::{BlobStorage, ResourceActionRequest};
 use asset_plugin_api::abi::content::PluginContentRange;
@@ -145,6 +146,26 @@ pub(super) fn compile_plugin(
 }
 
 impl HostContentResolver {
+    pub(super) fn register_available(
+        &self,
+        key: StorageKey,
+        size: u64,
+    ) -> Result<Option<ContentLease>, CoreError> {
+        if size > self.policy.max_content_bytes() {
+            return Ok(None);
+        }
+        let reference = content_reference();
+        self.state
+            .lock()
+            .map_err(|_| CoreError::configuration("content reference map lock poisoned"))?
+            .references
+            .insert(reference.clone(), AvailableContent { key, size });
+        Ok(Some(ContentLease {
+            state: self.state.clone(),
+            reference,
+        }))
+    }
+
     pub(super) fn register(
         &self,
         plugin_id: &str,
@@ -170,22 +191,7 @@ impl HostContentResolver {
                 ),
             ));
         }
-        let reference = content_reference();
-        self.state
-            .lock()
-            .map_err(|_| CoreError::configuration("content reference map lock poisoned"))?
-            .references
-            .insert(
-                reference.clone(),
-                AvailableContent {
-                    key: request.storage_key().clone(),
-                    size: content.size(),
-                },
-            );
-        Ok(Some(ContentLease {
-            state: self.state.clone(),
-            reference,
-        }))
+        self.register_available(request.storage_key().clone(), content.size())
     }
 
     pub(super) fn open(&self, reference: &str) -> Result<String, CoreError> {
@@ -280,6 +286,23 @@ impl HostContentResolver {
     }
 }
 
+pub(super) fn plugin_resource_content(content: &ResourceContent) -> PluginResourceContent {
+    PluginResourceContent {
+        size: content.size(),
+        mime_type: content.mime_type().map(str::to_string),
+        verification_status: match content.verification_status() {
+            ContentVerificationStatus::Pending => PluginContentVerificationStatus::Pending,
+            ContentVerificationStatus::Verified => PluginContentVerificationStatus::Verified,
+            ContentVerificationStatus::Failed => PluginContentVerificationStatus::Failed,
+        },
+        checksum: content.checksum().map(|checksum| PluginChecksum {
+            kind: checksum.kind().as_str().to_string(),
+            value: checksum.value().to_string(),
+        }),
+        verification_error: content.verification_error().map(str::to_string),
+    }
+}
+
 pub(super) struct ContentLease {
     pub(super) state: Arc<Mutex<HostContentState>>,
     pub(super) reference: String,
@@ -346,22 +369,7 @@ pub(super) fn build_payload(
             name: resource.name().to_string(),
             kind: resource.kind().as_str().to_string(),
             revision: resource.revision(),
-            content: content_ref.map(|content| PluginResourceContent {
-                size: content.size(),
-                mime_type: content.mime_type().map(str::to_string),
-                verification_status: match content.verification_status() {
-                    ContentVerificationStatus::Pending => PluginContentVerificationStatus::Pending,
-                    ContentVerificationStatus::Verified => {
-                        PluginContentVerificationStatus::Verified
-                    }
-                    ContentVerificationStatus::Failed => PluginContentVerificationStatus::Failed,
-                },
-                checksum: content.checksum().map(|checksum| PluginChecksum {
-                    kind: checksum.kind().as_str().to_string(),
-                    value: checksum.value().to_string(),
-                }),
-                verification_error: content.verification_error().map(str::to_string),
-            }),
+            content: content_ref.map(plugin_resource_content),
             created_at: resource.created_at().to_rfc3339(),
             updated_at: resource.updated_at().to_rfc3339(),
             deleted_at: resource.deleted_at().map(|value| value.to_rfc3339()),

@@ -6,8 +6,9 @@ const MAX_KIND_ID_LEN: usize = 256;
 
 /// Canonical lexical value shared by target-specific kind identifiers.
 ///
-/// A kind ID is exactly `namespace:name`. Both components use lowercase ASCII letters, digits,
-/// `.`, `-`, and `_`. Identity values are never trimmed or case-normalized.
+/// A kind ID contains at least two colon-separated segments. Every segment uses lowercase ASCII
+/// letters, digits, `.`, `-`, and `_`. Identity values are never trimmed or case-normalized, and
+/// hierarchy remains explicit metadata rather than being inferred from the number of segments.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct KindId(String);
@@ -20,7 +21,7 @@ pub enum KindIdError {
     NonCanonical,
     #[error("kind id must not exceed {max} characters")]
     TooLong { max: usize },
-    #[error("kind id must use canonical lowercase namespace:name format: `{value}`")]
+    #[error("kind id must use canonical lowercase colon-separated segments: `{value}`")]
     InvalidFormat { value: String },
 }
 
@@ -38,10 +39,7 @@ impl KindId {
                 max: MAX_KIND_ID_LEN,
             });
         }
-        let Some((namespace, name)) = value.split_once(':') else {
-            return Err(KindIdError::InvalidFormat { value });
-        };
-        let valid = |part: &str| {
+        let valid_segment = |part: &str| {
             !part.is_empty()
                 && part.chars().all(|character| {
                     character.is_ascii_lowercase()
@@ -49,7 +47,11 @@ impl KindId {
                         || matches!(character, '.' | '-' | '_')
                 })
         };
-        if !valid(namespace) || !valid(name) {
+        let mut segments = value.split(':');
+        let valid = segments.next().is_some_and(valid_segment)
+            && segments.next().is_some_and(valid_segment)
+            && segments.all(valid_segment);
+        if !valid {
             return Err(KindIdError::InvalidFormat { value });
         }
         Ok(Self(value))
@@ -105,8 +107,8 @@ mod tests {
     #[test]
     fn accepts_only_canonical_namespaced_ids() {
         assert_eq!(
-            KindId::new("azvs.game:markdown_v2").unwrap().as_str(),
-            "azvs.game:markdown_v2"
+            KindId::new("azvs.game:directory:item_v2").unwrap().as_str(),
+            "azvs.game:directory:item_v2"
         );
         for value in [
             "",
@@ -114,7 +116,8 @@ mod tests {
             "Core:image",
             "core:image ",
             "image",
-            "core:image:large",
+            "core::image",
+            "core:image:",
         ] {
             assert!(KindId::new(value).is_err(), "`{value}` must be rejected");
         }

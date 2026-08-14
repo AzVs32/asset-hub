@@ -1,4 +1,4 @@
-use super::content_abi::{AvailableContent, HostContentResolver, HostContentState};
+use super::content_abi::{HostContentResolver, HostContentState};
 use super::frame_url::{plugin_web_asset_url, resolve_plugin_output_urls};
 use super::permissions::validate_external_permissions;
 use crate::config::PluginPermissionGrants;
@@ -31,7 +31,7 @@ fn plugin_frame_relative_url_is_resolved_to_plugin_web_route() {
 #[test]
 fn plugin_frame_rejects_a_different_plugin_api() {
     let mut output = PluginResourceActionOutput::new(PluginView::PluginFrame(PluginFrameView {
-        plugin_api: "asset-hub.plugin-api@4".to_string(),
+        plugin_api: "asset-hub.plugin-api@3".to_string(),
         title: None,
         url: "index.html".to_string(),
     }));
@@ -93,17 +93,20 @@ async fn content_handles_read_raw_bounded_ranges_and_close() {
         .put(&key, bytes::Bytes::from_static(b"abcdefgh"))
         .await
         .unwrap();
-    let reference = "asset://content/test".to_string();
-    let mut state = HostContentState::default();
-    state
-        .references
-        .insert(reference.clone(), AvailableContent { key, size: 8 });
     let resolver = HostContentResolver {
         storage,
-        state: Arc::new(Mutex::new(state)),
+        state: Arc::new(Mutex::new(HostContentState::default())),
         runtime: tokio::runtime::Handle::current(),
         policy: Arc::new(PluginExecutionPolicy::new(128, 16, 3, 1024, 1024, 1, 32, 5).unwrap()),
     };
+    assert!(
+        resolver
+            .register_available(StorageKey::new("docs/too-large.bin").unwrap(), 129)
+            .unwrap()
+            .is_none()
+    );
+    let lease = resolver.register_available(key, 8).unwrap().unwrap();
+    let reference = lease.reference().to_string();
 
     tokio::task::spawn_blocking(move || {
         let handle = resolver.open(&reference).unwrap();
@@ -112,6 +115,8 @@ async fn content_handles_read_raw_bounded_ranges_and_close() {
         assert_eq!(resolver.read(&handle, 5, 3).unwrap(), b"fgh");
         resolver.close(&handle).unwrap();
         assert!(resolver.size(&handle).is_err());
+        drop(lease);
+        assert!(resolver.open(&reference).is_err());
     })
     .await
     .unwrap();

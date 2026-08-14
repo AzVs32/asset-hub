@@ -42,7 +42,7 @@ fn manifest_requires_current_versions() {
             .is_err()
     );
     document["manifest_version"] = serde_json::json!(MANIFEST_VERSION);
-    for unsupported in ["asset-hub.plugin-api@1", "asset-hub.plugin-api@4"] {
+    for unsupported in ["asset-hub.plugin-api@1", "asset-hub.plugin-api@3"] {
         document["runtime"]["plugin_api"] = serde_json::json!(unsupported);
         assert!(
             serde_json::from_value::<PluginManifest>(document.clone())
@@ -56,6 +56,65 @@ fn manifest_requires_current_versions() {
         .unwrap()
         .remove("plugin_api");
     assert!(serde_json::from_value::<PluginManifest>(document).is_err());
+}
+
+#[test]
+fn manifest_accepts_multi_segment_kind_ids_and_directory_parent_constraints() {
+    let mut document = manifest_document();
+    document["capabilities"]["directory_kinds"] = serde_json::json!([
+        {
+            "kind": "plugin:directory:games",
+            "parent": "core:directory",
+            "label": "Games"
+        },
+        {
+            "kind": "plugin:directory:games:item",
+            "parent": "core:directory",
+            "allowed_parent_kinds": ["plugin:directory:games"],
+            "label": "Game"
+        }
+    ]);
+
+    let manifest = serde_json::from_value::<PluginManifest>(document).unwrap();
+    manifest.validate().unwrap();
+    assert_eq!(
+        manifest.capabilities.directory_kinds[1].allowed_parent_kinds,
+        ["plugin:directory:games"]
+    );
+}
+
+#[test]
+fn directory_content_access_requires_resource_content_permissions() {
+    let mut document = manifest_document();
+    document["capabilities"]["resource_actions"] = serde_json::json!([]);
+    document["capabilities"]["directory_actions"] = serde_json::json!([{
+        "id": "example.plugin.inspect",
+        "label": "Inspect",
+        "handler": "inspect",
+        "requires": {"resources": "content"},
+        "output": {"views": ["json"]}
+    }]);
+    document["permissions"]["allow"] =
+        serde_json::json!(["directory.read", "directory.resources.list"]);
+
+    assert!(
+        serde_json::from_value::<PluginManifest>(document.clone())
+            .unwrap()
+            .validate()
+            .unwrap_err()
+            .contains("resource.read and resource.content.read")
+    );
+
+    document["permissions"]["allow"] = serde_json::json!([
+        "directory.read",
+        "directory.resources.list",
+        "resource.read",
+        "resource.content.read"
+    ]);
+    serde_json::from_value::<PluginManifest>(document)
+        .unwrap()
+        .validate()
+        .unwrap();
 }
 
 #[test]
@@ -261,7 +320,7 @@ fn directory_workspace_provider_has_an_exclusive_read_only_frame_contract() {
         "handler": "render_workspace",
         "applies_to": {"kinds": ["example:collection"]},
         "access": "read",
-        "requires": {"children": true, "resources": true},
+        "requires": {"children": true, "resources": "metadata"},
         "output": {"views": ["plugin_frame", "json"]},
         "ui": {"locations": ["directory_workspace"]}
     }]);

@@ -185,6 +185,7 @@ pub(crate) struct DirectoryKindResponse {
     pub(crate) kind: String,
     pub(crate) parent: Option<String>,
     pub(crate) ancestors: Vec<String>,
+    pub(crate) allowed_parent_kinds: Vec<String>,
     pub(crate) label: String,
     pub(crate) actions: Vec<DirectoryActionDefinitionResponse>,
     pub(crate) origin: DefinitionOriginResponse,
@@ -202,6 +203,11 @@ impl DirectoryKindResponse {
                 .kind_lineage(definition.kind())
                 .into_iter()
                 .skip(1)
+                .map(|kind| kind.as_str().to_string())
+                .collect(),
+            allowed_parent_kinds: definition
+                .allowed_parent_kinds()
+                .iter()
                 .map(|kind| kind.as_str().to_string())
                 .collect(),
             label: definition.label().to_string(),
@@ -323,7 +329,15 @@ pub(crate) struct DirectoryActionDefinitionResponse {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub(crate) struct DirectoryActionRequirementsResponse {
     pub(crate) children: bool,
-    pub(crate) resources: bool,
+    pub(crate) resources: DirectoryResourceAccessResponse,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DirectoryResourceAccessResponse {
+    None,
+    Metadata,
+    Content,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -342,7 +356,17 @@ impl From<&DirectoryActionDefinition> for DirectoryActionDefinitionResponse {
             access: action_access_text(action.access()).to_string(),
             requires: DirectoryActionRequirementsResponse {
                 children: action.requirements().children,
-                resources: action.requirements().resources,
+                resources: match action.requirements().resources {
+                    asset_core::domain::DirectoryResourceAccess::None => {
+                        DirectoryResourceAccessResponse::None
+                    }
+                    asset_core::domain::DirectoryResourceAccess::Metadata => {
+                        DirectoryResourceAccessResponse::Metadata
+                    }
+                    asset_core::domain::DirectoryResourceAccess::Content => {
+                        DirectoryResourceAccessResponse::Content
+                    }
+                },
             },
             output: ResourceActionOutputContractResponse {
                 views: action.output().views.clone(),

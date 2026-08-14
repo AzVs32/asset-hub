@@ -107,12 +107,26 @@ revision atomically in SQLite, including effects applied after a directory Actio
 Core Action and capability identifiers are validated domain values. Dynamic identifiers reject
 empty, non-canonical, uppercase, or unsupported characters before reaching registries or executors;
 Host-owned static declarations assert the same invariant at construction.
-Resource Kind IDs use lowercase `namespace:name`; Resource and Directory Action IDs use lowercase
-dot-separated provider names such as `azvs.markdown.read`. Runtime constructs all four registries
+Resource and Directory Kind IDs use two or more lowercase colon-separated segments; the segments
+are identity only, while inheritance is declared explicitly through `parent`. Resource and
+Directory Action IDs use lowercase dot-separated provider names such as `azvs.markdown.read`.
+Runtime constructs all four registries
 as one validated capability-catalog unit, rejects duplicate IDs and invalid scopes before serving,
 and reports ambiguous content-kind detection instead of selecting by registration order.
 Definition origins also carry validated lowercase dot-separated owner IDs rather than unchecked
 strings.
+
+Directory Kind declarations may restrict direct placement with `allowed_parent_kinds`. Catalog
+assembly verifies every referenced parent Kind, and Core enforces the effective nearest constraint
+on create, move, and Kind changes. A parent descendant satisfies an allowed ancestor. No Resource
+filename, role, or required-file policy is normalized by the Host.
+
+Directory Actions choose resource exposure with `requires.resources = none | metadata | content`.
+Metadata mode exposes paged Resource identity, Kind, revision, and content metadata. Content mode
+also creates call-scoped handles and reuses the standard content open/read/close Host ABI; it
+requires both Resource read permissions in addition to Directory resource listing. Leases are
+destroyed when the Directory Action invocation ends, so plugins receive neither persistent handles
+nor storage paths. Interpretation of special files and Resource Kinds remains plugin-owned.
 
 Plugin loading intentionally remains atomic and fail-fast. Package verification, cross-plugin
 capability conflict checks, Wasm compilation, executor bindings, and verified Web snapshots all

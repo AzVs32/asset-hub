@@ -2,7 +2,7 @@ use crate::domain::{KindId, KindIdError};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-/// 目录类型值对象。插件可以贡献自己的 `namespace:name` 类型。
+/// 目录类型值对象。插件可以贡献自己的小写冒号分段类型。
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct DirectoryKind(KindId);

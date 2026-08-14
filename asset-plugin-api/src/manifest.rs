@@ -15,9 +15,9 @@ mod validation;
 pub use capability::{
     ActionOutputCapability, ActionRequirements, ActionUi, ContentDelivery,
     DirectoryActionAppliesToCapability, DirectoryActionCapability,
-    DirectoryActionRequirementsCapability, DirectoryKindCapability, ManifestActionAccess,
-    PluginCapabilities, ResourceActionAppliesToCapability, ResourceActionCapability,
-    ResourceContentMatcher, ResourceKindCapability,
+    DirectoryActionRequirementsCapability, DirectoryKindCapability, DirectoryResourceAccess,
+    ManifestActionAccess, PluginCapabilities, ResourceActionAppliesToCapability,
+    ResourceActionCapability, ResourceContentMatcher, ResourceKindCapability,
 };
 pub use descriptor::PluginDescriptor;
 pub use document::{

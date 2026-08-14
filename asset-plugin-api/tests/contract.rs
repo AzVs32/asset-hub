@@ -1,4 +1,4 @@
-use asset_plugin_api::manifest::{MANIFEST_VERSION, PluginManifest};
+use asset_plugin_api::manifest::{DirectoryResourceAccess, MANIFEST_VERSION, PluginManifest};
 use asset_plugin_api::protocol::directory::{
     PluginDirectoryActionOutput, PluginDirectoryActionRequest,
 };
@@ -125,7 +125,7 @@ fn manifest_accepts_directory_actions_with_target_specific_requirements() {
         "handler": "organize",
         "applies_to": {"kinds": ["example:collection"]},
         "access": "write",
-        "requires": {"children": true, "resources": true},
+        "requires": {"children": true, "resources": "metadata"},
         "output": {"views": ["json"]},
         "ui": {"locations": ["directory_context_menu"]}
     }]);
@@ -141,7 +141,7 @@ fn manifest_accepts_directory_actions_with_target_specific_requirements() {
     let action = &manifest.capabilities.directory_actions[0];
     let requirements = action.requires.as_ref().unwrap();
     assert!(requirements.children);
-    assert!(requirements.resources);
+    assert_eq!(requirements.resources, DirectoryResourceAccess::Metadata);
     assert_eq!(
         action.ui.as_ref().unwrap().locations,
         ["directory_context_menu"]
@@ -245,7 +245,7 @@ fn directory_request_and_output_have_separate_wire_effects() {
 
 #[test]
 fn request_and_output_wire_shapes_match_the_current_goldens() {
-    assert_golden_round_trip::<PluginManifest>(include_str!("fixtures/manifest-v2.json"));
+    assert_golden_round_trip::<PluginManifest>(include_str!("fixtures/manifest-v3.json"));
     assert_golden_round_trip::<PluginResourceActionRequest>(include_str!(
         "fixtures/action-request-inline-v2.json"
     ));

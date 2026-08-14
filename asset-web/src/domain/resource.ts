@@ -4,6 +4,7 @@ export type ActionAccess = "read" | "write";
 export type ContentDelivery = "auto" | "inline" | "reference";
 export type ResourceActionEffectKind = "replace_content" | "delete";
 export type DirectoryActionEffectKind = "update" | "create_child" | "delete";
+export type DirectoryResourceAccess = "none" | "metadata" | "content";
 export interface ActionUi {
   group: string | null;
   order: number | null;
@@ -44,7 +45,7 @@ export interface DirectoryAction {
   label: string;
   description: string | null;
   access: ActionAccess;
-  requires: { children: boolean; resources: boolean };
+  requires: { children: boolean; resources: DirectoryResourceAccess };
   output: { views: PluginViewKind[]; effects: DirectoryActionEffectKind[] };
   ui: ActionUi;
   appliesTo: { kinds: string[] };
@@ -98,6 +99,7 @@ export interface DirectoryKind {
   kind: string;
   parent: string | null;
   ancestors: string[];
+  allowedParentKinds: string[];
   label: string;
   origin: DefinitionOrigin;
   actions: DirectoryAction[];

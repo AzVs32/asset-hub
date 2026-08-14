@@ -81,7 +81,7 @@ mod tests {
         let Some(PluginView::PluginFrame(frame)) = output.view else {
             panic!("expected plugin_frame output");
         };
-        assert_eq!(frame.plugin_api, "asset-hub.plugin-api@3");
+        assert_eq!(frame.plugin_api, "asset-hub.plugin-api@4");
         assert_eq!(frame.title.as_deref(), Some("Hello Directory"));
         assert_eq!(frame.url, "index.html");
         assert!(output.effects.is_empty());

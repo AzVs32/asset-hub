@@ -71,15 +71,15 @@ filesystem_write = []
 # `capabilities.directory_actions` for directory actions.
 # A kind-specific action can implement a singleton Host capability while retaining its own
 # provider-owned action ID. Resource actions recognize `thumbnail`, `text_read`, and `text_edit`;
-# directory actions recognize `thumbnail`.
+# directory actions recognize `thumbnail` and `workspace`.
 # Build the fixed `plugin.wasm` runtime and optional root `index.html` plus Web assets. Before
 # startup, run `asset plugin --seal <plugin-id>`; the CLI resolves the package below the configured
 # Blob root. Startup only verifies the
 # existing `manifest.lock.json` and never modifies the package.
 #
 # {
-#   "$schema": "https://asset-hub.local/schemas/plugin-manifest-v2.json",
-#   "manifest_version": 2,
+#   "$schema": "https://asset-hub.local/schemas/plugin-manifest-v3.json",
+#   "manifest_version": 3,
 #   "plugin": {
 #     "id": "example.tools",
 #     "name": "Example Tools",
@@ -89,7 +89,7 @@ filesystem_write = []
 #   },
 #   "runtime": {
 #     "type": "extism",
-#     "plugin_api": "asset-hub.plugin-api@3"
+#     "plugin_api": "asset-hub.plugin-api@4"
 #   },
 #   "capabilities": {
 #     "resource_kinds": [

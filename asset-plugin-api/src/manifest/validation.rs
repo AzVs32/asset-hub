@@ -134,6 +134,19 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
         if let Some(parent) = &kind.parent {
             validate_kind_id("capabilities.directory_kinds[].parent", parent)?;
         }
+        let mut allowed_parent_kinds = HashSet::new();
+        for parent in &kind.allowed_parent_kinds {
+            validate_kind_id(
+                "capabilities.directory_kinds[].allowed_parent_kinds[]",
+                parent,
+            )?;
+            if !allowed_parent_kinds.insert(parent.as_str()) {
+                return Err(format!(
+                    "directory kind `{}` contains duplicate allowed parent kind `{parent}`",
+                    kind.kind
+                ));
+            }
+        }
     }
     for action in &capabilities.resource_actions {
         validate_action_id("capabilities.resource_actions[].id", &action.id)?;
@@ -353,14 +366,22 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
                 action.id
             ));
         }
-        if action
-            .requires
-            .as_ref()
-            .is_some_and(|requires| requires.resources)
-            && !manifest.permissions.directory_resources_list()
+        if action.requires.as_ref().is_some_and(|requires| {
+            !matches!(requires.resources, super::DirectoryResourceAccess::None)
+        }) && !manifest.permissions.directory_resources_list()
         {
             return Err(format!(
                 "capabilities.directory_actions[`{}`] requires resources without directory.resources.list permission",
+                action.id
+            ));
+        }
+        if action.requires.as_ref().is_some_and(|requires| {
+            matches!(requires.resources, super::DirectoryResourceAccess::Content)
+        }) && (!manifest.permissions.resource_read()
+            || !manifest.permissions.resource_content_read())
+        {
+            return Err(format!(
+                "capabilities.directory_actions[`{}`] requires resource content without resource.read and resource.content.read permissions",
                 action.id
             ));
         }
@@ -592,15 +613,10 @@ fn validate_owner_id(field: &str, value: &str) -> Result<(), String> {
 fn validate_kind_id(field: &str, value: &str) -> Result<(), String> {
     if value.chars().count() > 256 || value.trim() != value {
         return Err(format!(
-            "{field} must use canonical lowercase namespace:name format: `{value}`"
+            "{field} must use canonical lowercase colon-separated segments: `{value}`"
         ));
     }
-    let Some((namespace, name)) = value.split_once(':') else {
-        return Err(format!(
-            "{field} must use canonical lowercase namespace:name format: `{value}`"
-        ));
-    };
-    let valid = |part: &str| {
+    let valid_segment = |part: &str| {
         !part.is_empty()
             && part.chars().all(|character| {
                 character.is_ascii_lowercase()
@@ -608,9 +624,13 @@ fn validate_kind_id(field: &str, value: &str) -> Result<(), String> {
                     || matches!(character, '.' | '-' | '_')
             })
     };
-    if !valid(namespace) || !valid(name) {
+    let mut segments = value.split(':');
+    let valid = segments.next().is_some_and(valid_segment)
+        && segments.next().is_some_and(valid_segment)
+        && segments.all(valid_segment);
+    if !valid {
         return Err(format!(
-            "{field} must use canonical lowercase namespace:name format: `{value}`"
+            "{field} must use canonical lowercase colon-separated segments: `{value}`"
         ));
     }
     Ok(())

@@ -1,9 +1,9 @@
 import { CallOptions, connect, WindowMessenger } from "penpal";
 
-export const PLUGIN_API_VERSION = "asset-hub.plugin-api@3";
+export const PLUGIN_API_VERSION = "asset-hub.plugin-api@4";
 
-const FRAME_CHANNEL = "asset-hub.plugin-frame@3";
-const DIRECTORY_FRAME_CHANNEL = "asset-hub.plugin-directory-frame@3";
+const FRAME_CHANNEL = "asset-hub.plugin-frame@4";
+const DIRECTORY_FRAME_CHANNEL = "asset-hub.plugin-directory-frame@4";
 const defaultConnectionTimeoutMs = 10_000;
 const defaultCallTimeoutMs = 30_000;
 

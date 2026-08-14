@@ -4,9 +4,9 @@ use crate::error::ResourceError;
 
 #[test]
 fn resource_kind_matches_directory_kind_naming_rules() {
-    let kind = ResourceKind::try_new("azvs.game:markdown_v2").unwrap();
+    let kind = ResourceKind::try_new("azvs:document:markdown_v2").unwrap();
 
-    assert_eq!(kind.as_str(), "azvs.game:markdown_v2");
+    assert_eq!(kind.as_str(), "azvs:document:markdown_v2");
     assert!(ResourceKind::try_new(" AzVs.Game:Markdown_V2 ").is_err());
     assert!(ResourceKind::try_new(" Core:Image ").is_err());
 }
@@ -17,7 +17,7 @@ fn resource_kind_rejects_non_namespaced_or_invalid_values() {
         "image",
         ":image",
         "core:",
-        "core:image:large",
+        "core::image",
         "core/image",
         "核心:图片",
     ] {

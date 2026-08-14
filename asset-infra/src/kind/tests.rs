@@ -83,6 +83,31 @@ fn registry_rejects_unknown_parents_and_cycles() {
 }
 
 #[test]
+fn directory_registry_rejects_unknown_allowed_parent_kinds() {
+    let definitions = vec![
+        DirectoryKindDefinition::new(
+            DirectoryKind::try_new("core:directory").unwrap(),
+            "Directory",
+            DefinitionOrigin::builtin_static("core.directory"),
+        ),
+        DirectoryKindDefinition::new(
+            DirectoryKind::try_new("plugin:directory:games:item").unwrap(),
+            "Game",
+            DefinitionOrigin::plugin_static("plugin.games"),
+        )
+        .with_parent(Some(DirectoryKind::try_new("core:directory").unwrap()))
+        .with_allowed_parent_kinds([DirectoryKind::try_new("plugin:directory:missing").unwrap()]),
+    ];
+
+    assert!(
+        super::directory_registry::validate_hierarchy(&definitions)
+            .unwrap_err()
+            .to_string()
+            .contains("allows unknown parent kind")
+    );
+}
+
+#[test]
 fn inherited_action_label_requires_an_ancestor_capability_provider() {
     let definitions = vec![
         definition_from_parts(
@@ -146,7 +171,7 @@ fn registry_rejects_duplicate_global_action_ids() {
         package.join("manifest.json"),
         r#"
         {
-          "manifest_version": 2,
+          "manifest_version": 3,
           "plugin": {
             "id": "duplicate-download",
             "name": "Duplicate Preview",
@@ -156,7 +181,7 @@ fn registry_rejects_duplicate_global_action_ids() {
           },
           "runtime": {
             "type": "extism",
-            "plugin_api": "asset-hub.plugin-api@3"
+            "plugin_api": "asset-hub.plugin-api@4"
           },
           "capabilities": {
             "resource_kinds": [],
@@ -397,7 +422,7 @@ fn write_empty_wasm_lock(root: &std::path::Path, plugin_id: &str) {
         root.join("manifest.lock.json"),
         format!(
             r#"{{
-              "manifest_version": 2,
+              "manifest_version": 3,
               "plugin_id": "{plugin_id}",
               "integrity": {{
                 "plugin.wasm": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"

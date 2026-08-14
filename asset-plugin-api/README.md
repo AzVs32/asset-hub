@@ -26,9 +26,9 @@ Asset Hub versions the Rust library and its serialized contracts separately:
 
 | Surface | Current value | Purpose |
 | --- | --- | --- |
-| Rust crate | `0.2.0` | Rust source API |
-| Manifest | `2` | external Extism/Wasm `manifest.json` document format |
-| Plugin API | `asset-hub.plugin-api@3` | Action JSON, Host functions, and Plugin Frame Web SDK |
+| Rust crate | `0.3.0` | Rust source API |
+| Manifest | `3` | external Extism/Wasm `manifest.json` document format |
+| Plugin API | `asset-hub.plugin-api@4` | Action JSON, Host functions, and Plugin Frame Web SDK |
 
 Plugins must declare both `manifest_version` and `runtime.plugin_api`. The host
 rejects unsupported contract versions instead of attempting to interpret them.
@@ -50,7 +50,7 @@ capabilities, and permissions:
 
 ```json
 {
-  "manifest_version": 2,
+  "manifest_version": 3,
   "plugin": {
     "id": "example.plugin",
     "name": "Example Plugin",
@@ -59,7 +59,7 @@ capabilities, and permissions:
   },
   "runtime": {
     "type": "extism",
-    "plugin_api": "asset-hub.plugin-api@3"
+    "plugin_api": "asset-hub.plugin-api@4"
   },
   "capabilities": {
     "resource_kinds": [
@@ -108,6 +108,34 @@ and runtime loading are read-only and use the same host implementation and limit
 (1 MiB Manifest, 4 MiB lock, 64 MiB Wasm, and 64 MiB total Web assets). Packages
 reject symbolic links and undeclared files. Rebuilds must remove the old lock,
 generate a new one, and verify it before startup.
+
+### Kind identity and Directory placement
+
+A Kind ID contains two or more lowercase colon-separated segments, for example
+`plugin:directory:games:item`. Every segment may contain lowercase ASCII letters, digits, `.`,
+`-`, and `_`. Colons are identity separators only: they do not create inheritance. Kind inheritance
+continues to use the explicit `parent` field.
+
+A Directory Kind may restrict its direct parent using `allowed_parent_kinds`:
+
+```json
+{
+  "kind": "plugin:directory:games:item",
+  "parent": "core:directory",
+  "allowed_parent_kinds": ["plugin:directory:games"],
+  "label": "Game"
+}
+```
+
+An empty or omitted list declares no new constraint. The effective constraint is inherited from
+the nearest Kind ancestor that declares a non-empty list; when no declaration exists, any parent is
+accepted. The Host enforces this invariant on Directory create, move, and Kind change, including
+Kind changes that would invalidate an existing direct child. Allowed entries accept descendants of
+the named parent Kind.
+
+The Host deliberately does not model role files such as `README.md`, `HASH.md`, or required
+resources in a Directory Kind declaration. Those meanings remain plugin policy. A Directory Action
+can inspect the current Directory and decide which names or Resource Kinds are special.
 
 ### Providing a singleton Host capability
 
@@ -158,11 +186,20 @@ implements every layout region or slot inside its iframe.
   "handler": "render_workspace",
   "applies_to": { "kinds": ["example:game"] },
   "access": "read",
-  "requires": { "children": true, "resources": true },
+  "requires": { "children": true, "resources": "metadata" },
   "output": { "views": ["plugin_frame", "json"] },
   "ui": { "locations": ["directory_workspace"] }
 }
 ```
+
+`requires.resources` is `"none"`, `"metadata"`, or `"content"` and defaults to `"none"`.
+`metadata` enables the paged directory resource ABI and exposes each Resource's identity, name,
+Kind, revision, and content metadata. `content` additionally exposes a call-scoped content handle
+for eligible Resources; plugins read that handle with the existing
+`asset_hub_content_open/size/read/close` ABI. It requires `directory.resources.list`,
+`resource.read`, and `resource.content.read`. Content handles are released with the Directory
+Action call and are never filesystem paths. A resource that has no readable content handle still
+retains its metadata in the page.
 
 A Resource action normally declares `label`. A singleton capability provider may omit it when the
 action targets a child Resource kind; the Host then inherits the normalized label from the nearest
@@ -279,12 +316,26 @@ cargo doc -p asset-plugin-api --open
 
 ## Compatibility
 
-Version 3 is intentionally incompatible with version 2. Existing packages must update their
+Version 4 of the Plugin API and Manifest version 3 are intentionally incompatible with their
+predecessors. Existing packages must update their
 Manifest and runtime together, migrate Plugin Frame code to the Web SDK, rebuild package artifacts,
-remove the old lock, and reseal the package. The Host rejects version 2 packages instead of
+remove the old lock, and reseal the package. The Host rejects Manifest version 2 or Plugin API
+version 3 packages instead of
 translating them.
 
-The principal version 3 changes are:
+The principal version 4 / Manifest version 3 changes are:
+
+- Kind IDs accept two or more explicit colon-separated segments; inheritance is still declared by
+  `parent` and is never inferred from the ID.
+- Directory Kinds may declare direct-parent placement constraints through
+  `allowed_parent_kinds`.
+- Directory Action resource requirements use `none`, `metadata`, or `content` instead of a boolean.
+  Content mode returns call-scoped handles that use the existing content ABI.
+- File roles, required filenames, and Resource-to-Directory policy are not Manifest concepts; the
+  plugin evaluates them using the Directory Action input and ABI.
+
+Version 3 was intentionally incompatible with version 2. Existing packages had to update their
+Manifest and runtime together. Its principal changes were:
 
 - Plugin Frames use the Asset Hub Web Plugin SDK backed by Penpal instead of the former public,
   hand-authored `window.postMessage` envelopes.
@@ -304,7 +355,8 @@ The principal version 3 changes are:
 Version 2 was intentionally incompatible with version 1. Its principal changes were:
 
 - Resource kinds use `capabilities.resource_kinds`; Directory kinds remain in
-  `capabilities.directory_kinds`. Kind IDs are canonical lowercase `namespace:name` values.
+  `capabilities.directory_kinds`. At that version, Kind IDs were canonical lowercase
+  `namespace:name` values.
 - Resource and Directory action contracts use distinct request/output types and canonical
   dot-separated provider IDs such as `example.plugin.inspect`.
 - Action metadata includes `description`, uses `access: "read" | "write"`, and declares views in

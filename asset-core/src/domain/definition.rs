@@ -173,6 +173,7 @@ impl ResourceKindDefinition {
 pub struct DirectoryKindDefinition {
     kind: DirectoryKind,
     parent: Option<DirectoryKind>,
+    allowed_parent_kinds: Vec<DirectoryKind>,
     label: String,
     origin: DefinitionOrigin,
 }
@@ -182,6 +183,7 @@ impl DirectoryKindDefinition {
         Self {
             kind,
             parent: None,
+            allowed_parent_kinds: Vec::new(),
             label: label.into(),
             origin,
         }
@@ -192,12 +194,24 @@ impl DirectoryKindDefinition {
         self
     }
 
+    pub fn with_allowed_parent_kinds(
+        mut self,
+        kinds: impl IntoIterator<Item = DirectoryKind>,
+    ) -> Self {
+        self.allowed_parent_kinds = kinds.into_iter().collect();
+        self
+    }
+
     pub fn kind(&self) -> &DirectoryKind {
         &self.kind
     }
 
     pub fn parent(&self) -> Option<&DirectoryKind> {
         self.parent.as_ref()
+    }
+
+    pub fn allowed_parent_kinds(&self) -> &[DirectoryKind] {
+        &self.allowed_parent_kinds
     }
 
     pub fn label(&self) -> &str {
