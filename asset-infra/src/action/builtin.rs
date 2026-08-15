@@ -7,19 +7,14 @@ use asset_core::port::{
 use asset_plugin_api::protocol::directory::DirectoryActionEffect;
 use asset_plugin_api::protocol::directory::PluginDirectoryActionOutput;
 use asset_plugin_api::protocol::{
-    DownloadView, MediaView, PluginMediaEncoding, PluginResourceActionEffect,
-    PluginResourceActionOutput, PluginView,
+    DownloadView, PluginResourceActionEffect, PluginResourceActionOutput, PluginView,
 };
 use async_trait::async_trait;
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use std::sync::Arc;
 
 use crate::builtin_catalog::{
     BuiltinDirectoryAction, BuiltinDirectoryHandler, BuiltinResourceAction, BuiltinResourceHandler,
 };
-
-const DIRECTORY_THUMBNAIL_SVG: &str = include_str!("../../assets/thumbnails/directory.svg");
 
 #[derive(Debug, Clone)]
 pub struct BuiltinResourceActionExecutor {
@@ -177,7 +172,6 @@ impl DirectoryActionExecutor for BuiltinDirectoryActionExecutor {
         match binding.handler {
             BuiltinDirectoryHandler::Delete => directory_delete(request),
             BuiltinDirectoryHandler::Download => directory_download(request),
-            BuiltinDirectoryHandler::GenericThumbnail => directory_thumbnail(request),
         }
     }
 }
@@ -189,25 +183,6 @@ fn directory_delete(request: DirectoryActionRequest) -> Result<DirectoryActionOu
         request.directory().id(),
         request.action().clone(),
         output,
-    ))
-}
-
-fn directory_thumbnail(
-    request: DirectoryActionRequest,
-) -> Result<DirectoryActionOutput, CoreError> {
-    let directory = request.directory();
-    let view = embedded_svg_thumbnail(
-        Some(if directory.id().is_root() {
-            "Asset Hub"
-        } else {
-            directory.directory().name()
-        }),
-        DIRECTORY_THUMBNAIL_SVG,
-    );
-    Ok(DirectoryActionOutput::new(
-        directory.id(),
-        DirectoryActionId::new(request.action().as_str()).map_err(CoreError::from)?,
-        PluginDirectoryActionOutput::new(view),
     ))
 }
 
@@ -261,13 +236,4 @@ fn resource_delete(request: ResourceActionRequest) -> Result<ResourceActionOutpu
         request.action().clone(),
         output,
     ))
-}
-
-fn embedded_svg_thumbnail(title: Option<&str>, svg: &str) -> PluginView {
-    PluginView::Media(MediaView {
-        mime_type: "image/svg+xml".to_string(),
-        title: title.map(str::to_string),
-        encoding: PluginMediaEncoding::Base64,
-        data: BASE64_STANDARD.encode(svg.as_bytes()),
-    })
 }

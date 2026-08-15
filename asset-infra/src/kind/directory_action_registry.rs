@@ -5,9 +5,9 @@ use asset_core::{
 };
 use asset_plugin_api::manifest::DirectoryActionCapability;
 
+use super::THUMBNAIL_CAPABILITY;
 use super::normalization::directory_action_definition;
 use super::validation::ensure_unique_scoped_action;
-use crate::builtin_catalog::THUMBNAIL_CAPABILITY;
 
 const DIRECTORY_THUMBNAIL_LOCATION: &str = "directory_thumbnail";
 const DIRECTORY_WORKSPACE_LOCATION: &str = "directory_workspace";

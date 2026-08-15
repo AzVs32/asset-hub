@@ -76,9 +76,10 @@ actions as flat arrays. Each kind/action includes its typed built-in or plugin o
 `azvs.epub.thumbnail` provides the Resource-scoped `thumbnail` capability
 for EPUB resources.
 `resource.image.thumbnail` provides the same capability on `core:resource` only when image MIME or
-extension matching succeeds; it does not introduce an image Kind. Resources with no matching
-thumbnail provider use the file-icon fallback. Automatic thumbnail slots accept only the resolved
-`thumbnail` provider. Resource and directory action registries scope that capability independently.
+extension matching succeeds; it does not introduce an image Kind. Resources and directories with
+no matching thumbnail provider use local File and Folder icon fallbacks without executing an
+Action. Automatic thumbnail slots accept only the resolved `thumbnail` provider. Resource and
+directory action registries scope that capability independently.
 
 Supported output views are `text`, `markdown`, `html`, `plugin_frame`, `json`, `media`, and
 `download`. Generic outputs are rendered by the host. A plugin

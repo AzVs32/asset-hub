@@ -10,14 +10,10 @@ use asset_core::domain::{
 const CORE_RESOURCE_DOWNLOAD: &str = "core.resource.download";
 /// Host 内置的资源软删除命令稳定 ID。
 const CORE_RESOURCE_DELETE: &str = "core.resource.delete";
-/// 按类型层级解析最近缩略图 provider 的单例 capability。
-pub(crate) const THUMBNAIL_CAPABILITY: &str = "thumbnail";
 /// Host 内置的目录归档下载 action 稳定 ID。
 const CORE_DIRECTORY_DOWNLOAD: &str = "core.directory.download";
 /// Host 内置的空目录删除命令稳定 ID。
 const CORE_DIRECTORY_DELETE: &str = "core.directory.delete";
-/// Host 内置的所有目录类型回退缩略图 provider 稳定 ID。
-const CORE_DIRECTORY_THUMBNAIL: &str = "core.directory.thumbnail";
 
 /// 对外报告的 Host 内置根资源类型来源。
 const CORE_RESOURCE_SOURCE: &str = "core.resource";
@@ -34,7 +30,6 @@ pub(crate) enum BuiltinResourceHandler {
 pub(crate) enum BuiltinDirectoryHandler {
     Delete,
     Download,
-    GenericThumbnail,
 }
 
 #[derive(Debug, Clone)]
@@ -152,25 +147,6 @@ impl BuiltinCatalog {
                         confirmation: Some("Delete empty directory {name}?".to_string()),
                     }),
                 handler: BuiltinDirectoryHandler::Delete,
-            },
-            BuiltinDirectoryAction {
-                definition: DirectoryActionDefinition::new_static(
-                    CORE_DIRECTORY_THUMBNAIL,
-                    "Thumbnail",
-                )
-                .with_static_provides(Some(THUMBNAIL_CAPABILITY))
-                .with_kinds([DirectoryKind::DEFAULT])
-                .with_output(ActionOutputContract {
-                    views: vec!["media".to_string()],
-                    effects: Vec::new(),
-                })
-                .with_ui(ActionDefinitionUi {
-                    group: Some("preview".to_string()),
-                    order: Some(100),
-                    locations: vec!["directory_thumbnail".to_string()],
-                    ..ActionDefinitionUi::default()
-                }),
-                handler: BuiltinDirectoryHandler::GenericThumbnail,
             },
         ];
 

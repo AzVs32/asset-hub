@@ -15,8 +15,8 @@ filesystem, making it easy to run directly on a workstation.
 - Manage users and workspace access.
 - Upload large files with resumable transfers and checksum verification.
 - Extend resource detection, actions, and views with Wasm and Web plugins.
-- Display directory thumbnails through the Host and matching resource thumbnails through plugins
-  for formats such as images and EPUB files.
+- Display plugin-provided Resource and Directory thumbnails with local File and Folder icon
+  fallbacks when no provider applies.
 - Run the API, administration CLI, and Web development server directly from source.
 
 ## Requirements

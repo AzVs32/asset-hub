@@ -58,9 +58,9 @@ files remain `core:resource`. The Host registers neither image nor video Kinds. 
 only the MIME types and extensions declared in its plugin manifest. `core:document` is not a
 registered Resource kind.
 
-The Host provides only the generic `core.directory.thumbnail` thumbnail Action. Resources without
-a matching plugin thumbnail provider use the Web client's file-icon fallback. The Host also
-declares `core.resource.delete` and `core.directory.delete` as ordinary write Actions in
+The Host provides no generic Resource or Directory thumbnail Action. When no plugin thumbnail
+provider applies, the Web client renders its local File or Folder icon without issuing an Action
+request. The Host declares `core.resource.delete` and `core.directory.delete` as ordinary write Actions in
 the same discovery catalogs. Their built-in handlers return no View and request one `delete`
 effect; Core applies it through the secured resource soft-delete or empty-directory-delete use
 case. External plugins may declare and return the same effect only when their Manifest requests
@@ -68,8 +68,8 @@ case. External plugins may declare and return the same effect only when their Ma
 and the current user is authorized to delete that aggregate. Delete cannot be combined with a
 different effect in one action output.
 `resource.image.thumbnail` returns the authorized image content URL as a media view; image bytes do
-not cross the Wasm boundary. The fixed directory artwork lives in `assets/thumbnails/directory.svg`
-and is embedded into the Host binary with `include_str!`; deployment does not copy it separately.
+not cross the Wasm boundary. `azvs.games.thumbnail` provides actual Directory thumbnails for the
+Games kinds. Neither fallback icon is represented as a capability provider.
 External actions retain their provider-owned IDs and may provide a Host-recognized capability for a
 more specific kind. Resource actions recognize `thumbnail` and `text_edit`; Directory
 actions recognize `thumbnail` and `workspace`. A Directory `workspace` provider is read-only,

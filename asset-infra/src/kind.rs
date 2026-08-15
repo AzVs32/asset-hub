@@ -16,5 +16,8 @@ use action_registry::*;
 use directory_registry::*;
 use resource_registry::*;
 
+/// Resource 与 Directory 按类型层级解析的缩略图单例能力。
+const THUMBNAIL_CAPABILITY: &str = "thumbnail";
+
 #[cfg(test)]
 mod tests;

@@ -336,7 +336,7 @@ fn thumbnail_capabilities_require_a_single_nearest_provider() {
             .contains("provides unsupported capability `resource.thumbnail`")
     );
 
-    let generic = DirectoryActionDefinition::new_static("core.directory.thumbnail", "Thumbnail")
+    let generic = DirectoryActionDefinition::new_static("example.directory.thumbnail", "Thumbnail")
         .with_static_provides(Some("thumbnail"))
         .with_kinds(["core:directory"])
         .with_output(ActionOutputContract {

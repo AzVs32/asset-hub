@@ -6,9 +6,9 @@ use asset_core::domain::{
 use asset_core::port::ResourceActionRegistry;
 use asset_plugin_api::manifest::ResourceActionCapability;
 
+use super::THUMBNAIL_CAPABILITY;
 use super::normalization::resource_action_definition;
 use super::validation::ensure_unique_scoped_action;
-use crate::builtin_catalog::THUMBNAIL_CAPABILITY;
 
 const RESOURCE_THUMBNAIL_LOCATION: &str = "resource_thumbnail";
 const TEXT_EDIT_CAPABILITY: &str = "text_edit";

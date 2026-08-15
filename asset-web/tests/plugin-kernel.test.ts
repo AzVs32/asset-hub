@@ -35,11 +35,11 @@ describe("PluginKernel", () => {
     expect(kernel.thumbnailAction(resource([fallback, explicit]))?.id).toBe("azvs.epub.thumbnail");
   });
 
-  it("selects Core Directory thumbnail and context-menu actions", () => {
+  it("selects an explicit Directory thumbnail provider and context-menu actions", () => {
     const kernel = new PluginKernel();
     const thumbnail = directoryAction({
-      id: "core.directory.thumbnail",
-      origin: { kind: "builtin", id: "core.directory" },
+      id: "example.directory.thumbnail",
+      origin: { kind: "plugin", id: "example.directory" },
       provides: "thumbnail",
       output: { views: ["media"], effects: [] },
       ui: { locations: [coreDirectoryWorkspaceSlots.directoryThumbnail] },
@@ -50,7 +50,7 @@ describe("PluginKernel", () => {
     });
     const item = directory([thumbnail, unknown]);
 
-    expect(kernel.directoryThumbnailAction(item)?.id).toBe("core.directory.thumbnail");
+    expect(kernel.directoryThumbnailAction(item)?.id).toBe("example.directory.thumbnail");
     expect(
       kernel
         .directoryActionsAtCoreSlot(item, coreDirectoryWorkspaceSlots.directoryContextMenu)

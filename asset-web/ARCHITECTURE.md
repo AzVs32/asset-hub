@@ -225,7 +225,8 @@ Action 默认读取最新授权快照，不会因为缩略图或预览缓存较�
 `azvs.epub.thumbnail` 为 EPUB 提供作用于 Resource Action 的 `thumbnail`。Resource 与
 Directory Action 注册表分别限定该能力的作用域。`resource.image.thumbnail` 在
 `core:resource` 上按 `image/*` 或常见图片扩展名提供该能力，但不声明图片 Kind；没有匹配
-缩略图 provider 的资源由前端显示文件图标。相同能力选择 Kind 谱系中最近的 provider，
+缩略图 provider 的资源和目录分别由前端显示 File 和 Folder 图标，不执行 Action。Host 不为
+Resource 或 Directory 提供通用缩略图 provider。相同能力选择 Kind 谱系中最近的 provider，
 同层冲突会导致 Host 启动失败，前端只执行后端已经解析出的 provider。Host 不提供通用
 文本、图片或视频 Kind，也不提供文本读取 provider 或文本编辑器。`resource.text` 插件在
 `core:resource` 上按 Markdown MIME 或受支持扩展名提供

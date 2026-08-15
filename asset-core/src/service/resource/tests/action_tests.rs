@@ -34,17 +34,6 @@ fn directory_service_with_inherited_actions() -> crate::service::DirectoryServic
                     views: Vec::new(),
                     effects: vec!["delete".to_string()],
                 }),
-            DirectoryActionDefinition::new_static("core.directory.thumbnail", "Thumbnail")
-                .with_static_provides(Some("thumbnail"))
-                .with_kinds([DirectoryKind::DEFAULT])
-                .with_output(ActionOutputContract {
-                    views: vec!["media".to_string()],
-                    effects: Vec::new(),
-                })
-                .with_ui(ActionUi {
-                    locations: vec!["directory_thumbnail".to_string()],
-                    ..ActionUi::default()
-                }),
             DirectoryActionDefinition::new_static(
                 "azvs.directory.hello.workspace",
                 "Hello workspace",
@@ -212,16 +201,8 @@ fn directory_subkind_inherits_ancestor_actions_and_keeps_its_workspace() {
             "azvs.directory.hello.workspace",
             "core.directory.download",
             "core.directory.delete",
-            "core.directory.thumbnail",
         ])
     );
-    let thumbnail = service
-        .resolve_action(
-            &directory,
-            &DirectoryActionId::from_static("core.directory.thumbnail"),
-        )
-        .unwrap();
-    assert_eq!(thumbnail.kinds(), [DirectoryKind::DEFAULT]);
 }
 
 #[test]

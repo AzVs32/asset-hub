@@ -375,9 +375,13 @@ function ResourceThumbnail({ resource }: { resource: Resource }) {
   const gateway = useGateway();
   const kernel = usePluginKernel();
   const action = kernel.thumbnailAction(resource);
+  const execute = () => {
+    if (!action) throw new Error("Resource thumbnail action is unavailable");
+    return gateway.executeAction(resource, action.id);
+  };
   const result = useQuery({
     queryKey: ["thumbnail", resource.id, resource.updatedAt, action?.id],
-    queryFn: () => gateway.executeAction(resource, action?.id ?? ""),
+    queryFn: execute,
     enabled: Boolean(action),
     retry: false,
     staleTime: 5 * 60_000,
