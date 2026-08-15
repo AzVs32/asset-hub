@@ -15,18 +15,18 @@ impl ResourceActionRegistry for ActionRegistry {
 #[test]
 fn actions_are_selected_from_the_supplied_kind_lineage() {
     let registry = ActionRegistry(vec![
-        ResourceActionDefinition::new_static("text.open", "Open").with_kinds(["core:text"]),
+        ResourceActionDefinition::new_static("source.open", "Open").with_kinds(["example:source"]),
         ResourceActionDefinition::new_static("image.view", "View").with_kinds(["core:image"]),
     ]);
     let lineage = vec![
         ResourceKind::try_new("code:c").unwrap(),
-        ResourceKind::try_new("core:text").unwrap(),
+        ResourceKind::try_new("example:source").unwrap(),
     ];
 
     let actions = registry.actions_for_kinds(&lineage);
 
     assert_eq!(actions.len(), 1);
-    assert_eq!(actions[0].id().as_str(), "text.open");
+    assert_eq!(actions[0].id().as_str(), "source.open");
 }
 
 #[test]
@@ -141,14 +141,14 @@ fn kind_detection_rejects_equally_specific_matches() {
 
 #[test]
 fn supports_arbitrary_depth_lineage_inheritance_and_leaf_detection() {
-    let text = ResourceKind::try_new("core:text").unwrap();
-    let code = ResourceKind::try_new("core:code").unwrap();
+    let source = ResourceKind::try_new("example:source").unwrap();
+    let code = ResourceKind::try_new("example:code").unwrap();
     let c = ResourceKind::try_new("code:c").unwrap();
     let registry = KindRegistry {
         definitions: vec![
             ResourceKindDefinition::new(
-                text.clone(),
-                "Text",
+                source.clone(),
+                "Source",
                 true,
                 DefinitionOrigin::builtin_static("test"),
             ),
@@ -158,7 +158,7 @@ fn supports_arbitrary_depth_lineage_inheritance_and_leaf_detection() {
                 true,
                 DefinitionOrigin::builtin_static("test"),
             )
-            .with_parent(Some(text.clone())),
+            .with_parent(Some(source.clone())),
             ResourceKindDefinition::new(
                 c.clone(),
                 "C",
@@ -170,7 +170,7 @@ fn supports_arbitrary_depth_lineage_inheritance_and_leaf_detection() {
         ],
     };
 
-    assert_eq!(registry.lineage(&c), vec![c.clone(), code.clone(), text]);
+    assert_eq!(registry.lineage(&c), vec![c.clone(), code.clone(), source]);
     assert!(registry.descendants(&code).contains(&c));
     assert_eq!(
         registry

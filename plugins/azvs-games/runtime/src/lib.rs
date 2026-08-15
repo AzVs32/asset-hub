@@ -113,7 +113,7 @@ fn generated_markdown(directory: &str, name: &str, data: String) -> CreateTreeRe
     CreateTreeResource {
         directory: directory.to_string(),
         name: name.to_string(),
-        kind: Some("core:text".to_string()),
+        kind: None,
         mime_type: Some("text/markdown; charset=utf-8".to_string()),
         encoding: CreateTreeResourceEncoding::Base64,
         data: BASE64_STANDARD.encode(data.as_bytes()),
@@ -283,6 +283,11 @@ mod tests {
         );
         assert_eq!(tree.directories[1].path, "game_name_1/public");
         assert_eq!(tree.resources.len(), 2);
+        assert!(
+            tree.resources
+                .iter()
+                .all(|resource| resource.kind.is_none())
+        );
         let readme = BASE64_STANDARD.decode(&tree.resources[0].data).unwrap();
         assert!(String::from_utf8(readme).unwrap().contains("# Game One"));
         assert!(

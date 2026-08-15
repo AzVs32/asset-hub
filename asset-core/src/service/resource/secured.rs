@@ -295,7 +295,7 @@ impl<'a> SecuredResourceService<'a> {
         };
         self.service
             .content()
-            .replace_text_content_snapshot(resource, command, data)
+            .replace_content_snapshot(resource, command, data)
             .await
             .map(Some)
     }

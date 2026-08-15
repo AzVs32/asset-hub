@@ -186,7 +186,7 @@ fn inherited_action_label_requires_an_ancestor_capability_provider() {
     ];
     let mut actions = vec![
         ResourceActionDefinition::new_static("example.image.read", "example.image.read")
-            .with_static_provides(Some("text_read"))
+            .with_static_provides(Some("thumbnail"))
             .with_kinds(["core:image"]),
     ];
 

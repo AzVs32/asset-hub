@@ -15,11 +15,11 @@ mkdir -p "$output"
 cargo build --locked --release --target wasm32-unknown-unknown \
   --manifest-path "$plugin_root/runtime/Cargo.toml"
 install -m 0644 \
-  "$plugin_root/runtime/target/wasm32-unknown-unknown/release/azvs_markdown_plugin.wasm" \
+  "$plugin_root/runtime/target/wasm32-unknown-unknown/release/resource_text_plugin.wasm" \
   "$output/plugin.wasm"
 
 (cd "$repository_root/asset-plugin-api/web" && npm run build)
 (cd "$plugin_root/web" && npm run build)
 install -m 0644 "$plugin_root/manifest.json" "$output/manifest.json"
 
-echo "Markdown plugin artifacts: $output"
+echo "Resource Text plugin artifacts: $output"

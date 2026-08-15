@@ -180,11 +180,12 @@ directory lineage. A less-specific provider remains the fallback when a more-spe
 not actually applicable. Two providers for the same capability at the same nearest kind fail Host
 startup instead of being selected by registration or UI sort order.
 
-The Host recognizes `thumbnail`, `text_read`, and `text_edit` singleton capabilities for Resource
+The Host recognizes `thumbnail` and `text_edit` singleton capabilities for Resource
 actions; Directory actions recognize `thumbnail` and `workspace`. A `thumbnail` provider must be read-only,
 support the `media` view, and declare the matching `resource_thumbnail` or
-`directory_thumbnail` UI location. A `text_read` provider must be read-only. A `text_edit`
-provider must be write and request `resource.content.replace`; generic `resource.write` and
+`directory_thumbnail` UI location. Read actions that do not need singleton-provider resolution are
+ordinary labeled actions without `provides`. A `text_edit` provider must be write and request
+`resource.content.replace`; generic `resource.write` and
 `resource.derived_asset.write` permissions are not part of the contract. The Host rejects unknown
 capability names. Plugins must retain their provider-owned action IDs and must not reuse a `core.*`
 action ID.
@@ -281,7 +282,7 @@ plugin policy rather than Manifest fields.
     "resources": [{
       "directory": "game-one",
       "name": "README.md",
-      "kind": "core:text",
+      "kind": "example:document",
       "mime_type": "text/markdown; charset=utf-8",
       "encoding": "base64",
       "data": "IyBHYW1lIE9uZQo="

@@ -86,7 +86,9 @@ See [`asset-cli/README.md`](asset-cli/README.md) for usage details.
 ## Plugins
 
 Asset Hub supports packaged Wasm runtime plugins with optional Web interfaces.
-The repository includes Markdown and EPUB plugins as examples.
+The repository includes the `resource.text`, EPUB, and Games plugins as examples. `resource.text`
+owns Markdown plus basic `.txt`, `.c`, `.cpp`, and `.h` reading/editing; the Host does not provide a
+generic text Resource kind.
 
 See [`asset-plugin-api/README.md`](asset-plugin-api/README.md) for the plugin
 authoring contract, package format, compatibility policy, and verification
@@ -132,12 +134,12 @@ plugin's own `asset-plugin-target/` directory, leaves the root `manifest.json` a
 source, and copies a delivery snapshot of it into the target:
 
 ```bash
-plugins/azvs-markdown/build.sh
+plugins/resource-text/build.sh
 plugins/azvs-epub/build.sh
 plugins/azvs-games/build.sh
-cargo test --manifest-path plugins/azvs-markdown/runtime/Cargo.toml
+cargo test --manifest-path plugins/resource-text/runtime/Cargo.toml
 cargo test --manifest-path plugins/azvs-epub/runtime/Cargo.toml
 cargo test --manifest-path plugins/azvs-games/runtime/Cargo.toml
-(cd plugins/azvs-markdown/web && npm run typecheck && npm run build)
+(cd plugins/resource-text/web && npm run typecheck && npm run build)
 (cd plugins/azvs-epub/web && npm run typecheck && npm run build)
 ```

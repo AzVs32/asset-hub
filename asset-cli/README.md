@@ -249,7 +249,7 @@ asset --config config.toml plugin --list
 `asset-plugin-target`：
 
 ```bash
-asset plugin --install plugins/azvs-markdown/asset-plugin-target
+asset plugin --install plugins/resource-text/asset-plugin-target
 asset --config config.toml plugin --install /tmp/downloaded-plugin
 ```
 
@@ -265,7 +265,7 @@ asset --config config.toml plugin --install /tmp/downloaded-plugin
 按 Manifest 插件 ID 删除 canonical 安装目录：
 
 ```bash
-asset plugin --uninstall azvs.markdown
+asset plugin --uninstall resource.text
 asset --config config.toml plugin --uninstall example.tools
 ```
 

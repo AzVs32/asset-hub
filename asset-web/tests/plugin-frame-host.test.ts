@@ -8,7 +8,7 @@ import { action, directory, directoryAction, resource } from "./fixtures";
 describe("Plugin Frame host bridge", () => {
   it("replaces text only for the frame's write text_edit provider and advances its revision", async () => {
     const edit = action({
-      id: "azvs.markdown.edit",
+      id: "example.content.edit",
       provides: "text_edit",
       access: "write",
     });
@@ -36,9 +36,9 @@ describe("Plugin Frame host bridge", () => {
   });
 
   it("denies replacement when the frame was opened by a read action", async () => {
-    const read = action({ id: "azvs.markdown.read", provides: "text_read" });
+    const read = action({ id: "example.content.read" });
     const edit = action({
-      id: "azvs.markdown.edit",
+      id: "example.content.edit",
       provides: "text_edit",
       access: "write",
     });

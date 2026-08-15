@@ -57,7 +57,7 @@ pub struct ExecuteResourceAction {
     pub(super) expected_revision: Option<u64>,
 }
 
-/// 流式替换可编辑文本资源的内容。
+/// 流式替换可编辑资源的内容。
 #[derive(Debug, Clone)]
 pub struct ReplaceResourceContent {
     pub(super) expected_size: u64,

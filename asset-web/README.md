@@ -89,7 +89,7 @@ and is available as both an ESM package and a self-contained script for plain `i
 A frame produced by the current
 write `text_edit` provider may also request raw text replacement; plugin Manifest validation
 requires that provider to request `resource.content.replace`. The Host binds it to that resource
-and sends the content through the same revision-guarded streaming use case as the core text editor.
+and sends the content through the Host's revision-guarded streaming replacement use case.
 A frame may invoke only Actions exposed for its bound Resource. Destructive Actions,
 including deletion, require a Host confirmation before the Gateway call is made.
 Directory frames use a separate Directory-bound bridge to execute exposed Directory Actions,

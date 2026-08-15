@@ -6,7 +6,7 @@
     "id": "0198a123-4567-7000-8000-000000000001",
     "directory": "documents",
     "name": "notes.md",
-    "kind": "core:text",
+    "kind": "example:document",
     "revision": 7,
     "content": {
       "size": 5,

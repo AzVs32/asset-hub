@@ -70,7 +70,7 @@ filesystem_write = []
 # directory types, `capabilities.resource_actions` for resource actions, and
 # `capabilities.directory_actions` for directory actions.
 # A kind-specific action can implement a singleton Host capability while retaining its own
-# provider-owned action ID. Resource actions recognize `thumbnail`, `text_read`, and `text_edit`;
+# provider-owned action ID. Resource actions recognize `thumbnail` and `text_edit`;
 # directory actions recognize `thumbnail` and `workspace`.
 # Build a local directory containing `manifest.json`, the fixed `plugin.wasm` runtime, and optional
 # root `index.html` plus Web assets. Run `asset plugin --install <path>`; the CLI snapshots and

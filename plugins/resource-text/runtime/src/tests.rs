@@ -1,22 +1,22 @@
 use super::*;
 
 #[test]
-fn large_markdown_uses_bounded_chunks() {
-    let markdown = vec![b'a'; CONTENT_CHUNK_BYTES as usize + 17];
-    let load = render_markdown_payload(request_json(
-        "azvs.markdown.read",
+fn large_text_uses_bounded_chunks() {
+    let text = vec![b'a'; CONTENT_CHUNK_BYTES as usize + 17];
+    let load = read_text_payload(request_json(
+        "resource.text.read",
         json!({"operation": "load"}),
-        Some(&markdown),
+        Some(&text),
     ))
     .unwrap();
     let load: Value = serde_json::from_str(&load).unwrap();
     assert_eq!(load["data"]["transfer"], "chunked");
     assert_eq!(load["data"]["chunk_size"], CONTENT_CHUNK_BYTES);
 
-    let chunk = render_markdown_payload(request_json(
-        "azvs.markdown.read",
+    let chunk = read_text_payload(request_json(
+        "resource.text.read",
         json!({"operation": "chunk", "offset": CONTENT_CHUNK_BYTES}),
-        Some(&markdown),
+        Some(&text),
     ))
     .unwrap();
     let chunk: Value = serde_json::from_str(&chunk).unwrap();
@@ -31,10 +31,10 @@ fn large_markdown_uses_bounded_chunks() {
 }
 
 #[test]
-fn update_markdown_rejects_legacy_inline_writeback() {
-    let error = update_markdown_payload(request_json(
-        "azvs.markdown.edit",
-        json!({"markdown": "# Updated"}),
+fn edit_text_rejects_inline_writeback() {
+    let error = edit_text_payload(request_json(
+        "resource.text.edit",
+        json!({"text": "updated"}),
         None,
     ))
     .unwrap_err();
@@ -42,14 +42,22 @@ fn update_markdown_rejects_legacy_inline_writeback() {
         error
             .0
             .to_string()
-            .contains("unsupported Markdown edit operation")
+            .contains("unsupported text edit operation")
     );
+}
+
+#[test]
+fn text_format_keeps_markdown_rendering_separate_from_plain_source_files() {
+    assert_eq!(text_format("resource:markdown", "README"), "markdown");
+    assert_eq!(text_format("core:resource", "README.MD"), "markdown");
+    assert_eq!(text_format("core:resource", "main.cpp"), "plain");
+    assert_eq!(text_format("core:resource", "notes.txt"), "plain");
 }
 
 fn request_json(action: &str, input: Value, content: Option<&[u8]>) -> String {
     let mut request = json!({
         "action": action,
-        "access": if action == "azvs.markdown.edit" { "write" } else { "read" },
+        "access": if action == "resource.text.edit" { "write" } else { "read" },
         "input": input,
         "resource": resource_json(),
     });
@@ -67,7 +75,7 @@ fn resource_json() -> Value {
         "id": "01900000-0000-7000-8000-000000000000",
         "directory": "documents",
         "name": "demo.md",
-        "kind": "azvs:markdown",
+        "kind": "resource:markdown",
         "revision": 1,
         "content": {
             "size": 4,

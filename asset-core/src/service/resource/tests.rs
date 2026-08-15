@@ -1008,7 +1008,7 @@ impl ResourceActionExecutor for StaticResourceActionExecutor {
         request: ResourceActionRequest,
     ) -> Result<ResourceActionOutput, CoreError> {
         let view = match request.action().as_str() {
-            "test.text.extract" => PluginView::Text(TextView {
+            "test.content.extract" => PluginView::Text(TextView {
                 text: String::from_utf8(
                     request
                         .content()
@@ -1017,7 +1017,7 @@ impl ResourceActionExecutor for StaticResourceActionExecutor {
                 )
                 .unwrap(),
             }),
-            "azvs.markdown.edit" => {
+            "example.content.edit" => {
                 let markdown = request
                     .input()
                     .get("markdown")
@@ -1087,7 +1087,7 @@ impl DirectoryActionExecutor for StaticDirectoryActionExecutor {
                         CreateTreeResource {
                             directory: "game-one".to_string(),
                             name: "README.md".to_string(),
-                            kind: Some("core:text".to_string()),
+                            kind: None,
                             mime_type: Some("text/markdown".to_string()),
                             encoding: CreateTreeResourceEncoding::Base64,
                             data: STANDARD.encode(b"# Game One\n"),
@@ -1095,7 +1095,7 @@ impl DirectoryActionExecutor for StaticDirectoryActionExecutor {
                         CreateTreeResource {
                             directory: "game-one".to_string(),
                             name: "HASH.md".to_string(),
-                            kind: Some("core:text".to_string()),
+                            kind: None,
                             mime_type: Some("text/markdown".to_string()),
                             encoding: CreateTreeResourceEncoding::Base64,
                             data: String::new(),
@@ -1177,8 +1177,8 @@ fn service() -> (
             DefinitionOrigin::builtin_static("test"),
         ),
         ResourceKindDefinition::new(
-            ResourceKind::try_new("doc:markdown").unwrap(),
-            "Markdown",
+            ResourceKind::try_new("example:metadata").unwrap(),
+            "Metadata-only resource",
             false,
             DefinitionOrigin::builtin_static("test"),
         ),
@@ -1195,18 +1195,12 @@ fn service() -> (
             DefinitionOrigin::builtin_static("test"),
         ),
         ResourceKindDefinition::new(
-            ResourceKind::try_new("core:text").unwrap(),
-            "Text",
-            true,
-            DefinitionOrigin::builtin_static("test"),
-        ),
-        ResourceKindDefinition::new(
-            ResourceKind::try_new("azvs:markdown").unwrap(),
-            "Markdown",
+            ResourceKind::try_new("example:document").unwrap(),
+            "Document",
             true,
             DefinitionOrigin::builtin_static("test"),
         )
-        .with_parent(Some(ResourceKind::try_new("core:text").unwrap()))
+        .with_parent(Some(ResourceKind::default()))
         .with_detect(
             ResourceContentMatcher::new()
                 .with_mime_types(["text/markdown", "text/x-markdown"])
@@ -1221,21 +1215,24 @@ fn service() -> (
     ]));
     let action_registry = Arc::new(InMemoryResourceActionRegistry {
         actions: vec![
-            ResourceActionDefinition::new_static("test.text.extract", "Extract text")
-                .with_kinds(["doc:markdown", "core:text"])
+            ResourceActionDefinition::new_static("test.content.extract", "Extract content")
+                .with_kinds(["example:metadata", "example:document"])
                 .with_requirements(content_requirements())
                 .with_output(output_contract(["text"])),
             ResourceActionDefinition::new_static("resource.inspect", "Inspect resource")
-                .with_kinds(["doc:markdown"])
+                .with_kinds(["example:metadata"])
                 .with_output(output_contract(["json"])),
-            ResourceActionDefinition::new_static("doc.markdown.thumbnail", "Markdown thumbnail")
+            ResourceActionDefinition::new_static(
+                "example.metadata.thumbnail",
+                "Metadata thumbnail",
+            )
+            .with_static_provides(Some("thumbnail"))
+            .with_kinds(["example:metadata"])
+            .with_requirements(content_requirements())
+            .with_output(output_contract(["media"])),
+            ResourceActionDefinition::new_static("test.content.thumbnail", "Content thumbnail")
                 .with_static_provides(Some("thumbnail"))
-                .with_kinds(["doc:markdown"])
-                .with_requirements(content_requirements())
-                .with_output(output_contract(["media"])),
-            ResourceActionDefinition::new_static("test.text.thumbnail", "Text thumbnail")
-                .with_static_provides(Some("thumbnail"))
-                .with_kinds(["core:text"])
+                .with_kinds(["example:document"])
                 .with_content_matcher(
                     ResourceContentMatcher::new().with_mime_types(["application/pdf"]),
                 )
@@ -1243,26 +1240,25 @@ fn service() -> (
             ResourceActionDefinition::new_static("core.resource.thumbnail", "Thumbnail")
                 .with_static_provides(Some("thumbnail"))
                 .with_output(output_contract(["media"])),
-            ResourceActionDefinition::new_static("azvs.markdown.read", "Read Markdown")
-                .with_static_provides(Some("text_read"))
-                .with_kinds(["core:text"])
+            ResourceActionDefinition::new_static("example.content.read", "Read content")
+                .with_kinds(["core:resource"])
                 .with_requirements(content_requirements())
                 .with_output(output_contract(["plugin_frame"]))
                 .with_content_matcher(
                     ResourceContentMatcher::new()
                         .with_mime_types(["text/markdown", "text/x-markdown"])
-                        .with_extensions([".md", ".markdown"]),
+                        .with_extensions([".md", ".markdown", ".txt"]),
                 ),
-            ResourceActionDefinition::new_static("azvs.markdown.edit", "Edit Markdown")
+            ResourceActionDefinition::new_static("example.content.edit", "Edit content")
                 .with_static_provides(Some("text_edit"))
-                .with_kinds(["core:text"])
+                .with_kinds(["core:resource"])
                 .with_requirements(content_requirements())
                 .with_access(ActionAccess::Write)
                 .with_output(effect_output_contract(["text"], ["replace_content"]))
                 .with_content_matcher(
                     ResourceContentMatcher::new()
                         .with_mime_types(["text/markdown", "text/x-markdown"])
-                        .with_extensions([".md", ".markdown"]),
+                        .with_extensions([".md", ".markdown", ".txt"]),
                 ),
         ],
     });

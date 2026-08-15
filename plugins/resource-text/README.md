@@ -1,6 +1,8 @@
-# AzVs Markdown Plugin
+# Resource Text Plugin
 
-Extism + React plugin for Asset Hub Markdown document reading and editing.
+`resource.text` owns text-file reading and editing outside the Asset Hub Host. It does not register a
+generic text kind. Markdown keeps its concrete `resource:markdown` kind, while basic text and source
+files remain `core:resource` and receive Actions through MIME or extension matching.
 
 ## Files
 
@@ -12,12 +14,26 @@ Extism + React plugin for Asset Hub Markdown document reading and editing.
 
 ## Contract
 
-- Plugin ID: `azvs.markdown`
-- Parent kind: `core:text`
-- Read action: `azvs.markdown.read` (`render_markdown`)
-- Edit action: `azvs.markdown.edit` (`update_markdown`)
-- Text capabilities: `text_read` and `text_edit`, replacing the `core:text` fallback providers
+- Plugin ID: `resource.text`
+- Markdown kind: `resource:markdown`
+- Parent kind: `core:resource`
+- Read action: `resource.text.read` (`read_text`)
+- Edit action: `resource.text.edit` (`edit_text`)
+- Edit capability: `text_edit`; reading is an ordinary labeled Action
 - Output view: `plugin_frame`
+
+The Host has no generic text kind or fallback text provider. Markdown MIME types and extensions are
+detected by this plugin's concrete `resource:markdown` declaration. Both Actions are declared on
+`core:resource`, match Markdown MIME types or supported extensions, and are inherited by
+`resource:markdown`.
+
+| Rendering | Extensions | Persisted Kind |
+| --- | --- | --- |
+| Markdown reader/editor with preview | `.md`, `.markdown`, `.mdown`, `.mkd` | `resource:markdown` |
+| Basic plain-text reader/editor | `.txt`, `.c`, `.cpp`, `.h` | `core:resource` |
+
+To add another basic text extension later, append it to the `extensions` list of both Actions in
+`manifest.json`. It will use the plain-text interface without requiring another Kind.
 
 The initial action returns an Asset Hub `PluginView` frame with a small routing payload:
 
@@ -33,24 +49,23 @@ The URL payload contains only `plugin_api`, `resource_id`, `mode`, and `action`;
 never copied into the iframe URL. After loading, the frame connects through
 `@asset-hub/plugin-web-sdk` and requests content through its validated Action bridge:
 
-- `{"operation":"load"}` returns UTF-8 Markdown directly up to 512 KiB.
+- `{"operation":"load"}` returns UTF-8 text directly up to 512 KiB.
 - Larger documents return transfer details and are fetched with sequential
   `{"operation":"chunk","offset":N}` requests using bounded 2 MiB Base64 byte chunks.
 - The browser validates the Plugin API, total length, offsets, chunk sizes, completion state,
   Base64, and final UTF-8 before rendering.
 
-The runtime rejects read operations for documents larger than 128 MiB. The effective read maximum
+The runtime rejects read operations for text larger than 128 MiB. The effective read maximum
 can be lower when the Host's plugin execution policy is lower.
 
 Saving uses the Web SDK's `replaceResourceText`. The Host accepts it only from the frame produced by the current
 Resource's resolved, write `text_edit` action, whose Manifest explicitly requests
 `resource.content.replace`, then forwards the text to the same
-revision-guarded streaming content use case as the core editor. The Markdown runtime deliberately
-rejects the former `{ "markdown": "..." }` Action input and no longer returns a
-`replace_content` effect. Consequently, Markdown saves are independent of the 1 MiB Action JSON
-limit and are bounded by `resource_edit.max_text_bytes`; an over-limit Resource does not expose the
-edit action. The React UI uses `markdown-it` to render Markdown, shows a title tree in read mode,
-and provides source editing with live preview in edit mode.
+revision-guarded streaming content replacement use case. The runtime rejects inline writeback
+through Action JSON and does not return a `replace_content` effect. Consequently, saves are
+independent of the 1 MiB Action JSON limit and are bounded by `resource_edit.max_text_bytes`; an
+over-limit Resource does not expose the edit action. The React UI uses `markdown-it` for Markdown
+headings and preview, while `.txt`, `.c`, `.cpp`, and `.h` use a basic monospaced reader/editor.
 
 ## Build
 
@@ -61,7 +76,7 @@ Requires Rust with the `wasm32-unknown-unknown` target and Node.js 22
 rustup target add wasm32-unknown-unknown
 cd asset-plugin-api/web
 npm ci
-cd ../../plugins/azvs-markdown/web
+cd ../../plugins/resource-text/web
 npm ci
 cd ../../..
 ```
@@ -69,8 +84,8 @@ cd ../../..
 Build and install from the repository root:
 
 ```bash
-plugins/azvs-markdown/build.sh
-cargo run --bin asset plugin --install plugins/azvs-markdown/asset-plugin-target
+plugins/resource-text/build.sh
+cargo run --bin asset plugin --install plugins/resource-text/asset-plugin-target
 ```
 
 <details>
@@ -80,14 +95,14 @@ cargo run --bin asset plugin --install plugins/azvs-markdown/asset-plugin-target
 application, and writes this plugin's generated files to:
 
 ```text
-plugins/azvs-markdown/asset-plugin-target/
+plugins/resource-text/asset-plugin-target/
 ├── manifest.json
 ├── plugin.wasm
 ├── index.html
 └── assets/
 ```
 
-`plugins/azvs-markdown/manifest.json` remains the only Manifest that authors edit. `build.sh`
+`plugins/resource-text/manifest.json` remains the only Manifest that authors edit. `build.sh`
 refreshes the target copy automatically; it does not generate `manifest.lock.json` or call the
 Asset CLI. `asset plugin --install` snapshots the target, generates and verifies the installed lock,
 and does not modify `asset-plugin-target`.
@@ -95,8 +110,8 @@ and does not modify `asset-plugin-target`.
 Individual checks remain available when changing only one side:
 
 ```bash
-cargo test --manifest-path plugins/azvs-markdown/runtime/Cargo.toml
-cd plugins/azvs-markdown/web
+cargo test --manifest-path plugins/resource-text/runtime/Cargo.toml
+cd plugins/resource-text/web
 npm run typecheck
 npm run build
 cd ../../..

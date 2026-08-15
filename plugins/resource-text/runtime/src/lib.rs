@@ -11,16 +11,16 @@ use serde_json::{Value, json};
 const VIEWER_ENTRYPOINT: &str = "index.html";
 const SMALL_TEXT_BYTES: u64 = 512 * 1024;
 const CONTENT_CHUNK_BYTES: u64 = 2 * 1024 * 1024;
-const MAX_MARKDOWN_BYTES: u64 = 128 * 1024 * 1024;
+const MAX_TEXT_BYTES: u64 = 128 * 1024 * 1024;
 
 #[plugin_fn]
-pub fn render_markdown(input: String) -> FnResult<String> {
-    structured_action_result(render_markdown_payload(input))
+pub fn read_text(input: String) -> FnResult<String> {
+    structured_action_result(read_text_payload(input))
 }
 
 #[plugin_fn]
-pub fn update_markdown(input: String) -> FnResult<String> {
-    structured_action_result(update_markdown_payload(input))
+pub fn edit_text(input: String) -> FnResult<String> {
+    structured_action_result(edit_text_payload(input))
 }
 
 fn structured_action_result(result: FnResult<String>) -> FnResult<String> {
@@ -35,7 +35,7 @@ fn structured_action_result(result: FnResult<String>) -> FnResult<String> {
     }
 }
 
-fn render_markdown_payload(input: String) -> FnResult<String> {
+fn read_text_payload(input: String) -> FnResult<String> {
     let request: PluginResourceActionRequest = serde_json::from_str(&input)?;
     if input_operation(&request.input).is_some() {
         return content_operation_response(&request);
@@ -43,13 +43,13 @@ fn render_markdown_payload(input: String) -> FnResult<String> {
     frame_response(&request, "read")
 }
 
-fn update_markdown_payload(input: String) -> FnResult<String> {
+fn edit_text_payload(input: String) -> FnResult<String> {
     let request: PluginResourceActionRequest = serde_json::from_str(&input)?;
     if input_operation(&request.input).is_some() {
         return content_operation_response(&request);
     }
     if request.input != json!({}) {
-        return Err(Error::msg("unsupported Markdown edit operation").into());
+        return Err(Error::msg("unsupported text edit operation").into());
     }
     frame_response(&request, "edit")
 }
@@ -60,6 +60,7 @@ fn frame_response(request: &PluginResourceActionRequest, mode: &str) -> FnResult
         "resource_id": request.resource.id,
         "mode": mode,
         "action": request.action,
+        "format": text_format(&request.resource.kind, &request.resource.name),
     }))?);
     let output = PluginResourceActionOutput::new(PluginView::PluginFrame(PluginFrameView {
         plugin_api: PLUGIN_API_VERSION.to_string(),
@@ -73,19 +74,19 @@ fn content_operation_response(request: &PluginResourceActionRequest) -> FnResult
     let data = match input_operation(&request.input) {
         Some("load") => load_content(request)?,
         Some("chunk") => load_content_chunk(request)?,
-        Some(_) => return Err(Error::msg("unsupported Markdown content operation").into()),
-        None => return Err(Error::msg("missing Markdown content operation").into()),
+        Some(_) => return Err(Error::msg("unsupported text content operation").into()),
+        None => return Err(Error::msg("missing text content operation").into()),
     };
     let output = PluginResourceActionOutput::new(PluginView::Json(JsonView { data }));
     Ok(serde_json::to_string(&output)?)
 }
 
 fn load_content(request: &PluginResourceActionRequest) -> FnResult<Value> {
-    let byte_length = markdown_content_size(request)?;
+    let byte_length = text_content_size(request)?;
     ensure_content_size(byte_length)?;
     if byte_length <= SMALL_TEXT_BYTES {
-        let bytes = markdown_content_bytes(request)?;
-        let markdown = String::from_utf8(bytes)?
+        let bytes = text_content_bytes(request)?;
+        let text = String::from_utf8(bytes)?
             .trim_start_matches('\u{feff}')
             .to_string();
         return Ok(json!({
@@ -93,7 +94,7 @@ fn load_content(request: &PluginResourceActionRequest) -> FnResult<Value> {
             "transfer": "complete",
             "resource_name": request.resource.name,
             "byte_length": byte_length,
-            "markdown": markdown,
+            "text": text,
         }));
     }
     Ok(json!({
@@ -110,16 +111,16 @@ fn load_content_chunk(request: &PluginResourceActionRequest) -> FnResult<Value> 
         .input
         .get("offset")
         .and_then(Value::as_u64)
-        .ok_or_else(|| Error::msg("missing or invalid Markdown chunk offset"))?;
-    let byte_length = markdown_content_size(request)?;
+        .ok_or_else(|| Error::msg("missing or invalid text chunk offset"))?;
+    let byte_length = text_content_size(request)?;
     ensure_content_size(byte_length)?;
     if offset >= byte_length {
-        return Err(Error::msg("Markdown chunk offset is out of range").into());
+        return Err(Error::msg("text chunk offset is out of range").into());
     }
     let length = CONTENT_CHUNK_BYTES.min(byte_length - offset);
-    let bytes = markdown_content_range(request, offset, length)?;
+    let bytes = text_content_range(request, offset, length)?;
     if bytes.len() as u64 != length {
-        return Err(Error::msg("Markdown chunk length does not match the requested range").into());
+        return Err(Error::msg("text chunk length does not match the requested range").into());
     }
     Ok(json!({
         "protocol": 1,
@@ -134,7 +135,7 @@ fn input_operation(input: &Value) -> Option<&str> {
     input.get("operation").and_then(Value::as_str)
 }
 
-fn markdown_content_size(input: &PluginResourceActionRequest) -> FnResult<u64> {
+fn text_content_size(input: &PluginResourceActionRequest) -> FnResult<u64> {
     if let Some(content) = &input.content {
         if content.encoding != PluginInlineContentEncoding::Base64 {
             return Err(Error::msg("unsupported content encoding").into());
@@ -144,7 +145,7 @@ fn markdown_content_size(input: &PluginResourceActionRequest) -> FnResult<u64> {
     let content_ref = input
         .content_ref
         .as_ref()
-        .ok_or_else(|| Error::msg("missing Markdown content payload"))?;
+        .ok_or_else(|| Error::msg("missing text content payload"))?;
     if content_ref.encoding != PluginContentReferenceEncoding::Handle {
         return Err(Error::msg("unsupported content reference encoding").into());
     }
@@ -153,39 +154,39 @@ fn markdown_content_size(input: &PluginResourceActionRequest) -> FnResult<u64> {
         .content
         .as_ref()
         .map(|content| content.size)
-        .ok_or_else(|| Error::msg("missing Markdown content description").into())
+        .ok_or_else(|| Error::msg("missing text content description").into())
 }
 
-fn markdown_content_bytes(input: &PluginResourceActionRequest) -> FnResult<Vec<u8>> {
-    let size = markdown_content_size(input)?;
-    markdown_content_range(input, 0, size)
+fn text_content_bytes(input: &PluginResourceActionRequest) -> FnResult<Vec<u8>> {
+    let size = text_content_size(input)?;
+    text_content_range(input, 0, size)
 }
 
-fn markdown_content_range(
+fn text_content_range(
     input: &PluginResourceActionRequest,
     offset: u64,
     length: u64,
 ) -> FnResult<Vec<u8>> {
     if let Some(content) = &input.content {
         let bytes = STANDARD.decode(&content.data)?;
-        let start = usize::try_from(offset).map_err(|_| Error::msg("Markdown offset overflow"))?;
-        let length = usize::try_from(length).map_err(|_| Error::msg("Markdown length overflow"))?;
+        let start = usize::try_from(offset).map_err(|_| Error::msg("text offset overflow"))?;
+        let length = usize::try_from(length).map_err(|_| Error::msg("text length overflow"))?;
         let end = start
             .checked_add(length)
             .filter(|end| *end <= bytes.len())
-            .ok_or_else(|| Error::msg("Markdown content range is out of bounds"))?;
+            .ok_or_else(|| Error::msg("text content range is out of bounds"))?;
         return Ok(bytes[start..end].to_vec());
     }
     let content_ref = input
         .content_ref
         .as_ref()
-        .ok_or_else(|| Error::msg("missing Markdown content payload"))?;
+        .ok_or_else(|| Error::msg("missing text content payload"))?;
     read_content_reference_range(&content_ref.reference, offset, length)
 }
 
 fn ensure_content_size(size: u64) -> FnResult<()> {
-    if size > MAX_MARKDOWN_BYTES {
-        return Err(Error::msg("Markdown exceeds the 128 MiB plugin limit").into());
+    if size > MAX_TEXT_BYTES {
+        return Err(Error::msg("text content exceeds the 128 MiB plugin limit").into());
     }
     Ok(())
 }
@@ -196,7 +197,7 @@ fn read_content_reference_range(reference: &str, offset: u64, length: u64) -> Fn
     asset_plugin_api::abi::content::guest::read_range(
         reference,
         range,
-        MAX_MARKDOWN_BYTES,
+        MAX_TEXT_BYTES,
         CONTENT_CHUNK_BYTES,
     )
 }
@@ -204,6 +205,19 @@ fn read_content_reference_range(reference: &str, offset: u64, length: u64) -> Fn
 #[cfg(not(target_arch = "wasm32"))]
 fn read_content_reference_range(_reference: &str, _offset: u64, _length: u64) -> FnResult<Vec<u8>> {
     Err(Error::msg("content references are only available in the wasm host").into())
+}
+
+fn text_format(kind: &str, name: &str) -> &'static str {
+    let name = name.to_ascii_lowercase();
+    if kind == "resource:markdown"
+        || [".md", ".markdown", ".mdown", ".mkd"]
+            .iter()
+            .any(|extension| name.ends_with(extension))
+    {
+        "markdown"
+    } else {
+        "plain"
+    }
 }
 
 #[cfg(test)]

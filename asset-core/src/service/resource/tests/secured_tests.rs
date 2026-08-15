@@ -61,7 +61,7 @@ fn directory_action_cannot_move_a_directory_outside_the_member_workspace() {
 }
 
 #[test]
-fn member_cannot_replace_text_outside_the_workspace() {
+fn member_cannot_replace_content_outside_the_workspace() {
     let (service, _, _) = service();
     let root = block_on(service.directory_service().root()).unwrap();
     let workspace = block_on(service.directory_service().create(&root, "workspace")).unwrap();
@@ -73,7 +73,7 @@ fn member_cannot_replace_text_outside_the_workspace() {
                 StorageKey::new("outside/outside.md").unwrap(),
                 Bytes::from_static(b"outside"),
             )
-            .with_kind(ResourceKind::try_new("core:text").unwrap())
+            .with_kind(ResourceKind::try_new("example:document").unwrap())
             .with_mime_type("text/markdown"),
         ),
     )
@@ -151,7 +151,7 @@ fn secured_directory_action_creates_a_bounded_directory_and_resource_tree() {
     ))
     .unwrap()
     .unwrap();
-    assert_eq!(readme.resource().kind().as_str(), "core:text");
+    assert_eq!(readme.resource().kind().as_str(), "example:document");
     assert_eq!(
         blob_storage
             .get_sync(&StorageKey::new("workspace/game-one/README.md").unwrap())
@@ -165,7 +165,7 @@ fn secured_directory_action_creates_a_bounded_directory_and_resource_tree() {
     ))
     .unwrap()
     .unwrap();
-    assert_eq!(hash.resource().kind().as_str(), "core:text");
+    assert_eq!(hash.resource().kind().as_str(), "example:document");
     assert_eq!(
         blob_storage
             .get_sync(&StorageKey::new("workspace/game-one/HASH.md").unwrap())

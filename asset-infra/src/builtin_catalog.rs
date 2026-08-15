@@ -14,16 +14,8 @@ const CORE_RESOURCE_DELETE: &str = "core.resource.delete";
 const CORE_RESOURCE_THUMBNAIL: &str = "core.resource.thumbnail";
 /// Host 内置的 `core:image` 特化缩略图 provider 稳定 ID。
 const CORE_IMAGE_THUMBNAIL: &str = "core.image.thumbnail";
-/// Host 内置的 `core:text` 纯文本读取 action 稳定 ID。
-const CORE_TEXT_READ: &str = "core.text.read";
-/// Host 内置的 `core:text` 纯文本编辑 action 稳定 ID。
-const CORE_TEXT_EDIT: &str = "core.text.edit";
 /// 按类型层级解析最近缩略图 provider 的单例 capability。
 pub(crate) const THUMBNAIL_CAPABILITY: &str = "thumbnail";
-/// 按类型层级解析最近纯文本读取 provider 的单例 capability。
-pub(crate) const TEXT_READ_CAPABILITY: &str = "text_read";
-/// 按类型层级解析最近纯文本编辑 provider 的单例 capability。
-pub(crate) const TEXT_EDIT_CAPABILITY: &str = "text_edit";
 /// Host 内置的目录归档下载 action 稳定 ID。
 const CORE_DIRECTORY_DOWNLOAD: &str = "core.directory.download";
 /// Host 内置的空目录删除命令稳定 ID。
@@ -42,8 +34,6 @@ pub(crate) enum BuiltinResourceHandler {
     Download,
     GenericThumbnail,
     ImageThumbnail,
-    TextRead,
-    TextEdit,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -77,7 +67,6 @@ impl BuiltinCatalog {
     pub(crate) fn new() -> Result<Self, CoreError> {
         let resource_kind = ResourceKind::try_new(ResourceKind::DEFAULT)?;
         let image_kind = ResourceKind::try_new("core:image")?;
-        let text_kind = ResourceKind::try_new("core:text")?;
         let video_kind = ResourceKind::try_new("core:video")?;
         let directory_kind = DirectoryKind::default();
 
@@ -100,28 +89,6 @@ impl BuiltinCatalog {
                     .with_mime_types(["image/*"])
                     .with_extensions([
                         ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".avif",
-                    ]),
-            ),
-            ResourceKindDefinition::new(
-                text_kind,
-                "Text",
-                true,
-                DefinitionOrigin::builtin_static("core.text"),
-            )
-            .with_parent(Some(resource_kind.clone()))
-            .with_detect(
-                ResourceContentMatcher::new()
-                    .with_mime_types([
-                        "text/*",
-                        "application/json",
-                        "application/xml",
-                        "application/toml",
-                        "application/yaml",
-                        "application/x-yaml",
-                    ])
-                    .with_extensions([
-                        ".txt", ".text", ".log", ".csv", ".tsv", ".json", ".xml", ".toml", ".yaml",
-                        ".yml",
                     ]),
             ),
             ResourceKindDefinition::new(
@@ -221,47 +188,6 @@ impl BuiltinCatalog {
                     ..ActionDefinitionUi::default()
                 }),
                 handler: BuiltinResourceHandler::ImageThumbnail,
-            },
-            BuiltinResourceAction {
-                definition: ResourceActionDefinition::new_static(CORE_TEXT_READ, "Read")
-                    .with_static_provides(Some(TEXT_READ_CAPABILITY))
-                    .with_kinds(["core:text"])
-                    .with_requirements(ResourceActionRequirements {
-                        content: true,
-                        content_delivery: ResourceActionContentDelivery::Inline,
-                    })
-                    .with_output(ActionOutputContract {
-                        views: vec!["text".to_string()],
-                        effects: Vec::new(),
-                    })
-                    .with_ui(ActionDefinitionUi {
-                        group: Some("open".to_string()),
-                        order: Some(50),
-                        locations: vec!["resource_context_menu".to_string()],
-                        ..ActionDefinitionUi::default()
-                    }),
-                handler: BuiltinResourceHandler::TextRead,
-            },
-            BuiltinResourceAction {
-                definition: ResourceActionDefinition::new_static(CORE_TEXT_EDIT, "Edit")
-                    .with_static_provides(Some(TEXT_EDIT_CAPABILITY))
-                    .with_access(ActionAccess::Write)
-                    .with_kinds(["core:text"])
-                    .with_requirements(ResourceActionRequirements {
-                        content: true,
-                        content_delivery: ResourceActionContentDelivery::Inline,
-                    })
-                    .with_output(ActionOutputContract {
-                        views: vec!["text".to_string()],
-                        effects: Vec::new(),
-                    })
-                    .with_ui(ActionDefinitionUi {
-                        group: Some("edit".to_string()),
-                        order: Some(50),
-                        locations: vec!["resource_context_menu".to_string()],
-                        ..ActionDefinitionUi::default()
-                    }),
-                handler: BuiltinResourceHandler::TextEdit,
             },
         ];
 

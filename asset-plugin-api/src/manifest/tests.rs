@@ -254,7 +254,7 @@ fn resource_capability_provider_may_omit_an_inherited_label() {
     let mut document = manifest_document();
     let action = &mut document["capabilities"]["resource_actions"][0];
     action.as_object_mut().unwrap().remove("label");
-    action["provides"] = serde_json::json!("text_read");
+    action["provides"] = serde_json::json!("thumbnail");
 
     let manifest = serde_json::from_value::<PluginManifest>(document).unwrap();
     manifest.validate().unwrap();

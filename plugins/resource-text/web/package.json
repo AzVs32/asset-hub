@@ -1,6 +1,6 @@
 {
-  "name": "azvs-markdown-web",
-  "version": "0.4.0",
+  "name": "resource-text-web",
+  "version": "0.1.0",
   "private": true,
   "description": "Asset Hub Markdown reader and editor UI.",
   "type": "module",

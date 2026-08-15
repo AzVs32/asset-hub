@@ -2,11 +2,11 @@
   "$schema": "https://asset-hub.local/schemas/plugin-manifest-v3.json",
   "manifest_version": 3,
   "plugin": {
-    "id": "azvs.markdown",
-    "name": "AzVs Markdown",
-    "version": "0.4.0",
+    "id": "resource.text",
+    "name": "Resource Text",
+    "version": "0.1.0",
     "publisher": "azvs",
-    "description": "Markdown reader and editor using the Asset Hub Web Plugin SDK."
+    "description": "Text-format resources with format-specific detection, reading, and editing."
   },
   "runtime": {
     "type": "extism",
@@ -16,8 +16,8 @@
   "capabilities": {
     "resource_kinds": [
       {
-        "kind": "azvs:markdown",
-        "parent": "core:text",
+        "kind": "resource:markdown",
+        "parent": "core:resource",
         "label": "Markdown",
         "supports_content": true,
         "detect": {
@@ -36,13 +36,27 @@
     ],
     "resource_actions": [
       {
-        "id": "azvs.markdown.read",
-        "provides": "text_read",
-        "description": "Open Markdown in the plugin reader.",
-        "handler": "render_markdown",
+        "id": "resource.text.read",
+        "label": "Read",
+        "description": "Open a supported text file in the plugin reader.",
+        "handler": "read_text",
         "applies_to": {
           "kinds": [
-            "azvs:markdown"
+            "core:resource"
+          ],
+          "mime_types": [
+            "text/markdown",
+            "text/x-markdown"
+          ],
+          "extensions": [
+            ".md",
+            ".markdown",
+            ".mdown",
+            ".mkd",
+            ".txt",
+            ".c",
+            ".cpp",
+            ".h"
           ]
         },
         "access": "read",
@@ -65,13 +79,28 @@
         }
       },
       {
-        "id": "azvs.markdown.edit",
+        "id": "resource.text.edit",
         "provides": "text_edit",
-        "description": "Edit Markdown through the bounded plugin frame bridge.",
-        "handler": "update_markdown",
+        "label": "Edit",
+        "description": "Edit a supported text file through the bounded plugin frame bridge.",
+        "handler": "edit_text",
         "applies_to": {
           "kinds": [
-            "azvs:markdown"
+            "core:resource"
+          ],
+          "mime_types": [
+            "text/markdown",
+            "text/x-markdown"
+          ],
+          "extensions": [
+            ".md",
+            ".markdown",
+            ".mdown",
+            ".mkd",
+            ".txt",
+            ".c",
+            ".cpp",
+            ".h"
           ]
         },
         "access": "write",
@@ -82,8 +111,7 @@
         "output": {
           "views": [
             "plugin_frame",
-            "json",
-            "text"
+            "json"
           ]
         },
         "ui": {

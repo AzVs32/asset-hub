@@ -52,7 +52,7 @@ fn action_ids_reject_blank_non_canonical_and_invalid_values() {
 #[test]
 fn capability_ids_use_the_narrower_capability_format() {
     assert!(ActionCapabilityId::new("thumbnail").is_ok());
-    assert!(ActionCapabilityId::new("text_read.v2").is_ok());
+    assert!(ActionCapabilityId::new("content_read.v2").is_ok());
     assert!(matches!(
         ActionCapabilityId::new("resource:thumbnail"),
         Err(ActionIdError::InvalidFormat { .. })

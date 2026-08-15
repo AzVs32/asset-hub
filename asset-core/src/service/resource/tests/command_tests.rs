@@ -6,7 +6,7 @@ fn update_resource_rejects_a_stale_authorized_snapshot() {
     let resource = command::build_resource(
         "original".to_string(),
         DirectoryId::root(),
-        Some(ResourceKind::try_new("doc:markdown").unwrap()),
+        Some(ResourceKind::try_new("example:metadata").unwrap()),
     )
     .build()
     .unwrap();

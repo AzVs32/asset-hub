@@ -226,13 +226,12 @@ Action 默认读取最新授权快照，不会因为缩略图或预览缓存较�
 Directory Action 注册表分别限定该能力的作用域。Host 对图片也遵循相同边界：
 `core.image.thumbnail` 仅适用于 `core:image`；通用 provider 本身始终保持 kind-neutral，
 不根据 MIME 特判图片。相同能力选择 Kind 谱系中最近的 provider，同层冲突会导致 Host
-启动失败，前端只执行后端已经解析出的 provider。文本能力同样按此规则解析：
-`core.text.read` 和 `core.text.edit` 是 `core:text` 的纯文本回退 provider，而 Markdown
-插件分别以 `azvs.markdown.read` 和 `azvs.markdown.edit` 提供 `text_read` 与 `text_edit`，
-从而在 `azvs:markdown` 上取代 Host 的纯文本界面。
-Host 内建纯文本编辑器只绑定稳定 ID `core.text.edit`，不会假定第三方 `text_edit`
-provider 接受相同输入。Action 只负责能力发现和返回初始文本；保存不再把完整文本塞入
-Action JSON，而是通过 `AssetGateway.replaceResourceText` 将 UTF-8 原始字节流提交到
+启动失败，前端只执行后端已经解析出的 provider。Host 不提供通用文本 Kind、文本读取
+provider 或文本编辑器。`resource.text` 插件在 `core:resource` 上按 Markdown MIME 或受支持扩展名提供
+`resource.text.read` 和 `resource.text.edit`：Markdown 子 Kind 继承这组 Action，`.txt`、
+`.c`、`.cpp` 和 `.h` 则保持 `core:resource`。插件通过自己的 `plugin_frame` 分别实现
+Markdown 预览编辑和基础纯文本读写。Action 只负责能力发现和返回 frame；保存不把完整文本塞入 Action JSON，
+而是由受约束的 frame bridge 通过 `AssetGateway.replaceResourceText` 将 UTF-8 原始字节流提交到
 `PUT /resources/{id}/content`。请求使用 `Content-SHA256` 做端到端完整性校验，并将打开
 编辑器时的 `Resource.revision` 放入 `If-Match`；Host 检测到资源或其目录位置已经变化时
 返回冲突并恢复原 Blob。`resource_edit.max_text_bytes` 由 Core 同时用于能力发现和执行，

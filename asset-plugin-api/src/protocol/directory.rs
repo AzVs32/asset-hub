@@ -246,7 +246,7 @@ mod tests {
                 resources: vec![CreateTreeResource {
                     directory: "game".to_string(),
                     name: "README.md".to_string(),
-                    kind: Some("core:text".to_string()),
+                    kind: Some("example:document".to_string()),
                     mime_type: Some("text/markdown".to_string()),
                     encoding: CreateTreeResourceEncoding::Base64,
                     data: "IyBHYW1l".to_string(),
@@ -262,7 +262,7 @@ mod tests {
                 "resources": [{
                     "directory": "game",
                     "name": "README.md",
-                    "kind": "core:text",
+                    "kind": "example:document",
                     "mime_type": "text/markdown",
                     "encoding": "base64",
                     "data": "IyBHYW1l"

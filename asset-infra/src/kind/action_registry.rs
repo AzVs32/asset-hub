@@ -8,14 +8,11 @@ use asset_plugin_api::manifest::ResourceActionCapability;
 
 use super::normalization::resource_action_definition;
 use super::validation::ensure_unique_scoped_action;
-use crate::builtin_catalog::{TEXT_EDIT_CAPABILITY, TEXT_READ_CAPABILITY, THUMBNAIL_CAPABILITY};
+use crate::builtin_catalog::THUMBNAIL_CAPABILITY;
 
 const RESOURCE_THUMBNAIL_LOCATION: &str = "resource_thumbnail";
-const RESOURCE_CAPABILITIES: &[&str] = &[
-    THUMBNAIL_CAPABILITY,
-    TEXT_READ_CAPABILITY,
-    TEXT_EDIT_CAPABILITY,
-];
+const TEXT_EDIT_CAPABILITY: &str = "text_edit";
+const RESOURCE_CAPABILITIES: &[&str] = &[THUMBNAIL_CAPABILITY, TEXT_EDIT_CAPABILITY];
 
 /// 默认资源动作注册表。
 #[derive(Debug, Clone)]
@@ -230,15 +227,6 @@ pub(super) fn validate_resource_action_capabilities(
         {
             return Err(CoreError::configuration(format!(
                 "resource thumbnail provider `{}` must be read-only and support the `media` view",
-                action.id()
-            )));
-        }
-        let provides_text_read = action
-            .provides()
-            .is_some_and(|capability| capability.as_str() == TEXT_READ_CAPABILITY);
-        if provides_text_read && action.access() != ActionAccess::Read {
-            return Err(CoreError::configuration(format!(
-                "resource text read provider `{}` must be read-only",
                 action.id()
             )));
         }

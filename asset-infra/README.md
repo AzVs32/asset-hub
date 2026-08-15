@@ -31,8 +31,7 @@ annotation after each kind is its typed definition origin. `core:resource` is th
 ```text
 core:resource  [builtin:core.resource; default]
 ├─ core:image  [builtin:core.image]
-├─ core:text  [builtin:core.text]
-│  └─ azvs:markdown  [plugin:azvs.markdown]
+├─ resource:markdown  [plugin:resource.text]
 ├─ azvs:epub  [plugin:azvs.epub]
 └─ core:video  [builtin:core.video]
 ```
@@ -40,19 +39,23 @@ core:resource  [builtin:core.resource; default]
 Resource capabilities are singleton providers, not generic action names. For each capability, the
 Host selects the provider declared on the nearest kind in the Resource lineage. A child provider
 therefore replaces, rather than coexists with, its ancestor's provider. The currently supported
-Resource capabilities are `thumbnail`, `text_read`, and `text_edit`.
+Resource capabilities are `thumbnail` and `text_edit`.
 
 | Kind | Resolved capability providers | Other available actions |
 | --- | --- | --- |
-| `core:resource` | `thumbnail` → `core.resource.thumbnail` | `core.resource.download`; effect-only action `core.resource.delete` |
+| `core:resource` | `thumbnail` → `core.resource.thumbnail`; matching text files also receive `text_edit` → `resource.text.edit` | `resource.text.read` when matched; `core.resource.download`; effect-only action `core.resource.delete` |
 | `core:image` | `thumbnail` → `core.image.thumbnail` | inherits download and delete |
-| `core:text` | `thumbnail` → `core.resource.thumbnail`; `text_read` → `core.text.read`; `text_edit` → `core.text.edit` | inherits download and delete |
-| `azvs:markdown` | `thumbnail` → `core.resource.thumbnail`; `text_read` → `azvs.markdown.read`; `text_edit` → `azvs.markdown.edit` | inherits download and delete |
+| `resource:markdown` | `thumbnail` → `core.resource.thumbnail`; `text_edit` → `resource.text.edit` | `resource.text.read`; inherits download and delete |
 | `azvs:epub` | `thumbnail` → `azvs.epub.thumbnail` | inherits download and delete; `azvs.epub.render` |
 | `core:video` | `thumbnail` → `core.resource.thumbnail` | inherits download and delete |
 
-`core:text` detects `text/*`, common structured-text MIME types, and common text extensions.
-More-specific descendants such as `azvs:markdown` still win when both definitions match.
+The Host does not register a generic text Resource kind or built-in text reader/editor.
+`resource:markdown` is contributed directly beneath `core:resource` by the `resource.text` plugin
+and detects only the Markdown MIME types and extensions declared in that plugin's Manifest. The
+same plugin declares an ordinary read Action and the `text_edit` provider on `core:resource` with
+Markdown MIME and supported-extension matchers, so
+`.txt`, `.c`, `.cpp`, and `.h` retain `core:resource` while receiving the basic text interface;
+Markdown descendants inherit those Actions.
 `core:image` detects `image/*` and its declared image extensions; `core:video` detects `video/*` and
 its declared video extensions; `azvs:epub` detects only the MIME types and extensions declared in
 its plugin manifest. `core:document` is not a registered Resource kind.
@@ -72,7 +75,7 @@ The fixed generic artwork lives in `assets/thumbnails/resource.svg` and
 `assets/thumbnails/directory.svg`. `include_str!` embeds both files into the Host binary at compile
 time; deployment does not need to copy them as separate runtime files.
 External actions retain their provider-owned IDs and may provide a Host-recognized capability for a
-more specific kind. Resource actions recognize `thumbnail`, `text_read`, and `text_edit`; Directory
+more specific kind. Resource actions recognize `thumbnail` and `text_edit`; Directory
 actions recognize `thumbnail` and `workspace`. A Directory `workspace` provider is read-only,
 effect-free, supports `plugin_frame`, and pairs capability `workspace` with the
 exclusive `directory_workspace` location. Resource resolution filters content requirements and matchers
@@ -83,10 +86,11 @@ descendants. Directory action discovery and execution use the same lineage-resol
 inherited action does not need to repeat every descendant kind in its declaration.
 When a plugin Resource capability provider omits its Manifest label, catalog assembly inherits the
 normalized label from the nearest ancestor provider for that capability; an explicit label remains
-an override, and a missing ancestor is a startup error. The built-in `text_read` and `text_edit`
-labels are `Read` and `Edit`. An external `text_edit` provider must declare write access and the
-specific `resource.content.replace` permission; generic Resource write permissions are not
-accepted.
+an override, and a missing ancestor is a startup error. `resource.text.read` is an ordinary Action
+with its own label. Because the Host has no text editing provider, `resource.text.edit` also declares
+its own label. An external `text_edit` provider must declare write access and the specific
+`resource.content.replace` permission; generic
+Resource write permissions are not accepted.
 At the package boundary, infrastructure explicitly converts external Manifest capabilities into
 `asset-core` Action/Kind definitions. Extism handler names remain in private adapter bindings and
 are not copied into Core models.
@@ -109,7 +113,7 @@ empty, non-canonical, uppercase, or unsupported characters before reaching regis
 Host-owned static declarations assert the same invariant at construction.
 Resource and Directory Kind IDs use two or more lowercase colon-separated segments; the segments
 are identity only, while inheritance is declared explicitly through `parent`. Resource and
-Directory Action IDs use lowercase dot-separated provider names such as `azvs.markdown.read`.
+Directory Action IDs use lowercase dot-separated provider names such as `resource.text.read`.
 Runtime constructs all four registries
 as one validated capability-catalog unit, rejects duplicate IDs and invalid scopes before serving,
 and reports ambiguous content-kind detection instead of selecting by registration order.

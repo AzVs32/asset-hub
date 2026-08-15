@@ -1,6 +1,6 @@
 [package]
-name = "azvs-markdown-plugin"
-version = "0.4.0"
+name = "resource-text-plugin"
+version = "0.1.0"
 edition = "2024"
 
 [lib]

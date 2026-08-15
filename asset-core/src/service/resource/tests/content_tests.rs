@@ -54,7 +54,7 @@ fn empty_repository_startup_recovers_metadata_before_checksum_verification() {
 }
 
 #[tokio::test]
-async fn streaming_text_replacement_serializes_with_rename_on_the_same_blob() {
+async fn streaming_content_replacement_serializes_with_rename_on_the_same_blob() {
     let (service, repository, blob_storage) = service();
     let key = StorageKey::new("docs/concurrent.md").unwrap();
     let renamed_key = StorageKey::new("docs/renamed.md").unwrap();
@@ -65,7 +65,7 @@ async fn streaming_text_replacement_serializes_with_rename_on_the_same_blob() {
                 key.clone(),
                 Bytes::from_static(b"# Original"),
             )
-            .with_kind(ResourceKind::try_new("core:text").unwrap())
+            .with_kind(ResourceKind::try_new("example:document").unwrap())
             .with_mime_type("text/markdown"),
         )
         .await
@@ -83,7 +83,7 @@ async fn streaming_text_replacement_serializes_with_rename_on_the_same_blob() {
     let replacement_task = tokio::spawn(async move {
         replacement_service
             .content()
-            .replace_text_content_snapshot(
+            .replace_content_snapshot(
                 replacement_snapshot,
                 command,
                 Box::pin(futures_util::stream::once(async move { Ok(replacement) })),
@@ -129,14 +129,14 @@ async fn streaming_text_replacement_serializes_with_rename_on_the_same_blob() {
 }
 
 #[test]
-fn streaming_text_replacement_restores_the_original_blob_when_cas_fails() {
+fn streaming_content_replacement_restores_the_original_blob_when_cas_fails() {
     let (service, repository, blob_storage) = service();
     let key = StorageKey::new("docs/rollback.md").unwrap();
     let original = Bytes::from_static(b"# Original");
     let resource = block_on(
         service.upload_resource_for_test(
             stream_upload_command("rollback.md", key.clone(), original.clone())
-                .with_kind(ResourceKind::try_new("core:text").unwrap())
+                .with_kind(ResourceKind::try_new("example:document").unwrap())
                 .with_mime_type("text/markdown"),
         ),
     )
@@ -149,7 +149,7 @@ fn streaming_text_replacement_restores_the_original_blob_when_cas_fails() {
     );
     repository.fail_next_conditional_save();
 
-    let error = block_on(service.content().replace_text_content_snapshot(
+    let error = block_on(service.content().replace_content_snapshot(
         repository.locate_sync(resource.clone()),
         command,
         Box::pin(futures_util::stream::once(async move { Ok(replacement) })),
@@ -172,7 +172,7 @@ fn startup_recovery_rolls_back_a_published_replacement_without_a_resource_commit
     let resource = block_on(
         service.upload_resource_for_test(
             stream_upload_command("interrupted.md", target.clone(), original.clone())
-                .with_kind(ResourceKind::try_new("core:text").unwrap())
+                .with_kind(ResourceKind::try_new("example:document").unwrap())
                 .with_mime_type("text/markdown"),
         ),
     )
@@ -224,7 +224,7 @@ fn startup_recovery_keeps_a_committed_replacement_and_cleans_internal_blobs() {
     let mut resource = block_on(
         service.upload_resource_for_test(
             stream_upload_command("committed.md", target.clone(), original)
-                .with_kind(ResourceKind::try_new("core:text").unwrap())
+                .with_kind(ResourceKind::try_new("example:document").unwrap())
                 .with_mime_type("text/markdown"),
         ),
     )
@@ -271,21 +271,21 @@ fn startup_recovery_keeps_a_committed_replacement_and_cleans_internal_blobs() {
 }
 
 #[test]
-fn streaming_text_replacement_rejects_bad_checksums_and_oversized_content() {
+fn streaming_content_replacement_rejects_bad_checksums_and_oversized_content() {
     let (service, repository, blob_storage) = service();
     let key = StorageKey::new("docs/validated.md").unwrap();
     let original = Bytes::from_static(b"# Original");
     let resource = block_on(
         service.upload_resource_for_test(
             stream_upload_command("validated.md", key.clone(), original.clone())
-                .with_kind(ResourceKind::try_new("core:text").unwrap())
+                .with_kind(ResourceKind::try_new("example:document").unwrap())
                 .with_mime_type("text/markdown"),
         ),
     )
     .unwrap();
     let replacement = Bytes::from_static(b"changed");
     let bad_checksum = Checksum::sha256("0".repeat(64)).unwrap();
-    let error = block_on(service.content().replace_text_content_snapshot(
+    let error = block_on(service.content().replace_content_snapshot(
         repository.locate_sync(resource.clone()),
         ReplaceResourceContent::new(replacement.len() as u64, bad_checksum, resource.revision()),
         Box::pin(futures_util::stream::once(async move { Ok(replacement) })),
@@ -295,7 +295,7 @@ fn streaming_text_replacement_rejects_bad_checksums_and_oversized_content() {
     assert_eq!(blob_storage.get_sync(&key), Some(original.clone()));
 
     let max = test_resource_content_edit_policy().max_text_bytes();
-    let error = block_on(service.content().replace_text_content_snapshot(
+    let error = block_on(service.content().replace_content_snapshot(
         repository.locate_sync(resource.clone()),
         ReplaceResourceContent::new(
             max + 1,
@@ -313,7 +313,7 @@ fn streaming_text_replacement_rejects_bad_checksums_and_oversized_content() {
 fn text_edit_capability_is_hidden_above_the_edit_policy() {
     let (service, _, _) = service();
     let resource = Resource::builder("large.md")
-        .with_kind(ResourceKind::try_new("core:text").unwrap())
+        .with_kind(ResourceKind::try_new("example:document").unwrap())
         .with_content(
             crate::domain::ResourceContent::verified(
                 test_resource_content_edit_policy().max_text_bytes() + 1,

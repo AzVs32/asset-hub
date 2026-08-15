@@ -20,12 +20,12 @@ fn plugin_frame_relative_url_is_resolved_to_plugin_web_route() {
         url: "index.html#payload=abc".to_string(),
     }));
 
-    resolve_plugin_output_urls(&mut output, "azvs.markdown").unwrap();
+    resolve_plugin_output_urls(&mut output, "example.plugin").unwrap();
 
     let Some(PluginView::PluginFrame(frame)) = output.view else {
         panic!("expected plugin frame");
     };
-    assert_eq!(frame.url, "/plugins/azvs.markdown/index.html#payload=abc");
+    assert_eq!(frame.url, "/plugins/example.plugin/index.html#payload=abc");
 }
 
 #[test]
@@ -36,21 +36,21 @@ fn plugin_frame_rejects_a_different_plugin_api() {
         url: "index.html".to_string(),
     }));
 
-    assert!(resolve_plugin_output_urls(&mut output, "azvs.markdown").is_err());
+    assert!(resolve_plugin_output_urls(&mut output, "example.plugin").is_err());
 }
 
 #[test]
 fn plugin_frame_public_or_protocol_url_is_rejected() {
-    assert!(plugin_web_asset_url("azvs.markdown", "/plugins/custom/index.html").is_err());
-    assert!(plugin_web_asset_url("azvs.markdown", "asset://content/demo.md").is_err());
-    assert!(plugin_web_asset_url("azvs.markdown", "https://example.com/view").is_err());
+    assert!(plugin_web_asset_url("example.plugin", "/plugins/custom/index.html").is_err());
+    assert!(plugin_web_asset_url("example.plugin", "asset://content/demo.bin").is_err());
+    assert!(plugin_web_asset_url("example.plugin", "https://example.com/view").is_err());
 }
 
 #[test]
 fn plugin_frame_hash_only_url_defaults_to_index_html() {
     assert_eq!(
-        plugin_web_asset_url("azvs.markdown", "#payload=abc").unwrap(),
-        "/plugins/azvs.markdown/index.html#payload=abc"
+        plugin_web_asset_url("example.plugin", "#payload=abc").unwrap(),
+        "/plugins/example.plugin/index.html#payload=abc"
     );
 }
 

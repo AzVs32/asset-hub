@@ -306,7 +306,7 @@ fn resource_without_content_describes_only_actions_without_content_requirements(
     let resource = command::build_resource(
         "contentless".to_string(),
         DirectoryId::root(),
-        Some(ResourceKind::try_new("doc:markdown").unwrap()),
+        Some(ResourceKind::try_new("example:metadata").unwrap()),
     )
     .build()
     .unwrap();
@@ -330,7 +330,7 @@ fn resource_without_content_rejects_direct_content_action_execution() {
     let resource = command::build_resource(
         "contentless".to_string(),
         DirectoryId::root(),
-        Some(ResourceKind::try_new("doc:markdown").unwrap()),
+        Some(ResourceKind::try_new("example:metadata").unwrap()),
     )
     .build()
     .unwrap();
@@ -338,7 +338,7 @@ fn resource_without_content_rejects_direct_content_action_execution() {
 
     let error = block_on(service.actions().execute_resource_action(
         &resource.id(),
-        ExecuteResourceAction::new(ResourceActionId::from_static("test.text.extract"), None),
+        ExecuteResourceAction::new(ResourceActionId::from_static("test.content.extract"), None),
     ))
     .unwrap_err();
 
@@ -347,7 +347,7 @@ fn resource_without_content_rejects_direct_content_action_execution() {
         CoreError::Unsupported {
             subject: "resource action",
             value
-        } if value == "test.text.extract"
+        } if value == "test.content.extract"
     ));
 }
 
@@ -362,7 +362,7 @@ fn execute_action_rejects_a_stale_caller_snapshot() {
                 key.clone(),
                 Bytes::from_static(b"# Current"),
             )
-            .with_kind(ResourceKind::try_new("core:text").unwrap())
+            .with_kind(ResourceKind::try_new("example:document").unwrap())
             .with_mime_type("text/markdown"),
         ),
     )
@@ -373,7 +373,7 @@ fn execute_action_rejects_a_stale_caller_snapshot() {
         service.actions().execute_resource_action(
             &resource.id(),
             ExecuteResourceAction::new(
-                ResourceActionId::from_static("azvs.markdown.edit"),
+                ResourceActionId::from_static("example.content.edit"),
                 Some(stale),
             )
             .with_input(json!({"markdown": "# Stale"})),
@@ -395,7 +395,7 @@ fn write_action_cleanup_failure_keeps_a_recoverable_intent() {
     let resource = block_on(
         service.upload_resource_for_test(
             stream_upload_command("note.md", key, Bytes::from_static(b"# Old"))
-                .with_kind(ResourceKind::try_new("core:text").unwrap())
+                .with_kind(ResourceKind::try_new("example:document").unwrap())
                 .with_mime_type("text/markdown"),
         ),
     )
@@ -406,7 +406,7 @@ fn write_action_cleanup_failure_keeps_a_recoverable_intent() {
         service.actions().execute_resource_action(
             &resource.id(),
             ExecuteResourceAction::new(
-                ResourceActionId::from_static("azvs.markdown.edit"),
+                ResourceActionId::from_static("example.content.edit"),
                 Some(resource.revision()),
             )
             .with_input(json!({"markdown": "# New"})),
@@ -443,7 +443,7 @@ fn describe_resource_actions_uses_declared_content_matchers() {
                 StorageKey::new("books/book.pdf").unwrap(),
                 Bytes::from_static(b"%PDF-1.4"),
             )
-            .with_kind(ResourceKind::try_new("core:text").unwrap())
+            .with_kind(ResourceKind::try_new("example:document").unwrap())
             .with_mime_type("application/pdf"),
         ),
     )
@@ -455,7 +455,7 @@ fn describe_resource_actions_uses_declared_content_matchers() {
                 StorageKey::new("books/book.txt").unwrap(),
                 Bytes::from_static(b"hello"),
             )
-            .with_kind(ResourceKind::try_new("core:text").unwrap())
+            .with_kind(ResourceKind::try_new("example:document").unwrap())
             .with_mime_type("text/plain"),
         ),
     )
@@ -470,12 +470,12 @@ fn describe_resource_actions_uses_declared_content_matchers() {
             .any(|action| action.id().as_str() == id)
     };
 
-    assert!(has_action(&pdf_actions, "test.text.extract"));
-    assert!(has_action(&pdf_actions, "test.text.thumbnail"));
+    assert!(has_action(&pdf_actions, "test.content.extract"));
+    assert!(has_action(&pdf_actions, "test.content.thumbnail"));
     assert!(!has_action(&pdf_actions, "core.resource.thumbnail"));
-    assert!(!has_action(&pdf_actions, "azvs.markdown.read"));
-    assert!(has_action(&text_actions, "test.text.extract"));
-    assert!(!has_action(&text_actions, "test.text.thumbnail"));
+    assert!(!has_action(&pdf_actions, "example.content.read"));
+    assert!(has_action(&text_actions, "test.content.extract"));
+    assert!(!has_action(&text_actions, "test.content.thumbnail"));
     assert!(has_action(&text_actions, "core.resource.thumbnail"));
-    assert!(!has_action(&text_actions, "azvs.markdown.read"));
+    assert!(has_action(&text_actions, "example.content.read"));
 }

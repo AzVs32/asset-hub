@@ -241,12 +241,12 @@ mod tests {
     #[test]
     fn definition_origins_reject_non_canonical_owner_ids() {
         assert_eq!(
-            DefinitionOrigin::plugin("azvs.markdown")
+            DefinitionOrigin::plugin("example.plugin")
                 .unwrap()
                 .to_string(),
-            "plugin:azvs.markdown"
+            "plugin:example.plugin"
         );
-        for value in ["", " Plugin", "AZVS.Markdown", "azvs/markdown"] {
+        for value in ["", " Plugin", "EXAMPLE.Plugin", "example/plugin"] {
             assert!(
                 DefinitionOrigin::plugin(value).is_err(),
                 "`{value}` must be rejected"

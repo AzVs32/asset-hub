@@ -68,7 +68,7 @@ impl<'a> ResourceContentService<'a> {
         }))
     }
 
-    pub(crate) async fn replace_text_content_snapshot(
+    pub(crate) async fn replace_content_snapshot(
         &self,
         located: LocatedResource,
         command: ReplaceResourceContent,

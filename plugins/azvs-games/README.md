@@ -8,6 +8,10 @@ plugin owns the game model: creating a game emits a game directory, `public/`, a
 `README.md`, and an empty `HASH.md` reserved for a later integrity workflow. The README is the
 default content rendered by both the library card and game workspace.
 
+Generated Markdown resources do not name a Kind owned by another plugin. Games leaves their Kind
+unset in the `create_tree` output, allowing the Host to detect an installed format-specific Kind or
+fall back to `core:resource`. The Games plugin therefore has no dependency on `resource.text`.
+
 `directory:games:item` inherits from `directory:games`, so the Kind hierarchy reflects that a game
 entry belongs to the Games model and receives the same workspace capabilities. This inheritance
 does not restrict physical placement: users may assign `directory:games:item` to a game directory
