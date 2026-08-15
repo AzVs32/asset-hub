@@ -131,7 +131,6 @@ dependencies = [
  "anyhow",
  "asset-core",
  "asset-infra",
- "asset-plugin-api",
  "asset-runtime",
  "clap",
  "comfy-table",

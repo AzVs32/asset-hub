@@ -95,9 +95,9 @@ workflow.
 At startup, `asset-runtime` assembles the verified plugin catalog, kind/action
 registries, Extism executors, and Core services in that order. `asset-infra`
 provides the filesystem verification, Extism, SQLite, OpenDAL, and registry
-adapters but does not compose application services. Plugin lock generation is
-an explicit packaging step; runtime loading is read-only and requires a valid
-`manifest.lock.json`.
+adapters but does not compose application services. `asset plugin --install <path>` generates the
+installed package lock after snapshotting and validation; runtime loading remains read-only and
+requires that valid `manifest.lock.json`.
 
 Runtime assembly creates one shared directory service for resource, user, and authorization
 workflows. It also owns the supervised upload-finalization tasks; Core validates upload state and

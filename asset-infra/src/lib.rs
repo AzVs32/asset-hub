@@ -10,12 +10,12 @@ mod plugin_manifest;
 pub mod sqlite;
 pub mod storage;
 
-/// Shared filesystem boundary for sealing and read-only loading of plugin packages.
+/// Shared filesystem boundary for installing, uninstalling, and loading plugin packages.
 pub mod plugin_package {
     pub use crate::plugin_manifest::{
-        LoadedPlugin, MAX_PLUGIN_LOCK_BYTES, MAX_PLUGIN_MANIFEST_BYTES, MAX_PLUGIN_WASM_BYTES,
-        MAX_PLUGIN_WEB_BYTES, PluginCatalog, generate_plugin_manifest_lock,
-        load_verified_plugin_package,
+        InstalledPluginPackage, LoadedPlugin, MAX_PLUGIN_LOCK_BYTES, MAX_PLUGIN_MANIFEST_BYTES,
+        MAX_PLUGIN_WASM_BYTES, MAX_PLUGIN_WEB_BYTES, PluginCatalog, generate_plugin_manifest_lock,
+        install_plugin_package, load_verified_plugin_package, uninstall_plugin_package,
     };
 }
 

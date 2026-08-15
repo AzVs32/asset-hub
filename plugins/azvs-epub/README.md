@@ -54,20 +54,11 @@ The plugin runtime accepts two private bridge operations on `azvs.epub.render`:
 
 ## Build
 
-Prerequisites:
-
-- Rust with the `wasm32-unknown-unknown` target.
-- Node.js 22 (`web/.node-version` pins the tested Node.js release).
-
-Install the Rust WebAssembly target once:
+Requires Rust with the `wasm32-unknown-unknown` target and Node.js 22
+(`web/.node-version` pins the tested Node.js release). Prepare them once:
 
 ```bash
 rustup target add wasm32-unknown-unknown
-```
-
-Install the Web dependencies once:
-
-```bash
 cd asset-plugin-api/web
 npm ci
 cd ../../plugins/azvs-epub/web
@@ -75,14 +66,18 @@ npm ci
 cd ../../..
 ```
 
-Then build this plugin from the repository root:
+Build and install from the repository root:
 
 ```bash
 plugins/azvs-epub/build.sh
+cargo run --bin asset plugin --install plugins/azvs-epub/asset-plugin-target
 ```
 
-The command builds the local Web SDK dependency, compiles the Wasm runtime, and leaves this
-plugin's generated files under:
+<details>
+<summary>Build details</summary>
+
+`build.sh` rebuilds the local Web SDK dependency, compiles the Wasm runtime, builds the React
+application, and writes this plugin's generated files to:
 
 ```text
 plugins/azvs-epub/asset-plugin-target/
@@ -94,8 +89,8 @@ plugins/azvs-epub/asset-plugin-target/
 
 `plugins/azvs-epub/manifest.json` remains the only Manifest that authors edit. `build.sh` refreshes
 the target copy automatically; it does not generate `manifest.lock.json` or call the Asset CLI.
-Lock generation, installation, and verification are intentionally deferred to the future plugin
-install workflow.
+`asset plugin --install` snapshots the target, generates and verifies the installed lock, and does
+not modify `asset-plugin-target`.
 
 Individual checks remain available when changing only one side:
 
@@ -106,3 +101,5 @@ npm run typecheck
 npm run build
 cd ../../..
 ```
+
+</details>

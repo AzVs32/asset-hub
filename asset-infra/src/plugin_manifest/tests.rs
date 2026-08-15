@@ -188,6 +188,55 @@ fn catalog_requires_an_explicitly_generated_lock_and_then_only_verifies_it() {
 }
 
 #[test]
+fn local_install_owns_sealing_replacement_and_uninstall_without_mutating_source() {
+    let root = unique_temp_path("install-lifecycle");
+    let source = root.join("arbitrary-output-directory");
+    let packages = root.join("installed-packages");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::write(
+        source.join(PLUGIN_MANIFEST_FILE_NAME),
+        minimal_extism_manifest("install.lifecycle"),
+    )
+    .unwrap();
+    std::fs::write(source.join(PLUGIN_WASM_FILE_NAME), b"wasm-v1").unwrap();
+    std::fs::write(
+        source.join(PLUGIN_WEB_ENTRY_FILE_NAME),
+        b"<!doctype html><title>v1</title>",
+    )
+    .unwrap();
+
+    let first = install_plugin_package(&source, &packages).unwrap();
+    let installed = packages.join("install.lifecycle");
+    assert_eq!(first.package_root(), installed);
+    assert!(!first.replaced_existing());
+    assert!(!source.join(PLUGIN_LOCK_FILE_NAME).exists());
+    assert!(installed.join(PLUGIN_LOCK_FILE_NAME).exists());
+    load_verified_plugin_package(&installed).unwrap();
+
+    std::fs::write(source.join(PLUGIN_WASM_FILE_NAME), b"wasm-v2").unwrap();
+    let second = install_plugin_package(&source, &packages).unwrap();
+    assert!(second.replaced_existing());
+    assert_eq!(
+        std::fs::read(installed.join(PLUGIN_WASM_FILE_NAME)).unwrap(),
+        b"wasm-v2"
+    );
+    load_verified_plugin_package(&installed).unwrap();
+
+    std::fs::remove_file(source.join(PLUGIN_WASM_FILE_NAME)).unwrap();
+    assert!(install_plugin_package(&source, &packages).is_err());
+    assert_eq!(
+        std::fs::read(installed.join(PLUGIN_WASM_FILE_NAME)).unwrap(),
+        b"wasm-v2"
+    );
+    load_verified_plugin_package(&installed).unwrap();
+
+    let removed = uninstall_plugin_package(&packages, "install.lifecycle").unwrap();
+    assert_eq!(removed, installed);
+    assert!(!installed.exists());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn atomic_lock_install_does_not_replace_an_existing_file() {
     let root = unique_temp_path("atomic-no-replace");
     std::fs::create_dir_all(&root).unwrap();

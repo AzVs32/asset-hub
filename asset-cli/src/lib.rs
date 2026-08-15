@@ -33,7 +33,7 @@ enum Command {
     System(system::Command),
     /// Manage Asset Hub users.
     User(user::Command),
-    /// Seal or verify an installed Asset Hub plugin package.
+    /// List, install, or uninstall Asset Hub plugin packages.
     Plugin(plugin::Command),
 }
 

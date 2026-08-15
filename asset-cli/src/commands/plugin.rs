@@ -1,6 +1,7 @@
 use crate::CliResult;
 use clap::{ArgGroup, Args};
-use std::path::{Component, Path, PathBuf};
+use comfy_table::{Table, presets::UTF8_FULL};
+use std::path::{Path, PathBuf};
 
 mod tool;
 
@@ -9,58 +10,75 @@ mod tool;
     ArgGroup::new("operation")
         .required(true)
         .multiple(false)
-        .args(["seal", "verify"])
+        .args(["list", "install", "uninstall"])
 ))]
 pub(crate) struct Command {
-    /// Seal an installed plugin package by ID and generate its lock.
+    /// List all installed plugins.
+    #[arg(long)]
+    list: bool,
+    /// Install a plugin from a local package directory.
+    #[arg(long, value_name = "PATH")]
+    install: Option<PathBuf>,
+    /// Uninstall an installed plugin by ID.
     #[arg(long, value_name = "PLUGIN_ID")]
-    seal: Option<String>,
-    /// Verify a sealed installed plugin package by ID without changing it.
-    #[arg(long, value_name = "PLUGIN_ID")]
-    verify: Option<String>,
+    uninstall: Option<String>,
 }
 
 pub(crate) fn run(command: Command, packages_root: &Path) -> CliResult {
-    let (plugin_id, operation) = match (command.seal, command.verify) {
-        (None, Some(plugin_id)) => (plugin_id, Operation::Verify),
-        (Some(plugin_id), None) => (plugin_id, Operation::Seal),
-        (None, None) => anyhow::bail!("one of --seal or --verify is required"),
-        (Some(_), Some(_)) => unreachable!("clap rejects conflicting plugin operations"),
+    if command.list {
+        list(packages_root)
+    } else if let Some(source) = command.install {
+        install(&source, packages_root)
+    } else if let Some(plugin_id) = command.uninstall {
+        uninstall(&plugin_id, packages_root)
+    } else {
+        unreachable!("clap requires exactly one plugin operation")
+    }
+}
+
+fn list(packages_root: &Path) -> CliResult {
+    let plugins = tool::list_packages(packages_root)?;
+    if plugins.is_empty() {
+        println!("no plugins installed");
+        return Ok(());
+    }
+    let mut table = Table::new();
+    table.load_style(UTF8_FULL);
+    table.set_header(["ID", "NAME", "VERSION", "PUBLISHER"]);
+    for plugin in plugins {
+        table.add_row([plugin.id, plugin.name, plugin.version, plugin.publisher]);
+    }
+    println!("{table}");
+    Ok(())
+}
+
+fn install(source: &Path, packages_root: &Path) -> CliResult {
+    let source_text = source.to_string_lossy();
+    if source_text.contains("://") || source_text.starts_with("git@") {
+        anyhow::bail!(
+            "remote plugin sources are not supported yet; --install expects a local directory path"
+        );
+    }
+    let installed = tool::install_package(source, packages_root)?;
+    let replacement = if installed.replaced_existing() {
+        "; replaced existing installation"
+    } else {
+        ""
     };
-    let package = package_path(packages_root, &plugin_id)?;
-
-    match operation {
-        Operation::Verify => {
-            let plugin = tool::verify_package(&package)?;
-            println!(
-                "verified plugin `{}` ({})",
-                plugin.plugin_id(),
-                package.display()
-            );
-            Ok(())
-        }
-        Operation::Seal => {
-            let plugin = tool::generate_lock(&package)?;
-            println!(
-                "sealed plugin `{}` ({})",
-                plugin.plugin_id(),
-                package.display()
-            );
-            Ok(())
-        }
-    }
+    println!(
+        "installed plugin `{}` from `{}` to `{}`{replacement}",
+        installed.manifest().plugin_id(),
+        source.display(),
+        installed.package_root().display()
+    );
+    Ok(())
 }
 
-#[derive(Debug, Clone, Copy)]
-enum Operation {
-    Seal,
-    Verify,
-}
-
-fn package_path(packages_root: &Path, plugin_id: &str) -> CliResult<PathBuf> {
-    let mut components = Path::new(plugin_id).components();
-    if !matches!(components.next(), Some(Component::Normal(_))) || components.next().is_some() {
-        anyhow::bail!("plugin id must be a single package directory name: `{plugin_id}`");
-    }
-    Ok(packages_root.join(plugin_id))
+fn uninstall(plugin_id: &str, packages_root: &Path) -> CliResult {
+    let removed = tool::uninstall_package(packages_root, plugin_id)?;
+    println!(
+        "uninstalled plugin `{plugin_id}` from `{}`",
+        removed.display()
+    );
+    Ok(())
 }

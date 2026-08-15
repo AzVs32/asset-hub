@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 /// Maximum accepted serialized Manifest size.
@@ -29,6 +29,13 @@ pub struct LoadedPlugin {
 }
 
 #[derive(Debug, Clone)]
+pub struct InstalledPluginPackage {
+    manifest: PluginManifest,
+    package_root: PathBuf,
+    replaced_existing: bool,
+}
+
+#[derive(Debug, Clone)]
 pub struct PluginCatalog {
     pub(crate) builtin: BuiltinCatalog,
     plugins: Vec<LoadedPlugin>,
@@ -38,7 +45,7 @@ impl PluginCatalog {
     /// Load the Host-owned built-in catalog and verify every external package.
     ///
     /// This operation is read-only. External packages must already contain a valid
-    /// `manifest.lock.json`; use [`generate_plugin_manifest_lock`] explicitly when sealing a
+    /// `manifest.lock.json`; use [`install_plugin_package`] to create or replace an installed
     /// package.
     pub fn load(packages_root: &Path) -> Result<Self, CoreError> {
         let builtin = BuiltinCatalog::new()?;
@@ -80,6 +87,135 @@ impl LoadedPlugin {
     pub fn web_assets(&self) -> &HashMap<PathBuf, Arc<[u8]>> {
         &self.web_assets
     }
+}
+
+impl InstalledPluginPackage {
+    pub fn manifest(&self) -> &PluginManifest {
+        &self.manifest
+    }
+
+    pub fn package_root(&self) -> &Path {
+        &self.package_root
+    }
+
+    pub fn replaced_existing(&self) -> bool {
+        self.replaced_existing
+    }
+}
+
+/// Install a local plugin directory into the canonical packages root.
+///
+/// The source directory name is irrelevant; `manifest.json` owns plugin identity. Source bytes are
+/// snapshotted after validation, copied into a same-filesystem staging directory, sealed there,
+/// and verified before the canonical package is replaced. The source directory is never modified.
+pub fn install_plugin_package(
+    source: &Path,
+    packages_root: &Path,
+) -> Result<InstalledPluginPackage, CoreError> {
+    validate_package_directory(source)?;
+    let manifest = load_plugin_manifest_file(&source.join(PLUGIN_MANIFEST_FILE_NAME))?;
+    let artifacts = inspect_package_artifacts(source, &manifest)?;
+    ensure_packages_root(packages_root)?;
+
+    let packages_parent = packages_root.parent().ok_or_else(|| {
+        CoreError::configuration(format!(
+            "plugin packages root `{}` must have a parent directory",
+            packages_root.display()
+        ))
+    })?;
+    let staging_container = packages_parent.join(format!(
+        ".asset-hub-plugin-install-{}",
+        uuid::Uuid::now_v7()
+    ));
+    std::fs::create_dir(&staging_container).map_err(|error| {
+        CoreError::configuration(format!(
+            "create plugin installation staging directory `{}`: {error}",
+            staging_container.display()
+        ))
+    })?;
+    let staging_package = staging_container.join(manifest.plugin_id());
+    let target_package = packages_root.join(manifest.plugin_id());
+
+    let install_result = (|| {
+        std::fs::create_dir(&staging_package).map_err(|error| {
+            CoreError::configuration(format!(
+                "create staged plugin package `{}`: {error}",
+                staging_package.display()
+            ))
+        })?;
+        write_manifest_snapshot(&staging_package, &manifest)?;
+        write_artifact_snapshot(&staging_package, &artifacts)?;
+        generate_plugin_manifest_lock(&staging_package)?;
+        load_verified_plugin_package(&staging_package)?;
+        let replaced_existing =
+            replace_installed_package(&staging_package, &target_package, packages_parent)?;
+        Ok(InstalledPluginPackage {
+            manifest,
+            package_root: target_package,
+            replaced_existing,
+        })
+    })();
+
+    if let Err(error) = std::fs::remove_dir_all(&staging_container)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!(
+            path = %staging_container.display(),
+            %error,
+            "failed to clean plugin installation staging directory"
+        );
+    }
+    install_result
+}
+
+/// Uninstall one canonical plugin package by ID.
+pub fn uninstall_plugin_package(
+    packages_root: &Path,
+    plugin_id: &str,
+) -> Result<PathBuf, CoreError> {
+    validate_plugin_id_path_component(plugin_id)?;
+    let package = packages_root.join(plugin_id);
+    let metadata = match std::fs::symlink_metadata(&package) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(CoreError::not_found("plugin package", plugin_id));
+        }
+        Err(error) => {
+            return Err(CoreError::configuration(format!(
+                "inspect installed plugin package `{}`: {error}",
+                package.display()
+            )));
+        }
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(CoreError::configuration(format!(
+            "installed plugin package `{}` must be a directory and not a symbolic link",
+            package.display()
+        )));
+    }
+    let packages_parent = packages_root.parent().ok_or_else(|| {
+        CoreError::configuration(format!(
+            "plugin packages root `{}` must have a parent directory",
+            packages_root.display()
+        ))
+    })?;
+    let removed_package = packages_parent.join(format!(
+        ".asset-hub-plugin-uninstall-{plugin_id}-{}",
+        uuid::Uuid::now_v7()
+    ));
+    std::fs::rename(&package, &removed_package).map_err(|error| {
+        CoreError::configuration(format!(
+            "remove plugin package `{}` from the active packages root: {error}",
+            package.display()
+        ))
+    })?;
+    std::fs::remove_dir_all(&removed_package).map_err(|error| {
+        CoreError::configuration(format!(
+            "delete uninstalled plugin package `{}`: {error}",
+            removed_package.display()
+        ))
+    })?;
+    Ok(package)
 }
 
 /// Verify and snapshot one external plugin package directory without changing it.
@@ -133,6 +269,177 @@ pub fn generate_plugin_manifest_lock(package_root: &Path) -> Result<PluginManife
         )));
     }
     Ok(manifest)
+}
+
+fn ensure_packages_root(packages_root: &Path) -> Result<(), CoreError> {
+    match std::fs::symlink_metadata(packages_root) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err(CoreError::configuration(format!(
+                    "plugin packages root `{}` must be a directory and not a symbolic link",
+                    packages_root.display()
+                )));
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::create_dir_all(packages_root).map_err(|error| {
+                CoreError::configuration(format!(
+                    "create plugin packages root `{}`: {error}",
+                    packages_root.display()
+                ))
+            })?;
+        }
+        Err(error) => {
+            return Err(CoreError::configuration(format!(
+                "inspect plugin packages root `{}`: {error}",
+                packages_root.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn write_manifest_snapshot(
+    package_root: &Path,
+    manifest: &PluginManifest,
+) -> Result<(), CoreError> {
+    let path = package_root.join(PLUGIN_MANIFEST_FILE_NAME);
+    let mut bytes = serde_json::to_vec_pretty(manifest).map_err(|error| {
+        CoreError::configuration(format!(
+            "encode staged plugin manifest `{}`: {error}",
+            path.display()
+        ))
+    })?;
+    bytes.push(b'\n');
+    if bytes.len() > MAX_PLUGIN_MANIFEST_BYTES as usize {
+        return Err(CoreError::configuration(format!(
+            "staged plugin manifest `{}` exceeds the {MAX_PLUGIN_MANIFEST_BYTES} byte limit",
+            path.display()
+        )));
+    }
+    std::fs::write(&path, bytes).map_err(|error| {
+        CoreError::configuration(format!(
+            "write staged plugin manifest `{}`: {error}",
+            path.display()
+        ))
+    })
+}
+
+fn write_artifact_snapshot(
+    package_root: &Path,
+    artifacts: &LoadedArtifacts,
+) -> Result<(), CoreError> {
+    let wasm_path = package_root.join(PLUGIN_WASM_FILE_NAME);
+    std::fs::write(&wasm_path, artifacts.wasm.as_ref()).map_err(|error| {
+        CoreError::configuration(format!(
+            "write staged plugin Wasm `{}`: {error}",
+            wasm_path.display()
+        ))
+    })?;
+    for (relative_path, bytes) in &artifacts.web_assets {
+        let path = package_root.join(relative_path);
+        let parent = path.parent().ok_or_else(|| {
+            CoreError::invariant(format!(
+                "staged plugin artifact `{}` has no parent directory",
+                path.display()
+            ))
+        })?;
+        std::fs::create_dir_all(parent).map_err(|error| {
+            CoreError::configuration(format!(
+                "create staged plugin Web directory `{}`: {error}",
+                parent.display()
+            ))
+        })?;
+        std::fs::write(&path, bytes.as_ref()).map_err(|error| {
+            CoreError::configuration(format!(
+                "write staged plugin Web artifact `{}`: {error}",
+                path.display()
+            ))
+        })?;
+    }
+    Ok(())
+}
+
+fn replace_installed_package(
+    staging_package: &Path,
+    target_package: &Path,
+    packages_parent: &Path,
+) -> Result<bool, CoreError> {
+    let metadata = match std::fs::symlink_metadata(target_package) {
+        Ok(metadata) => Some(metadata),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(CoreError::configuration(format!(
+                "inspect existing plugin package `{}`: {error}",
+                target_package.display()
+            )));
+        }
+    };
+    let Some(metadata) = metadata else {
+        std::fs::rename(staging_package, target_package).map_err(|error| {
+            CoreError::configuration(format!(
+                "install plugin package `{}`: {error}",
+                target_package.display()
+            ))
+        })?;
+        return Ok(false);
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(CoreError::configuration(format!(
+            "existing plugin package `{}` must be a directory and not a symbolic link",
+            target_package.display()
+        )));
+    }
+
+    let plugin_id = target_package
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            CoreError::invariant(format!(
+                "plugin package path `{}` has no UTF-8 file name",
+                target_package.display()
+            ))
+        })?;
+    let backup = packages_parent.join(format!(
+        ".asset-hub-plugin-backup-{plugin_id}-{}",
+        uuid::Uuid::now_v7()
+    ));
+    std::fs::rename(target_package, &backup).map_err(|error| {
+        CoreError::configuration(format!(
+            "stage existing plugin package `{}` for replacement: {error}",
+            target_package.display()
+        ))
+    })?;
+    if let Err(install_error) = std::fs::rename(staging_package, target_package) {
+        return match std::fs::rename(&backup, target_package) {
+            Ok(()) => Err(CoreError::configuration(format!(
+                "replace plugin package `{}`: {install_error}",
+                target_package.display()
+            ))),
+            Err(rollback_error) => Err(CoreError::configuration(format!(
+                "replace plugin package `{}`: {install_error}; restore previous package: {rollback_error}",
+                target_package.display()
+            ))),
+        };
+    }
+    if let Err(error) = std::fs::remove_dir_all(&backup) {
+        tracing::warn!(
+            path = %backup.display(),
+            %error,
+            "failed to clean replaced plugin package backup"
+        );
+    }
+    Ok(true)
+}
+
+fn validate_plugin_id_path_component(plugin_id: &str) -> Result<(), CoreError> {
+    let mut components = Path::new(plugin_id).components();
+    if !matches!(components.next(), Some(Component::Normal(_))) || components.next().is_some() {
+        return Err(CoreError::configuration(format!(
+            "plugin id must be a single package directory name: `{plugin_id}`"
+        )));
+    }
+    Ok(())
 }
 
 fn validate_package_directory(package_root: &Path) -> Result<(), CoreError> {

@@ -153,11 +153,15 @@ Runtime startup resolves every pending intent before upload recovery: a committe
 the published Blob, while an unchanged Resource is restored from its backup. Internal artifacts are
 removed only after the intent has reached a recoverable terminal state.
 
-`plugin_package` is the single public host boundary for package discovery and verification. Both
-the CLI and runtime use it. Its two workflows are intentionally separate:
+`plugin_package` is the single public host boundary for package installation, uninstallation,
+discovery, and verification. Both the CLI and runtime use it. Its workflows are intentionally
+separate:
 
-- `generate_plugin_manifest_lock` validates an unsealed package and atomically creates a missing
-  `manifest.lock.json`; it never replaces an existing lock.
+- `install_plugin_package` accepts an arbitrarily named local source directory, snapshots its
+  validated Manifest/Wasm/Web bytes into same-filesystem staging, generates a fresh lock, verifies
+  the staged canonical package, and only then installs or replaces it. It never mutates the source.
+- `uninstall_plugin_package` moves one ID-addressed canonical package out of the discovery root
+  before deleting it.
 - `load_verified_plugin_package` and `PluginCatalog::load` are read-only, require an existing lock,
   verify every declared digest and file, enforce the package layout and size limits, and retain
   verified Wasm/Web byte snapshots.

@@ -34,8 +34,9 @@ asset [--config <PATH>]
 │   ├── --disable <USERNAME>
 │   └── --show <USERNAME>
 └── plugin
-    ├── --seal <PLUGIN_ID>
-    └── --verify <PLUGIN_ID>
+    ├── --list
+    ├── --install <PATH>
+    └── --uninstall <PLUGIN_ID>
 ```
 
 | 命令组 | 用途 |
@@ -43,7 +44,7 @@ asset [--config <PATH>]
 | `asset config` | 检查和管理 Asset Hub 配置 |
 | `asset system` | 检查和维护本地 Asset Hub 系统 |
 | `asset user` | 管理 Asset Hub 用户 |
-| `asset plugin` | 封装和校验 Asset Hub 插件产物 |
+| `asset plugin` | 查看、安装和卸载 Asset Hub 插件包 |
 
 需要读取 Asset Hub 配置的命令统一通过顶层 `--config <PATH>` 指定文件。未指定时尝试读取
 当前目录的 `config.toml`；文件不存在时使用内置默认配置。
@@ -218,39 +219,58 @@ asset user --show alice
 # `asset plugin` 命令
 
 `asset plugin` 使用顶层 `--config` 指定的配置文件；未指定时读取当前目录的 `config.toml`
-（不存在时使用内置默认配置）。命令接收插件 ID，并将其解析为
-`<blob.local.root>/.asset-hub/plugins/<plugin-id>`，无需手动填写插件包路径。
+（不存在时使用内置默认配置）。命令只初始化插件包文件系统操作，不初始化数据库、对象存储
+或完整应用运行时。
 
-插件包必须在启动 Asset Hub 前显式生成 `manifest.lock.json`。生成 lock 与验证/加载是两个独立
-操作：生成操作只接受尚未存在 lock 的包；CLI 验证和 Runtime 加载均为只读，不会创建或覆盖
-lock。更新包内产物时，应删除旧 lock、重新生成并再次验证。
+安装输入是包含 `manifest.json`、`plugin.wasm` 和可选 Web 资源的本地目录。输入目录名称没有
+身份含义；CLI 从 Manifest 读取 `plugin.id`，在同一文件系统的临时目录快照输入文件、生成新的
+`manifest.lock.json` 并完整验证，然后安装到
+`<blob.local.root>/.asset-hub/plugins/<plugin-id>`。输入目录不会被修改。
 
 CLI 和 Runtime 共同调用 `asset-infra` 中唯一的包验证实现，因此目录遍历、符号链接规则、
 SHA-256、文件集合和大小限制完全一致：Manifest 最大 1 MiB、lock 最大 4 MiB、Wasm 最大
 64 MiB，Web 资源合计最大 64 MiB。
 
-## `asset [--config <PATH>] plugin --seal <PLUGIN_ID>`
+## `asset [--config <PATH>] plugin --list`
 
-校验插件契约、规范包目录和全部产物规则后，为尚未封装的插件包原子创建
-`manifest.lock.json`。如果 lock 已存在则失败，避免无意中接受被修改的产物。
-
-```bash
-asset plugin --seal example.tools
-asset --config config.toml plugin --seal example.tools
-```
-
-`PLUGIN_ID` 必须是单个插件目录名，不能是绝对路径，也不能包含 `/`、`..` 等路径成分。
-
-## `asset [--config <PATH>] plugin --verify <PLUGIN_ID>`
-
-从插件包目录读取 `manifest.json` 和已有的 `manifest.lock.json`，校验插件契约及全部包内产物的
-完整性，但不修改任何文件。该操作与 Runtime 启动使用同一验证/加载路径，适用于 CI、镜像
-构建和发布验收。
+列出 canonical 安装目录中所有通过包完整性验证的外部插件，显示 ID、名称、版本和发布者：
 
 ```bash
-asset plugin --verify example.tools
-asset --config config.toml plugin --verify example.tools
+asset plugin --list
+asset --config config.toml plugin --list
 ```
 
-`PLUGIN_ID` 使用与 `--seal` 相同的固定目录解析规则。插件命令只读取和校验配置，不会初始化
-数据库、对象存储或完整应用运行时。
+没有插件时输出 `no plugins installed`。列表不包含 Host 内置能力；任一已安装包损坏或 lock
+不匹配时命令返回错误，不会静默跳过。
+
+## `asset [--config <PATH>] plugin --install <PATH>`
+
+从本地目录安装插件。目录可以使用任意名称，例如插件开发目录中的
+`asset-plugin-target`：
+
+```bash
+asset plugin --install plugins/azvs-markdown/asset-plugin-target
+asset --config config.toml plugin --install /tmp/downloaded-plugin
+```
+
+安装前会验证 Manifest、Wasm、Web 入口、大小和包内文件类型。源目录中的旧 lock 不会被信任或
+复制；安装快照会生成自己的 lock。目标插件已存在时，只有新快照成功生成 lock 并通过完整
+验证后才会替换旧安装；无效输入不会破坏现有安装。
+
+当前只支持本地目录。`https://`、Git 和 GitHub 等远程来源会被明确拒绝，后续可以在不改变
+本地安装语义的前提下增加下载适配器。
+
+## `asset [--config <PATH>] plugin --uninstall <PLUGIN_ID>`
+
+按 Manifest 插件 ID 删除 canonical 安装目录：
+
+```bash
+asset plugin --uninstall azvs.markdown
+asset --config config.toml plugin --uninstall example.tools
+```
+
+`PLUGIN_ID` 必须是单个目录名，不能是绝对路径，也不能包含 `/`、`..` 等路径成分。卸载先将
+插件移出自动发现目录，再删除其文件；不存在的插件返回错误。
+
+Runtime 在启动时持有已验证的 Wasm/Web 内存快照，因此安装、替换或卸载后需要重启正在运行的
+Asset Hub 进程才能生效。

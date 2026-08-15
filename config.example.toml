@@ -65,17 +65,18 @@ filesystem_write = []
 
 # Plugins are discovered from <blob.local.root>/.asset-hub/plugins/<plugin-id>/manifest.json.
 # Restart the service after installing, removing, or changing a plugin package.
-# Plugin manifest example (Manifest V2):
+# Plugin manifest example (Manifest V3):
 # Use `capabilities.resource_kinds` for resource types, `capabilities.directory_kinds` for
 # directory types, `capabilities.resource_actions` for resource actions, and
 # `capabilities.directory_actions` for directory actions.
 # A kind-specific action can implement a singleton Host capability while retaining its own
 # provider-owned action ID. Resource actions recognize `thumbnail`, `text_read`, and `text_edit`;
 # directory actions recognize `thumbnail` and `workspace`.
-# Build the fixed `plugin.wasm` runtime and optional root `index.html` plus Web assets. Before
-# startup, run `asset plugin --seal <plugin-id>`; the CLI resolves the package below the configured
-# Blob root. Startup only verifies the
-# existing `manifest.lock.json` and never modifies the package.
+# Build a local directory containing `manifest.json`, the fixed `plugin.wasm` runtime, and optional
+# root `index.html` plus Web assets. Run `asset plugin --install <path>`; the CLI snapshots and
+# verifies the directory, generates its installed lock, and resolves the canonical destination
+# below the configured Blob root. Startup only verifies the existing `manifest.lock.json` and never
+# modifies the package.
 #
 # {
 #   "$schema": "https://asset-hub.local/schemas/plugin-manifest-v3.json",

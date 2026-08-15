@@ -97,22 +97,22 @@ An Extism plugin package uses `plugin.wasm` as its runtime entry. It may also
 provide an `index.html` Web interface. The action handler exports referenced by
 the Manifest exchange JSON values defined by this crate.
 
-The host requires a sealed package before startup. After assembling the package under
-`<blob.local.root>/.asset-hub/plugins/<plugin-id>`, generate and verify its lock by plugin ID:
+Build a local package directory containing `manifest.json`, `plugin.wasm`, and any Web assets, then
+install that directory. Its directory name is arbitrary because the Manifest owns plugin identity:
 
 ```bash
-asset plugin --seal <plugin-id>
-asset plugin --verify <plugin-id>
+asset plugin --install <local-package-path>
 ```
 
 Use the global `--config <PATH>` option when the package belongs to a non-default Asset Hub
 configuration.
 
-Lock generation writes `manifest.lock.json` only when it is absent. Verification
-and runtime loading are read-only and use the same host implementation and limits
-(1 MiB Manifest, 4 MiB lock, 64 MiB Wasm, and 64 MiB total Web assets). Packages
-reject symbolic links and undeclared files. Rebuilds must remove the old lock,
-generate a new one, and verify it before startup.
+Installation never mutates the source. It snapshots validated package bytes into same-filesystem
+staging, generates a fresh `manifest.lock.json`, verifies the complete package, and only then
+installs or replaces `<blob.local.root>/.asset-hub/plugins/<plugin-id>`. Runtime loading is read-only
+and uses the same host implementation and limits (1 MiB Manifest, 4 MiB lock, 64 MiB Wasm, and
+64 MiB total Web assets). Packages reject symbolic links and special files. Remote Git/GitHub
+sources are not currently supported.
 
 ### Kind identity and Directory placement
 
@@ -370,7 +370,7 @@ cargo doc -p asset-plugin-api --open
 Version 4 of the Plugin API and Manifest version 3 are intentionally incompatible with their
 predecessors. Existing packages must update their
 Manifest and runtime together, migrate Plugin Frame code to the Web SDK, rebuild package artifacts,
-remove the old lock, and reseal the package. The Host rejects Manifest version 2 or Plugin API
+and reinstall the rebuilt directory. The Host rejects Manifest version 2 or Plugin API
 version 3 packages instead of
 translating them.
 

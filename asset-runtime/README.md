@@ -37,9 +37,10 @@ private upload-finalization supervisor, the effective settings needed to start l
 and the sync guard after startup. The caller continues to own its loaded configuration; the full
 `AssetInfrastructure` aggregate is released when construction finishes.
 
-Plugin package mutation is not part of runtime startup. Packages must be sealed explicitly through
-`asset plugin --seal <plugin-id>` before loading. Business workflows, authorization, compensation,
-and effect application remain in `asset-core`.
+Plugin package mutation is not part of runtime startup. `asset plugin --install <path>` owns
+snapshotting, lock generation, verification, and canonical installation before loading. Runtime
+startup remains read-only. Business workflows, authorization, compensation, and effect application
+remain in `asset-core`.
 
 `UploadSession` owns its state-transition invariants. Creation and persistence rehydration reject
 inconsistent offsets, checksums, failure reasons, timestamps, and terminal states. Core atomically
