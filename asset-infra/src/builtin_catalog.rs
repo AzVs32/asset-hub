@@ -3,17 +3,13 @@ use asset_core::domain::{
     ActionAccess, ActionOutputContract, ActionUi as ActionDefinitionUi, DefinitionOrigin,
     DirectoryActionDefinition, DirectoryKind, DirectoryKindDefinition,
     ResourceActionContentDelivery, ResourceActionDefinition, ResourceActionRequirements,
-    ResourceContentMatcher, ResourceKind, ResourceKindDefinition,
+    ResourceKind, ResourceKindDefinition,
 };
 
 /// Host 内置的资源内容下载 action 稳定 ID。
 const CORE_RESOURCE_DOWNLOAD: &str = "core.resource.download";
 /// Host 内置的资源软删除命令稳定 ID。
 const CORE_RESOURCE_DELETE: &str = "core.resource.delete";
-/// Host 内置的所有资源类型回退缩略图 provider 稳定 ID。
-const CORE_RESOURCE_THUMBNAIL: &str = "core.resource.thumbnail";
-/// Host 内置的 `core:image` 特化缩略图 provider 稳定 ID。
-const CORE_IMAGE_THUMBNAIL: &str = "core.image.thumbnail";
 /// 按类型层级解析最近缩略图 provider 的单例 capability。
 pub(crate) const THUMBNAIL_CAPABILITY: &str = "thumbnail";
 /// Host 内置的目录归档下载 action 稳定 ID。
@@ -32,8 +28,6 @@ const CORE_DIRECTORY_SOURCE: &str = "core.directory";
 pub(crate) enum BuiltinResourceHandler {
     Delete,
     Download,
-    GenericThumbnail,
-    ImageThumbnail,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -66,44 +60,14 @@ pub(crate) struct BuiltinCatalog {
 impl BuiltinCatalog {
     pub(crate) fn new() -> Result<Self, CoreError> {
         let resource_kind = ResourceKind::try_new(ResourceKind::DEFAULT)?;
-        let image_kind = ResourceKind::try_new("core:image")?;
-        let video_kind = ResourceKind::try_new("core:video")?;
         let directory_kind = DirectoryKind::default();
 
-        let resource_kinds = vec![
-            ResourceKindDefinition::new(
-                resource_kind.clone(),
-                "Resource",
-                true,
-                DefinitionOrigin::builtin_static(CORE_RESOURCE_SOURCE),
-            ),
-            ResourceKindDefinition::new(
-                image_kind,
-                "Image",
-                true,
-                DefinitionOrigin::builtin_static("core.image"),
-            )
-            .with_parent(Some(resource_kind.clone()))
-            .with_detect(
-                ResourceContentMatcher::new()
-                    .with_mime_types(["image/*"])
-                    .with_extensions([
-                        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".avif",
-                    ]),
-            ),
-            ResourceKindDefinition::new(
-                video_kind,
-                "Video",
-                true,
-                DefinitionOrigin::builtin_static("core.video"),
-            )
-            .with_parent(Some(resource_kind))
-            .with_detect(
-                ResourceContentMatcher::new()
-                    .with_mime_types(["video/*"])
-                    .with_extensions([".mp4", ".webm", ".mov", ".m4v", ".ogv"]),
-            ),
-        ];
+        let resource_kinds = vec![ResourceKindDefinition::new(
+            resource_kind,
+            "Resource",
+            true,
+            DefinitionOrigin::builtin_static(CORE_RESOURCE_SOURCE),
+        )];
 
         let directory_kinds = vec![DirectoryKindDefinition::new(
             directory_kind,
@@ -150,44 +114,6 @@ impl BuiltinCatalog {
                         confirmation: Some("Delete {name}?".to_string()),
                     }),
                 handler: BuiltinResourceHandler::Delete,
-            },
-            BuiltinResourceAction {
-                definition: ResourceActionDefinition::new_static(
-                    CORE_RESOURCE_THUMBNAIL,
-                    "Thumbnail",
-                )
-                .with_static_provides(Some(THUMBNAIL_CAPABILITY))
-                .with_kinds([ResourceKind::DEFAULT])
-                .with_output(ActionOutputContract {
-                    views: vec!["media".to_string()],
-                    effects: Vec::new(),
-                })
-                .with_ui(ActionDefinitionUi {
-                    group: Some("preview".to_string()),
-                    order: Some(100),
-                    locations: vec!["resource_thumbnail".to_string()],
-                    ..ActionDefinitionUi::default()
-                }),
-                handler: BuiltinResourceHandler::GenericThumbnail,
-            },
-            BuiltinResourceAction {
-                definition: ResourceActionDefinition::new_static(
-                    CORE_IMAGE_THUMBNAIL,
-                    "Image Thumbnail",
-                )
-                .with_static_provides(Some(THUMBNAIL_CAPABILITY))
-                .with_kinds(["core:image"])
-                .with_output(ActionOutputContract {
-                    views: vec!["media".to_string()],
-                    effects: Vec::new(),
-                })
-                .with_ui(ActionDefinitionUi {
-                    group: Some("preview".to_string()),
-                    order: Some(100),
-                    locations: vec!["resource_thumbnail".to_string()],
-                    ..ActionDefinitionUi::default()
-                }),
-                handler: BuiltinResourceHandler::ImageThumbnail,
             },
         ];
 

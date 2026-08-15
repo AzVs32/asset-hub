@@ -19,7 +19,6 @@ use crate::builtin_catalog::{
     BuiltinDirectoryAction, BuiltinDirectoryHandler, BuiltinResourceAction, BuiltinResourceHandler,
 };
 
-const RESOURCE_THUMBNAIL_SVG: &str = include_str!("../../assets/thumbnails/resource.svg");
 const DIRECTORY_THUMBNAIL_SVG: &str = include_str!("../../assets/thumbnails/directory.svg");
 
 #[derive(Debug, Clone)]
@@ -101,12 +100,6 @@ impl ResourceActionExecutor for BuiltinResourceActionExecutor {
             BuiltinResourceHandler::Delete => resource_delete(request),
             BuiltinResourceHandler::Download => {
                 download(request.resource().clone(), request.action().clone())
-            }
-            BuiltinResourceHandler::GenericThumbnail => {
-                resource_thumbnail(request.resource().clone(), request.action().clone())
-            }
-            BuiltinResourceHandler::ImageThumbnail => {
-                image_thumbnail(request.resource().clone(), request.action().clone())
             }
         }
     }
@@ -267,42 +260,6 @@ fn resource_delete(request: ResourceActionRequest) -> Result<ResourceActionOutpu
         request.resource().id(),
         request.action().clone(),
         output,
-    ))
-}
-
-fn resource_thumbnail(
-    resource: Resource,
-    action: ResourceActionId,
-) -> Result<ResourceActionOutput, CoreError> {
-    let view = embedded_svg_thumbnail(Some(resource.name()), RESOURCE_THUMBNAIL_SVG);
-    Ok(ResourceActionOutput::new(
-        resource.id(),
-        action,
-        PluginResourceActionOutput::new(view),
-    ))
-}
-
-fn image_thumbnail(
-    resource: Resource,
-    action: ResourceActionId,
-) -> Result<ResourceActionOutput, CoreError> {
-    let view = match resource
-        .content()
-        .and_then(|content| content.mime_type())
-        .filter(|mime_type| mime_type.starts_with("image/"))
-    {
-        Some(mime_type) => PluginView::Media(MediaView {
-            mime_type: mime_type.to_string(),
-            title: Some(resource.name().to_string()),
-            encoding: PluginMediaEncoding::Url,
-            data: format!("/resources/{}/content", resource.id()),
-        }),
-        None => embedded_svg_thumbnail(Some(resource.name()), RESOURCE_THUMBNAIL_SVG),
-    };
-    Ok(ResourceActionOutput::new(
-        resource.id(),
-        action,
-        PluginResourceActionOutput::new(view),
     ))
 }
 

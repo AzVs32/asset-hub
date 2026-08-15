@@ -30,10 +30,8 @@ annotation after each kind is its typed definition origin. `core:resource` is th
 
 ```text
 core:resource  [builtin:core.resource; default]
-├─ core:image  [builtin:core.image]
 ├─ resource:markdown  [plugin:resource.text]
-├─ azvs:epub  [plugin:azvs.epub]
-└─ core:video  [builtin:core.video]
+└─ azvs:epub  [plugin:azvs.epub]
 ```
 
 Resource capabilities are singleton providers, not generic action names. For each capability, the
@@ -43,11 +41,9 @@ Resource capabilities are `thumbnail` and `text_edit`.
 
 | Kind | Resolved capability providers | Other available actions |
 | --- | --- | --- |
-| `core:resource` | `thumbnail` → `core.resource.thumbnail`; matching text files also receive `text_edit` → `resource.text.edit` | `resource.text.read` when matched; `core.resource.download`; effect-only action `core.resource.delete` |
-| `core:image` | `thumbnail` → `core.image.thumbnail` | inherits download and delete |
-| `resource:markdown` | `thumbnail` → `core.resource.thumbnail`; `text_edit` → `resource.text.edit` | `resource.text.read`; inherits download and delete |
+| `core:resource` | matching images receive `thumbnail` → `resource.image.thumbnail`; matching text files receive `text_edit` → `resource.text.edit` | `resource.text.read` when matched; `core.resource.download`; effect-only action `core.resource.delete` |
+| `resource:markdown` | `text_edit` → `resource.text.edit` | `resource.text.read`; inherits download and delete |
 | `azvs:epub` | `thumbnail` → `azvs.epub.thumbnail` | inherits download and delete; `azvs.epub.render` |
-| `core:video` | `thumbnail` → `core.resource.thumbnail` | inherits download and delete |
 
 The Host does not register a generic text Resource kind or built-in text reader/editor.
 `resource:markdown` is contributed directly beneath `core:resource` by the `resource.text` plugin
@@ -56,24 +52,24 @@ same plugin declares an ordinary read Action and the `text_edit` provider on `co
 Markdown MIME and supported-extension matchers, so
 `.txt`, `.c`, `.cpp`, and `.h` retain `core:resource` while receiving the basic text interface;
 Markdown descendants inherit those Actions.
-`core:image` detects `image/*` and its declared image extensions; `core:video` detects `video/*` and
-its declared video extensions; `azvs:epub` detects only the MIME types and extensions declared in
-its plugin manifest. `core:document` is not a registered Resource kind.
+The `resource.image` plugin declares no Kind. Its `thumbnail` provider applies on `core:resource`
+when the content MIME is `image/*` or the filename has a supported image extension, so matching
+files remain `core:resource`. The Host registers neither image nor video Kinds. `azvs:epub` detects
+only the MIME types and extensions declared in its plugin manifest. `core:document` is not a
+registered Resource kind.
 
-The Host provides generic `core.resource.thumbnail` and `core.directory.thumbnail` actions.
-It also declares `core.resource.delete` and `core.directory.delete` as ordinary write Actions in
+The Host provides only the generic `core.directory.thumbnail` thumbnail Action. Resources without
+a matching plugin thumbnail provider use the Web client's file-icon fallback. The Host also
+declares `core.resource.delete` and `core.directory.delete` as ordinary write Actions in
 the same discovery catalogs. Their built-in handlers return no View and request one `delete`
 effect; Core applies it through the secured resource soft-delete or empty-directory-delete use
 case. External plugins may declare and return the same effect only when their Manifest requests
 `resource.delete` or `directory.delete`, the corresponding `[plugin.grants]` switch is enabled,
 and the current user is authorized to delete that aggregate. Delete cannot be combined with a
 different effect in one action output.
-The generic resource provider always returns a kind-neutral file thumbnail. The Host-owned
-`core.image.thumbnail` action applies only to `core:image`, returns the authorized image content
-URL, and provides the same `thumbnail` singleton capability as the generic provider.
-The fixed generic artwork lives in `assets/thumbnails/resource.svg` and
-`assets/thumbnails/directory.svg`. `include_str!` embeds both files into the Host binary at compile
-time; deployment does not need to copy them as separate runtime files.
+`resource.image.thumbnail` returns the authorized image content URL as a media view; image bytes do
+not cross the Wasm boundary. The fixed directory artwork lives in `assets/thumbnails/directory.svg`
+and is embedded into the Host binary with `include_str!`; deployment does not copy it separately.
 External actions retain their provider-owned IDs and may provide a Host-recognized capability for a
 more specific kind. Resource actions recognize `thumbnail` and `text_edit`; Directory
 actions recognize `thumbnail` and `workspace`. A Directory `workspace` provider is read-only,

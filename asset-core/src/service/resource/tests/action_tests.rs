@@ -321,7 +321,7 @@ fn resource_without_content_describes_only_actions_without_content_requirements(
         .map(|action| action.id().as_str())
         .collect::<Vec<_>>();
 
-    assert_eq!(ids, vec!["resource.inspect", "core.resource.thumbnail"]);
+    assert_eq!(ids, vec!["resource.inspect", "example.resource.thumbnail"]);
 }
 
 #[test]
@@ -472,10 +472,10 @@ fn describe_resource_actions_uses_declared_content_matchers() {
 
     assert!(has_action(&pdf_actions, "test.content.extract"));
     assert!(has_action(&pdf_actions, "test.content.thumbnail"));
-    assert!(!has_action(&pdf_actions, "core.resource.thumbnail"));
+    assert!(!has_action(&pdf_actions, "example.resource.thumbnail"));
     assert!(!has_action(&pdf_actions, "example.content.read"));
     assert!(has_action(&text_actions, "test.content.extract"));
     assert!(!has_action(&text_actions, "test.content.thumbnail"));
-    assert!(has_action(&text_actions, "core.resource.thumbnail"));
+    assert!(has_action(&text_actions, "example.resource.thumbnail"));
     assert!(has_action(&text_actions, "example.content.read"));
 }

@@ -175,19 +175,19 @@ fn inherited_action_label_requires_an_ancestor_capability_provider() {
         )
         .unwrap(),
         definition_from_parts(
-            "core:image",
+            "example:image",
             "Image",
             Some("core:resource"),
             true,
             ResourceContentMatcher::default(),
-            DefinitionOrigin::builtin_static("core.image"),
+            DefinitionOrigin::plugin_static("example.image"),
         )
         .unwrap(),
     ];
     let mut actions = vec![
         ResourceActionDefinition::new_static("example.image.read", "example.image.read")
             .with_static_provides(Some("thumbnail"))
-            .with_kinds(["core:image"]),
+            .with_kinds(["example:image"]),
     ];
 
     assert!(
@@ -283,7 +283,7 @@ fn thumbnail_capabilities_require_a_single_nearest_provider() {
         true,
         DefinitionOrigin::builtin_static("test"),
     )];
-    let generic = ResourceActionDefinition::new_static("core.resource.thumbnail", "Thumbnail")
+    let generic = ResourceActionDefinition::new_static("example.resource.thumbnail", "Thumbnail")
         .with_static_provides(Some("thumbnail"))
         .with_kinds(["core:resource"])
         .with_output(ActionOutputContract {

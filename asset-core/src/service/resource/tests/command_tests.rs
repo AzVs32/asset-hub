@@ -45,7 +45,7 @@ fn soft_delete_rolls_blob_back_when_resource_snapshot_is_stale() {
     let trash_key = StorageKey::new(format!(".asset-hub/trash/{}", resource.id())).unwrap();
     let mut concurrent = resource;
     concurrent
-        .change_kind(ResourceKind::try_new("core:image").unwrap())
+        .change_kind(ResourceKind::try_new("asset:binary").unwrap())
         .unwrap();
     block_on(repository.save(&concurrent)).unwrap();
 

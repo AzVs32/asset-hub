@@ -16,7 +16,7 @@ impl ResourceActionRegistry for ActionRegistry {
 fn actions_are_selected_from_the_supplied_kind_lineage() {
     let registry = ActionRegistry(vec![
         ResourceActionDefinition::new_static("source.open", "Open").with_kinds(["example:source"]),
-        ResourceActionDefinition::new_static("image.view", "View").with_kinds(["core:image"]),
+        ResourceActionDefinition::new_static("image.view", "View").with_kinds(["example:image"]),
     ]);
     let lineage = vec![
         ResourceKind::try_new("code:c").unwrap(),
@@ -32,7 +32,7 @@ fn actions_are_selected_from_the_supplied_kind_lineage() {
 #[test]
 fn a_specific_provider_replaces_the_selected_generic_action() {
     let registry = ActionRegistry(vec![
-        ResourceActionDefinition::new_static("core.resource.thumbnail", "Thumbnail")
+        ResourceActionDefinition::new_static("example.resource.thumbnail", "Thumbnail")
             .with_static_provides(Some("thumbnail"))
             .with_kinds(["core:resource"]),
         ResourceActionDefinition::new_static("azvs.epub.thumbnail", "EPUB Thumbnail")
@@ -53,7 +53,7 @@ fn a_specific_provider_replaces_the_selected_generic_action() {
 #[test]
 fn capability_candidates_keep_fallback_providers_until_resource_filtering() {
     let registry = ActionRegistry(vec![
-        ResourceActionDefinition::new_static("core.resource.thumbnail", "Thumbnail")
+        ResourceActionDefinition::new_static("example.resource.thumbnail", "Thumbnail")
             .with_static_provides(Some("thumbnail"))
             .with_kinds(["core:resource"]),
         ResourceActionDefinition::new_static("azvs.epub.thumbnail", "EPUB Thumbnail")
@@ -69,7 +69,7 @@ fn capability_candidates_keep_fallback_providers_until_resource_filtering() {
 
     assert_eq!(candidates.len(), 2);
     assert_eq!(candidates[0].id().as_str(), "azvs.epub.thumbnail");
-    assert_eq!(candidates[1].id().as_str(), "core.resource.thumbnail");
+    assert_eq!(candidates[1].id().as_str(), "example.resource.thumbnail");
 }
 
 #[derive(Default)]
@@ -88,7 +88,7 @@ fn kind_detection_uses_only_kind_matchers() {
     let registry = KindRegistry {
         definitions: vec![
             ResourceKindDefinition::new(
-                ResourceKind::try_new("core:image").unwrap(),
+                ResourceKind::try_new("example:image").unwrap(),
                 "Image",
                 true,
                 DefinitionOrigin::builtin_static("test"),
@@ -107,7 +107,7 @@ fn kind_detection_uses_only_kind_matchers() {
         registry
             .detect_content_kind(None, Some("images/demo.png"))
             .unwrap(),
-        Some(ResourceKind::try_new("core:image").unwrap())
+        Some(ResourceKind::try_new("example:image").unwrap())
     );
 }
 

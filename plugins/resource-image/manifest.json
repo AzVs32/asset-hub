@@ -1,0 +1,67 @@
+{
+  "$schema": "https://asset-hub.local/schemas/plugin-manifest-v3.json",
+  "manifest_version": 3,
+  "plugin": {
+    "id": "resource.image",
+    "name": "Resource Image",
+    "version": "0.1.0",
+    "publisher": "azvs",
+    "description": "Thumbnail rendering for common image resources without introducing an image Kind."
+  },
+  "runtime": {
+    "type": "extism",
+    "wasi": false,
+    "plugin_api": "asset-hub.plugin-api@5"
+  },
+  "capabilities": {
+    "resource_kinds": [],
+    "resource_actions": [
+      {
+        "id": "resource.image.thumbnail",
+        "provides": "thumbnail",
+        "label": "Image Thumbnail",
+        "description": "Display the original image as its resource thumbnail.",
+        "handler": "render_thumbnail",
+        "applies_to": {
+          "kinds": [
+            "core:resource"
+          ],
+          "mime_types": [
+            "image/*"
+          ],
+          "extensions": [
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".gif",
+            ".webp",
+            ".svg",
+            ".bmp",
+            ".avif",
+            ".ico",
+            ".tif",
+            ".tiff"
+          ]
+        },
+        "access": "read",
+        "output": {
+          "views": [
+            "media"
+          ]
+        },
+        "ui": {
+          "group": "preview",
+          "order": 10,
+          "locations": [
+            "resource_thumbnail"
+          ]
+        }
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "resource.read"
+    ]
+  }
+}

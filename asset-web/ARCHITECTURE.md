@@ -223,11 +223,12 @@ Action 默认读取最新授权快照，不会因为缩略图或预览缓存较�
 界面通过 `plugin_frame` 加载插件自己的 Web 资源。
 后端会在实际适用性过滤后解析单例能力 provider；例如 EPUB 的
 `azvs.epub.thumbnail` 为 EPUB 提供作用于 Resource Action 的 `thumbnail`。Resource 与
-Directory Action 注册表分别限定该能力的作用域。Host 对图片也遵循相同边界：
-`core.image.thumbnail` 仅适用于 `core:image`；通用 provider 本身始终保持 kind-neutral，
-不根据 MIME 特判图片。相同能力选择 Kind 谱系中最近的 provider，同层冲突会导致 Host
-启动失败，前端只执行后端已经解析出的 provider。Host 不提供通用文本 Kind、文本读取
-provider 或文本编辑器。`resource.text` 插件在 `core:resource` 上按 Markdown MIME 或受支持扩展名提供
+Directory Action 注册表分别限定该能力的作用域。`resource.image.thumbnail` 在
+`core:resource` 上按 `image/*` 或常见图片扩展名提供该能力，但不声明图片 Kind；没有匹配
+缩略图 provider 的资源由前端显示文件图标。相同能力选择 Kind 谱系中最近的 provider，
+同层冲突会导致 Host 启动失败，前端只执行后端已经解析出的 provider。Host 不提供通用
+文本、图片或视频 Kind，也不提供文本读取 provider 或文本编辑器。`resource.text` 插件在
+`core:resource` 上按 Markdown MIME 或受支持扩展名提供
 `resource.text.read` 和 `resource.text.edit`：Markdown 子 Kind 继承这组 Action，`.txt`、
 `.c`、`.cpp` 和 `.h` 则保持 `core:resource`。插件通过自己的 `plugin_frame` 分别实现
 Markdown 预览编辑和基础纯文本读写。Action 只负责能力发现和返回 frame；保存不把完整文本塞入 Action JSON，

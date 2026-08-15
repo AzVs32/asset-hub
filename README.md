@@ -15,8 +15,8 @@ filesystem, making it easy to run directly on a workstation.
 - Manage users and workspace access.
 - Upload large files with resumable transfers and checksum verification.
 - Extend resource detection, actions, and views with Wasm and Web plugins.
-- Display kind-neutral resource and directory thumbnails with nearest-kind Host or plugin
-  providers for specialized kinds such as images and EPUB files.
+- Display directory thumbnails through the Host and matching resource thumbnails through plugins
+  for formats such as images and EPUB files.
 - Run the API, administration CLI, and Web development server directly from source.
 
 ## Requirements
@@ -86,9 +86,10 @@ See [`asset-cli/README.md`](asset-cli/README.md) for usage details.
 ## Plugins
 
 Asset Hub supports packaged Wasm runtime plugins with optional Web interfaces.
-The repository includes the `resource.text`, EPUB, and Games plugins as examples. `resource.text`
-owns Markdown plus basic `.txt`, `.c`, `.cpp`, and `.h` reading/editing; the Host does not provide a
-generic text Resource kind.
+The repository includes the `resource.text`, `resource.image`, EPUB, and Games plugins as examples.
+`resource.text` owns Markdown plus basic `.txt`, `.c`, `.cpp`, and `.h` reading/editing;
+`resource.image` provides common image thumbnails without introducing an image Kind. The Host does
+not provide generic text, image, or video Resource kinds.
 
 See [`asset-plugin-api/README.md`](asset-plugin-api/README.md) for the plugin
 authoring contract, package format, compatibility policy, and verification
@@ -135,9 +136,11 @@ source, and copies a delivery snapshot of it into the target:
 
 ```bash
 plugins/resource-text/build.sh
+plugins/resource-image/build.sh
 plugins/azvs-epub/build.sh
 plugins/azvs-games/build.sh
 cargo test --manifest-path plugins/resource-text/runtime/Cargo.toml
+cargo test --manifest-path plugins/resource-image/runtime/Cargo.toml
 cargo test --manifest-path plugins/azvs-epub/runtime/Cargo.toml
 cargo test --manifest-path plugins/azvs-games/runtime/Cargo.toml
 (cd plugins/resource-text/web && npm run typecheck && npm run build)

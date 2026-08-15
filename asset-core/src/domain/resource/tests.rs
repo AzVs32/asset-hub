@@ -71,14 +71,14 @@ fn resource_name_must_be_a_single_file_name() {
 
 #[test]
 fn deleted_resource_rejects_mutations() {
-    let mut resource = Resource::builder("image")
-        .with_kind(ResourceKind::try_new("core:image").unwrap())
+    let mut resource = Resource::builder("document")
+        .with_kind(ResourceKind::try_new("example:document").unwrap())
         .build()
         .unwrap();
     resource.soft_delete();
 
     assert_eq!(
-        resource.rename("new image"),
+        resource.rename("new document"),
         Err(ResourceError::DeletedResource)
     );
     assert_eq!(

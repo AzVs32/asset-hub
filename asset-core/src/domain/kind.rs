@@ -112,12 +112,12 @@ mod tests {
         );
         for value in [
             "",
-            " core:image",
-            "Core:image",
-            "core:image ",
-            "image",
-            "core::image",
-            "core:image:",
+            " example:item",
+            "Example:item",
+            "example:item ",
+            "item",
+            "example::item",
+            "example:item:",
         ] {
             assert!(KindId::new(value).is_err(), "`{value}` must be rejected");
         }

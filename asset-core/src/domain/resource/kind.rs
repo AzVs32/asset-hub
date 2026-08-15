@@ -26,7 +26,7 @@ impl ResourceKind {
     /// 判断当前资源类型是否等于指定类型值。
     ///
     /// 例如
-    /// `kind.is(ResourceKind::DEFAULT)` 或 `kind.is("core:image")`。
+    /// `kind.is(ResourceKind::DEFAULT)` 或 `kind.is("example:document")`。
     pub fn is(&self, kind: impl AsRef<str>) -> bool {
         self.as_str() == kind.as_ref()
     }

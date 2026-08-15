@@ -1183,12 +1183,6 @@ fn service() -> (
             DefinitionOrigin::builtin_static("test"),
         ),
         ResourceKindDefinition::new(
-            ResourceKind::try_new("core:image").unwrap(),
-            "Image",
-            true,
-            DefinitionOrigin::builtin_static("test"),
-        ),
-        ResourceKindDefinition::new(
             ResourceKind::try_new("asset:binary").unwrap(),
             "Binary",
             true,
@@ -1205,12 +1199,6 @@ fn service() -> (
             ResourceContentMatcher::new()
                 .with_mime_types(["text/markdown", "text/x-markdown"])
                 .with_extensions([".md", ".markdown"]),
-        ),
-        ResourceKindDefinition::new(
-            ResourceKind::try_new("core:video").unwrap(),
-            "Video",
-            true,
-            DefinitionOrigin::builtin_static("test"),
         ),
     ]));
     let action_registry = Arc::new(InMemoryResourceActionRegistry {
@@ -1237,7 +1225,7 @@ fn service() -> (
                     ResourceContentMatcher::new().with_mime_types(["application/pdf"]),
                 )
                 .with_output(output_contract(["media"])),
-            ResourceActionDefinition::new_static("core.resource.thumbnail", "Thumbnail")
+            ResourceActionDefinition::new_static("example.resource.thumbnail", "Thumbnail")
                 .with_static_provides(Some("thumbnail"))
                 .with_output(output_contract(["media"])),
             ResourceActionDefinition::new_static("example.content.read", "Read content")

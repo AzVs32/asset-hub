@@ -29,7 +29,7 @@ export function resource(actions: ResourceAction[] = []): Resource {
     id: "resource-1",
     name: "Example",
     directory: "library",
-    kind: "core:video",
+    kind: "core:resource",
     content: {
       size: 128,
       mimeType: "video/mp4",

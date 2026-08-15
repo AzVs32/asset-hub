@@ -5,15 +5,19 @@ use super::*;
 #[test]
 fn action_applies_to_matches_kind_mime_and_extension() {
     let applies_to = ResourceActionAppliesTo::new()
-        .with_kinds(["core:video"])
+        .with_kinds(["example:video"])
         .with_mime_types(["video/*"])
         .with_extensions(["mp4"]);
 
-    assert!(applies_to.matches_resource("core:video", Some("video/mp4"), Some("demo.bin")));
-    assert!(applies_to.matches_resource("core:video", None, Some("demo.mp4")));
-    assert!(!applies_to.matches_resource("CORE:VIDEO", None, Some("demo.mp4")));
-    assert!(!applies_to.matches_resource("core:image", Some("video/mp4"), Some("demo.mp4")));
-    assert!(!applies_to.matches_resource("core:video", Some("application/pdf"), Some("demo.pdf")));
+    assert!(applies_to.matches_resource("example:video", Some("video/mp4"), Some("demo.bin")));
+    assert!(applies_to.matches_resource("example:video", None, Some("demo.mp4")));
+    assert!(!applies_to.matches_resource("EXAMPLE:VIDEO", None, Some("demo.mp4")));
+    assert!(!applies_to.matches_resource("example:image", Some("video/mp4"), Some("demo.mp4")));
+    assert!(!applies_to.matches_resource(
+        "example:video",
+        Some("application/pdf"),
+        Some("demo.pdf")
+    ));
 }
 
 #[test]
