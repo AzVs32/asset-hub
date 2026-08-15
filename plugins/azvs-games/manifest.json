@@ -24,10 +24,7 @@
       {
         "kind": "directory:games:item",
         "parent": "directory:games",
-        "label": "Game",
-        "allowed_parent_kinds": [
-          "directory:games"
-        ]
+        "label": "Game"
       }
     ],
     "directory_actions": [

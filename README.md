@@ -127,11 +127,17 @@ npm test
 npm run build
 ```
 
-The bundled plugins have their own Rust and Web checks:
+The bundled plugins have separate build targets and checks. Each build writes only to that
+plugin's own `asset-plugin-target/` directory, leaves the root `manifest.json` as the editable
+source, and copies a delivery snapshot of it into the target:
 
 ```bash
+plugins/azvs-markdown/build.sh
+plugins/azvs-epub/build.sh
+plugins/azvs-games/build.sh
 cargo test --manifest-path plugins/azvs-markdown/runtime/Cargo.toml
 cargo test --manifest-path plugins/azvs-epub/runtime/Cargo.toml
+cargo test --manifest-path plugins/azvs-games/runtime/Cargo.toml
 (cd plugins/azvs-markdown/web && npm run typecheck && npm run build)
 (cd plugins/azvs-epub/web && npm run typecheck && npm run build)
 ```

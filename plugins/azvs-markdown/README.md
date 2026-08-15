@@ -4,11 +4,11 @@ Extism + React plugin for Asset Hub Markdown document reading and editing.
 
 ## Files
 
-- `manifest.json`: Asset Hub plugin manifest.
-- `plugin.wasm`: compiled Extism plugin artifact used when assembling the installed package.
+- `manifest.json`: editable source of the Asset Hub plugin manifest.
 - `runtime`: Rust source for rebuilding the Wasm runtime.
 - `web`: React reader/editor source loaded inside the host iframe.
-- `dist`: deployable Web bundle generated from `web`.
+- `asset-plugin-target`: ignored, self-contained installation input containing a generated Manifest
+  snapshot, `plugin.wasm`, and the deployable Web bundle.
 
 ## Contract
 
@@ -65,34 +65,44 @@ Install the Rust WebAssembly target once:
 rustup target add wasm32-unknown-unknown
 ```
 
-Then run the following commands from the repository root:
+Install the Web dependencies once:
 
 ```bash
-cargo build --locked --release --target wasm32-unknown-unknown \
-  --manifest-path plugins/azvs-markdown/runtime/Cargo.toml
-cp plugins/azvs-markdown/runtime/target/wasm32-unknown-unknown/release/azvs_markdown_plugin.wasm \
-  plugins/azvs-markdown/plugin.wasm
-
-cd plugins/azvs-markdown/web
+cd asset-plugin-api/web
 npm ci
+cd ../../plugins/azvs-markdown/web
+npm ci
+cd ../../..
+```
+
+Then build this plugin from the repository root:
+
+```bash
+plugins/azvs-markdown/build.sh
+```
+
+The command builds the local Web SDK dependency, compiles the Wasm runtime, and leaves this
+plugin's generated files under:
+
+```text
+plugins/azvs-markdown/asset-plugin-target/
+├── manifest.json
+├── plugin.wasm
+├── index.html
+└── assets/
+```
+
+`plugins/azvs-markdown/manifest.json` remains the only Manifest that authors edit. `build.sh`
+refreshes the target copy automatically; it does not generate `manifest.lock.json` or call the
+Asset CLI. Lock generation, installation, and verification are intentionally deferred to the
+future plugin install workflow.
+
+Individual checks remain available when changing only one side:
+
+```bash
+cargo test --manifest-path plugins/azvs-markdown/runtime/Cargo.toml
+cd plugins/azvs-markdown/web
 npm run typecheck
 npm run build
 cd ../../..
 ```
-
-Assemble a clean canonical package and seal it explicitly:
-
-```bash
-mkdir -p data/.asset-hub/plugins/azvs.markdown
-cp plugins/azvs-markdown/manifest.json plugins/azvs-markdown/plugin.wasm \
-  data/.asset-hub/plugins/azvs.markdown/
-cp -R plugins/azvs-markdown/dist/. data/.asset-hub/plugins/azvs.markdown/
-cargo run --bin asset plugin --seal azvs.markdown
-cargo run --bin asset plugin --verify azvs.markdown
-```
-
-Asset Hub startup requires and verifies `manifest.lock.json` without modifying it. Asset Hub
-discovers the installed package automatically. Its directory name must equal
-`plugin.id`; no config entry is required. The source directory keeps rebuild inputs and release
-artifacts, while only the canonical package under `.asset-hub/plugins` is loaded. When replacing
-the package, remove the old lock, generate a new one, and verify it before restarting.

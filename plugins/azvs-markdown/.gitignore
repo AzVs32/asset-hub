@@ -2,3 +2,5 @@
 /runtime/target/
 /web/node_modules/
 /dist/
+/plugin.wasm
+/asset-plugin-target/

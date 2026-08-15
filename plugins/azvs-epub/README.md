@@ -20,11 +20,11 @@ during normal browsing but is cleared when Asset Hub restarts.
 
 ## Files
 
-- `manifest.json`: Asset Hub plugin manifest.
-- `plugin.wasm`: compiled Extism plugin artifact used when assembling the installed package.
+- `manifest.json`: editable source of the Asset Hub plugin manifest.
 - `runtime`: Rust source for rebuilding the Wasm runtime.
 - `web`: React reader source.
-- `dist`: deployable Web bundle generated from `web`.
+- `asset-plugin-target`: ignored, self-contained installation input containing a generated Manifest
+  snapshot, `plugin.wasm`, and the deployable Web bundle.
 
 ## Resource Kind
 
@@ -65,31 +65,44 @@ Install the Rust WebAssembly target once:
 rustup target add wasm32-unknown-unknown
 ```
 
-Then run the following commands from the repository root:
+Install the Web dependencies once:
 
 ```bash
-cargo build --locked --release --target wasm32-unknown-unknown \
-  --manifest-path plugins/azvs-epub/runtime/Cargo.toml
-cp plugins/azvs-epub/runtime/target/wasm32-unknown-unknown/release/azvs_epub_plugin.wasm \
-  plugins/azvs-epub/plugin.wasm
-
-cd plugins/azvs-epub/web
+cd asset-plugin-api/web
 npm ci
+cd ../../plugins/azvs-epub/web
+npm ci
+cd ../../..
+```
+
+Then build this plugin from the repository root:
+
+```bash
+plugins/azvs-epub/build.sh
+```
+
+The command builds the local Web SDK dependency, compiles the Wasm runtime, and leaves this
+plugin's generated files under:
+
+```text
+plugins/azvs-epub/asset-plugin-target/
+├── manifest.json
+├── plugin.wasm
+├── index.html
+└── assets/
+```
+
+`plugins/azvs-epub/manifest.json` remains the only Manifest that authors edit. `build.sh` refreshes
+the target copy automatically; it does not generate `manifest.lock.json` or call the Asset CLI.
+Lock generation, installation, and verification are intentionally deferred to the future plugin
+install workflow.
+
+Individual checks remain available when changing only one side:
+
+```bash
+cargo test --manifest-path plugins/azvs-epub/runtime/Cargo.toml
+cd plugins/azvs-epub/web
 npm run typecheck
 npm run build
 cd ../../..
 ```
-
-Then assemble a clean package and seal it explicitly:
-
-```bash
-mkdir -p data/.asset-hub/plugins/azvs.epub
-cp plugins/azvs-epub/manifest.json plugins/azvs-epub/plugin.wasm \
-  data/.asset-hub/plugins/azvs.epub/
-cp -R plugins/azvs-epub/dist/. data/.asset-hub/plugins/azvs.epub/
-cargo run --bin asset plugin --seal azvs.epub
-cargo run --bin asset plugin --verify azvs.epub
-```
-
-Asset Hub startup requires and verifies `manifest.lock.json` without modifying it. When replacing
-the package artifacts, remove the old lock, generate a new one, and verify it before restarting.
