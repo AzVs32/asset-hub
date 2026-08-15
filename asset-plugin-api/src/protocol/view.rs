@@ -157,27 +157,7 @@ pub struct DownloadView {
 
 #[cfg(test)]
 mod tests {
-    use super::{DownloadView, PluginResourceActionEffect, PluginResourceActionOutput, PluginView};
-
-    #[test]
-    fn download_view_has_an_explicit_wire_discriminator() {
-        let view = PluginView::Download(DownloadView {
-            url: "/resources/resource-1/download".to_string(),
-            mime_type: Some("application/octet-stream".to_string()),
-            filename: Some("asset.bin".to_string()),
-        });
-
-        assert_eq!(view.kind(), "download");
-        assert_eq!(
-            serde_json::to_value(view).unwrap(),
-            serde_json::json!({
-                "view": "download",
-                "url": "/resources/resource-1/download",
-                "mime_type": "application/octet-stream",
-                "filename": "asset.bin"
-            })
-        );
-    }
+    use super::{PluginResourceActionEffect, PluginResourceActionOutput};
 
     #[test]
     fn effect_only_output_omits_view_fields() {

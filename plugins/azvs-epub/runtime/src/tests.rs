@@ -1,7 +1,7 @@
 use super::*;
 use crate::handler::render_epub_payload;
 use base64::Engine;
-use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
+use base64::engine::general_purpose::STANDARD;
 use serde_json::{Value, json};
 use std::io::{Cursor, Write};
 use zip::write::SimpleFileOptions;
@@ -40,14 +40,6 @@ fn sanitizer_rejects_active_content_and_unsafe_urls() {
 }
 
 #[test]
-fn cover_is_a_media_view() {
-    let cover = render_epub_cover_bytes(&sample_epub()).unwrap().unwrap();
-    let media = cover_media_view("Sample Book", &cover).unwrap();
-    assert_eq!(media.mime_type, "image/png");
-    assert_eq!(media.data, STANDARD.encode("cover"));
-}
-
-#[test]
 fn reads_epub2_ncx_titles_and_cover_metadata() {
     let book = parse_book("epub2".to_string(), Arc::new(epub2())).unwrap();
     assert_eq!(book.index.title, "EPUB2 Book");
@@ -57,23 +49,6 @@ fn reads_epub2_ncx_titles_and_cover_metadata() {
             .cover
             .as_deref()
             .is_some_and(|cover| cover.starts_with("data:image/jpeg;base64,"))
-    );
-}
-
-#[test]
-fn initial_action_returns_plugin_frame() {
-    let output = render_epub_payload(request_json(json!({}))).unwrap();
-    let output: Value = serde_json::from_str(&output).unwrap();
-    assert_eq!(output["view"], "plugin_frame");
-    let encoded = output["url"]
-        .as_str()
-        .unwrap()
-        .strip_prefix("index.html#payload=")
-        .unwrap();
-    let payload: Value = serde_json::from_slice(&URL_SAFE_NO_PAD.decode(encoded).unwrap()).unwrap();
-    assert_eq!(
-        payload["plugin_api"],
-        asset_plugin_api::protocol::PLUGIN_API_VERSION
     );
 }
 

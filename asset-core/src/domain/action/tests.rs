@@ -29,23 +29,6 @@ fn matcher_construction_preserves_normalized_invariants() {
 }
 
 #[test]
-fn directory_actions_share_the_common_shell_but_keep_directory_contracts() {
-    let action = DirectoryActionDefinition::new_static("example.collection.organize", "Organize")
-        .with_access(ActionAccess::Write)
-        .with_kinds(["example:collection"])
-        .with_requirements(DirectoryActionRequirements {
-            children: true,
-            resources: DirectoryResourceAccess::Metadata,
-        });
-
-    assert!(action.matches_exact_kind("example:collection"));
-    assert!(!action.matches_exact_kind("EXAMPLE:COLLECTION"));
-    assert!(!action.matches_exact_kind("core:directory"));
-    assert_eq!(action.access(), ActionAccess::Write);
-    assert!(action.requirements().children);
-}
-
-#[test]
 fn action_ids_reject_blank_non_canonical_and_invalid_values() {
     assert!(matches!(
         ActionId::new(""),

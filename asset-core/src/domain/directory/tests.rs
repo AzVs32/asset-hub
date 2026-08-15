@@ -1,18 +1,5 @@
 use super::*;
-use crate::domain::KindIdError;
 use crate::error::DirectoryError;
-
-#[test]
-fn directory_kind_is_limited_to_256_characters() {
-    let max_length = format!("a:{}", "b".repeat(254));
-    let too_long = format!("a:{}", "b".repeat(255));
-
-    assert!(DirectoryKind::try_new(max_length).is_ok());
-    assert!(matches!(
-        DirectoryKind::try_new(too_long),
-        Err(KindIdError::TooLong { max: 256 })
-    ));
-}
 
 #[test]
 fn directory_path_is_built_from_parent_and_single_name() {
@@ -51,18 +38,6 @@ fn directory_path_rejects_internal_storage_namespace() {
 }
 
 #[test]
-fn directory_path_serde_uses_the_path_representation() {
-    let directory = DirectoryPath::from_path("projects/images").unwrap();
-    let json = serde_json::to_string(&directory).unwrap();
-
-    assert_eq!(json, "\"projects/images\"");
-    assert_eq!(
-        serde_json::from_str::<DirectoryPath>(&json).unwrap(),
-        directory
-    );
-}
-
-#[test]
 fn directory_path_contains_obeys_segment_boundaries() {
     let root = DirectoryPath::root();
     let home = DirectoryPath::from_path("users/alice").unwrap();
@@ -73,21 +48,6 @@ fn directory_path_contains_obeys_segment_boundaries() {
     assert!(home.contains(&home));
     assert!(home.contains(&child));
     assert!(!home.contains(&sibling));
-}
-
-#[test]
-fn directory_is_an_independent_aggregate_with_a_stable_identity() {
-    let parent = DirectoryId::new();
-    let mut directory = Directory::new(parent, "Games").unwrap();
-    let id = directory.id();
-
-    directory.rename("Library").unwrap();
-    directory.move_to(DirectoryId::new()).unwrap();
-    directory.change_kind(DirectoryKind::try_new("azvs.game:library").unwrap());
-
-    assert_eq!(directory.id(), id);
-    assert_eq!(directory.name(), "Library");
-    assert_eq!(directory.kind().as_str(), "azvs.game:library");
 }
 
 #[test]

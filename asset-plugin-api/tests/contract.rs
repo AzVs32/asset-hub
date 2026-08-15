@@ -1,7 +1,4 @@
-use asset_plugin_api::manifest::{DirectoryResourceAccess, MANIFEST_VERSION, PluginManifest};
-use asset_plugin_api::protocol::directory::{
-    PluginDirectoryActionOutput, PluginDirectoryActionRequest,
-};
+use asset_plugin_api::manifest::{MANIFEST_VERSION, PluginManifest};
 use asset_plugin_api::protocol::{
     PLUGIN_API_VERSION, PluginActionFailure, PluginResourceActionOutput,
     PluginResourceActionRequest,
@@ -102,53 +99,6 @@ fn manifest_matchers_are_normalized_by_serde() {
 }
 
 #[test]
-fn manifest_accepts_extensible_directory_kind_hierarchies() {
-    let mut value = manifest_document();
-    value["capabilities"]["directory_kinds"] = json!([{
-        "kind": "example:collection",
-        "parent": "core:directory",
-        "label": "Collection"
-    }]);
-
-    let manifest = canonical_manifest(&value).unwrap();
-    let kind = &manifest.capabilities.directory_kinds[0];
-    assert_eq!(kind.kind, "example:collection");
-    assert_eq!(kind.parent.as_deref(), Some("core:directory"));
-}
-
-#[test]
-fn manifest_accepts_directory_actions_with_target_specific_requirements() {
-    let mut value = manifest_document();
-    value["capabilities"]["directory_actions"] = json!([{
-        "id": "example.plugin.organize",
-        "label": "Organize",
-        "handler": "organize",
-        "applies_to": {"kinds": ["example:collection"]},
-        "access": "write",
-        "requires": {"children": true, "resources": "metadata"},
-        "output": {"views": ["json"]},
-        "ui": {"locations": ["directory_context_menu"]}
-    }]);
-    value["permissions"]["allow"] = json!([
-        "resource.read",
-        "directory.read",
-        "directory.children.list",
-        "directory.resources.list",
-        "directory.write"
-    ]);
-
-    let manifest = canonical_manifest(&value).unwrap();
-    let action = &manifest.capabilities.directory_actions[0];
-    let requirements = action.requires.as_ref().unwrap();
-    assert!(requirements.children);
-    assert_eq!(requirements.resources, DirectoryResourceAccess::Metadata);
-    assert_eq!(
-        action.ui.as_ref().unwrap().locations,
-        ["directory_context_menu"]
-    );
-}
-
-#[test]
 fn resource_and_directory_action_ids_use_separate_namespaces() {
     let mut value = manifest_document();
     value["capabilities"]["directory_actions"] = json!([{
@@ -160,87 +110,6 @@ fn resource_and_directory_action_ids_use_separate_namespaces() {
     value["permissions"]["allow"] = json!(["resource.read", "directory.read"]);
 
     canonical_manifest(&value).unwrap();
-}
-
-#[test]
-fn manifest_actions_can_provide_singleton_host_capabilities() {
-    let mut value = manifest_document();
-    value["capabilities"]["resource_actions"][0]["provides"] = json!("thumbnail");
-    value["capabilities"]["resource_actions"][0]["output"]["views"] = json!(["media"]);
-    value["capabilities"]["resource_actions"][0]["ui"] =
-        json!({"locations": ["resource_thumbnail"]});
-    value["capabilities"]["directory_actions"] = json!([{
-        "id": "example.plugin.directory-thumbnail",
-        "provides": "thumbnail",
-        "label": "Directory Thumbnail",
-        "handler": "directory_thumbnail",
-        "output": {"views": ["media"]},
-        "ui": {"locations": ["directory_thumbnail"]}
-    }]);
-    value["permissions"]["allow"] = json!(["resource.read", "directory.read"]);
-
-    let manifest = canonical_manifest(&value).unwrap();
-
-    assert_eq!(
-        manifest.capabilities.resource_actions[0]
-            .provides
-            .as_deref(),
-        Some("thumbnail")
-    );
-    assert_eq!(
-        manifest.capabilities.directory_actions[0]
-            .provides
-            .as_deref(),
-        Some("thumbnail")
-    );
-}
-
-#[test]
-fn singleton_resource_provider_label_is_wire_optional() {
-    let mut value = manifest_document();
-    value["capabilities"]["resource_actions"][0]["provides"] = json!("text_read");
-    value["capabilities"]["resource_actions"][0]
-        .as_object_mut()
-        .unwrap()
-        .remove("label");
-
-    let manifest = canonical_manifest(&value).unwrap();
-    assert!(manifest.capabilities.resource_actions[0].label.is_none());
-    assert!(
-        serde_json::to_value(manifest).unwrap()["capabilities"]["resource_actions"][0]
-            .get("label")
-            .is_none()
-    );
-}
-
-#[test]
-fn directory_request_and_output_have_separate_wire_effects() {
-    let request: PluginDirectoryActionRequest = serde_json::from_value(json!({
-        "action": "example.plugin.organize",
-        "access": "write",
-        "input": {},
-        "directory": {
-            "id": "01900000-0000-7000-8000-000000000001",
-            "parent_id": "00000000-0000-0000-0000-000000000000",
-            "path": "library",
-            "name": "library",
-            "kind": "example:collection",
-            "revision": 3,
-            "created_at": "2026-07-28T00:00:00Z",
-            "updated_at": "2026-07-28T00:00:00Z"
-        },
-        "directory_ref": "directory:reference:call-scoped"
-    }))
-    .unwrap();
-    assert_eq!(request.directory.path, "library");
-
-    let output: PluginDirectoryActionOutput = serde_json::from_value(json!({
-        "view": "json",
-        "data": {"organized": true},
-        "effects": [{"type": "create_child", "name": "covers", "kind": "core:directory"}]
-    }))
-    .unwrap();
-    assert_eq!(output.effects.len(), 1);
 }
 
 #[test]

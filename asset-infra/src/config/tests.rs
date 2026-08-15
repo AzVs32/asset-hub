@@ -1,52 +1,6 @@
 use super::*;
 
 #[test]
-fn empty_config_uses_defaults() {
-    let config = AssetInfraConfig::from_config_str("").unwrap();
-
-    assert_eq!(config.database.backend, DatabaseBackend::Sqlite);
-    assert_eq!(
-        config.database.sqlite.max_connections,
-        DEFAULT_SQLITE_MAX_CONNECTIONS
-    );
-    assert_eq!(config.blob.backend, BlobBackend::Local);
-    assert_eq!(
-        config.blob.local.root,
-        PathBuf::from(DEFAULT_LOCAL_BLOB_ROOT)
-    );
-    assert!(config.blob.local.sync.enabled);
-    assert_eq!(
-        config.blob.local.sync.debounce_milliseconds,
-        DEFAULT_LOCAL_SYNC_DEBOUNCE_MILLISECONDS
-    );
-    assert_eq!(
-        config.blob.local.sync.reconcile_interval_seconds,
-        DEFAULT_LOCAL_SYNC_INTERVAL_SECONDS
-    );
-    assert_eq!(
-        config.plugin_packages_path(),
-        PathBuf::from("data/.asset-hub/plugins")
-    );
-    assert_eq!(
-        config.resource_edit.max_text_bytes,
-        DEFAULT_RESOURCE_EDIT_MAX_TEXT_BYTES
-    );
-}
-
-#[test]
-fn optional_missing_config_file_uses_defaults() {
-    let config = AssetInfraConfig::from_optional_config_file(
-        std::env::temp_dir().join("asset-hub-missing-config.toml"),
-    )
-    .unwrap();
-
-    assert_eq!(
-        config.blob.local.root,
-        PathBuf::from(DEFAULT_LOCAL_BLOB_ROOT)
-    );
-}
-
-#[test]
 fn normalized_config_turns_relative_paths_into_absolute_paths() {
     let config = AssetInfraConfig::default().normalized().unwrap();
 
@@ -107,82 +61,6 @@ fn config_rejects_unsupported_backends() {
 }
 
 #[test]
-fn normalized_config_rejects_zero_database_connections() {
-    let config = AssetInfraConfig {
-        database: DatabaseConfig {
-            sqlite: SqliteDatabaseConfig { max_connections: 0 },
-            ..DatabaseConfig::default()
-        },
-        ..AssetInfraConfig::default()
-    };
-
-    assert!(config.normalized().is_err());
-}
-
-#[test]
-fn normalized_config_rejects_zero_enabled_local_sync_intervals() {
-    for sync in [
-        LocalBlobSyncConfig {
-            debounce_milliseconds: 0,
-            ..LocalBlobSyncConfig::default()
-        },
-        LocalBlobSyncConfig {
-            reconcile_interval_seconds: 0,
-            ..LocalBlobSyncConfig::default()
-        },
-    ] {
-        let config = AssetInfraConfig {
-            blob: BlobConfig {
-                local: LocalBlobConfig {
-                    sync,
-                    ..LocalBlobConfig::default()
-                },
-                ..BlobConfig::default()
-            },
-            ..AssetInfraConfig::default()
-        };
-        assert!(config.normalized().is_err());
-    }
-}
-
-#[test]
-fn plugin_host_policy_parses_budgets_and_normalizes_grants() {
-    let config = AssetInfraConfig::from_config_str(
-        r#"
-        [plugin]
-        max_content_bytes = 1024
-        max_inline_content_bytes = 512
-        max_content_read_bytes = 256
-        max_input_bytes = 2048
-        max_output_bytes = 4096
-        max_concurrent_calls = 2
-        memory_max_pages = 128
-        timeout_seconds = 5
-
-        [plugin.grants]
-        network_hosts = ["api.example.com"]
-        filesystem_read = ["plugin-data"]
-        filesystem_write = []
-        "#,
-    )
-    .unwrap()
-    .normalized()
-    .unwrap();
-
-    assert_eq!(config.plugin.max_concurrent_calls, 2);
-    assert_eq!(
-        config
-            .plugin
-            .execution_policy()
-            .unwrap()
-            .max_content_bytes(),
-        1024
-    );
-    assert_eq!(config.plugin.grants.network_hosts, ["api.example.com"]);
-    assert!(config.plugin.grants.filesystem_read[0].is_absolute());
-}
-
-#[test]
 fn plugin_host_policy_rejects_unbounded_or_zero_values() {
     let wildcard = AssetInfraConfig::from_config_str(
         r#"
@@ -203,26 +81,6 @@ fn plugin_host_policy_rejects_unbounded_or_zero_values() {
     .unwrap()
     .normalized();
     assert!(zero.is_err());
-}
-
-#[test]
-fn configured_content_limit_is_the_runtime_policy_limit() {
-    let config = AssetInfraConfig::from_config_str(
-        r#"
-        [plugin]
-        max_content_bytes = 134217728
-        "#,
-    )
-    .unwrap()
-    .normalized()
-    .unwrap();
-
-    let policy = config.plugin.execution_policy().unwrap();
-    assert_eq!(policy.max_content_bytes(), 128 * 1024 * 1024);
-    assert_eq!(
-        policy.max_inline_content_bytes(),
-        DEFAULT_PLUGIN_MAX_INLINE_CONTENT_BYTES
-    );
 }
 
 #[test]

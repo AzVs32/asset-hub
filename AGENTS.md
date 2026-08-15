@@ -71,29 +71,40 @@ Treat the following as facts until the implementation and documentation are chan
 - plugin runtime: Extism/Wasm;
 - root directory ID: nil UUID `00000000-0000-0000-0000-000000000000`.
 
-## Test value policy
+## AI-first test policy
 
-Tests should protect behavior with meaningful regression risk, not mirror implementation structure or
-maximize line coverage.
+During the current AI-led development stage, tests exist only to help an AI agent understand and
+safely change the system. They are executable context, not a coverage target, QA inventory, release
+gate, or permanent record of every behavior that happens to exist.
 
-Prefer tests for:
+Keep a test only when reading or running it gives an AI material information that is not already
+obvious from the owning implementation and documentation. The strongest reasons to keep one are:
 
-- pure parsing, normalization, state-transition, path, ID, and naming rules;
-- authorization boundaries, optimistic concurrency, recovery, compensation, and failure ordering;
-- a small representative set of migration and repository guarantees;
-- public HTTP, OpenAPI, Plugin API, Manifest, ABI, and frame-protocol compatibility boundaries.
+- a non-obvious domain invariant, state transition, path/identity rule, or security boundary;
+- authorization, optimistic concurrency, recovery, compensation, or failure ordering;
+- a small representative persistence, migration, streaming, or atomic-filesystem guarantee;
+- a public HTTP, OpenAPI, Plugin API, Manifest, ABI, golden-wire, or frame-host compatibility boundary;
+- a concise regression for a real bug whose cause would otherwise be easy for an AI to reintroduce.
 
-Avoid or remove tests that only cover:
+Delete or do not add tests that primarily create context noise, including:
 
-- getters, setters, builder field assignment, defaults already exercised by a higher-value test, or
-  direct DTO field copying;
-- framework-generated CLI parsing and ordinary CRUD success paths already covered at another layer;
-- repeated permutations added only for coverage;
-- unstable presentation details while a feature is still changing rapidly.
+- getters, setters, builder assignments, constant/default mirroring, or direct DTO field copying;
+- framework behavior such as ordinary Clap/React/router parsing and rendering;
+- ordinary CRUD success paths already demonstrated at another layer;
+- repeated valid/invalid permutations that add no new rule;
+- presentation details while the UI is still changing quickly;
+- tests whose fixture, mock, or fake setup is substantially harder to understand than the invariant;
+- a second assertion of a rule already expressed more clearly by an owning-layer test or golden contract.
 
-Before adding a test, identify the invariant, compatibility boundary, or concrete regression it protects.
-Prefer one test at the layer that owns the behavior over duplicate assertions across Core, adapters, HTTP,
-CLI, and Web.
+Count test support code as part of the cost. Do not introduce a shared fake framework merely to make
+more tests convenient. Prefer one small scenario at the layer that owns the behavior. When a test
+needs broad setup, keep it only for a high-risk cross-component sequence that cannot be expressed
+more clearly in documentation or a narrower test.
+
+Before adding or retaining a test, be able to state in one sentence what future AI mistake it prevents.
+If that sentence only says that the implementation should keep doing what it currently does, remove the
+test. Do not automatically add tests for every production change, and do not replace deleted low-value
+tests with equivalent snapshots or parameterized cases.
 
 ## Validation
 

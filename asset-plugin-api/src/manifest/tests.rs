@@ -300,17 +300,6 @@ fn text_edit_provider_requires_content_replace_permission() {
 }
 
 #[test]
-fn manifest_accepts_download_view() {
-    let mut document = manifest_document();
-    document["capabilities"]["resource_actions"][0]["output"]["views"] =
-        serde_json::json!(["download"]);
-    serde_json::from_value::<PluginManifest>(document)
-        .unwrap()
-        .validate()
-        .unwrap();
-}
-
-#[test]
 fn delete_effect_requires_write_access_and_the_matching_permission() {
     let mut resource_document = manifest_document();
     let action = &mut resource_document["capabilities"]["resource_actions"][0];

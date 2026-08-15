@@ -1,54 +1,6 @@
 use super::*;
-use crate::domain::{DirectoryId, KindIdError};
+use crate::domain::DirectoryId;
 use crate::error::ResourceError;
-
-#[test]
-fn resource_kind_matches_directory_kind_naming_rules() {
-    let kind = ResourceKind::try_new("azvs:document:markdown_v2").unwrap();
-
-    assert_eq!(kind.as_str(), "azvs:document:markdown_v2");
-    assert!(ResourceKind::try_new(" AzVs.Game:Markdown_V2 ").is_err());
-    assert!(ResourceKind::try_new(" Core:Image ").is_err());
-}
-
-#[test]
-fn resource_kind_rejects_non_namespaced_or_invalid_values() {
-    for value in [
-        "image",
-        ":image",
-        "core:",
-        "core::image",
-        "core/image",
-        "核心:图片",
-    ] {
-        assert!(
-            ResourceKind::try_new(value).is_err(),
-            "`{value}` should be rejected"
-        );
-    }
-}
-
-#[test]
-fn resource_kind_is_limited_to_256_characters() {
-    let max_length = format!("a:{}", "b".repeat(254));
-    let too_long = format!("a:{}", "b".repeat(255));
-
-    assert!(ResourceKind::try_new(max_length).is_ok());
-    assert!(matches!(
-        ResourceKind::try_new(too_long),
-        Err(KindIdError::TooLong { max: 256 })
-    ));
-}
-
-#[test]
-fn resource_kind_serde_requires_canonical_input() {
-    assert!(serde_json::from_str::<ResourceKind>(r#"" Core:Image ""#).is_err());
-    let kind: ResourceKind = serde_json::from_str(r#""core:image""#).unwrap();
-
-    assert_eq!(kind.as_str(), "core:image");
-    assert_eq!(serde_json::to_string(&kind).unwrap(), r#""core:image""#);
-    assert!(serde_json::from_str::<ResourceKind>(r#""image""#).is_err());
-}
 
 #[test]
 fn resource_rehydration_rejects_inconsistent_timestamps() {
@@ -71,22 +23,6 @@ fn resource_rehydration_rejects_inconsistent_timestamps() {
             ..
         })
     ));
-}
-
-#[test]
-fn resource_soft_delete_and_restore_update_state() {
-    let mut resource = Resource::builder("image")
-        .with_kind(ResourceKind::try_new("core:image").unwrap())
-        .build()
-        .unwrap();
-
-    resource.soft_delete();
-    assert!(resource.is_deleted());
-    assert_eq!(resource.revision(), 2);
-
-    resource.restore();
-    assert!(!resource.is_deleted());
-    assert_eq!(resource.revision(), 3);
 }
 
 #[test]
@@ -243,12 +179,4 @@ fn resource_content_deserialization_applies_builder_validation() {
         },
     });
     assert!(serde_json::from_value::<ResourceContent>(invalid_checksum).is_err());
-}
-
-#[test]
-fn checksum_kind_uses_canonical_boundary_text() {
-    assert_eq!(ChecksumKind::Sha256.as_str(), "sha256");
-    assert_eq!(ChecksumKind::Sha256.to_string(), "sha256");
-    assert_eq!("sha256".parse(), Ok(ChecksumKind::Sha256));
-    assert!("md5".parse::<ChecksumKind>().is_err());
 }

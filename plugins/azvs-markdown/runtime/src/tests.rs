@@ -1,48 +1,6 @@
 use super::*;
 
 #[test]
-fn initial_frame_contains_only_small_routing_payload() {
-    let output =
-        render_markdown_payload(request_json("azvs.markdown.read", json!({}), None)).unwrap();
-    let output: Value = serde_json::from_str(&output).unwrap();
-    let payload = decode_frame_payload(&output);
-
-    assert_eq!(
-        payload["plugin_api"],
-        asset_plugin_api::protocol::PLUGIN_API_VERSION
-    );
-    assert_eq!(payload["resource_id"], resource_json()["id"]);
-    assert_eq!(payload["mode"], "read");
-    assert_eq!(payload["action"], "azvs.markdown.read");
-    assert!(payload.get("markdown").is_none());
-    assert!(output["url"].as_str().unwrap().len() < 300);
-}
-
-#[test]
-fn edit_frame_does_not_require_content() {
-    let output =
-        update_markdown_payload(request_json("azvs.markdown.edit", json!({}), None)).unwrap();
-    let output: Value = serde_json::from_str(&output).unwrap();
-    let payload = decode_frame_payload(&output);
-    assert_eq!(payload["mode"], "edit");
-    assert!(payload.get("markdown").is_none());
-}
-
-#[test]
-fn small_markdown_is_returned_directly() {
-    let output = render_markdown_payload(request_json(
-        "azvs.markdown.read",
-        json!({"operation": "load"}),
-        Some(b"\xef\xbb\xbf# Title\n\nBody"),
-    ))
-    .unwrap();
-    let output: Value = serde_json::from_str(&output).unwrap();
-    assert_eq!(output["view"], "json");
-    assert_eq!(output["data"]["transfer"], "complete");
-    assert_eq!(output["data"]["markdown"], "# Title\n\nBody");
-}
-
-#[test]
 fn large_markdown_uses_bounded_chunks() {
     let markdown = vec![b'a'; CONTENT_CHUNK_BYTES as usize + 17];
     let load = render_markdown_payload(request_json(
@@ -86,16 +44,6 @@ fn update_markdown_rejects_legacy_inline_writeback() {
             .to_string()
             .contains("unsupported Markdown edit operation")
     );
-}
-
-fn decode_frame_payload(output: &Value) -> Value {
-    let encoded = output["url"]
-        .as_str()
-        .unwrap()
-        .split_once("#payload=")
-        .unwrap()
-        .1;
-    serde_json::from_slice(&URL_SAFE_NO_PAD.decode(encoded).unwrap()).unwrap()
 }
 
 fn request_json(action: &str, input: Value, content: Option<&[u8]>) -> String {

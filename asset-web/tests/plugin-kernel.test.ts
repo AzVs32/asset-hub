@@ -4,67 +4,6 @@ import { coreDirectoryWorkspaceSlots, directoryWorkspaceOutlet } from "@/kernel/
 import { action, directory, directoryAction, resource } from "./fixtures";
 
 describe("PluginKernel", () => {
-  it("sorts actions placed in a CoreDirectoryWorkspace slot", () => {
-    const kernel = new PluginKernel();
-    const later = action({
-      id: "later",
-      label: "Later",
-      ui: {
-        group: "view",
-        order: 20,
-        locations: [coreDirectoryWorkspaceSlots.resourceContextMenu],
-      },
-    });
-    const earlier = action({
-      id: "earlier",
-      label: "Earlier",
-      ui: {
-        group: "view",
-        order: 10,
-        locations: [coreDirectoryWorkspaceSlots.resourceContextMenu],
-      },
-    });
-
-    expect(
-      kernel
-        .resourceActionsAtCoreSlot(
-          resource([later, earlier]),
-          coreDirectoryWorkspaceSlots.resourceContextMenu,
-        )
-        .map((item) => item.id),
-    ).toEqual(["earlier", "later"]);
-  });
-
-  it("sorts destructive CoreDirectoryWorkspace actions last", () => {
-    const kernel = new PluginKernel();
-    const remove = action({
-      id: "core.resource.delete",
-      access: "write",
-      output: { views: [], effects: ["delete"] },
-      ui: {
-        group: "danger",
-        locations: [coreDirectoryWorkspaceSlots.resourceContextMenu],
-        destructive: true,
-      },
-    });
-    const download = action({
-      id: "core.resource.download",
-      ui: {
-        group: "open",
-        locations: [coreDirectoryWorkspaceSlots.resourceContextMenu],
-      },
-    });
-
-    expect(
-      kernel
-        .resourceActionsAtCoreSlot(
-          resource([remove, download]),
-          coreDirectoryWorkspaceSlots.resourceContextMenu,
-        )
-        .map((item) => item.id),
-    ).toEqual(["core.resource.download", "core.resource.delete"]);
-  });
-
   it("keeps unknown Resource locations reachable only in the Core context menu", () => {
     const kernel = new PluginKernel();
     const unknown = action({

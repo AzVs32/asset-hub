@@ -110,3 +110,25 @@ impl Modify for CookieSecurity {
     )
 )]
 pub(crate) struct ApiDoc;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn document_keeps_the_public_identity_and_authentication_contract() {
+        let document = serde_json::to_value(ApiDoc::openapi()).unwrap();
+
+        assert!(document["paths"].get("/directories/{id}").is_some());
+        assert!(document["paths"].get("/resources/{id}/content").is_some());
+        assert_eq!(
+            document["components"]["securitySchemes"]["cookie_auth"]["name"],
+            "asset_hub_session"
+        );
+        assert!(
+            document["components"]["schemas"]["AuthenticatedUser"]["properties"]
+                .get("workspace_directory")
+                .is_none()
+        );
+    }
+}

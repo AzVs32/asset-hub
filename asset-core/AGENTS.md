@@ -72,11 +72,13 @@ MUST NOT move business policy into transport, command, persistence, or plugin-ru
 
 ## Tests
 
-- Put pure value and aggregate tests beside their module.
-- Use fake ports for service tests and assert call ordering/compensation where relevant.
-- Add authorization tests for administrator, member workspace, descendant access, and outside-scope
-  denial when changing secured use cases.
-- Add concurrency or recovery tests when changing upload finalization, replacement, or reconciliation.
+- Keep a pure value or aggregate test beside its module only when it explains a non-obvious invariant.
+- Use fake ports only for service failure ordering, compensation, or concurrency that cannot be made
+  clear with a smaller owning-layer scenario; fixture convenience is not a reason to add a fake.
+- Maintain one representative administrator/member/outside-scope authorization scenario when the
+  authorization model changes instead of adding transport-level or role-permutation duplicates.
+- Update the existing concurrency or recovery scenario when its semantics change; do not add another
+  test merely because a new branch or implementation step exists.
 
 Run:
 

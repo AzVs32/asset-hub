@@ -233,10 +233,8 @@ fn read_document(
 
 #[cfg(test)]
 mod tests {
-    use super::{create_game_payload, render_workspace_payload};
-    use asset_plugin_api::protocol::{
-        DirectoryActionEffect, PluginDirectoryActionOutput, PluginView,
-    };
+    use super::create_game_payload;
+    use asset_plugin_api::protocol::{DirectoryActionEffect, PluginDirectoryActionOutput};
     use base64::Engine;
     use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 
@@ -258,20 +256,6 @@ mod tests {
             "directory_ref": "opaque-directory-ref"
         })
         .to_string()
-    }
-
-    #[test]
-    fn initial_workspace_returns_the_games_frame() {
-        let output: PluginDirectoryActionOutput = serde_json::from_str(
-            &render_workspace_payload(&request("azvs.games.workspace", serde_json::json!({})))
-                .unwrap(),
-        )
-        .unwrap();
-        let Some(PluginView::PluginFrame(frame)) = output.view else {
-            panic!("expected frame")
-        };
-        assert_eq!(frame.plugin_api, "asset-hub.plugin-api@5");
-        assert_eq!(frame.url, "index.html");
     }
 
     #[test]

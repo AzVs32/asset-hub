@@ -35,6 +35,3 @@ tracing-subscriber.workspace = true
 utoipa.workspace = true
 utoipa-swagger-ui.workspace = true
 zip.workspace = true
-
-[dev-dependencies]
-base64.workspace = true

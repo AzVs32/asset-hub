@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BlobSha256, FileSha256 } from "@/infrastructure/http/file-sha256";
 import { OpenApiAssetGateway } from "@/infrastructure/http/openapi-asset-gateway";
-import { directory } from "./fixtures";
 
 describe("OpenApiAssetGateway URL boundary", () => {
   const hashFile: FileSha256 = async (file, onProgress) => {
@@ -21,36 +20,6 @@ describe("OpenApiAssetGateway URL boundary", () => {
     expect(gateway.assetUrl("https://example.com/tracker")).toBeNull();
     expect(gateway.assetUrl("//example.com/tracker")).toBeNull();
     expect(gateway.assetUrl("plugins/example/view.html")).toBeNull();
-  });
-
-  it("patches only the requested Directory metadata", async () => {
-    const current = { ...directory(), parentId: "parent-1" };
-    const fetchMock = vi.fn().mockResolvedValue(
-      Response.json({
-        actions: [],
-        created_at: current.createdAt,
-        id: current.id,
-        kind: "azvs:game",
-        name: current.name,
-        parent_id: current.parentId,
-        parent_path: current.parentPath,
-        path: current.path,
-        revision: 2,
-        updated_at: current.updatedAt,
-      }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-    const directoryGateway = new OpenApiAssetGateway("http://localhost/api");
-
-    const updated = await directoryGateway.updateDirectory(current, { kind: "azvs:game" });
-    const request = fetchMock.mock.calls[0]?.[0];
-    if (!(request instanceof Request)) throw new Error("Directory PATCH request was not captured");
-
-    expect(await request.json()).toEqual({
-      expected_revision: 1,
-      kind: "azvs:game",
-    });
-    expect(updated.kind).toBe("azvs:game");
   });
 
   it("preserves spaces in upload names and directories", async () => {
