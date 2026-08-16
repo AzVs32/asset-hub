@@ -1,9 +1,7 @@
 import type { AssetGateway } from "@/application/ports/asset-gateway";
-import type { JsonObject, ResourceActionOutput } from "@/domain/plugin";
+import type { ResourceActionOutput } from "@/domain/plugin";
 import type { Resource } from "@/domain/resource";
-
-export const pluginFrameApiVersion = "asset-hub.plugin-api@5";
-export const pluginFrameChannel = "asset-hub.plugin-frame@5";
+import { parseActionId, parseActionInput } from "./frame-input";
 
 export interface PluginFrameHostMethods extends Record<string, (...args: never[]) => unknown> {
   executeResourceAction(action: unknown, input?: unknown): Promise<ResourceActionOutput>;
@@ -44,7 +42,7 @@ export function createPluginFrameHostBridge({
       async executeResourceAction(actionValue, inputValue) {
         const current = boundResource();
         const actionId = parseActionId(actionValue);
-        const input = parseInput(inputValue);
+        const input = parseActionInput(inputValue);
         const action = current.actions.find((candidate) => candidate.id === actionId);
         if (!action) throw new Error(`Action ${actionId} is not available.`);
         if (action.ui.confirmation) {
@@ -53,7 +51,7 @@ export function createPluginFrameHostBridge({
           );
           if (!confirmed) throw new Error(`Action ${actionId} was not confirmed.`);
         }
-        const result = await gateway.executeAction(current, action.id, input);
+        const result = await gateway.executeResourceAction(current, action.id, input);
         if (action.access === "write") await onResourceChanged?.();
         return result;
       },
@@ -73,24 +71,10 @@ export function createPluginFrameHostBridge({
       },
     },
     updateResource(nextResource) {
-      if (nextResource.id !== resource.id || nextResource.revision > resource.revision) {
-        resource = nextResource;
+      if (nextResource.id !== frameResourceId) {
+        throw new Error("The plugin frame cannot change its bound Resource.");
       }
+      if (nextResource.revision >= resource.revision) resource = nextResource;
     },
   };
-}
-
-function parseActionId(value: unknown): string {
-  if (typeof value !== "string" || !value || value.length > 128) {
-    throw new TypeError("Action ID must be a non-empty string of at most 128 characters.");
-  }
-  return value;
-}
-
-function parseInput(value: unknown): JsonObject {
-  if (value === undefined) return {};
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new TypeError("Action input must be a JSON object.");
-  }
-  return value as JsonObject;
 }

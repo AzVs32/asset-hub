@@ -388,10 +388,11 @@ function executeEpubAction<T>(
 ): Promise<T> {
   return frameHost().then(async (host) => {
     const output = await host.executeResourceAction(frame.action, input);
-    if (output.view.view !== "json" || !validate(output.view.data)) {
+    const view = output.view;
+    if (view?.view !== "json" || !validate(view.data)) {
       throw new Error("EPUB plugin returned an invalid payload");
     }
-    return output.view.data;
+    return view.data;
   });
 }
 

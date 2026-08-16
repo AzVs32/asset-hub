@@ -404,10 +404,11 @@ function jsonViewData<T>(
 	validate: (value: unknown) => value is T,
 	invalidMessage: string,
 ): T {
-	if (result.view.view !== "json" || !validate(result.view.data)) {
+	const view = result.view;
+	if (view?.view !== "json" || !validate(view.data)) {
 		throw new Error(invalidMessage);
 	}
-	return result.view.data;
+	return view.data;
 }
 
 function isLoadResponse(value: unknown): value is LoadResponse {

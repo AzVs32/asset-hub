@@ -104,6 +104,14 @@ action 和用户授权能力。Feature 只知道这个接口。
 - `directory-frame-host` 将连接绑定到当前 Directory，只允许执行该 Directory 已暴露的
   Action、刷新当前 Directory 和请求 Host 导航；不暴露 Core 工作区组件或插槽。
 
+浏览器 Frame 协议不在 Host 内重复声明：版本、两个 channel、view/effect 枚举和 action 输出
+类型统一来自 `@asset-hub/plugin-web-sdk/contract`。Frame 输入在进入 Gateway 前递归验证为有界
+JSON 对象；超深、超量、循环引用、非有限数字及任何非 JSON 值都会在 Host 边界被拒绝。
+Resource 与 Directory Frame 使用同一套 Action ID、输入和绑定快照规则：连接始终绑定初始聚合
+ID，只接受 revision 不回退的同 ID 快照，并由 Gateway 从该快照重新解析 Action 声明。iframe
+资源 URL 和 opaque-origin Penpal Messenger 也由同一个安全边界创建。Resource 的原始文本替换
+以及 Directory 的刷新和导航仍是各自聚合特有的窄能力，不为表面对称而抽象成通用操作。
+
 Markdown 和媒体播放器均按需加载，不进入基础首屏包。
 
 ### `features`
@@ -198,7 +206,7 @@ Action 默认读取最新授权快照，不会因为缩略图或预览缓存较�
 后端 Resource.actions
   → PluginKernel 按 ui.locations 放入 slot
   → 用户触发，或宿主专用组件自动触发只读 action（如缩略图）
-  → AssetGateway.executeAction
+  → AssetGateway.executeResourceAction / executeDirectoryAction
   → Zod 校验 PluginView
   → PluginViewHost 查询 renderer registry
   → 通用 renderer 或 sandboxed plugin_frame

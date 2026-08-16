@@ -6,6 +6,30 @@
 /// Current and only supported Host/plugin wire and ABI version.
 pub const PLUGIN_API_VERSION: &str = "asset-hub.plugin-api@5";
 
+/// Browser Frame channel used for Resource-bound Host capabilities.
+pub const PLUGIN_RESOURCE_FRAME_CHANNEL: &str = "asset-hub.plugin-frame@5";
+
+/// Browser Frame channel used for Directory-bound Host capabilities.
+pub const PLUGIN_DIRECTORY_FRAME_CHANNEL: &str = "asset-hub.plugin-directory-frame@5";
+
+/// View discriminants supported by the current action and Browser Frame protocol.
+pub const PLUGIN_VIEW_KINDS: &[&str] = &[
+    "text",
+    "markdown",
+    "html",
+    "plugin_frame",
+    "json",
+    "media",
+    "download",
+];
+
+/// Resource effect discriminants exposed to Browser Frame clients after Host application.
+pub const PLUGIN_RESOURCE_ACTION_EFFECT_KINDS: &[&str] = &["replace_content", "delete"];
+
+/// Directory effect discriminants exposed to Browser Frame clients after Host application.
+pub const PLUGIN_DIRECTORY_ACTION_EFFECT_KINDS: &[&str] =
+    &["update", "create_child", "create_tree", "delete"];
+
 mod access;
 pub mod diagnostic;
 pub mod directory;

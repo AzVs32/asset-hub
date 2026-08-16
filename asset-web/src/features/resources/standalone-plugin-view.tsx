@@ -20,7 +20,7 @@ export function StandalonePluginView() {
       ) {
         throw new Error(`Action ${actionId} was not confirmed.`);
       }
-      return { resource, output: await gateway.executeAction(resource, action.id) };
+      return { resource, output: await gateway.executeResourceAction(resource, action.id) };
     },
     retry: false,
   });

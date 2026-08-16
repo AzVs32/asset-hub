@@ -1,28 +1,23 @@
-import { connect, WindowMessenger } from "penpal";
+import { connect } from "penpal";
 import React from "react";
-import type { PluginView, ResourceActionOutput } from "@/domain/plugin";
+import {
+  PLUGIN_API_VERSION,
+  type PluginView,
+  pluginViewKinds,
+  RESOURCE_FRAME_CHANNEL,
+  type ResourceActionOutput,
+} from "@/domain/plugin";
 import type { ResourceAction } from "@/domain/resource";
 import type { PluginKernel, PluginViewRendererProps } from "@/kernel/plugin-kernel";
-import {
-  createPluginFrameHostBridge,
-  pluginFrameApiVersion,
-  pluginFrameChannel,
-} from "../frame-host";
+import { createPluginFrameMessenger, pluginFrameUrl } from "../frame-boundary";
+import { createPluginFrameHostBridge } from "../frame-host";
 
 const MarkdownRenderer = React.lazy(() => import("./markdown-renderer"));
 const MediaRenderer = React.lazy(() => import("./media-renderer"));
 const DownloadRenderer = React.lazy(() => import("./download-renderer"));
 
 export function registerDefaultViewRenderers(kernel: PluginKernel): void {
-  for (const kind of [
-    "text",
-    "markdown",
-    "html",
-    "plugin_frame",
-    "json",
-    "media",
-    "download",
-  ] as const) {
+  for (const kind of pluginViewKinds) {
     kernel.registerView(kind, DefaultViewRenderer);
   }
 }
@@ -111,22 +106,17 @@ function PluginFrameView({
 
   React.useEffect(() => {
     const remoteWindow = ref.current?.contentWindow;
-    if (!source || !remoteWindow || view.plugin_api !== pluginFrameApiVersion) return;
-    const messenger = new WindowMessenger({
-      remoteWindow,
-      // The sandbox intentionally creates an opaque origin. Penpal still binds this exact Window.
-      allowedOrigins: ["*"],
-    });
+    if (!source || !remoteWindow || view.plugin_api !== PLUGIN_API_VERSION) return;
     const connection = connect({
-      messenger,
-      channel: pluginFrameChannel,
+      messenger: createPluginFrameMessenger(remoteWindow),
+      channel: RESOURCE_FRAME_CHANNEL,
       methods: bridge.methods,
     });
     return () => connection.destroy();
   }, [bridge, source, view.plugin_api]);
 
   if (!source) return <PluginError message="The plugin returned an invalid frame URL." />;
-  if (view.plugin_api !== pluginFrameApiVersion)
+  if (view.plugin_api !== PLUGIN_API_VERSION)
     return <PluginError message={`Unsupported Plugin Frame API: ${view.plugin_api}`} />;
   return (
     <iframe
@@ -145,11 +135,6 @@ function PluginError({ message }: { message: string }) {
       {message}
     </p>
   );
-}
-
-function pluginFrameUrl(value: string, resolveUrl: (url: string) => string | null): string | null {
-  if (!/^\/plugins\/[a-z0-9._-]+\/(?!.*(?:^|\/)\.\.(?:\/|$))/.test(value)) return null;
-  return resolveUrl(value);
 }
 
 function htmlWithoutNetwork(html: string): string {

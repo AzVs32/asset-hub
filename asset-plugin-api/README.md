@@ -296,6 +296,10 @@ plugin policy rather than Manifest fields.
 The public browser SDK lives in [`web`](web) and hides the Penpal transport used by the Host. A
 bundled Web application imports `@asset-hub/plugin-web-sdk`; a plain `index.html` can copy and load
 the self-contained `asset-hub-plugin.global.js` build without React, npm, or another framework.
+Transport-free Browser Frame constants and types are exported from
+`@asset-hub/plugin-web-sdk/contract`; the SDK and Web Host consume that same contract. Rust and
+TypeScript contract tests lock its API version, Resource and Directory channels, view kinds, and
+Host-normalized effect kinds to one golden document.
 
 ```ts
 import { connectAssetHubFrame } from "@asset-hub/plugin-web-sdk";
@@ -333,6 +337,10 @@ the Resource and originating Action that created the frame, while Penpal owns re
 timeouts, errors, and connection cleanup. The Host still validates method arguments, available
 Actions, resolved capability, write access, content policy, authorization, and Resource revision.
 The plugin runtime and browser frame never receive storage authority.
+Resource and Directory execution results both expose nullable views and the names of effects already
+applied by the Host. Action input is recursively restricted to bounded JSON objects. A Penpal call
+timeout stops the SDK from waiting but does not cancel Host work, so timed-out mutations must be
+reconciled against refreshed Host state before any retry.
 
 ## Rust API
 

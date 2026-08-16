@@ -10,6 +10,6 @@ export default defineConfig({
       fileName: (format) =>
         format === "es" ? "asset-hub-plugin.js" : "asset-hub-plugin.global.js",
     },
-    sourcemap: true,
+    sourcemap: false,
   },
 });

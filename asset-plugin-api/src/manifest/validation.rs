@@ -7,11 +7,12 @@ use super::{
     MANIFEST_VERSION, ManifestActionAccess, PLUGIN_LOCK_FILE_NAME, PLUGIN_MANIFEST_FILE_NAME,
     PLUGIN_WASM_FILE_NAME, PLUGIN_WEB_ENTRY_FILE_NAME, PluginManifest, PluginManifestLock,
 };
-use crate::protocol::PLUGIN_API_VERSION;
+use crate::protocol::{
+    PLUGIN_API_VERSION, PLUGIN_DIRECTORY_ACTION_EFFECT_KINDS, PLUGIN_RESOURCE_ACTION_EFFECT_KINDS,
+    PLUGIN_VIEW_KINDS,
+};
 use std::collections::HashSet;
 
-const RESOURCE_EFFECTS: &[&str] = &["replace_content", "delete"];
-const DIRECTORY_EFFECTS: &[&str] = &["update", "create_child", "create_tree", "delete"];
 const DIRECTORY_WORKSPACE_CAPABILITY: &str = "workspace";
 const DIRECTORY_WORKSPACE_LOCATION: &str = "directory_workspace";
 
@@ -100,16 +101,6 @@ fn validate_plugin_api_version(value: &str) -> Result<(), String> {
         ))
     }
 }
-
-const SUPPORTED_VIEWS: &[&str] = &[
-    "text",
-    "markdown",
-    "html",
-    "plugin_frame",
-    "json",
-    "media",
-    "download",
-];
 
 fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
     let capabilities = &manifest.capabilities;
@@ -234,7 +225,7 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
             ));
         }
         for view in &action.output.views {
-            if !SUPPORTED_VIEWS.contains(&view.as_str()) {
+            if !PLUGIN_VIEW_KINDS.contains(&view.as_str()) {
                 return Err(format!(
                     "capabilities.resource_actions[`{}`] declares unsupported view `{view}`",
                     action.id
@@ -245,7 +236,7 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
             "capabilities.resource_actions",
             &action.id,
             &action.output.effects,
-            RESOURCE_EFFECTS,
+            PLUGIN_RESOURCE_ACTION_EFFECT_KINDS,
         )?;
         if action
             .output
@@ -401,7 +392,7 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
             .output
             .views
             .iter()
-            .any(|view| !SUPPORTED_VIEWS.contains(&view.as_str()))
+            .any(|view| !PLUGIN_VIEW_KINDS.contains(&view.as_str()))
         {
             return Err(format!(
                 "directory action `{}` must declare only supported views",
@@ -439,7 +430,7 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
             "capabilities.directory_actions",
             &action.id,
             &action.output.effects,
-            DIRECTORY_EFFECTS,
+            PLUGIN_DIRECTORY_ACTION_EFFECT_KINDS,
         )?;
         if action
             .output

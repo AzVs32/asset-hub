@@ -412,10 +412,23 @@ var e = class extends Error {
 	#f = ({ data: e }) => {
 		if (this.#r?.(e)) for (let t of this.#a) t(e);
 	};
-}, z = "asset-hub.plugin-api@5", B = "asset-hub.plugin-frame@5", V = "asset-hub.plugin-directory-frame@5", H = 1e4, U = 3e4;
-async function W(e = {}) {
+}, z = "asset-hub.plugin-api@5", B = "asset-hub.plugin-frame@5", V = "asset-hub.plugin-directory-frame@5", H = [
+	"text",
+	"markdown",
+	"html",
+	"plugin_frame",
+	"json",
+	"media",
+	"download"
+], U = ["replace_content", "delete"], W = [
+	"update",
+	"create_child",
+	"create_tree",
+	"delete"
+], G = 1e4, K = 3e4;
+async function q(e = {}) {
 	if (window.parent === window) throw Error("Asset Hub Plugin Web SDK must run inside a plugin frame.");
-	let t = K(e.connectionTimeoutMs, H, "connectionTimeoutMs"), n = K(e.callTimeoutMs, U, "callTimeoutMs"), r = L({
+	let t = Y(e.connectionTimeoutMs, G, "connectionTimeoutMs"), n = Y(e.callTimeoutMs, K, "callTimeoutMs"), r = L({
 		messenger: new R({
 			remoteWindow: window.parent,
 			allowedOrigins: ["*"]
@@ -436,9 +449,9 @@ async function W(e = {}) {
 		}
 	};
 }
-async function G(e = {}) {
+async function J(e = {}) {
 	if (window.parent === window) throw Error("Asset Hub Directory Plugin Web SDK must run inside a plugin frame.");
-	let t = K(e.connectionTimeoutMs, H, "connectionTimeoutMs"), n = K(e.callTimeoutMs, U, "callTimeoutMs"), r = L({
+	let t = Y(e.connectionTimeoutMs, G, "connectionTimeoutMs"), n = Y(e.callTimeoutMs, K, "callTimeoutMs"), r = L({
 		messenger: new R({
 			remoteWindow: window.parent,
 			allowedOrigins: ["*"]
@@ -461,12 +474,10 @@ async function G(e = {}) {
 		}
 	};
 }
-function K(e, t, n) {
+function Y(e, t, n) {
 	if (e === void 0) return t;
 	if (!Number.isSafeInteger(e) || e <= 0) throw TypeError(`${n} must be a positive safe integer.`);
 	return e;
 }
 //#endregion
-export { z as PLUGIN_API_VERSION, G as connectAssetHubDirectoryFrame, W as connectAssetHubFrame };
-
-//# sourceMappingURL=asset-hub-plugin.js.map
+export { V as DIRECTORY_FRAME_CHANNEL, z as PLUGIN_API_VERSION, B as RESOURCE_FRAME_CHANNEL, J as connectAssetHubDirectoryFrame, q as connectAssetHubFrame, W as directoryActionEffectKinds, H as pluginViewKinds, U as resourceActionEffectKinds };

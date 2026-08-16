@@ -24,7 +24,7 @@ export function DirectoryWorkspaceOutlet({
     queryKey: ["directory-workspace", directory?.id, directory?.revision, action?.id],
     queryFn: () => {
       if (!directory || !action) throw new Error("Directory workspace provider is unavailable.");
-      return gateway.executeDirectoryAction(directory, action);
+      return gateway.executeDirectoryAction(directory, action.id);
     },
     enabled: Boolean(directory && action),
     retry: false,

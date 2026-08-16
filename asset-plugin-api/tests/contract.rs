@@ -1,7 +1,8 @@
 use asset_plugin_api::manifest::{MANIFEST_VERSION, PluginManifest};
 use asset_plugin_api::protocol::{
-    PLUGIN_API_VERSION, PluginActionFailure, PluginResourceActionOutput,
-    PluginResourceActionRequest,
+    PLUGIN_API_VERSION, PLUGIN_DIRECTORY_ACTION_EFFECT_KINDS, PLUGIN_DIRECTORY_FRAME_CHANNEL,
+    PLUGIN_RESOURCE_ACTION_EFFECT_KINDS, PLUGIN_RESOURCE_FRAME_CHANNEL, PLUGIN_VIEW_KINDS,
+    PluginActionFailure, PluginResourceActionOutput, PluginResourceActionRequest,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -130,6 +131,31 @@ fn request_and_output_wire_shapes_match_the_current_goldens() {
     assert_golden_round_trip::<PluginActionFailure>(include_str!(
         "fixtures/action-failure-v2.json"
     ));
+}
+
+#[test]
+fn browser_frame_discriminants_match_the_current_golden() {
+    let expected: Value =
+        serde_json::from_str(include_str!("fixtures/plugin-frame-contract-v5.json")).unwrap();
+
+    assert_eq!(expected["plugin_api"], PLUGIN_API_VERSION);
+    assert_eq!(
+        expected["channels"]["resource"],
+        PLUGIN_RESOURCE_FRAME_CHANNEL
+    );
+    assert_eq!(
+        expected["channels"]["directory"],
+        PLUGIN_DIRECTORY_FRAME_CHANNEL
+    );
+    assert_eq!(expected["view_kinds"], json!(PLUGIN_VIEW_KINDS));
+    assert_eq!(
+        expected["resource_effect_kinds"],
+        json!(PLUGIN_RESOURCE_ACTION_EFFECT_KINDS)
+    );
+    assert_eq!(
+        expected["directory_effect_kinds"],
+        json!(PLUGIN_DIRECTORY_ACTION_EFFECT_KINDS)
+    );
 }
 
 #[test]

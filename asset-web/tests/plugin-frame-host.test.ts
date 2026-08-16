@@ -60,18 +60,18 @@ describe("Plugin Frame host bridge", () => {
     const inspect = action({ id: "example.inspect" });
     const item = resource([inspect]);
     const expected = pluginOutput(inspect.id);
-    const executeAction = vi.fn().mockResolvedValue(expected);
+    const executeResourceAction = vi.fn().mockResolvedValue(expected);
     const bridge = createPluginFrameHostBridge({
       resource: item,
       frameResourceId: "resource-1",
       frameActionId: inspect.id,
-      gateway: { executeAction } as unknown as AssetGateway,
+      gateway: { executeResourceAction } as unknown as AssetGateway,
     });
 
     await expect(
       bridge.methods.executeResourceAction(inspect.id, { operation: "load" }),
     ).resolves.toBe(expected);
-    expect(executeAction).toHaveBeenCalledWith(item, inspect.id, { operation: "load" });
+    expect(executeResourceAction).toHaveBeenCalledWith(item, inspect.id, { operation: "load" });
     await expect(bridge.methods.executeResourceAction("missing", {})).rejects.toThrow(
       "Action missing is not available.",
     );
@@ -94,25 +94,25 @@ describe("Plugin Frame host bridge", () => {
       view: null,
       effects: ["delete"],
     };
-    const executeAction = vi.fn().mockResolvedValue(expected);
+    const executeResourceAction = vi.fn().mockResolvedValue(expected);
     const confirmAction = vi.fn().mockResolvedValue(false);
     const bridge = createPluginFrameHostBridge({
       resource: resource([remove]),
       frameResourceId: "resource-1",
       frameActionId: "example.frame",
-      gateway: { executeAction } as unknown as AssetGateway,
+      gateway: { executeResourceAction } as unknown as AssetGateway,
       confirmAction,
     });
 
     await expect(bridge.methods.executeResourceAction(remove.id, {})).rejects.toThrow(
       `Action ${remove.id} was not confirmed.`,
     );
-    expect(executeAction).not.toHaveBeenCalled();
+    expect(executeResourceAction).not.toHaveBeenCalled();
 
     confirmAction.mockResolvedValueOnce(true);
     await expect(bridge.methods.executeResourceAction(remove.id, {})).resolves.toBe(expected);
     expect(confirmAction).toHaveBeenCalledWith("Delete Example?");
-    expect(executeAction).toHaveBeenCalledWith(resource([remove]), remove.id, {});
+    expect(executeResourceAction).toHaveBeenCalledWith(resource([remove]), remove.id, {});
   });
 });
 
@@ -137,7 +137,7 @@ describe("Directory Plugin Frame host bridge", () => {
     await expect(
       bridge.methods.executeDirectoryAction(inspect.id, { operation: "load" }),
     ).resolves.toBe(expected);
-    expect(executeDirectoryAction).toHaveBeenCalledWith(item, inspect, { operation: "load" });
+    expect(executeDirectoryAction).toHaveBeenCalledWith(item, inspect.id, { operation: "load" });
     await expect(bridge.methods.executeDirectoryAction("missing", {})).rejects.toThrow(
       "Action missing is not available.",
     );
@@ -180,6 +180,31 @@ describe("Directory Plugin Frame host bridge", () => {
     await expect(bridge.methods.navigateToDirectory("../outside")).rejects.toThrow(
       "Directory path must be a canonical relative path.",
     );
+  });
+});
+
+describe("Plugin Frame aggregate binding", () => {
+  it("never rebinds an existing Resource or Directory frame", () => {
+    const currentResource = resource([]);
+    const resourceBridge = createPluginFrameHostBridge({
+      resource: currentResource,
+      frameResourceId: currentResource.id,
+      frameActionId: "example.frame",
+      gateway: {} as AssetGateway,
+    });
+    expect(() =>
+      resourceBridge.updateResource({ ...currentResource, id: "another-resource" }),
+    ).toThrow("cannot change its bound Resource");
+
+    const currentDirectory = directory([]);
+    const directoryBridge = createDirectoryPluginFrameHostBridge({
+      directory: currentDirectory,
+      frameDirectoryId: currentDirectory.id,
+      gateway: {} as AssetGateway,
+    });
+    expect(() =>
+      directoryBridge.updateDirectory({ ...currentDirectory, id: "another-directory" }),
+    ).toThrow("cannot change its bound Directory");
   });
 });
 

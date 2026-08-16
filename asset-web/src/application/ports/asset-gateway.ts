@@ -2,7 +2,6 @@ import type { CurrentUser, ManagedUser, UserStatus } from "@/domain/auth";
 import type { DirectoryActionOutput, JsonObject, ResourceActionOutput } from "@/domain/plugin";
 import type {
   Directory,
-  DirectoryAction,
   DirectoryKind,
   DirectoryListing,
   DirectoryPatch,
@@ -36,15 +35,14 @@ export interface AssetGateway {
   updateDirectory(directory: Directory, patch: DirectoryPatch): Promise<Directory>;
   executeDirectoryAction(
     directory: Directory,
-    action: DirectoryAction,
+    actionId: string,
     input?: JsonObject,
   ): Promise<DirectoryActionOutput>;
 
-  executeAction(
+  executeResourceAction(
     resource: Resource,
     actionId: string,
     input?: JsonObject,
-    expectedRevision?: number,
   ): Promise<ResourceActionOutput>;
   replaceResourceText(resource: Resource, text: string): Promise<Resource>;
   resourceContentUrl(resourceId: string): string;

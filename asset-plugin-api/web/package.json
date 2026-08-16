@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "packageManager": "npm@10.9.7",
   "engines": {
-    "node": ">=22 <23"
+    "node": ">=22.12 <23"
   },
   "files": [
     "dist"
@@ -15,21 +15,25 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/asset-hub-plugin.js"
-    }
+    },
+    "./contract": {
+      "types": "./dist/contract.d.ts",
+      "import": "./dist/contract.js"
+    },
+    "./global": "./dist/asset-hub-plugin.global.js"
   },
   "types": "./dist/index.d.ts",
   "module": "./dist/asset-hub-plugin.js",
   "scripts": {
-    "build": "vite build && tsc --project tsconfig.json --emitDeclarationOnly",
-    "check": "biome ci . && tsc --project tsconfig.json --noEmit",
+    "build": "vite build && vite build --config vite.contract.config.ts && tsc --project tsconfig.json --emitDeclarationOnly",
+    "check": "biome ci . && tsc --project tsconfig.json --noEmit && tsc --project tsconfig.tests.json --noEmit",
     "format": "biome check --write .",
-    "typecheck": "tsc --project tsconfig.json --noEmit"
-  },
-  "dependencies": {
-    "penpal": "^7.0.6"
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "typecheck": "tsc --project tsconfig.json --noEmit && tsc --project tsconfig.tests.json --noEmit"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.4",
+    "penpal": "^7.0.6",
     "typescript": "^5.9.3",
     "vite": "^8.1.5"
   }

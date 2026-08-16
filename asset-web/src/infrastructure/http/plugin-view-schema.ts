@@ -1,5 +1,16 @@
 import { z } from "zod";
-import { type PluginView, pluginViewKinds } from "@/domain/plugin";
+import { type JsonValue, type PluginView, pluginViewKinds } from "@/domain/plugin";
+
+const jsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
+  z.union([
+    z.null(),
+    z.boolean(),
+    z.number(),
+    z.string(),
+    z.array(jsonValueSchema),
+    z.record(z.string(), jsonValueSchema),
+  ]),
+);
 
 const pluginViewSchema = z.discriminatedUnion("view", [
   z.object({ view: z.literal("text"), text: z.string() }),
@@ -11,7 +22,7 @@ const pluginViewSchema = z.discriminatedUnion("view", [
     title: z.string().optional(),
     url: z.string(),
   }),
-  z.object({ view: z.literal("json"), data: z.unknown() }),
+  z.object({ view: z.literal("json"), data: jsonValueSchema }),
   z.object({
     view: z.literal("media"),
     mime_type: z.string(),

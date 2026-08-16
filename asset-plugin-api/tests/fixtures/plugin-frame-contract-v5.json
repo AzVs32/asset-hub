@@ -1,0 +1,18 @@
+{
+  "plugin_api": "asset-hub.plugin-api@5",
+  "channels": {
+    "resource": "asset-hub.plugin-frame@5",
+    "directory": "asset-hub.plugin-directory-frame@5"
+  },
+  "view_kinds": [
+    "text",
+    "markdown",
+    "html",
+    "plugin_frame",
+    "json",
+    "media",
+    "download"
+  ],
+  "resource_effect_kinds": ["replace_content", "delete"],
+  "directory_effect_kinds": ["update", "create_child", "create_tree", "delete"]
+}

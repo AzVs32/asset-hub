@@ -3,11 +3,14 @@ import { AuthenticationRequiredError } from "@/application/errors";
 import type { AssetGateway } from "@/application/ports/asset-gateway";
 import type { CurrentUser, ManagedUser, UserStatus } from "@/domain/auth";
 import { normalizeDirectory } from "@/domain/directory-path";
-import type {
-  DirectoryActionOutput,
-  JsonObject,
-  PluginDiagnostic,
-  ResourceActionOutput,
+import {
+  type DirectoryActionOutput,
+  directoryActionEffectKinds,
+  type JsonObject,
+  type JsonValue,
+  type PluginDiagnostic,
+  type ResourceActionOutput,
+  resourceActionEffectKinds,
 } from "@/domain/plugin";
 import type {
   Directory,
@@ -310,14 +313,14 @@ export class OpenApiAssetGateway implements AssetGateway {
 
   async executeDirectoryAction(
     directory: Directory,
-    action: DirectoryAction,
+    actionId: string,
     input: JsonObject = {},
   ): Promise<DirectoryActionOutput> {
-    if (!directory.actions.some((candidate) => candidate.id === action.id)) {
-      throw new Error(`Action ${action.id} is not available for directory ${directory.id}`);
-    }
+    const action = directory.actions.find((candidate) => candidate.id === actionId);
+    if (!action)
+      throw new Error(`Action ${actionId} is not available for directory ${directory.id}`);
     const result = await this.#client.POST("/directories/{id}/actions/{action}", {
-      params: { path: { id: directory.id, action: action.id } },
+      params: { path: { id: directory.id, action: actionId } },
       body: {
         input,
         ...(action.access === "write" ? { expected_revision: directory.revision } : {}),
@@ -333,21 +336,18 @@ export class OpenApiAssetGateway implements AssetGateway {
     };
   }
 
-  async executeAction(
+  async executeResourceAction(
     resource: Resource,
     actionId: string,
     input: JsonObject = {},
-    expectedRevision?: number,
   ): Promise<ResourceActionOutput> {
     const action = resource.actions.find((candidate) => candidate.id === actionId);
     if (!action) throw new Error(`Action ${actionId} is not available for resource ${resource.id}`);
-    const revision =
-      expectedRevision ?? (action.access === "write" ? resource.revision : undefined);
     const result = await this.#client.POST("/resources/{id}/actions/{action}", {
       params: { path: { id: resource.id, action: actionId } },
       body: {
         input,
-        ...(revision === undefined ? {} : { expected_revision: revision }),
+        ...(action.access === "write" ? { expected_revision: resource.revision } : {}),
       },
     });
     const data = expectData(result);
@@ -593,11 +593,11 @@ function mapAction(value: ApiAction): ResourceAction {
 }
 
 function resourceEffectKind(value: string): import("@/domain/resource").ResourceActionEffectKind {
-  return enumValue(value, ["replace_content", "delete"]);
+  return enumValue(value, resourceActionEffectKinds);
 }
 
 function directoryEffectKind(value: string): import("@/domain/resource").DirectoryActionEffectKind {
-  return enumValue(value, ["update", "create_child", "create_tree", "delete"]);
+  return enumValue(value, directoryActionEffectKinds);
 }
 
 function mapDiagnostic(value: Schemas["PluginDiagnosticResponse"]): PluginDiagnostic {
@@ -606,7 +606,7 @@ function mapDiagnostic(value: Schemas["PluginDiagnosticResponse"]): PluginDiagno
     message: value.message,
     severity: enumValue(value.severity, ["info", "warning", "error"]),
     retryable: value.retryable,
-    ...(value.details !== undefined ? { details: value.details } : {}),
+    ...(value.details !== undefined ? { details: value.details as JsonValue } : {}),
   };
 }
 

@@ -1,9 +1,8 @@
 import type { AssetGateway } from "@/application/ports/asset-gateway";
 import { normalizeDirectory } from "@/domain/directory-path";
-import type { DirectoryActionOutput, JsonObject } from "@/domain/plugin";
+import type { DirectoryActionOutput } from "@/domain/plugin";
 import type { Directory } from "@/domain/resource";
-
-export const directoryPluginFrameChannel = "asset-hub.plugin-directory-frame@5";
+import { parseActionId, parseActionInput } from "./frame-input";
 
 export interface DirectoryPluginFrameHostMethods
   extends Record<string, (...args: never[]) => unknown> {
@@ -46,7 +45,7 @@ export function createDirectoryPluginFrameHostBridge({
       async executeDirectoryAction(actionValue, inputValue) {
         const current = boundDirectory();
         const actionId = parseActionId(actionValue);
-        const input = parseInput(inputValue);
+        const input = parseActionInput(inputValue);
         const action = current.actions.find((candidate) => candidate.id === actionId);
         if (!action) throw new Error(`Action ${actionId} is not available.`);
         if (action.ui.confirmation) {
@@ -55,7 +54,7 @@ export function createDirectoryPluginFrameHostBridge({
           );
           if (!confirmed) throw new Error(`Action ${actionId} was not confirmed.`);
         }
-        const result = await gateway.executeDirectoryAction(current, action, input);
+        const result = await gateway.executeDirectoryAction(current, action.id, input);
         if (action.access === "write") await onDirectoryChanged?.();
         return result;
       },
@@ -70,26 +69,12 @@ export function createDirectoryPluginFrameHostBridge({
       },
     },
     updateDirectory(nextDirectory) {
-      if (nextDirectory.id === directory.id && nextDirectory.revision >= directory.revision) {
-        directory = nextDirectory;
+      if (nextDirectory.id !== frameDirectoryId) {
+        throw new Error("The plugin frame cannot change its bound Directory.");
       }
+      if (nextDirectory.revision >= directory.revision) directory = nextDirectory;
     },
   };
-}
-
-function parseActionId(value: unknown): string {
-  if (typeof value !== "string" || !value || value.length > 128) {
-    throw new TypeError("Action ID must be a non-empty string of at most 128 characters.");
-  }
-  return value;
-}
-
-function parseInput(value: unknown): JsonObject {
-  if (value === undefined) return {};
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new TypeError("Action input must be a JSON object.");
-  }
-  return value as JsonObject;
 }
 
 function parseDirectoryPath(value: unknown): string {

@@ -96,6 +96,15 @@ including deletion, require a Host confirmation before the Gateway call is made.
 Directory frames use a separate Directory-bound bridge to execute exposed Directory Actions,
 refresh the current Directory, and request canonical Host navigation. They cannot access Core
 workspace slots or address arbitrary Directory IDs.
+Both bridges pass only an Action ID to the Gateway, which resolves the canonical Action metadata
+from the current bound aggregate before deciding access and revision behavior. They share the same
+bounded JSON input parser, immutable aggregate-ID binding, monotonic snapshot update rule, plugin
+asset URL validation, and opaque-origin messenger construction. Resource text replacement and
+Directory refresh/navigation remain deliberately aggregate-specific capabilities.
+The Host imports the API version, Resource and Directory channels, view kinds, action result types,
+and effect kinds from `@asset-hub/plugin-web-sdk/contract`; it does not maintain a second copy of the
+Browser Frame protocol. Frame action input is recursively validated as a JSON object and is bounded
+to 32 nested levels and 10,000 values before it reaches the Gateway.
 
 Directories are addressed by stable UUID throughout the domain and Gateway. Paths are navigation
 labels only. Directory update/delete and Resource or Directory actions forward the aggregate's

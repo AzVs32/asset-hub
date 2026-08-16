@@ -112,7 +112,7 @@ export function useResourceCommands() {
     mutationFn: async ({ resource, action }: { resource: Resource; action: ResourceAction }) => ({
       resource,
       action,
-      output: await gateway.executeAction(resource, action.id),
+      output: await gateway.executeResourceAction(resource, action.id),
     }),
     onSuccess: async (result) => {
       if (result.output.view) setActionResult(result);
@@ -133,7 +133,7 @@ export function useResourceCommands() {
     }) => ({
       directory,
       action,
-      output: await gateway.executeDirectoryAction(directory, action),
+      output: await gateway.executeDirectoryAction(directory, action.id),
     }),
     onSuccess: async (result) => {
       if (result.output.view) setDirectoryActionResult(result);

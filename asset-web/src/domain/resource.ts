@@ -1,9 +1,9 @@
-import type { PluginViewKind } from "./plugin";
+import type { DirectoryActionEffectKind, PluginViewKind, ResourceActionEffectKind } from "./plugin";
+
+export type { DirectoryActionEffectKind, ResourceActionEffectKind } from "./plugin";
 
 export type ActionAccess = "read" | "write";
 export type ContentDelivery = "auto" | "inline" | "reference";
-export type ResourceActionEffectKind = "replace_content" | "delete";
-export type DirectoryActionEffectKind = "update" | "create_child" | "create_tree" | "delete";
 export type DirectoryResourceAccess = "none" | "metadata" | "content";
 export interface ActionUi {
   group: string | null;

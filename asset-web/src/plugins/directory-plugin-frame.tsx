@@ -1,13 +1,15 @@
-import { connect, WindowMessenger } from "penpal";
+import { connect } from "penpal";
 import React from "react";
 import type { AssetGateway } from "@/application/ports/asset-gateway";
-import type { DirectoryActionOutput, PluginView } from "@/domain/plugin";
-import type { Directory } from "@/domain/resource";
 import {
-  createDirectoryPluginFrameHostBridge,
-  directoryPluginFrameChannel,
-} from "./directory-frame-host";
-import { pluginFrameApiVersion } from "./frame-host";
+  DIRECTORY_FRAME_CHANNEL,
+  type DirectoryActionOutput,
+  PLUGIN_API_VERSION,
+  type PluginView,
+} from "@/domain/plugin";
+import type { Directory } from "@/domain/resource";
+import { createDirectoryPluginFrameHostBridge } from "./directory-frame-host";
+import { createPluginFrameMessenger, pluginFrameUrl } from "./frame-boundary";
 
 export function DirectoryPluginFrame({
   directory,
@@ -56,17 +58,17 @@ export function DirectoryPluginFrame({
 
   React.useEffect(() => {
     const remoteWindow = ref.current?.contentWindow;
-    if (!source || !remoteWindow || view.plugin_api !== pluginFrameApiVersion) return;
+    if (!source || !remoteWindow || view.plugin_api !== PLUGIN_API_VERSION) return;
     const connection = connect({
-      messenger: new WindowMessenger({ remoteWindow, allowedOrigins: ["*"] }),
-      channel: directoryPluginFrameChannel,
+      messenger: createPluginFrameMessenger(remoteWindow),
+      channel: DIRECTORY_FRAME_CHANNEL,
       methods: bridge.methods,
     });
     return () => connection.destroy();
   }, [bridge, source, view.plugin_api]);
 
   if (!source) return <FrameError message="The plugin returned an invalid frame URL." />;
-  if (view.plugin_api !== pluginFrameApiVersion) {
+  if (view.plugin_api !== PLUGIN_API_VERSION) {
     return <FrameError message={`Unsupported Plugin Frame API: ${view.plugin_api}`} />;
   }
   return (
@@ -78,11 +80,6 @@ export function DirectoryPluginFrame({
       title={view.title ?? "Directory plugin workspace"}
     />
   );
-}
-
-function pluginFrameUrl(value: string, resolveUrl: (url: string) => string | null): string | null {
-  if (!/^\/plugins\/[a-z0-9._-]+\/(?!.*(?:^|\/)\.\.(?:\/|$))/.test(value)) return null;
-  return resolveUrl(value);
 }
 
 function FrameError({ message }: { message: string }) {

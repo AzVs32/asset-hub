@@ -269,7 +269,7 @@ function DirectoryThumbnail({ directory }: { directory: Directory }) {
   const action = kernel.directoryThumbnailAction(directory);
   const execute = () => {
     if (!action) throw new Error("Directory thumbnail action is unavailable");
-    return gateway.executeDirectoryAction(directory, action);
+    return gateway.executeDirectoryAction(directory, action.id);
   };
   const result = useQuery({
     queryKey: ["directory-thumbnail", directory.id, action?.id],
@@ -377,7 +377,7 @@ function ResourceThumbnail({ resource }: { resource: Resource }) {
   const action = kernel.thumbnailAction(resource);
   const execute = () => {
     if (!action) throw new Error("Resource thumbnail action is unavailable");
-    return gateway.executeAction(resource, action.id);
+    return gateway.executeResourceAction(resource, action.id);
   };
   const result = useQuery({
     queryKey: ["thumbnail", resource.id, resource.updatedAt, action?.id],
