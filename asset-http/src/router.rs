@@ -7,11 +7,11 @@ use crate::state::HttpState;
 use asset_core::service::ResourceService;
 use asset_core::service::{AuthorizationService, UserService};
 use asset_runtime::{PluginWebAssets, UploadFinalizationDispatcher};
-use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderName, Method, StatusCode};
 use axum::middleware;
 use axum::routing::{delete, get, post};
+use axum::{Json, Router};
 use axum_login::AuthManagerLayerBuilder;
 use std::sync::Arc;
 use tower::ServiceBuilder;
@@ -20,7 +20,10 @@ use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 use tower_sessions::{Expiry, SessionManagerLayer, cookie::SameSite, session_store::SessionStore};
 use utoipa::OpenApi;
-use utoipa_swagger_ui::SwaggerUi;
+
+async fn openapi_document() -> Json<utoipa::openapi::OpenApi> {
+    Json(ApiDoc::openapi())
+}
 
 /// 使用显式边界配置和插件 web 根目录构建 HTTP 路由。
 pub fn build_router(
@@ -32,6 +35,7 @@ pub fn build_router(
 ) -> Router {
     let mut router = Router::new()
         .route("/health", get(handlers::health))
+        .route("/api-docs/openapi.json", get(openapi_document))
         .route(
             "/plugins/{plugin_id}/{*path}",
             get(handlers::plugin_web_asset),
@@ -75,11 +79,6 @@ pub fn build_router(
     } else {
         router.route("/resources/{id}/purge", delete(handlers::purge_disabled))
     };
-
-    if options.enable_swagger {
-        router = router
-            .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()));
-    }
 
     let upload_router = Router::new()
         .route("/uploads", post(handlers::create_upload))

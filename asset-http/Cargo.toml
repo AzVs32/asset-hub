@@ -33,5 +33,4 @@ tower-http.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 utoipa.workspace = true
-utoipa-swagger-ui.workspace = true
 zip.workspace = true

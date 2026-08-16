@@ -1,7 +1,8 @@
 # Asset HTTP
 
 `asset-http` is the Axum transport and the composition root for HTTP-only policy. It owns routing,
-cookie authentication, OpenAPI, request limits, CORS, and the authentication-session store.
+cookie authentication, the OpenAPI JSON contract, request limits, CORS, and the
+authentication-session store.
 
 Business handlers receive Core application services. Resource and Directory kind definitions are
 queried through `ResourceService`/`DirectoryService`, not through kind-registry Ports obtained from
@@ -34,6 +35,13 @@ remain available as direct HTTP use cases.
 Directory downloads use ordinary ZIP entries for directories and resources up to 4 GiB. ZIP64 is
 enabled only for an individual resource that exceeds the ZIP32 size limit, keeping ordinary
 downloads compatible with desktop archive tools without removing large-resource support.
+
+## OpenAPI contract
+
+The generated OpenAPI document is exposed directly as JSON at `/api-docs/openapi.json`. Asset Hub
+does not bundle or serve Swagger UI. The JSON endpoint remains public so `asset-web` can regenerate
+its checked-in transport declarations with `npm run generate:api`; browsers do not request this
+document during normal application use.
 
 ## Session storage boundary
 

@@ -21,16 +21,6 @@ struct HttpCli {
     #[arg(long, default_value = DEFAULT_HTTP_ADDR)]
     addr: SocketAddr,
 
-    /// Enable Swagger UI and the OpenAPI document.
-    #[arg(
-        long,
-        default_value_t = true,
-        num_args = 0..=1,
-        default_missing_value = "true",
-        action = ArgAction::Set
-    )]
-    enable_swagger: bool,
-
     /// Enable the permanent resource purge endpoint.
     #[arg(
         long,
@@ -80,7 +70,6 @@ pub enum CorsPolicy {
 /// HTTP 路由边界配置。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RouterOptions {
-    pub enable_swagger: bool,
     pub enable_purge: bool,
     pub cors: CorsPolicy,
     pub request_timeout: Duration,
@@ -95,7 +84,6 @@ pub struct SessionOptions {
 impl Default for RouterOptions {
     fn default() -> Self {
         Self {
-            enable_swagger: true,
             enable_purge: true,
             cors: CorsPolicy::None,
             request_timeout: Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS),
@@ -119,7 +107,6 @@ impl HttpSettings {
     ///
     /// - `--addr`：监听地址，默认 `127.0.0.1:8080`。
     /// - `--config`：可选配置文件路径，未指定时使用默认 `config.toml`。
-    /// - `--enable-swagger`：是否暴露 Swagger UI，默认 `true`。
     /// - `--enable-purge`：是否开放物理删除接口，默认 `true`。
     /// - `--cors-allowed-origins`：逗号分隔的显式 origin，不允许 `*`。
     /// - `--request-timeout-secs`：普通请求总超时秒数，默认 `30`；不限制流式上传总时长。
@@ -133,7 +120,6 @@ impl HttpSettings {
 
     fn from_cli_args(cli: HttpCli) -> Self {
         let router_options = RouterOptions {
-            enable_swagger: cli.enable_swagger,
             enable_purge: cli.enable_purge,
             cors: cli.cors_allowed_origins.unwrap_or(CorsPolicy::None),
             request_timeout: Duration::from_secs(cli.request_timeout_secs),
