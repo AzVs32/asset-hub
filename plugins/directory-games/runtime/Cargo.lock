@@ -53,7 +53,6 @@ name = "directory-games-plugin"
 version = "0.1.0"
 dependencies = [
  "asset-plugin-sdk",
- "extism-pdk",
 ]
 
 [[package]]

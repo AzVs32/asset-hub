@@ -137,11 +137,12 @@ source, and copies a delivery snapshot of it into the target:
 plugins/resource-text/build.sh
 plugins/resource-image/build.sh
 plugins/azvs-epub/build.sh
-plugins/azvs-games/build.sh
+plugins/directory-games/build.sh
 cargo test --manifest-path plugins/resource-text/runtime/Cargo.toml
 cargo test --manifest-path plugins/resource-image/runtime/Cargo.toml
 cargo test --manifest-path plugins/azvs-epub/runtime/Cargo.toml
-cargo test --manifest-path plugins/azvs-games/runtime/Cargo.toml
+cargo test --manifest-path plugins/directory-games/runtime/Cargo.toml
 (cd plugins/resource-text/web && npm run typecheck && npm run build)
 (cd plugins/azvs-epub/web && npm run typecheck && npm run build)
+(cd plugins/directory-games/web && npm run typecheck && npm run lint && npm run build)
 ```

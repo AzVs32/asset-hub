@@ -1,0 +1,79 @@
+# Directory Games plugin
+
+`directory.games` contributes a dedicated React workspace for `directory:games` and game entries
+of kind `directory:games:item`.
+
+The Host supplies bounded child/resource reads and the generic `create_tree` effect. This plugin
+owns the game model: creating a game emits a game directory, `public/`, a generated `README.md`, and
+an empty `HASH.md` reserved for a later integrity workflow. The README is the default content shown
+by both the library card and game workspace.
+
+The Rust runtime consumes these capabilities through bounded `DirectoryContext` queries and builds
+the scaffold with the SDK `Tree` response builder. The React frame imports
+`@asset-hub/plugin-web-sdk`, loads workspace data through `directory.games.workspace`, invokes
+`directory.games.create`, and delegates Directory navigation to the Host.
+
+Generated Markdown resources do not name a Kind owned by another plugin. Directory Games leaves
+their Kind unset in the `create_tree` output, allowing the Host to detect an installed
+format-specific Kind or fall back to `core:resource`. The plugin therefore has no dependency on
+`resource.text`.
+
+`directory:games:item` inherits from `directory:games`, so the Kind hierarchy reflects that a game
+entry belongs to the Games model and receives the same workspace capabilities. This inheritance
+does not restrict physical placement: users may assign `directory:games:item` to a game directory
+under any Directory Kind. The Games Kind declares it as `default_child_kind`, so new generic direct
+children and existing generic children present when a Directory becomes Games are automatically
+reclassified as game entries. Explicit non-Core child Kinds are preserved.
+
+## Build
+
+Requires Rust with the `wasm32-unknown-unknown` target and Node.js 22
+(`web/.node-version` pins the tested Node.js release). Prepare them once:
+
+```bash
+rustup target add wasm32-unknown-unknown
+cd asset-plugin-sdk/web
+npm ci
+cd ../../plugins/directory-games/web
+npm ci
+cd ../../..
+```
+
+Build and install from the repository root:
+
+```bash
+plugins/directory-games/build.sh
+cargo run --bin asset plugin --install plugins/directory-games/asset-plugin-target
+```
+
+<details>
+<summary>Build details</summary>
+
+`build.sh` rebuilds the local Web SDK dependency, compiles the Wasm runtime, builds the React
+application, and writes these generated files to:
+
+```text
+plugins/directory-games/asset-plugin-target/
+├── manifest.json
+├── plugin.wasm
+├── index.html
+└── assets/
+```
+
+The root `manifest.json` remains the only Manifest that authors edit. The build refreshes its target
+snapshot and does not generate `manifest.lock.json` or call the Asset CLI. `asset plugin --install`
+snapshots the target, generates and verifies the installed lock, and does not modify
+`asset-plugin-target`.
+
+Run the runtime and Web checks independently with:
+
+```bash
+cargo test --manifest-path plugins/directory-games/runtime/Cargo.toml
+cd plugins/directory-games/web
+npm run typecheck
+npm run lint
+npm run build
+cd ../../..
+```
+
+</details>

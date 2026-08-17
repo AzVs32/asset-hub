@@ -6,7 +6,7 @@
     "name": "Game Hub",
     "version": "0.1.0",
     "publisher": "AzVs",
-    "description": "A dedicated game library workspace."
+    "description": "A dedicated game library workspace backed by ordinary Asset Hub directories and resources."
   },
   "runtime": {
     "type": "extism",
@@ -57,6 +57,7 @@
         "id": "directory.games.workspace",
         "provides": "workspace",
         "label": "Games workspace",
+        "description": "Open the dedicated game library experience.",
         "handler": "render_workspace",
         "applies_to": {
           "kinds": [
@@ -86,6 +87,7 @@
       {
         "id": "directory.games.create",
         "label": "Add Game",
+        "description": "Create a game directory with README.md, HASH.md and public/.",
         "handler": "create_game",
         "applies_to": {
           "kinds": [

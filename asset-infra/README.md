@@ -23,53 +23,29 @@ driving adapter. `asset-runtime` starts it with `ResourceService` and owns its l
 Built-in kinds and actions are Rust Host definitions with private typed handler bindings. They are
 not parsed through `asset_plugin_sdk::manifest::PluginManifest` and never appear in the external package
 catalog. Every filesystem package is an Extism/Wasm package; `runtime.type = "builtin"` is rejected.
-## Resource kind and capability tree
 
-The following is the complete Resource kind tree assembled by the Host and bundled plugins. The
-annotation after each kind is its typed definition origin. `core:resource` is the default kind.
+## Kind and capability catalogs
 
-```text
-core:resource  [builtin:core.resource; default]
-├─ resource:markdown  [plugin:resource.text]
-└─ azvs:epub  [plugin:azvs.epub]
-```
+`core:resource` is the Host-owned default Resource Kind. External Resource and Directory Kinds,
+Actions, and capability providers are discovered from verified plugin Manifests at runtime.
+Infrastructure must not assume that any particular external plugin is installed, so its catalog
+boundary does not define or enumerate a fixed external Kind tree.
 
 Resource capabilities are singleton providers, not generic action names. For each capability, the
 Host selects the provider declared on the nearest kind in the Resource lineage. A child provider
 therefore replaces, rather than coexists with, its ancestor's provider. The currently supported
 Resource capabilities are `thumbnail` and `text_edit`.
 
-| Kind | Resolved capability providers | Other available actions |
-| --- | --- | --- |
-| `core:resource` | matching images receive `thumbnail` → `resource.image.thumbnail`; matching text files receive `text_edit` → `resource.text.edit` | `resource.text.read` when matched; `core.resource.download`; effect-only action `core.resource.delete` |
-| `resource:markdown` | `text_edit` → `resource.text.edit` | `resource.text.read`; inherits download and delete |
-| `azvs:epub` | `thumbnail` → `azvs.epub.thumbnail` | inherits download and delete; `azvs.epub.render` |
-
-The Host does not register a generic text Resource kind or built-in text reader/editor.
-`resource:markdown` is contributed directly beneath `core:resource` by the `resource.text` plugin
-and detects only the Markdown MIME types and extensions declared in that plugin's Manifest. The
-same plugin declares an ordinary read Action and the `text_edit` provider on `core:resource` with
-Markdown MIME and supported-extension matchers, so
-`.txt`, `.c`, `.cpp`, and `.h` retain `core:resource` while receiving the basic text interface;
-Markdown descendants inherit those Actions.
-The `resource.image` plugin declares no Kind. Its `thumbnail` provider applies on `core:resource`
-when the content MIME is `image/*` or the filename has a supported image extension, so matching
-files remain `core:resource`. The Host registers neither image nor video Kinds. `azvs:epub` detects
-only the MIME types and extensions declared in its plugin manifest. `core:document` is not a
-registered Resource kind.
-
-The Host provides no generic Resource or Directory thumbnail Action. When no plugin thumbnail
-provider applies, the Web client renders its local File or Folder icon without issuing an Action
-request. The Host declares `core.resource.delete` and `core.directory.delete` as ordinary write Actions in
-the same discovery catalogs. Their built-in handlers return no View and request one `delete`
-effect; Core applies it through the secured resource soft-delete or empty-directory-delete use
-case. External plugins may declare and return the same effect only when their Manifest requests
+The Host-owned catalog provides no generic Resource or Directory thumbnail Action; any concrete
+thumbnail provider comes from an external Manifest. The Host declares `core.resource.delete` and
+`core.directory.delete` as ordinary write Actions in the same discovery catalogs. Their built-in
+handlers return no View and request one `delete` effect; Core applies it through the secured
+resource soft-delete or empty-directory-delete use case. External plugins may declare and return
+the same effect only when their Manifest requests
 `resource.delete` or `directory.delete`, the corresponding `[plugin.grants]` switch is enabled,
 and the current user is authorized to delete that aggregate. Delete cannot be combined with a
 different effect in one action output.
-`resource.image.thumbnail` returns the authorized image content URL as a media view; image bytes do
-not cross the Wasm boundary. `azvs.games.thumbnail` provides actual Directory thumbnails for the
-Games kinds. Neither fallback icon is represented as a capability provider.
+
 External actions retain their provider-owned IDs and may provide a Host-recognized capability for a
 more specific kind. Resource actions recognize `thumbnail` and `text_edit`; Directory
 actions recognize `thumbnail` and `workspace`. A Directory `workspace` provider is read-only,
@@ -80,13 +56,13 @@ thumbnail-slot actions that do not provide `thumbnail`, and tied nearest provide
 Ordinary Resource and Directory actions declared on an ancestor kind are inherited by its
 descendants. Directory action discovery and execution use the same lineage-resolved set, so an
 inherited action does not need to repeat every descendant kind in its declaration.
+
 When a plugin Resource capability provider omits its Manifest label, catalog assembly inherits the
 normalized label from the nearest ancestor provider for that capability; an explicit label remains
-an override, and a missing ancestor is a startup error. `resource.text.read` is an ordinary Action
-with its own label. Because the Host has no text editing provider, `resource.text.edit` also declares
-its own label. An external `text_edit` provider must declare write access and the specific
-`resource.content.replace` permission; generic
-Resource write permissions are not accepted.
+an override, and a missing ancestor is a startup error. An external `text_edit` provider must
+declare write access and the specific `resource.content.replace` permission; generic Resource write
+permissions are not accepted.
+
 At the package boundary, infrastructure explicitly converts external Manifest capabilities into
 `asset-core` Action/Kind definitions. Extism handler names remain in private adapter bindings and
 are not copied into Core models.
@@ -109,7 +85,7 @@ empty, non-canonical, uppercase, or unsupported characters before reaching regis
 Host-owned static declarations assert the same invariant at construction.
 Resource and Directory Kind IDs use two or more lowercase colon-separated segments; the segments
 are identity only, while inheritance is declared explicitly through `parent`. Resource and
-Directory Action IDs use lowercase dot-separated provider names such as `resource.text.read`.
+Directory Action IDs use lowercase dot-separated provider names following `<plugin-id>.<verb>`.
 Runtime constructs all four registries
 as one validated capability-catalog unit, rejects duplicate IDs and invalid scopes before serving,
 and reports ambiguous content-kind detection instead of selecting by registration order.

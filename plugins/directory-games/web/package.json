@@ -2,10 +2,16 @@
   "name": "directory-games-web",
   "private": true,
   "version": "0.1.0",
+  "description": "Directory Games workspace UI for Asset Hub.",
   "type": "module",
+  "packageManager": "npm@10.9.7",
+  "engines": {
+    "node": ">=22.12 <23"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "typecheck": "tsc -b",
     "lint": "oxlint",
     "preview": "vite preview"
   },
