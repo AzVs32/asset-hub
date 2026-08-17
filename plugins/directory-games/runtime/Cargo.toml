@@ -1,0 +1,22 @@
+[package]
+name = "directory-games-plugin"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+asset-plugin-api = { path = "../../../asset-plugin-api", features = ["extism-guest"] }
+extism-pdk = "1.4.1"
+
+[profile.release]
+# 链接时优化；编译时间显著增加
+lto = true
+# 极致体积优化；牺牲一定的性能
+opt-level = "z"
+# 二进制中移除调试符号和内部符号；无法开发调试
+strip = true
+
+[workspace]

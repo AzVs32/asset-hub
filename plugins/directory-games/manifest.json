@@ -1,0 +1,118 @@
+{
+  "$schema": "https://asset-hub.local/schemas/plugin-manifest-v3.json",
+  "manifest_version": 3,
+  "plugin": {
+    "id": "directory.games",
+    "name": "Game Hub",
+    "version": "0.1.0",
+    "publisher": "AzVs",
+    "description": "A dedicated game library workspace."
+  },
+  "runtime": {
+    "type": "extism",
+    "wasi": false,
+    "plugin_api": "asset-hub.plugin-api@5"
+  },
+  "capabilities": {
+    "directory_kinds": [
+      {
+        "kind": "directory:games",
+        "parent": "core:directory",
+        "default_child_kind": "directory:games:item",
+        "label": "Games"
+      },
+      {
+        "kind": "directory:games:item",
+        "parent": "directory:games",
+        "label": "Game"
+      }
+    ],
+    "directory_actions": [
+      {
+        "id": "directory.games.thumbnail",
+        "provides": "thumbnail",
+        "label": "Game library thumbnail",
+        "handler": "render_thumbnail",
+        "applies_to": {
+          "kinds": [
+            "directory:games",
+            "directory:games:item"
+          ]
+        },
+        "access": "read",
+        "output": {
+          "views": [
+            "media"
+          ]
+        },
+        "ui": {
+          "group": "preview",
+          "order": 10,
+          "locations": [
+            "directory_thumbnail"
+          ]
+        }
+      },
+      {
+        "id": "directory.games.workspace",
+        "provides": "workspace",
+        "label": "Games workspace",
+        "handler": "render_workspace",
+        "applies_to": {
+          "kinds": [
+            "directory:games",
+            "directory:games:item"
+          ]
+        },
+        "access": "read",
+        "requires": {
+          "children": true,
+          "resources": "content"
+        },
+        "output": {
+          "views": [
+            "plugin_frame",
+            "json"
+          ]
+        },
+        "ui": {
+          "group": "workspace",
+          "order": 10,
+          "locations": [
+            "directory_workspace"
+          ]
+        }
+      },
+      {
+        "id": "directory.games.create",
+        "label": "Add Game",
+        "handler": "create_game",
+        "applies_to": {
+          "kinds": [
+            "directory:games"
+          ]
+        },
+        "access": "write",
+        "output": {
+          "views": [
+            "json"
+          ],
+          "effects": [
+            "create_tree"
+          ]
+        }
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "directory.read",
+      "directory.children.list",
+      "directory.resources.list",
+      "directory.create_child",
+      "resource.read",
+      "resource.content.read",
+      "resource.create"
+    ]
+  }
+}
