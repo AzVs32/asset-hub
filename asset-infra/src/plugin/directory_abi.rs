@@ -49,6 +49,24 @@ struct AvailableDirectory {
     content_leases: Arc<Mutex<HashMap<ResourceId, ContentLease>>>,
 }
 
+fn resolve_descendant_directory_id(
+    directories: &dyn DirectoryQuery,
+    runtime: &tokio::runtime::Handle,
+    action_directory_id: DirectoryId,
+    requested_directory_id: Option<&str>,
+    outside_error: &'static str,
+) -> Result<DirectoryId, CoreError> {
+    let directory_id = requested_directory_id
+        .map(DirectoryId::from_str)
+        .transpose()
+        .map_err(|error| CoreError::configuration(error.to_string()))?
+        .unwrap_or(action_directory_id);
+    if !runtime.block_on(directories.is_descendant_or_self(&action_directory_id, &directory_id))? {
+        return Err(CoreError::configuration(outside_error));
+    }
+    Ok(directory_id)
+}
+
 extism::host_fn!(asset_hub_directory_list_children(user_data: HostDirectoryResolver; request: String) -> String {
     let resolver = user_data.get()?.lock().map_err(|_| extism::Error::msg("directory host data lock poisoned"))?.clone();
     resolver.list_children(&request).map_err(|error| extism::Error::msg(error.to_string()))
@@ -157,20 +175,22 @@ impl HostDirectoryResolver {
             ));
         }
         let (request, offset) = self.page_request(value)?;
-        if request.directory_id.is_some() {
-            return Err(CoreError::configuration(
-                "directory child listing is bound to the action directory",
-            ));
-        }
         let available = self.available_directory(&request.reference)?;
         if !available.children {
             return Err(CoreError::configuration(
                 "directory action did not declare a children requirement",
             ));
         }
+        let directory_id = resolve_descendant_directory_id(
+            self.directories.as_ref(),
+            &self.runtime,
+            available.id,
+            request.directory_id.as_deref(),
+            "requested child directory is outside the action directory subtree",
+        )?;
         let mut items = self
             .runtime
-            .block_on(self.directories.list_children(&available.id))?;
+            .block_on(self.directories.list_children(&directory_id))?;
         items.sort_by(|left, right| left.directory().name().cmp(right.directory().name()));
         let total = items.len() as u64;
         let page = items
@@ -215,21 +235,13 @@ impl HostDirectoryResolver {
                 "directory resource content requires resource.read and resource.content.read permissions",
             ));
         }
-        let directory_id = request
-            .directory_id
-            .as_deref()
-            .map(DirectoryId::from_str)
-            .transpose()
-            .map_err(|error| CoreError::configuration(error.to_string()))?
-            .unwrap_or(available.id);
-        if !self.runtime.block_on(
-            self.directories
-                .is_descendant_or_self(&available.id, &directory_id),
-        )? {
-            return Err(CoreError::configuration(
-                "requested resource directory is outside the action directory subtree",
-            ));
-        }
+        let directory_id = resolve_descendant_directory_id(
+            self.directories.as_ref(),
+            &self.runtime,
+            available.id,
+            request.directory_id.as_deref(),
+            "requested resource directory is outside the action directory subtree",
+        )?;
         let page =
             self.runtime.block_on(self.resources.list(
                 &ListResources::new(request.limit, offset).with_directory_id(directory_id),
@@ -327,5 +339,54 @@ impl Drop for DirectoryLease {
         if let Ok(mut leases) = self.content_leases.lock() {
             leases.clear();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_descendant_directory_id;
+    use crate::directory_index::InMemoryDirectoryIndex;
+    use asset_core::domain::Directory;
+
+    #[test]
+    fn descendant_queries_cannot_escape_the_action_directory() {
+        let root = Directory::root();
+        let collection = Directory::new(root.id(), "collection").unwrap();
+        let item = Directory::new(collection.id(), "item").unwrap();
+        let assets = Directory::new(item.id(), "assets").unwrap();
+        let outside = Directory::new(root.id(), "outside").unwrap();
+        let index = InMemoryDirectoryIndex::from_directories(vec![
+            root,
+            collection.clone(),
+            item,
+            assets.clone(),
+            outside.clone(),
+        ])
+        .unwrap();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        assert_eq!(
+            resolve_descendant_directory_id(
+                &index,
+                runtime.handle(),
+                collection.id(),
+                Some(&assets.id().to_string()),
+                "outside",
+            )
+            .unwrap(),
+            assets.id()
+        );
+        assert!(
+            resolve_descendant_directory_id(
+                &index,
+                runtime.handle(),
+                collection.id(),
+                Some(&outside.id().to_string()),
+                "outside",
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("outside")
+        );
     }
 }

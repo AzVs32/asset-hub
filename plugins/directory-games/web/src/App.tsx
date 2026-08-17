@@ -2,8 +2,9 @@ import {
   useEffect,
   useRef,
   useState,
+  type ChangeEvent,
   type CSSProperties,
-  type FormEvent,
+  type KeyboardEvent,
   type ReactNode,
 } from "react";
 import {
@@ -14,6 +15,14 @@ import "./App.css";
 
 const WORKSPACE_ACTION = "directory.games.workspace";
 const CREATE_ACTION = "directory.games.create";
+const MAX_ICON_SIZE = 1024 * 1024;
+const ICON_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+  "image/svg+xml",
+]);
 
 type DirectorySummary = {
   name: string;
@@ -25,7 +34,6 @@ type GameSummary = {
   name: string;
   path: string;
   readme: string | null;
-  hash: string | null;
 };
 
 type LibraryModel = {
@@ -38,16 +46,27 @@ type GameModel = {
   mode: "game";
   directory: DirectorySummary;
   readme: string | null;
-  hash: string | null;
 };
 
 type WorkspaceModel = LibraryModel | GameModel;
 
 type NewGame = {
   name: string;
-  title: string;
-  summary: string;
-  version: string;
+  aliases: string[];
+  icon: {
+    mime_type: string;
+    data: string;
+  } | null;
+};
+
+type SelectedIcon = NonNullable<NewGame["icon"]> & {
+  filename: string;
+  preview: string;
+};
+
+type AliasField = {
+  id: number;
+  value: string;
 };
 
 function App() {
@@ -87,6 +106,20 @@ function App() {
     setModel(await loadWorkspace(client));
   }
 
+  async function loadGameCover(gameId: string) {
+    if (!client) return null;
+    const output = await client.executeDirectoryAction(WORKSPACE_ACTION, {
+      operation: "cover",
+      game_id: gameId,
+    });
+    if (output.view?.view !== "json" || !isCoverResponse(output.view.data)) {
+      throw new Error("Games returned an invalid cover response.");
+    }
+    return output.view.data.cover
+      ? `data:${output.view.data.cover.mime_type};base64,${output.view.data.cover.data}`
+      : null;
+  }
+
   if (error) {
     return <StatusScreen tone="error" title="Unable to open Games" detail={error} />;
   }
@@ -100,6 +133,7 @@ function App() {
     <GameLibrary
       model={model}
       onCreate={createGame}
+      onLoadCover={loadGameCover}
       onNavigate={(path) => client.navigateToDirectory(path)}
     />
   );
@@ -108,15 +142,22 @@ function App() {
 function GameLibrary({
   model,
   onCreate,
+  onLoadCover,
   onNavigate,
 }: {
   model: LibraryModel;
   onCreate: (input: NewGame) => Promise<void>;
+  onLoadCover: (gameId: string) => Promise<string | null>;
   onNavigate: (path: string) => Promise<void>;
 }) {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
+  const iconInputRef = useRef<HTMLInputElement | null>(null);
+  const nextAliasId = useRef(0);
   const [creating, setCreating] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [aliasFields, setAliasFields] = useState<AliasField[]>([]);
+  const [icon, setIcon] = useState<SelectedIcon | null>(null);
 
   function openDialog() {
     setFormError(null);
@@ -128,25 +169,88 @@ function GameLibrary({
     dialogRef.current?.close();
   }
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const fields = new FormData(form);
+  function addAlias() {
+    setAliasFields((fields) => [
+      ...fields,
+      { id: nextAliasId.current++, value: "" },
+    ]);
+  }
+
+  function updateAlias(id: number, value: string) {
+    setAliasFields((fields) => fields.map((field) =>
+      field.id === id ? { ...field, value } : field,
+    ));
+  }
+
+  function removeAlias(id: number) {
+    setAliasFields((fields) => fields.filter((field) => field.id !== id));
+  }
+
+  async function selectIcon(event: ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    input.value = "";
+    if (!file) return;
+    const mimeType = normalizedIconType(file);
+    if (!mimeType) {
+      setFormError("Choose a PNG, JPEG, WebP, GIF, or SVG image.");
+      return;
+    }
+    if (file.size === 0 || file.size > MAX_ICON_SIZE) {
+      setFormError("The game icon must be between 1 byte and 1 MiB.");
+      return;
+    }
+    try {
+      const data = bytesToBase64(await file.arrayBuffer());
+      setIcon({
+        filename: file.name,
+        mime_type: mimeType,
+        data,
+        preview: `data:${mimeType};base64,${data}`,
+      });
+      setFormError(null);
+    } catch (reason) {
+      setFormError(errorMessage(reason, "Unable to read the game icon"));
+    }
+  }
+
+  async function submit() {
+    const nameInput = nameInputRef.current;
+    if (!nameInput) return;
+    if (!nameInput.checkValidity()) {
+      nameInput.reportValidity();
+      return;
+    }
     setCreating(true);
     setFormError(null);
     try {
       await onCreate({
-        name: String(fields.get("name") ?? ""),
-        title: String(fields.get("title") ?? ""),
-        summary: String(fields.get("summary") ?? ""),
-        version: String(fields.get("version") ?? ""),
+        name: nameInput.value,
+        aliases: aliasFields
+          .map((field) => field.value.trim())
+          .filter(Boolean),
+        icon: icon ? { mime_type: icon.mime_type, data: icon.data } : null,
       });
-      form.reset();
+      nameInput.value = "";
+      setAliasFields([]);
+      setIcon(null);
       dialogRef.current?.close();
     } catch (reason) {
       setFormError(errorMessage(reason, "Unable to create the game"));
     } finally {
       setCreating(false);
+    }
+  }
+
+  function submitOnEnter(event: KeyboardEvent<HTMLDivElement>) {
+    if (
+      event.key === "Enter"
+      && event.target instanceof HTMLInputElement
+      && event.target.type !== "file"
+      && !event.nativeEvent.isComposing
+    ) {
+      event.preventDefault();
+      void submit();
     }
   }
 
@@ -172,14 +276,11 @@ function GameLibrary({
                 style={{ "--delay": `${index * 45}ms` } as CSSProperties}
                 key={game.id}
               >
-                <button
-                  className="cover"
-                  type="button"
-                  aria-label={`Open ${game.name}`}
-                  onClick={() => void onNavigate(game.path)}
-                >
-                  <span className="cover-mark">G{index + 1}</span>
-                </button>
+                <GameCover
+                  game={game}
+                  onLoad={onLoadCover}
+                  onOpen={() => onNavigate(game.path)}
+                />
                 <div className="card-copy">
                   <span className="folder-name">{game.name}</span>
                   <h2>{readTitle(game.readme, game.name)}</h2>
@@ -197,44 +298,191 @@ function GameLibrary({
           <section className="empty-state">
             <div className="empty-icon" aria-hidden="true">🎮</div>
             <h2>Your library is ready</h2>
-            <p>Add the first game. The plugin will create its README.md, HASH.md and public directory.</p>
+            <p>Add the first game. The plugin will create README.md and METADATA.yml.</p>
             <button className="primary" type="button" onClick={openDialog}>Add your first game</button>
           </section>
         )}
       </main>
 
       <dialog ref={dialogRef} onCancel={(event) => creating && event.preventDefault()}>
-        <form method="dialog" onSubmit={(event) => void submit(event)}>
+        <div
+          className="game-form"
+          role="form"
+          aria-labelledby="add-game-title"
+          onKeyDown={submitOnEnter}
+        >
           <div className="dialog-head">
-            <div><span className="eyebrow">NEW ENTRY</span><h2>Add a game</h2></div>
+            <div><span className="eyebrow">NEW ENTRY</span><h2 id="add-game-title">Add a game</h2></div>
             <button className="icon-button" type="button" aria-label="Close" onClick={closeDialog}>×</button>
           </div>
           <label>
-            Directory name
-            <input name="name" required maxLength={64} pattern="[A-Za-z0-9._-]+" placeholder="game_name_1" />
+            English name
+            <input ref={nameInputRef} required maxLength={255} placeholder="Game Name" autoFocus />
+            <span className="field-help">Required · used as the game directory name</span>
           </label>
-          <label>
-            Display title
-            <input name="title" required maxLength={120} placeholder="Game name" />
-          </label>
-          <label>
-            Summary
-            <textarea name="summary" required maxLength={1000} rows={4} placeholder="What makes this game special?" />
-          </label>
-          <label>
-            Version
-            <input name="version" maxLength={64} defaultValue="0.1.0" />
-          </label>
+          <div className="field-group">
+            <div className="field-heading">
+              <span>Other names</span>
+              <span className="optional">Optional</span>
+            </div>
+            {aliasFields.length > 0 && (
+              <div className="alias-list">
+                {aliasFields.map((field, index) => (
+                  <div className="alias-row" key={field.id}>
+                    <input
+                      value={field.value}
+                      maxLength={255}
+                      placeholder="Alias"
+                      aria-label={`Alias ${index + 1}`}
+                      autoFocus={index === aliasFields.length - 1}
+                      onChange={(event) => updateAlias(field.id, event.target.value)}
+                    />
+                    <button
+                      className="remove-alias"
+                      type="button"
+                      disabled={creating}
+                      aria-label={`Remove alias ${index + 1}`}
+                      onClick={() => removeAlias(field.id)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button
+              className="add-alias"
+              type="button"
+              disabled={creating || aliasFields.length >= 32}
+              onClick={addAlias}
+            >
+              ＋ Add alias
+            </button>
+            <span className="field-help">Add one field for each alternative name</span>
+          </div>
+          <div className="field-group">
+            <div className="field-heading">
+              <span>Game icon</span>
+              <span className="optional">Optional</span>
+            </div>
+            <div className="icon-picker">
+              <div className={`icon-preview${icon ? " has-image" : ""}`}>
+                {icon ? <img src={icon.preview} alt="Selected game icon" /> : <DefaultGameIcon />}
+              </div>
+              <div className="icon-picker-copy">
+                <strong>{icon?.filename || "Use the default game icon"}</strong>
+                <span>PNG, JPEG, WebP, GIF, or SVG · up to 1 MiB</span>
+                <div className="icon-picker-actions">
+                  <button
+                    className="add-alias"
+                    type="button"
+                    disabled={creating}
+                    onClick={() => iconInputRef.current?.click()}
+                  >
+                    {icon ? "Change icon" : "Upload icon"}
+                  </button>
+                  {icon && (
+                    <button
+                      className="remove-icon"
+                      type="button"
+                      disabled={creating}
+                      onClick={() => setIcon(null)}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              </div>
+              <input
+                ref={iconInputRef}
+                className="file-input"
+                type="file"
+                accept=".png,.jpg,.jpeg,.webp,.gif,.svg,image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+                aria-label="Upload game icon"
+                disabled={creating}
+                onChange={(event) => void selectIcon(event)}
+              />
+            </div>
+          </div>
           <p className="form-error" role="alert">{formError}</p>
           <div className="dialog-actions">
             <button className="secondary" type="button" disabled={creating} onClick={closeDialog}>Cancel</button>
-            <button className="primary" type="submit" disabled={creating}>
+            <button className="primary" type="button" disabled={creating} onClick={() => void submit()}>
               {creating ? "Creating…" : "Create game"}
             </button>
           </div>
-        </form>
+        </div>
       </dialog>
     </div>
+  );
+}
+
+function GameCover({
+  game,
+  onLoad,
+  onOpen,
+}: {
+  game: GameSummary;
+  onLoad: (gameId: string) => Promise<string | null>;
+  onOpen: () => Promise<void>;
+}) {
+  const coverRef = useRef<HTMLButtonElement | null>(null);
+  const started = useRef(false);
+  const [source, setSource] = useState<string | null>(null);
+
+  useEffect(() => {
+    const target = coverRef.current;
+    if (!target || started.current) return;
+    let active = true;
+    const load = () => {
+      if (started.current) return;
+      started.current = true;
+      void onLoad(game.id)
+        .then((cover) => {
+          if (active) setSource(cover);
+        })
+        .catch(() => {
+          // A missing or unreadable cover deliberately falls back to the default icon.
+        });
+    };
+    if (!("IntersectionObserver" in window)) {
+      load();
+      return () => { active = false; };
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        observer.disconnect();
+        load();
+      }
+    }, { rootMargin: "160px" });
+    observer.observe(target);
+    return () => {
+      active = false;
+      observer.disconnect();
+    };
+  }, [game.id, onLoad]);
+
+  return (
+    <button
+      ref={coverRef}
+      className={`cover${source ? " has-image" : ""}`}
+      type="button"
+      aria-label={`Open ${game.name}`}
+      onClick={() => void onOpen()}
+    >
+      {source ? <img src={source} alt="" /> : <DefaultGameIcon />}
+    </button>
+  );
+}
+
+function DefaultGameIcon() {
+  return (
+    <svg className="default-game-icon" viewBox="0 0 64 48" aria-hidden="true">
+      <path d="M20 14h24c7 0 12 5 14 13l2 9c1 5-1 9-5 10-3 1-6-1-9-5l-3-4H21l-3 4c-3 4-6 6-9 5-4-1-6-5-5-10l2-9c2-8 7-13 14-13Z" />
+      <path d="M20 23v10M15 28h10" />
+      <circle cx="43" cy="25" r="2" />
+      <circle cx="49" cy="31" r="2" />
+    </svg>
   );
 }
 
@@ -250,11 +498,6 @@ function GameDetail({ model }: { model: GameModel }) {
         <div className="document-meta"><span>README.md</span><span>{model.directory.path}</span></div>
         <div className="prose"><MarkdownDocument source={model.readme} /></div>
       </article>
-      <aside className="hash-panel">
-        <span className="eyebrow">INTEGRITY</span>
-        <h2>HASH.md</h2>
-        <pre>{model.hash === null ? "No HASH.md was found." : model.hash || "Empty file · awaiting integrity data"}</pre>
-      </aside>
     </main>
   );
 }
@@ -321,7 +564,7 @@ async function loadWorkspace(client: AssetHubDirectoryFrameClient): Promise<Work
 function isWorkspaceModel(value: unknown): value is WorkspaceModel {
   if (!isObject(value) || !isDirectory(value.directory)) return false;
   if (value.mode === "game") {
-    return nullableString(value.readme) && nullableString(value.hash);
+    return nullableString(value.readme);
   }
   return value.mode === "library"
     && Array.isArray(value.games)
@@ -337,8 +580,18 @@ function isGameSummary(value: unknown): value is GameSummary {
     && typeof value.id === "string"
     && typeof value.name === "string"
     && typeof value.path === "string"
-    && nullableString(value.readme)
-    && nullableString(value.hash);
+    && nullableString(value.readme);
+}
+
+function isCoverResponse(value: unknown): value is {
+  cover: { mime_type: string; data: string } | null;
+} {
+  if (!isObject(value) || !("cover" in value)) return false;
+  if (value.cover === null) return true;
+  return isObject(value.cover)
+    && typeof value.cover.mime_type === "string"
+    && ICON_TYPES.has(value.cover.mime_type)
+    && typeof value.cover.data === "string";
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -351,6 +604,28 @@ function nullableString(value: unknown): value is string | null {
 
 function readTitle(readme: string | null, fallback: string) {
   return readme?.match(/^#\s+(.+)$/m)?.[1] || fallback;
+}
+
+function normalizedIconType(file: File) {
+  if (ICON_TYPES.has(file.type)) return file.type;
+  const extension = file.name.toLowerCase().match(/\.([^.]+)$/)?.[1];
+  return ({
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    webp: "image/webp",
+    gif: "image/gif",
+    svg: "image/svg+xml",
+  } as Record<string, string>)[extension || ""] || null;
+}
+
+function bytesToBase64(buffer: ArrayBuffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 32_768) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 32_768));
+  }
+  return btoa(binary);
 }
 
 function errorMessage(reason: unknown, fallback: string) {

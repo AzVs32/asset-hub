@@ -255,47 +255,47 @@ async fn conditional_remove_rejects_a_stale_resource_snapshot() {
 async fn directory_tree_derives_paths_from_stable_ids_after_rename_and_move() {
     let repository = repository("directory-tree").await;
     let directories = directory_service(repository.clone()).await;
-    let games = directories
-        .ensure_path(&DirectoryPath::from_path("Games").unwrap())
+    let collections = directories
+        .ensure_path(&DirectoryPath::from_path("Collections").unwrap())
         .await
         .unwrap();
-    let title = directories
-        .ensure_path(&DirectoryPath::from_path("Games/Title").unwrap())
+    let item = directories
+        .ensure_path(&DirectoryPath::from_path("Collections/Item").unwrap())
         .await
         .unwrap();
-    let data = directories
-        .ensure_path(&DirectoryPath::from_path("Games/Title/data").unwrap())
+    let content = directories
+        .ensure_path(&DirectoryPath::from_path("Collections/Item/content").unwrap())
         .await
         .unwrap();
     let archive = directories
         .ensure_path(&DirectoryPath::from_path("Archive").unwrap())
         .await
         .unwrap();
-    let resource = Resource::builder("game.dat")
-        .with_directory_id(data.id())
+    let resource = Resource::builder("asset.bin")
+        .with_directory_id(content.id())
         .build()
         .unwrap();
     repository.save(&resource).await.unwrap();
 
-    directories.rename(&title.id(), "Renamed").await.unwrap();
+    directories.rename(&item.id(), "Renamed").await.unwrap();
 
     assert_eq!(
         directories
-            .locate_by_id(&title.id())
+            .locate_by_id(&item.id())
             .await
             .unwrap()
             .path()
             .path(),
-        "Games/Renamed"
+        "Collections/Renamed"
     );
     assert_eq!(
         directories
-            .locate_by_id(&data.id())
+            .locate_by_id(&content.id())
             .await
             .unwrap()
             .path()
             .path(),
-        "Games/Renamed/data"
+        "Collections/Renamed/content"
     );
     assert_eq!(
         resource_storage_key(
@@ -308,21 +308,21 @@ async fn directory_tree_derives_paths_from_stable_ids_after_rename_and_move() {
         )
         .await
         .as_str(),
-        "Games/Renamed/data/game.dat"
+        "Collections/Renamed/content/asset.bin"
     );
 
     directories
-        .move_to(&games.id(), &archive.id())
+        .move_to(&collections.id(), &archive.id())
         .await
         .unwrap();
     assert_eq!(
         directories
-            .locate_by_id(&data.id())
+            .locate_by_id(&content.id())
             .await
             .unwrap()
             .path()
             .path(),
-        "Archive/Games/Renamed/data"
+        "Archive/Collections/Renamed/content"
     );
 }
 

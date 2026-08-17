@@ -54,17 +54,17 @@ async fn fs_storage_ensures_each_user_directory_segment() {
 #[tokio::test]
 async fn fs_storage_moves_a_complete_directory_subtree() {
     let (storage, root) = storage_with_root("fs-move-directory");
-    let source = DirectoryPath::from_path("games/title").unwrap();
+    let source = DirectoryPath::from_path("collections/item").unwrap();
     let destination = DirectoryPath::from_path("archive/renamed").unwrap();
     storage.ensure_directory(&source).await.unwrap();
-    std::fs::write(root.join("games/title/game.dat"), b"game").unwrap();
+    std::fs::write(root.join("collections/item/payload.bin"), b"payload").unwrap();
 
     storage.move_directory(&source, &destination).await.unwrap();
 
-    assert!(!root.join("games/title").exists());
+    assert!(!root.join("collections/item").exists());
     assert_eq!(
-        std::fs::read(root.join("archive/renamed/game.dat")).unwrap(),
-        b"game"
+        std::fs::read(root.join("archive/renamed/payload.bin")).unwrap(),
+        b"payload"
     );
 }
 
@@ -141,7 +141,7 @@ async fn fs_storage_stages_complete_content_before_atomic_publish() {
 #[tokio::test]
 async fn fs_storage_stages_and_publishes_empty_content() {
     let (storage, root) = storage_with_root("fs-empty-staged-publish");
-    let key = StorageKey::new("games/title/HASH.md").unwrap();
+    let key = StorageKey::new("documents/empty.txt").unwrap();
     let stream: BlobByteStream = Box::pin(futures_util::stream::once(async { Ok(Bytes::new()) }));
 
     let staged = stage(&storage, stream).await;

@@ -16,7 +16,7 @@ the Asset Hub HTTP API do not need it.
 - Manifest models and validation.
 - High-level Resource and Directory Action contexts and response builders.
 - Export macros that own Extism entrypoints, wire serialization, and structured failures.
-- Bounded content, child Directory, and Directory Resource readers.
+- Bounded content, descendant child Directory, and Directory Resource readers.
 - Low-level Resource and Directory action request and response types.
 - Singleton resource and directory capabilities with kind-specific providers.
 - Structured views, effects, failures, and diagnostics.
@@ -142,7 +142,7 @@ sources are not currently supported.
 ### Kind identity and Directory placement
 
 A Kind ID contains two or more lowercase colon-separated segments, for example
-`plugin:directory:games:item`. Every segment may contain lowercase ASCII letters, digits, `.`,
+`example:collection:item`. Every segment may contain lowercase ASCII letters, digits, `.`,
 `-`, and `_`. Colons are identity separators only: they do not create inheritance. Kind inheritance
 continues to use the explicit `parent` field.
 
@@ -150,10 +150,10 @@ A Directory Kind may restrict its direct parent using `allowed_parent_kinds`:
 
 ```json
 {
-  "kind": "plugin:directory:games:item",
-  "parent": "core:directory",
-  "allowed_parent_kinds": ["plugin:directory:games"],
-  "label": "Game"
+  "kind": "example:collection:item",
+  "parent": "example:collection",
+  "allowed_parent_kinds": ["example:collection"],
+  "label": "Collection item"
 }
 ```
 
@@ -165,10 +165,10 @@ children that are still `core:directory` are reclassified.
 
 ```json
 {
-  "kind": "directory:games",
+  "kind": "example:collection",
   "parent": "core:directory",
-  "default_child_kind": "directory:games:item",
-  "label": "Games"
+  "default_child_kind": "example:collection:item",
+  "label": "Collection"
 }
 ```
 
@@ -226,11 +226,11 @@ implements every layout region or slot inside its iframe.
 
 ```json
 {
-  "id": "example.game.workspace",
+  "id": "example.collection.workspace",
   "provides": "workspace",
-  "label": "Game Library",
+  "label": "Collection workspace",
   "handler": "render_workspace",
-  "applies_to": { "kinds": ["example:game"] },
+  "applies_to": { "kinds": ["example:collection"] },
   "access": "read",
   "requires": { "children": true, "resources": "metadata" },
   "output": { "views": ["plugin_frame", "json"] },
@@ -247,9 +247,12 @@ for eligible Resources; plugins read that handle with the existing
 Action call and are never filesystem paths. A resource that has no readable content handle still
 retains its metadata in the page.
 
-The Directory resource ABI also accepts an optional descendant Directory ID. The Host permits only
-the current Action Directory or one of its descendants, so a library workspace can read role files
-inside its entries without gaining arbitrary workspace access.
+The Directory child and resource ABIs also accept an optional descendant Directory ID. The Host
+permits only the current Action Directory or one of its descendants, so a workspace can discover
+nested directories and read their resources without gaining arbitrary workspace access.
+The high-level SDK exposes this through `children_bounded_in`, `resources_bounded`, and the binary
+`DirectoryResource::read_bytes` reader. Omitting the Directory ID keeps both queries bound to the
+current Action Directory.
 
 A Resource action normally declares `label`. A singleton capability provider may omit it when the
 action targets a child Resource kind; the Host then inherits the normalized label from the nearest
@@ -301,16 +304,16 @@ plugin policy rather than Manifest fields.
   "effects": [{
     "type": "create_tree",
     "directories": [
-      { "path": "game-one", "kind": "directory:games:item" },
-      { "path": "game-one/public", "kind": "core:directory" }
+      { "path": "item-one", "kind": "example:collection:item" },
+      { "path": "item-one/assets", "kind": "core:directory" }
     ],
     "resources": [{
-      "directory": "game-one",
+      "directory": "item-one",
       "name": "README.md",
       "kind": "example:document",
       "mime_type": "text/markdown; charset=utf-8",
       "encoding": "base64",
-      "data": "IyBHYW1lIE9uZQo="
+      "data": "IyBJdGVtIE9uZQo="
     }]
   }]
 }
@@ -348,7 +351,7 @@ A Directory frame uses the separate target-bound client:
 import { connectAssetHubDirectoryFrame } from "@asset-hub/plugin-web-sdk";
 
 const host = await connectAssetHubDirectoryFrame();
-const output = await host.executeDirectoryAction("example.game.workspace", {
+const output = await host.executeDirectoryAction("example.collection.workspace", {
   operation: "load",
 });
 ```
@@ -418,6 +421,11 @@ the serialized contract remains unchanged. Changes to document fields,
 serialized representations, Host function signatures, or frame messages are
 wire-contract changes even when a development release deliberately keeps the
 current version value.
+
+Within `asset-hub.plugin-api@1`, the optional `directory_id` already present in Directory page
+requests is supported by both child and resource listing. Omitting it retains the original
+action-root behavior; supplying it is an additive descendant query and remains constrained to the
+action Directory subtree.
 
 Before upgrading, compare the supported values in this README with the
 `manifest_version` and `runtime.plugin_api` declared by the plugin.

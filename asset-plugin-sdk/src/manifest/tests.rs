@@ -63,16 +63,16 @@ fn manifest_accepts_multi_segment_kind_ids_and_directory_parent_constraints() {
     let mut document = manifest_document();
     document["capabilities"]["directory_kinds"] = serde_json::json!([
         {
-            "kind": "plugin:directory:games",
+            "kind": "example:directory:collection",
             "parent": "core:directory",
-            "default_child_kind": "plugin:directory:games:item",
-            "label": "Games"
+            "default_child_kind": "example:directory:collection:item",
+            "label": "Collection"
         },
         {
-            "kind": "plugin:directory:games:item",
-            "parent": "core:directory",
-            "allowed_parent_kinds": ["plugin:directory:games"],
-            "label": "Game"
+            "kind": "example:directory:collection:item",
+            "parent": "example:directory:collection",
+            "allowed_parent_kinds": ["example:directory:collection"],
+            "label": "Collection item"
         }
     ]);
 
@@ -80,13 +80,13 @@ fn manifest_accepts_multi_segment_kind_ids_and_directory_parent_constraints() {
     manifest.validate().unwrap();
     assert_eq!(
         manifest.capabilities.directory_kinds[1].allowed_parent_kinds,
-        ["plugin:directory:games"]
+        ["example:directory:collection"]
     );
     assert_eq!(
         manifest.capabilities.directory_kinds[0]
             .default_child_kind
             .as_deref(),
-        Some("plugin:directory:games:item")
+        Some("example:directory:collection:item")
     );
 }
 

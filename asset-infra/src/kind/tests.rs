@@ -91,9 +91,9 @@ fn directory_registry_rejects_unknown_allowed_parent_kinds() {
             DefinitionOrigin::builtin_static("core.directory"),
         ),
         DirectoryKindDefinition::new(
-            DirectoryKind::try_new("plugin:directory:games:item").unwrap(),
-            "Game",
-            DefinitionOrigin::plugin_static("plugin.games"),
+            DirectoryKind::try_new("example:directory:collection:item").unwrap(),
+            "Collection item",
+            DefinitionOrigin::plugin_static("example.collection"),
         )
         .with_parent(Some(DirectoryKind::try_new("core:directory").unwrap()))
         .with_allowed_parent_kinds([DirectoryKind::try_new("plugin:directory:missing").unwrap()]),
@@ -131,7 +131,7 @@ fn directory_registry_rejects_an_unknown_default_child_kind() {
 #[test]
 fn directory_registry_requires_default_children_to_inherit_from_the_parent_kind() {
     let core = DirectoryKind::try_new("core:directory").unwrap();
-    let games = DirectoryKind::try_new("plugin:directory:games").unwrap();
+    let collection = DirectoryKind::try_new("example:directory:collection").unwrap();
     let unrelated = DirectoryKind::try_new("plugin:directory:unrelated").unwrap();
     let definitions = vec![
         DirectoryKindDefinition::new(
@@ -140,9 +140,9 @@ fn directory_registry_requires_default_children_to_inherit_from_the_parent_kind(
             DefinitionOrigin::builtin_static("core.directory"),
         ),
         DirectoryKindDefinition::new(
-            games.clone(),
-            "Games",
-            DefinitionOrigin::plugin_static("plugin.games"),
+            collection.clone(),
+            "Collection",
+            DefinitionOrigin::plugin_static("example.collection"),
         )
         .with_parent(Some(core.clone()))
         .with_default_child_kind(Some(unrelated.clone())),

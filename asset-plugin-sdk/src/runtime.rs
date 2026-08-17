@@ -300,7 +300,16 @@ impl DirectoryContext {
 
     /// Collects all direct children, failing instead of silently truncating at `max_items`.
     pub fn children_bounded(&self, max_items: usize) -> Result<Vec<DirectoryChild>> {
-        collect_children(&self.request.directory_ref, max_items)
+        collect_children(&self.request.directory_ref, None, max_items)
+    }
+
+    /// Collects direct children of the current Directory or one descendant.
+    pub fn children_bounded_in(
+        &self,
+        directory_id: Option<&str>,
+        max_items: usize,
+    ) -> Result<Vec<DirectoryChild>> {
+        collect_children(&self.request.directory_ref, directory_id, max_items)
     }
 
     /// Collects Resources in the current Directory or one descendant, with an explicit bound.
@@ -381,14 +390,31 @@ impl DirectoryResource {
         self.0.revision
     }
 
-    pub fn read_text(&self, max_size: u64, chunk_size: u64) -> Result<Option<String>> {
+    pub fn content_size(&self) -> Option<u64> {
+        self.0.content.as_ref().map(|content| content.size)
+    }
+
+    pub fn mime_type(&self) -> Option<&str> {
+        self.0
+            .content
+            .as_ref()
+            .and_then(|content| content.mime_type.as_deref())
+    }
+
+    pub fn read_bytes(&self, max_size: u64, chunk_size: u64) -> Result<Option<Vec<u8>>> {
         let Some(reference) = self.0.content_ref.as_ref() else {
             return Ok(None);
         };
         if reference.encoding != PluginContentReferenceEncoding::Handle {
             return Err(Error::msg("unsupported directory resource content reference").into());
         }
-        let bytes = read_all_reference(&reference.reference, max_size, chunk_size)?;
+        read_all_reference(&reference.reference, max_size, chunk_size).map(Some)
+    }
+
+    pub fn read_text(&self, max_size: u64, chunk_size: u64) -> Result<Option<String>> {
+        let Some(bytes) = self.read_bytes(max_size, chunk_size)? else {
+            return Ok(None);
+        };
         Ok(Some(String::from_utf8(bytes).map_err(|_| {
             Error::msg(format!("{} is not valid UTF-8", self.name()))
         })?))
@@ -396,7 +422,11 @@ impl DirectoryResource {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn collect_children(reference: &str, max_items: usize) -> Result<Vec<DirectoryChild>> {
+fn collect_children(
+    reference: &str,
+    directory_id: Option<&str>,
+    max_items: usize,
+) -> Result<Vec<DirectoryChild>> {
     if max_items == 0 {
         return Err(Error::msg("directory child limit must be greater than zero").into());
     }
@@ -404,8 +434,9 @@ fn collect_children(reference: &str, max_items: usize) -> Result<Vec<DirectoryCh
     let mut cursor = None;
     loop {
         let remaining = max_items - items.len();
-        let page = abi::directory::guest::list_children(
+        let page = abi::directory::guest::list_children_in(
             reference,
+            directory_id,
             cursor.as_deref(),
             u32::try_from(remaining.min(100)).unwrap_or(100),
         )?;
@@ -430,7 +461,11 @@ fn collect_children(reference: &str, max_items: usize) -> Result<Vec<DirectoryCh
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn collect_children(_reference: &str, _max_items: usize) -> Result<Vec<DirectoryChild>> {
+fn collect_children(
+    _reference: &str,
+    _directory_id: Option<&str>,
+    _max_items: usize,
+) -> Result<Vec<DirectoryChild>> {
     Err(Error::msg("directory queries are only available in the Wasm Host").into())
 }
 

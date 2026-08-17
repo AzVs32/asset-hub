@@ -4,9 +4,18 @@
 of kind `directory:games:item`.
 
 The Host supplies bounded child/resource reads and the generic `create_tree` effect. This plugin
-owns the game model: creating a game emits a game directory, `public/`, a generated `README.md`, and
-an empty `HASH.md` reserved for a later integrity workflow. The README is the default content shown
-by both the library card and game workspace.
+owns the game model: creating a game uses its required printable-ASCII English name as the Directory
+name and emits `README.md` and `METADATA.yml`. An optional PNG, JPEG, WebP, GIF, or SVG icon (up to
+1 MiB) is stored as `public/cover.<ext>` inside the game Directory. The README is the default
+content shown by both the library card and game workspace; library cards load the cover lazily and
+retain the built-in game icon when no cover is available.
+Optional Unicode aliases are stored with the English name in a YAML array:
+
+```yaml
+name:
+  - "English Name"
+  - "别名"
+```
 
 The Rust runtime consumes these capabilities through bounded `DirectoryContext` queries and builds
 the scaffold with the SDK `Tree` response builder. The React frame imports

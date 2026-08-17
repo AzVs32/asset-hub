@@ -50,11 +50,11 @@ A Directory workspace frame connects through its separate bound client:
 import { connectAssetHubDirectoryFrame } from "@asset-hub/plugin-web-sdk";
 
 const host = await connectAssetHubDirectoryFrame();
-const output = await host.executeDirectoryAction("example.game.workspace", {
+const output = await host.executeDirectoryAction("example.collection.workspace", {
   operation: "load",
 });
 await host.refreshDirectory();
-await host.navigateToDirectory("games/favorites");
+await host.navigateToDirectory("collections/favorites");
 ```
 
 `executeDirectoryAction` accepts only an Action exposed on the bound Directory. Refresh and

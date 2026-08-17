@@ -11,5 +11,5 @@ body {
   min-height: 100vh;
   background: radial-gradient(circle at 90% 0%, rgba(115, 82, 255, 0.13), transparent 30%), #f7f6fb;
 }
-button, input, textarea { font: inherit; }
+button, input { font: inherit; }
 button { cursor: pointer; }

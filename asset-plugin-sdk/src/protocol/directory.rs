@@ -209,7 +209,7 @@ mod tests {
             "items": [{
                 "id": "01900000-0000-7000-8000-000000000001",
                 "name": "README.md",
-                "kind": "plugin:resource:games:readme",
+                "kind": "example:resource:document",
                 "revision": 2,
                 "content": {
                     "size": 12,
@@ -226,7 +226,7 @@ mod tests {
 
         let resource = &page.items[0];
         assert_eq!(resource.name, "README.md");
-        assert_eq!(resource.kind, "plugin:resource:games:readme");
+        assert_eq!(resource.kind, "example:resource:document");
         assert_eq!(resource.content.as_ref().unwrap().size, 12);
         assert_eq!(
             resource.content_ref.as_ref().unwrap().reference,
@@ -240,16 +240,16 @@ mod tests {
         output.effects.push(DirectoryActionEffect::CreateTree(
             CreateDirectoryTreeEffect {
                 directories: vec![CreateTreeDirectory {
-                    path: "game/public".to_string(),
+                    path: "item/assets".to_string(),
                     kind: Some("core:directory".to_string()),
                 }],
                 resources: vec![CreateTreeResource {
-                    directory: "game".to_string(),
+                    directory: "item".to_string(),
                     name: "README.md".to_string(),
                     kind: Some("example:document".to_string()),
                     mime_type: Some("text/markdown".to_string()),
                     encoding: CreateTreeResourceEncoding::Base64,
-                    data: "IyBHYW1l".to_string(),
+                    data: "IyBJdGVt".to_string(),
                 }],
             },
         ));
@@ -258,14 +258,14 @@ mod tests {
             serde_json::to_value(output).unwrap(),
             serde_json::json!({"effects": [{
                 "type": "create_tree",
-                "directories": [{"path": "game/public", "kind": "core:directory"}],
+                "directories": [{"path": "item/assets", "kind": "core:directory"}],
                 "resources": [{
-                    "directory": "game",
+                    "directory": "item",
                     "name": "README.md",
                     "kind": "example:document",
                     "mime_type": "text/markdown",
                     "encoding": "base64",
-                    "data": "IyBHYW1l"
+                    "data": "IyBJdGVt"
                 }]
             }]})
         );

@@ -87,7 +87,7 @@
       {
         "id": "directory.games.create",
         "label": "Add Game",
-        "description": "Create a game directory with README.md, HASH.md and public/.",
+        "description": "Create a game directory with metadata, README, and an optional public cover image.",
         "handler": "create_game",
         "applies_to": {
           "kinds": [
