@@ -6,9 +6,16 @@ of kind `directory:games:item`.
 The Host supplies bounded child/resource reads and the generic `create_tree` effect. This plugin
 owns the game model: creating a game uses its required printable-ASCII English name as the Directory
 name and emits `README.md` and `METADATA.yml`. An optional PNG, JPEG, WebP, GIF, or SVG icon (up to
-1 MiB) is stored as `public/cover.<ext>` inside the game Directory. The game workspace displays the
-cover in its left rail and uses the built-in game icon when no cover is available. Library cards
-load the same cover lazily and otherwise use that fallback icon.
+1 MiB) is stored as `public/cover.<ext>` inside the game Directory. Raster formats are identified
+from their content, decoded with bounded dimensions and memory, and stored unchanged under the
+matching canonical extension even when the submitted MIME type names another supported image
+format; the submitted MIME type is advisory and is not trusted for validation. SVG icons are parsed
+as bounded static images with external file references disabled, then serialized from the normalized
+SVG tree before storage; scripts, animation, event handlers, and other unsupported dynamic content
+are not preserved. SVG text should be converted to paths because the runtime deliberately does not
+load fonts. The game workspace displays the cover in its left rail and uses the built-in game icon
+when no cover is available. Library cards load the same cover lazily and otherwise use that fallback
+icon.
 Optional Unicode aliases are stored with the English name in a YAML array:
 
 ```yaml

@@ -137,7 +137,9 @@ npm ci
 npm run dev
 ```
 
-Vite serves `http://127.0.0.1:5173` and proxies `/api` to the API. To use another API origin:
+Vite serves `http://127.0.0.1:5173` and proxies `/api` plus public `/plugins` Web assets to the
+API. The `/plugins` proxy also preserves nested Resource frames mounted inside Directory plugin
+workspaces. To use another API origin:
 
 ```bash
 VITE_API_BASE_URL=http://127.0.0.1:8080 npm run dev

@@ -144,7 +144,6 @@ function App() {
 
 	function selectSection(id: string) {
 		setActiveId(id);
-		setSidebarOpen(false);
 		contentRef.current?.scrollTo({ top: 0, behavior: "smooth" });
 	}
 

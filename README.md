@@ -70,8 +70,8 @@ npm install
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173`. The development server proxies `/api` requests
-to the API at `http://127.0.0.1:8080`.
+Open `http://127.0.0.1:5173`. The development server proxies `/api` requests and public
+`/plugins` Web assets to the API at `http://127.0.0.1:8080`.
 
 ### 4. Use the Administration CLI
 

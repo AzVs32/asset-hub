@@ -70,7 +70,9 @@ revision-guarded streaming content replacement use case. The runtime rejects inl
 through Action JSON and does not return a `replace_content` effect. Consequently, saves are
 independent of the 1 MiB Action JSON limit and are bounded by `resource_edit.max_text_bytes`; an
 over-limit Resource does not expose the edit action. The React UI uses `markdown-it` for Markdown
-headings and preview, while basic text, source, and YAML files use a monospaced reader/editor.
+headings and preview. Selecting a heading keeps the reader's heading sidebar open until the user
+explicitly toggles it from the toolbar. Basic text, source, and YAML files use a monospaced
+reader/editor.
 
 ## Build
 
