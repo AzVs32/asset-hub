@@ -72,14 +72,11 @@ root Directory kind remains immutable with the rest of the root aggregate metada
 
 The backend resolves singleton capability providers before returning resource or directory
 actions as flat arrays. Each kind/action includes its typed built-in or plugin origin. Actions use
-`read` or `write` access and declare their possible `output.views` and `output.effects`. For example,
-`azvs.epub.thumbnail` provides the Resource-scoped `thumbnail` capability
-for EPUB resources.
-`resource.image.thumbnail` provides the same capability on `core:resource` only when image MIME or
-extension matching succeeds; it does not introduce an image Kind. Resources and directories with
-no matching thumbnail provider use local File and Folder icon fallbacks without executing an
-Action. Automatic thumbnail slots accept only the resolved `thumbnail` provider. Resource and
-directory action registries scope that capability independently.
+`read` or `write` access and declare their possible `output.views` and `output.effects`. A plugin
+provider can target a Kind or use MIME/extension matching without introducing a new Kind.
+Resources and directories with no matching thumbnail provider use local File and Folder icon
+fallbacks without executing an Action. Automatic thumbnail slots accept only the resolved
+`thumbnail` provider. Resource and directory action registries scope that capability independently.
 
 Supported output views are `text`, `markdown`, `html`, `plugin_frame`, `json`, `media`, and
 `download`. Generic outputs are rendered by the host. A plugin
@@ -95,7 +92,9 @@ A frame may invoke only Actions exposed for its bound Resource. Destructive Acti
 including deletion, require a Host confirmation before the Gateway call is made.
 Directory frames use a separate Directory-bound bridge to execute exposed Directory Actions,
 refresh the current Directory, and request canonical Host navigation. They cannot access Core
-workspace slots or address arbitrary Directory IDs.
+workspace slots or address arbitrary Directory IDs. Navigating to a different Directory remounts
+the iframe so the Web SDK establishes a new connection bound to that Directory; an existing frame
+is never rebound to another aggregate.
 Both bridges pass only an Action ID to the Gateway, which resolves the canonical Action metadata
 from the current bound aggregate before deciding access and revision behavior. They share the same
 bounded JSON input parser, immutable aggregate-ID binding, monotonic snapshot update rule, plugin

@@ -30,7 +30,9 @@ detected by this plugin's concrete `resource:markdown` declaration. Both Actions
 | Rendering | Extensions | Persisted Kind |
 | --- | --- | --- |
 | Markdown reader/editor with preview | `.md`, `.markdown`, `.mdown`, `.mkd` | `resource:markdown` |
-| Basic plain-text reader/editor | `.txt`, `.c`, `.cpp`, `.h` | `core:resource` |
+| Basic plain-text reader/editor | `.txt`, `.c`, `.cpp`, `.h`, `.yaml`, `.yml` | `core:resource` |
+
+YAML matching accepts `application/yaml`, `application/x-yaml`, `text/yaml`, and `text/x-yaml`.
 
 To add another basic text extension later, append it to the `extensions` list of both Actions in
 `manifest.json`. It will use the plain-text interface without requiring another Kind.
@@ -68,7 +70,7 @@ revision-guarded streaming content replacement use case. The runtime rejects inl
 through Action JSON and does not return a `replace_content` effect. Consequently, saves are
 independent of the 1 MiB Action JSON limit and are bounded by `resource_edit.max_text_bytes`; an
 over-limit Resource does not expose the edit action. The React UI uses `markdown-it` for Markdown
-headings and preview, while `.txt`, `.c`, `.cpp`, and `.h` use a basic monospaced reader/editor.
+headings and preview, while basic text, source, and YAML files use a monospaced reader/editor.
 
 ## Build
 

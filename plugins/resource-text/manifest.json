@@ -46,7 +46,11 @@
           ],
           "mime_types": [
             "text/markdown",
-            "text/x-markdown"
+            "text/x-markdown",
+            "application/yaml",
+            "application/x-yaml",
+            "text/yaml",
+            "text/x-yaml"
           ],
           "extensions": [
             ".md",
@@ -56,7 +60,9 @@
             ".txt",
             ".c",
             ".cpp",
-            ".h"
+            ".h",
+            ".yaml",
+            ".yml"
           ]
         },
         "access": "read",
@@ -90,7 +96,11 @@
           ],
           "mime_types": [
             "text/markdown",
-            "text/x-markdown"
+            "text/x-markdown",
+            "application/yaml",
+            "application/x-yaml",
+            "text/yaml",
+            "text/x-yaml"
           ],
           "extensions": [
             ".md",
@@ -100,7 +110,9 @@
             ".txt",
             ".c",
             ".cpp",
-            ".h"
+            ".h",
+            ".yaml",
+            ".yml"
           ]
         },
         "access": "write",

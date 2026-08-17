@@ -102,7 +102,9 @@ action 和用户授权能力。Feature 只知道这个接口。
   资源已经暴露的 action，且只有由当前 `text_edit` provider 打开的读写 frame 才能请求替换
   当前资源文本。
 - `directory-frame-host` 将连接绑定到当前 Directory，只允许执行该 Directory 已暴露的
-  Action、刷新当前 Directory 和请求 Host 导航；不暴露 Core 工作区组件或插槽。
+  Action、刷新当前 Directory 和请求 Host 导航；不暴露 Core 工作区组件或插槽。导航到不同
+  Directory 时，Host 会重新挂载 iframe，使 Web SDK 建立绑定到新聚合的连接；既有连接不会被
+  改绑到另一个 Directory。
 
 浏览器 Frame 协议不在 Host 内重复声明：版本、两个 channel、view/effect 枚举和 action 输出
 类型统一来自 `@asset-hub/plugin-web-sdk/contract`。Frame 输入在进入 Gateway 前递归验证为有界
@@ -229,19 +231,14 @@ Action 默认读取最新授权快照，不会因为缩略图或预览缓存较�
 和空目录删除用例；已删除资源的恢复仍由资源行菜单提供。资源详情区
 不再提供插件自动插入 slot，插件 action 从对应行菜单触发。完全自定义
 界面通过 `plugin_frame` 加载插件自己的 Web 资源。
-后端会在实际适用性过滤后解析单例能力 provider；例如 EPUB 的
-`azvs.epub.thumbnail` 为 EPUB 提供作用于 Resource Action 的 `thumbnail`。Resource 与
-Directory Action 注册表分别限定该能力的作用域。`resource.image.thumbnail` 在
-`core:resource` 上按 `image/*` 或常见图片扩展名提供该能力，但不声明图片 Kind；没有匹配
-缩略图 provider 的资源和目录分别由前端显示 File 和 Folder 图标，不执行 Action。Host 不为
-Resource 或 Directory 提供通用缩略图 provider。相同能力选择 Kind 谱系中最近的 provider，
-同层冲突会导致 Host 启动失败，前端只执行后端已经解析出的 provider。Host 不提供通用
-文本、图片或视频 Kind，也不提供文本读取 provider 或文本编辑器。`resource.text` 插件在
-`core:resource` 上按 Markdown MIME 或受支持扩展名提供
-`resource.text.read` 和 `resource.text.edit`：Markdown 子 Kind 继承这组 Action，`.txt`、
-`.c`、`.cpp` 和 `.h` 则保持 `core:resource`。插件通过自己的 `plugin_frame` 分别实现
-Markdown 预览编辑和基础纯文本读写。Action 只负责能力发现和返回 frame；保存不把完整文本塞入 Action JSON，
-而是由受约束的 frame bridge 通过 `AssetGateway.replaceResourceText` 将 UTF-8 原始字节流提交到
+后端会在实际适用性过滤后解析单例能力 provider，Resource 与 Directory Action 注册表分别
+限定能力作用域。Provider 可以面向 Kind，也可以使用 MIME 或扩展名匹配而不引入新 Kind；
+没有匹配缩略图 provider 的资源和目录分别由前端显示 File 和 Folder 图标，不执行 Action。
+相同能力选择 Kind 谱系中最近的 provider，同层冲突会导致 Host 启动失败，前端只执行后端
+已经解析出的 provider。Host 不内置具体格式的 Kind、读取器或编辑器；插件通过自己的
+`plugin_frame` 实现格式相关界面。Action 只负责能力发现和返回 frame；文本保存不把完整内容
+塞入 Action JSON，而是由受约束的 frame bridge 通过 `AssetGateway.replaceResourceText` 将
+UTF-8 原始字节流提交到
 `PUT /resources/{id}/content`。请求使用 `Content-SHA256` 做端到端完整性校验，并将打开
 编辑器时的 `Resource.revision` 放入 `If-Match`；Host 检测到资源或其目录位置已经变化时
 返回冲突并恢复原 Blob。`resource_edit.max_text_bytes` 由 Core 同时用于能力发现和执行，

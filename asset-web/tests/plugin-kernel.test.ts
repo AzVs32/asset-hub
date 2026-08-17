@@ -23,7 +23,7 @@ describe("PluginKernel", () => {
     const kernel = new PluginKernel();
     const fallback = action({ id: "media", output: { views: ["media"], effects: [] } });
     const explicit = action({
-      id: "azvs.epub.thumbnail",
+      id: "example.document.thumbnail",
       provides: "thumbnail",
       ui: {
         group: null,
@@ -32,7 +32,9 @@ describe("PluginKernel", () => {
       },
     });
 
-    expect(kernel.thumbnailAction(resource([fallback, explicit]))?.id).toBe("azvs.epub.thumbnail");
+    expect(kernel.thumbnailAction(resource([fallback, explicit]))?.id).toBe(
+      "example.document.thumbnail",
+    );
   });
 
   it("selects an explicit Directory thumbnail provider and context-menu actions", () => {
@@ -61,7 +63,7 @@ describe("PluginKernel", () => {
   it("hands the entire Directory workspace to one valid workspace provider", () => {
     const kernel = new PluginKernel();
     const workspace = directoryAction({
-      id: "example.game.workspace",
+      id: "example.collection.workspace",
       provides: "workspace",
       output: { views: ["plugin_frame", "json"], effects: [] },
       ui: { locations: [directoryWorkspaceOutlet] },

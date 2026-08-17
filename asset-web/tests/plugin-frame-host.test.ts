@@ -118,13 +118,13 @@ describe("Plugin Frame host bridge", () => {
 
 describe("Directory Plugin Frame host bridge", () => {
   it("executes only actions exposed by the bound Directory", async () => {
-    const inspect = directoryAction({ id: "example.game.load" });
+    const inspect = directoryAction({ id: "example.collection.load" });
     const item = directory([inspect]);
     const expected = {
       directoryId: item.id,
       action: inspect.id,
       diagnostics: [],
-      view: { view: "json" as const, data: { games: [] } },
+      view: { view: "json" as const, data: { items: [] } },
       effects: [],
     };
     const executeDirectoryAction = vi.fn().mockResolvedValue(expected);
@@ -172,11 +172,11 @@ describe("Directory Plugin Frame host bridge", () => {
 
     await bridge.methods.executeDirectoryAction(remove.id, {});
     await bridge.methods.refreshDirectory();
-    await bridge.methods.navigateToDirectory("library/games");
+    await bridge.methods.navigateToDirectory("collections/items");
 
     expect(confirmAction).toHaveBeenCalledWith("Delete Library?");
     expect(onDirectoryChanged).toHaveBeenCalledTimes(2);
-    expect(onNavigate).toHaveBeenCalledWith("library/games");
+    expect(onNavigate).toHaveBeenCalledWith("collections/items");
     await expect(bridge.methods.navigateToDirectory("../outside")).rejects.toThrow(
       "Directory path must be a canonical relative path.",
     );

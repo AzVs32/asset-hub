@@ -73,6 +73,7 @@ export function DirectoryPluginFrame({
   }
   return (
     <iframe
+      key={directoryId}
       ref={ref}
       className={className}
       sandbox="allow-scripts"
