@@ -1,6 +1,7 @@
 import type { JsonObject, JsonValue } from "@/domain/plugin";
 
 const maximumActionIdLength = 128;
+const maximumResourceIdLength = 128;
 const maximumJsonDepth = 32;
 const maximumJsonValues = 10_000;
 
@@ -8,6 +9,15 @@ export function parseActionId(value: unknown): string {
   if (typeof value !== "string" || !value || value.length > maximumActionIdLength) {
     throw new TypeError(
       `Action ID must be a non-empty string of at most ${maximumActionIdLength} characters.`,
+    );
+  }
+  return value;
+}
+
+export function parseResourceId(value: unknown): string {
+  if (typeof value !== "string" || !value || value.length > maximumResourceIdLength) {
+    throw new TypeError(
+      `Resource ID must be a non-empty string of at most ${maximumResourceIdLength} characters.`,
     );
   }
   return value;

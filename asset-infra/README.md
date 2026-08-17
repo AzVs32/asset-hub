@@ -34,7 +34,7 @@ boundary does not define or enumerate a fixed external Kind tree.
 Resource capabilities are singleton providers, not generic action names. For each capability, the
 Host selects the provider declared on the nearest kind in the Resource lineage. A child provider
 therefore replaces, rather than coexists with, its ancestor's provider. The currently supported
-Resource capabilities are `thumbnail` and `text_edit`.
+Resource capabilities are `thumbnail`, `text_view`, and `text_edit`.
 
 The Host-owned catalog provides no generic Resource or Directory thumbnail Action; any concrete
 thumbnail provider comes from an external Manifest. The Host declares `core.resource.delete` and
@@ -47,7 +47,7 @@ and the current user is authorized to delete that aggregate. Delete cannot be co
 different effect in one action output.
 
 External actions retain their provider-owned IDs and may provide a Host-recognized capability for a
-more specific kind. Resource actions recognize `thumbnail` and `text_edit`; Directory
+more specific kind. Resource actions recognize `thumbnail`, `text_view`, and `text_edit`; Directory
 actions recognize `thumbnail` and `workspace`. A Directory `workspace` provider is read-only,
 effect-free, supports `plugin_frame`, and pairs capability `workspace` with the
 exclusive `directory_workspace` location. Resource resolution filters content requirements and matchers
@@ -59,7 +59,8 @@ inherited action does not need to repeat every descendant kind in its declaratio
 
 When a plugin Resource capability provider omits its Manifest label, catalog assembly inherits the
 normalized label from the nearest ancestor provider for that capability; an explicit label remains
-an override, and a missing ancestor is a startup error. An external `text_edit` provider must
+an override, and a missing ancestor is a startup error. A `text_view` provider must be effect-free,
+read-only, and support `plugin_frame`. An external `text_edit` provider must
 declare write access and the specific `resource.content.replace` permission; generic Resource write
 permissions are not accepted.
 

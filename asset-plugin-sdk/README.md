@@ -205,11 +205,12 @@ directory lineage. A less-specific provider remains the fallback when a more-spe
 not actually applicable. Two providers for the same capability at the same nearest kind fail Host
 startup instead of being selected by registration or UI sort order.
 
-The Host recognizes `thumbnail` and `text_edit` singleton capabilities for Resource
+The Host recognizes `thumbnail`, `text_view`, and `text_edit` singleton capabilities for Resource
 actions; Directory actions recognize `thumbnail` and `workspace`. A `thumbnail` provider must be read-only,
 support the `media` view, and declare the matching `resource_thumbnail` or
 `directory_thumbnail` UI location. Read actions that do not need singleton-provider resolution are
-ordinary labeled actions without `provides`. A `text_edit` provider must be write and request
+ordinary labeled actions without `provides`. A `text_view` provider must be effect-free, read-only,
+and support `plugin_frame`. A `text_edit` provider must be write and request
 `resource.content.replace`; generic `resource.write` and
 `resource.derived_asset.write` permissions are not part of the contract. The Host rejects unknown
 capability names. Plugins must retain their provider-owned action IDs and must not reuse a `core.*`
@@ -326,8 +327,8 @@ bundled Web application imports `@asset-hub/plugin-web-sdk`; a plain `index.html
 the self-contained `asset-hub-plugin.global.js` build without React, npm, or another framework.
 Transport-free Browser Frame constants and types are exported from
 `@asset-hub/plugin-web-sdk/contract`; the SDK and Web Host consume that same contract. Rust and
-TypeScript contract tests lock its API version, Resource and Directory channels, view kinds, and
-Host-normalized effect kinds to one golden document.
+TypeScript contract tests lock its API version, Resource and Directory channels and methods, view
+kinds, and Host-normalized effect kinds to one golden document.
 
 ```ts
 import { connectAssetHubFrame } from "@asset-hub/plugin-web-sdk";
@@ -356,9 +357,13 @@ const output = await host.executeDirectoryAction("example.collection.workspace",
 });
 ```
 
-It can execute an Action already exposed for the bound Directory, request a Directory refresh, and
-ask the Host to navigate to a canonical relative Directory path. It cannot address a different
-Directory directly or access any `CoreDirectoryWorkspace` slot.
+It can execute an Action already exposed for the bound Directory, request a Directory refresh, ask
+the Host to navigate to a canonical relative Directory path, and ask the Host to view or edit a
+direct Resource by opaque ID. The Host resolves the current `text_view` or `text_edit` provider;
+the Directory plugin never supplies either provider Action ID. The Web SDK can mount the returned
+read frame inside the Directory frame and relays only its originating read Action. The Directory
+frame gains neither arbitrary Resource Action execution nor Resource write authority. It cannot
+address a different Directory directly or access any `CoreDirectoryWorkspace` slot.
 
 SDK method calls no longer supply Resource identity or request IDs. The Host binds the connection to
 the Resource and originating Action that created the frame, while Penpal owns request correlation,

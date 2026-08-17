@@ -6,9 +6,9 @@ of kind `directory:games:item`.
 The Host supplies bounded child/resource reads and the generic `create_tree` effect. This plugin
 owns the game model: creating a game uses its required printable-ASCII English name as the Directory
 name and emits `README.md` and `METADATA.yml`. An optional PNG, JPEG, WebP, GIF, or SVG icon (up to
-1 MiB) is stored as `public/cover.<ext>` inside the game Directory. The README is the default
-content shown by both the library card and game workspace; library cards load the cover lazily and
-retain the built-in game icon when no cover is available.
+1 MiB) is stored as `public/cover.<ext>` inside the game Directory. The game workspace displays the
+cover in its left rail and uses the built-in game icon when no cover is available. Library cards
+load the same cover lazily and otherwise use that fallback icon.
 Optional Unicode aliases are stored with the English name in a YAML array:
 
 ```yaml
@@ -20,12 +20,17 @@ name:
 The Rust runtime consumes these capabilities through bounded `DirectoryContext` queries and builds
 the scaffold with the SDK `Tree` response builder. The React frame imports
 `@asset-hub/plugin-web-sdk`, loads workspace data through `directory.games.workspace`, invokes
-`directory.games.create`, and delegates Directory navigation to the Host.
+`directory.games.create`, and delegates Directory navigation and document viewing/editing to the
+Host. The game workspace shows `README.md` through the resolved `text_view` provider and mounts its
+exact `plugin_frame`. The Web SDK relays that nested frame's standard Resource calls through the
+Directory-bound Host connection. Editing uses the symmetric resolved `text_edit` provider.
+Directory Games does not read document content in its runtime, select either provider Action ID,
+render Markdown, implement text saving, or request Resource write permission.
 
 Generated Markdown resources do not name a Kind owned by another plugin. Directory Games leaves
 their Kind unset in the `create_tree` output, allowing the Host to detect an installed
-format-specific Kind or fall back to `core:resource`. The plugin therefore has no dependency on
-`resource.text`.
+format-specific Kind or fall back to `core:resource`. Reading and editing are available when the
+Resource exposes matching `text_view` and `text_edit` providers.
 
 `directory:games:item` inherits from `directory:games`, so the Kind hierarchy reflects that a game
 entry belongs to the Games model and receives the same workspace capabilities. This inheritance

@@ -7,6 +7,18 @@ export const RESOURCE_FRAME_CHANNEL = "asset-hub.plugin-frame@1";
 /** Penpal channel used by Directory-bound plugin frames. */
 export const DIRECTORY_FRAME_CHANNEL = "asset-hub.plugin-directory-frame@1";
 
+/** Host methods exposed to Resource-bound plugin frames. */
+export const resourceFrameMethods = ["executeResourceAction", "replaceResourceText"] as const;
+
+/** Host methods exposed to Directory-bound plugin frames. */
+export const directoryFrameMethods = [
+  "executeDirectoryAction",
+  "viewResource",
+  "refreshDirectory",
+  "navigateToDirectory",
+  "editResource",
+] as const;
+
 export type JsonPrimitive = boolean | number | string | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | JsonObject;
 export type JsonObject = { [key: string]: JsonValue };

@@ -87,7 +87,7 @@ var e = class extends Error {
 	apply(t, r, i) {
 		return e(n, i);
 	}
-}), C = (t) => new e("CONNECTION_DESTROYED", `Method call ${g(t)}() failed due to destroyed connection`), w = (t, r, a) => {
+}), C = (t) => new e("CONNECTION_DESTROYED", `Method call ${g(t)}() failed due to destroyed connection`), ee = (t, r, a) => {
 	let o = !1, s = /* @__PURE__ */ new Map(), c = (e) => {
 		if (!f(e)) return;
 		let { callId: t, value: r, isError: i, isSerializedErrorInstance: o } = e, c = s.get(t);
@@ -128,7 +128,7 @@ var e = class extends Error {
 			s.clear();
 		}
 	};
-}, T = () => {
+}, w = () => {
 	let e, t;
 	return {
 		promise: new Promise((n, r) => {
@@ -137,18 +137,18 @@ var e = class extends Error {
 		resolve: e,
 		reject: t
 	};
-}, E = "deprecated-penpal", D = (e) => a(e) && "penpal" in e, O = (e) => e.split("."), k = (e) => e.join("."), A = (e) => {
+}, T = "deprecated-penpal", E = (e) => a(e) && "penpal" in e, D = (e) => e.split("."), O = (e) => e.join("."), k = (e) => {
 	try {
 		return JSON.stringify(e);
 	} catch {
 		return String(e);
 	}
-}, j = (t) => new e("TRANSMISSION_FAILED", `Unexpected message to translate: ${A(t)}`), M = (e) => {
+}, A = (t) => new e("TRANSMISSION_FAILED", `Unexpected message to translate: ${k(t)}`), j = (e) => {
 	if (e.penpal === "syn") return {
 		namespace: i,
 		channel: void 0,
 		type: "SYN",
-		participantId: E
+		participantId: T
 	};
 	if (e.penpal === "ack") return {
 		namespace: i,
@@ -160,7 +160,7 @@ var e = class extends Error {
 		channel: void 0,
 		type: "CALL",
 		id: e.id,
-		methodPath: O(e.methodName),
+		methodPath: D(e.methodName),
 		args: e.args
 	};
 	if (e.penpal === "reply") return e.resolution === "fulfilled" ? {
@@ -180,16 +180,16 @@ var e = class extends Error {
 			isSerializedErrorInstance: !0
 		} : { value: e.returnValue }
 	};
-	throw j(e);
-}, N = (e) => {
+	throw A(e);
+}, M = (e) => {
 	if (l(e)) return {
 		penpal: "synAck",
-		methodNames: e.methodPaths.map(k)
+		methodNames: e.methodPaths.map(O)
 	};
 	if (d(e)) return {
 		penpal: "call",
 		id: e.id,
-		methodName: k(e.methodPath),
+		methodName: O(e.methodPath),
 		args: e.args
 	};
 	if (f(e)) return e.isError ? {
@@ -206,21 +206,21 @@ var e = class extends Error {
 		resolution: "fulfilled",
 		returnValue: e.value
 	};
-	throw j(e);
-}, P = ({ messenger: t, methods: n, timeout: r, channel: a, log: o }) => {
-	let s = y(), d, f = [], p = !1, h = m(n), { promise: g, resolve: _, reject: b } = T(), x = r === void 0 ? void 0 : setTimeout(() => {
+	throw A(e);
+}, N = ({ messenger: t, methods: n, timeout: r, channel: a, log: o }) => {
+	let s = y(), d, f = [], p = !1, h = m(n), { promise: g, resolve: _, reject: b } = w(), x = r === void 0 ? void 0 : setTimeout(() => {
 		b(new e("CONNECTION_TIMEOUT", `Connection timed out after ${r}ms`));
 	}, r), S = () => {
 		for (let e of f) e();
 	}, C = () => {
 		if (p) return;
 		f.push(v(t, n, a, o));
-		let { remoteProxy: e, destroy: r } = w(t, a, o);
+		let { remoteProxy: e, destroy: r } = ee(t, a, o);
 		f.push(r), clearTimeout(x), p = !0, _({
 			remoteProxy: e,
 			destroy: S
 		});
-	}, D = () => {
+	}, E = () => {
 		let n = {
 			namespace: i,
 			type: "SYN",
@@ -233,8 +233,8 @@ var e = class extends Error {
 		} catch (t) {
 			b(new e("TRANSMISSION_FAILED", t.message));
 		}
-	}, O = (n) => {
-		if (o?.("Received handshake SYN", n), n.participantId === d && d !== E || (d = n.participantId, D(), !(s > d || d === E))) return;
+	}, D = (n) => {
+		if (o?.("Received handshake SYN", n), n.participantId === d && d !== T || (d = n.participantId, E(), !(s > d || d === T))) return;
 		let r = {
 			namespace: i,
 			channel: a,
@@ -248,7 +248,7 @@ var e = class extends Error {
 			b(new e("TRANSMISSION_FAILED", t.message));
 			return;
 		}
-	}, k = (n) => {
+	}, O = (n) => {
 		o?.("Received handshake ACK1", n);
 		let r = {
 			namespace: i,
@@ -263,20 +263,20 @@ var e = class extends Error {
 			return;
 		}
 		C();
-	}, A = (e) => {
+	}, k = (e) => {
 		o?.("Received handshake ACK2", e), C();
-	}, j = (e) => {
-		c(e) && O(e), l(e) && k(e), u(e) && A(e);
+	}, A = (e) => {
+		c(e) && D(e), l(e) && O(e), u(e) && k(e);
 	};
-	return t.addMessageHandler(j), f.push(() => t.removeMessageHandler(j)), D(), g;
-}, F = (e) => {
+	return t.addMessageHandler(A), f.push(() => t.removeMessageHandler(A)), E(), g;
+}, P = (e) => {
 	let t = !1, n;
 	return (...r) => (t || (t = !0, n = e(...r)), n);
-}, I = /* @__PURE__ */ new WeakSet(), L = ({ messenger: t, methods: n = {}, timeout: r, channel: a, log: o }) => {
+}, F = /* @__PURE__ */ new WeakSet(), I = ({ messenger: t, methods: n = {}, timeout: r, channel: a, log: o }) => {
 	if (!t) throw new e("INVALID_ARGUMENT", "messenger must be defined");
-	if (I.has(t)) throw new e("INVALID_ARGUMENT", "A messenger can only be used for a single connection");
-	I.add(t);
-	let c = [t.destroy], l = F((e) => {
+	if (F.has(t)) throw new e("INVALID_ARGUMENT", "A messenger can only be used for a single connection");
+	F.add(t);
+	let c = [t.destroy], l = P((e) => {
 		if (e) {
 			let e = {
 				namespace: i,
@@ -299,7 +299,7 @@ var e = class extends Error {
 				}), t.addMessageHandler((e) => {
 					p(e) && l(!1);
 				});
-				let { remoteProxy: e, destroy: i } = await P({
+				let { remoteProxy: e, destroy: i } = await N({
 					messenger: t,
 					methods: n,
 					timeout: r,
@@ -315,7 +315,7 @@ var e = class extends Error {
 			l(!0);
 		}
 	};
-}, R = class {
+}, L = class {
 	#e;
 	#t;
 	#n;
@@ -341,7 +341,7 @@ var e = class extends Error {
 			return;
 		}
 		if (l(t) || this.#s) {
-			let e = this.#s ? N(t) : t, r = this.#l(t);
+			let e = this.#s ? M(t) : t, r = this.#l(t);
 			this.#e.postMessage(e, {
 				targetOrigin: r,
 				transfer: n
@@ -384,10 +384,10 @@ var e = class extends Error {
 	};
 	#d = ({ source: e, origin: t, ports: n, data: r }) => {
 		if (e === this.#e) {
-			if (D(r)) {
+			if (E(r)) {
 				this.#n?.("Please upgrade the child window to the latest version of Penpal."), this.#s = !0;
 				try {
-					r = M(r);
+					r = j(r);
 				} catch (e) {
 					this.#n?.(`Failed to translate deprecated message: ${e.message}`);
 					return;
@@ -412,7 +412,13 @@ var e = class extends Error {
 	#f = ({ data: e }) => {
 		if (this.#r?.(e)) for (let t of this.#a) t(e);
 	};
-}, z = "asset-hub.plugin-api@1", B = "asset-hub.plugin-frame@1", V = "asset-hub.plugin-directory-frame@1", H = [
+}, R = "asset-hub.plugin-api@1", z = "asset-hub.plugin-frame@1", B = "asset-hub.plugin-directory-frame@1", V = ["executeResourceAction", "replaceResourceText"], H = [
+	"executeDirectoryAction",
+	"viewResource",
+	"refreshDirectory",
+	"navigateToDirectory",
+	"editResource"
+], U = [
 	"text",
 	"markdown",
 	"html",
@@ -420,20 +426,20 @@ var e = class extends Error {
 	"json",
 	"media",
 	"download"
-], U = ["replace_content", "delete"], W = [
+], W = ["replace_content", "delete"], G = [
 	"update",
 	"create_child",
 	"create_tree",
 	"delete"
-], G = 1e4, K = 3e4;
-async function q(e = {}) {
+], K = 1e4, q = 3e4;
+async function J(e = {}) {
 	if (window.parent === window) throw Error("Asset Hub Plugin Web SDK must run inside a plugin frame.");
-	let t = Y(e.connectionTimeoutMs, G, "connectionTimeoutMs"), n = Y(e.callTimeoutMs, K, "callTimeoutMs"), r = L({
-		messenger: new R({
+	let t = $(e.connectionTimeoutMs, K, "connectionTimeoutMs"), n = $(e.callTimeoutMs, q, "callTimeoutMs"), r = I({
+		messenger: new L({
 			remoteWindow: window.parent,
 			allowedOrigins: ["*"]
 		}),
-		channel: B,
+		channel: z,
 		timeout: t
 	}), i = await r.promise;
 	return {
@@ -449,19 +455,22 @@ async function q(e = {}) {
 		}
 	};
 }
-async function J(e = {}) {
+async function Y(e = {}) {
 	if (window.parent === window) throw Error("Asset Hub Directory Plugin Web SDK must run inside a plugin frame.");
-	let t = Y(e.connectionTimeoutMs, G, "connectionTimeoutMs"), n = Y(e.callTimeoutMs, K, "callTimeoutMs"), r = L({
-		messenger: new R({
+	let t = $(e.connectionTimeoutMs, K, "connectionTimeoutMs"), n = $(e.callTimeoutMs, q, "callTimeoutMs"), r = I({
+		messenger: new L({
 			remoteWindow: window.parent,
 			allowedOrigins: ["*"]
 		}),
-		channel: V,
+		channel: B,
 		timeout: t
 	}), i = await r.promise;
 	return {
 		executeDirectoryAction(e, t) {
 			return i.executeDirectoryAction(e, t ?? {}, new b({ timeout: n }));
+		},
+		viewResource(e, t) {
+			return i.viewResource(e, t ?? {}, new b({ timeout: n }));
 		},
 		refreshDirectory() {
 			return i.refreshDirectory(new b({ timeout: n }));
@@ -469,15 +478,64 @@ async function J(e = {}) {
 		navigateToDirectory(e) {
 			return i.navigateToDirectory(e, new b({ timeout: n }));
 		},
+		editResource(e) {
+			return i.editResource(e, new b({ timeout: n }));
+		},
 		disconnect() {
 			r.destroy();
 		}
 	};
 }
-function Y(e, t, n) {
+function X({ client: e, frame: t, resourceId: n, output: r, connectionTimeoutMs: i }) {
+	if (r.resourceId !== n) throw Error("The Resource frame output is not bound to the requested Resource.");
+	let a = r.view;
+	if (a?.view !== "plugin_frame") throw Error("The Resource Action did not return a plugin_frame.");
+	if (a.plugin_api !== "asset-hub.plugin-api@1") throw Error(`Unsupported Plugin Frame API: ${a.plugin_api}`);
+	let o = Z(a.url), s = t.contentWindow;
+	if (!s) throw Error("The Resource frame window is not available.");
+	t.setAttribute("sandbox", "allow-scripts"), t.title = a.title ?? "Resource view", t.src = o;
+	let c = $(i, K, "connectionTimeoutMs"), l = I({
+		messenger: new L({
+			remoteWindow: s,
+			allowedOrigins: ["*"]
+		}),
+		channel: z,
+		timeout: c,
+		methods: {
+			executeResourceAction(t, i) {
+				return t === r.action ? e.viewResource(n, i ?? {}) : Promise.reject(/* @__PURE__ */ Error("The nested Resource frame may execute only its originating Action."));
+			},
+			replaceResourceText() {
+				return Promise.reject(/* @__PURE__ */ Error("Text replacement is not available from an embedded read-only Resource frame."));
+			}
+		}
+	});
+	return {
+		ready: l.promise.then(() => void 0),
+		disconnect() {
+			l.destroy();
+		}
+	};
+}
+function Z(e) {
+	let [t] = e.split(/[?#]/, 1);
+	if (!t || !/^\/plugins\/[a-z0-9._-]+\//.test(t) || Q(t)) throw Error("The Resource Action returned an invalid plugin frame URL.");
+	return e;
+}
+function Q(e) {
+	try {
+		return e.split("/").some((e) => {
+			let t = decodeURIComponent(e);
+			return t === "." || t === ".." || t.includes("/") || t.includes("\\");
+		});
+	} catch {
+		return !0;
+	}
+}
+function $(e, t, n) {
 	if (e === void 0) return t;
 	if (!Number.isSafeInteger(e) || e <= 0) throw TypeError(`${n} must be a positive safe integer.`);
 	return e;
 }
 //#endregion
-export { V as DIRECTORY_FRAME_CHANNEL, z as PLUGIN_API_VERSION, B as RESOURCE_FRAME_CHANNEL, J as connectAssetHubDirectoryFrame, q as connectAssetHubFrame, W as directoryActionEffectKinds, H as pluginViewKinds, U as resourceActionEffectKinds };
+export { B as DIRECTORY_FRAME_CHANNEL, R as PLUGIN_API_VERSION, z as RESOURCE_FRAME_CHANNEL, Y as connectAssetHubDirectoryFrame, J as connectAssetHubFrame, G as directoryActionEffectKinds, H as directoryFrameMethods, X as mountAssetHubResourceFrame, U as pluginViewKinds, W as resourceActionEffectKinds, V as resourceFrameMethods };

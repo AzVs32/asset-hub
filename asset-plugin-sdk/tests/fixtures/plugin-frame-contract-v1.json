@@ -4,6 +4,16 @@
     "resource": "asset-hub.plugin-frame@1",
     "directory": "asset-hub.plugin-directory-frame@1"
   },
+  "methods": {
+    "resource": ["executeResourceAction", "replaceResourceText"],
+    "directory": [
+      "executeDirectoryAction",
+      "viewResource",
+      "refreshDirectory",
+      "navigateToDirectory",
+      "editResource"
+    ]
+  },
   "view_kinds": [
     "text",
     "markdown",

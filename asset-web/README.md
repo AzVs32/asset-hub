@@ -91,19 +91,26 @@ and sends the content through the Host's revision-guarded streaming replacement 
 A frame may invoke only Actions exposed for its bound Resource. Destructive Actions,
 including deletion, require a Host confirmation before the Gateway call is made.
 Directory frames use a separate Directory-bound bridge to execute exposed Directory Actions,
-refresh the current Directory, and request canonical Host navigation. They cannot access Core
-workspace slots or address arbitrary Directory IDs. Navigating to a different Directory remounts
-the iframe so the Web SDK establishes a new connection bound to that Directory; an existing frame
-is never rebound to another aggregate.
-Both bridges pass only an Action ID to the Gateway, which resolves the canonical Action metadata
-from the current bound aggregate before deciding access and revision behavior. They share the same
-bounded JSON input parser, immutable aggregate-ID binding, monotonic snapshot update rule, plugin
-asset URL validation, and opaque-origin messenger construction. Resource text replacement and
-Directory refresh/navigation remain deliberately aggregate-specific capabilities.
+refresh the current Directory, request canonical Host navigation, or ask the Host to view/edit a
+direct Resource by opaque ID. Both Resource paths reload the Resource, verify exact Directory
+membership, and resolve the current `text_view` or `text_edit` provider without accepting its Action
+ID from the Directory plugin. The Directory Web SDK can mount the read frame and relay the nested
+Resource frame's calls back through the same read-only provider binding. Editing opens the write
+`text_edit` frame through the existing Host dialog. The Directory frame cannot write Resource
+content directly.
+It cannot access Core workspace slots or address arbitrary Directory IDs. Navigating to a different
+Directory remounts the iframe so the Web SDK establishes a new connection bound to that Directory;
+an existing frame is never rebound to another aggregate. A successful Resource replacement also
+remounts the current Directory workspace so it reloads authoritative document state.
+Both bridges resolve canonical Action metadata from a currently bound aggregate before execution.
+They share immutable aggregate-ID binding, monotonic snapshot update rules, plugin asset URL
+validation, and opaque-origin messenger construction. Resource text replacement and Directory
+refresh/navigation/Resource-frame/editor delegation remain deliberately aggregate-specific capabilities.
 The Host imports the API version, Resource and Directory channels, view kinds, action result types,
-and effect kinds from `@asset-hub/plugin-web-sdk/contract`; it does not maintain a second copy of the
-Browser Frame protocol. Frame action input is recursively validated as a JSON object and is bounded
-to 32 nested levels and 10,000 values before it reaches the Gateway.
+and effect kinds from `@asset-hub/plugin-web-sdk/contract`; the shared golden contract additionally
+locks the exposed Host method names. Frame action input is recursively validated as a JSON
+object and is bounded to 32 nested levels and 10,000 values before it reaches the Gateway; opaque
+Resource IDs receive a separate non-empty length check.
 
 Directories are addressed by stable UUID throughout the domain and Gateway. Paths are navigation
 labels only. Directory update/delete and Resource or Directory actions forward the aggregate's

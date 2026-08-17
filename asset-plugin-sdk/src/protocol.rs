@@ -12,6 +12,19 @@ pub const PLUGIN_RESOURCE_FRAME_CHANNEL: &str = "asset-hub.plugin-frame@1";
 /// Browser Frame channel used for Directory-bound Host capabilities.
 pub const PLUGIN_DIRECTORY_FRAME_CHANNEL: &str = "asset-hub.plugin-directory-frame@1";
 
+/// Host methods exposed to Resource-bound Browser Frames.
+pub const PLUGIN_RESOURCE_FRAME_METHODS: &[&str] =
+    &["executeResourceAction", "replaceResourceText"];
+
+/// Host methods exposed to Directory-bound Browser Frames.
+pub const PLUGIN_DIRECTORY_FRAME_METHODS: &[&str] = &[
+    "executeDirectoryAction",
+    "viewResource",
+    "refreshDirectory",
+    "navigateToDirectory",
+    "editResource",
+];
+
 /// View discriminants supported by the current action and Browser Frame protocol.
 pub const PLUGIN_VIEW_KINDS: &[&str] = &[
     "text",

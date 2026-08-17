@@ -5,11 +5,12 @@ import {
   type ChangeEvent,
   type CSSProperties,
   type KeyboardEvent,
-  type ReactNode,
 } from "react";
 import {
   connectAssetHubDirectoryFrame,
+  mountAssetHubResourceFrame,
   type AssetHubDirectoryFrameClient,
+  type ResourceActionOutput,
 } from "@asset-hub/plugin-web-sdk";
 import "./App.css";
 
@@ -33,7 +34,6 @@ type GameSummary = {
   id: string;
   name: string;
   path: string;
-  readme: string | null;
 };
 
 type LibraryModel = {
@@ -45,7 +45,18 @@ type LibraryModel = {
 type GameModel = {
   mode: "game";
   directory: DirectorySummary;
-  readme: string | null;
+  documents: GameDocument[];
+  cover: GameCoverData | null;
+};
+
+type GameDocument = {
+  id: string;
+  name: "README.md" | "METADATA.yml";
+};
+
+type GameCoverData = {
+  mime_type: string;
+  data: string;
 };
 
 type WorkspaceModel = LibraryModel | GameModel;
@@ -127,7 +138,7 @@ function App() {
     return <StatusScreen tone="loading" title="Opening game library" detail="Loading directory data" />;
   }
   if (model.mode === "game") {
-    return <GameDetail model={model} />;
+    return <GameDetail model={model} client={client} />;
   }
   return (
     <GameLibrary
@@ -283,10 +294,7 @@ function GameLibrary({
                 />
                 <div className="card-copy">
                   <span className="folder-name">{game.name}</span>
-                  <h2>{readTitle(game.readme, game.name)}</h2>
-                  <div className="readme-preview">
-                    <MarkdownDocument source={game.readme} compact />
-                  </div>
+                  <h2>{game.name}</h2>
                   <button className="text-button" type="button" onClick={() => void onNavigate(game.path)}>
                     Open game <span>→</span>
                   </button>
@@ -486,69 +494,154 @@ function DefaultGameIcon() {
   );
 }
 
-function GameDetail({ model }: { model: GameModel }) {
+function GameDetail({
+  model,
+  client,
+}: {
+  model: GameModel;
+  client: AssetHubDirectoryFrameClient;
+}) {
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [documentOutput, setDocumentOutput] = useState<ResourceActionOutput | null>(null);
+  const [viewError, setViewError] = useState<string | null>(null);
+  const readme = model.documents.find((document) => document.name === "README.md");
+  const coverSource = model.cover
+    ? `data:${model.cover.mime_type};base64,${model.cover.data}`
+    : null;
+
+  useEffect(() => {
+    if (!readme) {
+      setDocumentOutput(null);
+      setViewError("README.md was not found for this game.");
+      return;
+    }
+    let active = true;
+    setDocumentOutput(null);
+    setViewError(null);
+    void client.viewResource(readme.id)
+      .then((output) => {
+        if (!active) return;
+        if (output.view?.view !== "plugin_frame") {
+          throw new Error("Resource Text did not return its reader frame.");
+        }
+        setDocumentOutput(output);
+      })
+      .catch((reason: unknown) => {
+        if (active) setViewError(errorMessage(reason, "Unable to display README.md"));
+      });
+    return () => {
+      active = false;
+    };
+  }, [client, readme]);
+
+  async function edit(document: GameDocument) {
+    setEditing(document.id);
+    setEditError(null);
+    try {
+      await client.editResource(document.id);
+    } catch (reason) {
+      setEditError(errorMessage(reason, `Unable to edit ${document.name}`));
+    } finally {
+      setEditing(null);
+    }
+  }
+
   return (
     <main className="game-detail">
       <div className="detail-rail">
-        <div className="game-glyph">G</div>
-        <span>{model.directory.name}</span>
+        <div className={`detail-cover${coverSource ? " has-image" : ""}`}>
+          {coverSource ? <img src={coverSource} alt="" /> : <DefaultGameIcon />}
+        </div>
+        <span className="detail-name">{model.directory.name}</span>
         <small>GAME DOCUMENT</small>
+        <div className="detail-actions">
+          {model.documents.map((document) => (
+            <button
+              type="button"
+              disabled={editing !== null}
+              key={document.id}
+              onClick={() => void edit(document)}
+            >
+              {editing === document.id ? "Opening…" : `Edit ${document.name}`}
+            </button>
+          ))}
+        </div>
+        {editError ? <p className="rail-error" role="alert">{editError}</p> : null}
       </div>
       <article className="document">
-        <div className="document-meta"><span>README.md</span><span>{model.directory.path}</span></div>
-        <div className="prose"><MarkdownDocument source={model.readme} /></div>
+        {viewError ? (
+          <DocumentState tone="error" title="Unable to display README.md" detail={viewError} />
+        ) : documentOutput && readme ? (
+          <ResourceProviderFrame
+            client={client}
+            resourceId={readme.id}
+            output={documentOutput}
+            onError={setViewError}
+          />
+        ) : (
+          <DocumentState tone="loading" title="Opening README.md" detail="Loading text view" />
+        )}
       </article>
     </main>
   );
 }
 
-function MarkdownDocument({ source, compact = false }: { source: string | null; compact?: boolean }) {
-  const lines = (source || "No README.md was found for this game.").split(/\r?\n/);
-  const blocks: ReactNode[] = [];
-  let index = 0;
+function ResourceProviderFrame({
+  client,
+  resourceId,
+  output,
+  onError,
+}: {
+  client: AssetHubDirectoryFrameClient;
+  resourceId: string;
+  output: ResourceActionOutput;
+  onError: (message: string) => void;
+}) {
+  const frameRef = useRef<HTMLIFrameElement | null>(null);
 
-  while (index < lines.length) {
-    const line = lines[index];
-    if (!line.trim()) {
-      index += 1;
-      continue;
+  useEffect(() => {
+    const frame = frameRef.current;
+    if (!frame) return;
+    let active = true;
+    try {
+      const mount = mountAssetHubResourceFrame({ client, frame, resourceId, output });
+      void mount.ready.catch((reason: unknown) => {
+        if (active) onError(errorMessage(reason, "Unable to connect the Resource Text reader"));
+      });
+      return () => {
+        active = false;
+        mount.disconnect();
+      };
+    } catch (reason) {
+      onError(errorMessage(reason, "Unable to mount the Resource Text reader"));
     }
-    const heading = /^(#{1,3})\s+(.+)$/.exec(line);
-    if (heading) {
-      if (!(compact && heading[1].length === 1)) {
-        const content = inlineMarkdown(heading[2]);
-        if (heading[1].length === 1) blocks.push(<h1 key={index}>{content}</h1>);
-        else if (heading[1].length === 2) blocks.push(<h2 key={index}>{content}</h2>);
-        else blocks.push(<h3 key={index}>{content}</h3>);
-      }
-      index += 1;
-      continue;
-    }
-    if (/^[-*]\s+/.test(line)) {
-      const items: ReactNode[] = [];
-      const key = index;
-      while (index < lines.length && /^[-*]\s+/.test(lines[index])) {
-        items.push(<li key={index}>{inlineMarkdown(lines[index].replace(/^[-*]\s+/, ""))}</li>);
-        index += 1;
-      }
-      blocks.push(<ul key={key}>{items}</ul>);
-      continue;
-    }
-    const paragraph: string[] = [];
-    const key = index;
-    while (index < lines.length && lines[index].trim() && !/^(?:#{1,3}|[-*])\s+/.test(lines[index])) {
-      paragraph.push(lines[index]);
-      index += 1;
-    }
-    blocks.push(<p key={key}>{inlineMarkdown(paragraph.join(" "))}</p>);
-  }
+  }, [client, onError, output, resourceId]);
 
-  return <>{blocks}</>;
+  return (
+    <iframe
+      ref={frameRef}
+      className="provider-document"
+      sandbox="allow-scripts"
+      title="README.md"
+    />
+  );
 }
 
-function inlineMarkdown(value: string): ReactNode[] {
-  return value.split(/`([^`]+)`/g).map((part, index) =>
-    index % 2 === 1 ? <code key={index}>{part}</code> : part,
+function DocumentState({
+  tone,
+  title,
+  detail,
+}: {
+  tone: "loading" | "error";
+  title: string;
+  detail: string;
+}) {
+  return (
+    <div className={`document-state ${tone}`} role={tone === "error" ? "alert" : "status"}>
+      <strong>{title}</strong>
+      <span>{detail}</span>
+    </div>
   );
 }
 
@@ -564,11 +657,19 @@ async function loadWorkspace(client: AssetHubDirectoryFrameClient): Promise<Work
 function isWorkspaceModel(value: unknown): value is WorkspaceModel {
   if (!isObject(value) || !isDirectory(value.directory)) return false;
   if (value.mode === "game") {
-    return nullableString(value.readme);
+    return Array.isArray(value.documents)
+      && value.documents.every(isGameDocument)
+      && isGameCover(value.cover);
   }
   return value.mode === "library"
     && Array.isArray(value.games)
     && value.games.every(isGameSummary);
+}
+
+function isGameDocument(value: unknown): value is GameDocument {
+  return isObject(value)
+    && typeof value.id === "string"
+    && (value.name === "README.md" || value.name === "METADATA.yml");
 }
 
 function isDirectory(value: unknown): value is DirectorySummary {
@@ -579,31 +680,26 @@ function isGameSummary(value: unknown): value is GameSummary {
   return isObject(value)
     && typeof value.id === "string"
     && typeof value.name === "string"
-    && typeof value.path === "string"
-    && nullableString(value.readme);
+    && typeof value.path === "string";
 }
 
 function isCoverResponse(value: unknown): value is {
-  cover: { mime_type: string; data: string } | null;
+  cover: GameCoverData | null;
 } {
   if (!isObject(value) || !("cover" in value)) return false;
-  if (value.cover === null) return true;
-  return isObject(value.cover)
-    && typeof value.cover.mime_type === "string"
-    && ICON_TYPES.has(value.cover.mime_type)
-    && typeof value.cover.data === "string";
+  return isGameCover(value.cover);
+}
+
+function isGameCover(value: unknown): value is GameCoverData | null {
+  if (value === null) return true;
+  return isObject(value)
+    && typeof value.mime_type === "string"
+    && ICON_TYPES.has(value.mime_type)
+    && typeof value.data === "string";
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function nullableString(value: unknown): value is string | null {
-  return value === null || typeof value === "string";
-}
-
-function readTitle(readme: string | null, fallback: string) {
-  return readme?.match(/^#\s+(.+)$/m)?.[1] || fallback;
 }
 
 function normalizedIconType(file: File) {

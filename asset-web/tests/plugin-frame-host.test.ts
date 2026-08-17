@@ -181,6 +181,92 @@ describe("Directory Plugin Frame host bridge", () => {
       "Directory path must be a canonical relative path.",
     );
   });
+
+  it("opens only a direct Resource through its resolved frame-based text editor", async () => {
+    const edit = action({
+      id: "example.text.edit",
+      provides: "text_edit",
+      access: "write",
+      output: { views: ["plugin_frame"], effects: [] },
+    });
+    const directResource = resource([edit]);
+    const outsideResource = { ...directResource, id: "resource-2", directory: "outside" };
+    const resourceWithoutEditor = { ...directResource, id: "resource-3", actions: [] };
+    const findResource = vi
+      .fn()
+      .mockResolvedValueOnce(directResource)
+      .mockResolvedValueOnce(outsideResource)
+      .mockResolvedValueOnce(resourceWithoutEditor);
+    const onEditResource = vi.fn().mockResolvedValue(undefined);
+    const item = directory([]);
+    const bridge = createDirectoryPluginFrameHostBridge({
+      directory: item,
+      frameDirectoryId: item.id,
+      gateway: { findResource } as unknown as AssetGateway,
+      onEditResource,
+    });
+
+    await bridge.methods.editResource(directResource.id);
+
+    expect(findResource).toHaveBeenCalledWith(directResource.id);
+    expect(onEditResource).toHaveBeenCalledWith(directResource, edit);
+    await expect(bridge.methods.editResource(outsideResource.id)).rejects.toThrow(
+      "not a direct member of the bound Directory",
+    );
+    await expect(bridge.methods.editResource(resourceWithoutEditor.id)).rejects.toThrow(
+      "No frame-based text editor",
+    );
+    expect(onEditResource).toHaveBeenCalledTimes(1);
+  });
+
+  it("resolves only the current frame-based text_view provider for a direct Resource", async () => {
+    const read = action({
+      id: "example.document.read",
+      provides: "text_view",
+      output: { views: ["plugin_frame", "json"], effects: [] },
+    });
+    const invalid = action({
+      id: "example.document.invalid-view",
+      provides: "text_view",
+      access: "write",
+      output: { views: ["plugin_frame"], effects: [] },
+    });
+    const directResource = resource([read]);
+    const resourceWithoutViewer = { ...directResource, actions: [invalid] };
+    const output: ResourceActionOutput = {
+      resourceId: directResource.id,
+      action: read.id,
+      diagnostics: [],
+      effects: [],
+      view: {
+        view: "plugin_frame",
+        plugin_api: "asset-hub.plugin-api@1",
+        title: "Example",
+        url: "/plugins/example.document/index.html",
+      },
+    };
+    const findResource = vi
+      .fn()
+      .mockResolvedValueOnce(directResource)
+      .mockResolvedValueOnce(resourceWithoutViewer);
+    const executeResourceAction = vi.fn().mockResolvedValue(output);
+    const item = directory([]);
+    const bridge = createDirectoryPluginFrameHostBridge({
+      directory: item,
+      frameDirectoryId: item.id,
+      gateway: { findResource, executeResourceAction } as unknown as AssetGateway,
+    });
+
+    await expect(
+      bridge.methods.viewResource(directResource.id, { operation: "load" }),
+    ).resolves.toBe(output);
+    expect(executeResourceAction).toHaveBeenCalledWith(directResource, read.id, {
+      operation: "load",
+    });
+    await expect(bridge.methods.viewResource(directResource.id, {})).rejects.toThrow(
+      "No frame-based text viewer",
+    );
+  });
 });
 
 describe("Plugin Frame aggregate binding", () => {

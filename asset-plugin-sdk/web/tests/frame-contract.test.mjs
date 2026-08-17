@@ -4,10 +4,12 @@ import { describe, it } from "node:test";
 import {
   DIRECTORY_FRAME_CHANNEL,
   directoryActionEffectKinds,
+  directoryFrameMethods,
   PLUGIN_API_VERSION,
   pluginViewKinds,
   RESOURCE_FRAME_CHANNEL,
   resourceActionEffectKinds,
+  resourceFrameMethods,
 } from "../dist/contract.js";
 
 const fixture = JSON.parse(
@@ -19,6 +21,8 @@ describe("Browser Frame contract", () => {
     assert.equal(PLUGIN_API_VERSION, fixture.plugin_api);
     assert.equal(RESOURCE_FRAME_CHANNEL, fixture.channels.resource);
     assert.equal(DIRECTORY_FRAME_CHANNEL, fixture.channels.directory);
+    assert.deepEqual(resourceFrameMethods, fixture.methods.resource);
+    assert.deepEqual(directoryFrameMethods, fixture.methods.directory);
     assert.deepEqual(pluginViewKinds, fixture.view_kinds);
     assert.deepEqual(resourceActionEffectKinds, fixture.resource_effect_kinds);
     assert.deepEqual(directoryActionEffectKinds, fixture.directory_effect_kinds);

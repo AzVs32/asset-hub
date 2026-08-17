@@ -36,6 +36,7 @@ export function ResourceWorkspace() {
   const [uploadOpen, setUploadOpen] = React.useState(false);
   const [folderOpen, setFolderOpen] = React.useState(false);
   const [usersOpen, setUsersOpen] = React.useState(false);
+  const [directoryWorkspaceVersion, setDirectoryWorkspaceVersion] = React.useState(0);
   const selected = useQuery({
     queryKey: queryKeys.resource(browser.selectedId ?? ""),
     queryFn: () => gateway.findResource(browser.selectedId ?? ""),
@@ -87,6 +88,13 @@ export function ResourceWorkspace() {
         },
       },
     );
+  }
+
+  async function openResourceEditor(item: Resource, action: ResourceAction) {
+    if (!confirmAction(action, item.name)) {
+      throw new Error(`Action ${action.id} was not confirmed.`);
+    }
+    await commands.execute.mutateAsync({ resource: item, action });
   }
 
   async function logout() {
@@ -146,6 +154,8 @@ export function ResourceWorkspace() {
         directory={currentDirectory}
         onDirectoryChanged={() => browser.listing.refetch().then(() => undefined)}
         onNavigate={browser.openDirectory}
+        onEditResource={openResourceEditor}
+        instanceVersion={directoryWorkspaceVersion}
         coreWorkspace={
           <CoreDirectoryWorkspace
             browser={
@@ -226,13 +236,17 @@ export function ResourceWorkspace() {
       <PluginActionDialog
         result={commands.actionResult}
         onClose={() => commands.setActionResult(null)}
-        onResourceChanged={() => commands.refresh(commands.actionResult?.resource.id)}
+        onResourceChanged={async () => {
+          await commands.refresh(commands.actionResult?.resource.id);
+          setDirectoryWorkspaceVersion((version) => version + 1);
+        }}
       />
       <DirectoryActionDialog
         result={commands.directoryActionResult}
         onClose={() => commands.setDirectoryActionResult(null)}
         onDirectoryChanged={() => browser.listing.refetch().then(() => undefined)}
         onNavigate={browser.openDirectory}
+        onEditResource={openResourceEditor}
       />
       {usersOpen ? (
         <React.Suspense fallback={null}>

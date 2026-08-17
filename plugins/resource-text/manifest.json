@@ -37,6 +37,7 @@
     "resource_actions": [
       {
         "id": "resource.text.read",
+        "provides": "text_view",
         "label": "Read",
         "description": "Open a supported text file in the plugin reader.",
         "handler": "read_text",

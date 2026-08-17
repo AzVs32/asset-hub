@@ -55,11 +55,18 @@ const output = await host.executeDirectoryAction("example.collection.workspace",
 });
 await host.refreshDirectory();
 await host.navigateToDirectory("collections/favorites");
+const readme = await host.viewResource("resource-id");
+await host.editResource("resource-id");
 ```
 
 `executeDirectoryAction` accepts only an Action exposed on the bound Directory. Refresh and
-navigation remain Host operations. A Directory plugin owns its iframe's complete UI and does not
-receive the Core workspace's menu, thumbnail, resource-row, or detail slots.
+navigation remain Host operations. `viewResource` accepts only a direct Resource and resolves its
+current effect-free, read-only `text_view` provider. `mountAssetHubResourceFrame` mounts the initial
+frame output and relays the nested frame's normal Resource API calls back through that same resolved
+provider. The relay can execute only the originating read Action and always rejects text replacement.
+`editResource` applies the same Directory binding before asking the Host to open the resolved,
+write `text_edit` provider. A Directory plugin owns its iframe's complete UI and does not receive
+the Core workspace's menu, thumbnail, resource-row, or detail slots.
 
 Action input must be a JSON object throughout: nested values may contain only finite numbers,
 strings, booleans, null, arrays, and plain objects. The Host rejects cyclic or non-JSON values and

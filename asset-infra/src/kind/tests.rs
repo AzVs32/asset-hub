@@ -4,9 +4,9 @@ use crate::kind::directory_action_registry::validate_directory_action_capabiliti
 use crate::plugin_manifest::PluginCatalog;
 use asset_core::CoreError;
 use asset_core::domain::{
-    ActionOutputContract, ActionUi, DefinitionOrigin, DirectoryActionDefinition, DirectoryKind,
-    DirectoryKindDefinition, ResourceActionDefinition, ResourceContentMatcher, ResourceKind,
-    ResourceKindDefinition,
+    ActionAccess, ActionOutputContract, ActionUi, DefinitionOrigin, DirectoryActionDefinition,
+    DirectoryKind, DirectoryKindDefinition, ResourceActionDefinition, ResourceContentMatcher,
+    ResourceKind, ResourceKindDefinition,
 };
 use asset_core::port::DirectoryKindRegistry;
 use std::path::{Path, PathBuf};
@@ -399,6 +399,39 @@ fn thumbnail_capabilities_require_a_single_nearest_provider() {
             .unwrap_err()
             .to_string()
             .contains("provides unsupported capability `directory.thumbnail`")
+    );
+}
+
+#[test]
+fn text_view_capability_requires_an_effect_free_read_only_resource_frame() {
+    let definitions = vec![ResourceKindDefinition::new(
+        ResourceKind::default(),
+        "Resource",
+        true,
+        DefinitionOrigin::builtin_static("test"),
+    )];
+    let valid = ResourceActionDefinition::new_static("example.text.view", "View")
+        .with_static_provides(Some("text_view"))
+        .with_kinds(["core:resource"])
+        .with_output(ActionOutputContract {
+            views: vec!["plugin_frame".to_string(), "json".to_string()],
+            effects: Vec::new(),
+        });
+    validate_resource_action_capabilities(&definitions, &[valid]).unwrap();
+
+    let invalid = ResourceActionDefinition::new_static("example.text.view", "View")
+        .with_static_provides(Some("text_view"))
+        .with_access(ActionAccess::Write)
+        .with_kinds(["core:resource"])
+        .with_output(ActionOutputContract {
+            views: vec!["html".to_string()],
+            effects: Vec::new(),
+        });
+    assert!(
+        validate_resource_action_capabilities(&definitions, &[invalid])
+            .unwrap_err()
+            .to_string()
+            .contains("must be effect-free, read-only, and support `plugin_frame`")
     );
 }
 

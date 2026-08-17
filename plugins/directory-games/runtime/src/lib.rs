@@ -7,7 +7,6 @@ const GAMES_KIND: &str = "directory:games";
 const GAME_KIND: &str = "directory:games:item";
 const MAX_GAME_NAME_CHARS: usize = 255;
 const MAX_ALIASES: usize = 32;
-const MAX_DOCUMENT_SIZE: u64 = 1024 * 1024;
 const MAX_COVER_SIZE: usize = 1024 * 1024;
 const CONTENT_CHUNK_SIZE: u64 = 64 * 1024;
 const THUMBNAIL_SVG: &str = include_str!("thumbnail.svg");
@@ -284,12 +283,10 @@ fn load_workspace(context: &DirectoryContext) -> Result<DirectoryResponse> {
             .into_iter()
             .filter(|item| item.kind() == GAME_KIND)
         {
-            let documents = context.resources_bounded(Some(child.id()), 100)?;
             games.push(json!({
                 "id": child.id(),
                 "name": child.name(),
                 "path": child.path(),
-                "readme": read_document(&documents, "README.md")?,
             }));
         }
         json!({
@@ -302,12 +299,21 @@ fn load_workspace(context: &DirectoryContext) -> Result<DirectoryResponse> {
         json!({
             "mode": "game",
             "directory": {"name": directory.name(), "path": directory.path()},
-            "readme": read_document(&documents, "README.md")?
+            "documents": editable_document_references(&documents),
+            "cover": read_cover(context, None)?
         })
     } else {
         return Err(Error::msg("unsupported directory kind for Games workspace").into());
     };
     DirectoryResponse::json(data)
+}
+
+fn editable_document_references(resources: &[DirectoryResource]) -> Vec<Value> {
+    ["README.md", "METADATA.yml"]
+        .iter()
+        .filter_map(|name| resources.iter().find(|resource| resource.name() == *name))
+        .map(|resource| json!({"id": resource.id(), "name": resource.name()}))
+        .collect()
 }
 
 fn load_cover(context: &DirectoryContext) -> Result<DirectoryResponse> {
@@ -320,27 +326,29 @@ fn load_cover(context: &DirectoryContext) -> Result<DirectoryResponse> {
         .iter()
         .find(|child| child.id() == game_id && child.kind() == GAME_KIND)
         .ok_or_else(|| Error::msg("game is not a direct child of this Games directory"))?;
-    let Some(public) = context
-        .children_bounded_in(Some(game.id()), 100)?
-        .into_iter()
-        .find(|child| child.name() == "public")
-    else {
-        return DirectoryResponse::json(json!({"cover": null}));
+    DirectoryResponse::json(json!({"cover": read_cover(context, Some(game.id()))?}))
+}
+
+fn read_cover(context: &DirectoryContext, game_id: Option<&str>) -> Result<Value> {
+    let children = match game_id {
+        Some(game_id) => context.children_bounded_in(Some(game_id), 100)?,
+        None => context.children_bounded(100)?,
+    };
+    let Some(public) = children.into_iter().find(|child| child.name() == "public") else {
+        return Ok(Value::Null);
     };
     let resources = context.resources_bounded(Some(public.id()), 100)?;
     let Some((resource, mime_type)) = resources.iter().find_map(|resource| {
         cover_mime_type(resource.name()).map(|mime_type| (resource, mime_type))
     }) else {
-        return DirectoryResponse::json(json!({"cover": null}));
+        return Ok(Value::Null);
     };
     let Some(bytes) = resource.read_bytes(MAX_COVER_SIZE as u64, CONTENT_CHUNK_SIZE)? else {
-        return DirectoryResponse::json(json!({"cover": null}));
+        return Ok(Value::Null);
     };
-    DirectoryResponse::json(json!({
-        "cover": {
-            "mime_type": mime_type,
-            "data": encode_base64(bytes)
-        }
+    Ok(json!({
+        "mime_type": mime_type,
+        "data": encode_base64(bytes)
     }))
 }
 
@@ -353,13 +361,6 @@ fn cover_mime_type(name: &str) -> Option<&'static str> {
         "cover.svg" => Some("image/svg+xml"),
         _ => None,
     }
-}
-
-fn read_document(resources: &[DirectoryResource], name: &str) -> Result<Option<String>> {
-    let Some(resource) = resources.iter().find(|resource| resource.name() == name) else {
-        return Ok(None);
-    };
-    resource.read_text(MAX_DOCUMENT_SIZE, CONTENT_CHUNK_SIZE)
 }
 
 #[cfg(test)]

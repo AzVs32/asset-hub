@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type React from "react";
 import { useGateway } from "@/application/ports/gateway-context";
-import type { Directory } from "@/domain/resource";
+import type { Directory, Resource, ResourceAction } from "@/domain/resource";
 import { usePluginKernel } from "@/kernel/plugin-kernel";
 import { DirectoryPluginFrame } from "@/plugins/directory-plugin-frame";
 import { ErrorState, LoadingState } from "@/shared/ui/state";
@@ -11,11 +11,15 @@ export function DirectoryWorkspaceOutlet({
   coreWorkspace,
   onDirectoryChanged,
   onNavigate,
+  onEditResource,
+  instanceVersion,
 }: {
   directory: Directory | undefined;
   coreWorkspace: React.ReactNode;
   onDirectoryChanged: () => void | Promise<void>;
   onNavigate: (path: string) => void | Promise<void>;
+  onEditResource: (resource: Resource, action: ResourceAction) => void | Promise<void>;
+  instanceVersion: number;
 }) {
   const gateway = useGateway();
   const kernel = usePluginKernel();
@@ -57,6 +61,8 @@ export function DirectoryWorkspaceOutlet({
         gateway={gateway}
         onDirectoryChanged={onDirectoryChanged}
         onNavigate={onNavigate}
+        onEditResource={onEditResource}
+        instanceVersion={instanceVersion}
       />
     </section>
   );

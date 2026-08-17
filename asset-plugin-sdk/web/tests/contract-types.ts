@@ -1,4 +1,5 @@
 import type { DirectoryActionOutput, PluginView, ResourceActionOutput } from "../src/contract";
+import type { AssetHubDirectoryFrameClient } from "../src/index";
 
 const views: PluginView[] = [
   { view: "text", text: "plain" },
@@ -39,4 +40,10 @@ const directoryOutput: DirectoryActionOutput = {
   diagnostics: [],
 };
 
-void [views, resourceOutput, directoryOutput];
+declare const directoryFrame: AssetHubDirectoryFrameClient;
+const readResource: Promise<ResourceActionOutput> = directoryFrame.viewResource("resource-id", {
+  operation: "load",
+});
+const editResource: Promise<void> = directoryFrame.editResource("resource-id");
+
+void [views, resourceOutput, directoryOutput, readResource, editResource];

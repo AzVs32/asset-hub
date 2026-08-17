@@ -11,8 +11,13 @@ use super::normalization::resource_action_definition;
 use super::validation::ensure_unique_scoped_action;
 
 const RESOURCE_THUMBNAIL_LOCATION: &str = "resource_thumbnail";
+const TEXT_VIEW_CAPABILITY: &str = "text_view";
 const TEXT_EDIT_CAPABILITY: &str = "text_edit";
-const RESOURCE_CAPABILITIES: &[&str] = &[THUMBNAIL_CAPABILITY, TEXT_EDIT_CAPABILITY];
+const RESOURCE_CAPABILITIES: &[&str] = &[
+    THUMBNAIL_CAPABILITY,
+    TEXT_VIEW_CAPABILITY,
+    TEXT_EDIT_CAPABILITY,
+];
 
 /// 默认资源动作注册表。
 #[derive(Debug, Clone)]
@@ -227,6 +232,23 @@ pub(super) fn validate_resource_action_capabilities(
         {
             return Err(CoreError::configuration(format!(
                 "resource thumbnail provider `{}` must be read-only and support the `media` view",
+                action.id()
+            )));
+        }
+        let provides_text_view = action
+            .provides()
+            .is_some_and(|capability| capability.as_str() == TEXT_VIEW_CAPABILITY);
+        if provides_text_view
+            && (action.access() != ActionAccess::Read
+                || !action.output().effects.is_empty()
+                || !action
+                    .output()
+                    .views
+                    .iter()
+                    .any(|view| view == "plugin_frame"))
+        {
+            return Err(CoreError::configuration(format!(
+                "resource text view provider `{}` must be effect-free, read-only, and support `plugin_frame`",
                 action.id()
             )));
         }

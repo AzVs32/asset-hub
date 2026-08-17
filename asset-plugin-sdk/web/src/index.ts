@@ -3,6 +3,7 @@ import {
   DIRECTORY_FRAME_CHANNEL,
   type DirectoryActionOutput,
   type JsonObject,
+  PLUGIN_API_VERSION,
   RESOURCE_FRAME_CHANNEL,
   type ResourceActionOutput,
 } from "./contract";
@@ -25,14 +26,24 @@ export interface AssetHubFrameClient {
 
 interface AssetHubDirectoryFrameHost extends Record<string, (...args: never[]) => unknown> {
   executeDirectoryAction(action: string, input?: JsonObject): Promise<DirectoryActionOutput>;
+  viewResource(resourceId: string, input?: JsonObject): Promise<ResourceActionOutput>;
   refreshDirectory(): Promise<void>;
   navigateToDirectory(path: string): Promise<void>;
+  editResource(resourceId: string): Promise<void>;
 }
 
 export interface AssetHubDirectoryFrameClient {
   executeDirectoryAction(action: string, input?: JsonObject): Promise<DirectoryActionOutput>;
+  viewResource(resourceId: string, input?: JsonObject): Promise<ResourceActionOutput>;
   refreshDirectory(): Promise<void>;
   navigateToDirectory(path: string): Promise<void>;
+  editResource(resourceId: string): Promise<void>;
+  disconnect(): void;
+}
+
+export interface AssetHubResourceFrameMount {
+  /** Resolves when the nested Resource frame has connected to its Directory-frame relay. */
+  ready: Promise<void>;
   disconnect(): void;
 }
 
@@ -126,16 +137,119 @@ export async function connectAssetHubDirectoryFrame(
         new CallOptions({ timeout: callTimeoutMs }),
       );
     },
+    viewResource(resourceId, input) {
+      return host.viewResource(
+        resourceId,
+        input ?? {},
+        new CallOptions({ timeout: callTimeoutMs }),
+      );
+    },
     refreshDirectory() {
       return host.refreshDirectory(new CallOptions({ timeout: callTimeoutMs }));
     },
     navigateToDirectory(path) {
       return host.navigateToDirectory(path, new CallOptions({ timeout: callTimeoutMs }));
     },
+    editResource(resourceId) {
+      return host.editResource(resourceId, new CallOptions({ timeout: callTimeoutMs }));
+    },
     disconnect() {
       connection.destroy();
     },
   };
+}
+
+/**
+ * Mounts an existing read-only Resource plugin frame inside a Directory plugin frame.
+ *
+ * The nested frame receives the normal Resource-frame API. Calls are relayed through the
+ * Directory-bound client, so the outer Host retains Resource membership and Action authority.
+ */
+export function mountAssetHubResourceFrame({
+  client,
+  frame,
+  resourceId,
+  output,
+  connectionTimeoutMs,
+}: {
+  client: AssetHubDirectoryFrameClient;
+  frame: HTMLIFrameElement;
+  resourceId: string;
+  output: ResourceActionOutput;
+  connectionTimeoutMs?: number;
+}): AssetHubResourceFrameMount {
+  if (output.resourceId !== resourceId) {
+    throw new Error("The Resource frame output is not bound to the requested Resource.");
+  }
+  const view = output.view;
+  if (view?.view !== "plugin_frame") {
+    throw new Error("The Resource Action did not return a plugin_frame.");
+  }
+  if (view.plugin_api !== PLUGIN_API_VERSION) {
+    throw new Error(`Unsupported Plugin Frame API: ${view.plugin_api}`);
+  }
+  const source = pluginFrameSource(view.url);
+  const remoteWindow = frame.contentWindow;
+  if (!remoteWindow) throw new Error("The Resource frame window is not available.");
+
+  frame.setAttribute("sandbox", "allow-scripts");
+  frame.title = view.title ?? "Resource view";
+  frame.src = source;
+
+  const timeout = positiveTimeout(
+    connectionTimeoutMs,
+    defaultConnectionTimeoutMs,
+    "connectionTimeoutMs",
+  );
+  const connection = connect<Record<string, never>>({
+    messenger: new WindowMessenger({
+      remoteWindow,
+      allowedOrigins: ["*"],
+    }),
+    channel: RESOURCE_FRAME_CHANNEL,
+    timeout,
+    methods: {
+      executeResourceAction(action: string, input?: JsonObject) {
+        if (action !== output.action) {
+          return Promise.reject(
+            new Error("The nested Resource frame may execute only its originating Action."),
+          );
+        }
+        return client.viewResource(resourceId, input ?? {});
+      },
+      replaceResourceText() {
+        return Promise.reject(
+          new Error("Text replacement is not available from an embedded read-only Resource frame."),
+        );
+      },
+    } satisfies AssetHubFrameHost,
+  });
+
+  return {
+    ready: connection.promise.then(() => undefined),
+    disconnect() {
+      connection.destroy();
+    },
+  };
+}
+
+function pluginFrameSource(value: string): string {
+  const [path] = value.split(/[?#]/, 1);
+  if (!path || !/^\/plugins\/[a-z0-9._-]+\//.test(path) || hasUnsafePathSegment(path)) {
+    throw new Error("The Resource Action returned an invalid plugin frame URL.");
+  }
+  return value;
+}
+
+function hasUnsafePathSegment(path: string): boolean {
+  try {
+    return path.split("/").some((segment) => {
+      const decoded = decodeURIComponent(segment);
+      return decoded === "." || decoded === ".." || decoded.includes("/") || decoded.includes("\\");
+    });
+  } catch {
+    return true;
+  }
 }
 
 function positiveTimeout(value: number | undefined, fallback: number, name: string): number {

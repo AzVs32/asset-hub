@@ -1,7 +1,8 @@
 use asset_plugin_sdk::manifest::{MANIFEST_VERSION, PluginManifest};
 use asset_plugin_sdk::protocol::{
     PLUGIN_API_VERSION, PLUGIN_DIRECTORY_ACTION_EFFECT_KINDS, PLUGIN_DIRECTORY_FRAME_CHANNEL,
-    PLUGIN_RESOURCE_ACTION_EFFECT_KINDS, PLUGIN_RESOURCE_FRAME_CHANNEL, PLUGIN_VIEW_KINDS,
+    PLUGIN_DIRECTORY_FRAME_METHODS, PLUGIN_RESOURCE_ACTION_EFFECT_KINDS,
+    PLUGIN_RESOURCE_FRAME_CHANNEL, PLUGIN_RESOURCE_FRAME_METHODS, PLUGIN_VIEW_KINDS,
     PluginActionFailure, PluginResourceActionOutput, PluginResourceActionRequest,
 };
 use serde::Serialize;
@@ -146,6 +147,14 @@ fn browser_frame_discriminants_match_the_current_golden() {
     assert_eq!(
         expected["channels"]["directory"],
         PLUGIN_DIRECTORY_FRAME_CHANNEL
+    );
+    assert_eq!(
+        expected["methods"]["resource"],
+        json!(PLUGIN_RESOURCE_FRAME_METHODS)
+    );
+    assert_eq!(
+        expected["methods"]["directory"],
+        json!(PLUGIN_DIRECTORY_FRAME_METHODS)
     );
     assert_eq!(expected["view_kinds"], json!(PLUGIN_VIEW_KINDS));
     assert_eq!(

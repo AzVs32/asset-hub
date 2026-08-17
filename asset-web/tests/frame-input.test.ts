@@ -1,11 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { parseActionId, parseActionInput } from "@/plugins/frame-input";
+import { parseActionId, parseActionInput, parseResourceId } from "@/plugins/frame-input";
 
 describe("Plugin Frame action input", () => {
   it("accepts only bounded Action IDs", () => {
     expect(parseActionId("example.plugin.action")).toBe("example.plugin.action");
     for (const value of [undefined, "", "a".repeat(129)]) {
       expect(() => parseActionId(value)).toThrow(/Action ID/);
+    }
+  });
+
+  it("accepts only bounded Resource IDs", () => {
+    expect(parseResourceId("resource-id")).toBe("resource-id");
+    for (const value of [undefined, "", "r".repeat(129)]) {
+      expect(() => parseResourceId(value)).toThrow(/Resource ID/);
     }
   });
 

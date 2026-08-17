@@ -4,6 +4,10 @@ export declare const PLUGIN_API_VERSION = "asset-hub.plugin-api@1";
 export declare const RESOURCE_FRAME_CHANNEL = "asset-hub.plugin-frame@1";
 /** Penpal channel used by Directory-bound plugin frames. */
 export declare const DIRECTORY_FRAME_CHANNEL = "asset-hub.plugin-directory-frame@1";
+/** Host methods exposed to Resource-bound plugin frames. */
+export declare const resourceFrameMethods: readonly ["executeResourceAction", "replaceResourceText"];
+/** Host methods exposed to Directory-bound plugin frames. */
+export declare const directoryFrameMethods: readonly ["executeDirectoryAction", "viewResource", "refreshDirectory", "navigateToDirectory", "editResource"];
 export type JsonPrimitive = boolean | number | string | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | JsonObject;
 export type JsonObject = {

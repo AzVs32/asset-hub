@@ -19,7 +19,7 @@ files remain `core:resource` and receive Actions through MIME or extension match
 - Parent kind: `core:resource`
 - Read action: `resource.text.read` (`read_text`)
 - Edit action: `resource.text.edit` (`edit_text`)
-- Edit capability: `text_edit`; reading is an ordinary labeled Action
+- Read capability: `text_view`; edit capability: `text_edit`
 - Output view: `plugin_frame`
 
 The Host has no generic text kind or fallback text provider. Markdown MIME types and extensions are

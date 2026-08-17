@@ -69,6 +69,49 @@ describe("DirectoryPluginFrame", () => {
 
     expect(container.querySelector("iframe")).not.toBe(firstFrame);
   });
+
+  it("replaces the iframe when its Host-controlled instance version changes", async () => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    mounted.push(root);
+    const currentDirectory = directory([]);
+    const view: Extract<PluginView, { view: "plugin_frame" }> = {
+      view: "plugin_frame",
+      plugin_api: "asset-hub.plugin-api@1",
+      title: "Collection workspace",
+      url: "/plugins/example.collection/index.html",
+    };
+    const gateway = {
+      assetUrl: (url: string) => url,
+    } as unknown as AssetGateway;
+
+    await act(async () => {
+      root.render(
+        <DirectoryPluginFrame
+          directory={currentDirectory}
+          output={output(currentDirectory.id, view)}
+          view={view}
+          gateway={gateway}
+          instanceVersion={0}
+        />,
+      );
+    });
+    const firstFrame = container.querySelector("iframe");
+
+    await act(async () => {
+      root.render(
+        <DirectoryPluginFrame
+          directory={currentDirectory}
+          output={output(currentDirectory.id, view)}
+          view={view}
+          gateway={gateway}
+          instanceVersion={1}
+        />,
+      );
+    });
+
+    expect(container.querySelector("iframe")).not.toBe(firstFrame);
+  });
 });
 
 function output(

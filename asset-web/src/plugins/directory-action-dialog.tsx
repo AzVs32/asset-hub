@@ -1,7 +1,7 @@
 import ReactMarkdown from "react-markdown";
 import { useGateway } from "@/application/ports/gateway-context";
 import type { DirectoryActionOutput, PluginView } from "@/domain/plugin";
-import type { Directory, DirectoryAction } from "@/domain/resource";
+import type { Directory, DirectoryAction, Resource, ResourceAction } from "@/domain/resource";
 import { Dialog } from "@/shared/ui/dialog";
 import { DirectoryPluginFrame } from "./directory-plugin-frame";
 
@@ -16,11 +16,15 @@ export function DirectoryActionDialog({
   onClose,
   onDirectoryChanged,
   onNavigate,
+  onEditResource,
 }: {
   result: DirectoryActionResult | null;
   onClose: () => void;
   onDirectoryChanged?: (() => void | Promise<void>) | undefined;
   onNavigate?: ((path: string) => void | Promise<void>) | undefined;
+  onEditResource?:
+    | ((resource: Resource, action: ResourceAction) => void | Promise<void>)
+    | undefined;
 }) {
   return (
     <Dialog
@@ -47,6 +51,7 @@ export function DirectoryActionDialog({
               view={result.output.view}
               onDirectoryChanged={onDirectoryChanged}
               onNavigate={onNavigate}
+              onEditResource={onEditResource}
             />
           ) : null}
         </div>
@@ -60,11 +65,15 @@ function DirectoryView({
   view,
   onDirectoryChanged,
   onNavigate,
+  onEditResource,
 }: {
   result: DirectoryActionResult;
   view: PluginView;
   onDirectoryChanged?: (() => void | Promise<void>) | undefined;
   onNavigate?: ((path: string) => void | Promise<void>) | undefined;
+  onEditResource?:
+    | ((resource: Resource, action: ResourceAction) => void | Promise<void>)
+    | undefined;
 }) {
   const gateway = useGateway();
   if (view.view === "text")
@@ -99,6 +108,7 @@ function DirectoryView({
         gateway={gateway}
         onDirectoryChanged={onDirectoryChanged}
         onNavigate={onNavigate}
+        onEditResource={onEditResource}
         className="block h-[70vh] min-h-96 w-full border-0"
       />
     );

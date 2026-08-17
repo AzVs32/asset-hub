@@ -102,12 +102,16 @@ action 和用户授权能力。Feature 只知道这个接口。
   资源已经暴露的 action，且只有由当前 `text_edit` provider 打开的读写 frame 才能请求替换
   当前资源文本。
 - `directory-frame-host` 将连接绑定到当前 Directory，只允许执行该 Directory 已暴露的
-  Action、刷新当前 Directory 和请求 Host 导航；不暴露 Core 工作区组件或插槽。导航到不同
-  Directory 时，Host 会重新挂载 iframe，使 Web SDK 建立绑定到新聚合的连接；既有连接不会被
-  改绑到另一个 Directory。
+  Action、刷新当前 Directory、请求 Host 导航，或按不透明 Resource ID 使用直属资源。Host 会
+  重新读取资源并校验精确目录归属；阅读和编辑分别解析当前 `text_view` 与 `text_edit` provider，
+  Directory 插件不提供两者的 Action ID。Web SDK 将读取 Resource frame 嵌入 Directory frame，
+  并把子 frame 的标准 Resource 调用中继回同一个只读 provider；文本替换始终被拒绝。导航到不同
+  Directory 时，Host 会重新挂载
+  iframe，使 Web SDK 建立绑定到新聚合的连接；既有连接不会被改绑到另一个 Directory。编辑
+  保存后也会重新挂载当前工作区，以读取最新资源内容。
 
-浏览器 Frame 协议不在 Host 内重复声明：版本、两个 channel、view/effect 枚举和 action 输出
-类型统一来自 `@asset-hub/plugin-web-sdk/contract`。Frame 输入在进入 Gateway 前递归验证为有界
+浏览器 Frame 协议不在 Host 内重复声明：版本、两个 channel、Host method、view/effect 枚举和
+action 输出类型统一来自 `@asset-hub/plugin-web-sdk/contract`。Frame 输入在进入 Gateway 前递归验证为有界
 JSON 对象；超深、超量、循环引用、非有限数字及任何非 JSON 值都会在 Host 边界被拒绝。
 Resource 与 Directory Frame 使用同一套 Action ID、输入和绑定快照规则：连接始终绑定初始聚合
 ID，只接受 revision 不回退的同 ID 快照，并由 Gateway 从该快照重新解析 Action 声明。iframe
@@ -254,6 +258,7 @@ frame 对应的原始 action 是当前资源解析出的读写 `text_edit` provi
 
 - 增加一种全新的 view kind。
 - 增加具有新布局语义的宿主 slot。
+- 增加或改变 Plugin Frame 的 Host method。
 - 升级 Plugin Frame Web SDK 协议的主版本。
 
 ## 6. 必须维持的边界
@@ -265,5 +270,8 @@ frame 对应的原始 action 是当前资源解析出的读写 `text_edit` provi
 - iframe action 必须先在当前 `Resource.actions` 中验证；文本替换还必须绑定产生当前 frame
   的 `write` `text_edit` action，并由插件 Manifest 显式申请 `resource.content.replace`。
   iframe 调用 destructive Action 前必须经过宿主确认。
+- Directory iframe 请求资源阅读或编辑时，只能使用绑定 Directory 的直属 Resource ID；Host
+  必须重新读取资源并分别解析当前 `text_view` 或 `text_edit` provider，不能接受 Directory 插件
+  提供的 provider Action ID；嵌套读取 frame 只能回调其起始 Action。
 - 外部 URL 不允许作为插件媒体或 iframe 地址加载。
 - 新的后端请求能力先加入 `AssetGateway`，再实现 HTTP adapter，最后由 feature 使用。
