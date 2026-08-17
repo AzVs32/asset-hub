@@ -43,6 +43,16 @@ does not bundle or serve Swagger UI. The JSON endpoint remains public so `asset-
 its checked-in transport declarations with `npm run generate:api`; browsers do not request this
 document during normal application use.
 
+## Plugin Web asset policy
+
+Verified plugin Web assets are public immutable snapshots served from `/plugins/<plugin-id>/...`.
+Their Content Security Policy permits scripts, styles, images, media, fonts, and nested frames only
+from the Asset Hub origin (with data URLs additionally allowed for visual assets). Network
+connections and objects remain disabled. Same-origin nested frames are required when a Directory
+workspace mounts a Host-resolved Resource provider, such as the Games workspace displaying a
+README through the Resource Text reader; both frames still run in the Host's script-only iframe
+sandbox.
+
 ## Session storage boundary
 
 HTTP login sessions use a dedicated SQLite file and connection pool. The store never receives a

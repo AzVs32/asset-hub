@@ -9,6 +9,7 @@ use crate::domain::{
     ResourceContentReplacementId, StorageKey,
 };
 use crate::port::{BlobByteStream, LocatedResource, RESERVED_BLOB_STORAGE_PREFIX, StagedBlob};
+use asset_plugin_sdk::manifest::RESOURCE_EDIT_CAPABILITY;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use futures_util::StreamExt;
@@ -81,16 +82,16 @@ impl<'a> ResourceContentService<'a> {
         let current_content = resource.content().cloned().ok_or_else(|| {
             CoreError::invalid_operation("resource content replacement requires existing content")
         })?;
-        let has_text_edit = self
+        let has_edit = self
             .service
             .available_actions_for_resource(&resource)
             .iter()
             .any(|action| {
                 action
                     .provides()
-                    .is_some_and(|capability| capability.as_str() == "text_edit")
+                    .is_some_and(|capability| capability.as_str() == RESOURCE_EDIT_CAPABILITY)
             });
-        if !has_text_edit {
+        if !has_edit {
             return Err(CoreError::invalid_operation(format!(
                 "resource `{}` is not available for text editing",
                 resource.id()

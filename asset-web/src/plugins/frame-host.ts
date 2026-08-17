@@ -1,5 +1,5 @@
 import type { AssetGateway } from "@/application/ports/asset-gateway";
-import type { ResourceActionOutput } from "@/domain/plugin";
+import { RESOURCE_EDIT_CAPABILITY, type ResourceActionOutput } from "@/domain/plugin";
 import type { Resource } from "@/domain/resource";
 import { parseActionId, parseActionInput } from "./frame-input";
 
@@ -62,7 +62,7 @@ export function createPluginFrameHostBridge({
         const editAction = current.actions.find(
           (candidate) =>
             candidate.id === frameActionId &&
-            candidate.provides === "text_edit" &&
+            candidate.provides === RESOURCE_EDIT_CAPABILITY &&
             candidate.access === "write",
         );
         if (!editAction) throw new Error("Text editing is not available from this frame.");

@@ -4,8 +4,11 @@
 //! 约束。它只验证声明，不读取文件或探测实际运行时产物。
 
 use super::{
+    DIRECTORY_ACTION_CAPABILITIES, DIRECTORY_THUMBNAIL_CAPABILITY, DIRECTORY_WORKSPACE_CAPABILITY,
     MANIFEST_VERSION, ManifestActionAccess, PLUGIN_LOCK_FILE_NAME, PLUGIN_MANIFEST_FILE_NAME,
     PLUGIN_WASM_FILE_NAME, PLUGIN_WEB_ENTRY_FILE_NAME, PluginManifest, PluginManifestLock,
+    RESOURCE_ACTION_CAPABILITIES, RESOURCE_EDIT_CAPABILITY, RESOURCE_THUMBNAIL_CAPABILITY,
+    RESOURCE_VIEW_CAPABILITY,
 };
 use crate::protocol::{
     PLUGIN_API_VERSION, PLUGIN_DIRECTORY_ACTION_EFFECT_KINDS, PLUGIN_RESOURCE_ACTION_EFFECT_KINDS,
@@ -13,7 +16,8 @@ use crate::protocol::{
 };
 use std::collections::HashSet;
 
-const DIRECTORY_WORKSPACE_CAPABILITY: &str = "workspace";
+const RESOURCE_THUMBNAIL_LOCATION: &str = "resource_thumbnail";
+const DIRECTORY_THUMBNAIL_LOCATION: &str = "directory_thumbnail";
 const DIRECTORY_WORKSPACE_LOCATION: &str = "directory_workspace";
 
 impl PluginManifest {
@@ -156,6 +160,12 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
                 provides,
                 &['.', ':', '-', '_'],
             )?;
+            if !RESOURCE_ACTION_CAPABILITIES.contains(&provides.as_str()) {
+                return Err(format!(
+                    "capabilities.resource_actions[`{}`] provides unsupported capability `{provides}`",
+                    action.id
+                ));
+            }
         }
         if action
             .label
@@ -282,13 +292,51 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
                 action.id
             ));
         }
-        if action.provides.as_deref() == Some("text_edit")
-            && !manifest.permissions.resource_content_replace()
-        {
-            return Err(format!(
-                "capabilities.resource_actions[`{}`] provides text_edit without resource.content.replace permission",
-                action.id
-            ));
+        match action.provides.as_deref() {
+            Some(RESOURCE_THUMBNAIL_CAPABILITY)
+                if !matches!(action.access, ManifestActionAccess::Read)
+                    || !action.output.views.iter().any(|view| view == "media")
+                    || !action.ui.as_ref().is_some_and(|ui| {
+                        ui.locations
+                            .iter()
+                            .any(|location| location == RESOURCE_THUMBNAIL_LOCATION)
+                    }) =>
+            {
+                return Err(format!(
+                    "capabilities.resource_actions[`{}`] thumbnail provider must be read-only, support media, and use resource_thumbnail",
+                    action.id
+                ));
+            }
+            Some(RESOURCE_VIEW_CAPABILITY)
+                if !matches!(action.access, ManifestActionAccess::Read)
+                    || !action.output.effects.is_empty()
+                    || !action
+                        .output
+                        .views
+                        .iter()
+                        .any(|view| view == "plugin_frame") =>
+            {
+                return Err(format!(
+                    "capabilities.resource_actions[`{}`] view provider must be effect-free, read-only, and support plugin_frame",
+                    action.id
+                ));
+            }
+            Some(RESOURCE_EDIT_CAPABILITY)
+                if !matches!(action.access, ManifestActionAccess::Write)
+                    || !action.output.effects.is_empty()
+                    || !action
+                        .output
+                        .views
+                        .iter()
+                        .any(|view| view == "plugin_frame")
+                    || !manifest.permissions.resource_content_replace() =>
+            {
+                return Err(format!(
+                    "capabilities.resource_actions[`{}`] edit provider must be effect-free, writable, support plugin_frame, and request resource.content.replace",
+                    action.id
+                ));
+            }
+            _ => {}
         }
         if action
             .requires
@@ -335,6 +383,12 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
                 provides,
                 &['.', ':', '-', '_'],
             )?;
+            if !DIRECTORY_ACTION_CAPABILITIES.contains(&provides.as_str()) {
+                return Err(format!(
+                    "capabilities.directory_actions[`{}`] provides unsupported capability `{provides}`",
+                    action.id
+                ));
+            }
         }
         if !manifest.permissions.directory_read() {
             return Err(format!(
@@ -405,6 +459,22 @@ fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
                 "capabilities.directory_actions[`{}`].output.views must not contain duplicates",
                 action.id
             ));
+        }
+        if action.provides.as_deref() == Some(DIRECTORY_THUMBNAIL_CAPABILITY) {
+            let uses_thumbnail = action.ui.as_ref().is_some_and(|ui| {
+                ui.locations
+                    .iter()
+                    .any(|location| location == DIRECTORY_THUMBNAIL_LOCATION)
+            });
+            if !matches!(action.access, ManifestActionAccess::Read)
+                || !action.output.views.iter().any(|view| view == "media")
+                || !uses_thumbnail
+            {
+                return Err(format!(
+                    "capabilities.directory_actions[`{}`] thumbnail provider must be read-only, support media, and use directory_thumbnail",
+                    action.id
+                ));
+            }
         }
         if action.provides.as_deref() == Some(DIRECTORY_WORKSPACE_CAPABILITY) {
             let owns_only_workspace = action

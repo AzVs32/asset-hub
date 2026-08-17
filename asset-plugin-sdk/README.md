@@ -199,19 +199,35 @@ capability by declaring its semantic identifier in `provides`:
 }
 ```
 
+Capability IDs are a Manifest-versioned SDK contract rather than open-ended plugin strings. Rust
+authors and Host crates import the canonical constants from `asset_plugin_sdk::manifest`:
+
+```rust
+use asset_plugin_sdk::manifest::{
+    RESOURCE_ACTION_CAPABILITIES,
+    RESOURCE_EDIT_CAPABILITY,
+    RESOURCE_VIEW_CAPABILITY,
+};
+```
+
+Manifest validation rejects a syntactically valid but unsupported `provides` value. The SDK also
+validates provider-level access, output, location, effect, and permission requirements. Host
+registries repeat the normalized invariants defensively and own nearest-kind provider selection and
+conflict detection.
+
 The Host first filters candidates by content availability, MIME type, extension, and other action
 requirements. It then selects the provider declared for the nearest kind in the resource or
 directory lineage. A less-specific provider remains the fallback when a more-specific provider is
 not actually applicable. Two providers for the same capability at the same nearest kind fail Host
 startup instead of being selected by registration or UI sort order.
 
-The Host recognizes `thumbnail`, `text_view`, and `text_edit` singleton capabilities for Resource
+The Host recognizes `thumbnail`, `view`, and `edit` singleton capabilities for Resource
 actions; Directory actions recognize `thumbnail` and `workspace`. A `thumbnail` provider must be read-only,
 support the `media` view, and declare the matching `resource_thumbnail` or
 `directory_thumbnail` UI location. Read actions that do not need singleton-provider resolution are
-ordinary labeled actions without `provides`. A `text_view` provider must be effect-free, read-only,
-and support `plugin_frame`. A `text_edit` provider must be write and request
-`resource.content.replace`; generic `resource.write` and
+ordinary labeled actions without `provides`. A `view` provider must be effect-free, read-only,
+and support `plugin_frame`. An `edit` provider must be effect-free, writable, support
+`plugin_frame`, and request `resource.content.replace`; generic `resource.write` and
 `resource.derived_asset.write` permissions are not part of the contract. The Host rejects unknown
 capability names. Plugins must retain their provider-owned action IDs and must not reuse a `core.*`
 action ID.
@@ -342,7 +358,7 @@ The returned client exposes only:
 - `executeResourceAction(action, input?)`, which can call an Action already exposed for the current
   Resource;
 - `replaceResourceText(text)`, which is accepted only from the frame created by the current
-  Resource's resolved, write `text_edit` provider whose Manifest requests
+  Resource's resolved, write `edit` provider whose Manifest requests
   `resource.content.replace`;
 - `disconnect()`, which releases the frame connection.
 
@@ -359,7 +375,7 @@ const output = await host.executeDirectoryAction("example.collection.workspace",
 
 It can execute an Action already exposed for the bound Directory, request a Directory refresh, ask
 the Host to navigate to a canonical relative Directory path, and ask the Host to view or edit a
-direct Resource by opaque ID. The Host resolves the current `text_view` or `text_edit` provider;
+direct Resource by opaque ID. The Host resolves the current `view` or `edit` provider;
 the Directory plugin never supplies either provider Action ID. The Web SDK can mount the returned
 read frame inside the Directory frame and relays only its originating read Action. The Directory
 frame gains neither arbitrary Resource Action execution nor Resource write authority. It cannot

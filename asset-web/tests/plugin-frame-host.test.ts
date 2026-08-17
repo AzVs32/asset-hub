@@ -6,10 +6,10 @@ import { createPluginFrameHostBridge } from "@/plugins/frame-host";
 import { action, directory, directoryAction, resource } from "./fixtures";
 
 describe("Plugin Frame host bridge", () => {
-  it("replaces text only for the frame's write text_edit provider and advances its revision", async () => {
+  it("replaces text only for the frame's write edit provider and advances its revision", async () => {
     const edit = action({
       id: "example.content.edit",
-      provides: "text_edit",
+      provides: "edit",
       access: "write",
     });
     const initial = resource([edit]);
@@ -39,7 +39,7 @@ describe("Plugin Frame host bridge", () => {
     const read = action({ id: "example.content.read" });
     const edit = action({
       id: "example.content.edit",
-      provides: "text_edit",
+      provides: "edit",
       access: "write",
     });
     const replaceResourceText = vi.fn();
@@ -182,10 +182,10 @@ describe("Directory Plugin Frame host bridge", () => {
     );
   });
 
-  it("opens only a direct Resource through its resolved frame-based text editor", async () => {
+  it("opens only a direct Resource through its resolved frame-based editor", async () => {
     const edit = action({
       id: "example.text.edit",
-      provides: "text_edit",
+      provides: "edit",
       access: "write",
       output: { views: ["plugin_frame"], effects: [] },
     });
@@ -214,20 +214,20 @@ describe("Directory Plugin Frame host bridge", () => {
       "not a direct member of the bound Directory",
     );
     await expect(bridge.methods.editResource(resourceWithoutEditor.id)).rejects.toThrow(
-      "No frame-based text editor",
+      "No frame-based editor",
     );
     expect(onEditResource).toHaveBeenCalledTimes(1);
   });
 
-  it("resolves only the current frame-based text_view provider for a direct Resource", async () => {
+  it("resolves only the current frame-based view provider for a direct Resource", async () => {
     const read = action({
       id: "example.document.read",
-      provides: "text_view",
+      provides: "view",
       output: { views: ["plugin_frame", "json"], effects: [] },
     });
     const invalid = action({
       id: "example.document.invalid-view",
-      provides: "text_view",
+      provides: "view",
       access: "write",
       output: { views: ["plugin_frame"], effects: [] },
     });
@@ -264,7 +264,7 @@ describe("Directory Plugin Frame host bridge", () => {
       operation: "load",
     });
     await expect(bridge.methods.viewResource(directResource.id, {})).rejects.toThrow(
-      "No frame-based text viewer",
+      "No frame-based viewer",
     );
   });
 });

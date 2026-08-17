@@ -1,4 +1,6 @@
-use asset_plugin_sdk::manifest::{MANIFEST_VERSION, PluginManifest};
+use asset_plugin_sdk::manifest::{
+    DIRECTORY_ACTION_CAPABILITIES, MANIFEST_VERSION, PluginManifest, RESOURCE_ACTION_CAPABILITIES,
+};
 use asset_plugin_sdk::protocol::{
     PLUGIN_API_VERSION, PLUGIN_DIRECTORY_ACTION_EFFECT_KINDS, PLUGIN_DIRECTORY_FRAME_CHANNEL,
     PLUGIN_DIRECTORY_FRAME_METHODS, PLUGIN_RESOURCE_ACTION_EFFECT_KINDS,
@@ -164,6 +166,22 @@ fn browser_frame_discriminants_match_the_current_golden() {
     assert_eq!(
         expected["directory_effect_kinds"],
         json!(PLUGIN_DIRECTORY_ACTION_EFFECT_KINDS)
+    );
+}
+
+#[test]
+fn manifest_capability_ids_match_the_current_golden() {
+    let expected: Value =
+        serde_json::from_str(include_str!("fixtures/manifest-capabilities-v3.json")).unwrap();
+
+    assert_eq!(expected["manifest_version"], MANIFEST_VERSION);
+    assert_eq!(
+        expected["resource_action"],
+        json!(RESOURCE_ACTION_CAPABILITIES)
+    );
+    assert_eq!(
+        expected["directory_action"],
+        json!(DIRECTORY_ACTION_CAPABILITIES)
     );
 }
 

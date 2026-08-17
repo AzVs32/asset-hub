@@ -1,4 +1,10 @@
-import type { DirectoryActionEffectKind, PluginViewKind, ResourceActionEffectKind } from "./plugin";
+import type {
+  DirectoryActionCapabilityId,
+  DirectoryActionEffectKind,
+  PluginViewKind,
+  ResourceActionCapabilityId,
+  ResourceActionEffectKind,
+} from "./plugin";
 
 export type { DirectoryActionEffectKind, ResourceActionEffectKind } from "./plugin";
 
@@ -28,7 +34,7 @@ export interface ResourceContent {
 export interface ResourceAction {
   id: string;
   origin: DefinitionOrigin;
-  provides: string | null;
+  provides: ResourceActionCapabilityId | null;
   label: string;
   description: string | null;
   access: ActionAccess;
@@ -41,7 +47,7 @@ export interface ResourceAction {
 export interface DirectoryAction {
   id: string;
   origin: DefinitionOrigin;
-  provides: string | null;
+  provides: DirectoryActionCapabilityId | null;
   label: string;
   description: string | null;
   access: ActionAccess;

@@ -3,16 +3,16 @@ use asset_core::{
     domain::{ActionAccess, DefinitionOrigin, DirectoryActionDefinition},
     port::{DirectoryActionRegistry, DirectoryKindRegistry},
 };
-use asset_plugin_sdk::manifest::DirectoryActionCapability;
+use asset_plugin_sdk::manifest::{
+    DIRECTORY_ACTION_CAPABILITIES, DIRECTORY_THUMBNAIL_CAPABILITY, DIRECTORY_WORKSPACE_CAPABILITY,
+    DirectoryActionCapability,
+};
 
-use super::THUMBNAIL_CAPABILITY;
 use super::normalization::directory_action_definition;
 use super::validation::ensure_unique_scoped_action;
 
 const DIRECTORY_THUMBNAIL_LOCATION: &str = "directory_thumbnail";
 const DIRECTORY_WORKSPACE_LOCATION: &str = "directory_workspace";
-const WORKSPACE_CAPABILITY: &str = "workspace";
-const DIRECTORY_CAPABILITIES: &[&str] = &[THUMBNAIL_CAPABILITY, WORKSPACE_CAPABILITY];
 
 #[derive(Debug, Clone, Default)]
 pub struct DefaultDirectoryActionRegistry {
@@ -60,7 +60,7 @@ pub(super) fn validate_directory_action_capabilities(
     for action in actions {
         if let Some(capability) = action
             .provides()
-            .filter(|capability| !DIRECTORY_CAPABILITIES.contains(&capability.as_str()))
+            .filter(|capability| !DIRECTORY_ACTION_CAPABILITIES.contains(&capability.as_str()))
         {
             return Err(CoreError::configuration(format!(
                 "directory action `{}` provides unsupported capability `{capability}`",
@@ -74,10 +74,10 @@ pub(super) fn validate_directory_action_capabilities(
             .any(|location| location == DIRECTORY_THUMBNAIL_LOCATION);
         let provides_thumbnail = action
             .provides()
-            .is_some_and(|capability| capability.as_str() == THUMBNAIL_CAPABILITY);
+            .is_some_and(|capability| capability.as_str() == DIRECTORY_THUMBNAIL_CAPABILITY);
         if in_thumbnail_slot != provides_thumbnail {
             return Err(CoreError::configuration(format!(
-                "directory action `{}` must pair `{DIRECTORY_THUMBNAIL_LOCATION}` with capability `{THUMBNAIL_CAPABILITY}`",
+                "directory action `{}` must pair `{DIRECTORY_THUMBNAIL_LOCATION}` with capability `{DIRECTORY_THUMBNAIL_CAPABILITY}`",
                 action.id()
             )));
         }
@@ -97,10 +97,10 @@ pub(super) fn validate_directory_action_capabilities(
             .any(|location| location == DIRECTORY_WORKSPACE_LOCATION);
         let provides_workspace = action
             .provides()
-            .is_some_and(|capability| capability.as_str() == WORKSPACE_CAPABILITY);
+            .is_some_and(|capability| capability.as_str() == DIRECTORY_WORKSPACE_CAPABILITY);
         if in_workspace_slot != provides_workspace {
             return Err(CoreError::configuration(format!(
-                "directory action `{}` must pair `{DIRECTORY_WORKSPACE_LOCATION}` with capability `{WORKSPACE_CAPABILITY}`",
+                "directory action `{}` must pair `{DIRECTORY_WORKSPACE_LOCATION}` with capability `{DIRECTORY_WORKSPACE_CAPABILITY}`",
                 action.id()
             )));
         }
@@ -126,7 +126,7 @@ pub(super) fn validate_directory_action_capabilities(
             .iter()
             .map(|kind| kind.as_str())
             .collect::<Vec<_>>();
-        for capability in DIRECTORY_CAPABILITIES {
+        for capability in DIRECTORY_ACTION_CAPABILITIES {
             validate_nearest_directory_capability_provider(
                 definition.kind().as_str(),
                 &lineage,

@@ -99,11 +99,11 @@ action 和用户授权能力。Feature 只知道这个接口。
 - `plugin-output` 统一展示 diagnostics 并进入 view renderer。
 - `renderers` 支持 text、Markdown、HTML、JSON、media、download 和 iframe。
 - `frame-host` 通过 Penpal 暴露窄能力接口；公共 Web SDK 隐藏传输细节。iframe 只能调用当前
-  资源已经暴露的 action，且只有由当前 `text_edit` provider 打开的读写 frame 才能请求替换
+  资源已经暴露的 action，且只有由当前 `edit` provider 打开的读写 frame 才能请求替换
   当前资源文本。
 - `directory-frame-host` 将连接绑定到当前 Directory，只允许执行该 Directory 已暴露的
   Action、刷新当前 Directory、请求 Host 导航，或按不透明 Resource ID 使用直属资源。Host 会
-  重新读取资源并校验精确目录归属；阅读和编辑分别解析当前 `text_view` 与 `text_edit` provider，
+  重新读取资源并校验精确目录归属；阅读和编辑分别解析当前 `view` 与 `edit` provider，
   Directory 插件不提供两者的 Action ID。Web SDK 将读取 Resource frame 嵌入 Directory frame，
   并把子 frame 的标准 Resource 调用中继回同一个只读 provider；文本替换始终被拒绝。导航到不同
   Directory 时，Host 会重新挂载
@@ -113,6 +113,9 @@ action 和用户授权能力。Feature 只知道这个接口。
 浏览器 Frame 协议不在 Host 内重复声明：版本、两个 channel、Host method、view/effect 枚举和
 action 输出类型统一来自 `@asset-hub/plugin-web-sdk/contract`。Frame 输入在进入 Gateway 前递归验证为有界
 JSON 对象；超深、超量、循环引用、非有限数字及任何非 JSON 值都会在 Host 边界被拒绝。
+Resource/Directory capability ID 及其字面量联合类型也来自该 contract；HTTP adapter 在值进入
+Web Domain 前按 SDK 列表校验，Kernel 和 frame bridge 不维护本地字符串副本。Manifest v3 golden
+fixture 同时锁定 Rust Manifest SDK 与 Web contract 的 capability 列表。
 Resource 与 Directory Frame 使用同一套 Action ID、输入和绑定快照规则：连接始终绑定初始聚合
 ID，只接受 revision 不回退的同 ID 快照，并由 Gateway 从该快照重新解析 Action 声明。iframe
 资源 URL 和 opaque-origin Penpal Messenger 也由同一个安全边界创建。Resource 的原始文本替换
@@ -246,12 +249,12 @@ UTF-8 原始字节流提交到
 `PUT /resources/{id}/content`。请求使用 `Content-SHA256` 做端到端完整性校验，并将打开
 编辑器时的 `Resource.revision` 放入 `If-Match`；Host 检测到资源或其目录位置已经变化时
 返回冲突并恢复原 Blob。`resource_edit.max_text_bytes` 由 Core 同时用于能力发现和执行，
-超限资源不会暴露 `text_edit`。
+超限资源不会暴露 `edit`。
 
 因此 Action JSON 属于控制面，资源原始内容属于流式数据面。HTTP Action 的 1 MiB 请求
 限制不会再限制文本保存，Blob 数据也不需要经过 JSON 转义或 Base64 膨胀。
 插件 iframe 通过 Web SDK 的 `replaceResourceText` 进入同一个 Gateway；宿主同时校验
-frame 对应的原始 action 是当前资源解析出的读写 `text_edit` provider。保存成功后宿主连接
+frame 对应的原始 action 是当前资源解析出的读写 `edit` provider。保存成功后宿主连接
 持有响应中的新 revision，以支持同一编辑窗口连续保存。
 
 只有以下变化属于前端宿主协议升级：
@@ -268,10 +271,10 @@ frame 对应的原始 action 是当前资源解析出的读写 `text_edit` provi
 - 具体插件 id、kind 或 action id 不允许硬编码进宿主组件。
 - 自动缩略图 slot 不允许执行 write action。
 - iframe action 必须先在当前 `Resource.actions` 中验证；文本替换还必须绑定产生当前 frame
-  的 `write` `text_edit` action，并由插件 Manifest 显式申请 `resource.content.replace`。
+  的 `write` `edit` action，并由插件 Manifest 显式申请 `resource.content.replace`。
   iframe 调用 destructive Action 前必须经过宿主确认。
 - Directory iframe 请求资源阅读或编辑时，只能使用绑定 Directory 的直属 Resource ID；Host
-  必须重新读取资源并分别解析当前 `text_view` 或 `text_edit` provider，不能接受 Directory 插件
+  必须重新读取资源并分别解析当前 `view` 或 `edit` provider，不能接受 Directory 插件
   提供的 provider Action ID；嵌套读取 frame 只能回调其起始 Action。
 - 外部 URL 不允许作为插件媒体或 iframe 地址加载。
 - 新的后端请求能力先加入 `AssetGateway`，再实现 HTTP adapter，最后由 feature 使用。

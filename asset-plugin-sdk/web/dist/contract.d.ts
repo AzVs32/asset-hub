@@ -4,6 +4,17 @@ export declare const PLUGIN_API_VERSION = "asset-hub.plugin-api@1";
 export declare const RESOURCE_FRAME_CHANNEL = "asset-hub.plugin-frame@1";
 /** Penpal channel used by Directory-bound plugin frames. */
 export declare const DIRECTORY_FRAME_CHANNEL = "asset-hub.plugin-directory-frame@1";
+/** Resource Action singleton capability IDs supported by Manifest version 3. */
+export declare const resourceActionCapabilityIds: readonly ["thumbnail", "view", "edit"];
+export type ResourceActionCapabilityId = (typeof resourceActionCapabilityIds)[number];
+export declare const RESOURCE_THUMBNAIL_CAPABILITY: "thumbnail";
+export declare const RESOURCE_VIEW_CAPABILITY: "view";
+export declare const RESOURCE_EDIT_CAPABILITY: "edit";
+/** Directory Action singleton capability IDs supported by Manifest version 3. */
+export declare const directoryActionCapabilityIds: readonly ["thumbnail", "workspace"];
+export type DirectoryActionCapabilityId = (typeof directoryActionCapabilityIds)[number];
+export declare const DIRECTORY_THUMBNAIL_CAPABILITY: "thumbnail";
+export declare const DIRECTORY_WORKSPACE_CAPABILITY: "workspace";
 /** Host methods exposed to Resource-bound plugin frames. */
 export declare const resourceFrameMethods: readonly ["executeResourceAction", "replaceResourceText"];
 /** Host methods exposed to Directory-bound plugin frames. */

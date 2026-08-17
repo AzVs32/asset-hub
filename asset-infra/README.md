@@ -34,7 +34,13 @@ boundary does not define or enumerate a fixed external Kind tree.
 Resource capabilities are singleton providers, not generic action names. For each capability, the
 Host selects the provider declared on the nearest kind in the Resource lineage. A child provider
 therefore replaces, rather than coexists with, its ancestor's provider. The currently supported
-Resource capabilities are `thumbnail`, `text_view`, and `text_edit`.
+Resource capabilities are `thumbnail`, `view`, and `edit`.
+
+The supported Resource and Directory capability IDs are imported from
+`asset_plugin_sdk::manifest`; infrastructure does not maintain a second identifier catalog. SDK
+Manifest validation rejects unknown IDs and invalid provider declarations before catalog assembly.
+Infrastructure repeats the normalized provider invariants as a defensive Host boundary, then owns
+kind-lineage selection and tied-provider rejection.
 
 The Host-owned catalog provides no generic Resource or Directory thumbnail Action; any concrete
 thumbnail provider comes from an external Manifest. The Host declares `core.resource.delete` and
@@ -47,7 +53,7 @@ and the current user is authorized to delete that aggregate. Delete cannot be co
 different effect in one action output.
 
 External actions retain their provider-owned IDs and may provide a Host-recognized capability for a
-more specific kind. Resource actions recognize `thumbnail`, `text_view`, and `text_edit`; Directory
+more specific kind. Resource actions recognize `thumbnail`, `view`, and `edit`; Directory
 actions recognize `thumbnail` and `workspace`. A Directory `workspace` provider is read-only,
 effect-free, supports `plugin_frame`, and pairs capability `workspace` with the
 exclusive `directory_workspace` location. Resource resolution filters content requirements and matchers
@@ -59,10 +65,10 @@ inherited action does not need to repeat every descendant kind in its declaratio
 
 When a plugin Resource capability provider omits its Manifest label, catalog assembly inherits the
 normalized label from the nearest ancestor provider for that capability; an explicit label remains
-an override, and a missing ancestor is a startup error. A `text_view` provider must be effect-free,
-read-only, and support `plugin_frame`. An external `text_edit` provider must
-declare write access and the specific `resource.content.replace` permission; generic Resource write
-permissions are not accepted.
+an override, and a missing ancestor is a startup error. A `view` provider must be effect-free,
+read-only, and support `plugin_frame`. An external `edit` provider must be effect-free,
+writable, support `plugin_frame`, and declare the specific `resource.content.replace` permission;
+generic Resource write permissions are not accepted.
 
 At the package boundary, infrastructure explicitly converts external Manifest capabilities into
 `asset-core` Action/Kind definitions. Extism handler names remain in private adapter bindings and
@@ -74,8 +80,8 @@ Action content policy from the same configured limits.
 
 Interactive text editing has a separate Host policy because browser editing is not a plugin
 execution budget. `[resource_edit].max_text_bytes` defaults to 4 MiB. Runtime passes that value to
-Core, which uses it both when discovering `text_edit` providers and when validating streamed
-replacement content. Resources above the limit therefore do not advertise `text_edit`.
+Core, which uses it both when discovering `edit` providers and when validating streamed
+replacement content. Resources above the limit therefore do not advertise `edit`.
 
 Resource and Directory optimistic concurrency use persisted, monotonically increasing `revision`
 values; timestamps remain display and ordering metadata. Directory writes compare the expected

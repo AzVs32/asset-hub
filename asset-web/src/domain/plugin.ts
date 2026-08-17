@@ -1,4 +1,5 @@
 export type {
+  DirectoryActionCapabilityId,
   DirectoryActionEffectKind,
   DirectoryActionOutput,
   JsonObject,
@@ -7,14 +8,22 @@ export type {
   PluginDiagnostic,
   PluginView,
   PluginViewKind,
+  ResourceActionCapabilityId,
   ResourceActionEffectKind,
   ResourceActionOutput,
 } from "@asset-hub/plugin-web-sdk/contract";
 export {
   DIRECTORY_FRAME_CHANNEL,
+  DIRECTORY_THUMBNAIL_CAPABILITY,
+  DIRECTORY_WORKSPACE_CAPABILITY,
+  directoryActionCapabilityIds,
   directoryActionEffectKinds,
   PLUGIN_API_VERSION,
   pluginViewKinds,
+  RESOURCE_EDIT_CAPABILITY,
   RESOURCE_FRAME_CHANNEL,
+  RESOURCE_THUMBNAIL_CAPABILITY,
+  RESOURCE_VIEW_CAPABILITY,
+  resourceActionCapabilityIds,
   resourceActionEffectKinds,
 } from "@asset-hub/plugin-web-sdk/contract";

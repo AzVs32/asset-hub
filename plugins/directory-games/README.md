@@ -21,16 +21,16 @@ The Rust runtime consumes these capabilities through bounded `DirectoryContext` 
 the scaffold with the SDK `Tree` response builder. The React frame imports
 `@asset-hub/plugin-web-sdk`, loads workspace data through `directory.games.workspace`, invokes
 `directory.games.create`, and delegates Directory navigation and document viewing/editing to the
-Host. The game workspace shows `README.md` through the resolved `text_view` provider and mounts its
+Host. The game workspace shows `README.md` through the resolved `view` provider and mounts its
 exact `plugin_frame`. The Web SDK relays that nested frame's standard Resource calls through the
-Directory-bound Host connection. Editing uses the symmetric resolved `text_edit` provider.
+Directory-bound Host connection. Editing uses the symmetric resolved `edit` provider.
 Directory Games does not read document content in its runtime, select either provider Action ID,
 render Markdown, implement text saving, or request Resource write permission.
 
 Generated Markdown resources do not name a Kind owned by another plugin. Directory Games leaves
 their Kind unset in the `create_tree` output, allowing the Host to detect an installed
 format-specific Kind or fall back to `core:resource`. Reading and editing are available when the
-Resource exposes matching `text_view` and `text_edit` providers.
+Resource exposes matching `view` and `edit` providers.
 
 `directory:games:item` inherits from `directory:games`, so the Kind hierarchy reflects that a game
 entry belongs to the Games model and receives the same workspace capabilities. This inheritance

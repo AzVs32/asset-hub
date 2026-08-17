@@ -7,6 +7,19 @@ export const RESOURCE_FRAME_CHANNEL = "asset-hub.plugin-frame@1";
 /** Penpal channel used by Directory-bound plugin frames. */
 export const DIRECTORY_FRAME_CHANNEL = "asset-hub.plugin-directory-frame@1";
 
+/** Resource Action singleton capability IDs supported by Manifest version 3. */
+export const resourceActionCapabilityIds = ["thumbnail", "view", "edit"] as const;
+export type ResourceActionCapabilityId = (typeof resourceActionCapabilityIds)[number];
+export const RESOURCE_THUMBNAIL_CAPABILITY = resourceActionCapabilityIds[0];
+export const RESOURCE_VIEW_CAPABILITY = resourceActionCapabilityIds[1];
+export const RESOURCE_EDIT_CAPABILITY = resourceActionCapabilityIds[2];
+
+/** Directory Action singleton capability IDs supported by Manifest version 3. */
+export const directoryActionCapabilityIds = ["thumbnail", "workspace"] as const;
+export type DirectoryActionCapabilityId = (typeof directoryActionCapabilityIds)[number];
+export const DIRECTORY_THUMBNAIL_CAPABILITY = directoryActionCapabilityIds[0];
+export const DIRECTORY_WORKSPACE_CAPABILITY = directoryActionCapabilityIds[1];
+
 /** Host methods exposed to Resource-bound plugin frames. */
 export const resourceFrameMethods = ["executeResourceAction", "replaceResourceText"] as const;
 

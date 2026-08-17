@@ -14,6 +14,7 @@ use crate::port::{
     StorageScanner, UploadSessionRepository,
 };
 use crate::service::DirectoryService;
+use asset_plugin_sdk::manifest::RESOURCE_EDIT_CAPABILITY;
 use std::sync::Arc;
 
 mod action;
@@ -364,10 +365,10 @@ impl ResourceService {
             .filter(|action| resource.content().is_some() || !action.requirements().content)
             .filter(|action| self.action_matches_resource(action, resource))
             .filter(|action| {
-                let is_text_edit = action
+                let is_edit = action
                     .provides()
-                    .is_some_and(|capability| capability.as_str() == "text_edit");
-                !is_text_edit
+                    .is_some_and(|capability| capability.as_str() == RESOURCE_EDIT_CAPABILITY);
+                !is_edit
                     || resource.content().is_some_and(|content| {
                         content.size() <= self.resource_content_edit_policy.max_text_bytes()
                     })

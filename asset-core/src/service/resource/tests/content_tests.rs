@@ -310,7 +310,7 @@ fn streaming_content_replacement_rejects_bad_checksums_and_oversized_content() {
 }
 
 #[test]
-fn text_edit_capability_is_hidden_above_the_edit_policy() {
+fn edit_capability_is_hidden_above_the_edit_policy() {
     let (service, _, _) = service();
     let resource = Resource::builder("large.md")
         .with_kind(ResourceKind::try_new("example:document").unwrap())
@@ -330,6 +330,6 @@ fn text_edit_capability_is_hidden_above_the_edit_policy() {
     assert!(actions.available_actions().iter().all(|action| {
         !action
             .provides()
-            .is_some_and(|capability| capability.as_str() == "text_edit")
+            .is_some_and(|capability| capability.as_str() == "edit")
     }));
 }

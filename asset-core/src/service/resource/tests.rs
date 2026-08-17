@@ -1238,7 +1238,7 @@ fn service() -> (
                         .with_extensions([".md", ".markdown", ".txt"]),
                 ),
             ResourceActionDefinition::new_static("example.content.edit", "Edit content")
-                .with_static_provides(Some("text_edit"))
+                .with_static_provides(Some("edit"))
                 .with_kinds(["core:resource"])
                 .with_requirements(content_requirements())
                 .with_access(ActionAccess::Write)

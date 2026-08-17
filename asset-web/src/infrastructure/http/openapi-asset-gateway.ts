@@ -5,11 +5,13 @@ import type { CurrentUser, ManagedUser, UserStatus } from "@/domain/auth";
 import { normalizeDirectory } from "@/domain/directory-path";
 import {
   type DirectoryActionOutput,
+  directoryActionCapabilityIds,
   directoryActionEffectKinds,
   type JsonObject,
   type JsonValue,
   type PluginDiagnostic,
   type ResourceActionOutput,
+  resourceActionCapabilityIds,
   resourceActionEffectKinds,
 } from "@/domain/plugin";
 import type {
@@ -500,7 +502,10 @@ function mapDirectoryAction(value: ApiDirectoryAction): DirectoryAction {
   return {
     id: value.id,
     origin: mapOrigin(value.origin),
-    provides: value.provides ?? null,
+    provides:
+      value.provides === undefined || value.provides === null
+        ? null
+        : enumValue(value.provides, directoryActionCapabilityIds),
     label: value.label,
     description: value.description ?? null,
     access: enumValue(value.access, ["read", "write"]),
@@ -565,7 +570,10 @@ function mapAction(value: ApiAction): ResourceAction {
   return {
     id: value.id,
     origin: mapOrigin(value.origin),
-    provides: value.provides ?? null,
+    provides:
+      value.provides === undefined || value.provides === null
+        ? null
+        : enumValue(value.provides, resourceActionCapabilityIds),
     label: value.label,
     description: value.description ?? null,
     access: enumValue(value.access, ["read", "write"]),

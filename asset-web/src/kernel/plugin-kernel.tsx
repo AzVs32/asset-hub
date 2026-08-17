@@ -1,6 +1,13 @@
 import React from "react";
 import type { AssetGateway } from "@/application/ports/asset-gateway";
-import type { PluginView, PluginViewKind, ResourceActionOutput } from "@/domain/plugin";
+import {
+  DIRECTORY_THUMBNAIL_CAPABILITY,
+  DIRECTORY_WORKSPACE_CAPABILITY,
+  type PluginView,
+  type PluginViewKind,
+  RESOURCE_THUMBNAIL_CAPABILITY,
+  type ResourceActionOutput,
+} from "@/domain/plugin";
 import type { Directory, DirectoryAction, Resource, ResourceAction } from "@/domain/resource";
 import {
   type CoreDirectoryWorkspaceSlot,
@@ -50,7 +57,7 @@ export class PluginKernel {
   thumbnailAction(resource: Resource): ResourceAction | null {
     return (
       this.resourceActionsAtCoreSlot(resource, coreDirectoryWorkspaceSlots.resourceThumbnail).find(
-        (action) => action.access === "read" && action.provides === "thumbnail",
+        (action) => action.access === "read" && action.provides === RESOURCE_THUMBNAIL_CAPABILITY,
       ) ?? null
     );
   }
@@ -76,7 +83,9 @@ export class PluginKernel {
       this.directoryActionsAtCoreSlot(
         directory,
         coreDirectoryWorkspaceSlots.directoryThumbnail,
-      ).find((action) => action.access === "read" && action.provides === "thumbnail") ?? null
+      ).find(
+        (action) => action.access === "read" && action.provides === DIRECTORY_THUMBNAIL_CAPABILITY,
+      ) ?? null
     );
   }
 
@@ -84,7 +93,7 @@ export class PluginKernel {
     return (
       directory.actions.find(
         (action) =>
-          action.provides === "workspace" &&
+          action.provides === DIRECTORY_WORKSPACE_CAPABILITY &&
           action.access === "read" &&
           action.output.views.includes("plugin_frame") &&
           action.output.effects.length === 0 &&

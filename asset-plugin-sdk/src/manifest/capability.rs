@@ -5,6 +5,29 @@
 
 use serde::{Deserialize, Deserializer, Serialize};
 
+/// Resource thumbnail singleton capability declared by a Resource Action provider.
+pub const RESOURCE_THUMBNAIL_CAPABILITY: &str = "thumbnail";
+/// Read-only frame singleton capability declared by a Resource Action provider.
+pub const RESOURCE_VIEW_CAPABILITY: &str = "view";
+/// Editor frame singleton capability declared by a Resource Action provider.
+pub const RESOURCE_EDIT_CAPABILITY: &str = "edit";
+/// Resource Action singleton capability IDs supported by Manifest version 3.
+pub const RESOURCE_ACTION_CAPABILITIES: &[&str] = &[
+    RESOURCE_THUMBNAIL_CAPABILITY,
+    RESOURCE_VIEW_CAPABILITY,
+    RESOURCE_EDIT_CAPABILITY,
+];
+
+/// Directory thumbnail singleton capability declared by a Directory Action provider.
+pub const DIRECTORY_THUMBNAIL_CAPABILITY: &str = "thumbnail";
+/// Directory workspace singleton capability declared by a Directory Action provider.
+pub const DIRECTORY_WORKSPACE_CAPABILITY: &str = "workspace";
+/// Directory Action singleton capability IDs supported by Manifest version 3.
+pub const DIRECTORY_ACTION_CAPABILITIES: &[&str] = &[
+    DIRECTORY_THUMBNAIL_CAPABILITY,
+    DIRECTORY_WORKSPACE_CAPABILITY,
+];
+
 /// Capabilities contributed by a plugin.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]

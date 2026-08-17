@@ -1,4 +1,13 @@
-import type { DirectoryActionOutput, PluginView, ResourceActionOutput } from "../src/contract";
+import {
+  DIRECTORY_WORKSPACE_CAPABILITY,
+  type DirectoryActionCapabilityId,
+  type DirectoryActionOutput,
+  type PluginView,
+  RESOURCE_EDIT_CAPABILITY,
+  RESOURCE_VIEW_CAPABILITY,
+  type ResourceActionCapabilityId,
+  type ResourceActionOutput,
+} from "../src/contract";
 import type { AssetHubDirectoryFrameClient } from "../src/index";
 
 const views: PluginView[] = [
@@ -45,5 +54,17 @@ const readResource: Promise<ResourceActionOutput> = directoryFrame.viewResource(
   operation: "load",
 });
 const editResource: Promise<void> = directoryFrame.editResource("resource-id");
+const resourceCapability: ResourceActionCapabilityId = RESOURCE_VIEW_CAPABILITY;
+const resourceEditCapability: ResourceActionCapabilityId = RESOURCE_EDIT_CAPABILITY;
+const directoryCapability: DirectoryActionCapabilityId = DIRECTORY_WORKSPACE_CAPABILITY;
 
-void [views, resourceOutput, directoryOutput, readResource, editResource];
+void [
+  views,
+  resourceOutput,
+  directoryOutput,
+  readResource,
+  editResource,
+  resourceCapability,
+  resourceEditCapability,
+  directoryCapability,
+];

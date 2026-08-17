@@ -4,20 +4,15 @@ use asset_core::domain::{
     ResourceKindDefinition,
 };
 use asset_core::port::ResourceActionRegistry;
-use asset_plugin_sdk::manifest::ResourceActionCapability;
+use asset_plugin_sdk::manifest::{
+    RESOURCE_ACTION_CAPABILITIES, RESOURCE_EDIT_CAPABILITY, RESOURCE_THUMBNAIL_CAPABILITY,
+    RESOURCE_VIEW_CAPABILITY, ResourceActionCapability,
+};
 
-use super::THUMBNAIL_CAPABILITY;
 use super::normalization::resource_action_definition;
 use super::validation::ensure_unique_scoped_action;
 
 const RESOURCE_THUMBNAIL_LOCATION: &str = "resource_thumbnail";
-const TEXT_VIEW_CAPABILITY: &str = "text_view";
-const TEXT_EDIT_CAPABILITY: &str = "text_edit";
-const RESOURCE_CAPABILITIES: &[&str] = &[
-    THUMBNAIL_CAPABILITY,
-    TEXT_VIEW_CAPABILITY,
-    TEXT_EDIT_CAPABILITY,
-];
 
 /// 默认资源动作注册表。
 #[derive(Debug, Clone)]
@@ -205,7 +200,7 @@ pub(super) fn validate_resource_action_capabilities(
     for action in actions {
         if let Some(capability) = action
             .provides()
-            .filter(|capability| !RESOURCE_CAPABILITIES.contains(&capability.as_str()))
+            .filter(|capability| !RESOURCE_ACTION_CAPABILITIES.contains(&capability.as_str()))
         {
             return Err(CoreError::configuration(format!(
                 "resource action `{}` provides unsupported capability `{capability}`",
@@ -219,10 +214,10 @@ pub(super) fn validate_resource_action_capabilities(
             .any(|location| location == RESOURCE_THUMBNAIL_LOCATION);
         let provides_thumbnail = action
             .provides()
-            .is_some_and(|capability| capability.as_str() == THUMBNAIL_CAPABILITY);
+            .is_some_and(|capability| capability.as_str() == RESOURCE_THUMBNAIL_CAPABILITY);
         if in_thumbnail_slot != provides_thumbnail {
             return Err(CoreError::configuration(format!(
-                "resource action `{}` must pair `{RESOURCE_THUMBNAIL_LOCATION}` with capability `{THUMBNAIL_CAPABILITY}`",
+                "resource action `{}` must pair `{RESOURCE_THUMBNAIL_LOCATION}` with capability `{RESOURCE_THUMBNAIL_CAPABILITY}`",
                 action.id()
             )));
         }
@@ -235,10 +230,10 @@ pub(super) fn validate_resource_action_capabilities(
                 action.id()
             )));
         }
-        let provides_text_view = action
+        let provides_view = action
             .provides()
-            .is_some_and(|capability| capability.as_str() == TEXT_VIEW_CAPABILITY);
-        if provides_text_view
+            .is_some_and(|capability| capability.as_str() == RESOURCE_VIEW_CAPABILITY);
+        if provides_view
             && (action.access() != ActionAccess::Read
                 || !action.output().effects.is_empty()
                 || !action
@@ -248,23 +243,31 @@ pub(super) fn validate_resource_action_capabilities(
                     .any(|view| view == "plugin_frame"))
         {
             return Err(CoreError::configuration(format!(
-                "resource text view provider `{}` must be effect-free, read-only, and support `plugin_frame`",
+                "resource view provider `{}` must be effect-free, read-only, and support `plugin_frame`",
                 action.id()
             )));
         }
-        let provides_text_edit = action
+        let provides_edit = action
             .provides()
-            .is_some_and(|capability| capability.as_str() == TEXT_EDIT_CAPABILITY);
-        if provides_text_edit && action.access() != ActionAccess::Write {
+            .is_some_and(|capability| capability.as_str() == RESOURCE_EDIT_CAPABILITY);
+        if provides_edit
+            && (action.access() != ActionAccess::Write
+                || !action.output().effects.is_empty()
+                || !action
+                    .output()
+                    .views
+                    .iter()
+                    .any(|view| view == "plugin_frame"))
+        {
             return Err(CoreError::configuration(format!(
-                "resource text edit provider `{}` must have write access",
+                "resource edit provider `{}` must be effect-free, writable, and support `plugin_frame`",
                 action.id()
             )));
         }
     }
     for definition in definitions {
         let lineage = resource_kind_lineage(definitions, definition);
-        for capability in RESOURCE_CAPABILITIES {
+        for capability in RESOURCE_ACTION_CAPABILITIES {
             validate_nearest_resource_capability_provider(
                 definition.kind().as_str(),
                 &lineage,

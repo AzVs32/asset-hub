@@ -247,6 +247,16 @@ fn manifest_validates_provided_capability_ids() {
             .validate()
             .is_err()
     );
+
+    let mut document = manifest_document();
+    document["capabilities"]["resource_actions"][0]["provides"] = serde_json::json!("custom_view");
+    assert!(
+        serde_json::from_value::<PluginManifest>(document)
+            .unwrap()
+            .validate()
+            .unwrap_err()
+            .contains("unsupported capability")
+    );
 }
 
 #[test]
@@ -254,7 +264,8 @@ fn resource_capability_provider_may_omit_an_inherited_label() {
     let mut document = manifest_document();
     let action = &mut document["capabilities"]["resource_actions"][0];
     action.as_object_mut().unwrap().remove("label");
-    action["provides"] = serde_json::json!("thumbnail");
+    action["provides"] = serde_json::json!("view");
+    action["output"] = serde_json::json!({"views": ["plugin_frame"]});
 
     let manifest = serde_json::from_value::<PluginManifest>(document).unwrap();
     manifest.validate().unwrap();
@@ -279,11 +290,12 @@ fn resource_action_without_a_capability_still_requires_a_label() {
 }
 
 #[test]
-fn text_edit_provider_requires_content_replace_permission() {
+fn edit_provider_requires_content_replace_permission() {
     let mut document = manifest_document();
     let action = &mut document["capabilities"]["resource_actions"][0];
-    action["provides"] = serde_json::json!("text_edit");
+    action["provides"] = serde_json::json!("edit");
     action["access"] = serde_json::json!("write");
+    action["output"] = serde_json::json!({"views": ["plugin_frame"]});
 
     let error = serde_json::from_value::<PluginManifest>(document.clone())
         .unwrap()

@@ -85,7 +85,7 @@ the frame runs with `sandbox="allow-scripts"` and can request only actions alrea
 current Resource or Directory through the versioned Asset Hub Web Plugin SDK. The SDK hides its Penpal transport
 and is available as both an ESM package and a self-contained script for plain `index.html` plugins.
 A frame produced by the current
-write `text_edit` provider may also request raw text replacement; plugin Manifest validation
+write `edit` provider may also request raw text replacement; plugin Manifest validation
 requires that provider to request `resource.content.replace`. The Host binds it to that resource
 and sends the content through the Host's revision-guarded streaming replacement use case.
 A frame may invoke only Actions exposed for its bound Resource. Destructive Actions,
@@ -93,10 +93,10 @@ including deletion, require a Host confirmation before the Gateway call is made.
 Directory frames use a separate Directory-bound bridge to execute exposed Directory Actions,
 refresh the current Directory, request canonical Host navigation, or ask the Host to view/edit a
 direct Resource by opaque ID. Both Resource paths reload the Resource, verify exact Directory
-membership, and resolve the current `text_view` or `text_edit` provider without accepting its Action
+membership, and resolve the current `view` or `edit` provider without accepting its Action
 ID from the Directory plugin. The Directory Web SDK can mount the read frame and relay the nested
 Resource frame's calls back through the same read-only provider binding. Editing opens the write
-`text_edit` frame through the existing Host dialog. The Directory frame cannot write Resource
+`edit` frame through the existing Host dialog. The Directory frame cannot write Resource
 content directly.
 It cannot access Core workspace slots or address arbitrary Directory IDs. Navigating to a different
 Directory remounts the iframe so the Web SDK establishes a new connection bound to that Directory;
@@ -106,6 +106,10 @@ Both bridges resolve canonical Action metadata from a currently bound aggregate 
 They share immutable aggregate-ID binding, monotonic snapshot update rules, plugin asset URL
 validation, and opaque-origin messenger construction. Resource text replacement and Directory
 refresh/navigation/Resource-frame/editor delegation remain deliberately aggregate-specific capabilities.
+Capability IDs and literal types come from `@asset-hub/plugin-web-sdk/contract`; the HTTP adapter
+rejects an unknown `provides` value before it enters the Web domain. Kernel slots and frame bridges
+compare against the exported constants instead of declaring Host-local strings. A shared Manifest
+v3 golden fixture keeps these Web values aligned with the Rust Manifest SDK.
 The Host imports the API version, Resource and Directory channels, view kinds, action result types,
 and effect kinds from `@asset-hub/plugin-web-sdk/contract`; the shared golden contract additionally
 locks the exposed Host method names. Frame action input is recursively validated as a JSON

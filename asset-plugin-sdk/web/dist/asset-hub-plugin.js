@@ -412,13 +412,17 @@ var e = class extends Error {
 	#f = ({ data: e }) => {
 		if (this.#r?.(e)) for (let t of this.#a) t(e);
 	};
-}, R = "asset-hub.plugin-api@1", z = "asset-hub.plugin-frame@1", B = "asset-hub.plugin-directory-frame@1", V = ["executeResourceAction", "replaceResourceText"], H = [
+}, R = "asset-hub.plugin-api@1", z = "asset-hub.plugin-frame@1", B = "asset-hub.plugin-directory-frame@1", V = [
+	"thumbnail",
+	"view",
+	"edit"
+], H = V[0], U = V[1], W = V[2], G = ["thumbnail", "workspace"], K = G[0], q = G[1], J = ["executeResourceAction", "replaceResourceText"], Y = [
 	"executeDirectoryAction",
 	"viewResource",
 	"refreshDirectory",
 	"navigateToDirectory",
 	"editResource"
-], U = [
+], X = [
 	"text",
 	"markdown",
 	"html",
@@ -426,15 +430,15 @@ var e = class extends Error {
 	"json",
 	"media",
 	"download"
-], W = ["replace_content", "delete"], G = [
+], te = ["replace_content", "delete"], ne = [
 	"update",
 	"create_child",
 	"create_tree",
 	"delete"
-], K = 1e4, q = 3e4;
-async function J(e = {}) {
+], Z = 1e4, Q = 3e4;
+async function re(e = {}) {
 	if (window.parent === window) throw Error("Asset Hub Plugin Web SDK must run inside a plugin frame.");
-	let t = $(e.connectionTimeoutMs, K, "connectionTimeoutMs"), n = $(e.callTimeoutMs, q, "callTimeoutMs"), r = I({
+	let t = $(e.connectionTimeoutMs, Z, "connectionTimeoutMs"), n = $(e.callTimeoutMs, Q, "callTimeoutMs"), r = I({
 		messenger: new L({
 			remoteWindow: window.parent,
 			allowedOrigins: ["*"]
@@ -455,9 +459,9 @@ async function J(e = {}) {
 		}
 	};
 }
-async function Y(e = {}) {
+async function ie(e = {}) {
 	if (window.parent === window) throw Error("Asset Hub Directory Plugin Web SDK must run inside a plugin frame.");
-	let t = $(e.connectionTimeoutMs, K, "connectionTimeoutMs"), n = $(e.callTimeoutMs, q, "callTimeoutMs"), r = I({
+	let t = $(e.connectionTimeoutMs, Z, "connectionTimeoutMs"), n = $(e.callTimeoutMs, Q, "callTimeoutMs"), r = I({
 		messenger: new L({
 			remoteWindow: window.parent,
 			allowedOrigins: ["*"]
@@ -486,15 +490,15 @@ async function Y(e = {}) {
 		}
 	};
 }
-function X({ client: e, frame: t, resourceId: n, output: r, connectionTimeoutMs: i }) {
+function ae({ client: e, frame: t, resourceId: n, output: r, connectionTimeoutMs: i }) {
 	if (r.resourceId !== n) throw Error("The Resource frame output is not bound to the requested Resource.");
 	let a = r.view;
 	if (a?.view !== "plugin_frame") throw Error("The Resource Action did not return a plugin_frame.");
 	if (a.plugin_api !== "asset-hub.plugin-api@1") throw Error(`Unsupported Plugin Frame API: ${a.plugin_api}`);
-	let o = Z(a.url), s = t.contentWindow;
+	let o = oe(a.url), s = t.contentWindow;
 	if (!s) throw Error("The Resource frame window is not available.");
 	t.setAttribute("sandbox", "allow-scripts"), t.title = a.title ?? "Resource view", t.src = o;
-	let c = $(i, K, "connectionTimeoutMs"), l = I({
+	let c = $(i, Z, "connectionTimeoutMs"), l = I({
 		messenger: new L({
 			remoteWindow: s,
 			allowedOrigins: ["*"]
@@ -517,12 +521,12 @@ function X({ client: e, frame: t, resourceId: n, output: r, connectionTimeoutMs:
 		}
 	};
 }
-function Z(e) {
+function oe(e) {
 	let [t] = e.split(/[?#]/, 1);
-	if (!t || !/^\/plugins\/[a-z0-9._-]+\//.test(t) || Q(t)) throw Error("The Resource Action returned an invalid plugin frame URL.");
+	if (!t || !/^\/plugins\/[a-z0-9._-]+\//.test(t) || se(t)) throw Error("The Resource Action returned an invalid plugin frame URL.");
 	return e;
 }
-function Q(e) {
+function se(e) {
 	try {
 		return e.split("/").some((e) => {
 			let t = decodeURIComponent(e);
@@ -538,4 +542,4 @@ function $(e, t, n) {
 	return e;
 }
 //#endregion
-export { B as DIRECTORY_FRAME_CHANNEL, R as PLUGIN_API_VERSION, z as RESOURCE_FRAME_CHANNEL, Y as connectAssetHubDirectoryFrame, J as connectAssetHubFrame, G as directoryActionEffectKinds, H as directoryFrameMethods, X as mountAssetHubResourceFrame, U as pluginViewKinds, W as resourceActionEffectKinds, V as resourceFrameMethods };
+export { B as DIRECTORY_FRAME_CHANNEL, K as DIRECTORY_THUMBNAIL_CAPABILITY, q as DIRECTORY_WORKSPACE_CAPABILITY, R as PLUGIN_API_VERSION, W as RESOURCE_EDIT_CAPABILITY, z as RESOURCE_FRAME_CHANNEL, H as RESOURCE_THUMBNAIL_CAPABILITY, U as RESOURCE_VIEW_CAPABILITY, ie as connectAssetHubDirectoryFrame, re as connectAssetHubFrame, G as directoryActionCapabilityIds, ne as directoryActionEffectKinds, Y as directoryFrameMethods, ae as mountAssetHubResourceFrame, X as pluginViewKinds, V as resourceActionCapabilityIds, te as resourceActionEffectKinds, J as resourceFrameMethods };

@@ -1,6 +1,11 @@
 import type { AssetGateway } from "@/application/ports/asset-gateway";
 import { normalizeDirectory } from "@/domain/directory-path";
-import type { DirectoryActionOutput, ResourceActionOutput } from "@/domain/plugin";
+import {
+  type DirectoryActionOutput,
+  RESOURCE_EDIT_CAPABILITY,
+  RESOURCE_VIEW_CAPABILITY,
+  type ResourceActionOutput,
+} from "@/domain/plugin";
 import type { Directory, Resource, ResourceAction } from "@/domain/resource";
 import { parseActionId, parseActionInput, parseResourceId } from "./frame-input";
 
@@ -88,13 +93,13 @@ export function createDirectoryPluginFrameHostBridge({
         const input = parseActionInput(inputValue);
         const viewer = resource.actions.find(
           (candidate) =>
-            candidate.provides === "text_view" &&
+            candidate.provides === RESOURCE_VIEW_CAPABILITY &&
             candidate.access === "read" &&
             candidate.output.effects.length === 0 &&
             candidate.output.views.includes("plugin_frame"),
         );
         if (!viewer) {
-          throw new Error("No frame-based text viewer is available for this Resource.");
+          throw new Error("No frame-based viewer is available for this Resource.");
         }
         return gateway.executeResourceAction(resource, viewer.id, input);
       },
@@ -105,12 +110,13 @@ export function createDirectoryPluginFrameHostBridge({
         const resource = await directResource(resourceIdValue);
         const editor = resource.actions.find(
           (candidate) =>
-            candidate.provides === "text_edit" &&
+            candidate.provides === RESOURCE_EDIT_CAPABILITY &&
             candidate.access === "write" &&
+            candidate.output.effects.length === 0 &&
             candidate.output.views.includes("plugin_frame"),
         );
         if (!editor) {
-          throw new Error("No frame-based text editor is available for this Resource.");
+          throw new Error("No frame-based editor is available for this Resource.");
         }
         await onEditResource(resource, editor);
       },

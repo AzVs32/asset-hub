@@ -403,7 +403,7 @@ fn thumbnail_capabilities_require_a_single_nearest_provider() {
 }
 
 #[test]
-fn text_view_capability_requires_an_effect_free_read_only_resource_frame() {
+fn view_capability_requires_an_effect_free_read_only_resource_frame() {
     let definitions = vec![ResourceKindDefinition::new(
         ResourceKind::default(),
         "Resource",
@@ -411,7 +411,7 @@ fn text_view_capability_requires_an_effect_free_read_only_resource_frame() {
         DefinitionOrigin::builtin_static("test"),
     )];
     let valid = ResourceActionDefinition::new_static("example.text.view", "View")
-        .with_static_provides(Some("text_view"))
+        .with_static_provides(Some("view"))
         .with_kinds(["core:resource"])
         .with_output(ActionOutputContract {
             views: vec!["plugin_frame".to_string(), "json".to_string()],
@@ -420,7 +420,7 @@ fn text_view_capability_requires_an_effect_free_read_only_resource_frame() {
     validate_resource_action_capabilities(&definitions, &[valid]).unwrap();
 
     let invalid = ResourceActionDefinition::new_static("example.text.view", "View")
-        .with_static_provides(Some("text_view"))
+        .with_static_provides(Some("view"))
         .with_access(ActionAccess::Write)
         .with_kinds(["core:resource"])
         .with_output(ActionOutputContract {

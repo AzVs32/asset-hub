@@ -19,7 +19,7 @@ files remain `core:resource` and receive Actions through MIME or extension match
 - Parent kind: `core:resource`
 - Read action: `resource.text.read` (`read_text`)
 - Edit action: `resource.text.edit` (`edit_text`)
-- Read capability: `text_view`; edit capability: `text_edit`
+- Read capability: `view`; edit capability: `edit`
 - Output view: `plugin_frame`
 
 The Host has no generic text kind or fallback text provider. Markdown MIME types and extensions are
@@ -64,7 +64,7 @@ Inline bytes and opaque Host content handles are consumed through the same bound
 Wasm implementations.
 
 Saving uses the Web SDK's `replaceResourceText`. The Host accepts it only from the frame produced by the current
-Resource's resolved, write `text_edit` action, whose Manifest explicitly requests
+Resource's resolved, write `edit` action, whose Manifest explicitly requests
 `resource.content.replace`, then forwards the text to the same
 revision-guarded streaming content replacement use case. The runtime rejects inline writeback
 through Action JSON and does not return a `replace_content` effect. Consequently, saves are

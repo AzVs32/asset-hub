@@ -1,5 +1,7 @@
 use super::*;
 
+const PLUGIN_ASSET_CONTENT_SECURITY_POLICY: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' data:; font-src 'self' data:; connect-src 'none'; frame-src 'self'; object-src 'none'; base-uri 'none'";
+
 pub(crate) async fn plugin_web_asset(
     State(state): State<HttpState>,
     Path((plugin_id, path)): Path<(String, String)>,
@@ -21,7 +23,7 @@ pub(crate) async fn plugin_web_asset(
     );
     response.headers_mut().insert(
         header::CONTENT_SECURITY_POLICY,
-        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' data:; font-src 'self' data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'"
+        PLUGIN_ASSET_CONTENT_SECURITY_POLICY
             .parse()
             .expect("static plugin CSP is valid"),
     );
@@ -61,5 +63,16 @@ pub(super) fn plugin_asset_content_type(path: &FsPath) -> &'static str {
         Some("jpg") | Some("jpeg") => "image/jpeg",
         Some("webp") => "image/webp",
         _ => DEFAULT_CONTENT_TYPE,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PLUGIN_ASSET_CONTENT_SECURITY_POLICY;
+
+    #[test]
+    fn plugin_asset_csp_allows_only_same_origin_nested_frames() {
+        assert!(PLUGIN_ASSET_CONTENT_SECURITY_POLICY.contains("frame-src 'self'"));
+        assert!(!PLUGIN_ASSET_CONTENT_SECURITY_POLICY.contains("frame-src 'none'"));
     }
 }
