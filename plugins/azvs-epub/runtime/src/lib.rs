@@ -1,8 +1,8 @@
+use asset_plugin_sdk::{Error, Media, ResourceContext, ResourceResponse, Result};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-#[cfg(target_arch = "wasm32")]
 const READ_CHUNK_BYTES: u64 = 1024 * 1024;
 const MAX_EPUB_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES: usize = 10_000;

@@ -1,5 +1,5 @@
 //#region src/contract.ts
-var e = "asset-hub.plugin-api@5", t = "asset-hub.plugin-frame@5", n = "asset-hub.plugin-directory-frame@5", r = [
+var e = "asset-hub.plugin-api@1", t = "asset-hub.plugin-frame@1", n = "asset-hub.plugin-directory-frame@1", r = [
 	"text",
 	"markdown",
 	"html",

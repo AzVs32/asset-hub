@@ -9,7 +9,7 @@ use asset_core::domain::{
     ResourceKindDefinition,
 };
 use asset_core::port::DirectoryKindRegistry;
-use asset_plugin_api::manifest::ResourceKindCapability;
+use asset_plugin_sdk::manifest::ResourceKindCapability;
 
 use super::normalization::content_matcher;
 use super::validation::ensure_unique_id;

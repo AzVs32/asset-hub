@@ -1,49 +1,14 @@
 use super::*;
-use asset_plugin_api::protocol::{
-    MediaView, PluginContentReferenceEncoding, PluginInlineContentEncoding, PluginMediaEncoding,
-    PluginResourceActionRequest,
-};
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD;
-use extism_pdk::{Error, FnResult};
 use roxmltree::Document;
 use std::io::{Cursor, Read};
 use std::sync::Arc;
 use zip::ZipArchive;
 
-pub(super) fn epub_content_bytes(input: &PluginResourceActionRequest) -> FnResult<Vec<u8>> {
-    if let Some(content) = &input.content {
-        if content.encoding != PluginInlineContentEncoding::Base64 {
-            return Err(Error::msg("unsupported content encoding").into());
-        }
-        let bytes = STANDARD.decode(&content.data)?;
-        if bytes.len() as u64 > MAX_EPUB_BYTES {
-            return Err(Error::msg("EPUB exceeds the 128 MiB plugin limit").into());
-        }
-        return Ok(bytes);
-    }
-
-    let content_ref = input
-        .content_ref
-        .as_ref()
-        .ok_or_else(|| Error::msg("missing EPUB content payload"))?;
-    if content_ref.encoding != PluginContentReferenceEncoding::Handle {
-        return Err(Error::msg("unsupported content reference encoding").into());
-    }
-    read_content_reference(&content_ref.reference)
+pub(super) fn epub_content_bytes(context: &ResourceContext) -> Result<Vec<u8>> {
+    context.content().read_all(MAX_EPUB_BYTES, READ_CHUNK_BYTES)
 }
 
-#[cfg(target_arch = "wasm32")]
-pub(super) fn read_content_reference(reference: &str) -> FnResult<Vec<u8>> {
-    asset_plugin_api::abi::content::guest::read_all(reference, MAX_EPUB_BYTES, READ_CHUNK_BYTES)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub(super) fn read_content_reference(_reference: &str) -> FnResult<Vec<u8>> {
-    Err(Error::msg("content references are only available in the wasm host").into())
-}
-
-pub(super) fn parse_book(key: String, bytes: Arc<Vec<u8>>) -> FnResult<CachedBook> {
+pub(super) fn parse_book(key: String, bytes: Arc<Vec<u8>>) -> Result<CachedBook> {
     let mut archive = open_archive(&bytes)?;
     let opf_path = find_opf_path(&mut archive)?;
     let opf = read_zip_text_limited(&mut archive, &opf_path, MAX_MARKUP_BYTES)?;
@@ -66,7 +31,7 @@ pub(super) fn parse_book(key: String, bytes: Arc<Vec<u8>>) -> FnResult<CachedBoo
     })
 }
 
-pub(super) fn open_archive(bytes: &[u8]) -> FnResult<ZipArchive<Cursor<&[u8]>>> {
+pub(super) fn open_archive(bytes: &[u8]) -> Result<ZipArchive<Cursor<&[u8]>>> {
     let mut archive = ZipArchive::new(Cursor::new(bytes))?;
     if archive.len() > MAX_ARCHIVE_ENTRIES {
         return Err(Error::msg("EPUB contains too many ZIP entries").into());
@@ -83,7 +48,7 @@ pub(super) fn open_archive(bytes: &[u8]) -> FnResult<ZipArchive<Cursor<&[u8]>>> 
     Ok(archive)
 }
 
-pub(super) fn render_epub_cover_bytes(epub: &[u8]) -> FnResult<Option<String>> {
+pub(super) fn render_epub_cover_bytes(epub: &[u8]) -> Result<Option<String>> {
     let mut archive = open_archive(epub)?;
     let opf_path = find_opf_path(&mut archive)?;
     let opf = read_zip_text_limited(&mut archive, &opf_path, MAX_MARKUP_BYTES)?;
@@ -91,20 +56,15 @@ pub(super) fn render_epub_cover_bytes(epub: &[u8]) -> FnResult<Option<String>> {
     Ok(find_cover_data_url(&mut archive, &package, &opf_path))
 }
 
-pub(super) fn cover_media_view(title: &str, data_url: &str) -> FnResult<MediaView> {
+pub(super) fn cover_media_view(title: &str, data_url: &str) -> Result<Media> {
     let (mime_type, data) = data_url
         .strip_prefix("data:")
         .and_then(|value| value.split_once(";base64,"))
         .ok_or_else(|| Error::msg("invalid EPUB cover data URL"))?;
-    Ok(MediaView {
-        mime_type: mime_type.to_string(),
-        title: Some(title.to_string()),
-        encoding: PluginMediaEncoding::Base64,
-        data: data.to_string(),
-    })
+    Ok(Media::base64_data(mime_type, data).title(title))
 }
 
-pub(super) fn find_opf_path(archive: &mut ZipArchive<Cursor<&[u8]>>) -> FnResult<String> {
+pub(super) fn find_opf_path(archive: &mut ZipArchive<Cursor<&[u8]>>) -> Result<String> {
     let container = read_zip_text_limited(archive, "META-INF/container.xml", MAX_MARKUP_BYTES)?;
     let doc = Document::parse(&container)?;
     let path = doc
@@ -119,7 +79,7 @@ pub(super) fn read_zip_text_limited(
     archive: &mut ZipArchive<Cursor<&[u8]>>,
     path: &str,
     limit: u64,
-) -> FnResult<String> {
+) -> Result<String> {
     let bytes = read_zip_bytes_limited(archive, path, limit)?;
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
@@ -128,7 +88,7 @@ pub(super) fn read_zip_bytes_limited(
     archive: &mut ZipArchive<Cursor<&[u8]>>,
     path: &str,
     limit: u64,
-) -> FnResult<Vec<u8>> {
+) -> Result<Vec<u8>> {
     let safe_path = safe_zip_path(path).ok_or_else(|| Error::msg("unsafe EPUB ZIP path"))?;
     let mut file = archive.by_name(&safe_path)?;
     if file.is_dir() || file.size() > limit {

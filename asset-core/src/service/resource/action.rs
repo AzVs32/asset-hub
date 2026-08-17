@@ -11,7 +11,7 @@ use crate::domain::{
 };
 use crate::port::{LocatedResource, ResourceActionOutput, ResourceActionRequest};
 use crate::service::validate_action_revision;
-use asset_plugin_api::protocol::PluginResourceActionEffect;
+use asset_plugin_sdk::protocol::PluginResourceActionEffect;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use bytes::Bytes;

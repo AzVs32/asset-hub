@@ -412,7 +412,7 @@ var e = class extends Error {
 	#f = ({ data: e }) => {
 		if (this.#r?.(e)) for (let t of this.#a) t(e);
 	};
-}, z = "asset-hub.plugin-api@5", B = "asset-hub.plugin-frame@5", V = "asset-hub.plugin-directory-frame@5", H = [
+}, z = "asset-hub.plugin-api@1", B = "asset-hub.plugin-frame@1", V = "asset-hub.plugin-directory-frame@1", H = [
 	"text",
 	"markdown",
 	"html",

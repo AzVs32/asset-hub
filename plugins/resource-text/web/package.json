@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@asset-hub/plugin-web-sdk": "file:../../../asset-plugin-api/web",
+    "@asset-hub/plugin-web-sdk": "file:../../../asset-plugin-sdk/web",
     "lucide-react": "^0.468.0",
     "markdown-it": "^14.3.0",
     "react": "^19.0.0",

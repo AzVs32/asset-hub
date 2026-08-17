@@ -33,9 +33,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
-name = "asset-plugin-api"
-version = "0.4.0"
+name = "asset-plugin-sdk"
+version = "0.1.0"
 dependencies = [
+ "base64 0.23.1",
  "extism-pdk",
  "serde",
  "serde_json",
@@ -52,9 +53,8 @@ name = "azvs-epub-plugin"
 version = "0.4.0"
 dependencies = [
  "ammonia",
- "asset-plugin-api",
+ "asset-plugin-sdk",
  "base64 0.23.1",
- "extism-pdk",
  "lol_html",
  "roxmltree",
  "serde",

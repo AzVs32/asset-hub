@@ -1,11 +1,10 @@
 use super::*;
-use extism_pdk::FnResult;
 use roxmltree::{Document, Node};
 use std::collections::HashMap;
 use std::io::Cursor;
 use zip::ZipArchive;
 
-pub(super) fn parse_package(opf: &str, opf_path: &str) -> FnResult<Package> {
+pub(super) fn parse_package(opf: &str, opf_path: &str) -> Result<Package> {
     let doc = Document::parse(opf)?;
     let title = doc
         .descendants()

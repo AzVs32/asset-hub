@@ -1,47 +1,52 @@
 use super::*;
+use asset_plugin_sdk::decode_base64;
 
 #[test]
 fn large_text_uses_bounded_chunks() {
     let text = vec![b'a'; CONTENT_CHUNK_BYTES as usize + 17];
-    let load = read_text_payload(request_json(
-        "resource.text.read",
-        json!({"operation": "load"}),
-        Some(&text),
-    ))
+    let load = asset_plugin_sdk::runtime::run_resource_action(
+        request_json(
+            "resource.text.read",
+            json!({"operation": "load"}),
+            Some(&text),
+        ),
+        read_text_payload,
+    )
     .unwrap();
     let load: Value = serde_json::from_str(&load).unwrap();
     assert_eq!(load["data"]["transfer"], "chunked");
     assert_eq!(load["data"]["chunk_size"], CONTENT_CHUNK_BYTES);
 
-    let chunk = read_text_payload(request_json(
-        "resource.text.read",
-        json!({"operation": "chunk", "offset": CONTENT_CHUNK_BYTES}),
-        Some(&text),
-    ))
+    let chunk = asset_plugin_sdk::runtime::run_resource_action(
+        request_json(
+            "resource.text.read",
+            json!({"operation": "chunk", "offset": CONTENT_CHUNK_BYTES}),
+            Some(&text),
+        ),
+        read_text_payload,
+    )
     .unwrap();
     let chunk: Value = serde_json::from_str(&chunk).unwrap();
     assert_eq!(chunk["data"]["offset"], CONTENT_CHUNK_BYTES);
     assert_eq!(chunk["data"]["done"], true);
     assert_eq!(
-        STANDARD
-            .decode(chunk["data"]["data"].as_str().unwrap())
-            .unwrap(),
+        decode_base64(chunk["data"]["data"].as_str().unwrap()).unwrap(),
         vec![b'a'; 17]
     );
 }
 
 #[test]
 fn edit_text_rejects_inline_writeback() {
-    let error = edit_text_payload(request_json(
-        "resource.text.edit",
-        json!({"text": "updated"}),
-        None,
-    ))
-    .unwrap_err();
+    let error = asset_plugin_sdk::runtime::run_resource_action(
+        request_json("resource.text.edit", json!({"text": "updated"}), None),
+        edit_text_payload,
+    )
+    .unwrap();
+    let error: Value = serde_json::from_str(&error).unwrap();
     assert!(
-        error
-            .0
-            .to_string()
+        error["error"]["message"]
+            .as_str()
+            .unwrap()
             .contains("unsupported text edit operation")
     );
 }
@@ -64,7 +69,7 @@ fn request_json(action: &str, input: Value, content: Option<&[u8]>) -> String {
     if let Some(content) = content {
         request["content"] = json!({
             "encoding": "base64",
-            "data": STANDARD.encode(content),
+            "data": encode_base64(content),
         });
     }
     request.to_string()

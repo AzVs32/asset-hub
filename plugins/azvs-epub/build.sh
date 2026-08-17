@@ -18,7 +18,7 @@ install -m 0644 \
   "$plugin_root/runtime/target/wasm32-unknown-unknown/release/azvs_epub_plugin.wasm" \
   "$output/plugin.wasm"
 
-(cd "$repository_root/asset-plugin-api/web" && npm run build)
+(cd "$repository_root/asset-plugin-sdk/web" && npm run build)
 (cd "$plugin_root/web" && npm run build)
 install -m 0644 "$plugin_root/manifest.json" "$output/manifest.json"
 

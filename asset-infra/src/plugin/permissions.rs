@@ -1,8 +1,8 @@
 use asset_core::CoreError;
 use asset_core::domain::{ActionAccess, ResourceActionContentDelivery};
 use asset_core::port::ResourceActionRequest;
-use asset_plugin_api::manifest::{PluginPermission, PluginPermissions};
-use asset_plugin_api::protocol::{PluginDiagnostic, PluginDiagnosticSeverity};
+use asset_plugin_sdk::manifest::{PluginPermission, PluginPermissions};
+use asset_plugin_sdk::protocol::{PluginDiagnostic, PluginDiagnosticSeverity};
 use extism::{Manifest, Wasm};
 use std::path::{Component, Path};
 
@@ -138,7 +138,7 @@ pub(super) fn verify_content_budget(
             &binding.plugin_id,
             &binding.action,
             host_diagnostic(
-                asset_plugin_api::protocol::diagnostic::codes::CONTENT_LIMIT_EXCEEDED,
+                asset_plugin_sdk::protocol::diagnostic::codes::CONTENT_LIMIT_EXCEEDED,
                 format!(
                     "resource content is {size} bytes, plugin limit is {}",
                     policy.max_content_bytes()

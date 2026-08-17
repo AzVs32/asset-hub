@@ -16,11 +16,11 @@ use crate::port::{
     ResourceContentReplacementRepository, ResourceKindRegistry, ResourcePage, ScannedStorageEntry,
     StagedBlob, StoragePrefix, UploadSessionRepository, UserRepository,
 };
-use asset_plugin_api::protocol::directory::{
+use asset_plugin_sdk::protocol::directory::{
     CreateDirectoryTreeEffect, CreateTreeDirectory, CreateTreeResource, CreateTreeResourceEncoding,
     DirectoryActionEffect, PluginDirectoryActionOutput, UpdateDirectoryEffect,
 };
-use asset_plugin_api::protocol::{
+use asset_plugin_sdk::protocol::{
     PluginReplacementEncoding, PluginResourceActionEffect, PluginResourceActionOutput, PluginView,
     ReplaceContentEffect, TextView,
 };

@@ -1,55 +1,33 @@
-use asset_plugin_api::protocol::{
-    MediaView, PluginActionFailure, PluginDiagnostic, PluginMediaEncoding,
-    PluginResourceActionOutput, PluginResourceActionRequest, PluginView,
+use asset_plugin_sdk::{
+    Error, Media, ResourceContext, ResourceResponse, ResourceSnapshot, Result,
+    export_resource_action,
 };
-use extism_pdk::{Error, FnResult, plugin_fn};
 
-#[plugin_fn]
-pub fn render_thumbnail(input: String) -> FnResult<String> {
-    structured_action_result(render_thumbnail_payload(input))
-}
+export_resource_action!(render_thumbnail => render_thumbnail_action);
 
-fn structured_action_result(result: FnResult<String>) -> FnResult<String> {
-    match result {
-        Ok(output) => Ok(output),
-        Err(error) => Ok(serde_json::to_string(&PluginActionFailure::new(
-            PluginDiagnostic::error(
-                asset_plugin_api::protocol::diagnostic::codes::ACTION_FAILED,
-                error.0.to_string(),
-            ),
-        ))?),
-    }
-}
-
-fn render_thumbnail_payload(input: String) -> FnResult<String> {
-    let request: PluginResourceActionRequest = serde_json::from_str(&input)?;
-    if request.resource.content.is_none() {
+fn render_thumbnail_action(context: ResourceContext) -> Result<ResourceResponse> {
+    let resource = context.resource();
+    if resource.content_size().is_none() {
         return Err(Error::msg("image resource has no content").into());
     }
     let mime_type =
-        image_mime_type(&request).ok_or_else(|| Error::msg("resource is not a supported image"))?;
-    let output = PluginResourceActionOutput::new(PluginView::Media(MediaView {
-        mime_type,
-        title: Some(request.resource.name.clone()),
-        encoding: PluginMediaEncoding::Url,
-        data: format!("/resources/{}/content", request.resource.id),
-    }));
-    Ok(serde_json::to_string(&output)?)
+        image_mime_type(resource).ok_or_else(|| Error::msg("resource is not a supported image"))?;
+    Ok(ResourceResponse::media(
+        Media::url(mime_type, format!("/resources/{}/content", resource.id()))
+            .title(resource.name()),
+    ))
 }
 
-fn image_mime_type(request: &PluginResourceActionRequest) -> Option<String> {
-    if let Some(mime_type) = request
-        .resource
-        .content
-        .as_ref()
-        .and_then(|content| content.mime_type.as_deref())
+fn image_mime_type(resource: ResourceSnapshot<'_>) -> Option<String> {
+    if let Some(mime_type) = resource
+        .mime_type()
         .map(str::trim)
         .filter(|mime_type| mime_type.to_ascii_lowercase().starts_with("image/"))
     {
         return Some(mime_type.to_ascii_lowercase());
     }
 
-    let name = request.resource.name.to_ascii_lowercase();
+    let name = resource.name().to_ascii_lowercase();
     let mime_type = if name.ends_with(".png") {
         "image/png"
     } else if name.ends_with(".jpg") || name.ends_with(".jpeg") {
@@ -76,12 +54,12 @@ fn image_mime_type(request: &PluginResourceActionRequest) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use asset_plugin_api::manifest::PluginManifest;
+    use asset_plugin_sdk::manifest::PluginManifest;
 
     #[test]
     fn manifest_is_valid_and_does_not_declare_an_image_kind() {
         let manifest: PluginManifest =
-            serde_json::from_str(include_str!("../../manifest.json")).unwrap();
+            asset_plugin_sdk::serde_json::from_str(include_str!("../../manifest.json")).unwrap();
 
         manifest.validate().unwrap();
         assert!(manifest.capabilities.resource_kinds.is_empty());

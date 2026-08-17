@@ -57,6 +57,9 @@ never copied into the iframe URL. After loading, the frame connects through
 
 The runtime rejects read operations for text larger than 128 MiB. The effective read maximum
 can be lower when the Host's plugin execution policy is lower.
+Inline bytes and opaque Host content handles are consumed through the same bounded
+`ResourceContext::content` SDK interface; the plugin does not manage ABI handles or conditional
+Wasm implementations.
 
 Saving uses the Web SDK's `replaceResourceText`. The Host accepts it only from the frame produced by the current
 Resource's resolved, write `text_edit` action, whose Manifest explicitly requests
@@ -74,7 +77,7 @@ Requires Rust with the `wasm32-unknown-unknown` target and Node.js 22
 
 ```bash
 rustup target add wasm32-unknown-unknown
-cd asset-plugin-api/web
+cd asset-plugin-sdk/web
 npm ci
 cd ../../plugins/resource-text/web
 npm ci

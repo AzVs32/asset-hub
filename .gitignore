@@ -6,9 +6,8 @@ asset-web/node_modules/
 asset-web/dist/
 asset-web/coverage/
 asset-web/*.tsbuildinfo
-asset-plugin-api/web/node_modules/
-asset-plugin-api/web/dist/
-asset-plugin-api/web/coverage/
+asset-plugin-sdk/web/node_modules/
+asset-plugin-sdk/web/coverage/
 
 # Rust compiler and profiling artifacts
 **/*.rs.bk

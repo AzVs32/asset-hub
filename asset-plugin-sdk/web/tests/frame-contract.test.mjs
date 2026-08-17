@@ -11,7 +11,7 @@ import {
 } from "../dist/contract.js";
 
 const fixture = JSON.parse(
-  readFileSync(new URL("../../tests/fixtures/plugin-frame-contract-v5.json", import.meta.url)),
+  readFileSync(new URL("../../tests/fixtures/plugin-frame-contract-v1.json", import.meta.url)),
 );
 
 describe("Browser Frame contract", () => {

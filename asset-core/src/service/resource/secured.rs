@@ -17,7 +17,7 @@ use crate::port::{
     LocatedResource, ResourceActionOutput, ResourcePage,
 };
 use crate::service::{AuthorizationService, ExecuteDirectoryAction};
-use asset_plugin_api::protocol::directory::{
+use asset_plugin_sdk::protocol::directory::{
     CreateDirectoryTreeEffect, CreateTreeResourceEncoding, DirectoryActionEffect,
 };
 use base64::Engine;

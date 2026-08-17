@@ -6,7 +6,7 @@ const views: PluginView[] = [
   { view: "html", title: "HTML", html: "<p>HTML</p>" },
   {
     view: "plugin_frame",
-    plugin_api: "asset-hub.plugin-api@5",
+    plugin_api: "asset-hub.plugin-api@1",
     title: "Frame",
     url: "/plugins/example/index.html",
   },

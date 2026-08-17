@@ -8,7 +8,7 @@ crate-type = ["cdylib"]
 path = "src/lib.rs"
 
 [dependencies]
-asset-plugin-api = { path = "../../../asset-plugin-api", features = ["extism-guest"] }
+asset-plugin-sdk = { path = "../../../asset-plugin-sdk", features = ["extism-guest"] }
 extism-pdk = "1.4.1"
 
 [profile.release]

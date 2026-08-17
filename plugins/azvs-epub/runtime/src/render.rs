@@ -1,13 +1,12 @@
 use super::*;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use extism_pdk::{Error, FnResult};
 use lol_html::{RewriteStrSettings, element, rewrite_str};
 use std::collections::HashMap;
 use std::io::Cursor;
 use zip::ZipArchive;
 
-pub(super) fn render_chapter(book: &CachedBook, index: usize) -> FnResult<ChapterContent> {
+pub(super) fn render_chapter(book: &CachedBook, index: usize) -> Result<ChapterContent> {
     let chapter = book
         .index
         .chapters
@@ -52,7 +51,7 @@ pub(super) fn rewrite_chapter_html(
     chapter_path: &str,
     chapter_paths: &HashMap<String, usize>,
     raw: &str,
-) -> FnResult<String> {
+) -> Result<String> {
     let mut embedded_bytes = 0_u64;
     let rewritten = rewrite_str(
         raw,
@@ -224,7 +223,7 @@ pub(super) fn asset_data_url(
     opf_path: &str,
     path: &str,
     limit: u64,
-) -> FnResult<String> {
+) -> Result<String> {
     let mime = manifest_mime(package, opf_path, path).unwrap_or_else(|| mime_from_path(path));
     if !is_embeddable_mime(&mime) {
         return Err(Error::msg("unsupported EPUB asset type").into());

@@ -22,7 +22,7 @@
     "generate:api": "openapi-typescript http://127.0.0.1:8080/api-docs/openapi.json -o src/infrastructure/http/generated.ts"
   },
   "dependencies": {
-    "@asset-hub/plugin-web-sdk": "file:../asset-plugin-api/web",
+    "@asset-hub/plugin-web-sdk": "file:../asset-plugin-sdk/web",
     "@hookform/resolvers": "^5.4.0",
     "@radix-ui/react-dialog": "^1.1.19",
     "@radix-ui/react-dropdown-menu": "^2.1.20",

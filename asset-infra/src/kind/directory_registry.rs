@@ -3,7 +3,7 @@ use crate::plugin_manifest::PluginCatalog;
 use asset_core::CoreError;
 use asset_core::domain::{DefinitionOrigin, DirectoryKind, DirectoryKindDefinition};
 use asset_core::port::DirectoryKindRegistry;
-use asset_plugin_api::manifest::DirectoryKindCapability;
+use asset_plugin_sdk::manifest::DirectoryKindCapability;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]

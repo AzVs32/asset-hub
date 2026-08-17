@@ -12,7 +12,7 @@ const THUMBNAIL_SVG: &str = include_str!("thumbnail.svg");
 
 #[plugin_fn]
 pub fn hello_world(_: ()) -> FnResult<String> {
-    Ok("Hello from directory-games-plugin!\n".to_string()+GAME_KIND+GAME_KIND+THUMBNAIL_SVG)
+    Ok("Hello from directory-games-plugin!\n".to_string() + GAME_KIND + GAME_KIND + THUMBNAIL_SVG)
 }
 
 // #[plugin_fn]

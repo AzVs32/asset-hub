@@ -4,9 +4,9 @@ use asset_core::port::{
     DirectoryActionExecutor, DirectoryActionOutput, DirectoryActionRequest, DirectoryKindRegistry,
     ResourceActionExecutor, ResourceActionOutput, ResourceActionRequest, ResourceKindRegistry,
 };
-use asset_plugin_api::protocol::directory::DirectoryActionEffect;
-use asset_plugin_api::protocol::directory::PluginDirectoryActionOutput;
-use asset_plugin_api::protocol::{
+use asset_plugin_sdk::protocol::directory::DirectoryActionEffect;
+use asset_plugin_sdk::protocol::directory::PluginDirectoryActionOutput;
+use asset_plugin_sdk::protocol::{
     DownloadView, PluginResourceActionEffect, PluginResourceActionOutput, PluginView,
 };
 use async_trait::async_trait;

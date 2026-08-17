@@ -1,9 +1,9 @@
 /** Current Host/plugin wire and Browser Frame API version. */
-export declare const PLUGIN_API_VERSION = "asset-hub.plugin-api@5";
+export declare const PLUGIN_API_VERSION = "asset-hub.plugin-api@1";
 /** Penpal channel used by Resource-bound plugin frames. */
-export declare const RESOURCE_FRAME_CHANNEL = "asset-hub.plugin-frame@5";
+export declare const RESOURCE_FRAME_CHANNEL = "asset-hub.plugin-frame@1";
 /** Penpal channel used by Directory-bound plugin frames. */
-export declare const DIRECTORY_FRAME_CHANNEL = "asset-hub.plugin-directory-frame@5";
+export declare const DIRECTORY_FRAME_CHANNEL = "asset-hub.plugin-directory-frame@1";
 export type JsonPrimitive = boolean | number | string | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | JsonObject;
 export type JsonObject = {

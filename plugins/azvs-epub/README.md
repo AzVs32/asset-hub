@@ -47,6 +47,10 @@ The first action call returns a `plugin_frame`. The React reader connects throug
 frame bridge. Additional chapters are fetched on demand and cached by the reader and Wasm runtime.
 Book content has no direct network access.
 
+The Rust runtime uses the high-level Asset Plugin SDK context, so inline/reference delivery,
+content-handle lifetime, frame protocol versioning, and structured Action failures stay outside
+the EPUB parser and renderer.
+
 The plugin runtime accepts two private bridge operations on `azvs.epub.render`:
 
 - `{"operation":"load"}` returns book information, chapter summaries, cover, and the first chapter.
@@ -59,7 +63,7 @@ Requires Rust with the `wasm32-unknown-unknown` target and Node.js 22
 
 ```bash
 rustup target add wasm32-unknown-unknown
-cd asset-plugin-api/web
+cd asset-plugin-sdk/web
 npm ci
 cd ../../plugins/azvs-epub/web
 npm ci

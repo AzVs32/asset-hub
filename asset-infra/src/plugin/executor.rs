@@ -7,15 +7,15 @@ use asset_core::port::{
     DirectoryKindRegistry, DirectoryQuery, ResourceActionExecutor, ResourceActionOutput,
     ResourceActionRequest, ResourceKindRegistry, ResourceQuery,
 };
-use asset_plugin_api::manifest::{
+use asset_plugin_sdk::manifest::{
     DirectoryActionCapability, PluginPermission, PluginPermissions, PluginRuntime,
     ResourceActionCapability,
 };
-use asset_plugin_api::protocol::directory::{
+use asset_plugin_sdk::protocol::directory::{
     DirectoryActionEffect, PluginDirectory, PluginDirectoryActionOutput,
     PluginDirectoryActionRequest,
 };
-use asset_plugin_api::protocol::{
+use asset_plugin_sdk::protocol::{
     PluginActionAccess, PluginActionFailure, PluginResourceActionOutput,
     PluginResourceActionRequest,
 };
@@ -172,7 +172,7 @@ impl ExtismActionExecutor {
                 if action.requires.as_ref().is_some_and(|requires| {
                     !matches!(
                         requires.resources,
-                        asset_plugin_api::manifest::DirectoryResourceAccess::None
+                        asset_plugin_sdk::manifest::DirectoryResourceAccess::None
                     )
                 }) && !manifest.permissions.directory_resources_list()
                 {
@@ -185,7 +185,7 @@ impl ExtismActionExecutor {
                 if action.requires.as_ref().is_some_and(|requires| {
                     matches!(
                         requires.resources,
-                        asset_plugin_api::manifest::DirectoryResourceAccess::Content
+                        asset_plugin_sdk::manifest::DirectoryResourceAccess::Content
                     )
                 }) && (!manifest.permissions.resource_read()
                     || !manifest.permissions.resource_content_read())
@@ -720,7 +720,7 @@ pub(super) fn call_extism(
             &binding.plugin_id,
             &binding.action,
             host_diagnostic(
-                asset_plugin_api::protocol::diagnostic::codes::INPUT_LIMIT_EXCEEDED,
+                asset_plugin_sdk::protocol::diagnostic::codes::INPUT_LIMIT_EXCEEDED,
                 format!(
                     "serialized input is {} bytes, limit is {}",
                     input.len(),
@@ -739,7 +739,7 @@ pub(super) fn call_extism(
             &binding.plugin_id,
             &binding.action,
             host_diagnostic(
-                asset_plugin_api::protocol::diagnostic::codes::OUTPUT_LIMIT_EXCEEDED,
+                asset_plugin_sdk::protocol::diagnostic::codes::OUTPUT_LIMIT_EXCEEDED,
                 format!(
                     "plugin output is {} bytes, limit is {}",
                     output.len(),
@@ -754,7 +754,7 @@ pub(super) fn call_extism(
             &binding.plugin_id,
             &binding.action,
             host_diagnostic(
-                asset_plugin_api::protocol::diagnostic::codes::INVALID_OUTPUT,
+                asset_plugin_sdk::protocol::diagnostic::codes::INVALID_OUTPUT,
                 format!("plugin returned invalid JSON: {error}"),
             ),
         )
@@ -765,7 +765,7 @@ pub(super) fn call_extism(
                 &binding.plugin_id,
                 &binding.action,
                 host_diagnostic(
-                    asset_plugin_api::protocol::diagnostic::codes::INVALID_OUTPUT,
+                    asset_plugin_sdk::protocol::diagnostic::codes::INVALID_OUTPUT,
                     format!("plugin returned an invalid failure diagnostic: {error}"),
                 ),
             )
@@ -782,17 +782,17 @@ pub(super) fn call_extism(
                 &binding.plugin_id,
                 &binding.action,
                 host_diagnostic(
-                    asset_plugin_api::protocol::diagnostic::codes::INVALID_OUTPUT,
+                    asset_plugin_sdk::protocol::diagnostic::codes::INVALID_OUTPUT,
                     format!("plugin returned invalid action output: {error}"),
                 ),
             )
         })?;
     for effect in &output.effects {
         let allowed = match effect {
-            asset_plugin_api::protocol::PluginResourceActionEffect::ReplaceContent(_) => {
+            asset_plugin_sdk::protocol::PluginResourceActionEffect::ReplaceContent(_) => {
                 binding.permissions.resource_content_replace()
             }
-            asset_plugin_api::protocol::PluginResourceActionEffect::Delete => {
+            asset_plugin_sdk::protocol::PluginResourceActionEffect::Delete => {
                 binding.permissions.resource_delete()
             }
         };
@@ -801,7 +801,7 @@ pub(super) fn call_extism(
                 &binding.plugin_id,
                 &binding.action,
                 host_diagnostic(
-                    asset_plugin_api::protocol::diagnostic::codes::PERMISSION_DENIED,
+                    asset_plugin_sdk::protocol::diagnostic::codes::PERMISSION_DENIED,
                     format!(
                         "plugin returned {} without the required permission",
                         effect.kind()

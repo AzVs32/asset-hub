@@ -14,7 +14,7 @@ use crate::{
         DirectoryActionRequest,
     },
 };
-use asset_plugin_api::protocol::directory::DirectoryActionEffect;
+use asset_plugin_sdk::protocol::directory::DirectoryActionEffect;
 use std::str::FromStr;
 use std::sync::Arc;
 

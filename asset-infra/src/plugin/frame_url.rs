@@ -1,5 +1,5 @@
 use asset_core::CoreError;
-use asset_plugin_api::protocol::{PLUGIN_API_VERSION, PluginResourceActionOutput, PluginView};
+use asset_plugin_sdk::protocol::{PLUGIN_API_VERSION, PluginResourceActionOutput, PluginView};
 
 pub(super) fn resolve_plugin_output_urls(
     output: &mut PluginResourceActionOutput,

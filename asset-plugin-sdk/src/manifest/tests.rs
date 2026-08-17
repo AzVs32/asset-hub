@@ -42,7 +42,7 @@ fn manifest_requires_current_versions() {
             .is_err()
     );
     document["manifest_version"] = serde_json::json!(MANIFEST_VERSION);
-    for unsupported in ["asset-hub.plugin-api@1", "asset-hub.plugin-api@4"] {
+    for unsupported in ["asset-hub.plugin-api@0", "asset-hub.plugin-api@2"] {
         document["runtime"]["plugin_api"] = serde_json::json!(unsupported);
         assert!(
             serde_json::from_value::<PluginManifest>(document.clone())
@@ -200,8 +200,8 @@ fn lock_uses_one_flat_integrity_map() {
 }
 
 #[test]
-fn lock_rejects_the_removed_runtime_and_web_groups() {
-    let old_lock = serde_json::json!({
+fn lock_rejects_non_flat_integrity_groups() {
+    let grouped_lock = serde_json::json!({
         "manifest_version": MANIFEST_VERSION,
         "plugin_id": "example.plugin",
         "integrity": {},
@@ -209,7 +209,7 @@ fn lock_rejects_the_removed_runtime_and_web_groups() {
         "web": {"integrity": {}}
     });
 
-    assert!(serde_json::from_value::<PluginManifestLock>(old_lock).is_err());
+    assert!(serde_json::from_value::<PluginManifestLock>(grouped_lock).is_err());
 }
 
 #[test]

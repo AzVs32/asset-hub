@@ -91,9 +91,8 @@ The repository includes the `resource.text`, `resource.image`, EPUB, and Games p
 `resource.image` provides common image thumbnails without introducing an image Kind. The Host does
 not provide generic text, image, or video Resource kinds.
 
-See [`asset-plugin-api/README.md`](asset-plugin-api/README.md) for the plugin
-authoring contract, package format, compatibility policy, and verification
-workflow.
+See [`asset-plugin-sdk/README.md`](asset-plugin-sdk/README.md) for the high-level Rust authoring
+facade, low-level wire contract, package format, compatibility policy, and verification workflow.
 
 At startup, `asset-runtime` assembles the verified plugin catalog, kind/action
 registries, Extism executors, and Core services in that order. `asset-infra`

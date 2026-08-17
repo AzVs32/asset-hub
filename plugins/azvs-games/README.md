@@ -7,6 +7,8 @@ The Host only supplies bounded child/resource reads and the generic `create_tree
 plugin owns the game model: creating a game emits a game directory, `public/`, a generated
 `README.md`, and an empty `HASH.md` reserved for a later integrity workflow. The README is the
 default content rendered by both the library card and game workspace.
+The Rust runtime consumes these capabilities through bounded `DirectoryContext` queries and builds
+the scaffold with the SDK `Tree` response builder rather than raw ABI pages and effect DTOs.
 
 Generated Markdown resources do not name a Kind owned by another plugin. Games leaves their Kind
 unset in the `create_tree` output, allowing the Host to detect an installed format-specific Kind or
@@ -26,7 +28,7 @@ Requires Rust with the `wasm32-unknown-unknown` target and Node.js 22. Prepare t
 
 ```bash
 rustup target add wasm32-unknown-unknown
-cd asset-plugin-api/web
+cd asset-plugin-sdk/web
 npm ci
 cd ../..
 ```

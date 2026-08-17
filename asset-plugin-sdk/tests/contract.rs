@@ -1,5 +1,5 @@
-use asset_plugin_api::manifest::{MANIFEST_VERSION, PluginManifest};
-use asset_plugin_api::protocol::{
+use asset_plugin_sdk::manifest::{MANIFEST_VERSION, PluginManifest};
+use asset_plugin_sdk::protocol::{
     PLUGIN_API_VERSION, PLUGIN_DIRECTORY_ACTION_EFFECT_KINDS, PLUGIN_DIRECTORY_FRAME_CHANNEL,
     PLUGIN_RESOURCE_ACTION_EFFECT_KINDS, PLUGIN_RESOURCE_FRAME_CHANNEL, PLUGIN_VIEW_KINDS,
     PluginActionFailure, PluginResourceActionOutput, PluginResourceActionRequest,
@@ -117,26 +117,26 @@ fn resource_and_directory_action_ids_use_separate_namespaces() {
 fn request_and_output_wire_shapes_match_the_current_goldens() {
     assert_golden_round_trip::<PluginManifest>(include_str!("fixtures/manifest-v3.json"));
     assert_golden_round_trip::<PluginResourceActionRequest>(include_str!(
-        "fixtures/action-request-inline-v2.json"
+        "fixtures/action-request-inline-v1.json"
     ));
     assert_golden_round_trip::<PluginResourceActionRequest>(include_str!(
-        "fixtures/action-request-reference-v2.json"
+        "fixtures/action-request-reference-v1.json"
     ));
     assert_golden_round_trip::<PluginResourceActionOutput>(include_str!(
-        "fixtures/action-output-v2.json"
+        "fixtures/action-output-v1.json"
     ));
     assert_golden_round_trip::<PluginResourceActionOutput>(include_str!(
-        "fixtures/action-output-download-v2.json"
+        "fixtures/action-output-download-v1.json"
     ));
     assert_golden_round_trip::<PluginActionFailure>(include_str!(
-        "fixtures/action-failure-v2.json"
+        "fixtures/action-failure-v1.json"
     ));
 }
 
 #[test]
 fn browser_frame_discriminants_match_the_current_golden() {
     let expected: Value =
-        serde_json::from_str(include_str!("fixtures/plugin-frame-contract-v5.json")).unwrap();
+        serde_json::from_str(include_str!("fixtures/plugin-frame-contract-v1.json")).unwrap();
 
     assert_eq!(expected["plugin_api"], PLUGIN_API_VERSION);
     assert_eq!(
@@ -161,17 +161,17 @@ fn browser_frame_discriminants_match_the_current_golden() {
 #[test]
 fn context_specific_encodings_reject_invalid_wire_combinations() {
     let mut request: Value =
-        serde_json::from_str(include_str!("fixtures/action-request-inline-v2.json")).unwrap();
+        serde_json::from_str(include_str!("fixtures/action-request-inline-v1.json")).unwrap();
     request["content"]["encoding"] = json!("handle");
     assert!(serde_json::from_value::<PluginResourceActionRequest>(request).is_err());
 
     let mut output: Value =
-        serde_json::from_str(include_str!("fixtures/action-output-v2.json")).unwrap();
+        serde_json::from_str(include_str!("fixtures/action-output-v1.json")).unwrap();
     output["effects"][0]["encoding"] = json!("url");
     assert!(serde_json::from_value::<PluginResourceActionOutput>(output).is_err());
 
     let mut output: Value =
-        serde_json::from_str(include_str!("fixtures/action-output-v2.json")).unwrap();
+        serde_json::from_str(include_str!("fixtures/action-output-v1.json")).unwrap();
     output["effects"][0]["checksum"] = json!({
         "kind": "sha256",
         "value": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"

@@ -9,7 +9,7 @@ publish = false
 [dependencies]
 asset-core.workspace = true
 asset-infra.workspace = true
-asset-plugin-api.workspace = true
+asset-plugin-sdk.workspace = true
 asset-runtime.workspace = true
 
 axum.workspace = true

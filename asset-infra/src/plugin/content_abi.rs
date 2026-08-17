@@ -4,9 +4,9 @@ use asset_core::domain::{
     StorageKey,
 };
 use asset_core::port::{BlobStorage, ResourceActionRequest};
-use asset_plugin_api::abi::content::PluginContentRange;
-use asset_plugin_api::manifest::PluginPermissions;
-use asset_plugin_api::protocol::{
+use asset_plugin_sdk::abi::content::PluginContentRange;
+use asset_plugin_sdk::manifest::PluginPermissions;
+use asset_plugin_sdk::protocol::{
     PluginActionAccess, PluginChecksum, PluginContentBytes, PluginContentReference,
     PluginContentReferenceEncoding, PluginContentVerificationStatus, PluginInlineContentEncoding,
     PluginResource, PluginResourceActionRequest, PluginResourceContent,

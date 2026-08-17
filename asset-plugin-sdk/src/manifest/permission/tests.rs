@@ -4,7 +4,7 @@ use super::*;
 use serde_json::json;
 
 #[test]
-fn removed_generic_resource_write_permissions_are_rejected() {
+fn unknown_generic_resource_write_permissions_are_rejected() {
     for permission in ["resource.write", "resource.derived_asset.write"] {
         let result = serde_json::from_value::<PluginPermissions>(json!({
             "allow": [permission]

@@ -25,6 +25,10 @@ The Action applies to `image/*` or these common extensions: `.png`, `.jpg`, `.jp
 preserved in normalized form; when matching by extension, the runtime supplies the corresponding
 image MIME type to the media view.
 
+The runtime imports the high-level authoring API directly from `asset-plugin-sdk`; the SDK export
+macro owns Extism/wire serialization and `Media::url` expresses the thumbnail response without
+constructing protocol DTOs.
+
 ## Build
 
 Requires Rust with the `wasm32-unknown-unknown` target. Prepare it once:

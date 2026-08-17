@@ -1,33 +1,23 @@
 use super::*;
-use asset_plugin_api::protocol::PluginResourceActionRequest;
-use extism_pdk::FnResult;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, OnceLock};
 
 static BOOK_CACHE: OnceLock<Mutex<VecDeque<Arc<CachedBook>>>> = OnceLock::new();
 static COVER_CACHE: OnceLock<Mutex<VecDeque<CachedCover>>> = OnceLock::new();
 
-pub(super) fn resource_cache_key(request: &PluginResourceActionRequest) -> String {
+pub(super) fn resource_cache_key(context: &ResourceContext) -> String {
+    let resource = context.resource();
     let mut key = format!(
         "{}:{}:{}",
-        request.resource.id,
-        request.resource.updated_at,
-        request
-            .resource
-            .content
-            .as_ref()
-            .map_or(0, |value| value.size)
+        resource.id(),
+        resource.updated_at(),
+        resource.content_size().unwrap_or(0)
     );
-    if let Some(checksum) = request
-        .resource
-        .content
-        .as_ref()
-        .and_then(|content| content.checksum.as_ref())
-    {
+    if let Some((kind, value)) = resource.checksum() {
         key.push(':');
-        key.push_str(&checksum.kind);
+        key.push_str(kind);
         key.push(':');
-        key.push_str(&checksum.value);
+        key.push_str(value);
     }
     key
 }
@@ -41,13 +31,13 @@ pub(super) fn cached_book(key: &str) -> Option<Arc<CachedBook>> {
     Some(book)
 }
 
-pub(super) fn load_cached_book(request: &PluginResourceActionRequest) -> FnResult<Arc<CachedBook>> {
-    let key = resource_cache_key(request);
+pub(super) fn load_cached_book(context: &ResourceContext) -> Result<Arc<CachedBook>> {
+    let key = resource_cache_key(context);
     if let Some(book) = cached_book(&key) {
         return Ok(book);
     }
 
-    let bytes = Arc::new(epub_content_bytes(request)?);
+    let bytes = Arc::new(epub_content_bytes(context)?);
     let book = Arc::new(parse_book(key, bytes.clone())?);
     if bytes.len() <= MAX_CACHED_BOOK_BYTES {
         let cache = BOOK_CACHE.get_or_init(|| Mutex::new(VecDeque::new()));

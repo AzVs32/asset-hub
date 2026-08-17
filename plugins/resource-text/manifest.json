@@ -11,7 +11,7 @@
   "runtime": {
     "type": "extism",
     "wasi": true,
-    "plugin_api": "asset-hub.plugin-api@5"
+    "plugin_api": "asset-hub.plugin-api@1"
   },
   "capabilities": {
     "resource_kinds": [

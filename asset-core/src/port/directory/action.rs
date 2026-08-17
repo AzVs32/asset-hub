@@ -10,7 +10,7 @@ use crate::{
     },
     port::LocatedDirectory,
 };
-use asset_plugin_api::protocol::directory::PluginDirectoryActionOutput;
+use asset_plugin_sdk::protocol::directory::PluginDirectoryActionOutput;
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashSet;

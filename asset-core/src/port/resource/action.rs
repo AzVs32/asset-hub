@@ -9,7 +9,7 @@ use crate::domain::{
     ResourceActionId, ResourceId, ResourceKind, StorageKey,
 };
 use crate::port::DirectoryLocation;
-use asset_plugin_api::protocol::PluginResourceActionOutput;
+use asset_plugin_sdk::protocol::PluginResourceActionOutput;
 use async_trait::async_trait;
 use bytes::Bytes;
 use serde_json::Value;

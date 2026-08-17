@@ -4,7 +4,7 @@ use asset_core::domain::{
     ResourceKindDefinition,
 };
 use asset_core::port::ResourceActionRegistry;
-use asset_plugin_api::manifest::ResourceActionCapability;
+use asset_plugin_sdk::manifest::ResourceActionCapability;
 
 use super::THUMBNAIL_CAPABILITY;
 use super::normalization::resource_action_definition;

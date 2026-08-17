@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
-    "asset-plugin-api",
+    "asset-plugin-sdk",
     "asset-core",
     "asset-infra",
     "asset-runtime",
@@ -16,7 +16,7 @@ license = "Apache-2.0"
 authors = ["AzVs"]
 
 [workspace.dependencies]
-asset-plugin-api = { path = "asset-plugin-api" }
+asset-plugin-sdk = { path = "asset-plugin-sdk" }
 asset-core = { path = "asset-core"}
 asset-infra = { path = "asset-infra" }
 asset-runtime = { path = "asset-runtime" }

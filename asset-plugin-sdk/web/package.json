@@ -1,6 +1,6 @@
 {
   "name": "@asset-hub/plugin-web-sdk",
-  "version": "0.4.0",
+  "version": "0.1.0",
   "description": "Stable browser SDK for Asset Hub plugin frames.",
   "type": "module",
   "license": "Apache-2.0",

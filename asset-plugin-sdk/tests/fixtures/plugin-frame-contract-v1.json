@@ -1,8 +1,8 @@
 {
-  "plugin_api": "asset-hub.plugin-api@5",
+  "plugin_api": "asset-hub.plugin-api@1",
   "channels": {
-    "resource": "asset-hub.plugin-frame@5",
-    "directory": "asset-hub.plugin-directory-frame@5"
+    "resource": "asset-hub.plugin-frame@1",
+    "directory": "asset-hub.plugin-directory-frame@1"
   },
   "view_kinds": [
     "text",

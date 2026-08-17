@@ -6,13 +6,13 @@ describe("plugin view boundary", () => {
     expect(
       parsePluginView({
         view: "plugin_frame",
-        plugin_api: "asset-hub.plugin-api@5",
+        plugin_api: "asset-hub.plugin-api@1",
         title: "Reader",
         url: "/plugins/example.reader/index.html",
       }),
     ).toEqual({
       view: "plugin_frame",
-      plugin_api: "asset-hub.plugin-api@5",
+      plugin_api: "asset-hub.plugin-api@1",
       title: "Reader",
       url: "/plugins/example.reader/index.html",
     });
@@ -25,7 +25,7 @@ describe("plugin view boundary", () => {
     ).toThrow();
   });
 
-  it("accepts download views and rejects the removed binary URL view", () => {
+  it("accepts download views and rejects unknown view kinds", () => {
     expect(
       parsePluginView({
         view: "download",

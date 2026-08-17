@@ -1,11 +1,11 @@
-# Asset Plugin API
+# Asset Plugin SDK
 
-`asset-plugin-api` is the public Rust contract for external Asset Hub plugins.
-It provides the shared types used to describe an Extism/Wasm package, declare
-its capabilities, exchange action data with the host, and access supported Host
-functions from Wasm. Host-owned built-in providers and their handler bindings
-are intentionally outside this crate. The SDK also excludes Host-normalized
-Action/Kind definitions, execution configuration, and loaded package snapshots.
+`asset-plugin-sdk` is the supported Rust authoring SDK and wire contract for external Asset Hub
+plugins. Ordinary plugin code imports its high-level runtime contexts directly from the crate root;
+Host adapters and advanced integrations may use the lower-level Manifest, protocol, and ABI modules
+directly.
+Host-owned built-in providers, normalized Action/Kind definitions, execution configuration, and
+loaded package snapshots remain outside this crate.
 
 Use this crate when building an Asset Hub plugin runtime or another tool that
 needs to read and validate the plugin contract. Applications that only consume
@@ -14,7 +14,10 @@ the Asset Hub HTTP API do not need it.
 ## What It Provides
 
 - Manifest models and validation.
-- Resource and directory action request and response types.
+- High-level Resource and Directory Action contexts and response builders.
+- Export macros that own Extism entrypoints, wire serialization, and structured failures.
+- Bounded content, child Directory, and Directory Resource readers.
+- Low-level Resource and Directory action request and response types.
 - Singleton resource and directory capabilities with kind-specific providers.
 - Structured views, effects, failures, and diagnostics.
 - Versioned content and directory Host function definitions.
@@ -26,28 +29,50 @@ Asset Hub versions the Rust library and its serialized contracts separately:
 
 | Surface | Current value | Purpose |
 | --- | --- | --- |
-| Rust crate | `0.4.0` | Rust source API |
+| Rust crate | `0.1.0` | Rust source API |
 | Manifest | `3` | external Extism/Wasm `manifest.json` document format |
-| Plugin API | `asset-hub.plugin-api@5` | Action JSON, Host functions, and Plugin Frame Web SDK |
+| Plugin API | `asset-hub.plugin-api@1` | Action JSON, Host functions, and Plugin Frame Web SDK |
 
 Plugins must declare both `manifest_version` and `runtime.plugin_api`. The host
 rejects unsupported contract versions instead of attempting to interpret them.
 The only supported runtime discriminator is `"type": "extism"`; `builtin` is
 not a plugin runtime value and is rejected during deserialization.
 
-Plugin API `@5` is intentionally incompatible with `@4`. It adds the `resource.create`
-permission, the Directory `create_tree` effect, descendant-scoped Directory resource queries, and
-the corresponding `@5` Resource and Directory frame channels. Plugins must be rebuilt against the
-`0.4` Rust/Web SDK and redeclare `runtime.plugin_api` before installation.
-
 ## Getting Started
 
-Add `asset-plugin-api` to the plugin runtime's `Cargo.toml`. Enable
-`extism-guest` when the Wasm guest needs the provided Host function helpers:
+Add the SDK as the plugin runtime's only Asset Hub/Extism dependency:
 
 ```toml
 [dependencies]
-asset-plugin-api = { path = "<path-to-asset-plugin-api>", features = ["extism-guest"] }
+asset-plugin-sdk = { path = "<path-to-asset-plugin-sdk>", features = ["extism-guest"] }
+```
+
+Import the authoring API from the crate root and export a business handler. The SDK decodes the
+request, serializes the response, supplies the current Plugin API version, and converts failures
+into the structured wire shape:
+
+```rust
+use asset_plugin_sdk::{
+    Media, ResourceContext, ResourceResponse, Result, export_resource_action,
+};
+
+const THUMBNAIL: &str = include_str!("thumbnail.svg");
+
+export_resource_action!(render_thumbnail => render_thumbnail_action);
+
+fn render_thumbnail_action(context: ResourceContext) -> Result<ResourceResponse> {
+    let resource = context.resource();
+    Ok(ResourceResponse::media(
+        Media::base64("image/svg+xml", THUMBNAIL).title(resource.name()),
+    ))
+}
+```
+
+Content access uses the same context regardless of whether the Host supplied inline bytes or an
+opaque call-scoped handle. Plugins must choose explicit bounds:
+
+```rust
+let bytes = context.content().read_all(128 * 1024 * 1024, 1024 * 1024)?;
 ```
 
 Create a `manifest.json` that identifies the plugin and declares its runtime,
@@ -64,7 +89,7 @@ capabilities, and permissions:
   },
   "runtime": {
     "type": "extism",
-    "plugin_api": "asset-hub.plugin-api@5"
+    "plugin_api": "asset-hub.plugin-api@1"
   },
   "capabilities": {
     "resource_kinds": [
@@ -346,89 +371,42 @@ reconciled against refreshed Host state before any retry.
 
 The main modules are:
 
+- crate root: recommended high-level imports for ordinary plugin runtime code.
+- `runtime`: implementation module for Action contexts, bounded Host access, views, responses,
+  effects, and export runners.
 - `manifest`: external package authoring models and validation.
 - `protocol`: resource and directory action wire types.
 - `abi`: versioned Host function definitions and optional guest helpers.
 
-Public types are exported only through their owning module; the crate root keeps
-only `CRATE_VERSION` and the three module entry points. Typical plugin code uses
-explicit imports:
+Typical plugins should not construct protocol DTOs or invoke raw ABI functions. Those modules
+remain public for Host adapters and specialized integrations:
 
 ```rust
-use asset_plugin_api::manifest::PluginManifest;
-use asset_plugin_api::protocol::{
-    PLUGIN_API_VERSION, PluginResourceActionRequest, PluginResourceActionOutput,
+use asset_plugin_sdk::{
+    Media, ResourceContext, ResourceResponse, Result, export_resource_action,
 };
-use asset_plugin_api::abi::content::guest;
 ```
 
-The SDK deliberately stops at the external contract boundary. The Host converts
-Manifest capabilities into its own normalized Action/Kind definitions and maps
-its authorization state to `PluginActionAccess` when creating wire requests.
-Host executor selection, handler bindings, built-in identifiers, execution
-budgets, filesystem paths, and loaded Web assets are not public SDK concepts.
+`ResourceContext::content` hides inline/reference delivery and content-handle lifetime.
+`DirectoryContext::children_bounded` and `resources_bounded` hide pagination while rejecting data
+sets beyond the plugin-selected limit instead of silently truncating. `Frame` inserts the current
+Plugin API version, `Media` and `Tree` own base64 wire encoding, and the export macros return
+structured failures. The low-level `protocol` and `abi` modules remain the canonical wire owners.
+
+The Host converts Manifest capabilities into normalized internal Action/Kind definitions and maps
+authorization state into wire requests. Host executor selection, handler bindings, built-in
+identifiers, execution budgets, filesystem paths, and loaded Web assets are not SDK concepts.
 
 Generate the Rust API documentation locally with:
 
 ```bash
-cargo doc -p asset-plugin-api --open
+cargo doc -p asset-plugin-sdk --open
 ```
 
-## Compatibility
+## Versioning
 
-Version 4 of the Plugin API and Manifest version 3 are intentionally incompatible with their
-predecessors. Existing packages must update their
-Manifest and runtime together, migrate Plugin Frame code to the Web SDK, rebuild package artifacts,
-and reinstall the rebuilt directory. The Host rejects Manifest version 2 or Plugin API
-version 3 packages instead of
-translating them.
-
-The principal version 4 / Manifest version 3 changes are:
-
-- Kind IDs accept two or more explicit colon-separated segments; inheritance is still declared by
-  `parent` and is never inferred from the ID.
-- Directory Kinds may declare direct-parent placement constraints through
-  `allowed_parent_kinds`.
-- Directory Action resource requirements use `none`, `metadata`, or `content` instead of a boolean.
-  Content mode returns call-scoped handles that use the existing content ABI.
-- File roles, required filenames, and Resource-to-Directory policy are not Manifest concepts; the
-  plugin evaluates them using the Directory Action input and ABI.
-
-Version 3 was intentionally incompatible with version 2. Existing packages had to update their
-Manifest and runtime together. Its principal changes were:
-
-- Plugin Frames use the Asset Hub Web Plugin SDK backed by Penpal instead of the former public,
-  hand-authored `window.postMessage` envelopes.
-- Frame calls are bound to the Resource and originating Action by the Host; callers no longer send
-  `plugin_api`, `request_id`, or `resource_id` with each operation.
-- Frame calls use Promise results and errors, with connection and method timeouts owned by the SDK.
-- The SDK includes both an ESM build and a self-contained browser global build for plain HTML
-  plugins.
-- Action output contracts declare `output.effects`; effect-only outputs may omit a View. Resource
-  and Directory Actions can request the permission-gated `delete` effect.
-- Directory kinds may provide one nearest `workspace` capability at the top-level
-  `directory_workspace` outlet; that frame replaces `CoreDirectoryWorkspace` instead of receiving
-  its internal slots.
-- Directory workspace frames use a separate Directory-bound SDK client for exposed Directory
-  Actions, refresh, and canonical Host navigation.
-
-Version 2 was intentionally incompatible with version 1. Its principal changes were:
-
-- Resource kinds use `capabilities.resource_kinds`; Directory kinds remain in
-  `capabilities.directory_kinds`. At that version, Kind IDs were canonical lowercase
-  `namespace:name` values.
-- Resource and Directory action contracts use distinct request/output types and canonical
-  dot-separated provider IDs such as `example.plugin.inspect`.
-- Action metadata includes `description`, uses `access: "read" | "write"`, and declares views in
-  `output.views`. Resource MIME matching is declared in `applies_to.mime_types`.
-- A Resource singleton-capability provider may omit `label` to inherit the nearest ancestor
-  provider's normalized label; ordinary Resource actions and Directory actions still require it.
-- Resource and Directory wire snapshots include their current `revision`. Effects are accepted
-  only when their aggregate identity and optimistic-concurrency precondition still match.
-- Host write-Action requests require `expected_revision`; read Actions may omit it and use the
-  latest authorized snapshot, or supply it as an explicit consistency precondition.
-- Built-in capabilities remain Host-owned definitions and cannot be declared with a plugin
-  runtime discriminator.
+Rust crate version, Manifest document version, and Plugin API version remain independent. The Host
+accepts only the current identifiers and does not translate unsupported package versions.
 
 Host applications use `asset-core` for normalized Action/Kind and
 runtime-independent Action policy, `asset-infra` for Extism execution policy,
@@ -449,7 +427,7 @@ Before upgrading, compare the supported values in this README with the
 Run the crate tests from the repository root:
 
 ```bash
-cargo test -p asset-plugin-api
+cargo test -p asset-plugin-sdk
 ```
 
 Contract fixtures are stored in `tests/fixtures`.

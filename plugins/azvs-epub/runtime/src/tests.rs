@@ -54,14 +54,21 @@ fn reads_epub2_ncx_titles_and_cover_metadata() {
 
 #[test]
 fn load_and_chapter_operations_return_structured_data() {
-    let load = render_epub_payload(request_json(json!({"operation": "load"}))).unwrap();
+    let load = asset_plugin_sdk::runtime::run_resource_action(
+        request_json(json!({"operation": "load"})),
+        render_epub_payload,
+    )
+    .unwrap();
     let load: Value = serde_json::from_str(&load).unwrap();
     assert_eq!(load["data"]["title"], "Sample Book");
     assert_eq!(load["data"]["chapters"].as_array().unwrap().len(), 2);
     assert!(load["data"]["initial_chapter"]["html"].is_string());
 
-    let chapter =
-        render_epub_payload(request_json(json!({"operation": "chapter", "index": 1}))).unwrap();
+    let chapter = asset_plugin_sdk::runtime::run_resource_action(
+        request_json(json!({"operation": "chapter", "index": 1})),
+        render_epub_payload,
+    )
+    .unwrap();
     let chapter: Value = serde_json::from_str(&chapter).unwrap();
     assert_eq!(chapter["data"]["index"], 1);
     assert!(

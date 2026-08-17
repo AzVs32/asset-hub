@@ -38,7 +38,7 @@ A port describes what Core needs, not how an adapter works.
 MUST:
 
 - expose each SPI type through the curated `asset_core::port` surface;
-- use `asset-plugin-api` contract types only at plugin-facing boundaries;
+- use `asset-plugin-sdk` contract types only at plugin-facing boundaries;
 - keep implementation modules private and re-export only the intended SPI;
 - document ordering, atomicity, ownership, streaming, and failure guarantees when they matter;
 - design storage and scan ports so scanners report facts and services decide mutations.

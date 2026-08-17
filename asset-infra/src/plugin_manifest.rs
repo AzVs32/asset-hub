@@ -1,6 +1,6 @@
 use crate::builtin_catalog::BuiltinCatalog;
 use asset_core::CoreError;
-use asset_plugin_api::manifest::{
+use asset_plugin_sdk::manifest::{
     PLUGIN_LOCK_FILE_NAME, PLUGIN_MANIFEST_FILE_NAME, PLUGIN_WASM_FILE_NAME,
     PLUGIN_WEB_ENTRY_FILE_NAME, PluginManifest, PluginManifestLock,
 };

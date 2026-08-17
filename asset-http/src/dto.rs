@@ -5,7 +5,7 @@ use asset_core::domain::{
 };
 use asset_core::port::{DirectoryActionOutput, ResourceActionOutput};
 use asset_core::service::ResourceActions;
-use asset_plugin_api::protocol::{PluginDiagnostic, PluginDiagnosticSeverity};
+use asset_plugin_sdk::protocol::{PluginDiagnostic, PluginDiagnosticSeverity};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 #[allow(unused_imports)]
