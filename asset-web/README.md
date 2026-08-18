@@ -49,9 +49,9 @@ The following locations are owned by `CoreDirectoryWorkspace`, not by the outer 
 | Location | Host behavior |
 | --- | --- |
 | `directory_context_menu` | Entries in a Core directory-row context menu |
-| `directory_thumbnail` | Core directory-row preview |
+| `directory_thumbnail` | Core directory-row and detail-header preview |
 | `resource_context_menu` | Entries in a Core resource-row context menu |
-| `resource_thumbnail` | Core resource-row preview |
+| `resource_thumbnail` | Core resource-row and detail-header preview |
 
 Actions with no location, or only locations unknown to this host version, remain reachable through
 `resource_context_menu` for resources and `directory_context_menu` for directories. Automatic
@@ -60,8 +60,8 @@ host-owned Save command. `core.resource.delete` and `core.directory.delete` are 
 Actions discovered in the corresponding row menus; they carry destructive confirmation metadata,
 return only a `delete` effect, and enter the existing authorized soft-delete/empty-directory-delete
 use cases without returning a fake view. Restore remains a Host row-menu command for deleted
-resources. Plugin actions are invoked from the corresponding row context menu. There are no
-automatic plugin insertion points in the resource detail panel.
+resources. Plugin actions are invoked from the corresponding row context menu. The detail header
+reuses the matching thumbnail provider; no other automatic plugin insertion point exists there.
 
 When a Directory kind resolves a `workspace` Provider, `CoreDirectoryWorkspace` is not mounted, so
 none of its four internal locations exist. The plugin frame owns its complete internal UI and may
@@ -79,7 +79,9 @@ actions as flat arrays. Each kind/action includes its typed built-in or plugin o
 provider can target a Kind or use MIME/extension matching without introducing a new Kind.
 Resources and directories with no matching thumbnail provider use local File and Folder icon
 fallbacks without executing an Action. Automatic thumbnail slots accept only the resolved
-`thumbnail` provider. Resource and directory action registries scope that capability independently.
+`thumbnail` provider. A slot may have multiple Host-owned presentation sites: list rows and detail
+headers share one revision-keyed query result. Resource and directory action registries scope that
+capability independently.
 
 Supported output views are `text`, `markdown`, `html`, `plugin_frame`, `json`, `media`, and
 `download`. Resource and Directory actions share the same Host renderer for every generic output,

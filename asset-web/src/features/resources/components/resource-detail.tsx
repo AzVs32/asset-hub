@@ -1,5 +1,4 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import InsertDriveFileIcon from "@mui/icons-material/InsertDriveFile";
 import SaveIcon from "@mui/icons-material/Save";
 import StorageRoundedIcon from "@mui/icons-material/StorageRounded";
 import {
@@ -20,6 +19,7 @@ import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 import type { Resource, ResourceDraft, ResourceKind } from "@/domain/resource";
 import { draftFromResource, formatBytes, formatDate } from "@/domain/resource-draft";
+import { ResourceThumbnail } from "./asset-thumbnail";
 import { KindSelect } from "./kind-select";
 
 const draftSchema = z.object({
@@ -81,11 +81,7 @@ function Detail({
   return (
     <Card sx={{ minHeight: 0, overflow: "auto" }}>
       <CardHeader
-        avatar={
-          <Avatar>
-            <InsertDriveFileIcon />
-          </Avatar>
-        }
+        avatar={<ResourceThumbnail resource={resource} size={64} />}
         title={resource.name}
         subheader={resource.id}
         action={

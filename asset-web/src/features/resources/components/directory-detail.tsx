@@ -1,15 +1,6 @@
-import FolderIcon from "@mui/icons-material/Folder";
-import {
-  Avatar,
-  Box,
-  Card,
-  CardContent,
-  CardHeader,
-  Divider,
-  Stack,
-  Typography,
-} from "@mui/material";
+import { Box, Card, CardContent, CardHeader, Divider, Stack, Typography } from "@mui/material";
 import type { Directory, DirectoryKind } from "@/domain/resource";
+import { DirectoryThumbnail } from "./asset-thumbnail";
 
 export function DirectoryDetail({
   directory,
@@ -21,13 +12,7 @@ export function DirectoryDetail({
   return (
     <Card sx={{ minHeight: 0, overflow: "auto" }}>
       <CardHeader
-        avatar={
-          <Avatar
-            sx={{ color: "warning.dark", background: "linear-gradient(145deg, #fffbeb, #ffedd5)" }}
-          >
-            <FolderIcon />
-          </Avatar>
-        }
+        avatar={<DirectoryThumbnail directory={directory} size={64} />}
         title={directory.name || "/"}
         subheader={directory.id}
       />

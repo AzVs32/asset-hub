@@ -1,6 +1,5 @@
 import CreateNewFolderIcon from "@mui/icons-material/CreateNewFolder";
 import FolderIcon from "@mui/icons-material/Folder";
-import InsertDriveFileIcon from "@mui/icons-material/InsertDriveFile";
 import MoreVertIcon from "@mui/icons-material/MoreVert";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import SearchIcon from "@mui/icons-material/Search";
@@ -31,9 +30,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { useQuery } from "@tanstack/react-query";
 import React from "react";
-import { useGateway } from "@/application/ports/gateway-context";
 import { parentDirectory } from "@/domain/directory-path";
 import type {
   Directory,
@@ -47,6 +44,7 @@ import type {
 import { formatBytes, formatDate } from "@/domain/resource-draft";
 import { usePluginKernel } from "@/kernel/plugin-kernel";
 import { coreDirectoryWorkspaceSlots } from "@/kernel/slots";
+import { DirectoryThumbnail, ResourceThumbnail } from "./asset-thumbnail";
 import { KindSelect } from "./kind-select";
 
 export function ResourceList({
@@ -286,38 +284,6 @@ function FolderRow({
   );
 }
 
-function DirectoryThumbnail({ directory }: { directory: Directory }) {
-  const gateway = useGateway();
-  const kernel = usePluginKernel();
-  const action = kernel.directoryThumbnailAction(directory);
-  const execute = () => {
-    if (!action) throw new Error("Directory thumbnail action is unavailable");
-    return gateway.executeDirectoryAction(directory, action.id);
-  };
-  const result = useQuery({
-    queryKey: ["directory-thumbnail", directory.id, action?.id],
-    queryFn: execute,
-    enabled: Boolean(action),
-    retry: false,
-    staleTime: 5 * 60_000,
-  });
-  const image = result.data
-    ? thumbnailImage(result.data.view, gateway.assetUrl.bind(gateway))
-    : null;
-  if (image) return <Avatar variant="rounded" src={image} />;
-  return (
-    <Avatar
-      variant="rounded"
-      sx={{
-        color: "warning.dark",
-        background: "linear-gradient(145deg, #fffbeb, #ffedd5)",
-      }}
-    >
-      <FolderIcon />
-    </Avatar>
-  );
-}
-
 function ResourceRow({
   resource,
   selected,
@@ -371,45 +337,6 @@ function ResourceRow({
       </ListItemButton>
     </ListItem>
   );
-}
-
-function ResourceThumbnail({ resource }: { resource: Resource }) {
-  const gateway = useGateway();
-  const kernel = usePluginKernel();
-  const action = kernel.thumbnailAction(resource);
-  const execute = () => {
-    if (!action) throw new Error("Resource thumbnail action is unavailable");
-    return gateway.executeResourceAction(resource, action.id);
-  };
-  const result = useQuery({
-    queryKey: ["thumbnail", resource.id, resource.updatedAt, action?.id],
-    queryFn: execute,
-    enabled: Boolean(action),
-    retry: false,
-    staleTime: 5 * 60_000,
-  });
-  const image = result.data
-    ? thumbnailImage(result.data.view, gateway.assetUrl.bind(gateway))
-    : null;
-  if (image) return <Avatar variant="rounded" src={image} />;
-  return (
-    <Avatar variant="rounded">
-      <InsertDriveFileIcon />
-    </Avatar>
-  );
-}
-
-function thumbnailImage(
-  view: import("@/domain/plugin").PluginView | null,
-  resolveUrl: (url: string) => string | null,
-): string | null {
-  if (!view) return null;
-  if (view.view === "media" && view.mime_type.startsWith("image/")) {
-    return view.encoding === "base64"
-      ? `data:${view.mime_type};base64,${view.data}`
-      : resolveUrl(view.data);
-  }
-  return null;
 }
 
 function ActionsMenu({

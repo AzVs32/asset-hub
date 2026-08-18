@@ -231,17 +231,19 @@ Action 默认读取最新授权快照，不会因为缩略图或预览缓存较�
 | slot | 行为 |
 | --- | --- |
 | `directory_context_menu` | 目录行菜单，用户触发 |
-| `directory_thumbnail` | 目录缩略图，只读自动执行 |
+| `directory_thumbnail` | 目录行与详情标题缩略图，只读自动执行 |
 | `resource_context_menu` | 资源行菜单，用户触发 |
-| `resource_thumbnail` | 资源缩略图，只读自动执行 |
+| `resource_thumbnail` | 资源行与详情标题缩略图，只读自动执行 |
 
 插件只要在 manifest 中声明已有 slot，并返回已有 view kind，就不需要修改前端。目录 action
 未声明位置或声明了当前宿主未知的位置时，会回退到 `directory_context_menu`；资源 action
 未声明位置或声明了当前宿主未知的位置时，会回退到 `resource_context_menu`。资源详情面板仍由
-宿主提供编辑表单和事实信息，保存由编辑表单触发。`core.resource.delete` 和
+宿主提供编辑表单和事实信息，保存由编辑表单触发。详情标题复用对应 thumbnail provider，
+列表行与详情按聚合 ID、revision 和 Action ID 共享查询结果；同一 slot 可以有多个 Host
+拥有的展示位置，而不产生新的插件协议。`core.resource.delete` 和
 `core.directory.delete` 通过对应 Action 菜单发现，并由 Host 在确认后分别进入受权的资源软删除
-和空目录删除用例；已删除资源的恢复仍由资源行菜单提供。资源详情区
-不再提供插件自动插入 slot，插件 action 从对应行菜单触发。完全自定义
+和空目录删除用例；已删除资源的恢复仍由资源行菜单提供。资源详情区除 thumbnail 外不提供
+其他插件自动插入位置，插件 action 从对应行菜单触发。完全自定义
 界面通过 `plugin_frame` 加载插件自己的 Web 资源。
 后端会在实际适用性过滤后解析单例能力 provider，Resource 与 Directory Action 注册表分别
 限定能力作用域。Provider 可以面向 Kind，也可以使用 MIME 或扩展名匹配而不引入新 Kind；
