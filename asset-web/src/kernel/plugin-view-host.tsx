@@ -1,3 +1,4 @@
+import { Alert } from "@mui/material";
 import type { AssetGateway } from "@/application/ports/asset-gateway";
 import type { ResourceActionOutput } from "@/domain/plugin";
 import type { Resource } from "@/domain/resource";
@@ -19,9 +20,9 @@ export function PluginViewHost({
   const Renderer = kernel.viewRenderer(output.view.view);
   if (!Renderer) {
     return (
-      <div className="plugin-unsupported">
+      <Alert severity="warning" sx={{ m: 2 }}>
         No host renderer is registered for <code>{output.view.view}</code>.
-      </div>
+      </Alert>
     );
   }
   return (

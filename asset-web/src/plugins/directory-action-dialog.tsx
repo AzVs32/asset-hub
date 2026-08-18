@@ -1,8 +1,17 @@
+import {
+  Alert,
+  Box,
+  Button,
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  Stack,
+  Typography,
+} from "@mui/material";
 import ReactMarkdown from "react-markdown";
 import { useGateway } from "@/application/ports/gateway-context";
 import type { DirectoryActionOutput, PluginView } from "@/domain/plugin";
 import type { Directory, DirectoryAction, Resource, ResourceAction } from "@/domain/resource";
-import { Dialog } from "@/shared/ui/dialog";
 import { DirectoryPluginFrame } from "./directory-plugin-frame";
 
 export interface DirectoryActionResult {
@@ -27,35 +36,35 @@ export function DirectoryActionDialog({
     | undefined;
 }) {
   return (
-    <Dialog
-      open={Boolean(result)}
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
-      title={result?.action.label ?? "Directory action"}
-      description={result ? `${result.directory.path || "/"} · ${result.action.id}` : undefined}
-      className="max-w-5xl"
-    >
-      {result ? (
-        <div>
-          {result.output.diagnostics.length ? (
-            <div className="m-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950 shadow-sm">
-              {result.output.diagnostics.map((item) => (
-                <p key={`${item.code}:${item.message}`}>{item.message}</p>
-              ))}
-            </div>
-          ) : null}
-          {result.output.view ? (
-            <DirectoryView
-              result={result}
-              view={result.output.view}
-              onDirectoryChanged={onDirectoryChanged}
-              onNavigate={onNavigate}
-              onEditResource={onEditResource}
-            />
-          ) : null}
-        </div>
-      ) : null}
+    <Dialog open={Boolean(result)} fullWidth maxWidth="lg" onClose={onClose}>
+      <DialogTitle>{result?.action.label ?? "Directory action"}</DialogTitle>
+      <DialogContent>
+        {result ? (
+          <>
+            <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 2 }}>
+              {result.directory.path || "/"} · {result.action.id}
+            </Typography>
+            {result.output.diagnostics.length ? (
+              <Stack spacing={1} sx={{ mb: 2 }}>
+                {result.output.diagnostics.map((item) => (
+                  <Alert severity="warning" key={`${item.code}:${item.message}`}>
+                    {item.message}
+                  </Alert>
+                ))}
+              </Stack>
+            ) : null}
+            {result.output.view ? (
+              <DirectoryView
+                result={result}
+                view={result.output.view}
+                onDirectoryChanged={onDirectoryChanged}
+                onNavigate={onNavigate}
+                onEditResource={onEditResource}
+              />
+            ) : null}
+          </>
+        ) : null}
+      </DialogContent>
     </Dialog>
   );
 }
@@ -77,52 +86,71 @@ function DirectoryView({
 }) {
   const gateway = useGateway();
   if (view.view === "text")
-    return <pre className="whitespace-pre-wrap p-5 text-sm">{view.text}</pre>;
+    return (
+      <Box component="pre" sx={{ whiteSpace: "pre-wrap", p: 2.5, fontSize: "0.875rem", m: 0 }}>
+        {view.text}
+      </Box>
+    );
   if (view.view === "markdown")
     return (
-      <article className="plugin-prose p-5">
+      <Box component="article" className="plugin-prose" sx={{ p: 2.5 }}>
         <ReactMarkdown>{view.markdown}</ReactMarkdown>
-      </article>
+      </Box>
     );
   if (view.view === "json")
     return (
-      <pre className="max-h-[65vh] overflow-auto bg-slate-950 p-5 text-xs leading-6 text-slate-100">
+      <Box
+        component="pre"
+        sx={{
+          maxHeight: "65vh",
+          overflow: "auto",
+          p: 2,
+          fontFamily: "monospace",
+          fontSize: "0.875rem",
+          whiteSpace: "pre-wrap",
+          m: 0,
+        }}
+      >
         {JSON.stringify(view.data, null, 2)}
-      </pre>
+      </Box>
     );
   if (view.view === "html")
     return (
-      <iframe
-        className="block h-[65vh] min-h-80 w-full border-0"
+      <Box
+        component="iframe"
         sandbox=""
         title={view.title ?? "Directory action output"}
         srcDoc={view.html}
+        sx={{ display: "block", height: "65vh", minHeight: "20rem", width: "100%", border: 0 }}
       />
     );
   if (view.view === "plugin_frame") {
     return (
-      <DirectoryPluginFrame
-        directory={result.directory}
-        output={result.output}
-        view={view}
-        gateway={gateway}
-        onDirectoryChanged={onDirectoryChanged}
-        onNavigate={onNavigate}
-        onEditResource={onEditResource}
-        className="block h-[70vh] min-h-96 w-full border-0"
-      />
+      <Box sx={{ height: "70vh", minHeight: "24rem" }}>
+        <DirectoryPluginFrame
+          directory={result.directory}
+          output={result.output}
+          view={view}
+          gateway={gateway}
+          onDirectoryChanged={onDirectoryChanged}
+          onNavigate={onNavigate}
+          onEditResource={onEditResource}
+        />
+      </Box>
     );
   }
   if (view.view === "download") {
     const source = gateway.assetUrl(view.url);
     return source ? (
-      <a
-        className="m-5 inline-flex text-sm font-medium text-blue-700 underline"
+      <Button
+        component="a"
         href={source}
-        download={view.filename}
+        download={view.filename ?? ""}
+        variant="text"
+        sx={{ m: 2.5 }}
       >
         Download {view.filename ?? "file"}
-      </a>
+      </Button>
     ) : null;
   }
   const source =
@@ -131,13 +159,15 @@ function DirectoryView({
       : `data:${view.mime_type};base64,${view.data}`;
   if (!source) return null;
   return view.mime_type.startsWith("image/") ? (
-    <img
-      className="max-h-[70vh] w-full object-contain p-5"
-      src={source}
-      alt={view.title ?? "Directory action media"}
-    />
+    <Box sx={{ p: 2.5 }}>
+      <img
+        style={{ maxHeight: "70vh", width: "100%", objectFit: "contain" }}
+        src={source}
+        alt={view.title ?? "Directory action media"}
+      />
+    </Box>
   ) : (
     // biome-ignore lint/a11y/useMediaCaption: the plugin media ABI does not expose transcript tracks
-    <video className="max-h-[70vh] w-full" src={source} controls />
+    <video style={{ maxHeight: "70vh", width: "100%" }} src={source} controls />
   );
 }

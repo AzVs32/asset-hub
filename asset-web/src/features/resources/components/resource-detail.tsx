@@ -1,12 +1,25 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Database, FileText, Save } from "lucide-react";
+import InsertDriveFileIcon from "@mui/icons-material/InsertDriveFile";
+import SaveIcon from "@mui/icons-material/Save";
+import StorageRoundedIcon from "@mui/icons-material/StorageRounded";
+import {
+  Avatar,
+  Box,
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  Chip,
+  Divider,
+  Stack,
+  TextField,
+  Typography,
+} from "@mui/material";
 import React from "react";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 import type { Resource, ResourceDraft, ResourceKind } from "@/domain/resource";
 import { draftFromResource, formatBytes, formatDate } from "@/domain/resource-draft";
-import { Button } from "@/shared/ui/button";
-import { Field, Input } from "@/shared/ui/field";
 import { KindSelect } from "./kind-select";
 
 const draftSchema = z.object({
@@ -25,14 +38,16 @@ interface ResourceDetailProps {
 export function ResourceDetail({ resource, kinds, pending, onSave }: ResourceDetailProps) {
   if (!resource) {
     return (
-      <aside className="grid min-h-72 place-items-center overflow-hidden rounded-3xl border border-slate-200/80 bg-white text-slate-400 shadow-[0_18px_50px_-30px_rgba(15,23,42,0.45)]">
-        <span className="grid max-w-56 justify-items-center gap-3 text-center text-sm font-medium">
-          <span className="grid size-14 place-items-center rounded-2xl bg-slate-100 text-slate-300">
-            <Database size={25} />
-          </span>
-          Select an asset or folder to see its details
-        </span>
-      </aside>
+      <Card sx={{ minHeight: 288, display: "grid", placeItems: "center" }}>
+        <Stack alignItems="center" spacing={1.5}>
+          <Avatar sx={{ width: 56, height: 56 }}>
+            <StorageRoundedIcon />
+          </Avatar>
+          <Typography variant="body2" color="text.secondary">
+            Select an asset or folder to see its details
+          </Typography>
+        </Stack>
+      </Card>
     );
   }
   return <Detail resource={resource} kinds={kinds} pending={pending} onSave={onSave} />;
@@ -64,106 +79,136 @@ function Detail({
   const kind = kinds.find((candidate) => candidate.kind === resource.kind);
 
   return (
-    <aside
-      className="min-h-0 overflow-auto rounded-3xl border border-slate-200/80 bg-white shadow-[0_18px_50px_-30px_rgba(15,23,42,0.45)]"
-      aria-label="Resource details"
-    >
-      <div className="grid gap-5 p-5">
-        <header className="flex items-start justify-between gap-4">
-          <div className="flex min-w-0 items-start gap-3">
-            <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-indigo-50 text-indigo-600 ring-1 ring-indigo-100">
-              <FileText size={20} />
-            </span>
-            <div className="min-w-0 pt-0.5">
-              <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-400">
-                Asset details
-              </p>
-              <h2 className="mt-0.5 break-words text-lg font-bold tracking-[-0.025em] text-slate-950">
-                {resource.name}
-              </h2>
-              <code className="mt-1 block truncate text-[10px] text-slate-400">{resource.id}</code>
-            </div>
-          </div>
-          {resource.deletedAt ? (
-            <span className="shrink-0 rounded-full bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-700 ring-1 ring-rose-200">
-              deleted
-            </span>
-          ) : null}
-        </header>
-
-        <form
-          className="grid gap-3 rounded-2xl border border-slate-200/80 bg-slate-50/65 p-4"
-          onSubmit={form.handleSubmit(onSave)}
-        >
-          <Field label="Name" error={form.formState.errors.name?.message}>
-            <Input disabled={Boolean(resource.deletedAt)} {...form.register("name")} />
-          </Field>
-          <Field label="Directory">
-            <Input disabled={Boolean(resource.deletedAt)} {...form.register("directory")} />
-          </Field>
-          <Field label="Kind">
-            <KindSelect
-              kinds={kinds}
-              disabled={Boolean(resource.deletedAt)}
-              {...form.register("kind")}
+    <Card>
+      <CardHeader
+        avatar={
+          <Avatar>
+            <InsertDriveFileIcon />
+          </Avatar>
+        }
+        title={resource.name}
+        subheader={resource.id}
+        action={
+          resource.deletedAt ? <Chip label="deleted" color="error" size="small" /> : undefined
+        }
+      />
+      <Divider />
+      <CardContent>
+        <Stack spacing={2}>
+          <Stack component="form" spacing={2} onSubmit={form.handleSubmit(onSave)}>
+            <Controller
+              name="name"
+              control={form.control}
+              render={({ field, fieldState }) => {
+                const { ref, ...rest } = field;
+                return (
+                  <TextField
+                    {...rest}
+                    inputRef={ref}
+                    label="Name"
+                    disabled={Boolean(resource.deletedAt)}
+                    error={Boolean(fieldState.error)}
+                    helperText={fieldState.error?.message}
+                  />
+                );
+              }}
             />
-          </Field>
-          <div className="flex justify-end border-t border-slate-200/70 pt-3">
-            <Button
-              type="submit"
-              size="small"
-              disabled={pending || Boolean(resource.deletedAt) || !form.formState.isDirty}
-            >
-              <Save size={16} />
-              Save
-            </Button>
-          </div>
-        </form>
-
-        <section className="grid grid-cols-2 gap-x-4 rounded-2xl border border-slate-200/80 bg-white p-4 text-sm shadow-sm">
-          <Fact label="Created" value={formatDate(resource.createdAt)} />
-          <Fact label="Updated" value={formatDate(resource.updatedAt)} />
-          <Fact label="Directory" value={displayResource.directory} />
-          <Fact label="Size" value={formatBytes(resource.content?.size ?? 0)} />
-          <Fact label="MIME" value={resource.content?.mimeType ?? "—"} />
-          <Fact
-            label="Verification"
-            value={
-              resource.content
-                ? resource.content.verificationStatus === "failed"
-                  ? `failed: ${resource.content.verificationError ?? "unknown error"}`
-                  : resource.content.verificationStatus
-                : "—"
-            }
-          />
-          <Fact label="Kind origin" value={kind ? `${kind.origin.kind}:${kind.origin.id}` : "—"} />
-          <Fact
-            label="Content"
-            value={
-              resource.content
-                ? resource.directory
-                  ? `${resource.directory}/${resource.name}`
-                  : `/${resource.name}`
-                : "—"
-            }
-            wide
-          />
-          <Fact
-            label="Actions"
-            value={resource.actions.map((action) => action.id).join(", ") || "—"}
-            wide
-          />
-        </section>
-      </div>
-    </aside>
+            <Controller
+              name="directory"
+              control={form.control}
+              render={({ field }) => {
+                const { ref, ...rest } = field;
+                return (
+                  <TextField
+                    {...rest}
+                    inputRef={ref}
+                    label="Directory"
+                    disabled={Boolean(resource.deletedAt)}
+                  />
+                );
+              }}
+            />
+            <Controller
+              name="kind"
+              control={form.control}
+              render={({ field, fieldState }) => {
+                const { ref, ...rest } = field;
+                return (
+                  <KindSelect
+                    {...rest}
+                    inputRef={ref}
+                    label="Kind"
+                    kinds={kinds}
+                    disabled={Boolean(resource.deletedAt)}
+                    error={Boolean(fieldState.error)}
+                    helperText={fieldState.error?.message}
+                  />
+                );
+              }}
+            />
+            <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
+              <Button
+                type="submit"
+                variant="contained"
+                size="small"
+                startIcon={<SaveIcon />}
+                disabled={pending || Boolean(resource.deletedAt) || !form.formState.isDirty}
+              >
+                Save
+              </Button>
+            </Box>
+          </Stack>
+          <Divider />
+          <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
+            <Fact label="Created" value={formatDate(resource.createdAt)} />
+            <Fact label="Updated" value={formatDate(resource.updatedAt)} />
+            <Fact label="Directory" value={displayResource.directory} />
+            <Fact label="Size" value={formatBytes(resource.content?.size ?? 0)} />
+            <Fact label="MIME" value={resource.content?.mimeType ?? "—"} />
+            <Fact
+              label="Verification"
+              value={
+                resource.content
+                  ? resource.content.verificationStatus === "failed"
+                    ? `failed: ${resource.content.verificationError ?? "unknown error"}`
+                    : resource.content.verificationStatus
+                  : "—"
+              }
+            />
+            <Fact
+              label="Kind origin"
+              value={kind ? `${kind.origin.kind}:${kind.origin.id}` : "—"}
+            />
+            <Fact
+              label="Content"
+              value={
+                resource.content
+                  ? resource.directory
+                    ? `${resource.directory}/${resource.name}`
+                    : `/${resource.name}`
+                  : "—"
+              }
+            />
+            <Fact
+              label="Actions"
+              value={resource.actions.map((action) => action.id).join(", ") || "—"}
+            />
+          </Box>
+        </Stack>
+      </CardContent>
+    </Card>
   );
 }
 
-function Fact({ label, value, wide = false }: { label: string; value: string; wide?: boolean }) {
+function Fact({ label, value }: { label: string; value: string }) {
   return (
-    <div className={`min-w-0 border-b border-slate-100 py-2.5 ${wide ? "col-span-2" : ""}`}>
-      <dt className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">{label}</dt>
-      <dd className="mt-1 break-words text-xs font-medium leading-5 text-slate-700">{value}</dd>
-    </div>
+    <Box>
+      <Typography variant="overline" color="text.secondary">
+        {label}
+      </Typography>
+      <Typography variant="body2" sx={{ wordBreak: "break-word" }}>
+        {value}
+      </Typography>
+    </Box>
   );
 }

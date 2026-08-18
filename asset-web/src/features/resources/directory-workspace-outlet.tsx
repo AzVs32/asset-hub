@@ -1,10 +1,10 @@
+import { Alert, Box, CircularProgress, Paper } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
 import type React from "react";
 import { useGateway } from "@/application/ports/gateway-context";
 import type { Directory, Resource, ResourceAction } from "@/domain/resource";
 import { usePluginKernel } from "@/kernel/plugin-kernel";
 import { DirectoryPluginFrame } from "@/plugins/directory-plugin-frame";
-import { ErrorState, LoadingState } from "@/shared/ui/state";
 
 export function DirectoryWorkspaceOutlet({
   directory,
@@ -34,25 +34,55 @@ export function DirectoryWorkspaceOutlet({
     retry: false,
   });
 
-  if (!directory) return <LoadingState label="Loading directory" />;
+  if (!directory) {
+    return (
+      <Box sx={{ display: "flex", justifyContent: "center", p: 4 }}>
+        <CircularProgress />
+      </Box>
+    );
+  }
   if (!action) return coreWorkspace;
-  if (result.error) return <ErrorState error={result.error} />;
-  if (!result.data) return <LoadingState label="Loading directory workspace" />;
+  if (result.error) {
+    return (
+      <Alert severity="error" sx={{ m: 2 }}>
+        {result.error.message}
+      </Alert>
+    );
+  }
+  if (!result.data) {
+    return (
+      <Box sx={{ display: "flex", justifyContent: "center", p: 4 }}>
+        <CircularProgress />
+      </Box>
+    );
+  }
   const view = result.data.view;
   if (view?.view !== "plugin_frame") {
-    return <ErrorState error={new Error(`Action ${action.id} did not return a plugin_frame.`)} />;
+    return (
+      <Alert severity="error" sx={{ m: 2 }}>
+        Action {action.id} did not return a plugin_frame.
+      </Alert>
+    );
   }
   return (
-    <section
-      className="m-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-3xl border border-slate-200/80 bg-white shadow-[0_18px_50px_-30px_rgba(15,23,42,0.45)] xl:m-5"
+    <Paper
+      component="section"
       aria-label={action.label}
+      sx={{
+        m: 2.5,
+        display: "flex",
+        flexDirection: "column",
+        minHeight: 0,
+        flex: 1,
+        overflow: "hidden",
+      }}
     >
       {result.data.diagnostics.length ? (
-        <div className="m-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950 shadow-sm">
+        <Alert severity="warning" sx={{ m: 2 }}>
           {result.data.diagnostics.map((diagnostic) => (
-            <p key={`${diagnostic.code}:${diagnostic.message}`}>{diagnostic.message}</p>
+            <Box key={`${diagnostic.code}:${diagnostic.message}`}>{diagnostic.message}</Box>
           ))}
-        </div>
+        </Alert>
       ) : null}
       <DirectoryPluginFrame
         directory={directory}
@@ -64,6 +94,6 @@ export function DirectoryWorkspaceOutlet({
         onEditResource={onEditResource}
         instanceVersion={instanceVersion}
       />
-    </section>
+    </Paper>
   );
 }

@@ -1,3 +1,4 @@
+import { Box, CircularProgress } from "@mui/material";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import React from "react";
 import { Navigate, Outlet, useLocation } from "react-router";
@@ -5,7 +6,6 @@ import { defaultDirectoryPath, LOGIN_PATH } from "@/app/paths";
 import { AuthenticationRequiredError } from "@/application/errors";
 import { useGateway } from "@/application/ports/gateway-context";
 import { queryKeys } from "@/application/queries/keys";
-import { LoadingState } from "@/shared/ui/state";
 import { LoginForm } from "./login-form";
 import { SessionProvider } from "./session-context";
 
@@ -20,7 +20,13 @@ export function AuthBoundary() {
   });
   const [loginError, setLoginError] = React.useState<string | null>(null);
 
-  if (session.isPending) return <LoadingState label="Opening workspace" />;
+  if (session.isPending) {
+    return (
+      <Box sx={{ display: "grid", minHeight: "100vh", placeItems: "center" }}>
+        <CircularProgress />
+      </Box>
+    );
+  }
   if (!session.data) {
     if (location.pathname !== LOGIN_PATH) {
       return <Navigate to={LOGIN_PATH} replace />;

@@ -1,3 +1,4 @@
+import { Alert } from "@mui/material";
 import { connect } from "penpal";
 import React from "react";
 import type { AssetGateway } from "@/application/ports/asset-gateway";
@@ -20,7 +21,6 @@ export function DirectoryPluginFrame({
   onNavigate,
   onEditResource,
   instanceVersion = 0,
-  className = "block min-h-96 w-full flex-1 border-0 bg-white",
 }: {
   directory: Directory;
   output: DirectoryActionOutput;
@@ -32,7 +32,6 @@ export function DirectoryPluginFrame({
     | ((resource: Resource, action: ResourceAction) => void | Promise<void>)
     | undefined;
   instanceVersion?: number;
-  className?: string;
 }) {
   const ref = React.useRef<HTMLIFrameElement>(null);
   const source = pluginFrameUrl(view.url, gateway.assetUrl.bind(gateway));
@@ -93,7 +92,7 @@ export function DirectoryPluginFrame({
       key={`${directoryId}:${instanceVersion}`}
       ref={ref}
       data-instance-version={instanceVersion}
-      className={className}
+      style={{ width: "100%", height: "100%", minHeight: "24rem", border: 0, flex: 1 }}
       sandbox="allow-scripts"
       src={source}
       title={view.title ?? "Directory plugin workspace"}
@@ -103,8 +102,8 @@ export function DirectoryPluginFrame({
 
 function FrameError({ message }: { message: string }) {
   return (
-    <p className="m-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+    <Alert severity="error" sx={{ m: 2 }}>
       {message}
-    </p>
+    </Alert>
   );
 }

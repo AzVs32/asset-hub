@@ -1,6 +1,4 @@
-import React from "react";
-import { cn } from "@/shared/ui/cn";
-import { controlClass } from "@/shared/ui/field";
+import { MenuItem, TextField, type TextFieldProps } from "@mui/material";
 
 export interface KindSelectItem {
   kind: string;
@@ -28,7 +26,7 @@ export function kindTreeOptions(kinds: readonly KindSelectItem[]): KindTreeOptio
   const visit = (item: KindSelectItem, depth: number) => {
     if (visited.has(item.kind)) return;
     visited.add(item.kind);
-    const prefix = "\u00a0\u00a0\u00a0".repeat(depth);
+    const prefix = "   ".repeat(depth);
     options.push({ item, prefix });
 
     const nested = children.get(item.kind) ?? [];
@@ -45,34 +43,32 @@ export function kindTreeOptions(kinds: readonly KindSelectItem[]): KindTreeOptio
   return options;
 }
 
-interface KindSelectProps extends Omit<React.SelectHTMLAttributes<HTMLSelectElement>, "children"> {
+interface KindSelectProps extends Omit<TextFieldProps, "select" | "children"> {
   kinds: readonly KindSelectItem[];
   emptyOption?: { label: string; value?: string };
   showKind?: boolean;
   isKindDisabled?: (kind: string) => boolean;
 }
 
-export const KindSelect = React.forwardRef<HTMLSelectElement, KindSelectProps>(
-  ({ kinds, emptyOption, showKind = false, isKindDisabled, className, ...props }, ref) => (
-    <select ref={ref} className={cn(controlClass, className)} {...props}>
+export function KindSelect({
+  kinds,
+  emptyOption,
+  showKind = false,
+  isKindDisabled,
+  ...props
+}: KindSelectProps) {
+  return (
+    <TextField select fullWidth {...props}>
       {emptyOption ? (
-        <option className="bg-white text-slate-900" value={emptyOption.value ?? ""}>
-          {emptyOption.label}
-        </option>
+        <MenuItem value={emptyOption.value ?? ""}>{emptyOption.label}</MenuItem>
       ) : null}
       {kindTreeOptions(kinds).map(({ item, prefix }) => (
-        <option
-          className="bg-white text-slate-900"
-          key={item.kind}
-          value={item.kind}
-          disabled={isKindDisabled?.(item.kind)}
-        >
+        <MenuItem key={item.kind} value={item.kind} disabled={isKindDisabled?.(item.kind)}>
           {prefix}
           {item.label}
           {showKind ? ` · ${item.kind}` : ""}
-        </option>
+        </MenuItem>
       ))}
-    </select>
-  ),
-);
-KindSelect.displayName = "KindSelect";
+    </TextField>
+  );
+}

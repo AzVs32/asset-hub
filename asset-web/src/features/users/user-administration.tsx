@@ -1,13 +1,25 @@
+import {
+  Alert,
+  Box,
+  Button,
+  Checkbox,
+  Chip,
+  CircularProgress,
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  FormControlLabel,
+  MenuItem,
+  Stack,
+  TextField,
+  Typography,
+} from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { useGateway } from "@/application/ports/gateway-context";
 import { queryKeys } from "@/application/queries/keys";
 import type { ManagedUser } from "@/domain/auth";
-import { Button } from "@/shared/ui/button";
-import { Dialog } from "@/shared/ui/dialog";
-import { controlClass, Field, Input } from "@/shared/ui/field";
-import { ErrorState, LoadingState } from "@/shared/ui/state";
 
 interface NewUserForm {
   username: string;
@@ -56,82 +68,126 @@ export function UserAdministration({
   const busy = createUser.isPending || updateStatus.isPending;
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={onOpenChange}
-      title="Users"
-      description="Accounts and automatically assigned workspace boundaries."
-      className="max-w-4xl"
-    >
-      <div className="grid gap-7 bg-slate-50/50 p-6">
-        {users.isPending ? <LoadingState label="Loading users" compact /> : null}
-        {users.isError ? <ErrorState error={users.error} compact /> : null}
-        <div className="grid gap-2">
-          {users.data?.map((user) => (
-            <div
-              className="grid items-center gap-3 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm sm:grid-cols-[minmax(150px,1fr)_7rem_9rem]"
-              key={user.id}
-            >
-              <div className="min-w-0">
-                <strong className="text-sm text-slate-900">{user.username}</strong>
-                {user.id === currentUserId ? (
-                  <span className="ml-2 rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700 ring-1 ring-indigo-100">
-                    You
-                  </span>
-                ) : null}
-                <code className="mt-1 block truncate text-xs text-slate-500">
-                  /{user.workspaceDirectory}
-                </code>
-              </div>
-              <span className="text-sm capitalize text-slate-600">{user.role}</span>
-              <select
-                className={controlClass}
-                value={user.status}
-                disabled={busy || user.id === currentUserId}
-                onChange={(event) =>
-                  updateStatus.mutate({ user, status: event.target.value as ManagedUser["status"] })
-                }
+    <Dialog open={open} fullWidth maxWidth="md" onClose={() => onOpenChange(false)}>
+      <DialogTitle>Users</DialogTitle>
+      <DialogContent>
+        <Stack spacing={3.5} sx={{ pt: 1 }}>
+          {users.isPending ? (
+            <Box sx={{ display: "flex", justifyContent: "center", p: 2 }}>
+              <CircularProgress size={24} />
+            </Box>
+          ) : null}
+          {users.isError ? (
+            <Alert severity="error">
+              {users.error instanceof Error ? users.error.message : "Unexpected error"}
+            </Alert>
+          ) : null}
+          <Stack spacing={1}>
+            {users.data?.map((user) => (
+              <Box
+                key={user.id}
+                sx={{
+                  display: "grid",
+                  gridTemplateColumns: { xs: "1fr", sm: "minmax(150px, 1fr) 7rem 9rem" },
+                  gap: 1.5,
+                  alignItems: "center",
+                  borderRadius: 2,
+                  border: 1,
+                  borderColor: "divider",
+                  p: 2,
+                }}
               >
-                <option value="active">Active</option>
-                <option value="disabled">Disabled</option>
-              </select>
-            </div>
-          ))}
-        </div>
+                <Box sx={{ minWidth: 0 }}>
+                  <Typography component="span" variant="body2" fontWeight={600}>
+                    {user.username}
+                  </Typography>
+                  {user.id === currentUserId ? (
+                    <Chip
+                      label="You"
+                      size="small"
+                      color="primary"
+                      variant="outlined"
+                      sx={{ ml: 1 }}
+                    />
+                  ) : null}
+                  <Typography
+                    component="code"
+                    variant="caption"
+                    sx={{ display: "block", color: "text.secondary", mt: 0.5 }}
+                  >
+                    /{user.workspaceDirectory}
+                  </Typography>
+                </Box>
+                <Typography variant="body2" sx={{ textTransform: "capitalize" }}>
+                  {user.role}
+                </Typography>
+                <TextField
+                  select
+                  size="small"
+                  value={user.status}
+                  disabled={busy || user.id === currentUserId}
+                  onChange={(event) =>
+                    updateStatus.mutate({
+                      user,
+                      status: event.target.value as ManagedUser["status"],
+                    })
+                  }
+                >
+                  <MenuItem value="active">Active</MenuItem>
+                  <MenuItem value="disabled">Disabled</MenuItem>
+                </TextField>
+              </Box>
+            ))}
+          </Stack>
 
-        <form
-          className="grid gap-4 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm sm:grid-cols-2"
-          onSubmit={newUser.handleSubmit((input) => createUser.mutate(input))}
-        >
-          <div className="sm:col-span-2">
-            <h3 className="font-bold tracking-[-0.02em] text-slate-900">Create user</h3>
-            <p className="mt-1 text-xs text-slate-500">Add an account with its own workspace.</p>
-          </div>
-          <Field label="Username">
-            <Input {...newUser.register("username", { required: true })} />
-          </Field>
-          <Field label="Password">
-            <Input
-              type="password"
-              minLength={4}
-              {...newUser.register("password", { required: true })}
+          <Stack
+            component="form"
+            spacing={2}
+            sx={{ borderRadius: 2, border: 1, borderColor: "divider", p: 2.5 }}
+            onSubmit={newUser.handleSubmit((input) => createUser.mutate(input))}
+          >
+            <Box>
+              <Typography variant="subtitle1" fontWeight={700}>
+                Create user
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                Add an account with its own workspace.
+              </Typography>
+            </Box>
+            <Controller
+              name="username"
+              control={newUser.control}
+              render={({ field }) => {
+                const { ref, ...rest } = field;
+                return <TextField {...rest} inputRef={ref} label="Username" />;
+              }}
             />
-          </Field>
-          <label className="flex items-center gap-2 self-end pb-3 text-sm font-medium text-slate-700">
-            <input
-              className="size-4 accent-indigo-600"
-              type="checkbox"
-              {...newUser.register("isAdmin")}
+            <Controller
+              name="password"
+              control={newUser.control}
+              render={({ field }) => {
+                const { ref, ...rest } = field;
+                return <TextField {...rest} inputRef={ref} type="password" label="Password" />;
+              }}
             />
-            Administrator
-          </label>
-          <div className="sm:col-span-2">
-            <Button type="submit" disabled={busy}>
-              {createUser.isPending ? "Creating…" : "Create user"}
-            </Button>
-          </div>
-        </form>
-      </div>
+            <Controller
+              name="isAdmin"
+              control={newUser.control}
+              render={({ field }) => (
+                <FormControlLabel
+                  control={<Checkbox checked={field.value} onChange={field.onChange} />}
+                  label="Administrator"
+                />
+              )}
+            />
+            <Box>
+              <Button type="submit" variant="contained" disabled={busy}>
+                {createUser.isPending ? "Creating…" : "Create user"}
+              </Button>
+            </Box>
+          </Stack>
+        </Stack>
+      </DialogContent>
     </Dialog>
   );
 }

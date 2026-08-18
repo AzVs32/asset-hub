@@ -1,5 +1,8 @@
+import LogoutIcon from "@mui/icons-material/Logout";
+import PeopleIcon from "@mui/icons-material/People";
+import StorageRoundedIcon from "@mui/icons-material/StorageRounded";
+import { AppBar, Avatar, Box, Button, IconButton, Toolbar, Typography } from "@mui/material";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Database, LogOut, Users } from "lucide-react";
 import React from "react";
 import { toast } from "sonner";
 import { useGateway } from "@/application/ports/gateway-context";
@@ -9,7 +12,6 @@ import { useSession } from "@/features/auth/session-context";
 import { useSignOut } from "@/features/auth/use-sign-out";
 import { DirectoryActionDialog } from "@/plugins/directory-action-dialog";
 import { PluginActionDialog } from "@/plugins/plugin-action-dialog";
-import { Button } from "@/shared/ui/button";
 import { DirectoryDetail } from "./components/directory-detail";
 import { DirectoryBreadcrumbs, DirectoryKindEditor } from "./components/directory-navigation";
 import { ResourceDetail } from "./components/resource-detail";
@@ -106,50 +108,51 @@ export function ResourceWorkspace() {
   }
 
   return (
-    <main className="flex h-screen min-h-[42rem] flex-col overflow-hidden bg-[#eef2f7]">
-      <header className="relative z-20 flex min-h-[4.75rem] shrink-0 items-center gap-5 border-b border-slate-200/80 bg-white/90 px-5 py-3 text-slate-900 shadow-[0_12px_35px_-26px_rgba(15,23,42,0.35)] backdrop-blur-xl xl:px-7">
-        <div className="flex shrink-0 items-center gap-3">
-          <span className="grid size-11 place-items-center rounded-2xl bg-gradient-to-br from-indigo-500 to-blue-500 text-white shadow-[0_10px_28px_-12px_rgba(99,102,241,0.95)] ring-1 ring-white/15">
-            <Database size={20} strokeWidth={2.2} />
-          </span>
-          <div>
-            <h1 className="font-bold tracking-[-0.025em] text-slate-950">Asset Hub</h1>
-            <p className="text-xs font-medium text-slate-400">{user.username}</p>
-          </div>
-        </div>
-        <DirectoryBreadcrumbs path={browser.filters.directory} onNavigate={browser.openDirectory} />
-        <DirectoryKindEditor
-          directory={currentDirectory}
-          kinds={browser.directoryKinds.data ?? []}
-          pending={commands.updateDirectoryKind.isPending}
-          onKindChange={(kind) => {
-            if (currentDirectory)
-              commands.updateDirectoryKind.mutate({ directory: currentDirectory, kind });
-          }}
-        />
-        <div className="ml-auto flex shrink-0 items-center gap-2">
+    <Box
+      component="main"
+      sx={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100vh",
+        overflow: "hidden",
+      }}
+    >
+      <AppBar position="static" color="default">
+        <Toolbar sx={{ gap: 2 }}>
+          <Avatar sx={{ bgcolor: "primary.main" }}>
+            <StorageRoundedIcon />
+          </Avatar>
+          <Box sx={{ minWidth: 0 }}>
+            <Typography variant="h6" component="h1" noWrap>
+              Asset Hub
+            </Typography>
+            <Typography variant="caption" color="text.secondary" noWrap>
+              {user.username}
+            </Typography>
+          </Box>
+          <DirectoryBreadcrumbs
+            path={browser.filters.directory}
+            onNavigate={browser.openDirectory}
+          />
+          <DirectoryKindEditor
+            directory={currentDirectory}
+            kinds={browser.directoryKinds.data ?? []}
+            pending={commands.updateDirectoryKind.isPending}
+            onKindChange={(kind) => {
+              if (currentDirectory)
+                commands.updateDirectoryKind.mutate({ directory: currentDirectory, kind });
+            }}
+          />
           {user.isAdmin ? (
-            <Button
-              variant="ghost"
-              size="small"
-              className="text-slate-500 hover:bg-indigo-50 hover:text-indigo-700 focus-visible:ring-indigo-100"
-              onClick={() => setUsersOpen(true)}
-            >
-              <Users size={16} />
+            <Button color="inherit" startIcon={<PeopleIcon />} onClick={() => setUsersOpen(true)}>
               Users
             </Button>
           ) : null}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="text-slate-400 hover:bg-slate-100 hover:text-slate-700 focus-visible:ring-slate-200"
-            aria-label="Sign out"
-            onClick={() => void logout()}
-          >
-            <LogOut size={18} />
-          </Button>
-        </div>
-      </header>
+          <IconButton color="inherit" aria-label="Sign out" onClick={() => void logout()}>
+            <LogoutIcon />
+          </IconButton>
+        </Toolbar>
+      </AppBar>
       <DirectoryWorkspaceOutlet
         directory={currentDirectory}
         onDirectoryChanged={() => browser.listing.refetch().then(() => undefined)}
@@ -257,7 +260,7 @@ export function ResourceWorkspace() {
           />
         </React.Suspense>
       ) : null}
-    </main>
+    </Box>
   );
 }
 

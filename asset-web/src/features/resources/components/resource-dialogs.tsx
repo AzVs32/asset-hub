@@ -1,10 +1,21 @@
-import { FileUp, FolderPlus, LoaderCircle } from "lucide-react";
+import CreateNewFolderIcon from "@mui/icons-material/CreateNewFolder";
+import UploadFileIcon from "@mui/icons-material/UploadFile";
+import {
+  Box,
+  Button,
+  CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  LinearProgress,
+  Stack,
+  TextField,
+  Typography,
+} from "@mui/material";
 import React from "react";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import type { ResourceKind, UploadDraft, UploadProgress } from "@/domain/resource";
-import { Button } from "@/shared/ui/button";
-import { Dialog } from "@/shared/ui/dialog";
-import { Field, Input } from "@/shared/ui/field";
 import { KindSelect } from "./kind-select";
 
 interface UploadForm {
@@ -42,59 +53,93 @@ export function UploadResourceDialog({
   return (
     <Dialog
       open={open}
-      onOpenChange={(nextOpen) => {
-        if (!pending) onOpenChange(nextOpen);
+      fullWidth
+      maxWidth="sm"
+      onClose={() => {
+        if (!pending) onOpenChange(false);
       }}
-      title="Upload asset"
-      description="The server can detect the kind from file content and extension."
     >
-      <form
-        className="grid gap-4 bg-slate-50/50 p-6 sm:grid-cols-2"
-        onSubmit={form.handleSubmit(async (input) => {
-          const selected = input.file.item(0);
-          if (!selected) return;
-          await onUpload({
-            file: selected,
-            name: input.name,
-            directory: input.directory,
-            kind: input.kind,
-          });
-          onOpenChange(false);
-        })}
-      >
-        <label className="sm:col-span-2 flex min-h-32 cursor-pointer items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-slate-300 bg-white p-5 text-sm font-semibold text-slate-600 shadow-sm transition hover:border-indigo-400 hover:bg-indigo-50/50 hover:text-indigo-700">
-          <span className="grid size-11 place-items-center rounded-2xl bg-indigo-50 text-indigo-600">
-            <FileUp size={21} />
-          </span>
-          <span>{file?.name ?? "Choose a file"}</span>
-          <input className="sr-only" type="file" {...form.register("file", { required: true })} />
-        </label>
-        <Field label="Display name">
-          <Input placeholder={file?.name ?? "Defaults to filename"} {...form.register("name")} />
-        </Field>
-        <Field label="Directory">
-          <Input {...form.register("directory")} />
-        </Field>
-        <Field label="Kind">
-          <KindSelect
-            kinds={kinds}
-            emptyOption={{ label: "Automatic detection" }}
-            showKind
-            isKindDisabled={(kind) => !kinds.find((item) => item.kind === kind)?.supportsContent}
-            {...form.register("kind")}
+      <DialogTitle>Upload asset</DialogTitle>
+      <DialogContent>
+        <Box
+          component="form"
+          sx={{ display: "grid", gap: 2, pt: 1 }}
+          onSubmit={form.handleSubmit(async (input) => {
+            const selected = input.file.item(0);
+            if (!selected) return;
+            await onUpload({
+              file: selected,
+              name: input.name,
+              directory: input.directory,
+              kind: input.kind,
+            });
+            onOpenChange(false);
+          })}
+        >
+          <Button
+            component="label"
+            variant="outlined"
+            startIcon={<UploadFileIcon />}
+            sx={{ minHeight: 128 }}
+          >
+            {file?.name ?? "Choose a file"}
+            <input type="file" hidden {...form.register("file", { required: true })} />
+          </Button>
+          <Controller
+            name="name"
+            control={form.control}
+            render={({ field }) => {
+              const { ref, ...rest } = field;
+              return (
+                <TextField
+                  {...rest}
+                  inputRef={ref}
+                  label="Display name"
+                  placeholder={file?.name ?? "Defaults to filename"}
+                />
+              );
+            }}
           />
-        </Field>
-        {pending && progress ? <UploadProgressView progress={progress} /> : null}
-        <div className="flex justify-end gap-2 border-t border-slate-200/70 pt-4 sm:col-span-2">
-          <Button variant="secondary" disabled={pending} onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button type="submit" disabled={pending || !file}>
-            {pending ? <LoaderCircle className="animate-spin" size={17} /> : <FileUp size={17} />}
-            {pending && progress ? uploadButtonLabel(progress) : "Upload"}
-          </Button>
-        </div>
-      </form>
+          <Controller
+            name="directory"
+            control={form.control}
+            render={({ field }) => {
+              const { ref, ...rest } = field;
+              return <TextField {...rest} inputRef={ref} label="Directory" />;
+            }}
+          />
+          <Controller
+            name="kind"
+            control={form.control}
+            render={({ field }) => {
+              const { ref, ...rest } = field;
+              return (
+                <KindSelect
+                  {...rest}
+                  inputRef={ref}
+                  label="Kind"
+                  kinds={kinds}
+                  emptyOption={{ label: "Automatic detection" }}
+                  showKind
+                  isKindDisabled={(kind) =>
+                    !kinds.find((item) => item.kind === kind)?.supportsContent
+                  }
+                />
+              );
+            }}
+          />
+          {pending && progress ? <UploadProgressView progress={progress} /> : null}
+          <DialogActions sx={{ px: 0, pb: 0 }}>
+            <Button disabled={pending} onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="contained" disabled={pending || !file}>
+              {pending ? <CircularProgress size={17} color="inherit" sx={{ mr: 1 }} /> : null}
+              {pending && progress ? uploadButtonLabel(progress) : "Upload"}
+            </Button>
+          </DialogActions>
+        </Box>
+      </DialogContent>
     </Dialog>
   );
 }
@@ -114,38 +159,34 @@ function UploadProgressView({ progress }: { progress: UploadProgress }) {
   const finalizing = progress.stage === "finalizing";
 
   return (
-    <div
-      className="grid gap-2 rounded-2xl border border-indigo-200 bg-indigo-50 p-4 shadow-sm sm:col-span-2"
+    <Box
+      sx={{
+        p: 2,
+        borderRadius: 2,
+        border: 1,
+        borderColor: "primary.light",
+        bgcolor: "primary.light",
+      }}
       aria-live="polite"
     >
-      <div className="flex items-center justify-between gap-3 text-sm font-semibold text-slate-800">
-        <span>{label}</span>
-        <span>{finalizing ? "File uploaded" : `${percentage}%`}</span>
-      </div>
-      <div
-        className="h-2.5 overflow-hidden rounded-full bg-indigo-100"
-        role="progressbar"
-        aria-label={finalizing ? "Resource publishing progress" : "Upload progress"}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={finalizing ? undefined : percentage}
-      >
-        <div
-          className={`h-full rounded-full bg-indigo-600 transition-[width] duration-300 ${
-            finalizing ? "animate-pulse" : ""
-          }`}
-          style={{ width: `${percentage}%` }}
-        />
-      </div>
-      <p className="text-xs text-slate-600">
+      <Stack direction="row" justifyContent="space-between" spacing={1.5}>
+        <Typography variant="body2" fontWeight={600}>
+          {label}
+        </Typography>
+        <Typography variant="body2" fontWeight={600}>
+          {finalizing ? "File uploaded" : `${percentage}%`}
+        </Typography>
+      </Stack>
+      <LinearProgress variant="determinate" value={percentage} sx={{ mt: 1.5, mb: 1 }} />
+      <Typography variant="caption" color="text.secondary">
         {formatBytes(progress.bytesSent)} / {formatBytes(progress.totalBytes)}
         {progress.stage === "uploading"
           ? " · updates after each 8 MiB chunk"
           : finalizing
             ? " transferred · large files take longer to verify"
             : " hashed locally in a background worker"}
-      </p>
-    </div>
+      </Typography>
+    </Box>
   );
 }
 
@@ -193,40 +234,58 @@ export function CreateFolderDialog({
     if (open) form.reset();
   }, [form, open]);
   return (
-    <Dialog
-      open={open}
-      onOpenChange={onOpenChange}
-      title="New folder"
-      description={`Inside /${parent}`}
-    >
-      <form
-        className="grid gap-5 bg-slate-50/50 p-6"
-        onSubmit={form.handleSubmit(async ({ name, kind }) => {
-          await onCreate(name, kind || undefined);
-          onOpenChange(false);
-        })}
-      >
-        <Field label="Folder name" error={form.formState.errors.name?.message}>
-          <Input
-            autoFocus
-            {...form.register("name", {
-              validate: (value) => value.trim().length > 0 || "Folder name is required",
-            })}
+    <Dialog open={open} fullWidth maxWidth="xs" onClose={() => onOpenChange(false)}>
+      <DialogTitle>New folder</DialogTitle>
+      <DialogContent>
+        <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 2 }}>
+          Inside /{parent}
+        </Typography>
+        <Box
+          component="form"
+          sx={{ display: "grid", gap: 2, pt: 1 }}
+          onSubmit={form.handleSubmit(async ({ name, kind }) => {
+            await onCreate(name, kind || undefined);
+            onOpenChange(false);
+          })}
+        >
+          <Controller
+            name="name"
+            control={form.control}
+            render={({ field, fieldState }) => {
+              const { ref, ...rest } = field;
+              return (
+                <TextField
+                  {...rest}
+                  inputRef={ref}
+                  label="Folder name"
+                  autoFocus
+                  error={Boolean(fieldState.error)}
+                  helperText={fieldState.error?.message}
+                />
+              );
+            }}
           />
-        </Field>
-        <Field label="Folder kind">
-          <KindSelect kinds={kinds} {...form.register("kind")} />
-        </Field>
-        <div className="flex justify-end gap-2">
-          <Button variant="secondary" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button type="submit" disabled={pending}>
-            <FolderPlus size={17} />
-            {pending ? "Creating…" : "Create"}
-          </Button>
-        </div>
-      </form>
+          <Controller
+            name="kind"
+            control={form.control}
+            render={({ field }) => {
+              const { ref, ...rest } = field;
+              return <KindSelect {...rest} inputRef={ref} label="Folder kind" kinds={kinds} />;
+            }}
+          />
+          <DialogActions sx={{ px: 0, pb: 0 }}>
+            <Button onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button
+              type="submit"
+              variant="contained"
+              startIcon={<CreateNewFolderIcon />}
+              disabled={pending}
+            >
+              {pending ? "Creating…" : "Create"}
+            </Button>
+          </DialogActions>
+        </Box>
+      </DialogContent>
     </Dialog>
   );
 }

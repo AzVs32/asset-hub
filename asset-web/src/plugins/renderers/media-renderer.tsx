@@ -1,3 +1,4 @@
+import { Alert } from "@mui/material";
 import {
   MediaControlBar,
   MediaController,
@@ -21,9 +22,9 @@ export default function MediaRenderer({ view, gateway }: PluginViewRendererProps
 
 function InvalidMediaUrl() {
   return (
-    <p className="m-4 rounded-xl bg-red-50 p-4 text-sm text-red-700">
+    <Alert severity="error" sx={{ m: 2 }}>
       The plugin returned an invalid or external media URL.
-    </p>
+    </Alert>
   );
 }
 
@@ -39,14 +40,20 @@ function MediaContent({
   if (mimeType.startsWith("image/"))
     return (
       <img
-        className="mx-auto max-h-[70vh] max-w-full object-contain"
+        style={{
+          display: "block",
+          margin: "0 auto",
+          maxHeight: "70vh",
+          maxWidth: "100%",
+          objectFit: "contain",
+        }}
         src={source}
         alt={title ?? "Plugin output"}
       />
     );
   if (mimeType.startsWith("audio/")) {
     return (
-      <MediaController className="w-full bg-slate-950">
+      <MediaController style={{ width: "100%" }}>
         {/* biome-ignore lint/a11y/useMediaCaption: the plugin media ABI does not expose transcript tracks */}
         <audio slot="media" src={source} preload="metadata" />
         <MediaControlBar>
@@ -60,8 +67,8 @@ function MediaContent({
     );
   }
   return (
-    <p className="m-4 rounded-xl bg-slate-100 p-4 text-sm text-slate-600">
+    <Alert severity="info" sx={{ m: 2 }}>
       No host renderer is available for media type <code>{mimeType}</code>.
-    </p>
+    </Alert>
   );
 }

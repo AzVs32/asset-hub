@@ -1,3 +1,4 @@
+import { Alert, Box, Stack } from "@mui/material";
 import { useGateway } from "@/application/ports/gateway-context";
 import type { ResourceActionOutput } from "@/domain/plugin";
 import type { Resource } from "@/domain/resource";
@@ -14,22 +15,15 @@ export function PluginOutput({
 }) {
   const gateway = useGateway();
   return (
-    <div>
+    <Box>
       {output.diagnostics.length ? (
-        <section
-          className="m-4 grid gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm"
-          aria-label="Plugin diagnostics"
-        >
+        <Stack spacing={1} sx={{ m: 2 }} aria-label="Plugin diagnostics">
           {output.diagnostics.map((item) => (
-            <p
-              className="text-sm leading-6 text-amber-950"
-              key={`${item.severity}:${item.code}:${item.message}`}
-            >
-              <strong className="mr-2 uppercase">{item.severity}</strong>
-              {item.message}
-            </p>
+            <Alert severity="warning" key={`${item.severity}:${item.code}:${item.message}`}>
+              <strong>{item.severity.toUpperCase()}</strong> {item.message}
+            </Alert>
           ))}
-        </section>
+        </Stack>
       ) : null}
       <PluginViewHost
         output={output}
@@ -37,6 +31,6 @@ export function PluginOutput({
         gateway={gateway}
         onResourceChanged={onResourceChanged}
       />
-    </div>
+    </Box>
   );
 }

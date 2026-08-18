@@ -1,3 +1,4 @@
+import { Alert, Box, CircularProgress } from "@mui/material";
 import { connect } from "penpal";
 import React from "react";
 import {
@@ -49,25 +50,47 @@ function DefaultViewRenderer(props: PluginViewRendererProps) {
 }
 
 function TextView({ text }: { text: string }) {
-  return <article className="plugin-prose whitespace-pre-wrap">{text}</article>;
+  return (
+    <Box component="article" className="plugin-prose" sx={{ whiteSpace: "pre-wrap" }}>
+      {text}
+    </Box>
+  );
 }
 
 function HtmlView({ view }: { view: Extract<PluginView, { view: "html" }> }) {
   return (
-    <iframe
-      className="block h-[65vh] min-h-80 w-full border-0 bg-white"
+    <Box
+      component="iframe"
       sandbox=""
       title={view.title ?? "Plugin HTML output"}
       srcDoc={htmlWithoutNetwork(view.html)}
+      sx={{
+        display: "block",
+        height: "65vh",
+        minHeight: "20rem",
+        width: "100%",
+        border: 0,
+      }}
     />
   );
 }
 
 function JsonView({ value }: { value: unknown }) {
   return (
-    <pre className="max-h-[65vh] overflow-auto bg-slate-950 p-5 font-mono text-xs leading-6 text-slate-100">
+    <Box
+      component="pre"
+      sx={{
+        maxHeight: "65vh",
+        overflow: "auto",
+        p: 2,
+        fontFamily: "monospace",
+        fontSize: "0.875rem",
+        whiteSpace: "pre-wrap",
+        m: 0,
+      }}
+    >
       {JSON.stringify(value, null, 2)}
-    </pre>
+    </Box>
   );
 }
 
@@ -121,7 +144,13 @@ function PluginFrameView({
   return (
     <iframe
       ref={ref}
-      className="block h-[70vh] min-h-96 w-full border-0 bg-white"
+      style={{
+        display: "block",
+        height: "70vh",
+        minHeight: "24rem",
+        width: "100%",
+        border: 0,
+      }}
       sandbox="allow-scripts"
       src={source}
       title={view.title ?? "Plugin view"}
@@ -131,9 +160,9 @@ function PluginFrameView({
 
 function PluginError({ message }: { message: string }) {
   return (
-    <p className="m-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+    <Alert severity="error" sx={{ m: 2 }}>
       {message}
-    </p>
+    </Alert>
   );
 }
 
@@ -156,9 +185,9 @@ function LazyView({ children }: { children: React.ReactNode }) {
   return (
     <React.Suspense
       fallback={
-        <div className="grid min-h-40 place-items-center text-sm text-slate-500">
-          Loading plugin renderer…
-        </div>
+        <Box sx={{ display: "grid", minHeight: "10rem", placeItems: "center" }}>
+          <CircularProgress size={20} />
+        </Box>
       }
     >
       {children}

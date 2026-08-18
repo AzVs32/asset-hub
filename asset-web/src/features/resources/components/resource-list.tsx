@@ -1,14 +1,38 @@
-import { useQuery } from "@tanstack/react-query";
+import CreateNewFolderIcon from "@mui/icons-material/CreateNewFolder";
+import FolderIcon from "@mui/icons-material/Folder";
+import InsertDriveFileIcon from "@mui/icons-material/InsertDriveFile";
+import MoreVertIcon from "@mui/icons-material/MoreVert";
+import RefreshIcon from "@mui/icons-material/Refresh";
+import SearchIcon from "@mui/icons-material/Search";
+import UploadFileIcon from "@mui/icons-material/UploadFile";
 import {
-  ChevronLeft,
-  ChevronRight,
-  File,
-  FileUp,
-  Folder,
-  FolderPlus,
-  RefreshCw,
-  Search,
-} from "lucide-react";
+  Alert,
+  Avatar,
+  Box,
+  Button,
+  Card,
+  CardActions,
+  CardHeader,
+  Checkbox,
+  CircularProgress,
+  Divider,
+  FormControlLabel,
+  IconButton,
+  InputAdornment,
+  List,
+  ListItem,
+  ListItemAvatar,
+  ListItemButton,
+  ListItemText,
+  Menu,
+  MenuItem,
+  Pagination,
+  Stack,
+  TextField,
+  Typography,
+} from "@mui/material";
+import { useQuery } from "@tanstack/react-query";
+import React from "react";
 import { useGateway } from "@/application/ports/gateway-context";
 import { parentDirectory } from "@/domain/directory-path";
 import type {
@@ -23,10 +47,6 @@ import type {
 import { formatBytes, formatDate } from "@/domain/resource-draft";
 import { usePluginKernel } from "@/kernel/plugin-kernel";
 import { coreDirectoryWorkspaceSlots } from "@/kernel/slots";
-import { Button } from "@/shared/ui/button";
-import { ActionMenu, ActionMenuItem } from "@/shared/ui/dropdown";
-import { Input } from "@/shared/ui/field";
-import { ErrorState, LoadingState } from "@/shared/ui/state";
 import { KindSelect } from "./kind-select";
 
 export function ResourceList({
@@ -71,124 +91,128 @@ export function ResourceList({
   const parent = parentDirectory(filters.directory);
 
   return (
-    <section
-      className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-3xl border border-slate-200/80 bg-white shadow-[0_18px_50px_-30px_rgba(15,23,42,0.45)]"
-      aria-label="Resource workspace"
-    >
-      <header className="flex min-h-[4.75rem] flex-wrap items-center justify-between gap-4 border-b border-slate-100 px-5 py-3.5 xl:px-6">
-        <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-indigo-500">
-            Directory
-          </p>
-          <h2 className="mt-0.5 text-lg font-bold tracking-[-0.025em] text-slate-950">
-            {listing?.directory.name || "Root"}
-          </h2>
-          <p className="mt-0.5 text-xs font-medium text-slate-400">
-            {listing?.folders.length ?? 0} folders · {total} assets
-          </p>
-        </div>
-        <div className="flex flex-wrap justify-end gap-2">
-          <Button variant="ghost" size="icon" aria-label="Refresh" onClick={onRefresh}>
-            <RefreshCw className={loading ? "animate-spin" : ""} size={17} />
-          </Button>
-          <Button variant="secondary" size="small" onClick={onCreateFolder}>
-            <FolderPlus size={15} />
-            New folder
-          </Button>
-          <Button size="small" onClick={onUpload}>
-            <FileUp size={15} />
-            Upload
-          </Button>
-        </div>
-      </header>
-
-      <div className="grid gap-2.5 border-b border-slate-100 bg-slate-50/70 px-4 py-3 md:grid-cols-2 xl:grid-cols-[minmax(180px,1fr)_minmax(160px,220px)_auto]">
-        <div className="relative">
-          <Search className="absolute left-3.5 top-3 text-slate-400" size={16} />
-          <Input
-            className="bg-white pl-10"
-            aria-label="Search resources"
-            placeholder="Search resources"
-            value={filters.query}
-            onChange={(event) => onFilters({ query: event.target.value, page: 1 })}
-          />
-        </div>
+    <Card sx={{ display: "flex", flexDirection: "column", minHeight: 0, minWidth: 0 }}>
+      <CardHeader
+        avatar={
+          <Avatar sx={{ bgcolor: "primary.main" }}>
+            <FolderIcon />
+          </Avatar>
+        }
+        title={listing?.directory.name || "Root"}
+        subheader={`${listing?.folders.length ?? 0} folders · ${total} assets`}
+        action={
+          <Stack direction="row" spacing={1}>
+            <IconButton aria-label="Refresh" onClick={onRefresh}>
+              <RefreshIcon />
+            </IconButton>
+            <Button startIcon={<CreateNewFolderIcon />} onClick={onCreateFolder}>
+              New folder
+            </Button>
+            <Button variant="contained" startIcon={<UploadFileIcon />} onClick={onUpload}>
+              Upload
+            </Button>
+          </Stack>
+        }
+      />
+      <Divider />
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns: { xs: "1fr", md: "1fr 1fr auto" },
+          gap: 1.5,
+          p: 2,
+        }}
+      >
+        <TextField
+          size="small"
+          placeholder="Search resources"
+          value={filters.query}
+          onChange={(event) => onFilters({ query: event.target.value, page: 1 })}
+          InputProps={{
+            startAdornment: (
+              <InputAdornment position="start">
+                <SearchIcon fontSize="small" />
+              </InputAdornment>
+            ),
+          }}
+          inputProps={{ "aria-label": "Search resources" }}
+        />
         <KindSelect
-          aria-label="Resource kind"
           kinds={kinds}
           emptyOption={{ label: "All kinds" }}
-          className="bg-white"
+          size="small"
           value={filters.kind}
           onChange={(event) => onFilters({ kind: event.target.value, page: 1 })}
         />
-        <Toggle
+        <FormControlLabel
+          control={
+            <Checkbox
+              checked={filters.includeDeleted}
+              onChange={(event) => onFilters({ includeDeleted: event.target.checked, page: 1 })}
+            />
+          }
           label="Deleted"
-          checked={filters.includeDeleted}
-          onChange={(includeDeleted) => onFilters({ includeDeleted, page: 1 })}
         />
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-auto bg-white p-2">
-        {error ? <ErrorState error={error} /> : null}
-        {loading && !listing ? <LoadingState label="Loading resources" /> : null}
-        {parent !== null ? <FolderRow name=".." onClick={() => onOpenDirectory(parent)} /> : null}
-        {listing?.folders.map((folder) => (
-          <FolderRow
-            key={folder.id}
-            name={folder.name}
-            directory={folder}
-            selected={folder.id === selectedDirectoryId}
-            onSelect={() => onSelectDirectory(folder)}
-            onOpen={() => onOpenDirectory(folder.path)}
-            onAction={(action) => onDirectoryAction(folder, action)}
-          />
-        ))}
-        {listing?.resources.items.map((resource) => (
-          <ResourceRow
-            key={resource.id}
-            resource={resource}
-            selected={resource.id === selectedId}
-            onSelect={() => onSelect(resource)}
-            onAction={(action) => onAction(resource, action)}
-            onRestore={() => onRestore(resource)}
-          />
-        ))}
-        {!loading && listing && !listing.folders.length && !listing.resources.items.length ? (
-          <div className="grid min-h-64 place-items-center rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 text-sm text-slate-400">
-            <span className="grid justify-items-center gap-3 font-medium">
-              <span className="grid size-12 place-items-center rounded-2xl bg-white text-slate-300 shadow-sm">
-                <Folder size={21} />
-              </span>
-              This folder is empty
-            </span>
-          </div>
+      </Box>
+      <Divider />
+      <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+        {error ? (
+          <Alert severity="error" sx={{ m: 2 }}>
+            {error instanceof Error ? error.message : "Unexpected error"}
+          </Alert>
         ) : null}
-      </div>
-
-      <footer className="flex min-h-14 items-center justify-between border-t border-slate-100 bg-slate-50/60 px-5 text-xs font-medium text-slate-500 xl:px-6">
-        <span className="rounded-lg bg-white px-2.5 py-1 shadow-sm ring-1 ring-slate-200/70">
-          Page {filters.page} of {totalPages}
-        </span>
-        <div className="flex gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            disabled={filters.page <= 1}
-            onClick={() => onFilters({ page: filters.page - 1 })}
-          >
-            <ChevronLeft size={18} />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            disabled={filters.page >= totalPages}
-            onClick={() => onFilters({ page: filters.page + 1 })}
-          >
-            <ChevronRight size={18} />
-          </Button>
-        </div>
-      </footer>
-    </section>
+        {loading && !listing ? (
+          <Box sx={{ display: "flex", justifyContent: "center", p: 4 }}>
+            <CircularProgress />
+          </Box>
+        ) : null}
+        <List disablePadding>
+          {parent !== null ? <FolderRow name=".." onClick={() => onOpenDirectory(parent)} /> : null}
+          {listing?.folders.map((folder) => (
+            <FolderRow
+              key={folder.id}
+              name={folder.name}
+              directory={folder}
+              selected={folder.id === selectedDirectoryId}
+              onSelect={() => onSelectDirectory(folder)}
+              onOpen={() => onOpenDirectory(folder.path)}
+              onAction={(action) => onDirectoryAction(folder, action)}
+            />
+          ))}
+          {listing?.resources.items.map((resource) => (
+            <ResourceRow
+              key={resource.id}
+              resource={resource}
+              selected={resource.id === selectedId}
+              onSelect={() => onSelect(resource)}
+              onAction={(action) => onAction(resource, action)}
+              onRestore={() => onRestore(resource)}
+            />
+          ))}
+        </List>
+        {!loading && listing && !listing.folders.length && !listing.resources.items.length ? (
+          <Box sx={{ display: "grid", placeItems: "center", minHeight: 320 }}>
+            <Stack alignItems="center" spacing={1.5}>
+              <Avatar sx={{ width: 56, height: 56 }}>
+                <FolderIcon />
+              </Avatar>
+              <Typography variant="body2" color="text.secondary">
+                This folder is empty
+              </Typography>
+            </Stack>
+          </Box>
+        ) : null}
+      </Box>
+      <Divider />
+      <CardActions sx={{ justifyContent: "center" }}>
+        <Pagination
+          count={totalPages}
+          page={filters.page}
+          size="small"
+          onChange={(_event, page) => onFilters({ page })}
+        />
+      </CardActions>
+    </Card>
   );
 }
 
@@ -214,52 +238,34 @@ function FolderRow({
     ? kernel.directoryActionsAtCoreSlot(directory, coreDirectoryWorkspaceSlots.directoryContextMenu)
     : [];
   return (
-    <div
-      className={`group mb-1 grid min-h-[4.25rem] grid-cols-[minmax(0,1fr)_auto] items-center rounded-2xl transition-all ${selected ? "bg-indigo-50 shadow-sm ring-1 ring-inset ring-indigo-200" : "bg-amber-50/35 hover:bg-amber-50/70"}`}
+    <ListItem
+      disablePadding
+      secondaryAction={
+        actions.length && onAction ? (
+          <ActionsMenu
+            items={actions.map((action) => ({
+              id: action.id,
+              label: action.label,
+              destructive: action.ui.destructive,
+              onSelect: () => onAction(action),
+            }))}
+          />
+        ) : null
+      }
     >
-      <button
-        className="grid min-w-0 grid-cols-[3rem_minmax(0,1fr)] items-center gap-3 px-3 py-2.5 text-left"
-        type="button"
-        aria-pressed={directory ? selected : undefined}
-        onClick={onSelect ?? onClick}
-        onDoubleClick={onOpen}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" && onOpen) {
-            event.preventDefault();
-            onOpen();
-          }
-        }}
-      >
-        {directory ? (
-          <DirectoryThumbnail directory={directory} />
-        ) : (
-          <span className="grid size-12 place-items-center rounded-2xl bg-gradient-to-br from-amber-100 to-orange-100 text-amber-700 shadow-sm ring-1 ring-amber-200/70">
-            <Folder size={18} />
-          </span>
-        )}
-        <span className="min-w-0">
-          <strong className="block truncate text-sm font-semibold text-slate-800">{name}</strong>
-          <span className="mt-0.5 block text-[11px] font-medium text-slate-400">
-            {directory?.kind ?? "Parent directory"}
-          </span>
-        </span>
-      </button>
-      {actions.length && onAction ? (
-        <div className="pr-2 opacity-60 transition group-hover:opacity-100 group-focus-within:opacity-100">
-          <ActionMenu>
-            {actions.map((action) => (
-              <ActionMenuItem
-                key={action.id}
-                destructive={action.ui.destructive}
-                onSelect={() => onAction(action)}
-              >
-                {action.label}
-              </ActionMenuItem>
-            ))}
-          </ActionMenu>
-        </div>
-      ) : null}
-    </div>
+      <ListItemButton selected={selected} onClick={onSelect ?? onClick} onDoubleClick={onOpen}>
+        <ListItemAvatar>
+          {directory ? (
+            <DirectoryThumbnail directory={directory} />
+          ) : (
+            <Avatar>
+              <FolderIcon />
+            </Avatar>
+          )}
+        </ListItemAvatar>
+        <ListItemText primary={name} secondary={directory?.kind ?? "Parent directory"} />
+      </ListItemButton>
+    </ListItem>
   );
 }
 
@@ -281,12 +287,11 @@ function DirectoryThumbnail({ directory }: { directory: Directory }) {
   const image = result.data
     ? thumbnailImage(result.data.view, gateway.assetUrl.bind(gateway))
     : null;
-  if (image)
-    return <img className="size-12 rounded-2xl object-cover shadow-sm" src={image} alt="" />;
+  if (image) return <Avatar variant="rounded" src={image} />;
   return (
-    <span className="grid size-12 place-items-center rounded-2xl bg-gradient-to-br from-amber-100 to-orange-100 text-amber-700 shadow-sm ring-1 ring-amber-200/70">
-      <Folder className={result.isPending ? "animate-pulse" : ""} size={18} />
-    </span>
+    <Avatar variant="rounded">
+      <FolderIcon />
+    </Avatar>
   );
 }
 
@@ -308,66 +313,40 @@ function ResourceRow({
     resource,
     coreDirectoryWorkspaceSlots.resourceContextMenu,
   );
+  const status =
+    resource.content?.verificationStatus === "pending"
+      ? "Verifying · "
+      : resource.content?.verificationStatus === "failed"
+        ? "Verification failed · "
+        : resource.deletedAt
+          ? "Deleted · "
+          : "";
+  const menuItems = [
+    ...(resource.deletedAt
+      ? [{ id: "restore", label: "Restore resource", destructive: false, onSelect: onRestore }]
+      : []),
+    ...actions.map((action) => ({
+      id: action.id,
+      label: action.label,
+      destructive: action.ui.destructive,
+      onSelect: () => onAction(action),
+    })),
+  ];
   return (
-    <div
-      className={`group mb-1 grid min-h-[4.25rem] grid-cols-[minmax(0,1fr)_auto] items-center rounded-2xl transition-all ${selected ? "bg-indigo-50 shadow-sm ring-1 ring-inset ring-indigo-200" : "hover:bg-slate-50"}`}
+    <ListItem
+      disablePadding
+      secondaryAction={menuItems.length ? <ActionsMenu items={menuItems} /> : null}
     >
-      <button
-        className="grid min-w-0 grid-cols-[3rem_minmax(0,1fr)] items-center gap-3 px-3 py-2.5 text-left"
-        type="button"
-        onClick={onSelect}
-      >
-        <ResourceThumbnail resource={resource} />
-        <span className="min-w-0">
-          <strong className="block truncate text-sm font-semibold text-slate-900">
-            {resource.name}
-          </strong>
-          <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-medium text-slate-400">
-            <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-slate-500">
-              {resource.kind}
-            </span>
-            <span>{formatBytes(resource.content?.size ?? 0)}</span>
-            <span>{formatDate(resource.updatedAt)}</span>
-          </span>
-        </span>
-      </button>
-      <div className="flex items-center gap-2 pr-2">
-        {resource.content?.verificationStatus === "pending" ? (
-          <span className="rounded-full bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200/60">
-            verifying
-          </span>
-        ) : null}
-        {resource.content?.verificationStatus === "failed" ? (
-          <span
-            className="rounded-full bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-700 ring-1 ring-rose-200/60"
-            title={resource.content.verificationError ?? "Checksum verification failed"}
-          >
-            verification failed
-          </span>
-        ) : null}
-        {resource.deletedAt ? (
-          <span className="rounded-full bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-700 ring-1 ring-rose-200/60">
-            deleted
-          </span>
-        ) : null}
-        <span className="opacity-60 transition group-hover:opacity-100 group-focus-within:opacity-100">
-          <ActionMenu>
-            {resource.deletedAt ? (
-              <ActionMenuItem onSelect={onRestore}>Restore resource</ActionMenuItem>
-            ) : null}
-            {actions.map((action) => (
-              <ActionMenuItem
-                key={action.id}
-                destructive={action.ui.destructive}
-                onSelect={() => onAction(action)}
-              >
-                {action.label}
-              </ActionMenuItem>
-            ))}
-          </ActionMenu>
-        </span>
-      </div>
-    </div>
+      <ListItemButton selected={selected} onClick={onSelect}>
+        <ListItemAvatar>
+          <ResourceThumbnail resource={resource} />
+        </ListItemAvatar>
+        <ListItemText
+          primary={resource.name}
+          secondary={`${status}${resource.kind} · ${formatBytes(resource.content?.size ?? 0)} · ${formatDate(resource.updatedAt)}`}
+        />
+      </ListItemButton>
+    </ListItem>
   );
 }
 
@@ -389,14 +368,11 @@ function ResourceThumbnail({ resource }: { resource: Resource }) {
   const image = result.data
     ? thumbnailImage(result.data.view, gateway.assetUrl.bind(gateway))
     : null;
-  if (image)
-    return (
-      <img className="size-12 rounded-2xl bg-slate-100 object-cover shadow-sm" src={image} alt="" />
-    );
+  if (image) return <Avatar variant="rounded" src={image} />;
   return (
-    <span className="grid size-12 place-items-center rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-100 text-slate-400 shadow-sm">
-      <File className={result.isPending ? "animate-pulse" : ""} size={18} />
-    </span>
+    <Avatar variant="rounded">
+      <InsertDriveFileIcon />
+    </Avatar>
   );
 }
 
@@ -413,27 +389,35 @@ function thumbnailImage(
   return null;
 }
 
-function Toggle({
-  label,
-  checked,
-  disabled,
-  onChange,
+function ActionsMenu({
+  items,
 }: {
-  label: string;
-  checked: boolean;
-  disabled?: boolean;
-  onChange: (checked: boolean) => void;
+  items: { id: string; label: string; destructive?: boolean; onSelect: () => void }[];
 }) {
+  const [anchor, setAnchor] = React.useState<HTMLElement | null>(null);
   return (
-    <label className="flex min-h-10 cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 transition hover:border-slate-300">
-      <input
-        className="size-4 rounded accent-indigo-600"
-        type="checkbox"
-        checked={checked}
-        disabled={disabled}
-        onChange={(event) => onChange(event.target.checked)}
-      />
-      {label}
-    </label>
+    <>
+      <IconButton
+        size="small"
+        aria-label="Open actions"
+        onClick={(event) => setAnchor(event.currentTarget)}
+      >
+        <MoreVertIcon fontSize="small" />
+      </IconButton>
+      <Menu anchorEl={anchor} open={Boolean(anchor)} onClose={() => setAnchor(null)}>
+        {items.map((item) => (
+          <MenuItem
+            key={item.id}
+            onClick={() => {
+              setAnchor(null);
+              item.onSelect();
+            }}
+            sx={item.destructive ? { color: "error.main" } : undefined}
+          >
+            {item.label}
+          </MenuItem>
+        ))}
+      </Menu>
+    </>
   );
 }

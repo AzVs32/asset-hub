@@ -1,3 +1,4 @@
+import { Box } from "@mui/material";
 import type React from "react";
 
 /**
@@ -12,9 +13,18 @@ export function CoreDirectoryWorkspace({
   detail: React.ReactNode;
 }) {
   return (
-    <div className="grid min-h-0 flex-1 gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_minmax(23rem,27rem)] xl:gap-5 xl:p-5">
+    <Box
+      sx={{
+        display: "grid",
+        gridTemplateColumns: { xs: "1fr", lg: "minmax(0, 1fr) 24rem" },
+        gap: 2,
+        flex: 1,
+        minHeight: 0,
+        p: 2,
+      }}
+    >
       {browser}
       {detail}
-    </div>
+    </Box>
   );
 }
