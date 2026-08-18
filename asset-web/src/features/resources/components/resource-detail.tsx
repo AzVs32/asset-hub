@@ -79,7 +79,7 @@ function Detail({
   const kind = kinds.find((candidate) => candidate.kind === resource.kind);
 
   return (
-    <Card>
+    <Card sx={{ minHeight: 0, overflow: "auto" }}>
       <CardHeader
         avatar={
           <Avatar>

@@ -17,9 +17,11 @@ export function CoreDirectoryWorkspace({
       sx={{
         display: "grid",
         gridTemplateColumns: { xs: "1fr", lg: "minmax(0, 1fr) 24rem" },
+        gridTemplateRows: { xs: "auto auto", lg: "minmax(0, 1fr)" },
         gap: 2,
         flex: 1,
         minHeight: 0,
+        overflow: { xs: "visible", lg: "hidden" },
         p: 2,
       }}
     >

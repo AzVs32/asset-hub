@@ -1,8 +1,9 @@
-import { Alert, Box, Stack } from "@mui/material";
+import { Box } from "@mui/material";
 import { useGateway } from "@/application/ports/gateway-context";
 import type { ResourceActionOutput } from "@/domain/plugin";
 import type { Resource } from "@/domain/resource";
 import { PluginViewHost } from "@/kernel/plugin-view-host";
+import { PluginDiagnostics } from "./plugin-diagnostics";
 
 export function PluginOutput({
   output,
@@ -16,15 +17,7 @@ export function PluginOutput({
   const gateway = useGateway();
   return (
     <Box>
-      {output.diagnostics.length ? (
-        <Stack spacing={1} sx={{ m: 2 }} aria-label="Plugin diagnostics">
-          {output.diagnostics.map((item) => (
-            <Alert severity="warning" key={`${item.severity}:${item.code}:${item.message}`}>
-              <strong>{item.severity.toUpperCase()}</strong> {item.message}
-            </Alert>
-          ))}
-        </Stack>
-      ) : null}
+      <PluginDiagnostics diagnostics={output.diagnostics} sx={{ m: 2 }} />
       <PluginViewHost
         output={output}
         resource={resource}

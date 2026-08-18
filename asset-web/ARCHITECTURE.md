@@ -23,7 +23,7 @@
 └────┬─────┘             └──────────────────┘             └───────────────────┘
      │
      ├────────▶ kernel / plugins
-     └────────▶ shared/ui
+     └────────▶ theme / Material UI
 
 app/main 负责创建并连接以上所有外层实现。
 ```
@@ -96,8 +96,9 @@ action 和用户授权能力。Feature 只知道这个接口。
 这是通用插件宿主，而不是具体插件实现：
 
 - `plugin-action-dialog` 承载用户触发的 action 结果。
-- `plugin-output` 统一展示 diagnostics 并进入 view renderer。
-- `renderers` 支持 text、Markdown、HTML、JSON、media、download 和 iframe。
+- `plugin-output` 与 Directory 输出统一按实际 severity 展示 diagnostics 并进入 view renderer。
+- Resource 与 Directory action 的 text、Markdown、HTML、JSON、media、download 共用同一组
+  `renderers`；HTML 一律注入禁止网络访问的 CSP。两种 `plugin_frame` 仍使用各自聚合绑定的桥接。
 - `frame-host` 通过 Penpal 暴露窄能力接口；公共 Web SDK 隐藏传输细节。iframe 只能调用当前
   资源已经暴露的 action，且只有由当前 `edit` provider 打开的读写 frame 才能请求替换
   当前资源文本。
@@ -134,10 +135,13 @@ Feature 是用户用例与界面的组合边界：
 资源查询与命令分别放在 `use-resource-listing` 和 `use-resource-commands` 中，组件主要负责
 展示与事件绑定。
 
-### `shared/ui`
+### `theme.ts` 与 Material UI
 
-只放无业务语义的宿主 UI 原语，例如 Button、Dialog、Field 和状态提示。复杂交互使用
-Radix 提供焦点管理、键盘行为和 overlay 语义。
+宿主界面直接组合 Material UI 组件；对话框、菜单、表单控件和状态提示的焦点管理、键盘行为与
+overlay 语义由 Material UI 提供。`theme.ts` 集中定义全局 palette、typography、shape、表面层级、
+交互状态和组件默认样式，Feature 只保留自身布局所需的 `sx`，不重复声明品牌颜色和通用控件外观。
+主题是展示配置，不包含业务规则。插件 Markdown/文本内容不属于 Material UI 组件树能够完整覆盖的
+排版区域，其少量宿主样式继续集中在 `styles.css`，不再引入额外的 utility CSS 构建链。
 
 ### `app` 与 `main.tsx`
 
@@ -149,10 +153,11 @@ main.tsx
   ├─ 创建 PluginKernel 并注册通用 renderer
   ├─ 创建 TanStack QueryClient
   └─ AppProviders
-       └─ AuthBoundary
-            └─ RouterProvider
-                 ├─ ResourceWorkspace
-                 └─ StandalonePluginView
+       └─ Material UI ThemeProvider / CssBaseline
+            └─ AuthBoundary
+                 └─ RouterProvider
+                      ├─ ResourceWorkspace
+                      └─ StandalonePluginView
 ```
 
 路由和大功能使用 lazy import。认证在路由外层，因此所有业务路由默认受保护。

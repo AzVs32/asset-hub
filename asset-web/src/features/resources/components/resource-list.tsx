@@ -138,6 +138,7 @@ export function ResourceList({
           inputProps={{ "aria-label": "Search resources" }}
         />
         <KindSelect
+          label="Resource kind"
           kinds={kinds}
           emptyOption={{ label: "All kinds" }}
           size="small"
@@ -253,12 +254,28 @@ function FolderRow({
         ) : null
       }
     >
-      <ListItemButton selected={selected} onClick={onSelect ?? onClick} onDoubleClick={onOpen}>
+      <ListItemButton
+        selected={selected}
+        aria-pressed={directory ? selected : undefined}
+        onClick={onSelect ?? onClick}
+        onDoubleClick={onOpen}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && onOpen) {
+            event.preventDefault();
+            onOpen();
+          }
+        }}
+      >
         <ListItemAvatar>
           {directory ? (
             <DirectoryThumbnail directory={directory} />
           ) : (
-            <Avatar>
+            <Avatar
+              sx={{
+                color: "warning.dark",
+                background: "linear-gradient(145deg, #fffbeb, #ffedd5)",
+              }}
+            >
               <FolderIcon />
             </Avatar>
           )}
@@ -289,7 +306,13 @@ function DirectoryThumbnail({ directory }: { directory: Directory }) {
     : null;
   if (image) return <Avatar variant="rounded" src={image} />;
   return (
-    <Avatar variant="rounded">
+    <Avatar
+      variant="rounded"
+      sx={{
+        color: "warning.dark",
+        background: "linear-gradient(145deg, #fffbeb, #ffedd5)",
+      }}
+    >
       <FolderIcon />
     </Avatar>
   );

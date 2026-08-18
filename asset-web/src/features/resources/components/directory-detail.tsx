@@ -19,10 +19,12 @@ export function DirectoryDetail({
   kind: DirectoryKind | null;
 }) {
   return (
-    <Card>
+    <Card sx={{ minHeight: 0, overflow: "auto" }}>
       <CardHeader
         avatar={
-          <Avatar>
+          <Avatar
+            sx={{ color: "warning.dark", background: "linear-gradient(145deg, #fffbeb, #ffedd5)" }}
+          >
             <FolderIcon />
           </Avatar>
         }

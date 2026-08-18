@@ -11,30 +11,3 @@ export const coreDirectoryWorkspaceSlots = {
 
 export type CoreDirectoryWorkspaceSlot =
   (typeof coreDirectoryWorkspaceSlots)[keyof typeof coreDirectoryWorkspaceSlots];
-
-export const coreDirectoryWorkspaceSlotCatalog: ReadonlyArray<{
-  id: CoreDirectoryWorkspaceSlot;
-  behavior: "menu" | "automatic_view";
-  description: string;
-}> = [
-  {
-    id: coreDirectoryWorkspaceSlots.directoryContextMenu,
-    behavior: "menu",
-    description: "Entries in a CoreDirectoryWorkspace directory-row context menu.",
-  },
-  {
-    id: coreDirectoryWorkspaceSlots.directoryThumbnail,
-    behavior: "automatic_view",
-    description: "Directory thumbnail rendered by CoreDirectoryWorkspace.",
-  },
-  {
-    id: coreDirectoryWorkspaceSlots.resourceContextMenu,
-    behavior: "menu",
-    description: "Entries in a CoreDirectoryWorkspace resource-row context menu.",
-  },
-  {
-    id: coreDirectoryWorkspaceSlots.resourceThumbnail,
-    behavior: "automatic_view",
-    description: "Resource thumbnail rendered by CoreDirectoryWorkspace.",
-  },
-];

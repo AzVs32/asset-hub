@@ -18,14 +18,17 @@ src/
 ├── kernel/                 host slots and plugin view renderer registry
 ├── plugins/                generic action, slot, iframe, and view hosting
 ├── features/               resource workspace, authentication, user management
-├── shared/ui/              small Radix-backed host design system
+├── theme.ts                Material UI tokens and component-wide defaults
+├── styles.css              plugin prose styles not owned by Material UI
 └── app/                    composition root and routing
 ```
 
 The dependency direction is inward: features use the `AssetGateway` port and domain types; only
 the HTTP adapter knows snake_case OpenAPI DTOs. Plugin JSON is validated with Zod before it reaches
-a renderer. Server state is owned by TanStack Query, forms by React Hook Form, accessible overlay
-behavior by Radix, and formatting/linting by Biome.
+a renderer. Server state is owned by TanStack Query, forms by React Hook Form, accessible component
+and overlay behavior by Material UI, and formatting/linting by Biome. The global Material UI theme
+owns the Host's palette, typography, shape, surfaces, and shared component defaults; feature code
+retains layout-specific presentation without moving business policy into the theme.
 
 ## Plugin Host Contract
 
@@ -79,7 +82,9 @@ fallbacks without executing an Action. Automatic thumbnail slots accept only the
 `thumbnail` provider. Resource and directory action registries scope that capability independently.
 
 Supported output views are `text`, `markdown`, `html`, `plugin_frame`, `json`, `media`, and
-`download`. Generic outputs are rendered by the host. A plugin
+`download`. Resource and Directory actions share the same Host renderer for every generic output,
+including a network-denying CSP for sandboxed HTML; only `plugin_frame` uses an aggregate-specific
+bridge. A plugin
 that needs its own application UI returns `plugin_frame` with a verified `/plugins/<id>/...` path;
 the frame runs with `sandbox="allow-scripts"` and can request only actions already exposed for the
 current Resource or Directory through the versioned Asset Hub Web Plugin SDK. The SDK hides its Penpal transport

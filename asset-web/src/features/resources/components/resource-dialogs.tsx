@@ -164,8 +164,8 @@ function UploadProgressView({ progress }: { progress: UploadProgress }) {
         p: 2,
         borderRadius: 2,
         border: 1,
-        borderColor: "primary.light",
-        bgcolor: "primary.light",
+        borderColor: "#c7d2fe",
+        bgcolor: "#eef2ff",
       }}
       aria-live="polite"
     >
@@ -251,6 +251,9 @@ export function CreateFolderDialog({
           <Controller
             name="name"
             control={form.control}
+            rules={{
+              validate: (value) => value.trim().length > 0 || "Folder name is required",
+            }}
             render={({ field, fieldState }) => {
               const { ref, ...rest } = field;
               return (

@@ -109,7 +109,7 @@ export function useResourceListing() {
   };
 }
 
-export function searchParamsForFilters(
+function searchParamsForFilters(
   current: URLSearchParams,
   filters: ResourceFilters,
   patch: Partial<ResourceFilters>,

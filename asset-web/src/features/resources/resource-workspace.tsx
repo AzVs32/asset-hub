@@ -113,12 +113,13 @@ export function ResourceWorkspace() {
       sx={{
         display: "flex",
         flexDirection: "column",
-        height: "100vh",
-        overflow: "hidden",
+        height: { xs: "auto", lg: "100dvh" },
+        minHeight: "100dvh",
+        overflow: { xs: "visible", lg: "hidden" },
       }}
     >
-      <AppBar position="static" color="default">
-        <Toolbar sx={{ gap: 2 }}>
+      <AppBar position="static" color="transparent">
+        <Toolbar sx={{ flexWrap: { xs: "wrap", lg: "nowrap" }, gap: 2, py: 1 }}>
           <Avatar sx={{ bgcolor: "primary.main" }}>
             <StorageRoundedIcon />
           </Avatar>

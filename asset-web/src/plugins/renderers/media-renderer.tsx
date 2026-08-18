@@ -8,10 +8,16 @@ import {
   MediaTimeRange,
   MediaVolumeRange,
 } from "media-chrome/react";
-import type { PluginViewRendererProps } from "@/kernel/plugin-kernel";
+import type { AssetGateway } from "@/application/ports/asset-gateway";
+import type { PluginView } from "@/domain/plugin";
 
-export default function MediaRenderer({ view, gateway }: PluginViewRendererProps) {
-  if (view.view !== "media") return null;
+export default function MediaRenderer({
+  view,
+  gateway,
+}: {
+  view: Extract<PluginView, { view: "media" }>;
+  gateway: AssetGateway;
+}) {
   const source =
     view.encoding === "base64"
       ? `data:${view.mime_type};base64,${view.data}`
@@ -56,6 +62,26 @@ function MediaContent({
       <MediaController style={{ width: "100%" }}>
         {/* biome-ignore lint/a11y/useMediaCaption: the plugin media ABI does not expose transcript tracks */}
         <audio slot="media" src={source} preload="metadata" />
+        <MediaControlBar>
+          <MediaPlayButton />
+          <MediaTimeDisplay />
+          <MediaTimeRange />
+          <MediaMuteButton />
+          <MediaVolumeRange />
+        </MediaControlBar>
+      </MediaController>
+    );
+  }
+  if (mimeType.startsWith("video/")) {
+    return (
+      <MediaController style={{ width: "100%" }}>
+        {/* biome-ignore lint/a11y/useMediaCaption: the plugin media ABI does not expose transcript tracks */}
+        <video
+          slot="media"
+          style={{ maxHeight: "70vh", width: "100%" }}
+          src={source}
+          preload="metadata"
+        />
         <MediaControlBar>
           <MediaPlayButton />
           <MediaTimeDisplay />

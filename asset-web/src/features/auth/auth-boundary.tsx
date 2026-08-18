@@ -6,8 +6,11 @@ import { defaultDirectoryPath, LOGIN_PATH } from "@/app/paths";
 import { AuthenticationRequiredError } from "@/application/errors";
 import { useGateway } from "@/application/ports/gateway-context";
 import { queryKeys } from "@/application/queries/keys";
-import { LoginForm } from "./login-form";
 import { SessionProvider } from "./session-context";
+
+const LoginForm = React.lazy(() =>
+  import("./login-form").then((module) => ({ default: module.LoginForm })),
+);
 
 export function AuthBoundary() {
   const gateway = useGateway();
@@ -20,13 +23,7 @@ export function AuthBoundary() {
   });
   const [loginError, setLoginError] = React.useState<string | null>(null);
 
-  if (session.isPending) {
-    return (
-      <Box sx={{ display: "grid", minHeight: "100vh", placeItems: "center" }}>
-        <CircularProgress />
-      </Box>
-    );
-  }
+  if (session.isPending) return <SessionLoading label="Opening workspace" />;
   if (!session.data) {
     if (location.pathname !== LOGIN_PATH) {
       return <Navigate to={LOGIN_PATH} replace />;
@@ -35,7 +32,11 @@ export function AuthBoundary() {
       session.isError && !(session.error instanceof AuthenticationRequiredError)
         ? session.error.message
         : loginError;
-    return <LoginForm error={error} onSubmit={login} />;
+    return (
+      <React.Suspense fallback={<SessionLoading label="Opening sign in" />}>
+        <LoginForm error={error} onSubmit={login} />
+      </React.Suspense>
+    );
   }
 
   if (location.pathname === LOGIN_PATH) {
@@ -60,4 +61,12 @@ export function AuthBoundary() {
       setLoginError(error instanceof Error ? error.message : "Sign in failed");
     }
   }
+}
+
+function SessionLoading({ label }: { label: string }) {
+  return (
+    <Box sx={{ display: "grid", minHeight: "100vh", placeItems: "center" }}>
+      <CircularProgress aria-label={label} />
+    </Box>
+  );
 }

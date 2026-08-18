@@ -5,6 +5,7 @@ import { useGateway } from "@/application/ports/gateway-context";
 import type { Directory, Resource, ResourceAction } from "@/domain/resource";
 import { usePluginKernel } from "@/kernel/plugin-kernel";
 import { DirectoryPluginFrame } from "@/plugins/directory-plugin-frame";
+import { PluginDiagnostics } from "@/plugins/plugin-diagnostics";
 
 export function DirectoryWorkspaceOutlet({
   directory,
@@ -77,13 +78,7 @@ export function DirectoryWorkspaceOutlet({
         overflow: "hidden",
       }}
     >
-      {result.data.diagnostics.length ? (
-        <Alert severity="warning" sx={{ m: 2 }}>
-          {result.data.diagnostics.map((diagnostic) => (
-            <Box key={`${diagnostic.code}:${diagnostic.message}`}>{diagnostic.message}</Box>
-          ))}
-        </Alert>
-      ) : null}
+      <PluginDiagnostics diagnostics={result.data.diagnostics} sx={{ m: 2 }} />
       <DirectoryPluginFrame
         directory={directory}
         output={result.data}

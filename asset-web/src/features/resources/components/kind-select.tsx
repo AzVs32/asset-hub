@@ -1,17 +1,17 @@
 import { MenuItem, TextField, type TextFieldProps } from "@mui/material";
 
-export interface KindSelectItem {
+interface KindSelectItem {
   kind: string;
   label: string;
   parent: string | null;
 }
 
-export interface KindTreeOption {
+interface KindTreeOption {
   item: KindSelectItem;
   prefix: string;
 }
 
-export function kindTreeOptions(kinds: readonly KindSelectItem[]): KindTreeOption[] {
+function kindTreeOptions(kinds: readonly KindSelectItem[]): KindTreeOption[] {
   const knownKinds = new Set(kinds.map((item) => item.kind));
   const children = new Map<string | null, KindSelectItem[]>();
   for (const item of kinds) {

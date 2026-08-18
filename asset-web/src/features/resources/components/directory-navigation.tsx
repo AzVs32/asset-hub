@@ -18,7 +18,13 @@ export function DirectoryBreadcrumbs({
     <Breadcrumbs
       separator={<ChevronRightIcon fontSize="small" />}
       aria-label="Directory path"
-      sx={{ minWidth: 0, flex: 1 }}
+      sx={{
+        minWidth: 0,
+        flex: 1,
+        flexBasis: { xs: "100%", md: "auto" },
+        order: { xs: 3, md: 0 },
+        overflow: "hidden",
+      }}
     >
       {crumbs.map((crumb) => (
         <Link
@@ -59,7 +65,12 @@ export function DirectoryKindEditor({
   const changed = canEdit && Boolean(kind) && kind !== directory?.kind;
 
   return (
-    <Stack direction="row" spacing={1} alignItems="center">
+    <Stack
+      direction="row"
+      spacing={1}
+      alignItems="center"
+      sx={{ width: { xs: "100%", sm: "auto" }, order: { xs: 4, lg: 0 } }}
+    >
       <KindSelect
         label="Directory kind"
         kinds={kinds}
@@ -74,7 +85,7 @@ export function DirectoryKindEditor({
             value: event.target.value,
           })
         }
-        sx={{ minWidth: 220 }}
+        sx={{ minWidth: { xs: 0, sm: 220 }, flex: 1 }}
       />
       <Button
         variant="contained"

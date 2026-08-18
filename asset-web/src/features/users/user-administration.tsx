@@ -157,17 +157,41 @@ export function UserAdministration({
             <Controller
               name="username"
               control={newUser.control}
-              render={({ field }) => {
+              rules={{
+                validate: (value) => value.trim().length > 0 || "Username is required",
+              }}
+              render={({ field, fieldState }) => {
                 const { ref, ...rest } = field;
-                return <TextField {...rest} inputRef={ref} label="Username" />;
+                return (
+                  <TextField
+                    {...rest}
+                    inputRef={ref}
+                    label="Username"
+                    error={Boolean(fieldState.error)}
+                    helperText={fieldState.error?.message}
+                  />
+                );
               }}
             />
             <Controller
               name="password"
               control={newUser.control}
-              render={({ field }) => {
+              rules={{
+                required: "Password is required",
+                minLength: { value: 4, message: "Password must be at least 4 characters" },
+              }}
+              render={({ field, fieldState }) => {
                 const { ref, ...rest } = field;
-                return <TextField {...rest} inputRef={ref} type="password" label="Password" />;
+                return (
+                  <TextField
+                    {...rest}
+                    inputRef={ref}
+                    type="password"
+                    label="Password"
+                    error={Boolean(fieldState.error)}
+                    helperText={fieldState.error?.message}
+                  />
+                );
               }}
             />
             <Controller
