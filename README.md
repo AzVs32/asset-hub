@@ -1,148 +1,64 @@
 # Asset Hub
 
-Asset Hub is a local-first asset management system for organizing, browsing,
-and extending personal or team asset collections. It provides an HTTP API, a
-Web interface, an administration CLI, and a plugin system for supporting
-additional resource formats and actions.
+Asset Hub is a local-first asset management system with support for multiple user accounts. It
+provides a Web interface and local administration commands, and can be extended with plugins.
 
-The project currently stores metadata in SQLite and asset files on the local
-filesystem, making it easy to run directly on a workstation.
+## Getting Started
 
-## Features
-
-- Organize assets in directories with metadata and content references.
-- Address directories by stable UUID and protect Resource and Directory mutations with revisions.
-- Manage users and workspace access.
-- Upload large files with resumable transfers and checksum verification.
-- Extend resource detection, actions, and views with Wasm and Web plugins.
-- Display plugin-provided Resource and Directory thumbnails with local File and Folder icon
-  fallbacks when no provider applies.
-- Run the API, administration CLI, and Web development server directly from source.
-
-## Requirements
-
-- Rust 1.97.1, pinned by `rust-toolchain.toml`.
-- Node.js 22.22.2, pinned by `.node-version` and `.nvmrc`.
-
-## Quick Start
-
-### 1. Create the First Administrator
-
-Create the first administrator through the trusted local administration CLI. The password is read
-twice from the terminal without being added to the command line:
+Install the Rust target and JavaScript dependencies required by the bundled plugins and Web app:
 
 ```bash
-cargo run -p asset-cli --bin asset -- user --create admin --admin
+rustup target add wasm32-unknown-unknown
+npm --prefix asset-plugin-sdk/web ci
+npm --prefix plugins/resource-text/web ci
+npm --prefix plugins/azvs-epub/web ci
+npm --prefix plugins/directory-games/web ci
+npm --prefix asset-web ci
 ```
 
-Administrators use the root workspace. Omitting `--admin` creates a member whose default workspace
-is `users/<username>`. If you select a non-default configuration with `--config`, pass the same
-path to both `asset` and `asset-http`.
+### 1. Build and Install the Bundled Plugins
 
-### 2. Start the API
-
-```bash
-cargo run -p asset-http --bin asset-http
-```
-
-The API listens on `http://127.0.0.1:8080` by default. It can start with no users, but nobody can
-log in until an administrator is created with the CLI.
-
-To start with the example configuration:
-
-```bash
-cargo run -p asset-http --bin asset-http -- --config config.example.toml
-```
-
-Run the following command to see all API options:
-
-```bash
-cargo run -p asset-http --bin asset-http -- --help
-```
-
-### 3. Start the Web UI
-
-In another terminal:
-
-```bash
-cd asset-web
-npm install
-npm run dev
-```
-
-Open `http://127.0.0.1:5173`. The development server proxies `/api` requests and public
-`/plugins` Web assets to the API at `http://127.0.0.1:8080`.
-
-### 4. Use the Administration CLI
-
-```bash
-cargo run -p asset-cli --bin asset -- --help
-```
-
-The CLI provides configuration inspection, user management, system
-maintenance, and plugin commands.
-See [`asset-cli/README.md`](asset-cli/README.md) for usage details.
-
-## Plugins
-
-Asset Hub supports packaged Wasm runtime plugins with optional Web interfaces.
-The repository includes the `resource.text`, `resource.image`, EPUB, and Games plugins as examples.
-`resource.text` owns Markdown plus basic `.txt`, `.c`, `.cpp`, and `.h` reading/editing;
-`resource.image` provides common image thumbnails without introducing an image Kind. The Host does
-not provide generic text, image, or video Resource kinds.
-
-See [`asset-plugin-sdk/README.md`](asset-plugin-sdk/README.md) for the high-level Rust authoring
-facade, low-level wire contract, package format, compatibility policy, and verification workflow.
-
-At startup, `asset-runtime` assembles the verified plugin catalog, kind/action
-registries, Extism executors, and Core services in that order. `asset-infra`
-provides the filesystem verification, Extism, SQLite, OpenDAL, and registry
-adapters but does not compose application services. `asset plugin --install <path>` generates the
-installed package lock after snapshotting and validation; runtime loading remains read-only and
-requires that valid `manifest.lock.json`.
-
-Runtime assembly creates one shared directory service for resource, user, and authorization
-workflows. It also owns the supervised upload-finalization tasks; Core validates upload state and
-executes finalization business logic without spawning detached work.
-Resource and Directory kinds/actions use parallel typed contracts: canonical kind/action IDs,
-typed built-in or plugin origins, flattened discovered actions, declared output views, and strict
-aggregate-identity validation for action effects.
-
-See [`asset-infra/README.md`](asset-infra/README.md) and
-[`asset-runtime/README.md`](asset-runtime/README.md) for the adapter/composition
-boundary and startup order.
-
-## Development Checks
-
-Run the Rust workspace tests:
-
-```bash
-cargo test --workspace
-```
-
-Check the Web application:
-
-```bash
-cd asset-web
-npm run check
-npm test
-npm run build
-```
-
-The bundled plugins have separate build targets and checks. Each build writes only to that
-plugin's own `asset-plugin-target/` directory, leaves the root `manifest.json` as the editable
-source, and copies a delivery snapshot of it into the target:
+From the repository root, build the plugin packages:
 
 ```bash
 plugins/resource-text/build.sh
 plugins/resource-image/build.sh
 plugins/azvs-epub/build.sh
 plugins/directory-games/build.sh
-cargo test --manifest-path plugins/resource-text/runtime/Cargo.toml
-cargo test --manifest-path plugins/resource-image/runtime/Cargo.toml
-cargo test --manifest-path plugins/azvs-epub/runtime/Cargo.toml
-cargo test --manifest-path plugins/directory-games/runtime/Cargo.toml
-(cd plugins/resource-text/web && npm run typecheck && npm run build)
-(cd plugins/azvs-epub/web && npm run typecheck && npm run build)
-(cd plugins/directory-games/web && npm run typecheck && npm run lint && npm run build)
 ```
+
+Then install them into Asset Hub:
+
+```bash
+cargo run -p asset-cli --bin asset -- plugin --install plugins/resource-text/asset-plugin-target
+cargo run -p asset-cli --bin asset -- plugin --install plugins/resource-image/asset-plugin-target
+cargo run -p asset-cli --bin asset -- plugin --install plugins/azvs-epub/asset-plugin-target
+cargo run -p asset-cli --bin asset -- plugin --install plugins/directory-games/asset-plugin-target
+```
+
+### 2. Create the First Administrator
+
+```bash
+cargo run -p asset-cli --bin asset -- user --create admin --admin
+```
+
+Enter the administrator password when prompted.
+
+### 3. Start the API
+
+```bash
+cargo run -p asset-http --bin asset-http
+```
+
+The API listens on `http://127.0.0.1:8080` by default.
+
+### 4. Start the Web Interface
+
+In another terminal:
+
+```bash
+cd asset-web
+npm run dev
+```
+
+Open `http://127.0.0.1:5173`.
