@@ -1,11 +1,11 @@
 # Asset Hub
 
-Asset Hub is a local-first asset management system with support for multiple user accounts. It
-provides a Web interface and local administration commands, and can be extended with plugins.
+Asset Hub 是一个以本地为主的资源管理系统，支持多个用户账户。
+它提供一个 Web 页面和本地管理命令，并且可以通过插件进行拓展。
 
-## Getting Started
+## 入门指南
 
-Install the Rust target and JavaScript dependencies required by the bundled plugins and Web app:
+安装捆绑插件和 Web 应用所需的依赖：
 
 ```bash
 rustup target add wasm32-unknown-unknown
@@ -16,9 +16,9 @@ npm --prefix plugins/directory-games/web ci
 npm --prefix asset-web ci
 ```
 
-### 1. Build and Install the Bundled Plugins
+## 1. 构建并安装捆绑插件
 
-From the repository root, build the plugin packages:
+从仓库根目录构建插件：
 
 ```bash
 plugins/resource-text/build.sh
@@ -27,7 +27,7 @@ plugins/azvs-epub/build.sh
 plugins/directory-games/build.sh
 ```
 
-Then install them into Asset Hub:
+然后将其安装到 Asset Hub：
 
 ```bash
 cargo run -p asset-cli --bin asset -- plugin --install plugins/resource-text/asset-plugin-target
@@ -36,29 +36,29 @@ cargo run -p asset-cli --bin asset -- plugin --install plugins/azvs-epub/asset-p
 cargo run -p asset-cli --bin asset -- plugin --install plugins/directory-games/asset-plugin-target
 ```
 
-### 2. Create the First Administrator
+### 创建首位管理员
 
 ```bash
 cargo run -p asset-cli --bin asset -- user --create admin --admin
 ```
 
-Enter the administrator password when prompted.
+在系统提示时输入管理员密码。
 
-### 3. Start the API
+### 3. 启动 API
 
 ```bash
 cargo run -p asset-http --bin asset-http
 ```
 
-The API listens on `http://127.0.0.1:8080` by default.
+默认情况下，API 在 `http://127.0.0.1:8080` 上进行监听。
 
-### 4. Start the Web Interface
+### 4. 启动 Web 页面
 
-In another terminal:
+在另一个终端中：
 
 ```bash
 cd asset-web
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173`.
+打开 `http://127.0.0.1:5173`。
