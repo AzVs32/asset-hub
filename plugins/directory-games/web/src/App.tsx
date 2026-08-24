@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -79,6 +80,10 @@ type AliasField = {
   id: number;
   value: string;
 };
+
+type DocumentViewState =
+  | { resourceId: string; status: "ready"; output: ResourceActionOutput }
+  | { resourceId: string; status: "error"; message: string };
 
 function App() {
   const [client, setClient] = useState<AssetHubDirectoryFrameClient | null>(null);
@@ -503,37 +508,52 @@ function GameDetail({
 }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
-  const [documentOutput, setDocumentOutput] = useState<ResourceActionOutput | null>(null);
-  const [viewError, setViewError] = useState<string | null>(null);
+  const [documentView, setDocumentView] = useState<DocumentViewState | null>(null);
   const readme = model.documents.find((document) => document.name === "README.md");
   const coverSource = model.cover
     ? `data:${model.cover.mime_type};base64,${model.cover.data}`
     : null;
+  const currentDocumentView = readme && documentView?.resourceId === readme.id
+    ? documentView
+    : null;
+  const documentOutput = currentDocumentView?.status === "ready"
+    ? currentDocumentView.output
+    : null;
+  const viewError = !readme
+    ? "README.md was not found for this game."
+    : currentDocumentView?.status === "error"
+      ? currentDocumentView.message
+      : null;
+
+  const reportDocumentError = useCallback((resourceId: string, message: string) => {
+    setDocumentView({ resourceId, status: "error", message });
+  }, []);
 
   useEffect(() => {
-    if (!readme) {
-      setDocumentOutput(null);
-      setViewError("README.md was not found for this game.");
-      return;
-    }
+    const resourceId = readme?.id;
+    if (!resourceId) return;
     let active = true;
-    setDocumentOutput(null);
-    setViewError(null);
-    void client.viewResource(readme.id)
+    void client.viewResource(resourceId)
       .then((output) => {
         if (!active) return;
         if (output.view?.view !== "plugin_frame") {
           throw new Error("Resource Text did not return its reader frame.");
         }
-        setDocumentOutput(output);
+        setDocumentView({ resourceId, status: "ready", output });
       })
       .catch((reason: unknown) => {
-        if (active) setViewError(errorMessage(reason, "Unable to display README.md"));
+        if (active) {
+          setDocumentView({
+            resourceId,
+            status: "error",
+            message: errorMessage(reason, "Unable to display README.md"),
+          });
+        }
       });
     return () => {
       active = false;
     };
-  }, [client, readme]);
+  }, [client, readme?.id]);
 
   async function edit(document: GameDocument) {
     setEditing(document.id);
@@ -577,7 +597,7 @@ function GameDetail({
             client={client}
             resourceId={readme.id}
             output={documentOutput}
-            onError={setViewError}
+            onError={reportDocumentError}
           />
         ) : (
           <DocumentState tone="loading" title="Opening README.md" detail="Loading text view" />
@@ -596,7 +616,7 @@ function ResourceProviderFrame({
   client: AssetHubDirectoryFrameClient;
   resourceId: string;
   output: ResourceActionOutput;
-  onError: (message: string) => void;
+  onError: (resourceId: string, message: string) => void;
 }) {
   const frameRef = useRef<HTMLIFrameElement | null>(null);
 
@@ -607,14 +627,16 @@ function ResourceProviderFrame({
     try {
       const mount = mountAssetHubResourceFrame({ client, frame, resourceId, output });
       void mount.ready.catch((reason: unknown) => {
-        if (active) onError(errorMessage(reason, "Unable to connect the Resource Text reader"));
+        if (active) {
+          onError(resourceId, errorMessage(reason, "Unable to connect the Resource Text reader"));
+        }
       });
       return () => {
         active = false;
         mount.disconnect();
       };
     } catch (reason) {
-      onError(errorMessage(reason, "Unable to mount the Resource Text reader"));
+      onError(resourceId, errorMessage(reason, "Unable to mount the Resource Text reader"));
     }
   }, [client, onError, output, resourceId]);
 

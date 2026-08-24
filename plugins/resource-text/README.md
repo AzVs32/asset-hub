@@ -76,8 +76,9 @@ reader/editor.
 
 ## Build
 
-Requires Rust with the `wasm32-unknown-unknown` target and Node.js 22
-(`web/.node-version` pins the tested Node.js release). Prepare them once:
+Requires Rust with the `wasm32-unknown-unknown` target and Node.js 22.12 or later
+(`web/.node-version` pins the tested release). The Web bundle uses Vite 8 with Rolldown. Prepare
+them once:
 
 ```bash
 rustup target add wasm32-unknown-unknown

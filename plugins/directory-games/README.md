@@ -48,8 +48,9 @@ reclassified as game entries. Explicit non-Core child Kinds are preserved.
 
 ## Build
 
-Requires Rust with the `wasm32-unknown-unknown` target and Node.js 22
-(`web/.node-version` pins the tested Node.js release). Prepare them once:
+Requires Rust with the `wasm32-unknown-unknown` target and Node.js 22.12 or later
+(`web/.node-version` pins the tested release). The Web bundle uses Vite 8 with Rolldown. Prepare
+them once:
 
 ```bash
 rustup target add wasm32-unknown-unknown
@@ -92,7 +93,6 @@ Run the runtime and Web checks independently with:
 cargo test --manifest-path plugins/directory-games/runtime/Cargo.toml
 cd plugins/directory-games/web
 npm run typecheck
-npm run lint
 npm run build
 cd ../../..
 ```

@@ -82,7 +82,7 @@ Connection and call timeouts limit how long the SDK waits. They do not cancel wo
 has already started. A timed-out write can still complete, so a plugin must refresh authoritative
 state before deciding whether another write is safe; it must not blindly retry a mutation.
 
-Build and type-check with Node.js 22.12 or later in the Node.js 22 release line:
+Build and type-check with Node.js 22.12 or later. The SDK bundle uses Vite 8 with Rolldown:
 
 ```bash
 npm ci

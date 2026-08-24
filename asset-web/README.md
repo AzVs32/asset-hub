@@ -136,7 +136,8 @@ does not need to be changed.
 
 ## Development
 
-Start `asset-http` on port 8080, then:
+Use Node.js 22.12 or later. The frontend builds with Vite 8 and Rolldown. Start `asset-http` on port
+8080, then:
 
 ```bash
 cd asset-web
