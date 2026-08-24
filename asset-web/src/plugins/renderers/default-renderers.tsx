@@ -50,7 +50,7 @@ function PluginFrameView({
       frameResourceId: output.resourceId,
       frameActionId: output.action,
       gateway,
-      onResourceChanged: () => onResourceChangedRef.current?.(),
+      onResourceChanged: (latestResource) => onResourceChangedRef.current?.(latestResource),
       confirmAction: (message) => window.confirm(message),
     });
   }, [gateway, output.action, output.resourceId, selectedResourceId]);

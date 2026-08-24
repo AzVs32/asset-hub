@@ -25,7 +25,7 @@ export function createPluginFrameHostBridge({
   frameResourceId: string;
   frameActionId: string;
   gateway: AssetGateway;
-  onResourceChanged?: (() => void | Promise<void>) | undefined;
+  onResourceChanged?: ((latestResource?: Resource) => void | Promise<void>) | undefined;
   confirmAction?: ((message: string) => boolean | Promise<boolean>) | undefined;
 }): PluginFrameHostBridge {
   let resource = initialResource;
@@ -67,7 +67,7 @@ export function createPluginFrameHostBridge({
         );
         if (!editAction) throw new Error("Text editing is not available from this frame.");
         resource = await gateway.replaceResourceText(current, textValue);
-        await onResourceChanged?.();
+        await onResourceChanged?.(resource);
       },
     },
     updateResource(nextResource) {

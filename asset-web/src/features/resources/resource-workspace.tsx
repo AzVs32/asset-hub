@@ -240,8 +240,9 @@ export function ResourceWorkspace() {
       <PluginActionDialog
         result={commands.actionResult}
         onClose={() => commands.setActionResult(null)}
-        onResourceChanged={async () => {
-          await commands.refresh(commands.actionResult?.resource.id);
+        onResourceChanged={async (latestResource) => {
+          if (latestResource) commands.synchronizeResourceSnapshot(latestResource);
+          await commands.refresh(latestResource?.id ?? commands.actionResult?.resource.id);
           setDirectoryWorkspaceVersion((version) => version + 1);
         }}
       />

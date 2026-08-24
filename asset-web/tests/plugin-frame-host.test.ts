@@ -32,7 +32,8 @@ describe("Plugin Frame host bridge", () => {
 
     expect(replaceResourceText).toHaveBeenNthCalledWith(1, initial, "# First");
     expect(replaceResourceText).toHaveBeenNthCalledWith(2, revised, "# Second");
-    expect(onResourceChanged).toHaveBeenCalledTimes(2);
+    expect(onResourceChanged).toHaveBeenNthCalledWith(1, revised);
+    expect(onResourceChanged).toHaveBeenNthCalledWith(2, { ...revised, revision: 3 });
   });
 
   it("denies replacement when the frame was opened by a read action", async () => {

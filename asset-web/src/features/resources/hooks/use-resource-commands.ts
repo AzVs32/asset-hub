@@ -7,6 +7,7 @@ import { queryKeys } from "@/application/queries/keys";
 import type {
   Directory,
   DirectoryAction,
+  DirectoryListing,
   Resource,
   ResourceAction,
   ResourceDraft,
@@ -41,6 +42,33 @@ export function useResourceCommands() {
       notifyError(error);
     },
     [refresh],
+  );
+  const synchronizeResourceSnapshot = React.useCallback(
+    (resource: Resource) => {
+      queryClient.setQueryData(queryKeys.resource(resource.id), resource);
+      queryClient.setQueriesData<DirectoryListing>({ queryKey: ["directory"] }, (listing) => {
+        if (!listing?.resources.items.some((item) => item.id === resource.id)) return listing;
+        return {
+          ...listing,
+          resources: {
+            ...listing.resources,
+            items: listing.resources.items.map((item) =>
+              item.id === resource.id ? resource : item,
+            ),
+          },
+        };
+      });
+      setActionResult((current) => {
+        if (current?.resource.id !== resource.id) return current;
+        return {
+          ...current,
+          resource,
+          action:
+            resource.actions.find((action) => action.id === current.action.id) ?? current.action,
+        };
+      });
+    },
+    [queryClient],
   );
 
   const update = useMutation({
@@ -158,6 +186,7 @@ export function useResourceCommands() {
     setActionResult,
     directoryActionResult,
     setDirectoryActionResult,
+    synchronizeResourceSnapshot,
     refresh,
   };
 }

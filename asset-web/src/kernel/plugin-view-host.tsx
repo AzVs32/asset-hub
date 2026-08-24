@@ -2,7 +2,7 @@ import { Alert } from "@mui/material";
 import type { AssetGateway } from "@/application/ports/asset-gateway";
 import type { ResourceActionOutput } from "@/domain/plugin";
 import type { Resource } from "@/domain/resource";
-import { usePluginKernel } from "./plugin-kernel";
+import { type ResourceChangedHandler, usePluginKernel } from "./plugin-kernel";
 
 export function PluginViewHost({
   output,
@@ -13,7 +13,7 @@ export function PluginViewHost({
   output: ResourceActionOutput;
   resource: Resource;
   gateway: AssetGateway;
-  onResourceChanged?: (() => void | Promise<void>) | undefined;
+  onResourceChanged?: ResourceChangedHandler | undefined;
 }) {
   const kernel = usePluginKernel();
   if (!output.view) return null;

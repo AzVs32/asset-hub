@@ -20,8 +20,10 @@ export interface PluginViewRendererProps {
   output: ResourceActionOutput;
   resource: Resource;
   gateway: AssetGateway;
-  onResourceChanged?: (() => void | Promise<void>) | undefined;
+  onResourceChanged?: ResourceChangedHandler | undefined;
 }
+
+export type ResourceChangedHandler = (latestResource?: Resource) => void | Promise<void>;
 
 export type PluginViewRenderer = React.ComponentType<PluginViewRendererProps>;
 

@@ -101,7 +101,8 @@ action 和用户授权能力。Feature 只知道这个接口。
   `renderers`；HTML 一律注入禁止网络访问的 CSP。两种 `plugin_frame` 仍使用各自聚合绑定的桥接。
 - `frame-host` 通过 Penpal 暴露窄能力接口；公共 Web SDK 隐藏传输细节。iframe 只能调用当前
   资源已经暴露的 action，且只有由当前 `edit` provider 打开的读写 frame 才能请求替换
-  当前资源文本。
+  当前资源文本。替换成功后，Host 将返回的最新 Resource 快照立即同步到当前 action 弹窗、
+  资源详情和目录列表缓存，再执行 query invalidation；连续保存或关闭后立即重新编辑不会复用旧 revision。
 - `directory-frame-host` 将连接绑定到当前 Directory，只允许执行该 Directory 已暴露的
   Action、刷新当前 Directory、请求 Host 导航，或按不透明 Resource ID 使用直属资源。Host 会
   重新读取资源并校验精确目录归属；阅读和编辑分别解析当前 `view` 与 `edit` provider，
