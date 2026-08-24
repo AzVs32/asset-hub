@@ -9,6 +9,7 @@ Actions through MIME or extension matching.
 
 - `manifest.json`: editable source of the Asset Hub plugin manifest.
 - `runtime`: Rust source for rebuilding the Wasm runtime.
+  - `assets/*-thumbnail.svg`: static Markdown and Mermaid icons embedded in the runtime.
 - `web`: React reader/editor source loaded inside the host iframe:
   - `src/main.tsx`: composition root that reads the frame context and mounts React.
   - `src/App.tsx`: reader/editor state and layout.
@@ -22,6 +23,7 @@ Actions through MIME or extension matching.
 
 - Plugin ID: `resource.text`
 - Format-specific kinds: `resource:markdown`, `resource:mermaid`
+- Thumbnail action: `resource.text.thumbnail` (`render_thumbnail`), providing `thumbnail`
 - Parent kind: `core:resource`
 - Read action: `resource.text.read` (`read_text`)
 - Edit action: `resource.text.edit` (`edit_text`)
@@ -29,9 +31,15 @@ Actions through MIME or extension matching.
 - Output view: `plugin_frame`
 
 The Host has no generic text kind or fallback text provider. Markdown and Mermaid MIME types and
-extensions are detected by this plugin's concrete Kind declarations. Both Actions are declared on
-`core:resource`, match supported MIME types or extensions, and are inherited by both concrete
-Kinds.
+extensions are detected by this plugin's concrete Kind declarations. The read and edit Actions are
+declared on `core:resource`, match supported MIME types or extensions, and are inherited by both
+concrete Kinds.
+
+The thumbnail provider is scoped to the concrete Markdown and Mermaid Kinds, uses their MIME and
+extension matching, and does not request or inspect Resource content. It returns one of two embedded
+`image/svg+xml` assets in the same neutral visual style: the familiar `M` plus down-arrow mark for
+Markdown, or `M` plus a compact decision-flow symbol for Mermaid. Plain text and source files
+deliberately keep the Host's default file icon.
 
 | Rendering | Extensions | Persisted Kind |
 | --- | --- | --- |

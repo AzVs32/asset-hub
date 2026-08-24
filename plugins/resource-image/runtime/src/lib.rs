@@ -57,15 +57,24 @@ mod tests {
     use asset_plugin_sdk::manifest::PluginManifest;
 
     #[test]
-    fn manifest_is_valid_and_does_not_declare_an_image_kind() {
+    fn manifest_uses_content_matching_without_an_image_kind() {
         let manifest: PluginManifest =
             asset_plugin_sdk::serde_json::from_str(include_str!("../../manifest.json")).unwrap();
 
         manifest.validate().unwrap();
         assert!(manifest.capabilities.resource_kinds.is_empty());
-        assert_eq!(
-            manifest.capabilities.resource_actions[0].id,
-            "resource.image.thumbnail"
+
+        let thumbnail = &manifest.capabilities.resource_actions[0];
+        assert_eq!(thumbnail.id, "resource.image.thumbnail");
+        assert_eq!(thumbnail.provides.as_deref(), Some("thumbnail"));
+        assert!(thumbnail.applies_to.kinds.is_empty());
+        assert_eq!(thumbnail.applies_to.mime_types, ["image/*"]);
+        assert!(
+            thumbnail
+                .applies_to
+                .extensions
+                .iter()
+                .any(|extension| extension == ".png")
         );
     }
 }

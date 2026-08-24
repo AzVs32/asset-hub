@@ -6,7 +6,7 @@
     "name": "Resource Image",
     "version": "0.1.0",
     "publisher": "azvs",
-    "description": "Thumbnail rendering for common image resources without introducing an image Kind."
+    "description": "Thumbnail rendering for common image resources matched by content metadata."
   },
   "runtime": {
     "type": "extism",
@@ -23,9 +23,6 @@
         "description": "Display the original image as its resource thumbnail.",
         "handler": "render_thumbnail",
         "applies_to": {
-          "kinds": [
-            "core:resource"
-          ],
           "mime_types": [
             "image/*"
           ],

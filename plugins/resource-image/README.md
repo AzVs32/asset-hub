@@ -1,8 +1,9 @@
 # Resource Image Plugin
 
-`resource.image` provides image thumbnails outside the Asset Hub Host. It intentionally registers
-no Resource Kind: matching files remain `core:resource`, and the thumbnail Action is selected by
-MIME type or filename extension.
+`resource.image` provides image thumbnails outside the Asset Hub Host. It does not introduce a
+Resource Kind or act as the `core:resource` thumbnail provider: the Action is selected only when
+the Resource MIME type or filename extension identifies a supported image. Other resources keep
+the Host's default file icon.
 
 ## Files
 
@@ -14,16 +15,16 @@ MIME type or filename extension.
 ## Contract
 
 - Plugin ID: `resource.image`
-- Kind declarations: none
+- Resource kinds: none
 - Thumbnail action: `resource.image.thumbnail` (`render_thumbnail`)
 - Thumbnail capability: `thumbnail`
 - Output view: URL-encoded `media` pointing to the authorized Resource content endpoint
 - Permission: `resource.read`; the Wasm runtime does not read or copy image bytes
 
-The Action applies to `image/*` or these common extensions: `.png`, `.jpg`, `.jpeg`, `.gif`,
-`.webp`, `.svg`, `.bmp`, `.avif`, `.ico`, `.tif`, and `.tiff`. An available image MIME type is
-preserved in normalized form; when matching by extension, the runtime supplies the corresponding
-image MIME type to the media view.
+The Action has no Kind scope and matches `image/*` or these common extensions: `.png`, `.jpg`,
+`.jpeg`, `.gif`, `.webp`, `.svg`, `.bmp`, `.avif`, `.ico`, `.tif`, and `.tiff`. An available image
+MIME type is preserved in normalized form; when matching by extension, the runtime supplies the
+corresponding image MIME type to the media view.
 
 The runtime imports the high-level authoring API directly from `asset-plugin-sdk`; the SDK export
 macro owns Extism/wire serialization and `Media::url` expresses the thumbnail response without

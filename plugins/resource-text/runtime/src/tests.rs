@@ -80,6 +80,36 @@ fn text_format_selects_format_specific_renderers_before_plain_text() {
 }
 
 #[test]
+fn thumbnail_returns_the_format_specific_static_svg() {
+    for (kind, name, marker) in [
+        (
+            "resource:markdown",
+            "README.md",
+            "data-thumbnail=\"markdown\"",
+        ),
+        (
+            "resource:mermaid",
+            "architecture.mmd",
+            "data-thumbnail=\"mermaid\"",
+        ),
+    ] {
+        let output = asset_plugin_sdk::runtime::run_resource_action(
+            thumbnail_request_json(kind, name),
+            handle_thumbnail,
+        )
+        .unwrap();
+        let output: Value = serde_json::from_str(&output).unwrap();
+
+        assert_eq!(output["view"], "media");
+        assert_eq!(output["mime_type"], "image/svg+xml");
+        assert_eq!(output["encoding"], "base64");
+        assert_eq!(output["title"], name);
+        let svg = decode_base64(output["data"].as_str().unwrap()).unwrap();
+        assert!(String::from_utf8(svg).unwrap().contains(marker));
+    }
+}
+
+#[test]
 fn manifest_keeps_format_kinds_and_shared_text_actions_aligned() {
     let manifest: PluginManifest =
         serde_json::from_str(include_str!("../../manifest.json")).unwrap();
@@ -112,6 +142,53 @@ fn manifest_keeps_format_kinds_and_shared_text_actions_aligned() {
             );
         }
     }
+
+    let thumbnail = manifest
+        .capabilities
+        .resource_actions
+        .iter()
+        .find(|action| action.id == "resource.text.thumbnail")
+        .unwrap();
+    assert_eq!(thumbnail.provides.as_deref(), Some("thumbnail"));
+    assert_eq!(thumbnail.output.views.as_slice(), ["media"]);
+    assert!(
+        thumbnail
+            .ui
+            .as_ref()
+            .unwrap()
+            .locations
+            .iter()
+            .any(|location| location == "resource_thumbnail")
+    );
+    for extension in [".md", ".markdown", ".mdown", ".mkd", ".mmd", ".mermaid"] {
+        assert!(
+            thumbnail
+                .applies_to
+                .extensions
+                .iter()
+                .any(|item| item == extension)
+        );
+    }
+    assert!(
+        !thumbnail
+            .applies_to
+            .extensions
+            .iter()
+            .any(|item| item == ".txt")
+    );
+}
+
+fn thumbnail_request_json(kind: &str, name: &str) -> String {
+    let mut resource = resource_json();
+    resource["kind"] = json!(kind);
+    resource["name"] = json!(name);
+    json!({
+        "action": "resource.text.thumbnail",
+        "access": "read",
+        "input": {},
+        "resource": resource,
+    })
+    .to_string()
 }
 
 fn request_json(action: &str, input: Value, content: Option<&[u8]>) -> String {

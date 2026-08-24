@@ -1,13 +1,16 @@
 use asset_plugin_sdk::{
-    Error, Frame, ResourceContext, ResourceResponse, Result, Value, encode_base64,
+    Error, Frame, Media, ResourceContext, ResourceResponse, Result, Value, encode_base64,
     encode_base64_url, export_resource_action, json, serde_json,
 };
 
 const VIEWER_ENTRYPOINT: &str = "index.html";
+const MARKDOWN_THUMBNAIL_SVG: &str = include_str!("../assets/markdown-thumbnail.svg");
+const MERMAID_THUMBNAIL_SVG: &str = include_str!("../assets/mermaid-thumbnail.svg");
 const SMALL_TEXT_BYTES: u64 = 512 * 1024;
 const CONTENT_CHUNK_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_TEXT_BYTES: u64 = 128 * 1024 * 1024;
 
+export_resource_action!(render_thumbnail => handle_thumbnail);
 export_resource_action!(read_text => handle_read_text);
 export_resource_action!(edit_text => handle_edit_text);
 
@@ -41,6 +44,20 @@ impl TextFormat {
             Self::Plain => "plain",
         }
     }
+}
+
+fn handle_thumbnail(context: ResourceContext) -> Result<ResourceResponse> {
+    let resource = context.resource();
+    let svg = match detect_text_format(resource.kind(), resource.name()) {
+        TextFormat::Markdown => MARKDOWN_THUMBNAIL_SVG,
+        TextFormat::Mermaid => MERMAID_THUMBNAIL_SVG,
+        TextFormat::Plain => {
+            return Err(Error::msg("thumbnail is available only for Markdown and Mermaid").into());
+        }
+    };
+    Ok(ResourceResponse::media(
+        Media::base64("image/svg+xml", svg).title(resource.name()),
+    ))
 }
 
 fn handle_read_text(context: ResourceContext) -> Result<ResourceResponse> {

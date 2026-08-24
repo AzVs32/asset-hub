@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" data-thumbnail="markdown">
+  <title>Markdown</title>
+  <rect width="96" height="96" rx="22" fill="#f6f8fa"/>
+  <rect x="8" y="22" width="80" height="52" rx="10" fill="#24292f"/>
+  <path d="M20 61V35h8l10 12 10-12h8v26h-8V47L38 58 28 47v14H20Z" fill="#fff"/>
+  <path d="M68 35h8v14h9L72 63 59 49h9V35Z" fill="#fff"/>
+</svg>

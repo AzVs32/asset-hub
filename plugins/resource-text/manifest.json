@@ -52,6 +52,46 @@
     ],
     "resource_actions": [
       {
+        "id": "resource.text.thumbnail",
+        "provides": "thumbnail",
+        "label": "Text Format Thumbnail",
+        "description": "Display a format-specific Markdown or Mermaid icon.",
+        "handler": "render_thumbnail",
+        "applies_to": {
+          "kinds": [
+            "resource:markdown",
+            "resource:mermaid"
+          ],
+          "mime_types": [
+            "text/markdown",
+            "text/x-markdown",
+            "text/vnd.mermaid",
+            "text/x-mermaid"
+          ],
+          "extensions": [
+            ".md",
+            ".markdown",
+            ".mdown",
+            ".mkd",
+            ".mmd",
+            ".mermaid"
+          ]
+        },
+        "access": "read",
+        "output": {
+          "views": [
+            "media"
+          ]
+        },
+        "ui": {
+          "group": "preview",
+          "order": 10,
+          "locations": [
+            "resource_thumbnail"
+          ]
+        }
+      },
+      {
         "id": "resource.text.read",
         "provides": "view",
         "label": "Read",
