@@ -67,7 +67,7 @@ routing value; document content is never copied into the iframe URL. Resource bi
 outer Host responsibility and is not duplicated in the private payload. The Host treats the
 fragment as an opaque part of the plugin URL and does not need a Mermaid-specific contract. After
 loading, the frame connects through
-`@asset-hub/plugin-web-sdk` and requests content through its validated Action bridge:
+`@asset-hub/asset-web-sdk` and requests content through its validated Action bridge:
 
 - `{"operation":"load"}` returns UTF-8 text directly up to 512 KiB.
 - Larger documents return transfer details and are fetched with sequential
@@ -103,7 +103,7 @@ them once:
 
 ```bash
 rustup target add wasm32-unknown-unknown
-cd asset-plugin-sdk/web
+cd sdk/asset-web-sdk
 npm ci
 cd ../../plugins/resource-text/web
 npm ci

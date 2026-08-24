@@ -54,7 +54,7 @@ fn reads_epub2_ncx_titles_and_cover_metadata() {
 
 #[test]
 fn load_and_chapter_operations_return_structured_data() {
-    let load = asset_plugin_sdk::runtime::run_resource_action(
+    let load = asset_rust_sdk::__private::run_resource_action(
         request_json(json!({"operation": "load"})),
         render_epub_payload,
     )
@@ -64,7 +64,7 @@ fn load_and_chapter_operations_return_structured_data() {
     assert_eq!(load["data"]["chapters"].as_array().unwrap().len(), 2);
     assert!(load["data"]["initial_chapter"]["html"].is_string());
 
-    let chapter = asset_plugin_sdk::runtime::run_resource_action(
+    let chapter = asset_rust_sdk::__private::run_resource_action(
         request_json(json!({"operation": "chapter", "index": 1})),
         render_epub_payload,
     )

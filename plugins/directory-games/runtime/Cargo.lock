@@ -27,9 +27,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
 
 [[package]]
-name = "asset-plugin-sdk"
+name = "asset-plugin-api"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "asset-rust-sdk"
+version = "0.1.0"
+dependencies = [
+ "asset-plugin-api",
  "base64 0.23.1",
  "extism-pdk",
  "serde",
@@ -109,7 +118,7 @@ checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
 name = "directory-games-plugin"
 version = "0.1.0"
 dependencies = [
- "asset-plugin-sdk",
+ "asset-rust-sdk",
  "image",
  "usvg",
 ]

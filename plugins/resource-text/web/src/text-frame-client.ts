@@ -4,7 +4,7 @@ import {
 	type JsonObject,
 	PLUGIN_API_VERSION,
 	type ResourceActionOutput,
-} from "@asset-hub/plugin-web-sdk";
+} from "@asset-hub/asset-web-sdk";
 
 export type TextDocumentFormat = "markdown" | "mermaid" | "plain";
 

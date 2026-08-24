@@ -7,7 +7,7 @@ authors.workspace = true
 publish = false
 
 [dependencies]
-asset-plugin-sdk.workspace = true
+asset-plugin-api.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 serde.workspace = true

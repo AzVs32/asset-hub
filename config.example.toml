@@ -79,8 +79,7 @@ filesystem_write = []
 # modifies the package.
 #
 # {
-#   "$schema": "https://asset-hub.local/schemas/plugin-manifest-v3.json",
-#   "manifest_version": 3,
+#   "manifest_version": 4,
 #   "plugin": {
 #     "id": "example.tools",
 #     "name": "Example Tools",

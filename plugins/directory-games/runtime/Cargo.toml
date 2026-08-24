@@ -8,7 +8,7 @@ crate-type = ["cdylib"]
 path = "src/lib.rs"
 
 [dependencies]
-asset-plugin-sdk = { path = "../../../asset-plugin-sdk", features = ["extism-guest"] }
+asset-rust-sdk = { path = "../../../sdk/asset-rust-sdk", features = ["extism-guest"] }
 image = { version = "0.25.10", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 usvg = { version = "0.48.1", default-features = false, features = ["writer"] }
 

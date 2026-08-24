@@ -1,4 +1,4 @@
-use asset_plugin_sdk::{Error, Result, Value, decode_base64};
+use asset_rust_sdk::{Error, Result, Value, decode_base64};
 use image::{ImageFormat, ImageReader, Limits};
 use std::io::Cursor;
 
@@ -29,14 +29,14 @@ pub(crate) fn optional_icon(input: &Value) -> Result<Option<GameIcon>> {
         .and_then(Value::as_str)
         .ok_or_else(|| Error::msg("icon.data is required"))?;
     if data.len() > MAX_COVER_SIZE.saturating_mul(4) / 3 + 4 {
-        return Err(Error::msg("game icon exceeds 1 MiB").into());
+        return Err(Error::msg("game icon exceeds 1 MiB"));
     }
     let bytes = decode_base64(data).map_err(|_| Error::msg("game icon is not valid base64"))?;
     if bytes.is_empty() {
-        return Err(Error::msg("game icon must not be empty").into());
+        return Err(Error::msg("game icon must not be empty"));
     }
     if bytes.len() > MAX_COVER_SIZE {
-        return Err(Error::msg("game icon exceeds 1 MiB").into());
+        return Err(Error::msg("game icon exceeds 1 MiB"));
     }
 
     detect_icon(bytes).map(Some)
@@ -60,7 +60,7 @@ fn detect_icon(bytes: Vec<u8>) -> Result<GameIcon> {
         ImageFormat::Jpeg => ("cover.jpg", "image/jpeg"),
         ImageFormat::WebP => ("cover.webp", "image/webp"),
         ImageFormat::Gif => ("cover.gif", "image/gif"),
-        _ => return Err(Error::msg("game icon must be PNG, JPEG, WebP, GIF, or SVG").into()),
+        _ => return Err(Error::msg("game icon must be PNG, JPEG, WebP, GIF, or SVG")),
     };
     validate_raster_image(&bytes, format)?;
     Ok(GameIcon {
@@ -96,12 +96,11 @@ fn normalize_svg(bytes: &[u8]) -> Result<Vec<u8>> {
     if size.width() > MAX_COVER_DIMENSION as f32 || size.height() > MAX_COVER_DIMENSION as f32 {
         return Err(Error::msg(format!(
             "game icon dimensions exceed {MAX_COVER_DIMENSION}x{MAX_COVER_DIMENSION}"
-        ))
-        .into());
+        )));
     }
     let normalized = tree.to_string(&usvg::WriteOptions::default()).into_bytes();
     if normalized.len() > MAX_COVER_SIZE {
-        return Err(Error::msg("normalized game icon exceeds 1 MiB").into());
+        return Err(Error::msg("normalized game icon exceeds 1 MiB"));
     }
     Ok(normalized)
 }
@@ -109,7 +108,7 @@ fn normalize_svg(bytes: &[u8]) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::optional_icon;
-    use asset_plugin_sdk::{json, runtime::encode_base64};
+    use asset_rust_sdk::{encode_base64, json};
     use image::{DynamicImage, ImageFormat};
     use std::io::Cursor;
 

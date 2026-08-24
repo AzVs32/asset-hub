@@ -11,7 +11,7 @@ export type {
   ResourceActionCapabilityId,
   ResourceActionEffectKind,
   ResourceActionOutput,
-} from "@asset-hub/plugin-web-sdk/contract";
+} from "@asset-hub/asset-web-sdk/contract";
 export {
   DIRECTORY_FRAME_CHANNEL,
   DIRECTORY_THUMBNAIL_CAPABILITY,
@@ -26,4 +26,4 @@ export {
   RESOURCE_VIEW_CAPABILITY,
   resourceActionCapabilityIds,
   resourceActionEffectKinds,
-} from "@asset-hub/plugin-web-sdk/contract";
+} from "@asset-hub/asset-web-sdk/contract";

@@ -9,7 +9,7 @@ Asset Hub 是一个以本地为主的资源管理系统，支持多个用户账�
 
 ```bash
 rustup target add wasm32-unknown-unknown
-npm --prefix asset-plugin-sdk/web ci
+npm --prefix sdk/asset-web-sdk ci
 npm --prefix plugins/resource-text/web ci
 npm --prefix plugins/azvs-epub/web ci
 npm --prefix plugins/directory-games/web ci

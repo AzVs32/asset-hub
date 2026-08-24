@@ -21,7 +21,7 @@ driving adapter. `asset-runtime` starts it with `ResourceService` and owns its l
 ## Plugin package boundary
 
 Built-in kinds and actions are Rust Host definitions with private typed handler bindings. They are
-not parsed through `asset_plugin_sdk::manifest::PluginManifest` and never appear in the external package
+not parsed through `asset_plugin_api::manifest::PluginManifest` and never appear in the external package
 catalog. Every filesystem package is an Extism/Wasm package; `runtime.type = "builtin"` is rejected.
 
 ## Kind and capability catalogs
@@ -37,7 +37,7 @@ therefore replaces, rather than coexists with, its ancestor's provider. The curr
 Resource capabilities are `thumbnail`, `view`, and `edit`.
 
 The supported Resource and Directory capability IDs are imported from
-`asset_plugin_sdk::manifest`; infrastructure does not maintain a second identifier catalog. SDK
+`asset_plugin_api::manifest`; infrastructure does not maintain a second identifier catalog. SDK
 Manifest validation rejects unknown IDs and invalid provider declarations before catalog assembly.
 Infrastructure repeats the normalized provider invariants as a defensive Host boundary, then owns
 kind-lineage selection and tied-provider rejection.

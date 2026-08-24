@@ -9,7 +9,7 @@ Install the Rust target and JavaScript dependencies required by the bundled plug
 
 ```bash
 rustup target add wasm32-unknown-unknown
-npm --prefix asset-plugin-sdk/web ci
+npm --prefix sdk/asset-web-sdk ci
 npm --prefix plugins/resource-text/web ci
 npm --prefix plugins/azvs-epub/web ci
 npm --prefix plugins/directory-games/web ci

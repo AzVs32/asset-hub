@@ -12,7 +12,7 @@ import {
   mountAssetHubResourceFrame,
   type AssetHubDirectoryFrameClient,
   type ResourceActionOutput,
-} from "@asset-hub/plugin-web-sdk";
+} from "@asset-hub/asset-web-sdk";
 import "./App.css";
 
 const WORKSPACE_ACTION = "directory.games.workspace";

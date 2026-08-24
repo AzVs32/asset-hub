@@ -116,12 +116,12 @@ Both bridges resolve canonical Action metadata from a currently bound aggregate 
 They share immutable aggregate-ID binding, monotonic snapshot update rules, plugin asset URL
 validation, and opaque-origin messenger construction. Resource text replacement and Directory
 refresh/navigation/Resource-frame/editor delegation remain deliberately aggregate-specific capabilities.
-Capability IDs and literal types come from `@asset-hub/plugin-web-sdk/contract`; the HTTP adapter
+Capability IDs and literal types come from `@asset-hub/asset-web-sdk/contract`; the HTTP adapter
 rejects an unknown `provides` value before it enters the Web domain. Kernel slots and frame bridges
 compare against the exported constants instead of declaring Host-local strings. A shared Manifest
 v3 golden fixture keeps these Web values aligned with the Rust Manifest SDK.
 The Host imports the API version, Resource and Directory channels, view kinds, action result types,
-and effect kinds from `@asset-hub/plugin-web-sdk/contract`; the shared golden contract additionally
+and effect kinds from `@asset-hub/asset-web-sdk/contract`; the shared golden contract additionally
 locks the exposed Host method names. Frame action input is recursively validated as a JSON
 object and is bounded to 32 nested levels and 10,000 values before it reaches the Gateway; opaque
 Resource IDs receive a separate non-empty length check.

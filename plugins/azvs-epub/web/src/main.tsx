@@ -5,7 +5,7 @@ import {
   connectAssetHubFrame,
   type AssetHubFrameClient,
   type JsonObject,
-} from "@asset-hub/plugin-web-sdk";
+} from "@asset-hub/asset-web-sdk";
 import {
   BookOpen,
   ChevronLeft,

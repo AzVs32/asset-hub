@@ -14,7 +14,7 @@ use crate::port::{
     StorageScanner, UploadSessionRepository,
 };
 use crate::service::DirectoryService;
-use asset_plugin_sdk::manifest::RESOURCE_EDIT_CAPABILITY;
+use asset_plugin_api::manifest::RESOURCE_EDIT_CAPABILITY;
 use std::sync::Arc;
 
 mod action;

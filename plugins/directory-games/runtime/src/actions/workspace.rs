@@ -1,5 +1,5 @@
 use super::{GAME_KIND, GAMES_KIND, required_string};
-use asset_plugin_sdk::{
+use asset_rust_sdk::{
     DirectoryContext, DirectoryResource, DirectoryResponse, Error, Frame, Result, Value,
     encode_base64, json,
 };
@@ -21,7 +21,7 @@ pub(crate) fn handle(context: DirectoryContext) -> Result<DirectoryResponse> {
     match operation {
         "load" => load_workspace(&context),
         "cover" => load_cover(&context),
-        _ => Err(Error::msg("unsupported Games workspace operation").into()),
+        _ => Err(Error::msg("unsupported Games workspace operation")),
     }
 }
 
@@ -54,7 +54,7 @@ fn load_workspace(context: &DirectoryContext) -> Result<DirectoryResponse> {
             "cover": read_cover(context, None)?
         })
     } else {
-        return Err(Error::msg("unsupported directory kind for Games workspace").into());
+        return Err(Error::msg("unsupported directory kind for Games workspace"));
     };
     DirectoryResponse::json(data)
 }
@@ -69,7 +69,9 @@ fn editable_document_references(resources: &[DirectoryResource]) -> Vec<Value> {
 
 fn load_cover(context: &DirectoryContext) -> Result<DirectoryResponse> {
     if context.directory().kind() != GAMES_KIND {
-        return Err(Error::msg("game covers can only be loaded from a Games directory").into());
+        return Err(Error::msg(
+            "game covers can only be loaded from a Games directory",
+        ));
     }
     let game_id = required_string(context.input(), "game_id", 64)?;
     let games = context.children_bounded(1_000)?;

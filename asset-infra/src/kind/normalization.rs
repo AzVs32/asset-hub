@@ -7,7 +7,7 @@ use asset_core::domain::{
     ResourceActionAppliesTo, ResourceActionContentDelivery, ResourceActionDefinition,
     ResourceActionRequirements, ResourceContentMatcher,
 };
-use asset_plugin_sdk::manifest::{
+use asset_plugin_api::manifest::{
     ContentDelivery, DirectoryActionCapability, ManifestActionAccess, ResourceActionCapability,
 };
 
@@ -87,13 +87,13 @@ pub(super) fn directory_action_definition(
         definition = definition.with_requirements(DirectoryActionRequirements {
             children: requirements.children,
             resources: match requirements.resources {
-                asset_plugin_sdk::manifest::DirectoryResourceAccess::None => {
+                asset_plugin_api::manifest::DirectoryResourceAccess::None => {
                     DirectoryResourceAccess::None
                 }
-                asset_plugin_sdk::manifest::DirectoryResourceAccess::Metadata => {
+                asset_plugin_api::manifest::DirectoryResourceAccess::Metadata => {
                     DirectoryResourceAccess::Metadata
                 }
-                asset_plugin_sdk::manifest::DirectoryResourceAccess::Content => {
+                asset_plugin_api::manifest::DirectoryResourceAccess::Content => {
                     DirectoryResourceAccess::Content
                 }
             },
@@ -135,7 +135,7 @@ pub(crate) fn resource_action_applies_to(
 }
 
 pub(super) fn content_matcher(
-    matcher: &asset_plugin_sdk::manifest::ResourceContentMatcher,
+    matcher: &asset_plugin_api::manifest::ResourceContentMatcher,
 ) -> ResourceContentMatcher {
     ResourceContentMatcher::new()
         .with_mime_types(matcher.mime_types().iter().cloned())

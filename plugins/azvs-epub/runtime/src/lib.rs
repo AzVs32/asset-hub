@@ -1,4 +1,4 @@
-use asset_plugin_sdk::{Error, Media, ResourceContext, ResourceResponse, Result};
+use asset_rust_sdk::{Error, Media, ResourceContext, ResourceResponse, Result};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;

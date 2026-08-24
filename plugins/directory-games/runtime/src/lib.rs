@@ -1,7 +1,7 @@
 mod actions;
 mod cover;
 
-use asset_plugin_sdk::export_directory_action;
+use asset_rust_sdk::export_directory_action;
 
 export_directory_action!(render_thumbnail => crate::actions::thumbnail::handle);
 export_directory_action!(render_workspace => crate::actions::workspace::handle);

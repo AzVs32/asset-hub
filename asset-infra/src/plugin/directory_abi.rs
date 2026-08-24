@@ -3,13 +3,16 @@ use asset_core::{
     domain::{DirectoryId, DirectoryResourceAccess, ResourceId, StorageKey},
     port::{DirectoryActionRequest, DirectoryQuery, ListResources, ResourceQuery},
 };
-use asset_plugin_sdk::manifest::{PluginPermission, PluginPermissions};
-use asset_plugin_sdk::protocol::directory::{
+use asset_plugin_api::abi::{
+    DIRECTORY_LIST_CHILDREN_FN, DIRECTORY_LIST_RESOURCES_FN, DIRECTORY_PAGE_MAX_LIMIT,
+    PluginDirectoryPageRequest,
+};
+use asset_plugin_api::manifest::{PluginPermission, PluginPermissions};
+use asset_plugin_api::protocol::directory::{
     PluginDirectoryChild, PluginDirectoryPage, PluginDirectoryResource, PluginDirectoryResourcePage,
 };
-use asset_plugin_sdk::protocol::{PluginContentReference, PluginContentReferenceEncoding};
+use asset_plugin_api::protocol::{PluginContentReference, PluginContentReferenceEncoding};
 use extism::{Function, PTR, UserData};
-use serde::Deserialize;
 use std::{
     collections::HashMap,
     str::FromStr,
@@ -17,8 +20,6 @@ use std::{
 };
 
 use super::content_abi::{ContentLease, HostContentResolver, plugin_resource_content};
-
-const MAX_PAGE_SIZE: u32 = 100;
 
 #[derive(Clone)]
 pub(super) struct HostDirectoryResolver {
@@ -28,17 +29,6 @@ pub(super) struct HostDirectoryResolver {
     permissions: PluginPermissions,
     state: Arc<Mutex<HashMap<String, AvailableDirectory>>>,
     runtime: tokio::runtime::Handle,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PageRequest {
-    reference: String,
-    #[serde(default)]
-    directory_id: Option<String>,
-    #[serde(default)]
-    cursor: Option<String>,
-    limit: u32,
 }
 
 #[derive(Clone)]
@@ -80,14 +70,14 @@ extism::host_fn!(asset_hub_directory_list_resources(user_data: HostDirectoryReso
 pub(super) fn host_functions(resolver: &HostDirectoryResolver) -> [Function; 2] {
     [
         Function::new(
-            "asset_hub_directory_list_children",
+            DIRECTORY_LIST_CHILDREN_FN,
             [PTR],
             [PTR],
             UserData::new(resolver.clone()),
             asset_hub_directory_list_children,
         ),
         Function::new(
-            "asset_hub_directory_list_resources",
+            DIRECTORY_LIST_RESOURCES_FN,
             [PTR],
             [PTR],
             UserData::new(resolver.clone()),
@@ -147,13 +137,13 @@ impl HostDirectoryResolver {
             .ok_or_else(|| CoreError::configuration("directory reference is not available"))
     }
 
-    fn page_request(&self, value: &str) -> Result<(PageRequest, u64), CoreError> {
-        let request: PageRequest = serde_json::from_str(value).map_err(|error| {
+    fn page_request(&self, value: &str) -> Result<(PluginDirectoryPageRequest, u64), CoreError> {
+        let request: PluginDirectoryPageRequest = serde_json::from_str(value).map_err(|error| {
             CoreError::configuration(format!("invalid directory page request: {error}"))
         })?;
-        if request.limit == 0 || request.limit > MAX_PAGE_SIZE {
+        if request.limit == 0 || request.limit > DIRECTORY_PAGE_MAX_LIMIT {
             return Err(CoreError::configuration(format!(
-                "directory page limit must be between 1 and {MAX_PAGE_SIZE}"
+                "directory page limit must be between 1 and {DIRECTORY_PAGE_MAX_LIMIT}"
             )));
         }
         let offset = request

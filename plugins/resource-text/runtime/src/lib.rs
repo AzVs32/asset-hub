@@ -1,6 +1,6 @@
-use asset_plugin_sdk::{
-    Error, Frame, Media, ResourceContext, ResourceResponse, Result, Value, encode_base64,
-    encode_base64_url, export_resource_action, json, serde_json,
+use asset_rust_sdk::{
+    Error, Frame, Media, PLUGIN_API_VERSION, ResourceContext, ResourceResponse, Result, Value,
+    encode_base64, encode_base64_url, export_resource_action, json, serde_json,
 };
 
 const VIEWER_ENTRYPOINT: &str = "index.html";
@@ -52,7 +52,9 @@ fn handle_thumbnail(context: ResourceContext) -> Result<ResourceResponse> {
         TextFormat::Markdown => MARKDOWN_THUMBNAIL_SVG,
         TextFormat::Mermaid => MERMAID_THUMBNAIL_SVG,
         TextFormat::Plain => {
-            return Err(Error::msg("thumbnail is available only for Markdown and Mermaid").into());
+            return Err(Error::msg(
+                "thumbnail is available only for Markdown and Mermaid",
+            ));
         }
     };
     Ok(ResourceResponse::media(
@@ -72,7 +74,7 @@ fn handle_edit_text(context: ResourceContext) -> Result<ResourceResponse> {
         return handle_content_operation(&context);
     }
     if context.input() != &json!({}) {
-        return Err(Error::msg("unsupported text edit operation").into());
+        return Err(Error::msg("unsupported text edit operation"));
     }
     text_frame_response(&context, FrameMode::Edit)
 }
@@ -80,7 +82,7 @@ fn handle_edit_text(context: ResourceContext) -> Result<ResourceResponse> {
 fn text_frame_response(context: &ResourceContext, mode: FrameMode) -> Result<ResourceResponse> {
     let resource = context.resource();
     let payload = encode_base64_url(serde_json::to_vec(&json!({
-        "plugin_api": asset_plugin_sdk::protocol::PLUGIN_API_VERSION,
+        "plugin_api": PLUGIN_API_VERSION,
         "mode": mode.as_str(),
         "action": context.action(),
         "format": detect_text_format(resource.kind(), resource.name()).as_str(),
@@ -94,8 +96,8 @@ fn handle_content_operation(context: &ResourceContext) -> Result<ResourceRespons
     let data = match requested_operation(context.input()) {
         Some("load") => load_text(context)?,
         Some("chunk") => load_text_chunk(context)?,
-        Some(_) => return Err(Error::msg("unsupported text content operation").into()),
-        None => return Err(Error::msg("missing text content operation").into()),
+        Some(_) => return Err(Error::msg("unsupported text content operation")),
+        None => return Err(Error::msg("missing text content operation")),
     };
     ResourceResponse::json(data)
 }
@@ -136,7 +138,7 @@ fn load_text_chunk(context: &ResourceContext) -> Result<Value> {
     let byte_length = context.content().size()?;
     ensure_text_size(byte_length)?;
     if offset >= byte_length {
-        return Err(Error::msg("text chunk offset is out of range").into());
+        return Err(Error::msg("text chunk offset is out of range"));
     }
     let length = CONTENT_CHUNK_BYTES.min(byte_length - offset);
     let bytes =
@@ -144,7 +146,9 @@ fn load_text_chunk(context: &ResourceContext) -> Result<Value> {
             .content()
             .read_range(offset, length, MAX_TEXT_BYTES, CONTENT_CHUNK_BYTES)?;
     if bytes.len() as u64 != length {
-        return Err(Error::msg("text chunk length does not match the requested range").into());
+        return Err(Error::msg(
+            "text chunk length does not match the requested range",
+        ));
     }
     Ok(json!({
         "protocol": 1,
@@ -161,7 +165,7 @@ fn requested_operation(input: &Value) -> Option<&str> {
 
 fn ensure_text_size(size: u64) -> Result<()> {
     if size > MAX_TEXT_BYTES {
-        return Err(Error::msg("text content exceeds the 128 MiB plugin limit").into());
+        return Err(Error::msg("text content exceeds the 128 MiB plugin limit"));
     }
     Ok(())
 }

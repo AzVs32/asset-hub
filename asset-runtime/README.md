@@ -55,7 +55,8 @@ its guard. Splitting the watcher into a service-independent event source remains
 refinement; it is not current runtime wiring.
 
 The runtime owns the verified browser-asset snapshot exposed to application surfaces. Filesystem
-paths and loaded bytes are Host runtime data and are intentionally absent from `asset-plugin-sdk`.
+paths and loaded bytes are Host runtime data and are intentionally absent from `asset-plugin-api`
+and the authoring SDKs.
 
 Run:
 

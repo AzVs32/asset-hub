@@ -4,9 +4,11 @@ use asset_core::domain::{
     StorageKey,
 };
 use asset_core::port::{BlobStorage, ResourceActionRequest};
-use asset_plugin_sdk::abi::content::PluginContentRange;
-use asset_plugin_sdk::manifest::PluginPermissions;
-use asset_plugin_sdk::protocol::{
+use asset_plugin_api::abi::{
+    CONTENT_CLOSE_FN, CONTENT_OPEN_FN, CONTENT_READ_RANGE_FN, CONTENT_SIZE_FN, PluginContentRange,
+};
+use asset_plugin_api::manifest::PluginPermissions;
+use asset_plugin_api::protocol::{
     PluginActionAccess, PluginChecksum, PluginContentBytes, PluginContentReference,
     PluginContentReferenceEncoding, PluginContentVerificationStatus, PluginInlineContentEncoding,
     PluginResource, PluginResourceActionRequest, PluginResourceContent,
@@ -98,28 +100,28 @@ pub(super) fn compile_plugin(
     policy: &PluginExecutionPolicy,
 ) -> Result<Arc<CompiledPlugin>, CoreError> {
     let content_open = Function::new(
-        "asset_hub_content_open",
+        CONTENT_OPEN_FN,
         [PTR],
         [PTR],
         UserData::new(host_content.clone()),
         asset_hub_content_open,
     );
     let content_size = Function::new(
-        "asset_hub_content_size",
+        CONTENT_SIZE_FN,
         [PTR],
         [PTR],
         UserData::new(host_content.clone()),
         asset_hub_content_size,
     );
     let content_read = Function::new(
-        "asset_hub_content_read",
+        CONTENT_READ_RANGE_FN,
         [PTR, PTR, PTR],
         [PTR],
         UserData::new(host_content.clone()),
         asset_hub_content_read,
     );
     let content_close = Function::new(
-        "asset_hub_content_close",
+        CONTENT_CLOSE_FN,
         [PTR],
         [],
         UserData::new(host_content.clone()),

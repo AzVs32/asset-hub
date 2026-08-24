@@ -2,14 +2,13 @@ pub(crate) mod create_game;
 pub(crate) mod thumbnail;
 pub(crate) mod workspace;
 
-use asset_plugin_sdk::{Error, Result, Value};
+use asset_rust_sdk::{Error, Result, Value};
 
 pub(crate) const GAMES_KIND: &str = "directory:games";
 pub(crate) const GAME_KIND: &str = "directory:games:item";
 
 pub(crate) fn required_string(input: &Value, field: &str, max: usize) -> Result<String> {
-    optional_string(input, field, max)?
-        .ok_or_else(|| Error::msg(format!("{field} is required")).into())
+    optional_string(input, field, max)?.ok_or_else(|| Error::msg(format!("{field} is required")))
 }
 
 fn optional_string(input: &Value, field: &str, max: usize) -> Result<Option<String>> {
@@ -24,7 +23,7 @@ fn optional_string(input: &Value, field: &str, max: usize) -> Result<Option<Stri
         return Ok(None);
     }
     if value.chars().count() > max {
-        return Err(Error::msg(format!("{field} exceeds {max} characters")).into());
+        return Err(Error::msg(format!("{field} exceeds {max} characters")));
     }
     Ok(Some(value.to_string()))
 }

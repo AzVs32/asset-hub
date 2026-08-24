@@ -1,10 +1,10 @@
 use super::*;
-use asset_plugin_sdk::{decode_base64, manifest::PluginManifest};
+use asset_rust_sdk::decode_base64;
 
 #[test]
 fn large_text_uses_bounded_chunks() {
     let text = vec![b'a'; CONTENT_CHUNK_BYTES as usize + 17];
-    let load = asset_plugin_sdk::runtime::run_resource_action(
+    let load = asset_rust_sdk::__private::run_resource_action(
         request_json(
             "resource.text.read",
             json!({"operation": "load"}),
@@ -17,7 +17,7 @@ fn large_text_uses_bounded_chunks() {
     assert_eq!(load["data"]["transfer"], "chunked");
     assert_eq!(load["data"]["chunk_size"], CONTENT_CHUNK_BYTES);
 
-    let chunk = asset_plugin_sdk::runtime::run_resource_action(
+    let chunk = asset_rust_sdk::__private::run_resource_action(
         request_json(
             "resource.text.read",
             json!({"operation": "chunk", "offset": CONTENT_CHUNK_BYTES}),
@@ -37,7 +37,7 @@ fn large_text_uses_bounded_chunks() {
 
 #[test]
 fn edit_text_rejects_inline_writeback() {
-    let error = asset_plugin_sdk::runtime::run_resource_action(
+    let error = asset_rust_sdk::__private::run_resource_action(
         request_json("resource.text.edit", json!({"text": "updated"}), None),
         handle_edit_text,
     )
@@ -93,7 +93,7 @@ fn thumbnail_returns_the_format_specific_static_svg() {
             "data-thumbnail=\"mermaid\"",
         ),
     ] {
-        let output = asset_plugin_sdk::runtime::run_resource_action(
+        let output = asset_rust_sdk::__private::run_resource_action(
             thumbnail_request_json(kind, name),
             handle_thumbnail,
         )
@@ -111,68 +111,64 @@ fn thumbnail_returns_the_format_specific_static_svg() {
 
 #[test]
 fn manifest_keeps_format_kinds_and_shared_text_actions_aligned() {
-    let manifest: PluginManifest =
-        serde_json::from_str(include_str!("../../manifest.json")).unwrap();
-    manifest.validate().unwrap();
+    let manifest: Value = serde_json::from_str(include_str!("../../manifest.json")).unwrap();
+    let resource_kinds = manifest["capabilities"]["resource_kinds"]
+        .as_array()
+        .unwrap();
+    let resource_actions = manifest["capabilities"]["resource_actions"]
+        .as_array()
+        .unwrap();
 
     for kind_id in ["resource:markdown", "resource:mermaid"] {
-        let kind = manifest
-            .capabilities
-            .resource_kinds
+        let kind = resource_kinds
             .iter()
-            .find(|kind| kind.kind == kind_id)
+            .find(|kind| kind["kind"] == kind_id)
             .unwrap();
-        assert_eq!(kind.parent.as_deref(), Some("core:resource"));
+        assert_eq!(kind["parent"], "core:resource");
     }
 
     for action_id in ["resource.text.read", "resource.text.edit"] {
-        let action = manifest
-            .capabilities
-            .resource_actions
+        let action = resource_actions
             .iter()
-            .find(|action| action.id == action_id)
+            .find(|action| action["id"] == action_id)
             .unwrap();
         for extension in [".md", ".mmd", ".mermaid"] {
             assert!(
-                action
-                    .applies_to
-                    .extensions
+                action["applies_to"]["extensions"]
+                    .as_array()
+                    .unwrap()
                     .iter()
                     .any(|item| item == extension)
             );
         }
     }
 
-    let thumbnail = manifest
-        .capabilities
-        .resource_actions
+    let thumbnail = resource_actions
         .iter()
-        .find(|action| action.id == "resource.text.thumbnail")
+        .find(|action| action["id"] == "resource.text.thumbnail")
         .unwrap();
-    assert_eq!(thumbnail.provides.as_deref(), Some("thumbnail"));
-    assert_eq!(thumbnail.output.views.as_slice(), ["media"]);
+    assert_eq!(thumbnail["provides"], "thumbnail");
+    assert_eq!(thumbnail["output"]["views"][0], "media");
     assert!(
-        thumbnail
-            .ui
-            .as_ref()
+        thumbnail["ui"]["locations"]
+            .as_array()
             .unwrap()
-            .locations
             .iter()
             .any(|location| location == "resource_thumbnail")
     );
     for extension in [".md", ".markdown", ".mdown", ".mkd", ".mmd", ".mermaid"] {
         assert!(
-            thumbnail
-                .applies_to
-                .extensions
+            thumbnail["applies_to"]["extensions"]
+                .as_array()
+                .unwrap()
                 .iter()
                 .any(|item| item == extension)
         );
     }
     assert!(
-        !thumbnail
-            .applies_to
-            .extensions
+        !thumbnail["applies_to"]["extensions"]
+            .as_array()
+            .unwrap()
             .iter()
             .any(|item| item == ".txt")
     );

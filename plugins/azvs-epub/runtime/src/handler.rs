@@ -1,5 +1,5 @@
 use super::*;
-use asset_plugin_sdk::{Frame, Value, encode_base64_url, export_resource_action};
+use asset_rust_sdk::{Frame, PLUGIN_API_VERSION, Value, encode_base64_url, export_resource_action};
 use serde_json::json;
 
 export_resource_action!(render_epub => render_epub_payload);
@@ -30,11 +30,11 @@ pub(super) fn render_epub_payload(context: ResourceContext) -> Result<ResourceRe
             let chapter = render_chapter(&book, index)?;
             ResourceResponse::json(chapter)
         }
-        Some(_) => Err(Error::msg("unsupported EPUB operation").into()),
+        Some(_) => Err(Error::msg("unsupported EPUB operation")),
         None => {
             let resource = context.resource();
             let payload = encode_base64_url(serde_json::to_vec(&json!({
-                "plugin_api": asset_plugin_sdk::protocol::PLUGIN_API_VERSION,
+                "plugin_api": PLUGIN_API_VERSION,
                 "resource_id": resource.id(),
                 "resource_name": resource.name(),
                 "action": context.action(),

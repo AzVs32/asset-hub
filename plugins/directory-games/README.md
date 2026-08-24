@@ -26,7 +26,7 @@ name:
 
 The Rust runtime consumes these capabilities through bounded `DirectoryContext` queries and builds
 the scaffold with the SDK `Tree` response builder. The React frame imports
-`@asset-hub/plugin-web-sdk`, loads workspace data through `directory.games.workspace`, invokes
+`@asset-hub/asset-web-sdk`, loads workspace data through `directory.games.workspace`, invokes
 `directory.games.create`, and delegates Directory navigation and document viewing/editing to the
 Host. The game workspace shows `README.md` through the resolved `view` provider and mounts its
 exact `plugin_frame`. The Web SDK relays that nested frame's standard Resource calls through the
@@ -54,7 +54,7 @@ them once:
 
 ```bash
 rustup target add wasm32-unknown-unknown
-cd asset-plugin-sdk/web
+cd sdk/asset-web-sdk
 npm ci
 cd ../../plugins/directory-games/web
 npm ci

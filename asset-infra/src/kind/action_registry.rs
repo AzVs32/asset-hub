@@ -4,7 +4,7 @@ use asset_core::domain::{
     ResourceKindDefinition,
 };
 use asset_core::port::ResourceActionRegistry;
-use asset_plugin_sdk::manifest::{
+use asset_plugin_api::manifest::{
     RESOURCE_ACTION_CAPABILITIES, RESOURCE_EDIT_CAPABILITY, RESOURCE_THUMBNAIL_CAPABILITY,
     RESOURCE_VIEW_CAPABILITY, ResourceActionCapability,
 };

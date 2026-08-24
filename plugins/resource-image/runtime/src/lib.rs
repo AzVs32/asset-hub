@@ -1,4 +1,4 @@
-use asset_plugin_sdk::{
+use asset_rust_sdk::{
     Error, Media, ResourceContext, ResourceResponse, ResourceSnapshot, Result,
     export_resource_action,
 };
@@ -8,7 +8,7 @@ export_resource_action!(render_thumbnail => render_thumbnail_action);
 fn render_thumbnail_action(context: ResourceContext) -> Result<ResourceResponse> {
     let resource = context.resource();
     if resource.content_size().is_none() {
-        return Err(Error::msg("image resource has no content").into());
+        return Err(Error::msg("image resource has no content"));
     }
     let mime_type =
         image_mime_type(resource).ok_or_else(|| Error::msg("resource is not a supported image"))?;
@@ -54,25 +54,28 @@ fn image_mime_type(resource: ResourceSnapshot<'_>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use asset_plugin_sdk::manifest::PluginManifest;
+    use asset_rust_sdk::Value;
 
     #[test]
     fn manifest_uses_content_matching_without_an_image_kind() {
-        let manifest: PluginManifest =
-            asset_plugin_sdk::serde_json::from_str(include_str!("../../manifest.json")).unwrap();
+        let manifest: Value =
+            asset_rust_sdk::serde_json::from_str(include_str!("../../manifest.json")).unwrap();
 
-        manifest.validate().unwrap();
-        assert!(manifest.capabilities.resource_kinds.is_empty());
-
-        let thumbnail = &manifest.capabilities.resource_actions[0];
-        assert_eq!(thumbnail.id, "resource.image.thumbnail");
-        assert_eq!(thumbnail.provides.as_deref(), Some("thumbnail"));
-        assert!(thumbnail.applies_to.kinds.is_empty());
-        assert_eq!(thumbnail.applies_to.mime_types, ["image/*"]);
         assert!(
-            thumbnail
-                .applies_to
-                .extensions
+            manifest["capabilities"]["resource_kinds"]
+                .as_array()
+                .is_some_and(Vec::is_empty)
+        );
+
+        let thumbnail = &manifest["capabilities"]["resource_actions"][0];
+        assert_eq!(thumbnail["id"], "resource.image.thumbnail");
+        assert_eq!(thumbnail["provides"], "thumbnail");
+        assert!(thumbnail["applies_to"]["kinds"].is_null());
+        assert_eq!(thumbnail["applies_to"]["mime_types"][0], "image/*");
+        assert!(
+            thumbnail["applies_to"]["extensions"]
+                .as_array()
+                .unwrap()
                 .iter()
                 .any(|extension| extension == ".png")
         );

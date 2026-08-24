@@ -1,13 +1,15 @@
 use super::{GAME_KIND, GAMES_KIND, required_string};
 use crate::cover;
-use asset_plugin_sdk::{DirectoryContext, DirectoryResponse, Error, Result, Tree, Value, json};
+use asset_rust_sdk::{DirectoryContext, DirectoryResponse, Error, Result, Tree, Value, json};
 
 const MAX_GAME_NAME_CHARS: usize = 255;
 const MAX_ALIASES: usize = 32;
 
 pub(crate) fn handle(context: DirectoryContext) -> Result<DirectoryResponse> {
     if context.directory().kind() != GAMES_KIND {
-        return Err(Error::msg("games can only be created inside a Games directory").into());
+        return Err(Error::msg(
+            "games can only be created inside a Games directory",
+        ));
     }
     let name = required_string(context.input(), "name", MAX_GAME_NAME_CHARS)?;
     validate_english_directory_name(&name)?;
@@ -62,7 +64,7 @@ fn aliases(input: &Value) -> Result<Vec<String>> {
         .as_array()
         .ok_or_else(|| Error::msg("aliases must be an array of strings"))?;
     if values.len() > MAX_ALIASES {
-        return Err(Error::msg(format!("aliases exceeds {MAX_ALIASES} entries")).into());
+        return Err(Error::msg(format!("aliases exceeds {MAX_ALIASES} entries")));
     }
     values
         .iter()
@@ -72,15 +74,15 @@ fn aliases(input: &Value) -> Result<Vec<String>> {
                 .ok_or_else(|| Error::msg("aliases must contain only strings"))?
                 .trim();
             if alias.is_empty() {
-                return Err(Error::msg("aliases must not contain blank names").into());
+                return Err(Error::msg("aliases must not contain blank names"));
             }
             if alias.chars().count() > MAX_GAME_NAME_CHARS {
-                return Err(
-                    Error::msg(format!("alias exceeds {MAX_GAME_NAME_CHARS} characters")).into(),
-                );
+                return Err(Error::msg(format!(
+                    "alias exceeds {MAX_GAME_NAME_CHARS} characters"
+                )));
             }
             if alias.chars().any(char::is_control) {
-                return Err(Error::msg("aliases must not contain control characters").into());
+                return Err(Error::msg("aliases must not contain control characters"));
             }
             Ok(alias.to_string())
         })
@@ -98,8 +100,7 @@ fn validate_english_directory_name(name: &str) -> Result<()> {
     } else {
         Err(Error::msg(
             "name must be a printable English directory name without slash or backslash",
-        )
-        .into())
+        ))
     }
 }
 
@@ -122,9 +123,9 @@ fn metadata_yaml(names: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::handle;
-    use asset_plugin_sdk::protocol::{DirectoryActionEffect, PluginDirectoryActionOutput};
-    use asset_plugin_sdk::runtime::{decode_base64, encode_base64, run_directory_action};
-    use asset_plugin_sdk::serde_json;
+    use asset_rust_sdk::__private::run_directory_action;
+    use asset_rust_sdk::serde_json;
+    use asset_rust_sdk::{decode_base64, encode_base64};
 
     fn request(input: serde_json::Value) -> String {
         serde_json::json!({
@@ -148,7 +149,7 @@ mod tests {
 
     #[test]
     fn create_game_emits_the_complete_game_tree() {
-        let output: PluginDirectoryActionOutput = serde_json::from_str(
+        let output: serde_json::Value = serde_json::from_str(
             &run_directory_action(
                 request(serde_json::json!({
                     "name": "Game One",
@@ -163,47 +164,47 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        let DirectoryActionEffect::CreateTree(tree) = &output.effects[0] else {
-            panic!("expected create tree")
-        };
-        assert_eq!(tree.directories.len(), 2);
-        assert_eq!(tree.directories[0].path, "Game One");
-        assert_eq!(
-            tree.directories[0].kind.as_deref(),
-            Some("directory:games:item")
-        );
-        assert_eq!(tree.directories[1].path, "Game One/public");
-        assert_eq!(tree.directories[1].kind, None);
-        assert_eq!(tree.resources.len(), 3);
-        assert!(
-            tree.resources
-                .iter()
-                .all(|resource| resource.kind.is_none())
-        );
+        let tree = &output["effects"][0];
+        assert_eq!(tree["type"], "create_tree");
+        let directories = tree["directories"].as_array().unwrap();
+        assert_eq!(directories.len(), 2);
+        assert_eq!(directories[0]["path"], "Game One");
+        assert_eq!(directories[0]["kind"], "directory:games:item");
+        assert_eq!(directories[1]["path"], "Game One/public");
+        assert!(directories[1]["kind"].is_null());
+        let resources = tree["resources"].as_array().unwrap();
+        assert_eq!(resources.len(), 3);
+        assert!(resources.iter().all(|resource| resource["kind"].is_null()));
         let resource = |name: &str| {
-            tree.resources
+            resources
                 .iter()
-                .find(|resource| resource.name == name)
+                .find(|resource| resource["name"] == name)
                 .unwrap()
         };
         assert_eq!(
-            String::from_utf8(decode_base64(&resource("README.md").data).unwrap()).unwrap(),
+            String::from_utf8(
+                decode_base64(resource("README.md")["data"].as_str().unwrap()).unwrap()
+            )
+            .unwrap(),
             "# Game One\n"
         );
         assert_eq!(
-            resource("METADATA.yml").mime_type.as_deref(),
-            Some("application/yaml; charset=utf-8")
+            resource("METADATA.yml")["mime_type"],
+            "application/yaml; charset=utf-8"
         );
         assert_eq!(
-            String::from_utf8(decode_base64(&resource("METADATA.yml").data).unwrap()).unwrap(),
+            String::from_utf8(
+                decode_base64(resource("METADATA.yml")["data"].as_str().unwrap()).unwrap()
+            )
+            .unwrap(),
             "name:\n  - \"Game One\"\n  - \"Game 1\"\n  - \"游戏一\"\n  - \"Game \\\"One\\\"\"\n"
         );
-        assert_eq!(resource("cover.svg").directory, "Game One/public");
-        assert_eq!(
-            resource("cover.svg").mime_type.as_deref(),
-            Some("image/svg+xml")
-        );
-        let cover = String::from_utf8(decode_base64(&resource("cover.svg").data).unwrap()).unwrap();
+        assert_eq!(resource("cover.svg")["directory"], "Game One/public");
+        assert_eq!(resource("cover.svg")["mime_type"], "image/svg+xml");
+        let cover = String::from_utf8(
+            decode_base64(resource("cover.svg")["data"].as_str().unwrap()).unwrap(),
+        )
+        .unwrap();
         assert!(cover.contains("<svg"));
     }
 

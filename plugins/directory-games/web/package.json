@@ -15,7 +15,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@asset-hub/plugin-web-sdk": "file:../../../asset-plugin-sdk/web",
+    "@asset-hub/asset-web-sdk": "file:../../../sdk/asset-web-sdk",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },

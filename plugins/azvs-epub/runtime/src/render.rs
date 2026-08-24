@@ -226,7 +226,7 @@ pub(super) fn asset_data_url(
 ) -> Result<String> {
     let mime = manifest_mime(package, opf_path, path).unwrap_or_else(|| mime_from_path(path));
     if !is_embeddable_mime(&mime) {
-        return Err(Error::msg("unsupported EPUB asset type").into());
+        return Err(Error::msg("unsupported EPUB asset type"));
     }
     let bytes = read_zip_bytes_limited(archive, path, limit)?;
     Ok(data_url(&mime, &bytes))

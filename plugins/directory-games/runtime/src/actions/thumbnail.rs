@@ -1,4 +1,4 @@
-use asset_plugin_sdk::{DirectoryContext, DirectoryResponse, Media, Result};
+use asset_rust_sdk::{DirectoryContext, DirectoryResponse, Media, Result};
 
 const THUMBNAIL_SVG: &str = include_str!("../thumbnail.svg");
 

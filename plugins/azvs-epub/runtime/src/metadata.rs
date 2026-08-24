@@ -5,7 +5,7 @@ use std::io::Cursor;
 use zip::ZipArchive;
 
 pub(super) fn parse_package(opf: &str, opf_path: &str) -> Result<Package> {
-    let doc = Document::parse(opf)?;
+    let doc = Document::parse(opf).map_err(Error::from_display)?;
     let title = doc
         .descendants()
         .find(|node| local_name(node.tag_name().name()) == "title")

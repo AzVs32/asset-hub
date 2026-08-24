@@ -3,7 +3,7 @@ use asset_core::{
     domain::{ActionAccess, DefinitionOrigin, DirectoryActionDefinition},
     port::{DirectoryActionRegistry, DirectoryKindRegistry},
 };
-use asset_plugin_sdk::manifest::{
+use asset_plugin_api::manifest::{
     DIRECTORY_ACTION_CAPABILITIES, DIRECTORY_THUMBNAIL_CAPABILITY, DIRECTORY_WORKSPACE_CAPABILITY,
     DirectoryActionCapability,
 };

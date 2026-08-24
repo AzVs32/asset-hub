@@ -141,7 +141,7 @@ dependencies = [
 name = "asset-core"
 version = "0.1.0"
 dependencies = [
- "asset-plugin-sdk",
+ "asset-plugin-api",
  "async-trait",
  "base64 0.23.1",
  "bytes",
@@ -163,7 +163,7 @@ version = "0.1.0"
 dependencies = [
  "asset-core",
  "asset-infra",
- "asset-plugin-sdk",
+ "asset-plugin-api",
  "asset-runtime",
  "async-trait",
  "axum",
@@ -195,7 +195,7 @@ version = "0.1.0"
 dependencies = [
  "argon2",
  "asset-core",
- "asset-plugin-sdk",
+ "asset-plugin-api",
  "async-trait",
  "base64 0.23.1",
  "bytes",
@@ -216,11 +216,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "asset-plugin-sdk"
+name = "asset-plugin-api"
 version = "0.1.0"
 dependencies = [
- "base64 0.23.1",
- "extism-pdk",
  "serde",
  "serde_json",
 ]
@@ -233,6 +231,17 @@ dependencies = [
  "asset-infra",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "asset-rust-sdk"
+version = "0.1.0"
+dependencies = [
+ "asset-plugin-api",
+ "base64 0.23.1",
+ "extism-pdk",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

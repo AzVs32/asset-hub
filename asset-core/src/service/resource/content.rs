@@ -9,7 +9,7 @@ use crate::domain::{
     ResourceContentReplacementId, StorageKey,
 };
 use crate::port::{BlobByteStream, LocatedResource, RESERVED_BLOB_STORAGE_PREFIX, StagedBlob};
-use asset_plugin_sdk::manifest::RESOURCE_EDIT_CAPABILITY;
+use asset_plugin_api::manifest::RESOURCE_EDIT_CAPABILITY;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use futures_util::StreamExt;

@@ -28,14 +28,16 @@ The important aggregates are:
 
 ## Repository map
 
-- `asset-plugin-sdk`: public plugin authoring and wire-contract crate.
+- `asset-plugin-api`: runtime- and language-neutral plugin Manifest, protocol, and ABI contract.
+- `sdk/asset-rust-sdk`: public Rust plugin authoring SDK and runtime adapters.
+- `sdk/asset-web-sdk`: public browser Frame authoring SDK.
 - `asset-core`: workspace-internal domain, ports, and application services.
 - `asset-infra`: concrete SQLx, OpenDAL, filesystem, registry, manifest, and Extism adapters.
 - `asset-runtime`: reusable runtime assembly and background-task ownership.
 - `asset-http`: Axum transport, authentication, DTOs, OpenAPI, and HTTP executable.
 - `asset-cli`: administration commands and CLI executable.
 - `asset-web`: React host using domain/application/adapter boundaries.
-- `plugins`: bundled external plugins that consume `asset-plugin-sdk`.
+- `plugins`: bundled external plugins that consume the authoring SDKs.
 
 ## Dependency rules
 
@@ -44,7 +46,7 @@ MUST:
 - keep domain and service logic independent of Axum, SQLx, OpenDAL, Extism runtime objects, 
   and CLI parsing;
 - define host requirements as ports in `asset-core::port` and implement them in adapters;
-- keep external plugin contracts in `asset-plugin-sdk`;
+- keep external plugin contracts in `asset-plugin-api`;
 - use `ResourceService::secured` or an equivalently authorization-bound core use case for
   user-scoped or untrusted resource mutations; trusted local maintenance commands must remain
   explicit administrative operations;

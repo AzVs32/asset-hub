@@ -32,18 +32,18 @@ pub(super) fn parse_book(key: String, bytes: Arc<Vec<u8>>) -> Result<CachedBook>
 }
 
 pub(super) fn open_archive(bytes: &[u8]) -> Result<ZipArchive<Cursor<&[u8]>>> {
-    let mut archive = ZipArchive::new(Cursor::new(bytes))?;
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).map_err(Error::from_display)?;
     if archive.len() > MAX_ARCHIVE_ENTRIES {
-        return Err(Error::msg("EPUB contains too many ZIP entries").into());
+        return Err(Error::msg("EPUB contains too many ZIP entries"));
     }
     let mut total = 0_u64;
     for index in 0..archive.len() {
         total = total
-            .checked_add(archive.by_index(index)?.size())
+            .checked_add(archive.by_index(index).map_err(Error::from_display)?.size())
             .ok_or_else(|| Error::msg("EPUB uncompressed size overflow"))?;
     }
     if total > MAX_UNCOMPRESSED_BYTES {
-        return Err(Error::msg("EPUB uncompressed content exceeds 512 MiB").into());
+        return Err(Error::msg("EPUB uncompressed content exceeds 512 MiB"));
     }
     Ok(archive)
 }
@@ -66,13 +66,13 @@ pub(super) fn cover_media_view(title: &str, data_url: &str) -> Result<Media> {
 
 pub(super) fn find_opf_path(archive: &mut ZipArchive<Cursor<&[u8]>>) -> Result<String> {
     let container = read_zip_text_limited(archive, "META-INF/container.xml", MAX_MARKUP_BYTES)?;
-    let doc = Document::parse(&container)?;
+    let doc = Document::parse(&container).map_err(Error::from_display)?;
     let path = doc
         .descendants()
         .find(|node| local_name(node.tag_name().name()) == "rootfile")
         .and_then(|node| node.attribute("full-path"))
         .ok_or_else(|| Error::msg("EPUB container.xml does not contain a rootfile"))?;
-    safe_zip_path(path).ok_or_else(|| Error::msg("EPUB rootfile has an unsafe path").into())
+    safe_zip_path(path).ok_or_else(|| Error::msg("EPUB rootfile has an unsafe path"))
 }
 
 pub(super) fn read_zip_text_limited(
@@ -90,9 +90,11 @@ pub(super) fn read_zip_bytes_limited(
     limit: u64,
 ) -> Result<Vec<u8>> {
     let safe_path = safe_zip_path(path).ok_or_else(|| Error::msg("unsafe EPUB ZIP path"))?;
-    let mut file = archive.by_name(&safe_path)?;
+    let mut file = archive.by_name(&safe_path).map_err(Error::from_display)?;
     if file.is_dir() || file.size() > limit {
-        return Err(Error::msg(format!("EPUB entry exceeds its {limit} byte limit")).into());
+        return Err(Error::msg(format!(
+            "EPUB entry exceeds its {limit} byte limit"
+        )));
     }
     let mut bytes = Vec::with_capacity(file.size() as usize);
     file.read_to_end(&mut bytes)?;

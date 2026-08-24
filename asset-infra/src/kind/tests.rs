@@ -226,7 +226,7 @@ fn registry_rejects_duplicate_global_action_ids() {
         package.join("manifest.json"),
         r#"
         {
-          "manifest_version": 3,
+          "manifest_version": 4,
           "plugin": {
             "id": "duplicate-download",
             "name": "Duplicate Preview",
@@ -510,7 +510,7 @@ fn write_empty_wasm_lock(root: &std::path::Path, plugin_id: &str) {
         root.join("manifest.lock.json"),
         format!(
             r#"{{
-              "manifest_version": 3,
+              "manifest_version": 4,
               "plugin_id": "{plugin_id}",
               "integrity": {{
                 "plugin.wasm": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"

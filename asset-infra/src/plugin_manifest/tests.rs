@@ -1,5 +1,5 @@
 use super::*;
-use asset_plugin_sdk::manifest::MANIFEST_VERSION;
+use asset_plugin_api::manifest::MANIFEST_VERSION;
 
 #[test]
 fn rejects_manifest_with_missing_fields() {
@@ -39,7 +39,7 @@ fn external_package_rejects_host_owned_builtin_runtime() {
         package.join(PLUGIN_MANIFEST_FILE_NAME),
         r#"
         {
-          "manifest_version": 3,
+          "manifest_version": 4,
           "plugin": {
             "id": "invalid.builtin",
             "name": "Invalid Builtin",
@@ -326,7 +326,7 @@ fn create_package(root: &Path, id: &str, manifest: String) -> PathBuf {
 fn minimal_extism_manifest(id: &str) -> String {
     format!(
         r#"{{
-          "manifest_version": 3,
+          "manifest_version": 4,
           "plugin": {{"id": "{id}", "name": "Test", "version": "0.1.0", "publisher": "test"}},
           "runtime": {{
             "type": "extism", "wasi": false, "plugin_api": "asset-hub.plugin-api@1"
@@ -353,7 +353,7 @@ fn write_lock(
     std::fs::write(
         root.join(PLUGIN_LOCK_FILE_NAME),
         serde_json::to_vec(&serde_json::json!({
-            "manifest_version": 3,
+            "manifest_version": 4,
             "plugin_id": plugin_id,
             "integrity": integrity,
         }))

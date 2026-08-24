@@ -8,7 +8,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 ammonia = "4.1.4"
-asset-plugin-sdk = { path = "../../../asset-plugin-sdk", features = ["extism-guest"] }
+asset-rust-sdk = { path = "../../../sdk/asset-rust-sdk", features = ["extism-guest"] }
 base64 = "0.23.1"
 lol_html = "3.0.1"
 roxmltree = "0.21.1"
