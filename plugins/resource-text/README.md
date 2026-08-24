@@ -1,35 +1,42 @@
 # Resource Text Plugin
 
 `resource.text` owns text-file reading and editing outside the Asset Hub Host. It does not register a
-generic text kind. Markdown keeps its concrete `resource:markdown` kind, while basic text and source
-files remain `core:resource` and receive Actions through MIME or extension matching.
+generic text kind. Markdown and Mermaid keep the concrete `resource:markdown` and
+`resource:mermaid` kinds, while basic text and source files remain `core:resource` and receive
+Actions through MIME or extension matching.
 
 ## Files
 
 - `manifest.json`: editable source of the Asset Hub plugin manifest.
 - `runtime`: Rust source for rebuilding the Wasm runtime.
-- `web`: React reader/editor source loaded inside the host iframe.
+- `web`: React reader/editor source loaded inside the host iframe:
+  - `src/main.tsx`: composition root that reads the frame context and mounts React.
+  - `src/App.tsx`: reader/editor state and layout.
+  - `src/text-frame-client.ts`: private frame payload, Host bridge, bounded transfer, and validation.
+  - `src/markdown-renderer.tsx`: Markdown rendering, heading sections, and Mermaid fence routing.
+  - `src/mermaid-renderer.tsx`: lazy Mermaid loading, serialized rendering, and error fallback.
 - `asset-plugin-target`: ignored, self-contained installation input containing a generated Manifest
   snapshot, `plugin.wasm`, and the deployable Web bundle.
 
 ## Contract
 
 - Plugin ID: `resource.text`
-- Markdown kind: `resource:markdown`
+- Format-specific kinds: `resource:markdown`, `resource:mermaid`
 - Parent kind: `core:resource`
 - Read action: `resource.text.read` (`read_text`)
 - Edit action: `resource.text.edit` (`edit_text`)
 - Read capability: `view`; edit capability: `edit`
 - Output view: `plugin_frame`
 
-The Host has no generic text kind or fallback text provider. Markdown MIME types and extensions are
-detected by this plugin's concrete `resource:markdown` declaration. Both Actions are declared on
-`core:resource`, match Markdown MIME types or supported extensions, and are inherited by
-`resource:markdown`.
+The Host has no generic text kind or fallback text provider. Markdown and Mermaid MIME types and
+extensions are detected by this plugin's concrete Kind declarations. Both Actions are declared on
+`core:resource`, match supported MIME types or extensions, and are inherited by both concrete
+Kinds.
 
 | Rendering | Extensions | Persisted Kind |
 | --- | --- | --- |
-| Markdown reader/editor with preview | `.md`, `.markdown`, `.mdown`, `.mkd` | `resource:markdown` |
+| Markdown reader/editor with preview, including Mermaid fenced blocks | `.md`, `.markdown`, `.mdown`, `.mkd` | `resource:markdown` |
+| Mermaid reader/editor with diagram preview | `.mmd`, `.mermaid` | `resource:mermaid` |
 | Basic plain-text reader/editor | `.txt`, `.c`, `.cpp`, `.h`, `.yaml`, `.yml` | `core:resource` |
 
 YAML matching accepts `application/yaml`, `application/x-yaml`, `text/yaml`, and `text/x-yaml`.
@@ -47,8 +54,11 @@ The initial action returns an Asset Hub `PluginView` frame with a small routing 
 }
 ```
 
-The URL payload contains only `plugin_api`, `resource_id`, `mode`, and `action`; document content is
-never copied into the iframe URL. After loading, the frame connects through
+The URL payload contains only `plugin_api`, `mode`, `action`, and the plugin-private `format`
+routing value; document content is never copied into the iframe URL. Resource binding remains an
+outer Host responsibility and is not duplicated in the private payload. The Host treats the
+fragment as an opaque part of the plugin URL and does not need a Mermaid-specific contract. After
+loading, the frame connects through
 `@asset-hub/plugin-web-sdk` and requests content through its validated Action bridge:
 
 - `{"operation":"load"}` returns UTF-8 text directly up to 512 KiB.
@@ -70,7 +80,10 @@ revision-guarded streaming content replacement use case. The runtime rejects inl
 through Action JSON and does not return a `replace_content` effect. Consequently, saves are
 independent of the 1 MiB Action JSON limit and are bounded by `resource_edit.max_text_bytes`; an
 over-limit Resource does not expose the edit action. The React UI uses `markdown-it` for Markdown
-headings and preview. Selecting a heading keeps the reader's heading sidebar open until the user
+headings and preview. Mermaid is dynamically loaded only for standalone Mermaid resources or
+`mermaid` fenced blocks and renders with `securityLevel: "strict"` inside the existing sandboxed
+plugin frame. Invalid diagram syntax remains visible with a local error instead of failing the
+document reader. Selecting a heading keeps the reader's heading sidebar open until the user
 explicitly toggles it from the toolbar. Basic text, source, and YAML files use a monospaced
 reader/editor.
 

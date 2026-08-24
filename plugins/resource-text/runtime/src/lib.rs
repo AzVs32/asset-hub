@@ -8,53 +8,84 @@ const SMALL_TEXT_BYTES: u64 = 512 * 1024;
 const CONTENT_CHUNK_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_TEXT_BYTES: u64 = 128 * 1024 * 1024;
 
-export_resource_action!(read_text => read_text_payload);
-export_resource_action!(edit_text => edit_text_payload);
+export_resource_action!(read_text => handle_read_text);
+export_resource_action!(edit_text => handle_edit_text);
 
-fn read_text_payload(context: ResourceContext) -> Result<ResourceResponse> {
-    if input_operation(context.input()).is_some() {
-        return content_operation_response(&context);
-    }
-    frame_response(&context, "read")
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FrameMode {
+    Read,
+    Edit,
 }
 
-fn edit_text_payload(context: ResourceContext) -> Result<ResourceResponse> {
-    if input_operation(context.input()).is_some() {
-        return content_operation_response(&context);
+impl FrameMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Edit => "edit",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TextFormat {
+    Markdown,
+    Mermaid,
+    Plain,
+}
+
+impl TextFormat {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Markdown => "markdown",
+            Self::Mermaid => "mermaid",
+            Self::Plain => "plain",
+        }
+    }
+}
+
+fn handle_read_text(context: ResourceContext) -> Result<ResourceResponse> {
+    if requested_operation(context.input()).is_some() {
+        return handle_content_operation(&context);
+    }
+    text_frame_response(&context, FrameMode::Read)
+}
+
+fn handle_edit_text(context: ResourceContext) -> Result<ResourceResponse> {
+    if requested_operation(context.input()).is_some() {
+        return handle_content_operation(&context);
     }
     if context.input() != &json!({}) {
         return Err(Error::msg("unsupported text edit operation").into());
     }
-    frame_response(&context, "edit")
+    text_frame_response(&context, FrameMode::Edit)
 }
 
-fn frame_response(context: &ResourceContext, mode: &str) -> Result<ResourceResponse> {
+fn text_frame_response(context: &ResourceContext, mode: FrameMode) -> Result<ResourceResponse> {
     let resource = context.resource();
     let payload = encode_base64_url(serde_json::to_vec(&json!({
         "plugin_api": asset_plugin_sdk::protocol::PLUGIN_API_VERSION,
-        "resource_id": resource.id(),
-        "mode": mode,
+        "mode": mode.as_str(),
         "action": context.action(),
-        "format": text_format(resource.kind(), resource.name()),
+        "format": detect_text_format(resource.kind(), resource.name()).as_str(),
     }))?);
     Ok(ResourceResponse::frame(
         Frame::new(format!("{VIEWER_ENTRYPOINT}#payload={payload}")).title(resource.name()),
     ))
 }
 
-fn content_operation_response(context: &ResourceContext) -> Result<ResourceResponse> {
-    let data = match input_operation(context.input()) {
-        Some("load") => load_content(context)?,
-        Some("chunk") => load_content_chunk(context)?,
+fn handle_content_operation(context: &ResourceContext) -> Result<ResourceResponse> {
+    let data = match requested_operation(context.input()) {
+        Some("load") => load_text(context)?,
+        Some("chunk") => load_text_chunk(context)?,
         Some(_) => return Err(Error::msg("unsupported text content operation").into()),
         None => return Err(Error::msg("missing text content operation").into()),
     };
     ResourceResponse::json(data)
 }
 
-fn load_content(context: &ResourceContext) -> Result<Value> {
+fn load_text(context: &ResourceContext) -> Result<Value> {
     let byte_length = context.content().size()?;
-    ensure_content_size(byte_length)?;
+    ensure_text_size(byte_length)?;
     if byte_length <= SMALL_TEXT_BYTES {
         let bytes = context
             .content()
@@ -79,14 +110,14 @@ fn load_content(context: &ResourceContext) -> Result<Value> {
     }))
 }
 
-fn load_content_chunk(context: &ResourceContext) -> Result<Value> {
+fn load_text_chunk(context: &ResourceContext) -> Result<Value> {
     let offset = context
         .input()
         .get("offset")
         .and_then(Value::as_u64)
         .ok_or_else(|| Error::msg("missing or invalid text chunk offset"))?;
     let byte_length = context.content().size()?;
-    ensure_content_size(byte_length)?;
+    ensure_text_size(byte_length)?;
     if offset >= byte_length {
         return Err(Error::msg("text chunk offset is out of range").into());
     }
@@ -107,27 +138,33 @@ fn load_content_chunk(context: &ResourceContext) -> Result<Value> {
     }))
 }
 
-fn input_operation(input: &Value) -> Option<&str> {
+fn requested_operation(input: &Value) -> Option<&str> {
     input.get("operation").and_then(Value::as_str)
 }
 
-fn ensure_content_size(size: u64) -> Result<()> {
+fn ensure_text_size(size: u64) -> Result<()> {
     if size > MAX_TEXT_BYTES {
         return Err(Error::msg("text content exceeds the 128 MiB plugin limit").into());
     }
     Ok(())
 }
 
-fn text_format(kind: &str, name: &str) -> &'static str {
+fn detect_text_format(kind: &str, name: &str) -> TextFormat {
     let name = name.to_ascii_lowercase();
-    if kind == "resource:markdown"
+    if kind == "resource:mermaid"
+        || [".mmd", ".mermaid"]
+            .iter()
+            .any(|extension| name.ends_with(extension))
+    {
+        TextFormat::Mermaid
+    } else if kind == "resource:markdown"
         || [".md", ".markdown", ".mdown", ".mkd"]
             .iter()
             .any(|extension| name.ends_with(extension))
     {
-        "markdown"
+        TextFormat::Markdown
     } else {
-        "plain"
+        TextFormat::Plain
     }
 }
 

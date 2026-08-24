@@ -32,6 +32,22 @@
             ".mkd"
           ]
         }
+      },
+      {
+        "kind": "resource:mermaid",
+        "parent": "core:resource",
+        "label": "Mermaid",
+        "supports_content": true,
+        "detect": {
+          "mime_types": [
+            "text/vnd.mermaid",
+            "text/x-mermaid"
+          ],
+          "extensions": [
+            ".mmd",
+            ".mermaid"
+          ]
+        }
       }
     ],
     "resource_actions": [
@@ -48,6 +64,8 @@
           "mime_types": [
             "text/markdown",
             "text/x-markdown",
+            "text/vnd.mermaid",
+            "text/x-mermaid",
             "application/yaml",
             "application/x-yaml",
             "text/yaml",
@@ -58,6 +76,8 @@
             ".markdown",
             ".mdown",
             ".mkd",
+            ".mmd",
+            ".mermaid",
             ".txt",
             ".c",
             ".cpp",
@@ -98,6 +118,8 @@
           "mime_types": [
             "text/markdown",
             "text/x-markdown",
+            "text/vnd.mermaid",
+            "text/x-mermaid",
             "application/yaml",
             "application/x-yaml",
             "text/yaml",
@@ -108,6 +130,8 @@
             ".markdown",
             ".mdown",
             ".mkd",
+            ".mmd",
+            ".mermaid",
             ".txt",
             ".c",
             ".cpp",

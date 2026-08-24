@@ -2,7 +2,7 @@
   "name": "resource-text-web",
   "version": "0.1.0",
   "private": true,
-  "description": "Asset Hub Markdown reader and editor UI.",
+  "description": "Asset Hub text, Markdown, and Mermaid reader and editor UI.",
   "type": "module",
   "packageManager": "npm@10.9.7",
   "engines": {
@@ -16,6 +16,7 @@
     "@asset-hub/plugin-web-sdk": "file:../../../asset-plugin-sdk/web",
     "lucide-react": "^0.468.0",
     "markdown-it": "^14.3.0",
+    "mermaid": "^11.17.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

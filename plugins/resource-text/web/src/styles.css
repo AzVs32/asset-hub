@@ -373,6 +373,68 @@ textarea {
 	height: auto;
 }
 
+.mermaid-body {
+	display: grid;
+	min-height: calc(100vh - 50px);
+	place-items: center;
+	padding: 28px;
+}
+
+.mermaid-diagram {
+	max-width: 100%;
+	margin: 1.5rem 0;
+	overflow: auto;
+	border: 1px solid #d7dcde;
+	border-radius: 7px;
+	background: #ffffff;
+	padding: 18px;
+}
+
+.mermaid-diagram.standalone-mermaid {
+	width: min(100%, 1200px);
+	min-height: 180px;
+	margin: 0;
+}
+
+.mermaid-diagram svg {
+	display: block;
+	max-width: 100%;
+	height: auto;
+	margin: auto;
+}
+
+.mermaid-status {
+	display: grid;
+	min-height: 140px;
+	place-items: center;
+	color: #657175;
+	font-size: 13px;
+}
+
+.mermaid-error {
+	margin-bottom: 12px;
+	color: #b42318;
+	font-size: 13px;
+	font-weight: 650;
+}
+
+.mermaid-diagram .mermaid-source {
+	margin: 0;
+	overflow: auto;
+	border-radius: 6px;
+	background: #172025;
+	color: #e7ecee;
+	padding: 14px 16px;
+	font:
+		13px / 1.55 ui-monospace,
+		SFMono-Regular,
+		Menlo,
+		Monaco,
+		Consolas,
+		monospace;
+	white-space: pre;
+}
+
 .plain-text-body {
 	width: 100%;
 	min-height: calc(100vh - 50px);
@@ -440,5 +502,10 @@ textarea {
 	.markdown-body {
 		min-height: auto;
 		padding: 26px 22px 34px;
+	}
+
+	.mermaid-body {
+		min-height: auto;
+		padding: 16px;
 	}
 }

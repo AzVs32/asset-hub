@@ -1,5 +1,5 @@
 use super::*;
-use asset_plugin_sdk::decode_base64;
+use asset_plugin_sdk::{decode_base64, manifest::PluginManifest};
 
 #[test]
 fn large_text_uses_bounded_chunks() {
@@ -10,7 +10,7 @@ fn large_text_uses_bounded_chunks() {
             json!({"operation": "load"}),
             Some(&text),
         ),
-        read_text_payload,
+        handle_read_text,
     )
     .unwrap();
     let load: Value = serde_json::from_str(&load).unwrap();
@@ -23,7 +23,7 @@ fn large_text_uses_bounded_chunks() {
             json!({"operation": "chunk", "offset": CONTENT_CHUNK_BYTES}),
             Some(&text),
         ),
-        read_text_payload,
+        handle_read_text,
     )
     .unwrap();
     let chunk: Value = serde_json::from_str(&chunk).unwrap();
@@ -39,7 +39,7 @@ fn large_text_uses_bounded_chunks() {
 fn edit_text_rejects_inline_writeback() {
     let error = asset_plugin_sdk::runtime::run_resource_action(
         request_json("resource.text.edit", json!({"text": "updated"}), None),
-        edit_text_payload,
+        handle_edit_text,
     )
     .unwrap();
     let error: Value = serde_json::from_str(&error).unwrap();
@@ -52,11 +52,66 @@ fn edit_text_rejects_inline_writeback() {
 }
 
 #[test]
-fn text_format_keeps_markdown_rendering_separate_from_plain_source_files() {
-    assert_eq!(text_format("resource:markdown", "README"), "markdown");
-    assert_eq!(text_format("core:resource", "README.MD"), "markdown");
-    assert_eq!(text_format("core:resource", "main.cpp"), "plain");
-    assert_eq!(text_format("core:resource", "notes.txt"), "plain");
+fn text_format_selects_format_specific_renderers_before_plain_text() {
+    assert_eq!(
+        detect_text_format("resource:markdown", "README"),
+        TextFormat::Markdown
+    );
+    assert_eq!(
+        detect_text_format("core:resource", "README.MD"),
+        TextFormat::Markdown
+    );
+    assert_eq!(
+        detect_text_format("resource:mermaid", "diagram"),
+        TextFormat::Mermaid
+    );
+    assert_eq!(
+        detect_text_format("core:resource", "architecture.MMD"),
+        TextFormat::Mermaid
+    );
+    assert_eq!(
+        detect_text_format("core:resource", "main.cpp"),
+        TextFormat::Plain
+    );
+    assert_eq!(
+        detect_text_format("core:resource", "notes.txt"),
+        TextFormat::Plain
+    );
+}
+
+#[test]
+fn manifest_keeps_format_kinds_and_shared_text_actions_aligned() {
+    let manifest: PluginManifest =
+        serde_json::from_str(include_str!("../../manifest.json")).unwrap();
+    manifest.validate().unwrap();
+
+    for kind_id in ["resource:markdown", "resource:mermaid"] {
+        let kind = manifest
+            .capabilities
+            .resource_kinds
+            .iter()
+            .find(|kind| kind.kind == kind_id)
+            .unwrap();
+        assert_eq!(kind.parent.as_deref(), Some("core:resource"));
+    }
+
+    for action_id in ["resource.text.read", "resource.text.edit"] {
+        let action = manifest
+            .capabilities
+            .resource_actions
+            .iter()
+            .find(|action| action.id == action_id)
+            .unwrap();
+        for extension in [".md", ".mmd", ".mermaid"] {
+            assert!(
+                action
+                    .applies_to
+                    .extensions
+                    .iter()
+                    .any(|item| item == extension)
+            );
+        }
+    }
 }
 
 fn request_json(action: &str, input: Value, content: Option<&[u8]>) -> String {
