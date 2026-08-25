@@ -1,10 +1,12 @@
 import type { CurrentUser, ManagedUser, UserStatus } from "@/domain/auth";
-import type { DirectoryActionOutput, JsonObject, ResourceActionOutput } from "@/domain/plugin";
 import type {
   Directory,
   DirectoryKind,
   DirectoryListing,
   DirectoryPatch,
+} from "@/domain/directory";
+import type { DirectoryActionOutput, JsonObject, ResourceActionOutput } from "@/domain/plugin";
+import type {
   Resource,
   ResourceDraft,
   ResourceFilters,

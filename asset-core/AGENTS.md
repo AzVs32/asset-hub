@@ -58,6 +58,7 @@ MUST:
 - place cross-aggregate workflow, authorization, compensation, and persistence ordering in services;
 - resolve the target directory/resource before authorization when the target determines scope;
 - route untrusted resource operations through `SecuredResourceService`;
+- route workflows that apply both Resource and Directory effects through `AssetCoordinator`;
 - keep per-object concurrency controls keyed by stable `StorageKey` or aggregate ID;
 - preserve streaming for large content and uploads.
 

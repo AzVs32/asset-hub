@@ -1,25 +1,30 @@
 import createClient from "openapi-fetch";
 import { AuthenticationRequiredError } from "@/application/errors";
 import type { AssetGateway } from "@/application/ports/asset-gateway";
+import type { DefinitionOrigin } from "@/domain/action";
 import type { CurrentUser, ManagedUser, UserStatus } from "@/domain/auth";
-import { normalizeDirectory } from "@/domain/directory-path";
-import {
-  type DirectoryActionOutput,
-  directoryActionCapabilityIds,
-  directoryActionEffectKinds,
-  type JsonObject,
-  type JsonValue,
-  type PluginDiagnostic,
-  type ResourceActionOutput,
-  resourceActionCapabilityIds,
-  resourceActionEffectKinds,
-} from "@/domain/plugin";
 import type {
   Directory,
   DirectoryAction,
   DirectoryKind,
   DirectoryListing,
   DirectoryPatch,
+} from "@/domain/directory";
+import { normalizeDirectory } from "@/domain/directory-path";
+import {
+  type DirectoryActionEffectKind,
+  type DirectoryActionOutput,
+  directoryActionCapabilityIds,
+  directoryActionEffectKinds,
+  type JsonObject,
+  type JsonValue,
+  type PluginDiagnostic,
+  type ResourceActionEffectKind,
+  type ResourceActionOutput,
+  resourceActionCapabilityIds,
+  resourceActionEffectKinds,
+} from "@/domain/plugin";
+import type {
   Resource,
   ResourceAction,
   ResourceDraft,
@@ -600,11 +605,11 @@ function mapAction(value: ApiAction): ResourceAction {
   };
 }
 
-function resourceEffectKind(value: string): import("@/domain/resource").ResourceActionEffectKind {
+function resourceEffectKind(value: string): ResourceActionEffectKind {
   return enumValue(value, resourceActionEffectKinds);
 }
 
-function directoryEffectKind(value: string): import("@/domain/resource").DirectoryActionEffectKind {
+function directoryEffectKind(value: string): DirectoryActionEffectKind {
   return enumValue(value, directoryActionEffectKinds);
 }
 
@@ -618,9 +623,7 @@ function mapDiagnostic(value: Schemas["PluginDiagnosticResponse"]): PluginDiagno
   };
 }
 
-function mapOrigin(
-  value: Schemas["DefinitionOriginResponse"],
-): import("@/domain/resource").DefinitionOrigin {
+function mapOrigin(value: Schemas["DefinitionOriginResponse"]): DefinitionOrigin {
   return {
     kind: enumValue(value.kind, ["builtin", "plugin"]),
     id: value.id,

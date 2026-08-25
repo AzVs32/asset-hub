@@ -1,10 +1,10 @@
 //! Authorization-bound Directory use cases for untrusted application surfaces.
 
-use super::{DirectoryService, ExecuteDirectoryAction, UpdateDirectory};
+use super::{DirectoryService, UpdateDirectory};
 use crate::{
     CoreError,
     domain::{AccessContext, DirectoryId, DirectoryKind, DirectoryOperation, DirectoryPath},
-    port::{DirectoryActionOutput, DirectoryLocation, LocatedDirectory},
+    port::{DirectoryLocation, LocatedDirectory},
     service::AuthorizationService,
 };
 
@@ -117,38 +117,5 @@ impl<'a> SecuredDirectoryService<'a> {
         self.service
             .remove_if_empty(directory.location(), Some(expected_revision))
             .await
-    }
-
-    pub async fn execute_action(
-        &self,
-        id: &DirectoryId,
-        command: ExecuteDirectoryAction,
-    ) -> Result<DirectoryActionOutput, CoreError> {
-        let directory = self.service.find_by_id(id).await?;
-        let definition = self
-            .service
-            .resolve_action(directory.directory(), &command.action)?;
-        let operation = if definition
-            .output()
-            .effects
-            .iter()
-            .any(|effect| effect == "delete")
-        {
-            DirectoryOperation::DeleteDirectory
-        } else {
-            DirectoryOperation::ExecuteDirectoryAction
-        };
-        self.require(directory.location(), operation).await?;
-        let scope_root = self
-            .authorization
-            .workspace_scope(self.context)
-            .await?
-            .root()
-            .id();
-        let executed = self.service.invoke_action(id, command).await?;
-        self.service
-            .apply_executed_action(&executed, Some(scope_root))
-            .await?;
-        Ok(executed.into_output())
     }
 }

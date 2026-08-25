@@ -28,7 +28,8 @@ use asset_core::{
 use config::{AssetInfraConfig, BlobBackend, DatabaseBackend};
 use directory_index::InMemoryDirectoryIndex;
 use sqlite::{
-    SqliteIdentityRepository, SqliteResourceContentReplacementRepository, SqliteResourceRepository,
+    SqliteDatabase, SqliteDirectoryRepository, SqliteIdentityRepository,
+    SqliteResourceContentReplacementRepository, SqliteResourceRepository,
     SqliteUploadSessionRepository,
 };
 use std::sync::Arc;
@@ -42,8 +43,8 @@ use storage::{FileSystemScanner, OpenDalBlobStorage};
 pub struct AssetInfrastructure {
     /// 实际生效的基础设施配置。
     config: AssetInfraConfig,
-    /// SQLite 聚合持久化适配器，对外分别实现资源与目录仓储端口。
     resource_repository: Arc<SqliteResourceRepository>,
+    directory_repository: Arc<SqliteDirectoryRepository>,
     directory_index: Arc<InMemoryDirectoryIndex>,
     identity_repository: Arc<SqliteIdentityRepository>,
     upload_session_repository: Arc<SqliteUploadSessionRepository>,
@@ -68,37 +69,33 @@ impl AssetInfrastructure {
             ),
         };
         let sqlite_started = Instant::now();
-        let resource_repository = match config.database.backend {
+        let database = match config.database.backend {
             DatabaseBackend::Sqlite => {
                 let sqlite_path = config.sqlite_path();
-                Arc::new(
-                    SqliteResourceRepository::connect(
-                        &sqlite_path,
-                        config.database.sqlite.max_connections,
-                    )
-                    .await?,
-                )
+                SqliteDatabase::connect(&sqlite_path, config.database.sqlite.max_connections)
+                    .await?
             }
         };
         tracing::info!(
             elapsed_ms = sqlite_started.elapsed().as_millis(),
             "SQLite initialized"
         );
+        let resource_repository = Arc::new(SqliteResourceRepository::new(database.pool().clone()));
+        let directory_repository =
+            Arc::new(SqliteDirectoryRepository::new(database.pool().clone()));
         let directory_index = Arc::new(InMemoryDirectoryIndex::from_directories(
-            resource_repository.load_all().await?,
+            directory_repository.load_all().await?,
         )?);
-        let identity_repository = Arc::new(SqliteIdentityRepository::new(
-            resource_repository.pool().clone(),
-        ));
-        let upload_session_repository = Arc::new(SqliteUploadSessionRepository::new(
-            resource_repository.pool().clone(),
-        ));
+        let identity_repository = Arc::new(SqliteIdentityRepository::new(database.pool().clone()));
+        let upload_session_repository =
+            Arc::new(SqliteUploadSessionRepository::new(database.pool().clone()));
         let content_replacement_repository = Arc::new(
-            SqliteResourceContentReplacementRepository::new(resource_repository.pool().clone()),
+            SqliteResourceContentReplacementRepository::new(database.pool().clone()),
         );
         Ok(Self {
             config,
             resource_repository,
+            directory_repository,
             directory_index,
             identity_repository,
             upload_session_repository,
@@ -123,7 +120,7 @@ impl AssetInfrastructure {
     }
 
     pub fn directory_repository(&self) -> Arc<dyn DirectoryRepository> {
-        self.resource_repository.clone()
+        self.directory_repository.clone()
     }
 
     pub fn directory_index(&self) -> Arc<dyn DirectoryIndex> {

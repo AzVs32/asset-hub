@@ -1,0 +1,194 @@
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import React from "react";
+import { toast } from "sonner";
+import { ConcurrentModificationError } from "@/application/errors";
+import { useGateway } from "@/application/ports/gateway-context";
+import { queryKeys } from "@/application/queries/keys";
+import type { Directory, DirectoryAction, DirectoryListing } from "@/domain/directory";
+import type {
+  Resource,
+  ResourceAction,
+  ResourceDraft,
+  UploadDraft,
+  UploadProgress,
+} from "@/domain/resource";
+import type { DirectoryActionResult } from "@/plugins/directory-action-dialog";
+import type { ResourceActionResult } from "@/plugins/resource-action-dialog";
+
+export function useAssetWorkspaceCommands() {
+  const gateway = useGateway();
+  const queryClient = useQueryClient();
+  const [actionResult, setActionResult] = React.useState<ResourceActionResult | null>(null);
+  const [directoryActionResult, setDirectoryActionResult] =
+    React.useState<DirectoryActionResult | null>(null);
+  const [uploadProgress, setUploadProgress] = React.useState<UploadProgress | null>(null);
+
+  const refresh = React.useCallback(
+    async (resourceId?: string) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["directory"] }),
+        ...(resourceId
+          ? [queryClient.invalidateQueries({ queryKey: queryKeys.resource(resourceId) })]
+          : []),
+      ]);
+    },
+    [queryClient],
+  );
+  const handleMutationError = React.useCallback(
+    async (error: unknown) => {
+      if (error instanceof ConcurrentModificationError) await refresh();
+      notifyError(error);
+    },
+    [refresh],
+  );
+  const synchronizeResourceSnapshot = React.useCallback(
+    (resource: Resource) => {
+      queryClient.setQueryData(queryKeys.resource(resource.id), resource);
+      queryClient.setQueriesData<DirectoryListing>({ queryKey: ["directory"] }, (listing) => {
+        if (!listing?.resources.items.some((item) => item.id === resource.id)) return listing;
+        return {
+          ...listing,
+          resources: {
+            ...listing.resources,
+            items: listing.resources.items.map((item) =>
+              item.id === resource.id ? resource : item,
+            ),
+          },
+        };
+      });
+      setActionResult((current) => {
+        if (current?.resource.id !== resource.id) return current;
+        return {
+          ...current,
+          resource,
+          action:
+            resource.actions.find((action) => action.id === current.action.id) ?? current.action,
+        };
+      });
+    },
+    [queryClient],
+  );
+
+  const update = useMutation({
+    mutationFn: ({ resource, draft }: { resource: Resource; draft: ResourceDraft }) =>
+      gateway.updateResource(resource, draft),
+    onSuccess: async (resource) => {
+      toast.success("Resource saved");
+      queryClient.setQueryData(queryKeys.resource(resource.id), resource);
+      await refresh(resource.id);
+    },
+    onError: handleMutationError,
+  });
+  const upload = useMutation({
+    mutationFn: (draft: UploadDraft) => gateway.uploadResource(draft, setUploadProgress),
+    onMutate: (draft) => {
+      setUploadProgress({ stage: "preparing", bytesSent: 0, totalBytes: draft.file.size });
+    },
+    onSuccess: (receipt) => {
+      setUploadProgress(null);
+      const notification = toast.loading(
+        `${receipt.name} uploaded; verifying and publishing in the background`,
+      );
+      void gateway
+        .waitForUpload(receipt.id)
+        .then(async (resource) => {
+          toast.success(`${resource.name} is ready`, { id: notification });
+          await refresh(resource.id);
+        })
+        .catch((error) => {
+          toast.error(error instanceof Error ? error.message : "Resource publishing failed", {
+            id: notification,
+          });
+        });
+    },
+    onError: (error) => {
+      setUploadProgress(null);
+      void handleMutationError(error);
+    },
+  });
+  const restore = useMutation({
+    mutationFn: (resource: Resource) => gateway.restoreResource(resource),
+    onSuccess: async (resource) => {
+      toast.success(`${resource.name} restored`);
+      await refresh(resource.id);
+    },
+    onError: handleMutationError,
+  });
+  const createFolder = useMutation({
+    mutationFn: ({ parent, name, kind }: { parent: Directory; name: string; kind?: string }) =>
+      gateway.createDirectory(parent, name, kind),
+    onSuccess: async () => {
+      toast.success("Folder created");
+      await refresh();
+    },
+    onError: handleMutationError,
+  });
+  const updateDirectoryKind = useMutation({
+    mutationFn: ({ directory, kind }: { directory: Directory; kind: string }) => {
+      if (!directory.parentId) throw new Error("The root directory kind cannot be changed");
+      return gateway.updateDirectory(directory, { kind });
+    },
+    onSuccess: async (directory) => {
+      toast.success(`${directory.name} kind changed`);
+      await refresh();
+    },
+    onError: handleMutationError,
+  });
+  const execute = useMutation({
+    mutationFn: async ({ resource, action }: { resource: Resource; action: ResourceAction }) => ({
+      resource,
+      action,
+      output: await gateway.executeResourceAction(resource, action.id),
+    }),
+    onSuccess: async (result) => {
+      if (result.output.view) setActionResult(result);
+      if (result.output.effects.includes("delete")) {
+        toast.success(`${result.resource.name} moved to deleted resources`);
+      }
+      if (result.action.access === "write") await refresh(result.resource.id);
+    },
+    onError: handleMutationError,
+  });
+  const executeDirectory = useMutation({
+    mutationFn: async ({
+      directory,
+      action,
+    }: {
+      directory: Directory;
+      action: DirectoryAction;
+    }) => ({
+      directory,
+      action,
+      output: await gateway.executeDirectoryAction(directory, action.id),
+    }),
+    onSuccess: async (result) => {
+      if (result.output.view) setDirectoryActionResult(result);
+      if (result.output.effects.includes("delete")) {
+        toast.success(`${result.directory.name} deleted`);
+      }
+      if (result.action.access === "write") await refresh();
+    },
+    onError: handleMutationError,
+  });
+
+  return {
+    update,
+    upload,
+    uploadProgress,
+    restore,
+    createFolder,
+    updateDirectoryKind,
+    execute,
+    executeDirectory,
+    actionResult,
+    setActionResult,
+    directoryActionResult,
+    setDirectoryActionResult,
+    synchronizeResourceSnapshot,
+    refresh,
+  };
+}
+
+function notifyError(error: unknown) {
+  toast.error(error instanceof Error ? error.message : "Request failed");
+}

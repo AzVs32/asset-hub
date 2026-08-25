@@ -1,6 +1,6 @@
-export declare const PLUGIN_API_VERSION: "asset-hub.plugin-api@2";
-export declare const RESOURCE_FRAME_CHANNEL: "asset-hub.plugin-frame@2";
-export declare const DIRECTORY_FRAME_CHANNEL: "asset-hub.plugin-directory-frame@2";
+export declare const PLUGIN_API_VERSION: "asset-hub.plugin-api@3";
+export declare const RESOURCE_FRAME_CHANNEL: "asset-hub.plugin-frame.resource@3";
+export declare const DIRECTORY_FRAME_CHANNEL: "asset-hub.plugin-frame.directory@3";
 export declare const resourceActionCapabilityIds: readonly ["thumbnail", "view", "edit"];
 export declare const directoryActionCapabilityIds: readonly ["thumbnail", "workspace"];
 export declare const resourceFrameMethods: readonly ["executeResourceAction", "replaceResourceText"];

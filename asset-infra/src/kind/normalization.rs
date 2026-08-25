@@ -8,7 +8,8 @@ use asset_core::domain::{
     ResourceActionRequirements, ResourceContentMatcher,
 };
 use asset_plugin_api::manifest::{
-    ContentDelivery, DirectoryActionCapability, ManifestActionAccess, ResourceActionCapability,
+    DirectoryActionCapability, ManifestActionAccess, ResourceActionCapability,
+    ResourceContentDelivery,
 };
 
 pub(super) fn resource_action_definition(
@@ -155,9 +156,9 @@ fn validated_capability_id(value: Option<&str>) -> Option<ActionCapabilityId> {
     })
 }
 
-fn content_delivery(delivery: ContentDelivery) -> ResourceActionContentDelivery {
+fn content_delivery(delivery: ResourceContentDelivery) -> ResourceActionContentDelivery {
     match delivery {
-        ContentDelivery::Inline => ResourceActionContentDelivery::Inline,
-        ContentDelivery::Reference => ResourceActionContentDelivery::Reference,
+        ResourceContentDelivery::Inline => ResourceActionContentDelivery::Inline,
+        ResourceContentDelivery::Reference => ResourceActionContentDelivery::Reference,
     }
 }

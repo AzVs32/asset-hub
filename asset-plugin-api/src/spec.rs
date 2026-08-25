@@ -8,7 +8,7 @@ use serde::Serialize;
 pub struct ContractCatalog {
     pub manifest_version: u32,
     pub plugin_api: &'static str,
-    pub frame: FrameCatalog,
+    pub browser_frames: BrowserFrameCatalog,
     pub capabilities: CapabilityCatalog,
     pub views: &'static [&'static str],
     pub resource_effects: &'static [&'static str],
@@ -17,11 +17,15 @@ pub struct ContractCatalog {
 }
 
 #[derive(Debug, Serialize)]
-pub struct FrameCatalog {
-    pub resource_channel: &'static str,
-    pub directory_channel: &'static str,
-    pub resource_methods: &'static [protocol::FrameMethodSpec],
-    pub directory_methods: &'static [protocol::FrameMethodSpec],
+pub struct BrowserFrameCatalog {
+    pub resource: BrowserFrameEndpointCatalog,
+    pub directory: BrowserFrameEndpointCatalog,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BrowserFrameEndpointCatalog {
+    pub channel: &'static str,
+    pub host_methods: &'static [protocol::FrameMethodSpec],
 }
 
 #[derive(Debug, Serialize)]
@@ -34,19 +38,23 @@ pub fn contract_catalog() -> ContractCatalog {
     ContractCatalog {
         manifest_version: manifest::MANIFEST_VERSION,
         plugin_api: protocol::PLUGIN_API_VERSION,
-        frame: FrameCatalog {
-            resource_channel: protocol::PLUGIN_RESOURCE_FRAME_CHANNEL,
-            directory_channel: protocol::PLUGIN_DIRECTORY_FRAME_CHANNEL,
-            resource_methods: protocol::RESOURCE_FRAME_METHODS,
-            directory_methods: protocol::DIRECTORY_FRAME_METHODS,
+        browser_frames: BrowserFrameCatalog {
+            resource: BrowserFrameEndpointCatalog {
+                channel: protocol::RESOURCE_FRAME_CHANNEL,
+                host_methods: protocol::RESOURCE_FRAME_METHODS,
+            },
+            directory: BrowserFrameEndpointCatalog {
+                channel: protocol::DIRECTORY_FRAME_CHANNEL,
+                host_methods: protocol::DIRECTORY_FRAME_METHODS,
+            },
         },
         capabilities: CapabilityCatalog {
             resource_actions: manifest::RESOURCE_ACTION_CAPABILITIES,
             directory_actions: manifest::DIRECTORY_ACTION_CAPABILITIES,
         },
-        views: protocol::PLUGIN_VIEW_KINDS,
-        resource_effects: protocol::PLUGIN_RESOURCE_ACTION_EFFECT_KINDS,
-        directory_effects: protocol::PLUGIN_DIRECTORY_ACTION_EFFECT_KINDS,
+        views: protocol::VIEW_KINDS,
+        resource_effects: protocol::RESOURCE_ACTION_EFFECT_KINDS,
+        directory_effects: protocol::DIRECTORY_ACTION_EFFECT_KINDS,
         host_functions: abi::HOST_FUNCTIONS,
     }
 }
@@ -55,15 +63,15 @@ pub fn schemas() -> Vec<(&'static str, Schema)> {
     vec![
         schema::<manifest::PluginManifestDocument>("manifest-v5.schema.json"),
         schema::<manifest::PluginManifestLock>("manifest-lock-v5.schema.json"),
-        schema::<protocol::PluginResourceActionRequest>("resource-action-request-v2.schema.json"),
-        schema::<protocol::PluginResourceActionResult>("resource-action-result-v2.schema.json"),
-        schema::<protocol::PluginDirectoryActionRequest>("directory-action-request-v2.schema.json"),
-        schema::<protocol::PluginDirectoryActionResult>("directory-action-result-v2.schema.json"),
-        schema::<protocol::ResourceFrameActionOutput>("resource-frame-output-v2.schema.json"),
-        schema::<protocol::DirectoryFrameActionOutput>("directory-frame-output-v2.schema.json"),
-        schema::<abi::DirectoryPageRequest>("directory-page-request-v2.schema.json"),
-        schema::<protocol::PluginDirectoryPage>("directory-page-v2.schema.json"),
-        schema::<protocol::PluginDirectoryResourcePage>("directory-resource-page-v2.schema.json"),
+        schema::<protocol::PluginResourceActionRequest>("resource-action-request-v3.schema.json"),
+        schema::<protocol::PluginResourceActionResult>("resource-action-result-v3.schema.json"),
+        schema::<protocol::PluginDirectoryActionRequest>("directory-action-request-v3.schema.json"),
+        schema::<protocol::PluginDirectoryActionResult>("directory-action-result-v3.schema.json"),
+        schema::<protocol::ResourceFrameActionOutput>("resource-frame-output-v3.schema.json"),
+        schema::<protocol::DirectoryFrameActionOutput>("directory-frame-output-v3.schema.json"),
+        schema::<abi::DirectoryPageRequest>("directory-page-request-v3.schema.json"),
+        schema::<protocol::PluginDirectoryPage>("directory-page-v3.schema.json"),
+        schema::<protocol::PluginDirectoryResourcePage>("directory-resource-page-v3.schema.json"),
     ]
 }
 
@@ -84,22 +92,24 @@ export const pluginViewKinds = {} as const;\n\
 export const resourceActionEffectKinds = {} as const;\n\
 export const directoryActionEffectKinds = {} as const;\n",
         json(catalog.plugin_api),
-        json(catalog.frame.resource_channel),
-        json(catalog.frame.directory_channel),
+        json(catalog.browser_frames.resource.channel),
+        json(catalog.browser_frames.directory.channel),
         json(catalog.capabilities.resource_actions),
         json(catalog.capabilities.directory_actions),
         json(
             &catalog
-                .frame
-                .resource_methods
+                .browser_frames
+                .resource
+                .host_methods
                 .iter()
                 .map(|method| method.name)
                 .collect::<Vec<_>>()
         ),
         json(
             &catalog
-                .frame
-                .directory_methods
+                .browser_frames
+                .directory
+                .host_methods
                 .iter()
                 .map(|method| method.name)
                 .collect::<Vec<_>>()
@@ -146,7 +156,7 @@ fn apply_wire_constraints(name: &str, document: &mut serde_json::Value) {
             "pattern": r"^(?!/)(?![A-Za-z]:/)(?!.*\\)(?!.*//)(?!.*(?:^|/)\.{1,2}(?:/|$))(?!.*/$)[^\u0000-\u001F]+$"
         });
     }
-    if name == "directory-page-request-v2.schema.json" {
+    if name == "directory-page-request-v3.schema.json" {
         document["properties"]["reference"]["minLength"] = serde_json::Value::from(1);
         document["properties"]["directory_id"]["minLength"] = serde_json::Value::from(1);
         document["properties"]["cursor"]["minLength"] = serde_json::Value::from(1);

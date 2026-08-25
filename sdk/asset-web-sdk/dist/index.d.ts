@@ -1,7 +1,7 @@
 import { type DirectoryActionOutput, type JsonObject, type ResourceActionOutput } from "./contract";
 export type { DirectoryActionEffectKind, DirectoryActionOutput, JsonObject, JsonPrimitive, JsonValue, PluginDiagnostic, PluginView, PluginViewKind, ResourceActionEffectKind, ResourceActionOutput, } from "./contract";
 export { PLUGIN_API_VERSION } from "./contract";
-export interface AssetHubFrameClient {
+export interface AssetHubResourceFrameClient {
     executeResourceAction(action: string, input?: JsonObject): Promise<ResourceActionOutput>;
     replaceResourceText(text: string): Promise<void>;
     disconnect(): void;
@@ -31,7 +31,7 @@ export interface AssetHubFrameConnectionOptions {
     callTimeoutMs?: number;
 }
 /** Connects the current plugin iframe to the narrow capability API exposed by its Asset Hub host. */
-export declare function connectAssetHubFrame(options?: AssetHubFrameConnectionOptions): Promise<AssetHubFrameClient>;
+export declare function connectAssetHubResourceFrame(options?: AssetHubFrameConnectionOptions): Promise<AssetHubResourceFrameClient>;
 /** Connects a Directory workspace iframe to capabilities bound to its current Directory. */
 export declare function connectAssetHubDirectoryFrame(options?: AssetHubFrameConnectionOptions): Promise<AssetHubDirectoryFrameClient>;
 /**

@@ -8,7 +8,7 @@ contract. Rust types and typed catalogs in this crate generate the committed JSO
 Rust plugin authors use `asset-rust-sdk`; Host adapters and implementations of other language SDKs
 depend on this crate directly.
 
-The current, only supported contract is Manifest v5 / Plugin API v2. This is an intentionally
+The current, only supported contract is Manifest v5 / Plugin API v3. This is an intentionally
 closed protocol: unknown fields are rejected in Manifest, lock, Action JSON, ABI JSON, and Frame
 output documents. A contract extension therefore requires a version change rather than silently
 shipping fields that older consumers ignore.
@@ -19,6 +19,11 @@ naming axes:
 
 - Resource and Directory Action messages are aggregate-bound JSON protocols.
 - Content and Directory Host functions are capabilities callable by Wasm guests.
+
+Browser Frame channels form one protocol family while remaining aggregate-specific capability
+surfaces: `asset-hub.plugin-frame.resource@3` and `asset-hub.plugin-frame.directory@3`. The
+language-neutral catalog groups each channel with its Host methods under
+`browser_frames.resource` and `browser_frames.directory`.
 
 The content ABI is deliberately capability-named rather than aggregate-named. It reads opaque,
 call-scoped content references issued either directly to a Resource Action or through Resource

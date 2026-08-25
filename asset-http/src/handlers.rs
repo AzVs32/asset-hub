@@ -29,6 +29,7 @@ use std::path::{Component, Path as FsPath};
 use std::str::FromStr;
 
 pub(crate) mod content;
+pub(crate) mod directory;
 pub(crate) mod maintenance;
 pub(crate) mod plugin;
 pub(crate) mod resource;
@@ -37,17 +38,20 @@ pub(crate) mod upload;
 pub(crate) use content::{
     download_directory, download_resource_content, get_resource_content, replace_resource_content,
 };
+pub(crate) use directory::{
+    create_directory, delete_directory, execute_directory_action, find_directory, list_directory,
+    list_directory_kinds, update_directory,
+};
 pub(crate) use maintenance::{health, purge_disabled};
 pub(crate) use plugin::plugin_web_asset;
 pub(crate) use resource::{
-    MAX_ACTION_REQUEST_BYTES, create_directory, delete_directory, execute_directory_action,
-    execute_resource_action, find_directory, find_resource, list_directory, list_directory_kinds,
-    list_resource_kinds, list_resources, remove_resource, soft_delete_resource, update_directory,
-    update_resource,
+    MAX_ACTION_REQUEST_BYTES, execute_resource_action, find_resource, list_resource_kinds,
+    list_resources, remove_resource, soft_delete_resource, update_resource,
 };
 pub(crate) use upload::{
     abort_upload, append_upload, complete_upload, create_upload, upload_status,
 };
 
 use content::*;
+use directory::*;
 use resource::*;

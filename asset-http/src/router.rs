@@ -4,8 +4,9 @@ use crate::openapi::ApiDoc;
 use crate::session_store::SessionStoreHealth;
 use crate::settings::{CorsPolicy, RouterOptions, SessionOptions};
 use crate::state::HttpState;
-use asset_core::service::ResourceService;
-use asset_core::service::{AuthorizationService, UserService};
+use asset_core::service::{
+    AssetCoordinator, AuthorizationService, DirectoryService, ResourceService, UserService,
+};
 use asset_runtime::{PluginWebAssets, UploadFinalizationDispatcher};
 use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderName, Method, StatusCode};
@@ -27,7 +28,9 @@ async fn openapi_document() -> Json<utoipa::openapi::OpenApi> {
 
 /// 使用显式边界配置和插件 web 根目录构建 HTTP 路由。
 pub fn build_router(
-    service: ResourceService,
+    resources: ResourceService,
+    directories: DirectoryService,
+    asset_coordinator: AssetCoordinator,
     options: RouterOptions,
     plugin_web_assets: PluginWebAssets,
     authorization: AuthorizationService,
@@ -133,7 +136,9 @@ pub fn build_router(
         .merge(resource_content_router)
         .merge(directory_download_router)
         .with_state(HttpState::new_with_plugin_web_assets(
-            service,
+            resources,
+            directories,
+            asset_coordinator,
             plugin_web_assets,
             authorization,
             upload_finalizations,

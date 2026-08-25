@@ -20,7 +20,8 @@ Construction has a deterministic order:
    configuration values;
 6. compose one shared `DirectoryService`, then inject clones of that same service into
    `ResourceService`, `UserService`, and `AuthorizationService` so directory mutation locking has
-   one process-local ownership boundary;
+   one process-local ownership boundary; compose a narrow `AssetCoordinator` from the Resource and
+   Directory services for directory actions and archive projections that cross both aggregates;
 7. recover pending Resource content replacements;
 8. read pending upload finalization IDs from Core and schedule them through the Runtime-owned
    finalization supervisor;
@@ -30,12 +31,13 @@ Construction has a deterministic order:
 kind/action registries, and concrete action executors are construction locals. Their required
 ports and handler ownership are retained by the composed Core services; the Runtime does not keep
 duplicate concrete `Arc`s or expose registry getters. Resource and Directory kind definitions are
-queried through `ResourceService` and its shared `DirectoryService`.
+queried through their respective services; the coordinator exposes no kind or repository surface.
 
-The Runtime retains only the application services, the frozen Plugin Web asset snapshot, the
+The Runtime retains only the Resource and Directory services, the narrow cross-aggregate
+coordinator, the frozen Plugin Web asset snapshot, the
 private upload-finalization supervisor, the effective settings needed to start local storage sync,
-and the sync guard after startup. The caller continues to own its loaded configuration; the full
-`AssetInfrastructure` aggregate is released when construction finishes.
+and the sync guard after startup. The caller continues to own its loaded configuration; the
+`AssetInfrastructure` assembly object is released when construction finishes.
 
 Plugin package mutation is not part of runtime startup. `asset plugin --install <path>` owns
 snapshotting, lock generation, verification, and canonical installation before loading. Runtime

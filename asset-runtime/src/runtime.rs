@@ -3,7 +3,8 @@ use crate::{PluginWebAssets, UploadFinalizationDispatcher};
 use asset_core::CoreError;
 use asset_core::domain::{ResourceActionPolicy, ResourceContentEditPolicy};
 use asset_core::service::{
-    AuthorizationService, DirectoryService, ResourceService, ResourceServicePorts, UserService,
+    AssetCoordinator, AuthorizationService, DirectoryService, ResourceService,
+    ResourceServicePorts, UserService,
 };
 use asset_infra::AssetInfrastructure;
 use asset_infra::action::{DefaultDirectoryActionExecutor, DefaultResourceActionExecutor};
@@ -26,6 +27,8 @@ pub struct AssetRuntime {
     /// 已验证的浏览器静态资源快照
     plugin_web_assets: PluginWebAssets,
     resource_service: ResourceService,
+    directory_service: DirectoryService,
+    asset_coordinator: AssetCoordinator,
     user_service: UserService,
     /// 授权应用能力
     authorization_service: AuthorizationService,
@@ -144,7 +147,9 @@ impl AssetRuntime {
             directory_service.clone(),
         );
         let authorization_service =
-            AuthorizationService::new(infrastructure.user_repository(), directory_service);
+            AuthorizationService::new(infrastructure.user_repository(), directory_service.clone());
+        let asset_coordinator =
+            AssetCoordinator::new(resource_service.clone(), directory_service.clone());
         let plugin_web_assets = plugin_web_assets_from_catalog(&plugin_catalog)?;
 
         let replacements_resumed = resource_service.resume_content_replacements().await?;
@@ -167,6 +172,8 @@ impl AssetRuntime {
         Ok(Self {
             plugin_web_assets,
             resource_service,
+            directory_service,
+            asset_coordinator,
             user_service,
             authorization_service,
             upload_finalizations,
@@ -197,9 +204,17 @@ impl AssetRuntime {
         Ok(())
     }
 
-    /// 创建资源应用服务。
+    /// 返回 Resource 聚合应用服务。
     pub fn resource_service(&self) -> ResourceService {
         self.resource_service.clone()
+    }
+
+    pub fn directory_service(&self) -> DirectoryService {
+        self.directory_service.clone()
+    }
+
+    pub fn asset_coordinator(&self) -> AssetCoordinator {
+        self.asset_coordinator.clone()
     }
 
     pub fn user_service(&self) -> UserService {

@@ -12,8 +12,7 @@ use super::{
     RESOURCE_VIEW_CAPABILITY, ValidatedPluginManifest,
 };
 use crate::protocol::{
-    PLUGIN_API_VERSION, PLUGIN_DIRECTORY_ACTION_EFFECT_KINDS, PLUGIN_RESOURCE_ACTION_EFFECT_KINDS,
-    PLUGIN_VIEW_KINDS,
+    DIRECTORY_ACTION_EFFECT_KINDS, PLUGIN_API_VERSION, RESOURCE_ACTION_EFFECT_KINDS, VIEW_KINDS,
 };
 use std::collections::HashSet;
 
@@ -295,7 +294,7 @@ fn validate_capabilities(manifest: &PluginManifestDocument) -> Result<(), String
             ));
         }
         for view in &action.output.views {
-            if !PLUGIN_VIEW_KINDS.contains(&view.as_str()) {
+            if !VIEW_KINDS.contains(&view.as_str()) {
                 return Err(format!(
                     "capabilities.resource_actions[`{}`] declares unsupported view `{view}`",
                     action.id
@@ -306,7 +305,7 @@ fn validate_capabilities(manifest: &PluginManifestDocument) -> Result<(), String
             "capabilities.resource_actions",
             &action.id,
             &action.output.effects,
-            PLUGIN_RESOURCE_ACTION_EFFECT_KINDS,
+            RESOURCE_ACTION_EFFECT_KINDS,
         )?;
         if action
             .output
@@ -506,7 +505,7 @@ fn validate_capabilities(manifest: &PluginManifestDocument) -> Result<(), String
             .output
             .views
             .iter()
-            .any(|view| !PLUGIN_VIEW_KINDS.contains(&view.as_str()))
+            .any(|view| !VIEW_KINDS.contains(&view.as_str()))
         {
             return Err(format!(
                 "directory action `{}` must declare only supported views",
@@ -560,7 +559,7 @@ fn validate_capabilities(manifest: &PluginManifestDocument) -> Result<(), String
             "capabilities.directory_actions",
             &action.id,
             &action.output.effects,
-            PLUGIN_DIRECTORY_ACTION_EFFECT_KINDS,
+            DIRECTORY_ACTION_EFFECT_KINDS,
         )?;
         if action
             .output

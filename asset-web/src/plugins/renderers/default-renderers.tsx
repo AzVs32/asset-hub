@@ -9,30 +9,30 @@ import {
   type ResourceActionOutput,
 } from "@/domain/plugin";
 import type { ResourceAction } from "@/domain/resource";
-import type { PluginKernel, PluginViewRendererProps } from "@/kernel/plugin-kernel";
+import type { PluginKernel, ResourceViewRendererProps } from "@/kernel/plugin-kernel";
 import { createPluginFrameMessenger, pluginFrameUrl } from "../frame-boundary";
-import { createPluginFrameHostBridge } from "../frame-host";
+import { createResourceFrameHostBridge } from "../resource-frame-host";
 import { GenericPluginViewRenderer } from "./generic-plugin-view";
 
 export function registerDefaultViewRenderers(kernel: PluginKernel): void {
   for (const kind of pluginViewKinds) {
-    kernel.registerView(kind, DefaultViewRenderer);
+    kernel.registerResourceView(kind, DefaultViewRenderer);
   }
 }
 
-function DefaultViewRenderer(props: PluginViewRendererProps) {
+function DefaultViewRenderer(props: ResourceViewRendererProps) {
   const { view } = props;
-  if (view.type === "plugin_frame") return <PluginFrameView {...props} view={view} />;
+  if (view.type === "plugin_frame") return <ResourcePluginFrame {...props} view={view} />;
   return <GenericPluginViewRenderer view={view} gateway={props.gateway} />;
 }
 
-function PluginFrameView({
+function ResourcePluginFrame({
   view,
   output,
   resource,
   gateway,
   onResourceChanged,
-}: PluginViewRendererProps & { view: Extract<PluginView, { type: "plugin_frame" }> }) {
+}: ResourceViewRendererProps & { view: Extract<PluginView, { type: "plugin_frame" }> }) {
   const ref = React.useRef<HTMLIFrameElement>(null);
   const source = pluginFrameUrl(view.url, gateway.assetUrl.bind(gateway));
   const onResourceChangedRef = React.useRef(onResourceChanged);
@@ -45,7 +45,7 @@ function PluginFrameView({
     if (initialResource.id !== selectedResourceId) {
       throw new Error("The plugin frame Resource changed during connection setup.");
     }
-    return createPluginFrameHostBridge({
+    return createResourceFrameHostBridge({
       resource: initialResource,
       frameResourceId: output.resourceId,
       frameActionId: output.action,

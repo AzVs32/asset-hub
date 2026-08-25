@@ -1,0 +1,429 @@
+{
+  "$id": "urn:asset-hub:plugin-contract:directory-action-result-v3",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PluginDirectoryActionResult",
+  "description": "Complete Directory Action handler result.",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/PluginDirectoryActionOutput"
+    },
+    {
+      "$ref": "#/$defs/PluginActionFailure"
+    }
+  ],
+  "$defs": {
+    "CreateTreeDirectory": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "Canonical, non-empty path relative to the action's current Directory.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "path"
+      ]
+    },
+    "CreateTreeResource": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "string"
+        },
+        "directory": {
+          "description": "Canonical Directory path relative to the action's current Directory; empty means current.",
+          "type": "string"
+        },
+        "encoding": {
+          "$ref": "#/$defs/CreateTreeResourceEncoding"
+        },
+        "kind": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mime_type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "encoding",
+        "data"
+      ]
+    },
+    "CreateTreeResourceEncoding": {
+      "type": "string",
+      "enum": [
+        "base64"
+      ]
+    },
+    "DirectoryActionEffect": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "parent_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "update"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "name": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "create_child"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "name"
+          ]
+        },
+        {
+          "description": "Creates a bounded set of relative directories and resources below the current Directory.\n\nThe Host validates all paths and kinds, applies user authorization, and compensates newly\ncreated entries when a later entry fails. File roles and required structure remain plugin\npolicy rather than fields in the Manifest.",
+          "type": "object",
+          "properties": {
+            "directories": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/CreateTreeDirectory"
+              }
+            },
+            "resources": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/CreateTreeResource"
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "create_tree"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "delete"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        }
+      ]
+    },
+    "PluginActionFailure": {
+      "description": "Error response that plugins may return instead of an action view.",
+      "type": "object",
+      "properties": {
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PluginDiagnostic"
+          }
+        },
+        "error": {
+          "$ref": "#/$defs/PluginDiagnostic"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "error"
+      ]
+    },
+    "PluginDiagnostic": {
+      "description": "Machine-readable diagnostic produced by a plugin or by a host execution phase.",
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "details": true,
+        "message": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean",
+          "default": false
+        },
+        "severity": {
+          "$ref": "#/$defs/PluginDiagnosticSeverity",
+          "default": "error"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message"
+      ]
+    },
+    "PluginDiagnosticSeverity": {
+      "type": "string",
+      "enum": [
+        "info",
+        "warning",
+        "error"
+      ]
+    },
+    "PluginDirectoryActionOutput": {
+      "type": "object",
+      "properties": {
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PluginDiagnostic"
+          }
+        },
+        "effects": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DirectoryActionEffect"
+          }
+        },
+        "view": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PluginView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "PluginMediaEncoding": {
+      "description": "Encodings renderable by a media view.",
+      "type": "string",
+      "enum": [
+        "base64",
+        "url"
+      ]
+    },
+    "PluginView": {
+      "description": "Shared view protocol returned by plugin actions.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "text"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "markdown": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "markdown"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "markdown"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "html": {
+              "type": "string"
+            },
+            "title": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "html"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "html"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "plugin_api": {
+              "type": "string",
+              "const": "asset-hub.plugin-api@3"
+            },
+            "title": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "plugin_frame"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "plugin_api",
+            "url"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": true,
+            "type": {
+              "type": "string",
+              "const": "json"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "string"
+            },
+            "encoding": {
+              "$ref": "#/$defs/PluginMediaEncoding"
+            },
+            "mime_type": {
+              "type": "string"
+            },
+            "title": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "media"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "mime_type",
+            "encoding",
+            "data"
+          ]
+        },
+        {
+          "description": "Host-owned URL exposed as a downloadable file.",
+          "type": "object",
+          "properties": {
+            "filename": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "mime_type": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "download"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "url"
+          ]
+        }
+      ]
+    }
+  }
+}

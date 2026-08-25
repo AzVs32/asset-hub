@@ -1,5 +1,5 @@
 use super::*;
-use crate::sqlite::SqliteResourceRepository;
+use crate::sqlite::SqliteDirectoryRepository;
 use asset_core::domain::Directory;
 use asset_core::port::{DirectoryRepository, UserQuery, UserRepository};
 use sqlx::sqlite::SqlitePoolOptions;
@@ -11,8 +11,8 @@ async fn user_queries_return_workspace_locations_in_one_projection() {
         .connect("sqlite::memory:")
         .await
         .unwrap();
-    let directories = SqliteResourceRepository::from_pool(pool.clone());
-    directories.run_migrations().await.unwrap();
+    crate::migration::sqlite::run(&pool).await.unwrap();
+    let directories = SqliteDirectoryRepository::new(pool.clone());
     let teams = Directory::new(DirectoryId::root(), "teams").unwrap();
     DirectoryRepository::insert(&directories, &teams)
         .await
@@ -39,8 +39,7 @@ async fn invalid_persisted_user_is_a_repository_failure() {
         .connect("sqlite::memory:")
         .await
         .unwrap();
-    let directories = SqliteResourceRepository::from_pool(pool.clone());
-    directories.run_migrations().await.unwrap();
+    crate::migration::sqlite::run(&pool).await.unwrap();
     let repository = SqliteIdentityRepository::new(pool.clone());
     let user = User::new(
         "alice",

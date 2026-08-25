@@ -1,18 +1,20 @@
 use asset_core::CoreError;
 use asset_core::domain::AccessContext;
 use asset_core::service::{
-    AuthorizationService, ResourceService, SecuredDirectoryService, SecuredResourceService,
-    WorkspaceScope,
+    AssetCoordinator, AuthorizationService, DirectoryService, ResourceService,
+    SecuredAssetCoordinator, SecuredDirectoryService, SecuredResourceService, WorkspaceScope,
 };
 use asset_runtime::{PluginWebAssets, UploadFinalizationDispatcher};
 use std::sync::Arc;
 
 /// HTTP handler 共享状态。
 ///
-/// Axum 会为每个请求 clone 该状态；`ResourceService` 内部只 clone 端口引用，因此成本较低。
+/// Axum 会为每个请求 clone 该状态；各服务内部只 clone 端口引用，因此成本较低。
 #[derive(Clone)]
 pub(crate) struct HttpState {
-    service: ResourceService,
+    resources: ResourceService,
+    directories: DirectoryService,
+    asset_coordinator: AssetCoordinator,
     plugin_web_assets: Arc<PluginWebAssets>,
     authorization: AuthorizationService,
     upload_finalizations: Arc<dyn UploadFinalizationDispatcher>,
@@ -20,30 +22,42 @@ pub(crate) struct HttpState {
 
 impl HttpState {
     pub(crate) fn new_with_plugin_web_assets(
-        service: ResourceService,
+        resources: ResourceService,
+        directories: DirectoryService,
+        asset_coordinator: AssetCoordinator,
         plugin_web_assets: PluginWebAssets,
         authorization: AuthorizationService,
         upload_finalizations: Arc<dyn UploadFinalizationDispatcher>,
     ) -> Self {
         Self {
-            service,
+            resources,
+            directories,
+            asset_coordinator,
             plugin_web_assets: Arc::new(plugin_web_assets),
             authorization,
             upload_finalizations,
         }
     }
 
-    pub(crate) fn secured<'a>(&'a self, context: &'a AccessContext) -> SecuredResourceService<'a> {
-        self.service.secured(&self.authorization, context)
+    pub(crate) fn secured_resources<'a>(
+        &'a self,
+        context: &'a AccessContext,
+    ) -> SecuredResourceService<'a> {
+        self.resources.secured(&self.authorization, context)
     }
 
     pub(crate) fn secured_directories<'a>(
         &'a self,
         context: &'a AccessContext,
     ) -> SecuredDirectoryService<'a> {
-        self.service
-            .directory_service()
-            .secured(&self.authorization, context)
+        self.directories.secured(&self.authorization, context)
+    }
+
+    pub(crate) fn secured_asset_coordination<'a>(
+        &'a self,
+        context: &'a AccessContext,
+    ) -> SecuredAssetCoordinator<'a> {
+        self.asset_coordinator.secured(&self.authorization, context)
     }
 
     pub(crate) fn dispatch_upload_finalization(
@@ -60,9 +74,12 @@ impl HttpState {
         self.authorization.workspace_scope(context).await
     }
 
-    /// 返回资源应用服务。
-    pub(crate) fn service(&self) -> &ResourceService {
-        &self.service
+    pub(crate) fn resources(&self) -> &ResourceService {
+        &self.resources
+    }
+
+    pub(crate) fn directories(&self) -> &DirectoryService {
+        &self.directories
     }
 
     pub(crate) fn plugin_web_asset(

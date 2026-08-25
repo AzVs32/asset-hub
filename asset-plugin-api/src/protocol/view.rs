@@ -1,51 +1,8 @@
-//! 插件 Action 的 JSON 输出与视图协议。
-//!
-//! 插件通过这里的 DTO 返回可渲染视图、受约束的副作用声明和诊断信息；实际副作用
-//! 是否允许以及如何落库仍由 Host 校验和执行。
+//! Resource 与 Directory Action 共用的可渲染视图协议。
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-
-use crate::protocol::PluginDiagnostic;
-
-/// Complete Resource Action handler result.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(untagged)]
-pub enum PluginResourceActionResult {
-    Success(PluginResourceActionOutput),
-    Failure(crate::protocol::PluginActionFailure),
-}
-
-/// Standard action output.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PluginResourceActionOutput {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub view: Option<PluginView>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub effects: Vec<PluginResourceActionEffect>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub diagnostics: Vec<PluginDiagnostic>,
-}
-
-impl PluginResourceActionOutput {
-    pub fn new(view: PluginView) -> Self {
-        Self {
-            view: Some(view),
-            effects: Vec::new(),
-            diagnostics: Vec::new(),
-        }
-    }
-
-    pub fn without_view() -> Self {
-        Self {
-            view: None,
-            effects: Vec::new(),
-            diagnostics: Vec::new(),
-        }
-    }
-}
 
 impl PluginView {
     pub fn kind(&self) -> &'static str {
@@ -59,39 +16,6 @@ impl PluginView {
             Self::Download(_) => "download",
         }
     }
-}
-
-/// Side effects requested by a plugin action.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-pub enum PluginResourceActionEffect {
-    ReplaceContent(ReplaceContentEffect),
-    Delete,
-}
-
-impl PluginResourceActionEffect {
-    pub fn kind(&self) -> &'static str {
-        match self {
-            Self::ReplaceContent(_) => "replace_content",
-            Self::Delete => "delete",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ReplaceContentEffect {
-    pub encoding: PluginReplacementEncoding,
-    pub data: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mime_type: Option<String>,
-}
-
-/// Encoding accepted for bytes returned by a content replacement effect.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum PluginReplacementEncoding {
-    Base64,
 }
 
 /// Shared view protocol returned by plugin actions.
@@ -169,20 +93,4 @@ pub struct DownloadView {
     pub mime_type: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filename: Option<String>,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{PluginResourceActionEffect, PluginResourceActionOutput};
-
-    #[test]
-    fn effect_only_output_omits_view_fields() {
-        let mut output = PluginResourceActionOutput::without_view();
-        output.effects.push(PluginResourceActionEffect::Delete);
-
-        assert_eq!(
-            serde_json::to_value(output).unwrap(),
-            serde_json::json!({"effects": [{"type": "delete"}]})
-        );
-    }
 }

@@ -2,8 +2,8 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import {
   PLUGIN_API_VERSION,
-  connectAssetHubFrame,
-  type AssetHubFrameClient,
+  connectAssetHubResourceFrame,
+  type AssetHubResourceFrameClient,
   type JsonObject,
 } from "@asset-hub/asset-web-sdk";
 import {
@@ -389,17 +389,17 @@ function executeEpubAction<T>(
   return frameHost().then(async (host) => {
     const output = await host.executeResourceAction(frame.action, input);
     const view = output.view;
-    if (view?.view !== "json" || !validate(view.data)) {
+    if (view?.type !== "json" || !validate(view.data)) {
       throw new Error("EPUB plugin returned an invalid payload");
     }
     return view.data;
   });
 }
 
-let frameHostPromise: Promise<AssetHubFrameClient> | null = null;
+let frameHostPromise: Promise<AssetHubResourceFrameClient> | null = null;
 
-function frameHost(): Promise<AssetHubFrameClient> {
-  frameHostPromise ??= connectAssetHubFrame();
+function frameHost(): Promise<AssetHubResourceFrameClient> {
+  frameHostPromise ??= connectAssetHubResourceFrame();
   return frameHostPromise;
 }
 

@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AssetGateway } from "@/application/ports/asset-gateway";
 import type { ResourceActionOutput } from "@/domain/plugin";
-import { createDirectoryPluginFrameHostBridge } from "@/plugins/directory-frame-host";
-import { createPluginFrameHostBridge } from "@/plugins/frame-host";
+import { createDirectoryFrameHostBridge } from "@/plugins/directory-frame-host";
+import { createResourceFrameHostBridge } from "@/plugins/resource-frame-host";
 import { action, directory, directoryAction, resource } from "./fixtures";
 
 describe("Plugin Frame host bridge", () => {
@@ -19,7 +19,7 @@ describe("Plugin Frame host bridge", () => {
       .mockResolvedValueOnce(revised)
       .mockResolvedValueOnce({ ...revised, revision: 3 });
     const onResourceChanged = vi.fn().mockResolvedValue(undefined);
-    const bridge = createPluginFrameHostBridge({
+    const bridge = createResourceFrameHostBridge({
       resource: initial,
       frameResourceId: "resource-1",
       frameActionId: edit.id,
@@ -44,7 +44,7 @@ describe("Plugin Frame host bridge", () => {
       access: "write",
     });
     const replaceResourceText = vi.fn();
-    const bridge = createPluginFrameHostBridge({
+    const bridge = createResourceFrameHostBridge({
       resource: resource([read, edit]),
       frameResourceId: "resource-1",
       frameActionId: read.id,
@@ -62,7 +62,7 @@ describe("Plugin Frame host bridge", () => {
     const item = resource([inspect]);
     const expected = pluginOutput(inspect.id);
     const executeResourceAction = vi.fn().mockResolvedValue(expected);
-    const bridge = createPluginFrameHostBridge({
+    const bridge = createResourceFrameHostBridge({
       resource: item,
       frameResourceId: "resource-1",
       frameActionId: inspect.id,
@@ -97,7 +97,7 @@ describe("Plugin Frame host bridge", () => {
     };
     const executeResourceAction = vi.fn().mockResolvedValue(expected);
     const confirmAction = vi.fn().mockResolvedValue(false);
-    const bridge = createPluginFrameHostBridge({
+    const bridge = createResourceFrameHostBridge({
       resource: resource([remove]),
       frameResourceId: "resource-1",
       frameActionId: "example.frame",
@@ -129,7 +129,7 @@ describe("Directory Plugin Frame host bridge", () => {
       effects: [],
     };
     const executeDirectoryAction = vi.fn().mockResolvedValue(expected);
-    const bridge = createDirectoryPluginFrameHostBridge({
+    const bridge = createDirectoryFrameHostBridge({
       directory: item,
       frameDirectoryId: item.id,
       gateway: { executeDirectoryAction } as unknown as AssetGateway,
@@ -162,7 +162,7 @@ describe("Directory Plugin Frame host bridge", () => {
     const onDirectoryChanged = vi.fn().mockResolvedValue(undefined);
     const onNavigate = vi.fn().mockResolvedValue(undefined);
     const confirmAction = vi.fn().mockResolvedValue(true);
-    const bridge = createDirectoryPluginFrameHostBridge({
+    const bridge = createDirectoryFrameHostBridge({
       directory: item,
       frameDirectoryId: item.id,
       gateway: { executeDirectoryAction } as unknown as AssetGateway,
@@ -200,7 +200,7 @@ describe("Directory Plugin Frame host bridge", () => {
       .mockResolvedValueOnce(resourceWithoutEditor);
     const onEditResource = vi.fn().mockResolvedValue(undefined);
     const item = directory([]);
-    const bridge = createDirectoryPluginFrameHostBridge({
+    const bridge = createDirectoryFrameHostBridge({
       directory: item,
       frameDirectoryId: item.id,
       gateway: { findResource } as unknown as AssetGateway,
@@ -241,7 +241,7 @@ describe("Directory Plugin Frame host bridge", () => {
       effects: [],
       view: {
         type: "plugin_frame",
-        plugin_api: "asset-hub.plugin-api@2",
+        plugin_api: "asset-hub.plugin-api@3",
         title: "Example",
         url: "/plugins/example.document/index.html",
       },
@@ -252,7 +252,7 @@ describe("Directory Plugin Frame host bridge", () => {
       .mockResolvedValueOnce(resourceWithoutViewer);
     const executeResourceAction = vi.fn().mockResolvedValue(output);
     const item = directory([]);
-    const bridge = createDirectoryPluginFrameHostBridge({
+    const bridge = createDirectoryFrameHostBridge({
       directory: item,
       frameDirectoryId: item.id,
       gateway: { findResource, executeResourceAction } as unknown as AssetGateway,
@@ -273,7 +273,7 @@ describe("Directory Plugin Frame host bridge", () => {
 describe("Plugin Frame aggregate binding", () => {
   it("never rebinds an existing Resource or Directory frame", () => {
     const currentResource = resource([]);
-    const resourceBridge = createPluginFrameHostBridge({
+    const resourceBridge = createResourceFrameHostBridge({
       resource: currentResource,
       frameResourceId: currentResource.id,
       frameActionId: "example.frame",
@@ -284,7 +284,7 @@ describe("Plugin Frame aggregate binding", () => {
     ).toThrow("cannot change its bound Resource");
 
     const currentDirectory = directory([]);
-    const directoryBridge = createDirectoryPluginFrameHostBridge({
+    const directoryBridge = createDirectoryFrameHostBridge({
       directory: currentDirectory,
       frameDirectoryId: currentDirectory.id,
       gateway: {} as AssetGateway,
@@ -303,7 +303,7 @@ function pluginOutput(actionId: string): ResourceActionOutput {
     effects: [],
     view: {
       type: "plugin_frame",
-      plugin_api: "asset-hub.plugin-api@2",
+      plugin_api: "asset-hub.plugin-api@3",
       title: "Plugin frame",
       url: "/plugins/example/index.html",
     },

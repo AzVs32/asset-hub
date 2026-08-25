@@ -51,10 +51,11 @@ pub(crate) async fn run(command: Command, users: UserService) -> CliResult {
     if command.list {
         print_user_list(&users.list().await?);
     } else if let Some(username) = command.create {
-        let role = command
-            .admin
-            .then_some(UserRole::Administrator)
-            .unwrap_or(UserRole::Member);
+        let role = if command.admin {
+            UserRole::Administrator
+        } else {
+            UserRole::Member
+        };
         let password = prompt_new_password()?;
         let user = users.create(&username, &password, role, None).await?;
         println!("created {} `{}`", role, user.username());

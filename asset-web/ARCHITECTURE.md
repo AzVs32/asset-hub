@@ -71,7 +71,7 @@ action 和用户授权能力。Feature 只知道这个接口。
 
 微内核只管理三件事：
 
-- view kind 到 React renderer 的注册表。
+- Resource view kind 到 React renderer 的注册表。
 - `directory_workspace` 的最近 Kind singleton Provider 选择。
 - `CoreDirectoryWorkspace` 内部 action slot 的选择、排序和回退。
 
@@ -95,11 +95,12 @@ action 和用户授权能力。Feature 只知道这个接口。
 
 这是通用插件宿主，而不是具体插件实现：
 
-- `plugin-action-dialog` 承载用户触发的 action 结果。
-- `plugin-output` 与 Directory 输出统一按实际 severity 展示 diagnostics 并进入 view renderer。
+- `resource-action-dialog` 承载用户触发的 action 结果。
+- `resource-plugin-output` 与 Directory 输出统一按实际 severity 展示 diagnostics；Resource
+  输出通过 Kernel renderer 注册表，Directory 的通用视图直接复用同一 renderer 实现。
 - Resource 与 Directory action 的 text、Markdown、HTML、JSON、media、download 共用同一组
   `renderers`；HTML 一律注入禁止网络访问的 CSP。两种 `plugin_frame` 仍使用各自聚合绑定的桥接。
-- `frame-host` 通过 Penpal 暴露窄能力接口；公共 Web SDK 隐藏传输细节。iframe 只能调用当前
+- `resource-frame-host` 通过 Penpal 暴露窄能力接口；公共 Web SDK 隐藏传输细节。iframe 只能调用当前
   资源已经暴露的 action，且只有由当前 `edit` provider 打开的读写 frame 才能请求替换
   当前资源文本。替换成功后，Host 将返回的最新 Resource 快照立即同步到当前 action 弹窗、
   资源详情和目录列表缓存，再执行 query invalidation；连续保存或关闭后立即重新编辑不会复用旧 revision。
@@ -157,8 +158,8 @@ main.tsx
        └─ Material UI ThemeProvider / CssBaseline
             └─ AuthBoundary
                  └─ RouterProvider
-                      ├─ ResourceWorkspace
-                      └─ StandalonePluginView
+                      ├─ AssetWorkspace
+                      └─ StandaloneResourcePluginView
 ```
 
 路由和大功能使用 lazy import。认证在路由外层，因此所有业务路由默认受保护。
@@ -181,8 +182,8 @@ main.tsx
 ## 4. 资源请求链路
 
 ```text
-ResourceWorkspace
-  → useResourceListing / useResourceCommands
+AssetWorkspace
+  → useAssetWorkspaceListing / useAssetWorkspaceCommands
   → AssetGateway port
   → OpenApiAssetGateway
   → asset-http
@@ -194,7 +195,7 @@ ResourceWorkspace
 Directory 工作区所有权链路：
 
 ```text
-ResourceWorkspace Host shell
+AssetWorkspace Host shell
   ├─ Primary header
   │    ├─ Asset Hub 标题
   │    └─ 路径面包屑
@@ -223,7 +224,7 @@ Action 默认读取最新授权快照，不会因为缩略图或预览缓存较�
   → 用户触发，或宿主专用组件自动触发只读 action（如缩略图）
   → AssetGateway.executeResourceAction / executeDirectoryAction
   → Zod 校验 PluginView
-  → PluginViewHost 查询 renderer registry
+  → ResourcePluginViewHost 查询 renderer registry
   → 通用 renderer 或 sandboxed plugin_frame
 ```
 

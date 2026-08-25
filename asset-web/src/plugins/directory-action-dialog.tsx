@@ -1,7 +1,8 @@
 import { Box, Dialog, DialogContent, DialogTitle, Typography } from "@mui/material";
 import { useGateway } from "@/application/ports/gateway-context";
+import type { Directory, DirectoryAction } from "@/domain/directory";
 import type { DirectoryActionOutput, PluginView } from "@/domain/plugin";
-import type { Directory, DirectoryAction, Resource, ResourceAction } from "@/domain/resource";
+import type { Resource, ResourceAction } from "@/domain/resource";
 import { DirectoryPluginFrame } from "./directory-plugin-frame";
 import { PluginDiagnostics } from "./plugin-diagnostics";
 import { GenericPluginViewRenderer } from "./renderers/generic-plugin-view";

@@ -4,26 +4,27 @@ use crate::domain::DirectoryActionId;
 #[test]
 fn directory_action_cannot_move_a_directory_outside_the_member_workspace() {
     let (service, _, _) = service();
-    let root = block_on(service.directory_service().root()).unwrap();
-    let workspace = block_on(service.directory_service().create(&root, "workspace")).unwrap();
-    let outside = block_on(service.directory_service().create(&root, "outside")).unwrap();
-    let inside = block_on(service.directory_service().create(&workspace, "inside")).unwrap();
+    let root = block_on(service.directories.root()).unwrap();
+    let workspace = block_on(service.directories.create(&root, "workspace")).unwrap();
+    let outside = block_on(service.directories.create(&root, "outside")).unwrap();
+    let inside = block_on(service.directories.create(&workspace, "inside")).unwrap();
     let user = User::new("member", "hash", UserRole::Member, workspace.id()).unwrap();
     let context = AccessContext::member(user.id());
     let authorization = crate::service::AuthorizationService::new(
         Arc::new(SingleUserRepository(user)),
-        service.directory_service().clone(),
+        service.directories.clone(),
     );
-    let inside_revision = block_on(service.directory_service().find_by_id(&inside.id()))
+    let inside_revision = block_on(service.directories.find_by_id(&inside.id()))
         .unwrap()
         .directory()
         .revision();
+    let coordinator =
+        crate::service::AssetCoordinator::new(service.clone(), service.directories.clone());
 
     let error = block_on(
-        service
-            .directory_service()
+        coordinator
             .secured(&authorization, &context)
-            .execute_action(
+            .execute_directory_action(
                 &inside.id(),
                 crate::service::ExecuteDirectoryAction::new(
                     DirectoryActionId::from_static("test.directory.move"),
@@ -36,10 +37,9 @@ fn directory_action_cannot_move_a_directory_outside_the_member_workspace() {
     assert!(matches!(error, CoreError::InvalidOperation { .. }));
 
     let error = block_on(
-        service
-            .directory_service()
+        coordinator
             .secured(&authorization, &context)
-            .execute_action(
+            .execute_directory_action(
                 &inside.id(),
                 crate::service::ExecuteDirectoryAction::new(
                     DirectoryActionId::from_static("test.directory.move"),
@@ -52,7 +52,7 @@ fn directory_action_cannot_move_a_directory_outside_the_member_workspace() {
 
     assert!(matches!(error, CoreError::Forbidden { .. }));
     assert_eq!(
-        block_on(service.directory_service().locate_by_id(&inside.id()))
+        block_on(service.directories.locate_by_id(&inside.id()))
             .unwrap()
             .path()
             .path(),
@@ -63,9 +63,9 @@ fn directory_action_cannot_move_a_directory_outside_the_member_workspace() {
 #[test]
 fn member_cannot_replace_content_outside_the_workspace() {
     let (service, _, _) = service();
-    let root = block_on(service.directory_service().root()).unwrap();
-    let workspace = block_on(service.directory_service().create(&root, "workspace")).unwrap();
-    let outside = block_on(service.directory_service().create(&root, "outside")).unwrap();
+    let root = block_on(service.directories.root()).unwrap();
+    let workspace = block_on(service.directories.create(&root, "workspace")).unwrap();
+    let outside = block_on(service.directories.create(&root, "outside")).unwrap();
     let resource = block_on(
         service.upload_resource_for_test(
             stream_upload_command(
@@ -83,7 +83,7 @@ fn member_cannot_replace_content_outside_the_workspace() {
     let context = AccessContext::member(user.id());
     let authorization = crate::service::AuthorizationService::new(
         Arc::new(SingleUserRepository(user)),
-        service.directory_service().clone(),
+        service.directories.clone(),
     );
     let replacement = Bytes::from_static(b"denied");
     let command = ReplaceResourceContent::new(
@@ -108,21 +108,23 @@ fn member_cannot_replace_content_outside_the_workspace() {
 #[test]
 fn secured_directory_action_creates_a_bounded_directory_and_resource_tree() {
     let (service, repository, blob_storage) = service();
-    let root = block_on(service.directory_service().root()).unwrap();
-    let workspace = block_on(service.directory_service().create(&root, "workspace")).unwrap();
+    let root = block_on(service.directories.root()).unwrap();
+    let workspace = block_on(service.directories.create(&root, "workspace")).unwrap();
     let user = User::new("member", "hash", UserRole::Member, workspace.id()).unwrap();
     let context = AccessContext::member(user.id());
     let authorization = crate::service::AuthorizationService::new(
         Arc::new(SingleUserRepository(user)),
-        service.directory_service().clone(),
+        service.directories.clone(),
     );
-    let revision = block_on(service.directory_service().find_by_id(&workspace.id()))
+    let revision = block_on(service.directories.find_by_id(&workspace.id()))
         .unwrap()
         .directory()
         .revision();
+    let coordinator =
+        crate::service::AssetCoordinator::new(service.clone(), service.directories.clone());
 
     block_on(
-        service
+        coordinator
             .secured(&authorization, &context)
             .execute_directory_action(
                 &workspace.id(),
@@ -137,11 +139,11 @@ fn secured_directory_action_creates_a_bounded_directory_and_resource_tree() {
     let game_path = DirectoryPath::from_path("workspace/game-one").unwrap();
     let public_path = DirectoryPath::from_path("workspace/game-one/public").unwrap();
     assert!(
-        block_on(service.directory_service().find_by_path(&game_path)).is_ok(),
+        block_on(service.directories.find_by_path(&game_path)).is_ok(),
         "game directory must exist"
     );
     assert!(
-        block_on(service.directory_service().find_by_path(&public_path)).is_ok(),
+        block_on(service.directories.find_by_path(&public_path)).is_ok(),
         "public directory must exist"
     );
     let readme = block_on(ResourceQuery::find_by_path(

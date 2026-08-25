@@ -100,7 +100,7 @@ pub struct ResourceActionCapability {
     #[serde(default)]
     pub access: ManifestActionAccess,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub requires: Option<ActionRequirements>,
+    pub requires: Option<ResourceActionRequirementsCapability>,
     pub output: ActionOutputCapability,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ui: Option<ActionUi>,
@@ -182,16 +182,16 @@ pub struct ResourceActionAppliesToCapability {
 /// Optional object content a handler needs in addition to the resource snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct ActionRequirements {
+pub struct ResourceActionRequirementsCapability {
     #[serde(default)]
     pub content: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub content_delivery: Option<ContentDelivery>,
+    pub content_delivery: Option<ResourceContentDelivery>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum ContentDelivery {
+pub enum ResourceContentDelivery {
     Inline,
     Reference,
 }

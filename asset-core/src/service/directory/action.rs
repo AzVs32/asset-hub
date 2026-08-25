@@ -140,7 +140,7 @@ impl DirectoryService {
             .any(|effect| matches!(effect, DirectoryActionEffect::CreateTree(_)))
         {
             return Err(CoreError::configuration(
-                "create_tree directory effects require the ResourceService composition boundary",
+                "create_tree directory effects require the AssetCoordinator boundary",
             ));
         }
         self.apply_action_effects(

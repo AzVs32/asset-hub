@@ -10,14 +10,14 @@ behavior crosses one small kernel boundary.
 
 ```text
 src/
-├── domain/                 resource, authentication, plugin view contracts
+├── domain/                 Resource, Directory, authentication, and plugin view contracts
 ├── application/
 │   ├── ports/              AssetGateway and React composition boundary
 │   └── queries/            stable cache keys
 ├── infrastructure/http/    OpenAPI transport and DTO ↔ domain mapping
-├── kernel/                 host slots and plugin view renderer registry
+├── kernel/                 host slots and Resource view renderer registry
 ├── plugins/                generic action, slot, iframe, and view hosting
-├── features/               resource workspace, authentication, user management
+├── features/               asset workspace, authentication, user management
 ├── theme.ts                Material UI tokens and component-wide defaults
 ├── styles.css              plugin prose styles not owned by Material UI
 └── app/                    composition root and routing
@@ -119,7 +119,7 @@ refresh/navigation/Resource-frame/editor delegation remain deliberately aggregat
 Capability IDs and literal types come from `@asset-hub/asset-web-sdk/contract`; the HTTP adapter
 rejects an unknown `provides` value before it enters the Web domain. Kernel slots and frame bridges
 compare against the exported constants instead of declaring Host-local strings. A shared Manifest
-v3 golden fixture keeps these Web values aligned with the Rust Manifest SDK.
+v5 golden fixture keeps these Web values aligned with the Rust Manifest SDK.
 The Host imports the API version, Resource and Directory channels, view kinds, action result types,
 and effect kinds from `@asset-hub/asset-web-sdk/contract`; the shared golden contract additionally
 locks the exposed Host method names. Frame action input is recursively validated as a JSON

@@ -36,7 +36,7 @@ describe("DirectoryPluginFrame", () => {
     };
     const view: Extract<PluginView, { type: "plugin_frame" }> = {
       type: "plugin_frame",
-      plugin_api: "asset-hub.plugin-api@2",
+      plugin_api: "asset-hub.plugin-api@3",
       title: "Collection workspace",
       url: "/plugins/example.collection/index.html",
     };
@@ -77,7 +77,7 @@ describe("DirectoryPluginFrame", () => {
     const currentDirectory = directory([]);
     const view: Extract<PluginView, { type: "plugin_frame" }> = {
       type: "plugin_frame",
-      plugin_api: "asset-hub.plugin-api@2",
+      plugin_api: "asset-hub.plugin-api@3",
       title: "Collection workspace",
       url: "/plugins/example.collection/index.html",
     };

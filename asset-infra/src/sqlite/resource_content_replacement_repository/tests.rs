@@ -1,5 +1,5 @@
 use super::*;
-use crate::sqlite::SqliteResourceRepository;
+use crate::sqlite::{SqliteDatabase, SqliteResourceRepository};
 use asset_core::domain::{Checksum, Resource};
 use asset_core::port::ResourceRepository;
 
@@ -11,8 +11,9 @@ async fn pending_replacement_roundtrips_and_is_unique_per_resource() {
             uuid::Uuid::now_v7()
         ))
         .join("asset-hub.sqlite");
-    let resources = SqliteResourceRepository::connect(&path, 1).await.unwrap();
-    let repository = SqliteResourceContentReplacementRepository::new(resources.pool().clone());
+    let database = SqliteDatabase::connect(&path, 1).await.unwrap();
+    let resources = SqliteResourceRepository::new(database.pool().clone());
+    let repository = SqliteResourceContentReplacementRepository::new(database.pool().clone());
     let content = ResourceContent::verified(3, Checksum::sha256("a".repeat(64)).unwrap())
         .with_mime_type("text/plain")
         .build()
@@ -52,8 +53,9 @@ async fn invalid_persisted_replacement_content_is_rejected() {
             uuid::Uuid::now_v7()
         ))
         .join("asset-hub.sqlite");
-    let resources = SqliteResourceRepository::connect(&path, 1).await.unwrap();
-    let repository = SqliteResourceContentReplacementRepository::new(resources.pool().clone());
+    let database = SqliteDatabase::connect(&path, 1).await.unwrap();
+    let resources = SqliteResourceRepository::new(database.pool().clone());
+    let repository = SqliteResourceContentReplacementRepository::new(database.pool().clone());
     let content = ResourceContent::pending(3).build().unwrap();
     let resource = Resource::builder("note.txt")
         .with_content(content.clone())
@@ -78,7 +80,7 @@ async fn invalid_persisted_replacement_content_is_rejected() {
         "#,
     )
     .bind(pending.id().to_string())
-    .execute(resources.pool())
+    .execute(database.pool())
     .await
     .unwrap();
 

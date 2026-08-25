@@ -1,4 +1,5 @@
-import type { Directory, DirectoryAction, Resource, ResourceAction } from "@/domain/resource";
+import type { Directory, DirectoryAction } from "@/domain/directory";
+import type { Resource, ResourceAction } from "@/domain/resource";
 
 export function action(
   input: Omit<Partial<ResourceAction>, "ui"> &

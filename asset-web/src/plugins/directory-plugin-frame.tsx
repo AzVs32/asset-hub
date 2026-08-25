@@ -2,14 +2,15 @@ import { Alert } from "@mui/material";
 import { connect } from "penpal";
 import React from "react";
 import type { AssetGateway } from "@/application/ports/asset-gateway";
+import type { Directory } from "@/domain/directory";
 import {
   DIRECTORY_FRAME_CHANNEL,
   type DirectoryActionOutput,
   PLUGIN_API_VERSION,
   type PluginView,
 } from "@/domain/plugin";
-import type { Directory, Resource, ResourceAction } from "@/domain/resource";
-import { createDirectoryPluginFrameHostBridge } from "./directory-frame-host";
+import type { Resource, ResourceAction } from "@/domain/resource";
+import { createDirectoryFrameHostBridge } from "./directory-frame-host";
 import { createPluginFrameMessenger, pluginFrameUrl } from "./frame-boundary";
 
 export function DirectoryPluginFrame({
@@ -49,7 +50,7 @@ export function DirectoryPluginFrame({
     if (initialDirectory.id !== directoryId) {
       throw new Error("The Directory changed during plugin frame connection setup.");
     }
-    return createDirectoryPluginFrameHostBridge({
+    return createDirectoryFrameHostBridge({
       directory: initialDirectory,
       frameDirectoryId: output.directoryId,
       gateway,

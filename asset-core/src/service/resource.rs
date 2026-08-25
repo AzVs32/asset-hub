@@ -1,7 +1,7 @@
-//! 资源应用服务门面。
+//! Resource aggregate application service.
 //!
 //! 本模块只负责装配 Host Port、暴露可信维护入口，并把具体用例路由到内部子服务。
-//! 公开输入/输出位于 `contract`，资源生命周期、内容和动作分别由对应模块编排。
+//! 公开输入/输出位于 `contract`；资源生命周期、内容、动作与存储协调分别由对应模块编排。
 
 use crate::CoreError;
 use crate::domain::{
@@ -9,12 +9,13 @@ use crate::domain::{
     ResourceKind, ResourceKindDefinition, StorageKey,
 };
 use crate::port::{
-    BlobStorage, DirectoryLocation, ResourceActionExecutor, ResourceActionRegistry,
-    ResourceContentReplacementRepository, ResourceKindRegistry, ResourceQuery, ResourceRepository,
-    StorageScanner, UploadSessionRepository,
+    BlobStorage, DirectoryLocation, ListResources, LocatedResource, ResourceActionExecutor,
+    ResourceActionRegistry, ResourceContentReplacementRepository, ResourceKindRegistry,
+    ResourcePage, ResourceQuery, ResourceRepository, StorageScanner, UploadSessionRepository,
 };
 use crate::service::DirectoryService;
 use asset_plugin_api::manifest::RESOURCE_EDIT_CAPABILITY;
+use bytes::Bytes;
 use std::sync::Arc;
 
 mod action;
@@ -31,8 +32,8 @@ use action::ResourceActionService;
 use command::ResourceCommandService;
 use content::ResourceContentService;
 pub use contract::{
-    CreateUpload, DirectoryArchiveManifest, DirectoryArchiveResource, ExecuteResourceAction,
-    ReplaceResourceContent, ResourceActions, ResourceContentStream, UpdateResource,
+    CreateUpload, ExecuteResourceAction, ReplaceResourceContent, ResourceActions,
+    ResourceContentStream, UpdateResource,
 };
 use reconciliation::StorageReconciliationService;
 pub use reconciliation::{ResourceScanProgress, StorageReconciliationReport};
@@ -41,7 +42,7 @@ use storage_key_locks::StorageKeyLocks;
 use upload::ResourceUploadService;
 use upload_locks::UploadLocks;
 
-/// 资源应用服务。
+/// Resource 聚合应用服务。
 ///
 /// 外部用户入口应通过 [`ResourceService::secured`] 获取带授权上下文的门面；未授权门面只
 /// 暴露健康检查和存储协调等可信维护入口。具体业务编排分布在 command、content、action
@@ -118,7 +119,7 @@ impl ResourceServicePorts {
 }
 
 impl ResourceService {
-    /// 创建资源应用服务。
+    /// 创建 Resource 聚合应用服务。
     pub fn new(
         ports: ResourceServicePorts,
         directories: DirectoryService,
@@ -152,10 +153,6 @@ impl ResourceService {
         }
     }
 
-    pub fn directory_service(&self) -> &DirectoryService {
-        &self.directories
-    }
-
     /// 返回当前 Host 已注册并冻结的资源类型定义。
     ///
     /// Application Surface 通过本服务查询类型能力，不需要直接依赖注册表 Port。
@@ -186,6 +183,37 @@ impl ResourceService {
 
     fn reconciliation(&self) -> StorageReconciliationService<'_> {
         StorageReconciliationService::new(self)
+    }
+
+    pub(super) fn max_inline_action_content_bytes(&self) -> u64 {
+        self.resource_action_policy.max_inline_content_bytes()
+    }
+
+    pub(super) async fn list_resources_for_coordination(
+        &self,
+        query: ListResources,
+    ) -> Result<ResourcePage, CoreError> {
+        self.commands().list_resources(query).await
+    }
+
+    pub(super) async fn create_generated_resource(
+        &self,
+        directory: &DirectoryLocation,
+        name: String,
+        kind: Option<ResourceKind>,
+        mime_type: Option<String>,
+        data: Bytes,
+    ) -> Result<LocatedResource, CoreError> {
+        self.commands()
+            .create_generated_resource_snapshot(directory, name, kind, mime_type, data)
+            .await
+    }
+
+    pub(super) async fn remove_generated_resource(
+        &self,
+        resource: LocatedResource,
+    ) -> Result<(), CoreError> {
+        self.commands().remove_resource_snapshot(resource).await
     }
 
     /// 将资源用例绑定到访问主体。HTTP、CLI、TUI 等非可信入口应通过该门面执行操作。

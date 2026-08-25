@@ -1,4 +1,5 @@
 import type { AssetGateway } from "@/application/ports/asset-gateway";
+import type { Directory } from "@/domain/directory";
 import { normalizeDirectory } from "@/domain/directory-path";
 import {
   type DirectoryActionOutput,
@@ -6,11 +7,10 @@ import {
   RESOURCE_VIEW_CAPABILITY,
   type ResourceActionOutput,
 } from "@/domain/plugin";
-import type { Directory, Resource, ResourceAction } from "@/domain/resource";
+import type { Resource, ResourceAction } from "@/domain/resource";
 import { parseActionId, parseActionInput, parseResourceId } from "./frame-input";
 
-export interface DirectoryPluginFrameHostMethods
-  extends Record<string, (...args: never[]) => unknown> {
+export interface DirectoryFrameHostMethods extends Record<string, (...args: never[]) => unknown> {
   executeDirectoryAction(action: unknown, input?: unknown): Promise<DirectoryActionOutput>;
   viewResource(resourceId: unknown, input?: unknown): Promise<ResourceActionOutput>;
   refreshDirectory(): Promise<void>;
@@ -18,12 +18,12 @@ export interface DirectoryPluginFrameHostMethods
   editResource(resourceId: unknown): Promise<void>;
 }
 
-export interface DirectoryPluginFrameHostBridge {
-  methods: DirectoryPluginFrameHostMethods;
+export interface DirectoryFrameHostBridge {
+  methods: DirectoryFrameHostMethods;
   updateDirectory(directory: Directory): void;
 }
 
-export function createDirectoryPluginFrameHostBridge({
+export function createDirectoryFrameHostBridge({
   directory: initialDirectory,
   frameDirectoryId,
   gateway,
@@ -41,7 +41,7 @@ export function createDirectoryPluginFrameHostBridge({
     | ((resource: Resource, action: ResourceAction) => void | Promise<void>)
     | undefined;
   confirmAction?: ((message: string) => boolean | Promise<boolean>) | undefined;
-}): DirectoryPluginFrameHostBridge {
+}): DirectoryFrameHostBridge {
   let directory = initialDirectory;
 
   function boundDirectory(): Directory {

@@ -1,27 +1,13 @@
+import type { ActionAccess, ActionUi, DefinitionOrigin } from "./action";
 import type {
-  DirectoryActionCapabilityId,
-  DirectoryActionEffectKind,
   PluginViewKind,
   ResourceActionCapabilityId,
   ResourceActionEffectKind,
 } from "./plugin";
 
-export type { DirectoryActionEffectKind, ResourceActionEffectKind } from "./plugin";
+export type { ResourceActionEffectKind } from "./plugin";
 
-export type ActionAccess = "read" | "write";
-export type ContentDelivery = "auto" | "inline" | "reference";
-export type DirectoryResourceAccess = "none" | "metadata" | "content";
-export interface ActionUi {
-  group: string | null;
-  order: number | null;
-  locations: string[];
-  destructive: boolean;
-  confirmation: string | null;
-}
-export interface DefinitionOrigin {
-  kind: "builtin" | "plugin";
-  id: string;
-}
+export type ResourceContentDelivery = "auto" | "inline" | "reference";
 
 export interface ResourceContent {
   size: number;
@@ -38,23 +24,10 @@ export interface ResourceAction {
   label: string;
   description: string | null;
   access: ActionAccess;
-  requires: { content: boolean; contentDelivery: ContentDelivery };
+  requires: { content: boolean; contentDelivery: ResourceContentDelivery };
   output: { views: PluginViewKind[]; effects: ResourceActionEffectKind[] };
   ui: ActionUi;
   appliesTo: { kinds: string[]; mimeTypes: string[]; extensions: string[] };
-}
-
-export interface DirectoryAction {
-  id: string;
-  origin: DefinitionOrigin;
-  provides: DirectoryActionCapabilityId | null;
-  label: string;
-  description: string | null;
-  access: ActionAccess;
-  requires: { children: boolean; resources: DirectoryResourceAccess };
-  output: { views: PluginViewKind[]; effects: DirectoryActionEffectKind[] };
-  ui: ActionUi;
-  appliesTo: { kinds: string[] };
 }
 
 export interface Resource {
@@ -88,36 +61,6 @@ export interface ResourcePage {
   limit: number;
 }
 
-export interface Directory {
-  id: string;
-  parentId: string | null;
-  path: string;
-  parentPath: string;
-  name: string;
-  kind: string;
-  actions: DirectoryAction[];
-  createdAt: string;
-  updatedAt: string;
-  revision: number;
-}
-
-export interface DirectoryKind {
-  kind: string;
-  parent: string | null;
-  ancestors: string[];
-  allowedParentKinds: string[];
-  label: string;
-  origin: DefinitionOrigin;
-  actions: DirectoryAction[];
-}
-
-export interface DirectoryListing {
-  path: string;
-  directory: Directory;
-  folders: Directory[];
-  resources: ResourcePage;
-}
-
 export interface ResourceFilters {
   directory: string;
   page: number;
@@ -131,12 +74,6 @@ export interface ResourceDraft {
   name: string;
   directory: string;
   kind: string;
-}
-
-export interface DirectoryPatch {
-  name?: string;
-  parentId?: string;
-  kind?: string;
 }
 
 export interface UploadDraft {

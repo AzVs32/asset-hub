@@ -31,7 +31,7 @@ fn plugin_frame_relative_url_is_resolved_to_plugin_web_route() {
 #[test]
 fn plugin_frame_rejects_a_different_plugin_api() {
     let mut output = PluginResourceActionOutput::new(PluginView::PluginFrame(PluginFrameView {
-        plugin_api: "asset-hub.plugin-api@3".to_string(),
+        plugin_api: "asset-hub.plugin-api@4".to_string(),
         title: None,
         url: "index.html".to_string(),
     }));

@@ -1,5 +1,6 @@
 import React from "react";
 import type { AssetGateway } from "@/application/ports/asset-gateway";
+import type { Directory, DirectoryAction } from "@/domain/directory";
 import {
   DIRECTORY_THUMBNAIL_CAPABILITY,
   DIRECTORY_WORKSPACE_CAPABILITY,
@@ -8,14 +9,14 @@ import {
   RESOURCE_THUMBNAIL_CAPABILITY,
   type ResourceActionOutput,
 } from "@/domain/plugin";
-import type { Directory, DirectoryAction, Resource, ResourceAction } from "@/domain/resource";
+import type { Resource, ResourceAction } from "@/domain/resource";
 import {
   type CoreDirectoryWorkspaceSlot,
   coreDirectoryWorkspaceSlots,
   directoryWorkspaceOutlet,
 } from "./slots";
 
-export interface PluginViewRendererProps {
+export interface ResourceViewRendererProps {
   view: PluginView;
   output: ResourceActionOutput;
   resource: Resource;
@@ -25,19 +26,21 @@ export interface PluginViewRendererProps {
 
 export type ResourceChangedHandler = (latestResource?: Resource) => void | Promise<void>;
 
-export type PluginViewRenderer = React.ComponentType<PluginViewRendererProps>;
+export type ResourceViewRenderer = React.ComponentType<ResourceViewRendererProps>;
 
 export class PluginKernel {
-  readonly #viewRenderers = new Map<PluginViewKind, PluginViewRenderer>();
+  readonly #resourceViewRenderers = new Map<PluginViewKind, ResourceViewRenderer>();
 
-  registerView(kind: PluginViewKind, renderer: PluginViewRenderer): () => void {
-    if (this.#viewRenderers.has(kind)) throw new Error(`View renderer already registered: ${kind}`);
-    this.#viewRenderers.set(kind, renderer);
-    return () => this.#viewRenderers.delete(kind);
+  registerResourceView(kind: PluginViewKind, renderer: ResourceViewRenderer): () => void {
+    if (this.#resourceViewRenderers.has(kind)) {
+      throw new Error(`Resource view renderer already registered: ${kind}`);
+    }
+    this.#resourceViewRenderers.set(kind, renderer);
+    return () => this.#resourceViewRenderers.delete(kind);
   }
 
-  viewRenderer(kind: PluginViewKind): PluginViewRenderer | null {
-    return this.#viewRenderers.get(kind) ?? null;
+  resourceViewRenderer(kind: PluginViewKind): ResourceViewRenderer | null {
+    return this.#resourceViewRenderers.get(kind) ?? null;
   }
 
   resourceActionsAtCoreSlot(

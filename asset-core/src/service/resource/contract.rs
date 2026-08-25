@@ -1,8 +1,8 @@
 //! 资源服务的公开输入与输出契约。
 //!
-//! 本模块只描述调用方与资源应用服务交换的数据，不包含仓储或对象存储编排。
+//! 本模块只描述调用方与 Resource 应用服务交换的数据，不包含仓储或对象存储编排。
 
-use crate::domain::{Checksum, DirectoryPath, ResourceId, ResourceKind};
+use crate::domain::{Checksum, DirectoryPath, ResourceKind};
 use crate::domain::{ResourceActionDefinition, ResourceActionId};
 use crate::port::BlobByteStream;
 
@@ -182,68 +182,5 @@ impl ResourceContentStream {
 
     pub fn into_content(self) -> BlobByteStream {
         self.content
-    }
-}
-
-/// Authorized, point-in-time directory tree projection used to build a ZIP download.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DirectoryArchiveManifest {
-    filename: String,
-    directories: Vec<String>,
-    resources: Vec<DirectoryArchiveResource>,
-}
-
-impl DirectoryArchiveManifest {
-    pub(super) fn new(
-        filename: String,
-        directories: Vec<String>,
-        resources: Vec<DirectoryArchiveResource>,
-    ) -> Self {
-        Self {
-            filename,
-            directories,
-            resources,
-        }
-    }
-
-    pub fn filename(&self) -> &str {
-        &self.filename
-    }
-
-    pub fn directories(&self) -> &[String] {
-        &self.directories
-    }
-
-    pub fn resources(&self) -> &[DirectoryArchiveResource] {
-        &self.resources
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DirectoryArchiveResource {
-    resource_id: ResourceId,
-    path: String,
-    content_length: u64,
-}
-
-impl DirectoryArchiveResource {
-    pub(super) fn new(resource_id: ResourceId, path: String, content_length: u64) -> Self {
-        Self {
-            resource_id,
-            path,
-            content_length,
-        }
-    }
-
-    pub fn resource_id(&self) -> ResourceId {
-        self.resource_id
-    }
-
-    pub fn path(&self) -> &str {
-        &self.path
-    }
-
-    pub fn content_length(&self) -> u64 {
-        self.content_length
     }
 }

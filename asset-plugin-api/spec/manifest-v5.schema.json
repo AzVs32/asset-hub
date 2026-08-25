@@ -58,27 +58,6 @@
       },
       "additionalProperties": false
     },
-    "ActionRequirements": {
-      "description": "Optional object content a handler needs in addition to the resource snapshot.",
-      "type": "object",
-      "properties": {
-        "content": {
-          "type": "boolean",
-          "default": false
-        },
-        "content_delivery": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ContentDelivery"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "additionalProperties": false
-    },
     "ActionUi": {
       "description": "Optional UI placement hints for host applications.",
       "type": "object",
@@ -107,13 +86,6 @@
         }
       },
       "additionalProperties": false
-    },
-    "ContentDelivery": {
-      "type": "string",
-      "enum": [
-        "inline",
-        "reference"
-      ]
     },
     "DirectoryActionAppliesToCapability": {
       "type": "object",
@@ -436,7 +408,7 @@
           "properties": {
             "plugin_api": {
               "type": "string",
-              "const": "asset-hub.plugin-api@2"
+              "const": "asset-hub.plugin-api@3"
             },
             "type": {
               "type": "string",
@@ -531,7 +503,7 @@
         "requires": {
           "anyOf": [
             {
-              "$ref": "#/$defs/ActionRequirements"
+              "$ref": "#/$defs/ResourceActionRequirementsCapability"
             },
             {
               "type": "null"
@@ -554,6 +526,34 @@
         "id",
         "handler",
         "output"
+      ]
+    },
+    "ResourceActionRequirementsCapability": {
+      "description": "Optional object content a handler needs in addition to the resource snapshot.",
+      "type": "object",
+      "properties": {
+        "content": {
+          "type": "boolean",
+          "default": false
+        },
+        "content_delivery": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResourceContentDelivery"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "ResourceContentDelivery": {
+      "type": "string",
+      "enum": [
+        "inline",
+        "reference"
       ]
     },
     "ResourceContentMatcher": {

@@ -25,12 +25,12 @@ export { PLUGIN_API_VERSION } from "./contract";
 const defaultConnectionTimeoutMs = 10_000;
 const defaultCallTimeoutMs = 30_000;
 
-interface AssetHubFrameHost extends Record<string, (...args: never[]) => unknown> {
+interface AssetHubResourceFrameHost extends Record<string, (...args: never[]) => unknown> {
   executeResourceAction(action: string, input?: JsonObject): Promise<ResourceActionOutput>;
   replaceResourceText(text: string): Promise<void>;
 }
 
-export interface AssetHubFrameClient {
+export interface AssetHubResourceFrameClient {
   executeResourceAction(action: string, input?: JsonObject): Promise<ResourceActionOutput>;
   replaceResourceText(text: string): Promise<void>;
   disconnect(): void;
@@ -72,9 +72,9 @@ export interface AssetHubFrameConnectionOptions {
 }
 
 /** Connects the current plugin iframe to the narrow capability API exposed by its Asset Hub host. */
-export async function connectAssetHubFrame(
+export async function connectAssetHubResourceFrame(
   options: AssetHubFrameConnectionOptions = {},
-): Promise<AssetHubFrameClient> {
+): Promise<AssetHubResourceFrameClient> {
   if (window.parent === window) {
     throw new Error("Asset Web SDK must run inside a plugin frame.");
   }
@@ -94,7 +94,7 @@ export async function connectAssetHubFrame(
     // Penpal still restricts messages to this exact parent Window reference.
     allowedOrigins: ["*"],
   });
-  const connection = connect<AssetHubFrameHost>({
+  const connection = connect<AssetHubResourceFrameHost>({
     messenger,
     channel: RESOURCE_FRAME_CHANNEL,
     timeout: connectionTimeoutMs,
@@ -234,7 +234,7 @@ export function mountAssetHubResourceFrame({
           new Error("Text replacement is not available from an embedded read-only Resource frame."),
         );
       },
-    } satisfies AssetHubFrameHost,
+    } satisfies AssetHubResourceFrameHost,
   });
 
   return {

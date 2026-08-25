@@ -1,0 +1,324 @@
+{
+  "$id": "urn:asset-hub:plugin-contract:resource-action-result-v3",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PluginResourceActionResult",
+  "description": "Complete Resource Action handler result.",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/PluginResourceActionOutput"
+    },
+    {
+      "$ref": "#/$defs/PluginActionFailure"
+    }
+  ],
+  "$defs": {
+    "PluginActionFailure": {
+      "description": "Error response that plugins may return instead of an action view.",
+      "type": "object",
+      "properties": {
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PluginDiagnostic"
+          }
+        },
+        "error": {
+          "$ref": "#/$defs/PluginDiagnostic"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "error"
+      ]
+    },
+    "PluginDiagnostic": {
+      "description": "Machine-readable diagnostic produced by a plugin or by a host execution phase.",
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "details": true,
+        "message": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean",
+          "default": false
+        },
+        "severity": {
+          "$ref": "#/$defs/PluginDiagnosticSeverity",
+          "default": "error"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message"
+      ]
+    },
+    "PluginDiagnosticSeverity": {
+      "type": "string",
+      "enum": [
+        "info",
+        "warning",
+        "error"
+      ]
+    },
+    "PluginMediaEncoding": {
+      "description": "Encodings renderable by a media view.",
+      "type": "string",
+      "enum": [
+        "base64",
+        "url"
+      ]
+    },
+    "PluginReplacementEncoding": {
+      "description": "Encoding accepted for bytes returned by a content replacement effect.",
+      "type": "string",
+      "enum": [
+        "base64"
+      ]
+    },
+    "PluginResourceActionEffect": {
+      "description": "Side effects requested by a Resource Action.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "string"
+            },
+            "encoding": {
+              "$ref": "#/$defs/PluginReplacementEncoding"
+            },
+            "mime_type": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "replace_content"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "encoding",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "delete"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        }
+      ]
+    },
+    "PluginResourceActionOutput": {
+      "description": "Standard Resource Action output.",
+      "type": "object",
+      "properties": {
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PluginDiagnostic"
+          }
+        },
+        "effects": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PluginResourceActionEffect"
+          }
+        },
+        "view": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PluginView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "PluginView": {
+      "description": "Shared view protocol returned by plugin actions.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "text"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "markdown": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "markdown"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "markdown"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "html": {
+              "type": "string"
+            },
+            "title": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "html"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "html"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "plugin_api": {
+              "type": "string",
+              "const": "asset-hub.plugin-api@3"
+            },
+            "title": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "plugin_frame"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "plugin_api",
+            "url"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": true,
+            "type": {
+              "type": "string",
+              "const": "json"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "string"
+            },
+            "encoding": {
+              "$ref": "#/$defs/PluginMediaEncoding"
+            },
+            "mime_type": {
+              "type": "string"
+            },
+            "title": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "media"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "mime_type",
+            "encoding",
+            "data"
+          ]
+        },
+        {
+          "description": "Host-owned URL exposed as a downloadable file.",
+          "type": "object",
+          "properties": {
+            "filename": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "mime_type": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "download"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "url"
+          ]
+        }
+      ]
+    }
+  }
+}

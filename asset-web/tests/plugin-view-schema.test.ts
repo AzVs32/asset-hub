@@ -6,13 +6,13 @@ describe("plugin view boundary", () => {
     expect(
       parsePluginView({
         type: "plugin_frame",
-        plugin_api: "asset-hub.plugin-api@2",
+        plugin_api: "asset-hub.plugin-api@3",
         title: "Reader",
         url: "/plugins/example.reader/index.html",
       }),
     ).toEqual({
       type: "plugin_frame",
-      plugin_api: "asset-hub.plugin-api@2",
+      plugin_api: "asset-hub.plugin-api@3",
       title: "Reader",
       url: "/plugins/example.reader/index.html",
     });

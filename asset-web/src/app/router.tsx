@@ -9,14 +9,14 @@ export const router = createBrowserRouter([
       {
         path: "/view/:resourceId/:actionId",
         lazy: async () => ({
-          Component: (await import("@/features/resources/standalone-plugin-view"))
-            .StandalonePluginView,
+          Component: (await import("@/features/asset-workspace/standalone-resource-plugin-view"))
+            .StandaloneResourcePluginView,
         }),
       },
       {
         path: "/*",
         lazy: async () => ({
-          Component: (await import("@/features/resources/resource-workspace")).ResourceWorkspace,
+          Component: (await import("@/features/asset-workspace/asset-workspace")).AssetWorkspace,
         }),
       },
     ],

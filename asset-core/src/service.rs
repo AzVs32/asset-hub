@@ -7,11 +7,15 @@
 //! [`ResourceServicePorts`] 所声明的写仓储、查询、Blob、扫描与运行时适配器，并注入共享
 //! 的 [`DirectoryService`]。
 
+mod asset;
 mod authorization;
 mod directory;
 mod resource;
 mod user;
 
+pub use asset::{
+    AssetCoordinator, DirectoryArchiveManifest, DirectoryArchiveResource, SecuredAssetCoordinator,
+};
 pub use authorization::{AuthorizationService, WorkspaceScope};
 pub use directory::{
     DirectoryActions, DirectoryService, ExecuteDirectoryAction, SecuredDirectoryService,

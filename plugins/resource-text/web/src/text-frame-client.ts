@@ -1,6 +1,6 @@
 import {
-	type AssetHubFrameClient,
-	connectAssetHubFrame,
+	type AssetHubResourceFrameClient,
+	connectAssetHubResourceFrame,
 	type JsonObject,
 	PLUGIN_API_VERSION,
 	type ResourceActionOutput,
@@ -154,7 +154,7 @@ function requireJsonViewData<T>(
 	invalidMessage: string,
 ): T {
 	const view = result.view;
-	if (view?.view !== "json" || !validate(view.data)) {
+	if (view?.type !== "json" || !validate(view.data)) {
 		throw new Error(invalidMessage);
 	}
 	return view.data;
@@ -227,9 +227,9 @@ function executeTextAction(
 	);
 }
 
-let frameHostPromise: Promise<AssetHubFrameClient> | null = null;
+let frameHostPromise: Promise<AssetHubResourceFrameClient> | null = null;
 
-function frameHost(): Promise<AssetHubFrameClient> {
-	frameHostPromise ??= connectAssetHubFrame();
+function frameHost(): Promise<AssetHubResourceFrameClient> {
+	frameHostPromise ??= connectAssetHubResourceFrame();
 	return frameHostPromise;
 }

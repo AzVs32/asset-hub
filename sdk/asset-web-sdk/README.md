@@ -16,9 +16,9 @@ The package publishes three stable entry points:
 Bundled applications can import the SDK:
 
 ```ts
-import { connectAssetHubFrame } from "@asset-hub/asset-web-sdk";
+import { connectAssetHubResourceFrame } from "@asset-hub/asset-web-sdk";
 
-const host = await connectAssetHubFrame();
+const host = await connectAssetHubResourceFrame();
 const output = await host.executeResourceAction("example.plugin.inspect", { operation: "load" });
 ```
 
@@ -32,7 +32,7 @@ assets and use the global build without React, npm, or another framework:
 ```html
 <script src="./asset-web-sdk.global.js"></script>
 <script>
-  AssetWebSdk.connectAssetHubFrame().then(async (host) => {
+  AssetWebSdk.connectAssetHubResourceFrame().then(async (host) => {
     const output = await host.executeResourceAction("example.plugin.inspect", {});
     document.body.textContent = JSON.stringify(output.view);
   });
@@ -70,8 +70,8 @@ the Core workspace's menu, thumbnail, resource-row, or detail slots.
 
 The contract entry point also exports `resourceActionCapabilityIds`,
 `directoryActionCapabilityIds`, their literal union types, and named constants such as
-`RESOURCE_VIEW_CAPABILITY`. These values are generated from the Manifest v5 / Plugin API v2
-catalog in `asset-plugin-api/spec/contract-v2.json`; Browser Hosts use the exported values instead
+`RESOURCE_VIEW_CAPABILITY`. These values are generated from the Manifest v5 / Plugin API v3
+catalog in `asset-plugin-api/spec/contract-v3.json`; Browser Hosts use the exported values instead
 of repeating capability strings. Frame output views use `type` as their discriminator, and Host
 decoders reject unknown fields.
 

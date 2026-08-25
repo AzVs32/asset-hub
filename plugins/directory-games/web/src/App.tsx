@@ -128,7 +128,7 @@ function App() {
       operation: "cover",
       game_id: gameId,
     });
-    if (output.view?.view !== "json" || !isCoverResponse(output.view.data)) {
+    if (output.view?.type !== "json" || !isCoverResponse(output.view.data)) {
       throw new Error("Games returned an invalid cover response.");
     }
     return output.view.data.cover
@@ -536,7 +536,7 @@ function GameDetail({
     void client.viewResource(resourceId)
       .then((output) => {
         if (!active) return;
-        if (output.view?.view !== "plugin_frame") {
+        if (output.view?.type !== "plugin_frame") {
           throw new Error("Resource Text did not return its reader frame.");
         }
         setDocumentView({ resourceId, status: "ready", output });
@@ -669,7 +669,7 @@ function DocumentState({
 
 async function loadWorkspace(client: AssetHubDirectoryFrameClient): Promise<WorkspaceModel> {
   const output = await client.executeDirectoryAction(WORKSPACE_ACTION, { operation: "load" });
-  if (output.view?.view !== "json" || !isWorkspaceModel(output.view.data)) {
+  if (output.view?.type !== "json" || !isWorkspaceModel(output.view.data)) {
     throw new Error("Games returned an invalid workspace response.");
   }
   document.title = output.view.data.directory.name || "Games";

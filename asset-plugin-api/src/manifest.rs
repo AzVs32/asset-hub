@@ -15,13 +15,14 @@ mod runtime;
 mod validation;
 
 pub use capability::{
-    ActionOutputCapability, ActionRequirements, ActionUi, ContentDelivery,
-    DIRECTORY_ACTION_CAPABILITIES, DIRECTORY_THUMBNAIL_CAPABILITY, DIRECTORY_WORKSPACE_CAPABILITY,
+    ActionOutputCapability, ActionUi, DIRECTORY_ACTION_CAPABILITIES,
+    DIRECTORY_THUMBNAIL_CAPABILITY, DIRECTORY_WORKSPACE_CAPABILITY,
     DirectoryActionAppliesToCapability, DirectoryActionCapability,
     DirectoryActionRequirementsCapability, DirectoryKindCapability, DirectoryResourceAccess,
     ManifestActionAccess, PluginCapabilities, RESOURCE_ACTION_CAPABILITIES,
     RESOURCE_EDIT_CAPABILITY, RESOURCE_THUMBNAIL_CAPABILITY, RESOURCE_VIEW_CAPABILITY,
-    ResourceActionAppliesToCapability, ResourceActionCapability, ResourceContentMatcher,
+    ResourceActionAppliesToCapability, ResourceActionCapability,
+    ResourceActionRequirementsCapability, ResourceContentDelivery, ResourceContentMatcher,
     ResourceKindCapability,
 };
 pub use descriptor::PluginDescriptor;

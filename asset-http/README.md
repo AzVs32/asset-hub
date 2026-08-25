@@ -9,6 +9,10 @@ queried through `ResourceService`/`DirectoryService`, not through kind-registry 
 `AssetRuntime`. Upload completion receives the narrow `UploadFinalizationDispatcher` Host
 capability; HTTP does not depend on the concrete Runtime scheduler or supervisor.
 
+Resource and Directory handlers live in separate modules. HTTP state exposes separately secured
+Resource and Directory surfaces, plus `AssetCoordinator` only for directory actions and archive
+projections whose result spans both aggregates.
+
 Resource and Directory contracts deliberately use the same shape where their semantics overlap.
 Both expose stable UUIDs, kind definitions with typed `origin` metadata, flattened action arrays,
 and monotonically increasing `revision` values. Directory creation accepts a stable `parent_id`;

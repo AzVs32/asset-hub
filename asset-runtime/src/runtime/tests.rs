@@ -52,8 +52,7 @@ async fn find_resource(
 }
 
 async fn root_directory_paths(runtime: &AssetRuntime) -> Vec<DirectoryPath> {
-    let service = runtime.resource_service();
-    let directories = service.directory_service();
+    let directories = runtime.directory_service();
     let root = directories.root().await.unwrap();
     directories
         .list_children(&root)
@@ -100,9 +99,9 @@ async fn local_storage_changes_are_synchronized_automatically() {
             .describe_kind_actions(&ResourceKind::default())
             .is_empty()
     );
-    assert!(!service.directory_service().kind_definitions().is_empty());
+    assert!(!runtime.directory_service().kind_definitions().is_empty());
     assert!(
-        !service
+        !runtime
             .directory_service()
             .describe_kind_actions(&DirectoryKind::default())
             .is_empty()

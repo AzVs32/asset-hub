@@ -4,16 +4,16 @@
 //! 可用，也不执行插件声明的副作用。
 
 /// Current and only supported Host/plugin wire and ABI version.
-pub const PLUGIN_API_VERSION: &str = "asset-hub.plugin-api@2";
+pub const PLUGIN_API_VERSION: &str = "asset-hub.plugin-api@3";
 
 /// Browser Frame channel used for Resource-bound Host capabilities.
-pub const PLUGIN_RESOURCE_FRAME_CHANNEL: &str = "asset-hub.plugin-frame@2";
+pub const RESOURCE_FRAME_CHANNEL: &str = "asset-hub.plugin-frame.resource@3";
 
 /// Browser Frame channel used for Directory-bound Host capabilities.
-pub const PLUGIN_DIRECTORY_FRAME_CHANNEL: &str = "asset-hub.plugin-directory-frame@2";
+pub const DIRECTORY_FRAME_CHANNEL: &str = "asset-hub.plugin-frame.directory@3";
 
 /// View discriminants supported by the current action and Browser Frame protocol.
-pub const PLUGIN_VIEW_KINDS: &[&str] = &[
+pub const VIEW_KINDS: &[&str] = &[
     "text",
     "markdown",
     "html",
@@ -24,10 +24,10 @@ pub const PLUGIN_VIEW_KINDS: &[&str] = &[
 ];
 
 /// Resource effect discriminants exposed to Browser Frame clients after Host application.
-pub const PLUGIN_RESOURCE_ACTION_EFFECT_KINDS: &[&str] = &["replace_content", "delete"];
+pub const RESOURCE_ACTION_EFFECT_KINDS: &[&str] = &["replace_content", "delete"];
 
 /// Directory effect discriminants exposed to Browser Frame clients after Host application.
-pub const PLUGIN_DIRECTORY_ACTION_EFFECT_KINDS: &[&str] =
+pub const DIRECTORY_ACTION_EFFECT_KINDS: &[&str] =
     &["update", "create_child", "create_tree", "delete"];
 
 mod access;
@@ -54,12 +54,12 @@ pub use frame::{
 };
 pub use resource::{
     PluginChecksum, PluginContentBytes, PluginContentReference, PluginContentReferenceEncoding,
-    PluginContentVerificationStatus, PluginInlineContentEncoding, PluginResource,
-    PluginResourceActionRequest, PluginResourceContent,
+    PluginContentVerificationStatus, PluginInlineContentEncoding, PluginReplacementEncoding,
+    PluginResource, PluginResourceActionEffect, PluginResourceActionOutput,
+    PluginResourceActionRequest, PluginResourceActionResult, PluginResourceContent,
+    ReplaceContentEffect,
 };
 pub use view::{
     DownloadView, HtmlView, JsonView, MarkdownView, MediaView, PluginFrameView,
-    PluginMediaEncoding, PluginReplacementEncoding, PluginResourceActionEffect,
-    PluginResourceActionOutput, PluginResourceActionResult, PluginView, ReplaceContentEffect,
-    TextView,
+    PluginMediaEncoding, PluginView, TextView,
 };
