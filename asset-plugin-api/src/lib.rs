@@ -6,3 +6,4 @@ pub const CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub mod abi;
 pub mod manifest;
 pub mod protocol;
+pub mod spec;

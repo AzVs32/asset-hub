@@ -15,7 +15,7 @@ export default function MediaRenderer({
   view,
   gateway,
 }: {
-  view: Extract<PluginView, { view: "media" }>;
+  view: Extract<PluginView, { type: "media" }>;
   gateway: AssetGateway;
 }) {
   const source =

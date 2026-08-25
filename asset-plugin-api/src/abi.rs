@@ -5,14 +5,16 @@
 //! 各子模块只定义运行时无关的函数名、输入边界和值对象；具体 guest 调用适配器由各语言
 //! SDK 实现，Host 端实现位于基础设施层。
 
-pub mod content;
-pub mod directory;
+mod content;
+mod contract;
+mod directory;
 
 pub use content::{
-    CONTENT_CLOSE_FN, CONTENT_OPEN_FN, CONTENT_READ_RANGE_FN, CONTENT_SIZE_FN, ContentRangeError,
-    PluginContentRange,
+    CONTENT_CLOSE_FN, CONTENT_OPEN_FN, CONTENT_READ_FN, CONTENT_SIZE_FN, ContentRange,
+    ContentRangeError,
 };
+pub use contract::{AbiParameter, AbiValueType, HOST_FUNCTIONS, HostFunctionSpec};
 pub use directory::{
     DIRECTORY_LIST_CHILDREN_FN, DIRECTORY_LIST_RESOURCES_FN, DIRECTORY_PAGE_MAX_LIMIT,
-    PluginDirectoryPageRequest,
+    DirectoryPageRequest, DirectoryPageRequestError,
 };

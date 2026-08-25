@@ -14,40 +14,33 @@ import {
   resourceFrameMethods,
 } from "../dist/contract.js";
 
-const fixture = JSON.parse(
-  readFileSync(
-    new URL(
-      "../../../asset-plugin-api/tests/fixtures/plugin-frame-contract-v1.json",
-      import.meta.url,
-    ),
-  ),
-);
-const manifestCapabilities = JSON.parse(
-  readFileSync(
-    new URL(
-      "../../../asset-plugin-api/tests/fixtures/manifest-capabilities-v4.json",
-      import.meta.url,
-    ),
-  ),
+const contract = JSON.parse(
+  readFileSync(new URL("../../../asset-plugin-api/spec/contract-v2.json", import.meta.url)),
 );
 
 describe("Browser Frame contract", () => {
   it("matches the Rust Plugin API golden", () => {
-    assert.equal(PLUGIN_API_VERSION, fixture.plugin_api);
-    assert.equal(RESOURCE_FRAME_CHANNEL, fixture.channels.resource);
-    assert.equal(DIRECTORY_FRAME_CHANNEL, fixture.channels.directory);
-    assert.deepEqual(resourceFrameMethods, fixture.methods.resource);
-    assert.deepEqual(directoryFrameMethods, fixture.methods.directory);
-    assert.deepEqual(pluginViewKinds, fixture.view_kinds);
-    assert.deepEqual(resourceActionEffectKinds, fixture.resource_effect_kinds);
-    assert.deepEqual(directoryActionEffectKinds, fixture.directory_effect_kinds);
+    assert.equal(PLUGIN_API_VERSION, contract.plugin_api);
+    assert.equal(RESOURCE_FRAME_CHANNEL, contract.frame.resource_channel);
+    assert.equal(DIRECTORY_FRAME_CHANNEL, contract.frame.directory_channel);
+    assert.deepEqual(
+      resourceFrameMethods,
+      contract.frame.resource_methods.map(({ name }) => name),
+    );
+    assert.deepEqual(
+      directoryFrameMethods,
+      contract.frame.directory_methods.map(({ name }) => name),
+    );
+    assert.deepEqual(pluginViewKinds, contract.views);
+    assert.deepEqual(resourceActionEffectKinds, contract.resource_effects);
+    assert.deepEqual(directoryActionEffectKinds, contract.directory_effects);
   });
 });
 
 describe("Manifest capability contract", () => {
-  it("matches the Rust Manifest v4 golden", () => {
-    assert.equal(manifestCapabilities.manifest_version, 4);
-    assert.deepEqual(resourceActionCapabilityIds, manifestCapabilities.resource_action);
-    assert.deepEqual(directoryActionCapabilityIds, manifestCapabilities.directory_action);
+  it("matches the Rust Manifest v5 catalog", () => {
+    assert.equal(contract.manifest_version, 5);
+    assert.deepEqual(resourceActionCapabilityIds, contract.capabilities.resource_actions);
+    assert.deepEqual(directoryActionCapabilityIds, contract.capabilities.directory_actions);
   });
 });

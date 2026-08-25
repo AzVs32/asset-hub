@@ -220,7 +220,7 @@ impl CoreError {
             plugin,
             action,
             PluginDiagnostic {
-                code: asset_plugin_api::protocol::diagnostic::codes::RUNTIME_FAILURE.to_string(),
+                code: asset_plugin_api::protocol::diagnostic_codes::RUNTIME_FAILURE.to_string(),
                 message: message.into(),
                 severity: asset_plugin_api::protocol::PluginDiagnosticSeverity::Error,
                 retryable: false,

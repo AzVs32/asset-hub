@@ -1,5 +1,0 @@
-{
-  "manifest_version": 4,
-  "resource_action": ["thumbnail", "view", "edit"],
-  "directory_action": ["thumbnail", "workspace"]
-}

@@ -1,16 +1,16 @@
-use asset_plugin_api::abi::PluginDirectoryPageRequest;
+use asset_plugin_api::abi::DirectoryPageRequest;
 use asset_plugin_api::manifest::{
-    DIRECTORY_ACTION_CAPABILITIES, MANIFEST_VERSION, PluginManifest, RESOURCE_ACTION_CAPABILITIES,
+    MANIFEST_VERSION, PluginManifestDocument, ValidatedPluginManifest,
 };
 use asset_plugin_api::protocol::{
-    PLUGIN_API_VERSION, PLUGIN_DIRECTORY_ACTION_EFFECT_KINDS, PLUGIN_DIRECTORY_FRAME_CHANNEL,
-    PLUGIN_DIRECTORY_FRAME_METHODS, PLUGIN_RESOURCE_ACTION_EFFECT_KINDS,
-    PLUGIN_RESOURCE_FRAME_CHANNEL, PLUGIN_RESOURCE_FRAME_METHODS, PLUGIN_VIEW_KINDS,
-    PluginActionFailure, PluginResourceActionOutput, PluginResourceActionRequest,
+    PLUGIN_API_VERSION, PluginActionFailure, PluginResourceActionOutput,
+    PluginResourceActionRequest,
 };
+use asset_plugin_api::spec;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
+use std::path::Path;
 
 fn assert_golden_round_trip<T>(source: &str)
 where
@@ -21,10 +21,10 @@ where
     assert_eq!(serde_json::to_value(parsed).unwrap(), expected);
 }
 
-fn canonical_manifest(value: &Value) -> Result<PluginManifest, String> {
-    let manifest: PluginManifest = serde_json::from_value(value.clone())
+fn canonical_manifest(value: &Value) -> Result<ValidatedPluginManifest, String> {
+    let manifest: PluginManifestDocument = serde_json::from_value(value.clone())
         .map_err(|error| format!("Serde rejected manifest: {error}"))?;
-    manifest
+    let manifest = manifest
         .validate()
         .map_err(|error| format!("host rejected manifest: {error}"))?;
     Ok(manifest)
@@ -79,7 +79,7 @@ fn host_rejects_canonical_manifest_violations() {
     ];
 
     for value in invalid_documents {
-        let manifest: PluginManifest = serde_json::from_value(value).unwrap();
+        let manifest: PluginManifestDocument = serde_json::from_value(value).unwrap();
         assert!(manifest.validate().is_err());
     }
 }
@@ -89,7 +89,7 @@ fn schema_hint_is_not_part_of_the_manifest_contract() {
     let mut value = manifest_document();
     value["$schema"] = json!("https://example.invalid/plugin-manifest.json");
 
-    assert!(serde_json::from_value::<PluginManifest>(value).is_err());
+    assert!(serde_json::from_value::<PluginManifestDocument>(value).is_err());
 }
 
 #[test]
@@ -127,93 +127,83 @@ fn resource_and_directory_action_ids_use_separate_namespaces() {
 
 #[test]
 fn request_and_output_wire_shapes_match_the_current_goldens() {
-    assert_golden_round_trip::<PluginManifest>(include_str!("fixtures/manifest-v4.json"));
+    assert_golden_round_trip::<PluginManifestDocument>(include_str!("fixtures/manifest-v5.json"));
     assert_golden_round_trip::<PluginResourceActionRequest>(include_str!(
-        "fixtures/action-request-inline-v1.json"
+        "fixtures/resource-action-request-inline-v2.json"
     ));
     assert_golden_round_trip::<PluginResourceActionRequest>(include_str!(
-        "fixtures/action-request-reference-v1.json"
+        "fixtures/resource-action-request-reference-v2.json"
     ));
     assert_golden_round_trip::<PluginResourceActionOutput>(include_str!(
-        "fixtures/action-output-v1.json"
+        "fixtures/resource-action-output-v2.json"
     ));
     assert_golden_round_trip::<PluginResourceActionOutput>(include_str!(
-        "fixtures/action-output-download-v1.json"
+        "fixtures/resource-action-output-download-v2.json"
     ));
     assert_golden_round_trip::<PluginActionFailure>(include_str!(
-        "fixtures/action-failure-v1.json"
+        "fixtures/action-failure-v2.json"
     ));
-    assert_golden_round_trip::<PluginDirectoryPageRequest>(include_str!(
-        "fixtures/directory-page-request-v1.json"
+    assert_golden_round_trip::<DirectoryPageRequest>(include_str!(
+        "fixtures/directory-page-request-v2.json"
     ));
 }
 
 #[test]
-fn browser_frame_discriminants_match_the_current_golden() {
+fn committed_language_neutral_specs_are_current() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("spec");
     let expected: Value =
-        serde_json::from_str(include_str!("fixtures/plugin-frame-contract-v1.json")).unwrap();
-
-    assert_eq!(expected["plugin_api"], PLUGIN_API_VERSION);
+        serde_json::from_slice(&std::fs::read(root.join("contract-v2.json")).unwrap()).unwrap();
     assert_eq!(
-        expected["channels"]["resource"],
-        PLUGIN_RESOURCE_FRAME_CHANNEL
+        expected,
+        serde_json::to_value(spec::contract_catalog()).unwrap()
     );
-    assert_eq!(
-        expected["channels"]["directory"],
-        PLUGIN_DIRECTORY_FRAME_CHANNEL
-    );
-    assert_eq!(
-        expected["methods"]["resource"],
-        json!(PLUGIN_RESOURCE_FRAME_METHODS)
-    );
-    assert_eq!(
-        expected["methods"]["directory"],
-        json!(PLUGIN_DIRECTORY_FRAME_METHODS)
-    );
-    assert_eq!(expected["view_kinds"], json!(PLUGIN_VIEW_KINDS));
-    assert_eq!(
-        expected["resource_effect_kinds"],
-        json!(PLUGIN_RESOURCE_ACTION_EFFECT_KINDS)
-    );
-    assert_eq!(
-        expected["directory_effect_kinds"],
-        json!(PLUGIN_DIRECTORY_ACTION_EFFECT_KINDS)
-    );
-}
-
-#[test]
-fn manifest_capability_ids_match_the_current_golden() {
-    let expected: Value =
-        serde_json::from_str(include_str!("fixtures/manifest-capabilities-v4.json")).unwrap();
-
-    assert_eq!(expected["manifest_version"], MANIFEST_VERSION);
-    assert_eq!(
-        expected["resource_action"],
-        json!(RESOURCE_ACTION_CAPABILITIES)
-    );
-    assert_eq!(
-        expected["directory_action"],
-        json!(DIRECTORY_ACTION_CAPABILITIES)
-    );
+    for (name, schema) in spec::schemas() {
+        let expected: Value =
+            serde_json::from_slice(&std::fs::read(root.join(name)).unwrap()).unwrap();
+        assert_eq!(expected, serde_json::to_value(schema).unwrap(), "{name}");
+    }
+    let typescript = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../sdk/asset-web-sdk/src/contract.generated.ts"),
+    )
+    .unwrap();
+    assert_eq!(typescript, spec::typescript_catalog_module());
 }
 
 #[test]
 fn context_specific_encodings_reject_invalid_wire_combinations() {
-    let mut request: Value =
-        serde_json::from_str(include_str!("fixtures/action-request-inline-v1.json")).unwrap();
+    let mut request: Value = serde_json::from_str(include_str!(
+        "fixtures/resource-action-request-inline-v2.json"
+    ))
+    .unwrap();
     request["content"]["encoding"] = json!("handle");
     assert!(serde_json::from_value::<PluginResourceActionRequest>(request).is_err());
 
     let mut output: Value =
-        serde_json::from_str(include_str!("fixtures/action-output-v1.json")).unwrap();
+        serde_json::from_str(include_str!("fixtures/resource-action-output-v2.json")).unwrap();
     output["effects"][0]["encoding"] = json!("url");
     assert!(serde_json::from_value::<PluginResourceActionOutput>(output).is_err());
 
     let mut output: Value =
-        serde_json::from_str(include_str!("fixtures/action-output-v1.json")).unwrap();
+        serde_json::from_str(include_str!("fixtures/resource-action-output-v2.json")).unwrap();
     output["effects"][0]["checksum"] = json!({
         "kind": "sha256",
         "value": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
     });
+    assert!(serde_json::from_value::<PluginResourceActionOutput>(output).is_err());
+}
+
+#[test]
+fn all_versioned_wire_documents_reject_unknown_fields() {
+    let mut request: Value = serde_json::from_str(include_str!(
+        "fixtures/resource-action-request-inline-v2.json"
+    ))
+    .unwrap();
+    request["unexpected"] = json!(true);
+    assert!(serde_json::from_value::<PluginResourceActionRequest>(request).is_err());
+
+    let mut output: Value =
+        serde_json::from_str(include_str!("fixtures/resource-action-output-v2.json")).unwrap();
+    output["view"]["unexpected"] = json!(true);
     assert!(serde_json::from_value::<PluginResourceActionOutput>(output).is_err());
 }

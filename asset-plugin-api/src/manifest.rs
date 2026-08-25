@@ -7,7 +7,9 @@
 mod capability;
 mod descriptor;
 mod document;
+mod error;
 mod lock;
+mod package_path;
 mod permission;
 mod runtime;
 mod validation;
@@ -25,11 +27,14 @@ pub use capability::{
 pub use descriptor::PluginDescriptor;
 pub use document::{
     MANIFEST_VERSION, PLUGIN_LOCK_FILE_NAME, PLUGIN_MANIFEST_FILE_NAME, PLUGIN_WASM_FILE_NAME,
-    PLUGIN_WEB_ENTRY_FILE_NAME, PluginManifest,
+    PLUGIN_WEB_ENTRY_FILE_NAME, PluginManifestDocument, ValidatedPluginManifest,
 };
+pub use error::{ManifestValidationCode, ManifestValidationError};
 pub use lock::PluginManifestLock;
+pub use package_path::PluginPackagePath;
 pub use permission::{
-    FilesystemPermission, NetworkPermission, PluginPermission, PluginPermissions,
+    FilesystemPermission, FilesystemScope, NetworkPermission, NetworkScope, PluginPermission,
+    PluginPermissions,
 };
 pub use runtime::PluginRuntime;
 

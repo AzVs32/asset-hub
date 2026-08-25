@@ -7,7 +7,7 @@ const MarkdownRenderer = React.lazy(() => import("./markdown-renderer"));
 const MediaRenderer = React.lazy(() => import("./media-renderer"));
 const DownloadRenderer = React.lazy(() => import("./download-renderer"));
 
-type GenericPluginView = Exclude<PluginView, { view: "plugin_frame" }>;
+type GenericPluginView = Exclude<PluginView, { type: "plugin_frame" }>;
 
 export function GenericPluginViewRenderer({
   view,
@@ -16,23 +16,23 @@ export function GenericPluginViewRenderer({
   view: GenericPluginView;
   gateway: AssetGateway;
 }) {
-  if (view.view === "text") return <TextView text={view.text} />;
-  if (view.view === "markdown") {
+  if (view.type === "text") return <TextView text={view.text} />;
+  if (view.type === "markdown") {
     return (
       <LazyView>
         <MarkdownRenderer view={view} />
       </LazyView>
     );
   }
-  if (view.view === "html") return <HtmlView view={view} />;
-  if (view.view === "media") {
+  if (view.type === "html") return <HtmlView view={view} />;
+  if (view.type === "media") {
     return (
       <LazyView>
         <MediaRenderer view={view} gateway={gateway} />
       </LazyView>
     );
   }
-  if (view.view === "download") {
+  if (view.type === "download") {
     return (
       <LazyView>
         <DownloadRenderer view={view} gateway={gateway} />
@@ -50,7 +50,7 @@ function TextView({ text }: { text: string }) {
   );
 }
 
-function HtmlView({ view }: { view: Extract<PluginView, { view: "html" }> }) {
+function HtmlView({ view }: { view: Extract<PluginView, { type: "html" }> }) {
   return (
     <Box
       component="iframe"

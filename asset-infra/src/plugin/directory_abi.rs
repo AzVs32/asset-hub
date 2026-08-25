@@ -4,14 +4,13 @@ use asset_core::{
     port::{DirectoryActionRequest, DirectoryQuery, ListResources, ResourceQuery},
 };
 use asset_plugin_api::abi::{
-    DIRECTORY_LIST_CHILDREN_FN, DIRECTORY_LIST_RESOURCES_FN, DIRECTORY_PAGE_MAX_LIMIT,
-    PluginDirectoryPageRequest,
+    DIRECTORY_LIST_CHILDREN_FN, DIRECTORY_LIST_RESOURCES_FN, DirectoryPageRequest,
 };
 use asset_plugin_api::manifest::{PluginPermission, PluginPermissions};
-use asset_plugin_api::protocol::directory::{
+use asset_plugin_api::protocol::{PluginContentReference, PluginContentReferenceEncoding};
+use asset_plugin_api::protocol::{
     PluginDirectoryChild, PluginDirectoryPage, PluginDirectoryResource, PluginDirectoryResourcePage,
 };
-use asset_plugin_api::protocol::{PluginContentReference, PluginContentReferenceEncoding};
 use extism::{Function, PTR, UserData};
 use std::{
     collections::HashMap,
@@ -137,18 +136,12 @@ impl HostDirectoryResolver {
             .ok_or_else(|| CoreError::configuration("directory reference is not available"))
     }
 
-    fn page_request(&self, value: &str) -> Result<(PluginDirectoryPageRequest, u64), CoreError> {
-        let request: PluginDirectoryPageRequest = serde_json::from_str(value).map_err(|error| {
+    fn page_request(&self, value: &str) -> Result<(DirectoryPageRequest, u64), CoreError> {
+        let request: DirectoryPageRequest = serde_json::from_str(value).map_err(|error| {
             CoreError::configuration(format!("invalid directory page request: {error}"))
         })?;
-        if request.limit == 0 || request.limit > DIRECTORY_PAGE_MAX_LIMIT {
-            return Err(CoreError::configuration(format!(
-                "directory page limit must be between 1 and {DIRECTORY_PAGE_MAX_LIMIT}"
-            )));
-        }
         let offset = request
-            .cursor
-            .as_deref()
+            .cursor()
             .unwrap_or("0")
             .parse::<u64>()
             .map_err(|_| CoreError::configuration("invalid directory page cursor"))?;
@@ -165,7 +158,7 @@ impl HostDirectoryResolver {
             ));
         }
         let (request, offset) = self.page_request(value)?;
-        let available = self.available_directory(&request.reference)?;
+        let available = self.available_directory(request.reference())?;
         if !available.children {
             return Err(CoreError::configuration(
                 "directory action did not declare a children requirement",
@@ -175,7 +168,7 @@ impl HostDirectoryResolver {
             self.directories.as_ref(),
             &self.runtime,
             available.id,
-            request.directory_id.as_deref(),
+            request.directory_id(),
             "requested child directory is outside the action directory subtree",
         )?;
         let mut items = self
@@ -186,7 +179,7 @@ impl HostDirectoryResolver {
         let page = items
             .into_iter()
             .skip(offset as usize)
-            .take(request.limit as usize)
+            .take(request.limit() as usize)
             .map(|located| PluginDirectoryChild {
                 id: located.id().to_string(),
                 name: located.directory().name().to_string(),
@@ -196,8 +189,8 @@ impl HostDirectoryResolver {
             .collect();
         serde_json::to_string(&PluginDirectoryPage {
             items: page,
-            next_cursor: (offset + u64::from(request.limit) < total)
-                .then(|| (offset + u64::from(request.limit)).to_string()),
+            next_cursor: (offset + u64::from(request.limit()) < total)
+                .then(|| (offset + u64::from(request.limit())).to_string()),
         })
         .map_err(|error| CoreError::configuration(error.to_string()))
     }
@@ -212,7 +205,7 @@ impl HostDirectoryResolver {
             ));
         }
         let (request, offset) = self.page_request(value)?;
-        let available = self.available_directory(&request.reference)?;
+        let available = self.available_directory(request.reference())?;
         if !available.resources.includes_metadata() {
             return Err(CoreError::configuration(
                 "directory action did not declare a resources requirement",
@@ -229,12 +222,12 @@ impl HostDirectoryResolver {
             self.directories.as_ref(),
             &self.runtime,
             available.id,
-            request.directory_id.as_deref(),
+            request.directory_id(),
             "requested resource directory is outside the action directory subtree",
         )?;
         let page =
             self.runtime.block_on(self.resources.list(
-                &ListResources::new(request.limit, offset).with_directory_id(directory_id),
+                &ListResources::new(request.limit(), offset).with_directory_id(directory_id),
             ))?;
         serde_json::to_string(&PluginDirectoryResourcePage {
             items: page

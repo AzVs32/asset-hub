@@ -22,7 +22,7 @@ export function PluginActionDialog({
   onResourceChanged: ResourceChangedHandler;
 }) {
   const description = result?.output.view
-    ? `${result.action.id} · ${result.output.view.view}`
+    ? `${result.action.id} · ${result.output.view.type}`
     : undefined;
   return (
     <Dialog

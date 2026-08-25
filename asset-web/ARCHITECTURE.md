@@ -116,8 +116,8 @@ action 和用户授权能力。Feature 只知道这个接口。
 action 输出类型统一来自 `@asset-hub/asset-web-sdk/contract`。Frame 输入在进入 Gateway 前递归验证为有界
 JSON 对象；超深、超量、循环引用、非有限数字及任何非 JSON 值都会在 Host 边界被拒绝。
 Resource/Directory capability ID 及其字面量联合类型也来自该 contract；HTTP adapter 在值进入
-Web Domain 前按 SDK 列表校验，Kernel 和 frame bridge 不维护本地字符串副本。Manifest v4 golden
-fixture 同时锁定 Rust Manifest SDK 与 Web contract 的 capability 列表。
+Web Domain 前按 SDK 列表校验，Kernel 和 frame bridge 不维护本地字符串副本。Manifest v5 / Plugin
+API v2 的语言无关 catalog 同时生成 Rust 契约产物与 Web SDK 常量，契约测试负责检测漂移。
 Resource 与 Directory Frame 使用同一套 Action ID、输入和绑定快照规则：连接始终绑定初始聚合
 ID，只接受 revision 不回退的同 ID 快照，并由 Gateway 从该快照重新解析 Action 声明。iframe
 资源 URL 和 opaque-origin Penpal Messenger 也由同一个安全边界创建。Resource 的原始文本替换

@@ -8,7 +8,7 @@ describe("generic plugin HTML view", () => {
     const markup = renderToStaticMarkup(
       <GenericPluginViewRenderer
         gateway={{} as AssetGateway}
-        view={{ view: "html", html: '<img src="https://example.com/tracker.png">' }}
+        view={{ type: "html", html: '<img src="https://example.com/tracker.png">' }}
       />,
     );
 

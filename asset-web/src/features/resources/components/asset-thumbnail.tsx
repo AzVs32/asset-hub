@@ -82,7 +82,7 @@ function thumbnailImage(
   view: PluginView | null,
   resolveUrl: (url: string) => string | null,
 ): string | null {
-  if (view?.view !== "media" || !view.mime_type.startsWith("image/")) return null;
+  if (view?.type !== "media" || !view.mime_type.startsWith("image/")) return null;
   return view.encoding === "base64"
     ? `data:${view.mime_type};base64,${view.data}`
     : resolveUrl(view.data);

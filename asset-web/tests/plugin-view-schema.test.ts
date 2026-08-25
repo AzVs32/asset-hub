@@ -5,21 +5,21 @@ describe("plugin view boundary", () => {
   it("preserves the Plugin API carried by frame views", () => {
     expect(
       parsePluginView({
-        view: "plugin_frame",
-        plugin_api: "asset-hub.plugin-api@1",
+        type: "plugin_frame",
+        plugin_api: "asset-hub.plugin-api@2",
         title: "Reader",
         url: "/plugins/example.reader/index.html",
       }),
     ).toEqual({
-      view: "plugin_frame",
-      plugin_api: "asset-hub.plugin-api@1",
+      type: "plugin_frame",
+      plugin_api: "asset-hub.plugin-api@2",
       title: "Reader",
       url: "/plugins/example.reader/index.html",
     });
 
     expect(() =>
       parsePluginView({
-        view: "plugin_frame",
+        type: "plugin_frame",
         url: "/plugins/example.reader/index.html",
       }),
     ).toThrow();
@@ -28,23 +28,24 @@ describe("plugin view boundary", () => {
   it("accepts download views and rejects unknown view kinds", () => {
     expect(
       parsePluginView({
-        view: "download",
+        type: "download",
         url: "/resources/resource-1/download",
         filename: "asset.bin",
-      }).view,
+      }).type,
     ).toBe("download");
     expect(() =>
       parsePluginView({
-        view: "binary_url",
+        type: "binary_url",
         url: "/resources/resource-1/content",
       }),
     ).toThrow();
   });
 
   it("rejects untrusted output that does not match a host renderer contract", () => {
-    expect(() => parsePluginView({ view: "plugin_frame", url: 42 })).toThrow();
-    expect(() => parsePluginView({ view: "script", code: "alert(1)" })).toThrow();
-    expect(() => parsePluginView({ view: "table", columns: [], rows: [] })).toThrow();
-    expect(() => parsePluginView({ view: "form", schema: {} })).toThrow();
+    expect(() => parsePluginView({ type: "plugin_frame", url: 42 })).toThrow();
+    expect(() => parsePluginView({ type: "script", code: "alert(1)" })).toThrow();
+    expect(() => parsePluginView({ type: "table", columns: [], rows: [] })).toThrow();
+    expect(() => parsePluginView({ type: "form", schema: {} })).toThrow();
+    expect(() => parsePluginView({ type: "text", text: "ok", future: true })).toThrow();
   });
 });

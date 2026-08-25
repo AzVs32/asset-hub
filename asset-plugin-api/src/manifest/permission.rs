@@ -3,11 +3,15 @@
 //! 权限只表达插件申请的能力边界；Host 仍需结合 Action access、当前用户授权和执行策略
 //! 做最终判定。
 
+use super::{ManifestValidationCode, ManifestValidationError};
+use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::BTreeSet;
 
 /// Fine-grained host capabilities requested by a plugin.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 pub enum PluginPermission {
     #[serde(rename = "resource.read")]
     ResourceRead,
@@ -34,7 +38,7 @@ pub enum PluginPermission {
 }
 
 /// Fine-grained permissions requested by a plugin manifest.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PluginPermissions {
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
@@ -90,14 +94,14 @@ impl PluginPermissions {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum NetworkPermission {
     Flag(bool),
     Scoped(NetworkScope),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NetworkScope {
     #[serde(deserialize_with = "deserialize_nonempty_strings")]
@@ -111,6 +115,13 @@ impl Default for NetworkPermission {
 }
 
 impl NetworkPermission {
+    pub fn scoped(
+        hosts: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Result<Self, ManifestValidationError> {
+        let hosts = canonical_scope_values(hosts, true)?;
+        Ok(Self::Scoped(NetworkScope { hosts }))
+    }
+
     pub fn enabled(&self) -> bool {
         match self {
             Self::Flag(value) => *value,
@@ -128,14 +139,14 @@ impl NetworkPermission {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum FilesystemPermission {
     Flag(bool),
     Scoped(FilesystemScope),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FilesystemScope {
     #[serde(deserialize_with = "deserialize_strings")]
@@ -180,6 +191,22 @@ impl Default for FilesystemPermission {
 }
 
 impl FilesystemPermission {
+    pub fn scoped(
+        read_paths: impl IntoIterator<Item = impl Into<String>>,
+        write_paths: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Result<Self, ManifestValidationError> {
+        let read = canonical_scope_values(read_paths, false)?;
+        let write = canonical_scope_values(write_paths, false)?;
+        if read.is_empty() && write.is_empty() {
+            return Err(ManifestValidationError::new(
+                ManifestValidationCode::InvalidValue,
+                "$.permissions.filesystem",
+                "filesystem scope must contain at least one read or write path",
+            ));
+        }
+        Ok(Self::Scoped(FilesystemScope { read, write }))
+    }
+
     pub fn enabled(&self) -> bool {
         match self {
             Self::Flag(value) => *value,
@@ -201,6 +228,25 @@ impl FilesystemPermission {
             Self::Scoped(scope) => &scope.write,
         }
     }
+}
+
+fn canonical_scope_values(
+    values: impl IntoIterator<Item = impl Into<String>>,
+    require_nonempty: bool,
+) -> Result<Vec<String>, ManifestValidationError> {
+    let values = values.into_iter().map(Into::into).collect::<Vec<_>>();
+    if values
+        .iter()
+        .any(|value| value.is_empty() || value.trim() != value)
+        || require_nonempty && values.is_empty()
+    {
+        return Err(ManifestValidationError::new(
+            ManifestValidationCode::InvalidValue,
+            "$.permissions",
+            "permission scopes must contain canonical non-empty strings",
+        ));
+    }
+    Ok(values)
 }
 
 #[cfg(test)]

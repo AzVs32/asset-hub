@@ -4,26 +4,13 @@
 //! 可用，也不执行插件声明的副作用。
 
 /// Current and only supported Host/plugin wire and ABI version.
-pub const PLUGIN_API_VERSION: &str = "asset-hub.plugin-api@1";
+pub const PLUGIN_API_VERSION: &str = "asset-hub.plugin-api@2";
 
 /// Browser Frame channel used for Resource-bound Host capabilities.
-pub const PLUGIN_RESOURCE_FRAME_CHANNEL: &str = "asset-hub.plugin-frame@1";
+pub const PLUGIN_RESOURCE_FRAME_CHANNEL: &str = "asset-hub.plugin-frame@2";
 
 /// Browser Frame channel used for Directory-bound Host capabilities.
-pub const PLUGIN_DIRECTORY_FRAME_CHANNEL: &str = "asset-hub.plugin-directory-frame@1";
-
-/// Host methods exposed to Resource-bound Browser Frames.
-pub const PLUGIN_RESOURCE_FRAME_METHODS: &[&str] =
-    &["executeResourceAction", "replaceResourceText"];
-
-/// Host methods exposed to Directory-bound Browser Frames.
-pub const PLUGIN_DIRECTORY_FRAME_METHODS: &[&str] = &[
-    "executeDirectoryAction",
-    "viewResource",
-    "refreshDirectory",
-    "navigateToDirectory",
-    "editResource",
-];
+pub const PLUGIN_DIRECTORY_FRAME_CHANNEL: &str = "asset-hub.plugin-directory-frame@2";
 
 /// View discriminants supported by the current action and Browser Frame protocol.
 pub const PLUGIN_VIEW_KINDS: &[&str] = &[
@@ -44,19 +31,26 @@ pub const PLUGIN_DIRECTORY_ACTION_EFFECT_KINDS: &[&str] =
     &["update", "create_child", "create_tree", "delete"];
 
 mod access;
-pub mod diagnostic;
-pub mod directory;
-pub mod resource;
-pub mod view;
+mod diagnostic;
+mod directory;
+mod frame;
+mod resource;
+mod view;
 
 pub use access::PluginActionAccess;
+pub use diagnostic::codes as diagnostic_codes;
 pub use diagnostic::{PluginActionFailure, PluginDiagnostic, PluginDiagnosticSeverity};
 pub use directory::{
     CreateChildDirectoryEffect, CreateDirectoryTreeEffect, CreateTreeDirectory, CreateTreeResource,
     CreateTreeResourceEncoding, DirectoryActionEffect, PluginDirectory,
-    PluginDirectoryActionOutput, PluginDirectoryActionRequest, PluginDirectoryChild,
-    PluginDirectoryPage, PluginDirectoryResource, PluginDirectoryResourcePage,
-    UpdateDirectoryEffect,
+    PluginDirectoryActionOutput, PluginDirectoryActionRequest, PluginDirectoryActionResult,
+    PluginDirectoryChild, PluginDirectoryPage, PluginDirectoryResource,
+    PluginDirectoryResourcePage, UpdateDirectoryEffect,
+};
+pub use frame::{
+    DIRECTORY_FRAME_METHODS, DirectoryFrameActionOutput, DirectoryFrameEffectKind,
+    FrameArgumentSpec, FrameMethodSpec, RESOURCE_FRAME_METHODS, ResourceFrameActionOutput,
+    ResourceFrameEffectKind,
 };
 pub use resource::{
     PluginChecksum, PluginContentBytes, PluginContentReference, PluginContentReferenceEncoding,
@@ -66,5 +60,6 @@ pub use resource::{
 pub use view::{
     DownloadView, HtmlView, JsonView, MarkdownView, MediaView, PluginFrameView,
     PluginMediaEncoding, PluginReplacementEncoding, PluginResourceActionEffect,
-    PluginResourceActionOutput, PluginView, ReplaceContentEffect, TextView,
+    PluginResourceActionOutput, PluginResourceActionResult, PluginView, ReplaceContentEffect,
+    TextView,
 };

@@ -1,11 +1,11 @@
 use crate::runtime::{Error, Result};
-use asset_plugin_api::abi::PluginContentRange;
-use asset_plugin_api::protocol::directory::{PluginDirectoryPage, PluginDirectoryResourcePage};
+use asset_plugin_api::abi::ContentRange;
+use asset_plugin_api::protocol::{PluginDirectoryPage, PluginDirectoryResourcePage};
 
 #[cfg(all(feature = "extism-guest", target_arch = "wasm32"))]
 pub(crate) fn read_content_range(
     reference: &str,
-    range: PluginContentRange,
+    range: ContentRange,
     max_size: u64,
     chunk_size: u64,
 ) -> Result<Vec<u8>> {
@@ -15,7 +15,7 @@ pub(crate) fn read_content_range(
 #[cfg(not(all(feature = "extism-guest", target_arch = "wasm32")))]
 pub(crate) fn read_content_range(
     _reference: &str,
-    _range: PluginContentRange,
+    _range: ContentRange,
     _max_size: u64,
     _chunk_size: u64,
 ) -> Result<Vec<u8>> {

@@ -69,7 +69,7 @@ function DirectoryView({
     | undefined;
 }) {
   const gateway = useGateway();
-  if (view.view === "plugin_frame") {
+  if (view.type === "plugin_frame") {
     return (
       <Box sx={{ height: "70vh", minHeight: "24rem" }}>
         <DirectoryPluginFrame

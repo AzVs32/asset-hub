@@ -22,7 +22,7 @@ export function registerDefaultViewRenderers(kernel: PluginKernel): void {
 
 function DefaultViewRenderer(props: PluginViewRendererProps) {
   const { view } = props;
-  if (view.view === "plugin_frame") return <PluginFrameView {...props} view={view} />;
+  if (view.type === "plugin_frame") return <PluginFrameView {...props} view={view} />;
   return <GenericPluginViewRenderer view={view} gateway={props.gateway} />;
 }
 
@@ -32,7 +32,7 @@ function PluginFrameView({
   resource,
   gateway,
   onResourceChanged,
-}: PluginViewRendererProps & { view: Extract<PluginView, { view: "plugin_frame" }> }) {
+}: PluginViewRendererProps & { view: Extract<PluginView, { type: "plugin_frame" }> }) {
   const ref = React.useRef<HTMLIFrameElement>(null);
   const source = pluginFrameUrl(view.url, gateway.assetUrl.bind(gateway));
   const onResourceChangedRef = React.useRef(onResourceChanged);
@@ -101,8 +101,8 @@ function PluginError({ message }: { message: string }) {
 export function actionTitle(action: ResourceAction, output: ResourceActionOutput): string {
   const view = output.view;
   if (!view) return action.label;
-  if ((view.view === "html" || view.view === "plugin_frame" || view.view === "media") && view.title)
+  if ((view.type === "html" || view.type === "plugin_frame" || view.type === "media") && view.title)
     return view.title;
-  if (view.view === "download" && view.filename) return view.filename;
+  if (view.type === "download" && view.filename) return view.filename;
   return action.label;
 }

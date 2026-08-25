@@ -1,6 +1,8 @@
 {
-  "view": "text",
-  "text": "saved",
+  "view": {
+    "type": "text",
+    "text": "saved"
+  },
   "effects": [
     {
       "type": "replace_content",

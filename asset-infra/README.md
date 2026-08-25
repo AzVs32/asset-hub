@@ -21,7 +21,7 @@ driving adapter. `asset-runtime` starts it with `ResourceService` and owns its l
 ## Plugin package boundary
 
 Built-in kinds and actions are Rust Host definitions with private typed handler bindings. They are
-not parsed through `asset_plugin_api::manifest::PluginManifest` and never appear in the external package
+not parsed through `asset_plugin_api::manifest::PluginManifestDocument` and never appear in the external package
 catalog. Every filesystem package is an Extism/Wasm package; `runtime.type = "builtin"` is rejected.
 
 ## Kind and capability catalogs

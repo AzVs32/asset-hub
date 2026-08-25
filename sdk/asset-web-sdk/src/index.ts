@@ -194,7 +194,7 @@ export function mountAssetHubResourceFrame({
     throw new Error("The Resource frame output is not bound to the requested Resource.");
   }
   const view = output.view;
-  if (view?.view !== "plugin_frame") {
+  if (view?.type !== "plugin_frame") {
     throw new Error("The Resource Action did not return a plugin_frame.");
   }
   if (view.plugin_api !== PLUGIN_API_VERSION) {

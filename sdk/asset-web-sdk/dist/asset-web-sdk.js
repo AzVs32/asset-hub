@@ -412,14 +412,12 @@ var e = class extends Error {
 	#f = ({ data: e }) => {
 		if (this.#r?.(e)) for (let t of this.#a) t(e);
 	};
-}, z = "asset-hub.plugin-api@1", B = "asset-hub.plugin-frame@1", V = "asset-hub.plugin-directory-frame@1", H = [
+}, z = "asset-hub.plugin-api@2", B = "asset-hub.plugin-frame@2", V = "asset-hub.plugin-directory-frame@2", H = [
 	"thumbnail",
 	"view",
 	"edit"
-];
-H[0], H[1], H[2];
-var U = ["thumbnail", "workspace"];
-U[0], U[1];
+], U = ["thumbnail", "workspace"];
+H[0], H[1], H[2], U[0], U[1];
 //#endregion
 //#region src/index.ts
 var W = 1e4, G = 3e4;
@@ -480,8 +478,8 @@ async function q(e = {}) {
 function J({ client: e, frame: t, resourceId: n, output: r, connectionTimeoutMs: i }) {
 	if (r.resourceId !== n) throw Error("The Resource frame output is not bound to the requested Resource.");
 	let a = r.view;
-	if (a?.view !== "plugin_frame") throw Error("The Resource Action did not return a plugin_frame.");
-	if (a.plugin_api !== "asset-hub.plugin-api@1") throw Error(`Unsupported Plugin Frame API: ${a.plugin_api}`);
+	if (a?.type !== "plugin_frame") throw Error("The Resource Action did not return a plugin_frame.");
+	if (a.plugin_api !== "asset-hub.plugin-api@2") throw Error(`Unsupported Plugin Frame API: ${a.plugin_api}`);
 	let o = Y(a.url), s = t.contentWindow;
 	if (!s) throw Error("The Resource frame window is not available.");
 	t.setAttribute("sandbox", "allow-scripts"), t.title = a.title ?? "Resource view", t.src = o;

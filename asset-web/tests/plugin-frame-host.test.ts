@@ -125,7 +125,7 @@ describe("Directory Plugin Frame host bridge", () => {
       directoryId: item.id,
       action: inspect.id,
       diagnostics: [],
-      view: { view: "json" as const, data: { items: [] } },
+      view: { type: "json" as const, data: { items: [] } },
       effects: [],
     };
     const executeDirectoryAction = vi.fn().mockResolvedValue(expected);
@@ -240,8 +240,8 @@ describe("Directory Plugin Frame host bridge", () => {
       diagnostics: [],
       effects: [],
       view: {
-        view: "plugin_frame",
-        plugin_api: "asset-hub.plugin-api@1",
+        type: "plugin_frame",
+        plugin_api: "asset-hub.plugin-api@2",
         title: "Example",
         url: "/plugins/example.document/index.html",
       },
@@ -302,8 +302,8 @@ function pluginOutput(actionId: string): ResourceActionOutput {
     diagnostics: [],
     effects: [],
     view: {
-      view: "plugin_frame",
-      plugin_api: "asset-hub.plugin-api@1",
+      type: "plugin_frame",
+      plugin_api: "asset-hub.plugin-api@2",
       title: "Plugin frame",
       url: "/plugins/example/index.html",
     },

@@ -11,18 +11,18 @@ import {
 import type { AssetHubDirectoryFrameClient } from "../src/index";
 
 const views: PluginView[] = [
-  { view: "text", text: "plain" },
-  { view: "markdown", markdown: "# Markdown" },
-  { view: "html", title: "HTML", html: "<p>HTML</p>" },
+  { type: "text", text: "plain" },
+  { type: "markdown", markdown: "# Markdown" },
+  { type: "html", title: "HTML", html: "<p>HTML</p>" },
   {
-    view: "plugin_frame",
-    plugin_api: "asset-hub.plugin-api@1",
+    type: "plugin_frame",
+    plugin_api: "asset-hub.plugin-api@2",
     title: "Frame",
     url: "/plugins/example/index.html",
   },
-  { view: "json", data: { nested: [true, 1, "value", null] } },
-  { view: "media", mime_type: "image/png", encoding: "url", data: "/image.png" },
-  { view: "download", url: "/download", filename: "example.bin" },
+  { type: "json", data: { nested: [true, 1, "value", null] } },
+  { type: "media", mime_type: "image/png", encoding: "url", data: "/image.png" },
+  { type: "download", url: "/download", filename: "example.bin" },
 ];
 
 const resourceOutput: ResourceActionOutput = {

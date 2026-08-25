@@ -5,10 +5,11 @@
 
 use super::{
     DIRECTORY_ACTION_CAPABILITIES, DIRECTORY_THUMBNAIL_CAPABILITY, DIRECTORY_WORKSPACE_CAPABILITY,
-    MANIFEST_VERSION, ManifestActionAccess, PLUGIN_LOCK_FILE_NAME, PLUGIN_MANIFEST_FILE_NAME,
-    PLUGIN_WASM_FILE_NAME, PLUGIN_WEB_ENTRY_FILE_NAME, PluginManifest, PluginManifestLock,
+    MANIFEST_VERSION, ManifestActionAccess, ManifestValidationCode, ManifestValidationError,
+    PLUGIN_LOCK_FILE_NAME, PLUGIN_MANIFEST_FILE_NAME, PLUGIN_WASM_FILE_NAME,
+    PLUGIN_WEB_ENTRY_FILE_NAME, PluginManifestDocument, PluginManifestLock, PluginPackagePath,
     RESOURCE_ACTION_CAPABILITIES, RESOURCE_EDIT_CAPABILITY, RESOURCE_THUMBNAIL_CAPABILITY,
-    RESOURCE_VIEW_CAPABILITY,
+    RESOURCE_VIEW_CAPABILITY, ValidatedPluginManifest,
 };
 use crate::protocol::{
     PLUGIN_API_VERSION, PLUGIN_DIRECTORY_ACTION_EFFECT_KINDS, PLUGIN_RESOURCE_ACTION_EFFECT_KINDS,
@@ -20,37 +21,98 @@ const RESOURCE_THUMBNAIL_LOCATION: &str = "resource_thumbnail";
 const DIRECTORY_THUMBNAIL_LOCATION: &str = "directory_thumbnail";
 const DIRECTORY_WORKSPACE_LOCATION: &str = "directory_workspace";
 
-impl PluginManifest {
-    pub fn validate(&self) -> Result<(), String> {
-        if self.manifest_version != MANIFEST_VERSION {
-            return Err(format!(
-                "unsupported manifest_version `{}`; supported version is `{MANIFEST_VERSION}`",
-                self.manifest_version
+pub(super) fn validate_manifest(
+    manifest: &PluginManifestDocument,
+) -> Result<(), ManifestValidationError> {
+    if manifest.manifest_version != MANIFEST_VERSION {
+        return Err(ManifestValidationError::new(
+            ManifestValidationCode::UnsupportedVersion,
+            "$.manifest_version",
+            format!(
+                "unsupported manifest version {}; expected {MANIFEST_VERSION}",
+                manifest.manifest_version
+            ),
+        ));
+    }
+    for (index, action) in manifest.capabilities.resource_actions.iter().enumerate() {
+        validate_action_owner(
+            &manifest.plugin.id,
+            &action.id,
+            format!("$.capabilities.resource_actions[{index}].id"),
+        )?;
+        if action
+            .requires
+            .as_ref()
+            .is_some_and(|requires| !requires.content && requires.content_delivery.is_some())
+        {
+            return Err(ManifestValidationError::new(
+                ManifestValidationCode::InconsistentDeclaration,
+                format!("$.capabilities.resource_actions[{index}].requires.content_delivery"),
+                "content_delivery requires content=true",
             ));
         }
-        validate_owner_id("plugin.id", &self.plugin.id)?;
-        if self.plugin.name.trim().is_empty()
-            || self.plugin.version.trim().is_empty()
-            || self.plugin.publisher.trim().is_empty()
-        {
-            return Err(
-                "plugin.name, plugin.version and plugin.publisher must not be empty".to_string(),
-            );
-        }
-        validate_plugin_api_version(self.runtime.plugin_api())?;
-        if self.permissions.network.enabled() && !self.permissions.network.has_scope() {
-            return Err("permissions.network must declare an explicit host scope".to_string());
-        }
-        if self.permissions.filesystem.enabled() && !self.permissions.filesystem.has_scope() {
-            return Err("permissions.filesystem must declare explicit path scopes".to_string());
-        }
-        validate_capabilities(self)?;
+    }
+    for (index, action) in manifest.capabilities.directory_actions.iter().enumerate() {
+        validate_action_owner(
+            &manifest.plugin.id,
+            &action.id,
+            format!("$.capabilities.directory_actions[{index}].id"),
+        )?;
+    }
+    validate_manifest_document(manifest).map_err(|message| {
+        ManifestValidationError::new(ManifestValidationCode::InvalidValue, "$", message)
+    })
+}
+
+fn validate_action_owner(
+    plugin_id: &str,
+    action_id: &str,
+    path: String,
+) -> Result<(), ManifestValidationError> {
+    let prefix = format!("{plugin_id}.");
+    if action_id.starts_with(&prefix) && action_id.len() > prefix.len() {
         Ok(())
+    } else {
+        Err(ManifestValidationError::new(
+            ManifestValidationCode::ActionOwnerMismatch,
+            path,
+            format!("action id must start with `{prefix}`"),
+        ))
     }
 }
 
+fn validate_manifest_document(manifest: &PluginManifestDocument) -> Result<(), String> {
+    validate_owner_id("plugin.id", &manifest.plugin.id)?;
+    if manifest.plugin.name.trim().is_empty()
+        || manifest.plugin.version.trim().is_empty()
+        || manifest.plugin.publisher.trim().is_empty()
+    {
+        return Err(
+            "plugin.name, plugin.version and plugin.publisher must not be empty".to_string(),
+        );
+    }
+    validate_plugin_api_version(manifest.runtime.plugin_api())?;
+    if manifest.permissions.network.enabled() && !manifest.permissions.network.has_scope() {
+        return Err("permissions.network must declare an explicit host scope".to_string());
+    }
+    if manifest.permissions.filesystem.enabled() && !manifest.permissions.filesystem.has_scope() {
+        return Err("permissions.filesystem must declare explicit path scopes".to_string());
+    }
+    validate_capabilities(manifest)?;
+    Ok(())
+}
+
 impl PluginManifestLock {
-    pub fn validate_for(&self, manifest: &PluginManifest) -> Result<(), String> {
+    pub fn validate_for(
+        &self,
+        manifest: &ValidatedPluginManifest,
+    ) -> Result<(), ManifestValidationError> {
+        self.validate_for_document(manifest).map_err(|message| {
+            ManifestValidationError::new(ManifestValidationCode::InvalidValue, "$", message)
+        })
+    }
+
+    fn validate_for_document(&self, manifest: &PluginManifestDocument) -> Result<(), String> {
         if self.manifest_version != manifest.manifest_version {
             return Err(format!(
                 "manifest.lock.json manifest_version `{}` does not match manifest `{}`",
@@ -63,34 +125,32 @@ impl PluginManifestLock {
                 self.plugin_id, manifest.plugin.id
             ));
         }
-        let wasm_path = std::path::Path::new(PLUGIN_WASM_FILE_NAME);
-        if !self.integrity.contains_key(wasm_path) {
+        let wasm_path =
+            PluginPackagePath::new(PLUGIN_WASM_FILE_NAME).expect("canonical Wasm package path");
+        if !self.integrity.contains_key(&wasm_path) {
             return Err(format!(
                 "manifest.lock.json integrity must contain `{PLUGIN_WASM_FILE_NAME}` for extism plugins"
             ));
         }
-        let has_web_assets = self.integrity.keys().any(|path| path != wasm_path);
+        let has_web_assets = self.integrity.keys().any(|path| path != &wasm_path);
         if has_web_assets
-            && !self
-                .integrity
-                .contains_key(std::path::Path::new(PLUGIN_WEB_ENTRY_FILE_NAME))
+            && !self.integrity.contains_key(
+                &PluginPackagePath::new(PLUGIN_WEB_ENTRY_FILE_NAME)
+                    .expect("canonical Web entry package path"),
+            )
         {
             return Err(format!(
                 "manifest.lock.json integrity must contain `{PLUGIN_WEB_ENTRY_FILE_NAME}` when Web assets are present"
             ));
         }
         for (path, digest) in &self.integrity {
-            validate_relative_path("manifest.lock.json integrity path", path)?;
             if is_plugin_metadata_path(path) {
                 return Err(format!(
                     "manifest.lock.json integrity must not contain metadata file `{}`",
-                    path.display()
+                    path
                 ));
             }
-            validate_digest(
-                &format!("manifest.lock.json integrity[`{}`]", path.display()),
-                digest,
-            )?;
+            validate_digest(&format!("manifest.lock.json integrity[`{path}`]"), digest)?;
         }
         Ok(())
     }
@@ -106,7 +166,7 @@ fn validate_plugin_api_version(value: &str) -> Result<(), String> {
     }
 }
 
-fn validate_capabilities(manifest: &PluginManifest) -> Result<(), String> {
+fn validate_capabilities(manifest: &PluginManifestDocument) -> Result<(), String> {
     let capabilities = &manifest.capabilities;
     let mut resource_action_ids = HashSet::new();
     let mut directory_action_ids = HashSet::new();
@@ -601,30 +661,15 @@ fn validate_action_effects(
     Ok(())
 }
 
-fn validate_relative_path(field: &str, path: &std::path::Path) -> Result<(), String> {
-    if path.as_os_str().is_empty()
-        || path.is_absolute()
-        || path
-            .components()
-            .any(|component| matches!(component, std::path::Component::ParentDir))
-    {
-        return Err(format!("{field} must be a safe relative path"));
-    }
-    Ok(())
-}
-
-fn is_plugin_metadata_path(path: &std::path::Path) -> bool {
+fn is_plugin_metadata_path(path: &PluginPackagePath) -> bool {
     [PLUGIN_MANIFEST_FILE_NAME, PLUGIN_LOCK_FILE_NAME]
         .iter()
-        .any(|name| path == std::path::Path::new(name))
-        || path.components().count() == 1
+        .any(|name| path.as_str() == *name)
+        || !path.as_str().contains('/')
             && path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| {
-                    name.starts_with(&format!(".{PLUGIN_LOCK_FILE_NAME}."))
-                        && name.ends_with(".tmp")
-                })
+                .as_str()
+                .starts_with(&format!(".{PLUGIN_LOCK_FILE_NAME}."))
+            && path.as_str().ends_with(".tmp")
 }
 
 fn validate_digest(field: &str, value: &str) -> Result<(), String> {

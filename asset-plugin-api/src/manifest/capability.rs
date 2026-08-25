@@ -3,6 +3,7 @@
 //! 这些类型直接映射外部插件的 manifest JSON。Host 如何注册、匹配和执行这些
 //! 声明不属于 SDK，由 Host 侧适配器完成转换。
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 
 /// Resource thumbnail singleton capability declared by a Resource Action provider.
@@ -11,7 +12,7 @@ pub const RESOURCE_THUMBNAIL_CAPABILITY: &str = "thumbnail";
 pub const RESOURCE_VIEW_CAPABILITY: &str = "view";
 /// Editor frame singleton capability declared by a Resource Action provider.
 pub const RESOURCE_EDIT_CAPABILITY: &str = "edit";
-/// Resource Action singleton capability IDs supported by Manifest version 4.
+/// Resource Action singleton capability IDs supported by Manifest version 5.
 pub const RESOURCE_ACTION_CAPABILITIES: &[&str] = &[
     RESOURCE_THUMBNAIL_CAPABILITY,
     RESOURCE_VIEW_CAPABILITY,
@@ -22,14 +23,14 @@ pub const RESOURCE_ACTION_CAPABILITIES: &[&str] = &[
 pub const DIRECTORY_THUMBNAIL_CAPABILITY: &str = "thumbnail";
 /// Directory workspace singleton capability declared by a Directory Action provider.
 pub const DIRECTORY_WORKSPACE_CAPABILITY: &str = "workspace";
-/// Directory Action singleton capability IDs supported by Manifest version 4.
+/// Directory Action singleton capability IDs supported by Manifest version 5.
 pub const DIRECTORY_ACTION_CAPABILITIES: &[&str] = &[
     DIRECTORY_THUMBNAIL_CAPABILITY,
     DIRECTORY_WORKSPACE_CAPABILITY,
 ];
 
 /// Capabilities contributed by a plugin.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct PluginCapabilities {
     pub resource_kinds: Vec<ResourceKindCapability>,
@@ -39,7 +40,7 @@ pub struct PluginCapabilities {
 }
 
 /// Directory kind contributed by a plugin manifest.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct DirectoryKindCapability {
     pub kind: String,
@@ -57,7 +58,7 @@ pub struct DirectoryKindCapability {
 }
 
 /// Resource kind contributed by a plugin manifest.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct ResourceKindCapability {
     pub kind: String,
@@ -80,7 +81,7 @@ impl Default for ResourceKindCapability {
 }
 
 /// Resource action contributed by a plugin manifest.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ResourceActionCapability {
     pub id: String,
@@ -106,7 +107,7 @@ pub struct ResourceActionCapability {
 }
 
 /// Directory action contributed by a plugin manifest.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DirectoryActionCapability {
     pub id: String,
@@ -128,13 +129,13 @@ pub struct DirectoryActionCapability {
     pub ui: Option<ActionUi>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct DirectoryActionAppliesToCapability {
     pub kinds: Vec<String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct DirectoryActionRequirementsCapability {
     pub children: bool,
@@ -142,7 +143,7 @@ pub struct DirectoryActionRequirementsCapability {
 }
 
 /// Resource data exposed to a Directory Action through its call-scoped directory reference.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DirectoryResourceAccess {
     #[default]
@@ -152,7 +153,7 @@ pub enum DirectoryResourceAccess {
 }
 
 /// Views and effects an action is allowed to return.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct ActionOutputCapability {
     pub views: Vec<String>,
@@ -161,7 +162,7 @@ pub struct ActionOutputCapability {
 }
 
 /// Manifest-level action access declaration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ManifestActionAccess {
     #[default]
@@ -170,7 +171,7 @@ pub enum ManifestActionAccess {
 }
 
 /// Resource/action matching declaration.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct ResourceActionAppliesToCapability {
     pub kinds: Vec<String>,
@@ -179,7 +180,7 @@ pub struct ResourceActionAppliesToCapability {
 }
 
 /// Optional object content a handler needs in addition to the resource snapshot.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ActionRequirements {
     #[serde(default)]
@@ -188,7 +189,7 @@ pub struct ActionRequirements {
     pub content_delivery: Option<ContentDelivery>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ContentDelivery {
     Inline,
@@ -196,7 +197,7 @@ pub enum ContentDelivery {
 }
 
 /// Optional UI placement hints for host applications.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct ActionUi {
     pub group: Option<String>,
@@ -205,7 +206,7 @@ pub struct ActionUi {
 }
 
 /// Content matching declaration used by external resource-kind capabilities.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ResourceContentMatcher {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

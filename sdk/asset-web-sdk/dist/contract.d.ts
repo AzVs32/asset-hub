@@ -1,57 +1,44 @@
-/** Current Host/plugin wire and Browser Frame API version. */
-export declare const PLUGIN_API_VERSION = "asset-hub.plugin-api@1";
-/** Penpal channel used by Resource-bound plugin frames. */
-export declare const RESOURCE_FRAME_CHANNEL = "asset-hub.plugin-frame@1";
-/** Penpal channel used by Directory-bound plugin frames. */
-export declare const DIRECTORY_FRAME_CHANNEL = "asset-hub.plugin-directory-frame@1";
-/** Resource Action singleton capability IDs supported by Manifest version 4. */
-export declare const resourceActionCapabilityIds: readonly ["thumbnail", "view", "edit"];
+import { DIRECTORY_FRAME_CHANNEL, directoryActionCapabilityIds, directoryActionEffectKinds, directoryFrameMethods, PLUGIN_API_VERSION, pluginViewKinds, RESOURCE_FRAME_CHANNEL, resourceActionCapabilityIds, resourceActionEffectKinds, resourceFrameMethods } from "./contract.generated";
+export { DIRECTORY_FRAME_CHANNEL, directoryActionCapabilityIds, directoryActionEffectKinds, directoryFrameMethods, PLUGIN_API_VERSION, pluginViewKinds, RESOURCE_FRAME_CHANNEL, resourceActionCapabilityIds, resourceActionEffectKinds, resourceFrameMethods, };
 export type ResourceActionCapabilityId = (typeof resourceActionCapabilityIds)[number];
 export declare const RESOURCE_THUMBNAIL_CAPABILITY: "thumbnail";
 export declare const RESOURCE_VIEW_CAPABILITY: "view";
 export declare const RESOURCE_EDIT_CAPABILITY: "edit";
-/** Directory Action singleton capability IDs supported by Manifest version 4. */
-export declare const directoryActionCapabilityIds: readonly ["thumbnail", "workspace"];
 export type DirectoryActionCapabilityId = (typeof directoryActionCapabilityIds)[number];
 export declare const DIRECTORY_THUMBNAIL_CAPABILITY: "thumbnail";
 export declare const DIRECTORY_WORKSPACE_CAPABILITY: "workspace";
-/** Host methods exposed to Resource-bound plugin frames. */
-export declare const resourceFrameMethods: readonly ["executeResourceAction", "replaceResourceText"];
-/** Host methods exposed to Directory-bound plugin frames. */
-export declare const directoryFrameMethods: readonly ["executeDirectoryAction", "viewResource", "refreshDirectory", "navigateToDirectory", "editResource"];
 export type JsonPrimitive = boolean | number | string | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | JsonObject;
 export type JsonObject = {
     [key: string]: JsonValue;
 };
-export declare const pluginViewKinds: readonly ["text", "markdown", "html", "plugin_frame", "json", "media", "download"];
 export type PluginViewKind = (typeof pluginViewKinds)[number];
 export type PluginView = {
-    view: "text";
+    type: "text";
     text: string;
 } | {
-    view: "markdown";
+    type: "markdown";
     markdown: string;
 } | {
-    view: "html";
+    type: "html";
     title?: string;
     html: string;
 } | {
-    view: "plugin_frame";
+    type: "plugin_frame";
     plugin_api: string;
     title?: string;
     url: string;
 } | {
-    view: "json";
+    type: "json";
     data: JsonValue;
 } | {
-    view: "media";
+    type: "media";
     mime_type: string;
     title?: string;
     encoding: "base64" | "url";
     data: string;
 } | {
-    view: "download";
+    type: "download";
     url: string;
     mime_type?: string;
     filename?: string;
@@ -63,9 +50,7 @@ export interface PluginDiagnostic {
     retryable: boolean;
     details?: JsonValue;
 }
-export declare const resourceActionEffectKinds: readonly ["replace_content", "delete"];
 export type ResourceActionEffectKind = (typeof resourceActionEffectKinds)[number];
-export declare const directoryActionEffectKinds: readonly ["update", "create_child", "create_tree", "delete"];
 export type DirectoryActionEffectKind = (typeof directoryActionEffectKinds)[number];
 /** Host-normalized result returned to a Resource-bound browser frame. */
 export interface ResourceActionOutput {

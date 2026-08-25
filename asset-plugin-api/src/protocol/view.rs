@@ -3,15 +3,25 @@
 //! 插件通过这里的 DTO 返回可渲染视图、受约束的副作用声明和诊断信息；实际副作用
 //! 是否允许以及如何落库仍由 Host 校验和执行。
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::protocol::PluginDiagnostic;
 
+/// Complete Resource Action handler result.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum PluginResourceActionResult {
+    Success(PluginResourceActionOutput),
+    Failure(crate::protocol::PluginActionFailure),
+}
+
 /// Standard action output.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PluginResourceActionOutput {
-    #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub view: Option<PluginView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<PluginResourceActionEffect>,
@@ -52,8 +62,8 @@ impl PluginView {
 }
 
 /// Side effects requested by a plugin action.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PluginResourceActionEffect {
     ReplaceContent(ReplaceContentEffect),
     Delete,
@@ -68,7 +78,7 @@ impl PluginResourceActionEffect {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReplaceContentEffect {
     pub encoding: PluginReplacementEncoding,
@@ -78,15 +88,15 @@ pub struct ReplaceContentEffect {
 }
 
 /// Encoding accepted for bytes returned by a content replacement effect.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PluginReplacementEncoding {
     Base64,
 }
 
 /// Shared view protocol returned by plugin actions.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "view", rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PluginView {
     Text(TextView),
     Markdown(MarkdownView),
@@ -97,24 +107,27 @@ pub enum PluginView {
     Download(DownloadView),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TextView {
     pub text: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MarkdownView {
     pub markdown: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct HtmlView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     pub html: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PluginFrameView {
     pub plugin_api: String,
@@ -123,12 +136,14 @@ pub struct PluginFrameView {
     pub url: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct JsonView {
     pub data: Value,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MediaView {
     pub mime_type: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -138,7 +153,7 @@ pub struct MediaView {
 }
 
 /// Encodings renderable by a media view.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PluginMediaEncoding {
     Base64,
@@ -146,7 +161,8 @@ pub enum PluginMediaEncoding {
 }
 
 /// Host-owned URL exposed as a downloadable file.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct DownloadView {
     pub url: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

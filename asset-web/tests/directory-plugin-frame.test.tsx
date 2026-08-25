@@ -34,9 +34,9 @@ describe("DirectoryPluginFrame", () => {
       path: "collections/item",
       name: "Item",
     };
-    const view: Extract<PluginView, { view: "plugin_frame" }> = {
-      view: "plugin_frame",
-      plugin_api: "asset-hub.plugin-api@1",
+    const view: Extract<PluginView, { type: "plugin_frame" }> = {
+      type: "plugin_frame",
+      plugin_api: "asset-hub.plugin-api@2",
       title: "Collection workspace",
       url: "/plugins/example.collection/index.html",
     };
@@ -75,9 +75,9 @@ describe("DirectoryPluginFrame", () => {
     const root = createRoot(container);
     mounted.push(root);
     const currentDirectory = directory([]);
-    const view: Extract<PluginView, { view: "plugin_frame" }> = {
-      view: "plugin_frame",
-      plugin_api: "asset-hub.plugin-api@1",
+    const view: Extract<PluginView, { type: "plugin_frame" }> = {
+      type: "plugin_frame",
+      plugin_api: "asset-hub.plugin-api@2",
       title: "Collection workspace",
       url: "/plugins/example.collection/index.html",
     };
@@ -116,7 +116,7 @@ describe("DirectoryPluginFrame", () => {
 
 function output(
   directoryId: string,
-  view: Extract<PluginView, { view: "plugin_frame" }>,
+  view: Extract<PluginView, { type: "plugin_frame" }>,
 ): DirectoryActionOutput {
   return {
     directoryId,

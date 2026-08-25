@@ -12,26 +12,26 @@ const jsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
   ]),
 );
 
-const pluginViewSchema = z.discriminatedUnion("view", [
-  z.object({ view: z.literal("text"), text: z.string() }),
-  z.object({ view: z.literal("markdown"), markdown: z.string() }),
-  z.object({ view: z.literal("html"), title: z.string().optional(), html: z.string() }),
-  z.object({
-    view: z.literal("plugin_frame"),
+const pluginViewSchema = z.discriminatedUnion("type", [
+  z.strictObject({ type: z.literal("text"), text: z.string() }),
+  z.strictObject({ type: z.literal("markdown"), markdown: z.string() }),
+  z.strictObject({ type: z.literal("html"), title: z.string().optional(), html: z.string() }),
+  z.strictObject({
+    type: z.literal("plugin_frame"),
     plugin_api: z.string().min(1),
     title: z.string().optional(),
     url: z.string(),
   }),
-  z.object({ view: z.literal("json"), data: jsonValueSchema }),
-  z.object({
-    view: z.literal("media"),
+  z.strictObject({ type: z.literal("json"), data: jsonValueSchema }),
+  z.strictObject({
+    type: z.literal("media"),
     mime_type: z.string(),
     title: z.string().optional(),
     encoding: z.enum(["base64", "url"]),
     data: z.string(),
   }),
-  z.object({
-    view: z.literal("download"),
+  z.strictObject({
+    type: z.literal("download"),
     url: z.string(),
     mime_type: z.string().optional(),
     filename: z.string().optional(),

@@ -31,7 +31,7 @@ fn structured_action_result(result: Result<String>) -> FnResult<String> {
         Ok(output) => Ok(output),
         Err(error) => Ok(serde_json::to_string(&PluginActionFailure::new(
             PluginDiagnostic::error(
-                asset_plugin_api::protocol::diagnostic::codes::ACTION_FAILED,
+                asset_plugin_api::protocol::diagnostic_codes::ACTION_FAILED,
                 error.to_string(),
             ),
         ))?),
@@ -40,7 +40,7 @@ fn structured_action_result(result: Result<String>) -> FnResult<String> {
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) mod content {
-    use asset_plugin_api::abi::PluginContentRange;
+    use asset_plugin_api::abi::ContentRange;
     use extism_pdk::{Error, FnResult, host_fn};
 
     #[host_fn]
@@ -62,13 +62,13 @@ pub(crate) mod content {
                 ))
                 .into());
             }
-            read_open_range(handle, PluginContentRange::new(0, size)?, chunk_size)
+            read_open_range(handle, ContentRange::new(0, size)?, chunk_size)
         })
     }
 
     pub(crate) fn read_range(
         reference: &str,
-        range: PluginContentRange,
+        range: ContentRange,
         max_size: u64,
         chunk_size: u64,
     ) -> FnResult<Vec<u8>> {
@@ -106,11 +106,7 @@ pub(crate) mod content {
         }
     }
 
-    fn read_open_range(
-        handle: &str,
-        range: PluginContentRange,
-        chunk_size: u64,
-    ) -> FnResult<Vec<u8>> {
+    fn read_open_range(handle: &str, range: ContentRange, chunk_size: u64) -> FnResult<Vec<u8>> {
         let capacity = usize::try_from(range.length())
             .map_err(|_| Error::msg("content host range does not fit guest memory"))?;
         let mut bytes = Vec::with_capacity(capacity);
@@ -159,7 +155,7 @@ mod tests {
         .unwrap();
         let output: serde_json::Value = serde_json::from_str(&output).unwrap();
         assert_eq!(
-            output["plugin_api"],
+            output["view"]["plugin_api"],
             asset_plugin_api::protocol::PLUGIN_API_VERSION
         );
 
@@ -186,8 +182,8 @@ mod tests {
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) mod directory {
-    use asset_plugin_api::abi::PluginDirectoryPageRequest;
-    use asset_plugin_api::protocol::directory::{PluginDirectoryPage, PluginDirectoryResourcePage};
+    use asset_plugin_api::abi::DirectoryPageRequest;
+    use asset_plugin_api::protocol::{PluginDirectoryPage, PluginDirectoryResourcePage};
     use extism_pdk::{FnResult, host_fn};
 
     #[host_fn]
@@ -202,12 +198,7 @@ pub(crate) mod directory {
         cursor: Option<&str>,
         limit: u32,
     ) -> FnResult<PluginDirectoryPage> {
-        let request = PluginDirectoryPageRequest {
-            reference: reference.to_string(),
-            directory_id: directory_id.map(str::to_string),
-            cursor: cursor.map(str::to_string),
-            limit,
-        };
+        let request = page_request(reference, directory_id, cursor, limit)?;
         let response =
             unsafe { asset_hub_directory_list_children(serde_json::to_string(&request)?) }?;
         Ok(serde_json::from_str(&response)?)
@@ -219,14 +210,25 @@ pub(crate) mod directory {
         cursor: Option<&str>,
         limit: u32,
     ) -> FnResult<PluginDirectoryResourcePage> {
-        let request = PluginDirectoryPageRequest {
-            reference: reference.to_string(),
-            directory_id: directory_id.map(str::to_string),
-            cursor: cursor.map(str::to_string),
-            limit,
-        };
+        let request = page_request(reference, directory_id, cursor, limit)?;
         let response =
             unsafe { asset_hub_directory_list_resources(serde_json::to_string(&request)?) }?;
         Ok(serde_json::from_str(&response)?)
+    }
+
+    fn page_request(
+        reference: &str,
+        directory_id: Option<&str>,
+        cursor: Option<&str>,
+        limit: u32,
+    ) -> FnResult<DirectoryPageRequest> {
+        let mut request = DirectoryPageRequest::new(reference, limit)?;
+        if let Some(directory_id) = directory_id {
+            request = request.in_directory(directory_id)?;
+        }
+        if let Some(cursor) = cursor {
+            request = request.after(cursor)?;
+        }
+        Ok(request)
     }
 }

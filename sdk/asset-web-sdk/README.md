@@ -70,9 +70,10 @@ the Core workspace's menu, thumbnail, resource-row, or detail slots.
 
 The contract entry point also exports `resourceActionCapabilityIds`,
 `directoryActionCapabilityIds`, their literal union types, and named constants such as
-`RESOURCE_VIEW_CAPABILITY`. These values mirror the Rust Manifest SDK and are checked against
-the shared Manifest v4 golden contract. Browser Hosts use the exported values instead of repeating
-capability strings.
+`RESOURCE_VIEW_CAPABILITY`. These values are generated from the Manifest v5 / Plugin API v2
+catalog in `asset-plugin-api/spec/contract-v2.json`; Browser Hosts use the exported values instead
+of repeating capability strings. Frame output views use `type` as their discriminator, and Host
+decoders reject unknown fields.
 
 Action input must be a JSON object throughout: nested values may contain only finite numbers,
 strings, booleans, null, arrays, and plain objects. The Host rejects cyclic or non-JSON values and

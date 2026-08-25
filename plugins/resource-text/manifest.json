@@ -1,5 +1,5 @@
 {
-  "manifest_version": 4,
+  "manifest_version": 5,
   "plugin": {
     "id": "resource.text",
     "name": "Resource Text",
@@ -10,7 +10,7 @@
   "runtime": {
     "type": "extism",
     "wasi": true,
-    "plugin_api": "asset-hub.plugin-api@1"
+    "plugin_api": "asset-hub.plugin-api@2"
   },
   "capabilities": {
     "resource_kinds": [

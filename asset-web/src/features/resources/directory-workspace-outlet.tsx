@@ -58,7 +58,7 @@ export function DirectoryWorkspaceOutlet({
     );
   }
   const view = result.data.view;
-  if (view?.view !== "plugin_frame") {
+  if (view?.type !== "plugin_frame") {
     return (
       <Alert severity="error" sx={{ m: 2 }}>
         Action {action.id} did not return a plugin_frame.

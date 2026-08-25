@@ -1,38 +1,12 @@
 use super::*;
 use crate::kind::builder::{definition_from_parts, push_definition};
 use crate::kind::directory_action_registry::validate_directory_action_capabilities;
-use crate::plugin_manifest::PluginCatalog;
-use asset_core::CoreError;
 use asset_core::domain::{
     ActionAccess, ActionOutputContract, ActionUi, DefinitionOrigin, DirectoryActionDefinition,
     DirectoryKind, DirectoryKindDefinition, ResourceActionDefinition, ResourceContentMatcher,
     ResourceKind, ResourceKindDefinition,
 };
 use asset_core::port::DirectoryKindRegistry;
-use std::path::{Path, PathBuf};
-
-fn registries(
-    packages_root: &Path,
-) -> Result<
-    (
-        DefaultResourceKindRegistry,
-        DefaultDirectoryKindRegistry,
-        DefaultResourceActionRegistry,
-    ),
-    CoreError,
-> {
-    let catalog = PluginCatalog::load(packages_root)?;
-    let catalogs = build_capability_catalogs(&catalog)?;
-    Ok((
-        catalogs.resource_kinds,
-        catalogs.directory_kinds,
-        catalogs.resource_actions,
-    ))
-}
-
-fn action_registry(packages_root: &Path) -> Result<DefaultResourceActionRegistry, CoreError> {
-    registries(packages_root).map(|(_, _, actions)| actions)
-}
 
 #[test]
 fn registry_rejects_unknown_parents_and_cycles() {
@@ -214,65 +188,6 @@ fn registry_rejects_duplicate_kinds() {
     let error = push_definition(&mut definitions, definition).unwrap_err();
 
     assert!(error.to_string().contains("duplicate resource kind"));
-}
-
-#[test]
-fn registry_rejects_duplicate_global_action_ids() {
-    let root = unique_temp_path("duplicate-action");
-    let package = root.join("duplicate-download");
-    std::fs::create_dir_all(&package).unwrap();
-    std::fs::write(package.join("plugin.wasm"), []).unwrap();
-    std::fs::write(
-        package.join("manifest.json"),
-        r#"
-        {
-          "manifest_version": 4,
-          "plugin": {
-            "id": "duplicate-download",
-            "name": "Duplicate Preview",
-            "version": "0.1.0",
-            "publisher": "test",
-            "description": "Duplicate action id test plugin."
-          },
-          "runtime": {
-            "type": "extism",
-            "plugin_api": "asset-hub.plugin-api@1"
-          },
-          "capabilities": {
-            "resource_kinds": [],
-            "resource_actions": [
-              {
-                "id": "core.resource.download",
-                "label": "Duplicate Download",
-                "handler": "duplicate_download",
-                "applies_to": {
-                  "kinds": ["core:resource"]
-                },
-                "access": "read",
-                "output": {"views": ["download"]}
-              }
-            ]
-          },
-          "permissions": {
-            "allow": ["resource.read", "resource.content.read"],
-            "network": false,
-            "filesystem": false
-          }
-        }
-        "#,
-    )
-    .unwrap();
-    write_empty_wasm_lock(&package, "duplicate-download");
-
-    let error = action_registry(&root).unwrap_err();
-
-    assert!(
-        error
-            .to_string()
-            .contains("duplicate global resource action `core.resource.download`")
-    );
-
-    let _ = std::fs::remove_dir_all(root);
 }
 
 #[test]
@@ -503,24 +418,4 @@ fn directory_workspace_capability_is_exclusive_and_frame_only() {
             .to_string()
             .contains("use only `directory_workspace`")
     );
-}
-
-fn write_empty_wasm_lock(root: &std::path::Path, plugin_id: &str) {
-    std::fs::write(
-        root.join("manifest.lock.json"),
-        format!(
-            r#"{{
-              "manifest_version": 4,
-              "plugin_id": "{plugin_id}",
-              "integrity": {{
-                "plugin.wasm": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-              }}
-            }}"#
-        ),
-    )
-    .unwrap();
-}
-
-fn unique_temp_path(name: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("asset-hub-kind-{name}-{}", uuid::Uuid::now_v7()))
 }

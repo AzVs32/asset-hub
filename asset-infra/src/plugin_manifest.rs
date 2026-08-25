@@ -2,7 +2,8 @@ use crate::builtin_catalog::BuiltinCatalog;
 use asset_core::CoreError;
 use asset_plugin_api::manifest::{
     PLUGIN_LOCK_FILE_NAME, PLUGIN_MANIFEST_FILE_NAME, PLUGIN_WASM_FILE_NAME,
-    PLUGIN_WEB_ENTRY_FILE_NAME, PluginManifest, PluginManifestLock,
+    PLUGIN_WEB_ENTRY_FILE_NAME, PluginManifestDocument, PluginManifestLock, PluginPackagePath,
+    ValidatedPluginManifest,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -23,14 +24,14 @@ pub const MAX_PLUGIN_WEB_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct LoadedPlugin {
-    pub(crate) manifest: PluginManifest,
+    pub(crate) manifest: ValidatedPluginManifest,
     pub(crate) wasm: Arc<[u8]>,
     pub(crate) web_assets: HashMap<PathBuf, Arc<[u8]>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct InstalledPluginPackage {
-    manifest: PluginManifest,
+    manifest: ValidatedPluginManifest,
     package_root: PathBuf,
     replaced_existing: bool,
 }
@@ -76,7 +77,7 @@ impl PluginCatalog {
 }
 
 impl LoadedPlugin {
-    pub fn manifest(&self) -> &PluginManifest {
+    pub fn manifest(&self) -> &ValidatedPluginManifest {
         &self.manifest
     }
 
@@ -90,7 +91,7 @@ impl LoadedPlugin {
 }
 
 impl InstalledPluginPackage {
-    pub fn manifest(&self) -> &PluginManifest {
+    pub fn manifest(&self) -> &ValidatedPluginManifest {
         &self.manifest
     }
 
@@ -235,7 +236,9 @@ pub fn load_verified_plugin_package(package_root: &Path) -> Result<LoadedPlugin,
 ///
 /// Generation and verification deliberately remain separate: this function refuses to replace an
 /// existing lock, while [`load_verified_plugin_package`] never creates or updates one.
-pub fn generate_plugin_manifest_lock(package_root: &Path) -> Result<PluginManifest, CoreError> {
+pub fn generate_plugin_manifest_lock(
+    package_root: &Path,
+) -> Result<ValidatedPluginManifest, CoreError> {
     validate_package_directory(package_root)?;
     let manifest = load_plugin_manifest_file(&package_root.join(PLUGIN_MANIFEST_FILE_NAME))?;
     validate_package_identity(&manifest, package_root)?;
@@ -301,7 +304,7 @@ fn ensure_packages_root(packages_root: &Path) -> Result<(), CoreError> {
 
 fn write_manifest_snapshot(
     package_root: &Path,
-    manifest: &PluginManifest,
+    manifest: &ValidatedPluginManifest,
 ) -> Result<(), CoreError> {
     let path = package_root.join(PLUGIN_MANIFEST_FILE_NAME);
     let mut bytes = serde_json::to_vec_pretty(manifest).map_err(|error| {
@@ -459,7 +462,7 @@ fn validate_package_directory(package_root: &Path) -> Result<(), CoreError> {
 }
 
 fn validate_package_identity(
-    manifest: &PluginManifest,
+    manifest: &ValidatedPluginManifest,
     package_root: &Path,
 ) -> Result<(), CoreError> {
     if package_root.file_name().and_then(|name| name.to_str()) != Some(manifest.plugin_id()) {
@@ -518,7 +521,7 @@ fn discover_plugin_packages(root: &Path) -> Result<Vec<PathBuf>, CoreError> {
     Ok(packages)
 }
 
-pub(crate) fn load_plugin_manifest_file(path: &Path) -> Result<PluginManifest, CoreError> {
+pub(crate) fn load_plugin_manifest_file(path: &Path) -> Result<ValidatedPluginManifest, CoreError> {
     let metadata = regular_file_metadata(path, "plugin manifest")?;
     if metadata.len() > MAX_PLUGIN_MANIFEST_BYTES {
         return Err(CoreError::configuration(format!(
@@ -532,7 +535,7 @@ pub(crate) fn load_plugin_manifest_file(path: &Path) -> Result<PluginManifest, C
             path.display()
         ))
     })?;
-    let manifest: PluginManifest = serde_json::from_str(&content).map_err(|error| {
+    let manifest: PluginManifestDocument = serde_json::from_str(&content).map_err(|error| {
         CoreError::configuration(format!(
             "parse plugin manifest `{}`: {error}",
             path.display()
@@ -543,13 +546,12 @@ pub(crate) fn load_plugin_manifest_file(path: &Path) -> Result<PluginManifest, C
             "invalid plugin manifest `{}`: {error}",
             path.display()
         ))
-    })?;
-    Ok(manifest)
+    })
 }
 
 fn load_plugin_manifest_lock_file(
     path: &Path,
-    manifest: &PluginManifest,
+    manifest: &ValidatedPluginManifest,
 ) -> Result<PluginManifestLock, CoreError> {
     let metadata = regular_file_metadata(path, "plugin manifest lock")?;
     if metadata.len() > MAX_PLUGIN_LOCK_BYTES {
@@ -581,7 +583,7 @@ fn load_plugin_manifest_lock_file(
 
 fn generate_plugin_manifest_lock_value(
     package_root: &Path,
-    manifest: &PluginManifest,
+    manifest: &ValidatedPluginManifest,
 ) -> Result<PluginManifestLock, CoreError> {
     let artifacts = inspect_package_artifacts(package_root, manifest)?;
     Ok(PluginManifestLock {
@@ -666,19 +668,13 @@ fn regular_file_metadata(path: &Path, label: &str) -> Result<std::fs::Metadata, 
 struct LoadedArtifacts {
     wasm: Arc<[u8]>,
     web_assets: HashMap<PathBuf, Arc<[u8]>>,
-    integrity: BTreeMap<PathBuf, String>,
+    integrity: BTreeMap<PluginPackagePath, String>,
 }
 
 fn validate_loaded_manifest(
-    manifest: &PluginManifest,
+    manifest: &ValidatedPluginManifest,
     package_root: &Path,
 ) -> Result<LoadedArtifacts, CoreError> {
-    manifest.validate().map_err(|error| {
-        CoreError::configuration(format!(
-            "invalid plugin manifest `{}`: {error}",
-            package_root.display()
-        ))
-    })?;
     let lock = load_plugin_manifest_lock_file(&package_root.join(PLUGIN_LOCK_FILE_NAME), manifest)?;
     let artifacts = inspect_package_artifacts(package_root, manifest)?;
     if lock.integrity != artifacts.integrity {
@@ -692,7 +688,7 @@ fn validate_loaded_manifest(
             .collect::<Vec<_>>();
         let wasm_detail = if changed
             .iter()
-            .any(|path| path.as_path() == Path::new(PLUGIN_WASM_FILE_NAME))
+            .any(|path| path.as_str() == PLUGIN_WASM_FILE_NAME)
         {
             "; Wasm digest mismatch"
         } else {
@@ -708,7 +704,7 @@ fn validate_loaded_manifest(
 
 fn inspect_package_artifacts(
     package_root: &Path,
-    manifest: &PluginManifest,
+    manifest: &ValidatedPluginManifest,
 ) -> Result<LoadedArtifacts, CoreError> {
     let mut artifact_paths = HashSet::new();
     collect_package_artifact_files(package_root, package_root, &mut artifact_paths)?;
@@ -754,7 +750,7 @@ fn inspect_package_artifacts(
                 path.display()
             ))
         })?;
-        integrity.insert(relative_path.clone(), sha256_hex(&bytes));
+        integrity.insert(package_path(&relative_path)?, sha256_hex(&bytes));
         if relative_path == wasm_path {
             wasm = Some(Arc::from(bytes));
         } else {
@@ -766,6 +762,26 @@ fn inspect_package_artifacts(
         web_assets,
         integrity,
     })
+}
+
+fn package_path(path: &Path) -> Result<PluginPackagePath, CoreError> {
+    let mut segments = Vec::new();
+    for component in path.components() {
+        let Component::Normal(segment) = component else {
+            return Err(CoreError::configuration(format!(
+                "plugin artifact path `{}` is not canonical",
+                path.display()
+            )));
+        };
+        segments.push(segment.to_str().ok_or_else(|| {
+            CoreError::configuration(format!(
+                "plugin artifact path `{}` must be valid UTF-8",
+                path.display()
+            ))
+        })?);
+    }
+    PluginPackagePath::new(segments.join("/"))
+        .map_err(|error| CoreError::configuration(error.to_string()))
 }
 
 fn sha256_hex(data: &[u8]) -> String {
@@ -780,7 +796,7 @@ fn sha256_hex(data: &[u8]) -> String {
 }
 
 fn validate_artifact_layout(
-    manifest: &PluginManifest,
+    manifest: &ValidatedPluginManifest,
     artifact_paths: &HashSet<PathBuf>,
 ) -> Result<(), CoreError> {
     let wasm_path = Path::new(PLUGIN_WASM_FILE_NAME);
@@ -869,7 +885,7 @@ fn is_temporary_lock_file(path: &Path) -> bool {
             })
 }
 
-fn manifest_uses_plugin_frame(manifest: &PluginManifest) -> bool {
+fn manifest_uses_plugin_frame(manifest: &ValidatedPluginManifest) -> bool {
     manifest.capabilities.resource_actions.iter().any(|action| {
         action
             .output

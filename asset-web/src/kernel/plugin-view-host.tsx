@@ -17,11 +17,11 @@ export function PluginViewHost({
 }) {
   const kernel = usePluginKernel();
   if (!output.view) return null;
-  const Renderer = kernel.viewRenderer(output.view.view);
+  const Renderer = kernel.viewRenderer(output.view.type);
   if (!Renderer) {
     return (
       <Alert severity="warning" sx={{ m: 2 }}>
-        No host renderer is registered for <code>{output.view.view}</code>.
+        No host renderer is registered for <code>{output.view.type}</code>.
       </Alert>
     );
   }

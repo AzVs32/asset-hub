@@ -223,7 +223,7 @@ fn read_content_reference(
     max_size: u64,
     chunk_size: u64,
 ) -> Result<Vec<u8>> {
-    let range = abi::content::PluginContentRange::new(offset, length)?;
+    let range = abi::ContentRange::new(offset, length)?;
     crate::guest::read_content_range(reference, range, max_size, chunk_size)
 }
 

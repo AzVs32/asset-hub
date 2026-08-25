@@ -4,7 +4,7 @@ import type { PluginView } from "@/domain/plugin";
 export default function MarkdownRenderer({
   view,
 }: {
-  view: Extract<PluginView, { view: "markdown" }>;
+  view: Extract<PluginView, { type: "markdown" }>;
 }) {
   return (
     <article className="plugin-prose markdown-body">

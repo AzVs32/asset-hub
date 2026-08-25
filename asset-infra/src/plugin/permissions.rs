@@ -138,7 +138,7 @@ pub(super) fn verify_content_budget(
             &binding.plugin_id,
             &binding.action,
             host_diagnostic(
-                asset_plugin_api::protocol::diagnostic::codes::CONTENT_LIMIT_EXCEEDED,
+                asset_plugin_api::protocol::diagnostic_codes::CONTENT_LIMIT_EXCEEDED,
                 format!(
                     "resource content is {size} bytes, plugin limit is {}",
                     policy.max_content_bytes()

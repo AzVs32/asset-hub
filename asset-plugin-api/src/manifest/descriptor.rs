@@ -2,10 +2,11 @@
 //!
 //! `PluginDescriptor` 是 manifest 文档的一部分，描述稳定插件 ID 及面向注册表的元数据。
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Stable identity and registry description for a plugin.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PluginDescriptor {
     pub id: String,

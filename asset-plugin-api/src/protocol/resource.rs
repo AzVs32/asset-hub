@@ -4,11 +4,13 @@
 //! Action 可用性判断、权限决策或持久化等领域职责。
 
 use crate::protocol::PluginActionAccess;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Action request passed from host to a plugin handler.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PluginResourceActionRequest {
     pub action: String,
     pub access: PluginActionAccess,
@@ -22,7 +24,8 @@ pub struct PluginResourceActionRequest {
 }
 
 /// Resource snapshot exposed to plugin handlers.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PluginResource {
     pub id: String,
     pub directory: String,
@@ -38,7 +41,7 @@ pub struct PluginResource {
 }
 
 /// Resource content reference exposed to plugins.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PluginResourceContent {
     pub size: u64,
@@ -51,7 +54,7 @@ pub struct PluginResourceContent {
     pub verification_error: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PluginContentVerificationStatus {
     Pending,
@@ -59,7 +62,7 @@ pub enum PluginContentVerificationStatus {
     Failed,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PluginChecksum {
     pub kind: String,
@@ -67,21 +70,22 @@ pub struct PluginChecksum {
 }
 
 /// Inline object content supplied to a plugin.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PluginContentBytes {
     pub encoding: PluginInlineContentEncoding,
     pub data: String,
 }
 
 /// Encoding accepted for content embedded directly in an action request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PluginInlineContentEncoding {
     Base64,
 }
 
 /// Non-inline object content supplied to a plugin.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PluginContentReference {
     pub encoding: PluginContentReferenceEncoding,
@@ -89,7 +93,7 @@ pub struct PluginContentReference {
 }
 
 /// Encoding used by an opaque, call-scoped host content reference.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PluginContentReferenceEncoding {
     Handle,

@@ -24,7 +24,7 @@ export function DirectoryPluginFrame({
 }: {
   directory: Directory;
   output: DirectoryActionOutput;
-  view: Extract<PluginView, { view: "plugin_frame" }>;
+  view: Extract<PluginView, { type: "plugin_frame" }>;
   gateway: AssetGateway;
   onDirectoryChanged?: (() => void | Promise<void>) | undefined;
   onNavigate?: ((path: string) => void | Promise<void>) | undefined;

@@ -1,0 +1,10 @@
+export declare const PLUGIN_API_VERSION: "asset-hub.plugin-api@2";
+export declare const RESOURCE_FRAME_CHANNEL: "asset-hub.plugin-frame@2";
+export declare const DIRECTORY_FRAME_CHANNEL: "asset-hub.plugin-directory-frame@2";
+export declare const resourceActionCapabilityIds: readonly ["thumbnail", "view", "edit"];
+export declare const directoryActionCapabilityIds: readonly ["thumbnail", "workspace"];
+export declare const resourceFrameMethods: readonly ["executeResourceAction", "replaceResourceText"];
+export declare const directoryFrameMethods: readonly ["executeDirectoryAction", "viewResource", "refreshDirectory", "navigateToDirectory", "editResource"];
+export declare const pluginViewKinds: readonly ["text", "markdown", "html", "plugin_frame", "json", "media", "download"];
+export declare const resourceActionEffectKinds: readonly ["replace_content", "delete"];
+export declare const directoryActionEffectKinds: readonly ["update", "create_child", "create_tree", "delete"];

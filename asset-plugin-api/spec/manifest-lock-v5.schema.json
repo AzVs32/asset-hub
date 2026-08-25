@@ -1,0 +1,33 @@
+{
+  "$id": "urn:asset-hub:plugin-contract:manifest-lock-v5",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PluginManifestLock",
+  "description": "Generated integrity data for a plugin package.",
+  "type": "object",
+  "properties": {
+    "integrity": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "propertyNames": {
+        "pattern": "^(?!/)(?![A-Za-z]:/)(?!.*\\\\)(?!.*//)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*/$)[^\\u0000-\\u001F]+$"
+      }
+    },
+    "manifest_version": {
+      "type": "integer",
+      "format": "uint32",
+      "const": 5,
+      "minimum": 0
+    },
+    "plugin_id": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "manifest_version",
+    "plugin_id",
+    "integrity"
+  ]
+}

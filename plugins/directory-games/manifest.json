@@ -1,5 +1,5 @@
 {
-  "manifest_version": 4,
+  "manifest_version": 5,
   "plugin": {
     "id": "directory.games",
     "name": "Game Hub",
@@ -10,7 +10,7 @@
   "runtime": {
     "type": "extism",
     "wasi": false,
-    "plugin_api": "asset-hub.plugin-api@1"
+    "plugin_api": "asset-hub.plugin-api@2"
   },
   "capabilities": {
     "directory_kinds": [

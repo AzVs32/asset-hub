@@ -5,7 +5,7 @@ use asset_core::domain::{
 };
 use asset_core::port::{BlobStorage, ResourceActionRequest};
 use asset_plugin_api::abi::{
-    CONTENT_CLOSE_FN, CONTENT_OPEN_FN, CONTENT_READ_RANGE_FN, CONTENT_SIZE_FN, PluginContentRange,
+    CONTENT_CLOSE_FN, CONTENT_OPEN_FN, CONTENT_READ_FN, CONTENT_SIZE_FN, ContentRange,
 };
 use asset_plugin_api::manifest::PluginPermissions;
 use asset_plugin_api::protocol::{
@@ -114,7 +114,7 @@ pub(super) fn compile_plugin(
         asset_hub_content_size,
     );
     let content_read = Function::new(
-        CONTENT_READ_RANGE_FN,
+        CONTENT_READ_FN,
         [PTR, PTR, PTR],
         [PTR],
         UserData::new(host_content.clone()),
@@ -227,8 +227,10 @@ impl HostContentResolver {
         length: u64,
     ) -> Result<Vec<u8>, CoreError> {
         let content = self.open_content(handle)?;
-        let range = PluginContentRange::new(offset, length)
-            .and_then(|range| range.bounded(content.size, self.policy.max_content_read_bytes()))
+        let range = ContentRange::new(offset, length)
+            .and_then(|range| {
+                range.constrain_to(content.size, self.policy.max_content_read_bytes())
+            })
             .map_err(|error| CoreError::configuration(error.to_string()))?;
         if range.length() == 0 {
             return Ok(Vec::new());

@@ -11,13 +11,13 @@ use asset_plugin_api::manifest::{
     DirectoryActionCapability, PluginPermission, PluginPermissions, PluginRuntime,
     ResourceActionCapability,
 };
-use asset_plugin_api::protocol::directory::{
+use asset_plugin_api::protocol::{
     DirectoryActionEffect, PluginDirectory, PluginDirectoryActionOutput,
-    PluginDirectoryActionRequest,
+    PluginDirectoryActionRequest, PluginDirectoryActionResult,
 };
 use asset_plugin_api::protocol::{
-    PluginActionAccess, PluginActionFailure, PluginResourceActionOutput,
-    PluginResourceActionRequest,
+    PluginActionAccess, PluginResourceActionOutput, PluginResourceActionRequest,
+    PluginResourceActionResult,
 };
 use async_trait::async_trait;
 use extism::{CompiledPlugin, Plugin};
@@ -616,35 +616,23 @@ fn call_extism_directory(
             "directory action output exceeds plugin limit",
         ));
     }
-    let value: serde_json::Value = serde_json::from_str(&raw).map_err(|error| {
+    let result: PluginDirectoryActionResult = serde_json::from_str(&raw).map_err(|error| {
         CoreError::plugin(
             &binding.plugin_id,
             &binding.action,
-            format!("invalid JSON output: {error}"),
+            format!("invalid directory action result: {error}"),
         )
     })?;
-    if value.get("error").is_some() {
-        let failure: PluginActionFailure = serde_json::from_value(value).map_err(|error| {
-            CoreError::plugin(
+    let mut output = match result {
+        PluginDirectoryActionResult::Success(output) => output,
+        PluginDirectoryActionResult::Failure(failure) => {
+            return Err(CoreError::plugin_failure(
                 &binding.plugin_id,
                 &binding.action,
-                format!("invalid failure diagnostic: {error}"),
-            )
-        })?;
-        return Err(CoreError::plugin_failure(
-            &binding.plugin_id,
-            &binding.action,
-            failure,
-        ));
-    }
-    let mut output: PluginDirectoryActionOutput =
-        serde_json::from_value(value).map_err(|error| {
-            CoreError::plugin(
-                &binding.plugin_id,
-                &binding.action,
-                format!("invalid directory action output: {error}"),
-            )
-        })?;
+                failure,
+            ));
+        }
+    };
     for effect in &output.effects {
         let allowed = match effect {
             DirectoryActionEffect::Update(_) => {
@@ -720,7 +708,7 @@ pub(super) fn call_extism(
             &binding.plugin_id,
             &binding.action,
             host_diagnostic(
-                asset_plugin_api::protocol::diagnostic::codes::INPUT_LIMIT_EXCEEDED,
+                asset_plugin_api::protocol::diagnostic_codes::INPUT_LIMIT_EXCEEDED,
                 format!(
                     "serialized input is {} bytes, limit is {}",
                     input.len(),
@@ -739,7 +727,7 @@ pub(super) fn call_extism(
             &binding.plugin_id,
             &binding.action,
             host_diagnostic(
-                asset_plugin_api::protocol::diagnostic::codes::OUTPUT_LIMIT_EXCEEDED,
+                asset_plugin_api::protocol::diagnostic_codes::OUTPUT_LIMIT_EXCEEDED,
                 format!(
                     "plugin output is {} bytes, limit is {}",
                     output.len(),
@@ -749,44 +737,26 @@ pub(super) fn call_extism(
         ));
     }
 
-    let value: serde_json::Value = serde_json::from_str(&output).map_err(|error| {
+    let result: PluginResourceActionResult = serde_json::from_str(&output).map_err(|error| {
         CoreError::plugin_diagnostic(
             &binding.plugin_id,
             &binding.action,
             host_diagnostic(
-                asset_plugin_api::protocol::diagnostic::codes::INVALID_OUTPUT,
-                format!("plugin returned invalid JSON: {error}"),
+                asset_plugin_api::protocol::diagnostic_codes::INVALID_OUTPUT,
+                format!("plugin returned an invalid action result: {error}"),
             ),
         )
     })?;
-    if value.get("error").is_some() {
-        let failure: PluginActionFailure = serde_json::from_value(value).map_err(|error| {
-            CoreError::plugin_diagnostic(
+    let mut output = match result {
+        PluginResourceActionResult::Success(output) => output,
+        PluginResourceActionResult::Failure(failure) => {
+            return Err(CoreError::plugin_failure(
                 &binding.plugin_id,
                 &binding.action,
-                host_diagnostic(
-                    asset_plugin_api::protocol::diagnostic::codes::INVALID_OUTPUT,
-                    format!("plugin returned an invalid failure diagnostic: {error}"),
-                ),
-            )
-        })?;
-        return Err(CoreError::plugin_failure(
-            &binding.plugin_id,
-            &binding.action,
-            failure,
-        ));
-    }
-    let mut output: PluginResourceActionOutput =
-        serde_json::from_value(value).map_err(|error| {
-            CoreError::plugin_diagnostic(
-                &binding.plugin_id,
-                &binding.action,
-                host_diagnostic(
-                    asset_plugin_api::protocol::diagnostic::codes::INVALID_OUTPUT,
-                    format!("plugin returned invalid action output: {error}"),
-                ),
-            )
-        })?;
+                failure,
+            ));
+        }
+    };
     for effect in &output.effects {
         let allowed = match effect {
             asset_plugin_api::protocol::PluginResourceActionEffect::ReplaceContent(_) => {
@@ -801,7 +771,7 @@ pub(super) fn call_extism(
                 &binding.plugin_id,
                 &binding.action,
                 host_diagnostic(
-                    asset_plugin_api::protocol::diagnostic::codes::PERMISSION_DENIED,
+                    asset_plugin_api::protocol::diagnostic_codes::PERMISSION_DENIED,
                     format!(
                         "plugin returned {} without the required permission",
                         effect.kind()

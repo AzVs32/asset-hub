@@ -6,7 +6,7 @@ export default function DownloadRenderer({
   view,
   gateway,
 }: {
-  view: Extract<PluginView, { view: "download" }>;
+  view: Extract<PluginView, { type: "download" }>;
   gateway: AssetGateway;
 }) {
   const source = gateway.assetUrl(view.url);

@@ -1,0 +1,612 @@
+{
+  "$id": "urn:asset-hub:plugin-contract:manifest-v5",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PluginManifestDocument",
+  "description": "Complete plugin manifest document.",
+  "type": "object",
+  "properties": {
+    "capabilities": {
+      "$ref": "#/$defs/PluginCapabilities",
+      "default": {
+        "directory_actions": [],
+        "directory_kinds": [],
+        "resource_actions": [],
+        "resource_kinds": []
+      }
+    },
+    "manifest_version": {
+      "type": "integer",
+      "format": "uint32",
+      "const": 5,
+      "minimum": 0
+    },
+    "permissions": {
+      "$ref": "#/$defs/PluginPermissions"
+    },
+    "plugin": {
+      "$ref": "#/$defs/PluginDescriptor"
+    },
+    "runtime": {
+      "$ref": "#/$defs/PluginRuntime"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "manifest_version",
+    "plugin",
+    "runtime",
+    "permissions"
+  ],
+  "$defs": {
+    "ActionOutputCapability": {
+      "description": "Views and effects an action is allowed to return.",
+      "type": "object",
+      "properties": {
+        "effects": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "views": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ActionRequirements": {
+      "description": "Optional object content a handler needs in addition to the resource snapshot.",
+      "type": "object",
+      "properties": {
+        "content": {
+          "type": "boolean",
+          "default": false
+        },
+        "content_delivery": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ContentDelivery"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "ActionUi": {
+      "description": "Optional UI placement hints for host applications.",
+      "type": "object",
+      "properties": {
+        "group": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "locations": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "order": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32",
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "ContentDelivery": {
+      "type": "string",
+      "enum": [
+        "inline",
+        "reference"
+      ]
+    },
+    "DirectoryActionAppliesToCapability": {
+      "type": "object",
+      "properties": {
+        "kinds": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "DirectoryActionCapability": {
+      "description": "Directory action contributed by a plugin manifest.",
+      "type": "object",
+      "properties": {
+        "access": {
+          "$ref": "#/$defs/ManifestActionAccess",
+          "default": "read"
+        },
+        "applies_to": {
+          "$ref": "#/$defs/DirectoryActionAppliesToCapability",
+          "default": {
+            "kinds": []
+          }
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "handler": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "output": {
+          "$ref": "#/$defs/ActionOutputCapability"
+        },
+        "provides": {
+          "description": "Optional singleton Host capability implemented by this action provider.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "requires": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DirectoryActionRequirementsCapability"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ui": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ActionUi"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "label",
+        "handler",
+        "output"
+      ]
+    },
+    "DirectoryActionRequirementsCapability": {
+      "type": "object",
+      "properties": {
+        "children": {
+          "type": "boolean",
+          "default": false
+        },
+        "resources": {
+          "$ref": "#/$defs/DirectoryResourceAccess",
+          "default": "none"
+        }
+      },
+      "additionalProperties": false
+    },
+    "DirectoryKindCapability": {
+      "description": "Directory kind contributed by a plugin manifest.",
+      "type": "object",
+      "properties": {
+        "allowed_parent_kinds": {
+          "description": "Direct parent Directory kinds accepted by this kind.\n\nAn empty list declares no constraint at this node; the nearest ancestor declaration may\nstill supply the effective constraint.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "default_child_kind": {
+          "description": "Kind automatically assigned to otherwise-generic direct child Directories.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "type": "string",
+          "default": ""
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "parent": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "DirectoryResourceAccess": {
+      "description": "Resource data exposed to a Directory Action through its call-scoped directory reference.",
+      "type": "string",
+      "enum": [
+        "none",
+        "metadata",
+        "content"
+      ]
+    },
+    "FilesystemPermission": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "$ref": "#/$defs/FilesystemScope"
+        }
+      ]
+    },
+    "FilesystemScope": {
+      "type": "object",
+      "properties": {
+        "read": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "write": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "read",
+        "write"
+      ]
+    },
+    "ManifestActionAccess": {
+      "description": "Manifest-level action access declaration.",
+      "type": "string",
+      "enum": [
+        "read",
+        "write"
+      ]
+    },
+    "NetworkPermission": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "$ref": "#/$defs/NetworkScope"
+        }
+      ]
+    },
+    "NetworkScope": {
+      "type": "object",
+      "properties": {
+        "hosts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "hosts"
+      ]
+    },
+    "PluginCapabilities": {
+      "description": "Capabilities contributed by a plugin.",
+      "type": "object",
+      "properties": {
+        "directory_actions": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/DirectoryActionCapability"
+          }
+        },
+        "directory_kinds": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/DirectoryKindCapability"
+          }
+        },
+        "resource_actions": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ResourceActionCapability"
+          }
+        },
+        "resource_kinds": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ResourceKindCapability"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "PluginDescriptor": {
+      "description": "Stable identity and registry description for a plugin.",
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "publisher": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "version",
+        "publisher"
+      ]
+    },
+    "PluginPermission": {
+      "description": "Fine-grained host capabilities requested by a plugin.",
+      "type": "string",
+      "enum": [
+        "resource.read",
+        "resource.create",
+        "resource.delete",
+        "resource.content.read",
+        "resource.content.replace",
+        "directory.read",
+        "directory.children.list",
+        "directory.resources.list",
+        "directory.write",
+        "directory.delete",
+        "directory.create_child"
+      ]
+    },
+    "PluginPermissions": {
+      "description": "Fine-grained permissions requested by a plugin manifest.",
+      "type": "object",
+      "properties": {
+        "allow": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PluginPermission"
+          },
+          "uniqueItems": true
+        },
+        "filesystem": {
+          "$ref": "#/$defs/FilesystemPermission",
+          "default": false
+        },
+        "network": {
+          "$ref": "#/$defs/NetworkPermission",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "PluginRuntime": {
+      "description": "External runtime used to execute plugin actions.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "plugin_api": {
+              "type": "string",
+              "const": "asset-hub.plugin-api@2"
+            },
+            "type": {
+              "type": "string",
+              "const": "extism"
+            },
+            "wasi": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "plugin_api"
+          ]
+        }
+      ]
+    },
+    "ResourceActionAppliesToCapability": {
+      "description": "Resource/action matching declaration.",
+      "type": "object",
+      "properties": {
+        "extensions": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "kinds": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "mime_types": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ResourceActionCapability": {
+      "description": "Resource action contributed by a plugin manifest.",
+      "type": "object",
+      "properties": {
+        "access": {
+          "$ref": "#/$defs/ManifestActionAccess",
+          "default": "read"
+        },
+        "applies_to": {
+          "$ref": "#/$defs/ResourceActionAppliesToCapability",
+          "default": {
+            "extensions": [],
+            "kinds": [],
+            "mime_types": []
+          }
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "handler": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "description": "Optional display label. Singleton capability providers inherit the nearest ancestor\nprovider's label when omitted; other Resource actions must declare one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "output": {
+          "$ref": "#/$defs/ActionOutputCapability"
+        },
+        "provides": {
+          "description": "Optional singleton Host capability implemented by this action provider.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "requires": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ActionRequirements"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ui": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ActionUi"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "handler",
+        "output"
+      ]
+    },
+    "ResourceContentMatcher": {
+      "description": "Content matching declaration used by external resource-kind capabilities.",
+      "type": "object",
+      "properties": {
+        "extensions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "mime_types": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ResourceKindCapability": {
+      "description": "Resource kind contributed by a plugin manifest.",
+      "type": "object",
+      "properties": {
+        "detect": {
+          "$ref": "#/$defs/ResourceContentMatcher",
+          "default": {}
+        },
+        "kind": {
+          "type": "string",
+          "default": ""
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "parent": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "supports_content": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

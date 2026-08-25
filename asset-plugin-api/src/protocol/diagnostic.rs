@@ -2,10 +2,11 @@
 //!
 //! 诊断码用于跨运行时边界稳定表达错误类别；其中不包含 Host 内部错误类型或日志实现。
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PluginDiagnosticSeverity {
     Info,
@@ -14,7 +15,7 @@ pub enum PluginDiagnosticSeverity {
 }
 
 /// Machine-readable diagnostic produced by a plugin or by a host execution phase.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PluginDiagnostic {
     pub code: String,
@@ -38,7 +39,7 @@ fn error_severity() -> PluginDiagnosticSeverity {
 }
 
 /// Error response that plugins may return instead of an action view.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PluginActionFailure {
     pub error: PluginDiagnostic,

@@ -6,11 +6,21 @@
 use crate::protocol::{
     PluginActionAccess, PluginContentReference, PluginDiagnostic, PluginResourceContent, PluginView,
 };
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Complete Directory Action handler result.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum PluginDirectoryActionResult {
+    Success(PluginDirectoryActionOutput),
+    Failure(crate::protocol::PluginActionFailure),
+}
+
 /// Directory action request passed from the host to a plugin handler.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PluginDirectoryActionRequest {
     pub action: String,
     pub access: PluginActionAccess,
@@ -21,7 +31,8 @@ pub struct PluginDirectoryActionRequest {
     pub directory_ref: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PluginDirectory {
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -34,9 +45,10 @@ pub struct PluginDirectory {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PluginDirectoryActionOutput {
-    #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub view: Option<PluginView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<DirectoryActionEffect>,
@@ -62,8 +74,8 @@ impl PluginDirectoryActionOutput {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum DirectoryActionEffect {
     Update(UpdateDirectoryEffect),
     CreateChild(CreateChildDirectoryEffect),
@@ -82,7 +94,7 @@ impl DirectoryActionEffect {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateDirectoryEffect {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -93,7 +105,7 @@ pub struct UpdateDirectoryEffect {
     pub kind: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateChildDirectoryEffect {
     pub name: String,
@@ -106,7 +118,7 @@ pub struct CreateChildDirectoryEffect {
 /// The Host validates all paths and kinds, applies user authorization, and compensates newly
 /// created entries when a later entry fails. File roles and required structure remain plugin
 /// policy rather than fields in the Manifest.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateDirectoryTreeEffect {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -115,7 +127,7 @@ pub struct CreateDirectoryTreeEffect {
     pub resources: Vec<CreateTreeResource>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateTreeDirectory {
     /// Canonical, non-empty path relative to the action's current Directory.
@@ -124,7 +136,7 @@ pub struct CreateTreeDirectory {
     pub kind: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateTreeResource {
     /// Canonical Directory path relative to the action's current Directory; empty means current.
@@ -139,20 +151,22 @@ pub struct CreateTreeResource {
     pub data: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CreateTreeResourceEncoding {
     Base64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PluginDirectoryPage {
     pub items: Vec<PluginDirectoryChild>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PluginDirectoryChild {
     pub id: String,
     pub name: String,
@@ -160,14 +174,16 @@ pub struct PluginDirectoryChild {
     pub kind: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PluginDirectoryResourcePage {
     pub items: Vec<PluginDirectoryResource>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PluginDirectoryResource {
     /// Stable Resource identity within the current workspace.
     pub id: String,

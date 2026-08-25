@@ -79,7 +79,7 @@ filesystem_write = []
 # modifies the package.
 #
 # {
-#   "manifest_version": 4,
+#   "manifest_version": 5,
 #   "plugin": {
 #     "id": "example.tools",
 #     "name": "Example Tools",
@@ -89,7 +89,7 @@ filesystem_write = []
 #   },
 #   "runtime": {
 #     "type": "extism",
-#     "plugin_api": "asset-hub.plugin-api@1"
+#     "plugin_api": "asset-hub.plugin-api@2"
 #   },
 #   "capabilities": {
 #     "resource_kinds": [
