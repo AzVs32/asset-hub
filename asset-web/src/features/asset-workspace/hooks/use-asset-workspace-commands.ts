@@ -1,9 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import React from "react";
 import { toast } from "sonner";
-import { ConcurrentModificationError } from "@/application/errors";
-import { useGateway } from "@/application/ports/gateway-context";
-import { queryKeys } from "@/application/queries/keys";
 import type { Directory, DirectoryAction, DirectoryListing } from "@/domain/directory";
 import type {
   Resource,
@@ -14,9 +11,13 @@ import type {
 } from "@/domain/resource";
 import type { DirectoryActionResult } from "@/plugins/directory-action-dialog";
 import type { ResourceActionResult } from "@/plugins/resource-action-dialog";
+import { ConcurrentModificationError } from "@/shared/api/errors";
+import { useAssetWorkspaceGateway, usePluginHostGateway } from "@/shared/api/gateway-context";
+import { queryKeys } from "@/shared/api/query-keys";
 
 export function useAssetWorkspaceCommands() {
-  const gateway = useGateway();
+  const assetGateway = useAssetWorkspaceGateway();
+  const pluginGateway = usePluginHostGateway();
   const queryClient = useQueryClient();
   const [actionResult, setActionResult] = React.useState<ResourceActionResult | null>(null);
   const [directoryActionResult, setDirectoryActionResult] =
@@ -71,7 +72,7 @@ export function useAssetWorkspaceCommands() {
 
   const update = useMutation({
     mutationFn: ({ resource, draft }: { resource: Resource; draft: ResourceDraft }) =>
-      gateway.updateResource(resource, draft),
+      assetGateway.updateResource(resource, draft),
     onSuccess: async (resource) => {
       toast.success("Resource saved");
       queryClient.setQueryData(queryKeys.resource(resource.id), resource);
@@ -80,7 +81,7 @@ export function useAssetWorkspaceCommands() {
     onError: handleMutationError,
   });
   const upload = useMutation({
-    mutationFn: (draft: UploadDraft) => gateway.uploadResource(draft, setUploadProgress),
+    mutationFn: (draft: UploadDraft) => assetGateway.uploadResource(draft, setUploadProgress),
     onMutate: (draft) => {
       setUploadProgress({ stage: "preparing", bytesSent: 0, totalBytes: draft.file.size });
     },
@@ -89,7 +90,7 @@ export function useAssetWorkspaceCommands() {
       const notification = toast.loading(
         `${receipt.name} uploaded; verifying and publishing in the background`,
       );
-      void gateway
+      void assetGateway
         .waitForUpload(receipt.id)
         .then(async (resource) => {
           toast.success(`${resource.name} is ready`, { id: notification });
@@ -107,7 +108,7 @@ export function useAssetWorkspaceCommands() {
     },
   });
   const restore = useMutation({
-    mutationFn: (resource: Resource) => gateway.restoreResource(resource),
+    mutationFn: (resource: Resource) => assetGateway.restoreResource(resource),
     onSuccess: async (resource) => {
       toast.success(`${resource.name} restored`);
       await refresh(resource.id);
@@ -116,7 +117,7 @@ export function useAssetWorkspaceCommands() {
   });
   const createFolder = useMutation({
     mutationFn: ({ parent, name, kind }: { parent: Directory; name: string; kind?: string }) =>
-      gateway.createDirectory(parent, name, kind),
+      assetGateway.createDirectory(parent, name, kind),
     onSuccess: async () => {
       toast.success("Folder created");
       await refresh();
@@ -126,7 +127,7 @@ export function useAssetWorkspaceCommands() {
   const updateDirectoryKind = useMutation({
     mutationFn: ({ directory, kind }: { directory: Directory; kind: string }) => {
       if (!directory.parentId) throw new Error("The root directory kind cannot be changed");
-      return gateway.updateDirectory(directory, { kind });
+      return assetGateway.updateDirectory(directory, { kind });
     },
     onSuccess: async (directory) => {
       toast.success(`${directory.name} kind changed`);
@@ -138,7 +139,7 @@ export function useAssetWorkspaceCommands() {
     mutationFn: async ({ resource, action }: { resource: Resource; action: ResourceAction }) => ({
       resource,
       action,
-      output: await gateway.executeResourceAction(resource, action.id),
+      output: await pluginGateway.executeResourceAction(resource, action.id),
     }),
     onSuccess: async (result) => {
       if (result.output.view) setActionResult(result);
@@ -159,7 +160,7 @@ export function useAssetWorkspaceCommands() {
     }) => ({
       directory,
       action,
-      output: await gateway.executeDirectoryAction(directory, action.id),
+      output: await pluginGateway.executeDirectoryAction(directory, action.id),
     }),
     onSuccess: async (result) => {
       if (result.output.view) setDirectoryActionResult(result);

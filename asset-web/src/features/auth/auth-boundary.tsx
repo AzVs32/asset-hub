@@ -2,10 +2,10 @@ import { Box, CircularProgress } from "@mui/material";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import React from "react";
 import { Navigate, Outlet, useLocation } from "react-router";
-import { defaultDirectoryPath, LOGIN_PATH } from "@/app/paths";
-import { AuthenticationRequiredError } from "@/application/errors";
-import { useGateway } from "@/application/ports/gateway-context";
-import { queryKeys } from "@/application/queries/keys";
+import { AuthenticationRequiredError } from "@/shared/api/errors";
+import { useAuthGateway } from "@/shared/api/gateway-context";
+import { queryKeys } from "@/shared/api/query-keys";
+import { defaultDirectoryPath, LOGIN_PATH } from "@/shared/routing/paths";
 import { SessionProvider } from "./session-context";
 
 const LoginForm = React.lazy(() =>
@@ -13,7 +13,7 @@ const LoginForm = React.lazy(() =>
 );
 
 export function AuthBoundary() {
-  const gateway = useGateway();
+  const gateway = useAuthGateway();
   const queryClient = useQueryClient();
   const location = useLocation();
   const session = useQuery({

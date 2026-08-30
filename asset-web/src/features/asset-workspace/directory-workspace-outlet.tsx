@@ -1,12 +1,12 @@
 import { Alert, Box, CircularProgress, Paper } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
 import type React from "react";
-import { useGateway } from "@/application/ports/gateway-context";
 import type { Directory } from "@/domain/directory";
 import type { Resource, ResourceAction } from "@/domain/resource";
 import { usePluginKernel } from "@/kernel/plugin-kernel";
 import { DirectoryPluginFrame } from "@/plugins/directory-plugin-frame";
 import { PluginDiagnostics } from "@/plugins/plugin-diagnostics";
+import { usePluginHostGateway } from "@/shared/api/gateway-context";
 
 export function DirectoryWorkspaceOutlet({
   directory,
@@ -23,7 +23,7 @@ export function DirectoryWorkspaceOutlet({
   onEditResource: (resource: Resource, action: ResourceAction) => void | Promise<void>;
   instanceVersion: number;
 }) {
-  const gateway = useGateway();
+  const gateway = usePluginHostGateway();
   const kernel = usePluginKernel();
   const action = directory ? kernel.directoryWorkspaceAction(directory) : null;
   const result = useQuery({

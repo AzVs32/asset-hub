@@ -1,12 +1,12 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
-import { LOGIN_PATH } from "@/app/paths";
-import { useGateway } from "@/application/ports/gateway-context";
-import { queryKeys } from "@/application/queries/keys";
 import type { CurrentUser } from "@/domain/auth";
+import { useAuthGateway } from "@/shared/api/gateway-context";
+import { queryKeys } from "@/shared/api/query-keys";
+import { LOGIN_PATH } from "@/shared/routing/paths";
 
 export function useSignOut(): () => Promise<void> {
-  const gateway = useGateway();
+  const gateway = useAuthGateway();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
 

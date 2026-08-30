@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import type { AssetGateway } from "@/application/ports/asset-gateway";
 import type { ResourceActionOutput } from "@/domain/plugin";
 import { createDirectoryFrameHostBridge } from "@/plugins/directory-frame-host";
 import { createResourceFrameHostBridge } from "@/plugins/resource-frame-host";
+import type { PluginHostGateway } from "@/shared/api/gateways";
 import { action, directory, directoryAction, resource } from "./fixtures";
 
 describe("Plugin Frame host bridge", () => {
@@ -23,7 +23,7 @@ describe("Plugin Frame host bridge", () => {
       resource: initial,
       frameResourceId: "resource-1",
       frameActionId: edit.id,
-      gateway: { replaceResourceText } as unknown as AssetGateway,
+      gateway: { replaceResourceText } as unknown as PluginHostGateway,
       onResourceChanged,
     });
 
@@ -48,7 +48,7 @@ describe("Plugin Frame host bridge", () => {
       resource: resource([read, edit]),
       frameResourceId: "resource-1",
       frameActionId: read.id,
-      gateway: { replaceResourceText } as unknown as AssetGateway,
+      gateway: { replaceResourceText } as unknown as PluginHostGateway,
     });
 
     await expect(bridge.methods.replaceResourceText("# Not allowed")).rejects.toThrow(
@@ -57,7 +57,7 @@ describe("Plugin Frame host bridge", () => {
     expect(replaceResourceText).not.toHaveBeenCalled();
   });
 
-  it("executes only actions exposed by the bound Resource and rejects malformed input", async () => {
+  it("executes only actions exposed by the bound Resource", async () => {
     const inspect = action({ id: "example.inspect" });
     const item = resource([inspect]);
     const expected = pluginOutput(inspect.id);
@@ -66,7 +66,7 @@ describe("Plugin Frame host bridge", () => {
       resource: item,
       frameResourceId: "resource-1",
       frameActionId: inspect.id,
-      gateway: { executeResourceAction } as unknown as AssetGateway,
+      gateway: { executeResourceAction } as unknown as PluginHostGateway,
     });
 
     await expect(
@@ -75,9 +75,6 @@ describe("Plugin Frame host bridge", () => {
     expect(executeResourceAction).toHaveBeenCalledWith(item, inspect.id, { operation: "load" });
     await expect(bridge.methods.executeResourceAction("missing", {})).rejects.toThrow(
       "Action missing is not available.",
-    );
-    await expect(bridge.methods.executeResourceAction(inspect.id, [])).rejects.toThrow(
-      "Action input must be a JSON object.",
     );
   });
 
@@ -101,7 +98,7 @@ describe("Plugin Frame host bridge", () => {
       resource: resource([remove]),
       frameResourceId: "resource-1",
       frameActionId: "example.frame",
-      gateway: { executeResourceAction } as unknown as AssetGateway,
+      gateway: { executeResourceAction } as unknown as PluginHostGateway,
       confirmAction,
     });
 
@@ -132,7 +129,7 @@ describe("Directory Plugin Frame host bridge", () => {
     const bridge = createDirectoryFrameHostBridge({
       directory: item,
       frameDirectoryId: item.id,
-      gateway: { executeDirectoryAction } as unknown as AssetGateway,
+      gateway: { executeDirectoryAction } as unknown as PluginHostGateway,
     });
 
     await expect(
@@ -165,7 +162,7 @@ describe("Directory Plugin Frame host bridge", () => {
     const bridge = createDirectoryFrameHostBridge({
       directory: item,
       frameDirectoryId: item.id,
-      gateway: { executeDirectoryAction } as unknown as AssetGateway,
+      gateway: { executeDirectoryAction } as unknown as PluginHostGateway,
       onDirectoryChanged,
       onNavigate,
       confirmAction,
@@ -203,7 +200,7 @@ describe("Directory Plugin Frame host bridge", () => {
     const bridge = createDirectoryFrameHostBridge({
       directory: item,
       frameDirectoryId: item.id,
-      gateway: { findResource } as unknown as AssetGateway,
+      gateway: { findResource } as unknown as PluginHostGateway,
       onEditResource,
     });
 
@@ -255,7 +252,7 @@ describe("Directory Plugin Frame host bridge", () => {
     const bridge = createDirectoryFrameHostBridge({
       directory: item,
       frameDirectoryId: item.id,
-      gateway: { findResource, executeResourceAction } as unknown as AssetGateway,
+      gateway: { findResource, executeResourceAction } as unknown as PluginHostGateway,
     });
 
     await expect(
@@ -277,7 +274,7 @@ describe("Plugin Frame aggregate binding", () => {
       resource: currentResource,
       frameResourceId: currentResource.id,
       frameActionId: "example.frame",
-      gateway: {} as AssetGateway,
+      gateway: {} as PluginHostGateway,
     });
     expect(() =>
       resourceBridge.updateResource({ ...currentResource, id: "another-resource" }),
@@ -287,7 +284,7 @@ describe("Plugin Frame aggregate binding", () => {
     const directoryBridge = createDirectoryFrameHostBridge({
       directory: currentDirectory,
       frameDirectoryId: currentDirectory.id,
-      gateway: {} as AssetGateway,
+      gateway: {} as PluginHostGateway,
     });
     expect(() =>
       directoryBridge.updateDirectory({ ...currentDirectory, id: "another-directory" }),

@@ -1,171 +1,44 @@
 # Asset Web
 
-`asset-web` is the React host for Asset Hub. Its architecture mirrors the Rust workspace: domain
-types and application ports are kept independent from HTTP and React, while plugin-specific
-behavior crosses one small kernel boundary.
+`asset-web` is the browser host for Asset Hub. It provides the authenticated asset workspace,
+user administration, and the secure UI boundary for backend plugin actions and views.
 
-中文架构说明见 [`ARCHITECTURE.md`](ARCHITECTURE.md)。
+For dependency rules, state ownership, runtime flows, and plugin-host constraints, see
+[`ARCHITECTURE.md`](ARCHITECTURE.md). Plugin authors should use the
+[`asset-web-sdk`](../sdk/asset-web-sdk/README.md).
 
-## Architecture
+## Prerequisites
 
-```text
-src/
-├── domain/                 Resource, Directory, authentication, and plugin view contracts
-├── application/
-│   ├── ports/              AssetGateway and React composition boundary
-│   └── queries/            stable cache keys
-├── infrastructure/http/    OpenAPI transport and DTO ↔ domain mapping
-├── kernel/                 host slots and Resource view renderer registry
-├── plugins/                generic action, slot, iframe, and view hosting
-├── features/               asset workspace, authentication, user management
-├── theme.ts                Material UI tokens and component-wide defaults
-├── styles.css              plugin prose styles not owned by Material UI
-└── app/                    composition root and routing
-```
+- Node.js 22.12 or later.
+- `asset-http` running on `http://127.0.0.1:8080`.
 
-The dependency direction is inward: features use the `AssetGateway` port and domain types; only
-the HTTP adapter knows snake_case OpenAPI DTOs. Plugin JSON is validated with Zod before it reaches
-a renderer. Server state is owned by TanStack Query, forms by React Hook Form, accessible component
-and overlay behavior by Material UI, and formatting/linting by Biome. The global Material UI theme
-owns the Host's palette, typography, shape, surfaces, and shared component defaults; feature code
-retains layout-specific presentation without moving business policy into the theme.
-
-## Plugin Host Contract
-
-A backend plugin contributes actions through its manifest. The host discovers the available
-actions from each resource response, so adding or changing a plugin does not require editing or
-rebuilding `asset-web` when it uses an existing slot and view kind.
-Action discovery exposes matching, access, output, and UI metadata only; executor selection and
-handler bindings remain private to the backend Host.
-
-The only top-level Directory workspace handoff point is:
-
-| Location | Host behavior |
-| --- | --- |
-| `directory_workspace` | A nearest-kind, read-only `workspace` Provider exclusively replaces the complete Core Directory content workspace with its `plugin_frame` |
-
-The following locations are owned by `CoreDirectoryWorkspace`, not by the outer Host shell:
-
-| Location | Host behavior |
-| --- | --- |
-| `directory_context_menu` | Entries in a Core directory-row context menu |
-| `directory_thumbnail` | Core directory-row and detail-header preview |
-| `resource_context_menu` | Entries in a Core resource-row context menu |
-| `resource_thumbnail` | Core resource-row and detail-header preview |
-
-Actions with no location, or only locations unknown to this host version, remain reachable through
-`resource_context_menu` for resources and `directory_context_menu` for directories. Automatic
-thumbnail slots deliberately ignore write actions. The detail panel's editing form hosts the
-host-owned Save command. `core.resource.delete` and `core.directory.delete` are Host-owned ordinary
-Actions discovered in the corresponding row menus; they carry destructive confirmation metadata,
-return only a `delete` effect, and enter the existing authorized soft-delete/empty-directory-delete
-use cases without returning a fake view. Restore remains a Host row-menu command for deleted
-resources. Plugin actions are invoked from the corresponding row context menu. The detail header
-reuses the matching thumbnail provider; no other automatic plugin insertion point exists there.
-
-When a Directory kind resolves a `workspace` Provider, `CoreDirectoryWorkspace` is not mounted, so
-none of its four internal locations exist. The plugin frame owns its complete internal UI and may
-define private slots without registering them with the Host. The Host retains only its global
-session shell, sandbox boundary, dialogs, confirmations, and navigation authority. Path breadcrumbs
-share the primary header row with the Asset Hub title, while the current Directory kind editor sits
-immediately above `directory_workspace`; both remain available for Core and plugin workspaces.
-Changing a non-root Directory kind uses the normal
-revision-guarded Directory update and causes the Host to resolve the workspace Provider again. The
-root Directory kind remains immutable with the rest of the root aggregate metadata.
-
-The backend resolves singleton capability providers before returning resource or directory
-actions as flat arrays. Each kind/action includes its typed built-in or plugin origin. Actions use
-`read` or `write` access and declare their possible `output.views` and `output.effects`. A plugin
-provider can target a Kind or use MIME/extension matching without introducing a new Kind.
-Resources and directories with no matching thumbnail provider use local File and Folder icon
-fallbacks without executing an Action. Automatic thumbnail slots accept only the resolved
-`thumbnail` provider. A slot may have multiple Host-owned presentation sites: list rows and detail
-headers share one revision-keyed query result. Resource and directory action registries scope that
-capability independently.
-
-Supported output views are `text`, `markdown`, `html`, `plugin_frame`, `json`, `media`, and
-`download`. Resource and Directory actions share the same Host renderer for every generic output,
-including a network-denying CSP for sandboxed HTML; only `plugin_frame` uses an aggregate-specific
-bridge. A plugin
-that needs its own application UI returns `plugin_frame` with a verified `/plugins/<id>/...` path;
-the frame runs with `sandbox="allow-scripts"` and can request only actions already exposed for the
-current Resource or Directory through the versioned Asset Hub Web Plugin SDK. The SDK hides its Penpal transport
-and is available as both an ESM package and a self-contained script for plain `index.html` plugins.
-A frame produced by the current
-write `edit` provider may also request raw text replacement; plugin Manifest validation
-requires that provider to request `resource.content.replace`. The Host binds it to that resource
-and sends the content through the Host's revision-guarded streaming replacement use case. After a
-successful replacement, the Host immediately propagates the returned Resource snapshot to the open
-action, detail, and directory-list caches before invalidating queries, so reopening the editor cannot
-reuse the pre-save revision.
-A frame may invoke only Actions exposed for its bound Resource. Destructive Actions,
-including deletion, require a Host confirmation before the Gateway call is made.
-Directory frames use a separate Directory-bound bridge to execute exposed Directory Actions,
-refresh the current Directory, request canonical Host navigation, or ask the Host to view/edit a
-direct Resource by opaque ID. Both Resource paths reload the Resource, verify exact Directory
-membership, and resolve the current `view` or `edit` provider without accepting its Action
-ID from the Directory plugin. The Directory Web SDK can mount the read frame and relay the nested
-Resource frame's calls back through the same read-only provider binding. Editing opens the write
-`edit` frame through the existing Host dialog. The Directory frame cannot write Resource
-content directly.
-It cannot access Core workspace slots or address arbitrary Directory IDs. Navigating to a different
-Directory remounts the iframe so the Web SDK establishes a new connection bound to that Directory;
-an existing frame is never rebound to another aggregate. A successful Resource replacement also
-remounts the current Directory workspace so it reloads authoritative document state.
-Both bridges resolve canonical Action metadata from a currently bound aggregate before execution.
-They share immutable aggregate-ID binding, monotonic snapshot update rules, plugin asset URL
-validation, and opaque-origin messenger construction. Resource text replacement and Directory
-refresh/navigation/Resource-frame/editor delegation remain deliberately aggregate-specific capabilities.
-Capability IDs and literal types come from `@asset-hub/asset-web-sdk/contract`; the HTTP adapter
-rejects an unknown `provides` value before it enters the Web domain. Kernel slots and frame bridges
-compare against the exported constants instead of declaring Host-local strings. A shared Manifest
-v5 golden fixture keeps these Web values aligned with the Rust Manifest SDK.
-The Host imports the API version, Resource and Directory channels, view kinds, action result types,
-and effect kinds from `@asset-hub/asset-web-sdk/contract`; the shared golden contract additionally
-locks the exposed Host method names. Frame action input is recursively validated as a JSON
-object and is bounded to 32 nested levels and 10,000 values before it reaches the Gateway; opaque
-Resource IDs receive a separate non-empty length check.
-
-Directories are addressed by stable UUID throughout the domain and Gateway. Paths are navigation
-labels only. Directory update/delete and Resource or Directory actions forward the aggregate's
-current revision whenever they can write. Read actions operate on the latest authorized
-snapshot without producing avoidable stale-preview conflicts. A coded write conflict invalidates
-the relevant queries and tells the user that the latest version has been loaded.
-
-Adding a new slot or a new output view kind is a host protocol change and therefore does require a
-frontend update. Adding a plugin that consumes the contract does not. The API currently snapshots
-verified plugin files at startup, so restart the API after changing a plugin package; the frontend
-does not need to be changed.
-
-## Development
-
-Use Node.js 22.12 or later. The frontend builds with Vite 8 and Rolldown. Start `asset-http` on port
-8080, then:
+## Quick start
 
 ```bash
-cd asset-web
 npm ci
 npm run dev
 ```
 
-Vite serves `http://127.0.0.1:5173` and proxies `/api` plus public `/plugins` Web assets to the
-API. The `/plugins` proxy also preserves nested Resource frames mounted inside Directory plugin
-workspaces. To use another API origin:
+The development server listens on `http://127.0.0.1:5173` and connects to the local API.
+
+To use a different API origin:
 
 ```bash
 VITE_API_BASE_URL=http://127.0.0.1:8080 npm run dev
 ```
 
-Regenerate the transport-only OpenAPI declarations while the API is running:
+## Commands
 
-```bash
-npm run generate:api
-```
+| Command | Purpose |
+| --- | --- |
+| `npm run dev` | Start the local development server |
+| `npm run check` | Run formatting/lint checks and TypeScript validation |
+| `npm test` | Run the focused executable-contract tests |
+| `npm run build` | Create a production build |
+| `npm run generate:api` | Regenerate HTTP-only OpenAPI declarations from a running API |
 
-## Verification
+## Plugin development
 
-```bash
-npm run check
-npm test
-npm run build
-```
+The API snapshots verified plugin files at startup. Restart `asset-http` after changing a plugin
+package. Changes that stay within an existing host slot, capability, and view kind do not require a
+frontend rebuild.

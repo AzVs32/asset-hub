@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { IncrementalSha256 } from "@/infrastructure/http/incremental-sha256";
+import { IncrementalSha256 } from "@/infra/http/incremental-sha256";
 
 const encoder = new TextEncoder();
 

@@ -19,7 +19,7 @@
     "format": "biome check --write .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "generate:api": "openapi-typescript http://127.0.0.1:8080/api-docs/openapi.json -o src/infrastructure/http/generated.ts"
+    "generate:api": "openapi-typescript http://127.0.0.1:8080/api-docs/openapi.json -o src/infra/http/generated.ts"
   },
   "dependencies": {
     "@asset-hub/asset-web-sdk": "file:../sdk/asset-web-sdk",

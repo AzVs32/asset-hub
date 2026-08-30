@@ -1,9 +1,9 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AssetGateway } from "@/application/ports/asset-gateway";
 import type { DirectoryActionOutput, PluginView } from "@/domain/plugin";
 import { DirectoryPluginFrame } from "@/plugins/directory-plugin-frame";
+import type { PluginHostGateway } from "@/shared/api/gateways";
 import { directory } from "./fixtures";
 
 const { destroy } = vi.hoisted(() => ({ destroy: vi.fn() }));
@@ -42,7 +42,7 @@ describe("DirectoryPluginFrame", () => {
     };
     const gateway = {
       assetUrl: (url: string) => url,
-    } as unknown as AssetGateway;
+    } as unknown as PluginHostGateway;
 
     await act(async () => {
       root.render(
@@ -83,7 +83,7 @@ describe("DirectoryPluginFrame", () => {
     };
     const gateway = {
       assetUrl: (url: string) => url,
-    } as unknown as AssetGateway;
+    } as unknown as PluginHostGateway;
 
     await act(async () => {
       root.render(

@@ -1,7 +1,6 @@
 import { Alert } from "@mui/material";
 import { connect } from "penpal";
 import React from "react";
-import type { AssetGateway } from "@/application/ports/asset-gateway";
 import type { Directory } from "@/domain/directory";
 import {
   DIRECTORY_FRAME_CHANNEL,
@@ -10,6 +9,7 @@ import {
   type PluginView,
 } from "@/domain/plugin";
 import type { Resource, ResourceAction } from "@/domain/resource";
+import type { PluginHostGateway } from "@/shared/api/gateways";
 import { createDirectoryFrameHostBridge } from "./directory-frame-host";
 import { createPluginFrameMessenger, pluginFrameUrl } from "./frame-boundary";
 
@@ -26,7 +26,7 @@ export function DirectoryPluginFrame({
   directory: Directory;
   output: DirectoryActionOutput;
   view: Extract<PluginView, { type: "plugin_frame" }>;
-  gateway: AssetGateway;
+  gateway: PluginHostGateway;
   onDirectoryChanged?: (() => void | Promise<void>) | undefined;
   onNavigate?: ((path: string) => void | Promise<void>) | undefined;
   onEditResource?:

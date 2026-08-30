@@ -1,6 +1,6 @@
-import type { AssetGateway } from "@/application/ports/asset-gateway";
 import { RESOURCE_EDIT_CAPABILITY, type ResourceActionOutput } from "@/domain/plugin";
 import type { Resource } from "@/domain/resource";
+import type { PluginHostGateway } from "@/shared/api/gateways";
 import { parseActionId, parseActionInput } from "./frame-input";
 
 export interface ResourceFrameHostMethods extends Record<string, (...args: never[]) => unknown> {
@@ -24,7 +24,7 @@ export function createResourceFrameHostBridge({
   resource: Resource;
   frameResourceId: string;
   frameActionId: string;
-  gateway: AssetGateway;
+  gateway: PluginHostGateway;
   onResourceChanged?: ((latestResource?: Resource) => void | Promise<void>) | undefined;
   confirmAction?: ((message: string) => boolean | Promise<boolean>) | undefined;
 }): ResourceFrameHostBridge {

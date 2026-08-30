@@ -5,14 +5,14 @@ import { AppBar, Avatar, Box, Button, IconButton, Toolbar, Typography } from "@m
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import React from "react";
 import { toast } from "sonner";
-import { useGateway } from "@/application/ports/gateway-context";
-import { queryKeys } from "@/application/queries/keys";
 import type { Directory, DirectoryAction } from "@/domain/directory";
 import type { Resource, ResourceAction } from "@/domain/resource";
 import { useSession } from "@/features/auth/session-context";
 import { useSignOut } from "@/features/auth/use-sign-out";
 import { DirectoryActionDialog } from "@/plugins/directory-action-dialog";
 import { ResourceActionDialog } from "@/plugins/resource-action-dialog";
+import { useAssetWorkspaceGateway } from "@/shared/api/gateway-context";
+import { queryKeys } from "@/shared/api/query-keys";
 import { DirectoryDetail } from "./components/directory-detail";
 import { DirectoryBreadcrumbs, DirectoryKindEditor } from "./components/directory-navigation";
 import { ResourceDetail } from "./components/resource-detail";
@@ -30,7 +30,7 @@ const UserAdministration = React.lazy(() =>
 );
 
 export function AssetWorkspace() {
-  const gateway = useGateway();
+  const gateway = useAssetWorkspaceGateway();
   const user = useSession();
   const signOut = useSignOut();
   const queryClient = useQueryClient();

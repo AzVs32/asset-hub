@@ -8,15 +8,15 @@ import {
   MediaTimeRange,
   MediaVolumeRange,
 } from "media-chrome/react";
-import type { AssetGateway } from "@/application/ports/asset-gateway";
 import type { PluginView } from "@/domain/plugin";
+import type { PluginHostGateway } from "@/shared/api/gateways";
 
 export default function MediaRenderer({
   view,
   gateway,
 }: {
   view: Extract<PluginView, { type: "media" }>;
-  gateway: AssetGateway;
+  gateway: PluginHostGateway;
 }) {
   const source =
     view.encoding === "base64"

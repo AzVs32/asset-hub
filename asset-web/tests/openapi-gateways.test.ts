@@ -1,14 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { BlobSha256, FileSha256 } from "@/infrastructure/http/file-sha256";
-import { OpenApiAssetGateway } from "@/infrastructure/http/openapi-asset-gateway";
+import type { BlobSha256, FileSha256 } from "@/infra/http/file-sha256";
+import { createOpenApiGateways } from "@/infra/http/openapi-gateways";
 
-describe("OpenApiAssetGateway URL boundary", () => {
+describe("composed OpenAPI gateways", () => {
   const hashFile: FileSha256 = async (file, onProgress) => {
     onProgress?.(file.size);
     return "ed7002b439e9ac845f22357d822bac14447368f3032e885031b31f6f2f88a3f8";
   };
   const hashChunk: BlobSha256 = async () => "c".repeat(64);
-  const gateway = new OpenApiAssetGateway("/api", hashFile, hashChunk);
+  const gateways = createOpenApiGateways("/api", hashFile, hashChunk);
+  const gateway = gateways.assetWorkspace;
 
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -16,10 +17,12 @@ describe("OpenApiAssetGateway URL boundary", () => {
   });
 
   it("resolves backend-owned paths and rejects untrusted asset URLs", () => {
-    expect(gateway.assetUrl("/plugins/example/view.html")).toBe("/api/plugins/example/view.html");
-    expect(gateway.assetUrl("https://example.com/tracker")).toBeNull();
-    expect(gateway.assetUrl("//example.com/tracker")).toBeNull();
-    expect(gateway.assetUrl("plugins/example/view.html")).toBeNull();
+    expect(gateways.pluginHost.assetUrl("/plugins/example/view.html")).toBe(
+      "/api/plugins/example/view.html",
+    );
+    expect(gateways.pluginHost.assetUrl("https://example.com/tracker")).toBeNull();
+    expect(gateways.pluginHost.assetUrl("//example.com/tracker")).toBeNull();
+    expect(gateways.pluginHost.assetUrl("plugins/example/view.html")).toBeNull();
   });
 
   it("preserves spaces in upload names and directories", async () => {
@@ -111,7 +114,11 @@ describe("OpenApiAssetGateway URL boundary", () => {
   });
 
   it("continues a persisted upload from the server offset", async () => {
-    const uploadGateway = new OpenApiAssetGateway("http://localhost/api", hashFile, hashChunk);
+    const uploadGateway = createOpenApiGateways(
+      "http://localhost/api",
+      hashFile,
+      hashChunk,
+    ).assetWorkspace;
     const file = new File(["content"], "resume.txt", {
       type: "text/plain",
       lastModified: 1_700_000_000_000,
@@ -190,7 +197,7 @@ describe("OpenApiAssetGateway URL boundary", () => {
       )
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
     vi.stubGlobal("fetch", completionFetch);
-    const completionGateway = new OpenApiAssetGateway("http://localhost/api");
+    const completionGateway = createOpenApiGateways("http://localhost/api").assetWorkspace;
 
     const uploaded = await completionGateway.waitForUpload(receipt.id);
 
@@ -219,7 +226,11 @@ describe("OpenApiAssetGateway URL boundary", () => {
       .mockResolvedValueOnce(Response.json({ error: "connection lost" }, { status: 500 }));
     vi.stubGlobal("fetch", firstFetch);
     await expect(
-      new OpenApiAssetGateway("http://localhost/api", hashFile, hashChunk).uploadResource(draft),
+      createOpenApiGateways(
+        "http://localhost/api",
+        hashFile,
+        hashChunk,
+      ).assetWorkspace.uploadResource(draft),
     ).rejects.toThrow("connection lost");
 
     const differentHash: FileSha256 = async () => "b".repeat(64);
@@ -240,11 +251,11 @@ describe("OpenApiAssetGateway URL boundary", () => {
       );
     vi.stubGlobal("fetch", secondFetch);
 
-    const receipt = await new OpenApiAssetGateway(
+    const receipt = await createOpenApiGateways(
       "http://localhost/api",
       differentHash,
       hashChunk,
-    ).uploadResource(draft);
+    ).assetWorkspace.uploadResource(draft);
 
     expect(new URL(String(secondFetch.mock.calls[0]?.[0])).pathname).toBe("/api/uploads");
     expect(secondFetch.mock.calls[0]?.[1]?.method).toBe("POST");

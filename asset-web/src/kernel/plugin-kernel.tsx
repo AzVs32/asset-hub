@@ -1,5 +1,4 @@
 import React from "react";
-import type { AssetGateway } from "@/application/ports/asset-gateway";
 import type { Directory, DirectoryAction } from "@/domain/directory";
 import {
   DIRECTORY_THUMBNAIL_CAPABILITY,
@@ -10,6 +9,7 @@ import {
   type ResourceActionOutput,
 } from "@/domain/plugin";
 import type { Resource, ResourceAction } from "@/domain/resource";
+import type { PluginHostGateway } from "@/shared/api/gateways";
 import {
   type CoreDirectoryWorkspaceSlot,
   coreDirectoryWorkspaceSlots,
@@ -20,7 +20,7 @@ export interface ResourceViewRendererProps {
   view: PluginView;
   output: ResourceActionOutput;
   resource: Resource;
-  gateway: AssetGateway;
+  gateway: PluginHostGateway;
   onResourceChanged?: ResourceChangedHandler | undefined;
 }
 

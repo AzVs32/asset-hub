@@ -1,7 +1,7 @@
 import { Alert } from "@mui/material";
-import type { AssetGateway } from "@/application/ports/asset-gateway";
 import type { ResourceActionOutput } from "@/domain/plugin";
 import type { Resource } from "@/domain/resource";
+import type { PluginHostGateway } from "@/shared/api/gateways";
 import { type ResourceChangedHandler, usePluginKernel } from "./plugin-kernel";
 
 export function ResourcePluginViewHost({
@@ -12,7 +12,7 @@ export function ResourcePluginViewHost({
 }: {
   output: ResourceActionOutput;
   resource: Resource;
-  gateway: AssetGateway;
+  gateway: PluginHostGateway;
   onResourceChanged?: ResourceChangedHandler | undefined;
 }) {
   const kernel = usePluginKernel();

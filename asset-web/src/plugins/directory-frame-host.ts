@@ -1,4 +1,3 @@
-import type { AssetGateway } from "@/application/ports/asset-gateway";
 import type { Directory } from "@/domain/directory";
 import { normalizeDirectory } from "@/domain/directory-path";
 import {
@@ -8,6 +7,7 @@ import {
   type ResourceActionOutput,
 } from "@/domain/plugin";
 import type { Resource, ResourceAction } from "@/domain/resource";
+import type { PluginHostGateway } from "@/shared/api/gateways";
 import { parseActionId, parseActionInput, parseResourceId } from "./frame-input";
 
 export interface DirectoryFrameHostMethods extends Record<string, (...args: never[]) => unknown> {
@@ -34,7 +34,7 @@ export function createDirectoryFrameHostBridge({
 }: {
   directory: Directory;
   frameDirectoryId: string;
-  gateway: AssetGateway;
+  gateway: PluginHostGateway;
   onDirectoryChanged?: (() => void | Promise<void>) | undefined;
   onNavigate?: ((path: string) => void | Promise<void>) | undefined;
   onEditResource?:

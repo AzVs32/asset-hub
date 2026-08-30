@@ -1,13 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useMemo } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
-import { decodeDirectoryPath, directoryPath } from "@/app/paths";
-import { useGateway } from "@/application/ports/gateway-context";
-import { queryKeys } from "@/application/queries/keys";
 import type { ResourceFilters } from "@/domain/resource";
+import { useAssetWorkspaceGateway } from "@/shared/api/gateway-context";
+import { queryKeys } from "@/shared/api/query-keys";
+import { decodeDirectoryPath, directoryPath } from "@/shared/routing/paths";
 
 export function useAssetWorkspaceListing() {
-  const gateway = useGateway();
+  const gateway = useAssetWorkspaceGateway();
   const navigate = useNavigate();
   const route = useParams<"*">();
   const [searchParams, setSearchParams] = useSearchParams();

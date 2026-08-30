@@ -2,14 +2,14 @@ import FolderIcon from "@mui/icons-material/Folder";
 import InsertDriveFileIcon from "@mui/icons-material/InsertDriveFile";
 import { Avatar } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
-import { useGateway } from "@/application/ports/gateway-context";
 import type { Directory } from "@/domain/directory";
 import type { PluginView } from "@/domain/plugin";
 import type { Resource } from "@/domain/resource";
 import { usePluginKernel } from "@/kernel/plugin-kernel";
+import { usePluginHostGateway } from "@/shared/api/gateway-context";
 
 export function ResourceThumbnail({ resource, size = 40 }: { resource: Resource; size?: number }) {
-  const gateway = useGateway();
+  const gateway = usePluginHostGateway();
   const kernel = usePluginKernel();
   const action = kernel.thumbnailAction(resource);
   const result = useQuery({
@@ -45,7 +45,7 @@ export function DirectoryThumbnail({
   directory: Directory;
   size?: number;
 }) {
-  const gateway = useGateway();
+  const gateway = usePluginHostGateway();
   const kernel = usePluginKernel();
   const action = kernel.directoryThumbnailAction(directory);
   const result = useQuery({

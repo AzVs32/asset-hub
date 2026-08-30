@@ -3,18 +3,18 @@ import { ThemeProvider } from "@mui/material/styles";
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type React from "react";
 import { Toaster } from "sonner";
-import type { AssetGateway } from "@/application/ports/asset-gateway";
-import { GatewayProvider } from "@/application/ports/gateway-context";
 import { type PluginKernel, PluginKernelProvider } from "@/kernel/plugin-kernel";
+import { GatewayProvider } from "@/shared/api/gateway-context";
+import type { AppGateways } from "@/shared/api/gateways";
 import { theme } from "@/theme";
 
 export function AppProviders({
-  gateway,
+  gateways,
   kernel,
   queryClient,
   children,
 }: {
-  gateway: AssetGateway;
+  gateways: AppGateways;
   kernel: PluginKernel;
   queryClient: QueryClient;
   children: React.ReactNode;
@@ -23,7 +23,7 @@ export function AppProviders({
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <QueryClientProvider client={queryClient}>
-        <GatewayProvider gateway={gateway}>
+        <GatewayProvider gateways={gateways}>
           <PluginKernelProvider kernel={kernel}>
             {children}
             <Toaster richColors position="bottom-right" />

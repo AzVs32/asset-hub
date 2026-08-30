@@ -17,9 +17,9 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Controller, useForm } from "react-hook-form";
 import { toast } from "sonner";
-import { useGateway } from "@/application/ports/gateway-context";
-import { queryKeys } from "@/application/queries/keys";
 import type { ManagedUser } from "@/domain/auth";
+import { useUserAdministrationGateway } from "@/shared/api/gateway-context";
+import { queryKeys } from "@/shared/api/query-keys";
 
 interface NewUserForm {
   username: string;
@@ -36,7 +36,7 @@ export function UserAdministration({
   onOpenChange: (open: boolean) => void;
   currentUserId: string;
 }) {
-  const gateway = useGateway();
+  const gateway = useUserAdministrationGateway();
   const queryClient = useQueryClient();
   const users = useQuery({
     queryKey: queryKeys.users,

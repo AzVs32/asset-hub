@@ -1,8 +1,8 @@
 import { Box, Dialog, DialogContent, DialogTitle, Typography } from "@mui/material";
-import { useGateway } from "@/application/ports/gateway-context";
 import type { Directory, DirectoryAction } from "@/domain/directory";
 import type { DirectoryActionOutput, PluginView } from "@/domain/plugin";
 import type { Resource, ResourceAction } from "@/domain/resource";
+import { usePluginHostGateway } from "@/shared/api/gateway-context";
 import { DirectoryPluginFrame } from "./directory-plugin-frame";
 import { PluginDiagnostics } from "./plugin-diagnostics";
 import { GenericPluginViewRenderer } from "./renderers/generic-plugin-view";
@@ -69,7 +69,7 @@ function DirectoryView({
     | ((resource: Resource, action: ResourceAction) => void | Promise<void>)
     | undefined;
 }) {
-  const gateway = useGateway();
+  const gateway = usePluginHostGateway();
   if (view.type === "plugin_frame") {
     return (
       <Box sx={{ height: "70vh", minHeight: "24rem" }}>

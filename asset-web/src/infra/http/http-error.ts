@@ -43,4 +43,4 @@ async function parseBody(response: Response): Promise<unknown> {
   return response.json().catch(() => undefined);
 }
 
-import { ConcurrentModificationError } from "@/application/errors";
+import { ConcurrentModificationError } from "@/shared/api/errors";

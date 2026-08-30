@@ -1,289 +1,278 @@
 # asset-web 架构
 
-## 1. 总体原则
+## 1. 定位与原则
 
-`asset-web` 使用与 Rust 后端相同的边界思想，但不机械模仿 crate：
+`asset-web` 是 Asset Hub 的浏览器宿主。它保留与后端一致的契约边界，但按前端 feature 和
+运行时职责组织代码，不机械复制后端 crate：
 
 - 领域对象不感知 HTTP、React 或后端 DTO。
-- 功能代码面向 `AssetGateway` 端口，不直接调用 `fetch`。
-- OpenAPI 类型只存在于 HTTP 基础设施适配器内。
-- 插件通过 action、顶层 Directory workspace 交接点和通用 view 协议进入宿主。
-- `main.tsx` 是唯一组装具体实现的 composition root。
+- Feature 只依赖自己需要的窄 Gateway，不直接调用 `fetch`。
+- OpenAPI 类型和 snake_case DTO 只存在于 `infra/http`。
+- 服务端状态、URL 状态、表单状态和插件注册状态分别拥有明确归属。
+- 插件只能通过受版本约束的 action、view、slot 和 Frame Host capability 进入宿主。
+- `main.tsx` 是唯一的前端 composition root。
 
-依赖方向如下：
+依赖方向：
 
 ```text
-                              ┌──────────────────────┐
-                              │ infrastructure/http  │
-                              │ OpenAPI adapter      │
-                              └──────────┬───────────┘
-                                         │ implements
-┌──────────┐    uses     ┌────────────────▼─┐    uses    ┌───────────────────┐
-│ features │ ──────────▶ │ application/ports │ ─────────▶ │ domain            │
-└────┬─────┘             └──────────────────┘             └───────────────────┘
-     │
-     ├────────▶ kernel / plugins
-     └────────▶ theme / Material UI
+infra/http ──implements──▶ shared/api ──uses──▶ domain
+                                        ▲
+                                        │
+                                    features
+                                      │   │
+                                      ▼   ▼
+                                   kernel plugins
 
-app/main 负责创建并连接以上所有外层实现。
+app/main 只负责创建外层实现并连接 Provider、路由和功能入口。
 ```
 
-## 2. 目录职责
+## 2. 模块职责
 
 ### `domain`
 
-定义前端内部稳定的业务语言：
+定义前端内部稳定的业务语言和无副作用规则：
 
-- `Resource`、`ResourceAction`、`ResourceKind`。
-- 登录用户、受管用户和目录授权。
-- 插件 view 与 action output 的联合类型。
-- 资源草稿、目录规范化、面包屑等无副作用规则。
+- `Resource`、`Directory`、Kind、Action、用户与授权模型。
+- 插件 view、diagnostic 和 action output 类型。
+- 资源草稿、目录规范化、父目录和面包屑规则。
 
-领域层只使用 TypeScript，不允许导入 React、OpenAPI 或请求库。字段使用前端统一的
-camelCase；snake_case 被限制在 HTTP 适配器中。
-Action 领域模型只包含发现和展示所需的声明，不包含后端私有的 executor 或 handler
-binding。
+Domain 字段统一使用 camelCase。Action 只包含前端发现和展示所需的声明，不包含后端 executor、
+handler binding 或传输 DTO。
 
-### `application`
+### `shared`
 
-`application/ports/asset-gateway.ts` 是前端面对后端的 SPI，声明认证、资源、目录、插件
-action 和用户授权能力。Feature 只知道这个接口。
+`shared/api/gateways.ts` 按消费者定义四个接口：
 
-`application/queries/keys.ts` 定义服务端状态的统一身份，避免每个页面自行发明缓存 key。
-`gateway-context.tsx` 只负责将端口实例注入 React 树，不包含业务规则。
-`application/errors.ts` 定义 feature 可以理解的应用错误；例如 HTTP 401 会在 adapter 中转换为
-`AuthenticationRequiredError`，认证界面无需认识 HTTP 状态码。
+- `AuthGateway`：Session、登录和退出。
+- `AssetWorkspaceGateway`：目录浏览、资源命令和上传。
+- `PluginHostGateway`：Action 执行、插件资源 URL 和受约束内容替换。
+- `UserAdministrationGateway`：管理员用户操作。
 
-### `infrastructure/http`
+`gateway-context.tsx` 为每个接口提供独立 React Hook，避免 Feature 获得全能 API 对象。
+`query-keys.ts` 统一服务端状态身份，`errors.ts` 定义 Feature 可理解的错误，
+`routing/paths.ts` 保存跨 Feature 的 URL 编解码规则。Feature 不反向依赖 `app`。
 
-`OpenApiAssetGateway` 是 `AssetGateway` 的当前实现：
+### `infra/http`
 
-1. 使用 `openapi-fetch` 调用后端。
-2. 将 OpenAPI snake_case DTO 转换为 domain camelCase 对象。
-3. 将资源草稿转换为请求 DTO。
-4. 统一把错误转换成 `HttpError`。
-5. 用 Zod 校验不可信的插件 view JSON。
-6. 限制插件媒体和 iframe 只能访问后端同源路径。
+`createOpenApiGateways` 让所有 HTTP Gateway 共享一个 OpenAPI client。实现按职责拆为认证、资产
+工作区、用户管理、DTO 映射和可恢复上传模块，负责：
 
-以后改成 Tauri command、本地 mock 或另一个 HTTP 协议时，只需提供新的端口实现。
+- 调用 `asset-http` 并将 DTO 映射为 Domain 对象。
+- 把 HTTP 错误转换为前端错误，例如认证失效和 revision 冲突。
+- 校验不可信插件 view JSON、capability 和 effect 枚举。
+- 限制插件媒体与 iframe URL 只能指向允许的后端路径。
+- 处理文件哈希、分块上传、校验重试、断点恢复和发布轮询。
 
-### `kernel`
-
-微内核只管理三件事：
-
-- Resource view kind 到 React renderer 的注册表。
-- `directory_workspace` 的最近 Kind singleton Provider 选择。
-- `CoreDirectoryWorkspace` 内部 action slot 的选择、排序和回退。
-
-内核不认识 Markdown、EPUB、视频等具体插件。未知 slot 的 Resource action 会回退到
-`resource_context_menu`，未知 slot 的 Directory action 会回退到
-`directory_context_menu`，避免插件 action 因宿主版本较旧而完全不可访问。
-
-`directory_workspace` 是 Host 唯一的顶层 Directory UI 交接点。没有 `workspace` Provider
-时挂载 `CoreDirectoryWorkspace`；存在 Provider 时，Host 不挂载 Core 工作区，而将完整内容
-画布交给插件的内联 `plugin_frame`。`directory_context_menu`、`directory_thumbnail`、
-`resource_context_menu` 和 `resource_thumbnail` 都属于 Core 工作区内部，不会穿透 iframe。
-第三方工作区的内部插槽完全由插件自行定义和实现。
-
-路径面包屑和当前 Directory 的 kind 编辑器属于 Host 外壳，位于 `directory_workspace`
-之外，因此不会随 Core 工作区一起被替换。面包屑与 Asset Hub 标题同处主标题栏；kind
-编辑器位于标题栏和 workspace 之间。非根目录修改 kind 走带 revision 的 Directory 更新
-端口；成功后刷新 listing，新的 kind、Actions 和最近 `workspace` Provider 会一起重新解析。
-根目录沿用 Core 的不可变元数据约束，不能修改 kind。
-
-### `plugins`
-
-这是通用插件宿主，而不是具体插件实现：
-
-- `resource-action-dialog` 承载用户触发的 action 结果。
-- `resource-plugin-output` 与 Directory 输出统一按实际 severity 展示 diagnostics；Resource
-  输出通过 Kernel renderer 注册表，Directory 的通用视图直接复用同一 renderer 实现。
-- Resource 与 Directory action 的 text、Markdown、HTML、JSON、media、download 共用同一组
-  `renderers`；HTML 一律注入禁止网络访问的 CSP。两种 `plugin_frame` 仍使用各自聚合绑定的桥接。
-- `resource-frame-host` 通过 Penpal 暴露窄能力接口；公共 Web SDK 隐藏传输细节。iframe 只能调用当前
-  资源已经暴露的 action，且只有由当前 `edit` provider 打开的读写 frame 才能请求替换
-  当前资源文本。替换成功后，Host 将返回的最新 Resource 快照立即同步到当前 action 弹窗、
-  资源详情和目录列表缓存，再执行 query invalidation；连续保存或关闭后立即重新编辑不会复用旧 revision。
-- `directory-frame-host` 将连接绑定到当前 Directory，只允许执行该 Directory 已暴露的
-  Action、刷新当前 Directory、请求 Host 导航，或按不透明 Resource ID 使用直属资源。Host 会
-  重新读取资源并校验精确目录归属；阅读和编辑分别解析当前 `view` 与 `edit` provider，
-  Directory 插件不提供两者的 Action ID。Web SDK 将读取 Resource frame 嵌入 Directory frame，
-  并把子 frame 的标准 Resource 调用中继回同一个只读 provider；文本替换始终被拒绝。导航到不同
-  Directory 时，Host 会重新挂载
-  iframe，使 Web SDK 建立绑定到新聚合的连接；既有连接不会被改绑到另一个 Directory。编辑
-  保存后也会重新挂载当前工作区，以读取最新资源内容。
-
-浏览器 Frame 协议不在 Host 内重复声明：版本、两个 channel、Host method、view/effect 枚举和
-action 输出类型统一来自 `@asset-hub/asset-web-sdk/contract`。Frame 输入在进入 Gateway 前递归验证为有界
-JSON 对象；超深、超量、循环引用、非有限数字及任何非 JSON 值都会在 Host 边界被拒绝。
-Resource/Directory capability ID 及其字面量联合类型也来自该 contract；HTTP adapter 在值进入
-Web Domain 前按 SDK 列表校验，Kernel 和 frame bridge 不维护本地字符串副本。Manifest v5 / Plugin
-API v2 的语言无关 catalog 同时生成 Rust 契约产物与 Web SDK 常量，契约测试负责检测漂移。
-Resource 与 Directory Frame 使用同一套 Action ID、输入和绑定快照规则：连接始终绑定初始聚合
-ID，只接受 revision 不回退的同 ID 快照，并由 Gateway 从该快照重新解析 Action 声明。iframe
-资源 URL 和 opaque-origin Penpal Messenger 也由同一个安全边界创建。Resource 的原始文本替换
-以及 Directory 的刷新和导航仍是各自聚合特有的窄能力，不为表面对称而抽象成通用操作。
-
-Markdown 和媒体播放器均按需加载，不进入基础首屏包。
+替换 HTTP、引入本地 mock 或增加另一种传输时，只替换受影响 Feature 的 Gateway 实现。
 
 ### `features`
 
-Feature 是用户用例与界面的组合边界：
+- `auth`：加载 Session、登录、退出和 Session Context。
+- `asset-workspace`：目录浏览、URL 筛选、资源详情、命令、上传和插件 Action。
+- `users`：管理员用户列表、创建和状态更新。
 
-- `auth`：加载 session、登录和 session context。
-- `resources`：目录列表、URL 筛选、资源命令、详情、上传和插件 action。
-- `users`：管理员、用户状态和目录授权。
+资产工作区将读流程放在 `use-asset-workspace-listing`，写流程放在
+`use-asset-workspace-commands`；组件主要负责展示、交互和组合。
 
-资源查询与命令分别放在 `use-resource-listing` 和 `use-resource-commands` 中，组件主要负责
-展示与事件绑定。
+### `kernel` 与 `plugins`
 
-### `theme.ts` 与 Material UI
+Kernel 保存宿主级插件选择规则：
 
-宿主界面直接组合 Material UI 组件；对话框、菜单、表单控件和状态提示的焦点管理、键盘行为与
-overlay 语义由 Material UI 提供。`theme.ts` 集中定义全局 palette、typography、shape、表面层级、
-交互状态和组件默认样式，Feature 只保留自身布局所需的 `sx`，不重复声明品牌颜色和通用控件外观。
-主题是展示配置，不包含业务规则。插件 Markdown/文本内容不属于 Material UI 组件树能够完整覆盖的
-排版区域，其少量宿主样式继续集中在 `styles.css`，不再引入额外的 utility CSS 构建链。
+- Resource view kind 到 React renderer 的注册表。
+- Resource/Directory Action 到 Core slot 的选择、排序和回退。
+- Directory kind 的最近 `workspace` provider 选择。
 
-### `app` 与 `main.tsx`
+`plugins` 实现通用 Action 对话框、diagnostic、view renderer、sandboxed iframe 和
+Resource/Directory Frame Host Bridge。Kernel 与 plugins 不包含具体插件 ID 或具体文件格式实现。
+
+### `app`、主题与样式
+
+`app` 只定义 Provider 组合和路由。路由及大型 Feature 使用 lazy import，认证边界位于业务路由
+外层。
+
+Material UI 主题集中管理宿主 palette、typography、shape、表面和共享组件默认样式。Feature
+只保留布局相关样式；插件文本和 Markdown 的少量宿主排版位于 `styles.css`。
+
+## 3. 组装与状态归属
 
 启动顺序：
 
 ```text
 main.tsx
-  ├─ 创建 OpenApiAssetGateway
-  ├─ 创建 PluginKernel 并注册通用 renderer
-  ├─ 创建 TanStack QueryClient
+  ├─ createOpenApiGateways
+  ├─ PluginKernel + 通用 renderer
+  ├─ TanStack QueryClient
   └─ AppProviders
-       └─ Material UI ThemeProvider / CssBaseline
+       ├─ ThemeProvider / CssBaseline
+       ├─ QueryClientProvider
+       ├─ GatewayProvider
+       └─ PluginKernelProvider
             └─ AuthBoundary
                  └─ RouterProvider
                       ├─ AssetWorkspace
                       └─ StandaloneResourcePluginView
 ```
 
-路由和大功能使用 lazy import。认证在路由外层，因此所有业务路由默认受保护。
-
-## 3. 状态归属
-
-不同状态有明确的唯一归属：
+状态只有一个主要所有者：
 
 | 状态 | 归属 |
 | --- | --- |
-| 当前目录、搜索、kind、分页、选中资源 | URL search params |
-| 资源、目录、kind、用户、授权、session | TanStack Query server cache |
-| 创建、编辑、上传表单 | React Hook Form/local component state |
-| 当前登录用户读取 | Session context |
-| view renderer 与 slot 规则 | PluginKernel |
+| 当前目录、搜索、kind、分页、选中 Resource/Directory | URL path 与 search params |
+| Resource、Directory、Kind、用户、授权、Session | TanStack Query server cache |
+| 创建、编辑、上传表单 | React Hook Form 或局部组件状态 |
+| 当前登录用户读取 | Session Context |
+| view renderer、slot 和 provider 规则 | PluginKernel |
 
-因此不需要一个同时承载服务端数据、表单和 UI 状态的全局 store。刷新页面可以恢复导航和
-筛选状态，写操作成功后通过 query invalidation 获取后端真实状态。
+因此不使用一个同时承载服务端数据、表单和 UI 状态的全局 Store。刷新页面可以恢复导航和筛选；
+写操作完成后更新必要快照并失效相关 Query，以后端状态为最终事实。
 
-## 4. 资源请求链路
+## 4. 运行时流程
+
+### 认证与路由
+
+`AuthBoundary` 首先通过 `AuthGateway.currentUser` 加载 Session：
+
+- 未认证用户被送到 `/login`。
+- 登录成功后清理旧业务缓存并写入新的 Session。
+- 已认证用户访问 `/login` 时返回根目录。
+- 退出成功后清除业务缓存并回到登录页。
+
+### 浏览与查询
 
 ```text
-AssetWorkspace
-  → useAssetWorkspaceListing / useAssetWorkspaceCommands
-  → AssetGateway port
-  → OpenApiAssetGateway
+URL path / search params
+  → useAssetWorkspaceListing
+  → AssetWorkspaceGateway
+  → OpenAPI HTTP module
   → asset-http
-  → DTO 映射为 Resource domain model
-  → TanStack Query 更新缓存
+  → DTO 映射为 Domain 对象
+  → TanStack Query cache
   → React 重新渲染
 ```
 
-Directory 工作区所有权链路：
+Resource Kind、Directory Kind 和目录 listing 使用稳定 Query Key。存在内容验证状态为 `pending`
+的 Resource 时，listing 临时轮询；验证结束后停止。
+
+Directory 在 Domain 和 Gateway 中始终使用稳定 UUID 标识，path 只用于导航和显示。切换目录时
+清除分页与选中项，Resource 和 Directory 选中状态互斥。
+
+### 命令、并发与上传
+
+资源更新、恢复、目录创建、Directory kind 更新和 Action 执行统一通过 React Query mutation。
+写入成功后更新必要 Resource 快照并失效目录或详情 Query。稳定错误码
+`concurrency.revision_conflict` 会触发刷新并提示用户已加载最新版本。
+
+Directory 更新和 write Action 携带当前 revision；read Action 读取最新授权快照，避免预览缓存
+产生无意义冲突。根 Directory 的 kind 与其他根元数据一样不可修改。
+
+上传流程：
 
 ```text
-AssetWorkspace Host shell
-  ├─ Primary header
-  │    ├─ Asset Hub 标题
-  │    └─ 路径面包屑
-  ├─ Directory kind 编辑器
-  └─ DirectoryWorkspaceOutlet
-       ├─ 无 workspace Provider → CoreDirectoryWorkspace
-       │    └─ 四个 Core 内部 action slot
-       └─ 最近 Kind workspace Provider → plugin_frame
-            └─ 插件完全拥有 iframe 内部 UI
+计算文件 SHA-256
+  → 创建或恢复上传会话
+  → 分块上传并校验每个 chunk
+  → checksum mismatch 时有限重试
+  → 完成会话
+  → 轮询后台验证与发布
+  → Resource 就绪后刷新缓存
 ```
 
-Resource 与 Directory action 都是扁平数组，使用 `read` / `write` access，并通过
-`output.views` / `output.effects` 声明可能返回的结果。只产生副作用的 Action 可以不返回
-View；`delete` 就是这种普通 write Action。Kind 与 Action 的 `origin` 明确区分 Host 内建定义
-和插件定义。
-Directory 在 Domain 和 Gateway 中始终以稳定 UUID 标识，path 仅用于导航与显示。目录写入
-以及 `write` Action 执行携带当前 revision，过期页面不能覆盖已经提交的并发修改；`read`
-Action 默认读取最新授权快照，不会因为缩略图或预览缓存较旧而产生无意义的 409。稳定错误码
-`concurrency.revision_conflict` 会触发相关 query invalidation，并提示用户已加载最新版本。
+恢复指纹包含文件 SHA-256，避免同名、同大小但内容不同的文件错误复用上传会话。
 
-## 5. 插件执行链路
+## 5. 插件宿主模型
 
-```text
-后端 Resource.actions
-  → PluginKernel 按 ui.locations 放入 slot
-  → 用户触发，或宿主专用组件自动触发只读 action（如缩略图）
-  → AssetGateway.executeResourceAction / executeDirectoryAction
-  → Zod 校验 PluginView
-  → ResourcePluginViewHost 查询 renderer registry
-  → 通用 renderer 或 sandboxed plugin_frame
-```
+### Action 与 Provider
 
-当前稳定插槽：
+后端返回实际适用的 Resource/Directory Action 扁平数组。每个 Action 声明：
 
-| slot | 行为 |
+- builtin 或 plugin `origin`。
+- `read` 或 `write` access。
+- 可能产生的 `output.views` 和 `output.effects`。
+- UI location、排序、破坏性确认和 capability `provides`。
+
+后端在返回前解析 singleton capability provider。Provider 可以匹配 Kind、MIME 或扩展名；同一
+Kind 层级冲突由 Host 启动校验处理。前端只执行已经解析出的 Action，不内置具体格式 Kind、读取器
+或编辑器。
+
+### Host 交接点
+
+稳定的宿主 location：
+
+| Location | 所有者与行为 |
 | --- | --- |
-| `directory_context_menu` | 目录行菜单，用户触发 |
-| `directory_thumbnail` | 目录行与详情标题缩略图，只读自动执行 |
-| `resource_context_menu` | 资源行菜单，用户触发 |
-| `resource_thumbnail` | 资源行与详情标题缩略图，只读自动执行 |
+| `directory_workspace` | 顶层交接点；最近 Kind 的只读 `workspace` provider 完整替换 Core 内容区 |
+| `directory_context_menu` | Core Directory 行菜单 |
+| `directory_thumbnail` | Core Directory 行和详情标题缩略图 |
+| `resource_context_menu` | Core Resource 行菜单 |
+| `resource_thumbnail` | Core Resource 行和详情标题缩略图 |
 
-插件只要在 manifest 中声明已有 slot，并返回已有 view kind，就不需要修改前端。目录 action
-未声明位置或声明了当前宿主未知的位置时，会回退到 `directory_context_menu`；资源 action
-未声明位置或声明了当前宿主未知的位置时，会回退到 `resource_context_menu`。资源详情面板仍由
-宿主提供编辑表单和事实信息，保存由编辑表单触发。详情标题复用对应 thumbnail provider，
-列表行与详情按聚合 ID、revision 和 Action ID 共享查询结果；同一 slot 可以有多个 Host
-拥有的展示位置，而不产生新的插件协议。`core.resource.delete` 和
-`core.directory.delete` 通过对应 Action 菜单发现，并由 Host 在确认后分别进入受权的资源软删除
-和空目录删除用例；已删除资源的恢复仍由资源行菜单提供。资源详情区除 thumbnail 外不提供
-其他插件自动插入位置，插件 action 从对应行菜单触发。完全自定义
-界面通过 `plugin_frame` 加载插件自己的 Web 资源。
-后端会在实际适用性过滤后解析单例能力 provider，Resource 与 Directory Action 注册表分别
-限定能力作用域。Provider 可以面向 Kind，也可以使用 MIME 或扩展名匹配而不引入新 Kind；
-没有匹配缩略图 provider 的资源和目录分别由前端显示 File 和 Folder 图标，不执行 Action。
-相同能力选择 Kind 谱系中最近的 provider，同层冲突会导致 Host 启动失败，前端只执行后端
-已经解析出的 provider。Host 不内置具体格式的 Kind、读取器或编辑器；插件通过自己的
-`plugin_frame` 实现格式相关界面。Action 只负责能力发现和返回 frame；文本保存不把完整内容
-塞入 Action JSON，而是由受约束的 frame bridge 通过 `AssetGateway.replaceResourceText` 将
-UTF-8 原始字节流提交到
-`PUT /resources/{id}/content`。请求使用 `Content-SHA256` 做端到端完整性校验，并将打开
-编辑器时的 `Resource.revision` 放入 `If-Match`；Host 检测到资源或其目录位置已经变化时
-返回冲突并恢复原 Blob。`resource_edit.max_text_bytes` 由 Core 同时用于能力发现和执行，
-超限资源不会暴露 `edit`。
+没有 `workspace` provider 时挂载 `CoreDirectoryWorkspace`。存在 provider 时 Core 工作区不挂载，
+其四个内部 location 也不存在，插件 iframe 完全拥有内容画布。路径面包屑和当前 Directory kind
+编辑器属于外层 Host Shell，因此始终保留。
 
-因此 Action JSON 属于控制面，资源原始内容属于流式数据面。HTTP Action 的 1 MiB 请求
-限制不会再限制文本保存，Blob 数据也不需要经过 JSON 转义或 Base64 膨胀。
-插件 iframe 通过 Web SDK 的 `replaceResourceText` 进入同一个 Gateway；宿主同时校验
-frame 对应的原始 action 是当前资源解析出的读写 `edit` provider。保存成功后宿主连接
-持有响应中的新 revision，以支持同一编辑窗口连续保存。
+未声明 location 或只声明当前 Host 不认识的 location 时，Resource/Directory Action 分别回退到
+对应 context menu。自动 thumbnail 只接受解析后的只读 `thumbnail` provider；没有 provider 时
+显示本地 File 或 Folder 图标，不执行 Action。
 
-只有以下变化属于前端宿主协议升级：
+### View 与渲染
 
-- 增加一种全新的 view kind。
-- 增加具有新布局语义的宿主 slot。
-- 增加或改变 Plugin Frame 的 Host method。
-- 升级 Plugin Frame Web SDK 协议的主版本。
+支持 `text`、`markdown`、`html`、`json`、`media`、`download` 和 `plugin_frame`。Resource 与
+Directory 共用通用 renderer；HTML 注入禁止网络访问的 CSP。Markdown 和媒体 renderer 按需加载，
+不进入基础首屏包。
 
-## 6. 必须维持的边界
+只有 `plugin_frame` 使用聚合专属 Bridge。插件资源 URL 必须是验证后的 `/plugins/<id>/...` 路径；
+iframe 使用 `sandbox="allow-scripts"`，在 opaque origin 下运行。
 
-- Feature 不允许导入 `infrastructure/http/generated.ts`。
-- OpenAPI DTO 不允许穿过 `OpenApiAssetGateway`。
-- 具体插件 id、kind 或 action id 不允许硬编码进宿主组件。
-- 自动缩略图 slot 不允许执行 write action。
-- iframe action 必须先在当前 `Resource.actions` 中验证；文本替换还必须绑定产生当前 frame
-  的 `write` `edit` action，并由插件 Manifest 显式申请 `resource.content.replace`。
-  iframe 调用 destructive Action 前必须经过宿主确认。
-- Directory iframe 请求资源阅读或编辑时，只能使用绑定 Directory 的直属 Resource ID；Host
-  必须重新读取资源并分别解析当前 `view` 或 `edit` provider，不能接受 Directory 插件
-  提供的 provider Action ID；嵌套读取 frame 只能回调其起始 Action。
-- 外部 URL 不允许作为插件媒体或 iframe 地址加载。
-- 新的后端请求能力先加入 `AssetGateway`，再实现 HTTP adapter，最后由 feature 使用。
+### Frame Host capability
+
+Frame 协议版本、channel、Host method、view/effect、Action output 和 capability ID 统一来自
+`@asset-hub/asset-web-sdk/contract`，宿主不维护字符串副本。Frame Action 输入在进入 Gateway 前
+必须是有界 JSON 对象：最多 32 层、10,000 个值，并拒绝循环引用、非有限数字和非 JSON 值。
+
+Resource Frame：
+
+- 只能执行当前 Resource 已暴露的 Action。
+- destructive Action 必须先由 Host 确认。
+- 只有产生当前 Frame 的 write `edit` provider 可以替换当前 Resource 文本。
+- 保存成功后立即推进 Bridge 快照，并同步详情、列表和 Action 对话框缓存。
+
+Directory Frame：
+
+- 只能执行绑定 Directory 已暴露的 Action、刷新当前 Directory 或请求 Host 导航。
+- 只能通过不透明 ID 访问绑定 Directory 的直属 Resource。
+- Host 重新读取 Resource，并自行解析当前只读 `view` 或 write `edit` provider；插件不能指定
+  provider Action ID。
+- 嵌套 Resource 读取 Frame 只中继起始只读 provider，Directory Frame 不能直接替换 Resource
+  内容。
+
+两个 Bridge 始终绑定初始聚合 ID，只接受同 ID 且 revision 不回退的快照。导航到另一 Directory
+或 Host 主动提升 instance version 时重新挂载 iframe，既有连接不会改绑到另一聚合。
+
+### 控制面与数据面
+
+Action JSON 只承载控制信息。Resource 原始内容走流式数据面：文本替换通过
+`PUT /resources/{id}/content`，使用 `Content-SHA256` 校验完整性，并通过 `If-Match` 携带打开编辑器
+时的 revision。插件 Manifest 必须显式申请 `resource.content.replace`，超出
+`resource_edit.max_text_bytes` 的 Resource 不暴露 `edit` provider。
+
+## 6. 维护边界与扩展规则
+
+必须维持：
+
+- Feature 不导入 `infra/http/generated.ts` 或直接调用传输实现。
+- OpenAPI DTO 不穿过 `infra/http`。
+- 新请求能力只加入实际消费它的 Feature Gateway，不扩张成全局 API 接口。
+- 宿主组件不硬编码具体插件 ID、Kind 或 Action ID。
+- 自动 slot 不执行 write Action。
+- Frame Action 必须重新验证当前聚合、Action、access、capability 和必要的 Host 确认。
+- 外部 URL 不作为插件媒体或 iframe 地址加载。
+- 行为、公共协议、配置或运行流程变化时，同步更新本文档。
+
+以下变化属于前端宿主协议升级，需要同步 Web SDK、Host、测试和文档：
+
+- 增加新的 view kind。
+- 增加具有新布局语义的 Host slot。
+- 增加或改变 Frame Host method。
+- 升级 Frame 协议主版本。
+
+添加只使用既有 capability、slot 和 view kind 的插件不需要修改或重新构建 `asset-web`。

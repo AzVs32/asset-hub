@@ -1,13 +1,13 @@
 import { Alert, Box, Button } from "@mui/material";
-import type { AssetGateway } from "@/application/ports/asset-gateway";
 import type { PluginView } from "@/domain/plugin";
+import type { PluginHostGateway } from "@/shared/api/gateways";
 
 export default function DownloadRenderer({
   view,
   gateway,
 }: {
   view: Extract<PluginView, { type: "download" }>;
-  gateway: AssetGateway;
+  gateway: PluginHostGateway;
 }) {
   const source = gateway.assetUrl(view.url);
   if (!source) {

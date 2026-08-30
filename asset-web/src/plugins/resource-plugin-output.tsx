@@ -1,9 +1,9 @@
 import { Box } from "@mui/material";
-import { useGateway } from "@/application/ports/gateway-context";
 import type { ResourceActionOutput } from "@/domain/plugin";
 import type { Resource } from "@/domain/resource";
 import type { ResourceChangedHandler } from "@/kernel/plugin-kernel";
 import { ResourcePluginViewHost } from "@/kernel/resource-plugin-view-host";
+import { usePluginHostGateway } from "@/shared/api/gateway-context";
 import { PluginDiagnostics } from "./plugin-diagnostics";
 
 export function ResourcePluginOutput({
@@ -15,7 +15,7 @@ export function ResourcePluginOutput({
   resource: Resource;
   onResourceChanged?: ResourceChangedHandler | undefined;
 }) {
-  const gateway = useGateway();
+  const gateway = usePluginHostGateway();
   return (
     <Box>
       <PluginDiagnostics diagnostics={output.diagnostics} sx={{ m: 2 }} />

@@ -16,11 +16,13 @@ import type {
   UploadReceipt,
 } from "@/domain/resource";
 
-export interface AssetGateway {
+export interface AuthGateway {
   currentUser(): Promise<CurrentUser>;
   login(username: string, password: string): Promise<CurrentUser>;
   logout(): Promise<void>;
+}
 
+export interface AssetWorkspaceGateway {
   listResourceKinds(): Promise<ResourceKind[]>;
   listDirectoryKinds(): Promise<DirectoryKind[]>;
   listDirectory(filters: ResourceFilters, signal?: AbortSignal): Promise<DirectoryListing>;
@@ -32,15 +34,18 @@ export interface AssetGateway {
     onProgress?: (progress: UploadProgress) => void,
   ): Promise<UploadReceipt>;
   waitForUpload(id: string): Promise<Resource>;
-  findDirectory(id: string): Promise<Directory>;
   createDirectory(parent: Directory, name: string, kind?: string): Promise<Directory>;
   updateDirectory(directory: Directory, patch: DirectoryPatch): Promise<Directory>;
+}
+
+export interface PluginHostGateway {
+  findResource(id: string): Promise<Resource>;
+  findDirectory(id: string): Promise<Directory>;
   executeDirectoryAction(
     directory: Directory,
     actionId: string,
     input?: JsonObject,
   ): Promise<DirectoryActionOutput>;
-
   executeResourceAction(
     resource: Resource,
     actionId: string,
@@ -49,8 +54,17 @@ export interface AssetGateway {
   replaceResourceText(resource: Resource, text: string): Promise<Resource>;
   resourceContentUrl(resourceId: string): string;
   assetUrl(path: string): string | null;
+}
 
+export interface UserAdministrationGateway {
   listUsers(): Promise<ManagedUser[]>;
   createUser(input: { username: string; password: string; isAdmin: boolean }): Promise<void>;
   updateUserStatus(id: string, status: UserStatus): Promise<ManagedUser>;
+}
+
+export interface AppGateways {
+  auth: AuthGateway;
+  assetWorkspace: AssetWorkspaceGateway;
+  pluginHost: PluginHostGateway;
+  userAdministration: UserAdministrationGateway;
 }

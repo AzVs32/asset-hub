@@ -2,17 +2,18 @@ import StorageRoundedIcon from "@mui/icons-material/StorageRounded";
 import { Alert, Avatar, Box, Card, CardHeader, CircularProgress, Divider } from "@mui/material";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams } from "react-router";
-import { useGateway } from "@/application/ports/gateway-context";
 import { ResourcePluginOutput } from "@/plugins/resource-plugin-output";
+import { useAssetWorkspaceGateway, usePluginHostGateway } from "@/shared/api/gateway-context";
 
 export function StandaloneResourcePluginView() {
-  const gateway = useGateway();
+  const assetGateway = useAssetWorkspaceGateway();
+  const pluginGateway = usePluginHostGateway();
   const queryClient = useQueryClient();
   const { resourceId = "", actionId = "" } = useParams();
   const result = useQuery({
     queryKey: ["standalone-plugin-view", resourceId, actionId],
     queryFn: async () => {
-      const resource = await gateway.findResource(resourceId);
+      const resource = await assetGateway.findResource(resourceId);
       const action = resource.actions.find((candidate) => candidate.id === actionId);
       if (!action) throw new Error(`Action ${actionId} is not available.`);
       if (
@@ -21,7 +22,10 @@ export function StandaloneResourcePluginView() {
       ) {
         throw new Error(`Action ${actionId} was not confirmed.`);
       }
-      return { resource, output: await gateway.executeResourceAction(resource, action.id) };
+      return {
+        resource,
+        output: await pluginGateway.executeResourceAction(resource, action.id),
+      };
     },
     retry: false,
   });

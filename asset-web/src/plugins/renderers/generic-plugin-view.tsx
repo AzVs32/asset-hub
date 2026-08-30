@@ -1,7 +1,7 @@
 import { Box, CircularProgress } from "@mui/material";
 import React from "react";
-import type { AssetGateway } from "@/application/ports/asset-gateway";
 import type { PluginView } from "@/domain/plugin";
+import type { PluginHostGateway } from "@/shared/api/gateways";
 
 const MarkdownRenderer = React.lazy(() => import("./markdown-renderer"));
 const MediaRenderer = React.lazy(() => import("./media-renderer"));
@@ -14,7 +14,7 @@ export function GenericPluginViewRenderer({
   gateway,
 }: {
   view: GenericPluginView;
-  gateway: AssetGateway;
+  gateway: PluginHostGateway;
 }) {
   if (view.type === "text") return <TextView text={view.text} />;
   if (view.type === "markdown") {
