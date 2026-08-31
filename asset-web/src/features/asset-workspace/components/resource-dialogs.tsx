@@ -113,12 +113,7 @@ export function UploadResourceDialog({
             render={({ field }) => {
               const { onChange, ref, ...rest } = field;
               return (
-                <DirectorySelect
-                  {...rest}
-                  inputRef={ref}
-                  onChange={onChange}
-                  disabled={pending}
-                />
+                <DirectorySelect {...rest} inputRef={ref} onChange={onChange} disabled={pending} />
               );
             }}
           />

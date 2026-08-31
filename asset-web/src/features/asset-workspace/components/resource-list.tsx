@@ -295,16 +295,9 @@ function ResourceRow({
     resource,
     coreDirectoryWorkspaceSlots.resourceContextMenu,
   );
-  const status =
-    resource.content?.verificationStatus === "pending"
-      ? "Verifying · "
-      : resource.content?.verificationStatus === "failed"
-        ? "Verification failed · "
-        : resource.deletedAt
-          ? "Deleted · "
-          : "";
+  const status = resourceStatusLabel(resource.state.effective);
   const menuItems = [
-    ...(resource.deletedAt
+    ...(resource.state.lifecycle.status === "deleted"
       ? [{ id: "restore", label: "Restore resource", destructive: false, onSelect: onRestore }]
       : []),
     ...actions.map((action) => ({
@@ -330,6 +323,20 @@ function ResourceRow({
       </ListItemButton>
     </ListItem>
   );
+}
+
+function resourceStatusLabel(status: Resource["state"]["effective"]): string {
+  switch (status) {
+    case "deleted":
+      return "Deleted · ";
+    case "verifying":
+      return "Verifying · ";
+    case "verification_failed":
+      return "Verification failed · ";
+    case "no_content":
+    case "ready":
+      return "";
+  }
 }
 
 function ActionsMenu({

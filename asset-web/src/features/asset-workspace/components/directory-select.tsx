@@ -14,8 +14,8 @@ import {
   ListItemText,
   Popover,
   TextField,
-  Typography,
   type TextFieldProps,
+  Typography,
 } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
 import React from "react";
@@ -24,10 +24,7 @@ import type { ResourceFilters } from "@/domain/resource";
 import { useAssetWorkspaceGateway } from "@/shared/api/gateway-context";
 import { queryKeys } from "@/shared/api/query-keys";
 
-type DirectorySelectProps = Omit<
-  TextFieldProps,
-  "children" | "onChange" | "select" | "value"
-> & {
+type DirectorySelectProps = Omit<TextFieldProps, "children" | "onChange" | "select" | "value"> & {
   value: string;
   onChange: (value: string) => void;
 };

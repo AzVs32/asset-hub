@@ -39,9 +39,7 @@ export function useAssetWorkspaceListing() {
     queryFn: ({ signal }) => gateway.listDirectory(filters, signal),
     placeholderData: (previous) => previous,
     refetchInterval: (query) =>
-      query.state.data?.resources.items.some(
-        (resource) => resource.content?.verificationStatus === "pending",
-      )
+      query.state.data?.resources.items.some((resource) => resource.state.content === "pending")
         ? 1_000
         : false,
   });

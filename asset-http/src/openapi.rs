@@ -1,11 +1,12 @@
 use crate::dto::{
-    BinaryContent, ChecksumResponse, ContentVerificationStatusResponse, CreateDirectoryRequest,
-    CreateUploadRequest, DirectoryActionDefinitionResponse, DirectoryActionOutputResponse,
-    DirectoryKindResponse, DirectoryKindsResponse, DirectoryListingResponse, DirectoryResponse,
-    ErrorResponse, ExecuteDirectoryActionRequest, ExecuteResourceActionRequest,
-    HealthComponentResponse, HealthResponse, PluginDiagnosticResponse,
-    ResourceActionDefinitionResponse, ResourceActionOutputResponse, ResourceContentResponse,
-    ResourceKindResponse, ResourceKindsResponse, ResourcePageResponse, ResourceResponse,
+    BinaryContent, ChecksumResponse, CreateDirectoryRequest, CreateUploadRequest,
+    DirectoryActionDefinitionResponse, DirectoryActionOutputResponse, DirectoryKindResponse,
+    DirectoryKindsResponse, DirectoryListingResponse, DirectoryResponse, ErrorResponse,
+    ExecuteDirectoryActionRequest, ExecuteResourceActionRequest, HealthComponentResponse,
+    HealthResponse, PluginDiagnosticResponse, ResourceActionDefinitionResponse,
+    ResourceActionOutputResponse, ResourceContentResponse, ResourceContentStateResponse,
+    ResourceEffectiveStateResponse, ResourceKindResponse, ResourceKindsResponse,
+    ResourceLifecycleStateResponse, ResourcePageResponse, ResourceResponse, ResourceStateResponse,
     UpdateDirectoryRequest, UpdateResourceRequest, UploadSessionResponse,
 };
 use crate::{auth, handlers};
@@ -65,7 +66,6 @@ impl Modify for CookieSecurity {
     components(
         schemas(
             ChecksumResponse,
-            ContentVerificationStatusResponse,
             BinaryContent,
             CreateDirectoryRequest,
             DirectoryListingResponse,
@@ -85,6 +85,10 @@ impl Modify for CookieSecurity {
             ResourceActionDefinitionResponse,
             ResourceActionOutputResponse,
             ResourceContentResponse,
+            ResourceContentStateResponse,
+            ResourceEffectiveStateResponse,
+            ResourceLifecycleStateResponse,
+            ResourceStateResponse,
             DirectoryResponse,
             ResourcePageResponse,
             ResourceResponse,
@@ -130,5 +134,19 @@ mod tests {
                 .get("workspace_directory")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn resource_contract_exposes_only_the_unified_state_model() {
+        let document = serde_json::to_value(ApiDoc::openapi()).unwrap();
+        let schemas = &document["components"]["schemas"];
+        let resource = &schemas["ResourceResponse"]["properties"];
+        let content = &schemas["ResourceContentResponse"]["properties"];
+
+        assert!(resource.get("state").is_some());
+        assert!(resource.get("deleted_at").is_none());
+        assert!(content.get("verification_status").is_none());
+        assert!(schemas.get("ResourceStateResponse").is_some());
+        assert!(schemas.get("ContentVerificationStatusResponse").is_none());
     }
 }

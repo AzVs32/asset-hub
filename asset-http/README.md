@@ -23,6 +23,12 @@ aggregate. Read Actions omit the precondition by default and run against the lat
 snapshot; callers may still supply it when exact snapshot consistency is required. Path strings
 remain navigation and display data, not Directory identity.
 
+Resource responses expose one authoritative `state` object derived by Core. It contains the
+lifecycle state (including the deletion timestamp only for `deleted`), content state, and effective
+single-value state. HTTP does not also expose `deleted_at` or a second content-verification status;
+clients must consume `state` instead of reconstructing precedence from independent transport
+fields.
+
 Kind-list responses retain their contextual action declarations, while Resource and Directory
 responses contain actions that are actually applicable to that aggregate and content state. This
 small amount of metadata repetition is intentional: aggregate responses remain self-contained and

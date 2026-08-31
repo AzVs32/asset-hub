@@ -121,11 +121,15 @@ export function mapResource(value: ApiResource): Resource {
     name: value.name,
     directory: value.directory,
     kind: value.kind,
+    state: {
+      lifecycle: value.state.lifecycle,
+      content: value.state.content,
+      effective: value.state.effective,
+    },
     content: value.content
       ? {
           size: value.content.size,
           mimeType: value.content.mime_type ?? null,
-          verificationStatus: value.content.verification_status,
           checksum: value.content.checksum ?? null,
           verificationError: value.content.verification_error ?? null,
         }
@@ -134,7 +138,6 @@ export function mapResource(value: ApiResource): Resource {
     createdAt: value.created_at,
     updatedAt: value.updated_at,
     revision: value.revision,
-    deletedAt: value.deleted_at ?? null,
   };
 }
 

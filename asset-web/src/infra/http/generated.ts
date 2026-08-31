@@ -380,11 +380,6 @@ export interface components {
             /** @description 校验和值。 */
             value: string;
         };
-        /**
-         * @description 内容校验状态响应。
-         * @enum {string}
-         */
-        ContentVerificationStatusResponse: "pending" | "verified" | "failed";
         /** @description 创建逻辑目录请求。 */
         CreateDirectoryRequest: {
             /** @description 可选目录类型。 */
@@ -632,9 +627,17 @@ export interface components {
             size: number;
             /** @description 后台校验失败原因；仅校验失败时存在。 */
             verification_error?: string | null;
-            /** @description 内容校验状态。 */
-            verification_status: components["schemas"]["ContentVerificationStatusResponse"];
         };
+        /**
+         * @description 资源是否包含对象内容及其校验状态。
+         * @enum {string}
+         */
+        ResourceContentStateResponse: "absent" | "pending" | "verified" | "failed";
+        /**
+         * @description 需要单值状态判断的消费者所使用的统一有效状态。
+         * @enum {string}
+         */
+        ResourceEffectiveStateResponse: "deleted" | "no_content" | "verifying" | "ready" | "verification_failed";
         /** @description 资源类型响应。 */
         ResourceKindResponse: {
             /** @description kind 支持的动作。 */
@@ -657,6 +660,15 @@ export interface components {
         ResourceKindsResponse: {
             /** @description 当前后端支持的资源类型。 */
             items: components["schemas"]["ResourceKindResponse"][];
+        };
+        /** @description 资源生命周期；删除时间只在 deleted 状态中存在。 */
+        ResourceLifecycleStateResponse: {
+            /** @enum {string} */
+            status: "active";
+        } | {
+            at: string;
+            /** @enum {string} */
+            status: "deleted";
         };
         /** @description 资源分页响应。 */
         ResourcePageResponse: {
@@ -685,8 +697,6 @@ export interface components {
             content?: null | components["schemas"]["ResourceContentResponse"];
             /** @description 资源创建时间，RFC3339 格式。 */
             created_at: string;
-            /** @description 软删除时间，RFC3339 格式；为空表示未删除。 */
-            deleted_at?: string | null;
             /** @description 相对于当前用户可见根目录的路径；根目录为空字符串。 */
             directory: string;
             /** @description 资源唯一标识。 */
@@ -700,8 +710,16 @@ export interface components {
              * @description 单调递增的资源聚合版本。
              */
             revision: number;
+            /** @description 由 Core 统一派生的资源生命周期、内容和有效状态。 */
+            state: components["schemas"]["ResourceStateResponse"];
             /** @description 资源最后更新时间，RFC3339 格式。 */
             updated_at: string;
+        };
+        /** @description 资源生命周期、内容和单值有效状态的统一响应。 */
+        ResourceStateResponse: {
+            content: components["schemas"]["ResourceContentStateResponse"];
+            effective: components["schemas"]["ResourceEffectiveStateResponse"];
+            lifecycle: components["schemas"]["ResourceLifecycleStateResponse"];
         };
         UpdateDirectoryRequest: {
             /** Format: int64 */

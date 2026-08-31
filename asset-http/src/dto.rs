@@ -1,7 +1,8 @@
 use asset_core::domain::{
-    ActionAccess, Checksum, DefinitionOrigin, DirectoryActionDefinition, DirectoryKindDefinition,
-    DirectoryPath, Resource, ResourceActionContentDelivery, ResourceActionDefinition,
-    ResourceContent, ResourceKindDefinition,
+    ActionAccess, Checksum, ContentVerificationStatus, DefinitionOrigin, DirectoryActionDefinition,
+    DirectoryKindDefinition, DirectoryPath, Resource, ResourceActionContentDelivery,
+    ResourceActionDefinition, ResourceContent, ResourceEffectiveStatus, ResourceKindDefinition,
+    ResourceLifecycleStatus,
 };
 use asset_core::port::{DirectoryActionOutput, ResourceActionOutput};
 use asset_core::service::ResourceActions;
@@ -516,6 +517,8 @@ pub(crate) struct ResourceResponse {
     pub(crate) directory: DirectoryPath,
     /// 资源类型。
     pub(crate) kind: String,
+    /// 由 Core 统一派生的资源生命周期、内容和有效状态。
+    pub(crate) state: ResourceStateResponse,
     /// 资源内容引用。
     pub(crate) content: Option<ResourceContentResponse>,
     /// 当前资源允许的操作。
@@ -526,8 +529,43 @@ pub(crate) struct ResourceResponse {
     pub(crate) updated_at: String,
     /// 单调递增的资源聚合版本。
     pub(crate) revision: u64,
-    /// 软删除时间，RFC3339 格式；为空表示未删除。
-    pub(crate) deleted_at: Option<String>,
+}
+
+/// 资源生命周期、内容和单值有效状态的统一响应。
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct ResourceStateResponse {
+    pub(crate) lifecycle: ResourceLifecycleStateResponse,
+    pub(crate) content: ResourceContentStateResponse,
+    pub(crate) effective: ResourceEffectiveStateResponse,
+}
+
+/// 资源生命周期；删除时间只在 deleted 状态中存在。
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub(crate) enum ResourceLifecycleStateResponse {
+    Active,
+    Deleted { at: String },
+}
+
+/// 资源是否包含对象内容及其校验状态。
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ResourceContentStateResponse {
+    Absent,
+    Pending,
+    Verified,
+    Failed,
+}
+
+/// 需要单值状态判断的消费者所使用的统一有效状态。
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ResourceEffectiveStateResponse {
+    Deleted,
+    NoContent,
+    Verifying,
+    Ready,
+    VerificationFailed,
 }
 
 /// 资源分页响应。
@@ -715,6 +753,7 @@ impl ResourceResponse {
             name: resource.name().to_string(),
             directory,
             kind: resource.kind().as_str().to_string(),
+            state: ResourceStateResponse::from(resource),
             content: resource.content().map(ResourceContentResponse::from),
             actions: actions
                 .available_actions()
@@ -724,7 +763,41 @@ impl ResourceResponse {
             created_at: resource.created_at().to_rfc3339(),
             updated_at: resource.updated_at().to_rfc3339(),
             revision: resource.revision(),
-            deleted_at: resource.deleted_at().map(|value| value.to_rfc3339()),
+        }
+    }
+}
+
+impl From<&Resource> for ResourceStateResponse {
+    fn from(resource: &Resource) -> Self {
+        let state = resource.state();
+        let lifecycle = match state.lifecycle() {
+            ResourceLifecycleStatus::Active => ResourceLifecycleStateResponse::Active,
+            ResourceLifecycleStatus::Deleted => ResourceLifecycleStateResponse::Deleted {
+                at: resource
+                    .deleted_at()
+                    .expect("deleted resource state must retain its deletion timestamp")
+                    .to_rfc3339(),
+            },
+        };
+        let content = match state.content() {
+            None => ResourceContentStateResponse::Absent,
+            Some(ContentVerificationStatus::Pending) => ResourceContentStateResponse::Pending,
+            Some(ContentVerificationStatus::Verified) => ResourceContentStateResponse::Verified,
+            Some(ContentVerificationStatus::Failed) => ResourceContentStateResponse::Failed,
+        };
+        let effective = match state.effective() {
+            ResourceEffectiveStatus::Deleted => ResourceEffectiveStateResponse::Deleted,
+            ResourceEffectiveStatus::NoContent => ResourceEffectiveStateResponse::NoContent,
+            ResourceEffectiveStatus::Verifying => ResourceEffectiveStateResponse::Verifying,
+            ResourceEffectiveStatus::Ready => ResourceEffectiveStateResponse::Ready,
+            ResourceEffectiveStatus::VerificationFailed => {
+                ResourceEffectiveStateResponse::VerificationFailed
+            }
+        };
+        Self {
+            lifecycle,
+            content,
+            effective,
         }
     }
 }
@@ -736,40 +809,17 @@ pub(crate) struct ResourceContentResponse {
     pub(crate) size: u64,
     /// 内容 MIME 类型。
     pub(crate) mime_type: Option<String>,
-    /// 内容校验状态。
-    pub(crate) verification_status: ContentVerificationStatusResponse,
     /// 服务端根据内容本体计算得到的校验和；待校验或校验失败时为空。
     pub(crate) checksum: Option<ChecksumResponse>,
     /// 后台校验失败原因；仅校验失败时存在。
     pub(crate) verification_error: Option<String>,
 }
 
-/// 内容校验状态响应。
-#[derive(Debug, Serialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum ContentVerificationStatusResponse {
-    Pending,
-    Verified,
-    Failed,
-}
-
 impl From<&ResourceContent> for ResourceContentResponse {
     fn from(content: &ResourceContent) -> Self {
-        let verification_status = match content.verification_status() {
-            asset_core::domain::ContentVerificationStatus::Pending => {
-                ContentVerificationStatusResponse::Pending
-            }
-            asset_core::domain::ContentVerificationStatus::Verified => {
-                ContentVerificationStatusResponse::Verified
-            }
-            asset_core::domain::ContentVerificationStatus::Failed => {
-                ContentVerificationStatusResponse::Failed
-            }
-        };
         Self {
             size: content.size(),
             mime_type: content.mime_type().map(str::to_string),
-            verification_status,
             checksum: content.checksum().map(ChecksumResponse::from),
             verification_error: content.verification_error().map(str::to_string),
         }

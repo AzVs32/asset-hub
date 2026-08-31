@@ -44,8 +44,7 @@ export function AssetWorkspace() {
     queryKey: queryKeys.resource(browser.selectedId ?? ""),
     queryFn: () => gateway.findResource(browser.selectedId ?? ""),
     enabled: Boolean(browser.selectedId),
-    refetchInterval: (query) =>
-      query.state.data?.content?.verificationStatus === "pending" ? 1_000 : false,
+    refetchInterval: (query) => (query.state.data?.state.content === "pending" ? 1_000 : false),
   });
   const resource = browser.selectedId ? (selected.data ?? null) : null;
   const directory = browser.selectedDirectoryId

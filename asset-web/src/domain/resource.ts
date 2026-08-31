@@ -8,11 +8,24 @@ import type {
 export type { ResourceActionEffectKind } from "./plugin";
 
 export type ResourceContentDelivery = "auto" | "inline" | "reference";
+export type ResourceContentState = "absent" | "pending" | "verified" | "failed";
+export type ResourceEffectiveState =
+  | "deleted"
+  | "no_content"
+  | "verifying"
+  | "ready"
+  | "verification_failed";
+export type ResourceLifecycleState = { status: "active" } | { status: "deleted"; at: string };
+
+export interface ResourceState {
+  lifecycle: ResourceLifecycleState;
+  content: ResourceContentState;
+  effective: ResourceEffectiveState;
+}
 
 export interface ResourceContent {
   size: number;
   mimeType: string | null;
-  verificationStatus: "pending" | "verified" | "failed";
   checksum: { kind: string; value: string } | null;
   verificationError: string | null;
 }
@@ -35,12 +48,12 @@ export interface Resource {
   name: string;
   directory: string;
   kind: string;
+  state: ResourceState;
   content: ResourceContent | null;
   actions: ResourceAction[];
   createdAt: string;
   updatedAt: string;
   revision: number;
-  deletedAt: string | null;
 }
 
 export interface ResourceKind {

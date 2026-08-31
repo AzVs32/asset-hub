@@ -86,7 +86,7 @@ function Detail({
       subtitle={resourcePath}
       badges={<Chip label={kind?.label ?? resource.kind} size="small" variant="outlined" />}
       action={
-        !editing && !resource.deletedAt ? (
+        !editing && resource.state.lifecycle.status === "active" ? (
           <Button size="small" startIcon={<EditIcon />} onClick={() => setEditing(true)}>
             Edit
           </Button>
@@ -176,8 +176,8 @@ function Detail({
             <DetailRow label="MIME">{resource.content?.mimeType ?? "—"}</DetailRow>
             <DetailRow label="Created">{formatDate(resource.createdAt)}</DetailRow>
             <DetailRow label="Updated">{formatDate(resource.updatedAt)}</DetailRow>
-            {resource.deletedAt ? (
-              <DetailRow label="Deleted">{formatDate(resource.deletedAt)}</DetailRow>
+            {resource.state.lifecycle.status === "deleted" ? (
+              <DetailRow label="Deleted">{formatDate(resource.state.lifecycle.at)}</DetailRow>
             ) : null}
           </DetailSection>
           <DetailAdvanced>

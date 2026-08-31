@@ -185,6 +185,11 @@ describe("composed OpenAPI gateways", () => {
             directory: "uploads",
             kind: "core:resource",
             content: null,
+            state: {
+              lifecycle: { status: "active" },
+              content: "absent",
+              effective: "no_content",
+            },
             actions: [],
             created_at: "2026-01-01T00:00:00Z",
             updated_at: "2026-01-01T00:00:00Z",

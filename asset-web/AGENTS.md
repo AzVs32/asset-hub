@@ -34,6 +34,10 @@ Do not introduce a global store that mixes server state, URL state, and form sta
 Directory selection are mutually exclusive. Directory navigation uses paths, while Directory
 identity and mutations use stable UUIDs. The browser-visible root path is the empty string.
 
+Resource lifecycle, content, and effective status come from the backend `state` contract. Features
+must consume that state directly and must not reconstruct status or precedence from timestamps,
+content metadata, or transport fallbacks.
+
 ## Resource and Directory mutations
 
 - Mutations go through the relevant gateway and backend authorization-bound use case.
