@@ -51,7 +51,6 @@ describe("composed OpenAPI gateways", () => {
         file: new File(["content"], "fallback.txt", { type: "text/plain" }),
         name: " draft  01.txt ",
         directory: " library /project A ",
-        kind: "core:resource",
       },
       (event) => progress.push(event),
     );
@@ -61,6 +60,7 @@ describe("composed OpenAPI gateways", () => {
     const createBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     expect(createBody.name).toBe(" draft  01.txt ");
     expect(createBody.directory).toBe(" library /project A ");
+    expect(createBody).not.toHaveProperty("kind");
     expect(createBody.expected_sha256).toBe(
       "ed7002b439e9ac845f22357d822bac14447368f3032e885031b31f6f2f88a3f8",
     );
@@ -104,7 +104,6 @@ describe("composed OpenAPI gateways", () => {
       file: new File(["content"], "retry.txt", { type: "text/plain" }),
       name: "retry.txt",
       directory: "uploads",
-      kind: "core:resource",
     });
 
     const patchRequests = fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH");
@@ -127,7 +126,6 @@ describe("composed OpenAPI gateways", () => {
       file,
       name: "resume.txt",
       directory: "uploads",
-      kind: "core:resource",
     };
     const failedFetch = vi
       .fn()
@@ -213,7 +211,6 @@ describe("composed OpenAPI gateways", () => {
       file,
       name: "same.txt",
       directory: "uploads",
-      kind: "core:resource",
     };
     const firstFetch = vi
       .fn()

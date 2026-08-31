@@ -53,7 +53,6 @@ export function AssetWorkspace() {
         (candidate): candidate is Directory => candidate?.id === browser.selectedDirectoryId,
       ) ?? null)
     : null;
-  const formDirectory = browser.filters.directory || "/";
   const kinds = browser.kinds.data ?? [];
   const currentDirectory =
     browser.listing.data?.path === browser.filters.directory
@@ -214,8 +213,7 @@ export function AssetWorkspace() {
       <UploadResourceDialog
         open={uploadOpen}
         onOpenChange={setUploadOpen}
-        directory={user.isAdmin && !browser.filters.directory ? "uploads" : formDirectory}
-        kinds={kinds}
+        directory={browser.filters.directory}
         pending={commands.upload.isPending}
         progress={commands.uploadProgress}
         onUpload={(draft) => commands.upload.mutateAsync(draft)}

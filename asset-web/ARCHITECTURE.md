@@ -178,6 +178,9 @@ Directory 更新和 write Action 携带当前 revision；read Action 读取最�
 ```
 
 恢复指纹包含文件 SHA-256，避免同名、同大小但内容不同的文件错误复用上传会话。
+浏览器上传不提交 Resource Kind；后端根据 MIME 类型和文件扩展名检测具体 Kind，无法匹配时
+回退到 `core:resource`。上传目标默认是当前浏览目录，弹窗通过逐层加载直属子目录选择目标；
+Resource 详情展示并编辑后端最终持久化的具体 Kind。
 
 ## 5. 插件宿主模型
 
