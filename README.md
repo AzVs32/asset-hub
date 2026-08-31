@@ -20,6 +20,8 @@ npm --prefix asset-web ci
 
 From the repository root, build the plugin packages:
 
+On Windows, run the following commands from a Git Bash shell.
+
 ```bash
 plugins/resource-text/build.sh
 plugins/resource-image/build.sh
