@@ -1,7 +1,13 @@
-//! 资源聚合及其内容、类型值对象。
+//! 资源聚合及其内容、类型和状态值对象。
+//!
+//! Resource 生命周期与内容校验是两个独立的权威状态轴；[`ResourceState`] 在读取时统一
+//! 投影它们，并通过 [`ResourceState::effective`] 提供软删除优先的单值判断。该投影不
+//! 持久化，也不接收状态写命令。尚未发布为 Resource 的上传流程继续由独立的
+//! [`crate::domain::UploadSession`] 聚合管理。
 
 mod content;
 mod kind;
+mod state;
 
 use crate::domain::DirectoryId;
 use crate::error::ResourceError;
@@ -9,10 +15,11 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 
 pub use content::{
-    Checksum, ChecksumKind, ContentVerification, ContentVerificationStatus, ResourceContent,
-    ResourceContentBuilder, StorageKey,
+    Checksum, ChecksumKind, ContentVerificationStatus, ResourceContent, ResourceContentBuilder,
+    StorageKey,
 };
 pub use kind::ResourceKind;
+pub use state::{ResourceEffectiveStatus, ResourceLifecycleStatus, ResourceState};
 
 /// 资源名称允许的最大字符数。
 const MAX_RESOURCE_NAME_LEN: usize = 255;
@@ -150,10 +157,17 @@ impl Resource {
         self.deleted_at
     }
 
+    /// 返回生命周期与内容校验状态的统一只读投影。
+    ///
+    /// 投影不引入新的持久化状态；需要改变资源时仍应调用对应的领域行为和应用服务用例。
+    pub fn state(&self) -> ResourceState {
+        ResourceState::from_resource(self)
+    }
+
     /// 是否已被软删除
     ///
     /// 当 `deleted_at` 字段不为空时，表示为已经软删除。
-    pub fn is_deleted(&self) -> bool {
+    fn is_deleted(&self) -> bool {
         self.deleted_at.is_some()
     }
 

@@ -390,7 +390,7 @@ impl ResourceService {
         let applicable = self
             .action_candidates_for_resource_kind(resource.kind())
             .into_iter()
-            .filter(|action| resource.content().is_some() || !action.requirements().content)
+            .filter(|action| resource.state().content().is_some() || !action.requirements().content)
             .filter(|action| self.action_matches_resource(action, resource))
             .filter(|action| {
                 let is_edit = action

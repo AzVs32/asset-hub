@@ -5,7 +5,9 @@
 
 use super::{ResourceService, UpdateResource};
 use crate::CoreError;
-use crate::domain::{Checksum, DirectoryId, Resource, ResourceId, ResourceKind, StorageKey};
+use crate::domain::{
+    Checksum, DirectoryId, Resource, ResourceId, ResourceKind, ResourceLifecycleStatus, StorageKey,
+};
 use crate::port::{
     DirectoryLocation, ListResources, LocatedResource, RESERVED_BLOB_STORAGE_PREFIX, ResourcePage,
 };
@@ -38,7 +40,9 @@ impl<'a> ResourceCommandService<'a> {
             .query
             .find_located_by_id(id)
             .await?
-            .filter(|located| !located.resource().is_deleted()))
+            .filter(|located| {
+                located.resource().state().lifecycle() == ResourceLifecycleStatus::Active
+            }))
     }
 
     /// Creates one small Host-generated resource without exposing storage authority to a plugin.
@@ -157,7 +161,8 @@ impl<'a> ResourceCommandService<'a> {
             ));
         }
         let old_storage_key = persisted_content_key(&resource, &directory)?;
-        let restoring = resource.is_deleted() && command.restore;
+        let restoring =
+            resource.state().lifecycle() == ResourceLifecycleStatus::Deleted && command.restore;
 
         if command.restore {
             resource.restore();
@@ -327,11 +332,12 @@ fn persisted_content_key(
     resource: &Resource,
     directory: &DirectoryLocation,
 ) -> Result<Option<StorageKey>, CoreError> {
-    if resource.content().is_none() {
+    let state = resource.state();
+    if state.content().is_none() {
         return Ok(None);
     }
 
-    if resource.is_deleted() {
+    if state.lifecycle() == ResourceLifecycleStatus::Deleted {
         return StorageKey::new(format!(
             "{RESERVED_BLOB_STORAGE_PREFIX}/trash/{}",
             resource.id()

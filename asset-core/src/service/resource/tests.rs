@@ -6,7 +6,7 @@ use crate::domain::{
     DirectoryActionDefinition, DirectoryId, DirectoryKindDefinition, DirectoryPath,
     ResourceActionDefinition, ResourceActionPolicy, ResourceContentEditPolicy,
     ResourceContentMatcher, ResourceContentReplacement, ResourceContentReplacementId, ResourceId,
-    UploadId, UploadSession, UploadStatus, User, UserId, UserRole,
+    ResourceLifecycleStatus, UploadId, UploadSession, UploadStatus, User, UserId, UserRole,
 };
 use crate::port::{
     BlobByteStream, DirectoryActionExecutor, DirectoryActionOutput, DirectoryActionRegistry,
@@ -373,7 +373,7 @@ impl ResourceQuery for InMemoryResourceRepository {
             .unwrap()
             .values()
             .find(|resource| {
-                !resource.is_deleted()
+                resource.state().lifecycle() == ResourceLifecycleStatus::Active
                     && Some(resource.directory_id()) == directory_id
                     && resource.name() == name
             })
@@ -393,7 +393,10 @@ impl ResourceQuery for InMemoryResourceRepository {
             .lock()
             .unwrap()
             .values()
-            .filter(|resource| query.include_deleted() || !resource.is_deleted())
+            .filter(|resource| {
+                query.include_deleted()
+                    || resource.state().lifecycle() == ResourceLifecycleStatus::Active
+            })
             .filter(|resource| query.kinds().is_empty() || query.kinds().contains(resource.kind()))
             .filter(|resource| query.q().is_none_or(|q| resource.name().contains(q)))
             .filter(|resource| {

@@ -26,8 +26,9 @@ pub use directory::{
 pub use identity::{AccessContext, DirectoryOperation, User, UserId, UserRole, UserStatus};
 pub use kind::{KindId, KindIdError};
 pub use resource::{
-    Checksum, ChecksumKind, ContentVerification, ContentVerificationStatus, Resource,
-    ResourceBuilder, ResourceContent, ResourceContentBuilder, ResourceId, ResourceKind, StorageKey,
+    Checksum, ChecksumKind, ContentVerificationStatus, Resource, ResourceBuilder, ResourceContent,
+    ResourceContentBuilder, ResourceEffectiveStatus, ResourceId, ResourceKind,
+    ResourceLifecycleStatus, ResourceState, StorageKey,
 };
 pub use resource_action_policy::{InvalidResourceActionPolicy, ResourceActionPolicy};
 pub use resource_content_edit_policy::{

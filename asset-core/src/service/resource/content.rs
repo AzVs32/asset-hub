@@ -6,7 +6,7 @@ use super::{ReplaceResourceContent, ResourceContentStream, ResourceService};
 use crate::CoreError;
 use crate::domain::{
     Checksum, ChecksumKind, Resource, ResourceContent, ResourceContentReplacement,
-    ResourceContentReplacementId, StorageKey,
+    ResourceContentReplacementId, ResourceEffectiveStatus, StorageKey,
 };
 use crate::port::{BlobByteStream, LocatedResource, RESERVED_BLOB_STORAGE_PREFIX, StagedBlob};
 use asset_plugin_api::manifest::RESOURCE_EDIT_CAPABILITY;
@@ -30,7 +30,10 @@ impl<'a> ResourceContentService<'a> {
         located: &LocatedResource,
     ) -> Result<Option<Bytes>, CoreError> {
         let resource = located.resource();
-        if resource.is_deleted() || resource.content().is_none() {
+        if matches!(
+            resource.state().effective(),
+            ResourceEffectiveStatus::Deleted | ResourceEffectiveStatus::NoContent
+        ) {
             return Ok(None);
         }
         let storage_key = located.storage_key()?;
@@ -43,7 +46,7 @@ impl<'a> ResourceContentService<'a> {
         range: Option<(u64, u64)>,
     ) -> Result<Option<ResourceContentStream>, CoreError> {
         let resource = located.resource();
-        if resource.is_deleted() {
+        if resource.state().effective() == ResourceEffectiveStatus::Deleted {
             return Ok(None);
         }
         let Some(content) = resource.content() else {

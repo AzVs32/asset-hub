@@ -86,9 +86,10 @@ impl<'a> StorageReconciliationService<'a> {
         let resources = self.all_active_resources().await?;
         if resources.is_empty()
             || resources.iter().all(|located| {
-                located.resource().content().is_some_and(|content| {
-                    content.verification_status() != ContentVerificationStatus::Verified
-                })
+                matches!(
+                    located.resource().state().content(),
+                    Some(ContentVerificationStatus::Pending | ContentVerificationStatus::Failed)
+                )
             })
         {
             self.recover_storage_metadata().await
@@ -129,7 +130,7 @@ impl<'a> StorageReconciliationService<'a> {
         for located in resources {
             let storage_key = located.storage_key()?;
             let resource = located.resource();
-            if resource.content().is_some() && !physical_keys.contains(&storage_key) {
+            if resource.state().content().is_some() && !physical_keys.contains(&storage_key) {
                 let _storage_key_guard = self.service.storage_key_locks.lock(&storage_key).await;
                 if self
                     .service
@@ -283,7 +284,7 @@ impl<'a> StorageReconciliationService<'a> {
         for located in resources {
             let storage_key = located.storage_key()?;
             let resource = located.resource();
-            if resource.content().is_some() && !physical_keys.contains(&storage_key) {
+            if resource.state().content().is_some() && !physical_keys.contains(&storage_key) {
                 let _storage_key_guard = self.service.storage_key_locks.lock(&storage_key).await;
                 if self
                     .service
@@ -648,7 +649,7 @@ impl<'a> StorageReconciliationService<'a> {
     async fn remove_missing_blob_resource_locked(&self, key: &StorageKey) -> Result<(), CoreError> {
         let (directory, name) = resource_path_from_key(key)?;
         if let Some(located) = self.service.query.find_by_path(&directory, &name).await?
-            && located.resource().content().is_some()
+            && located.resource().state().content().is_some()
         {
             let resource = located.resource();
             self.service

@@ -120,7 +120,7 @@ impl ResourceContent {
 /// 内容校验的完整持久化状态。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
-pub enum ContentVerification {
+enum ContentVerification {
     Pending,
     Verified { checksum: Checksum },
     Failed { error: String },
@@ -155,7 +155,7 @@ impl<'de> Deserialize<'de> for ContentVerification {
 }
 
 impl ContentVerification {
-    pub fn status(&self) -> ContentVerificationStatus {
+    fn status(&self) -> ContentVerificationStatus {
         match self {
             Self::Pending => ContentVerificationStatus::Pending,
             Self::Verified { .. } => ContentVerificationStatus::Verified,
@@ -163,14 +163,14 @@ impl ContentVerification {
         }
     }
 
-    pub fn checksum(&self) -> Option<&Checksum> {
+    fn checksum(&self) -> Option<&Checksum> {
         match self {
             Self::Verified { checksum } => Some(checksum),
             Self::Pending | Self::Failed { .. } => None,
         }
     }
 
-    pub fn error(&self) -> Option<&str> {
+    fn error(&self) -> Option<&str> {
         match self {
             Self::Failed { error } => Some(error),
             Self::Pending | Self::Verified { .. } => None,
@@ -179,22 +179,11 @@ impl ContentVerification {
 }
 
 /// 面向业务和传输边界的稳定校验状态。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ContentVerificationStatus {
     Pending,
     Verified,
     Failed,
-}
-
-impl ContentVerificationStatus {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Pending => "pending",
-            Self::Verified => "verified",
-            Self::Failed => "failed",
-        }
-    }
 }
 
 /// 资源内容引用构建器。

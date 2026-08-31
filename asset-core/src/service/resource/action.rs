@@ -7,7 +7,8 @@ use super::{ExecuteResourceAction, ResourceActions, ResourceService};
 use crate::CoreError;
 use crate::domain::{
     ActionAccess, Resource, ResourceActionContentDelivery, ResourceActionDefinition,
-    ResourceActionId, ResourceActionPolicy, ResourceContent, ResourceId, StorageKey,
+    ResourceActionId, ResourceActionPolicy, ResourceContent, ResourceEffectiveStatus, ResourceId,
+    StorageKey,
 };
 use crate::port::{LocatedResource, ResourceActionOutput, ResourceActionRequest};
 use crate::service::validate_action_revision;
@@ -52,7 +53,7 @@ impl<'a> ResourceActionService<'a> {
         resource: &Resource,
     ) -> Result<ResourceActions, CoreError> {
         self.service.require_kind_definition(resource.kind())?;
-        if resource.is_deleted() {
+        if resource.state().effective() == ResourceEffectiveStatus::Deleted {
             return Ok(ResourceActions::default());
         }
 
@@ -145,7 +146,7 @@ impl<'a> ResourceActionService<'a> {
         action_id: &ResourceActionId,
     ) -> Result<ResourceActionDefinition, CoreError> {
         self.service.require_kind_definition(resource.kind())?;
-        if resource.is_deleted() {
+        if resource.state().effective() == ResourceEffectiveStatus::Deleted {
             return Err(CoreError::invalid_operation(format!(
                 "deleted resource `{}` cannot execute actions",
                 resource.id()

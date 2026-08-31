@@ -59,7 +59,14 @@ fn soft_delete_rolls_blob_back_when_resource_snapshot_is_stale() {
     assert!(matches!(error, CoreError::Conflict { .. }));
     assert_eq!(blob_storage.get_sync(&key), Some(data));
     assert!(!blob_storage.contains(&trash_key));
-    assert!(!repository.find_sync(&concurrent.id()).unwrap().is_deleted());
+    assert_eq!(
+        repository
+            .find_sync(&concurrent.id())
+            .unwrap()
+            .state()
+            .lifecycle(),
+        ResourceLifecycleStatus::Active
+    );
 }
 
 #[test]
