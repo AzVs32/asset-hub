@@ -16,7 +16,10 @@ export function CoreDirectoryWorkspace({
     <Box
       sx={{
         display: "grid",
-        gridTemplateColumns: { xs: "1fr", lg: "minmax(0, 1fr) 24rem" },
+        gridTemplateColumns: {
+          xs: "1fr",
+          lg: "minmax(0, 1fr) clamp(22rem, 30vw, 30rem)",
+        },
         gridTemplateRows: { xs: "auto auto", lg: "minmax(0, 1fr)" },
         gap: 2,
         flex: 1,

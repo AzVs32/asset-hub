@@ -1,6 +1,15 @@
-import { Box, Card, CardContent, CardHeader, Divider, Stack, Typography } from "@mui/material";
+import { Chip } from "@mui/material";
 import type { Directory, DirectoryKind } from "@/domain/directory";
+import { formatDate } from "@/shared/format";
 import { DirectoryThumbnail } from "./asset-thumbnail";
+import {
+  CopyableValue,
+  DetailAdvanced,
+  DetailPanel,
+  DetailRow,
+  DetailSection,
+  DetailValueList,
+} from "./detail-panel";
 
 export function DirectoryDetail({
   directory,
@@ -9,39 +18,40 @@ export function DirectoryDetail({
   directory: Directory;
   kind: DirectoryKind | null;
 }) {
+  const path = formatDirectory(directory.path);
   return (
-    <Card sx={{ minHeight: 0, overflow: "auto" }}>
-      <CardHeader
-        avatar={<DirectoryThumbnail directory={directory} size={64} />}
-        title={directory.name || "/"}
-        subheader={directory.id}
-      />
-      <Divider />
-      <CardContent>
-        <Stack spacing={2}>
-          <Fact label="Path" value={directory.path || "/"} />
-          <Fact label="Parent" value={directory.parentPath || "/"} />
-          <Fact label="Kind" value={directory.kind} />
-          <Fact label="Kind origin" value={kind ? `${kind.origin.kind}:${kind.origin.id}` : "-"} />
-          <Fact
-            label="Actions"
-            value={directory.actions.map((action) => action.id).join(", ") || "-"}
-          />
-        </Stack>
-      </CardContent>
-    </Card>
+    <DetailPanel
+      thumbnail={<DirectoryThumbnail directory={directory} size={48} />}
+      title={directory.name || "Root"}
+      subtitle={path}
+      badges={<Chip label={kind?.label ?? directory.kind} size="small" variant="outlined" />}
+    >
+      <DetailSection title="General">
+        <DetailRow label="Created">{formatDate(directory.createdAt)}</DetailRow>
+        <DetailRow label="Updated">{formatDate(directory.updatedAt)}</DetailRow>
+      </DetailSection>
+      <DetailAdvanced>
+        <DetailRow label="Directory ID">
+          <CopyableValue value={directory.id} />
+        </DetailRow>
+        <DetailRow label="Parent ID">
+          {directory.parentId ? <CopyableValue value={directory.parentId} /> : "—"}
+        </DetailRow>
+        <DetailRow label="Kind ID">
+          <CopyableValue value={directory.kind} />
+        </DetailRow>
+        <DetailRow label="Kind origin">
+          {kind ? `${kind.origin.kind}:${kind.origin.id}` : "—"}
+        </DetailRow>
+        <DetailRow label="Revision">{directory.revision}</DetailRow>
+        <DetailRow label="Actions">
+          <DetailValueList values={directory.actions.map((action) => action.id)} />
+        </DetailRow>
+      </DetailAdvanced>
+    </DetailPanel>
   );
 }
 
-function Fact({ label, value }: { label: string; value: string }) {
-  return (
-    <Box>
-      <Typography variant="overline" color="text.secondary">
-        {label}
-      </Typography>
-      <Typography variant="body2" sx={{ wordBreak: "break-word" }}>
-        {value}
-      </Typography>
-    </Box>
-  );
+function formatDirectory(directory: string): string {
+  return directory ? `/${directory}` : "/";
 }

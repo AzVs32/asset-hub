@@ -34,9 +34,9 @@ import React from "react";
 import type { Directory, DirectoryAction, DirectoryListing } from "@/domain/directory";
 import { parentDirectory } from "@/domain/directory-path";
 import type { Resource, ResourceAction, ResourceFilters, ResourceKind } from "@/domain/resource";
-import { formatBytes, formatDate } from "@/domain/resource-draft";
 import { usePluginKernel } from "@/kernel/plugin-kernel";
 import { coreDirectoryWorkspaceSlots } from "@/kernel/slots";
+import { formatBytes, formatDate } from "@/shared/format";
 import { DirectoryThumbnail, ResourceThumbnail } from "./asset-thumbnail";
 import { KindSelect } from "./kind-select";
 
