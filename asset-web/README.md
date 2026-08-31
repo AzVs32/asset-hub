@@ -3,8 +3,8 @@
 `asset-web` is the browser host for Asset Hub. It provides the authenticated asset workspace,
 user administration, and the secure UI boundary for backend plugin actions and views.
 
-For dependency rules, state ownership, runtime flows, and plugin-host constraints, see
-[`ARCHITECTURE.md`](ARCHITECTURE.md). Plugin authors should use the
+AI agents and maintainers should follow [`AGENTS.md`](AGENTS.md) for dependency rules, state
+ownership, and plugin-host constraints. Plugin authors should use the
 [`asset-web-sdk`](../sdk/asset-web-sdk/README.md).
 
 ## Prerequisites

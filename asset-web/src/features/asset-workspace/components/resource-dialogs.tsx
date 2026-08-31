@@ -16,21 +16,20 @@ import {
 import React from "react";
 import { Controller, useForm } from "react-hook-form";
 import type { DirectoryKind } from "@/domain/directory";
-import type { ResourceKind, UploadDraft, UploadProgress } from "@/domain/resource";
+import type { UploadDraft, UploadProgress } from "@/domain/resource";
+import { DirectorySelect } from "./directory-select";
 import { KindSelect } from "./kind-select";
 
 interface UploadForm {
   file: FileList;
   name: string;
   directory: string;
-  kind: string;
 }
 
 export function UploadResourceDialog({
   open,
   onOpenChange,
   directory,
-  kinds,
   pending,
   progress,
   onUpload,
@@ -38,16 +37,15 @@ export function UploadResourceDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   directory: string;
-  kinds: ResourceKind[];
   pending: boolean;
   progress: UploadProgress | null;
   onUpload: (draft: UploadDraft) => Promise<unknown>;
 }) {
   const form = useForm<UploadForm>({
-    defaultValues: { name: "", directory, kind: "" },
+    defaultValues: { name: "", directory },
   });
   React.useEffect(() => {
-    if (open) form.reset({ name: "", directory, kind: "" });
+    if (open) form.reset({ name: "", directory });
   }, [directory, form, open]);
   const file = form.watch("file")?.item(0);
 
@@ -72,7 +70,6 @@ export function UploadResourceDialog({
               file: selected,
               name: input.name,
               directory: input.directory,
-              kind: input.kind,
             });
             onOpenChange(false);
           })}
@@ -84,7 +81,16 @@ export function UploadResourceDialog({
             sx={{ minHeight: 128 }}
           >
             {file?.name ?? "Choose a file"}
-            <input type="file" hidden {...form.register("file", { required: true })} />
+            <input
+              type="file"
+              hidden
+              {...form.register("file", {
+                required: true,
+                onChange: (event: React.ChangeEvent<HTMLInputElement>) => {
+                  form.setValue("name", event.target.files?.item(0)?.name ?? "");
+                },
+              })}
+            />
           </Button>
           <Controller
             name="name"
@@ -95,7 +101,7 @@ export function UploadResourceDialog({
                 <TextField
                   {...rest}
                   inputRef={ref}
-                  label="Display name"
+                  label="Resource name"
                   placeholder={file?.name ?? "Defaults to filename"}
                 />
               );
@@ -105,26 +111,13 @@ export function UploadResourceDialog({
             name="directory"
             control={form.control}
             render={({ field }) => {
-              const { ref, ...rest } = field;
-              return <TextField {...rest} inputRef={ref} label="Directory" />;
-            }}
-          />
-          <Controller
-            name="kind"
-            control={form.control}
-            render={({ field }) => {
-              const { ref, ...rest } = field;
+              const { onChange, ref, ...rest } = field;
               return (
-                <KindSelect
+                <DirectorySelect
                   {...rest}
                   inputRef={ref}
-                  label="Kind"
-                  kinds={kinds}
-                  emptyOption={{ label: "Automatic detection" }}
-                  showKind
-                  isKindDisabled={(kind) =>
-                    !kinds.find((item) => item.kind === kind)?.supportsContent
-                  }
+                  onChange={onChange}
+                  disabled={pending}
                 />
               );
             }}

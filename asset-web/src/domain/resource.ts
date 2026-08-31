@@ -80,7 +80,6 @@ export interface UploadDraft {
   file: File;
   name: string;
   directory: string;
-  kind: string;
 }
 
 export interface UploadProgress {

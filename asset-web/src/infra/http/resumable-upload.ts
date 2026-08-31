@@ -37,7 +37,6 @@ export class ResumableUpload {
     const metadata = {
       name: draft.name.length > 0 ? draft.name : file.name,
       directory: normalizeDirectory(draft.directory),
-      ...(draft.kind.trim() ? { kind: draft.kind.trim() } : {}),
       mime_type: file.type || "application/octet-stream",
       size: file.size,
       expected_sha256: expectedSha256,
