@@ -1,0 +1,28 @@
+# Normalize every file Git detects as text and keep cross-platform sources on LF.
+* text=auto eol=lf
+
+# Native Command Prompt scripts conventionally require CRLF on Windows.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary assets must never be modified by line-ending normalization.
+*.avif binary -eol
+*.bmp binary -eol
+*.epub binary -eol
+*.gif binary -eol
+*.ico binary -eol
+*.jpeg binary -eol
+*.jpg binary -eol
+*.otf binary -eol
+*.pdf binary -eol
+*.png binary -eol
+*.sqlite binary -eol
+*.sqlite3 binary -eol
+*.tif binary -eol
+*.tiff binary -eol
+*.ttf binary -eol
+*.wasm binary -eol
+*.webp binary -eol
+*.woff binary -eol
+*.woff2 binary -eol
+*.zip binary -eol

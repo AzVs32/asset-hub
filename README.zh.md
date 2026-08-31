@@ -20,6 +20,8 @@ npm --prefix asset-web ci
 
 从仓库根目录构建插件：
 
+在 Windows 环境中，请在 Git Bash 中运行以下命令。
+
 ```bash
 plugins/resource-text/build.sh
 plugins/resource-image/build.sh
