@@ -4,7 +4,8 @@
 //! 常量与 guest helper 定义在 [`crate::abi::directory`]。
 
 use crate::protocol::{
-    PluginActionAccess, PluginContentReference, PluginDiagnostic, PluginResourceContent, PluginView,
+    PluginActionAccess, PluginContentReference, PluginDiagnostic, PluginResourceContent,
+    PluginResourceState, PluginView,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -190,6 +191,8 @@ pub struct PluginDirectoryResource {
     pub name: String,
     pub kind: String,
     pub revision: u64,
+    /// Authoritative Resource state derived by the Host.
+    pub state: PluginResourceState,
     /// Content metadata exposed by both `metadata` and `content` resource access modes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content: Option<PluginResourceContent>,
@@ -227,10 +230,14 @@ mod tests {
                 "name": "README.md",
                 "kind": "example:resource:document",
                 "revision": 2,
+                "state": {
+                    "lifecycle": {"status": "active"},
+                    "content": "verified",
+                    "effective": "ready"
+                },
                 "content": {
                     "size": 12,
-                    "mime_type": "text/markdown",
-                    "verification_status": "verified"
+                    "mime_type": "text/markdown"
                 },
                 "content_ref": {
                     "encoding": "handle",

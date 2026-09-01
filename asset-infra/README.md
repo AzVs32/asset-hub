@@ -114,6 +114,9 @@ also creates call-scoped handles and reuses the standard content open/read/close
 requires both Resource read permissions in addition to Directory resource listing. Leases are
 destroyed when the Directory Action invocation ends, so plugins receive neither persistent handles
 nor storage paths. Interpretation of special files and Resource Kinds remains plugin-owned.
+Resource Action snapshots and Directory resource pages both receive the same Core-derived
+lifecycle, content, and effective state projection; content metadata does not duplicate verification
+status.
 
 Plugin loading intentionally remains atomic and fail-fast. Package verification, cross-plugin
 capability conflict checks, Wasm compilation, executor bindings, and verified Web snapshots all

@@ -18,7 +18,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use super::content_abi::{ContentLease, HostContentResolver, plugin_resource_content};
+use super::content_abi::{
+    ContentLease, HostContentResolver, plugin_resource_content, plugin_resource_state,
+};
 
 #[derive(Clone)]
 pub(super) struct HostDirectoryResolver {
@@ -261,6 +263,7 @@ impl HostDirectoryResolver {
                                     name: resource.name().to_string(),
                                     kind: resource.kind().as_str().to_string(),
                                     revision: resource.revision(),
+                                    state: plugin_resource_state(resource),
                                     content: resource.content().map(plugin_resource_content),
                                     content_ref: None,
                                 });
@@ -287,6 +290,7 @@ impl HostDirectoryResolver {
                         name: resource.name().to_string(),
                         kind: resource.kind().as_str().to_string(),
                         revision: resource.revision(),
+                        state: plugin_resource_state(resource),
                         content: resource.content().map(plugin_resource_content),
                         content_ref: content_ref.map(|reference| PluginContentReference {
                             encoding: PluginContentReferenceEncoding::Handle,

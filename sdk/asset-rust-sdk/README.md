@@ -31,6 +31,10 @@ Host adapters and implementations of other language SDKs depend on `asset-plugin
 The current `extism-guest` feature is an adapter implementation; public handler errors remain
 independent from Extism so additional Wasm runtimes can implement the same authoring API.
 
+Both `ResourceSnapshot` and directory-listed `DirectoryResource` expose the Host-derived
+`ResourceState`. Plugin code should use its lifecycle, content, and effective values directly and
+must not reconstruct status from content metadata.
+
 Run checks from the repository root:
 
 ```bash

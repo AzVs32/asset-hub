@@ -1,9 +1,9 @@
 {
   "manifest_version": 5,
-  "plugin_api": "asset-hub.plugin-api@3",
+  "plugin_api": "asset-hub.plugin-api@4",
   "browser_frames": {
     "resource": {
-      "channel": "asset-hub.plugin-frame.resource@3",
+      "channel": "asset-hub.plugin-frame.resource@4",
       "host_methods": [
         {
           "name": "executeResourceAction",
@@ -35,7 +35,7 @@
       ]
     },
     "directory": {
-      "channel": "asset-hub.plugin-frame.directory@3",
+      "channel": "asset-hub.plugin-frame.directory@4",
       "host_methods": [
         {
           "name": "executeDirectoryAction",

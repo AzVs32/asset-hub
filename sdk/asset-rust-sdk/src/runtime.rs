@@ -18,7 +18,8 @@ use asset_plugin_api::protocol::{
     PluginDirectoryActionRequest, PluginDirectoryChild, PluginDirectoryResource, PluginFrameView,
     PluginInlineContentEncoding, PluginMediaEncoding, PluginReplacementEncoding, PluginResource,
     PluginResourceActionEffect, PluginResourceActionOutput, PluginResourceActionRequest,
-    PluginView, ReplaceContentEffect, TextView, UpdateDirectoryEffect,
+    PluginResourceContentState, PluginResourceEffectiveState, PluginResourceLifecycleState,
+    PluginResourceState, PluginView, ReplaceContentEffect, TextView, UpdateDirectoryEffect,
 };
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
@@ -93,6 +94,10 @@ impl<'a> ResourceSnapshot<'a> {
         self.0.revision
     }
 
+    pub fn state(self) -> ResourceState<'a> {
+        ResourceState(&self.0.state)
+    }
+
     pub fn updated_at(self) -> &'a str {
         &self.0.updated_at
     }
@@ -115,6 +120,63 @@ impl<'a> ResourceSnapshot<'a> {
             .and_then(|content| content.checksum.as_ref())
             .map(|checksum| (checksum.kind.as_str(), checksum.value.as_str()))
     }
+}
+
+/// Read-only authoritative Resource state exposed to plugin authoring code.
+#[derive(Clone, Copy)]
+pub struct ResourceState<'a>(&'a PluginResourceState);
+
+impl<'a> ResourceState<'a> {
+    pub fn lifecycle(self) -> ResourceLifecycleState<'a> {
+        match &self.0.lifecycle {
+            PluginResourceLifecycleState::Active => ResourceLifecycleState::Active,
+            PluginResourceLifecycleState::Deleted { at } => ResourceLifecycleState::Deleted { at },
+        }
+    }
+
+    pub fn content(self) -> ResourceContentState {
+        match self.0.content {
+            PluginResourceContentState::Absent => ResourceContentState::Absent,
+            PluginResourceContentState::Pending => ResourceContentState::Pending,
+            PluginResourceContentState::Verified => ResourceContentState::Verified,
+            PluginResourceContentState::Failed => ResourceContentState::Failed,
+        }
+    }
+
+    pub fn effective(self) -> ResourceEffectiveState {
+        match self.0.effective {
+            PluginResourceEffectiveState::Deleted => ResourceEffectiveState::Deleted,
+            PluginResourceEffectiveState::NoContent => ResourceEffectiveState::NoContent,
+            PluginResourceEffectiveState::Verifying => ResourceEffectiveState::Verifying,
+            PluginResourceEffectiveState::Ready => ResourceEffectiveState::Ready,
+            PluginResourceEffectiveState::VerificationFailed => {
+                ResourceEffectiveState::VerificationFailed
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceLifecycleState<'a> {
+    Active,
+    Deleted { at: &'a str },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceContentState {
+    Absent,
+    Pending,
+    Verified,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceEffectiveState {
+    Deleted,
+    NoContent,
+    Verifying,
+    Ready,
+    VerificationFailed,
 }
 
 /// Unified inline/reference content reader for the current Resource Action.
@@ -339,6 +401,10 @@ impl DirectoryResource {
 
     pub fn revision(&self) -> u64 {
         self.0.revision
+    }
+
+    pub fn state(&self) -> ResourceState<'_> {
+        ResourceState(&self.0.state)
     }
 
     pub fn content_size(&self) -> Option<u64> {

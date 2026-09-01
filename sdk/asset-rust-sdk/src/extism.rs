@@ -139,6 +139,11 @@ mod tests {
                 "name": "demo.txt",
                 "kind": "core:resource",
                 "revision": 1,
+                "state": {
+                    "lifecycle": {"status": "active"},
+                    "content": "absent",
+                    "effective": "no_content"
+                },
                 "created_at": "2026-01-01T00:00:00Z",
                 "updated_at": "2026-01-01T00:00:00Z"
             }

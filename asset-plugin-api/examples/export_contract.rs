@@ -7,7 +7,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|| "spec".to_string());
     let output = Path::new(&output);
     std::fs::create_dir_all(output)?;
-    write_json(output.join("contract-v3.json"), &spec::contract_catalog())?;
+    write_json(output.join("contract-v4.json"), &spec::contract_catalog())?;
     for (name, schema) in spec::schemas() {
         write_json(output.join(name), &schema)?;
     }

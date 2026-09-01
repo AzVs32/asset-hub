@@ -1,175 +1,17 @@
 {
-  "$id": "urn:asset-hub:plugin-contract:directory-action-result-v3",
+  "$id": "urn:asset-hub:plugin-contract:resource-action-result-v4",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "PluginDirectoryActionResult",
-  "description": "Complete Directory Action handler result.",
+  "title": "PluginResourceActionResult",
+  "description": "Complete Resource Action handler result.",
   "anyOf": [
     {
-      "$ref": "#/$defs/PluginDirectoryActionOutput"
+      "$ref": "#/$defs/PluginResourceActionOutput"
     },
     {
       "$ref": "#/$defs/PluginActionFailure"
     }
   ],
   "$defs": {
-    "CreateTreeDirectory": {
-      "type": "object",
-      "properties": {
-        "kind": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "path": {
-          "description": "Canonical, non-empty path relative to the action's current Directory.",
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "path"
-      ]
-    },
-    "CreateTreeResource": {
-      "type": "object",
-      "properties": {
-        "data": {
-          "type": "string"
-        },
-        "directory": {
-          "description": "Canonical Directory path relative to the action's current Directory; empty means current.",
-          "type": "string"
-        },
-        "encoding": {
-          "$ref": "#/$defs/CreateTreeResourceEncoding"
-        },
-        "kind": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "mime_type": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "name": {
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "name",
-        "encoding",
-        "data"
-      ]
-    },
-    "CreateTreeResourceEncoding": {
-      "type": "string",
-      "enum": [
-        "base64"
-      ]
-    },
-    "DirectoryActionEffect": {
-      "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "kind": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "name": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "parent_id": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "type": {
-              "type": "string",
-              "const": "update"
-            }
-          },
-          "additionalProperties": false,
-          "required": [
-            "type"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "kind": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "name": {
-              "type": "string"
-            },
-            "type": {
-              "type": "string",
-              "const": "create_child"
-            }
-          },
-          "additionalProperties": false,
-          "required": [
-            "type",
-            "name"
-          ]
-        },
-        {
-          "description": "Creates a bounded set of relative directories and resources below the current Directory.\n\nThe Host validates all paths and kinds, applies user authorization, and compensates newly\ncreated entries when a later entry fails. File roles and required structure remain plugin\npolicy rather than fields in the Manifest.",
-          "type": "object",
-          "properties": {
-            "directories": {
-              "type": "array",
-              "items": {
-                "$ref": "#/$defs/CreateTreeDirectory"
-              }
-            },
-            "resources": {
-              "type": "array",
-              "items": {
-                "$ref": "#/$defs/CreateTreeResource"
-              }
-            },
-            "type": {
-              "type": "string",
-              "const": "create_tree"
-            }
-          },
-          "additionalProperties": false,
-          "required": [
-            "type"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "type": {
-              "type": "string",
-              "const": "delete"
-            }
-          },
-          "additionalProperties": false,
-          "required": [
-            "type"
-          ]
-        }
-      ]
-    },
     "PluginActionFailure": {
       "description": "Error response that plugins may return instead of an action view.",
       "type": "object",
@@ -223,7 +65,68 @@
         "error"
       ]
     },
-    "PluginDirectoryActionOutput": {
+    "PluginMediaEncoding": {
+      "description": "Encodings renderable by a media view.",
+      "type": "string",
+      "enum": [
+        "base64",
+        "url"
+      ]
+    },
+    "PluginReplacementEncoding": {
+      "description": "Encoding accepted for bytes returned by a content replacement effect.",
+      "type": "string",
+      "enum": [
+        "base64"
+      ]
+    },
+    "PluginResourceActionEffect": {
+      "description": "Side effects requested by a Resource Action.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "string"
+            },
+            "encoding": {
+              "$ref": "#/$defs/PluginReplacementEncoding"
+            },
+            "mime_type": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "replace_content"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "encoding",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "delete"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        }
+      ]
+    },
+    "PluginResourceActionOutput": {
+      "description": "Standard Resource Action output.",
       "type": "object",
       "properties": {
         "diagnostics": {
@@ -235,7 +138,7 @@
         "effects": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/DirectoryActionEffect"
+            "$ref": "#/$defs/PluginResourceActionEffect"
           }
         },
         "view": {
@@ -250,14 +153,6 @@
         }
       },
       "additionalProperties": false
-    },
-    "PluginMediaEncoding": {
-      "description": "Encodings renderable by a media view.",
-      "type": "string",
-      "enum": [
-        "base64",
-        "url"
-      ]
     },
     "PluginView": {
       "description": "Shared view protocol returned by plugin actions.",
@@ -324,7 +219,7 @@
           "properties": {
             "plugin_api": {
               "type": "string",
-              "const": "asset-hub.plugin-api@3"
+              "const": "asset-hub.plugin-api@4"
             },
             "title": {
               "type": [

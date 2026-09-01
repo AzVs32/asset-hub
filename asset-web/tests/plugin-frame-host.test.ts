@@ -238,7 +238,7 @@ describe("Directory Plugin Frame host bridge", () => {
       effects: [],
       view: {
         type: "plugin_frame",
-        plugin_api: "asset-hub.plugin-api@3",
+        plugin_api: "asset-hub.plugin-api@4",
         title: "Example",
         url: "/plugins/example.document/index.html",
       },
@@ -300,7 +300,7 @@ function pluginOutput(actionId: string): ResourceActionOutput {
     effects: [],
     view: {
       type: "plugin_frame",
-      plugin_api: "asset-hub.plugin-api@3",
+      plugin_api: "asset-hub.plugin-api@4",
       title: "Plugin frame",
       url: "/plugins/example/index.html",
     },

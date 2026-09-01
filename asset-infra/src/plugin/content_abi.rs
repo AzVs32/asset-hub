@@ -1,7 +1,7 @@
 use asset_core::CoreError;
 use asset_core::domain::{
-    ActionAccess, ContentVerificationStatus, ResourceActionContentDelivery, ResourceContent,
-    StorageKey,
+    ActionAccess, ContentVerificationStatus, Resource, ResourceActionContentDelivery,
+    ResourceContent, ResourceEffectiveStatus, ResourceLifecycleStatus, StorageKey,
 };
 use asset_core::port::{BlobStorage, ResourceActionRequest};
 use asset_plugin_api::abi::{
@@ -10,8 +10,9 @@ use asset_plugin_api::abi::{
 use asset_plugin_api::manifest::PluginPermissions;
 use asset_plugin_api::protocol::{
     PluginActionAccess, PluginChecksum, PluginContentBytes, PluginContentReference,
-    PluginContentReferenceEncoding, PluginContentVerificationStatus, PluginInlineContentEncoding,
-    PluginResource, PluginResourceActionRequest, PluginResourceContent,
+    PluginContentReferenceEncoding, PluginInlineContentEncoding, PluginResource,
+    PluginResourceActionRequest, PluginResourceContent, PluginResourceContentState,
+    PluginResourceEffectiveState, PluginResourceLifecycleState, PluginResourceState,
 };
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
@@ -294,16 +295,44 @@ pub(super) fn plugin_resource_content(content: &ResourceContent) -> PluginResour
     PluginResourceContent {
         size: content.size(),
         mime_type: content.mime_type().map(str::to_string),
-        verification_status: match content.verification_status() {
-            ContentVerificationStatus::Pending => PluginContentVerificationStatus::Pending,
-            ContentVerificationStatus::Verified => PluginContentVerificationStatus::Verified,
-            ContentVerificationStatus::Failed => PluginContentVerificationStatus::Failed,
-        },
         checksum: content.checksum().map(|checksum| PluginChecksum {
             kind: checksum.kind().as_str().to_string(),
             value: checksum.value().to_string(),
         }),
         verification_error: content.verification_error().map(str::to_string),
+    }
+}
+
+pub(super) fn plugin_resource_state(resource: &Resource) -> PluginResourceState {
+    let state = resource.state();
+    let lifecycle = match state.lifecycle() {
+        ResourceLifecycleStatus::Active => PluginResourceLifecycleState::Active,
+        ResourceLifecycleStatus::Deleted => PluginResourceLifecycleState::Deleted {
+            at: resource
+                .deleted_at()
+                .expect("deleted resource state must retain its deletion timestamp")
+                .to_rfc3339(),
+        },
+    };
+    let content = match state.content() {
+        None => PluginResourceContentState::Absent,
+        Some(ContentVerificationStatus::Pending) => PluginResourceContentState::Pending,
+        Some(ContentVerificationStatus::Verified) => PluginResourceContentState::Verified,
+        Some(ContentVerificationStatus::Failed) => PluginResourceContentState::Failed,
+    };
+    let effective = match state.effective() {
+        ResourceEffectiveStatus::Deleted => PluginResourceEffectiveState::Deleted,
+        ResourceEffectiveStatus::NoContent => PluginResourceEffectiveState::NoContent,
+        ResourceEffectiveStatus::Verifying => PluginResourceEffectiveState::Verifying,
+        ResourceEffectiveStatus::Ready => PluginResourceEffectiveState::Ready,
+        ResourceEffectiveStatus::VerificationFailed => {
+            PluginResourceEffectiveState::VerificationFailed
+        }
+    };
+    PluginResourceState {
+        lifecycle,
+        content,
+        effective,
     }
 }
 
@@ -373,10 +402,10 @@ pub(super) fn build_payload(
             name: resource.name().to_string(),
             kind: resource.kind().as_str().to_string(),
             revision: resource.revision(),
+            state: plugin_resource_state(resource),
             content: content_ref.map(plugin_resource_content),
             created_at: resource.created_at().to_rfc3339(),
             updated_at: resource.updated_at().to_rfc3339(),
-            deleted_at: resource.deleted_at().map(|value| value.to_rfc3339()),
         },
         content,
         content_ref: content_ref_payload,

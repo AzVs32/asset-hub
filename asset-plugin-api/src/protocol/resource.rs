@@ -32,12 +32,46 @@ pub struct PluginResource {
     pub name: String,
     pub kind: String,
     pub revision: u64,
+    pub state: PluginResourceState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content: Option<PluginResourceContent>,
     pub created_at: String,
     pub updated_at: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub deleted_at: Option<String>,
+}
+
+/// Authoritative Resource lifecycle, content, and effective state exposed to plugins.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PluginResourceState {
+    pub lifecycle: PluginResourceLifecycleState,
+    pub content: PluginResourceContentState,
+    pub effective: PluginResourceEffectiveState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PluginResourceLifecycleState {
+    Active,
+    Deleted { at: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginResourceContentState {
+    Absent,
+    Pending,
+    Verified,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginResourceEffectiveState {
+    Deleted,
+    NoContent,
+    Verifying,
+    Ready,
+    VerificationFailed,
 }
 
 /// Resource content reference exposed to plugins.
@@ -47,19 +81,10 @@ pub struct PluginResourceContent {
     pub size: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
-    pub verification_status: PluginContentVerificationStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checksum: Option<PluginChecksum>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_error: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum PluginContentVerificationStatus {
-    Pending,
-    Verified,
-    Failed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

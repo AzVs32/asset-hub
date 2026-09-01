@@ -15,8 +15,9 @@ mod runtime;
 pub use asset_plugin_api::protocol::PLUGIN_API_VERSION;
 pub use runtime::{
     Diagnostic, DirectoryChild, DirectoryContext, DirectoryResource, DirectoryResponse,
-    DirectorySnapshot, Download, Error, Frame, Media, ResourceContent, ResourceContext,
-    ResourceResponse, ResourceSnapshot, Result, Tree, View, decode_base64, encode_base64,
+    DirectorySnapshot, Download, Error, Frame, Media, ResourceContent, ResourceContentState,
+    ResourceContext, ResourceEffectiveState, ResourceLifecycleState, ResourceResponse,
+    ResourceSnapshot, ResourceState, Result, Tree, View, decode_base64, encode_base64,
     encode_base64_url,
 };
 pub use serde::{Deserialize, Serialize};

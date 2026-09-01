@@ -1,5 +1,5 @@
 {
-  "$id": "urn:asset-hub:plugin-contract:directory-page-v3",
+  "$id": "urn:asset-hub:plugin-contract:directory-page-v4",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "PluginDirectoryPage",
   "type": "object",

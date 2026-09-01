@@ -15,7 +15,7 @@ import {
 } from "../dist/contract.js";
 
 const contract = JSON.parse(
-  readFileSync(new URL("../../../asset-plugin-api/spec/contract-v3.json", import.meta.url)),
+  readFileSync(new URL("../../../asset-plugin-api/spec/contract-v4.json", import.meta.url)),
 );
 
 describe("Browser Frame contract", () => {

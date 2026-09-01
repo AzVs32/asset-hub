@@ -4,13 +4,13 @@
 //! 可用，也不执行插件声明的副作用。
 
 /// Current and only supported Host/plugin wire and ABI version.
-pub const PLUGIN_API_VERSION: &str = "asset-hub.plugin-api@3";
+pub const PLUGIN_API_VERSION: &str = "asset-hub.plugin-api@4";
 
 /// Browser Frame channel used for Resource-bound Host capabilities.
-pub const RESOURCE_FRAME_CHANNEL: &str = "asset-hub.plugin-frame.resource@3";
+pub const RESOURCE_FRAME_CHANNEL: &str = "asset-hub.plugin-frame.resource@4";
 
 /// Browser Frame channel used for Directory-bound Host capabilities.
-pub const DIRECTORY_FRAME_CHANNEL: &str = "asset-hub.plugin-frame.directory@3";
+pub const DIRECTORY_FRAME_CHANNEL: &str = "asset-hub.plugin-frame.directory@4";
 
 /// View discriminants supported by the current action and Browser Frame protocol.
 pub const VIEW_KINDS: &[&str] = &[
@@ -54,9 +54,10 @@ pub use frame::{
 };
 pub use resource::{
     PluginChecksum, PluginContentBytes, PluginContentReference, PluginContentReferenceEncoding,
-    PluginContentVerificationStatus, PluginInlineContentEncoding, PluginReplacementEncoding,
-    PluginResource, PluginResourceActionEffect, PluginResourceActionOutput,
-    PluginResourceActionRequest, PluginResourceActionResult, PluginResourceContent,
+    PluginInlineContentEncoding, PluginReplacementEncoding, PluginResource,
+    PluginResourceActionEffect, PluginResourceActionOutput, PluginResourceActionRequest,
+    PluginResourceActionResult, PluginResourceContent, PluginResourceContentState,
+    PluginResourceEffectiveState, PluginResourceLifecycleState, PluginResourceState,
     ReplaceContentEffect,
 };
 pub use view::{

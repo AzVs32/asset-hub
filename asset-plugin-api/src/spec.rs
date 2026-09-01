@@ -63,15 +63,15 @@ pub fn schemas() -> Vec<(&'static str, Schema)> {
     vec![
         schema::<manifest::PluginManifestDocument>("manifest-v5.schema.json"),
         schema::<manifest::PluginManifestLock>("manifest-lock-v5.schema.json"),
-        schema::<protocol::PluginResourceActionRequest>("resource-action-request-v3.schema.json"),
-        schema::<protocol::PluginResourceActionResult>("resource-action-result-v3.schema.json"),
-        schema::<protocol::PluginDirectoryActionRequest>("directory-action-request-v3.schema.json"),
-        schema::<protocol::PluginDirectoryActionResult>("directory-action-result-v3.schema.json"),
-        schema::<protocol::ResourceFrameActionOutput>("resource-frame-output-v3.schema.json"),
-        schema::<protocol::DirectoryFrameActionOutput>("directory-frame-output-v3.schema.json"),
-        schema::<abi::DirectoryPageRequest>("directory-page-request-v3.schema.json"),
-        schema::<protocol::PluginDirectoryPage>("directory-page-v3.schema.json"),
-        schema::<protocol::PluginDirectoryResourcePage>("directory-resource-page-v3.schema.json"),
+        schema::<protocol::PluginResourceActionRequest>("resource-action-request-v4.schema.json"),
+        schema::<protocol::PluginResourceActionResult>("resource-action-result-v4.schema.json"),
+        schema::<protocol::PluginDirectoryActionRequest>("directory-action-request-v4.schema.json"),
+        schema::<protocol::PluginDirectoryActionResult>("directory-action-result-v4.schema.json"),
+        schema::<protocol::ResourceFrameActionOutput>("resource-frame-output-v4.schema.json"),
+        schema::<protocol::DirectoryFrameActionOutput>("directory-frame-output-v4.schema.json"),
+        schema::<abi::DirectoryPageRequest>("directory-page-request-v4.schema.json"),
+        schema::<protocol::PluginDirectoryPage>("directory-page-v4.schema.json"),
+        schema::<protocol::PluginDirectoryResourcePage>("directory-resource-page-v4.schema.json"),
     ]
 }
 
@@ -156,7 +156,7 @@ fn apply_wire_constraints(name: &str, document: &mut serde_json::Value) {
             "pattern": r"^(?!/)(?![A-Za-z]:/)(?!.*\\)(?!.*//)(?!.*(?:^|/)\.{1,2}(?:/|$))(?!.*/$)[^\u0000-\u001F]+$"
         });
     }
-    if name == "directory-page-request-v3.schema.json" {
+    if name == "directory-page-request-v4.schema.json" {
         document["properties"]["reference"]["minLength"] = serde_json::Value::from(1);
         document["properties"]["directory_id"]["minLength"] = serde_json::Value::from(1);
         document["properties"]["cursor"]["minLength"] = serde_json::Value::from(1);

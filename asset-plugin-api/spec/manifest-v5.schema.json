@@ -408,7 +408,7 @@
           "properties": {
             "plugin_api": {
               "type": "string",
-              "const": "asset-hub.plugin-api@3"
+              "const": "asset-hub.plugin-api@4"
             },
             "type": {
               "type": "string",

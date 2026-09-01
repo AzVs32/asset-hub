@@ -60,9 +60,12 @@ fn load_and_chapter_operations_return_structured_data() {
     )
     .unwrap();
     let load: Value = serde_json::from_str(&load).unwrap();
-    assert_eq!(load["data"]["title"], "Sample Book");
-    assert_eq!(load["data"]["chapters"].as_array().unwrap().len(), 2);
-    assert!(load["data"]["initial_chapter"]["html"].is_string());
+    assert_eq!(load["view"]["data"]["title"], "Sample Book");
+    assert_eq!(
+        load["view"]["data"]["chapters"].as_array().unwrap().len(),
+        2
+    );
+    assert!(load["view"]["data"]["initial_chapter"]["html"].is_string());
 
     let chapter = asset_rust_sdk::__private::run_resource_action(
         request_json(json!({"operation": "chapter", "index": 1})),
@@ -70,9 +73,9 @@ fn load_and_chapter_operations_return_structured_data() {
     )
     .unwrap();
     let chapter: Value = serde_json::from_str(&chapter).unwrap();
-    assert_eq!(chapter["data"]["index"], 1);
+    assert_eq!(chapter["view"]["data"]["index"], 1);
     assert!(
-        chapter["data"]["html"]
+        chapter["view"]["data"]["html"]
             .as_str()
             .unwrap()
             .contains("Second body")
@@ -116,10 +119,14 @@ fn request_json(input: Value) -> String {
             "name": "book.epub",
             "kind": "azvs:epub",
             "revision": 1,
+            "state": {
+                "lifecycle": {"status": "active"},
+                "content": "verified",
+                "effective": "ready"
+            },
             "content": {
                 "size": 1,
                 "mime_type": "application/epub+zip",
-                "verification_status": "verified",
                 "checksum": {
                     "kind": "sha256",
                     "value": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"

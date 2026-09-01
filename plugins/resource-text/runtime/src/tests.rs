@@ -14,8 +14,8 @@ fn large_text_uses_bounded_chunks() {
     )
     .unwrap();
     let load: Value = serde_json::from_str(&load).unwrap();
-    assert_eq!(load["data"]["transfer"], "chunked");
-    assert_eq!(load["data"]["chunk_size"], CONTENT_CHUNK_BYTES);
+    assert_eq!(load["view"]["data"]["transfer"], "chunked");
+    assert_eq!(load["view"]["data"]["chunk_size"], CONTENT_CHUNK_BYTES);
 
     let chunk = asset_rust_sdk::__private::run_resource_action(
         request_json(
@@ -27,10 +27,10 @@ fn large_text_uses_bounded_chunks() {
     )
     .unwrap();
     let chunk: Value = serde_json::from_str(&chunk).unwrap();
-    assert_eq!(chunk["data"]["offset"], CONTENT_CHUNK_BYTES);
-    assert_eq!(chunk["data"]["done"], true);
+    assert_eq!(chunk["view"]["data"]["offset"], CONTENT_CHUNK_BYTES);
+    assert_eq!(chunk["view"]["data"]["done"], true);
     assert_eq!(
-        decode_base64(chunk["data"]["data"].as_str().unwrap()).unwrap(),
+        decode_base64(chunk["view"]["data"]["data"].as_str().unwrap()).unwrap(),
         vec![b'a'; 17]
     );
 }
@@ -100,11 +100,11 @@ fn thumbnail_returns_the_format_specific_static_svg() {
         .unwrap();
         let output: Value = serde_json::from_str(&output).unwrap();
 
-        assert_eq!(output["view"], "media");
-        assert_eq!(output["mime_type"], "image/svg+xml");
-        assert_eq!(output["encoding"], "base64");
-        assert_eq!(output["title"], name);
-        let svg = decode_base64(output["data"].as_str().unwrap()).unwrap();
+        assert_eq!(output["view"]["type"], "media");
+        assert_eq!(output["view"]["mime_type"], "image/svg+xml");
+        assert_eq!(output["view"]["encoding"], "base64");
+        assert_eq!(output["view"]["title"], name);
+        let svg = decode_base64(output["view"]["data"].as_str().unwrap()).unwrap();
         assert!(String::from_utf8(svg).unwrap().contains(marker));
     }
 }
@@ -210,10 +210,14 @@ fn resource_json() -> Value {
         "name": "demo.md",
         "kind": "resource:markdown",
         "revision": 1,
+        "state": {
+            "lifecycle": {"status": "active"},
+            "content": "verified",
+            "effective": "ready"
+        },
         "content": {
             "size": 4,
             "mime_type": "text/markdown",
-            "verification_status": "verified",
             "checksum": {
                 "kind": "sha256",
                 "value": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"

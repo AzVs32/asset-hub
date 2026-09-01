@@ -1,7 +1,7 @@
 {
-  "$id": "urn:asset-hub:plugin-contract:directory-frame-output-v3",
+  "$id": "urn:asset-hub:plugin-contract:resource-frame-output-v4",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "DirectoryFrameActionOutput",
+  "title": "ResourceFrameActionOutput",
   "type": "object",
   "properties": {
     "action": {
@@ -13,14 +13,14 @@
         "$ref": "#/$defs/PluginDiagnostic"
       }
     },
-    "directoryId": {
-      "type": "string"
-    },
     "effects": {
       "type": "array",
       "items": {
-        "$ref": "#/$defs/DirectoryFrameEffectKind"
+        "$ref": "#/$defs/ResourceFrameEffectKind"
       }
+    },
+    "resourceId": {
+      "type": "string"
     },
     "view": {
       "anyOf": [
@@ -35,21 +35,12 @@
   },
   "additionalProperties": false,
   "required": [
-    "directoryId",
+    "resourceId",
     "action",
     "effects",
     "diagnostics"
   ],
   "$defs": {
-    "DirectoryFrameEffectKind": {
-      "type": "string",
-      "enum": [
-        "update",
-        "create_child",
-        "create_tree",
-        "delete"
-      ]
-    },
     "PluginDiagnostic": {
       "description": "Machine-readable diagnostic produced by a plugin or by a host execution phase.",
       "type": "object",
@@ -157,7 +148,7 @@
           "properties": {
             "plugin_api": {
               "type": "string",
-              "const": "asset-hub.plugin-api@3"
+              "const": "asset-hub.plugin-api@4"
             },
             "title": {
               "type": [
@@ -256,6 +247,13 @@
             "url"
           ]
         }
+      ]
+    },
+    "ResourceFrameEffectKind": {
+      "type": "string",
+      "enum": [
+        "replace_content",
+        "delete"
       ]
     }
   }

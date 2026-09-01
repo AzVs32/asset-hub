@@ -1,5 +1,5 @@
 {
-  "$id": "urn:asset-hub:plugin-contract:directory-resource-page-v3",
+  "$id": "urn:asset-hub:plugin-contract:directory-resource-page-v4",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "PluginDirectoryResourcePage",
   "type": "object",
@@ -62,14 +62,6 @@
         "handle"
       ]
     },
-    "PluginContentVerificationStatus": {
-      "type": "string",
-      "enum": [
-        "pending",
-        "verified",
-        "failed"
-      ]
-    },
     "PluginDirectoryResource": {
       "type": "object",
       "properties": {
@@ -109,6 +101,10 @@
           "type": "integer",
           "format": "uint64",
           "minimum": 0
+        },
+        "state": {
+          "description": "Authoritative Resource state derived by the Host.",
+          "$ref": "#/$defs/PluginResourceState"
         }
       },
       "additionalProperties": false,
@@ -116,7 +112,8 @@
         "id",
         "name",
         "kind",
-        "revision"
+        "revision",
+        "state"
       ]
     },
     "PluginResourceContent": {
@@ -149,15 +146,85 @@
             "string",
             "null"
           ]
-        },
-        "verification_status": {
-          "$ref": "#/$defs/PluginContentVerificationStatus"
         }
       },
       "additionalProperties": false,
       "required": [
-        "size",
-        "verification_status"
+        "size"
+      ]
+    },
+    "PluginResourceContentState": {
+      "type": "string",
+      "enum": [
+        "absent",
+        "pending",
+        "verified",
+        "failed"
+      ]
+    },
+    "PluginResourceEffectiveState": {
+      "type": "string",
+      "enum": [
+        "deleted",
+        "no_content",
+        "verifying",
+        "ready",
+        "verification_failed"
+      ]
+    },
+    "PluginResourceLifecycleState": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "const": "active"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "status"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "at": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string",
+              "const": "deleted"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "at"
+          ]
+        }
+      ]
+    },
+    "PluginResourceState": {
+      "description": "Authoritative Resource lifecycle, content, and effective state exposed to plugins.",
+      "type": "object",
+      "properties": {
+        "content": {
+          "$ref": "#/$defs/PluginResourceContentState"
+        },
+        "effective": {
+          "$ref": "#/$defs/PluginResourceEffectiveState"
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/PluginResourceLifecycleState"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "lifecycle",
+        "content",
+        "effective"
       ]
     }
   }
