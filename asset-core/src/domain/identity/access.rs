@@ -39,13 +39,13 @@ pub enum DirectoryOperation {
     CreateDirectory,
     UpdateDirectory,
     DeleteDirectory,
+    CreateResource,
     ReadResource,
     UpdateResource,
     ReplaceResourceContent,
     ExecuteDirectoryAction,
     ExecuteResourceAction,
     DeleteResource,
-    PurgeResource,
 }
 
 impl DirectoryOperation {
@@ -56,13 +56,13 @@ impl DirectoryOperation {
             Self::CreateDirectory => "create directory",
             Self::UpdateDirectory => "update directory",
             Self::DeleteDirectory => "delete directory",
+            Self::CreateResource => "create resource",
             Self::ReadResource => "read resource",
             Self::UpdateResource => "update resource",
             Self::ReplaceResourceContent => "replace resource content",
             Self::ExecuteDirectoryAction => "execute directory action",
             Self::ExecuteResourceAction => "execute resource action",
             Self::DeleteResource => "delete resource",
-            Self::PurgeResource => "purge resource",
         }
     }
 }

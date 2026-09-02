@@ -22,14 +22,15 @@ pub mod plugin_package {
 use asset_core::{
     CoreError, port::BlobStorage, port::DirectoryProjection, port::DirectoryQuery,
     port::DirectoryRelocationStore, port::DirectoryStorage, port::DirectoryStore,
-    port::ResourceContentReplacementRepository, port::ResourceQuery, port::ResourceRepository,
+    port::ResourceContentReplacementRepository, port::ResourceMaintenanceReadModel, port::ResourceReadModel,
+    port::ResourceRelocationStore, port::ResourceStore,
     port::StorageScanner, port::UploadSessionRepository, port::UserQuery, port::UserRepository,
 };
 use config::{AssetInfraConfig, BlobBackend, DatabaseBackend};
 use directory_index::InMemoryDirectoryIndex;
 use sqlite::{
     SqliteDatabase, SqliteDirectoryStore, SqliteIdentityRepository,
-    SqliteResourceContentReplacementRepository, SqliteResourceRepository,
+    SqliteResourceContentReplacementRepository, SqliteResourceStore,
     SqliteUploadSessionRepository,
 };
 use std::sync::Arc;
@@ -43,7 +44,7 @@ use storage::{FileSystemScanner, OpenDalBlobStorage};
 pub struct AssetInfrastructure {
     /// 实际生效的基础设施配置。
     config: AssetInfraConfig,
-    resource_repository: Arc<SqliteResourceRepository>,
+    resource_store: Arc<SqliteResourceStore>,
     directory_store: Arc<SqliteDirectoryStore>,
     directory_index: Arc<InMemoryDirectoryIndex>,
     identity_repository: Arc<SqliteIdentityRepository>,
@@ -80,7 +81,7 @@ impl AssetInfrastructure {
             elapsed_ms = sqlite_started.elapsed().as_millis(),
             "SQLite initialized"
         );
-        let resource_repository = Arc::new(SqliteResourceRepository::new(database.pool().clone()));
+        let resource_store = Arc::new(SqliteResourceStore::new(database.pool().clone()));
         let directory_store = Arc::new(SqliteDirectoryStore::new(database.pool().clone()));
         let directory_index = Arc::new(InMemoryDirectoryIndex::from_directories(
             directory_store.load_all().await?,
@@ -93,7 +94,7 @@ impl AssetInfrastructure {
         );
         Ok(Self {
             config,
-            resource_repository,
+            resource_store,
             directory_store,
             directory_index,
             identity_repository,
@@ -110,12 +111,20 @@ impl AssetInfrastructure {
     }
 
     /// 返回资源仓储端口对象。
-    pub fn resource_repository(&self) -> Arc<dyn ResourceRepository> {
-        self.resource_repository.clone()
+    pub fn resource_store(&self) -> Arc<dyn ResourceStore> {
+        self.resource_store.clone()
     }
 
-    pub fn resource_query(&self) -> Arc<dyn ResourceQuery> {
-        self.resource_repository.clone()
+    pub fn resource_read_model(&self) -> Arc<dyn ResourceReadModel> {
+        self.resource_store.clone()
+    }
+
+    pub fn resource_relocation_store(&self) -> Arc<dyn ResourceRelocationStore> {
+        self.resource_store.clone()
+    }
+
+    pub fn resource_maintenance_read_model(&self) -> Arc<dyn ResourceMaintenanceReadModel> {
+        self.resource_store.clone()
     }
 
     pub fn directory_store(&self) -> Arc<dyn DirectoryStore> {

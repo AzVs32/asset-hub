@@ -48,9 +48,7 @@ pub(crate) async fn list_directory(
     let page = query.page.unwrap_or(DEFAULT_PAGE).max(1);
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let offset = u64::from(page - 1) * u64::from(limit);
-    let mut resources_query = ListResources::new(limit, offset)
-        .with_directory(directory.clone())
-        .with_include_deleted(query.include_deleted.unwrap_or(false));
+    let mut resources_query = ListResources::new(limit, offset, DirectoryId::root());
 
     if let Some(kind) = query.kind {
         resources_query = resources_query.with_kind(parse_kind(kind)?);
@@ -73,14 +71,20 @@ pub(crate) async fn list_directory(
         .await?;
     let resources = state
         .secured_resources(&access.0)
-        .list_resources(resources_query)
+        .list(&directory, resources_query)
         .await?;
 
     Ok(Json(DirectoryListingResponse {
         path: directory,
         directory: directory_response(state.directories(), &workspace, &current)?,
         folders,
-        resources: resource_page_response(state.resources(), &workspace, resources, page)?,
+        resources: resource_page_response(
+            state.resources(),
+            state.resource_actions(),
+            &workspace,
+            resources,
+            page,
+        )?,
     }))
 }
 

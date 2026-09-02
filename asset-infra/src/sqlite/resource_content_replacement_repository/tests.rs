@@ -1,7 +1,7 @@
 use super::*;
-use crate::sqlite::{SqliteDatabase, SqliteResourceRepository};
+use crate::sqlite::{SqliteDatabase, SqliteResourceStore};
 use asset_core::domain::{Checksum, Resource};
-use asset_core::port::ResourceRepository;
+use asset_core::port::ResourceStore;
 
 #[tokio::test]
 async fn pending_replacement_roundtrips_and_is_unique_per_resource() {
@@ -12,7 +12,7 @@ async fn pending_replacement_roundtrips_and_is_unique_per_resource() {
         ))
         .join("asset-hub.sqlite");
     let database = SqliteDatabase::connect(&path, 1).await.unwrap();
-    let resources = SqliteResourceRepository::new(database.pool().clone());
+    let resources = SqliteResourceStore::new(database.pool().clone());
     let repository = SqliteResourceContentReplacementRepository::new(database.pool().clone());
     let content = ResourceContent::verified(3, Checksum::sha256("a".repeat(64)).unwrap())
         .with_mime_type("text/plain")
@@ -22,7 +22,7 @@ async fn pending_replacement_roundtrips_and_is_unique_per_resource() {
         .with_content(content.clone())
         .build()
         .unwrap();
-    resources.save(&resource).await.unwrap();
+    resources.insert(&resource).await.unwrap();
     let pending = ResourceContentReplacement::new(
         resource.id(),
         resource.revision(),
@@ -54,14 +54,14 @@ async fn invalid_persisted_replacement_content_is_rejected() {
         ))
         .join("asset-hub.sqlite");
     let database = SqliteDatabase::connect(&path, 1).await.unwrap();
-    let resources = SqliteResourceRepository::new(database.pool().clone());
+    let resources = SqliteResourceStore::new(database.pool().clone());
     let repository = SqliteResourceContentReplacementRepository::new(database.pool().clone());
     let content = ResourceContent::pending(3).build().unwrap();
     let resource = Resource::builder("note.txt")
         .with_content(content.clone())
         .build()
         .unwrap();
-    resources.save(&resource).await.unwrap();
+    resources.insert(&resource).await.unwrap();
     let pending = ResourceContentReplacement::new(
         resource.id(),
         resource.revision(),

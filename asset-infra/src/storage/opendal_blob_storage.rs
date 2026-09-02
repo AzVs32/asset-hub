@@ -225,6 +225,13 @@ impl BlobStorage for OpenDalBlobStorage {
         }
     }
 
+    async fn exists(&self, key: &StorageKey) -> Result<bool, CoreError> {
+        self.operator
+            .exists(key.as_str())
+            .await
+            .map_err(|error| CoreError::storage("blob.exists", error))
+    }
+
     async fn get_stream(&self, key: &StorageKey) -> Result<Option<BlobByteStream>, CoreError> {
         if let Some(root) = &self.local_root {
             let file = match tokio::fs::File::open(root.join(key.as_str())).await {

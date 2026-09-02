@@ -10,7 +10,8 @@ pub use action::{
 };
 pub use kind::ResourceKindRegistry;
 pub use persistence::{
-    ListResources, LocatedResource, ResourcePage, ResourceQuery, ResourceRepository,
+    ListResources, LocatedResource, ResourceMaintenanceReadModel, ResourcePage, ResourceReadModel,
+    ResourceRelocation, ResourceRelocationStore, ResourceStore,
 };
 pub use replacement::ResourceContentReplacementRepository;
 

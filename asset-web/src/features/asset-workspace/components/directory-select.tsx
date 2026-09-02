@@ -41,7 +41,6 @@ export function DirectorySelect({ value, onChange, ...props }: DirectorySelectPr
       limit: 1,
       query: "",
       kind: "",
-      includeDeleted: false,
     }),
     [directory],
   );

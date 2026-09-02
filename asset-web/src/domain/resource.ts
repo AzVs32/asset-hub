@@ -46,6 +46,7 @@ export interface ResourceAction {
 export interface Resource {
   id: string;
   name: string;
+  directoryId: string;
   directory: string;
   kind: string;
   state: ResourceState;
@@ -80,7 +81,6 @@ export interface ResourceFilters {
   limit: number;
   query: string;
   kind: string;
-  includeDeleted: boolean;
 }
 
 export interface ResourceDraft {

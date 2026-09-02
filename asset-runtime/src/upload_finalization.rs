@@ -6,7 +6,7 @@
 
 use asset_core::CoreError;
 use asset_core::domain::UploadId;
-use asset_core::service::ResourceService;
+use asset_core::service::UploadService;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
@@ -44,7 +44,7 @@ struct SchedulerInner {
 }
 
 impl UploadFinalizationScheduler {
-    pub(crate) fn new(service: ResourceService) -> Self {
+    pub(crate) fn new(service: UploadService) -> Self {
         // 调度接口是同步方法，因此使用无界 channel 将“提交请求”和“执行最终化”解耦。
         // receiver 只交给下面启动的唯一监督器，所有 scheduler clone 都复用这个队列。
         let (sender, receiver) = mpsc::unbounded_channel();
@@ -103,7 +103,7 @@ impl Drop for SchedulerInner {
 }
 
 async fn run_supervisor(
-    service: ResourceService,
+    service: UploadService,
     mut receiver: mpsc::UnboundedReceiver<UploadId>,
     scheduled: Arc<Mutex<HashSet<UploadId>>>,
 ) {
@@ -122,7 +122,7 @@ async fn run_supervisor(
                 let service = service.clone();
                 // 每个上传由独立子任务执行，避免某个慢上传阻塞其他 ID 的最终化。
                 let task = tasks.spawn(async move {
-                    let result = service.finalize_upload(&id).await;
+                    let result = service.finalize(&id).await;
                     (id, result)
                 });
                 // 在任务结果中记录对应关系，供非正常结束时清理 scheduled。

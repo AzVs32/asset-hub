@@ -1,7 +1,7 @@
 use asset_core::{
     CoreError,
     domain::{DirectoryId, DirectoryResourceAccess, ResourceId, StorageKey},
-    port::{DirectoryActionRequest, DirectoryQuery, ListResources, ResourceQuery},
+    port::{DirectoryActionRequest, DirectoryQuery, ListResources, ResourceReadModel},
 };
 use asset_plugin_api::abi::{
     DIRECTORY_LIST_CHILDREN_FN, DIRECTORY_LIST_RESOURCES_FN, DirectoryPageRequest,
@@ -25,7 +25,7 @@ use super::content_abi::{
 #[derive(Clone)]
 pub(super) struct HostDirectoryResolver {
     directories: Arc<dyn DirectoryQuery>,
-    resources: Arc<dyn ResourceQuery>,
+    resources: Arc<dyn ResourceReadModel>,
     content: HostContentResolver,
     permissions: PluginPermissions,
     state: Arc<Mutex<HashMap<String, AvailableDirectory>>>,
@@ -90,7 +90,7 @@ pub(super) fn host_functions(resolver: &HostDirectoryResolver) -> [Function; 2] 
 impl HostDirectoryResolver {
     pub(super) fn new(
         directories: Arc<dyn DirectoryQuery>,
-        resources: Arc<dyn ResourceQuery>,
+        resources: Arc<dyn ResourceReadModel>,
         content: HostContentResolver,
         permissions: PluginPermissions,
     ) -> Self {
@@ -229,7 +229,7 @@ impl HostDirectoryResolver {
         )?;
         let page =
             self.runtime.block_on(self.resources.list(
-                &ListResources::new(request.limit(), offset).with_directory_id(directory_id),
+                &ListResources::new(request.limit(), offset, directory_id),
             ))?;
         serde_json::to_string(&PluginDirectoryResourcePage {
             items: page

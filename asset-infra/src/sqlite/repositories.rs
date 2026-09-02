@@ -6,8 +6,8 @@ use asset_core::domain::{
 };
 use asset_core::port::{
     DirectoryLocation, DirectoryRelocation, DirectoryRelocationStore, DirectoryRevisionUpdate,
-    DirectoryStore, ListResources, LocatedResource, ResourcePage, ResourceQuery,
-    ResourceRepository,
+    DirectoryStore, ListResources, LocatedResource, ResourceMaintenanceReadModel, ResourcePage,
+    ResourceReadModel, ResourceRelocation, ResourceRelocationStore, ResourceStore,
 };
 use chrono::{DateTime, Utc};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
@@ -78,6 +78,22 @@ struct LocatedResourceRow {
     directory_path: String,
 }
 
+#[derive(sqlx::FromRow)]
+struct ResourceRelocationRow {
+    resource_id: String,
+    expected_revision: i64,
+    source_key: String,
+    destination_key: String,
+    name: String,
+    directory_id: String,
+    kind: String,
+    content_json: Option<String>,
+    created_at: String,
+    updated_at: String,
+    revision: i64,
+    deleted_at: Option<String>,
+}
+
 /// SQLite 目录记录，与 Core 的目录聚合保持解耦。
 #[derive(sqlx::FromRow)]
 struct DirectoryRow {
@@ -142,13 +158,21 @@ impl SqliteDatabase {
 
 /// SQLite adapter for the Resource aggregate and its query projection.
 #[derive(Clone)]
-pub struct SqliteResourceRepository {
+pub struct SqliteResourceStore {
     pool: SqlitePool,
 }
 
-impl SqliteResourceRepository {
+impl SqliteResourceStore {
     pub(crate) fn new(pool: SqlitePool) -> Self {
         Self { pool }
+    }
+}
+
+fn map_resource_insert_error(error: sqlx::Error) -> CoreError {
+    if error.to_string().contains("UNIQUE") {
+        CoreError::conflict("a resource with the same identity or directory name already exists")
+    } else {
+        CoreError::repository("resource.insert", error)
     }
 }
 
@@ -165,7 +189,7 @@ impl SqliteDirectoryStore {
 }
 
 #[async_trait::async_trait]
-impl ResourceRepository for SqliteResourceRepository {
+impl ResourceStore for SqliteResourceStore {
     async fn health_check(&self) -> Result<(), CoreError> {
         sqlx::query_scalar::<_, i64>("SELECT 1")
             .fetch_one(&self.pool)
@@ -174,7 +198,7 @@ impl ResourceRepository for SqliteResourceRepository {
             .map_err(|error| CoreError::repository("health_check", error))
     }
 
-    async fn save(&self, resource: &Resource) -> Result<(), CoreError> {
+    async fn insert(&self, resource: &Resource) -> Result<(), CoreError> {
         let content_json = resource
             .content()
             .map(serde_json::to_string)
@@ -195,15 +219,6 @@ impl ResourceRepository for SqliteResourceRepository {
                 deleted_at
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                name = excluded.name,
-                directory_id = excluded.directory_id,
-                kind = excluded.kind,
-                content_json = excluded.content_json,
-                created_at = excluded.created_at,
-                updated_at = excluded.updated_at,
-                revision = excluded.revision,
-                deleted_at = excluded.deleted_at
             "#,
         )
         .bind(resource.id().to_string())
@@ -217,12 +232,12 @@ impl ResourceRepository for SqliteResourceRepository {
         .bind(resource.deleted_at().map(encode_timestamp))
         .execute(&self.pool)
         .await
-        .map_err(|error| CoreError::repository("save", error))?;
+        .map_err(map_resource_insert_error)?;
 
         Ok(())
     }
 
-    async fn save_if_unchanged(
+    async fn update_if_revision(
         &self,
         resource: &Resource,
         expected_revision: u64,
@@ -253,11 +268,11 @@ impl ResourceRepository for SqliteResourceRepository {
         .bind(encode_revision(expected_revision)?)
         .execute(&self.pool)
         .await
-        .map_err(|error| CoreError::repository("save_if_unchanged", error))?;
+        .map_err(|error| CoreError::repository("resource.update_if_revision", error))?;
         Ok(result.rows_affected() == 1)
     }
 
-    async fn find_by_id(&self, id: &ResourceId) -> Result<Option<Resource>, CoreError> {
+    async fn load(&self, id: &ResourceId) -> Result<Option<Resource>, CoreError> {
         let statement = format!("{RESOURCE_AGGREGATE_SELECT} WHERE resources.id = ?");
         let row = sqlx::query_as::<_, ResourceRow>(&statement)
             .bind(id.to_string())
@@ -268,7 +283,7 @@ impl ResourceRepository for SqliteResourceRepository {
         row.map(decode_resource).transpose()
     }
 
-    async fn remove_if_unchanged(
+    async fn delete_if_revision(
         &self,
         id: &ResourceId,
         expected_revision: u64,
@@ -278,25 +293,16 @@ impl ResourceRepository for SqliteResourceRepository {
             .bind(encode_revision(expected_revision)?)
             .execute(&self.pool)
             .await
-            .map_err(|error| CoreError::repository("remove_if_unchanged", error))?;
+            .map_err(|error| CoreError::repository("resource.delete_if_revision", error))?;
 
         Ok(result.rows_affected() == 1)
     }
 
-    async fn remove(&self, id: &ResourceId) -> Result<(), CoreError> {
-        sqlx::query("DELETE FROM resources WHERE id = ?")
-            .bind(id.to_string())
-            .execute(&self.pool)
-            .await
-            .map_err(|error| CoreError::repository("remove", error))?;
-
-        Ok(())
-    }
 }
 
 #[async_trait::async_trait]
-impl ResourceQuery for SqliteResourceRepository {
-    async fn find_located_by_id(
+impl ResourceReadModel for SqliteResourceStore {
+    async fn find_by_id(
         &self,
         id: &ResourceId,
     ) -> Result<Option<LocatedResource>, CoreError> {
@@ -310,17 +316,16 @@ impl ResourceQuery for SqliteResourceRepository {
         row.map(decode_located_resource).transpose()
     }
 
-    async fn find_by_path(
+    async fn find_by_directory_and_name(
         &self,
-        directory: &DirectoryPath,
+        directory_id: DirectoryId,
         name: &str,
     ) -> Result<Option<LocatedResource>, CoreError> {
         let statement = format!(
-            "{RESOURCE_SELECT} WHERE directory_paths.path = ? AND resources.name = ? \
-             AND resources.deleted_at IS NULL"
+            "{RESOURCE_SELECT} WHERE resources.directory_id = ? AND resources.name = ?"
         );
         let row = sqlx::query_as::<_, LocatedResourceRow>(&statement)
-            .bind(directory.path())
+            .bind(directory_id.to_string())
             .bind(name)
             .fetch_optional(&self.pool)
             .await
@@ -351,6 +356,102 @@ impl ResourceQuery for SqliteResourceRepository {
             limit: query.limit(),
             offset: query.offset(),
         })
+    }
+}
+
+#[async_trait::async_trait]
+impl ResourceMaintenanceReadModel for SqliteResourceStore {
+    async fn list_all(&self) -> Result<Vec<LocatedResource>, CoreError> {
+        sqlx::query_as::<_, LocatedResourceRow>(RESOURCE_SELECT)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|error| CoreError::repository("resource.maintenance.list_all", error))?
+            .into_iter()
+            .map(decode_located_resource)
+            .collect()
+    }
+}
+
+#[async_trait::async_trait]
+impl ResourceRelocationStore for SqliteResourceStore {
+    async fn save(&self, relocation: &ResourceRelocation) -> Result<(), CoreError> {
+        let desired = relocation.desired();
+        let content_json = desired
+            .content()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|error| CoreError::repository("resource.relocation.encode_content", error))?;
+        sqlx::query(
+            r#"
+            INSERT INTO resource_relocations (
+                resource_id, expected_revision, source_key, destination_key,
+                name, directory_id, kind, content_json, created_at, updated_at, revision,
+                deleted_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(desired.id().to_string())
+        .bind(encode_revision(relocation.expected_revision())?)
+        .bind(relocation.source_key().as_str())
+        .bind(relocation.destination_key().as_str())
+        .bind(desired.name())
+        .bind(desired.directory_id().to_string())
+        .bind(desired.kind().as_str())
+        .bind(content_json)
+        .bind(encode_timestamp(desired.created_at()))
+        .bind(encode_timestamp(desired.updated_at()))
+        .bind(encode_revision(desired.revision())?)
+        .bind(desired.deleted_at().map(encode_timestamp))
+        .execute(&self.pool)
+        .await
+        .map_err(|error| CoreError::repository("resource.relocation.save", error))?;
+        Ok(())
+    }
+
+    async fn load_all(&self) -> Result<Vec<ResourceRelocation>, CoreError> {
+        let rows = sqlx::query_as::<_, ResourceRelocationRow>(
+            r#"
+            SELECT resource_id, expected_revision, source_key, destination_key,
+                   name, directory_id, kind, content_json, created_at, updated_at, revision,
+                   deleted_at
+            FROM resource_relocations
+            ORDER BY resource_id
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| CoreError::repository("resource.relocation.load_all", error))?;
+
+        rows.into_iter()
+            .map(|row| {
+                let desired = decode_resource(ResourceRow {
+                    id: row.resource_id,
+                    name: row.name,
+                    directory_id: row.directory_id,
+                    kind: row.kind,
+                    content_json: row.content_json,
+                    created_at: row.created_at,
+                    updated_at: row.updated_at,
+                    revision: row.revision,
+                    deleted_at: row.deleted_at,
+                })?;
+                ResourceRelocation::new(
+                    desired,
+                    decode_revision(row.expected_revision)?,
+                    asset_core::domain::StorageKey::new(row.source_key)?,
+                    asset_core::domain::StorageKey::new(row.destination_key)?,
+                )
+            })
+            .collect()
+    }
+
+    async fn complete(&self, id: &ResourceId) -> Result<(), CoreError> {
+        sqlx::query("DELETE FROM resource_relocations WHERE resource_id = ?")
+            .bind(id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|error| CoreError::repository("resource.relocation.complete", error))?;
+        Ok(())
     }
 }
 
@@ -669,11 +770,6 @@ fn build_list_select_query<'a>(query: &'a ListResources) -> QueryBuilder<'a, Sql
 fn push_list_where<'a>(builder: &mut QueryBuilder<'a, Sqlite>, query: &'a ListResources) {
     let mut has_where = false;
 
-    if !query.include_deleted() {
-        push_condition_prefix(builder, &mut has_where);
-        builder.push("resources.deleted_at IS NULL");
-    }
-
     if !query.kinds().is_empty() {
         push_condition_prefix(builder, &mut has_where);
         builder.push("resources.kind IN (");
@@ -691,11 +787,9 @@ fn push_list_where<'a>(builder: &mut QueryBuilder<'a, Sqlite>, query: &'a ListRe
         builder.push(" ESCAPE '\\'");
     }
 
-    if let Some(directory_id) = query.directory_id() {
-        push_condition_prefix(builder, &mut has_where);
-        builder.push("resources.directory_id = ");
-        builder.push_bind(directory_id.to_string());
-    }
+    push_condition_prefix(builder, &mut has_where);
+    builder.push("resources.directory_id = ");
+    builder.push_bind(query.directory_id().to_string());
 }
 
 fn push_condition_prefix(builder: &mut QueryBuilder<Sqlite>, has_where: &mut bool) {

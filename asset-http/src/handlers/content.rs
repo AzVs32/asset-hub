@@ -86,14 +86,20 @@ pub(crate) async fn replace_resource_content(
     }
     let workspace = state.workspace(&access.0).await?;
     let Some(resource) = state
-        .secured_resources(&access.0)
-        .replace_resource_content(&id, command, body_stream(body))
+        .secured_content(&access.0)
+        .replace(&id, command, body_stream(body))
         .await?
     else {
         return Err(HttpError::not_found(format!("resource `{id}` not found")));
     };
     Ok(Json(
-        resource_snapshot_response(state.resources(), &workspace, &resource).await?,
+        resource_snapshot_response(
+            state.resources(),
+            state.resource_actions(),
+            &workspace,
+            &resource,
+        )
+        .await?,
     ))
 }
 
@@ -202,8 +208,8 @@ pub(crate) async fn download_directory(
             .start_file(entry.path(), file_options)
             .map_err(|error| CoreError::storage("directory.archive.start_file", error))?;
         let Some(content) = state
-            .secured_resources(&access.0)
-            .get_resource_content_stream(&entry.resource_id(), None)
+            .secured_content(&access.0)
+            .stream(&entry.resource_id(), None)
             .await?
         else {
             return Err(HttpError::not_found(format!(
@@ -269,7 +275,7 @@ async fn resource_content_response(
     headers: &HeaderMap,
     id: &ResourceId,
 ) -> Result<(Response, String), HttpError> {
-    let Some(resource) = state.secured_resources(access).find_resource(id).await? else {
+    let Some(resource) = state.secured_resources(access).get(id).await? else {
         return Err(HttpError::not_found(format!("resource `{id}` not found")));
     };
     let content_type = resource
@@ -288,8 +294,8 @@ async fn resource_content_response(
     let response = match range {
         ByteRangeRequest::Unsatisfiable => range_not_satisfiable_response(content_ref.size()),
         ByteRangeRequest::None => match state
-            .secured_resources(access)
-            .get_resource_content_stream(id, None)
+            .secured_content(access)
+            .stream(id, None)
             .await?
         {
             Some(content) => binary_stream_response(
@@ -304,8 +310,8 @@ async fn resource_content_response(
             }
         },
         ByteRangeRequest::Range { start, end } => match state
-            .secured_resources(access)
-            .get_resource_content_stream(id, Some((start, end)))
+            .secured_content(access)
+            .stream(id, Some((start, end)))
             .await?
         {
             Some(content) => range_stream_response(

@@ -107,14 +107,6 @@ export function useAssetWorkspaceCommands() {
       void handleMutationError(error);
     },
   });
-  const restore = useMutation({
-    mutationFn: (resource: Resource) => assetGateway.restoreResource(resource),
-    onSuccess: async (resource) => {
-      toast.success(`${resource.name} restored`);
-      await refresh(resource.id);
-    },
-    onError: handleMutationError,
-  });
   const createFolder = useMutation({
     mutationFn: ({ parent, name, kind }: { parent: Directory; name: string; kind?: string }) =>
       assetGateway.createDirectory(parent, name, kind),
@@ -144,7 +136,7 @@ export function useAssetWorkspaceCommands() {
     onSuccess: async (result) => {
       if (result.output.view) setActionResult(result);
       if (result.output.effects.includes("delete")) {
-        toast.success(`${result.resource.name} moved to deleted resources`);
+        toast.success(`${result.resource.name} deleted`);
       }
       if (result.action.access === "write") await refresh(result.resource.id);
     },
@@ -176,7 +168,6 @@ export function useAssetWorkspaceCommands() {
     update,
     upload,
     uploadProgress,
-    restore,
     createFolder,
     updateDirectoryKind,
     execute,

@@ -5,13 +5,14 @@ use crate::session_store::SessionStoreHealth;
 use crate::settings::{CorsPolicy, RouterOptions, SessionOptions};
 use crate::state::HttpState;
 use asset_core::service::{
-    AssetCoordinator, AuthorizationService, DirectoryService, ResourceService, UserService,
+    ActionOrchestrator, AssetWorkflowService, AuthorizationService, ContentService,
+    DirectoryService, ResourceService, UploadService, UserService,
 };
 use asset_runtime::{PluginWebAssets, UploadFinalizationDispatcher};
 use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderName, Method, StatusCode};
 use axum::middleware;
-use axum::routing::{delete, get, post};
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use axum_login::AuthManagerLayerBuilder;
 use std::sync::Arc;
@@ -29,8 +30,11 @@ async fn openapi_document() -> Json<utoipa::openapi::OpenApi> {
 /// 使用显式边界配置和插件 web 根目录构建 HTTP 路由。
 pub fn build_router(
     resources: ResourceService,
+    content: ContentService,
+    uploads: UploadService,
+    resource_actions: ActionOrchestrator,
     directories: DirectoryService,
-    asset_coordinator: AssetCoordinator,
+    asset_workflows: AssetWorkflowService,
     options: RouterOptions,
     plugin_web_assets: PluginWebAssets,
     authorization: AuthorizationService,
@@ -60,7 +64,7 @@ pub fn build_router(
             "/resources/{id}",
             get(handlers::find_resource)
                 .patch(handlers::update_resource)
-                .delete(handlers::soft_delete_resource),
+                .delete(handlers::delete_resource),
         )
         .route(
             "/resources/{id}/download",
@@ -76,12 +80,6 @@ pub fn build_router(
         post(handlers::execute_directory_action)
             .layer(DefaultBodyLimit::max(handlers::MAX_ACTION_REQUEST_BYTES)),
     );
-
-    router = if options.enable_purge {
-        router.route("/resources/{id}/purge", delete(handlers::remove_resource))
-    } else {
-        router.route("/resources/{id}/purge", delete(handlers::purge_disabled))
-    };
 
     let upload_router = Router::new()
         .route("/uploads", post(handlers::create_upload))
@@ -137,8 +135,11 @@ pub fn build_router(
         .merge(directory_download_router)
         .with_state(HttpState::new_with_plugin_web_assets(
             resources,
+            content,
+            uploads,
+            resource_actions,
             directories,
-            asset_coordinator,
+            asset_workflows,
             plugin_web_assets,
             authorization,
             upload_finalizations,

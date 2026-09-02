@@ -1,6 +1,6 @@
 use asset_core::CoreError;
 use asset_core::domain::StorageKey;
-use asset_core::service::ResourceService;
+use asset_core::service::StorageMaintenanceService;
 use notify::event::{AccessKind, AccessMode, ModifyKind, RenameMode};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashSet;
@@ -23,7 +23,7 @@ impl LocalStorageSync {
         root: PathBuf,
         debounce: Duration,
         reconcile_interval: Duration,
-        service: ResourceService,
+        service: StorageMaintenanceService,
     ) -> Result<Self, CoreError> {
         if debounce.is_zero() {
             return Err(CoreError::configuration(
@@ -85,7 +85,7 @@ impl LocalStorageSync {
     }
 }
 
-fn spawn_checksum_verification(service: ResourceService, key: StorageKey) {
+fn spawn_checksum_verification(service: StorageMaintenanceService, key: StorageKey) {
     tokio::spawn(async move {
         match service
             .reconcile_storage_keys(std::slice::from_ref(&key))
@@ -113,7 +113,7 @@ impl Drop for LocalStorageSync {
 #[allow(clippy::too_many_arguments)]
 async fn run_sync_loop(
     root: PathBuf,
-    service: ResourceService,
+    service: StorageMaintenanceService,
     mut receiver: mpsc::Receiver<notify::Result<Event>>,
     overflowed: Arc<AtomicBool>,
     mut known_directories: HashSet<StorageKey>,
@@ -154,7 +154,7 @@ async fn run_sync_loop(
 
 async fn reconcile_events(
     root: &Path,
-    service: &ResourceService,
+    service: &StorageMaintenanceService,
     known_directories: &mut HashSet<StorageKey>,
     events: Vec<notify::Result<Event>>,
     mut full_reconciliation: bool,
@@ -217,7 +217,7 @@ async fn reconcile_events(
 }
 
 async fn reconcile_all(
-    service: &ResourceService,
+    service: &StorageMaintenanceService,
     known_directories: &mut HashSet<StorageKey>,
 ) -> Result<(), CoreError> {
     let report = service.reconcile_storage().await?;

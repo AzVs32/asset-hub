@@ -45,8 +45,6 @@ pub(crate) struct ListResourcesQuery {
     /// 相对于当前用户可见根目录的过滤路径；根目录为空字符串。
     #[param(value_type = Option<String>)]
     pub(crate) directory: Option<DirectoryPath>,
-    /// 是否包含软删除资源。
-    pub(crate) include_deleted: Option<bool>,
 }
 
 /// 目录浏览查询参数。
@@ -64,8 +62,6 @@ pub(crate) struct ListDirectoryQuery {
     pub(crate) kind: Option<String>,
     /// 可选名称模糊搜索关键字。
     pub(crate) q: Option<String>,
-    /// 是否包含软删除资源。
-    pub(crate) include_deleted: Option<bool>,
 }
 
 /// 更新资源请求。
@@ -82,11 +78,8 @@ pub(crate) struct UpdateResourceRequest {
     pub(crate) name: Option<String>,
     /// 可选新资源类型。
     pub(crate) kind: Option<String>,
-    /// 相对于当前用户可见根目录的新路径；根目录为空字符串。
-    #[schema(value_type = Option<String>)]
-    pub(crate) directory: Option<DirectoryPath>,
-    /// 是否恢复软删除资源。
-    pub(crate) restore: Option<bool>,
+    /// Optional stable destination Directory UUID.
+    pub(crate) directory_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -111,7 +104,7 @@ pub(crate) struct CreateUploadRequest {
     pub(crate) name: String,
     #[serde(default)]
     #[schema(value_type = String)]
-    pub(crate) directory: DirectoryPath,
+    pub(crate) directory_id: String,
     pub(crate) kind: Option<String>,
     pub(crate) mime_type: Option<String>,
     pub(crate) size: u64,
@@ -248,6 +241,7 @@ impl ResourceKindResponse {
     pub(crate) fn from_definition(
         definition: &ResourceKindDefinition,
         service: &asset_core::service::ResourceService,
+        actions: &asset_core::service::ActionOrchestrator,
     ) -> Self {
         Self {
             kind: definition.kind().as_str().to_string(),
@@ -264,7 +258,7 @@ impl ResourceKindResponse {
                 mime_types: definition.detect().mime_types().to_vec(),
                 extensions: definition.detect().extensions().to_vec(),
             }),
-            actions: service
+            actions: actions
                 .describe_kind_actions(definition.kind())
                 .iter()
                 .map(ResourceActionDefinitionResponse::from)
@@ -512,6 +506,8 @@ pub(crate) struct ResourceResponse {
     pub(crate) id: String,
     /// 资源展示名。
     pub(crate) name: String,
+    /// Stable Directory identity; `directory` remains only the caller-relative display path.
+    pub(crate) directory_id: String,
     /// 相对于当前用户可见根目录的路径；根目录为空字符串。
     #[schema(value_type = String)]
     pub(crate) directory: DirectoryPath,
@@ -751,6 +747,7 @@ impl ResourceResponse {
         Self {
             id: resource.id().to_string(),
             name: resource.name().to_string(),
+            directory_id: resource.directory_id().to_string(),
             directory,
             kind: resource.kind().as_str().to_string(),
             state: ResourceStateResponse::from(resource),

@@ -70,65 +70,6 @@ fn resource_name_must_be_a_single_file_name() {
 }
 
 #[test]
-fn deleted_resource_rejects_mutations() {
-    let mut resource = Resource::builder("document")
-        .with_kind(ResourceKind::try_new("example:document").unwrap())
-        .build()
-        .unwrap();
-    resource.soft_delete();
-
-    assert_eq!(
-        resource.rename("new document"),
-        Err(ResourceError::DeletedResource)
-    );
-    assert_eq!(
-        resource.attach_content(
-            ResourceContent::verified(1, Checksum::sha256("a".repeat(64)).unwrap())
-                .build()
-                .unwrap(),
-        ),
-        Err(ResourceError::DeletedResource)
-    );
-}
-
-#[test]
-fn resource_effective_state_gives_deleted_lifecycle_precedence_over_content() {
-    let pending = ResourceContent::pending(42).build().unwrap();
-    let mut resource = Resource::builder("document")
-        .with_content(pending)
-        .build()
-        .unwrap();
-
-    assert_eq!(
-        resource.state().lifecycle(),
-        ResourceLifecycleStatus::Active
-    );
-    assert_eq!(
-        resource.state().content(),
-        Some(ContentVerificationStatus::Pending)
-    );
-    assert_eq!(
-        resource.state().effective(),
-        ResourceEffectiveStatus::Verifying
-    );
-
-    resource.soft_delete();
-
-    assert_eq!(
-        resource.state().lifecycle(),
-        ResourceLifecycleStatus::Deleted
-    );
-    assert_eq!(
-        resource.state().content(),
-        Some(ContentVerificationStatus::Pending)
-    );
-    assert_eq!(
-        resource.state().effective(),
-        ResourceEffectiveStatus::Deleted
-    );
-}
-
-#[test]
 fn storage_key_rejects_unsafe_paths() {
     assert!(StorageKey::new("assets/image.png").is_ok());
     assert_eq!(

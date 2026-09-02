@@ -4,12 +4,12 @@ use std::sync::{Arc, Mutex, Weak};
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 
 #[derive(Default)]
-pub(super) struct UploadLocks {
+pub(crate) struct UploadLocks {
     locks: Mutex<HashMap<UploadId, Weak<AsyncMutex<()>>>>,
 }
 
 impl UploadLocks {
-    pub(super) async fn lock(&self, id: &UploadId) -> OwnedMutexGuard<()> {
+    pub(crate) async fn lock(&self, id: &UploadId) -> OwnedMutexGuard<()> {
         let lock = {
             let mut locks = self
                 .locks

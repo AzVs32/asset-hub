@@ -23,8 +23,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let authorization = runtime.authorization_service();
     let app = build_router(
         runtime.resource_service(),
+        runtime.content_service(),
+        runtime.upload_service(),
+        runtime.action_orchestrator(),
         runtime.directory_service(),
-        runtime.asset_coordinator(),
+        runtime.asset_workflow_service(),
         settings.router_options().clone(),
         runtime.plugin_web_assets(),
         authorization.clone(),

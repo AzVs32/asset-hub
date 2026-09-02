@@ -1,33 +1,28 @@
-//! 资源聚合持久化与只读查询端口。
-//!
-//! 查询端口承接资源分页与检索，不负责目录树查询，也不参与资源聚合的保存事务。
+//! Resource aggregate persistence, read-model, and relocation ports.
 
 use crate::CoreError;
-use crate::domain::{DirectoryId, DirectoryPath, Resource, ResourceId, ResourceKind, StorageKey};
+use crate::domain::{DirectoryId, Resource, ResourceId, ResourceKind, StorageKey};
 use crate::port::DirectoryLocation;
 
-/// 资源列表查询条件。
+/// Resource read-model filters. Directory identity is always a stable UUID; path resolution is
+/// performed by an authorization-bound service before constructing this value.
 #[derive(Debug, Clone)]
 pub struct ListResources {
     limit: u32,
     offset: u64,
     kinds: Vec<ResourceKind>,
     q: Option<String>,
-    directory: Option<DirectoryPath>,
-    directory_id: Option<DirectoryId>,
-    include_deleted: bool,
+    directory_id: DirectoryId,
 }
 
 impl ListResources {
-    pub fn new(limit: u32, offset: u64) -> Self {
+    pub fn new(limit: u32, offset: u64, directory_id: DirectoryId) -> Self {
         Self {
             limit,
             offset,
             kinds: Vec::new(),
             q: None,
-            directory: None,
-            directory_id: None,
-            include_deleted: false,
+            directory_id,
         }
     }
 
@@ -43,23 +38,6 @@ impl ListResources {
 
     pub fn with_q(mut self, q: impl Into<String>) -> Self {
         self.q = Some(q.into());
-        self
-    }
-
-    pub fn with_directory(mut self, directory: DirectoryPath) -> Self {
-        self.directory = Some(directory);
-        self.directory_id = None;
-        self
-    }
-
-    pub fn with_directory_id(mut self, directory_id: DirectoryId) -> Self {
-        self.directory_id = Some(directory_id);
-        self.directory = None;
-        self
-    }
-
-    pub fn with_include_deleted(mut self, include_deleted: bool) -> Self {
-        self.include_deleted = include_deleted;
         self
     }
 
@@ -83,20 +61,12 @@ impl ListResources {
         self.q.as_deref()
     }
 
-    pub fn directory_id(&self) -> Option<&DirectoryId> {
-        self.directory_id.as_ref()
-    }
-
-    pub fn directory(&self) -> Option<&DirectoryPath> {
-        self.directory.as_ref()
-    }
-
-    pub fn include_deleted(&self) -> bool {
-        self.include_deleted
+    pub fn directory_id(&self) -> DirectoryId {
+        self.directory_id
     }
 }
 
-/// 带当前目录位置的资源读取投影。
+/// A Resource aggregate paired with its current Directory projection.
 #[derive(Debug, Clone)]
 pub struct LocatedResource {
     resource: Resource,
@@ -138,7 +108,6 @@ impl LocatedResource {
     }
 }
 
-/// 资源分页查询结果。
 #[derive(Debug, Clone)]
 pub struct ResourcePage {
     pub items: Vec<LocatedResource>,
@@ -147,58 +116,108 @@ pub struct ResourcePage {
     pub offset: u64,
 }
 
-/// 资源读取投影端口。
-///
-/// 查询适配器负责组合资源聚合与当前目录位置，不承担聚合写入职责。
+/// Rebuildable Resource query projection. It never owns aggregate writes.
 #[async_trait::async_trait]
-pub trait ResourceQuery: Send + Sync {
-    /// 按 ID 返回聚合及其当前目录位置，不过滤软删除状态。
-    async fn find_located_by_id(
-        &self,
-        id: &ResourceId,
-    ) -> Result<Option<LocatedResource>, CoreError>;
+pub trait ResourceReadModel: Send + Sync {
+    async fn find_by_id(&self, id: &ResourceId) -> Result<Option<LocatedResource>, CoreError>;
 
-    /// 按逻辑目录和名称查找未软删除资源，用于导入和自动协调的幂等去重。
-    ///
-    /// 软删除资源的 Blob 已移入内部回收站，不再占用原逻辑路径，因此不应参与查找。
-    async fn find_by_path(
+    async fn find_by_directory_and_name(
         &self,
-        directory: &DirectoryPath,
+        directory_id: DirectoryId,
         name: &str,
     ) -> Result<Option<LocatedResource>, CoreError>;
 
-    /// 按条件分页列出资源。
     async fn list(&self, query: &ListResources) -> Result<ResourcePage, CoreError>;
 }
 
-/// 资源聚合写仓储。
-///
-/// 只负责保存和还原完整 `Resource` 聚合；目录聚合与 Blob 内容分别由各自端口管理。
+/// Trusted full-catalog projection used only by storage maintenance. Normal business listing must
+/// always be scoped to one Directory UUID through `ResourceReadModel::list`.
 #[async_trait::async_trait]
-pub trait ResourceRepository: Send + Sync {
-    /// 检查资源持久化后端是否可访问；正常可用时返回 `Ok(())`。
+pub trait ResourceMaintenanceReadModel: Send + Sync {
+    async fn list_all(&self) -> Result<Vec<LocatedResource>, CoreError>;
+}
+
+/// Resource aggregate store. Every normal write has explicit insert or revision-CAS semantics.
+#[async_trait::async_trait]
+pub trait ResourceStore: Send + Sync {
     async fn health_check(&self) -> Result<(), CoreError>;
 
-    /// 按 Resource ID 保存完整聚合状态。
-    async fn save(&self, resource: &Resource) -> Result<(), CoreError>;
+    async fn load(&self, id: &ResourceId) -> Result<Option<Resource>, CoreError>;
 
-    /// 仅在聚合版本仍匹配时原子替换聚合。
-    async fn save_if_unchanged(
+    async fn insert(&self, resource: &Resource) -> Result<(), CoreError>;
+
+    async fn update_if_revision(
         &self,
         resource: &Resource,
         expected_revision: u64,
     ) -> Result<bool, CoreError>;
 
-    /// 仅在聚合版本仍匹配时原子删除聚合。
-    async fn remove_if_unchanged(
+    async fn delete_if_revision(
         &self,
         id: &ResourceId,
         expected_revision: u64,
     ) -> Result<bool, CoreError>;
+}
 
-    /// 按 ID 还原聚合，不过滤软删除状态。
-    async fn find_by_id(&self, id: &ResourceId) -> Result<Option<Resource>, CoreError>;
+/// Durable intent for a Resource rename/move whose physical and aggregate writes cannot share a
+/// transaction. `desired` contains the post-relocation aggregate and therefore the next revision.
+#[derive(Debug, Clone)]
+pub struct ResourceRelocation {
+    desired: Resource,
+    expected_revision: u64,
+    source_key: StorageKey,
+    destination_key: StorageKey,
+}
 
-    /// 幂等物理移除资源记录。
-    async fn remove(&self, id: &ResourceId) -> Result<(), CoreError>;
+impl ResourceRelocation {
+    pub fn new(
+        desired: Resource,
+        expected_revision: u64,
+        source_key: StorageKey,
+        destination_key: StorageKey,
+    ) -> Result<Self, CoreError> {
+        if source_key == destination_key {
+            return Err(CoreError::invariant(
+                "resource relocation source and destination must differ",
+            ));
+        }
+        if desired.revision() <= expected_revision {
+            return Err(CoreError::invariant(
+                "resource relocation must advance the aggregate revision",
+            ));
+        }
+        Ok(Self {
+            desired,
+            expected_revision,
+            source_key,
+            destination_key,
+        })
+    }
+
+    pub fn resource_id(&self) -> ResourceId {
+        self.desired.id()
+    }
+
+    pub fn desired(&self) -> &Resource {
+        &self.desired
+    }
+
+    pub fn expected_revision(&self) -> u64 {
+        self.expected_revision
+    }
+
+    pub fn source_key(&self) -> &StorageKey {
+        &self.source_key
+    }
+
+    pub fn destination_key(&self) -> &StorageKey {
+        &self.destination_key
+    }
+}
+
+#[async_trait::async_trait]
+pub trait ResourceRelocationStore: Send + Sync {
+    async fn save(&self, relocation: &ResourceRelocation) -> Result<(), CoreError>;
+    async fn load_all(&self) -> Result<Vec<ResourceRelocation>, CoreError>;
+    async fn complete(&self, id: &ResourceId) -> Result<(), CoreError>;
 }

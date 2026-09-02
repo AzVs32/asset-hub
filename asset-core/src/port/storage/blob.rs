@@ -101,6 +101,9 @@ pub trait BlobStorage: Send + Sync {
     /// 才返回 `Err`，例如连接失败、权限不足或读取过程中发生 I/O 错误。
     async fn get(&self, key: &StorageKey) -> Result<Option<Bytes>, CoreError>;
 
+    /// Test whether an object exists without loading its bytes.
+    async fn exists(&self, key: &StorageKey) -> Result<bool, CoreError>;
+
     /// 流式读取指定存储键对应的对象内容。
     ///
     /// 用于预览、下载等大对象读取场景，避免把完整对象一次性加载到内存中。

@@ -5,7 +5,7 @@ use asset_core::domain::{
 use asset_core::port::{
     BlobStorage, DirectoryActionExecutor, DirectoryActionOutput, DirectoryActionRequest,
     DirectoryKindRegistry, DirectoryQuery, ResourceActionExecutor, ResourceActionOutput,
-    ResourceActionRequest, ResourceKindRegistry, ResourceQuery,
+    ResourceActionRequest, ResourceKindRegistry, ResourceReadModel,
 };
 use asset_plugin_api::manifest::{
     DirectoryActionCapability, PluginPermission, PluginPermissions, PluginRuntime,
@@ -50,7 +50,7 @@ pub struct ExtismActionExecutor {
 #[derive(Clone)]
 pub struct ExtismHost {
     directory_query: Arc<dyn DirectoryQuery>,
-    resource_query: Arc<dyn ResourceQuery>,
+    resource_query: Arc<dyn ResourceReadModel>,
     blob_storage: Arc<dyn BlobStorage>,
     policy: Arc<PluginExecutionPolicy>,
     grants: PluginPermissionGrants,
@@ -59,7 +59,7 @@ pub struct ExtismHost {
 impl ExtismHost {
     pub fn new(
         directory_query: Arc<dyn DirectoryQuery>,
-        resource_query: Arc<dyn ResourceQuery>,
+        resource_query: Arc<dyn ResourceReadModel>,
         blob_storage: Arc<dyn BlobStorage>,
         policy: Arc<PluginExecutionPolicy>,
         grants: PluginPermissionGrants,

@@ -175,9 +175,6 @@ export function AssetWorkspace() {
                 onSelect={selectResource}
                 onSelectDirectory={(item) => browser.selectDirectory(item.id)}
                 onAction={runResourceAction}
-                onRestore={(item) =>
-                  commands.restore.mutate(item.id === resource?.id ? resource : item)
-                }
                 onDirectoryAction={runDirectoryAction}
                 onRefresh={() => void browser.listing.refetch()}
                 onUpload={() => setUploadOpen(true)}

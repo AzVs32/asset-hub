@@ -1,6 +1,6 @@
 use super::*;
 use asset_core::domain::{
-    AccessContext, DirectoryKind, DirectoryPath, Resource, ResourceKind, UserId,
+    AccessContext, DirectoryId, DirectoryKind, DirectoryPath, Resource, ResourceKind, UserId,
 };
 use asset_core::port::ListResources;
 use asset_infra::config::{
@@ -42,7 +42,10 @@ async fn find_resource(
     let context = AccessContext::administrator(UserId::new());
     let page = service
         .secured(&authorization, &context)
-        .list_resources(ListResources::new(100, 0).with_directory(directory.clone()))
+        .list(
+            directory,
+            ListResources::new(100, 0, DirectoryId::root()),
+        )
         .await
         .ok()?;
     page.items
@@ -95,7 +98,8 @@ async fn local_storage_changes_are_synchronized_automatically() {
     let service = runtime.resource_service();
     assert!(!service.kind_definitions().is_empty());
     assert!(
-        !service
+        !runtime
+            .action_orchestrator()
             .describe_kind_actions(&ResourceKind::default())
             .is_empty()
     );
@@ -192,7 +196,7 @@ async fn local_storage_changes_are_synchronized_automatically() {
     );
     assert!(!root.join(managed_path.path()).exists());
     runtime
-        .resource_service()
+        .storage_maintenance_service()
         .reconcile_storage()
         .await
         .unwrap();

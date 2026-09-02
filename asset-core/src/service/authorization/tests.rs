@@ -308,13 +308,13 @@ async fn member_operations_are_allowed_only_inside_workspace_subtree() {
         DirectoryOperation::DownloadDirectory,
         DirectoryOperation::CreateDirectory,
         DirectoryOperation::DeleteDirectory,
+        DirectoryOperation::CreateResource,
         DirectoryOperation::ReadResource,
         DirectoryOperation::UpdateResource,
         DirectoryOperation::ReplaceResourceContent,
         DirectoryOperation::ExecuteDirectoryAction,
         DirectoryOperation::ExecuteResourceAction,
         DirectoryOperation::DeleteResource,
-        DirectoryOperation::PurgeResource,
     ] {
         assert!(service.require(&actor, &workspace, operation).await.is_ok());
         assert!(
@@ -361,7 +361,7 @@ async fn root_workspace_contains_every_user_directory() {
             .require(
                 &actor,
                 &directories.reference("any/directory"),
-                DirectoryOperation::PurgeResource,
+                DirectoryOperation::DeleteResource,
             )
             .await
             .is_ok()
@@ -379,7 +379,7 @@ async fn administrator_access_does_not_depend_on_a_workspace() {
             .require(
                 &actor,
                 &directories.reference("any/directory"),
-                DirectoryOperation::PurgeResource,
+                DirectoryOperation::DeleteResource,
             )
             .await
             .is_ok()

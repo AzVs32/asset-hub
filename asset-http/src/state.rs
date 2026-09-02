@@ -1,8 +1,10 @@
 use asset_core::CoreError;
 use asset_core::domain::AccessContext;
 use asset_core::service::{
-    AssetCoordinator, AuthorizationService, DirectoryService, ResourceService,
-    SecuredAssetCoordinator, SecuredDirectoryService, SecuredResourceService, WorkspaceScope,
+    ActionOrchestrator, AssetWorkflowService, AuthorizationService, ContentService,
+    DirectoryService, ResourceService, SecuredActionOrchestrator, SecuredAssetWorkflowService,
+    SecuredContentService, SecuredDirectoryService, SecuredResourceService, SecuredUploadService,
+    UploadService, WorkspaceScope,
 };
 use asset_runtime::{PluginWebAssets, UploadFinalizationDispatcher};
 use std::sync::Arc;
@@ -13,8 +15,11 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub(crate) struct HttpState {
     resources: ResourceService,
+    content: ContentService,
+    uploads: UploadService,
+    resource_actions: ActionOrchestrator,
     directories: DirectoryService,
-    asset_coordinator: AssetCoordinator,
+    asset_workflows: AssetWorkflowService,
     plugin_web_assets: Arc<PluginWebAssets>,
     authorization: AuthorizationService,
     upload_finalizations: Arc<dyn UploadFinalizationDispatcher>,
@@ -23,16 +28,22 @@ pub(crate) struct HttpState {
 impl HttpState {
     pub(crate) fn new_with_plugin_web_assets(
         resources: ResourceService,
+        content: ContentService,
+        uploads: UploadService,
+        resource_actions: ActionOrchestrator,
         directories: DirectoryService,
-        asset_coordinator: AssetCoordinator,
+        asset_workflows: AssetWorkflowService,
         plugin_web_assets: PluginWebAssets,
         authorization: AuthorizationService,
         upload_finalizations: Arc<dyn UploadFinalizationDispatcher>,
     ) -> Self {
         Self {
             resources,
+            content,
+            uploads,
+            resource_actions,
             directories,
-            asset_coordinator,
+            asset_workflows,
             plugin_web_assets: Arc::new(plugin_web_assets),
             authorization,
             upload_finalizations,
@@ -53,11 +64,32 @@ impl HttpState {
         self.directories.secured(&self.authorization, context)
     }
 
+    pub(crate) fn secured_content<'a>(
+        &'a self,
+        context: &'a AccessContext,
+    ) -> SecuredContentService<'a> {
+        self.content.secured(&self.authorization, context)
+    }
+
+    pub(crate) fn secured_uploads<'a>(
+        &'a self,
+        context: &'a AccessContext,
+    ) -> SecuredUploadService<'a> {
+        self.uploads.secured(&self.authorization, context)
+    }
+
+    pub(crate) fn secured_resource_actions<'a>(
+        &'a self,
+        context: &'a AccessContext,
+    ) -> SecuredActionOrchestrator<'a> {
+        self.resource_actions.secured(&self.authorization, context)
+    }
+
     pub(crate) fn secured_asset_coordination<'a>(
         &'a self,
         context: &'a AccessContext,
-    ) -> SecuredAssetCoordinator<'a> {
-        self.asset_coordinator.secured(&self.authorization, context)
+    ) -> SecuredAssetWorkflowService<'a> {
+        self.asset_workflows.secured(&self.authorization, context)
     }
 
     pub(crate) fn dispatch_upload_finalization(
@@ -76,6 +108,10 @@ impl HttpState {
 
     pub(crate) fn resources(&self) -> &ResourceService {
         &self.resources
+    }
+
+    pub(crate) fn resource_actions(&self) -> &ActionOrchestrator {
+        &self.resource_actions
     }
 
     pub(crate) fn directories(&self) -> &DirectoryService {

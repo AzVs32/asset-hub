@@ -1,28 +1,29 @@
-//! 资源服务的公开输入与输出契约。
-//!
-//! 本模块只描述调用方与 Resource 应用服务交换的数据，不包含仓储或对象存储编排。
+//! Public application contracts for the independently assembled Resource-related services.
 
-use crate::domain::{Checksum, DirectoryPath, ResourceKind};
-use crate::domain::{ResourceActionDefinition, ResourceActionId};
+use crate::domain::{Checksum, DirectoryId, ResourceActionDefinition, ResourceActionId, ResourceKind};
 use crate::port::BlobByteStream;
 
-/// 创建持久化上传会话。
 #[derive(Debug, Clone)]
 pub struct CreateUpload {
     pub(super) name: String,
     pub(super) kind: Option<ResourceKind>,
-    pub(super) directory: DirectoryPath,
+    pub(super) directory_id: DirectoryId,
     pub(super) mime_type: Option<String>,
     pub(super) expected_size: u64,
     pub(super) expected_checksum: Checksum,
 }
 
 impl CreateUpload {
-    pub fn new(name: impl Into<String>, expected_size: u64, expected_checksum: Checksum) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        directory_id: DirectoryId,
+        expected_size: u64,
+        expected_checksum: Checksum,
+    ) -> Self {
         Self {
             name: name.into(),
             kind: None,
-            directory: DirectoryPath::root(),
+            directory_id,
             mime_type: None,
             expected_size,
             expected_checksum,
@@ -34,22 +35,16 @@ impl CreateUpload {
         self
     }
 
-    pub fn with_directory(mut self, directory: DirectoryPath) -> Self {
-        self.directory = directory;
-        self
-    }
-
     pub fn with_mime_type(mut self, mime_type: impl Into<String>) -> Self {
         self.mime_type = Some(mime_type.into());
         self
     }
 
-    pub fn directory(&self) -> &DirectoryPath {
-        &self.directory
+    pub fn directory_id(&self) -> DirectoryId {
+        self.directory_id
     }
 }
 
-/// 执行资源动作。
 #[derive(Debug, Clone)]
 pub struct ExecuteResourceAction {
     pub(super) action: ResourceActionId,
@@ -57,7 +52,21 @@ pub struct ExecuteResourceAction {
     pub(super) expected_revision: Option<u64>,
 }
 
-/// 流式替换可编辑资源的内容。
+impl ExecuteResourceAction {
+    pub fn new(action: ResourceActionId, expected_revision: Option<u64>) -> Self {
+        Self {
+            action,
+            input: serde_json::Value::Object(Default::default()),
+            expected_revision,
+        }
+    }
+
+    pub fn with_input(mut self, input: serde_json::Value) -> Self {
+        self.input = input;
+        self
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ReplaceResourceContent {
     pub(super) expected_size: u64,
@@ -82,29 +91,12 @@ impl ReplaceResourceContent {
     }
 }
 
-impl ExecuteResourceAction {
-    pub fn new(action: ResourceActionId, expected_revision: Option<u64>) -> Self {
-        Self {
-            action,
-            input: serde_json::Value::Object(Default::default()),
-            expected_revision,
-        }
-    }
-
-    pub fn with_input(mut self, input: serde_json::Value) -> Self {
-        self.input = input;
-        self
-    }
-}
-
-/// 更新资源聚合。
 #[derive(Debug, Clone, Default)]
 pub struct UpdateResource {
     pub(super) expected_revision: u64,
     pub(super) name: Option<String>,
-    pub(super) directory: Option<DirectoryPath>,
+    pub(super) directory_id: Option<DirectoryId>,
     pub(super) kind: Option<ResourceKind>,
-    pub(super) restore: bool,
 }
 
 impl UpdateResource {
@@ -120,8 +112,8 @@ impl UpdateResource {
         self
     }
 
-    pub fn with_directory(mut self, directory: DirectoryPath) -> Self {
-        self.directory = Some(directory);
+    pub fn with_directory_id(mut self, directory_id: DirectoryId) -> Self {
+        self.directory_id = Some(directory_id);
         self
     }
 
@@ -130,17 +122,11 @@ impl UpdateResource {
         self
     }
 
-    pub fn with_restore(mut self, restore: bool) -> Self {
-        self.restore = restore;
-        self
-    }
-
-    pub fn directory(&self) -> Option<&DirectoryPath> {
-        self.directory.as_ref()
+    pub fn directory_id(&self) -> Option<DirectoryId> {
+        self.directory_id
     }
 }
 
-/// 资源当前可执行动作。
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ResourceActions {
     available_actions: Vec<ResourceActionDefinition>,
@@ -156,7 +142,6 @@ impl ResourceActions {
     }
 }
 
-/// 流式读取资源内容结果。
 pub struct ResourceContentStream {
     content_type: String,
     content_length: u64,

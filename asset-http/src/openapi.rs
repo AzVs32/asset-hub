@@ -60,8 +60,7 @@ impl Modify for CookieSecurity {
         handlers::content::download_resource_content,
         handlers::content::download_directory,
         handlers::resource::execute_resource_action,
-        handlers::resource::soft_delete_resource,
-        handlers::resource::remove_resource
+        handlers::resource::delete_resource
     ),
     components(
         schemas(

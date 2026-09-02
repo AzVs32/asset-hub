@@ -1,4 +1,3 @@
-import { normalizeDirectory } from "@/domain/directory-path";
 import type { Resource, UploadDraft, UploadProgress, UploadReceipt } from "@/domain/resource";
 import type { BlobSha256, FileSha256 } from "./file-sha256";
 import { httpError } from "./http-error";
@@ -23,6 +22,7 @@ export class ResumableUpload {
     private readonly hashFile: FileSha256,
     private readonly hashChunk: BlobSha256,
     private readonly findResource: (id: string) => Promise<Resource>,
+    private readonly resolveDirectoryId: (path: string) => Promise<string>,
   ) {}
 
   async upload(
@@ -36,7 +36,7 @@ export class ResumableUpload {
     );
     const metadata = {
       name: draft.name.length > 0 ? draft.name : file.name,
-      directory: normalizeDirectory(draft.directory),
+      directory_id: await this.resolveDirectoryId(draft.directory),
       mime_type: file.type || "application/octet-stream",
       size: file.size,
       expected_sha256: expectedSha256,

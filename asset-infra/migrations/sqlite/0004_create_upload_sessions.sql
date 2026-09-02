@@ -8,8 +8,8 @@ CREATE TABLE upload_sessions (
     owner_id TEXT NOT NULL,
     -- 最终 Resource 的文件名。
     name TEXT NOT NULL,
-    -- 解析到当前工作区后的目标目录路径；与 name 共同确定最终 StorageKey。
-    directory TEXT NOT NULL,
+    -- 目标目录稳定身份；最终 StorageKey 在发布时由当前目录投影解析。
+    directory_id TEXT NOT NULL,
     -- 最终 Resource 使用的已注册资源类型。
     kind TEXT NOT NULL,
     -- 客户端声明的 MIME 类型；未提供时允许为空。
@@ -46,7 +46,8 @@ CREATE TABLE upload_sessions (
             AND actual_checksum_value = expected_checksum_value
         )
     ),
-    CHECK (status != 'failed' OR failure IS NOT NULL)
+    CHECK (status != 'failed' OR failure IS NOT NULL),
+    FOREIGN KEY (directory_id) REFERENCES directories(id) ON DELETE RESTRICT
 );
 
 -- 加速服务启动时恢复尚未完成的后台 finalization。

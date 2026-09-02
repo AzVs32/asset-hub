@@ -1,6 +1,6 @@
 //! Core 依赖的 Host Port。
 //!
-//! - 资源持久化：`ResourceRepository`、`ResourceQuery`
+//! - 资源持久化：`ResourceStore`、`ResourceReadModel`、`ResourceRelocationStore`
 //! - 目录持久化与查询：`DirectoryStore`、`DirectoryQuery`、`DirectoryIndex`
 //! - 内容存储：`BlobStorage`、`DirectoryStorage`、`StorageScanner`
 //! - 运行时注册与执行：kind/action registry、action executor
@@ -25,7 +25,8 @@ pub use identity::{LocatedUser, PasswordHasher, UserQuery, UserRepository};
 pub use resource::{
     ListResources, LocatedResource, ResourceActionExecutor, ResourceActionOutput,
     ResourceActionRegistry, ResourceActionRequest, ResourceContentReplacementRepository,
-    ResourceKindRegistry, ResourcePage, ResourceQuery, ResourceRepository,
+    ResourceKindRegistry, ResourceMaintenanceReadModel, ResourcePage, ResourceReadModel, ResourceRelocation,
+    ResourceRelocationStore, ResourceStore,
 };
 pub use storage::{
     BlobByteStream, BlobStorage, DirectoryStorage, RESERVED_BLOB_STORAGE_PREFIX, ScannedBlob,

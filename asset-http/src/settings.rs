@@ -21,16 +21,6 @@ struct HttpCli {
     #[arg(long, default_value = DEFAULT_HTTP_ADDR)]
     addr: SocketAddr,
 
-    /// Enable the permanent resource purge endpoint.
-    #[arg(
-        long,
-        default_value_t = true,
-        num_args = 0..=1,
-        default_missing_value = "true",
-        action = ArgAction::Set
-    )]
-    enable_purge: bool,
-
     /// Comma-separated explicit CORS origins.
     #[arg(long, value_parser = parse_cors_policy)]
     cors_allowed_origins: Option<CorsPolicy>,
@@ -70,7 +60,6 @@ pub enum CorsPolicy {
 /// HTTP 路由边界配置。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RouterOptions {
-    pub enable_purge: bool,
     pub cors: CorsPolicy,
     pub request_timeout: Duration,
 }
@@ -84,7 +73,6 @@ pub struct SessionOptions {
 impl Default for RouterOptions {
     fn default() -> Self {
         Self {
-            enable_purge: true,
             cors: CorsPolicy::None,
             request_timeout: Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS),
         }
@@ -120,7 +108,6 @@ impl HttpSettings {
 
     fn from_cli_args(cli: HttpCli) -> Self {
         let router_options = RouterOptions {
-            enable_purge: cli.enable_purge,
             cors: cli.cors_allowed_origins.unwrap_or(CorsPolicy::None),
             request_timeout: Duration::from_secs(cli.request_timeout_secs),
         };

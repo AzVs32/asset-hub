@@ -1,165 +1,217 @@
-//! 资源动作服务。
-//!
-//! 本模块负责把资源、kind/action 声明和动作执行器连接起来：解析可用动作、执行声明动作，并应用动作返回的写入效果。
+//! Host-side Resource action orchestration.
 
 use super::content::{build_verified_content, calculate_checksum};
-use super::{ExecuteResourceAction, ResourceActions, ResourceService};
+use super::{ContentService, ExecuteResourceAction, ResourceActions, ResourceService};
 use crate::CoreError;
 use crate::domain::{
-    ActionAccess, Resource, ResourceActionContentDelivery, ResourceActionDefinition,
-    ResourceActionId, ResourceActionPolicy, ResourceContent, ResourceEffectiveStatus, ResourceId,
-    StorageKey,
+    AccessContext, ActionAccess, DirectoryOperation, Resource, ResourceActionContentDelivery,
+    ResourceActionDefinition, ResourceActionId, ResourceActionPolicy, ResourceContentEditPolicy,
+    ResourceId, ResourceKind, StorageKey,
 };
-use crate::port::{LocatedResource, ResourceActionOutput, ResourceActionRequest};
-use crate::service::validate_action_revision;
+use crate::port::{
+    BlobStorage, LocatedResource, ResourceActionExecutor, ResourceActionOutput,
+    ResourceActionRegistry, ResourceActionRequest,
+};
+use crate::service::{AuthorizationService, validate_action_revision};
+use asset_plugin_api::manifest::RESOURCE_EDIT_CAPABILITY;
 use asset_plugin_api::protocol::PluginResourceActionEffect;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use bytes::Bytes;
+use std::sync::Arc;
 
-/// 资源动作服务。
-///
-/// 动作服务不决定 HTTP 表达形式，只返回核心层的动作输出和资源能力描述。
-pub(super) struct ResourceActionService<'a> {
-    service: &'a ResourceService,
+#[derive(Clone)]
+pub struct ActionOrchestrator {
+    resources: ResourceService,
+    content: ContentService,
+    blob_storage: Arc<dyn BlobStorage>,
+    registry: Arc<dyn ResourceActionRegistry>,
+    executor: Arc<dyn ResourceActionExecutor>,
+    action_policy: Arc<ResourceActionPolicy>,
+    edit_policy: Arc<ResourceContentEditPolicy>,
 }
 
-impl<'a> ResourceActionService<'a> {
-    /// 创建资源动作服务。
-    pub(super) fn new(service: &'a ResourceService) -> Self {
-        Self { service }
+impl ActionOrchestrator {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        resources: ResourceService,
+        content: ContentService,
+        blob_storage: Arc<dyn BlobStorage>,
+        registry: Arc<dyn ResourceActionRegistry>,
+        executor: Arc<dyn ResourceActionExecutor>,
+        action_policy: Arc<ResourceActionPolicy>,
+        edit_policy: Arc<ResourceContentEditPolicy>,
+    ) -> Self {
+        Self {
+            resources,
+            content,
+            blob_storage,
+            registry,
+            executor,
+            action_policy,
+            edit_policy,
+        }
     }
 
-    #[cfg(test)]
-    pub(super) async fn execute_resource_action(
+    pub fn secured<'a>(
+        &'a self,
+        authorization: &'a AuthorizationService,
+        context: &'a AccessContext,
+    ) -> SecuredActionOrchestrator<'a> {
+        SecuredActionOrchestrator {
+            service: self,
+            authorization,
+            context,
+        }
+    }
+
+    pub fn describe_kind_actions(&self, kind: &ResourceKind) -> Vec<ResourceActionDefinition> {
+        self.registry
+            .actions_for_kinds(&self.resources.kind_registry.lineage(kind))
+    }
+
+    pub(crate) fn max_inline_content_bytes(&self) -> u64 {
+        self.action_policy.max_inline_content_bytes()
+    }
+
+    pub fn describe_resource_actions(
+        &self,
+        resource: &Resource,
+    ) -> Result<ResourceActions, CoreError> {
+        self.require_kind(resource.kind())?;
+        Ok(ResourceActions::new(self.available_actions(resource)))
+    }
+
+    pub async fn execute(
         &self,
         id: &ResourceId,
         command: ExecuteResourceAction,
     ) -> Result<Option<ResourceActionOutput>, CoreError> {
-        let Some(resource) = self.service.commands().find_resource(id).await? else {
+        let Some(resource) = self.resources.get(id).await? else {
             return Ok(None);
         };
-        self.execute_resource_action_snapshot(resource, command)
-            .await
-            .map(Some)
+        self.execute_snapshot(resource, command).await.map(Some)
     }
 
-    /// 计算资源当前可执行动作。
-    ///
-    /// 该方法统一封装资源内容状态和注册 kind 能力，供不同应用入口复用，
-    /// 避免在 HTTP、CLI、TUI 中重复拼装判断逻辑。
-    pub(super) fn describe_resource_actions(
-        &self,
-        resource: &Resource,
-    ) -> Result<ResourceActions, CoreError> {
-        self.service.require_kind_definition(resource.kind())?;
-        if resource.state().effective() == ResourceEffectiveStatus::Deleted {
-            return Ok(ResourceActions::default());
-        }
-
-        let available_actions = self.service.available_actions_for_resource(resource);
-
-        Ok(ResourceActions::new(available_actions))
-    }
-
-    /// 执行资源类型声明的插件动作。
-    ///
-    /// 核心负责资源存在性、删除状态、kind/action 声明、访问边界和对象内容加载；具体 wasm
-    /// 运行时由 `ResourceActionExecutor` 端口承接。
-    pub(super) async fn execute_resource_action_snapshot(
-        &self,
-        resource: LocatedResource,
-        command: ExecuteResourceAction,
-    ) -> Result<ResourceActionOutput, CoreError> {
-        let definition =
-            self.resolve_declared_resource_action(resource.resource(), &command.action)?;
-        validate_action_revision(
-            definition.access(),
-            command.expected_revision,
-            resource.resource().revision(),
-            "resource",
-            resource.resource().id().to_string(),
-        )?;
-        self.execute_declared_resource_action_snapshot(
-            resource,
-            command.action,
-            command.input,
-            definition,
-        )
-        .await
-    }
-
-    pub(super) async fn execute_declared_resource_action_snapshot(
+    async fn execute_snapshot(
         &self,
         located: LocatedResource,
-        action_id: ResourceActionId,
-        input: serde_json::Value,
-        action: ResourceActionDefinition,
+        command: ExecuteResourceAction,
     ) -> Result<ResourceActionOutput, CoreError> {
-        let (mut resource, directory) = located.into_parts();
-        // 1. Load content only when the resolved action contract says the executor should receive
-        //    it. Resolution and revision validation happened before touching runtime state.
-        let storage_key = StorageKey::from_resource_path(directory.path(), resource.name())?;
+        let action = self.resolve_action(located.resource(), &command.action)?;
+        validate_action_revision(
+            action.access(),
+            command.expected_revision,
+            located.resource().revision(),
+            "resource",
+            located.resource().id().to_string(),
+        )?;
+        let storage_key = located.storage_key()?;
         let content = self
-            .load_declared_resource_action_content(&resource, &storage_key, &action)
+            .load_action_content(located.resource(), &storage_key, &action)
             .await?;
-
-        // 2. Dispatch the request through the configured action executor.
-        let access = action.access();
-        let Some(ports) = &self.service.action_ports else {
-            return Err(CoreError::configuration(
-                "resource action executor is not configured",
-            ));
-        };
-        let content_delivery = resource
+        let content_delivery = located
+            .resource()
             .content()
             .and_then(|content| {
-                resolved_content_delivery(
-                    &action,
-                    content.size(),
-                    &self.service.resource_action_policy,
-                )
+                resolved_content_delivery(&action, content.size(), &self.action_policy)
             })
             .unwrap_or(ResourceActionContentDelivery::Auto);
         let request = ResourceActionRequest::new(
-            resource.clone(),
-            directory.clone(),
+            located.resource().clone(),
+            located.directory().clone(),
             storage_key.clone(),
-            action_id.clone(),
-            access,
-            input,
+            command.action.clone(),
+            action.access(),
+            command.input,
         )
         .with_content(content_delivery, content);
-        let output = ports.executor.execute(request).await?;
-        self.validate_action_output(resource.id(), &action_id, &action, &output)?;
-
-        // 3. Apply write effects after the executor returns, guarded by the action access boundary.
-        self.apply_action_effects(&mut resource, &directory, &storage_key, &output, access)
+        let output = self.executor.execute(request).await?;
+        self.validate_output(located.resource().id(), &command.action, &action, &output)?;
+        self.apply_effects(located, &storage_key, &output, action.access())
             .await?;
-
         Ok(output)
     }
 
-    pub(super) fn resolve_declared_resource_action(
+    fn resolve_action(
         &self,
         resource: &Resource,
         action_id: &ResourceActionId,
     ) -> Result<ResourceActionDefinition, CoreError> {
-        self.service.require_kind_definition(resource.kind())?;
-        if resource.state().effective() == ResourceEffectiveStatus::Deleted {
-            return Err(CoreError::invalid_operation(format!(
-                "deleted resource `{}` cannot execute actions",
-                resource.id()
-            )));
-        }
-        let declared_actions = self.service.available_actions_for_resource(resource);
-        declared_actions
+        self.require_kind(resource.kind())?;
+        self.available_actions(resource)
             .into_iter()
             .find(|action| action.id().as_str() == action_id.as_str())
             .ok_or_else(|| CoreError::unsupported("resource action", action_id.to_string()))
     }
 
-    fn validate_action_output(
+    fn require_kind(&self, kind: &ResourceKind) -> Result<(), CoreError> {
+        self.resources
+            .kind_registry
+            .get(kind)
+            .map(|_| ())
+            .ok_or_else(|| {
+                CoreError::invariant(format!(
+                    "persisted resource kind `{kind}` is not registered"
+                ))
+            })
+    }
+
+    fn available_actions(&self, resource: &Resource) -> Vec<ResourceActionDefinition> {
+        let lineage = self.resources.kind_registry.lineage(resource.kind());
+        let content = resource.content();
+        let applicable = self
+            .registry
+            .action_candidates_for_kinds(&lineage)
+            .into_iter()
+            .filter(|action| content.is_some() || !action.requirements().content)
+            .filter(|action| {
+                lineage.iter().any(|kind| {
+                    action.matches_resource(
+                        kind.as_str(),
+                        content.and_then(|content| content.mime_type()),
+                        content.map(|_| resource.name()),
+                    )
+                })
+            })
+            .filter(|action| {
+                let is_edit = action
+                    .provides()
+                    .is_some_and(|capability| capability.as_str() == RESOURCE_EDIT_CAPABILITY);
+                !is_edit
+                    || content
+                        .is_some_and(|content| content.size() <= self.edit_policy.max_text_bytes())
+            })
+            .collect();
+        self.registry.resolve_capability_providers(applicable)
+    }
+
+    async fn load_action_content(
+        &self,
+        resource: &Resource,
+        storage_key: &StorageKey,
+        action: &ResourceActionDefinition,
+    ) -> Result<Option<Bytes>, CoreError> {
+        let Some(content) = resource.content() else {
+            return Ok(None);
+        };
+        if !matches!(
+            resolved_content_delivery(action, content.size(), &self.action_policy),
+            Some(ResourceActionContentDelivery::Inline)
+        ) {
+            return Ok(None);
+        }
+        if content.size() > self.action_policy.max_content_bytes() {
+            return Err(CoreError::limit_exceeded(
+                "plugin action content",
+                self.action_policy.max_content_bytes(),
+                content.size(),
+            ));
+        }
+        self.blob_storage.get(storage_key).await
+    }
+
+    fn validate_output(
         &self,
         resource_id: ResourceId,
         action_id: &ResourceActionId,
@@ -167,42 +219,34 @@ impl<'a> ResourceActionService<'a> {
         output: &ResourceActionOutput,
     ) -> Result<(), CoreError> {
         if output.resource_id() != resource_id || output.action() != action_id {
-            return Err(CoreError::invariant(format!(
-                "action `{action_id}` returned an output for a different invocation"
-            )));
+            return Err(CoreError::invariant(
+                "resource action returned output for a different invocation",
+            ));
         }
-        if let Some(view) = &output.output().view {
-            let actual = view.kind();
-            if !action
-                .output()
-                .views
-                .iter()
-                .any(|declared| declared == actual)
-            {
-                return Err(CoreError::invariant(format!(
-                    "action `{}` returned undeclared view `{actual}`",
-                    action.id()
-                )));
-            }
+        if let Some(view) = &output.output().view
+            && !action.output().views.iter().any(|kind| kind == view.kind())
+        {
+            return Err(CoreError::invariant(format!(
+                "action `{action_id}` returned an undeclared view"
+            )));
         }
         if output.output().view.is_none() && output.output().effects.is_empty() {
             return Err(CoreError::invariant(format!(
-                "action `{}` returned neither a view nor an effect",
-                action.id()
+                "action `{action_id}` returned neither a view nor an effect"
             )));
         }
-        if let Some(effect) = output.output().effects.iter().find(|effect| {
-            !action
+        for effect in &output.output().effects {
+            if !action
                 .output()
                 .effects
                 .iter()
                 .any(|kind| kind == effect.kind())
-        }) {
-            return Err(CoreError::invariant(format!(
-                "action `{}` returned undeclared effect `{}`",
-                action.id(),
-                effect.kind()
-            )));
+            {
+                return Err(CoreError::invariant(format!(
+                    "action `{action_id}` returned undeclared effect `{}`",
+                    effect.kind()
+                )));
+            }
         }
         let replacements = output
             .output()
@@ -211,10 +255,9 @@ impl<'a> ResourceActionService<'a> {
             .filter(|effect| matches!(effect, PluginResourceActionEffect::ReplaceContent(_)))
             .count();
         if replacements > 1 {
-            return Err(CoreError::invariant(format!(
-                "action `{}` returned more than one replace_content effect",
-                action.id()
-            )));
+            return Err(CoreError::invariant(
+                "resource action returned multiple replace_content effects",
+            ));
         }
         if output
             .output()
@@ -223,46 +266,16 @@ impl<'a> ResourceActionService<'a> {
             .any(|effect| matches!(effect, PluginResourceActionEffect::Delete))
             && output.output().effects.len() > 1
         {
-            return Err(CoreError::invariant(format!(
-                "action `{}` combined delete with another resource effect",
-                action.id()
-            )));
+            return Err(CoreError::invariant(
+                "resource action combined delete with another effect",
+            ));
         }
         Ok(())
     }
 
-    async fn load_declared_resource_action_content(
+    async fn apply_effects(
         &self,
-        resource: &Resource,
-        storage_key: &StorageKey,
-        action: &ResourceActionDefinition,
-    ) -> Result<Option<Bytes>, CoreError> {
-        let Some(content_ref) = resource.content() else {
-            return Ok(None);
-        };
-        if !should_load_declared_action_content(
-            action,
-            content_ref,
-            &self.service.resource_action_policy,
-        ) {
-            return Ok(None);
-        }
-        let max_content_bytes = self.service.resource_action_policy.max_content_bytes();
-        if content_ref.size() > max_content_bytes {
-            return Err(CoreError::limit_exceeded(
-                "plugin action content",
-                max_content_bytes,
-                content_ref.size(),
-            ));
-        }
-
-        self.service.blob_storage.get(storage_key).await
-    }
-
-    async fn apply_action_effects(
-        &self,
-        resource: &mut Resource,
-        directory: &crate::port::DirectoryLocation,
+        located: LocatedResource,
         storage_key: &StorageKey,
         output: &ResourceActionOutput,
         access: ActionAccess,
@@ -270,64 +283,85 @@ impl<'a> ResourceActionService<'a> {
         if output.output().effects.is_empty() {
             return Ok(());
         }
-        if !matches!(access, ActionAccess::Write) {
-            return Err(CoreError::invariant(format!(
-                "action `{}` returned effects without write access",
-                output.action()
-            )));
+        if access != ActionAccess::Write {
+            return Err(CoreError::invariant(
+                "read-only resource action returned write effects",
+            ));
         }
-
+        let mut resource = located.resource().clone();
         for effect in &output.output().effects {
             match effect {
                 PluginResourceActionEffect::ReplaceContent(effect) => {
-                    let Some(current_content) = resource.content().cloned() else {
-                        return Err(CoreError::invariant(format!(
-                            "action `{}` cannot replace missing resource content",
-                            output.action()
-                        )));
-                    };
-                    let data = BASE64_STANDARD
-                        .decode(effect.data.as_bytes())
-                        .map(Bytes::from)
-                        .map_err(|error| {
+                    let current = resource.content().cloned().ok_or_else(|| {
+                        CoreError::invariant("replace_content requires existing content")
+                    })?;
+                    let data = Bytes::from(
+                        BASE64_STANDARD.decode(effect.data.as_bytes()).map_err(|error| {
                             CoreError::invariant(format!(
-                                "action `{}` returned invalid replace_content base64: {error}",
-                                output.action()
+                                "resource action returned invalid base64: {error}"
                             ))
-                        })?;
-                    let checksum = calculate_checksum(data.as_ref())?;
+                        })?,
+                    );
                     let content = build_verified_content(
                         data.len() as u64,
                         effect
                             .mime_type
                             .clone()
-                            .or_else(|| current_content.mime_type().map(str::to_string)),
-                        checksum,
+                            .or_else(|| current.mime_type().map(str::to_string)),
+                        calculate_checksum(data.as_ref())?,
                         None,
                     )?;
-                    self.service
-                        .content()
-                        .replace_content_bytes_snapshot(resource, storage_key, content, data)
+                    self.content
+                        .replace_content_bytes_snapshot(
+                            &mut resource,
+                            storage_key,
+                            content,
+                            data,
+                        )
                         .await?;
                 }
                 PluginResourceActionEffect::Delete => {
-                    *resource = self
-                        .service
-                        .commands()
-                        .soft_delete_resource_snapshot(LocatedResource::new(
-                            resource.clone(),
-                            directory.clone(),
-                        )?)
+                    self.resources
+                        .delete(located.clone(), resource.revision())
                         .await?;
                 }
             }
         }
-
         Ok(())
     }
 }
 
-pub(super) fn resolved_content_delivery(
+pub struct SecuredActionOrchestrator<'a> {
+    service: &'a ActionOrchestrator,
+    authorization: &'a AuthorizationService,
+    context: &'a AccessContext,
+}
+
+impl SecuredActionOrchestrator<'_> {
+    pub async fn execute(
+        &self,
+        id: &ResourceId,
+        command: ExecuteResourceAction,
+    ) -> Result<Option<ResourceActionOutput>, CoreError> {
+        let Some(resource) = self.service.resources.get(id).await? else {
+            return Ok(None);
+        };
+        let action = self
+            .service
+            .resolve_action(resource.resource(), &command.action)?;
+        let operation = if action.output().effects.iter().any(|effect| effect == "delete") {
+            DirectoryOperation::DeleteResource
+        } else {
+            DirectoryOperation::ExecuteResourceAction
+        };
+        self.authorization
+            .require(self.context, resource.directory(), operation)
+            .await?;
+        self.service.execute_snapshot(resource, command).await.map(Some)
+    }
+}
+
+fn resolved_content_delivery(
     action: &ResourceActionDefinition,
     size: u64,
     policy: &ResourceActionPolicy,
@@ -342,15 +376,4 @@ pub(super) fn resolved_content_delivery(
         ResourceActionContentDelivery::Auto => Some(ResourceActionContentDelivery::Reference),
         delivery => Some(delivery),
     }
-}
-
-fn should_load_declared_action_content(
-    action: &ResourceActionDefinition,
-    content: &ResourceContent,
-    policy: &ResourceActionPolicy,
-) -> bool {
-    matches!(
-        resolved_content_delivery(action, content.size(), policy),
-        Some(ResourceActionContentDelivery::Inline)
-    )
 }

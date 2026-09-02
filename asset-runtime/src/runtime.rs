@@ -3,8 +3,9 @@ use crate::{PluginWebAssets, UploadFinalizationDispatcher};
 use asset_core::CoreError;
 use asset_core::domain::{ResourceActionPolicy, ResourceContentEditPolicy};
 use asset_core::service::{
-    AssetCoordinator, AuthorizationService, DirectoryIndexService, DirectoryProvisioningService,
-    DirectoryService, DirectoryServices, ResourceService, ResourceServicePorts, UserService,
+    ActionOrchestrator, AssetWorkflowService, AuthorizationService, ContentService,
+    DirectoryIndexService, DirectoryProvisioningService, DirectoryService, DirectoryServices,
+    ResourceService, ResourceServices, StorageMaintenanceService, UploadService, UserService,
 };
 use asset_infra::AssetInfrastructure;
 use asset_infra::action::{DefaultDirectoryActionExecutor, DefaultResourceActionExecutor};
@@ -27,10 +28,14 @@ pub struct AssetRuntime {
     /// 已验证的浏览器静态资源快照
     plugin_web_assets: PluginWebAssets,
     resource_service: ResourceService,
+    content_service: ContentService,
+    upload_service: UploadService,
+    action_orchestrator: ActionOrchestrator,
+    storage_maintenance_service: StorageMaintenanceService,
     directory_service: DirectoryService,
     directory_provisioning_service: DirectoryProvisioningService,
     directory_index_service: DirectoryIndexService,
-    asset_coordinator: AssetCoordinator,
+    asset_workflow_service: AssetWorkflowService,
     user_service: UserService,
     /// 授权应用能力
     authorization_service: AuthorizationService,
@@ -99,7 +104,7 @@ impl AssetRuntime {
             directory_kind_registry.as_ref(),
             ExtismHost::new(
                 infrastructure.directory_query(),
-                infrastructure.resource_query(),
+                infrastructure.resource_read_model(),
                 infrastructure.blob_storage(),
                 plugin_execution_policy.clone(),
                 config.plugin.grants.clone(),
@@ -139,22 +144,35 @@ impl AssetRuntime {
                 "recovered pending directory relocations"
             );
         }
-        let resource_service = ResourceService::new(
-            ResourceServicePorts::new(
-                infrastructure.resource_repository(),
-                infrastructure.resource_query(),
-                infrastructure.blob_storage(),
-                infrastructure.storage_scanner(),
-                resource_kind_registry,
-                infrastructure.upload_session_repository(),
-                infrastructure.content_replacement_repository(),
-            )
-            .with_actions(resource_action_registry, resource_action_executor),
+        let resource_services = ResourceServices::new(
+            infrastructure.resource_store(),
+            infrastructure.resource_read_model(),
+            infrastructure.resource_maintenance_read_model(),
+            infrastructure.resource_relocation_store(),
+            infrastructure.blob_storage(),
+            infrastructure.storage_scanner(),
             directory_service.clone(),
             directory_provisioning_service.clone(),
+            resource_kind_registry,
+            infrastructure.upload_session_repository(),
+            infrastructure.content_replacement_repository(),
+            resource_action_registry,
+            resource_action_executor,
             resource_action_policy,
             resource_content_edit_policy,
         );
+        let resource_service = resource_services.resource_service();
+        let content_service = resource_services.content_service();
+        let upload_service = resource_services.upload_service();
+        let action_orchestrator = resource_services.action_orchestrator();
+        let storage_maintenance_service = resource_services.storage_maintenance_service();
+        let recovered_resource_relocations = resource_service.recover_pending_relocations().await?;
+        if recovered_resource_relocations > 0 {
+            tracing::info!(
+                count = recovered_resource_relocations,
+                "recovered pending resource relocations"
+            );
+        }
         let user_service = UserService::new(
             infrastructure.user_repository(),
             infrastructure.user_query(),
@@ -163,21 +181,25 @@ impl AssetRuntime {
         );
         let authorization_service =
             AuthorizationService::new(infrastructure.user_repository(), directory_service.clone());
-        let asset_coordinator =
-            AssetCoordinator::new(resource_service.clone(), directory_service.clone());
+        let asset_workflow_service = AssetWorkflowService::new(
+            resource_service.clone(),
+            upload_service.clone(),
+            action_orchestrator.clone(),
+            directory_service.clone(),
+        );
         let plugin_web_assets = plugin_web_assets_from_catalog(&plugin_catalog)?;
 
-        let replacements_resumed = resource_service.resume_content_replacements().await?;
+        let replacements_resumed = content_service.resume_pending_replacements().await?;
         if replacements_resumed > 0 {
             tracing::info!(
                 count = replacements_resumed,
                 "recovered pending content replacements"
             );
         }
-        let pending_finalizations = resource_service.pending_upload_finalizations().await?;
+        let pending_finalizations = upload_service.pending_finalizations().await?;
         let resumed = pending_finalizations.len();
         let upload_finalizations =
-            Arc::new(UploadFinalizationScheduler::new(resource_service.clone()));
+            Arc::new(UploadFinalizationScheduler::new(upload_service.clone()));
         for id in pending_finalizations {
             upload_finalizations.dispatch(id)?;
         }
@@ -187,10 +209,14 @@ impl AssetRuntime {
         Ok(Self {
             plugin_web_assets,
             resource_service,
+            content_service,
+            upload_service,
+            action_orchestrator,
+            storage_maintenance_service,
             directory_service,
             directory_provisioning_service,
             directory_index_service,
-            asset_coordinator,
+            asset_workflow_service,
             user_service,
             authorization_service,
             upload_finalizations,
@@ -213,7 +239,7 @@ impl AssetRuntime {
                     settings.root.clone(),
                     settings.debounce,
                     settings.reconcile_interval,
-                    self.resource_service.clone(),
+                    self.storage_maintenance_service.clone(),
                 )
                 .await?,
             );
@@ -224,6 +250,22 @@ impl AssetRuntime {
     /// 返回 Resource 聚合应用服务。
     pub fn resource_service(&self) -> ResourceService {
         self.resource_service.clone()
+    }
+
+    pub fn content_service(&self) -> ContentService {
+        self.content_service.clone()
+    }
+
+    pub fn upload_service(&self) -> UploadService {
+        self.upload_service.clone()
+    }
+
+    pub fn action_orchestrator(&self) -> ActionOrchestrator {
+        self.action_orchestrator.clone()
+    }
+
+    pub fn storage_maintenance_service(&self) -> StorageMaintenanceService {
+        self.storage_maintenance_service.clone()
     }
 
     pub fn directory_service(&self) -> DirectoryService {
@@ -238,8 +280,8 @@ impl AssetRuntime {
         self.directory_index_service.clone()
     }
 
-    pub fn asset_coordinator(&self) -> AssetCoordinator {
-        self.asset_coordinator.clone()
+    pub fn asset_workflow_service(&self) -> AssetWorkflowService {
+        self.asset_workflow_service.clone()
     }
 
     pub fn user_service(&self) -> UserService {

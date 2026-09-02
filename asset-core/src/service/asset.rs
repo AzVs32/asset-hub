@@ -1,6 +1,9 @@
 //! Narrow application coordinator for use cases that mutate or project both aggregates.
 
-use super::{AuthorizationService, DirectoryService, ExecuteDirectoryAction, ResourceService};
+use super::{
+    ActionOrchestrator, AuthorizationService, DirectoryService, ExecuteDirectoryAction,
+    ResourceService, UploadService,
+};
 use crate::CoreError;
 use crate::domain::{
     AccessContext, DirectoryId, DirectoryKind, DirectoryOperation, DirectoryPath, ResourceId,
@@ -21,15 +24,24 @@ const MAX_CREATE_TREE_RESOURCES: usize = 32;
 
 /// Coordinates only operations whose consistency boundary spans Resource and Directory.
 #[derive(Clone)]
-pub struct AssetCoordinator {
+pub struct AssetWorkflowService {
     resources: ResourceService,
+    uploads: UploadService,
+    resource_actions: ActionOrchestrator,
     directories: DirectoryService,
 }
 
-impl AssetCoordinator {
-    pub fn new(resources: ResourceService, directories: DirectoryService) -> Self {
+impl AssetWorkflowService {
+    pub fn new(
+        resources: ResourceService,
+        uploads: UploadService,
+        resource_actions: ActionOrchestrator,
+        directories: DirectoryService,
+    ) -> Self {
         Self {
             resources,
+            uploads,
+            resource_actions,
             directories,
         }
     }
@@ -38,9 +50,9 @@ impl AssetCoordinator {
         &'a self,
         authorization: &'a AuthorizationService,
         context: &'a AccessContext,
-    ) -> SecuredAssetCoordinator<'a> {
-        SecuredAssetCoordinator {
-            coordinator: self,
+    ) -> SecuredAssetWorkflowService<'a> {
+        SecuredAssetWorkflowService {
+            workflows: self,
             authorization,
             context,
         }
@@ -48,13 +60,13 @@ impl AssetCoordinator {
 }
 
 /// Authorization-bound cross-aggregate operations.
-pub struct SecuredAssetCoordinator<'a> {
-    coordinator: &'a AssetCoordinator,
+pub struct SecuredAssetWorkflowService<'a> {
+    workflows: &'a AssetWorkflowService,
     authorization: &'a AuthorizationService,
     context: &'a AccessContext,
 }
 
-impl SecuredAssetCoordinator<'_> {
+impl SecuredAssetWorkflowService<'_> {
     async fn require(
         &self,
         directory: &crate::port::DirectoryLocation,
@@ -69,7 +81,7 @@ impl SecuredAssetCoordinator<'_> {
         &self,
         id: &DirectoryId,
     ) -> Result<DirectoryArchiveManifest, CoreError> {
-        let root = self.coordinator.directories.find_by_id(id).await?;
+        let root = self.workflows.directories.find_by_id(id).await?;
         self.require(root.location(), DirectoryOperation::DownloadDirectory)
             .await?;
         let archive_root = if root.id().is_root() {
@@ -85,7 +97,7 @@ impl SecuredAssetCoordinator<'_> {
 
         while let Some(directory) = pending.pop_front() {
             if !self
-                .coordinator
+                .workflows
                 .directories
                 .contains(id, &directory.id())
                 .await?
@@ -99,12 +111,13 @@ impl SecuredAssetCoordinator<'_> {
             let mut offset = 0;
             loop {
                 let page = self
-                    .coordinator
+                    .workflows
                     .resources
-                    .list_resources_for_coordination(
-                        ListResources::new(DIRECTORY_ARCHIVE_PAGE_SIZE, offset)
-                            .with_directory_id(directory.id()),
-                    )
+                    .list(ListResources::new(
+                        DIRECTORY_ARCHIVE_PAGE_SIZE,
+                        offset,
+                        directory.id(),
+                    ))
                     .await?;
                 let item_count = page.items.len() as u64;
                 resources.extend(page.items.into_iter().filter_map(|located| {
@@ -124,7 +137,7 @@ impl SecuredAssetCoordinator<'_> {
             }
 
             pending.extend(
-                self.coordinator
+                self.workflows
                     .directories
                     .list_located_children(&directory.id())
                     .await?,
@@ -145,9 +158,9 @@ impl SecuredAssetCoordinator<'_> {
         id: &DirectoryId,
         command: ExecuteDirectoryAction,
     ) -> Result<DirectoryActionOutput, CoreError> {
-        let directory = self.coordinator.directories.find_by_id(id).await?;
+        let directory = self.workflows.directories.find_by_id(id).await?;
         let definition = self
-            .coordinator
+            .workflows
             .directories
             .resolve_action(directory.directory(), &command.action)?;
         let operation = if definition
@@ -168,7 +181,7 @@ impl SecuredAssetCoordinator<'_> {
             .root()
             .id();
         let executed = self
-            .coordinator
+            .workflows
             .directories
             .invoke_action(id, command)
             .await?;
@@ -186,7 +199,7 @@ impl SecuredAssetCoordinator<'_> {
             self.apply_create_tree(&directory, executed.expected_revision(), effect, scope_root)
                 .await?;
         } else {
-            self.coordinator
+            self.workflows
                 .directories
                 .apply_executed_action(&executed, Some(scope_root))
                 .await?;
@@ -220,7 +233,7 @@ impl SecuredAssetCoordinator<'_> {
                 effect.resources.len() as u64,
             ));
         }
-        let current = self.coordinator.directories.find_by_id(&root.id()).await?;
+        let current = self.workflows.directories.find_by_id(&root.id()).await?;
         if current.directory().revision() != expected_revision {
             return Err(CoreError::revision_conflict(
                 "directory",
@@ -254,7 +267,7 @@ impl SecuredAssetCoordinator<'_> {
         let mut prepared_resources = Vec::with_capacity(effect.resources.len());
         let mut unique_resources = HashSet::new();
         let mut total_bytes = 0_u64;
-        let max_bytes = self.coordinator.resources.max_inline_action_content_bytes();
+        let max_bytes = self.workflows.resource_actions.max_inline_content_bytes();
         for spec in effect.resources {
             let directory = canonical_relative_directory(&spec.directory, true)?;
             let kind = spec.kind.map(ResourceKind::try_new).transpose()?;
@@ -308,7 +321,7 @@ impl SecuredAssetCoordinator<'_> {
                     ))
                 })?;
                 let created = self
-                    .coordinator
+                    .workflows
                     .directories
                     .create_with_kind_in_scope(&parent.id(), relative.name(), kind, scope_root)
                     .await?;
@@ -323,9 +336,9 @@ impl SecuredAssetCoordinator<'_> {
                     ))
                 })?;
                 let created = self
-                    .coordinator
-                    .resources
-                    .create_generated_resource(
+                    .workflows
+                    .uploads
+                    .create_generated(
                         directory,
                         resource.name,
                         resource.kind,
@@ -342,9 +355,9 @@ impl SecuredAssetCoordinator<'_> {
         if let Err(error) = result {
             for resource in created_resources.into_iter().rev() {
                 if let Err(rollback_error) = self
-                    .coordinator
+                    .workflows
                     .resources
-                    .remove_generated_resource(resource)
+                    .delete(resource.clone(), resource.resource().revision())
                     .await
                 {
                     tracing::error!(%rollback_error, "failed to roll back create_tree resource");
@@ -352,7 +365,7 @@ impl SecuredAssetCoordinator<'_> {
             }
             for directory in created_directories.into_iter().rev() {
                 if let Err(rollback_error) = self
-                    .coordinator
+                    .workflows
                     .directories
                     .delete_if_empty(&directory.id(), None)
                     .await

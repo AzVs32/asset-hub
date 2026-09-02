@@ -2,7 +2,7 @@ use super::*;
 use asset_core::domain::{DefinitionOrigin, DirectoryKindDefinition, StorageKey};
 use asset_core::port::{
     DirectoryKindRegistry, DirectoryRelocation, DirectoryRelocationStore, DirectoryRevisionUpdate,
-    DirectoryStorage, DirectoryStore, ResourceRepository,
+    DirectoryStorage, DirectoryStore, ResourceStore,
 };
 use asset_core::service::{DirectoryService, DirectoryServices, UpdateDirectory};
 use std::collections::HashSet;
@@ -12,21 +12,21 @@ use std::sync::Arc;
 
 #[derive(Clone)]
 struct TestRepositories {
-    resources: Arc<SqliteResourceRepository>,
+    resources: Arc<SqliteResourceStore>,
     directories: Arc<SqliteDirectoryStore>,
     pool: SqlitePool,
 }
 
 impl Deref for TestRepositories {
-    type Target = SqliteResourceRepository;
+    type Target = SqliteResourceStore;
 
     fn deref(&self) -> &Self::Target {
         self.resources.as_ref()
     }
 }
 
-impl AsRef<SqliteResourceRepository> for TestRepositories {
-    fn as_ref(&self) -> &SqliteResourceRepository {
+impl AsRef<SqliteResourceStore> for TestRepositories {
+    fn as_ref(&self) -> &SqliteResourceStore {
         self.resources.as_ref()
     }
 }
@@ -146,7 +146,7 @@ async fn resource_storage_key(repository: &TestRepositories, resource: &Resource
 async fn sqlite_repository_rejects_invalid_persisted_resource_content() {
     let repository = repository("invalid-content").await;
     let resource = Resource::builder("invalid.bin").build().unwrap();
-    repository.save(&resource).await.unwrap();
+    repository.insert(&resource).await.unwrap();
     sqlx::query(
         r#"
         UPDATE resources
@@ -160,7 +160,7 @@ async fn sqlite_repository_rejects_invalid_persisted_resource_content() {
     .unwrap();
 
     assert!(matches!(
-        repository.find_by_id(&resource.id()).await,
+        repository.load(&resource.id()).await,
         Err(CoreError::Repository {
             operation: "resource.decode_content",
             ..
@@ -172,7 +172,7 @@ async fn sqlite_repository_rejects_invalid_persisted_resource_content() {
 async fn sqlite_repository_classifies_invalid_resource_state_as_repository_failure() {
     let repository = repository("invalid-resource-snapshot").await;
     let resource = Resource::builder("valid.bin").build().unwrap();
-    repository.save(&resource).await.unwrap();
+    repository.insert(&resource).await.unwrap();
     sqlx::query("UPDATE resources SET name = '..' WHERE id = ?")
         .bind(resource.id().to_string())
         .execute(repository.pool())
@@ -180,7 +180,7 @@ async fn sqlite_repository_classifies_invalid_resource_state_as_repository_failu
         .unwrap();
 
     assert!(matches!(
-        repository.find_by_id(&resource.id()).await,
+        repository.load(&resource.id()).await,
         Err(CoreError::Repository {
             operation: "resource.rehydrate",
             ..
@@ -189,66 +189,29 @@ async fn sqlite_repository_classifies_invalid_resource_state_as_repository_failu
 }
 
 #[tokio::test]
-async fn sqlite_path_lookup_ignores_soft_deleted_resource_and_finds_replacement() {
-    let repository = repository("replace-soft-deleted-path").await;
-    let directories = directory_service(repository.directories.clone()).await;
-    let docs = directories
-        .create(&DirectoryId::root(), "docs")
-        .await
-        .unwrap();
-    let mut deleted = Resource::builder("same-name.txt")
-        .with_directory_id(docs.id())
-        .build()
-        .unwrap();
-    repository.save(&deleted).await.unwrap();
-    deleted.soft_delete();
-    repository.save(&deleted).await.unwrap();
-
-    assert!(
-        repository
-            .find_by_path(docs.path(), deleted.name())
-            .await
-            .unwrap()
-            .is_none()
-    );
-
-    let replacement = Resource::builder("same-name.txt")
-        .with_directory_id(docs.id())
-        .build()
-        .unwrap();
-    repository.save(&replacement).await.unwrap();
-
-    assert_eq!(
-        repository
-            .find_by_path(docs.path(), replacement.name())
-            .await
-            .unwrap()
-            .map(|resource| resource.resource().id()),
-        Some(replacement.id())
-    );
-}
-
-#[tokio::test]
 async fn conditional_save_rejects_a_stale_resource_snapshot() {
     let repository = repository("conditional-save").await;
     let resource = Resource::builder("original").build().unwrap();
-    repository.save(&resource).await.unwrap();
+    repository.insert(&resource).await.unwrap();
 
     let expected = resource.revision();
     let mut concurrent = resource.clone();
     concurrent.rename("concurrent").unwrap();
-    repository.save(&concurrent).await.unwrap();
+    assert!(repository
+        .update_if_revision(&concurrent, expected)
+        .await
+        .unwrap());
 
     let mut stale = resource.clone();
     stale.rename("stale").unwrap();
     assert!(
-        !ResourceRepository::save_if_unchanged(repository.as_ref(), &stale, expected)
+        !ResourceStore::update_if_revision(repository.as_ref(), &stale, expected)
             .await
             .unwrap()
     );
     assert_eq!(
         repository
-            .find_by_id(&resource.id())
+            .load(&resource.id())
             .await
             .unwrap()
             .unwrap()
@@ -300,28 +263,31 @@ async fn directory_store_rejects_a_stale_aggregate_snapshot() {
 async fn conditional_remove_rejects_a_stale_resource_snapshot() {
     let repository = repository("conditional-remove").await;
     let resource = Resource::builder("original").build().unwrap();
-    repository.save(&resource).await.unwrap();
+    repository.insert(&resource).await.unwrap();
 
     let expected = resource.revision();
     let mut concurrent = resource.clone();
     concurrent.rename("concurrent").unwrap();
-    repository.save(&concurrent).await.unwrap();
+    assert!(repository
+        .update_if_revision(&concurrent, expected)
+        .await
+        .unwrap());
 
     assert!(
         !repository
-            .remove_if_unchanged(&resource.id(), expected)
+            .delete_if_revision(&resource.id(), expected)
             .await
             .unwrap()
     );
     assert!(
         repository
-            .remove_if_unchanged(&resource.id(), concurrent.revision())
+            .delete_if_revision(&resource.id(), concurrent.revision())
             .await
             .unwrap()
     );
     assert!(
         repository
-            .find_by_id(&resource.id())
+            .load(&resource.id())
             .await
             .unwrap()
             .is_none()
@@ -346,7 +312,7 @@ async fn directory_tree_derives_paths_from_stable_ids_after_rename_and_move() {
         .with_directory_id(content.id())
         .build()
         .unwrap();
-    repository.save(&resource).await.unwrap();
+    repository.insert(&resource).await.unwrap();
 
     let item_revision = directories
         .find_by_id(&item.id())
@@ -384,7 +350,7 @@ async fn directory_tree_derives_paths_from_stable_ids_after_rename_and_move() {
         resource_storage_key(
             &repository,
             &repository
-                .find_by_id(&resource.id())
+                .load(&resource.id())
                 .await
                 .unwrap()
                 .unwrap(),
@@ -529,7 +495,7 @@ async fn repository(name: &str) -> TestRepositories {
         .await
         .unwrap();
     TestRepositories {
-        resources: Arc::new(SqliteResourceRepository::new(database.pool().clone())),
+        resources: Arc::new(SqliteResourceStore::new(database.pool().clone())),
         directories: Arc::new(SqliteDirectoryStore::new(database.pool().clone())),
         pool: database.pool().clone(),
     }
