@@ -11,8 +11,9 @@ use crate::domain::{
 use crate::port::{
     BlobByteStream, DirectoryActionExecutor, DirectoryActionOutput, DirectoryActionRegistry,
     DirectoryActionRequest, DirectoryIndex, DirectoryKindRegistry, DirectoryLocation,
-    DirectoryQuery, DirectoryRepository, DirectoryStorage, ListResources, LocatedDirectory,
-    LocatedResource, ResourceActionOutput, ResourceActionRequest,
+    DirectoryQuery, DirectoryRelocation, DirectoryRelocationStore, DirectoryRevisionUpdate,
+    DirectoryStorage, DirectoryStore, ListResources, LocatedDirectory, LocatedResource,
+    RESERVED_BLOB_STORAGE_PREFIX, ResourceActionOutput, ResourceActionRequest,
     ResourceContentReplacementRepository, ResourceKindRegistry, ResourcePage, ScannedStorageEntry,
     StagedBlob, StoragePrefix, UploadSessionRepository, UserRepository,
 };
@@ -183,6 +184,7 @@ struct InMemoryResourceRepository {
     fail_next_conditional_save: Mutex<bool>,
     next_save_started: Mutex<Option<oneshot::Sender<()>>>,
     next_save_release: Mutex<Option<oneshot::Receiver<()>>>,
+    relocations: Mutex<HashMap<DirectoryId, DirectoryRelocation>>,
 }
 
 impl Default for InMemoryResourceRepository {
@@ -195,6 +197,7 @@ impl Default for InMemoryResourceRepository {
             fail_next_conditional_save: Mutex::new(false),
             next_save_started: Mutex::new(None),
             next_save_release: Mutex::new(None),
+            relocations: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -440,7 +443,7 @@ impl ResourceQuery for InMemoryResourceRepository {
 }
 
 #[async_trait::async_trait]
-impl DirectoryRepository for InMemoryResourceRepository {
+impl DirectoryStore for InMemoryResourceRepository {
     async fn load_all(&self) -> Result<Vec<Directory>, CoreError> {
         Ok(self
             .directories
@@ -449,6 +452,15 @@ impl DirectoryRepository for InMemoryResourceRepository {
             .values()
             .map(|(directory, _)| directory.clone())
             .collect())
+    }
+
+    async fn load(&self, id: &DirectoryId) -> Result<Option<Directory>, CoreError> {
+        Ok(self
+            .directories
+            .lock()
+            .unwrap()
+            .get(id)
+            .map(|(directory, _)| directory.clone()))
     }
 
     async fn insert(&self, directory: &Directory) -> Result<(), CoreError> {
@@ -470,25 +482,43 @@ impl DirectoryRepository for InMemoryResourceRepository {
         Ok(())
     }
 
-    async fn save_if_unchanged(
+    async fn update_batch_if_unchanged(
         &self,
-        directory: &Directory,
-        expected_revision: u64,
+        updates: &[DirectoryRevisionUpdate],
     ) -> Result<bool, CoreError> {
-        let current = self
-            .directories
-            .lock()
-            .unwrap()
-            .get(&directory.id())
-            .cloned();
-        if !current.is_some_and(|(current, _)| current.revision() == expected_revision) {
-            return Ok(false);
+        {
+            let mut directories = self.directories.lock().unwrap();
+            if updates.iter().any(|update| {
+                !directories
+                    .get(&update.directory().id())
+                    .is_some_and(|(current, _)| current.revision() == update.expected_revision())
+            }) {
+                return Ok(false);
+            }
+            for update in updates {
+                let path = directories.get(&update.directory().id()).unwrap().1.clone();
+                directories.insert(update.directory().id(), (update.directory().clone(), path));
+            }
         }
-        self.insert(directory).await?;
+        let directories = self.load_all().await?;
+        DirectoryIndex::replace_all(self, directories).await?;
         Ok(true)
     }
 
-    async fn remove_if_empty(
+    async fn is_empty(&self, id: &DirectoryId) -> Result<bool, CoreError> {
+        let directories = self.directories.lock().unwrap();
+        Ok(!directories
+            .values()
+            .any(|(directory, _)| directory.parent_id() == Some(*id))
+            && !self
+                .resources
+                .lock()
+                .unwrap()
+                .values()
+                .any(|resource| resource.directory_id() == *id))
+    }
+
+    async fn delete_if_empty(
         &self,
         id: &DirectoryId,
         expected_revision: u64,
@@ -514,6 +544,26 @@ impl DirectoryRepository for InMemoryResourceRepository {
             return Ok(false);
         }
         Ok(directories.remove(id).is_some())
+    }
+}
+
+#[async_trait::async_trait]
+impl DirectoryRelocationStore for InMemoryResourceRepository {
+    async fn begin(&self, relocation: &DirectoryRelocation) -> Result<(), CoreError> {
+        self.relocations
+            .lock()
+            .unwrap()
+            .insert(relocation.directory_id(), relocation.clone());
+        Ok(())
+    }
+
+    async fn load_pending(&self) -> Result<Vec<DirectoryRelocation>, CoreError> {
+        Ok(self.relocations.lock().unwrap().values().cloned().collect())
+    }
+
+    async fn complete(&self, id: &DirectoryId) -> Result<(), CoreError> {
+        self.relocations.lock().unwrap().remove(id);
+        Ok(())
     }
 }
 
@@ -730,6 +780,10 @@ impl InMemoryBlobStorage {
 
 #[async_trait::async_trait]
 impl DirectoryStorage for InMemoryBlobStorage {
+    async fn directory_exists(&self, directory: &DirectoryPath) -> Result<bool, CoreError> {
+        Ok(directory.is_root() || self.directories.lock().unwrap().contains(directory))
+    }
+
     async fn ensure_directory(&self, directory: &DirectoryPath) -> Result<(), CoreError> {
         let mut directories = self.directories.lock().unwrap();
         let mut path = String::new();
@@ -743,6 +797,75 @@ impl DirectoryStorage for InMemoryBlobStorage {
         }
         Ok(())
     }
+
+    async fn move_directory(
+        &self,
+        from: &DirectoryPath,
+        to: &DirectoryPath,
+    ) -> Result<(), CoreError> {
+        let mut directories = self.directories.lock().unwrap();
+        if directories.contains(to) {
+            return Err(CoreError::conflict("directory destination exists"));
+        }
+        let affected = directories
+            .iter()
+            .filter(|path| from.contains(path))
+            .cloned()
+            .collect::<Vec<_>>();
+        for path in &affected {
+            directories.remove(path);
+        }
+        for path in affected {
+            let suffix = path.path().strip_prefix(from.path()).unwrap();
+            directories.insert(DirectoryPath::from_path(format!("{}{suffix}", to.path()))?);
+        }
+        drop(directories);
+
+        let prefix = format!("{}/", from.path());
+        let replacements = self
+            .objects
+            .lock()
+            .unwrap()
+            .keys()
+            .filter(|key| key.as_str().starts_with(&prefix))
+            .cloned()
+            .collect::<Vec<_>>();
+        for source in replacements {
+            let suffix = source.as_str().strip_prefix(from.path()).unwrap();
+            let destination = StorageKey::new(format!("{}{suffix}", to.path()))?;
+            if let Some(value) = self.objects.lock().unwrap().remove(&source) {
+                self.objects
+                    .lock()
+                    .unwrap()
+                    .insert(destination.clone(), value);
+            }
+            if let Some(value) = self.modified_at.lock().unwrap().remove(&source) {
+                self.modified_at.lock().unwrap().insert(destination, value);
+            }
+        }
+        Ok(())
+    }
+
+    async fn delete_empty_directory(&self, directory: &DirectoryPath) -> Result<(), CoreError> {
+        let prefix = format!("{}/", directory.path());
+        if self
+            .objects
+            .lock()
+            .unwrap()
+            .keys()
+            .any(|key| key.as_str().starts_with(&prefix))
+            || self
+                .directories
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|candidate| candidate != directory && directory.contains(candidate))
+        {
+            return Err(CoreError::conflict("directory is not physically empty"));
+        }
+        self.directories.lock().unwrap().remove(directory);
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
@@ -752,6 +875,12 @@ impl BlobStorage for InMemoryBlobStorage {
     }
 
     async fn put(&self, key: &StorageKey, data: Bytes) -> Result<(), CoreError> {
+        if !key.as_str().starts_with(RESERVED_BLOB_STORAGE_PREFIX)
+            && let Some((directory, _)) = key.as_str().rsplit_once('/')
+        {
+            self.ensure_directory(&DirectoryPath::from_path(directory)?)
+                .await?;
+        }
         self.objects.lock().unwrap().insert(key.clone(), data);
         self.modified_at
             .lock()
@@ -1255,13 +1384,15 @@ fn service() -> (
     });
     let repository = Arc::new(InMemoryResourceRepository::default());
     let blob_storage = Arc::new(InMemoryBlobStorage::default());
-    let directories = DirectoryService::new(
+    let directory_services = crate::service::DirectoryServices::new(
         repository.clone(),
         repository.clone(),
         blob_storage.clone(),
+        repository.clone(),
         Arc::new(InMemoryDirectoryKindRegistry::default()),
-    )
-    .with_actions(
+    );
+    let directory_provisioning = directory_services.provisioning_service();
+    let directories = directory_services.directory_service().with_actions(
         Arc::new(InMemoryDirectoryActionRegistry {
             actions: vec![
                 DirectoryActionDefinition::new_static("test.directory.move", "Move directory")
@@ -1291,6 +1422,7 @@ fn service() -> (
         )
         .with_actions(action_registry, Arc::new(StaticResourceActionExecutor)),
         directories,
+        directory_provisioning,
         Arc::new(test_resource_action_policy()),
         Arc::new(test_resource_content_edit_policy()),
     );
@@ -1374,6 +1506,9 @@ impl ResourceService {
             mut content,
             mime_type,
         } = draft;
+        self.directory_provisioning
+            .provision_path(&directory)
+            .await?;
         let mut bytes = Vec::new();
         while let Some(chunk) = content.next().await {
             bytes.extend_from_slice(&chunk?);

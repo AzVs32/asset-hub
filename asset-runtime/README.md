@@ -18,14 +18,15 @@ Construction has a deterministic order:
 4. compile private Extism handler bindings and combine them with typed built-in handler bindings;
 5. derive the Core Action-content and interactive text-edit policies from their independent Host
    configuration values;
-6. compose one shared `DirectoryService`, then inject clones of that same service into
-   `ResourceService`, `UserService`, and `AuthorizationService` so directory mutation locking has
-   one process-local ownership boundary; compose a narrow `AssetCoordinator` from the Resource and
-   Directory services for directory actions and archive projections that cross both aggregates;
-7. recover pending Resource content replacements;
-8. read pending upload finalization IDs from Core and schedule them through the Runtime-owned
+6. compose `DirectoryService`, `DirectoryProvisioningService`, and `DirectoryIndexService` through
+   one `DirectoryServices` bundle so they share a store, projection, and process-local mutation
+   boundary; inject ordinary Directory lookup/mutation into Resource/authorization/workflows and
+   inject provisioning only into User workspace setup and trusted storage reconciliation;
+7. recover pending Directory relocations before Resource/upload recovery;
+8. recover pending Resource content replacements;
+9. read pending upload finalization IDs from Core and schedule them through the Runtime-owned
    finalization supervisor;
-9. start optional storage synchronization only when the application surface requests it.
+10. start optional storage synchronization only when the application surface requests it.
 
 `AssetRuntime::new` is the composition boundary. `AssetInfrastructure`, `PluginCatalog`, concrete
 kind/action registries, and concrete action executors are construction locals. Their required
@@ -33,7 +34,7 @@ ports and handler ownership are retained by the composed Core services; the Runt
 duplicate concrete `Arc`s or expose registry getters. Resource and Directory kind definitions are
 queried through their respective services; the coordinator exposes no kind or repository surface.
 
-The Runtime retains only the Resource and Directory services, the narrow cross-aggregate
+The Runtime retains the Resource service, the three Directory services, the narrow cross-aggregate
 coordinator, the frozen Plugin Web asset snapshot, the
 private upload-finalization supervisor, the effective settings needed to start local storage sync,
 and the sync guard after startup. The caller continues to own its loaded configuration; the

@@ -51,8 +51,15 @@ fn directory_service_with_inherited_actions() -> crate::service::DirectoryServic
         ],
     });
 
-    crate::service::DirectoryService::new(repository.clone(), repository, storage, kinds)
-        .with_actions(actions, Arc::new(StaticDirectoryActionExecutor))
+    crate::service::DirectoryServices::new(
+        repository.clone(),
+        repository.clone(),
+        storage,
+        repository,
+        kinds,
+    )
+    .directory_service()
+    .with_actions(actions, Arc::new(StaticDirectoryActionExecutor))
 }
 
 fn directory_service_with_placement_rules() -> crate::service::DirectoryService {
@@ -98,7 +105,14 @@ fn directory_service_with_placement_rules() -> crate::service::DirectoryService 
             .with_parent(Some(DirectoryKind::default())),
         ],
     });
-    crate::service::DirectoryService::new(repository.clone(), repository, storage, kinds)
+    crate::service::DirectoryServices::new(
+        repository.clone(),
+        repository.clone(),
+        storage,
+        repository,
+        kinds,
+    )
+    .directory_service()
 }
 
 #[test]
@@ -108,9 +122,9 @@ fn directory_kind_placement_is_enforced_for_create_move_and_parent_kind_changes(
     let games_kind = DirectoryKind::try_new("azvs.games:directory").unwrap();
     let item_kind = DirectoryKind::try_new("azvs.games:directory:item").unwrap();
     let special_item_kind = DirectoryKind::try_new("azvs.games:directory:item:special").unwrap();
-    let games = block_on(service.create_with_kind(&root, "games", games_kind)).unwrap();
+    let games = block_on(service.create_with_kind(&root.id(), "games", games_kind)).unwrap();
 
-    let automatic_item = block_on(service.create(games.location(), "automatic-item")).unwrap();
+    let automatic_item = block_on(service.create(&games.id(), "automatic-item")).unwrap();
     assert_eq!(
         block_on(service.find_by_id(&automatic_item.id()))
             .unwrap()
@@ -120,23 +134,43 @@ fn directory_kind_placement_is_enforced_for_create_move_and_parent_kind_changes(
     );
 
     assert!(matches!(
-        block_on(service.create_with_kind(&root, "outside", item_kind.clone())),
+        block_on(service.create_with_kind(&root.id(), "outside", item_kind.clone())),
         Err(CoreError::Conflict { .. })
     ));
     assert!(matches!(
-        block_on(service.create_with_kind(&root, "special-outside", special_item_kind.clone())),
+        block_on(service.create_with_kind(
+            &root.id(),
+            "special-outside",
+            special_item_kind.clone()
+        )),
         Err(CoreError::Conflict { .. })
     ));
 
-    let item = block_on(service.create_with_kind(games.location(), "inside", item_kind)).unwrap();
-    block_on(service.create_with_kind(games.location(), "special-inside", special_item_kind))
-        .unwrap();
+    let item = block_on(service.create_with_kind(&games.id(), "inside", item_kind)).unwrap();
+    block_on(service.create_with_kind(&games.id(), "special-inside", special_item_kind)).unwrap();
+    let item_revision = block_on(service.find_by_id(&item.id()))
+        .unwrap()
+        .directory()
+        .revision();
     assert!(matches!(
-        block_on(service.move_to(&item.id(), &DirectoryId::root())),
+        block_on(service.update(
+            &item.id(),
+            crate::service::UpdateDirectory::new(item_revision).with_parent_id(DirectoryId::root())
+        )),
         Err(CoreError::Conflict { .. })
     ));
+    let games_revision = block_on(service.find_by_id(&games.id()))
+        .unwrap()
+        .directory()
+        .revision();
     assert!(matches!(
-        block_on(service.change_kind(&games.id(), DirectoryKind::default())),
+        block_on(
+            service.update(
+                &games.id(),
+                crate::service::UpdateDirectory::new(games_revision)
+                    .with_kind(DirectoryKind::default())
+            )
+        ),
         Err(CoreError::Conflict { .. })
     ));
 }
@@ -145,19 +179,26 @@ fn directory_kind_placement_is_enforced_for_create_move_and_parent_kind_changes(
 fn changing_a_directory_to_games_reclassifies_only_generic_direct_children() {
     let service = directory_service_with_placement_rules();
     let root = block_on(service.root()).unwrap();
-    let library = block_on(service.create(&root, "library")).unwrap();
-    let generic = block_on(service.create(&library, "generic-game")).unwrap();
+    let library = block_on(service.create(&root.id(), "library")).unwrap();
+    let generic = block_on(service.create(&library.id(), "generic-game")).unwrap();
     let unrelated = block_on(service.create_with_kind(
-        &library,
+        &library.id(),
         "preserved",
         DirectoryKind::try_new("azvs:unrelated").unwrap(),
     ))
     .unwrap();
 
-    block_on(service.change_kind(
-        &library.id(),
-        DirectoryKind::try_new("azvs.games:directory").unwrap(),
-    ))
+    let library_revision = block_on(service.find_by_id(&library.id()))
+        .unwrap()
+        .directory()
+        .revision();
+    block_on(
+        service.update(
+            &library.id(),
+            crate::service::UpdateDirectory::new(library_revision)
+                .with_kind(DirectoryKind::try_new("azvs.games:directory").unwrap()),
+        ),
+    )
     .unwrap();
 
     assert_eq!(

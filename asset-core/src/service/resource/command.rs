@@ -176,7 +176,7 @@ impl<'a> ResourceCommandService<'a> {
             directory = self
                 .service
                 .directories
-                .ensure_path(&target_directory)
+                .resolve_path(&target_directory)
                 .await?;
             resource.move_to_directory(directory.id())?;
         }

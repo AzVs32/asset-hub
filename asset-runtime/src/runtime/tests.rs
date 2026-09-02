@@ -55,7 +55,7 @@ async fn root_directory_paths(runtime: &AssetRuntime) -> Vec<DirectoryPath> {
     let directories = runtime.directory_service();
     let root = directories.root().await.unwrap();
     directories
-        .list_children(&root)
+        .list_children(&root.id())
         .await
         .unwrap()
         .into_iter()
@@ -174,6 +174,35 @@ async fn local_storage_changes_are_synchronized_automatically() {
     assert!(
         directory_removed,
         "removed directory should be synchronized"
+    );
+
+    let managed_path = DirectoryPath::from_path("managed-empty").unwrap();
+    let managed = runtime
+        .directory_provisioning_service()
+        .provision_path(&managed_path)
+        .await
+        .unwrap();
+    assert!(root.join(managed_path.path()).is_dir());
+    assert!(
+        runtime
+            .directory_service()
+            .delete_if_empty(&managed.id(), None)
+            .await
+            .unwrap()
+    );
+    assert!(!root.join(managed_path.path()).exists());
+    runtime
+        .resource_service()
+        .reconcile_storage()
+        .await
+        .unwrap();
+    assert!(
+        runtime
+            .directory_service()
+            .find_by_path(&managed_path)
+            .await
+            .is_err(),
+        "service deletion must not be re-imported by reconciliation"
     );
 
     drop(runtime);

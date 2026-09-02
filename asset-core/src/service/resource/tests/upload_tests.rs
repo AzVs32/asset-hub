@@ -192,6 +192,11 @@ async fn interrupted_upload_chunk_never_reaches_the_session_staging_file() {
 #[tokio::test]
 async fn upload_checksum_mismatch_fails_before_publication() {
     let (service, repository, blob_storage) = service();
+    service
+        .directory_provisioning
+        .provision_path(&DirectoryPath::from_path("assets").unwrap())
+        .await
+        .unwrap();
     let owner = UserId::new();
     let expected = Bytes::from_static(b"right");
     let received = Bytes::from_static(b"wrong");

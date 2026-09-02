@@ -34,7 +34,7 @@ impl DirectoryService {
             .map(|ports| {
                 ports
                     .registry
-                    .actions_for_kinds(&self.kind_registry.lineage(kind))
+                    .actions_for_kinds(&self.kernel.kind_registry.lineage(kind))
             })
             .unwrap_or_default()
     }
@@ -280,7 +280,7 @@ impl DirectoryService {
         {
             let directory = self.find_by_id(id).await?;
             if !self
-                .remove_if_empty(directory.location(), Some(expected_revision))
+                .delete_if_empty(&directory.id(), Some(expected_revision))
                 .await?
             {
                 return Err(CoreError::conflict(format!(

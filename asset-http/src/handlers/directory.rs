@@ -225,7 +225,7 @@ pub(crate) async fn delete_directory(
     let id = parse_directory_id(&id)?;
     if state
         .secured_directories(&access.0)
-        .remove_if_empty(&id, query.expected_revision)
+        .delete(&id, query.expected_revision)
         .await?
     {
         Ok(StatusCode::NO_CONTENT)

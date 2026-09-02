@@ -109,7 +109,10 @@ impl<'a> StorageReconciliationService<'a> {
         while let Some(entry) = entries.next().await {
             match entry? {
                 ScannedStorageEntry::Directory(directory) => {
-                    self.service.directories.ensure_path(&directory).await?;
+                    self.service
+                        .directory_provisioning
+                        .import_storage_path(&directory)
+                        .await?;
                     physical_directories.insert(directory);
                     report.directories += 1;
                 }
@@ -184,7 +187,11 @@ impl<'a> StorageReconciliationService<'a> {
         )?;
         let resource = build_resource(
             name,
-            self.service.directories.ensure_path(&directory).await?.id(),
+            self.service
+                .directory_provisioning
+                .import_storage_path(&directory)
+                .await?
+                .id(),
             Some(kind),
         )
         .with_content(content)
@@ -229,7 +236,10 @@ impl<'a> StorageReconciliationService<'a> {
         while let Some(entry) = entries.stream.next().await {
             match entry? {
                 ScannedStorageEntry::Directory(directory) => {
-                    self.service.directories.ensure_path(&directory).await?;
+                    self.service
+                        .directory_provisioning
+                        .import_storage_path(&directory)
+                        .await?;
                     physical_directories.insert(directory);
                     report.directories += 1;
                 }
@@ -418,7 +428,11 @@ impl<'a> StorageReconciliationService<'a> {
 
         let expected_revision = resource.revision();
         resource.rename(to_name)?;
-        let to_directory = self.service.directories.ensure_path(&to_directory).await?;
+        let to_directory = self
+            .service
+            .directory_provisioning
+            .import_storage_path(&to_directory)
+            .await?;
         resource.move_to_directory(to_directory.id())?;
         let checksum = self.calculate_stored_blob_checksum(to, target.size).await?;
         let content = build_verified_content(
@@ -512,7 +526,11 @@ impl<'a> StorageReconciliationService<'a> {
         if let Some(mut resource) = self.find_missing_rename_candidate(&content).await? {
             let expected_revision = resource.revision();
             resource.rename(name)?;
-            let directory = self.service.directories.ensure_path(&directory).await?;
+            let directory = self
+                .service
+                .directory_provisioning
+                .import_storage_path(&directory)
+                .await?;
             resource.move_to_directory(directory.id())?;
             resource.attach_content(content)?;
             if !self
@@ -536,7 +554,11 @@ impl<'a> StorageReconciliationService<'a> {
         )?;
         let resource = build_resource(
             name,
-            self.service.directories.ensure_path(&directory).await?.id(),
+            self.service
+                .directory_provisioning
+                .import_storage_path(&directory)
+                .await?
+                .id(),
             Some(kind),
         )
         .with_content(content)
@@ -589,7 +611,11 @@ impl<'a> StorageReconciliationService<'a> {
         )?;
         let resource = build_resource(
             name,
-            self.service.directories.ensure_path(&directory).await?.id(),
+            self.service
+                .directory_provisioning
+                .import_storage_path(&directory)
+                .await?
+                .id(),
             Some(kind),
         )
         .with_content(content)
@@ -667,7 +693,7 @@ impl<'a> StorageReconciliationService<'a> {
         let mut stored = Vec::new();
         let mut pending = vec![self.service.directories.root().await?];
         while let Some(parent) = pending.pop() {
-            let children = self.service.directories.list_children(&parent).await?;
+            let children = self.service.directories.list_children(&parent.id()).await?;
             pending.extend(children.iter().cloned());
             stored.extend(children);
         }
@@ -676,7 +702,7 @@ impl<'a> StorageReconciliationService<'a> {
             if !physical_directories.contains(directory.path()) {
                 self.service
                     .directories
-                    .remove_if_empty(&directory, None)
+                    .delete_if_empty(&directory.id(), None)
                     .await?;
             }
         }

@@ -3,18 +3,23 @@
 mod action;
 mod command;
 mod contract;
+mod index;
+mod provisioning;
 mod secured;
 
 pub(crate) use contract::ExecutedDirectoryAction;
 pub use contract::{DirectoryActions, ExecuteDirectoryAction, UpdateDirectory};
+pub use index::DirectoryIndexService;
+pub use provisioning::DirectoryProvisioningService;
 pub use secured::SecuredDirectoryService;
 
 use crate::{
     CoreError,
-    domain::{Directory, DirectoryId, DirectoryKind, DirectoryKindDefinition, DirectoryPath},
+    domain::{DirectoryId, DirectoryKind, DirectoryKindDefinition, DirectoryPath},
     port::{
         DirectoryActionExecutor, DirectoryActionRegistry, DirectoryIndex, DirectoryKindRegistry,
-        DirectoryLocation, DirectoryRepository, DirectoryStorage, LocatedDirectory,
+        DirectoryLocation, DirectoryProjection, DirectoryQuery, DirectoryRelocationStore,
+        DirectoryStorage, DirectoryStore, LocatedDirectory,
     },
 };
 use std::sync::Arc;
@@ -29,12 +34,68 @@ struct DirectoryActionPorts {
 /// Coordinates directory aggregates, the durable store, the query index, and physical storage.
 #[derive(Clone)]
 pub struct DirectoryService {
-    repository: Arc<dyn DirectoryRepository>,
-    index: Arc<dyn DirectoryIndex>,
+    kernel: Arc<DirectoryKernel>,
+    action_ports: Option<DirectoryActionPorts>,
+}
+
+struct DirectoryKernel {
+    store: Arc<dyn DirectoryStore>,
+    query: Arc<dyn DirectoryQuery>,
     storage: Arc<dyn DirectoryStorage>,
+    relocations: Arc<dyn DirectoryRelocationStore>,
     kind_registry: Arc<dyn DirectoryKindRegistry>,
     mutation_lock: Arc<Mutex<()>>,
-    action_ports: Option<DirectoryActionPorts>,
+    index_service: DirectoryIndexService,
+}
+
+/// Composition-time bundle that guarantees all Directory services share one mutation boundary.
+pub struct DirectoryServices {
+    directory: DirectoryService,
+    provisioning: DirectoryProvisioningService,
+    index: DirectoryIndexService,
+}
+
+impl DirectoryServices {
+    pub fn new(
+        store: Arc<dyn DirectoryStore>,
+        index: Arc<dyn DirectoryProjection>,
+        storage: Arc<dyn DirectoryStorage>,
+        relocations: Arc<dyn DirectoryRelocationStore>,
+        kind_registry: Arc<dyn DirectoryKindRegistry>,
+    ) -> Self {
+        let query: Arc<dyn DirectoryQuery> = index.clone();
+        let index_writer: Arc<dyn DirectoryIndex> = index;
+        let index_service = DirectoryIndexService::new(store.clone(), index_writer);
+        let kernel = Arc::new(DirectoryKernel {
+            store,
+            query,
+            storage,
+            relocations,
+            kind_registry,
+            mutation_lock: Arc::new(Mutex::new(())),
+            index_service: index_service.clone(),
+        });
+        Self {
+            directory: DirectoryService {
+                kernel: kernel.clone(),
+                action_ports: None,
+            },
+            provisioning: DirectoryProvisioningService::new(kernel),
+            index: index_service,
+        }
+    }
+
+    pub fn directory_service(&self) -> DirectoryService {
+        self.directory.clone()
+    }
+
+    pub fn provisioning_service(&self) -> DirectoryProvisioningService {
+        self.provisioning.clone()
+    }
+
+    pub fn index_service(&self) -> DirectoryIndexService {
+        self.index.clone()
+    }
 }
 
 impl DirectoryService {
@@ -46,33 +107,12 @@ impl DirectoryService {
         SecuredDirectoryService::new(self, authorization, context)
     }
 
-    pub fn new(
-        repository: Arc<dyn DirectoryRepository>,
-        index: Arc<dyn DirectoryIndex>,
-        storage: Arc<dyn DirectoryStorage>,
-        kind_registry: Arc<dyn DirectoryKindRegistry>,
-    ) -> Self {
-        Self {
-            repository,
-            index,
-            storage,
-            kind_registry,
-            mutation_lock: Arc::new(Mutex::new(())),
-            action_ports: None,
-        }
-    }
-
     pub fn kind_definitions(&self) -> &[DirectoryKindDefinition] {
-        self.kind_registry.definitions()
+        self.kernel.kind_registry.definitions()
     }
 
     pub fn kind_lineage(&self, kind: &DirectoryKind) -> Vec<DirectoryKind> {
-        self.kind_registry.lineage(kind)
-    }
-
-    pub async fn reload_index(&self) -> Result<(), CoreError> {
-        let directories = self.repository.load_all().await?;
-        self.index.replace_all(directories).await
+        self.kernel.kind_registry.lineage(kind)
     }
 
     pub async fn root(&self) -> Result<DirectoryLocation, CoreError> {
@@ -84,7 +124,8 @@ impl DirectoryService {
     }
 
     pub async fn find_by_id(&self, id: &DirectoryId) -> Result<LocatedDirectory, CoreError> {
-        self.index
+        self.kernel
+            .query
             .find_by_id(id)
             .await?
             .ok_or_else(|| CoreError::not_found("directory", id.to_string()))
@@ -95,7 +136,8 @@ impl DirectoryService {
     }
 
     pub async fn find_by_path(&self, path: &DirectoryPath) -> Result<LocatedDirectory, CoreError> {
-        self.index
+        self.kernel
+            .query
             .find_by_path(path)
             .await?
             .ok_or_else(|| CoreError::not_found("directory", path.path()))
@@ -107,10 +149,10 @@ impl DirectoryService {
 
     pub async fn list_children(
         &self,
-        parent: &DirectoryLocation,
+        parent_id: &DirectoryId,
     ) -> Result<Vec<DirectoryLocation>, CoreError> {
         Ok(self
-            .list_located_children(&parent.id())
+            .list_located_children(parent_id)
             .await?
             .into_iter()
             .map(|directory| directory.location().clone())
@@ -121,7 +163,7 @@ impl DirectoryService {
         &self,
         parent_id: &DirectoryId,
     ) -> Result<Vec<LocatedDirectory>, CoreError> {
-        self.index.list_children(parent_id).await
+        self.kernel.query.list_children(parent_id).await
     }
 
     pub async fn contains(
@@ -129,11 +171,14 @@ impl DirectoryService {
         ancestor: &DirectoryId,
         candidate: &DirectoryId,
     ) -> Result<bool, CoreError> {
-        self.index.is_descendant_or_self(ancestor, candidate).await
+        self.kernel
+            .query
+            .is_descendant_or_self(ancestor, candidate)
+            .await
     }
 
     fn ensure_kind_registered(&self, kind: &DirectoryKind) -> Result<(), CoreError> {
-        if self.kind_registry.supports(kind) {
+        if self.kernel.kind_registry.supports(kind) {
             Ok(())
         } else {
             Err(CoreError::unsupported("directory kind", kind.to_string()))
@@ -146,7 +191,8 @@ impl DirectoryService {
         requested_kind: DirectoryKind,
     ) -> DirectoryKind {
         if requested_kind == DirectoryKind::default() {
-            self.kind_registry
+            self.kernel
+                .kind_registry
                 .get(parent_kind)
                 .and_then(DirectoryKindDefinition::default_child_kind)
                 .cloned()
@@ -162,11 +208,13 @@ impl DirectoryService {
         parent_kind: &DirectoryKind,
     ) -> Result<(), CoreError> {
         let allowed = self
+            .kernel
             .kind_registry
             .lineage(child_kind)
             .into_iter()
             .find_map(|kind| {
                 let declared = self
+                    .kernel
                     .kind_registry
                     .get(&kind)
                     .expect("registered kind lineage must contain definitions")
@@ -177,7 +225,7 @@ impl DirectoryService {
         if allowed.is_empty()
             || allowed
                 .iter()
-                .any(|kind| self.kind_registry.is_a(parent_kind, kind))
+                .any(|kind| self.kernel.kind_registry.is_a(parent_kind, kind))
         {
             return Ok(());
         }
@@ -187,7 +235,7 @@ impl DirectoryService {
     }
 
     fn require_kind_registered(&self, kind: &DirectoryKind) -> Result<(), CoreError> {
-        if self.kind_registry.supports(kind) {
+        if self.kernel.kind_registry.supports(kind) {
             Ok(())
         } else {
             Err(CoreError::invariant(format!(
@@ -196,11 +244,7 @@ impl DirectoryService {
         }
     }
 
-    async fn update_index(&self, directory: Directory) -> Result<(), CoreError> {
-        if let Err(error) = self.index.upsert(directory).await {
-            let _ = self.reload_index().await;
-            return Err(error);
-        }
-        Ok(())
+    async fn refresh_index(&self, id: &DirectoryId) -> Result<(), CoreError> {
+        self.kernel.index_service.refresh(id).await
     }
 }

@@ -13,7 +13,7 @@ use crate::port::{
     ResourceActionRegistry, ResourceContentReplacementRepository, ResourceKindRegistry,
     ResourcePage, ResourceQuery, ResourceRepository, StorageScanner, UploadSessionRepository,
 };
-use crate::service::DirectoryService;
+use crate::service::{DirectoryProvisioningService, DirectoryService};
 use asset_plugin_api::manifest::RESOURCE_EDIT_CAPABILITY;
 use bytes::Bytes;
 use std::sync::Arc;
@@ -53,6 +53,7 @@ pub struct ResourceService {
     query: Arc<dyn ResourceQuery>,
     blob_storage: Arc<dyn BlobStorage>,
     directories: DirectoryService,
+    directory_provisioning: DirectoryProvisioningService,
     storage_scanner: Arc<dyn StorageScanner>,
     kind_registry: Arc<dyn ResourceKindRegistry>,
     action_ports: Option<ResourceActionPorts>,
@@ -73,8 +74,9 @@ struct ResourceActionPorts {
 /// `ResourceService` 所需的 Host Port 装配。
 ///
 /// 写模型、读模型、Blob、扫描器和 kind 注册表是必选端口；动作注册表与执行器必须成对
-/// 注入，避免出现只有动作声明或只有执行器的半配置状态。目录能力通过已经装配完成的
-/// [`DirectoryService`] 注入 `ResourceService`，确保所有应用服务共享同一并发边界。
+/// 注入，避免出现只有动作声明或只有执行器的半配置状态。普通 Resource/Upload 用例只
+/// 使用已装配的 [`DirectoryService`] 解析现有目录；可信存储协调另行注入
+/// [`DirectoryProvisioningService`]，两者由同一个 Directory service bundle 创建。
 pub struct ResourceServicePorts {
     repository: Arc<dyn ResourceRepository>,
     query: Arc<dyn ResourceQuery>,
@@ -123,6 +125,7 @@ impl ResourceService {
     pub fn new(
         ports: ResourceServicePorts,
         directories: DirectoryService,
+        directory_provisioning: DirectoryProvisioningService,
         resource_action_policy: Arc<ResourceActionPolicy>,
         resource_content_edit_policy: Arc<ResourceContentEditPolicy>,
     ) -> Self {
@@ -141,6 +144,7 @@ impl ResourceService {
             query,
             blob_storage,
             directories,
+            directory_provisioning,
             storage_scanner,
             kind_registry,
             action_ports,

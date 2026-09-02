@@ -401,6 +401,29 @@ fn local_file_stream(
 
 #[async_trait::async_trait]
 impl DirectoryStorage for OpenDalBlobStorage {
+    async fn directory_exists(&self, directory: &DirectoryPath) -> Result<bool, CoreError> {
+        if let Some(root) = &self.local_root {
+            let physical = if directory.is_root() {
+                root.clone()
+            } else {
+                root.join(directory.path())
+            };
+            return tokio::fs::try_exists(physical)
+                .await
+                .map_err(|error| CoreError::storage("directory.inspect", error));
+        }
+
+        if directory.is_root() {
+            return Ok(true);
+        }
+        let marker = format!("{}/", directory.path());
+        match self.operator.stat(&marker).await {
+            Ok(metadata) => Ok(metadata.is_dir()),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(CoreError::storage("directory.inspect", error)),
+        }
+    }
+
     async fn ensure_directory(&self, directory: &DirectoryPath) -> Result<(), CoreError> {
         let mut path = String::new();
 
@@ -479,6 +502,25 @@ impl DirectoryStorage for OpenDalBlobStorage {
         tokio::fs::rename(source, destination)
             .await
             .map_err(|error| CoreError::storage("directory_move", error))
+    }
+
+    async fn delete_empty_directory(&self, directory: &DirectoryPath) -> Result<(), CoreError> {
+        if directory.is_root() {
+            return Err(CoreError::conflict("root directory cannot be deleted"));
+        }
+        let root = self.local_root.as_ref().ok_or_else(|| {
+            CoreError::configuration(
+                "empty directory deletion is not implemented for the configured object storage",
+            )
+        })?;
+        match tokio::fs::remove_dir(root.join(directory.path())).await {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::DirectoryNotEmpty => Err(
+                CoreError::conflict(format!("directory `{directory}` is not physically empty")),
+            ),
+            Err(error) => Err(CoreError::storage("directory.delete_empty", error)),
+        }
     }
 }
 

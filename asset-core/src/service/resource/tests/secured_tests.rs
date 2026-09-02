@@ -5,9 +5,9 @@ use crate::domain::DirectoryActionId;
 fn directory_action_cannot_move_a_directory_outside_the_member_workspace() {
     let (service, _, _) = service();
     let root = block_on(service.directories.root()).unwrap();
-    let workspace = block_on(service.directories.create(&root, "workspace")).unwrap();
-    let outside = block_on(service.directories.create(&root, "outside")).unwrap();
-    let inside = block_on(service.directories.create(&workspace, "inside")).unwrap();
+    let workspace = block_on(service.directories.create(&root.id(), "workspace")).unwrap();
+    let outside = block_on(service.directories.create(&root.id(), "outside")).unwrap();
+    let inside = block_on(service.directories.create(&workspace.id(), "inside")).unwrap();
     let user = User::new("member", "hash", UserRole::Member, workspace.id()).unwrap();
     let context = AccessContext::member(user.id());
     let authorization = crate::service::AuthorizationService::new(
@@ -64,8 +64,8 @@ fn directory_action_cannot_move_a_directory_outside_the_member_workspace() {
 fn member_cannot_replace_content_outside_the_workspace() {
     let (service, _, _) = service();
     let root = block_on(service.directories.root()).unwrap();
-    let workspace = block_on(service.directories.create(&root, "workspace")).unwrap();
-    let outside = block_on(service.directories.create(&root, "outside")).unwrap();
+    let workspace = block_on(service.directories.create(&root.id(), "workspace")).unwrap();
+    let outside = block_on(service.directories.create(&root.id(), "outside")).unwrap();
     let resource = block_on(
         service.upload_resource_for_test(
             stream_upload_command(
@@ -109,7 +109,7 @@ fn member_cannot_replace_content_outside_the_workspace() {
 fn secured_directory_action_creates_a_bounded_directory_and_resource_tree() {
     let (service, repository, blob_storage) = service();
     let root = block_on(service.directories.root()).unwrap();
-    let workspace = block_on(service.directories.create(&root, "workspace")).unwrap();
+    let workspace = block_on(service.directories.create(&root.id(), "workspace")).unwrap();
     let user = User::new("member", "hash", UserRole::Member, workspace.id()).unwrap();
     let context = AccessContext::member(user.id());
     let authorization = crate::service::AuthorizationService::new(

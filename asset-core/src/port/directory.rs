@@ -9,5 +9,6 @@ pub use action::{
 };
 pub use kind::DirectoryKindRegistry;
 pub use persistence::{
-    DirectoryIndex, DirectoryLocation, DirectoryQuery, DirectoryRepository, LocatedDirectory,
+    DirectoryIndex, DirectoryLocation, DirectoryProjection, DirectoryQuery, DirectoryRelocation,
+    DirectoryRelocationStore, DirectoryRevisionUpdate, DirectoryStore, LocatedDirectory,
 };

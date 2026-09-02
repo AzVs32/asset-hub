@@ -310,7 +310,7 @@ impl SecuredAssetCoordinator<'_> {
                 let created = self
                     .coordinator
                     .directories
-                    .create_with_kind_in_scope(parent, relative.name(), kind, scope_root)
+                    .create_with_kind_in_scope(&parent.id(), relative.name(), kind, scope_root)
                     .await?;
                 locations.insert(relative.path().to_string(), created.location().clone());
                 created_directories.push(created);
@@ -354,7 +354,7 @@ impl SecuredAssetCoordinator<'_> {
                 if let Err(rollback_error) = self
                     .coordinator
                     .directories
-                    .remove_if_empty(directory.location(), None)
+                    .delete_if_empty(&directory.id(), None)
                     .await
                 {
                     tracing::error!(%rollback_error, "failed to roll back create_tree directory");

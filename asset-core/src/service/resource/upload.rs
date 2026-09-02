@@ -40,7 +40,7 @@ impl<'a> ResourceUploadService<'a> {
             mime_type.as_deref(),
             Some(storage_key.as_str()),
         )?;
-        let directory = self.service.directories.ensure_path(&directory).await?;
+        let directory = self.service.directories.resolve_path(&directory).await?;
         build_resource(name.clone(), directory.id(), Some(kind.clone())).build()?;
         if self
             .service

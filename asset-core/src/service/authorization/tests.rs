@@ -4,8 +4,9 @@ use crate::domain::{
     DirectoryPath, User, UserId, UserRole,
 };
 use crate::port::{
-    DirectoryIndex, DirectoryKindRegistry, DirectoryLocation, DirectoryQuery, DirectoryRepository,
-    DirectoryStorage, LocatedDirectory,
+    DirectoryIndex, DirectoryKindRegistry, DirectoryLocation, DirectoryQuery, DirectoryRelocation,
+    DirectoryRelocationStore, DirectoryRevisionUpdate, DirectoryStorage, DirectoryStore,
+    LocatedDirectory,
 };
 use async_trait::async_trait;
 use std::{collections::HashMap, sync::Mutex};
@@ -61,6 +62,7 @@ impl UserRepository for Users {
 
 struct Directories {
     values: Mutex<HashMap<DirectoryId, (Directory, DirectoryPath)>>,
+    relocations: Mutex<HashMap<DirectoryId, DirectoryRelocation>>,
 }
 
 impl Directories {
@@ -94,6 +96,7 @@ impl Directories {
         }
         Self {
             values: Mutex::new(values),
+            relocations: Mutex::new(HashMap::new()),
         }
     }
 
@@ -118,13 +121,21 @@ impl Directories {
 
 #[async_trait]
 impl DirectoryStorage for Directories {
+    async fn directory_exists(&self, _directory: &DirectoryPath) -> Result<bool, CoreError> {
+        Ok(true)
+    }
+
     async fn ensure_directory(&self, _directory: &DirectoryPath) -> Result<(), CoreError> {
+        Ok(())
+    }
+
+    async fn delete_empty_directory(&self, _directory: &DirectoryPath) -> Result<(), CoreError> {
         Ok(())
     }
 }
 
 #[async_trait]
-impl DirectoryRepository for Directories {
+impl DirectoryStore for Directories {
     async fn load_all(&self) -> Result<Vec<Directory>, CoreError> {
         Ok(self
             .values
@@ -134,22 +145,52 @@ impl DirectoryRepository for Directories {
             .map(|(directory, _)| directory.clone())
             .collect())
     }
+    async fn load(&self, id: &DirectoryId) -> Result<Option<Directory>, CoreError> {
+        Ok(self
+            .values
+            .lock()
+            .unwrap()
+            .get(id)
+            .map(|(directory, _)| directory.clone()))
+    }
     async fn insert(&self, _directory: &Directory) -> Result<(), CoreError> {
         Ok(())
     }
-    async fn save_if_unchanged(
+    async fn update_batch_if_unchanged(
         &self,
-        _directory: &Directory,
-        _expected_revision: u64,
+        _updates: &[DirectoryRevisionUpdate],
     ) -> Result<bool, CoreError> {
         Ok(true)
     }
-    async fn remove_if_empty(
+    async fn is_empty(&self, _id: &DirectoryId) -> Result<bool, CoreError> {
+        Ok(false)
+    }
+    async fn delete_if_empty(
         &self,
         _id: &DirectoryId,
         _expected_revision: u64,
     ) -> Result<bool, CoreError> {
         Ok(false)
+    }
+}
+
+#[async_trait]
+impl DirectoryRelocationStore for Directories {
+    async fn begin(&self, relocation: &DirectoryRelocation) -> Result<(), CoreError> {
+        self.relocations
+            .lock()
+            .unwrap()
+            .insert(relocation.directory_id(), relocation.clone());
+        Ok(())
+    }
+
+    async fn load_pending(&self) -> Result<Vec<DirectoryRelocation>, CoreError> {
+        Ok(self.relocations.lock().unwrap().values().cloned().collect())
+    }
+
+    async fn complete(&self, id: &DirectoryId) -> Result<(), CoreError> {
+        self.relocations.lock().unwrap().remove(id);
+        Ok(())
     }
 }
 
@@ -237,12 +278,14 @@ impl DirectoryKindRegistry for DirectoryKinds {
 fn authorization(users: Users, directories: Arc<Directories>) -> AuthorizationService {
     AuthorizationService::new(
         Arc::new(users),
-        DirectoryService::new(
+        crate::service::DirectoryServices::new(
+            directories.clone(),
             directories.clone(),
             directories.clone(),
             directories,
             Arc::new(DirectoryKinds::default()),
-        ),
+        )
+        .directory_service(),
     )
 }
 

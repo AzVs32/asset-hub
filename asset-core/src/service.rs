@@ -18,8 +18,8 @@ pub use asset::{
 };
 pub use authorization::{AuthorizationService, WorkspaceScope};
 pub use directory::{
-    DirectoryActions, DirectoryService, ExecuteDirectoryAction, SecuredDirectoryService,
-    UpdateDirectory,
+    DirectoryActions, DirectoryIndexService, DirectoryProvisioningService, DirectoryService,
+    DirectoryServices, ExecuteDirectoryAction, SecuredDirectoryService, UpdateDirectory,
 };
 pub use user::UserService;
 

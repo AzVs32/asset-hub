@@ -57,8 +57,11 @@ The following decisions constrain the refactor:
 
 ## Current service topology
 
-The current public application types are `ResourceService`, `SecuredResourceService`,
-`DirectoryService`, `SecuredDirectoryService`, `AssetCoordinator`, and `UserService`.
+The current public application types include `ResourceService`, `SecuredResourceService`,
+`DirectoryService`, `DirectoryProvisioningService`, `DirectoryIndexService`,
+`SecuredDirectoryService`, `AssetCoordinator`, and `UserService`. `DirectoryServices` is a
+composition-time bundle that guarantees the three Directory services share one mutation lock and
+one authoritative store/index pair; it is not a fourth business service.
 `ResourceCommandService`, `ResourceContentService`, `ResourceUploadService`,
 `ResourceActionService`, and `StorageReconciliationService` are private borrowing wrappers around
 the same `ResourceService`; they split files but do not own narrow dependency sets.
@@ -86,14 +89,29 @@ the same `ResourceService`; they split files but do not own narrow dependency se
 | Kind catalog | `DirectoryService::kind_definitions`, `kind_lineage` | Read frozen Directory kind definitions and lineage. |
 | Identity/path lookup | `root`, `find_by_id`, `locate_by_id`, `find_by_path`, `resolve_path` | Read a Directory aggregate with its current derived path. |
 | Tree query | `list_children`, `list_located_children`, `contains` | Read direct children or test descendant/self containment. |
-| Index maintenance | `reload_index` | Rebuild the in-memory Directory projection from the durable repository. |
-| Ensure path | `ensure_path` | Idempotently create missing physical and aggregate Directory segments. It is currently shared by user workflows, upload, Resource move, and storage import. |
-| Create | `create`, `create_with_kind` | Create one child after kind, placement, and sibling-name validation. |
-| Update | `update`, `rename`, `move_to`, `change_kind` | Update one Directory and affected child kind defaults with an expected revision. |
-| Delete | `remove_if_empty` | Delete a non-root Directory record when it has no Resource or Directory children. |
+| Index maintenance | `DirectoryIndexService::rebuild`, `refresh` | Rebuild or refresh the non-authoritative in-memory Directory projection from `DirectoryStore`. |
+| System provision | `DirectoryProvisioningService::provision_path` | Idempotently create missing physical and aggregate path segments for system initialization and User workspace setup. |
+| Storage import | `DirectoryProvisioningService::import_storage_path` | Import a path already observed by the local storage scanner; it never serves a user Resource/Upload command. |
+| Create | `DirectoryService::create`, `create_with_kind` | Create one child under a `DirectoryId` after kind, placement, sibling-name, database, index, and physical-path coordination. |
+| Update/move | `DirectoryService::update` | Update one Directory and affected child kind defaults using one atomic database batch; path changes use durable relocation recovery. |
+| Delete | `DirectoryService::delete_if_empty`, secured `delete` | Delete a non-root, logically and physically empty Directory from storage, database, and index. |
 | Action catalog | `describe_kind_actions`, `describe_actions`, `resolve_action` | Resolve applicable Directory actions and capability providers. |
 | Execute action | `AssetCoordinator::secured().execute_directory_action` | Authorize and invoke a Directory action, then apply a Directory or cross-aggregate effect. |
 | Archive projection | `AssetCoordinator::secured().directory_archive_manifest` | Build an authorized point-in-time manifest for a Directory subtree archive. |
+
+The Directory ports now have non-overlapping authority:
+
+- `DirectoryStore` is the authoritative aggregate store. It loads aggregates, inserts one new
+  aggregate, atomically applies a batch of revision updates, checks logical emptiness, and
+  conditionally deletes an empty aggregate.
+- `DirectoryRelocationStore` persists only unfinished rename/move intents and their desired atomic
+  update batches.
+- `DirectoryQuery` is a read-only tree/path projection.
+- `DirectoryIndex` is only the projection writer (`replace_all`, `upsert`, `remove`).
+  `DirectoryProjection` is the composition contract used when one adapter implements both narrow
+  ports; business code still receives them by their separate roles.
+- `DirectoryStorage` exposes exact physical existence, idempotent ensure, atomic subtree move, and
+  exact empty-directory delete. It cannot recursively delete user data.
 
 ### Current Content use cases
 
@@ -113,7 +131,7 @@ Content is currently implemented by the private `ResourceContentService` and rea
 
 | Use case | Current entry point | Core behavior |
 | --- | --- | --- |
-| Create | `create_upload` | Resolve/provision the Directory, validate kind and path availability, create staging, then save an owner-bound session. |
+| Create | `create_upload` | Resolve an existing Directory, validate kind and path availability, create staging, then save an owner-bound session. Upload never provisions paths. |
 | Status | `upload_status` | Load an owner-bound session and synchronize the persisted offset with staging. |
 | Append | `append_upload` | Verify requested offset and chunk checksum, append a temporary verified chunk, then CAS-advance the session offset. |
 | Complete request | `complete_upload` | Move a complete session to `Finalizing`; Runtime owns dispatch and task lifetime. |
@@ -141,10 +159,11 @@ what a caller can safely assume today, not the desired final contract.
 
 | Operation | Authorization | Revision/concurrency | Physical storage | Failure compensation | Current retry semantics |
 | --- | --- | --- | --- | --- | --- |
-| Ensure/provision path | Trusted callers or a workspace-resolved path | Process-wide Directory mutation lock; no caller revision | Create every missing physical path segment | No removal of physical segments when a later repository/index write fails | Existing paths converge to the same result, but partial failure can leave physical directories that later reconciliation imports. |
-| Create child | Workspace-bound `CreateDirectory` for secured callers | Process-wide mutation lock; ordinary create has no expected parent revision; action create checks the captured parent revision | Ensure physical child path before repository insert | No physical-directory cleanup if insert/index update fails | Repeating conflicts on sibling path; no command ID or original-result replay. |
-| Rename/move/change kind | Workspace-bound source and destination | Caller revision, process-wide mutation lock, repository CAS; automatic child-kind updates use individual CAS writes | Rename/move the complete local directory subtree when the path changes | Roll back child kind writes and physical move on later failure | A process exit between child changes, storage move, and parent save has no durable recovery intent. Old revisions conflict. |
-| Delete empty | Workspace-bound `DeleteDirectory` | Caller revision and repository conditional delete | Current `DirectoryStorage` has no user-directory delete operation; the physical empty directory remains | No physical compensation | Repeating finds no aggregate, but storage reconciliation can import the remaining physical directory again. This is not a reliable persistent delete. |
+| Provision path | Trusted User workspace/system initialization only | Shared Directory mutation lock; no caller revision | Create missing physical segments before their aggregate records | A newly created physical segment is deleted if its insert fails; a pre-existing path is never deleted as compensation | Existing paths converge to the same UUID projection; no user-facing command result is stored. |
+| Create child | Workspace-bound `CreateDirectory` for secured callers | Shared mutation lock; ordinary create has no expected parent revision; action create checks the captured parent revision | Ensure the physical child before insert | Delete the physical child only when this attempt created it and the insert fails; index failures trigger rebuild | Repeating conflicts on sibling path; no command ID or original-result replay. |
+| Change kind without path change | Workspace-bound source | Caller revision and one atomic `DirectoryStore::update_batch_if_unchanged` transaction for parent and automatic direct-child kind updates | No physical move | Database batch is all-or-none; index is rebuilt from the committed store | Old revisions conflict; retry requires a fresh revision. |
+| Rename/move | Workspace-bound source and destination | Caller revision, shared mutation lock, and the same atomic batch | Persist relocation intent, atomically rename the complete local subtree, atomically commit the database batch, rebuild index, clear intent | A CAS conflict rolls the physical path back; transient database/index failure retains the intent; Runtime startup resumes forward from source or destination state | A returned success is complete. An interruption after intent persistence is deterministically completed on startup while preserving UUID. |
+| Delete empty | Workspace-bound `DeleteDirectory` | Caller revision, authoritative empty check, then conditional database delete | Idempotently remove exactly the empty physical Directory; never recurse or remove ancestors | If the conditional database delete loses a race or fails, recreate the physical Directory. A crash after physical deletion is completed by missing-directory reconciliation rather than re-imported | Final state is convergent and the deleted physical path cannot resurrect its aggregate; response replay is not stored. |
 | Directory action effect | User authorized for execute or delete; plugin permissions apply, with Host grants additionally required only for grant-gated permissions | Write actions require expected revision; create child also checks captured parent revision | Depends on create/update/delete effect | Delegates to Directory workflows | Invocation has no durable command ID. |
 | Create tree | Workspace-bound Directory action plus plugin permissions | Root revision checked before application; each created aggregate has its own write | Create physical directories and publish generated Resource Blobs | Best-effort reverse removal; rollback failures are logged; no durable workflow intent | Retry can conflict or create a partial second result after interruption. |
 
@@ -170,7 +189,7 @@ what a caller can safely assume today, not the desired final contract.
 
 | Operation | Authorization | Revision/concurrency | Physical storage | Failure compensation/recovery | Current retry semantics |
 | --- | --- | --- | --- | --- | --- |
-| Import observed Directory | Trusted maintenance | Process-wide Directory mutation lock; no caller revision | Physical Directory already exists; `ensure_path` also ensures ancestors | Repository/index failure can leave the observed physical Directory to be retried on the next scan | Convergent. |
+| Import observed Directory | Trusted maintenance through `DirectoryProvisioningService` | Shared Directory mutation lock; no caller revision | The exact physical Directory must already exist | Insert missing aggregates and refresh/rebuild the index; the observed physical path remains available for retry | Convergent; Resource and Upload business commands cannot call this capability. |
 | Import observed Blob | Trusted maintenance | Per-path lock; Resource insert/upsert according to the observed path | Reads the existing Blob and records metadata before background verification | A later scan can rediscover the same path; invalid or failed verification is represented explicitly | Convergent by logical path, without a request result. |
 | Refresh changed Blob | Trusted maintenance | Per-path lock and Resource CAS | Reads size, modification time, and bytes for checksum | Verification failure is persisted when possible; storage errors remain visible | Repeated scans converge when the physical Blob stops changing. |
 | Reconcile confirmed rename | Trusted maintenance | Ordered source/target path locks and Resource CAS | Physical rename has already occurred; metadata is moved to the observed target path while preserving Resource ID when unambiguous | Falls back to per-key reconciliation when the target is missing; a CAS conflict is surfaced | Convergent after a stable filesystem event sequence. |
@@ -184,17 +203,12 @@ what a caller can safely assume today, not the desired final contract.
    produced dependency separation.
 3. Content replacement is incorrectly coupled to discovery of a plugin-provided `edit` capability.
    Content business validity and UI/editor availability must be separate decisions.
-4. `DirectoryService::ensure_path` conflates user creation, trusted provisioning, Resource move,
-   upload destination creation, and storage import.
-5. Resource and Directory path relocation use immediate compensation but have no durable recovery
-   intent.
-6. Directory delete does not remove the local physical directory, so storage reconciliation may
-   recreate the deleted aggregate.
-7. `ListResources` carries mutually exclusive path and Directory-ID filters. Core queries should
+4. Resource path relocation still uses immediate compensation but has no durable recovery intent.
+5. `ListResources` carries mutually exclusive path and Directory-ID filters. Core queries should
    use stable IDs after an authorized boundary resolves a path.
-8. Ordinary stores expose unconditional upsert/delete operations needed by maintenance and
+6. Ordinary Resource stores expose unconditional upsert/delete operations needed by maintenance and
    compensation, making it too easy for a business service to bypass revision rules.
-9. Plugin action invocation and externally retried create/replace commands have no durable command
+7. Plugin action invocation and externally retried create/replace commands have no durable command
    identity or result replay.
 
 ## Target service architecture
@@ -238,6 +252,26 @@ Owns normal Directory query and lifecycle use cases:
 
 Trusted recursive provisioning and storage import are separate capabilities rather than ordinary
 Directory business methods.
+
+### DirectoryProvisioningService
+
+Owns only trusted path materialization:
+
+- `provision_path` for system initialization and User workspace setup;
+- `import_storage_path` for paths already observed by storage reconciliation.
+
+Neither Resource update nor Upload creation can obtain this service. Their destination must already
+resolve through `DirectoryService`.
+
+### DirectoryIndexService
+
+Owns the rebuildable Directory query projection:
+
+- `rebuild` replaces the complete projection from `DirectoryStore`;
+- `refresh` updates one projection and falls back to rebuild on adapter failure.
+
+The index is never authoritative. Directory writes commit the store/physical workflow before
+publishing the index result.
 
 ### UploadService
 

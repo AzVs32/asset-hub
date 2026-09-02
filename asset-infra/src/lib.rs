@@ -20,15 +20,15 @@ pub mod plugin_package {
 }
 
 use asset_core::{
-    CoreError, port::BlobStorage, port::DirectoryIndex, port::DirectoryQuery,
-    port::DirectoryRepository, port::DirectoryStorage, port::ResourceContentReplacementRepository,
-    port::ResourceQuery, port::ResourceRepository, port::StorageScanner,
-    port::UploadSessionRepository, port::UserQuery, port::UserRepository,
+    CoreError, port::BlobStorage, port::DirectoryProjection, port::DirectoryQuery,
+    port::DirectoryRelocationStore, port::DirectoryStorage, port::DirectoryStore,
+    port::ResourceContentReplacementRepository, port::ResourceQuery, port::ResourceRepository,
+    port::StorageScanner, port::UploadSessionRepository, port::UserQuery, port::UserRepository,
 };
 use config::{AssetInfraConfig, BlobBackend, DatabaseBackend};
 use directory_index::InMemoryDirectoryIndex;
 use sqlite::{
-    SqliteDatabase, SqliteDirectoryRepository, SqliteIdentityRepository,
+    SqliteDatabase, SqliteDirectoryStore, SqliteIdentityRepository,
     SqliteResourceContentReplacementRepository, SqliteResourceRepository,
     SqliteUploadSessionRepository,
 };
@@ -44,7 +44,7 @@ pub struct AssetInfrastructure {
     /// 实际生效的基础设施配置。
     config: AssetInfraConfig,
     resource_repository: Arc<SqliteResourceRepository>,
-    directory_repository: Arc<SqliteDirectoryRepository>,
+    directory_store: Arc<SqliteDirectoryStore>,
     directory_index: Arc<InMemoryDirectoryIndex>,
     identity_repository: Arc<SqliteIdentityRepository>,
     upload_session_repository: Arc<SqliteUploadSessionRepository>,
@@ -81,10 +81,9 @@ impl AssetInfrastructure {
             "SQLite initialized"
         );
         let resource_repository = Arc::new(SqliteResourceRepository::new(database.pool().clone()));
-        let directory_repository =
-            Arc::new(SqliteDirectoryRepository::new(database.pool().clone()));
+        let directory_store = Arc::new(SqliteDirectoryStore::new(database.pool().clone()));
         let directory_index = Arc::new(InMemoryDirectoryIndex::from_directories(
-            directory_repository.load_all().await?,
+            directory_store.load_all().await?,
         )?);
         let identity_repository = Arc::new(SqliteIdentityRepository::new(database.pool().clone()));
         let upload_session_repository =
@@ -95,7 +94,7 @@ impl AssetInfrastructure {
         Ok(Self {
             config,
             resource_repository,
-            directory_repository,
+            directory_store,
             directory_index,
             identity_repository,
             upload_session_repository,
@@ -119,11 +118,15 @@ impl AssetInfrastructure {
         self.resource_repository.clone()
     }
 
-    pub fn directory_repository(&self) -> Arc<dyn DirectoryRepository> {
-        self.directory_repository.clone()
+    pub fn directory_store(&self) -> Arc<dyn DirectoryStore> {
+        self.directory_store.clone()
     }
 
-    pub fn directory_index(&self) -> Arc<dyn DirectoryIndex> {
+    pub fn directory_relocation_store(&self) -> Arc<dyn DirectoryRelocationStore> {
+        self.directory_store.clone()
+    }
+
+    pub fn directory_index(&self) -> Arc<dyn DirectoryProjection> {
         self.directory_index.clone()
     }
 

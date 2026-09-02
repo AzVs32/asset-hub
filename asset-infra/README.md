@@ -15,8 +15,16 @@ repository adapters. `asset-runtime` consumes these ports and composes the plugi
 services; after injection, the `AssetInfrastructure` assembly object itself is construction-only.
 
 SQLite connection and migration ownership is shared, while persistence ports are implemented by
-separate `SqliteResourceRepository` and `SqliteDirectoryRepository` adapters. Sharing a pool does
-not merge the two aggregate repositories.
+separate `SqliteResourceRepository` and `SqliteDirectoryStore` adapters. The Directory adapter
+supports atomic revision-update batches and the narrow `DirectoryRelocationStore`; sharing a pool
+does not merge Resource and Directory persistence boundaries.
+
+Directory rename/move writes a `directory_relocations` intent and its desired aggregate updates
+before the local filesystem rename. Runtime recovery distinguishes the source/destination physical
+state from the expected/applied database revisions, completes the atomic batch, rebuilds the index,
+and only then removes the intent. `DirectoryStorage::delete_empty_directory` removes exactly one
+empty user directory, is idempotent for an absent path, and never recursively removes content or
+ancestors.
 
 `LocalStorageSync` still implements the local filesystem watcher and event-to-reconciliation
 driving adapter. `asset-runtime` starts it with `ResourceService` and owns its lifetime;

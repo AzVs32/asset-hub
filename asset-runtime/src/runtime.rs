@@ -3,8 +3,8 @@ use crate::{PluginWebAssets, UploadFinalizationDispatcher};
 use asset_core::CoreError;
 use asset_core::domain::{ResourceActionPolicy, ResourceContentEditPolicy};
 use asset_core::service::{
-    AssetCoordinator, AuthorizationService, DirectoryService, ResourceService,
-    ResourceServicePorts, UserService,
+    AssetCoordinator, AuthorizationService, DirectoryIndexService, DirectoryProvisioningService,
+    DirectoryService, DirectoryServices, ResourceService, ResourceServicePorts, UserService,
 };
 use asset_infra::AssetInfrastructure;
 use asset_infra::action::{DefaultDirectoryActionExecutor, DefaultResourceActionExecutor};
@@ -28,6 +28,8 @@ pub struct AssetRuntime {
     plugin_web_assets: PluginWebAssets,
     resource_service: ResourceService,
     directory_service: DirectoryService,
+    directory_provisioning_service: DirectoryProvisioningService,
+    directory_index_service: DirectoryIndexService,
     asset_coordinator: AssetCoordinator,
     user_service: UserService,
     /// 授权应用能力
@@ -118,13 +120,25 @@ impl AssetRuntime {
             "plugins compiled"
         );
 
-        let directory_service = DirectoryService::new(
-            infrastructure.directory_repository(),
+        let directory_services = DirectoryServices::new(
+            infrastructure.directory_store(),
             infrastructure.directory_index(),
             infrastructure.directory_storage(),
+            infrastructure.directory_relocation_store(),
             directory_kind_registry,
-        )
-        .with_actions(directory_action_registry, directory_action_executor);
+        );
+        let directory_service = directory_services
+            .directory_service()
+            .with_actions(directory_action_registry, directory_action_executor);
+        let directory_provisioning_service = directory_services.provisioning_service();
+        let directory_index_service = directory_services.index_service();
+        let recovered_relocations = directory_service.recover_pending_relocations().await?;
+        if recovered_relocations > 0 {
+            tracing::info!(
+                count = recovered_relocations,
+                "recovered pending directory relocations"
+            );
+        }
         let resource_service = ResourceService::new(
             ResourceServicePorts::new(
                 infrastructure.resource_repository(),
@@ -137,6 +151,7 @@ impl AssetRuntime {
             )
             .with_actions(resource_action_registry, resource_action_executor),
             directory_service.clone(),
+            directory_provisioning_service.clone(),
             resource_action_policy,
             resource_content_edit_policy,
         );
@@ -144,7 +159,7 @@ impl AssetRuntime {
             infrastructure.user_repository(),
             infrastructure.user_query(),
             Arc::new(Argon2PasswordHasher),
-            directory_service.clone(),
+            directory_provisioning_service.clone(),
         );
         let authorization_service =
             AuthorizationService::new(infrastructure.user_repository(), directory_service.clone());
@@ -173,6 +188,8 @@ impl AssetRuntime {
             plugin_web_assets,
             resource_service,
             directory_service,
+            directory_provisioning_service,
+            directory_index_service,
             asset_coordinator,
             user_service,
             authorization_service,
@@ -211,6 +228,14 @@ impl AssetRuntime {
 
     pub fn directory_service(&self) -> DirectoryService {
         self.directory_service.clone()
+    }
+
+    pub fn directory_provisioning_service(&self) -> DirectoryProvisioningService {
+        self.directory_provisioning_service.clone()
+    }
+
+    pub fn directory_index_service(&self) -> DirectoryIndexService {
+        self.directory_index_service.clone()
     }
 
     pub fn asset_coordinator(&self) -> AssetCoordinator {
