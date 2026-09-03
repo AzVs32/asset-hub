@@ -4,7 +4,7 @@ use asset_core::service::{
     ActionOrchestrator, AssetWorkflowService, AuthorizationService, ContentService,
     DirectoryService, ResourceService, SecuredActionOrchestrator, SecuredAssetWorkflowService,
     SecuredContentService, SecuredDirectoryService, SecuredResourceService, SecuredUploadService,
-    UploadService, WorkspaceScope,
+    StorageMaintenanceService, UploadService, WorkspaceScope,
 };
 use asset_runtime::{PluginWebAssets, UploadFinalizationDispatcher};
 use std::sync::Arc;
@@ -20,12 +20,14 @@ pub(crate) struct HttpState {
     resource_actions: ActionOrchestrator,
     directories: DirectoryService,
     asset_workflows: AssetWorkflowService,
+    storage_maintenance: StorageMaintenanceService,
     plugin_web_assets: Arc<PluginWebAssets>,
     authorization: AuthorizationService,
     upload_finalizations: Arc<dyn UploadFinalizationDispatcher>,
 }
 
 impl HttpState {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new_with_plugin_web_assets(
         resources: ResourceService,
         content: ContentService,
@@ -33,6 +35,7 @@ impl HttpState {
         resource_actions: ActionOrchestrator,
         directories: DirectoryService,
         asset_workflows: AssetWorkflowService,
+        storage_maintenance: StorageMaintenanceService,
         plugin_web_assets: PluginWebAssets,
         authorization: AuthorizationService,
         upload_finalizations: Arc<dyn UploadFinalizationDispatcher>,
@@ -44,6 +47,7 @@ impl HttpState {
             resource_actions,
             directories,
             asset_workflows,
+            storage_maintenance,
             plugin_web_assets: Arc::new(plugin_web_assets),
             authorization,
             upload_finalizations,
@@ -116,6 +120,10 @@ impl HttpState {
 
     pub(crate) fn directories(&self) -> &DirectoryService {
         &self.directories
+    }
+
+    pub(crate) fn storage_maintenance(&self) -> &StorageMaintenanceService {
+        &self.storage_maintenance
     }
 
     pub(crate) fn plugin_web_asset(

@@ -3,7 +3,7 @@ use asset_core::domain::{
     ActionAccess, ResourceActionAppliesTo, ResourceContentMatcher, ResourceKindDefinition,
 };
 use asset_core::port::{
-    BlobStorage, DirectoryActionExecutor, DirectoryActionOutput, DirectoryActionRequest,
+    ContentReader, DirectoryActionExecutor, DirectoryActionOutput, DirectoryActionRequest,
     DirectoryKindRegistry, DirectoryQuery, ResourceActionExecutor, ResourceActionOutput,
     ResourceActionRequest, ResourceKindRegistry, ResourceReadModel,
 };
@@ -51,7 +51,7 @@ pub struct ExtismActionExecutor {
 pub struct ExtismHost {
     directory_query: Arc<dyn DirectoryQuery>,
     resource_query: Arc<dyn ResourceReadModel>,
-    blob_storage: Arc<dyn BlobStorage>,
+    content_reader: Arc<dyn ContentReader>,
     policy: Arc<PluginExecutionPolicy>,
     grants: PluginPermissionGrants,
 }
@@ -60,14 +60,14 @@ impl ExtismHost {
     pub fn new(
         directory_query: Arc<dyn DirectoryQuery>,
         resource_query: Arc<dyn ResourceReadModel>,
-        blob_storage: Arc<dyn BlobStorage>,
+        content_reader: Arc<dyn ContentReader>,
         policy: Arc<PluginExecutionPolicy>,
         grants: PluginPermissionGrants,
     ) -> Self {
         Self {
             directory_query,
             resource_query,
-            blob_storage,
+            content_reader,
             policy,
             grants,
         }
@@ -94,7 +94,7 @@ impl ExtismActionExecutor {
         let ExtismHost {
             directory_query,
             resource_query,
-            blob_storage,
+            content_reader,
             policy,
             grants,
         } = host;
@@ -107,7 +107,7 @@ impl ExtismActionExecutor {
             let wasm = &loaded_manifest.wasm;
             validate_external_permissions(manifest.plugin_id(), &manifest.permissions, &grants)?;
             let host_content = HostContentResolver {
-                storage: blob_storage.clone(),
+                storage: content_reader.clone(),
                 state: Arc::new(Mutex::new(HostContentState::default())),
                 runtime: tokio::runtime::Handle::current(),
                 policy: policy.clone(),

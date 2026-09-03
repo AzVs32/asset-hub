@@ -2,16 +2,16 @@
 //!
 //! 本模块只处理资源内容引用与 Blob 之间的编排；后台扫描协调位于 `reconciliation`。
 
-use super::{ReplaceResourceContent, ResourceContentStream, StorageKeyLocks};
+use super::{ReplaceResourceContent, ResourceContentStream, StorageKeyLocks, path_resolver};
 use crate::CoreError;
 use crate::domain::{
-    Checksum, ChecksumKind, Resource, ResourceContent, ResourceContentReplacement,
-    AccessContext, DirectoryOperation, ResourceContentEditPolicy, ResourceContentReplacementId,
+    AccessContext, Checksum, ChecksumKind, DirectoryOperation, Resource, ResourceContent,
+    ResourceContentEditPolicy, ResourceContentReplacement, ResourceContentReplacementId,
     ResourceId, StorageKey,
 };
 use crate::port::{
-    BlobByteStream, BlobStorage, LocatedResource, ResourceContentReplacementRepository,
-    ResourceReadModel, ResourceStore, RESERVED_BLOB_STORAGE_PREFIX, StagedBlob,
+    BlobByteStream, ContentObjectStore, ContentReader, ContentStagingStore, LocatedResource,
+    ResourceContentReplacementRepository, ResourceReadModel, ResourceStore, StagedBlob,
 };
 use crate::service::AuthorizationService;
 use bytes::Bytes;
@@ -24,17 +24,22 @@ use std::sync::{Arc, Mutex};
 pub struct ContentService {
     read_model: Arc<dyn ResourceReadModel>,
     store: Arc<dyn ResourceStore>,
-    blob_storage: Arc<dyn BlobStorage>,
+    reader: Arc<dyn ContentReader>,
+    staging: Arc<dyn ContentStagingStore>,
+    objects: Arc<dyn ContentObjectStore>,
     content_replacements: Arc<dyn ResourceContentReplacementRepository>,
     storage_key_locks: Arc<StorageKeyLocks>,
     edit_policy: Arc<ResourceContentEditPolicy>,
 }
 
 impl ContentService {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         read_model: Arc<dyn ResourceReadModel>,
         store: Arc<dyn ResourceStore>,
-        blob_storage: Arc<dyn BlobStorage>,
+        reader: Arc<dyn ContentReader>,
+        staging: Arc<dyn ContentStagingStore>,
+        objects: Arc<dyn ContentObjectStore>,
         content_replacements: Arc<dyn ResourceContentReplacementRepository>,
         storage_key_locks: Arc<StorageKeyLocks>,
         edit_policy: Arc<ResourceContentEditPolicy>,
@@ -42,7 +47,9 @@ impl ContentService {
         Self {
             read_model,
             store,
-            blob_storage,
+            reader,
+            staging,
+            objects,
             content_replacements,
             storage_key_locks,
             edit_policy,
@@ -70,7 +77,7 @@ impl ContentService {
             return Ok(None);
         }
         let storage_key = located.storage_key()?;
-        self.blob_storage.get(&storage_key).await
+        self.reader.get(&storage_key).await
     }
 
     pub(crate) async fn get_resource_content_stream_snapshot(
@@ -85,11 +92,11 @@ impl ContentService {
 
         let storage_key = located.storage_key()?;
         let stream = if let Some((start, end)) = range {
-            self.blob_storage
+            self.reader
                 .get_range_stream(&storage_key, start, end)
                 .await?
         } else {
-            self.blob_storage.get_stream(&storage_key).await?
+            self.reader.get_stream(&storage_key).await?
         };
 
         Ok(stream.map(|content_stream| {
@@ -122,33 +129,32 @@ impl ContentService {
                 command.expected_size,
             ));
         }
-        let target_key = StorageKey::from_resource_path(directory.path(), resource.name())?;
+        let target_key = path_resolver::resource_key(directory.path(), resource.name())?;
         let replacement_id = ResourceContentReplacementId::new();
-        let backup_key = replacement_backup_key(replacement_id)?;
-        let staging_key = replacement_staging_key(replacement_id)?;
-        let staging = self.blob_storage.create_staged(&staging_key).await?;
+        let backup_key = path_resolver::replacement_backup_key(replacement_id)?;
+        let staging_key = path_resolver::replacement_staging_key(replacement_id)?;
+        let staging = self.staging.create_staged(&staging_key).await?;
         let (tracked, checksum_state) = stream_with_checksum_tracking(limit_replacement_stream(
             data,
             command.expected_size,
             max_text_bytes,
         ));
-        let staged = match self.blob_storage.append_staged(&staging_key, 0, tracked).await
-        {
+        let staged = match self.staging.append_staged(&staging_key, 0, tracked).await {
             Ok(staged) => staged,
             Err(error) => {
-                let _ = self.blob_storage.discard_staged(&staging).await;
+                let _ = self.staging.discard_staged(&staging).await;
                 return Err(error);
             }
         };
         let actual_checksum = match finalize_tracked_checksum(checksum_state) {
             Ok(checksum) => checksum,
             Err(error) => {
-                let _ = self.blob_storage.discard_staged(&staged).await;
+                let _ = self.staging.discard_staged(&staged).await;
                 return Err(error);
             }
         };
         if staged.bytes_written() != command.expected_size {
-            let _ = self.blob_storage.discard_staged(&staged).await;
+            let _ = self.staging.discard_staged(&staged).await;
             return Err(CoreError::conflict(format!(
                 "content size mismatch: expected {}, received {}",
                 command.expected_size,
@@ -156,7 +162,7 @@ impl ContentService {
             )));
         }
         if actual_checksum != command.expected_checksum {
-            let _ = self.blob_storage.discard_staged(&staged).await;
+            let _ = self.staging.discard_staged(&staged).await;
             return Err(CoreError::conflict(format!(
                 "content checksum mismatch: expected {}, actual {}",
                 command.expected_checksum.value(),
@@ -174,7 +180,7 @@ impl ContentService {
         ) {
             Ok(content) => content,
             Err(error) => {
-                let _ = self.blob_storage.discard_staged(&staged).await;
+                let _ = self.staging.discard_staged(&staged).await;
                 return Err(error);
             }
         };
@@ -198,12 +204,12 @@ impl ContentService {
         data: Bytes,
     ) -> Result<(), CoreError> {
         let replacement_id = ResourceContentReplacementId::new();
-        let staging_key = replacement_staging_key(replacement_id)?;
-        let backup_key = replacement_backup_key(replacement_id)?;
-        let staging = self.blob_storage.create_staged(&staging_key).await?;
+        let staging_key = path_resolver::replacement_staging_key(replacement_id)?;
+        let backup_key = path_resolver::replacement_backup_key(replacement_id)?;
+        let staging = self.staging.create_staged(&staging_key).await?;
         let expected_size = data.len() as u64;
         let staged = match self
-            .blob_storage
+            .staging
             .append_staged(
                 &staging_key,
                 0,
@@ -213,14 +219,14 @@ impl ContentService {
         {
             Ok(staged) if staged.bytes_written() == expected_size => staged,
             Ok(staged) => {
-                let _ = self.blob_storage.discard_staged(&staged).await;
+                let _ = self.staging.discard_staged(&staged).await;
                 return Err(CoreError::conflict(format!(
                     "content size mismatch: expected {expected_size}, received {}",
                     staged.bytes_written()
                 )));
             }
             Err(error) => {
-                let _ = self.blob_storage.discard_staged(&staging).await;
+                let _ = self.staging.discard_staged(&staging).await;
                 return Err(error);
             }
         };
@@ -247,7 +253,7 @@ impl ContentService {
     ) -> Result<(), CoreError> {
         let expected_revision = resource.revision();
         if let Err(error) = resource.attach_content(content) {
-            let _ = self.blob_storage.discard_staged(&staged).await;
+            let _ = self.staging.discard_staged(&staged).await;
             return Err(error.into());
         }
         let replacement = ResourceContentReplacement::rehydrate(
@@ -267,63 +273,50 @@ impl ContentService {
         let current = match self.read_model.find_by_id(&resource.id()).await {
             Ok(Some(current)) => current,
             Ok(None) => {
-                let _ = self.blob_storage.discard_staged(&staged).await;
+                let _ = self.staging.discard_staged(&staged).await;
                 return Err(stale_replacement(resource));
             }
             Err(error) => {
-                let _ = self.blob_storage.discard_staged(&staged).await;
+                let _ = self.staging.discard_staged(&staged).await;
                 return Err(error);
             }
         };
         let current_key = match current.storage_key() {
             Ok(current_key) => current_key,
             Err(error) => {
-                let _ = self.blob_storage.discard_staged(&staged).await;
+                let _ = self.staging.discard_staged(&staged).await;
                 return Err(error);
             }
         };
         if current.resource().revision() != expected_revision || current_key != target_key {
-            let _ = self.blob_storage.discard_staged(&staged).await;
+            let _ = self.staging.discard_staged(&staged).await;
             return Err(stale_replacement(resource));
         }
 
         if let Err(error) = self.content_replacements.save(&replacement).await {
-            let _ = self.blob_storage.discard_staged(&staged).await;
+            let _ = self.staging.discard_staged(&staged).await;
             return Err(error);
         }
 
-        if let Err(error) = self
-            .blob_storage
-            .move_if_absent(&target_key, &backup_key)
-            .await
-        {
-            let _ = self.blob_storage.discard_staged(&staged).await;
-            let _ = self
-                .content_replacements
-                .remove(&replacement.id())
-                .await;
+        if let Err(error) = self.objects.move_if_absent(&target_key, &backup_key).await {
+            let _ = self.staging.discard_staged(&staged).await;
+            let _ = self.content_replacements.remove(&replacement.id()).await;
             return Err(error);
         }
         if let Err(error) = self
-            .blob_storage
+            .staging
             .publish_staged_if_absent(&staged, &target_key)
             .await
         {
-            let restored = self
-                .blob_storage
-                .move_if_absent(&backup_key, &target_key)
-                .await;
-            let _ = self.blob_storage.discard_staged(&staged).await;
+            let restored = self.objects.move_if_absent(&backup_key, &target_key).await;
+            let _ = self.staging.discard_staged(&staged).await;
             if let Err(restore_error) = restored {
                 return Err(CoreError::storage(
                     "resource_content_replace.publish_rollback",
                     restore_error,
                 ));
             }
-            let _ = self
-                .content_replacements
-                .remove(&replacement.id())
-                .await;
+            let _ = self.content_replacements.remove(&replacement.id()).await;
             return Err(error);
         }
 
@@ -334,9 +327,7 @@ impl ContentService {
         let error = match saved {
             Ok(true) => {
                 self.discard_replacement_artifacts(&replacement).await?;
-                self.content_replacements
-                    .remove(&replacement.id())
-                    .await?;
+                self.content_replacements.remove(&replacement.id()).await?;
                 return Ok(());
             }
             Ok(false) => stale_replacement(resource),
@@ -356,10 +347,7 @@ impl ContentService {
         let replacements = self.content_replacements.list_pending().await?;
         let count = replacements.len();
         for replacement in replacements {
-            let _storage_guard = self
-                .storage_key_locks
-                .lock(replacement.target_key())
-                .await;
+            let _storage_guard = self.storage_key_locks.lock(replacement.target_key()).await;
             self.recover_replacement(&replacement).await?;
         }
         Ok(count)
@@ -390,9 +378,7 @@ impl ContentService {
             && current.content() == Some(replacement.replacement_content());
         if committed {
             self.discard_replacement_artifacts(replacement).await?;
-            self.content_replacements
-                .remove(&replacement.id())
-                .await?;
+            self.content_replacements.remove(&replacement.id()).await?;
             return Ok(());
         }
 
@@ -413,24 +399,13 @@ impl ContentService {
         &self,
         replacement: &ResourceContentReplacement,
     ) -> Result<(), CoreError> {
-        let backup_exists = self
-            .blob_storage
-            .get_stream(replacement.backup_key())
-            .await?
-            .is_some();
+        let backup_exists = self.objects.exists(replacement.backup_key()).await?;
         if backup_exists {
-            self.blob_storage
-                .delete(replacement.target_key())
-                .await?;
-            self.blob_storage
+            self.objects.delete(replacement.target_key()).await?;
+            self.objects
                 .move_if_absent(replacement.backup_key(), replacement.target_key())
                 .await?;
-        } else if self
-            .blob_storage
-            .get_stream(replacement.target_key())
-            .await?
-            .is_none()
-        {
+        } else if !self.objects.exists(replacement.target_key()).await? {
             return Err(CoreError::invariant(format!(
                 "pending content replacement `{}` has neither its target nor backup Blob",
                 replacement.id()
@@ -441,10 +416,8 @@ impl ContentService {
             replacement.staged_key().clone(),
             replacement.replacement_content().size(),
         );
-        self.blob_storage.discard_staged(&staged).await?;
-        self.content_replacements
-            .remove(&replacement.id())
-            .await
+        self.staging.discard_staged(&staged).await?;
+        self.content_replacements.remove(&replacement.id()).await
     }
 
     async fn discard_replacement_artifacts(
@@ -455,10 +428,8 @@ impl ContentService {
             replacement.staged_key().clone(),
             replacement.replacement_content().size(),
         );
-        self.blob_storage
-            .delete(replacement.backup_key())
-            .await?;
-        self.blob_storage.discard_staged(&staged).await
+        self.objects.delete(replacement.backup_key()).await?;
+        self.staging.discard_staged(&staged).await
     }
 }
 
@@ -530,18 +501,6 @@ impl SecuredContentService<'_> {
 
 fn stale_replacement(resource: &Resource) -> CoreError {
     CoreError::revision_conflict("resource", resource.id().to_string())
-}
-
-fn replacement_staging_key(id: ResourceContentReplacementId) -> Result<StorageKey, CoreError> {
-    Ok(StorageKey::new(format!(
-        "{RESERVED_BLOB_STORAGE_PREFIX}/uploads/replacement-{id}",
-    ))?)
-}
-
-fn replacement_backup_key(id: ResourceContentReplacementId) -> Result<StorageKey, CoreError> {
-    Ok(StorageKey::new(format!(
-        "{RESERVED_BLOB_STORAGE_PREFIX}/content-backups/{id}",
-    ))?)
 }
 
 fn limit_replacement_stream(

@@ -6,7 +6,7 @@ use crate::settings::{CorsPolicy, RouterOptions, SessionOptions};
 use crate::state::HttpState;
 use asset_core::service::{
     ActionOrchestrator, AssetWorkflowService, AuthorizationService, ContentService,
-    DirectoryService, ResourceService, UploadService, UserService,
+    DirectoryService, ResourceService, StorageMaintenanceService, UploadService, UserService,
 };
 use asset_runtime::{PluginWebAssets, UploadFinalizationDispatcher};
 use axum::extract::DefaultBodyLimit;
@@ -28,6 +28,7 @@ async fn openapi_document() -> Json<utoipa::openapi::OpenApi> {
 }
 
 /// 使用显式边界配置和插件 web 根目录构建 HTTP 路由。
+#[allow(clippy::too_many_arguments)]
 pub fn build_router(
     resources: ResourceService,
     content: ContentService,
@@ -35,6 +36,7 @@ pub fn build_router(
     resource_actions: ActionOrchestrator,
     directories: DirectoryService,
     asset_workflows: AssetWorkflowService,
+    storage_maintenance: StorageMaintenanceService,
     options: RouterOptions,
     plugin_web_assets: PluginWebAssets,
     authorization: AuthorizationService,
@@ -140,6 +142,7 @@ pub fn build_router(
             resource_actions,
             directories,
             asset_workflows,
+            storage_maintenance,
             plugin_web_assets,
             authorization,
             upload_finalizations,

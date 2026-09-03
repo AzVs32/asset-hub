@@ -2,7 +2,8 @@
 //!
 //! - 资源持久化：`ResourceStore`、`ResourceReadModel`、`ResourceRelocationStore`
 //! - 目录持久化与查询：`DirectoryStore`、`DirectoryQuery`、`DirectoryIndex`
-//! - 内容存储：`BlobStorage`、`DirectoryStorage`、`StorageScanner`
+//! - 内容存储：`ContentReader`、`ContentStagingStore`、`ContentObjectStore`、`BlobHealth`、
+//!   `DirectoryStorage`、`StorageScanner`
 //! - 运行时注册与执行：kind/action registry、action executor
 //! - 身份：用户仓储、密码哈希
 //!
@@ -25,11 +26,12 @@ pub use identity::{LocatedUser, PasswordHasher, UserQuery, UserRepository};
 pub use resource::{
     ListResources, LocatedResource, ResourceActionExecutor, ResourceActionOutput,
     ResourceActionRegistry, ResourceActionRequest, ResourceContentReplacementRepository,
-    ResourceKindRegistry, ResourceMaintenanceReadModel, ResourcePage, ResourceReadModel, ResourceRelocation,
-    ResourceRelocationStore, ResourceStore,
+    ResourceKindRegistry, ResourceMaintenanceReadModel, ResourcePage, ResourceReadModel,
+    ResourceRelocation, ResourceRelocationStore, ResourceStore,
 };
 pub use storage::{
-    BlobByteStream, BlobStorage, DirectoryStorage, RESERVED_BLOB_STORAGE_PREFIX, ScannedBlob,
-    ScannedStorageEntry, StagedBlob, StoragePrefix, StorageScanStream, StorageScanner,
+    BlobByteStream, BlobHealth, ContentObjectStore, ContentReader, ContentStagingStore,
+    DirectoryStorage, RESERVED_BLOB_STORAGE_PREFIX, ScannedBlob, ScannedStorageEntry, StagedBlob,
+    StoragePrefix, StorageScanStream, StorageScanner,
 };
 pub use upload::UploadSessionRepository;

@@ -3,18 +3,18 @@
 //! 扫描器只报告存储事实；本服务负责把最终状态投影到资源和目录仓储。只有完整扫描成功
 //! 后才删除未见记录，避免一次不完整扫描造成误删。
 
-use super::{StorageKeyLocks, build_resource};
 use super::content::{
     build_failed_content, build_pending_content, build_verified_content, finalize_tracked_checksum,
     stream_with_checksum_tracking,
 };
+use super::{StorageKeyLocks, build_resource};
 use crate::CoreError;
 use crate::domain::{
     Checksum, ContentVerificationStatus, DirectoryPath, Resource, ResourceContent, ResourceKind,
     StorageKey,
 };
 use crate::port::{
-    BlobStorage, LocatedResource, ResourceKindRegistry, ResourceMaintenanceReadModel,
+    BlobHealth, ContentReader, LocatedResource, ResourceKindRegistry, ResourceMaintenanceReadModel,
     ResourceReadModel, ResourceStore, ScannedBlob, ScannedStorageEntry, StoragePrefix,
     StorageScanStream, StorageScanner,
 };
@@ -22,8 +22,8 @@ use crate::service::{DirectoryProvisioningService, DirectoryService};
 use futures_util::StreamExt;
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
-use std::time::{Duration, Instant};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 /// 完整资源扫描的文件级进度。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,7 +79,8 @@ struct MaintenanceDependencies {
     query: Arc<dyn ResourceReadModel>,
     maintenance_read_model: Arc<dyn ResourceMaintenanceReadModel>,
     storage_scanner: Arc<dyn StorageScanner>,
-    blob_storage: Arc<dyn BlobStorage>,
+    reader: Arc<dyn ContentReader>,
+    blob_health: Arc<dyn BlobHealth>,
     directories: DirectoryService,
     directory_provisioning: DirectoryProvisioningService,
     kind_registry: Arc<dyn ResourceKindRegistry>,
@@ -132,7 +133,8 @@ impl StorageMaintenanceService {
         query: Arc<dyn ResourceReadModel>,
         maintenance_read_model: Arc<dyn ResourceMaintenanceReadModel>,
         storage_scanner: Arc<dyn StorageScanner>,
-        blob_storage: Arc<dyn BlobStorage>,
+        reader: Arc<dyn ContentReader>,
+        blob_health: Arc<dyn BlobHealth>,
         directories: DirectoryService,
         directory_provisioning: DirectoryProvisioningService,
         kind_registry: Arc<dyn ResourceKindRegistry>,
@@ -144,13 +146,19 @@ impl StorageMaintenanceService {
                 query,
                 maintenance_read_model,
                 storage_scanner,
-                blob_storage,
+                reader,
+                blob_health,
                 directories,
                 directory_provisioning,
                 kind_registry,
                 storage_key_locks,
             }),
         }
+    }
+
+    /// 检查对象存储后端是否可访问；供应用就绪探针使用。
+    pub async fn check_blob_storage_health(&self) -> Result<(), CoreError> {
+        self.service.blob_health.health_check().await
     }
 
     /// 启动时优先恢复可用的资源索引。
@@ -275,8 +283,7 @@ impl StorageMaintenanceService {
     }
 
     pub async fn reconcile_storage(&self) -> Result<StorageReconciliationReport, CoreError> {
-        self.reconcile_storage_inner(false, false, None)
-            .await
+        self.reconcile_storage_inner(false, false, None).await
     }
 
     pub async fn scan_resources(&self) -> Result<StorageReconciliationReport, CoreError> {
@@ -438,10 +445,7 @@ impl StorageMaintenanceService {
         })
     }
 
-    pub async fn reconcile_storage_keys(
-        &self,
-        keys: &[StorageKey],
-    ) -> Result<(), CoreError> {
+    pub async fn reconcile_storage_keys(&self, keys: &[StorageKey]) -> Result<(), CoreError> {
         let mut existing = Vec::new();
         let mut missing = Vec::new();
         for key in keys {
@@ -773,7 +777,7 @@ impl StorageMaintenanceService {
     ) -> Result<Checksum, CoreError> {
         let stream = self
             .service
-            .blob_storage
+            .reader
             .get_stream(key)
             .await?
             .ok_or_else(|| CoreError::conflict(format!("blob `{key}` no longer exists")))?;

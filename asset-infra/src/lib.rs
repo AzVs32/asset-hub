@@ -20,18 +20,18 @@ pub mod plugin_package {
 }
 
 use asset_core::{
-    CoreError, port::BlobStorage, port::DirectoryProjection, port::DirectoryQuery,
+    CoreError, port::BlobHealth, port::ContentObjectStore, port::ContentReader,
+    port::ContentStagingStore, port::DirectoryProjection, port::DirectoryQuery,
     port::DirectoryRelocationStore, port::DirectoryStorage, port::DirectoryStore,
-    port::ResourceContentReplacementRepository, port::ResourceMaintenanceReadModel, port::ResourceReadModel,
-    port::ResourceRelocationStore, port::ResourceStore,
+    port::ResourceContentReplacementRepository, port::ResourceMaintenanceReadModel,
+    port::ResourceReadModel, port::ResourceRelocationStore, port::ResourceStore,
     port::StorageScanner, port::UploadSessionRepository, port::UserQuery, port::UserRepository,
 };
 use config::{AssetInfraConfig, BlobBackend, DatabaseBackend};
 use directory_index::InMemoryDirectoryIndex;
 use sqlite::{
     SqliteDatabase, SqliteDirectoryStore, SqliteIdentityRepository,
-    SqliteResourceContentReplacementRepository, SqliteResourceStore,
-    SqliteUploadSessionRepository,
+    SqliteResourceContentReplacementRepository, SqliteResourceStore, SqliteUploadSessionRepository,
 };
 use std::sync::Arc;
 use std::time::Instant;
@@ -151,8 +151,23 @@ impl AssetInfrastructure {
         self.identity_repository.clone()
     }
 
-    /// 返回对象存储端口对象。
-    pub fn blob_storage(&self) -> Arc<dyn BlobStorage> {
+    /// 返回对象内容只读端口。
+    pub fn content_reader(&self) -> Arc<dyn ContentReader> {
+        self.blob_storage.clone()
+    }
+
+    /// 返回内部暂存对象端口。
+    pub fn content_staging_store(&self) -> Arc<dyn ContentStagingStore> {
+        self.blob_storage.clone()
+    }
+
+    /// 返回对象搬迁与删除端口。
+    pub fn content_object_store(&self) -> Arc<dyn ContentObjectStore> {
+        self.blob_storage.clone()
+    }
+
+    /// 返回对象存储就绪检查端口。
+    pub fn blob_health(&self) -> Arc<dyn BlobHealth> {
         self.blob_storage.clone()
     }
 

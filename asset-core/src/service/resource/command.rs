@@ -1,20 +1,15 @@
 //! Resource metadata, lifecycle, and durable relocation workflows.
 
-use super::{ResourceService, UpdateResource};
+use super::{ResourceService, UpdateResource, path_resolver};
 use crate::CoreError;
-use crate::domain::{DirectoryId, Resource, ResourceId, ResourceKind, StorageKey};
+use crate::domain::{DirectoryId, Resource, ResourceId, ResourceKind};
 use crate::port::{
     DirectoryLocation, ListResources, LocatedResource, ResourcePage, ResourceRelocation,
-    RESERVED_BLOB_STORAGE_PREFIX,
 };
 
 impl ResourceService {
     pub async fn check_repository_health(&self) -> Result<(), CoreError> {
         self.store.health_check().await
-    }
-
-    pub async fn check_blob_storage_health(&self) -> Result<(), CoreError> {
-        self.blob_storage.health_check().await
     }
 
     pub async fn get(&self, id: &ResourceId) -> Result<Option<LocatedResource>, CoreError> {
@@ -35,7 +30,9 @@ impl ResourceService {
         &self,
         resource: &Resource,
     ) -> Result<DirectoryLocation, CoreError> {
-        self.directories.locate_by_id(&resource.directory_id()).await
+        self.directories
+            .locate_by_id(&resource.directory_id())
+            .await
     }
 
     pub async fn update(
@@ -78,16 +75,16 @@ impl ResourceService {
         {
             return Err(CoreError::conflict(format!(
                 "resource path `{}` is already occupied",
-                StorageKey::from_resource_path(destination_directory.path(), desired.name())?
+                path_resolver::resource_key(destination_directory.path(), desired.name())?
             )));
         }
 
         let has_content = desired.content().is_some();
         let source_key = has_content
-            .then(|| StorageKey::from_resource_path(source_directory.path(), &source_name))
+            .then(|| path_resolver::resource_key(source_directory.path(), &source_name))
             .transpose()?;
         let destination_key = has_content
-            .then(|| StorageKey::from_resource_path(destination_directory.path(), desired.name()))
+            .then(|| path_resolver::resource_key(destination_directory.path(), desired.name()))
             .transpose()?;
 
         match (source_key, destination_key) {
@@ -137,15 +134,13 @@ impl ResourceService {
                 resource.id().to_string(),
             ));
         }
-        let source_key = resource.content().map(|_| located.storage_key()).transpose()?;
+        let source_key = resource
+            .content()
+            .map(|_| located.storage_key())
+            .transpose()?;
         let deletion_key = source_key
             .as_ref()
-            .map(|_| {
-                StorageKey::new(format!(
-                    "{RESERVED_BLOB_STORAGE_PREFIX}/deletions/{}",
-                    resource.id()
-                ))
-            })
+            .map(|_| path_resolver::deletion_key(resource.id()))
             .transpose()?;
         let keys = source_key
             .iter()
@@ -155,8 +150,8 @@ impl ResourceService {
         let _guards = self.storage_key_locks.lock_many(&keys).await;
 
         let moved = if let (Some(source), Some(staged)) = (&source_key, &deletion_key) {
-            if self.blob_storage.exists(source).await? {
-                self.blob_storage.move_if_absent(source, staged).await?;
+            if self.objects.exists(source).await? {
+                self.objects.move_if_absent(source, staged).await?;
                 true
             } else {
                 false
@@ -170,10 +165,8 @@ impl ResourceService {
             .delete_if_revision(&resource.id(), expected_revision)
             .await?
         {
-            if moved
-                && let (Some(source), Some(staged)) = (&source_key, &deletion_key)
-            {
-                self.blob_storage.move_if_absent(staged, source).await?;
+            if moved && let (Some(source), Some(staged)) = (&source_key, &deletion_key) {
+                self.objects.move_if_absent(staged, source).await?;
             }
             return Err(CoreError::revision_conflict(
                 "resource",
@@ -182,7 +175,7 @@ impl ResourceService {
         }
 
         if let Some(staged) = deletion_key {
-            self.blob_storage.delete(&staged).await?;
+            self.objects.delete(&staged).await?;
         }
         Ok(())
     }
@@ -213,20 +206,14 @@ impl ResourceService {
             .load(&id)
             .await?
             .ok_or_else(|| CoreError::not_found("resource relocation", id.to_string()))?;
-        let source_exists = self.blob_storage.exists(relocation.source_key()).await?;
-        let destination_exists = self
-            .blob_storage
-            .exists(relocation.destination_key())
-            .await?;
+        let source_exists = self.objects.exists(relocation.source_key()).await?;
+        let destination_exists = self.objects.exists(relocation.destination_key()).await?;
 
         if current == *relocation.desired() {
             match (source_exists, destination_exists) {
                 (true, false) => {
-                    self.blob_storage
-                        .move_if_absent(
-                            relocation.source_key(),
-                            relocation.destination_key(),
-                        )
+                    self.objects
+                        .move_if_absent(relocation.source_key(), relocation.destination_key())
                         .await?;
                 }
                 (false, true) => {}
@@ -242,7 +229,7 @@ impl ResourceService {
 
         if current.revision() != relocation.expected_revision() {
             if !source_exists && destination_exists {
-                self.blob_storage
+                self.objects
                     .move_if_absent(relocation.destination_key(), relocation.source_key())
                     .await?;
             }
@@ -252,7 +239,7 @@ impl ResourceService {
 
         match (source_exists, destination_exists) {
             (true, false) => {
-                self.blob_storage
+                self.objects
                     .move_if_absent(relocation.source_key(), relocation.destination_key())
                     .await?;
             }
@@ -269,7 +256,7 @@ impl ResourceService {
             .update_if_revision(relocation.desired(), relocation.expected_revision())
             .await?
         {
-            self.blob_storage
+            self.objects
                 .move_if_absent(relocation.destination_key(), relocation.source_key())
                 .await?;
             self.relocations.complete(&id).await?;

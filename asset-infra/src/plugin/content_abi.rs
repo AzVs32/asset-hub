@@ -3,7 +3,7 @@ use asset_core::domain::{
     ActionAccess, ContentVerificationStatus, Resource, ResourceActionContentDelivery,
     ResourceContent, ResourceEffectiveStatus, ResourceLifecycleStatus, StorageKey,
 };
-use asset_core::port::{BlobStorage, ResourceActionRequest};
+use asset_core::port::{ContentReader, ResourceActionRequest};
 use asset_plugin_api::abi::{
     CONTENT_CLOSE_FN, CONTENT_OPEN_FN, CONTENT_READ_FN, CONTENT_SIZE_FN, ContentRange,
 };
@@ -27,7 +27,7 @@ use super::policy::PluginExecutionPolicy;
 
 #[derive(Clone)]
 pub(super) struct HostContentResolver {
-    pub(super) storage: Arc<dyn BlobStorage>,
+    pub(super) storage: Arc<dyn ContentReader>,
     pub(super) state: Arc<Mutex<HostContentState>>,
     pub(super) runtime: tokio::runtime::Handle,
     pub(super) policy: Arc<PluginExecutionPolicy>,

@@ -9,7 +9,7 @@ use crate::domain::{
     ResourceId, ResourceKind, StorageKey,
 };
 use crate::port::{
-    BlobStorage, LocatedResource, ResourceActionExecutor, ResourceActionOutput,
+    ContentReader, LocatedResource, ResourceActionExecutor, ResourceActionOutput,
     ResourceActionRegistry, ResourceActionRequest,
 };
 use crate::service::{AuthorizationService, validate_action_revision};
@@ -24,7 +24,7 @@ use std::sync::Arc;
 pub struct ActionOrchestrator {
     resources: ResourceService,
     content: ContentService,
-    blob_storage: Arc<dyn BlobStorage>,
+    reader: Arc<dyn ContentReader>,
     registry: Arc<dyn ResourceActionRegistry>,
     executor: Arc<dyn ResourceActionExecutor>,
     action_policy: Arc<ResourceActionPolicy>,
@@ -36,7 +36,7 @@ impl ActionOrchestrator {
     pub(crate) fn new(
         resources: ResourceService,
         content: ContentService,
-        blob_storage: Arc<dyn BlobStorage>,
+        reader: Arc<dyn ContentReader>,
         registry: Arc<dyn ResourceActionRegistry>,
         executor: Arc<dyn ResourceActionExecutor>,
         action_policy: Arc<ResourceActionPolicy>,
@@ -45,7 +45,7 @@ impl ActionOrchestrator {
         Self {
             resources,
             content,
-            blob_storage,
+            reader,
             registry,
             executor,
             action_policy,
@@ -208,7 +208,7 @@ impl ActionOrchestrator {
                 content.size(),
             ));
         }
-        self.blob_storage.get(storage_key).await
+        self.reader.get(storage_key).await
     }
 
     fn validate_output(
@@ -295,13 +295,14 @@ impl ActionOrchestrator {
                     let current = resource.content().cloned().ok_or_else(|| {
                         CoreError::invariant("replace_content requires existing content")
                     })?;
-                    let data = Bytes::from(
-                        BASE64_STANDARD.decode(effect.data.as_bytes()).map_err(|error| {
-                            CoreError::invariant(format!(
-                                "resource action returned invalid base64: {error}"
-                            ))
-                        })?,
-                    );
+                    let data =
+                        Bytes::from(BASE64_STANDARD.decode(effect.data.as_bytes()).map_err(
+                            |error| {
+                                CoreError::invariant(format!(
+                                    "resource action returned invalid base64: {error}"
+                                ))
+                            },
+                        )?);
                     let content = build_verified_content(
                         data.len() as u64,
                         effect
@@ -312,12 +313,7 @@ impl ActionOrchestrator {
                         None,
                     )?;
                     self.content
-                        .replace_content_bytes_snapshot(
-                            &mut resource,
-                            storage_key,
-                            content,
-                            data,
-                        )
+                        .replace_content_bytes_snapshot(&mut resource, storage_key, content, data)
                         .await?;
                 }
                 PluginResourceActionEffect::Delete => {
@@ -349,7 +345,12 @@ impl SecuredActionOrchestrator<'_> {
         let action = self
             .service
             .resolve_action(resource.resource(), &command.action)?;
-        let operation = if action.output().effects.iter().any(|effect| effect == "delete") {
+        let operation = if action
+            .output()
+            .effects
+            .iter()
+            .any(|effect| effect == "delete")
+        {
             DirectoryOperation::DeleteResource
         } else {
             DirectoryOperation::ExecuteResourceAction
@@ -357,7 +358,10 @@ impl SecuredActionOrchestrator<'_> {
         self.authorization
             .require(self.context, resource.directory(), operation)
             .await?;
-        self.service.execute_snapshot(resource, command).await.map(Some)
+        self.service
+            .execute_snapshot(resource, command)
+            .await
+            .map(Some)
     }
 }
 

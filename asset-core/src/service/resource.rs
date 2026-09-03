@@ -8,9 +8,10 @@ use crate::domain::{
     ResourceActionPolicy, ResourceContentEditPolicy, ResourceKind, ResourceKindDefinition,
 };
 use crate::port::{
-    BlobStorage, ResourceActionExecutor, ResourceActionRegistry, ResourceContentReplacementRepository,
-    ResourceKindRegistry, ResourceMaintenanceReadModel, ResourceReadModel, ResourceRelocationStore,
-    ResourceStore, StorageScanner, UploadSessionRepository,
+    BlobHealth, ContentObjectStore, ContentReader, ContentStagingStore, ResourceActionExecutor,
+    ResourceActionRegistry, ResourceContentReplacementRepository, ResourceKindRegistry,
+    ResourceMaintenanceReadModel, ResourceReadModel, ResourceRelocationStore, ResourceStore,
+    StorageScanner, UploadSessionRepository,
 };
 use crate::service::{DirectoryProvisioningService, DirectoryService};
 use std::sync::Arc;
@@ -19,6 +20,7 @@ mod action;
 mod command;
 mod content;
 mod contract;
+mod path_resolver;
 mod reconciliation;
 mod secured;
 mod storage_key_locks;
@@ -46,7 +48,7 @@ pub(crate) use upload_locks::UploadLocks;
 pub struct ResourceService {
     pub(crate) store: Arc<dyn ResourceStore>,
     pub(crate) read_model: Arc<dyn ResourceReadModel>,
-    pub(crate) blob_storage: Arc<dyn BlobStorage>,
+    pub(crate) objects: Arc<dyn ContentObjectStore>,
     pub(crate) relocations: Arc<dyn ResourceRelocationStore>,
     pub(crate) directories: DirectoryService,
     pub(crate) kind_registry: Arc<dyn ResourceKindRegistry>,
@@ -57,7 +59,7 @@ impl ResourceService {
     pub(crate) fn new(
         store: Arc<dyn ResourceStore>,
         read_model: Arc<dyn ResourceReadModel>,
-        blob_storage: Arc<dyn BlobStorage>,
+        objects: Arc<dyn ContentObjectStore>,
         relocations: Arc<dyn ResourceRelocationStore>,
         directories: DirectoryService,
         kind_registry: Arc<dyn ResourceKindRegistry>,
@@ -66,7 +68,7 @@ impl ResourceService {
         Self {
             store,
             read_model,
-            blob_storage,
+            objects,
             relocations,
             directories,
             kind_registry,
@@ -101,7 +103,6 @@ impl ResourceService {
             Err(CoreError::unsupported("resource kind", kind.to_string()))
         }
     }
-
 }
 
 /// Deterministic assembly bundle for the five independent Resource-related services. It is the
@@ -121,7 +122,10 @@ impl ResourceServices {
         read_model: Arc<dyn ResourceReadModel>,
         maintenance_read_model: Arc<dyn ResourceMaintenanceReadModel>,
         relocation_store: Arc<dyn ResourceRelocationStore>,
-        blob_storage: Arc<dyn BlobStorage>,
+        content_reader: Arc<dyn ContentReader>,
+        content_staging: Arc<dyn ContentStagingStore>,
+        content_objects: Arc<dyn ContentObjectStore>,
+        blob_health: Arc<dyn BlobHealth>,
         storage_scanner: Arc<dyn StorageScanner>,
         directories: DirectoryService,
         directory_provisioning: DirectoryProvisioningService,
@@ -137,7 +141,7 @@ impl ResourceServices {
         let resources = ResourceService::new(
             store.clone(),
             read_model.clone(),
-            blob_storage.clone(),
+            content_objects.clone(),
             relocation_store,
             directories.clone(),
             kind_registry.clone(),
@@ -146,7 +150,9 @@ impl ResourceServices {
         let content = ContentService::new(
             read_model.clone(),
             store.clone(),
-            blob_storage.clone(),
+            content_reader.clone(),
+            content_staging.clone(),
+            content_objects.clone(),
             content_replacements,
             locks.clone(),
             edit_policy.clone(),
@@ -154,7 +160,9 @@ impl ResourceServices {
         let uploads = UploadService::new(
             store.clone(),
             read_model.clone(),
-            blob_storage.clone(),
+            content_staging.clone(),
+            content_reader.clone(),
+            content_objects.clone(),
             storage_scanner.clone(),
             directories.clone(),
             kind_registry.clone(),
@@ -164,7 +172,7 @@ impl ResourceServices {
         let actions = ActionOrchestrator::new(
             resources.clone(),
             content.clone(),
-            blob_storage.clone(),
+            content_reader.clone(),
             action_registry,
             action_executor,
             action_policy,
@@ -175,7 +183,8 @@ impl ResourceServices {
             read_model,
             maintenance_read_model,
             storage_scanner,
-            blob_storage,
+            content_reader,
+            blob_health,
             directories,
             directory_provisioning,
             kind_registry,

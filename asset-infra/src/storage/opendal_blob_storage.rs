@@ -1,7 +1,8 @@
 use asset_core::CoreError;
 use asset_core::domain::{DirectoryPath, StorageKey};
 use asset_core::port::{
-    BlobByteStream, BlobStorage, DirectoryStorage, RESERVED_BLOB_STORAGE_PREFIX, StagedBlob,
+    BlobByteStream, BlobHealth, ContentObjectStore, ContentReader, ContentStagingStore,
+    DirectoryStorage, RESERVED_BLOB_STORAGE_PREFIX, StagedBlob,
 };
 use bytes::Bytes;
 use futures_util::{StreamExt, TryStreamExt};
@@ -42,7 +43,7 @@ impl OpenDalBlobStorage {
 }
 
 #[async_trait::async_trait]
-impl BlobStorage for OpenDalBlobStorage {
+impl BlobHealth for OpenDalBlobStorage {
     async fn health_check(&self) -> Result<(), CoreError> {
         if let Some(root) = &self.local_root {
             return tokio::fs::metadata(root)
@@ -56,8 +57,11 @@ impl BlobStorage for OpenDalBlobStorage {
             .map(|_| ())
             .map_err(|error| CoreError::storage("health_check", error))
     }
+}
 
-    async fn put(&self, key: &StorageKey, data: Bytes) -> Result<(), CoreError> {
+impl OpenDalBlobStorage {
+    #[cfg(test)]
+    pub(crate) async fn put(&self, key: &StorageKey, data: Bytes) -> Result<(), CoreError> {
         if let Some(root) = &self.local_root {
             let path = root.join(key.as_str());
             if let Some(parent) = path.parent() {
@@ -75,7 +79,10 @@ impl BlobStorage for OpenDalBlobStorage {
             .map(|_| ())
             .map_err(|error| CoreError::storage("put", error))
     }
+}
 
+#[async_trait::async_trait]
+impl ContentStagingStore for OpenDalBlobStorage {
     async fn create_staged(&self, key: &StorageKey) -> Result<StagedBlob, CoreError> {
         let root = self.local_root.as_ref().ok_or_else(|| {
             CoreError::configuration("staged uploads require the local blob storage backend")
@@ -209,7 +216,10 @@ impl BlobStorage for OpenDalBlobStorage {
         require_upload_staging_key(staged.key())?;
         self.delete(staged.key()).await
     }
+}
 
+#[async_trait::async_trait]
+impl ContentReader for OpenDalBlobStorage {
     async fn get(&self, key: &StorageKey) -> Result<Option<Bytes>, CoreError> {
         if let Some(root) = &self.local_root {
             return match tokio::fs::read(root.join(key.as_str())).await {
@@ -223,13 +233,6 @@ impl BlobStorage for OpenDalBlobStorage {
             Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
             Err(error) => Err(CoreError::storage("get", error)),
         }
-    }
-
-    async fn exists(&self, key: &StorageKey) -> Result<bool, CoreError> {
-        self.operator
-            .exists(key.as_str())
-            .await
-            .map_err(|error| CoreError::storage("blob.exists", error))
     }
 
     async fn get_stream(&self, key: &StorageKey) -> Result<Option<BlobByteStream>, CoreError> {
@@ -302,6 +305,16 @@ impl BlobStorage for OpenDalBlobStorage {
             .map_err(|error| CoreError::storage("get_range_stream.read", error));
 
         Ok(Some(Box::pin(stream)))
+    }
+}
+
+#[async_trait::async_trait]
+impl ContentObjectStore for OpenDalBlobStorage {
+    async fn exists(&self, key: &StorageKey) -> Result<bool, CoreError> {
+        self.operator
+            .exists(key.as_str())
+            .await
+            .map_err(|error| CoreError::storage("blob.exists", error))
     }
 
     async fn move_if_absent(&self, from: &StorageKey, to: &StorageKey) -> Result<(), CoreError> {

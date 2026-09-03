@@ -3,19 +3,20 @@ use super::content::{
     build_verified_content, calculate_stream_checksum, finalize_tracked_checksum,
     stream_with_checksum_tracking,
 };
-use super::{CreateUpload, StorageKeyLocks, UploadLocks};
+use super::{CreateUpload, StorageKeyLocks, UploadLocks, path_resolver};
 use crate::CoreError;
 use crate::domain::{
     AccessContext, Checksum, DirectoryOperation, Resource, ResourceKind, StorageKey, UploadId,
     UploadSession, UploadStatus, UserId,
 };
 use crate::port::{
-    BlobByteStream, BlobStorage, ResourceKindRegistry, ResourceReadModel, ResourceStore,
-    StorageScanner, UploadSessionRepository, RESERVED_BLOB_STORAGE_PREFIX, StagedBlob,
+    BlobByteStream, ContentObjectStore, ContentReader, ContentStagingStore,
+    RESERVED_BLOB_STORAGE_PREFIX, ResourceKindRegistry, ResourceReadModel, ResourceStore,
+    StagedBlob, StorageScanner, UploadSessionRepository,
 };
 use crate::service::{AuthorizationService, DirectoryService};
-use futures_util::StreamExt;
 use bytes::Bytes;
+use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
@@ -27,7 +28,9 @@ pub struct UploadService {
 struct UploadDependencies {
     store: Arc<dyn ResourceStore>,
     read_model: Arc<dyn ResourceReadModel>,
-    blob_storage: Arc<dyn BlobStorage>,
+    staging: Arc<dyn ContentStagingStore>,
+    reader: Arc<dyn ContentReader>,
+    objects: Arc<dyn ContentObjectStore>,
     storage_scanner: Arc<dyn StorageScanner>,
     directories: DirectoryService,
     kind_registry: Arc<dyn ResourceKindRegistry>,
@@ -69,7 +72,9 @@ impl UploadService {
     pub(crate) fn new(
         store: Arc<dyn ResourceStore>,
         read_model: Arc<dyn ResourceReadModel>,
-        blob_storage: Arc<dyn BlobStorage>,
+        staging: Arc<dyn ContentStagingStore>,
+        reader: Arc<dyn ContentReader>,
+        objects: Arc<dyn ContentObjectStore>,
         storage_scanner: Arc<dyn StorageScanner>,
         directories: DirectoryService,
         kind_registry: Arc<dyn ResourceKindRegistry>,
@@ -80,7 +85,9 @@ impl UploadService {
             service: Arc::new(UploadDependencies {
                 store,
                 read_model,
-                blob_storage,
+                staging,
+                reader,
+                objects,
                 storage_scanner,
                 directories,
                 kind_registry,
@@ -115,7 +122,7 @@ impl UploadService {
         mime_type: Option<String>,
         data: Bytes,
     ) -> Result<crate::port::LocatedResource, CoreError> {
-        let storage_key = StorageKey::from_resource_path(directory.path(), &name)?;
+        let storage_key = path_resolver::resource_key(directory.path(), &name)?;
         let kind = self.service.resolve_content_kind(
             kind,
             mime_type.as_deref(),
@@ -141,15 +148,12 @@ impl UploadService {
                 "resource path `{storage_key}` already exists"
             )));
         }
-        let staging_key = StorageKey::new(format!(
-            "{RESERVED_BLOB_STORAGE_PREFIX}/uploads/generated-{}",
-            uuid::Uuid::now_v7()
-        ))?;
-        let _staging = self.service.blob_storage.create_staged(&staging_key).await?;
+        let staging_key = path_resolver::generated_staging_key()?;
+        let _staging = self.service.staging.create_staged(&staging_key).await?;
         let expected_size = data.len() as u64;
         let staged = self
             .service
-            .blob_storage
+            .staging
             .append_staged(
                 &staging_key,
                 0,
@@ -157,19 +161,19 @@ impl UploadService {
             )
             .await?;
         if staged.bytes_written() != expected_size {
-            let _ = self.service.blob_storage.discard_staged(&staged).await;
+            let _ = self.service.staging.discard_staged(&staged).await;
             return Err(CoreError::conflict("generated content size changed"));
         }
         self.service
-            .blob_storage
+            .staging
             .publish_staged_if_absent(&staged, &storage_key)
             .await?;
         if let Err(error) = self.service.store.insert(&resource).await {
-            let _ = self.service.blob_storage.delete(&storage_key).await;
-            let _ = self.service.blob_storage.discard_staged(&staged).await;
+            let _ = self.service.objects.delete(&storage_key).await;
+            let _ = self.service.staging.discard_staged(&staged).await;
             return Err(error);
         }
-        self.service.blob_storage.discard_staged(&staged).await?;
+        self.service.staging.discard_staged(&staged).await?;
         crate::port::LocatedResource::new(resource, directory.clone())
     }
 
@@ -187,7 +191,7 @@ impl UploadService {
             expected_checksum,
         } = command;
         let directory = self.service.directories.locate_by_id(&directory_id).await?;
-        let storage_key = StorageKey::from_resource_path(directory.path(), &name)?;
+        let storage_key = path_resolver::resource_key(directory.path(), &name)?;
         reject_reserved_storage_key(&storage_key)?;
         let kind = self.service.resolve_content_kind(
             kind,
@@ -217,12 +221,9 @@ impl UploadService {
             expected_checksum,
         )?;
         let staged = staged_for(session.id())?;
-        self.service
-            .blob_storage
-            .create_staged(staged.key())
-            .await?;
+        self.service.staging.create_staged(staged.key()).await?;
         if let Err(error) = self.service.upload_sessions.save(&session).await {
-            let _ = self.service.blob_storage.discard_staged(&staged).await;
+            let _ = self.service.staging.discard_staged(&staged).await;
             return Err(error);
         }
         Ok(session)
@@ -270,18 +271,14 @@ impl UploadService {
             .ok_or_else(|| CoreError::conflict("upload offset exceeds expected size"))?;
         let staged_key = staged_for(*id)?;
         let chunk_key = chunk_for(*id)?;
-        self.service.blob_storage.discard_staged(&chunk_key).await?;
-        let chunk = self
-            .service
-            .blob_storage
-            .create_staged(chunk_key.key())
-            .await?;
+        self.service.staging.discard_staged(&chunk_key).await?;
+        let chunk = self.service.staging.create_staged(chunk_key.key()).await?;
 
         let append_result = async {
             let (tracked_data, checksum_state) =
                 stream_with_checksum_tracking(limit_stream(data, remaining));
             self.service
-                .blob_storage
+                .staging
                 .append_staged(chunk.key(), 0, tracked_data)
                 .await?;
             let actual_chunk_checksum = finalize_tracked_checksum(checksum_state)?;
@@ -295,13 +292,13 @@ impl UploadService {
 
             let verified_chunk = self
                 .service
-                .blob_storage
+                .reader
                 .get_stream(chunk.key())
                 .await?
                 .ok_or_else(|| CoreError::not_found("staged upload chunk", id.to_string()))?;
             let staged = self
                 .service
-                .blob_storage
+                .staging
                 .append_staged(staged_key.key(), session.offset(), verified_chunk)
                 .await?;
             if !self
@@ -318,7 +315,7 @@ impl UploadService {
         }
         .await;
 
-        let cleanup_result = self.service.blob_storage.discard_staged(&chunk).await;
+        let cleanup_result = self.service.staging.discard_staged(&chunk).await;
         let offset = append_result?;
         cleanup_result?;
         session.synchronize_offset(offset)?;
@@ -347,7 +344,7 @@ impl UploadService {
             )));
         }
         self.service
-            .blob_storage
+            .staging
             .discard_staged(&chunk_for(*id)?)
             .await?;
         if !self.service.upload_sessions.mark_finalizing(id).await? {
@@ -391,18 +388,9 @@ impl UploadService {
 
     async fn finalize_session(&self, session: &mut UploadSession) -> Result<Resource, CoreError> {
         let id = session.id();
-        if let Some(resource) = self
-            .service
-            .store
-            .load(&session.resource_id())
-            .await?
-        {
+        if let Some(resource) = self.service.store.load(&session.resource_id()).await? {
             self.service.upload_sessions.mark_completed(&id).await?;
-            let _ = self
-                .service
-                .blob_storage
-                .discard_staged(&staged_for(id)?)
-                .await;
+            let _ = self.service.staging.discard_staged(&staged_for(id)?).await;
             return Ok(resource);
         }
 
@@ -412,7 +400,7 @@ impl UploadService {
             None => {
                 let checksum_stream = self
                     .service
-                    .blob_storage
+                    .reader
                     .get_stream(staged.key())
                     .await?
                     .ok_or_else(|| CoreError::not_found("staged upload", id.to_string()))?;
@@ -444,7 +432,7 @@ impl UploadService {
         )
         .with_id(session.resource_id())
         .build()?;
-        let storage_key = StorageKey::from_resource_path(directory.path(), session.name())?;
+        let storage_key = path_resolver::resource_key(directory.path(), session.name())?;
 
         let _storage_guard = self.service.storage_key_locks.lock(&storage_key).await;
         if let Some(existing) = self
@@ -455,7 +443,7 @@ impl UploadService {
         {
             if existing.resource().id() == session.resource_id() {
                 self.service.upload_sessions.mark_completed(&id).await?;
-                let _ = self.service.blob_storage.discard_staged(&staged).await;
+                let _ = self.service.staging.discard_staged(&staged).await;
                 return Ok(existing.into_resource());
             }
             return Err(CoreError::conflict(format!(
@@ -465,7 +453,7 @@ impl UploadService {
 
         let published = match self
             .service
-            .blob_storage
+            .staging
             .publish_staged_if_absent(&staged, &storage_key)
             .await
         {
@@ -517,12 +505,12 @@ impl UploadService {
 
         match finalized {
             Ok(resource) => {
-                let _ = self.service.blob_storage.discard_staged(&staged).await;
+                let _ = self.service.staging.discard_staged(&staged).await;
                 Ok(resource)
             }
             Err(error) => {
                 if published || session.status() == UploadStatus::Finalizing {
-                    let _ = self.service.blob_storage.delete(&storage_key).await;
+                    let _ = self.service.objects.delete(&storage_key).await;
                 }
                 Err(error)
             }
@@ -534,8 +522,8 @@ impl UploadService {
         let session = self.load(owner_id, id).await?;
         let staged = staged_for(session.id())?;
         let chunk = chunk_for(session.id())?;
-        self.service.blob_storage.discard_staged(&chunk).await?;
-        self.service.blob_storage.discard_staged(&staged).await?;
+        self.service.staging.discard_staged(&chunk).await?;
+        self.service.staging.discard_staged(&staged).await?;
         self.service.upload_sessions.remove(id).await
     }
 
@@ -575,7 +563,7 @@ impl UploadService {
         if stored.size != expected_size {
             return Ok(false);
         }
-        let Some(stream) = self.service.blob_storage.get_stream(storage_key).await? else {
+        let Some(stream) = self.service.reader.get_stream(storage_key).await? else {
             return Ok(false);
         };
         Ok(calculate_stream_checksum(stream).await? == *expected_checksum)
@@ -585,7 +573,7 @@ impl UploadService {
         let id = session.id();
         let actual = self
             .service
-            .blob_storage
+            .staging
             .inspect_staged(staged_for(id)?.key())
             .await?
             .ok_or_else(|| CoreError::not_found("staged upload", id.to_string()))?
@@ -666,17 +654,11 @@ impl SecuredUploadService<'_> {
 }
 
 fn staged_for(id: UploadId) -> Result<StagedBlob, CoreError> {
-    Ok(StagedBlob::new(
-        StorageKey::new(format!("{RESERVED_BLOB_STORAGE_PREFIX}/uploads/{id}"))?,
-        0,
-    ))
+    Ok(StagedBlob::new(path_resolver::upload_staging_key(id)?, 0))
 }
 
 fn chunk_for(id: UploadId) -> Result<StagedBlob, CoreError> {
-    Ok(StagedBlob::new(
-        StorageKey::new(format!("{RESERVED_BLOB_STORAGE_PREFIX}/uploads/{id}.chunk"))?,
-        0,
-    ))
+    Ok(StagedBlob::new(path_resolver::upload_chunk_key(id)?, 0))
 }
 
 fn reject_reserved_storage_key(key: &StorageKey) -> Result<(), CoreError> {

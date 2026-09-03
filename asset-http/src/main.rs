@@ -28,6 +28,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         runtime.action_orchestrator(),
         runtime.directory_service(),
         runtime.asset_workflow_service(),
+        runtime.storage_maintenance_service(),
         settings.router_options().clone(),
         runtime.plugin_web_assets(),
         authorization.clone(),
