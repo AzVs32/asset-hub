@@ -132,9 +132,7 @@ impl AssetRuntime {
             infrastructure.directory_relocation_store(),
             directory_kind_registry,
         );
-        let directory_service = directory_services
-            .directory_service()
-            .with_actions(directory_action_registry, directory_action_executor);
+        let directory_service = directory_services.directory_service();
         let directory_provisioning_service = directory_services.provisioning_service();
         let directory_index_service = directory_services.index_service();
         let recovered_relocations = directory_service.recover_pending_relocations().await?;
@@ -162,6 +160,8 @@ impl AssetRuntime {
             infrastructure.content_replacement_repository(),
             resource_action_registry,
             resource_action_executor,
+            directory_action_registry,
+            directory_action_executor,
             resource_action_policy,
             resource_content_edit_policy,
         );

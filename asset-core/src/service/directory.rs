@@ -1,6 +1,5 @@
 //! Directory aggregate application service.
 
-mod action;
 mod command;
 mod contract;
 mod index;
@@ -17,25 +16,18 @@ use crate::{
     CoreError,
     domain::{DirectoryId, DirectoryKind, DirectoryKindDefinition, DirectoryPath},
     port::{
-        DirectoryActionExecutor, DirectoryActionRegistry, DirectoryIndex, DirectoryKindRegistry,
-        DirectoryLocation, DirectoryProjection, DirectoryQuery, DirectoryRelocationStore,
-        DirectoryStorage, DirectoryStore, LocatedDirectory,
+        DirectoryIndex, DirectoryKindRegistry, DirectoryLocation, DirectoryProjection,
+        DirectoryQuery, DirectoryRelocationStore, DirectoryStorage, DirectoryStore,
+        LocatedDirectory,
     },
 };
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-#[derive(Clone)]
-struct DirectoryActionPorts {
-    registry: Arc<dyn DirectoryActionRegistry>,
-    executor: Arc<dyn DirectoryActionExecutor>,
-}
-
 /// Coordinates directory aggregates, the durable store, the query index, and physical storage.
 #[derive(Clone)]
 pub struct DirectoryService {
     kernel: Arc<DirectoryKernel>,
-    action_ports: Option<DirectoryActionPorts>,
 }
 
 struct DirectoryKernel {
@@ -78,7 +70,6 @@ impl DirectoryServices {
         Self {
             directory: DirectoryService {
                 kernel: kernel.clone(),
-                action_ports: None,
             },
             provisioning: DirectoryProvisioningService::new(kernel),
             index: index_service,
@@ -234,7 +225,7 @@ impl DirectoryService {
         )))
     }
 
-    fn require_kind_registered(&self, kind: &DirectoryKind) -> Result<(), CoreError> {
+    pub(crate) fn require_kind_registered(&self, kind: &DirectoryKind) -> Result<(), CoreError> {
         if self.kernel.kind_registry.supports(kind) {
             Ok(())
         } else {

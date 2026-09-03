@@ -189,6 +189,7 @@ impl DirectoryKindResponse {
     pub(crate) fn from_definition(
         definition: &DirectoryKindDefinition,
         service: &asset_core::service::DirectoryService,
+        actions: &asset_core::service::ActionOrchestrator,
     ) -> Self {
         Self {
             kind: definition.kind().as_str().to_string(),
@@ -205,8 +206,8 @@ impl DirectoryKindResponse {
                 .map(|kind| kind.as_str().to_string())
                 .collect(),
             label: definition.label().to_string(),
-            actions: service
-                .describe_kind_actions(definition.kind())
+            actions: actions
+                .describe_directory_kind_actions(definition.kind())
                 .iter()
                 .map(DirectoryActionDefinitionResponse::from)
                 .collect(),

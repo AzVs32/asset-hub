@@ -27,7 +27,7 @@ const MAX_CREATE_TREE_RESOURCES: usize = 32;
 pub struct AssetWorkflowService {
     resources: ResourceService,
     uploads: UploadService,
-    resource_actions: ActionOrchestrator,
+    actions: ActionOrchestrator,
     directories: DirectoryService,
 }
 
@@ -35,13 +35,13 @@ impl AssetWorkflowService {
     pub fn new(
         resources: ResourceService,
         uploads: UploadService,
-        resource_actions: ActionOrchestrator,
+        actions: ActionOrchestrator,
         directories: DirectoryService,
     ) -> Self {
         Self {
             resources,
             uploads,
-            resource_actions,
+            actions,
             directories,
         }
     }
@@ -161,8 +161,8 @@ impl SecuredAssetWorkflowService<'_> {
         let directory = self.workflows.directories.find_by_id(id).await?;
         let definition = self
             .workflows
-            .directories
-            .resolve_action(directory.directory(), &command.action)?;
+            .actions
+            .resolve_directory_action(directory.directory(), &command.action)?;
         let operation = if definition
             .output()
             .effects
@@ -182,8 +182,8 @@ impl SecuredAssetWorkflowService<'_> {
             .id();
         let executed = self
             .workflows
-            .directories
-            .invoke_action(id, command)
+            .actions
+            .invoke_directory_action(id, command)
             .await?;
         let create_tree =
             executed
@@ -200,8 +200,8 @@ impl SecuredAssetWorkflowService<'_> {
                 .await?;
         } else {
             self.workflows
-                .directories
-                .apply_executed_action(&executed, Some(scope_root))
+                .actions
+                .apply_directory_action(&executed, Some(scope_root))
                 .await?;
         }
         Ok(executed.into_output())
@@ -267,7 +267,7 @@ impl SecuredAssetWorkflowService<'_> {
         let mut prepared_resources = Vec::with_capacity(effect.resources.len());
         let mut unique_resources = HashSet::new();
         let mut total_bytes = 0_u64;
-        let max_bytes = self.workflows.resource_actions.max_inline_content_bytes();
+        let max_bytes = self.workflows.actions.max_inline_content_bytes();
         for spec in effect.resources {
             let directory = canonical_relative_directory(&spec.directory, true)?;
             let kind = spec.kind.map(ResourceKind::try_new).transpose()?;

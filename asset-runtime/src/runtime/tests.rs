@@ -106,8 +106,8 @@ async fn local_storage_changes_are_synchronized_automatically() {
     assert!(!runtime.directory_service().kind_definitions().is_empty());
     assert!(
         !runtime
-            .directory_service()
-            .describe_kind_actions(&DirectoryKind::default())
+            .action_orchestrator()
+            .describe_directory_kind_actions(&DirectoryKind::default())
             .is_empty()
     );
     runtime.start_storage_sync().await.unwrap();

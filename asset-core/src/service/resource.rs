@@ -8,10 +8,11 @@ use crate::domain::{
     ResourceActionPolicy, ResourceContentEditPolicy, ResourceKind, ResourceKindDefinition,
 };
 use crate::port::{
-    BlobHealth, ContentObjectStore, ContentReader, ContentStagingStore, ResourceActionExecutor,
-    ResourceActionRegistry, ResourceContentReplacementRepository, ResourceKindRegistry,
-    ResourceMaintenanceReadModel, ResourceReadModel, ResourceRelocationStore, ResourceStore,
-    StorageScanner, UploadSessionRepository,
+    BlobHealth, ContentObjectStore, ContentReader, ContentStagingStore, DirectoryActionExecutor,
+    DirectoryActionRegistry, ResourceActionExecutor, ResourceActionRegistry,
+    ResourceContentReplacementRepository, ResourceKindRegistry, ResourceMaintenanceReadModel,
+    ResourceReadModel, ResourceRelocationStore, ResourceStore, StorageScanner,
+    UploadSessionRepository,
 };
 use crate::service::{DirectoryIndexService, DirectoryProvisioningService, DirectoryService};
 use std::sync::Arc;
@@ -135,6 +136,8 @@ impl ResourceServices {
         content_replacements: Arc<dyn ResourceContentReplacementRepository>,
         action_registry: Arc<dyn ResourceActionRegistry>,
         action_executor: Arc<dyn ResourceActionExecutor>,
+        directory_registry: Arc<dyn DirectoryActionRegistry>,
+        directory_executor: Arc<dyn DirectoryActionExecutor>,
         action_policy: Arc<ResourceActionPolicy>,
         edit_policy: Arc<ResourceContentEditPolicy>,
     ) -> Self {
@@ -173,9 +176,11 @@ impl ResourceServices {
         let actions = ActionOrchestrator::new(
             resources.clone(),
             content.clone(),
-            content_reader.clone(),
+            directories.clone(),
             action_registry,
             action_executor,
+            directory_registry,
+            directory_executor,
             action_policy,
             edit_policy,
         );

@@ -19,6 +19,7 @@ pub use directory::{
     DirectoryActions, DirectoryIndexService, DirectoryProvisioningService, DirectoryService,
     DirectoryServices, ExecuteDirectoryAction, SecuredDirectoryService, UpdateDirectory,
 };
+pub(crate) use directory::ExecutedDirectoryAction;
 pub use user::UserService;
 
 pub use resource::{

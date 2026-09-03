@@ -17,10 +17,7 @@ pub struct DirectoryProvisioningService {
 impl DirectoryProvisioningService {
     pub(super) fn new(kernel: Arc<DirectoryKernel>) -> Self {
         Self {
-            service: DirectoryService {
-                kernel,
-                action_ports: None,
-            },
+            service: DirectoryService { kernel },
         }
     }
 

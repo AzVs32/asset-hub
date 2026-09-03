@@ -21,7 +21,13 @@ pub(crate) async fn list_directory_kinds(
         items: directories
             .kind_definitions()
             .iter()
-            .map(|definition| DirectoryKindResponse::from_definition(definition, directories))
+            .map(|definition| {
+                DirectoryKindResponse::from_definition(
+                    definition,
+                    directories,
+                    state.resource_actions(),
+                )
+            })
             .collect(),
     })
 }
@@ -63,7 +69,7 @@ pub(crate) async fn list_directory(
         .list_children(&directory)
         .await?
         .into_iter()
-        .map(|directory| directory_response(state.directories(), &workspace, &directory))
+        .map(|directory| directory_response(state.resource_actions(), &workspace, &directory))
         .collect::<Result<Vec<_>, _>>()?;
     let current = state
         .secured_directories(&access.0)
@@ -76,7 +82,7 @@ pub(crate) async fn list_directory(
 
     Ok(Json(DirectoryListingResponse {
         path: directory,
-        directory: directory_response(state.directories(), &workspace, &current)?,
+        directory: directory_response(state.resource_actions(), &workspace, &current)?,
         folders,
         resources: resource_page_response(
             state.resources(),
@@ -123,7 +129,7 @@ pub(crate) async fn create_directory(
     Ok((
         StatusCode::CREATED,
         Json(directory_response(
-            state.directories(),
+            state.resource_actions(),
             &workspace,
             &directory,
         )?),
@@ -152,7 +158,7 @@ pub(crate) async fn find_directory(
     let workspace = state.workspace(&access.0).await?;
     let directory = state.secured_directories(&access.0).find_by_id(&id).await?;
     Ok(Json(directory_response(
-        state.directories(),
+        state.resource_actions(),
         &workspace,
         &directory,
     )?))
@@ -197,7 +203,7 @@ pub(crate) async fn update_directory(
         .update(&id, command)
         .await?;
     Ok(Json(directory_response(
-        state.directories(),
+        state.resource_actions(),
         &workspace,
         &directory,
     )?))
@@ -278,12 +284,12 @@ pub(super) fn parse_directory_kind(value: impl Into<String>) -> Result<Directory
 }
 
 pub(super) fn directory_response(
-    service: &asset_core::service::DirectoryService,
+    orchestrator: &asset_core::service::ActionOrchestrator,
     workspace: &asset_core::service::WorkspaceScope,
     directory: &asset_core::port::LocatedDirectory,
 ) -> Result<DirectoryResponse, CoreError> {
     let path = workspace.project(directory.path())?;
-    let actions = service.describe_actions(directory.directory())?;
+    let actions = orchestrator.describe_directory_actions(directory.directory())?;
     Ok(DirectoryResponse {
         id: directory.id().to_string(),
         parent_id: directory.directory().parent_id().map(|id| id.to_string()),

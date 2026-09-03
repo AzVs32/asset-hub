@@ -65,7 +65,7 @@ pub struct DirectoryActions {
 }
 
 impl DirectoryActions {
-    pub(super) fn new(available_actions: Vec<DirectoryActionDefinition>) -> Self {
+    pub(crate) fn new(available_actions: Vec<DirectoryActionDefinition>) -> Self {
         Self { available_actions }
     }
 
@@ -75,15 +75,37 @@ impl DirectoryActions {
 }
 
 pub(crate) struct ExecutedDirectoryAction {
-    pub(super) directory_id: DirectoryId,
-    pub(super) expected_revision: u64,
-    pub(super) access: ActionAccess,
-    pub(super) output: DirectoryActionOutput,
+    directory_id: DirectoryId,
+    expected_revision: u64,
+    access: ActionAccess,
+    output: DirectoryActionOutput,
 }
 
 impl ExecutedDirectoryAction {
+    pub(crate) fn new(
+        directory_id: DirectoryId,
+        expected_revision: u64,
+        access: ActionAccess,
+        output: DirectoryActionOutput,
+    ) -> Self {
+        Self {
+            directory_id,
+            expected_revision,
+            access,
+            output,
+        }
+    }
+
+    pub(crate) fn directory_id(&self) -> DirectoryId {
+        self.directory_id
+    }
+
     pub(crate) fn expected_revision(&self) -> u64 {
         self.expected_revision
+    }
+
+    pub(crate) fn access(&self) -> ActionAccess {
+        self.access
     }
 
     pub(crate) fn output(&self) -> &DirectoryActionOutput {

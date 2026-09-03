@@ -37,7 +37,7 @@ impl DirectoryService {
             .await
     }
 
-    pub(super) async fn create_with_kind_guarded(
+    pub(crate) async fn create_with_kind_guarded(
         &self,
         parent_id: &DirectoryId,
         name: impl Into<String>,
@@ -106,7 +106,7 @@ impl DirectoryService {
         self.update_expected(id, command, None).await
     }
 
-    pub(super) async fn update_expected(
+    pub(crate) async fn update_expected(
         &self,
         id: &DirectoryId,
         command: UpdateDirectory,

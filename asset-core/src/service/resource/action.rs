@@ -4,29 +4,37 @@ use super::content::{build_verified_content, calculate_checksum};
 use super::{ContentService, ExecuteResourceAction, ResourceActions, ResourceService};
 use crate::CoreError;
 use crate::domain::{
-    AccessContext, ActionAccess, DirectoryOperation, Resource, ResourceActionContentDelivery,
+    AccessContext, ActionAccess, Directory, DirectoryActionDefinition, DirectoryActionId,
+    DirectoryId, DirectoryKind, DirectoryOperation, Resource, ResourceActionContentDelivery,
     ResourceActionDefinition, ResourceActionId, ResourceActionPolicy, ResourceContentEditPolicy,
     ResourceId, ResourceKind, StorageKey,
 };
 use crate::port::{
-    ContentReader, LocatedResource, ResourceActionExecutor, ResourceActionOutput,
+    DirectoryActionExecutor, DirectoryActionOutput, DirectoryActionRegistry,
+    DirectoryActionRequest, LocatedResource, ResourceActionExecutor, ResourceActionOutput,
     ResourceActionRegistry, ResourceActionRequest,
 };
-use crate::service::{AuthorizationService, validate_action_revision};
+use crate::service::{
+    AuthorizationService, DirectoryActions, DirectoryService, ExecuteDirectoryAction,
+    ExecutedDirectoryAction, UpdateDirectory, validate_action_revision,
+};
 use asset_plugin_api::manifest::RESOURCE_EDIT_CAPABILITY;
-use asset_plugin_api::protocol::PluginResourceActionEffect;
+use asset_plugin_api::protocol::{DirectoryActionEffect, PluginResourceActionEffect};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use bytes::Bytes;
+use std::str::FromStr;
 use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct ActionOrchestrator {
     resources: ResourceService,
     content: ContentService,
-    reader: Arc<dyn ContentReader>,
+    directories: DirectoryService,
     registry: Arc<dyn ResourceActionRegistry>,
     executor: Arc<dyn ResourceActionExecutor>,
+    directory_registry: Arc<dyn DirectoryActionRegistry>,
+    directory_executor: Arc<dyn DirectoryActionExecutor>,
     action_policy: Arc<ResourceActionPolicy>,
     edit_policy: Arc<ResourceContentEditPolicy>,
 }
@@ -36,18 +44,22 @@ impl ActionOrchestrator {
     pub(crate) fn new(
         resources: ResourceService,
         content: ContentService,
-        reader: Arc<dyn ContentReader>,
+        directories: DirectoryService,
         registry: Arc<dyn ResourceActionRegistry>,
         executor: Arc<dyn ResourceActionExecutor>,
+        directory_registry: Arc<dyn DirectoryActionRegistry>,
+        directory_executor: Arc<dyn DirectoryActionExecutor>,
         action_policy: Arc<ResourceActionPolicy>,
         edit_policy: Arc<ResourceContentEditPolicy>,
     ) -> Self {
         Self {
             resources,
             content,
-            reader,
+            directories,
             registry,
             executor,
+            directory_registry,
+            directory_executor,
             action_policy,
             edit_policy,
         }
@@ -107,9 +119,7 @@ impl ActionOrchestrator {
             located.resource().id().to_string(),
         )?;
         let storage_key = located.storage_key()?;
-        let content = self
-            .load_action_content(located.resource(), &storage_key, &action)
-            .await?;
+        let content = self.load_action_content(&located, &action).await?;
         let content_delivery = located
             .resource()
             .content()
@@ -188,11 +198,10 @@ impl ActionOrchestrator {
 
     async fn load_action_content(
         &self,
-        resource: &Resource,
-        storage_key: &StorageKey,
+        located: &LocatedResource,
         action: &ResourceActionDefinition,
     ) -> Result<Option<Bytes>, CoreError> {
-        let Some(content) = resource.content() else {
+        let Some(content) = located.resource().content() else {
             return Ok(None);
         };
         if !matches!(
@@ -208,7 +217,7 @@ impl ActionOrchestrator {
                 content.size(),
             ));
         }
-        self.reader.get(storage_key).await
+        self.content.get_resource_content_snapshot(located).await
     }
 
     fn validate_output(
@@ -321,6 +330,255 @@ impl ActionOrchestrator {
                         .delete(located.clone(), resource.revision())
                         .await?;
                 }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn describe_directory_kind_actions(
+        &self,
+        kind: &DirectoryKind,
+    ) -> Vec<DirectoryActionDefinition> {
+        let lineage = self.directories.kind_lineage(kind);
+        self.directory_registry.actions_for_kinds(&lineage)
+    }
+
+    pub fn describe_directory_actions(
+        &self,
+        directory: &Directory,
+    ) -> Result<DirectoryActions, CoreError> {
+        Ok(DirectoryActions::new(
+            self.available_actions_for_directory(directory)?,
+        ))
+    }
+
+    pub(crate) fn resolve_directory_action(
+        &self,
+        directory: &Directory,
+        action_id: &DirectoryActionId,
+    ) -> Result<DirectoryActionDefinition, CoreError> {
+        self.available_actions_for_directory(directory)?
+            .into_iter()
+            .find(|action| action.id().as_str() == action_id.as_str())
+            .ok_or_else(|| CoreError::unsupported("directory action", action_id.to_string()))
+    }
+
+    /// Resolve the authoritative action set for one Directory instance, excluding root deletion.
+    fn available_actions_for_directory(
+        &self,
+        directory: &Directory,
+    ) -> Result<Vec<DirectoryActionDefinition>, CoreError> {
+        self.directories.require_kind_registered(directory.kind())?;
+        Ok(self
+            .describe_directory_kind_actions(directory.kind())
+            .into_iter()
+            .filter(|action| {
+                !(directory.id().is_root()
+                    && action
+                        .output()
+                        .effects
+                        .iter()
+                        .any(|effect| effect == "delete"))
+            })
+            .collect())
+    }
+
+    pub(crate) async fn invoke_directory_action(
+        &self,
+        id: &DirectoryId,
+        command: ExecuteDirectoryAction,
+    ) -> Result<ExecutedDirectoryAction, CoreError> {
+        let located = self.directories.find_by_id(id).await?;
+        let expected_revision = located.directory().revision();
+        let definition = self.resolve_directory_action(located.directory(), &command.action)?;
+        validate_action_revision(
+            definition.access(),
+            command.expected_revision,
+            expected_revision,
+            "directory",
+            id.to_string(),
+        )?;
+        let output = self
+            .directory_executor
+            .execute(DirectoryActionRequest::new(
+                located,
+                command.action.clone(),
+                definition.access(),
+                definition.requirements().clone(),
+                command.input,
+            ))
+            .await?;
+        self.validate_directory_action_output(id, &command.action, &definition, &output)?;
+        Ok(ExecutedDirectoryAction::new(
+            *id,
+            expected_revision,
+            definition.access(),
+            output,
+        ))
+    }
+
+    pub(crate) async fn apply_directory_action(
+        &self,
+        executed: &ExecutedDirectoryAction,
+        required_parent_ancestor: Option<DirectoryId>,
+    ) -> Result<(), CoreError> {
+        if executed
+            .output()
+            .output()
+            .effects
+            .iter()
+            .any(|effect| matches!(effect, DirectoryActionEffect::CreateTree(_)))
+        {
+            return Err(CoreError::configuration(
+                "create_tree directory effects require the AssetWorkflowService boundary",
+            ));
+        }
+        self.apply_directory_effects(
+            &executed.directory_id(),
+            executed.expected_revision(),
+            executed.access(),
+            executed.output(),
+            required_parent_ancestor,
+        )
+        .await
+    }
+
+    fn validate_directory_action_output(
+        &self,
+        directory_id: &DirectoryId,
+        action_id: &DirectoryActionId,
+        definition: &DirectoryActionDefinition,
+        output: &DirectoryActionOutput,
+    ) -> Result<(), CoreError> {
+        if output.directory_id() != *directory_id || output.action() != action_id {
+            return Err(CoreError::invariant(format!(
+                "action `{action_id}` returned an output for a different invocation"
+            )));
+        }
+        if let Some(view) = &output.output().view {
+            let actual = view.kind();
+            if !definition.output().views.iter().any(|view| view == actual) {
+                return Err(CoreError::invariant(format!(
+                    "action `{}` returned undeclared view `{actual}`",
+                    definition.id()
+                )));
+            }
+        }
+        if output.output().view.is_none() && output.output().effects.is_empty() {
+            return Err(CoreError::invariant(format!(
+                "action `{}` returned neither a view nor an effect",
+                definition.id()
+            )));
+        }
+        if let Some(effect) = output.output().effects.iter().find(|effect| {
+            !definition
+                .output()
+                .effects
+                .iter()
+                .any(|kind| kind == effect.kind())
+        }) {
+            return Err(CoreError::invariant(format!(
+                "action `{}` returned undeclared effect `{}`",
+                definition.id(),
+                effect.kind()
+            )));
+        }
+        if output.output().effects.len() > 1 {
+            return Err(CoreError::invariant(format!(
+                "action `{}` returned more than one directory effect",
+                definition.id()
+            )));
+        }
+        Ok(())
+    }
+
+    async fn apply_directory_effects(
+        &self,
+        id: &DirectoryId,
+        expected_revision: u64,
+        access: ActionAccess,
+        output: &DirectoryActionOutput,
+        required_parent_ancestor: Option<DirectoryId>,
+    ) -> Result<(), CoreError> {
+        if output.output().effects.is_empty() {
+            return Ok(());
+        }
+        if !matches!(access, ActionAccess::Write) {
+            return Err(CoreError::invariant(format!(
+                "action `{}` returned effects without write access",
+                output.action()
+            )));
+        }
+        for effect in output
+            .output()
+            .effects
+            .iter()
+            .filter_map(|effect| match effect {
+                DirectoryActionEffect::CreateChild(effect) => Some(effect),
+                DirectoryActionEffect::Update(_)
+                | DirectoryActionEffect::CreateTree(_)
+                | DirectoryActionEffect::Delete => None,
+            })
+        {
+            let kind = effect
+                .kind
+                .as_ref()
+                .map(|kind| DirectoryKind::try_new(kind.clone()))
+                .transpose()?
+                .unwrap_or_default();
+            self.directories
+                .create_with_kind_guarded(
+                    id,
+                    effect.name.clone(),
+                    kind,
+                    Some(expected_revision),
+                    required_parent_ancestor,
+                )
+                .await?;
+        }
+        if let Some(effect) = output
+            .output()
+            .effects
+            .iter()
+            .find_map(|effect| match effect {
+                DirectoryActionEffect::Update(effect) => Some(effect),
+                DirectoryActionEffect::CreateChild(_)
+                | DirectoryActionEffect::CreateTree(_)
+                | DirectoryActionEffect::Delete => None,
+            })
+        {
+            let mut command = UpdateDirectory::new(expected_revision);
+            if let Some(name) = &effect.name {
+                command = command.with_name(name.clone());
+            }
+            if let Some(parent_id) = &effect.parent_id {
+                command = command.with_parent_id(
+                    DirectoryId::from_str(parent_id)
+                        .map_err(|error| CoreError::invariant(error.to_string()))?,
+                );
+            }
+            if let Some(kind) = &effect.kind {
+                command = command.with_kind(DirectoryKind::try_new(kind.clone())?);
+            }
+            self.directories
+                .update_expected(id, command, required_parent_ancestor)
+                .await?;
+        }
+        if output
+            .output()
+            .effects
+            .iter()
+            .any(|effect| matches!(effect, DirectoryActionEffect::Delete))
+        {
+            let directory = self.directories.find_by_id(id).await?;
+            if !self
+                .directories
+                .delete_if_empty(&directory.id(), Some(expected_revision))
+                .await?
+            {
+                return Err(CoreError::conflict(format!(
+                    "directory `{id}` is not empty"
+                )));
             }
         }
         Ok(())
