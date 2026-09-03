@@ -9,7 +9,7 @@ const UPLOAD_CHECKSUM: HeaderName = HeaderName::from_static("upload-checksum");
     post,
     path = "/uploads",
     tag = "uploads",
-    params(("Idempotency-Key" = String, Header, description = "可选的幂等键，重复请求返回首次结果")),
+    params(("Idempotency-Key" = Option<String>, Header, description = "可选的幂等键，重复请求返回首次结果")),
     request_body = CreateUploadRequest,
     responses(
         (status = 201, description = "上传会话已创建", body = UploadSessionResponse),
@@ -40,10 +40,7 @@ pub(crate) async fn create_upload(
     if let Some(key) = parse_idempotency_key(&headers)? {
         command = command.with_idempotency_key(key);
     }
-    let session = state
-        .secured_uploads(&access.0)
-        .create(command)
-        .await?;
+    let session = state.secured_uploads(&access.0).create(command).await?;
     Ok((StatusCode::CREATED, Json(session_response(&session))))
 }
 
@@ -63,10 +60,7 @@ pub(crate) async fn upload_status(
     Path(id): Path<String>,
 ) -> Result<Json<UploadSessionResponse>, HttpError> {
     let id = parse_upload_id(&id)?;
-    let session = state
-        .secured_uploads(&access.0)
-        .status(&id)
-        .await?;
+    let session = state.secured_uploads(&access.0).status(&id).await?;
     Ok(Json(session_response(&session)))
 }
 

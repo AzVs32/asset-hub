@@ -105,11 +105,7 @@ pub(crate) async fn find_resource(
     let id = parse_resource_id(&id)?;
     let workspace = state.workspace(&access.0).await?;
 
-    match state
-        .secured_resources(&access.0)
-        .get(&id)
-        .await?
-    {
+    match state.secured_resources(&access.0).get(&id).await? {
         Some(resource) => Ok(Json(resource_response(
             state.resources(),
             state.resource_actions(),
@@ -186,7 +182,7 @@ pub(crate) async fn update_resource(
     params(
         ("id" = String, Path, description = "资源 ID"),
         ("action" = String, Path, description = "动作 ID"),
-        ("Idempotency-Key" = String, Header, description = "可选的幂等键，重复提交不会重复应用 Host effect")
+        ("Idempotency-Key" = Option<String>, Header, description = "可选的幂等键，重复提交不会重复应用 Host effect")
     ),
     responses(
         (status = 200, description = "动作执行结果", body = ResourceActionOutputResponse),

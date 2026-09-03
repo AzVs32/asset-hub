@@ -227,10 +227,13 @@ impl HostDirectoryResolver {
             request.directory_id(),
             "requested resource directory is outside the action directory subtree",
         )?;
-        let page =
-            self.runtime.block_on(self.resources.list(
-                &ListResources::new(request.limit(), offset, directory_id),
-            ))?;
+        let page = self
+            .runtime
+            .block_on(self.resources.list(&ListResources::new(
+                request.limit(),
+                offset,
+                directory_id,
+            )))?;
         serde_json::to_string(&PluginDirectoryResourcePage {
             items: page
                 .items

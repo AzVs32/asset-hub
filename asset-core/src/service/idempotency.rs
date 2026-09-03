@@ -71,10 +71,7 @@ impl IdempotencyService {
 fn decide(record: &IdempotencyRecord, request_hash: &str) -> IdempotencyOutcome {
     if record.is_completed() && record.request_hash() == request_hash {
         return IdempotencyOutcome::Replay(
-            record
-                .result()
-                .cloned()
-                .unwrap_or(serde_json::Value::Null),
+            record.result().cloned().unwrap_or(serde_json::Value::Null),
         );
     }
     IdempotencyOutcome::Conflict

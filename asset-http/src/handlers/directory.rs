@@ -253,7 +253,7 @@ pub(crate) async fn delete_directory(
     params(
         ("id" = String, Path),
         ("action" = String, Path),
-        ("Idempotency-Key" = String, Header, description = "可选的幂等键，重复提交不会重复应用 Host effect")
+        ("Idempotency-Key" = Option<String>, Header, description = "可选的幂等键，重复提交不会重复应用 Host effect")
     ),
     responses(
         (status = 200, description = "动作执行结果", body = DirectoryActionOutputResponse),

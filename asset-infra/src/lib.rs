@@ -31,9 +31,8 @@ use asset_core::{
 use config::{AssetInfraConfig, BlobBackend, DatabaseBackend};
 use directory_index::InMemoryDirectoryIndex;
 use sqlite::{
-    SqliteDatabase, SqliteDirectoryStore, SqliteIdempotencyRepository,
-    SqliteIdentityRepository, SqliteResourceContentReplacementRepository, SqliteResourceStore,
-    SqliteUploadSessionRepository,
+    SqliteDatabase, SqliteDirectoryStore, SqliteIdempotencyRepository, SqliteIdentityRepository,
+    SqliteResourceContentReplacementRepository, SqliteResourceStore, SqliteUploadSessionRepository,
 };
 use std::sync::Arc;
 use std::time::Instant;

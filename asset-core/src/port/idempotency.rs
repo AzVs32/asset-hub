@@ -12,8 +12,11 @@ pub trait IdempotencyRepository: Send + Sync {
     async fn insert(&self, record: &IdempotencyRecord) -> Result<(), CoreError>;
 
     /// Mark the record completed and persist its result.
-    async fn complete(&self, key: &IdempotencyKey, result: serde_json::Value)
-        -> Result<(), CoreError>;
+    async fn complete(
+        &self,
+        key: &IdempotencyKey,
+        result: serde_json::Value,
+    ) -> Result<(), CoreError>;
 
     /// Remove a record for a failed attempt so the key can be retried.
     async fn remove(&self, key: &IdempotencyKey) -> Result<(), CoreError>;

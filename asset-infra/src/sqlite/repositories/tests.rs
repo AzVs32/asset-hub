@@ -197,10 +197,12 @@ async fn conditional_save_rejects_a_stale_resource_snapshot() {
     let expected = resource.revision();
     let mut concurrent = resource.clone();
     concurrent.rename("concurrent").unwrap();
-    assert!(repository
-        .update_if_revision(&concurrent, expected)
-        .await
-        .unwrap());
+    assert!(
+        repository
+            .update_if_revision(&concurrent, expected)
+            .await
+            .unwrap()
+    );
 
     let mut stale = resource.clone();
     stale.rename("stale").unwrap();
@@ -268,10 +270,12 @@ async fn conditional_remove_rejects_a_stale_resource_snapshot() {
     let expected = resource.revision();
     let mut concurrent = resource.clone();
     concurrent.rename("concurrent").unwrap();
-    assert!(repository
-        .update_if_revision(&concurrent, expected)
-        .await
-        .unwrap());
+    assert!(
+        repository
+            .update_if_revision(&concurrent, expected)
+            .await
+            .unwrap()
+    );
 
     assert!(
         !repository
@@ -285,13 +289,7 @@ async fn conditional_remove_rejects_a_stale_resource_snapshot() {
             .await
             .unwrap()
     );
-    assert!(
-        repository
-            .load(&resource.id())
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(repository.load(&resource.id()).await.unwrap().is_none());
 }
 
 #[tokio::test]
@@ -349,11 +347,7 @@ async fn directory_tree_derives_paths_from_stable_ids_after_rename_and_move() {
     assert_eq!(
         resource_storage_key(
             &repository,
-            &repository
-                .load(&resource.id())
-                .await
-                .unwrap()
-                .unwrap(),
+            &repository.load(&resource.id()).await.unwrap().unwrap(),
         )
         .await
         .as_str(),

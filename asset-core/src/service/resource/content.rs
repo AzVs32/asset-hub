@@ -13,9 +13,7 @@ use crate::port::{
     BlobByteStream, ContentObjectStore, ContentReader, ContentStagingStore, LocatedResource,
     ResourceContentReplacementRepository, ResourceReadModel, ResourceStore, StagedBlob,
 };
-use crate::service::{
-    AuthorizationService, IdempotencyOutcome, IdempotencyService, request_hash,
-};
+use crate::service::{AuthorizationService, IdempotencyOutcome, IdempotencyService, request_hash};
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use futures_util::StreamExt;
@@ -253,8 +251,9 @@ impl ContentService {
             .get("resource_id")
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| CoreError::invariant("idempotency result is missing `resource_id`"))?;
-        let resource_id = std::str::FromStr::from_str(resource_id)
-            .map_err(|error| CoreError::invariant(format!("invalid stored resource id: {error}")))?;
+        let resource_id = std::str::FromStr::from_str(resource_id).map_err(|error| {
+            CoreError::invariant(format!("invalid stored resource id: {error}"))
+        })?;
         self.store
             .load(&resource_id)
             .await?

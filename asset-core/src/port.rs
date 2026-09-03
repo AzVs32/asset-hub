@@ -12,8 +12,8 @@
 //! infrastructure adapter 中。所有公开端口统一从本模块 re-export。
 
 mod directory;
-mod identity;
 mod idempotency;
+mod identity;
 mod resource;
 mod storage;
 mod upload;
@@ -24,8 +24,8 @@ pub use directory::{
     DirectoryProjection, DirectoryQuery, DirectoryRelocation, DirectoryRelocationStore,
     DirectoryRevisionUpdate, DirectoryStore, LocatedDirectory,
 };
-pub use identity::{LocatedUser, PasswordHasher, UserQuery, UserRepository};
 pub use idempotency::IdempotencyRepository;
+pub use identity::{LocatedUser, PasswordHasher, UserQuery, UserRepository};
 pub use resource::{
     ListResources, LocatedResource, ResourceActionExecutor, ResourceActionOutput,
     ResourceActionRegistry, ResourceActionRequest, ResourceContentReplacementRepository,

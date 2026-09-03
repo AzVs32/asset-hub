@@ -42,10 +42,7 @@ async fn find_resource(
     let context = AccessContext::administrator(UserId::new());
     let page = service
         .secured(&authorization, &context)
-        .list(
-            directory,
-            ListResources::new(100, 0, DirectoryId::root()),
-        )
+        .list(directory, ListResources::new(100, 0, DirectoryId::root()))
         .await
         .ok()?;
     page.items

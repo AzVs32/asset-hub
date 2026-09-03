@@ -258,8 +258,9 @@ impl SecuredAssetWorkflowService<'_> {
             .get("directory_id")
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| CoreError::invariant("idempotency result is missing `directory_id`"))?;
-        let directory_id = std::str::FromStr::from_str(directory_id)
-            .map_err(|error| CoreError::invariant(format!("invalid stored directory id: {error}")))?;
+        let directory_id = std::str::FromStr::from_str(directory_id).map_err(|error| {
+            CoreError::invariant(format!("invalid stored directory id: {error}"))
+        })?;
         let action = result
             .get("action")
             .and_then(serde_json::Value::as_str)
@@ -270,8 +271,10 @@ impl SecuredAssetWorkflowService<'_> {
             .get("output")
             .cloned()
             .ok_or_else(|| CoreError::invariant("idempotency result is missing `output`"))?;
-        let output = serde_json::from_value::<PluginDirectoryActionOutput>(output)
-            .map_err(|error| CoreError::invariant(format!("invalid stored action output: {error}")))?;
+        let output =
+            serde_json::from_value::<PluginDirectoryActionOutput>(output).map_err(|error| {
+                CoreError::invariant(format!("invalid stored action output: {error}"))
+            })?;
         Ok(DirectoryActionOutput::new(directory_id, action, output))
     }
 

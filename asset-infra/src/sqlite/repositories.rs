@@ -297,15 +297,11 @@ impl ResourceStore for SqliteResourceStore {
 
         Ok(result.rows_affected() == 1)
     }
-
 }
 
 #[async_trait::async_trait]
 impl ResourceReadModel for SqliteResourceStore {
-    async fn find_by_id(
-        &self,
-        id: &ResourceId,
-    ) -> Result<Option<LocatedResource>, CoreError> {
+    async fn find_by_id(&self, id: &ResourceId) -> Result<Option<LocatedResource>, CoreError> {
         let statement = format!("{RESOURCE_SELECT} WHERE resources.id = ?");
         let row = sqlx::query_as::<_, LocatedResourceRow>(&statement)
             .bind(id.to_string())
@@ -321,9 +317,8 @@ impl ResourceReadModel for SqliteResourceStore {
         directory_id: DirectoryId,
         name: &str,
     ) -> Result<Option<LocatedResource>, CoreError> {
-        let statement = format!(
-            "{RESOURCE_SELECT} WHERE resources.directory_id = ? AND resources.name = ?"
-        );
+        let statement =
+            format!("{RESOURCE_SELECT} WHERE resources.directory_id = ? AND resources.name = ?");
         let row = sqlx::query_as::<_, LocatedResourceRow>(&statement)
             .bind(directory_id.to_string())
             .bind(name)

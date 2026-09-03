@@ -158,8 +158,9 @@ impl ActionOrchestrator {
             .get("resource_id")
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| CoreError::invariant("idempotency result is missing `resource_id`"))?;
-        let resource_id = std::str::FromStr::from_str(resource_id)
-            .map_err(|error| CoreError::invariant(format!("invalid stored resource id: {error}")))?;
+        let resource_id = std::str::FromStr::from_str(resource_id).map_err(|error| {
+            CoreError::invariant(format!("invalid stored resource id: {error}"))
+        })?;
         let action = result
             .get("action")
             .and_then(serde_json::Value::as_str)
@@ -170,8 +171,10 @@ impl ActionOrchestrator {
             .get("output")
             .cloned()
             .ok_or_else(|| CoreError::invariant("idempotency result is missing `output`"))?;
-        let output = serde_json::from_value::<PluginResourceActionOutput>(output)
-            .map_err(|error| CoreError::invariant(format!("invalid stored action output: {error}")))?;
+        let output =
+            serde_json::from_value::<PluginResourceActionOutput>(output).map_err(|error| {
+                CoreError::invariant(format!("invalid stored action output: {error}"))
+            })?;
         Ok(ResourceActionOutput::new(resource_id, action, output))
     }
 

@@ -16,20 +16,20 @@ pub use asset::{
     SecuredAssetWorkflowService,
 };
 pub use authorization::{AuthorizationService, WorkspaceScope};
-pub use idempotency::{IdempotencyOutcome, IdempotencyService, request_hash};
+pub(crate) use directory::ExecutedDirectoryAction;
 pub use directory::{
     DirectoryActions, DirectoryIndexService, DirectoryProvisioningService, DirectoryService,
     DirectoryServices, ExecuteDirectoryAction, SecuredDirectoryService, UpdateDirectory,
 };
-pub(crate) use directory::ExecutedDirectoryAction;
+pub use idempotency::{IdempotencyOutcome, IdempotencyService, request_hash};
 pub use user::UserService;
 
 pub use resource::{
     ActionOrchestrator, ContentService, CreateUpload, ExecuteResourceAction,
     ReplaceResourceContent, ResourceActions, ResourceContentStream, ResourceScanProgress,
-    ResourceService, ResourceServices, SecuredActionOrchestrator, SecuredContentService, SecuredResourceService,
-    SecuredUploadService, StorageMaintenanceService, StorageReconciliationReport, UpdateResource,
-    UploadService,
+    ResourceService, ResourceServices, SecuredActionOrchestrator, SecuredContentService,
+    SecuredResourceService, SecuredUploadService, StorageMaintenanceService,
+    StorageReconciliationReport, UpdateResource, UploadService,
 };
 
 use crate::{CoreError, domain::ActionAccess};

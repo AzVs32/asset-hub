@@ -48,7 +48,8 @@ impl<'a> SecuredResourceService<'a> {
     }
 
     pub async fn get(&self, id: &ResourceId) -> Result<Option<LocatedResource>, CoreError> {
-        self.resource_for(id, DirectoryOperation::ReadResource).await
+        self.resource_for(id, DirectoryOperation::ReadResource)
+            .await
     }
 
     /// Resolve the caller-relative path at the authorization boundary, then query only by UUID.
@@ -63,7 +64,8 @@ impl<'a> SecuredResourceService<'a> {
             .await?
             .resolve(requested_directory)?;
         let directory = self.service.directories.resolve_path(&absolute).await?;
-        self.require(&directory, DirectoryOperation::ReadResource).await?;
+        self.require(&directory, DirectoryOperation::ReadResource)
+            .await?;
         let query = ListResources::new(query.limit(), query.offset(), directory.id())
             .with_kinds(query.kinds().to_vec());
         let query = query
@@ -87,16 +89,13 @@ impl<'a> SecuredResourceService<'a> {
         };
         if let Some(target_id) = command.directory_id() {
             let target = self.service.directories.locate_by_id(&target_id).await?;
-            self.require(&target, DirectoryOperation::UpdateResource).await?;
+            self.require(&target, DirectoryOperation::UpdateResource)
+                .await?;
         }
         self.service.update(resource, command).await.map(Some)
     }
 
-    pub async fn delete(
-        &self,
-        id: &ResourceId,
-        expected_revision: u64,
-    ) -> Result<bool, CoreError> {
+    pub async fn delete(&self, id: &ResourceId, expected_revision: u64) -> Result<bool, CoreError> {
         let Some(resource) = self
             .resource_for(id, DirectoryOperation::DeleteResource)
             .await?
