@@ -18,7 +18,7 @@ use crate::port::{
     ResourceReadModel, ResourceStore, ScannedBlob, ScannedStorageEntry, StoragePrefix,
     StorageScanStream, StorageScanner,
 };
-use crate::service::{DirectoryProvisioningService, DirectoryService};
+use crate::service::{DirectoryIndexService, DirectoryProvisioningService, DirectoryService};
 use futures_util::StreamExt;
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
@@ -82,6 +82,7 @@ struct MaintenanceDependencies {
     reader: Arc<dyn ContentReader>,
     blob_health: Arc<dyn BlobHealth>,
     directories: DirectoryService,
+    directory_index: DirectoryIndexService,
     directory_provisioning: DirectoryProvisioningService,
     kind_registry: Arc<dyn ResourceKindRegistry>,
     storage_key_locks: Arc<StorageKeyLocks>,
@@ -136,6 +137,7 @@ impl StorageMaintenanceService {
         reader: Arc<dyn ContentReader>,
         blob_health: Arc<dyn BlobHealth>,
         directories: DirectoryService,
+        directory_index: DirectoryIndexService,
         directory_provisioning: DirectoryProvisioningService,
         kind_registry: Arc<dyn ResourceKindRegistry>,
         storage_key_locks: Arc<StorageKeyLocks>,
@@ -149,6 +151,7 @@ impl StorageMaintenanceService {
                 reader,
                 blob_health,
                 directories,
+                directory_index,
                 directory_provisioning,
                 kind_registry,
                 storage_key_locks,
@@ -159,6 +162,11 @@ impl StorageMaintenanceService {
     /// 检查对象存储后端是否可访问；供应用就绪探针使用。
     pub async fn check_blob_storage_health(&self) -> Result<(), CoreError> {
         self.service.blob_health.health_check().await
+    }
+
+    /// 从权威 `DirectoryStore` 完整重建非权威的目录查询投影。
+    pub async fn rebuild_directory_index(&self) -> Result<(), CoreError> {
+        self.service.directory_index.rebuild().await
     }
 
     /// 启动时优先恢复可用的资源索引。

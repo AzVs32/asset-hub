@@ -13,7 +13,7 @@ use crate::port::{
     ResourceMaintenanceReadModel, ResourceReadModel, ResourceRelocationStore, ResourceStore,
     StorageScanner, UploadSessionRepository,
 };
-use crate::service::{DirectoryProvisioningService, DirectoryService};
+use crate::service::{DirectoryIndexService, DirectoryProvisioningService, DirectoryService};
 use std::sync::Arc;
 
 mod action;
@@ -128,6 +128,7 @@ impl ResourceServices {
         blob_health: Arc<dyn BlobHealth>,
         storage_scanner: Arc<dyn StorageScanner>,
         directories: DirectoryService,
+        directory_index: DirectoryIndexService,
         directory_provisioning: DirectoryProvisioningService,
         kind_registry: Arc<dyn ResourceKindRegistry>,
         upload_sessions: Arc<dyn UploadSessionRepository>,
@@ -186,6 +187,7 @@ impl ResourceServices {
             content_reader,
             blob_health,
             directories,
+            directory_index,
             directory_provisioning,
             kind_registry,
             locks,

@@ -155,6 +155,7 @@ impl AssetRuntime {
             infrastructure.blob_health(),
             infrastructure.storage_scanner(),
             directory_service.clone(),
+            directory_index_service.clone(),
             directory_provisioning_service.clone(),
             resource_kind_registry,
             infrastructure.upload_session_repository(),
