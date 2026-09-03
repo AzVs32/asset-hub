@@ -185,7 +185,8 @@ pub(crate) async fn update_resource(
     request_body = ExecuteResourceActionRequest,
     params(
         ("id" = String, Path, description = "资源 ID"),
-        ("action" = String, Path, description = "动作 ID")
+        ("action" = String, Path, description = "动作 ID"),
+        ("Idempotency-Key" = String, Header, description = "可选的幂等键，重复提交不会重复应用 Host effect")
     ),
     responses(
         (status = 200, description = "动作执行结果", body = ResourceActionOutputResponse),
@@ -199,6 +200,7 @@ pub(crate) async fn execute_resource_action(
     State(state): State<HttpState>,
     access: Extension<AccessContext>,
     Path((id, action)): Path<(String, String)>,
+    headers: HeaderMap,
     payload: Result<Json<ExecuteResourceActionRequest>, JsonRejection>,
 ) -> Result<Json<ResourceActionOutputResponse>, HttpError> {
     let id = parse_resource_id(&id)?;
@@ -209,11 +211,14 @@ pub(crate) async fn execute_resource_action(
             HttpError::bad_request(error.body_text())
         }
     })?;
-    let command = ExecuteResourceAction::new(
+    let mut command = ExecuteResourceAction::new(
         asset_core::domain::ResourceActionId::new(action).map_err(CoreError::from)?,
         payload.expected_revision,
     )
     .with_input(payload.input.clone());
+    if let Some(key) = parse_idempotency_key(&headers)? {
+        command = command.with_idempotency_key(key);
+    }
     let Some(output) = state
         .secured_resource_actions(&access.0)
         .execute(&id, command)

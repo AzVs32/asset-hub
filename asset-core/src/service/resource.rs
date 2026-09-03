@@ -9,12 +9,14 @@ use crate::domain::{
 };
 use crate::port::{
     BlobHealth, ContentObjectStore, ContentReader, ContentStagingStore, DirectoryActionExecutor,
-    DirectoryActionRegistry, ResourceActionExecutor, ResourceActionRegistry,
+    DirectoryActionRegistry, IdempotencyRepository, ResourceActionExecutor, ResourceActionRegistry,
     ResourceContentReplacementRepository, ResourceKindRegistry, ResourceMaintenanceReadModel,
     ResourceReadModel, ResourceRelocationStore, ResourceStore, StorageScanner,
     UploadSessionRepository,
 };
-use crate::service::{DirectoryIndexService, DirectoryProvisioningService, DirectoryService};
+use crate::service::{
+    DirectoryIndexService, DirectoryProvisioningService, DirectoryService, IdempotencyService,
+};
 use std::sync::Arc;
 
 mod action;
@@ -114,6 +116,7 @@ pub struct ResourceServices {
     uploads: UploadService,
     actions: ActionOrchestrator,
     maintenance: StorageMaintenanceService,
+    idempotency: IdempotencyService,
 }
 
 impl ResourceServices {
@@ -140,8 +143,10 @@ impl ResourceServices {
         directory_executor: Arc<dyn DirectoryActionExecutor>,
         action_policy: Arc<ResourceActionPolicy>,
         edit_policy: Arc<ResourceContentEditPolicy>,
+        idempotency_repository: Arc<dyn IdempotencyRepository>,
     ) -> Self {
         let locks = Arc::new(StorageKeyLocks::default());
+        let idempotency = IdempotencyService::new(idempotency_repository);
         let resources = ResourceService::new(
             store.clone(),
             read_model.clone(),
@@ -160,6 +165,7 @@ impl ResourceServices {
             content_replacements,
             locks.clone(),
             edit_policy.clone(),
+            idempotency.clone(),
         );
         let uploads = UploadService::new(
             store.clone(),
@@ -172,6 +178,7 @@ impl ResourceServices {
             kind_registry.clone(),
             upload_sessions,
             locks.clone(),
+            idempotency.clone(),
         );
         let actions = ActionOrchestrator::new(
             resources.clone(),
@@ -183,6 +190,7 @@ impl ResourceServices {
             directory_executor,
             action_policy,
             edit_policy,
+            idempotency.clone(),
         );
         let maintenance = StorageMaintenanceService::new(
             store,
@@ -203,6 +211,7 @@ impl ResourceServices {
             uploads,
             actions,
             maintenance,
+            idempotency,
         }
     }
 
@@ -220,6 +229,9 @@ impl ResourceServices {
     }
     pub fn storage_maintenance_service(&self) -> StorageMaintenanceService {
         self.maintenance.clone()
+    }
+    pub fn idempotency_service(&self) -> IdempotencyService {
+        self.idempotency.clone()
     }
 }
 

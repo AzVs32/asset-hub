@@ -7,6 +7,7 @@
 mod asset;
 mod authorization;
 mod directory;
+mod idempotency;
 mod resource;
 mod user;
 
@@ -15,6 +16,7 @@ pub use asset::{
     SecuredAssetWorkflowService,
 };
 pub use authorization::{AuthorizationService, WorkspaceScope};
+pub use idempotency::{IdempotencyOutcome, IdempotencyService, request_hash};
 pub use directory::{
     DirectoryActions, DirectoryIndexService, DirectoryProvisioningService, DirectoryService,
     DirectoryServices, ExecuteDirectoryAction, SecuredDirectoryService, UpdateDirectory,

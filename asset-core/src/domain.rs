@@ -2,6 +2,7 @@ mod action;
 mod definition;
 mod directory;
 mod identity;
+mod idempotency;
 mod kind;
 mod resource;
 mod resource_action_policy;
@@ -24,6 +25,9 @@ pub use directory::{
     Directory, DirectoryId, DirectoryKind, DirectoryPath, INTERNAL_STORAGE_DIRECTORY_NAME,
 };
 pub use identity::{AccessContext, DirectoryOperation, User, UserId, UserRole, UserStatus};
+pub use idempotency::{
+    IdempotencyKey, IdempotencyRecord, IdempotencyStatus, MAX_IDEMPOTENCY_KEY_LEN,
+};
 pub use kind::{KindId, KindIdError};
 pub use resource::{
     Checksum, ChecksumKind, ContentVerificationStatus, Resource, ResourceBuilder, ResourceContent,

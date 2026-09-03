@@ -6,12 +6,14 @@ use super::{
 };
 use crate::CoreError;
 use crate::domain::{
-    AccessContext, DirectoryId, DirectoryKind, DirectoryOperation, DirectoryPath, ResourceId,
-    ResourceKind,
+    AccessContext, DirectoryActionId, DirectoryId, DirectoryKind, DirectoryOperation,
+    DirectoryPath, ResourceId, ResourceKind,
 };
 use crate::port::{DirectoryActionOutput, ListResources, LocatedDirectory};
+use crate::service::{IdempotencyOutcome, IdempotencyService, request_hash};
 use asset_plugin_api::protocol::{
     CreateDirectoryTreeEffect, CreateTreeResourceEncoding, DirectoryActionEffect,
+    PluginDirectoryActionOutput,
 };
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
@@ -29,6 +31,7 @@ pub struct AssetWorkflowService {
     uploads: UploadService,
     actions: ActionOrchestrator,
     directories: DirectoryService,
+    idempotency: IdempotencyService,
 }
 
 impl AssetWorkflowService {
@@ -37,12 +40,14 @@ impl AssetWorkflowService {
         uploads: UploadService,
         actions: ActionOrchestrator,
         directories: DirectoryService,
+        idempotency: IdempotencyService,
     ) -> Self {
         Self {
             resources,
             uploads,
             actions,
             directories,
+            idempotency,
         }
     }
 
@@ -158,6 +163,44 @@ impl SecuredAssetWorkflowService<'_> {
         id: &DirectoryId,
         command: ExecuteDirectoryAction,
     ) -> Result<DirectoryActionOutput, CoreError> {
+        let Some(key) = command.idempotency_key().cloned() else {
+            return self.execute_directory_action_inner(id, command).await;
+        };
+        let hash = request_hash(&serde_json::json!({
+            "directory_id": id.to_string(),
+            "action": command.action.to_string(),
+            "expected_revision": command.expected_revision,
+            "input": &command.input,
+        }));
+        match self.workflows.idempotency.begin(&key, &hash).await? {
+            IdempotencyOutcome::Execute => {
+                let result = self.execute_directory_action_inner(id, command).await;
+                match &result {
+                    Ok(output) => {
+                        let _ = self
+                            .workflows
+                            .idempotency
+                            .complete(&key, directory_action_result(id, output)?)
+                            .await;
+                    }
+                    Err(_) => {
+                        let _ = self.workflows.idempotency.abandon(&key).await;
+                    }
+                }
+                result
+            }
+            IdempotencyOutcome::Replay(result) => self.replay_directory_action(&result).await,
+            IdempotencyOutcome::Conflict => Err(CoreError::conflict(format!(
+                "idempotency key `{key}` was already used for a different request"
+            ))),
+        }
+    }
+
+    async fn execute_directory_action_inner(
+        &self,
+        id: &DirectoryId,
+        command: ExecuteDirectoryAction,
+    ) -> Result<DirectoryActionOutput, CoreError> {
         let directory = self.workflows.directories.find_by_id(id).await?;
         let definition = self
             .workflows
@@ -205,6 +248,31 @@ impl SecuredAssetWorkflowService<'_> {
                 .await?;
         }
         Ok(executed.into_output())
+    }
+
+    async fn replay_directory_action(
+        &self,
+        result: &serde_json::Value,
+    ) -> Result<DirectoryActionOutput, CoreError> {
+        let directory_id = result
+            .get("directory_id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| CoreError::invariant("idempotency result is missing `directory_id`"))?;
+        let directory_id = std::str::FromStr::from_str(directory_id)
+            .map_err(|error| CoreError::invariant(format!("invalid stored directory id: {error}")))?;
+        let action = result
+            .get("action")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| CoreError::invariant("idempotency result is missing `action`"))?;
+        let action = DirectoryActionId::new(action.to_string())
+            .map_err(|error| CoreError::invariant(format!("invalid stored action id: {error}")))?;
+        let output = result
+            .get("output")
+            .cloned()
+            .ok_or_else(|| CoreError::invariant("idempotency result is missing `output`"))?;
+        let output = serde_json::from_value::<PluginDirectoryActionOutput>(output)
+            .map_err(|error| CoreError::invariant(format!("invalid stored action output: {error}")))?;
+        Ok(DirectoryActionOutput::new(directory_id, action, output))
     }
 
     async fn apply_create_tree(
@@ -448,6 +516,18 @@ struct PreparedTreeResource {
     kind: Option<ResourceKind>,
     mime_type: Option<String>,
     data: Bytes,
+}
+
+fn directory_action_result(
+    id: &DirectoryId,
+    output: &DirectoryActionOutput,
+) -> Result<serde_json::Value, CoreError> {
+    Ok(serde_json::json!({
+        "directory_id": id.to_string(),
+        "action": output.action().to_string(),
+        "output": serde_json::to_value(output.output())
+            .map_err(|error| CoreError::invariant(format!("action output must serialize: {error}")))?,
+    }))
 }
 
 fn canonical_relative_directory(

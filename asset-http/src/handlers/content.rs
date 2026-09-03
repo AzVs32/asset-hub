@@ -41,7 +41,8 @@ pub(crate) async fn get_resource_content(
         ("id" = String, Path, description = "资源 ID"),
         ("If-Match" = String, Header, description = "带双引号的资源 revision"),
         ("Content-SHA256" = String, Header, description = "64 位小写十六进制 SHA-256"),
-        ("Content-Length" = u64, Header, description = "原始内容字节数")
+        ("Content-Length" = u64, Header, description = "原始内容字节数"),
+        ("Idempotency-Key" = String, Header, description = "可选的幂等键，重复请求返回首次结果")
     ),
     request_body(
         content = inline(BinaryContent),
@@ -83,6 +84,9 @@ pub(crate) async fn replace_resource_content(
                 .to_str()
                 .map_err(|_| HttpError::bad_request("Content-Type must be valid ASCII"))?,
         );
+    }
+    if let Some(key) = parse_idempotency_key(&headers)? {
+        command = command.with_idempotency_key(key);
     }
     let workspace = state.workspace(&access.0).await?;
     let Some(resource) = state

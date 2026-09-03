@@ -9,6 +9,7 @@ const UPLOAD_CHECKSUM: HeaderName = HeaderName::from_static("upload-checksum");
     post,
     path = "/uploads",
     tag = "uploads",
+    params(("Idempotency-Key" = String, Header, description = "可选的幂等键，重复请求返回首次结果")),
     request_body = CreateUploadRequest,
     responses(
         (status = 201, description = "上传会话已创建", body = UploadSessionResponse),
@@ -19,6 +20,7 @@ const UPLOAD_CHECKSUM: HeaderName = HeaderName::from_static("upload-checksum");
 pub(crate) async fn create_upload(
     State(state): State<HttpState>,
     access: Extension<AccessContext>,
+    headers: HeaderMap,
     payload: Result<Json<CreateUploadRequest>, JsonRejection>,
 ) -> Result<(StatusCode, Json<UploadSessionResponse>), HttpError> {
     let request = parse_json_payload(payload)?;
@@ -34,6 +36,9 @@ pub(crate) async fn create_upload(
     }
     if let Some(mime_type) = request.mime_type {
         command = command.with_mime_type(mime_type);
+    }
+    if let Some(key) = parse_idempotency_key(&headers)? {
+        command = command.with_idempotency_key(key);
     }
     let session = state
         .secured_uploads(&access.0)

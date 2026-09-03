@@ -250,7 +250,11 @@ pub(crate) async fn delete_directory(
     path = "/directories/{id}/actions/{action}",
     tag = "directories",
     request_body = ExecuteDirectoryActionRequest,
-    params(("id" = String, Path), ("action" = String, Path)),
+    params(
+        ("id" = String, Path),
+        ("action" = String, Path),
+        ("Idempotency-Key" = String, Header, description = "可选的幂等键，重复提交不会重复应用 Host effect")
+    ),
     responses(
         (status = 200, description = "动作执行结果", body = DirectoryActionOutputResponse),
         (status = 400, description = "目录类型不支持该动作", body = crate::dto::ErrorResponse),
@@ -261,20 +265,22 @@ pub(crate) async fn execute_directory_action(
     State(state): State<HttpState>,
     access: Extension<AccessContext>,
     Path((id, action)): Path<(String, String)>,
+    headers: HeaderMap,
     payload: Result<Json<ExecuteDirectoryActionRequest>, JsonRejection>,
 ) -> Result<Json<DirectoryActionOutputResponse>, HttpError> {
     let id = parse_directory_id(&id)?;
     let payload = parse_json_payload(payload)?;
+    let mut command = ExecuteDirectoryAction::new(
+        asset_core::domain::DirectoryActionId::new(action).map_err(CoreError::from)?,
+        payload.expected_revision,
+    )
+    .with_input(payload.input);
+    if let Some(key) = parse_idempotency_key(&headers)? {
+        command = command.with_idempotency_key(key);
+    }
     let output = state
         .secured_asset_coordination(&access.0)
-        .execute_directory_action(
-            &id,
-            ExecuteDirectoryAction::new(
-                asset_core::domain::DirectoryActionId::new(action).map_err(CoreError::from)?,
-                payload.expected_revision,
-            )
-            .with_input(payload.input),
-        )
+        .execute_directory_action(&id, command)
         .await?;
     Ok(Json(DirectoryActionOutputResponse::from(&output)))
 }

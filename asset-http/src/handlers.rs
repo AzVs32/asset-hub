@@ -10,8 +10,8 @@ use crate::error::HttpError;
 use crate::state::HttpState;
 use asset_core::CoreError;
 use asset_core::domain::{
-    AccessContext, Checksum, DirectoryId, DirectoryKind, ResourceId, ResourceKind, UploadId,
-    UploadSession,
+    AccessContext, Checksum, DirectoryId, DirectoryKind, IdempotencyKey, ResourceId, ResourceKind,
+    UploadId, UploadSession,
 };
 use asset_core::port::BlobByteStream;
 use asset_core::port::ListResources;
@@ -55,3 +55,19 @@ pub(crate) use upload::{
 use content::*;
 use directory::*;
 use resource::*;
+
+const IDEMPOTENCY_KEY: header::HeaderName = header::HeaderName::from_static("idempotency-key");
+
+pub(super) fn parse_idempotency_key(
+    headers: &HeaderMap,
+) -> Result<Option<IdempotencyKey>, HttpError> {
+    let Some(value) = headers.get(IDEMPOTENCY_KEY) else {
+        return Ok(None);
+    };
+    let value = value
+        .to_str()
+        .map_err(|_| HttpError::bad_request("invalid idempotency-key header"))?;
+    IdempotencyKey::new(value)
+        .map(Some)
+        .map_err(|error| HttpError::bad_request(error.to_string()))
+}

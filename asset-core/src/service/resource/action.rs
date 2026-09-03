@@ -16,10 +16,13 @@ use crate::port::{
 };
 use crate::service::{
     AuthorizationService, DirectoryActions, DirectoryService, ExecuteDirectoryAction,
-    ExecutedDirectoryAction, UpdateDirectory, validate_action_revision,
+    ExecutedDirectoryAction, IdempotencyOutcome, IdempotencyService, UpdateDirectory, request_hash,
+    validate_action_revision,
 };
 use asset_plugin_api::manifest::RESOURCE_EDIT_CAPABILITY;
-use asset_plugin_api::protocol::{DirectoryActionEffect, PluginResourceActionEffect};
+use asset_plugin_api::protocol::{
+    DirectoryActionEffect, PluginResourceActionEffect, PluginResourceActionOutput,
+};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use bytes::Bytes;
@@ -37,6 +40,7 @@ pub struct ActionOrchestrator {
     directory_executor: Arc<dyn DirectoryActionExecutor>,
     action_policy: Arc<ResourceActionPolicy>,
     edit_policy: Arc<ResourceContentEditPolicy>,
+    idempotency: IdempotencyService,
 }
 
 impl ActionOrchestrator {
@@ -51,6 +55,7 @@ impl ActionOrchestrator {
         directory_executor: Arc<dyn DirectoryActionExecutor>,
         action_policy: Arc<ResourceActionPolicy>,
         edit_policy: Arc<ResourceContentEditPolicy>,
+        idempotency: IdempotencyService,
     ) -> Self {
         Self {
             resources,
@@ -62,6 +67,7 @@ impl ActionOrchestrator {
             directory_executor,
             action_policy,
             edit_policy,
+            idempotency,
         }
     }
 
@@ -99,10 +105,74 @@ impl ActionOrchestrator {
         id: &ResourceId,
         command: ExecuteResourceAction,
     ) -> Result<Option<ResourceActionOutput>, CoreError> {
+        let Some(key) = command.idempotency_key().cloned() else {
+            return self.execute_resource(id, command).await;
+        };
+        let hash = request_hash(&serde_json::json!({
+            "resource_id": id.to_string(),
+            "action": command.action.to_string(),
+            "expected_revision": command.expected_revision,
+            "input": &command.input,
+        }));
+        match self.idempotency.begin(&key, &hash).await? {
+            IdempotencyOutcome::Execute => {
+                let result = self.execute_resource(id, command).await;
+                match &result {
+                    Ok(Some(output)) => {
+                        let _ = self
+                            .idempotency
+                            .complete(&key, resource_action_result(id, output)?)
+                            .await;
+                    }
+                    _ => {
+                        let _ = self.idempotency.abandon(&key).await;
+                    }
+                }
+                result
+            }
+            IdempotencyOutcome::Replay(result) => {
+                self.replay_resource_action(&result).await.map(Some)
+            }
+            IdempotencyOutcome::Conflict => Err(CoreError::conflict(format!(
+                "idempotency key `{key}` was already used for a different request"
+            ))),
+        }
+    }
+
+    async fn execute_resource(
+        &self,
+        id: &ResourceId,
+        command: ExecuteResourceAction,
+    ) -> Result<Option<ResourceActionOutput>, CoreError> {
         let Some(resource) = self.resources.get(id).await? else {
             return Ok(None);
         };
         self.execute_snapshot(resource, command).await.map(Some)
+    }
+
+    async fn replay_resource_action(
+        &self,
+        result: &serde_json::Value,
+    ) -> Result<ResourceActionOutput, CoreError> {
+        let resource_id = result
+            .get("resource_id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| CoreError::invariant("idempotency result is missing `resource_id`"))?;
+        let resource_id = std::str::FromStr::from_str(resource_id)
+            .map_err(|error| CoreError::invariant(format!("invalid stored resource id: {error}")))?;
+        let action = result
+            .get("action")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| CoreError::invariant("idempotency result is missing `action`"))?;
+        let action = ResourceActionId::new(action.to_string())
+            .map_err(|error| CoreError::invariant(format!("invalid stored action id: {error}")))?;
+        let output = result
+            .get("output")
+            .cloned()
+            .ok_or_else(|| CoreError::invariant("idempotency result is missing `output`"))?;
+        let output = serde_json::from_value::<PluginResourceActionOutput>(output)
+            .map_err(|error| CoreError::invariant(format!("invalid stored action output: {error}")))?;
+        Ok(ResourceActionOutput::new(resource_id, action, output))
     }
 
     async fn execute_snapshot(
@@ -621,6 +691,18 @@ impl SecuredActionOrchestrator<'_> {
             .await
             .map(Some)
     }
+}
+
+fn resource_action_result(
+    id: &ResourceId,
+    output: &ResourceActionOutput,
+) -> Result<serde_json::Value, CoreError> {
+    Ok(serde_json::json!({
+        "resource_id": id.to_string(),
+        "action": output.action().to_string(),
+        "output": serde_json::to_value(output.output())
+            .map_err(|error| CoreError::invariant(format!("action output must serialize: {error}")))?,
+    }))
 }
 
 fn resolved_content_delivery(

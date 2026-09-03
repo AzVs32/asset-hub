@@ -23,15 +23,17 @@ use asset_core::{
     CoreError, port::BlobHealth, port::ContentObjectStore, port::ContentReader,
     port::ContentStagingStore, port::DirectoryProjection, port::DirectoryQuery,
     port::DirectoryRelocationStore, port::DirectoryStorage, port::DirectoryStore,
-    port::ResourceContentReplacementRepository, port::ResourceMaintenanceReadModel,
-    port::ResourceReadModel, port::ResourceRelocationStore, port::ResourceStore,
-    port::StorageScanner, port::UploadSessionRepository, port::UserQuery, port::UserRepository,
+    port::IdempotencyRepository, port::ResourceContentReplacementRepository,
+    port::ResourceMaintenanceReadModel, port::ResourceReadModel, port::ResourceRelocationStore,
+    port::ResourceStore, port::StorageScanner, port::UploadSessionRepository, port::UserQuery,
+    port::UserRepository,
 };
 use config::{AssetInfraConfig, BlobBackend, DatabaseBackend};
 use directory_index::InMemoryDirectoryIndex;
 use sqlite::{
-    SqliteDatabase, SqliteDirectoryStore, SqliteIdentityRepository,
-    SqliteResourceContentReplacementRepository, SqliteResourceStore, SqliteUploadSessionRepository,
+    SqliteDatabase, SqliteDirectoryStore, SqliteIdempotencyRepository,
+    SqliteIdentityRepository, SqliteResourceContentReplacementRepository, SqliteResourceStore,
+    SqliteUploadSessionRepository,
 };
 use std::sync::Arc;
 use std::time::Instant;
@@ -50,6 +52,7 @@ pub struct AssetInfrastructure {
     identity_repository: Arc<SqliteIdentityRepository>,
     upload_session_repository: Arc<SqliteUploadSessionRepository>,
     content_replacement_repository: Arc<SqliteResourceContentReplacementRepository>,
+    idempotency_repository: Arc<SqliteIdempotencyRepository>,
     /// 对象存储适配器。
     blob_storage: Arc<OpenDalBlobStorage>,
     storage_scanner: Arc<FileSystemScanner>,
@@ -92,6 +95,8 @@ impl AssetInfrastructure {
         let content_replacement_repository = Arc::new(
             SqliteResourceContentReplacementRepository::new(database.pool().clone()),
         );
+        let idempotency_repository =
+            Arc::new(SqliteIdempotencyRepository::new(database.pool().clone()));
         Ok(Self {
             config,
             resource_store,
@@ -100,6 +105,7 @@ impl AssetInfrastructure {
             identity_repository,
             upload_session_repository,
             content_replacement_repository,
+            idempotency_repository,
             blob_storage,
             storage_scanner,
         })
@@ -185,5 +191,9 @@ impl AssetInfrastructure {
 
     pub fn content_replacement_repository(&self) -> Arc<dyn ResourceContentReplacementRepository> {
         self.content_replacement_repository.clone()
+    }
+
+    pub fn idempotency_repository(&self) -> Arc<dyn IdempotencyRepository> {
+        self.idempotency_repository.clone()
     }
 }

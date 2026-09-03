@@ -1,6 +1,8 @@
 //! Public application contracts for the independently assembled Resource-related services.
 
-use crate::domain::{Checksum, DirectoryId, ResourceActionDefinition, ResourceActionId, ResourceKind};
+use crate::domain::{
+    Checksum, DirectoryId, IdempotencyKey, ResourceActionDefinition, ResourceActionId, ResourceKind,
+};
 use crate::port::BlobByteStream;
 
 #[derive(Debug, Clone)]
@@ -11,6 +13,7 @@ pub struct CreateUpload {
     pub(super) mime_type: Option<String>,
     pub(super) expected_size: u64,
     pub(super) expected_checksum: Checksum,
+    pub(super) idempotency_key: Option<IdempotencyKey>,
 }
 
 impl CreateUpload {
@@ -27,6 +30,7 @@ impl CreateUpload {
             mime_type: None,
             expected_size,
             expected_checksum,
+            idempotency_key: None,
         }
     }
 
@@ -40,8 +44,17 @@ impl CreateUpload {
         self
     }
 
+    pub fn with_idempotency_key(mut self, key: IdempotencyKey) -> Self {
+        self.idempotency_key = Some(key);
+        self
+    }
+
     pub fn directory_id(&self) -> DirectoryId {
         self.directory_id
+    }
+
+    pub fn idempotency_key(&self) -> Option<&IdempotencyKey> {
+        self.idempotency_key.as_ref()
     }
 }
 
@@ -50,6 +63,7 @@ pub struct ExecuteResourceAction {
     pub(super) action: ResourceActionId,
     pub(super) input: serde_json::Value,
     pub(super) expected_revision: Option<u64>,
+    pub(super) idempotency_key: Option<IdempotencyKey>,
 }
 
 impl ExecuteResourceAction {
@@ -58,12 +72,22 @@ impl ExecuteResourceAction {
             action,
             input: serde_json::Value::Object(Default::default()),
             expected_revision,
+            idempotency_key: None,
         }
     }
 
     pub fn with_input(mut self, input: serde_json::Value) -> Self {
         self.input = input;
         self
+    }
+
+    pub fn with_idempotency_key(mut self, key: IdempotencyKey) -> Self {
+        self.idempotency_key = Some(key);
+        self
+    }
+
+    pub fn idempotency_key(&self) -> Option<&IdempotencyKey> {
+        self.idempotency_key.as_ref()
     }
 }
 
@@ -73,6 +97,7 @@ pub struct ReplaceResourceContent {
     pub(super) expected_checksum: Checksum,
     pub(super) expected_revision: u64,
     pub(super) mime_type: Option<String>,
+    pub(super) idempotency_key: Option<IdempotencyKey>,
 }
 
 impl ReplaceResourceContent {
@@ -82,12 +107,22 @@ impl ReplaceResourceContent {
             expected_checksum,
             expected_revision,
             mime_type: None,
+            idempotency_key: None,
         }
     }
 
     pub fn with_mime_type(mut self, mime_type: impl Into<String>) -> Self {
         self.mime_type = Some(mime_type.into());
         self
+    }
+
+    pub fn with_idempotency_key(mut self, key: IdempotencyKey) -> Self {
+        self.idempotency_key = Some(key);
+        self
+    }
+
+    pub fn idempotency_key(&self) -> Option<&IdempotencyKey> {
+        self.idempotency_key.as_ref()
     }
 }
 

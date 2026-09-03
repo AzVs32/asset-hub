@@ -55,6 +55,24 @@ The following decisions constrain the refactor:
 - **Convergent maintenance**: repeated reconciliation moves persisted state toward observed storage
   state. It is not a substitute for user-command idempotency.
 
+## Durable idempotency contract
+
+Four guarantees are deliberately kept as distinct types and never collapsed into one operation
+journal:
+
+- **Revision guard (CAS)**: `update_if_revision` / `update_batch_if_unchanged` reject a stale
+  snapshot. It has no replay: a repeated old revision still conflicts.
+- **Request idempotency**: `IdempotencyKey` + `IdempotencyRecord` + `IdempotencyRepository` answer
+  "was this exact command already applied?". The same key with the same request hash replays the
+  stored result; the same key with a different request hash is a conflict. It guards `create
+  upload`, `replace content`, `execute resource action`, and `execute directory action` (which
+  includes `create tree`).
+- **Compensation**: an in-flight reversal after a later step fails (for example, moving a Blob back
+  after a CAS failure). It is not durable by itself.
+- **Recovery intent**: `ResourceRelocation` / `DirectoryRelocation` / `ResourceContentReplacement`
+  persist how to finish or roll back an interrupted rename/move or content replacement. Startup
+  recovery drives them forward; they are not request-idempotency keys.
+
 ## Current service topology
 
 The current public application types include `ResourceService`, `SecuredResourceService`,

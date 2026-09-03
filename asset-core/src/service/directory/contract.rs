@@ -1,5 +1,6 @@
 use crate::domain::{
     ActionAccess, DirectoryActionDefinition, DirectoryActionId, DirectoryId, DirectoryKind,
+    IdempotencyKey,
 };
 use crate::port::DirectoryActionOutput;
 use serde_json::Value;
@@ -42,6 +43,7 @@ pub struct ExecuteDirectoryAction {
     pub action: DirectoryActionId,
     pub input: Value,
     pub expected_revision: Option<u64>,
+    pub(super) idempotency_key: Option<IdempotencyKey>,
 }
 
 impl ExecuteDirectoryAction {
@@ -50,12 +52,22 @@ impl ExecuteDirectoryAction {
             action,
             input: Value::Object(Default::default()),
             expected_revision,
+            idempotency_key: None,
         }
     }
 
     pub fn with_input(mut self, input: Value) -> Self {
         self.input = input;
         self
+    }
+
+    pub fn with_idempotency_key(mut self, key: IdempotencyKey) -> Self {
+        self.idempotency_key = Some(key);
+        self
+    }
+
+    pub fn idempotency_key(&self) -> Option<&IdempotencyKey> {
+        self.idempotency_key.as_ref()
     }
 }
 

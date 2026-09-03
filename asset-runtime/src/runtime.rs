@@ -164,12 +164,14 @@ impl AssetRuntime {
             directory_action_executor,
             resource_action_policy,
             resource_content_edit_policy,
+            infrastructure.idempotency_repository(),
         );
         let resource_service = resource_services.resource_service();
         let content_service = resource_services.content_service();
         let upload_service = resource_services.upload_service();
         let action_orchestrator = resource_services.action_orchestrator();
         let storage_maintenance_service = resource_services.storage_maintenance_service();
+        let idempotency_service = resource_services.idempotency_service();
         let recovered_resource_relocations = resource_service.recover_pending_relocations().await?;
         if recovered_resource_relocations > 0 {
             tracing::info!(
@@ -190,6 +192,7 @@ impl AssetRuntime {
             upload_service.clone(),
             action_orchestrator.clone(),
             directory_service.clone(),
+            idempotency_service,
         );
         let plugin_web_assets = plugin_web_assets_from_catalog(&plugin_catalog)?;
 

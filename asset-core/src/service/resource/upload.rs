@@ -14,7 +14,9 @@ use crate::port::{
     RESERVED_BLOB_STORAGE_PREFIX, ResourceKindRegistry, ResourceReadModel, ResourceStore,
     StagedBlob, StorageScanner, UploadSessionRepository,
 };
-use crate::service::{AuthorizationService, DirectoryService};
+use crate::service::{
+    AuthorizationService, DirectoryService, IdempotencyOutcome, IdempotencyService, request_hash,
+};
 use bytes::Bytes;
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
@@ -37,6 +39,7 @@ struct UploadDependencies {
     upload_sessions: Arc<dyn UploadSessionRepository>,
     storage_key_locks: Arc<StorageKeyLocks>,
     upload_locks: Arc<UploadLocks>,
+    idempotency: IdempotencyService,
 }
 
 impl UploadDependencies {
@@ -80,6 +83,7 @@ impl UploadService {
         kind_registry: Arc<dyn ResourceKindRegistry>,
         upload_sessions: Arc<dyn UploadSessionRepository>,
         storage_key_locks: Arc<StorageKeyLocks>,
+        idempotency: IdempotencyService,
     ) -> Self {
         Self {
             service: Arc::new(UploadDependencies {
@@ -94,6 +98,7 @@ impl UploadService {
                 upload_sessions,
                 storage_key_locks,
                 upload_locks: Arc::new(UploadLocks::default()),
+                idempotency,
             }),
         }
     }
@@ -182,6 +187,49 @@ impl UploadService {
         owner_id: UserId,
         command: CreateUpload,
     ) -> Result<UploadSession, CoreError> {
+        let Some(key) = command.idempotency_key().cloned() else {
+            return self.create_session(owner_id, command).await;
+        };
+        let hash = request_hash(&serde_json::json!({
+            "name": &command.name,
+            "kind": command.kind.as_ref().map(|kind| kind.as_str()),
+            "directory_id": command.directory_id.to_string(),
+            "mime_type": &command.mime_type,
+            "expected_size": command.expected_size,
+            "expected_checksum": command.expected_checksum.value(),
+        }));
+        match self.service.idempotency.begin(&key, &hash).await? {
+            IdempotencyOutcome::Execute => {
+                let result = self.create_session(owner_id, command).await;
+                match &result {
+                    Ok(session) => {
+                        let _ = self
+                            .service
+                            .idempotency
+                            .complete(
+                                &key,
+                                serde_json::json!({ "upload_id": session.id().to_string() }),
+                            )
+                            .await;
+                    }
+                    Err(_) => {
+                        let _ = self.service.idempotency.abandon(&key).await;
+                    }
+                }
+                result
+            }
+            IdempotencyOutcome::Replay(result) => self.replay_upload(&result, owner_id).await,
+            IdempotencyOutcome::Conflict => Err(CoreError::conflict(format!(
+                "idempotency key `{key}` was already used for a different request"
+            ))),
+        }
+    }
+
+    async fn create_session(
+        &self,
+        owner_id: UserId,
+        command: CreateUpload,
+    ) -> Result<UploadSession, CoreError> {
         let CreateUpload {
             name,
             kind,
@@ -189,6 +237,7 @@ impl UploadService {
             mime_type,
             expected_size,
             expected_checksum,
+            ..
         } = command;
         let directory = self.service.directories.locate_by_id(&directory_id).await?;
         let storage_key = path_resolver::resource_key(directory.path(), &name)?;
@@ -227,6 +276,20 @@ impl UploadService {
             return Err(error);
         }
         Ok(session)
+    }
+
+    async fn replay_upload(
+        &self,
+        result: &serde_json::Value,
+        owner_id: UserId,
+    ) -> Result<UploadSession, CoreError> {
+        let upload_id = result
+            .get("upload_id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| CoreError::invariant("idempotency result is missing `upload_id`"))?;
+        let upload_id = std::str::FromStr::from_str(upload_id)
+            .map_err(|error| CoreError::invariant(format!("invalid stored upload id: {error}")))?;
+        self.load(owner_id, &upload_id).await
     }
 
     pub(crate) async fn status(

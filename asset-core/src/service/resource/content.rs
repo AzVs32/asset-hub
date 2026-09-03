@@ -13,7 +13,9 @@ use crate::port::{
     BlobByteStream, ContentObjectStore, ContentReader, ContentStagingStore, LocatedResource,
     ResourceContentReplacementRepository, ResourceReadModel, ResourceStore, StagedBlob,
 };
-use crate::service::AuthorizationService;
+use crate::service::{
+    AuthorizationService, IdempotencyOutcome, IdempotencyService, request_hash,
+};
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use futures_util::StreamExt;
@@ -30,6 +32,7 @@ pub struct ContentService {
     content_replacements: Arc<dyn ResourceContentReplacementRepository>,
     storage_key_locks: Arc<StorageKeyLocks>,
     edit_policy: Arc<ResourceContentEditPolicy>,
+    idempotency: IdempotencyService,
 }
 
 impl ContentService {
@@ -43,6 +46,7 @@ impl ContentService {
         content_replacements: Arc<dyn ResourceContentReplacementRepository>,
         storage_key_locks: Arc<StorageKeyLocks>,
         edit_policy: Arc<ResourceContentEditPolicy>,
+        idempotency: IdempotencyService,
     ) -> Self {
         Self {
             read_model,
@@ -53,6 +57,7 @@ impl ContentService {
             content_replacements,
             storage_key_locks,
             edit_policy,
+            idempotency,
         }
     }
 
@@ -109,6 +114,53 @@ impl ContentService {
     }
 
     pub(crate) async fn replace_content_snapshot(
+        &self,
+        located: LocatedResource,
+        command: ReplaceResourceContent,
+        data: BlobByteStream,
+    ) -> Result<Resource, CoreError> {
+        let Some(key) = command.idempotency_key().cloned() else {
+            return self
+                .replace_content_snapshot_inner(located, command, data)
+                .await;
+        };
+        let resource_id = located.resource().id();
+        let hash = request_hash(&serde_json::json!({
+            "resource_id": resource_id.to_string(),
+            "expected_size": command.expected_size,
+            "expected_checksum": command.expected_checksum.value(),
+            "expected_revision": command.expected_revision,
+            "mime_type": &command.mime_type,
+        }));
+        match self.idempotency.begin(&key, &hash).await? {
+            IdempotencyOutcome::Execute => {
+                let result = self
+                    .replace_content_snapshot_inner(located, command, data)
+                    .await;
+                match &result {
+                    Ok(resource) => {
+                        let _ = self
+                            .idempotency
+                            .complete(
+                                &key,
+                                serde_json::json!({ "resource_id": resource.id().to_string() }),
+                            )
+                            .await;
+                    }
+                    Err(_) => {
+                        let _ = self.idempotency.abandon(&key).await;
+                    }
+                }
+                result
+            }
+            IdempotencyOutcome::Replay(result) => self.replay_replacement(&result).await,
+            IdempotencyOutcome::Conflict => Err(CoreError::conflict(format!(
+                "idempotency key `{key}` was already used for a different request"
+            ))),
+        }
+    }
+
+    async fn replace_content_snapshot_inner(
         &self,
         located: LocatedResource,
         command: ReplaceResourceContent,
@@ -194,6 +246,19 @@ impl ContentService {
         )
         .await?;
         Ok(resource)
+    }
+
+    async fn replay_replacement(&self, result: &serde_json::Value) -> Result<Resource, CoreError> {
+        let resource_id = result
+            .get("resource_id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| CoreError::invariant("idempotency result is missing `resource_id`"))?;
+        let resource_id = std::str::FromStr::from_str(resource_id)
+            .map_err(|error| CoreError::invariant(format!("invalid stored resource id: {error}")))?;
+        self.store
+            .load(&resource_id)
+            .await?
+            .ok_or_else(|| CoreError::not_found("resource", resource_id.to_string()))
     }
 
     pub(super) async fn replace_content_bytes_snapshot(
