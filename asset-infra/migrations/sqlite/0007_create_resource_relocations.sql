@@ -1,5 +1,5 @@
--- Resource rename/move coordinates an aggregate CAS with a local Blob move. The desired aggregate
--- is persisted first so startup recovery can finish a process interrupted after either side.
+-- 资源重命名/移动将聚合 CAS 与本地 Blob 移动协调起来。期望聚合先持久化，
+-- 以便启动恢复完成进程在任一侧中断后的收尾。
 CREATE TABLE resource_relocations (
     resource_id TEXT PRIMARY KEY NOT NULL,
     expected_revision INTEGER NOT NULL CHECK (expected_revision > 0),

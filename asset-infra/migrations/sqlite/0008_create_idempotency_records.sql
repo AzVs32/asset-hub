@@ -1,5 +1,5 @@
--- Durable business idempotency for externally retried write commands. Each key identifies one
--- logical command; the stored request hash distinguishes a replay from a conflicting reuse.
+-- 外部重试写命令的持久业务幂等。每个 key 标识一个逻辑命令；
+-- 存储的请求哈希用于区分「重放」与「冲突复用」。
 CREATE TABLE idempotency_records (
     key TEXT PRIMARY KEY NOT NULL,
     request_hash TEXT NOT NULL,

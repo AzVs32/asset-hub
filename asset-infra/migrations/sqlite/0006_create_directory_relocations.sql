@@ -1,6 +1,5 @@
--- Directory rename/move is a cross-resource workflow: persist the desired database state before
--- atomically renaming the local filesystem subtree. Startup recovery completes either side after a
--- process interruption.
+-- 目录重命名/移动是跨资源工作流：先持久化期望的数据库状态，再原子重命名本地文件系统子树。
+-- 进程中断后，启动恢复可完成两侧中的任意一侧。
 CREATE TABLE directory_relocations (
     directory_id TEXT PRIMARY KEY NOT NULL,
     source_path TEXT NOT NULL,
