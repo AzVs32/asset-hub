@@ -16,7 +16,6 @@ fn resource_rehydration_rejects_inconsistent_timestamps() {
             created_at,
             created_at - chrono::Duration::seconds(1),
             1,
-            None,
         ),
         Err(ResourceError::InvalidFormat {
             field: "resource.updated_at",

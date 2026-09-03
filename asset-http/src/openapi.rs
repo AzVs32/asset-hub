@@ -143,7 +143,6 @@ mod tests {
         let content = &schemas["ResourceContentResponse"]["properties"];
 
         assert!(resource.get("state").is_some());
-        assert!(resource.get("deleted_at").is_none());
         assert!(content.get("verification_status").is_none());
         assert!(schemas.get("ResourceStateResponse").is_some());
         assert!(schemas.get("ContentVerificationStatusResponse").is_none());

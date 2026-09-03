@@ -37,8 +37,7 @@ const RESOURCE_SELECT: &str = r#"
         resources.content_json,
         resources.created_at,
         resources.updated_at,
-        resources.revision,
-        resources.deleted_at
+        resources.revision
     FROM resources
     JOIN directory_paths ON directory_paths.id = resources.directory_id
 "#;
@@ -52,8 +51,7 @@ const RESOURCE_AGGREGATE_SELECT: &str = r#"
         resources.content_json,
         resources.created_at,
         resources.updated_at,
-        resources.revision,
-        resources.deleted_at
+        resources.revision
     FROM resources
 "#;
 
@@ -68,7 +66,6 @@ struct ResourceRow {
     created_at: String,
     updated_at: String,
     revision: i64,
-    deleted_at: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -91,7 +88,6 @@ struct ResourceRelocationRow {
     created_at: String,
     updated_at: String,
     revision: i64,
-    deleted_at: Option<String>,
 }
 
 /// SQLite 目录记录，与 Core 的目录聚合保持解耦。
@@ -215,10 +211,9 @@ impl ResourceStore for SqliteResourceStore {
                 content_json,
                 created_at,
                 updated_at,
-                revision,
-                deleted_at
+                revision
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(resource.id().to_string())
@@ -229,7 +224,6 @@ impl ResourceStore for SqliteResourceStore {
         .bind(encode_timestamp(resource.created_at()))
         .bind(encode_timestamp(resource.updated_at()))
         .bind(encode_revision(resource.revision())?)
-        .bind(resource.deleted_at().map(encode_timestamp))
         .execute(&self.pool)
         .await
         .map_err(map_resource_insert_error)?;
@@ -252,7 +246,7 @@ impl ResourceStore for SqliteResourceStore {
             r#"
             UPDATE resources SET
                 name = ?, directory_id = ?, kind = ?, content_json = ?,
-                created_at = ?, updated_at = ?, revision = ?, deleted_at = ?
+                created_at = ?, updated_at = ?, revision = ?
             WHERE id = ? AND revision = ?
             "#,
         )
@@ -263,7 +257,6 @@ impl ResourceStore for SqliteResourceStore {
         .bind(encode_timestamp(resource.created_at()))
         .bind(encode_timestamp(resource.updated_at()))
         .bind(encode_revision(resource.revision())?)
-        .bind(resource.deleted_at().map(encode_timestamp))
         .bind(resource.id().to_string())
         .bind(encode_revision(expected_revision)?)
         .execute(&self.pool)
@@ -380,9 +373,8 @@ impl ResourceRelocationStore for SqliteResourceStore {
             r#"
             INSERT INTO resource_relocations (
                 resource_id, expected_revision, source_key, destination_key,
-                name, directory_id, kind, content_json, created_at, updated_at, revision,
-                deleted_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                name, directory_id, kind, content_json, created_at, updated_at, revision
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(desired.id().to_string())
@@ -396,7 +388,6 @@ impl ResourceRelocationStore for SqliteResourceStore {
         .bind(encode_timestamp(desired.created_at()))
         .bind(encode_timestamp(desired.updated_at()))
         .bind(encode_revision(desired.revision())?)
-        .bind(desired.deleted_at().map(encode_timestamp))
         .execute(&self.pool)
         .await
         .map_err(|error| CoreError::repository("resource.relocation.save", error))?;
@@ -407,8 +398,7 @@ impl ResourceRelocationStore for SqliteResourceStore {
         let rows = sqlx::query_as::<_, ResourceRelocationRow>(
             r#"
             SELECT resource_id, expected_revision, source_key, destination_key,
-                   name, directory_id, kind, content_json, created_at, updated_at, revision,
-                   deleted_at
+                   name, directory_id, kind, content_json, created_at, updated_at, revision
             FROM resource_relocations
             ORDER BY resource_id
             "#,
@@ -428,7 +418,6 @@ impl ResourceRelocationStore for SqliteResourceStore {
                     created_at: row.created_at,
                     updated_at: row.updated_at,
                     revision: row.revision,
-                    deleted_at: row.deleted_at,
                 })?;
                 ResourceRelocation::new(
                     desired,
@@ -813,16 +802,12 @@ fn decode_resource(row: ResourceRow) -> Result<Resource, CoreError> {
         created_at,
         updated_at,
         revision,
-        deleted_at,
     } = row;
     let kind = ResourceKind::try_new(kind)
         .map_err(|error| CoreError::repository("resource.decode_kind", error))?;
     let content = decode_content(content_json)?;
     let revision = u64::try_from(revision)
         .map_err(|error| CoreError::repository("resource.decode_revision", error))?;
-    let deleted_at = deleted_at
-        .map(|value| decode_timestamp("resource.decode_deleted_at", &value))
-        .transpose()?;
 
     Resource::rehydrate(
         decode_id(&id)?,
@@ -833,7 +818,6 @@ fn decode_resource(row: ResourceRow) -> Result<Resource, CoreError> {
         decode_timestamp("resource.decode_created_at", &created_at)?,
         decode_timestamp("resource.decode_updated_at", &updated_at)?,
         revision,
-        deleted_at,
     )
     .map_err(|error| CoreError::repository("resource.rehydrate", error))
 }

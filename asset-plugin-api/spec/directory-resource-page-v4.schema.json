@@ -165,7 +165,6 @@
     "PluginResourceEffectiveState": {
       "type": "string",
       "enum": [
-        "deleted",
         "no_content",
         "verifying",
         "ready",
@@ -185,23 +184,6 @@
           "additionalProperties": false,
           "required": [
             "status"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "at": {
-              "type": "string"
-            },
-            "status": {
-              "type": "string",
-              "const": "deleted"
-            }
-          },
-          "additionalProperties": false,
-          "required": [
-            "status",
-            "at"
           ]
         }
       ]

@@ -620,7 +620,7 @@ export interface components {
          * @description 需要单值状态判断的消费者所使用的统一有效状态。
          * @enum {string}
          */
-        ResourceEffectiveStateResponse: "deleted" | "no_content" | "verifying" | "ready" | "verification_failed";
+        ResourceEffectiveStateResponse: "no_content" | "verifying" | "ready" | "verification_failed";
         /** @description 资源类型响应。 */
         ResourceKindResponse: {
             /** @description kind 支持的动作。 */
@@ -644,14 +644,10 @@ export interface components {
             /** @description 当前后端支持的资源类型。 */
             items: components["schemas"]["ResourceKindResponse"][];
         };
-        /** @description 资源生命周期；删除时间只在 deleted 状态中存在。 */
+        /** @description 资源生命周期。 */
         ResourceLifecycleStateResponse: {
             /** @enum {string} */
             status: "active";
-        } | {
-            at: string;
-            /** @enum {string} */
-            status: "deleted";
         };
         /** @description 资源分页响应。 */
         ResourcePageResponse: {
@@ -1474,7 +1470,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 资源已软删除 */
+            /** @description 资源已删除 */
             200: {
                 headers: {
                     [name: string]: unknown;

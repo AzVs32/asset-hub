@@ -8,8 +8,6 @@ CREATE TABLE resources (
     revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    -- Kept in the published persistence/Plugin ABI shape; Host soft-delete behavior was removed.
-    deleted_at TEXT CHECK (deleted_at IS NULL),
 
     FOREIGN KEY (directory_id) REFERENCES directories(id) ON DELETE RESTRICT
 );

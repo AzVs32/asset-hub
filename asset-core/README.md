@@ -92,8 +92,7 @@ the same `ResourceService`; they split files but do not own narrow dependency se
 | Resource actions | `ResourceService::describe_resource_actions` | Filter action declarations by kind, content state, matcher, and edit size policy. |
 | Find | `SecuredResourceService::find_resource` | Resolve an active Resource with its current Directory projection after workspace authorization. |
 | List | `SecuredResourceService::list_resources` | Resolve a caller-relative Directory path into its workspace and page active Resources. |
-| Update | `SecuredResourceService::update_resource` | Rename, move, change kind, or restore one Resource with an expected revision. |
-| Soft delete | `SecuredResourceService::soft_delete_resource` | Mark a Resource deleted and move content to the internal trash path. |
+| Update | `SecuredResourceService::update_resource` | Rename, move, or change kind of one Resource with an expected revision. |
 | Purge | `SecuredResourceService::remove_resource` | Permanently remove the Resource record and then its Blob. |
 | Generated create | internal `create_generated_resource` | Create a small Host-generated Resource and publish inline content for cross-aggregate workflows. |
 | Execute action | `SecuredResourceService::execute_resource_action` | Authorize, resolve and invoke an action, validate output, then apply declared effects. |
@@ -167,11 +166,9 @@ what a caller can safely assume today, not the desired final contract.
 | --- | --- | --- | --- | --- | --- |
 | Update metadata only | Workspace-bound `UpdateResource` | Caller revision plus repository CAS | None when name and Directory do not change | No external compensation needed | A repeated old revision conflicts; no stored request result. |
 | Rename/move active Resource | Workspace-bound source; destination resolved inside the same workspace | Caller revision, ordered path locks, repository CAS | Move Blob from old logical path to new logical path without overwrite | Move Blob back if CAS/save fails | State mutation is protected, but a process exit between Blob move and Resource save has no durable recovery intent. Retry is not idempotent. |
-| Restore | Workspace-bound `UpdateResource` | Caller revision and repository CAS | Move trash Blob back to the active logical path | Move it back to trash if save fails | Repeating the old request conflicts. Target path conflicts are rejected. No durable relocation intent. |
-| Soft delete | Workspace-bound `DeleteResource` | Caller revision and repository CAS | Move active Blob into the Resource-ID trash path | Move Blob back if save fails | Repeating the old revision conflicts. A process exit between move and save is not recoverable from a durable intent. |
 | Purge | Workspace-bound `PurgeResource` under the current coarse workspace policy | Repository conditional remove using the loaded revision | Delete the current active/trash Blob after record deletion | No durable cleanup intent; a Blob delete failure can leave an orphan after the record is gone | Repository and Blob delete primitives are individually repeatable, but the application result is not durably recorded. |
 | Host-generated create | Trusted cross-aggregate workflow | Path lock and duplicate-path query; new UUID; repository `save` | Stage, publish-if-absent, then save Resource | Delete published Blob if repository save fails | Repeating creates a new UUID or conflicts on path; no request idempotency key. |
-| Resource action effect | User authorized for execute or delete; plugin permissions are checked by the executor boundary, with Host grants additionally required only for grant-gated permissions | Write actions require expected revision; effects use Resource CAS workflows | Replacement or trash move according to effect | Delegates to content replacement or soft-delete compensation | Invocation has no durable command ID; retry can execute plugin code again even when a stale revision prevents a second Host mutation. |
+| Resource action effect | User authorized for execute or delete; plugin permissions are checked by the executor boundary, with Host grants additionally required only for grant-gated permissions | Write actions require expected revision; effects use Resource CAS workflows | Replacement or trash move according to effect | Delegates to content replacement or delete compensation | Invocation has no durable command ID; retry can execute plugin code again even when a stale revision prevents a second Host mutation. |
 
 ### Directory writes
 
@@ -237,10 +234,9 @@ Owns Resource metadata and lifecycle use cases:
 
 - get/list Resource projections;
 - update name, Directory, and kind;
-- restore and soft delete;
 - enforce Resource invariants and revision checks;
-- coordinate durable logical/physical relocation when name, Directory, restore, or soft-delete
-  changes the local storage path.
+- coordinate durable logical/physical relocation when name or Directory changes the local
+  storage path.
 
 It does not own Blob streaming, uploads, plugin executors, storage scanning, or runtime recovery.
 

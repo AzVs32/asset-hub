@@ -24,10 +24,9 @@ snapshot; callers may still supply it when exact snapshot consistency is require
 remain navigation and display data, not Directory identity.
 
 Resource responses expose one authoritative `state` object derived by Core. It contains the
-lifecycle state (including the deletion timestamp only for `deleted`), content state, and effective
-single-value state. HTTP does not also expose `deleted_at` or a second content-verification status;
-clients must consume `state` instead of reconstructing precedence from independent transport
-fields.
+lifecycle state, content state, and effective single-value state. HTTP does not also expose a
+second content-verification status; clients must consume `state` instead of reconstructing
+precedence from independent transport fields.
 
 Kind-list responses retain their contextual action declarations, while Resource and Directory
 responses contain actions that are actually applicable to that aggregate and content state. This
@@ -38,7 +37,7 @@ Action declarations expose the views and effects they may return through `output
 `output.effects`. The built-in Resource and Directory delete entries are ordinary write Actions
 that declare only the `delete` effect, carry destructive confirmation metadata, and return no View.
 Clients invoke them through the same Resource or Directory action endpoint used by other Actions.
-Core applies the effect through the existing authorized resource soft-delete or empty-directory
+Core applies the effect through the existing authorized resource delete or empty-directory
 delete use case. The dedicated `DELETE /resources/{id}` and `DELETE /directories/{id}` endpoints
 remain available as direct HTTP use cases.
 

@@ -12,7 +12,6 @@ CREATE TABLE resource_relocations (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     revision INTEGER NOT NULL CHECK (revision > expected_revision),
-    deleted_at TEXT,
     FOREIGN KEY (resource_id) REFERENCES resources(id) ON DELETE RESTRICT,
     CHECK (source_key <> destination_key)
 );

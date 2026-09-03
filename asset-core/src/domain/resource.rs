@@ -1,9 +1,7 @@
 //! 资源聚合及其内容、类型和状态值对象。
 //!
-//! Resource 生命周期字段与内容校验是两个独立的状态轴；[`ResourceState`] 在读取时统一
-//! 投影它们。`deleted_at` 为已经发布的持久化/Plugin ABI 形状保留，但 Host 不再提供软
-//! 删除行为，当前写模型要求它始终为空。该投影不
-//! 持久化，也不接收状态写命令。尚未发布为 Resource 的上传流程继续由独立的
+//! 资源生命周期与内容校验是两个独立的状态轴；[`ResourceState`] 在读取时统一投影它们。
+//! 该投影不持久化，也不接收状态写命令。尚未发布为 Resource 的上传流程继续由独立的
 //! [`crate::domain::UploadSession`] 聚合管理。
 
 mod content;
@@ -53,8 +51,6 @@ pub struct Resource {
     updated_at: DateTime<Utc>,
     /// 单调递增的聚合版本，用于乐观并发控制。
     revision: u64,
-    /// 已发布的兼容字段；当前 Host 写模型要求始终为空。
-    deleted_at: Option<DateTime<Utc>>,
 }
 
 impl Resource {
@@ -65,7 +61,7 @@ impl Resource {
 
     /// 从持久化适配器已解析的完整状态还原资源聚合。
     ///
-    /// 该方法保留原 ID、时间戳和软删除状态，但仍会重新执行聚合约束校验。
+    /// 该方法保留原 ID 和时间戳，但仍会重新执行聚合约束校验。
     #[allow(clippy::too_many_arguments)]
     pub fn rehydrate(
         id: ResourceId,
@@ -76,7 +72,6 @@ impl Resource {
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
         revision: u64,
-        deleted_at: Option<DateTime<Utc>>,
     ) -> Result<Self, ResourceError> {
         let name = normalize_resource_name(name)?;
         if revision == 0 {
@@ -91,12 +86,6 @@ impl Resource {
                 reason: "updated timestamp cannot precede creation",
             });
         }
-        if deleted_at.is_some() {
-            return Err(ResourceError::InvalidFormat {
-                field: "resource.deleted_at",
-                reason: "soft-deleted resources are not supported",
-            });
-        }
 
         Ok(Self {
             id,
@@ -107,7 +96,6 @@ impl Resource {
             created_at,
             updated_at,
             revision,
-            deleted_at,
         })
     }
 }
@@ -153,21 +141,11 @@ impl Resource {
         self.revision
     }
 
-    /// 返回资源软删除时间。
-    pub fn deleted_at(&self) -> Option<DateTime<Utc>> {
-        self.deleted_at
-    }
-
     /// 返回生命周期与内容校验状态的统一只读投影。
     ///
     /// 投影不引入新的持久化状态；需要改变资源时仍应调用对应的领域行为和应用服务用例。
     pub fn state(&self) -> ResourceState {
         ResourceState::from_resource(self)
-    }
-
-    /// Whether the reserved lifecycle field contains a legacy deleted timestamp.
-    fn is_deleted(&self) -> bool {
-        self.deleted_at.is_some()
     }
 
     /// 重命名资源。
@@ -304,7 +282,6 @@ impl ResourceBuilder {
             created_at: now,
             updated_at: now,
             revision: 1,
-            deleted_at: None,
         })
     }
 }

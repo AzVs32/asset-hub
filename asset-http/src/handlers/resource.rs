@@ -236,7 +236,7 @@ pub(crate) async fn execute_resource_action(
         ExpectedRevisionQuery
     ),
     responses(
-        (status = 200, description = "资源已软删除", body = ResourceResponse),
+        (status = 200, description = "资源已删除", body = ResourceResponse),
         (status = 400, description = "请求参数无效", body = crate::dto::ErrorResponse),
         (status = 404, description = "资源不存在", body = crate::dto::ErrorResponse),
         (status = 409, description = "资源版本已变化", body = crate::dto::ErrorResponse),

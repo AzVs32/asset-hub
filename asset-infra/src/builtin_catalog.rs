@@ -8,7 +8,7 @@ use asset_core::domain::{
 
 /// Host 内置的资源内容下载 action 稳定 ID。
 const CORE_RESOURCE_DOWNLOAD: &str = "core.resource.download";
-/// Host 内置的资源软删除命令稳定 ID。
+/// Host 内置的资源删除命令稳定 ID。
 const CORE_RESOURCE_DELETE: &str = "core.resource.delete";
 /// Host 内置的目录归档下载 action 稳定 ID。
 const CORE_DIRECTORY_DOWNLOAD: &str = "core.directory.download";

@@ -536,12 +536,11 @@ pub(crate) struct ResourceStateResponse {
     pub(crate) effective: ResourceEffectiveStateResponse,
 }
 
-/// 资源生命周期；删除时间只在 deleted 状态中存在。
+/// 资源生命周期。
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub(crate) enum ResourceLifecycleStateResponse {
     Active,
-    Deleted { at: String },
 }
 
 /// 资源是否包含对象内容及其校验状态。
@@ -558,7 +557,6 @@ pub(crate) enum ResourceContentStateResponse {
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ResourceEffectiveStateResponse {
-    Deleted,
     NoContent,
     Verifying,
     Ready,
@@ -770,12 +768,6 @@ impl From<&Resource> for ResourceStateResponse {
         let state = resource.state();
         let lifecycle = match state.lifecycle() {
             ResourceLifecycleStatus::Active => ResourceLifecycleStateResponse::Active,
-            ResourceLifecycleStatus::Deleted => ResourceLifecycleStateResponse::Deleted {
-                at: resource
-                    .deleted_at()
-                    .expect("deleted resource state must retain its deletion timestamp")
-                    .to_rfc3339(),
-            },
         };
         let content = match state.content() {
             None => ResourceContentStateResponse::Absent,
@@ -784,7 +776,6 @@ impl From<&Resource> for ResourceStateResponse {
             Some(ContentVerificationStatus::Failed) => ResourceContentStateResponse::Failed,
         };
         let effective = match state.effective() {
-            ResourceEffectiveStatus::Deleted => ResourceEffectiveStateResponse::Deleted,
             ResourceEffectiveStatus::NoContent => ResourceEffectiveStateResponse::NoContent,
             ResourceEffectiveStatus::Verifying => ResourceEffectiveStateResponse::Verifying,
             ResourceEffectiveStatus::Ready => ResourceEffectiveStateResponse::Ready,

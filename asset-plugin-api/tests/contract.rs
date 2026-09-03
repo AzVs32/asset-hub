@@ -215,10 +215,6 @@ fn resource_requests_reject_removed_v3_state_fields() {
     ))
     .unwrap();
 
-    let mut deleted_at = request.clone();
-    deleted_at["resource"]["deleted_at"] = json!("2026-07-16T10:05:00Z");
-    assert!(serde_json::from_value::<PluginResourceActionRequest>(deleted_at).is_err());
-
     let mut verification_status = request;
     verification_status["resource"]["content"]["verification_status"] = json!("verified");
     assert!(serde_json::from_value::<PluginResourceActionRequest>(verification_status).is_err());

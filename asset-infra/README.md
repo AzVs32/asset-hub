@@ -58,7 +58,7 @@ The Host-owned catalog provides no generic Resource or Directory thumbnail Actio
 thumbnail provider comes from an external Manifest. The Host declares `core.resource.delete` and
 `core.directory.delete` as ordinary write Actions in the same discovery catalogs. Their built-in
 handlers return no View and request one `delete` effect; Core applies it through the secured
-resource soft-delete or empty-directory-delete use case. External plugins may declare and return
+resource delete or empty-directory-delete use case. External plugins may declare and return
 the same effect only when their Manifest requests
 `resource.delete` or `directory.delete`, the corresponding `[plugin.grants]` switch is enabled,
 and the current user is authorized to delete that aggregate. Delete cannot be combined with a

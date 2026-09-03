@@ -307,12 +307,6 @@ pub(super) fn plugin_resource_state(resource: &Resource) -> PluginResourceState 
     let state = resource.state();
     let lifecycle = match state.lifecycle() {
         ResourceLifecycleStatus::Active => PluginResourceLifecycleState::Active,
-        ResourceLifecycleStatus::Deleted => PluginResourceLifecycleState::Deleted {
-            at: resource
-                .deleted_at()
-                .expect("deleted resource state must retain its deletion timestamp")
-                .to_rfc3339(),
-        },
     };
     let content = match state.content() {
         None => PluginResourceContentState::Absent,
@@ -321,7 +315,6 @@ pub(super) fn plugin_resource_state(resource: &Resource) -> PluginResourceState 
         Some(ContentVerificationStatus::Failed) => PluginResourceContentState::Failed,
     };
     let effective = match state.effective() {
-        ResourceEffectiveStatus::Deleted => PluginResourceEffectiveState::Deleted,
         ResourceEffectiveStatus::NoContent => PluginResourceEffectiveState::NoContent,
         ResourceEffectiveStatus::Verifying => PluginResourceEffectiveState::Verifying,
         ResourceEffectiveStatus::Ready => PluginResourceEffectiveState::Ready,

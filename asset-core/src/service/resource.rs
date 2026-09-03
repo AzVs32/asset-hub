@@ -235,5 +235,5 @@ impl ResourceServices {
     }
 }
 
-// The old broad Resource service test harness encoded the removed facade and soft-delete API.
+// The old broad Resource service test harness encoded the removed facade.
 // Focused recovery and adapter tests live beside the owning relocation/store implementations.
