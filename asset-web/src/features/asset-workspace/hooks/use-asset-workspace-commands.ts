@@ -1,27 +1,15 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import React from "react";
 import { toast } from "sonner";
-import type { Directory, DirectoryAction, DirectoryListing } from "@/domain/directory";
-import type {
-  Resource,
-  ResourceAction,
-  ResourceDraft,
-  UploadDraft,
-  UploadProgress,
-} from "@/domain/resource";
-import type { DirectoryActionResult } from "@/plugins/directory-action-dialog";
-import type { ResourceActionResult } from "@/plugins/resource-action-dialog";
+import type { Directory } from "@/domain/directory";
+import type { Resource, ResourceDraft, UploadDraft, UploadProgress } from "@/domain/resource";
 import { ConcurrentModificationError } from "@/shared/api/errors";
-import { useAssetWorkspaceGateway, usePluginHostGateway } from "@/shared/api/gateway-context";
+import { useAssetWorkspaceGateway } from "@/shared/api/gateway-context";
 import { queryKeys } from "@/shared/api/query-keys";
 
 export function useAssetWorkspaceCommands() {
   const assetGateway = useAssetWorkspaceGateway();
-  const pluginGateway = usePluginHostGateway();
   const queryClient = useQueryClient();
-  const [actionResult, setActionResult] = React.useState<ResourceActionResult | null>(null);
-  const [directoryActionResult, setDirectoryActionResult] =
-    React.useState<DirectoryActionResult | null>(null);
   const [uploadProgress, setUploadProgress] = React.useState<UploadProgress | null>(null);
 
   const refresh = React.useCallback(
@@ -41,33 +29,6 @@ export function useAssetWorkspaceCommands() {
       notifyError(error);
     },
     [refresh],
-  );
-  const synchronizeResourceSnapshot = React.useCallback(
-    (resource: Resource) => {
-      queryClient.setQueryData(queryKeys.resource(resource.id), resource);
-      queryClient.setQueriesData<DirectoryListing>({ queryKey: ["directory"] }, (listing) => {
-        if (!listing?.resources.items.some((item) => item.id === resource.id)) return listing;
-        return {
-          ...listing,
-          resources: {
-            ...listing.resources,
-            items: listing.resources.items.map((item) =>
-              item.id === resource.id ? resource : item,
-            ),
-          },
-        };
-      });
-      setActionResult((current) => {
-        if (current?.resource.id !== resource.id) return current;
-        return {
-          ...current,
-          resource,
-          action:
-            resource.actions.find((action) => action.id === current.action.id) ?? current.action,
-        };
-      });
-    },
-    [queryClient],
   );
 
   const update = useMutation({
@@ -127,39 +88,21 @@ export function useAssetWorkspaceCommands() {
     },
     onError: handleMutationError,
   });
-  const execute = useMutation({
-    mutationFn: async ({ resource, action }: { resource: Resource; action: ResourceAction }) => ({
-      resource,
-      action,
-      output: await pluginGateway.executeResourceAction(resource, action.id),
-    }),
-    onSuccess: async (result) => {
-      if (result.output.view) setActionResult(result);
-      if (result.output.effects.includes("delete")) {
-        toast.success(`${result.resource.name} deleted`);
-      }
-      if (result.action.access === "write") await refresh(result.resource.id);
+  const deleteResource = useMutation({
+    mutationFn: ({ resource }: { resource: Resource }) => assetGateway.deleteResource(resource),
+    onSuccess: async (_data, { resource }) => {
+      toast.success(`${resource.name} deleted`);
+      queryClient.removeQueries({ queryKey: queryKeys.resource(resource.id) });
+      await refresh();
     },
     onError: handleMutationError,
   });
-  const executeDirectory = useMutation({
-    mutationFn: async ({
-      directory,
-      action,
-    }: {
-      directory: Directory;
-      action: DirectoryAction;
-    }) => ({
-      directory,
-      action,
-      output: await pluginGateway.executeDirectoryAction(directory, action.id),
-    }),
-    onSuccess: async (result) => {
-      if (result.output.view) setDirectoryActionResult(result);
-      if (result.output.effects.includes("delete")) {
-        toast.success(`${result.directory.name} deleted`);
-      }
-      if (result.action.access === "write") await refresh();
+  const deleteDirectory = useMutation({
+    mutationFn: ({ directory }: { directory: Directory }) =>
+      assetGateway.deleteDirectory(directory),
+    onSuccess: async (_data, { directory }) => {
+      toast.success(`${directory.name} deleted`);
+      await refresh();
     },
     onError: handleMutationError,
   });
@@ -170,13 +113,8 @@ export function useAssetWorkspaceCommands() {
     uploadProgress,
     createFolder,
     updateDirectoryKind,
-    execute,
-    executeDirectory,
-    actionResult,
-    setActionResult,
-    directoryActionResult,
-    setDirectoryActionResult,
-    synchronizeResourceSnapshot,
+    deleteResource,
+    deleteDirectory,
     refresh,
   };
 }

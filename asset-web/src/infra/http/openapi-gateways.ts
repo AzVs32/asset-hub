@@ -27,7 +27,6 @@ export function createOpenApiGateways(
   return {
     auth: new OpenApiAuthGateway(client),
     assetWorkspace: assetGateway,
-    pluginHost: assetGateway,
     userAdministration: new OpenApiUserAdministrationGateway(client),
   };
 }

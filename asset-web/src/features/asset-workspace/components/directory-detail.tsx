@@ -8,7 +8,6 @@ import {
   DetailPanel,
   DetailRow,
   DetailSection,
-  DetailValueList,
 } from "./detail-panel";
 
 export function DirectoryDetail({
@@ -21,7 +20,7 @@ export function DirectoryDetail({
   const path = formatDirectory(directory.path);
   return (
     <DetailPanel
-      thumbnail={<DirectoryThumbnail directory={directory} size={48} />}
+      thumbnail={<DirectoryThumbnail size={48} />}
       title={directory.name || "Root"}
       subtitle={path}
       badges={<Chip label={kind?.label ?? directory.kind} size="small" variant="outlined" />}
@@ -44,9 +43,6 @@ export function DirectoryDetail({
           {kind ? `${kind.origin.kind}:${kind.origin.id}` : "—"}
         </DetailRow>
         <DetailRow label="Revision">{directory.revision}</DetailRow>
-        <DetailRow label="Actions">
-          <DetailValueList values={directory.actions.map((action) => action.id)} />
-        </DetailRow>
       </DetailAdvanced>
     </DetailPanel>
   );

@@ -5,7 +5,6 @@ import type {
   DirectoryListing,
   DirectoryPatch,
 } from "@/domain/directory";
-import type { DirectoryActionOutput, JsonObject, ResourceActionOutput } from "@/domain/plugin";
 import type {
   Resource,
   ResourceDraft,
@@ -28,6 +27,8 @@ export interface AssetWorkspaceGateway {
   listDirectory(filters: ResourceFilters, signal?: AbortSignal): Promise<DirectoryListing>;
   findResource(id: string): Promise<Resource>;
   updateResource(resource: Resource, draft: ResourceDraft): Promise<Resource>;
+  deleteResource(resource: Resource): Promise<void>;
+  resourceDownloadUrl(resource: Resource): string;
   uploadResource(
     draft: UploadDraft,
     onProgress?: (progress: UploadProgress) => void,
@@ -35,24 +36,8 @@ export interface AssetWorkspaceGateway {
   waitForUpload(id: string): Promise<Resource>;
   createDirectory(parent: Directory, name: string, kind?: string): Promise<Directory>;
   updateDirectory(directory: Directory, patch: DirectoryPatch): Promise<Directory>;
-}
-
-export interface PluginHostGateway {
-  findResource(id: string): Promise<Resource>;
-  findDirectory(id: string): Promise<Directory>;
-  executeDirectoryAction(
-    directory: Directory,
-    actionId: string,
-    input?: JsonObject,
-  ): Promise<DirectoryActionOutput>;
-  executeResourceAction(
-    resource: Resource,
-    actionId: string,
-    input?: JsonObject,
-  ): Promise<ResourceActionOutput>;
-  replaceResourceText(resource: Resource, text: string): Promise<Resource>;
-  resourceContentUrl(resourceId: string): string;
-  assetUrl(path: string): string | null;
+  deleteDirectory(directory: Directory): Promise<void>;
+  directoryDownloadUrl(directory: Directory): string;
 }
 
 export interface UserAdministrationGateway {
@@ -64,6 +49,5 @@ export interface UserAdministrationGateway {
 export interface AppGateways {
   auth: AuthGateway;
   assetWorkspace: AssetWorkspaceGateway;
-  pluginHost: PluginHostGateway;
   userAdministration: UserAdministrationGateway;
 }

@@ -18,7 +18,6 @@ import {
   DetailPanel,
   DetailRow,
   DetailSection,
-  DetailValueList,
 } from "./detail-panel";
 import { DirectorySelect } from "./directory-select";
 import { KindSelect } from "./kind-select";
@@ -81,7 +80,7 @@ function Detail({
 
   return (
     <DetailPanel
-      thumbnail={<ResourceThumbnail resource={resource} size={48} />}
+      thumbnail={<ResourceThumbnail size={48} />}
       title={resource.name}
       subtitle={resourcePath}
       badges={<Chip label={kind?.label ?? resource.kind} size="small" variant="outlined" />}
@@ -196,9 +195,6 @@ function Detail({
               ) : (
                 "—"
               )}
-            </DetailRow>
-            <DetailRow label="Actions">
-              <DetailValueList values={resource.actions.map((action) => action.id)} />
             </DetailRow>
           </DetailAdvanced>
         </>

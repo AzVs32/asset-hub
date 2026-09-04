@@ -8,13 +8,6 @@ export const router = createBrowserRouter([
     children: [
       { path: LOGIN_PATH, element: null },
       {
-        path: "/view/:resourceId/:actionId",
-        lazy: async () => ({
-          Component: (await import("@/features/asset-workspace/standalone-resource-plugin-view"))
-            .StandaloneResourcePluginView,
-        }),
-      },
-      {
         path: "/*",
         lazy: async () => ({
           Component: (await import("@/features/asset-workspace/asset-workspace")).AssetWorkspace,

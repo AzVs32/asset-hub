@@ -1,25 +1,5 @@
-import type { ActionAccess, ActionUi, DefinitionOrigin } from "./action";
-import type {
-  DirectoryActionCapabilityId,
-  DirectoryActionEffectKind,
-  PluginViewKind,
-} from "./plugin";
+import type { DefinitionOrigin } from "./definition";
 import type { ResourcePage } from "./resource";
-
-export type DirectoryResourceAccess = "none" | "metadata" | "content";
-
-export interface DirectoryAction {
-  id: string;
-  origin: DefinitionOrigin;
-  provides: DirectoryActionCapabilityId | null;
-  label: string;
-  description: string | null;
-  access: ActionAccess;
-  requires: { children: boolean; resources: DirectoryResourceAccess };
-  output: { views: PluginViewKind[]; effects: DirectoryActionEffectKind[] };
-  ui: ActionUi;
-  appliesTo: { kinds: string[] };
-}
 
 export interface Directory {
   id: string;
@@ -28,7 +8,6 @@ export interface Directory {
   parentPath: string;
   name: string;
   kind: string;
-  actions: DirectoryAction[];
   createdAt: string;
   updatedAt: string;
   revision: number;
@@ -41,7 +20,6 @@ export interface DirectoryKind {
   allowedParentKinds: string[];
   label: string;
   origin: DefinitionOrigin;
-  actions: DirectoryAction[];
 }
 
 export interface DirectoryListing {

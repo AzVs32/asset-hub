@@ -3,7 +3,6 @@ import type {
   AppGateways,
   AssetWorkspaceGateway,
   AuthGateway,
-  PluginHostGateway,
   UserAdministrationGateway,
 } from "./gateways";
 
@@ -25,10 +24,6 @@ export function useAuthGateway(): AuthGateway {
 
 export function useAssetWorkspaceGateway(): AssetWorkspaceGateway {
   return useGateways().assetWorkspace;
-}
-
-export function usePluginHostGateway(): PluginHostGateway {
-  return useGateways().pluginHost;
 }
 
 export function useUserAdministrationGateway(): UserAdministrationGateway {

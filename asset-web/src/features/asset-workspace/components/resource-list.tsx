@@ -1,4 +1,5 @@
 import CreateNewFolderIcon from "@mui/icons-material/CreateNewFolder";
+import DeleteIcon from "@mui/icons-material/DeleteOutline";
 import FolderIcon from "@mui/icons-material/Folder";
 import MoreVertIcon from "@mui/icons-material/MoreVert";
 import RefreshIcon from "@mui/icons-material/Refresh";
@@ -29,11 +30,9 @@ import {
   Typography,
 } from "@mui/material";
 import React from "react";
-import type { Directory, DirectoryAction, DirectoryListing } from "@/domain/directory";
+import type { Directory, DirectoryListing } from "@/domain/directory";
 import { parentDirectory } from "@/domain/directory-path";
-import type { Resource, ResourceAction, ResourceFilters, ResourceKind } from "@/domain/resource";
-import { usePluginKernel } from "@/kernel/plugin-kernel";
-import { coreDirectoryWorkspaceSlots } from "@/kernel/slots";
+import type { Resource, ResourceFilters, ResourceKind } from "@/domain/resource";
 import { formatBytes, formatDate } from "@/shared/format";
 import { DirectoryThumbnail, ResourceThumbnail } from "./asset-thumbnail";
 import { KindSelect } from "./kind-select";
@@ -50,8 +49,10 @@ export function ResourceList({
   onOpenDirectory,
   onSelect,
   onSelectDirectory,
-  onAction,
-  onDirectoryAction,
+  onDownloadResource,
+  onDeleteResource,
+  onDownloadDirectory,
+  onDeleteDirectory,
   onRefresh,
   onUpload,
   onCreateFolder,
@@ -67,8 +68,10 @@ export function ResourceList({
   onOpenDirectory: (path: string) => void;
   onSelect: (resource: Resource) => void;
   onSelectDirectory: (directory: Directory) => void;
-  onAction: (resource: Resource, action: ResourceAction) => void;
-  onDirectoryAction: (directory: Directory, action: DirectoryAction) => void;
+  onDownloadResource: (resource: Resource) => void;
+  onDeleteResource: (resource: Resource) => void;
+  onDownloadDirectory: (directory: Directory) => void;
+  onDeleteDirectory: (directory: Directory) => void;
   onRefresh: () => void;
   onUpload: () => void;
   onCreateFolder: () => void;
@@ -155,7 +158,8 @@ export function ResourceList({
               selected={folder.id === selectedDirectoryId}
               onSelect={() => onSelectDirectory(folder)}
               onOpen={() => onOpenDirectory(folder.path)}
-              onAction={(action) => onDirectoryAction(folder, action)}
+              onDownload={() => onDownloadDirectory(folder)}
+              onDelete={() => onDeleteDirectory(folder)}
             />
           ))}
           {listing?.resources.items.map((resource) => (
@@ -164,7 +168,8 @@ export function ResourceList({
               resource={resource}
               selected={resource.id === selectedId}
               onSelect={() => onSelect(resource)}
-              onAction={(action) => onAction(resource, action)}
+              onDownload={() => onDownloadResource(resource)}
+              onDelete={() => onDeleteResource(resource)}
             />
           ))}
         </List>
@@ -201,7 +206,8 @@ function FolderRow({
   onClick,
   onSelect,
   onOpen,
-  onAction,
+  onDownload,
+  onDelete,
 }: {
   name: string;
   directory?: Directory;
@@ -209,24 +215,19 @@ function FolderRow({
   onClick?: () => void;
   onSelect?: () => void;
   onOpen?: () => void;
-  onAction?: (action: DirectoryAction) => void;
+  onDownload?: () => void;
+  onDelete?: () => void;
 }) {
-  const kernel = usePluginKernel();
-  const actions = directory
-    ? kernel.directoryActionsAtCoreSlot(directory, coreDirectoryWorkspaceSlots.directoryContextMenu)
-    : [];
   return (
     <ListItem
       disablePadding
       secondaryAction={
-        actions.length && onAction ? (
-          <ActionsMenu
-            items={actions.map((action) => ({
-              id: action.id,
-              label: action.label,
-              destructive: action.ui.destructive,
-              onSelect: () => onAction(action),
-            }))}
+        directory && onDownload && onDelete ? (
+          <RowActions
+            items={[
+              { id: "download", label: "Download", onSelect: onDownload },
+              { id: "delete", label: "Delete", destructive: true, onSelect: onDelete },
+            ]}
           />
         ) : null
       }
@@ -245,7 +246,7 @@ function FolderRow({
       >
         <ListItemAvatar>
           {directory ? (
-            <DirectoryThumbnail directory={directory} />
+            <DirectoryThumbnail />
           ) : (
             <Avatar
               sx={{
@@ -267,33 +268,25 @@ function ResourceRow({
   resource,
   selected,
   onSelect,
-  onAction,
+  onDownload,
+  onDelete,
 }: {
   resource: Resource;
   selected: boolean;
   onSelect: () => void;
-  onAction: (action: ResourceAction) => void;
+  onDownload: () => void;
+  onDelete: () => void;
 }) {
-  const kernel = usePluginKernel();
-  const actions = kernel.resourceActionsAtCoreSlot(
-    resource,
-    coreDirectoryWorkspaceSlots.resourceContextMenu,
-  );
   const status = resourceStatusLabel(resource.state.effective);
-  const menuItems = actions.map((action) => ({
-      id: action.id,
-      label: action.label,
-      destructive: action.ui.destructive,
-      onSelect: () => onAction(action),
-    }));
+  const items = [
+    ...(resource.content ? [{ id: "download", label: "Download", onSelect: onDownload }] : []),
+    { id: "delete", label: "Delete", destructive: true, onSelect: onDelete },
+  ];
   return (
-    <ListItem
-      disablePadding
-      secondaryAction={menuItems.length ? <ActionsMenu items={menuItems} /> : null}
-    >
+    <ListItem disablePadding secondaryAction={<RowActions items={items} />}>
       <ListItemButton selected={selected} onClick={onSelect}>
         <ListItemAvatar>
-          <ResourceThumbnail resource={resource} />
+          <ResourceThumbnail />
         </ListItemAvatar>
         <ListItemText
           primary={resource.name}
@@ -318,7 +311,7 @@ function resourceStatusLabel(status: Resource["state"]["effective"]): string {
   }
 }
 
-function ActionsMenu({
+function RowActions({
   items,
 }: {
   items: { id: string; label: string; destructive?: boolean; onSelect: () => void }[];
@@ -343,6 +336,7 @@ function ActionsMenu({
             }}
             sx={item.destructive ? { color: "error.main" } : undefined}
           >
+            {item.destructive ? <DeleteIcon fontSize="small" sx={{ mr: 1 }} /> : null}
             {item.label}
           </MenuItem>
         ))}

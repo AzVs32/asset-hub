@@ -1,11 +1,4 @@
-import type { ActionAccess, ActionUi, DefinitionOrigin } from "./action";
-import type {
-  PluginViewKind,
-  ResourceActionCapabilityId,
-  ResourceActionEffectKind,
-} from "./plugin";
-
-export type { ResourceActionEffectKind } from "./plugin";
+import type { DefinitionOrigin } from "./definition";
 
 export type ResourceContentDelivery = "auto" | "inline" | "reference";
 export type ResourceContentState = "absent" | "pending" | "verified" | "failed";
@@ -30,19 +23,6 @@ export interface ResourceContent {
   verificationError: string | null;
 }
 
-export interface ResourceAction {
-  id: string;
-  origin: DefinitionOrigin;
-  provides: ResourceActionCapabilityId | null;
-  label: string;
-  description: string | null;
-  access: ActionAccess;
-  requires: { content: boolean; contentDelivery: ResourceContentDelivery };
-  output: { views: PluginViewKind[]; effects: ResourceActionEffectKind[] };
-  ui: ActionUi;
-  appliesTo: { kinds: string[]; mimeTypes: string[]; extensions: string[] };
-}
-
 export interface Resource {
   id: string;
   name: string;
@@ -51,7 +31,6 @@ export interface Resource {
   kind: string;
   state: ResourceState;
   content: ResourceContent | null;
-  actions: ResourceAction[];
   createdAt: string;
   updatedAt: string;
   revision: number;
@@ -64,7 +43,6 @@ export interface ResourceKind {
   label: string;
   supportsContent: boolean;
   origin: DefinitionOrigin;
-  actions: ResourceAction[];
   detect: { mimeTypes: string[]; extensions: string[] } | null;
 }
 
