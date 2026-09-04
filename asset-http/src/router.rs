@@ -3,19 +3,14 @@ use crate::handlers;
 use crate::openapi::ApiDoc;
 use crate::session_store::SessionStoreHealth;
 use crate::settings::{CorsPolicy, RouterOptions, SessionOptions};
-use crate::state::HttpState;
-use asset_core::service::{
-    ActionOrchestrator, AssetWorkflowService, AuthorizationService, ContentService,
-    DirectoryService, ResourceService, StorageMaintenanceService, UploadService, UserService,
-};
-use asset_runtime::{PluginWebAssets, UploadFinalizationDispatcher};
+use crate::state::{HttpComposition, HttpState};
+use asset_core::service::UserService;
 use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderName, Method, StatusCode};
 use axum::middleware;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use axum_login::AuthManagerLayerBuilder;
-use std::sync::Arc;
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
 use tower_http::timeout::TimeoutLayer;
@@ -27,21 +22,8 @@ async fn openapi_document() -> Json<utoipa::openapi::OpenApi> {
     Json(ApiDoc::openapi())
 }
 
-/// 使用显式边界配置和插件 web 根目录构建 HTTP 路由。
-#[allow(clippy::too_many_arguments)]
-pub fn build_router(
-    resources: ResourceService,
-    content: ContentService,
-    uploads: UploadService,
-    resource_actions: ActionOrchestrator,
-    directories: DirectoryService,
-    asset_workflows: AssetWorkflowService,
-    storage_maintenance: StorageMaintenanceService,
-    options: RouterOptions,
-    plugin_web_assets: PluginWebAssets,
-    authorization: AuthorizationService,
-    upload_finalizations: Arc<dyn UploadFinalizationDispatcher>,
-) -> Router {
+/// Build the HTTP router from one explicit composition bundle and transport policy.
+pub fn build_router(composition: HttpComposition, options: RouterOptions) -> Router {
     let mut router = Router::new()
         .route("/health", get(handlers::health))
         .route("/api-docs/openapi.json", get(openapi_document))
@@ -135,18 +117,7 @@ pub fn build_router(
         .merge(upload_router)
         .merge(resource_content_router)
         .merge(directory_download_router)
-        .with_state(HttpState::new_with_plugin_web_assets(
-            resources,
-            content,
-            uploads,
-            resource_actions,
-            directories,
-            asset_workflows,
-            storage_maintenance,
-            plugin_web_assets,
-            authorization,
-            upload_finalizations,
-        ))
+        .with_state(HttpState::new(composition))
 }
 
 /// 为既有 API 增加由 host 提供的会话存储、登录接口和登录保护。

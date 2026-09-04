@@ -10,8 +10,12 @@ queried through `ResourceService`/`DirectoryService`, not through kind-registry 
 capability; HTTP does not depend on the concrete Runtime scheduler or supervisor.
 
 Resource and Directory handlers live in separate modules. HTTP state exposes separately secured
-Resource and Directory surfaces, plus `AssetCoordinator` only for directory actions and archive
-projections whose result spans both aggregates.
+Resource and Directory surfaces, plus `AssetWorkflowService` only for directory actions and archive
+projections whose result spans both aggregates. Router construction receives one
+`HttpComposition` bundle: `ResourceHttpServices`, `DirectoryHttpServices`, the cross-aggregate
+workflow service, and the narrow health-only Blob readiness capability. These bundles organize
+transport dependencies only; they do not add business workflows or expose repositories, storage,
+recovery, or reconciliation operations to handlers.
 
 Resource and Directory contracts deliberately use the same shape where their semantics overlap.
 Both expose stable UUIDs, kind definitions with typed `origin` metadata, flattened action arrays,

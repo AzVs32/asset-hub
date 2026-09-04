@@ -1,4 +1,7 @@
-use asset_http::{HttpSessionRuntime, HttpSettings, build_router, with_authentication};
+use asset_http::{
+    DirectoryHttpServices, HttpComposition, HttpHealthServices, HttpServices, HttpSessionRuntime,
+    HttpSettings, ResourceHttpServices, build_router, with_authentication,
+};
 use asset_infra::config::AssetInfraConfig;
 use asset_runtime::AssetRuntime;
 use tracing::info;
@@ -22,17 +25,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!(addr = %settings.addr(), "asset-http listening");
     let authorization = runtime.authorization_service();
     let app = build_router(
-        runtime.resource_service(),
-        runtime.content_service(),
-        runtime.upload_service(),
-        runtime.action_orchestrator(),
-        runtime.directory_service(),
-        runtime.asset_workflow_service(),
-        runtime.storage_maintenance_service(),
+        HttpComposition {
+            services: HttpServices {
+                resources: ResourceHttpServices {
+                    resources: runtime.resource_service(),
+                    content: runtime.content_service(),
+                    uploads: runtime.upload_service(),
+                    actions: runtime.action_orchestrator(),
+                },
+                directories: DirectoryHttpServices {
+                    directories: runtime.directory_service(),
+                },
+                workflows: runtime.asset_workflow_service(),
+                health: HttpHealthServices {
+                    storage_maintenance: runtime.storage_maintenance_service(),
+                },
+            },
+            plugin_web_assets: runtime.plugin_web_assets(),
+            authorization: authorization.clone(),
+            upload_finalizations: runtime.upload_finalization_dispatcher(),
+        },
         settings.router_options().clone(),
-        runtime.plugin_web_assets(),
-        authorization.clone(),
-        runtime.upload_finalization_dispatcher(),
     );
     let app = with_authentication(
         app,

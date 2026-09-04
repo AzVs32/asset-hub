@@ -20,7 +20,7 @@ pub(crate) async fn health(
     let session_health = session_health.map(|Extension(health)| health);
     let (database, blob_storage, session_store) = tokio::join!(
         state.resources().check_repository_health(),
-        state.storage_maintenance().check_blob_storage_health(),
+        state.check_blob_storage_health(),
         async move {
             match session_health {
                 Some(health) => Some(health.check().await),
