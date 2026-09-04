@@ -223,6 +223,34 @@ async fn conditional_save_rejects_a_stale_resource_snapshot() {
 }
 
 #[tokio::test]
+async fn sqlite_resource_cas_allows_only_one_concurrent_writer_for_a_revision() {
+    let repository = concurrent_repository("resource-cas-race").await;
+    let resource = Resource::builder("original").build().unwrap();
+    repository.insert(&resource).await.unwrap();
+    let expected_revision = resource.revision();
+
+    let mut left = resource.clone();
+    left.rename("left").unwrap();
+    let mut right = resource.clone();
+    right.rename("right").unwrap();
+    let (left_result, right_result) = tokio::join!(
+        ResourceStore::update_if_revision(repository.as_ref(), &left, expected_revision),
+        ResourceStore::update_if_revision(repository.as_ref(), &right, expected_revision),
+    );
+
+    assert_eq!(
+        [left_result.unwrap(), right_result.unwrap()]
+            .into_iter()
+            .filter(|updated| *updated)
+            .count(),
+        1
+    );
+    let current = repository.load(&resource.id()).await.unwrap().unwrap();
+    assert_eq!(current.revision(), expected_revision + 1);
+    assert!(matches!(current.name(), "left" | "right"));
+}
+
+#[tokio::test]
 async fn directory_store_rejects_a_stale_aggregate_snapshot() {
     let repository = repository("conditional-directory-save").await;
     let directories = directory_service(repository.directories.clone()).await;
@@ -258,6 +286,63 @@ async fn directory_store_rejects_a_stale_aggregate_snapshot() {
             .directory()
             .name(),
         "current"
+    );
+}
+
+#[tokio::test]
+async fn sqlite_directory_update_batch_rolls_back_when_one_cas_is_stale() {
+    let repository = repository("directory-batch-cas-rollback").await;
+    let directories = directory_service(repository.directories.clone()).await;
+    let left = directories
+        .create_with_kind(&DirectoryId::root(), "left", DirectoryKind::default())
+        .await
+        .unwrap();
+    let right = directories
+        .create_with_kind(&DirectoryId::root(), "right", DirectoryKind::default())
+        .await
+        .unwrap();
+    let left_expected = left.directory().revision();
+    let right_expected = right.directory().revision();
+    let mut left_desired = left.directory().clone();
+    left_desired.rename("left-moved").unwrap();
+    let mut right_desired = right.directory().clone();
+    right_desired.rename("right-stale").unwrap();
+
+    directories
+        .update(
+            &right.id(),
+            UpdateDirectory::new(right_expected).with_name("right-current"),
+        )
+        .await
+        .unwrap();
+    assert!(
+        !DirectoryStore::update_batch_if_unchanged(
+            repository.directories.as_ref(),
+            &[
+                DirectoryRevisionUpdate::new(left_desired, left_expected).unwrap(),
+                DirectoryRevisionUpdate::new(right_desired, right_expected).unwrap(),
+            ],
+        )
+        .await
+        .unwrap()
+    );
+    assert_eq!(
+        directories
+            .find_by_id(&left.id())
+            .await
+            .unwrap()
+            .directory()
+            .name(),
+        "left"
+    );
+    assert_eq!(
+        directories
+            .find_by_id(&right.id())
+            .await
+            .unwrap()
+            .directory()
+            .name(),
+        "right-current"
     );
 }
 
@@ -485,9 +570,20 @@ async fn directory_store_rejects_invalid_persisted_self_parent() {
 }
 
 async fn repository(name: &str) -> TestRepositories {
-    let database = SqliteDatabase::connect(&unique_temp_path(name).join("asset-hub.sqlite"), 1)
-        .await
-        .unwrap();
+    repository_with_connections(name, 1).await
+}
+
+async fn concurrent_repository(name: &str) -> TestRepositories {
+    repository_with_connections(name, 4).await
+}
+
+async fn repository_with_connections(name: &str, max_connections: u32) -> TestRepositories {
+    let database = SqliteDatabase::connect(
+        &unique_temp_path(name).join("asset-hub.sqlite"),
+        max_connections,
+    )
+    .await
+    .unwrap();
     TestRepositories {
         resources: Arc::new(SqliteResourceStore::new(database.pool().clone())),
         directories: Arc::new(SqliteDirectoryStore::new(database.pool().clone())),
