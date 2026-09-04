@@ -1,6 +1,7 @@
 mod action;
 mod definition;
 mod directory;
+mod idempotency;
 mod identity;
 mod kind;
 mod resource;
@@ -22,6 +23,10 @@ pub use definition::{
 };
 pub use directory::{
     Directory, DirectoryId, DirectoryKind, DirectoryPath, INTERNAL_STORAGE_DIRECTORY_NAME,
+};
+pub use idempotency::{
+    IdempotencyExecutionId, IdempotencyKey, IdempotencyRecord, IdempotencyStatus,
+    MAX_IDEMPOTENCY_KEY_LEN,
 };
 pub use identity::{AccessContext, DirectoryOperation, User, UserId, UserRole, UserStatus};
 pub use kind::{KindId, KindIdError};

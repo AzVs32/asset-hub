@@ -234,8 +234,8 @@ export interface paths {
         get: operations["find_resource"];
         put?: never;
         post?: never;
-        /** 软删除资源。 */
-        delete: operations["soft_delete_resource"];
+        /** Permanently delete a Resource and its physical content. */
+        delete: operations["delete_resource"];
         options?: never;
         head?: never;
         /** 更新资源。 */
@@ -289,23 +289,6 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/resources/{id}/purge": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** 物理移除资源和对象内容。 */
-        delete: operations["remove_resource"];
         options?: never;
         head?: never;
         patch?: never;
@@ -391,7 +374,7 @@ export interface components {
         };
         /** @description 创建断点续传会话。 */
         CreateUploadRequest: {
-            directory?: string;
+            directory_id?: string;
             /** @description 客户端对完整本地文件增量计算出的 SHA-256。 */
             expected_sha256: string;
             kind?: string | null;
@@ -637,7 +620,7 @@ export interface components {
          * @description 需要单值状态判断的消费者所使用的统一有效状态。
          * @enum {string}
          */
-        ResourceEffectiveStateResponse: "deleted" | "no_content" | "verifying" | "ready" | "verification_failed";
+        ResourceEffectiveStateResponse: "no_content" | "verifying" | "ready" | "verification_failed";
         /** @description 资源类型响应。 */
         ResourceKindResponse: {
             /** @description kind 支持的动作。 */
@@ -661,14 +644,10 @@ export interface components {
             /** @description 当前后端支持的资源类型。 */
             items: components["schemas"]["ResourceKindResponse"][];
         };
-        /** @description 资源生命周期；删除时间只在 deleted 状态中存在。 */
+        /** @description 资源生命周期。 */
         ResourceLifecycleStateResponse: {
             /** @enum {string} */
             status: "active";
-        } | {
-            at: string;
-            /** @enum {string} */
-            status: "deleted";
         };
         /** @description 资源分页响应。 */
         ResourcePageResponse: {
@@ -699,6 +678,8 @@ export interface components {
             created_at: string;
             /** @description 相对于当前用户可见根目录的路径；根目录为空字符串。 */
             directory: string;
+            /** @description Stable Directory identity; `directory` remains only the caller-relative display path. */
+            directory_id: string;
             /** @description 资源唯一标识。 */
             id: string;
             /** @description 资源类型。 */
@@ -736,8 +717,8 @@ export interface components {
          *     }
          */
         UpdateResourceRequest: {
-            /** @description 相对于当前用户可见根目录的新路径；根目录为空字符串。 */
-            directory?: string | null;
+            /** @description Optional stable destination Directory UUID. */
+            directory_id?: string | null;
             /**
              * Format: int64
              * @description Required optimistic-concurrency precondition.
@@ -747,8 +728,6 @@ export interface components {
             kind?: string | null;
             /** @description 可选新资源展示名。 */
             name?: string | null;
-            /** @description 是否恢复软删除资源。 */
-            restore?: boolean | null;
         };
         UpdateUserStatusRequest: {
             status: string;
@@ -952,8 +931,6 @@ export interface operations {
                 kind?: string;
                 /** @description 可选名称模糊搜索关键字。 */
                 q?: string;
-                /** @description 是否包含软删除资源。 */
-                include_deleted?: boolean;
             };
             header?: never;
             path?: never;
@@ -1207,7 +1184,10 @@ export interface operations {
     execute_directory_action: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description 可选的幂等键，重复提交不会重复应用 Host effect */
+                "Idempotency-Key"?: string | null;
+            };
             path: {
                 id: string;
                 action: string;
@@ -1390,8 +1370,6 @@ export interface operations {
                 q?: string;
                 /** @description 相对于当前用户可见根目录的过滤路径；根目录为空字符串。 */
                 directory?: string;
-                /** @description 是否包含软删除资源。 */
-                include_deleted?: boolean;
             };
             header?: never;
             path?: never;
@@ -1478,7 +1456,7 @@ export interface operations {
             };
         };
     };
-    soft_delete_resource: {
+    delete_resource: {
         parameters: {
             query: {
                 expected_revision: number;
@@ -1492,7 +1470,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 资源已软删除 */
+            /** @description 资源已删除 */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -1596,7 +1574,10 @@ export interface operations {
     execute_resource_action: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description 可选的幂等键，重复提交不会重复应用 Host effect */
+                "Idempotency-Key"?: string | null;
+            };
             path: {
                 /** @description 资源 ID */
                 id: string;
@@ -1718,6 +1699,8 @@ export interface operations {
                 "Content-SHA256": string;
                 /** @description 原始内容字节数 */
                 "Content-Length": number;
+                /** @description 可选的幂等键，重复请求返回首次结果 */
+                "Idempotency-Key"?: string | null;
             };
             path: {
                 /** @description 资源 ID */
@@ -1856,58 +1839,13 @@ export interface operations {
             };
         };
     };
-    remove_resource: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description 资源 ID */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description 资源和对象内容已物理移除 */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description 请求参数无效 */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description 资源不存在 */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description 服务端错误 */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
     create_upload: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description 可选的幂等键，重复请求返回首次结果 */
+                "Idempotency-Key"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };

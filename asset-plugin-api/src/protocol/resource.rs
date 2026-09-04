@@ -52,7 +52,6 @@ pub struct PluginResourceState {
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PluginResourceLifecycleState {
     Active,
-    Deleted { at: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -67,7 +66,6 @@ pub enum PluginResourceContentState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PluginResourceEffectiveState {
-    Deleted,
     NoContent,
     Verifying,
     Ready,

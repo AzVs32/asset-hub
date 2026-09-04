@@ -1,7 +1,6 @@
 import type { DefinitionOrigin } from "@/domain/action";
 import type { CurrentUser, ManagedUser } from "@/domain/auth";
 import type { Directory, DirectoryAction, DirectoryKind } from "@/domain/directory";
-import { normalizeDirectory } from "@/domain/directory-path";
 import {
   type DirectoryActionEffectKind,
   type DirectoryActionOutput,
@@ -119,6 +118,7 @@ export function mapResource(value: ApiResource): Resource {
   return {
     id: value.id,
     name: value.name,
+    directoryId: value.directory_id,
     directory: value.directory,
     kind: value.kind,
     state: {
@@ -202,11 +202,12 @@ export function mapDirectoryActionOutput(
 export function resourceBody(
   draft: ResourceDraft,
   expectedRevision: number,
+  directoryId: string,
 ): Schemas["UpdateResourceRequest"] {
   return {
     expected_revision: expectedRevision,
     name: draft.name,
-    directory: normalizeDirectory(draft.directory),
+    directory_id: directoryId,
     kind: draft.kind,
   };
 }

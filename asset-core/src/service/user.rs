@@ -2,7 +2,7 @@ use crate::{
     CoreError,
     domain::{DirectoryPath, User, UserId, UserRole, UserStatus},
     port::{LocatedUser, PasswordHasher, UserQuery, UserRepository},
-    service::DirectoryService,
+    service::DirectoryProvisioningService,
 };
 use std::sync::Arc;
 
@@ -13,7 +13,7 @@ pub struct UserService {
     repository: Arc<dyn UserRepository>,
     query: Arc<dyn UserQuery>,
     password_hasher: Arc<dyn PasswordHasher>,
-    directories: DirectoryService,
+    directories: DirectoryProvisioningService,
 }
 
 impl UserService {
@@ -21,7 +21,7 @@ impl UserService {
         repository: Arc<dyn UserRepository>,
         query: Arc<dyn UserQuery>,
         password_hasher: Arc<dyn PasswordHasher>,
-        directories: DirectoryService,
+        directories: DirectoryProvisioningService,
     ) -> Self {
         Self {
             repository,
@@ -47,7 +47,7 @@ impl UserService {
             None if role == UserRole::Administrator => DirectoryPath::root(),
             None => DirectoryPath::from_path(format!("users/{username}"))?,
         };
-        let workspace_directory = self.directories.ensure_path(&workspace_path).await?;
+        let workspace_directory = self.directories.provision_path(&workspace_path).await?;
         let user = User::new(
             username,
             self.password_hasher.hash(password)?,

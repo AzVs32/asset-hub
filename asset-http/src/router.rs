@@ -3,18 +3,14 @@ use crate::handlers;
 use crate::openapi::ApiDoc;
 use crate::session_store::SessionStoreHealth;
 use crate::settings::{CorsPolicy, RouterOptions, SessionOptions};
-use crate::state::HttpState;
-use asset_core::service::{
-    AssetCoordinator, AuthorizationService, DirectoryService, ResourceService, UserService,
-};
-use asset_runtime::{PluginWebAssets, UploadFinalizationDispatcher};
+use crate::state::{HttpComposition, HttpState};
+use asset_core::service::UserService;
 use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderName, Method, StatusCode};
 use axum::middleware;
-use axum::routing::{delete, get, post};
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use axum_login::AuthManagerLayerBuilder;
-use std::sync::Arc;
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
 use tower_http::timeout::TimeoutLayer;
@@ -26,16 +22,8 @@ async fn openapi_document() -> Json<utoipa::openapi::OpenApi> {
     Json(ApiDoc::openapi())
 }
 
-/// 使用显式边界配置和插件 web 根目录构建 HTTP 路由。
-pub fn build_router(
-    resources: ResourceService,
-    directories: DirectoryService,
-    asset_coordinator: AssetCoordinator,
-    options: RouterOptions,
-    plugin_web_assets: PluginWebAssets,
-    authorization: AuthorizationService,
-    upload_finalizations: Arc<dyn UploadFinalizationDispatcher>,
-) -> Router {
+/// Build the HTTP router from one explicit composition bundle and transport policy.
+pub fn build_router(composition: HttpComposition, options: RouterOptions) -> Router {
     let mut router = Router::new()
         .route("/health", get(handlers::health))
         .route("/api-docs/openapi.json", get(openapi_document))
@@ -60,7 +48,7 @@ pub fn build_router(
             "/resources/{id}",
             get(handlers::find_resource)
                 .patch(handlers::update_resource)
-                .delete(handlers::soft_delete_resource),
+                .delete(handlers::delete_resource),
         )
         .route(
             "/resources/{id}/download",
@@ -76,12 +64,6 @@ pub fn build_router(
         post(handlers::execute_directory_action)
             .layer(DefaultBodyLimit::max(handlers::MAX_ACTION_REQUEST_BYTES)),
     );
-
-    router = if options.enable_purge {
-        router.route("/resources/{id}/purge", delete(handlers::remove_resource))
-    } else {
-        router.route("/resources/{id}/purge", delete(handlers::purge_disabled))
-    };
 
     let upload_router = Router::new()
         .route("/uploads", post(handlers::create_upload))
@@ -135,14 +117,7 @@ pub fn build_router(
         .merge(upload_router)
         .merge(resource_content_router)
         .merge(directory_download_router)
-        .with_state(HttpState::new_with_plugin_web_assets(
-            resources,
-            directories,
-            asset_coordinator,
-            plugin_web_assets,
-            authorization,
-            upload_finalizations,
-        ))
+        .with_state(HttpState::new(composition))
 }
 
 /// 为既有 API 增加由 host 提供的会话存储、登录接口和登录保护。
@@ -204,6 +179,7 @@ fn cors_layer(policy: CorsPolicy) -> CorsLayer {
             HeaderName::from_static("upload-checksum"),
             HeaderName::from_static("content-sha256"),
             HeaderName::from_static("if-match"),
+            HeaderName::from_static("idempotency-key"),
         ])
         .expose_headers([
             HeaderName::from_static("upload-offset"),
@@ -213,5 +189,49 @@ fn cors_layer(policy: CorsPolicy) -> CorsLayer {
     match policy {
         CorsPolicy::None => layer,
         CorsPolicy::Origins(origins) => layer.allow_origin(origins).allow_credentials(true),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{HeaderValue, Request, header};
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn idempotency_key_is_allowed_for_cross_origin_preflight() {
+        let router = Router::new()
+            .route("/uploads", post(|| async { StatusCode::CREATED }))
+            .layer(cors_layer(CorsPolicy::Origins(vec![
+                HeaderValue::from_static("https://example.test"),
+            ])));
+        let request = Request::builder()
+            .method(Method::OPTIONS)
+            .uri("/uploads")
+            .header(header::ORIGIN, "https://example.test")
+            .header(header::ACCESS_CONTROL_REQUEST_METHOD, Method::POST.as_str())
+            .header(
+                header::ACCESS_CONTROL_REQUEST_HEADERS,
+                "idempotency-key,content-type",
+            )
+            .body(Body::empty())
+            .unwrap();
+
+        let response = router.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let allowed_headers = response
+            .headers()
+            .get(header::ACCESS_CONTROL_ALLOW_HEADERS)
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(
+            allowed_headers
+                .split(',')
+                .map(str::trim)
+                .any(|name| name.eq_ignore_ascii_case("idempotency-key"))
+        );
     }
 }

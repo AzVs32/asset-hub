@@ -19,7 +19,6 @@ export function useAssetWorkspaceListing() {
       limit: 30,
       query: searchParams.get("q") ?? "",
       kind: searchParams.get("kind") ?? "",
-      includeDeleted: searchParams.get("deleted") === "1",
     }),
     [routeDirectory, searchParams],
   );
@@ -117,7 +116,6 @@ function searchParamsForFilters(
   setOrDelete(next, "q", merged.query);
   setOrDelete(next, "kind", merged.kind);
   setOrDelete(next, "page", merged.page === 1 ? "" : String(merged.page));
-  setOrDelete(next, "deleted", merged.includeDeleted ? "1" : "");
   next.delete("resource");
   next.delete("folder");
   return next;

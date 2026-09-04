@@ -127,10 +127,9 @@ impl<'a> ResourceSnapshot<'a> {
 pub struct ResourceState<'a>(&'a PluginResourceState);
 
 impl<'a> ResourceState<'a> {
-    pub fn lifecycle(self) -> ResourceLifecycleState<'a> {
+    pub fn lifecycle(self) -> ResourceLifecycleState {
         match &self.0.lifecycle {
             PluginResourceLifecycleState::Active => ResourceLifecycleState::Active,
-            PluginResourceLifecycleState::Deleted { at } => ResourceLifecycleState::Deleted { at },
         }
     }
 
@@ -145,7 +144,6 @@ impl<'a> ResourceState<'a> {
 
     pub fn effective(self) -> ResourceEffectiveState {
         match self.0.effective {
-            PluginResourceEffectiveState::Deleted => ResourceEffectiveState::Deleted,
             PluginResourceEffectiveState::NoContent => ResourceEffectiveState::NoContent,
             PluginResourceEffectiveState::Verifying => ResourceEffectiveState::Verifying,
             PluginResourceEffectiveState::Ready => ResourceEffectiveState::Ready,
@@ -157,9 +155,8 @@ impl<'a> ResourceState<'a> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ResourceLifecycleState<'a> {
+pub enum ResourceLifecycleState {
     Active,
-    Deleted { at: &'a str },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -172,7 +169,6 @@ pub enum ResourceContentState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResourceEffectiveState {
-    Deleted,
     NoContent,
     Verifying,
     Ready,

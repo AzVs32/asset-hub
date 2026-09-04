@@ -1,11 +1,24 @@
 use crate::CoreError;
-use crate::domain::{Checksum, UploadId, UploadSession};
+use crate::domain::{Checksum, IdempotencyKey, UploadId, UploadSession};
 
 /// 上传会话持久化端口。
 #[async_trait::async_trait]
 pub trait UploadSessionRepository: Send + Sync {
     async fn save(&self, session: &UploadSession) -> Result<(), CoreError>;
+    /// Persist a newly-created session together with the request key that created it.
+    ///
+    /// This durable link lets a retry recover an upload session created before its idempotency
+    /// record could be completed.
+    async fn save_with_idempotency_key(
+        &self,
+        session: &UploadSession,
+        key: &IdempotencyKey,
+    ) -> Result<(), CoreError>;
     async fn find_by_id(&self, id: &UploadId) -> Result<Option<UploadSession>, CoreError>;
+    async fn find_by_idempotency_key(
+        &self,
+        key: &IdempotencyKey,
+    ) -> Result<Option<UploadSession>, CoreError>;
     async fn update_offset(
         &self,
         id: &UploadId,

@@ -3,21 +3,183 @@ use super::content::{
     build_verified_content, calculate_stream_checksum, finalize_tracked_checksum,
     stream_with_checksum_tracking,
 };
-use super::{CreateUpload, ResourceService};
+use super::{CreateUpload, StorageKeyLocks, UploadLocks, path_resolver};
 use crate::CoreError;
 use crate::domain::{
-    Checksum, Resource, StorageKey, UploadId, UploadSession, UploadStatus, UserId,
+    AccessContext, Checksum, DirectoryOperation, IdempotencyKey, Resource, ResourceKind,
+    StorageKey, UploadId, UploadSession, UploadStatus, UserId,
 };
-use crate::port::{BlobByteStream, RESERVED_BLOB_STORAGE_PREFIX, StagedBlob};
+use crate::port::{
+    BlobByteStream, ContentObjectStore, ContentReader, ContentStagingStore,
+    RESERVED_BLOB_STORAGE_PREFIX, ResourceKindRegistry, ResourceReadModel, ResourceStore,
+    StagedBlob, StorageScanner, UploadSessionRepository,
+};
+use crate::service::{
+    AuthorizationService, DirectoryService, IdempotencyOutcome, IdempotencyService, request_hash,
+};
+use bytes::Bytes;
 use futures_util::StreamExt;
+use sha2::{Digest, Sha256};
+use std::sync::Arc;
 
-pub(super) struct ResourceUploadService<'a> {
-    service: &'a ResourceService,
+#[derive(Clone)]
+pub struct UploadService {
+    service: Arc<UploadDependencies>,
 }
 
-impl<'a> ResourceUploadService<'a> {
-    pub(super) fn new(service: &'a ResourceService) -> Self {
-        Self { service }
+struct UploadDependencies {
+    store: Arc<dyn ResourceStore>,
+    read_model: Arc<dyn ResourceReadModel>,
+    staging: Arc<dyn ContentStagingStore>,
+    reader: Arc<dyn ContentReader>,
+    objects: Arc<dyn ContentObjectStore>,
+    storage_scanner: Arc<dyn StorageScanner>,
+    directories: DirectoryService,
+    kind_registry: Arc<dyn ResourceKindRegistry>,
+    upload_sessions: Arc<dyn UploadSessionRepository>,
+    storage_key_locks: Arc<StorageKeyLocks>,
+    upload_locks: Arc<UploadLocks>,
+    idempotency: IdempotencyService,
+}
+
+impl UploadDependencies {
+    fn resolve_content_kind(
+        &self,
+        kind: Option<ResourceKind>,
+        mime_type: Option<&str>,
+        storage_key: Option<&str>,
+    ) -> Result<ResourceKind, CoreError> {
+        let kind = match kind {
+            Some(kind) => kind,
+            None => self
+                .kind_registry
+                .detect_content_kind(mime_type, storage_key)?
+                .unwrap_or_default(),
+        };
+        let definition = self
+            .kind_registry
+            .get(&kind)
+            .ok_or_else(|| CoreError::unsupported("resource kind", kind.to_string()))?;
+        if !definition.supports_content() {
+            return Err(CoreError::unsupported(
+                "resource kind for content upload",
+                kind.to_string(),
+            ));
+        }
+        Ok(kind)
+    }
+}
+
+impl UploadService {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        store: Arc<dyn ResourceStore>,
+        read_model: Arc<dyn ResourceReadModel>,
+        staging: Arc<dyn ContentStagingStore>,
+        reader: Arc<dyn ContentReader>,
+        objects: Arc<dyn ContentObjectStore>,
+        storage_scanner: Arc<dyn StorageScanner>,
+        directories: DirectoryService,
+        kind_registry: Arc<dyn ResourceKindRegistry>,
+        upload_sessions: Arc<dyn UploadSessionRepository>,
+        storage_key_locks: Arc<StorageKeyLocks>,
+        idempotency: IdempotencyService,
+    ) -> Self {
+        Self {
+            service: Arc::new(UploadDependencies {
+                store,
+                read_model,
+                staging,
+                reader,
+                objects,
+                storage_scanner,
+                directories,
+                kind_registry,
+                upload_sessions,
+                storage_key_locks,
+                upload_locks: Arc::new(UploadLocks::default()),
+                idempotency,
+            }),
+        }
+    }
+
+    pub fn secured<'a>(
+        &'a self,
+        authorization: &'a AuthorizationService,
+        context: &'a AccessContext,
+    ) -> SecuredUploadService<'a> {
+        SecuredUploadService {
+            service: self,
+            authorization,
+            context,
+        }
+    }
+
+    pub async fn pending_finalizations(&self) -> Result<Vec<UploadId>, CoreError> {
+        self.service.upload_sessions.list_finalizing().await
+    }
+
+    pub(crate) async fn create_generated(
+        &self,
+        directory: &crate::port::DirectoryLocation,
+        name: String,
+        kind: Option<ResourceKind>,
+        mime_type: Option<String>,
+        data: Bytes,
+    ) -> Result<crate::port::LocatedResource, CoreError> {
+        let storage_key = path_resolver::resource_key(directory.path(), &name)?;
+        let kind = self.service.resolve_content_kind(
+            kind,
+            mime_type.as_deref(),
+            Some(storage_key.as_str()),
+        )?;
+        let mut resource = build_resource(name.clone(), directory.id(), Some(kind)).build()?;
+        let checksum = Checksum::sha256(super::content::hex_digest(&Sha256::digest(&data)))?;
+        resource.attach_content(build_verified_content(
+            data.len() as u64,
+            mime_type,
+            checksum,
+            None,
+        )?)?;
+        let _guard = self.service.storage_key_locks.lock(&storage_key).await;
+        if self
+            .service
+            .read_model
+            .find_by_directory_and_name(directory.id(), &name)
+            .await?
+            .is_some()
+        {
+            return Err(CoreError::conflict(format!(
+                "resource path `{storage_key}` already exists"
+            )));
+        }
+        let staging_key = path_resolver::generated_staging_key()?;
+        let _staging = self.service.staging.create_staged(&staging_key).await?;
+        let expected_size = data.len() as u64;
+        let staged = self
+            .service
+            .staging
+            .append_staged(
+                &staging_key,
+                0,
+                Box::pin(futures_util::stream::once(async move { Ok(data) })),
+            )
+            .await?;
+        if staged.bytes_written() != expected_size {
+            let _ = self.service.staging.discard_staged(&staged).await;
+            return Err(CoreError::conflict("generated content size changed"));
+        }
+        self.service
+            .staging
+            .publish_staged_if_absent(&staged, &storage_key)
+            .await?;
+        if let Err(error) = self.service.store.insert(&resource).await {
+            let _ = self.service.objects.delete(&storage_key).await;
+            let _ = self.service.staging.discard_staged(&staged).await;
+            return Err(error);
+        }
+        self.service.staging.discard_staged(&staged).await?;
+        crate::port::LocatedResource::new(resource, directory.clone())
     }
 
     pub(crate) async fn create(
@@ -25,27 +187,98 @@ impl<'a> ResourceUploadService<'a> {
         owner_id: UserId,
         command: CreateUpload,
     ) -> Result<UploadSession, CoreError> {
+        let Some(key) = command.idempotency_key().cloned() else {
+            return self.create_session(owner_id, command, None).await;
+        };
+        let hash = request_hash(&serde_json::json!({
+            "name": &command.name,
+            "kind": command.kind.as_ref().map(|kind| kind.as_str()),
+            "directory_id": command.directory_id.to_string(),
+            "mime_type": &command.mime_type,
+            "expected_size": command.expected_size,
+            "expected_checksum": command.expected_checksum.value(),
+        }));
+        match self.service.idempotency.begin(&key, &hash).await? {
+            IdempotencyOutcome::Acquired { execution_id } => {
+                match self
+                    .service
+                    .idempotency
+                    .execute_with_lease(
+                        &key,
+                        execution_id,
+                        self.create_session(owner_id, command, Some(&key)),
+                    )
+                    .await
+                {
+                    Ok(session) => {
+                        self.service
+                            .idempotency
+                            .complete(
+                                &key,
+                                execution_id,
+                                serde_json::json!({ "upload_id": session.id().to_string() }),
+                            )
+                            .await?;
+                        Ok(session)
+                    }
+                    Err(error) => {
+                        self.service.idempotency.abandon(&key, execution_id).await?;
+                        Err(error)
+                    }
+                }
+            }
+            IdempotencyOutcome::Replay(result) => self.replay_upload(&result, owner_id).await,
+            IdempotencyOutcome::ConflictDifferentRequest => Err(CoreError::conflict(format!(
+                "idempotency key `{key}` was already used for a different request"
+            ))),
+            IdempotencyOutcome::AlreadyInProgress => Err(CoreError::conflict(format!(
+                "idempotency key `{key}` is currently executing"
+            ))),
+        }
+    }
+
+    async fn create_session(
+        &self,
+        owner_id: UserId,
+        command: CreateUpload,
+        idempotency_key: Option<&IdempotencyKey>,
+    ) -> Result<UploadSession, CoreError> {
+        if let Some(key) = idempotency_key
+            && let Some(session) = self
+                .service
+                .upload_sessions
+                .find_by_idempotency_key(key)
+                .await?
+        {
+            if session.owner_id() != owner_id {
+                return Err(CoreError::conflict(format!(
+                    "idempotency key `{key}` belongs to a different upload owner"
+                )));
+            }
+            return Ok(session);
+        }
         let CreateUpload {
             name,
             kind,
-            directory,
+            directory_id,
             mime_type,
             expected_size,
             expected_checksum,
+            ..
         } = command;
-        let storage_key = StorageKey::from_resource_path(&directory, &name)?;
+        let directory = self.service.directories.locate_by_id(&directory_id).await?;
+        let storage_key = path_resolver::resource_key(directory.path(), &name)?;
         reject_reserved_storage_key(&storage_key)?;
         let kind = self.service.resolve_content_kind(
             kind,
             mime_type.as_deref(),
             Some(storage_key.as_str()),
         )?;
-        let directory = self.service.directories.ensure_path(&directory).await?;
         build_resource(name.clone(), directory.id(), Some(kind.clone())).build()?;
         if self
             .service
-            .query
-            .find_by_path(directory.path(), &name)
+            .read_model
+            .find_by_directory_and_name(directory.id(), &name)
             .await?
             .is_some()
         {
@@ -57,22 +290,42 @@ impl<'a> ResourceUploadService<'a> {
         let session = UploadSession::new(
             owner_id,
             name,
-            directory.path().clone(),
+            directory.id(),
             kind,
             mime_type,
             expected_size,
             expected_checksum,
         )?;
         let staged = staged_for(session.id())?;
-        self.service
-            .blob_storage
-            .create_staged(staged.key())
-            .await?;
-        if let Err(error) = self.service.upload_sessions.save(&session).await {
-            let _ = self.service.blob_storage.discard_staged(&staged).await;
+        self.service.staging.create_staged(staged.key()).await?;
+        let save = match idempotency_key {
+            Some(key) => {
+                self.service
+                    .upload_sessions
+                    .save_with_idempotency_key(&session, key)
+                    .await
+            }
+            None => self.service.upload_sessions.save(&session).await,
+        };
+        if let Err(error) = save {
+            let _ = self.service.staging.discard_staged(&staged).await;
             return Err(error);
         }
         Ok(session)
+    }
+
+    async fn replay_upload(
+        &self,
+        result: &serde_json::Value,
+        owner_id: UserId,
+    ) -> Result<UploadSession, CoreError> {
+        let upload_id = result
+            .get("upload_id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| CoreError::invariant("idempotency result is missing `upload_id`"))?;
+        let upload_id = std::str::FromStr::from_str(upload_id)
+            .map_err(|error| CoreError::invariant(format!("invalid stored upload id: {error}")))?;
+        self.load(owner_id, &upload_id).await
     }
 
     pub(crate) async fn status(
@@ -117,18 +370,14 @@ impl<'a> ResourceUploadService<'a> {
             .ok_or_else(|| CoreError::conflict("upload offset exceeds expected size"))?;
         let staged_key = staged_for(*id)?;
         let chunk_key = chunk_for(*id)?;
-        self.service.blob_storage.discard_staged(&chunk_key).await?;
-        let chunk = self
-            .service
-            .blob_storage
-            .create_staged(chunk_key.key())
-            .await?;
+        self.service.staging.discard_staged(&chunk_key).await?;
+        let chunk = self.service.staging.create_staged(chunk_key.key()).await?;
 
         let append_result = async {
             let (tracked_data, checksum_state) =
                 stream_with_checksum_tracking(limit_stream(data, remaining));
             self.service
-                .blob_storage
+                .staging
                 .append_staged(chunk.key(), 0, tracked_data)
                 .await?;
             let actual_chunk_checksum = finalize_tracked_checksum(checksum_state)?;
@@ -142,13 +391,13 @@ impl<'a> ResourceUploadService<'a> {
 
             let verified_chunk = self
                 .service
-                .blob_storage
+                .reader
                 .get_stream(chunk.key())
                 .await?
                 .ok_or_else(|| CoreError::not_found("staged upload chunk", id.to_string()))?;
             let staged = self
                 .service
-                .blob_storage
+                .staging
                 .append_staged(staged_key.key(), session.offset(), verified_chunk)
                 .await?;
             if !self
@@ -165,7 +414,7 @@ impl<'a> ResourceUploadService<'a> {
         }
         .await;
 
-        let cleanup_result = self.service.blob_storage.discard_staged(&chunk).await;
+        let cleanup_result = self.service.staging.discard_staged(&chunk).await;
         let offset = append_result?;
         cleanup_result?;
         session.synchronize_offset(offset)?;
@@ -194,7 +443,7 @@ impl<'a> ResourceUploadService<'a> {
             )));
         }
         self.service
-            .blob_storage
+            .staging
             .discard_staged(&chunk_for(*id)?)
             .await?;
         if !self.service.upload_sessions.mark_finalizing(id).await? {
@@ -207,7 +456,7 @@ impl<'a> ResourceUploadService<'a> {
         Ok((session, true))
     }
 
-    pub(crate) async fn finalize(&self, id: &UploadId) -> Result<Resource, CoreError> {
+    pub async fn finalize(&self, id: &UploadId) -> Result<Resource, CoreError> {
         let _upload_guard = self.service.upload_locks.lock(id).await;
         let mut session = self.load_unchecked(id).await?;
         if session.status() == UploadStatus::Completed {
@@ -238,18 +487,9 @@ impl<'a> ResourceUploadService<'a> {
 
     async fn finalize_session(&self, session: &mut UploadSession) -> Result<Resource, CoreError> {
         let id = session.id();
-        if let Some(resource) = self
-            .service
-            .repository
-            .find_by_id(&session.resource_id())
-            .await?
-        {
+        if let Some(resource) = self.service.store.load(&session.resource_id()).await? {
             self.service.upload_sessions.mark_completed(&id).await?;
-            let _ = self
-                .service
-                .blob_storage
-                .discard_staged(&staged_for(id)?)
-                .await;
+            let _ = self.service.staging.discard_staged(&staged_for(id)?).await;
             return Ok(resource);
         }
 
@@ -259,7 +499,7 @@ impl<'a> ResourceUploadService<'a> {
             None => {
                 let checksum_stream = self
                     .service
-                    .blob_storage
+                    .reader
                     .get_stream(staged.key())
                     .await?
                     .ok_or_else(|| CoreError::not_found("staged upload", id.to_string()))?;
@@ -282,7 +522,7 @@ impl<'a> ResourceUploadService<'a> {
         let directory = self
             .service
             .directories
-            .resolve_path(session.directory())
+            .locate_by_id(&session.directory_id())
             .await?;
         let mut resource = build_resource(
             session.name().to_string(),
@@ -291,18 +531,18 @@ impl<'a> ResourceUploadService<'a> {
         )
         .with_id(session.resource_id())
         .build()?;
-        let storage_key = StorageKey::from_resource_path(directory.path(), session.name())?;
+        let storage_key = path_resolver::resource_key(directory.path(), session.name())?;
 
         let _storage_guard = self.service.storage_key_locks.lock(&storage_key).await;
         if let Some(existing) = self
             .service
-            .query
-            .find_by_path(directory.path(), session.name())
+            .read_model
+            .find_by_directory_and_name(directory.id(), session.name())
             .await?
         {
             if existing.resource().id() == session.resource_id() {
                 self.service.upload_sessions.mark_completed(&id).await?;
-                let _ = self.service.blob_storage.discard_staged(&staged).await;
+                let _ = self.service.staging.discard_staged(&staged).await;
                 return Ok(existing.into_resource());
             }
             return Err(CoreError::conflict(format!(
@@ -312,7 +552,7 @@ impl<'a> ResourceUploadService<'a> {
 
         let published = match self
             .service
-            .blob_storage
+            .staging
             .publish_staged_if_absent(&staged, &storage_key)
             .await
         {
@@ -349,9 +589,13 @@ impl<'a> ResourceUploadService<'a> {
                 checksum.clone(),
                 Some(stored.modified_at),
             )?)?;
-            self.service.repository.save(&resource).await?;
+            self.service.store.insert(&resource).await?;
             if let Err(error) = self.service.upload_sessions.mark_completed(&id).await {
-                let _ = self.service.repository.remove(&resource.id()).await;
+                let _ = self
+                    .service
+                    .store
+                    .delete_if_revision(&resource.id(), resource.revision())
+                    .await;
                 return Err(error);
             }
             Ok(resource)
@@ -360,12 +604,12 @@ impl<'a> ResourceUploadService<'a> {
 
         match finalized {
             Ok(resource) => {
-                let _ = self.service.blob_storage.discard_staged(&staged).await;
+                let _ = self.service.staging.discard_staged(&staged).await;
                 Ok(resource)
             }
             Err(error) => {
                 if published || session.status() == UploadStatus::Finalizing {
-                    let _ = self.service.blob_storage.delete(&storage_key).await;
+                    let _ = self.service.objects.delete(&storage_key).await;
                 }
                 Err(error)
             }
@@ -377,8 +621,8 @@ impl<'a> ResourceUploadService<'a> {
         let session = self.load(owner_id, id).await?;
         let staged = staged_for(session.id())?;
         let chunk = chunk_for(session.id())?;
-        self.service.blob_storage.discard_staged(&chunk).await?;
-        self.service.blob_storage.discard_staged(&staged).await?;
+        self.service.staging.discard_staged(&chunk).await?;
+        self.service.staging.discard_staged(&staged).await?;
         self.service.upload_sessions.remove(id).await
     }
 
@@ -400,8 +644,8 @@ impl<'a> ResourceUploadService<'a> {
 
     async fn completed_resource(&self, session: &UploadSession) -> Result<Resource, CoreError> {
         self.service
-            .repository
-            .find_by_id(&session.resource_id())
+            .store
+            .load(&session.resource_id())
             .await?
             .ok_or_else(|| CoreError::not_found("resource", session.resource_id().to_string()))
     }
@@ -418,7 +662,7 @@ impl<'a> ResourceUploadService<'a> {
         if stored.size != expected_size {
             return Ok(false);
         }
-        let Some(stream) = self.service.blob_storage.get_stream(storage_key).await? else {
+        let Some(stream) = self.service.reader.get_stream(storage_key).await? else {
             return Ok(false);
         };
         Ok(calculate_stream_checksum(stream).await? == *expected_checksum)
@@ -428,7 +672,7 @@ impl<'a> ResourceUploadService<'a> {
         let id = session.id();
         let actual = self
             .service
-            .blob_storage
+            .staging
             .inspect_staged(staged_for(id)?.key())
             .await?
             .ok_or_else(|| CoreError::not_found("staged upload", id.to_string()))?
@@ -455,18 +699,65 @@ impl<'a> ResourceUploadService<'a> {
     }
 }
 
+pub struct SecuredUploadService<'a> {
+    service: &'a UploadService,
+    authorization: &'a AuthorizationService,
+    context: &'a AccessContext,
+}
+
+impl SecuredUploadService<'_> {
+    pub async fn create(&self, command: CreateUpload) -> Result<UploadSession, CoreError> {
+        let directory = self
+            .service
+            .service
+            .directories
+            .locate_by_id(&command.directory_id())
+            .await?;
+        self.authorization
+            .require(self.context, &directory, DirectoryOperation::CreateResource)
+            .await?;
+        self.service.create(self.context.user_id(), command).await
+    }
+
+    pub async fn status(&self, id: &UploadId) -> Result<UploadSession, CoreError> {
+        self.service.status(self.context.user_id(), id).await
+    }
+
+    pub async fn append(
+        &self,
+        id: &UploadId,
+        offset: u64,
+        expected_chunk_checksum: Checksum,
+        data: BlobByteStream,
+    ) -> Result<UploadSession, CoreError> {
+        self.service
+            .append(
+                self.context.user_id(),
+                id,
+                offset,
+                expected_chunk_checksum,
+                data,
+            )
+            .await
+    }
+
+    pub async fn complete(&self, id: &UploadId) -> Result<(UploadSession, bool), CoreError> {
+        self.service
+            .request_finalization(self.context.user_id(), id)
+            .await
+    }
+
+    pub async fn abort(&self, id: &UploadId) -> Result<(), CoreError> {
+        self.service.abort(self.context.user_id(), id).await
+    }
+}
+
 fn staged_for(id: UploadId) -> Result<StagedBlob, CoreError> {
-    Ok(StagedBlob::new(
-        StorageKey::new(format!("{RESERVED_BLOB_STORAGE_PREFIX}/uploads/{id}"))?,
-        0,
-    ))
+    Ok(StagedBlob::new(path_resolver::upload_staging_key(id)?, 0))
 }
 
 fn chunk_for(id: UploadId) -> Result<StagedBlob, CoreError> {
-    Ok(StagedBlob::new(
-        StorageKey::new(format!("{RESERVED_BLOB_STORAGE_PREFIX}/uploads/{id}.chunk"))?,
-        0,
-    ))
+    Ok(StagedBlob::new(path_resolver::upload_chunk_key(id)?, 0))
 }
 
 fn reject_reserved_storage_key(key: &StorageKey) -> Result<(), CoreError> {

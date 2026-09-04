@@ -1,32 +1,35 @@
 //! 应用服务与用例入口。
 //!
 //! service 层负责协调领域模型和端口完成完整业务动作。非可信应用入口应通过
-//! [`SecuredResourceService`] 调用资源用例；未绑定授权上下文的子服务仅在 Core 内部可见。
-//!
-//! 该层不依赖 OpenDAL、sqlx 等具体基础设施实现；调用方需要在应用启动时注入
-//! [`ResourceServicePorts`] 所声明的写仓储、查询、Blob、扫描与运行时适配器，并注入共享
-//! 的 [`DirectoryService`]。
+//! [`SecuredResourceService`] 只暴露资源元数据/生命周期；内容、上传与动作分别通过各自
+//! 的授权门面进入。该层不依赖 OpenDAL、sqlx 等具体基础设施实现。
 
 mod asset;
 mod authorization;
 mod directory;
+mod idempotency;
 mod resource;
 mod user;
 
 pub use asset::{
-    AssetCoordinator, DirectoryArchiveManifest, DirectoryArchiveResource, SecuredAssetCoordinator,
+    AssetWorkflowService, DirectoryArchiveManifest, DirectoryArchiveResource,
+    SecuredAssetWorkflowService,
 };
 pub use authorization::{AuthorizationService, WorkspaceScope};
+pub(crate) use directory::ExecutedDirectoryAction;
 pub use directory::{
-    DirectoryActions, DirectoryService, ExecuteDirectoryAction, SecuredDirectoryService,
-    UpdateDirectory,
+    DirectoryActions, DirectoryIndexService, DirectoryProvisioningService, DirectoryService,
+    DirectoryServices, ExecuteDirectoryAction, SecuredDirectoryService, UpdateDirectory,
 };
+pub use idempotency::{IdempotencyOutcome, IdempotencyService, request_hash};
 pub use user::UserService;
 
 pub use resource::{
-    CreateUpload, ExecuteResourceAction, ReplaceResourceContent, ResourceActions,
-    ResourceContentStream, ResourceScanProgress, ResourceService, ResourceServicePorts,
-    SecuredResourceService, StorageReconciliationReport, UpdateResource,
+    ActionOrchestrator, ContentService, CreateUpload, ExecuteResourceAction,
+    ReplaceResourceContent, ResourceActions, ResourceContentStream, ResourceScanProgress,
+    ResourceService, ResourceServices, SecuredActionOrchestrator, SecuredContentService,
+    SecuredResourceService, SecuredUploadService, StorageMaintenanceService,
+    StorageReconciliationReport, UpdateResource, UploadService,
 };
 
 use crate::{CoreError, domain::ActionAccess};

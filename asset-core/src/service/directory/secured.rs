@@ -83,7 +83,7 @@ impl<'a> SecuredDirectoryService<'a> {
             .root()
             .id();
         self.service
-            .create_with_kind_in_scope(parent.location(), name, kind, scope_root)
+            .create_with_kind_in_scope(parent_id, name, kind, scope_root)
             .await
     }
 
@@ -106,7 +106,7 @@ impl<'a> SecuredDirectoryService<'a> {
             .await
     }
 
-    pub async fn remove_if_empty(
+    pub async fn delete(
         &self,
         id: &DirectoryId,
         expected_revision: u64,
@@ -115,7 +115,7 @@ impl<'a> SecuredDirectoryService<'a> {
         self.require(directory.location(), DirectoryOperation::DeleteDirectory)
             .await?;
         self.service
-            .remove_if_empty(directory.location(), Some(expected_revision))
+            .delete_if_empty(id, Some(expected_revision))
             .await
     }
 }

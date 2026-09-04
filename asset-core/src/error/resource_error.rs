@@ -27,8 +27,4 @@ pub enum ResourceError {
         /// 具体格式错误原因。
         reason: &'static str,
     },
-
-    /// 已软删除的资源不允许继续修改。
-    #[error("deleted resource cannot be modified")]
-    DeletedResource,
 }

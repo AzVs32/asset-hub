@@ -1,5 +1,7 @@
 use crate::CliResult;
-use asset_core::service::{ResourceScanProgress, ResourceService, StorageReconciliationReport};
+use asset_core::service::{
+    ResourceScanProgress, StorageMaintenanceService, StorageReconciliationReport,
+};
 use clap::{ArgGroup, Args};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::io::Write;
@@ -19,7 +21,7 @@ pub(crate) struct Command {
     scan_resource: bool,
 }
 
-pub(crate) async fn run(command: Command, service: ResourceService) -> CliResult {
+pub(crate) async fn run(command: Command, service: StorageMaintenanceService) -> CliResult {
     if command.scan_resource {
         scan_resources(service).await
     } else {
@@ -28,7 +30,7 @@ pub(crate) async fn run(command: Command, service: ResourceService) -> CliResult
 }
 
 /// Scans every stored resource while rendering file-level progress.
-async fn scan_resources(service: ResourceService) -> CliResult {
+async fn scan_resources(service: StorageMaintenanceService) -> CliResult {
     println!("verifying all stored resources with SHA-256...");
     std::io::stdout().flush()?;
 

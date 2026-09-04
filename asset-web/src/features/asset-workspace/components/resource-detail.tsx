@@ -176,9 +176,6 @@ function Detail({
             <DetailRow label="MIME">{resource.content?.mimeType ?? "—"}</DetailRow>
             <DetailRow label="Created">{formatDate(resource.createdAt)}</DetailRow>
             <DetailRow label="Updated">{formatDate(resource.updatedAt)}</DetailRow>
-            {resource.state.lifecycle.status === "deleted" ? (
-              <DetailRow label="Deleted">{formatDate(resource.state.lifecycle.at)}</DetailRow>
-            ) : null}
           </DetailSection>
           <DetailAdvanced>
             <DetailRow label="Resource ID">

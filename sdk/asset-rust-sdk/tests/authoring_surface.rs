@@ -20,7 +20,7 @@ fn authoring_surface_is_available_without_a_runtime_adapter() {
 
 fn read_resource_state(resource: ResourceSnapshot<'_>) {
     let state = resource.state();
-    let _: ResourceLifecycleState<'_> = state.lifecycle();
+    let _: ResourceLifecycleState = state.lifecycle();
     let _: ResourceContentState = state.content();
     let _: ResourceEffectiveState = state.effective();
 }

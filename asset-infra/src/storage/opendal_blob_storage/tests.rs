@@ -69,6 +69,22 @@ async fn fs_storage_moves_a_complete_directory_subtree() {
 }
 
 #[tokio::test]
+async fn fs_storage_deletes_only_an_empty_user_directory() {
+    let (storage, root) = storage_with_root("fs-delete-empty-directory");
+    let empty = DirectoryPath::from_path("projects/empty").unwrap();
+    let occupied = DirectoryPath::from_path("projects/occupied").unwrap();
+    storage.ensure_directory(&empty).await.unwrap();
+    storage.ensure_directory(&occupied).await.unwrap();
+    std::fs::write(root.join("projects/occupied/file.bin"), b"content").unwrap();
+
+    storage.delete_empty_directory(&empty).await.unwrap();
+    assert!(!root.join("projects/empty").exists());
+    assert!(root.join("projects").is_dir());
+    assert!(storage.delete_empty_directory(&occupied).await.is_err());
+    assert!(root.join("projects/occupied/file.bin").is_file());
+}
+
+#[tokio::test]
 async fn fs_blob_delete_preserves_empty_user_directories() {
     let (storage, root) = storage_with_root("fs-preserve-user-directory");
     let key = StorageKey::new("drafts/readme.md").unwrap();

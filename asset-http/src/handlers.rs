@@ -10,8 +10,8 @@ use crate::error::HttpError;
 use crate::state::HttpState;
 use asset_core::CoreError;
 use asset_core::domain::{
-    AccessContext, Checksum, DirectoryId, DirectoryKind, ResourceId, ResourceKind, UploadId,
-    UploadSession,
+    AccessContext, Checksum, DirectoryId, DirectoryKind, IdempotencyKey, ResourceId, ResourceKind,
+    UploadId, UploadSession,
 };
 use asset_core::port::BlobByteStream;
 use asset_core::port::ListResources;
@@ -42,11 +42,11 @@ pub(crate) use directory::{
     create_directory, delete_directory, execute_directory_action, find_directory, list_directory,
     list_directory_kinds, update_directory,
 };
-pub(crate) use maintenance::{health, purge_disabled};
+pub(crate) use maintenance::health;
 pub(crate) use plugin::plugin_web_asset;
 pub(crate) use resource::{
-    MAX_ACTION_REQUEST_BYTES, execute_resource_action, find_resource, list_resource_kinds,
-    list_resources, remove_resource, soft_delete_resource, update_resource,
+    MAX_ACTION_REQUEST_BYTES, delete_resource, execute_resource_action, find_resource,
+    list_resource_kinds, list_resources, update_resource,
 };
 pub(crate) use upload::{
     abort_upload, append_upload, complete_upload, create_upload, upload_status,
@@ -55,3 +55,19 @@ pub(crate) use upload::{
 use content::*;
 use directory::*;
 use resource::*;
+
+const IDEMPOTENCY_KEY: header::HeaderName = header::HeaderName::from_static("idempotency-key");
+
+pub(super) fn parse_idempotency_key(
+    headers: &HeaderMap,
+) -> Result<Option<IdempotencyKey>, HttpError> {
+    let Some(value) = headers.get(IDEMPOTENCY_KEY) else {
+        return Ok(None);
+    };
+    let value = value
+        .to_str()
+        .map_err(|_| HttpError::bad_request("invalid idempotency-key header"))?;
+    IdempotencyKey::new(value)
+        .map(Some)
+        .map_err(|error| HttpError::bad_request(error.to_string()))
+}

@@ -12,10 +12,8 @@ import {
   Card,
   CardActions,
   CardHeader,
-  Checkbox,
   CircularProgress,
   Divider,
-  FormControlLabel,
   IconButton,
   InputAdornment,
   List,
@@ -53,7 +51,6 @@ export function ResourceList({
   onSelect,
   onSelectDirectory,
   onAction,
-  onRestore,
   onDirectoryAction,
   onRefresh,
   onUpload,
@@ -71,7 +68,6 @@ export function ResourceList({
   onSelect: (resource: Resource) => void;
   onSelectDirectory: (directory: Directory) => void;
   onAction: (resource: Resource, action: ResourceAction) => void;
-  onRestore: (resource: Resource) => void;
   onDirectoryAction: (directory: Directory, action: DirectoryAction) => void;
   onRefresh: () => void;
   onUpload: () => void;
@@ -136,15 +132,6 @@ export function ResourceList({
           value={filters.kind}
           onChange={(event) => onFilters({ kind: event.target.value, page: 1 })}
         />
-        <FormControlLabel
-          control={
-            <Checkbox
-              checked={filters.includeDeleted}
-              onChange={(event) => onFilters({ includeDeleted: event.target.checked, page: 1 })}
-            />
-          }
-          label="Deleted"
-        />
       </Box>
       <Divider />
       <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
@@ -178,7 +165,6 @@ export function ResourceList({
               selected={resource.id === selectedId}
               onSelect={() => onSelect(resource)}
               onAction={(action) => onAction(resource, action)}
-              onRestore={() => onRestore(resource)}
             />
           ))}
         </List>
@@ -282,13 +268,11 @@ function ResourceRow({
   selected,
   onSelect,
   onAction,
-  onRestore,
 }: {
   resource: Resource;
   selected: boolean;
   onSelect: () => void;
   onAction: (action: ResourceAction) => void;
-  onRestore: () => void;
 }) {
   const kernel = usePluginKernel();
   const actions = kernel.resourceActionsAtCoreSlot(
@@ -296,17 +280,12 @@ function ResourceRow({
     coreDirectoryWorkspaceSlots.resourceContextMenu,
   );
   const status = resourceStatusLabel(resource.state.effective);
-  const menuItems = [
-    ...(resource.state.lifecycle.status === "deleted"
-      ? [{ id: "restore", label: "Restore resource", destructive: false, onSelect: onRestore }]
-      : []),
-    ...actions.map((action) => ({
+  const menuItems = actions.map((action) => ({
       id: action.id,
       label: action.label,
       destructive: action.ui.destructive,
       onSelect: () => onAction(action),
-    })),
-  ];
+    }));
   return (
     <ListItem
       disablePadding

@@ -1,4 +1,4 @@
-use super::{Checksum, DirectoryPath, Resource, ResourceContent, ResourceId, ResourceKind, UserId};
+use super::{Checksum, DirectoryId, Resource, ResourceContent, ResourceId, ResourceKind, UserId};
 use crate::ResourceError;
 use chrono::{DateTime, Utc};
 
@@ -30,7 +30,7 @@ pub struct UploadSession {
     resource_id: ResourceId,
     owner_id: UserId,
     name: String,
-    directory: DirectoryPath,
+    directory_id: DirectoryId,
     kind: ResourceKind,
     mime_type: Option<String>,
     expected_size: u64,
@@ -49,7 +49,7 @@ pub struct UploadSessionSnapshot {
     pub resource_id: ResourceId,
     pub owner_id: UserId,
     pub name: String,
-    pub directory: DirectoryPath,
+    pub directory_id: DirectoryId,
     pub kind: ResourceKind,
     pub mime_type: Option<String>,
     pub expected_size: u64,
@@ -67,7 +67,7 @@ impl UploadSession {
     pub fn new(
         owner_id: UserId,
         name: impl Into<String>,
-        directory: DirectoryPath,
+        directory_id: DirectoryId,
         kind: ResourceKind,
         mime_type: Option<String>,
         expected_size: u64,
@@ -79,7 +79,7 @@ impl UploadSession {
             resource_id: ResourceId::new(),
             owner_id,
             name: name.into(),
-            directory,
+            directory_id,
             kind,
             mime_type,
             expected_size,
@@ -109,7 +109,7 @@ impl UploadSession {
             resource_id: snapshot.resource_id,
             owner_id: snapshot.owner_id,
             name: snapshot.name,
-            directory: snapshot.directory,
+            directory_id: snapshot.directory_id,
             kind: snapshot.kind,
             mime_type: snapshot.mime_type,
             expected_size: snapshot.expected_size,
@@ -135,8 +135,8 @@ impl UploadSession {
     pub fn name(&self) -> &str {
         &self.name
     }
-    pub fn directory(&self) -> &DirectoryPath {
-        &self.directory
+    pub fn directory_id(&self) -> DirectoryId {
+        self.directory_id
     }
     pub fn kind(&self) -> &ResourceKind {
         &self.kind
@@ -323,7 +323,7 @@ mod tests {
         UploadSession::new(
             UserId::new(),
             "asset.bin",
-            DirectoryPath::root(),
+            DirectoryId::root(),
             ResourceKind::default(),
             None,
             expected_size,
@@ -361,7 +361,7 @@ mod tests {
             resource_id: session.resource_id(),
             owner_id: session.owner_id(),
             name: session.name().to_string(),
-            directory: session.directory().clone(),
+            directory_id: session.directory_id(),
             kind: session.kind().clone(),
             mime_type: None,
             expected_size: 4,

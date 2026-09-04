@@ -20,7 +20,7 @@ pub(crate) async fn health(
     let session_health = session_health.map(|Extension(health)| health);
     let (database, blob_storage, session_store) = tokio::join!(
         state.resources().check_repository_health(),
-        state.resources().check_blob_storage_health(),
+        state.check_blob_storage_health(),
         async move {
             match session_health {
                 Some(health) => Some(health.check().await),
@@ -51,11 +51,4 @@ pub(crate) async fn health(
             session_store_ready,
         )),
     )
-}
-
-/// 物理删除接口已被启动配置禁用。
-pub(crate) async fn purge_disabled() -> Result<StatusCode, HttpError> {
-    Err(HttpError::forbidden(
-        "resource purge endpoint is disabled by --enable-purge=false",
-    ))
 }

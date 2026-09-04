@@ -5,11 +5,13 @@ use std::path::{Path, PathBuf};
 
 mod blob_config;
 mod database_config;
+mod idempotency_config;
 mod plugin_host_config;
 mod resource_edit_config;
 
 pub use blob_config::{BlobBackend, BlobConfig, LocalBlobConfig, LocalBlobSyncConfig};
 pub use database_config::{DatabaseBackend, DatabaseConfig, SqliteDatabaseConfig};
+pub use idempotency_config::IdempotencyConfig;
 pub use plugin_host_config::{PluginHostConfig, PluginPermissionGrants};
 pub use resource_edit_config::ResourceEditConfig;
 
@@ -54,6 +56,7 @@ const DEFAULT_RESOURCE_EDIT_MAX_TEXT_BYTES: u64 = 4 * 1024 * 1024;
 /// - 本地 Blob 存储根目录：`data`
 /// - SQLite 数据库文件：固定为 `<blob.local.root>/.asset-hub/asset-hub.sqlite`
 /// - SQLite 最大连接数：`5`
+/// - 请求幂等执行租约：`300` 秒
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AssetInfraConfig {
@@ -65,6 +68,8 @@ pub struct AssetInfraConfig {
     pub plugin: PluginHostConfig,
     /// Host 交互式资源编辑策略。
     pub resource_edit: ResourceEditConfig,
+    /// 持久请求幂等执行租约策略。
+    pub idempotency: IdempotencyConfig,
 }
 
 impl AssetInfraConfig {
@@ -135,6 +140,7 @@ impl AssetInfraConfig {
         }
         self.plugin.normalize_and_validate()?;
         self.resource_edit.validate()?;
+        self.idempotency.validate()?;
         Ok(self)
     }
 

@@ -11,3 +11,6 @@ mod state;
 pub use router::{build_router, with_authentication};
 pub use session_store::{HttpSessionRuntime, SessionStoreHealth};
 pub use settings::{CorsPolicy, HttpSettings, RouterOptions, SessionOptions};
+pub use state::{
+    DirectoryHttpServices, HttpComposition, HttpHealthServices, HttpServices, ResourceHttpServices,
+};

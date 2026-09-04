@@ -28,7 +28,6 @@ export interface AssetWorkspaceGateway {
   listDirectory(filters: ResourceFilters, signal?: AbortSignal): Promise<DirectoryListing>;
   findResource(id: string): Promise<Resource>;
   updateResource(resource: Resource, draft: ResourceDraft): Promise<Resource>;
-  restoreResource(resource: Resource): Promise<Resource>;
   uploadResource(
     draft: UploadDraft,
     onProgress?: (progress: UploadProgress) => void,

@@ -1,8 +1,7 @@
 //! 资源聚合及其内容、类型和状态值对象。
 //!
-//! Resource 生命周期与内容校验是两个独立的权威状态轴；[`ResourceState`] 在读取时统一
-//! 投影它们，并通过 [`ResourceState::effective`] 提供软删除优先的单值判断。该投影不
-//! 持久化，也不接收状态写命令。尚未发布为 Resource 的上传流程继续由独立的
+//! 资源生命周期与内容校验是两个独立的状态轴；[`ResourceState`] 在读取时统一投影它们。
+//! 该投影不持久化，也不接收状态写命令。尚未发布为 Resource 的上传流程继续由独立的
 //! [`crate::domain::UploadSession`] 聚合管理。
 
 mod content;
@@ -32,7 +31,7 @@ crate::gen_id_uuid_v7!(ResourceId);
 
 /// 资源聚合根。
 ///
-/// `Resource` 负责维护资源基础信息、内容引用和软删除状态。
+/// `Resource` 负责维护资源基础信息和内容引用。
 /// 外部代码应通过构建器和行为方法修改资源，避免绕过领域规则直接写字段。
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Resource {
@@ -52,8 +51,6 @@ pub struct Resource {
     updated_at: DateTime<Utc>,
     /// 单调递增的聚合版本，用于乐观并发控制。
     revision: u64,
-    /// 软删除时间；为空表示未删除。
-    deleted_at: Option<DateTime<Utc>>,
 }
 
 impl Resource {
@@ -64,7 +61,7 @@ impl Resource {
 
     /// 从持久化适配器已解析的完整状态还原资源聚合。
     ///
-    /// 该方法保留原 ID、时间戳和软删除状态，但仍会重新执行聚合约束校验。
+    /// 该方法保留原 ID 和时间戳，但仍会重新执行聚合约束校验。
     #[allow(clippy::too_many_arguments)]
     pub fn rehydrate(
         id: ResourceId,
@@ -75,7 +72,6 @@ impl Resource {
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
         revision: u64,
-        deleted_at: Option<DateTime<Utc>>,
     ) -> Result<Self, ResourceError> {
         let name = normalize_resource_name(name)?;
         if revision == 0 {
@@ -90,12 +86,6 @@ impl Resource {
                 reason: "updated timestamp cannot precede creation",
             });
         }
-        if deleted_at.is_some_and(|deleted_at| deleted_at != updated_at) {
-            return Err(ResourceError::InvalidFormat {
-                field: "resource.deleted_at",
-                reason: "deleted timestamp must match the last update",
-            });
-        }
 
         Ok(Self {
             id,
@@ -106,7 +96,6 @@ impl Resource {
             created_at,
             updated_at,
             revision,
-            deleted_at,
         })
     }
 }
@@ -152,11 +141,6 @@ impl Resource {
         self.revision
     }
 
-    /// 返回资源软删除时间。
-    pub fn deleted_at(&self) -> Option<DateTime<Utc>> {
-        self.deleted_at
-    }
-
     /// 返回生命周期与内容校验状态的统一只读投影。
     ///
     /// 投影不引入新的持久化状态；需要改变资源时仍应调用对应的领域行为和应用服务用例。
@@ -164,18 +148,10 @@ impl Resource {
         ResourceState::from_resource(self)
     }
 
-    /// 是否已被软删除
-    ///
-    /// 当 `deleted_at` 字段不为空时，表示为已经软删除。
-    fn is_deleted(&self) -> bool {
-        self.deleted_at.is_some()
-    }
-
     /// 重命名资源。
     ///
     /// 名称会按资源名称规则校验并原样保留，包括其中的首尾空白。
     pub fn rename(&mut self, name: impl Into<String>) -> Result<(), ResourceError> {
-        self.ensure_not_deleted()?;
         let name = normalize_resource_name(name.into())?;
         if self.name != name {
             self.name = name;
@@ -187,8 +163,6 @@ impl Resource {
 
     /// 移动资源到新的逻辑目录。
     pub fn move_to_directory(&mut self, directory_id: DirectoryId) -> Result<(), ResourceError> {
-        self.ensure_not_deleted()?;
-
         if self.directory_id != directory_id {
             self.directory_id = directory_id;
             self.touch();
@@ -199,10 +173,7 @@ impl Resource {
 
     /// 修改资源类型。
     ///
-    /// 已删除资源不能修改类型。
     pub fn change_kind(&mut self, kind: ResourceKind) -> Result<(), ResourceError> {
-        self.ensure_not_deleted()?;
-
         if self.kind != kind {
             self.kind = kind;
             self.touch();
@@ -211,40 +182,11 @@ impl Resource {
         Ok(())
     }
 
-    /// 软删除资源。
-    ///
-    /// 软删除会记录 `deleted_at` 并刷新 `updated_at`，不会清除内容引用。
-    pub fn soft_delete(&mut self) {
-        if self.deleted_at.is_none() {
-            let now = Utc::now();
-            self.deleted_at = Some(now);
-            self.updated_at = now;
-            self.increment_revision();
-        }
-    }
-
-    /// 从软删除状态恢复资源。
-    pub fn restore(&mut self) {
-        if self.deleted_at.take().is_some() {
-            self.touch();
-        }
-    }
-
     /// 绑定或替换资源内容引用。
     pub fn attach_content(&mut self, content: ResourceContent) -> Result<(), ResourceError> {
-        self.ensure_not_deleted()?;
         self.content = Some(content);
         self.touch();
         Ok(())
-    }
-
-    /// 确认资源当前仍可被修改。
-    fn ensure_not_deleted(&self) -> Result<(), ResourceError> {
-        if self.is_deleted() {
-            Err(ResourceError::DeletedResource)
-        } else {
-            Ok(())
-        }
     }
 
     /// 刷新资源更新时间。
@@ -340,7 +282,6 @@ impl ResourceBuilder {
             created_at: now,
             updated_at: now,
             revision: 1,
-            deleted_at: None,
         })
     }
 }

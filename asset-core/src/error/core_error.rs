@@ -77,6 +77,10 @@ pub enum CoreError {
         message: String,
     },
 
+    /// An idempotent command finished after another execution had taken over its lease.
+    #[error("idempotency execution lease was lost for key `{key}`")]
+    LostIdempotencyLease { key: String },
+
     /// 调用方基于过期的聚合快照发起了需要一致性的操作。
     #[error("{aggregate} `{id}` changed after it was read")]
     RevisionConflict { aggregate: &'static str, id: String },
@@ -167,6 +171,10 @@ impl CoreError {
         Self::Conflict {
             message: message.into(),
         }
+    }
+
+    pub fn lost_idempotency_lease(key: impl Into<String>) -> Self {
+        Self::LostIdempotencyLease { key: key.into() }
     }
 
     pub fn revision_conflict(aggregate: &'static str, id: impl Into<String>) -> Self {

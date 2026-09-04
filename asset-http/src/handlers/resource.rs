@@ -24,7 +24,13 @@ pub(crate) async fn list_resource_kinds(
             .resources()
             .kind_definitions()
             .iter()
-            .map(|definition| ResourceKindResponse::from_definition(definition, state.resources()))
+            .map(|definition| {
+                ResourceKindResponse::from_definition(
+                    definition,
+                    state.resources(),
+                    state.resource_actions(),
+                )
+            })
             .collect(),
     })
 }
@@ -50,8 +56,7 @@ pub(crate) async fn list_resources(
     let page = query.page.unwrap_or(DEFAULT_PAGE).max(1);
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let offset = u64::from(page - 1) * u64::from(limit);
-    let mut command = ListResources::new(limit, offset)
-        .with_include_deleted(query.include_deleted.unwrap_or(false));
+    let mut command = ListResources::new(limit, offset, DirectoryId::root());
 
     if let Some(kind) = query.kind {
         command = command.with_kind(parse_kind(kind)?);
@@ -61,17 +66,16 @@ pub(crate) async fn list_resources(
         command = command.with_q(q);
     }
 
-    if let Some(directory) = query.directory {
-        command = command.with_directory(directory);
-    }
+    let directory = query.directory.unwrap_or_default();
 
     let page_result = state
         .secured_resources(&access.0)
-        .list_resources(command)
+        .list(&directory, command)
         .await?;
 
     Ok(Json(resource_page_response(
         state.resources(),
+        state.resource_actions(),
         &workspace,
         page_result,
         page,
@@ -101,13 +105,10 @@ pub(crate) async fn find_resource(
     let id = parse_resource_id(&id)?;
     let workspace = state.workspace(&access.0).await?;
 
-    match state
-        .secured_resources(&access.0)
-        .find_resource(&id)
-        .await?
-    {
+    match state.secured_resources(&access.0).get(&id).await? {
         Some(resource) => Ok(Json(resource_response(
             state.resources(),
+            state.resource_actions(),
             &workspace,
             &resource,
         )?)),
@@ -150,21 +151,23 @@ pub(crate) async fn update_resource(
         command = command.with_kind(parse_kind(kind)?);
     }
 
-    if let Some(directory) = payload.directory {
-        command = command.with_directory(directory);
-    }
-
-    if let Some(restore) = payload.restore {
-        command = command.with_restore(restore);
+    if let Some(directory_id) = payload.directory_id {
+        command = command.with_directory_id(parse_directory_id(&directory_id)?);
     }
 
     match state
         .secured_resources(&access.0)
-        .update_resource(&id, command)
+        .update(&id, command)
         .await?
     {
         Some(resource) => Ok(Json(
-            resource_snapshot_response(state.resources(), &workspace, &resource).await?,
+            resource_snapshot_response(
+                state.resources(),
+                state.resource_actions(),
+                &workspace,
+                &resource,
+            )
+            .await?,
         )),
         None => Err(HttpError::not_found(format!("resource `{id}` not found"))),
     }
@@ -178,7 +181,8 @@ pub(crate) async fn update_resource(
     request_body = ExecuteResourceActionRequest,
     params(
         ("id" = String, Path, description = "资源 ID"),
-        ("action" = String, Path, description = "动作 ID")
+        ("action" = String, Path, description = "动作 ID"),
+        ("Idempotency-Key" = Option<String>, Header, description = "可选的幂等键，重复提交不会重复应用 Host effect")
     ),
     responses(
         (status = 200, description = "动作执行结果", body = ResourceActionOutputResponse),
@@ -192,6 +196,7 @@ pub(crate) async fn execute_resource_action(
     State(state): State<HttpState>,
     access: Extension<AccessContext>,
     Path((id, action)): Path<(String, String)>,
+    headers: HeaderMap,
     payload: Result<Json<ExecuteResourceActionRequest>, JsonRejection>,
 ) -> Result<Json<ResourceActionOutputResponse>, HttpError> {
     let id = parse_resource_id(&id)?;
@@ -202,14 +207,17 @@ pub(crate) async fn execute_resource_action(
             HttpError::bad_request(error.body_text())
         }
     })?;
-    let command = ExecuteResourceAction::new(
+    let mut command = ExecuteResourceAction::new(
         asset_core::domain::ResourceActionId::new(action).map_err(CoreError::from)?,
         payload.expected_revision,
     )
     .with_input(payload.input.clone());
+    if let Some(key) = parse_idempotency_key(&headers)? {
+        command = command.with_idempotency_key(key);
+    }
     let Some(output) = state
-        .secured_resources(&access.0)
-        .execute_resource_action(&id, command)
+        .secured_resource_actions(&access.0)
+        .execute(&id, command)
         .await?
     else {
         return Err(HttpError::not_found(format!("resource `{id}` not found")));
@@ -218,7 +226,7 @@ pub(crate) async fn execute_resource_action(
     Ok(Json(ResourceActionOutputResponse::from(&output)))
 }
 
-/// 软删除资源。
+/// Permanently delete a Resource and its physical content.
 #[utoipa::path(
     delete,
     path = "/resources/{id}",
@@ -228,59 +236,24 @@ pub(crate) async fn execute_resource_action(
         ExpectedRevisionQuery
     ),
     responses(
-        (status = 200, description = "资源已软删除", body = ResourceResponse),
+        (status = 200, description = "资源已删除", body = ResourceResponse),
         (status = 400, description = "请求参数无效", body = crate::dto::ErrorResponse),
         (status = 404, description = "资源不存在", body = crate::dto::ErrorResponse),
         (status = 409, description = "资源版本已变化", body = crate::dto::ErrorResponse),
         (status = 500, description = "服务端错误", body = crate::dto::ErrorResponse)
     )
 )]
-pub(crate) async fn soft_delete_resource(
+pub(crate) async fn delete_resource(
     State(state): State<HttpState>,
     access: Extension<AccessContext>,
     Path(id): Path<String>,
     Query(query): Query<ExpectedRevisionQuery>,
-) -> Result<Json<ResourceResponse>, HttpError> {
-    let id = parse_resource_id(&id)?;
-    let workspace = state.workspace(&access.0).await?;
-
-    match state
-        .secured_resources(&access.0)
-        .soft_delete_resource(&id, query.expected_revision)
-        .await?
-    {
-        Some(resource) => Ok(Json(
-            resource_snapshot_response(state.resources(), &workspace, &resource).await?,
-        )),
-        None => Err(HttpError::not_found(format!("resource `{id}` not found"))),
-    }
-}
-
-/// 物理移除资源和对象内容。
-#[utoipa::path(
-    delete,
-    path = "/resources/{id}/purge",
-    tag = "resources",
-    params(
-        ("id" = String, Path, description = "资源 ID")
-    ),
-    responses(
-        (status = 204, description = "资源和对象内容已物理移除"),
-        (status = 400, description = "请求参数无效", body = crate::dto::ErrorResponse),
-        (status = 404, description = "资源不存在", body = crate::dto::ErrorResponse),
-        (status = 500, description = "服务端错误", body = crate::dto::ErrorResponse)
-    )
-)]
-pub(crate) async fn remove_resource(
-    State(state): State<HttpState>,
-    access: Extension<AccessContext>,
-    Path(id): Path<String>,
 ) -> Result<StatusCode, HttpError> {
     let id = parse_resource_id(&id)?;
 
     if state
         .secured_resources(&access.0)
-        .remove_resource(&id)
+        .delete(&id, query.expected_revision)
         .await?
     {
         Ok(StatusCode::NO_CONTENT)
@@ -294,11 +267,12 @@ pub(super) fn parse_kind(value: impl Into<String>) -> Result<ResourceKind, HttpE
 }
 
 pub(super) fn resource_response(
-    service: &asset_core::service::ResourceService,
+    _service: &asset_core::service::ResourceService,
+    action_orchestrator: &asset_core::service::ActionOrchestrator,
     workspace: &asset_core::service::WorkspaceScope,
     resource: &asset_core::port::LocatedResource,
 ) -> Result<ResourceResponse, CoreError> {
-    let actions = service.describe_resource_actions(resource.resource())?;
+    let actions = action_orchestrator.describe_resource_actions(resource.resource())?;
     Ok(ResourceResponse::new(
         resource.resource(),
         workspace.project(resource.directory().path())?,
@@ -308,10 +282,11 @@ pub(super) fn resource_response(
 
 pub(super) async fn resource_snapshot_response(
     service: &asset_core::service::ResourceService,
+    action_orchestrator: &asset_core::service::ActionOrchestrator,
     workspace: &asset_core::service::WorkspaceScope,
     resource: &asset_core::domain::Resource,
 ) -> Result<ResourceResponse, CoreError> {
-    let actions = service.describe_resource_actions(resource)?;
+    let actions = action_orchestrator.describe_resource_actions(resource)?;
     let directory = service.locate_resource_directory(resource).await?;
     Ok(ResourceResponse::new(
         resource,
@@ -322,13 +297,19 @@ pub(super) async fn resource_snapshot_response(
 
 pub(super) fn resource_page_response(
     service: &asset_core::service::ResourceService,
+    action_orchestrator: &asset_core::service::ActionOrchestrator,
     workspace: &asset_core::service::WorkspaceScope,
     page_result: asset_core::port::ResourcePage,
     page: u32,
 ) -> Result<ResourcePageResponse, CoreError> {
     let mut items = Vec::with_capacity(page_result.items.len());
     for resource in &page_result.items {
-        items.push(resource_response(service, workspace, resource)?);
+        items.push(resource_response(
+            service,
+            action_orchestrator,
+            workspace,
+            resource,
+        )?);
     }
     Ok(ResourcePageResponse {
         items,

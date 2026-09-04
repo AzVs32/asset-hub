@@ -10,8 +10,15 @@ queried through `ResourceService`/`DirectoryService`, not through kind-registry 
 capability; HTTP does not depend on the concrete Runtime scheduler or supervisor.
 
 Resource and Directory handlers live in separate modules. HTTP state exposes separately secured
-Resource and Directory surfaces, plus `AssetCoordinator` only for directory actions and archive
-projections whose result spans both aggregates.
+Resource and Directory surfaces, plus `AssetWorkflowService` only for directory actions and archive
+projections whose result spans both aggregates. Router construction receives one
+`HttpComposition` bundle: `ResourceHttpServices`, `DirectoryHttpServices`, the cross-aggregate
+workflow service, and the narrow health-only Blob readiness capability. These bundles organize
+transport dependencies only; they do not add business workflows or expose repositories, storage,
+recovery, or reconciliation operations to handlers.
+
+When explicit CORS origins are configured, browser preflight requests may send the documented
+write precondition and upload headers, including `Idempotency-Key`.
 
 Resource and Directory contracts deliberately use the same shape where their semantics overlap.
 Both expose stable UUIDs, kind definitions with typed `origin` metadata, flattened action arrays,
@@ -24,10 +31,9 @@ snapshot; callers may still supply it when exact snapshot consistency is require
 remain navigation and display data, not Directory identity.
 
 Resource responses expose one authoritative `state` object derived by Core. It contains the
-lifecycle state (including the deletion timestamp only for `deleted`), content state, and effective
-single-value state. HTTP does not also expose `deleted_at` or a second content-verification status;
-clients must consume `state` instead of reconstructing precedence from independent transport
-fields.
+lifecycle state, content state, and effective single-value state. HTTP does not also expose a
+second content-verification status; clients must consume `state` instead of reconstructing
+precedence from independent transport fields.
 
 Kind-list responses retain their contextual action declarations, while Resource and Directory
 responses contain actions that are actually applicable to that aggregate and content state. This
@@ -38,7 +44,7 @@ Action declarations expose the views and effects they may return through `output
 `output.effects`. The built-in Resource and Directory delete entries are ordinary write Actions
 that declare only the `delete` effect, carry destructive confirmation metadata, and return no View.
 Clients invoke them through the same Resource or Directory action endpoint used by other Actions.
-Core applies the effect through the existing authorized resource soft-delete or empty-directory
+Core applies the effect through the existing authorized resource delete or empty-directory
 delete use case. The dedicated `DELETE /resources/{id}` and `DELETE /directories/{id}` endpoints
 remain available as direct HTTP use cases.
 

@@ -60,8 +60,7 @@ impl Modify for CookieSecurity {
         handlers::content::download_resource_content,
         handlers::content::download_directory,
         handlers::resource::execute_resource_action,
-        handlers::resource::soft_delete_resource,
-        handlers::resource::remove_resource
+        handlers::resource::delete_resource
     ),
     components(
         schemas(
@@ -144,7 +143,6 @@ mod tests {
         let content = &schemas["ResourceContentResponse"]["properties"];
 
         assert!(resource.get("state").is_some());
-        assert!(resource.get("deleted_at").is_none());
         assert!(content.get("verification_status").is_none());
         assert!(schemas.get("ResourceStateResponse").is_some());
         assert!(schemas.get("ContentVerificationStatusResponse").is_none());

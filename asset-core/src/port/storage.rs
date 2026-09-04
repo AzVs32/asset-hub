@@ -4,7 +4,10 @@ mod blob;
 mod directory;
 mod scanner;
 
-pub use blob::{BlobByteStream, BlobStorage, RESERVED_BLOB_STORAGE_PREFIX, StagedBlob};
+pub use blob::{
+    BlobByteStream, BlobHealth, ContentObjectStore, ContentReader, ContentStagingStore,
+    RESERVED_BLOB_STORAGE_PREFIX, StagedBlob,
+};
 pub use directory::DirectoryStorage;
 pub use scanner::{
     ScannedBlob, ScannedStorageEntry, StoragePrefix, StorageScanStream, StorageScanner,

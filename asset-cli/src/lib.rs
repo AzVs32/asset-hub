@@ -43,7 +43,7 @@ pub async fn run(cli: Cli) -> CliResult {
         Command::Config(command) => config::run(command, config_path),
         Command::System(command) => {
             let runtime = maintenance_runtime(config_path).await?;
-            system::run(command, runtime.resource_service()).await
+            system::run(command, runtime.storage_maintenance_service()).await
         }
         Command::User(command) => {
             let runtime = maintenance_runtime(config_path).await?;

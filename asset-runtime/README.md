@@ -18,14 +18,15 @@ Construction has a deterministic order:
 4. compile private Extism handler bindings and combine them with typed built-in handler bindings;
 5. derive the Core Action-content and interactive text-edit policies from their independent Host
    configuration values;
-6. compose one shared `DirectoryService`, then inject clones of that same service into
-   `ResourceService`, `UserService`, and `AuthorizationService` so directory mutation locking has
-   one process-local ownership boundary; compose a narrow `AssetCoordinator` from the Resource and
-   Directory services for directory actions and archive projections that cross both aggregates;
-7. recover pending Resource content replacements;
-8. read pending upload finalization IDs from Core and schedule them through the Runtime-owned
+6. compose `DirectoryService`, `DirectoryProvisioningService`, and `DirectoryIndexService` through
+   one `DirectoryServices` bundle so they share a store, projection, and process-local mutation
+   boundary; inject ordinary Directory lookup/mutation into Resource/authorization/workflows and
+   inject provisioning only into User workspace setup and trusted storage reconciliation;
+7. recover pending Directory relocations before Resource/upload recovery;
+8. recover pending Resource content replacements;
+9. read pending upload finalization IDs from Core and schedule them through the Runtime-owned
    finalization supervisor;
-9. start optional storage synchronization only when the application surface requests it.
+10. start optional storage synchronization only when the application surface requests it.
 
 `AssetRuntime::new` is the composition boundary. `AssetInfrastructure`, `PluginCatalog`, concrete
 kind/action registries, and concrete action executors are construction locals. Their required
@@ -33,7 +34,7 @@ ports and handler ownership are retained by the composed Core services; the Runt
 duplicate concrete `Arc`s or expose registry getters. Resource and Directory kind definitions are
 queried through their respective services; the coordinator exposes no kind or repository surface.
 
-The Runtime retains only the Resource and Directory services, the narrow cross-aggregate
+The Runtime retains the Resource service, the three Directory services, the narrow cross-aggregate
 coordinator, the frozen Plugin Web asset snapshot, the
 private upload-finalization supervisor, the effective settings needed to start local storage sync,
 and the sync guard after startup. The caller continues to own its loaded configuration; the
@@ -59,6 +60,20 @@ refinement; it is not current runtime wiring.
 The runtime owns the verified browser-asset snapshot exposed to application surfaces. Filesystem
 paths and loaded bytes are Host runtime data and are intentionally absent from `asset-plugin-api`
 and the authoring SDKs.
+
+## Recovery safety-net tests
+
+The focused test matrix deliberately exercises durable state and real local filesystem transitions
+instead of reproducing broad CRUD coverage:
+
+| Invariant | Simulated interruption or race | Expected result | Test location |
+| --- | --- | --- | --- |
+| Content replacement rollback | intent before filesystem work; Blob published before metadata CAS | old metadata and Blob are restored; staged/backup artifacts are removed; rerun is a no-op | `asset-runtime/src/runtime/tests.rs` |
+| Directory relocation recovery | filesystem subtree moved before SQLite update | stable Directory IDs and Resource directory IDs remain valid; paths/index converge; rerun is a no-op | `asset-runtime/src/runtime/tests.rs` |
+| Resource relocation recovery | physical Blob moved before resource CAS; competing revision wins | normal recovery commits the desired resource; a stale recovery restores the source Blob and never overwrites the newer aggregate | `asset-runtime/src/runtime/tests.rs` |
+| SQLite CAS and batch atomicity | two writers use the same Resource revision; one Directory batch entry is stale | exactly one Resource update commits; the Directory transaction leaves no partial update | `asset-infra/src/sqlite/repositories/tests.rs` |
+| Idempotency lease ownership | expired lease takeover and concurrent acquire | one new owner wins; stale owners cannot complete or abandon; completed results replay | `asset-infra/src/sqlite/idempotency_repository/tests.rs` |
+| Workspace isolation | member supplies foreign Resource or Directory UUID | secured services reject access before performing the operation | `asset-runtime/src/runtime/tests.rs` |
 
 Run:
 

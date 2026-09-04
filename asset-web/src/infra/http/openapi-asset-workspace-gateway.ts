@@ -34,7 +34,13 @@ export class OpenApiAssetWorkspaceGateway implements AssetWorkspaceGateway, Plug
     hashFile: FileSha256,
     private readonly hashChunk: BlobSha256,
   ) {
-    this.#upload = new ResumableUpload(baseUrl, hashFile, hashChunk, (id) => this.findResource(id));
+    this.#upload = new ResumableUpload(
+      baseUrl,
+      hashFile,
+      hashChunk,
+      (id) => this.findResource(id),
+      (path) => this.resolveDirectoryId(path),
+    );
   }
 
   async listResourceKinds() {
@@ -54,7 +60,6 @@ export class OpenApiAssetWorkspaceGateway implements AssetWorkspaceGateway, Plug
       limit: filters.limit,
       ...(filters.kind ? { kind: filters.kind } : {}),
       ...(filters.query.trim() ? { q: filters.query.trim() } : {}),
-      ...(filters.includeDeleted ? { include_deleted: true } : {}),
     };
     const result = await this.client.GET("/directories", {
       params: { query },
@@ -80,17 +85,10 @@ export class OpenApiAssetWorkspaceGateway implements AssetWorkspaceGateway, Plug
   }
 
   async updateResource(resource: Resource, draft: ResourceDraft) {
+    const directoryId = await this.resolveDirectoryId(draft.directory);
     const result = await this.client.PATCH("/resources/{id}", {
       params: { path: { id: resource.id } },
-      body: resourceBody(draft, resource.revision),
-    });
-    return mapResource(expectData(result));
-  }
-
-  async restoreResource(resource: Resource) {
-    const result = await this.client.PATCH("/resources/{id}", {
-      params: { path: { id: resource.id } },
-      body: { expected_revision: resource.revision, restore: true },
+      body: resourceBody(draft, resource.revision, directoryId),
     });
     return mapResource(expectData(result));
   }
@@ -101,6 +99,13 @@ export class OpenApiAssetWorkspaceGateway implements AssetWorkspaceGateway, Plug
 
   waitForUpload(id: string) {
     return this.#upload.waitForCompletion(id);
+  }
+
+  private async resolveDirectoryId(path: string): Promise<string> {
+    const result = await this.client.GET("/directories", {
+      params: { query: { path, page: 1, limit: 1 } },
+    });
+    return expectData(result).directory.id;
   }
 
   async findDirectory(id: string) {

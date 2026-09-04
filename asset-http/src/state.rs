@@ -1,41 +1,80 @@
 use asset_core::CoreError;
 use asset_core::domain::AccessContext;
 use asset_core::service::{
-    AssetCoordinator, AuthorizationService, DirectoryService, ResourceService,
-    SecuredAssetCoordinator, SecuredDirectoryService, SecuredResourceService, WorkspaceScope,
+    ActionOrchestrator, AssetWorkflowService, AuthorizationService, ContentService,
+    DirectoryService, ResourceService, SecuredActionOrchestrator, SecuredAssetWorkflowService,
+    SecuredContentService, SecuredDirectoryService, SecuredResourceService, SecuredUploadService,
+    StorageMaintenanceService, UploadService, WorkspaceScope,
 };
 use asset_runtime::{PluginWebAssets, UploadFinalizationDispatcher};
 use std::sync::Arc;
 
-/// HTTP handler 共享状态。
+/// HTTP routes that operate on Resource aggregates or their content.
 ///
-/// Axum 会为每个请求 clone 该状态；各服务内部只 clone 端口引用，因此成本较低。
+/// This is a composition-only grouping; application workflows remain on the individual services.
+#[derive(Clone)]
+pub struct ResourceHttpServices {
+    pub resources: ResourceService,
+    pub content: ContentService,
+    pub uploads: UploadService,
+    pub actions: ActionOrchestrator,
+}
+
+/// HTTP routes that address Directory aggregates.
+#[derive(Clone)]
+pub struct DirectoryHttpServices {
+    pub directories: DirectoryService,
+}
+
+/// The sole maintenance capability required by the public HTTP surface.
+///
+/// It supports `/health` Blob readiness only. Recovery and reconciliation operations are not
+/// exposed to handlers or added as HTTP endpoints.
+#[derive(Clone)]
+pub struct HttpHealthServices {
+    pub storage_maintenance: StorageMaintenanceService,
+}
+
+/// Application services consumed by HTTP routes, grouped only by transport dependency shape.
+///
+/// The bundle owns no business methods and does not merge the constituent service boundaries.
+#[derive(Clone)]
+pub struct HttpServices {
+    pub resources: ResourceHttpServices,
+    pub directories: DirectoryHttpServices,
+    pub workflows: AssetWorkflowService,
+    pub health: HttpHealthServices,
+}
+
+/// All dependencies needed to compose the HTTP router once at application startup.
+///
+/// Unlike [`HttpState`], this is public because executable composition happens outside the library.
+pub struct HttpComposition {
+    pub services: HttpServices,
+    pub plugin_web_assets: PluginWebAssets,
+    pub authorization: AuthorizationService,
+    pub upload_finalizations: Arc<dyn UploadFinalizationDispatcher>,
+}
+
+/// HTTP handler shared state.
+///
+/// Axum clones this state for each request. The bundled services already own their shared ports,
+/// so cloning retains the existing ownership model without introducing `Arc<Arc<Service>>`.
 #[derive(Clone)]
 pub(crate) struct HttpState {
-    resources: ResourceService,
-    directories: DirectoryService,
-    asset_coordinator: AssetCoordinator,
+    services: HttpServices,
     plugin_web_assets: Arc<PluginWebAssets>,
     authorization: AuthorizationService,
     upload_finalizations: Arc<dyn UploadFinalizationDispatcher>,
 }
 
 impl HttpState {
-    pub(crate) fn new_with_plugin_web_assets(
-        resources: ResourceService,
-        directories: DirectoryService,
-        asset_coordinator: AssetCoordinator,
-        plugin_web_assets: PluginWebAssets,
-        authorization: AuthorizationService,
-        upload_finalizations: Arc<dyn UploadFinalizationDispatcher>,
-    ) -> Self {
+    pub(crate) fn new(composition: HttpComposition) -> Self {
         Self {
-            resources,
-            directories,
-            asset_coordinator,
-            plugin_web_assets: Arc::new(plugin_web_assets),
-            authorization,
-            upload_finalizations,
+            services: composition.services,
+            plugin_web_assets: Arc::new(composition.plugin_web_assets),
+            authorization: composition.authorization,
+            upload_finalizations: composition.upload_finalizations,
         }
     }
 
@@ -43,21 +82,59 @@ impl HttpState {
         &'a self,
         context: &'a AccessContext,
     ) -> SecuredResourceService<'a> {
-        self.resources.secured(&self.authorization, context)
+        self.services
+            .resources
+            .resources
+            .secured(&self.authorization, context)
     }
 
     pub(crate) fn secured_directories<'a>(
         &'a self,
         context: &'a AccessContext,
     ) -> SecuredDirectoryService<'a> {
-        self.directories.secured(&self.authorization, context)
+        self.services
+            .directories
+            .directories
+            .secured(&self.authorization, context)
+    }
+
+    pub(crate) fn secured_content<'a>(
+        &'a self,
+        context: &'a AccessContext,
+    ) -> SecuredContentService<'a> {
+        self.services
+            .resources
+            .content
+            .secured(&self.authorization, context)
+    }
+
+    pub(crate) fn secured_uploads<'a>(
+        &'a self,
+        context: &'a AccessContext,
+    ) -> SecuredUploadService<'a> {
+        self.services
+            .resources
+            .uploads
+            .secured(&self.authorization, context)
+    }
+
+    pub(crate) fn secured_resource_actions<'a>(
+        &'a self,
+        context: &'a AccessContext,
+    ) -> SecuredActionOrchestrator<'a> {
+        self.services
+            .resources
+            .actions
+            .secured(&self.authorization, context)
     }
 
     pub(crate) fn secured_asset_coordination<'a>(
         &'a self,
         context: &'a AccessContext,
-    ) -> SecuredAssetCoordinator<'a> {
-        self.asset_coordinator.secured(&self.authorization, context)
+    ) -> SecuredAssetWorkflowService<'a> {
+        self.services
+            .workflows
+            .secured(&self.authorization, context)
     }
 
     pub(crate) fn dispatch_upload_finalization(
@@ -75,11 +152,23 @@ impl HttpState {
     }
 
     pub(crate) fn resources(&self) -> &ResourceService {
-        &self.resources
+        &self.services.resources.resources
+    }
+
+    pub(crate) fn resource_actions(&self) -> &ActionOrchestrator {
+        &self.services.resources.actions
     }
 
     pub(crate) fn directories(&self) -> &DirectoryService {
-        &self.directories
+        &self.services.directories.directories
+    }
+
+    pub(crate) async fn check_blob_storage_health(&self) -> Result<(), CoreError> {
+        self.services
+            .health
+            .storage_maintenance
+            .check_blob_storage_health()
+            .await
     }
 
     pub(crate) fn plugin_web_asset(

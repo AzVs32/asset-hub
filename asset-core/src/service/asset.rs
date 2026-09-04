@@ -1,14 +1,19 @@
 //! Narrow application coordinator for use cases that mutate or project both aggregates.
 
-use super::{AuthorizationService, DirectoryService, ExecuteDirectoryAction, ResourceService};
+use super::{
+    ActionOrchestrator, AuthorizationService, DirectoryService, ExecuteDirectoryAction,
+    ResourceService, UploadService,
+};
 use crate::CoreError;
 use crate::domain::{
-    AccessContext, DirectoryId, DirectoryKind, DirectoryOperation, DirectoryPath, ResourceId,
-    ResourceKind,
+    AccessContext, DirectoryActionId, DirectoryId, DirectoryKind, DirectoryOperation,
+    DirectoryPath, ResourceId, ResourceKind,
 };
 use crate::port::{DirectoryActionOutput, ListResources, LocatedDirectory};
+use crate::service::{IdempotencyOutcome, IdempotencyService, request_hash};
 use asset_plugin_api::protocol::{
     CreateDirectoryTreeEffect, CreateTreeResourceEncoding, DirectoryActionEffect,
+    PluginDirectoryActionOutput,
 };
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
@@ -21,16 +26,28 @@ const MAX_CREATE_TREE_RESOURCES: usize = 32;
 
 /// Coordinates only operations whose consistency boundary spans Resource and Directory.
 #[derive(Clone)]
-pub struct AssetCoordinator {
+pub struct AssetWorkflowService {
     resources: ResourceService,
+    uploads: UploadService,
+    actions: ActionOrchestrator,
     directories: DirectoryService,
+    idempotency: IdempotencyService,
 }
 
-impl AssetCoordinator {
-    pub fn new(resources: ResourceService, directories: DirectoryService) -> Self {
+impl AssetWorkflowService {
+    pub fn new(
+        resources: ResourceService,
+        uploads: UploadService,
+        actions: ActionOrchestrator,
+        directories: DirectoryService,
+        idempotency: IdempotencyService,
+    ) -> Self {
         Self {
             resources,
+            uploads,
+            actions,
             directories,
+            idempotency,
         }
     }
 
@@ -38,9 +55,9 @@ impl AssetCoordinator {
         &'a self,
         authorization: &'a AuthorizationService,
         context: &'a AccessContext,
-    ) -> SecuredAssetCoordinator<'a> {
-        SecuredAssetCoordinator {
-            coordinator: self,
+    ) -> SecuredAssetWorkflowService<'a> {
+        SecuredAssetWorkflowService {
+            workflows: self,
             authorization,
             context,
         }
@@ -48,13 +65,13 @@ impl AssetCoordinator {
 }
 
 /// Authorization-bound cross-aggregate operations.
-pub struct SecuredAssetCoordinator<'a> {
-    coordinator: &'a AssetCoordinator,
+pub struct SecuredAssetWorkflowService<'a> {
+    workflows: &'a AssetWorkflowService,
     authorization: &'a AuthorizationService,
     context: &'a AccessContext,
 }
 
-impl SecuredAssetCoordinator<'_> {
+impl SecuredAssetWorkflowService<'_> {
     async fn require(
         &self,
         directory: &crate::port::DirectoryLocation,
@@ -69,7 +86,7 @@ impl SecuredAssetCoordinator<'_> {
         &self,
         id: &DirectoryId,
     ) -> Result<DirectoryArchiveManifest, CoreError> {
-        let root = self.coordinator.directories.find_by_id(id).await?;
+        let root = self.workflows.directories.find_by_id(id).await?;
         self.require(root.location(), DirectoryOperation::DownloadDirectory)
             .await?;
         let archive_root = if root.id().is_root() {
@@ -85,7 +102,7 @@ impl SecuredAssetCoordinator<'_> {
 
         while let Some(directory) = pending.pop_front() {
             if !self
-                .coordinator
+                .workflows
                 .directories
                 .contains(id, &directory.id())
                 .await?
@@ -99,12 +116,13 @@ impl SecuredAssetCoordinator<'_> {
             let mut offset = 0;
             loop {
                 let page = self
-                    .coordinator
+                    .workflows
                     .resources
-                    .list_resources_for_coordination(
-                        ListResources::new(DIRECTORY_ARCHIVE_PAGE_SIZE, offset)
-                            .with_directory_id(directory.id()),
-                    )
+                    .list(ListResources::new(
+                        DIRECTORY_ARCHIVE_PAGE_SIZE,
+                        offset,
+                        directory.id(),
+                    ))
                     .await?;
                 let item_count = page.items.len() as u64;
                 resources.extend(page.items.into_iter().filter_map(|located| {
@@ -124,7 +142,7 @@ impl SecuredAssetCoordinator<'_> {
             }
 
             pending.extend(
-                self.coordinator
+                self.workflows
                     .directories
                     .list_located_children(&directory.id())
                     .await?,
@@ -145,11 +163,63 @@ impl SecuredAssetCoordinator<'_> {
         id: &DirectoryId,
         command: ExecuteDirectoryAction,
     ) -> Result<DirectoryActionOutput, CoreError> {
-        let directory = self.coordinator.directories.find_by_id(id).await?;
+        let Some(key) = command.idempotency_key().cloned() else {
+            return self.execute_directory_action_inner(id, command).await;
+        };
+        let hash = request_hash(&serde_json::json!({
+            "directory_id": id.to_string(),
+            "action": command.action.to_string(),
+            "expected_revision": command.expected_revision,
+            "input": &command.input,
+        }));
+        match self.workflows.idempotency.begin(&key, &hash).await? {
+            IdempotencyOutcome::Acquired { execution_id } => {
+                match self
+                    .workflows
+                    .idempotency
+                    .execute_with_lease(
+                        &key,
+                        execution_id,
+                        self.execute_directory_action_inner(id, command),
+                    )
+                    .await
+                {
+                    Ok(output) => {
+                        self.workflows
+                            .idempotency
+                            .complete(&key, execution_id, directory_action_result(id, &output)?)
+                            .await?;
+                        Ok(output)
+                    }
+                    Err(error) => {
+                        self.workflows
+                            .idempotency
+                            .abandon(&key, execution_id)
+                            .await?;
+                        Err(error)
+                    }
+                }
+            }
+            IdempotencyOutcome::Replay(result) => self.replay_directory_action(&result).await,
+            IdempotencyOutcome::ConflictDifferentRequest => Err(CoreError::conflict(format!(
+                "idempotency key `{key}` was already used for a different request"
+            ))),
+            IdempotencyOutcome::AlreadyInProgress => Err(CoreError::conflict(format!(
+                "idempotency key `{key}` is currently executing"
+            ))),
+        }
+    }
+
+    async fn execute_directory_action_inner(
+        &self,
+        id: &DirectoryId,
+        command: ExecuteDirectoryAction,
+    ) -> Result<DirectoryActionOutput, CoreError> {
+        let directory = self.workflows.directories.find_by_id(id).await?;
         let definition = self
-            .coordinator
-            .directories
-            .resolve_action(directory.directory(), &command.action)?;
+            .workflows
+            .actions
+            .resolve_directory_action(directory.directory(), &command.action)?;
         let operation = if definition
             .output()
             .effects
@@ -168,9 +238,9 @@ impl SecuredAssetCoordinator<'_> {
             .root()
             .id();
         let executed = self
-            .coordinator
-            .directories
-            .invoke_action(id, command)
+            .workflows
+            .actions
+            .invoke_directory_action(id, command)
             .await?;
         let create_tree =
             executed
@@ -186,12 +256,40 @@ impl SecuredAssetCoordinator<'_> {
             self.apply_create_tree(&directory, executed.expected_revision(), effect, scope_root)
                 .await?;
         } else {
-            self.coordinator
-                .directories
-                .apply_executed_action(&executed, Some(scope_root))
+            self.workflows
+                .actions
+                .apply_directory_action(&executed, Some(scope_root))
                 .await?;
         }
         Ok(executed.into_output())
+    }
+
+    async fn replay_directory_action(
+        &self,
+        result: &serde_json::Value,
+    ) -> Result<DirectoryActionOutput, CoreError> {
+        let directory_id = result
+            .get("directory_id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| CoreError::invariant("idempotency result is missing `directory_id`"))?;
+        let directory_id = std::str::FromStr::from_str(directory_id).map_err(|error| {
+            CoreError::invariant(format!("invalid stored directory id: {error}"))
+        })?;
+        let action = result
+            .get("action")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| CoreError::invariant("idempotency result is missing `action`"))?;
+        let action = DirectoryActionId::new(action.to_string())
+            .map_err(|error| CoreError::invariant(format!("invalid stored action id: {error}")))?;
+        let output = result
+            .get("output")
+            .cloned()
+            .ok_or_else(|| CoreError::invariant("idempotency result is missing `output`"))?;
+        let output =
+            serde_json::from_value::<PluginDirectoryActionOutput>(output).map_err(|error| {
+                CoreError::invariant(format!("invalid stored action output: {error}"))
+            })?;
+        Ok(DirectoryActionOutput::new(directory_id, action, output))
     }
 
     async fn apply_create_tree(
@@ -220,7 +318,7 @@ impl SecuredAssetCoordinator<'_> {
                 effect.resources.len() as u64,
             ));
         }
-        let current = self.coordinator.directories.find_by_id(&root.id()).await?;
+        let current = self.workflows.directories.find_by_id(&root.id()).await?;
         if current.directory().revision() != expected_revision {
             return Err(CoreError::revision_conflict(
                 "directory",
@@ -254,7 +352,7 @@ impl SecuredAssetCoordinator<'_> {
         let mut prepared_resources = Vec::with_capacity(effect.resources.len());
         let mut unique_resources = HashSet::new();
         let mut total_bytes = 0_u64;
-        let max_bytes = self.coordinator.resources.max_inline_action_content_bytes();
+        let max_bytes = self.workflows.actions.max_inline_content_bytes();
         for spec in effect.resources {
             let directory = canonical_relative_directory(&spec.directory, true)?;
             let kind = spec.kind.map(ResourceKind::try_new).transpose()?;
@@ -308,9 +406,9 @@ impl SecuredAssetCoordinator<'_> {
                     ))
                 })?;
                 let created = self
-                    .coordinator
+                    .workflows
                     .directories
-                    .create_with_kind_in_scope(parent, relative.name(), kind, scope_root)
+                    .create_with_kind_in_scope(&parent.id(), relative.name(), kind, scope_root)
                     .await?;
                 locations.insert(relative.path().to_string(), created.location().clone());
                 created_directories.push(created);
@@ -323,9 +421,9 @@ impl SecuredAssetCoordinator<'_> {
                     ))
                 })?;
                 let created = self
-                    .coordinator
-                    .resources
-                    .create_generated_resource(
+                    .workflows
+                    .uploads
+                    .create_generated(
                         directory,
                         resource.name,
                         resource.kind,
@@ -342,9 +440,9 @@ impl SecuredAssetCoordinator<'_> {
         if let Err(error) = result {
             for resource in created_resources.into_iter().rev() {
                 if let Err(rollback_error) = self
-                    .coordinator
+                    .workflows
                     .resources
-                    .remove_generated_resource(resource)
+                    .delete(resource.clone(), resource.resource().revision())
                     .await
                 {
                     tracing::error!(%rollback_error, "failed to roll back create_tree resource");
@@ -352,9 +450,9 @@ impl SecuredAssetCoordinator<'_> {
             }
             for directory in created_directories.into_iter().rev() {
                 if let Err(rollback_error) = self
-                    .coordinator
+                    .workflows
                     .directories
-                    .remove_if_empty(directory.location(), None)
+                    .delete_if_empty(&directory.id(), None)
                     .await
                 {
                     tracing::error!(%rollback_error, "failed to roll back create_tree directory");
@@ -435,6 +533,18 @@ struct PreparedTreeResource {
     kind: Option<ResourceKind>,
     mime_type: Option<String>,
     data: Bytes,
+}
+
+fn directory_action_result(
+    id: &DirectoryId,
+    output: &DirectoryActionOutput,
+) -> Result<serde_json::Value, CoreError> {
+    Ok(serde_json::json!({
+        "directory_id": id.to_string(),
+        "action": output.action().to_string(),
+        "output": serde_json::to_value(output.output())
+            .map_err(|error| CoreError::invariant(format!("action output must serialize: {error}")))?,
+    }))
 }
 
 fn canonical_relative_directory(

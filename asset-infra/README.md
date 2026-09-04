@@ -15,8 +15,16 @@ repository adapters. `asset-runtime` consumes these ports and composes the plugi
 services; after injection, the `AssetInfrastructure` assembly object itself is construction-only.
 
 SQLite connection and migration ownership is shared, while persistence ports are implemented by
-separate `SqliteResourceRepository` and `SqliteDirectoryRepository` adapters. Sharing a pool does
-not merge the two aggregate repositories.
+separate `SqliteResourceRepository` and `SqliteDirectoryStore` adapters. The Directory adapter
+supports atomic revision-update batches and the narrow `DirectoryRelocationStore`; sharing a pool
+does not merge Resource and Directory persistence boundaries.
+
+Directory rename/move writes a `directory_relocations` intent and its desired aggregate updates
+before the local filesystem rename. Runtime recovery distinguishes the source/destination physical
+state from the expected/applied database revisions, completes the atomic batch, rebuilds the index,
+and only then removes the intent. `DirectoryStorage::delete_empty_directory` removes exactly one
+empty user directory, is idempotent for an absent path, and never recursively removes content or
+ancestors.
 
 `LocalStorageSync` still implements the local filesystem watcher and event-to-reconciliation
 driving adapter. `asset-runtime` starts it with `ResourceService` and owns its lifetime;
@@ -50,7 +58,7 @@ The Host-owned catalog provides no generic Resource or Directory thumbnail Actio
 thumbnail provider comes from an external Manifest. The Host declares `core.resource.delete` and
 `core.directory.delete` as ordinary write Actions in the same discovery catalogs. Their built-in
 handlers return no View and request one `delete` effect; Core applies it through the secured
-resource soft-delete or empty-directory-delete use case. External plugins may declare and return
+resource delete or empty-directory-delete use case. External plugins may declare and return
 the same effect only when their Manifest requests
 `resource.delete` or `directory.delete`, the corresponding `[plugin.grants]` switch is enabled,
 and the current user is authorized to delete that aggregate. Delete cannot be combined with a
@@ -86,6 +94,21 @@ Interactive text editing has a separate Host policy because browser editing is n
 execution budget. `[resource_edit].max_text_bytes` defaults to 4 MiB. Runtime passes that value to
 Core, which uses it both when discovering `edit` providers and when validating streamed
 replacement content. Resources above the limit therefore do not advertise `edit`.
+
+## Durable request idempotency
+
+The `[idempotency].lease_duration_seconds` setting defaults to five minutes. Each guarded write
+stores a random execution ID, lease expiry, and update timestamp in SQLite. A matching request can
+take over only an expired in-progress lease through a conditional SQLite write; a completed record
+continues to replay indefinitely, and a different request hash always conflicts. Runtime renews a
+live command's lease while its future is executing. Completion and abandonment require the current
+execution ID, so an executor that lost its lease cannot overwrite or delete the newer owner's
+result. A crashed process stops renewing; after the configured lease duration, a matching retry can
+safely resume its command. This lease answers whether a request may start and remains separate from
+the durable relocation and content-replacement recovery intents that repair cross-persistence
+workflows. Upload creation additionally records its idempotency key on the durable upload session,
+so a retry that takes over after a crash returns that existing session instead of creating a second
+upload workflow.
 
 Resource and Directory optimistic concurrency use persisted, monotonically increasing `revision`
 values; timestamps remain display and ordering metadata. Directory writes compare the expected

@@ -29,6 +29,7 @@ export function resource(actions: ResourceAction[] = []): Resource {
   return {
     id: "resource-1",
     name: "Example",
+    directoryId: "directory-1",
     directory: "library",
     kind: "core:resource",
     state: {

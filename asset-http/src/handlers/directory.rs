@@ -21,7 +21,13 @@ pub(crate) async fn list_directory_kinds(
         items: directories
             .kind_definitions()
             .iter()
-            .map(|definition| DirectoryKindResponse::from_definition(definition, directories))
+            .map(|definition| {
+                DirectoryKindResponse::from_definition(
+                    definition,
+                    directories,
+                    state.resource_actions(),
+                )
+            })
             .collect(),
     })
 }
@@ -48,9 +54,7 @@ pub(crate) async fn list_directory(
     let page = query.page.unwrap_or(DEFAULT_PAGE).max(1);
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let offset = u64::from(page - 1) * u64::from(limit);
-    let mut resources_query = ListResources::new(limit, offset)
-        .with_directory(directory.clone())
-        .with_include_deleted(query.include_deleted.unwrap_or(false));
+    let mut resources_query = ListResources::new(limit, offset, DirectoryId::root());
 
     if let Some(kind) = query.kind {
         resources_query = resources_query.with_kind(parse_kind(kind)?);
@@ -65,7 +69,7 @@ pub(crate) async fn list_directory(
         .list_children(&directory)
         .await?
         .into_iter()
-        .map(|directory| directory_response(state.directories(), &workspace, &directory))
+        .map(|directory| directory_response(state.resource_actions(), &workspace, &directory))
         .collect::<Result<Vec<_>, _>>()?;
     let current = state
         .secured_directories(&access.0)
@@ -73,14 +77,20 @@ pub(crate) async fn list_directory(
         .await?;
     let resources = state
         .secured_resources(&access.0)
-        .list_resources(resources_query)
+        .list(&directory, resources_query)
         .await?;
 
     Ok(Json(DirectoryListingResponse {
         path: directory,
-        directory: directory_response(state.directories(), &workspace, &current)?,
+        directory: directory_response(state.resource_actions(), &workspace, &current)?,
         folders,
-        resources: resource_page_response(state.resources(), &workspace, resources, page)?,
+        resources: resource_page_response(
+            state.resources(),
+            state.resource_actions(),
+            &workspace,
+            resources,
+            page,
+        )?,
     }))
 }
 
@@ -119,7 +129,7 @@ pub(crate) async fn create_directory(
     Ok((
         StatusCode::CREATED,
         Json(directory_response(
-            state.directories(),
+            state.resource_actions(),
             &workspace,
             &directory,
         )?),
@@ -148,7 +158,7 @@ pub(crate) async fn find_directory(
     let workspace = state.workspace(&access.0).await?;
     let directory = state.secured_directories(&access.0).find_by_id(&id).await?;
     Ok(Json(directory_response(
-        state.directories(),
+        state.resource_actions(),
         &workspace,
         &directory,
     )?))
@@ -193,7 +203,7 @@ pub(crate) async fn update_directory(
         .update(&id, command)
         .await?;
     Ok(Json(directory_response(
-        state.directories(),
+        state.resource_actions(),
         &workspace,
         &directory,
     )?))
@@ -225,7 +235,7 @@ pub(crate) async fn delete_directory(
     let id = parse_directory_id(&id)?;
     if state
         .secured_directories(&access.0)
-        .remove_if_empty(&id, query.expected_revision)
+        .delete(&id, query.expected_revision)
         .await?
     {
         Ok(StatusCode::NO_CONTENT)
@@ -240,7 +250,11 @@ pub(crate) async fn delete_directory(
     path = "/directories/{id}/actions/{action}",
     tag = "directories",
     request_body = ExecuteDirectoryActionRequest,
-    params(("id" = String, Path), ("action" = String, Path)),
+    params(
+        ("id" = String, Path),
+        ("action" = String, Path),
+        ("Idempotency-Key" = Option<String>, Header, description = "可选的幂等键，重复提交不会重复应用 Host effect")
+    ),
     responses(
         (status = 200, description = "动作执行结果", body = DirectoryActionOutputResponse),
         (status = 400, description = "目录类型不支持该动作", body = crate::dto::ErrorResponse),
@@ -251,20 +265,22 @@ pub(crate) async fn execute_directory_action(
     State(state): State<HttpState>,
     access: Extension<AccessContext>,
     Path((id, action)): Path<(String, String)>,
+    headers: HeaderMap,
     payload: Result<Json<ExecuteDirectoryActionRequest>, JsonRejection>,
 ) -> Result<Json<DirectoryActionOutputResponse>, HttpError> {
     let id = parse_directory_id(&id)?;
     let payload = parse_json_payload(payload)?;
+    let mut command = ExecuteDirectoryAction::new(
+        asset_core::domain::DirectoryActionId::new(action).map_err(CoreError::from)?,
+        payload.expected_revision,
+    )
+    .with_input(payload.input);
+    if let Some(key) = parse_idempotency_key(&headers)? {
+        command = command.with_idempotency_key(key);
+    }
     let output = state
         .secured_asset_coordination(&access.0)
-        .execute_directory_action(
-            &id,
-            ExecuteDirectoryAction::new(
-                asset_core::domain::DirectoryActionId::new(action).map_err(CoreError::from)?,
-                payload.expected_revision,
-            )
-            .with_input(payload.input),
-        )
+        .execute_directory_action(&id, command)
         .await?;
     Ok(Json(DirectoryActionOutputResponse::from(&output)))
 }
@@ -274,12 +290,12 @@ pub(super) fn parse_directory_kind(value: impl Into<String>) -> Result<Directory
 }
 
 pub(super) fn directory_response(
-    service: &asset_core::service::DirectoryService,
+    orchestrator: &asset_core::service::ActionOrchestrator,
     workspace: &asset_core::service::WorkspaceScope,
     directory: &asset_core::port::LocatedDirectory,
 ) -> Result<DirectoryResponse, CoreError> {
     let path = workspace.project(directory.path())?;
-    let actions = service.describe_actions(directory.directory())?;
+    let actions = orchestrator.describe_directory_actions(directory.directory())?;
     Ok(DirectoryResponse {
         id: directory.id().to_string(),
         parent_id: directory.directory().parent_id().map(|id| id.to_string()),

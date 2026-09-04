@@ -1,6 +1,6 @@
 use asset_core::CoreError;
 use asset_core::domain::{
-    Checksum, DirectoryPath, ResourceId, ResourceKind, UploadId, UploadSession,
+    Checksum, DirectoryId, IdempotencyKey, ResourceId, ResourceKind, UploadId, UploadSession,
     UploadSessionSnapshot, UploadStatus, UserId,
 };
 use asset_core::port::UploadSessionRepository;
@@ -22,51 +22,32 @@ impl SqliteUploadSessionRepository {
 #[async_trait::async_trait]
 impl UploadSessionRepository for SqliteUploadSessionRepository {
     async fn save(&self, session: &UploadSession) -> Result<(), CoreError> {
-        sqlx::query(
-            r#"
-            INSERT INTO upload_sessions (
-                id, resource_id, owner_id, name, directory, kind, mime_type,
-                expected_size, offset, status, expected_checksum_value, actual_checksum_value,
-                failure, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
-        )
-        .bind(session.id().to_string())
-        .bind(session.resource_id().to_string())
-        .bind(session.owner_id().to_string())
-        .bind(session.name())
-        .bind(session.directory().path())
-        .bind(session.kind().as_str())
-        .bind(session.mime_type())
-        .bind(encode_u64(session.expected_size())?)
-        .bind(encode_u64(session.offset())?)
-        .bind(session.status().as_str())
-        .bind(session.expected_checksum().value())
-        .bind(session.actual_checksum().map(Checksum::value))
-        .bind(session.failure())
-        .bind(session.created_at().to_rfc3339())
-        .bind(session.updated_at().to_rfc3339())
-        .execute(&self.pool)
-        .await
-        .map(|_| ())
-        .map_err(|error| CoreError::repository("upload_session.save", error))
+        self.save_with_key(session, None).await
+    }
+
+    async fn save_with_idempotency_key(
+        &self,
+        session: &UploadSession,
+        key: &IdempotencyKey,
+    ) -> Result<(), CoreError> {
+        self.save_with_key(session, Some(key)).await
     }
 
     async fn find_by_id(&self, id: &UploadId) -> Result<Option<UploadSession>, CoreError> {
-        let row = sqlx::query(
-            r#"
-            SELECT id, resource_id, owner_id, name, directory, kind, mime_type,
-                   expected_size, offset, status, expected_checksum_value, actual_checksum_value,
-                   failure, created_at, updated_at
-            FROM upload_sessions
-            WHERE id = ?
-            "#,
+        self.find_one("id = ?", id.to_string(), "upload_session.find")
+            .await
+    }
+
+    async fn find_by_idempotency_key(
+        &self,
+        key: &IdempotencyKey,
+    ) -> Result<Option<UploadSession>, CoreError> {
+        self.find_one(
+            "idempotency_key = ?",
+            key.as_str().to_string(),
+            "upload_session.find_by_idempotency_key",
         )
-        .bind(id.to_string())
-        .fetch_optional(&self.pool)
         .await
-        .map_err(|error| CoreError::repository("upload_session.find", error))?;
-        row.map(decode_session).transpose()
     }
 
     async fn update_offset(
@@ -210,6 +191,66 @@ impl UploadSessionRepository for SqliteUploadSessionRepository {
     }
 }
 
+impl SqliteUploadSessionRepository {
+    async fn save_with_key(
+        &self,
+        session: &UploadSession,
+        idempotency_key: Option<&IdempotencyKey>,
+    ) -> Result<(), CoreError> {
+        sqlx::query(
+            r#"
+            INSERT INTO upload_sessions (
+                id, resource_id, owner_id, idempotency_key, name, directory_id, kind, mime_type,
+                expected_size, offset, status, expected_checksum_value, actual_checksum_value,
+                failure, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(session.id().to_string())
+        .bind(session.resource_id().to_string())
+        .bind(session.owner_id().to_string())
+        .bind(idempotency_key.map(IdempotencyKey::as_str))
+        .bind(session.name())
+        .bind(session.directory_id().to_string())
+        .bind(session.kind().as_str())
+        .bind(session.mime_type())
+        .bind(encode_u64(session.expected_size())?)
+        .bind(encode_u64(session.offset())?)
+        .bind(session.status().as_str())
+        .bind(session.expected_checksum().value())
+        .bind(session.actual_checksum().map(Checksum::value))
+        .bind(session.failure())
+        .bind(session.created_at().to_rfc3339())
+        .bind(session.updated_at().to_rfc3339())
+        .execute(&self.pool)
+        .await
+        .map(|_| ())
+        .map_err(|error| CoreError::repository("upload_session.save", error))
+    }
+
+    async fn find_one(
+        &self,
+        predicate: &str,
+        value: String,
+        operation: &'static str,
+    ) -> Result<Option<UploadSession>, CoreError> {
+        let row = sqlx::query(&format!(
+            r#"
+            SELECT id, resource_id, owner_id, name, directory_id, kind, mime_type,
+                   expected_size, offset, status, expected_checksum_value, actual_checksum_value,
+                   failure, created_at, updated_at
+            FROM upload_sessions
+            WHERE {predicate}
+            "#
+        ))
+        .bind(value)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| CoreError::repository(operation, error))?;
+        row.map(decode_session).transpose()
+    }
+}
+
 fn decode_session(row: sqlx::sqlite::SqliteRow) -> Result<UploadSession, CoreError> {
     let parse_id = |field: &'static str, value: String| {
         uuid::Uuid::parse_str(&value).map_err(|error| CoreError::repository(field, error))
@@ -229,8 +270,8 @@ fn decode_session(row: sqlx::sqlite::SqliteRow) -> Result<UploadSession, CoreErr
         )?),
         owner_id: UserId::from_uuid(parse_id("upload_session.owner_id", row.get("owner_id"))?),
         name: row.get("name"),
-        directory: DirectoryPath::from_str(row.get::<String, _>("directory").as_str())
-            .map_err(|error| CoreError::repository("upload_session.directory", error))?,
+        directory_id: DirectoryId::from_str(row.get::<String, _>("directory_id").as_str())
+            .map_err(|error| CoreError::repository("upload_session.directory_id", error))?,
         kind: ResourceKind::from_str(row.get::<String, _>("kind").as_str())
             .map_err(|error| CoreError::repository("upload_session.kind", error))?,
         mime_type: row.get("mime_type"),

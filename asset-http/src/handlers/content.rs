@@ -41,7 +41,8 @@ pub(crate) async fn get_resource_content(
         ("id" = String, Path, description = "资源 ID"),
         ("If-Match" = String, Header, description = "带双引号的资源 revision"),
         ("Content-SHA256" = String, Header, description = "64 位小写十六进制 SHA-256"),
-        ("Content-Length" = u64, Header, description = "原始内容字节数")
+        ("Content-Length" = u64, Header, description = "原始内容字节数"),
+        ("Idempotency-Key" = Option<String>, Header, description = "可选的幂等键，重复请求返回首次结果")
     ),
     request_body(
         content = inline(BinaryContent),
@@ -84,16 +85,25 @@ pub(crate) async fn replace_resource_content(
                 .map_err(|_| HttpError::bad_request("Content-Type must be valid ASCII"))?,
         );
     }
+    if let Some(key) = parse_idempotency_key(&headers)? {
+        command = command.with_idempotency_key(key);
+    }
     let workspace = state.workspace(&access.0).await?;
     let Some(resource) = state
-        .secured_resources(&access.0)
-        .replace_resource_content(&id, command, body_stream(body))
+        .secured_content(&access.0)
+        .replace(&id, command, body_stream(body))
         .await?
     else {
         return Err(HttpError::not_found(format!("resource `{id}` not found")));
     };
     Ok(Json(
-        resource_snapshot_response(state.resources(), &workspace, &resource).await?,
+        resource_snapshot_response(
+            state.resources(),
+            state.resource_actions(),
+            &workspace,
+            &resource,
+        )
+        .await?,
     ))
 }
 
@@ -202,8 +212,8 @@ pub(crate) async fn download_directory(
             .start_file(entry.path(), file_options)
             .map_err(|error| CoreError::storage("directory.archive.start_file", error))?;
         let Some(content) = state
-            .secured_resources(&access.0)
-            .get_resource_content_stream(&entry.resource_id(), None)
+            .secured_content(&access.0)
+            .stream(&entry.resource_id(), None)
             .await?
         else {
             return Err(HttpError::not_found(format!(
@@ -269,7 +279,7 @@ async fn resource_content_response(
     headers: &HeaderMap,
     id: &ResourceId,
 ) -> Result<(Response, String), HttpError> {
-    let Some(resource) = state.secured_resources(access).find_resource(id).await? else {
+    let Some(resource) = state.secured_resources(access).get(id).await? else {
         return Err(HttpError::not_found(format!("resource `{id}` not found")));
     };
     let content_type = resource
@@ -287,11 +297,7 @@ async fn resource_content_response(
 
     let response = match range {
         ByteRangeRequest::Unsatisfiable => range_not_satisfiable_response(content_ref.size()),
-        ByteRangeRequest::None => match state
-            .secured_resources(access)
-            .get_resource_content_stream(id, None)
-            .await?
-        {
+        ByteRangeRequest::None => match state.secured_content(access).stream(id, None).await? {
             Some(content) => binary_stream_response(
                 content_type,
                 Some(content.content_length()),
@@ -304,8 +310,8 @@ async fn resource_content_response(
             }
         },
         ByteRangeRequest::Range { start, end } => match state
-            .secured_resources(access)
-            .get_resource_content_stream(id, Some((start, end)))
+            .secured_content(access)
+            .stream(id, Some((start, end)))
             .await?
         {
             Some(content) => range_stream_response(

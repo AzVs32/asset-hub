@@ -3,7 +3,6 @@ use super::frame_url::{plugin_web_asset_url, resolve_plugin_output_urls};
 use super::permissions::validate_external_permissions;
 use crate::config::PluginPermissionGrants;
 use asset_core::domain::StorageKey;
-use asset_core::port::BlobStorage;
 use asset_plugin_api::manifest::PluginPermissions;
 use asset_plugin_api::protocol::{
     PLUGIN_API_VERSION, PluginFrameView, PluginResourceActionOutput, PluginView,

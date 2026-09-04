@@ -1,7 +1,7 @@
 use super::*;
-use crate::sqlite::SqliteDirectoryRepository;
+use crate::sqlite::SqliteDirectoryStore;
 use asset_core::domain::Directory;
-use asset_core::port::{DirectoryRepository, UserQuery, UserRepository};
+use asset_core::port::{DirectoryStore, UserQuery, UserRepository};
 use sqlx::sqlite::SqlitePoolOptions;
 
 #[tokio::test]
@@ -12,13 +12,11 @@ async fn user_queries_return_workspace_locations_in_one_projection() {
         .await
         .unwrap();
     crate::migration::sqlite::run(&pool).await.unwrap();
-    let directories = SqliteDirectoryRepository::new(pool.clone());
+    let directories = SqliteDirectoryStore::new(pool.clone());
     let teams = Directory::new(DirectoryId::root(), "teams").unwrap();
-    DirectoryRepository::insert(&directories, &teams)
-        .await
-        .unwrap();
+    DirectoryStore::insert(&directories, &teams).await.unwrap();
     let workspace = Directory::new(teams.id(), "alice").unwrap();
-    DirectoryRepository::insert(&directories, &workspace)
+    DirectoryStore::insert(&directories, &workspace)
         .await
         .unwrap();
     let repository = SqliteIdentityRepository::new(pool);

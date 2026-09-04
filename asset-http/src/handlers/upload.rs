@@ -9,6 +9,7 @@ const UPLOAD_CHECKSUM: HeaderName = HeaderName::from_static("upload-checksum");
     post,
     path = "/uploads",
     tag = "uploads",
+    params(("Idempotency-Key" = Option<String>, Header, description = "可选的幂等键，重复请求返回首次结果")),
     request_body = CreateUploadRequest,
     responses(
         (status = 201, description = "上传会话已创建", body = UploadSessionResponse),
@@ -19,22 +20,27 @@ const UPLOAD_CHECKSUM: HeaderName = HeaderName::from_static("upload-checksum");
 pub(crate) async fn create_upload(
     State(state): State<HttpState>,
     access: Extension<AccessContext>,
+    headers: HeaderMap,
     payload: Result<Json<CreateUploadRequest>, JsonRejection>,
 ) -> Result<(StatusCode, Json<UploadSessionResponse>), HttpError> {
     let request = parse_json_payload(payload)?;
     let expected_checksum = asset_core::domain::Checksum::sha256(request.expected_sha256)?;
-    let mut command = CreateUpload::new(request.name, request.size, expected_checksum)
-        .with_directory(request.directory);
+    let mut command = CreateUpload::new(
+        request.name,
+        parse_directory_id(&request.directory_id)?,
+        request.size,
+        expected_checksum,
+    );
     if let Some(kind) = request.kind {
         command = command.with_kind(parse_kind(kind)?);
     }
     if let Some(mime_type) = request.mime_type {
         command = command.with_mime_type(mime_type);
     }
-    let session = state
-        .secured_resources(&access.0)
-        .create_upload(command)
-        .await?;
+    if let Some(key) = parse_idempotency_key(&headers)? {
+        command = command.with_idempotency_key(key);
+    }
+    let session = state.secured_uploads(&access.0).create(command).await?;
     Ok((StatusCode::CREATED, Json(session_response(&session))))
 }
 
@@ -54,10 +60,7 @@ pub(crate) async fn upload_status(
     Path(id): Path<String>,
 ) -> Result<Json<UploadSessionResponse>, HttpError> {
     let id = parse_upload_id(&id)?;
-    let session = state
-        .secured_resources(&access.0)
-        .upload_status(&id)
-        .await?;
+    let session = state.secured_uploads(&access.0).status(&id).await?;
     Ok(Json(session_response(&session)))
 }
 
@@ -91,8 +94,8 @@ pub(crate) async fn append_upload(
     let offset = parse_offset(&headers)?;
     let expected_chunk_checksum = parse_checksum(&headers)?;
     let session = state
-        .secured_resources(&access.0)
-        .append_upload(&id, offset, expected_chunk_checksum, body_stream(body))
+        .secured_uploads(&access.0)
+        .append(&id, offset, expected_chunk_checksum, body_stream(body))
         .await?;
     Ok((StatusCode::NO_CONTENT, session_headers(&session)?))
 }
@@ -113,11 +116,10 @@ pub(crate) async fn complete_upload(
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<UploadSessionResponse>), HttpError> {
     let id = parse_upload_id(&id)?;
-    let session = state
-        .secured_resources(&access.0)
-        .complete_upload(&id)
-        .await?;
-    state.dispatch_upload_finalization(id)?;
+    let (session, dispatch) = state.secured_uploads(&access.0).complete(&id).await?;
+    if dispatch {
+        state.dispatch_upload_finalization(id)?;
+    }
     Ok((StatusCode::ACCEPTED, Json(session_response(&session))))
 }
 
@@ -137,7 +139,7 @@ pub(crate) async fn abort_upload(
     Path(id): Path<String>,
 ) -> Result<StatusCode, HttpError> {
     let id = parse_upload_id(&id)?;
-    state.secured_resources(&access.0).abort_upload(&id).await?;
+    state.secured_uploads(&access.0).abort(&id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
