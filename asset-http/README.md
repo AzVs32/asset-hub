@@ -17,6 +17,9 @@ workflow service, and the narrow health-only Blob readiness capability. These bu
 transport dependencies only; they do not add business workflows or expose repositories, storage,
 recovery, or reconciliation operations to handlers.
 
+When explicit CORS origins are configured, browser preflight requests may send the documented
+write precondition and upload headers, including `Idempotency-Key`.
+
 Resource and Directory contracts deliberately use the same shape where their semantics overlap.
 Both expose stable UUIDs, kind definitions with typed `origin` metadata, flattened action arrays,
 and monotonically increasing `revision` values. Directory creation accepts a stable `parent_id`;

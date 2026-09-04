@@ -179,6 +179,7 @@ fn cors_layer(policy: CorsPolicy) -> CorsLayer {
             HeaderName::from_static("upload-checksum"),
             HeaderName::from_static("content-sha256"),
             HeaderName::from_static("if-match"),
+            HeaderName::from_static("idempotency-key"),
         ])
         .expose_headers([
             HeaderName::from_static("upload-offset"),
@@ -188,5 +189,49 @@ fn cors_layer(policy: CorsPolicy) -> CorsLayer {
     match policy {
         CorsPolicy::None => layer,
         CorsPolicy::Origins(origins) => layer.allow_origin(origins).allow_credentials(true),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{HeaderValue, Request, header};
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn idempotency_key_is_allowed_for_cross_origin_preflight() {
+        let router = Router::new()
+            .route("/uploads", post(|| async { StatusCode::CREATED }))
+            .layer(cors_layer(CorsPolicy::Origins(vec![
+                HeaderValue::from_static("https://example.test"),
+            ])));
+        let request = Request::builder()
+            .method(Method::OPTIONS)
+            .uri("/uploads")
+            .header(header::ORIGIN, "https://example.test")
+            .header(header::ACCESS_CONTROL_REQUEST_METHOD, Method::POST.as_str())
+            .header(
+                header::ACCESS_CONTROL_REQUEST_HEADERS,
+                "idempotency-key,content-type",
+            )
+            .body(Body::empty())
+            .unwrap();
+
+        let response = router.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let allowed_headers = response
+            .headers()
+            .get(header::ACCESS_CONTROL_ALLOW_HEADERS)
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(
+            allowed_headers
+                .split(',')
+                .map(str::trim)
+                .any(|name| name.eq_ignore_ascii_case("idempotency-key"))
+        );
     }
 }
