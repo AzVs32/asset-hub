@@ -25,7 +25,8 @@ pub use directory::{
     Directory, DirectoryId, DirectoryKind, DirectoryPath, INTERNAL_STORAGE_DIRECTORY_NAME,
 };
 pub use idempotency::{
-    IdempotencyKey, IdempotencyRecord, IdempotencyStatus, MAX_IDEMPOTENCY_KEY_LEN,
+    IdempotencyExecutionId, IdempotencyKey, IdempotencyRecord, IdempotencyStatus,
+    MAX_IDEMPOTENCY_KEY_LEN,
 };
 pub use identity::{AccessContext, DirectoryOperation, User, UserId, UserRole, UserStatus};
 pub use kind::{KindId, KindIdError};

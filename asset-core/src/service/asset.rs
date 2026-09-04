@@ -173,25 +173,39 @@ impl SecuredAssetWorkflowService<'_> {
             "input": &command.input,
         }));
         match self.workflows.idempotency.begin(&key, &hash).await? {
-            IdempotencyOutcome::Execute => {
-                let result = self.execute_directory_action_inner(id, command).await;
-                match &result {
+            IdempotencyOutcome::Acquired { execution_id } => {
+                match self
+                    .workflows
+                    .idempotency
+                    .execute_with_lease(
+                        &key,
+                        execution_id,
+                        self.execute_directory_action_inner(id, command),
+                    )
+                    .await
+                {
                     Ok(output) => {
-                        let _ = self
-                            .workflows
+                        self.workflows
                             .idempotency
-                            .complete(&key, directory_action_result(id, output)?)
-                            .await;
+                            .complete(&key, execution_id, directory_action_result(id, &output)?)
+                            .await?;
+                        Ok(output)
                     }
-                    Err(_) => {
-                        let _ = self.workflows.idempotency.abandon(&key).await;
+                    Err(error) => {
+                        self.workflows
+                            .idempotency
+                            .abandon(&key, execution_id)
+                            .await?;
+                        Err(error)
                     }
                 }
-                result
             }
             IdempotencyOutcome::Replay(result) => self.replay_directory_action(&result).await,
-            IdempotencyOutcome::Conflict => Err(CoreError::conflict(format!(
+            IdempotencyOutcome::ConflictDifferentRequest => Err(CoreError::conflict(format!(
                 "idempotency key `{key}` was already used for a different request"
+            ))),
+            IdempotencyOutcome::AlreadyInProgress => Err(CoreError::conflict(format!(
+                "idempotency key `{key}` is currently executing"
             ))),
         }
     }

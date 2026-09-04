@@ -95,6 +95,21 @@ execution budget. `[resource_edit].max_text_bytes` defaults to 4 MiB. Runtime pa
 Core, which uses it both when discovering `edit` providers and when validating streamed
 replacement content. Resources above the limit therefore do not advertise `edit`.
 
+## Durable request idempotency
+
+The `[idempotency].lease_duration_seconds` setting defaults to five minutes. Each guarded write
+stores a random execution ID, lease expiry, and update timestamp in SQLite. A matching request can
+take over only an expired in-progress lease through a conditional SQLite write; a completed record
+continues to replay indefinitely, and a different request hash always conflicts. Runtime renews a
+live command's lease while its future is executing. Completion and abandonment require the current
+execution ID, so an executor that lost its lease cannot overwrite or delete the newer owner's
+result. A crashed process stops renewing; after the configured lease duration, a matching retry can
+safely resume its command. This lease answers whether a request may start and remains separate from
+the durable relocation and content-replacement recovery intents that repair cross-persistence
+workflows. Upload creation additionally records its idempotency key on the durable upload session,
+so a retry that takes over after a crash returns that existing session instead of creating a second
+upload workflow.
+
 Resource and Directory optimistic concurrency use persisted, monotonically increasing `revision`
 values; timestamps remain display and ordering metadata. Directory writes compare the expected
 revision atomically in SQLite, including effects applied after a directory Action returns.

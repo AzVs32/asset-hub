@@ -131,29 +131,38 @@ impl ContentService {
             "mime_type": &command.mime_type,
         }));
         match self.idempotency.begin(&key, &hash).await? {
-            IdempotencyOutcome::Execute => {
-                let result = self
-                    .replace_content_snapshot_inner(located, command, data)
-                    .await;
-                match &result {
+            IdempotencyOutcome::Acquired { execution_id } => {
+                match self
+                    .idempotency
+                    .execute_with_lease(
+                        &key,
+                        execution_id,
+                        self.replace_content_snapshot_inner(located, command, data),
+                    )
+                    .await
+                {
                     Ok(resource) => {
-                        let _ = self
-                            .idempotency
+                        self.idempotency
                             .complete(
                                 &key,
+                                execution_id,
                                 serde_json::json!({ "resource_id": resource.id().to_string() }),
                             )
-                            .await;
+                            .await?;
+                        Ok(resource)
                     }
-                    Err(_) => {
-                        let _ = self.idempotency.abandon(&key).await;
+                    Err(error) => {
+                        self.idempotency.abandon(&key, execution_id).await?;
+                        Err(error)
                     }
                 }
-                result
             }
             IdempotencyOutcome::Replay(result) => self.replay_replacement(&result).await,
-            IdempotencyOutcome::Conflict => Err(CoreError::conflict(format!(
+            IdempotencyOutcome::ConflictDifferentRequest => Err(CoreError::conflict(format!(
                 "idempotency key `{key}` was already used for a different request"
+            ))),
+            IdempotencyOutcome::AlreadyInProgress => Err(CoreError::conflict(format!(
+                "idempotency key `{key}` is currently executing"
             ))),
         }
     }

@@ -112,7 +112,9 @@ impl From<CoreError> for HttpError {
             CoreError::Unauthenticated => StatusCode::UNAUTHORIZED,
             CoreError::Forbidden { .. } => StatusCode::FORBIDDEN,
             CoreError::NotFound { .. } => StatusCode::NOT_FOUND,
-            CoreError::Conflict { .. } | CoreError::RevisionConflict { .. } => StatusCode::CONFLICT,
+            CoreError::Conflict { .. }
+            | CoreError::RevisionConflict { .. }
+            | CoreError::LostIdempotencyLease { .. } => StatusCode::CONFLICT,
             CoreError::LimitExceeded { .. } => StatusCode::PAYLOAD_TOO_LARGE,
             CoreError::Plugin { diagnostic, .. } => plugin_status(&diagnostic.code),
             CoreError::Storage { .. }

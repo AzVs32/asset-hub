@@ -106,3 +106,29 @@ fn resource_edit_policy_is_independent_and_rejects_zero() {
     .normalized();
     assert!(invalid.is_err());
 }
+
+#[test]
+fn idempotency_lease_duration_is_configurable_and_must_be_positive() {
+    let config = AssetInfraConfig::from_config_str(
+        r#"
+        [idempotency]
+        lease_duration_seconds = 90
+        "#,
+    )
+    .unwrap()
+    .normalized()
+    .unwrap();
+    assert_eq!(config.idempotency.lease_duration().as_secs(), 90);
+
+    assert!(
+        AssetInfraConfig::from_config_str(
+            r#"
+        [idempotency]
+        lease_duration_seconds = 0
+        "#,
+        )
+        .unwrap()
+        .normalized()
+        .is_err()
+    );
+}

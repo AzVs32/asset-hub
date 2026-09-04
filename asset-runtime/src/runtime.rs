@@ -165,6 +165,7 @@ impl AssetRuntime {
             resource_action_policy,
             resource_content_edit_policy,
             infrastructure.idempotency_repository(),
+            config.idempotency.lease_duration(),
         );
         let resource_service = resource_services.resource_service();
         let content_service = resource_services.content_service();

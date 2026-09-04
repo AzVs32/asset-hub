@@ -24,7 +24,7 @@ pub use directory::{
     DirectoryProjection, DirectoryQuery, DirectoryRelocation, DirectoryRelocationStore,
     DirectoryRevisionUpdate, DirectoryStore, LocatedDirectory,
 };
-pub use idempotency::IdempotencyRepository;
+pub use idempotency::{IdempotencyAcquire, IdempotencyRepository};
 pub use identity::{LocatedUser, PasswordHasher, UserQuery, UserRepository};
 pub use resource::{
     ListResources, LocatedResource, ResourceActionExecutor, ResourceActionOutput,

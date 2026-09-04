@@ -6,8 +6,8 @@ use super::content::{
 use super::{CreateUpload, StorageKeyLocks, UploadLocks, path_resolver};
 use crate::CoreError;
 use crate::domain::{
-    AccessContext, Checksum, DirectoryOperation, Resource, ResourceKind, StorageKey, UploadId,
-    UploadSession, UploadStatus, UserId,
+    AccessContext, Checksum, DirectoryOperation, IdempotencyKey, Resource, ResourceKind,
+    StorageKey, UploadId, UploadSession, UploadStatus, UserId,
 };
 use crate::port::{
     BlobByteStream, ContentObjectStore, ContentReader, ContentStagingStore,
@@ -188,7 +188,7 @@ impl UploadService {
         command: CreateUpload,
     ) -> Result<UploadSession, CoreError> {
         let Some(key) = command.idempotency_key().cloned() else {
-            return self.create_session(owner_id, command).await;
+            return self.create_session(owner_id, command, None).await;
         };
         let hash = request_hash(&serde_json::json!({
             "name": &command.name,
@@ -199,28 +199,40 @@ impl UploadService {
             "expected_checksum": command.expected_checksum.value(),
         }));
         match self.service.idempotency.begin(&key, &hash).await? {
-            IdempotencyOutcome::Execute => {
-                let result = self.create_session(owner_id, command).await;
-                match &result {
+            IdempotencyOutcome::Acquired { execution_id } => {
+                match self
+                    .service
+                    .idempotency
+                    .execute_with_lease(
+                        &key,
+                        execution_id,
+                        self.create_session(owner_id, command, Some(&key)),
+                    )
+                    .await
+                {
                     Ok(session) => {
-                        let _ = self
-                            .service
+                        self.service
                             .idempotency
                             .complete(
                                 &key,
+                                execution_id,
                                 serde_json::json!({ "upload_id": session.id().to_string() }),
                             )
-                            .await;
+                            .await?;
+                        Ok(session)
                     }
-                    Err(_) => {
-                        let _ = self.service.idempotency.abandon(&key).await;
+                    Err(error) => {
+                        self.service.idempotency.abandon(&key, execution_id).await?;
+                        Err(error)
                     }
                 }
-                result
             }
             IdempotencyOutcome::Replay(result) => self.replay_upload(&result, owner_id).await,
-            IdempotencyOutcome::Conflict => Err(CoreError::conflict(format!(
+            IdempotencyOutcome::ConflictDifferentRequest => Err(CoreError::conflict(format!(
                 "idempotency key `{key}` was already used for a different request"
+            ))),
+            IdempotencyOutcome::AlreadyInProgress => Err(CoreError::conflict(format!(
+                "idempotency key `{key}` is currently executing"
             ))),
         }
     }
@@ -229,7 +241,22 @@ impl UploadService {
         &self,
         owner_id: UserId,
         command: CreateUpload,
+        idempotency_key: Option<&IdempotencyKey>,
     ) -> Result<UploadSession, CoreError> {
+        if let Some(key) = idempotency_key
+            && let Some(session) = self
+                .service
+                .upload_sessions
+                .find_by_idempotency_key(key)
+                .await?
+        {
+            if session.owner_id() != owner_id {
+                return Err(CoreError::conflict(format!(
+                    "idempotency key `{key}` belongs to a different upload owner"
+                )));
+            }
+            return Ok(session);
+        }
         let CreateUpload {
             name,
             kind,
@@ -271,7 +298,16 @@ impl UploadService {
         )?;
         let staged = staged_for(session.id())?;
         self.service.staging.create_staged(staged.key()).await?;
-        if let Err(error) = self.service.upload_sessions.save(&session).await {
+        let save = match idempotency_key {
+            Some(key) => {
+                self.service
+                    .upload_sessions
+                    .save_with_idempotency_key(&session, key)
+                    .await
+            }
+            None => self.service.upload_sessions.save(&session).await,
+        };
+        if let Err(error) = save {
             let _ = self.service.staging.discard_staged(&staged).await;
             return Err(error);
         }

@@ -115,26 +115,36 @@ impl ActionOrchestrator {
             "input": &command.input,
         }));
         match self.idempotency.begin(&key, &hash).await? {
-            IdempotencyOutcome::Execute => {
-                let result = self.execute_resource(id, command).await;
-                match &result {
+            IdempotencyOutcome::Acquired { execution_id } => {
+                match self
+                    .idempotency
+                    .execute_with_lease(&key, execution_id, self.execute_resource(id, command))
+                    .await
+                {
                     Ok(Some(output)) => {
-                        let _ = self
-                            .idempotency
-                            .complete(&key, resource_action_result(id, output)?)
-                            .await;
+                        self.idempotency
+                            .complete(&key, execution_id, resource_action_result(id, &output)?)
+                            .await?;
+                        Ok(Some(output))
                     }
-                    _ => {
-                        let _ = self.idempotency.abandon(&key).await;
+                    Ok(None) => {
+                        self.idempotency.abandon(&key, execution_id).await?;
+                        Ok(None)
+                    }
+                    Err(error) => {
+                        self.idempotency.abandon(&key, execution_id).await?;
+                        Err(error)
                     }
                 }
-                result
             }
             IdempotencyOutcome::Replay(result) => {
                 self.replay_resource_action(&result).await.map(Some)
             }
-            IdempotencyOutcome::Conflict => Err(CoreError::conflict(format!(
+            IdempotencyOutcome::ConflictDifferentRequest => Err(CoreError::conflict(format!(
                 "idempotency key `{key}` was already used for a different request"
+            ))),
+            IdempotencyOutcome::AlreadyInProgress => Err(CoreError::conflict(format!(
+                "idempotency key `{key}` is currently executing"
             ))),
         }
     }
