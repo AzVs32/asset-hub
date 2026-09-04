@@ -5,7 +5,8 @@ use asset_core::domain::{ResourceActionPolicy, ResourceContentEditPolicy};
 use asset_core::service::{
     ActionOrchestrator, AssetWorkflowService, AuthorizationService, ContentService,
     DirectoryIndexService, DirectoryProvisioningService, DirectoryService, DirectoryServices,
-    ResourceService, ResourceServices, StorageMaintenanceService, UploadService, UserService,
+    IdempotencyService, ResourceService, ResourceServices, StorageMaintenanceService,
+    UploadService, UserService,
 };
 use asset_infra::AssetInfrastructure;
 use asset_infra::action::{DefaultDirectoryActionExecutor, DefaultResourceActionExecutor};
@@ -35,6 +36,7 @@ pub struct AssetRuntime {
     directory_service: DirectoryService,
     directory_provisioning_service: DirectoryProvisioningService,
     directory_index_service: DirectoryIndexService,
+    idempotency_service: IdempotencyService,
     asset_workflow_service: AssetWorkflowService,
     user_service: UserService,
     /// 授权应用能力
@@ -166,7 +168,7 @@ impl AssetRuntime {
             resource_content_edit_policy,
             infrastructure.idempotency_repository(),
             config.idempotency.lease_duration(),
-        );
+        )?;
         let resource_service = resource_services.resource_service();
         let content_service = resource_services.content_service();
         let upload_service = resource_services.upload_service();
@@ -193,7 +195,7 @@ impl AssetRuntime {
             upload_service.clone(),
             action_orchestrator.clone(),
             directory_service.clone(),
-            idempotency_service,
+            idempotency_service.clone(),
         );
         let plugin_web_assets = plugin_web_assets_from_catalog(&plugin_catalog)?;
 
@@ -224,6 +226,7 @@ impl AssetRuntime {
             directory_service,
             directory_provisioning_service,
             directory_index_service,
+            idempotency_service,
             asset_workflow_service,
             user_service,
             authorization_service,
@@ -266,6 +269,10 @@ impl AssetRuntime {
 
     pub fn upload_service(&self) -> UploadService {
         self.upload_service.clone()
+    }
+
+    pub fn idempotency_service(&self) -> IdempotencyService {
+        self.idempotency_service.clone()
     }
 
     pub fn action_orchestrator(&self) -> ActionOrchestrator {

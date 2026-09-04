@@ -45,6 +45,29 @@ async fn recovery_environment(
     (root, runtime, infrastructure)
 }
 
+#[tokio::test]
+async fn runtime_uses_the_configured_idempotency_lease_duration() {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "asset-hub-idempotency-config-{}-{nonce}",
+        std::process::id()
+    ));
+    let mut config = recovery_config(root.clone());
+    config.idempotency.lease_duration_seconds = 1;
+
+    let runtime = AssetRuntime::new(config).await.unwrap();
+    assert_eq!(
+        runtime.idempotency_service().lease_duration(),
+        Duration::from_secs(1)
+    );
+
+    drop(runtime);
+    let _ = std::fs::remove_dir_all(root);
+}
+
 fn verified_content(size: u64) -> ResourceContent {
     ResourceContent::verified(size, Checksum::sha256("0".repeat(64)).unwrap())
         .build()

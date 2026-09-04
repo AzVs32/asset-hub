@@ -108,27 +108,53 @@ fn resource_edit_policy_is_independent_and_rejects_zero() {
 }
 
 #[test]
-fn idempotency_lease_duration_is_configurable_and_must_be_positive() {
-    let config = AssetInfraConfig::from_config_str(
-        r#"
-        [idempotency]
-        lease_duration_seconds = 90
-        "#,
-    )
-    .unwrap()
-    .normalized()
-    .unwrap();
-    assert_eq!(config.idempotency.lease_duration().as_secs(), 90);
-
-    assert!(
-        AssetInfraConfig::from_config_str(
-            r#"
-        [idempotency]
-        lease_duration_seconds = 0
-        "#,
-        )
+fn idempotency_lease_duration_uses_the_supported_range() {
+    for seconds in [1, 300, 86_400] {
+        let config = AssetInfraConfig::from_config_str(&format!(
+            "[idempotency]\nlease_duration_seconds = {seconds}"
+        ))
         .unwrap()
         .normalized()
-        .is_err()
+        .unwrap();
+        assert_eq!(config.idempotency.lease_duration().as_secs(), seconds);
+    }
+
+    let default = AssetInfraConfig::from_config_str("")
+        .unwrap()
+        .normalized()
+        .unwrap();
+    assert_eq!(default.idempotency.lease_duration().as_secs(), 300);
+
+    for seconds in [0, 86_401, i64::MAX as u64] {
+        let error = AssetInfraConfig::from_config_str(&format!(
+            "[idempotency]\nlease_duration_seconds = {seconds}"
+        ))
+        .unwrap()
+        .normalized()
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "invalid configuration: idempotency.lease_duration_seconds must be between 1 and 86400 seconds; got {seconds}"
+            )
+        );
+    }
+
+    let overflow = AssetInfraConfig::from_config_str(&format!(
+        "[idempotency]\nlease_duration_seconds = {}",
+        u64::MAX
+    ))
+    .unwrap_err();
+    assert!(overflow.to_string().contains("invalid configuration"));
+    assert!(overflow.to_string().contains("u64 value was too large"));
+
+    let error = IdempotencyConfig {
+        lease_duration_seconds: u64::MAX,
+    }
+    .validate()
+    .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "invalid configuration: idempotency.lease_duration_seconds must be between 1 and 86400 seconds; got 18446744073709551615"
     );
 }

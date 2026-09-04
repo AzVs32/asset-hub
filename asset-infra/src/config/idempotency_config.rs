@@ -2,6 +2,9 @@ use asset_core::CoreError;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+const MIN_LEASE_DURATION_SECONDS: u64 = 1;
+const MAX_LEASE_DURATION_SECONDS: u64 = 24 * 60 * 60;
+
 /// Persistent request-idempotency execution lease policy.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -20,10 +23,13 @@ impl Default for IdempotencyConfig {
 
 impl IdempotencyConfig {
     pub fn validate(&self) -> Result<(), CoreError> {
-        if self.lease_duration_seconds == 0 {
-            return Err(CoreError::configuration(
-                "idempotency.lease_duration_seconds must be greater than 0",
-            ));
+        if !(MIN_LEASE_DURATION_SECONDS..=MAX_LEASE_DURATION_SECONDS)
+            .contains(&self.lease_duration_seconds)
+        {
+            return Err(CoreError::configuration(format!(
+                "idempotency.lease_duration_seconds must be between {MIN_LEASE_DURATION_SECONDS} and {MAX_LEASE_DURATION_SECONDS} seconds; got {}",
+                self.lease_duration_seconds,
+            )));
         }
         Ok(())
     }

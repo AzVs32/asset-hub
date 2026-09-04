@@ -97,7 +97,8 @@ replacement content. Resources above the limit therefore do not advertise `edit`
 
 ## Durable request idempotency
 
-The `[idempotency].lease_duration_seconds` setting defaults to five minutes. Each guarded write
+The `[idempotency].lease_duration_seconds` setting defaults to five minutes and accepts values
+from one second through 24 hours. Each guarded write
 stores a random execution ID, lease expiry, and update timestamp in SQLite. A matching request can
 take over only an expired in-progress lease through a conditional SQLite write; a completed record
 continues to replay indefinitely, and a different request hash always conflicts. Runtime renews a

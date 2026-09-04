@@ -146,12 +146,12 @@ impl ResourceServices {
         edit_policy: Arc<ResourceContentEditPolicy>,
         idempotency_repository: Arc<dyn IdempotencyRepository>,
         idempotency_lease_duration: Duration,
-    ) -> Self {
+    ) -> Result<Self, CoreError> {
         let locks = Arc::new(StorageKeyLocks::default());
         let idempotency = IdempotencyService::with_lease_duration(
             idempotency_repository,
             idempotency_lease_duration,
-        );
+        )?;
         let resources = ResourceService::new(
             store.clone(),
             read_model.clone(),
@@ -210,14 +210,14 @@ impl ResourceServices {
             kind_registry,
             locks,
         );
-        Self {
+        Ok(Self {
             resources,
             content,
             uploads,
             actions,
             maintenance,
             idempotency,
-        }
+        })
     }
 
     pub fn resource_service(&self) -> ResourceService {

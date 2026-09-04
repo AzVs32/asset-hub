@@ -21,6 +21,7 @@ const DEFAULT_LEASE_DURATION: Duration = Duration::from_secs(5 * 60);
 pub struct IdempotencyService {
     repository: Arc<dyn IdempotencyRepository>,
     lease_duration: Duration,
+    lease_chrono_duration: ChronoDuration,
 }
 
 /// Decision returned by [`IdempotencyService::begin`].
@@ -39,21 +40,34 @@ pub enum IdempotencyOutcome {
 
 impl IdempotencyService {
     pub fn new(repository: Arc<dyn IdempotencyRepository>) -> Self {
-        Self::with_lease_duration(repository, DEFAULT_LEASE_DURATION)
+        Self {
+            repository,
+            lease_duration: DEFAULT_LEASE_DURATION,
+            lease_chrono_duration: ChronoDuration::seconds(5 * 60),
+        }
     }
 
     pub fn with_lease_duration(
         repository: Arc<dyn IdempotencyRepository>,
         lease_duration: Duration,
-    ) -> Self {
-        assert!(
-            !lease_duration.is_zero(),
-            "idempotency lease duration must be greater than zero"
-        );
-        Self {
+    ) -> Result<Self, CoreError> {
+        if lease_duration.is_zero() {
+            return Err(CoreError::configuration(
+                "idempotency lease duration must be greater than zero",
+            ));
+        }
+        let lease_chrono_duration = ChronoDuration::from_std(lease_duration).map_err(|_| {
+            CoreError::configuration("idempotency lease duration must be representable by chrono")
+        })?;
+        Ok(Self {
             repository,
             lease_duration,
-        }
+            lease_chrono_duration,
+        })
+    }
+
+    pub fn lease_duration(&self) -> Duration {
+        self.lease_duration
     }
 
     pub async fn begin(
@@ -68,7 +82,7 @@ impl IdempotencyService {
             let record = IdempotencyRecord::new(
                 key.clone(),
                 request_hash.to_string(),
-                now + chrono_duration(self.lease_duration),
+                now + self.lease_chrono_duration,
             );
             match self.repository.acquire(&record).await? {
                 IdempotencyAcquire::Acquired => {
@@ -114,7 +128,7 @@ impl IdempotencyService {
         key: &IdempotencyKey,
         execution_id: IdempotencyExecutionId,
     ) -> Result<(), CoreError> {
-        let expires_at = Utc::now() + chrono_duration(self.lease_duration);
+        let expires_at = Utc::now() + self.lease_chrono_duration;
         if self.repository.renew(key, execution_id, expires_at).await? {
             Ok(())
         } else {
@@ -159,11 +173,6 @@ fn decide(record: &IdempotencyRecord, request_hash: &str) -> IdempotencyOutcome 
         );
     }
     IdempotencyOutcome::AlreadyInProgress
-}
-
-fn chrono_duration(duration: Duration) -> ChronoDuration {
-    ChronoDuration::from_std(duration)
-        .expect("configured idempotency lease duration is representable")
 }
 
 /// Canonical fingerprint of a command's idempotency-relevant fields.
