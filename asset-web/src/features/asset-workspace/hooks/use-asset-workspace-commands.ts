@@ -69,21 +69,10 @@ export function useAssetWorkspaceCommands() {
     },
   });
   const createFolder = useMutation({
-    mutationFn: ({ parent, name, kind }: { parent: Directory; name: string; kind?: string }) =>
-      assetGateway.createDirectory(parent, name, kind),
+    mutationFn: ({ parent, name }: { parent: Directory; name: string }) =>
+      assetGateway.createDirectory(parent, name),
     onSuccess: async () => {
       toast.success("Folder created");
-      await refresh();
-    },
-    onError: handleMutationError,
-  });
-  const updateDirectoryKind = useMutation({
-    mutationFn: ({ directory, kind }: { directory: Directory; kind: string }) => {
-      if (!directory.parentId) throw new Error("The root directory kind cannot be changed");
-      return assetGateway.updateDirectory(directory, { kind });
-    },
-    onSuccess: async (directory) => {
-      toast.success(`${directory.name} kind changed`);
       await refresh();
     },
     onError: handleMutationError,
@@ -112,7 +101,6 @@ export function useAssetWorkspaceCommands() {
     upload,
     uploadProgress,
     createFolder,
-    updateDirectoryKind,
     deleteResource,
     deleteDirectory,
     refresh,

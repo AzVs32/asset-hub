@@ -3,7 +3,6 @@ import DeleteIcon from "@mui/icons-material/DeleteOutline";
 import FolderIcon from "@mui/icons-material/Folder";
 import MoreVertIcon from "@mui/icons-material/MoreVert";
 import RefreshIcon from "@mui/icons-material/Refresh";
-import SearchIcon from "@mui/icons-material/Search";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
 import {
   Alert,
@@ -16,7 +15,6 @@ import {
   CircularProgress,
   Divider,
   IconButton,
-  InputAdornment,
   List,
   ListItem,
   ListItemAvatar,
@@ -26,20 +24,17 @@ import {
   MenuItem,
   Pagination,
   Stack,
-  TextField,
   Typography,
 } from "@mui/material";
 import React from "react";
 import type { Directory, DirectoryListing } from "@/domain/directory";
 import { parentDirectory } from "@/domain/directory-path";
-import type { Resource, ResourceFilters, ResourceKind } from "@/domain/resource";
+import type { Resource, ResourceFilters } from "@/domain/resource";
 import { formatBytes, formatDate } from "@/shared/format";
 import { DirectoryThumbnail, ResourceThumbnail } from "./asset-thumbnail";
-import { KindSelect } from "./kind-select";
 
 export function ResourceList({
   listing,
-  kinds,
   filters,
   selectedId,
   selectedDirectoryId,
@@ -58,7 +53,6 @@ export function ResourceList({
   onCreateFolder,
 }: {
   listing: DirectoryListing | undefined;
-  kinds: ResourceKind[];
   filters: ResourceFilters;
   selectedId: string | null;
   selectedDirectoryId: string | null;
@@ -105,38 +99,6 @@ export function ResourceList({
         }
       />
       <Divider />
-      <Box
-        sx={{
-          display: "grid",
-          gridTemplateColumns: { xs: "1fr", md: "1fr 1fr auto" },
-          gap: 1.5,
-          p: 2,
-        }}
-      >
-        <TextField
-          size="small"
-          placeholder="Search resources"
-          value={filters.query}
-          onChange={(event) => onFilters({ query: event.target.value, page: 1 })}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <SearchIcon fontSize="small" />
-              </InputAdornment>
-            ),
-          }}
-          inputProps={{ "aria-label": "Search resources" }}
-        />
-        <KindSelect
-          label="Resource kind"
-          kinds={kinds}
-          emptyOption={{ label: "All kinds" }}
-          size="small"
-          value={filters.kind}
-          onChange={(event) => onFilters({ kind: event.target.value, page: 1 })}
-        />
-      </Box>
-      <Divider />
       <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
         {error ? (
           <Alert severity="error" sx={{ m: 2 }}>
@@ -149,7 +111,7 @@ export function ResourceList({
           </Box>
         ) : null}
         <List disablePadding>
-          {parent !== null ? <FolderRow name=".." onClick={() => onOpenDirectory(parent)} /> : null}
+          {parent !== null ? <FolderRow name=".." onOpen={() => onOpenDirectory(parent)} /> : null}
           {listing?.folders.map((folder) => (
             <FolderRow
               key={folder.id}
@@ -203,7 +165,6 @@ function FolderRow({
   name,
   directory,
   selected = false,
-  onClick,
   onSelect,
   onOpen,
   onDownload,
@@ -212,7 +173,6 @@ function FolderRow({
   name: string;
   directory?: Directory;
   selected?: boolean;
-  onClick?: () => void;
   onSelect?: () => void;
   onOpen?: () => void;
   onDownload?: () => void;
@@ -235,7 +195,7 @@ function FolderRow({
       <ListItemButton
         selected={selected}
         aria-pressed={directory ? selected : undefined}
-        onClick={onSelect ?? onClick}
+        onClick={onSelect}
         onDoubleClick={onOpen}
         onKeyDown={(event) => {
           if (event.key === "Enter" && onOpen) {
@@ -258,7 +218,7 @@ function FolderRow({
             </Avatar>
           )}
         </ListItemAvatar>
-        <ListItemText primary={name} secondary={directory?.kind ?? "Parent directory"} />
+        <ListItemText primary={name} />
       </ListItemButton>
     </ListItem>
   );
@@ -290,7 +250,7 @@ function ResourceRow({
         </ListItemAvatar>
         <ListItemText
           primary={resource.name}
-          secondary={`${status}${resource.kind} · ${formatBytes(resource.content?.size ?? 0)} · ${formatDate(resource.updatedAt)}`}
+          secondary={`${status}${formatBytes(resource.content?.size ?? 0)} · ${formatDate(resource.updatedAt)}`}
         />
       </ListItemButton>
     </ListItem>

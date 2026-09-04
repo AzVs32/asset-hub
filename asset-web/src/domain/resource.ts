@@ -1,5 +1,3 @@
-import type { DefinitionOrigin } from "./definition";
-
 export type ResourceContentDelivery = "auto" | "inline" | "reference";
 export type ResourceContentState = "absent" | "pending" | "verified" | "failed";
 export type ResourceEffectiveState =
@@ -28,22 +26,11 @@ export interface Resource {
   name: string;
   directoryId: string;
   directory: string;
-  kind: string;
   state: ResourceState;
   content: ResourceContent | null;
   createdAt: string;
   updatedAt: string;
   revision: number;
-}
-
-export interface ResourceKind {
-  kind: string;
-  parent: string | null;
-  ancestors: string[];
-  label: string;
-  supportsContent: boolean;
-  origin: DefinitionOrigin;
-  detect: { mimeTypes: string[]; extensions: string[] } | null;
 }
 
 export interface ResourcePage {
@@ -57,14 +44,11 @@ export interface ResourceFilters {
   directory: string;
   page: number;
   limit: number;
-  query: string;
-  kind: string;
 }
 
 export interface ResourceDraft {
   name: string;
   directory: string;
-  kind: string;
 }
 
 export interface UploadDraft {

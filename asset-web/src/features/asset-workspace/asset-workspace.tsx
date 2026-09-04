@@ -12,7 +12,7 @@ import { useSignOut } from "@/features/auth/use-sign-out";
 import { useAssetWorkspaceGateway } from "@/shared/api/gateway-context";
 import { queryKeys } from "@/shared/api/query-keys";
 import { DirectoryDetail } from "./components/directory-detail";
-import { DirectoryBreadcrumbs, DirectoryKindEditor } from "./components/directory-navigation";
+import { DirectoryBreadcrumbs } from "./components/directory-navigation";
 import { ResourceDetail } from "./components/resource-detail";
 import { CreateFolderDialog, UploadResourceDialog } from "./components/resource-dialogs";
 import { ResourceList } from "./components/resource-list";
@@ -47,11 +47,6 @@ export function AssetWorkspace() {
         (candidate): candidate is Directory => candidate?.id === browser.selectedDirectoryId,
       ) ?? null)
     : null;
-  const kinds = browser.kinds.data ?? [];
-  const currentDirectory =
-    browser.listing.data?.path === browser.filters.directory
-      ? browser.listing.data.directory
-      : undefined;
   function selectResource(item: Resource) {
     queryClient.setQueryData(queryKeys.resource(item.id), item);
     browser.selectResource(item.id);
@@ -125,15 +120,6 @@ export function AssetWorkspace() {
             path={browser.filters.directory}
             onNavigate={browser.openDirectory}
           />
-          <DirectoryKindEditor
-            directory={currentDirectory}
-            kinds={browser.directoryKinds.data ?? []}
-            pending={commands.updateDirectoryKind.isPending}
-            onKindChange={(kind) => {
-              if (currentDirectory)
-                commands.updateDirectoryKind.mutate({ directory: currentDirectory, kind });
-            }}
-          />
           {user.isAdmin ? (
             <Button color="inherit" startIcon={<PeopleIcon />} onClick={() => setUsersOpen(true)}>
               Users
@@ -161,7 +147,6 @@ export function AssetWorkspace() {
       >
         <ResourceList
           listing={browser.listing.data}
-          kinds={kinds}
           filters={browser.filters}
           selectedId={browser.selectedId}
           selectedDirectoryId={browser.selectedDirectoryId}
@@ -180,14 +165,10 @@ export function AssetWorkspace() {
           onCreateFolder={() => setFolderOpen(true)}
         />
         {directory ? (
-          <DirectoryDetail
-            directory={directory}
-            kind={browser.directoryKinds.data?.find((item) => item.kind === directory.kind) ?? null}
-          />
+          <DirectoryDetail directory={directory} />
         ) : (
           <ResourceDetail
             resource={resource}
-            kinds={kinds}
             pending={commands.update.isPending}
             onSave={(draft) => {
               if (!resource) return Promise.reject(new Error("Resource is unavailable"));
@@ -209,18 +190,13 @@ export function AssetWorkspace() {
         open={folderOpen}
         onOpenChange={setFolderOpen}
         parent={browser.filters.directory}
-        kinds={browser.directoryKinds.data ?? []}
         pending={commands.createFolder.isPending}
-        onCreate={(name, kind) => {
+        onCreate={(name) => {
           const parent = browser.listing.data?.directory;
           if (!parent || parent.path !== browser.filters.directory) {
             return Promise.reject(new Error("Parent directory is unavailable"));
           }
-          return commands.createFolder.mutateAsync({
-            parent,
-            name,
-            ...(kind ? { kind } : {}),
-          });
+          return commands.createFolder.mutateAsync({ parent, name });
         }}
       />
       {usersOpen ? (

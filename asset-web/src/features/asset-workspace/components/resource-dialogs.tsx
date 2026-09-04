@@ -15,10 +15,8 @@ import {
 } from "@mui/material";
 import React from "react";
 import { Controller, useForm } from "react-hook-form";
-import type { DirectoryKind } from "@/domain/directory";
 import type { UploadDraft, UploadProgress } from "@/domain/resource";
 import { DirectorySelect } from "./directory-select";
-import { KindSelect } from "./kind-select";
 
 interface UploadForm {
   file: FileList;
@@ -205,19 +203,17 @@ export function CreateFolderDialog({
   open,
   onOpenChange,
   parent,
-  kinds,
   pending,
   onCreate,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   parent: string;
-  kinds: DirectoryKind[];
   pending: boolean;
-  onCreate: (name: string, kind?: string) => Promise<unknown>;
+  onCreate: (name: string) => Promise<unknown>;
 }) {
-  const form = useForm<{ name: string; kind: string }>({
-    defaultValues: { name: "", kind: "core:directory" },
+  const form = useForm<{ name: string }>({
+    defaultValues: { name: "" },
   });
   React.useEffect(() => {
     if (open) form.reset();
@@ -232,8 +228,8 @@ export function CreateFolderDialog({
         <Box
           component="form"
           sx={{ display: "grid", gap: 2, pt: 1 }}
-          onSubmit={form.handleSubmit(async ({ name, kind }) => {
-            await onCreate(name, kind || undefined);
+          onSubmit={form.handleSubmit(async ({ name }) => {
+            await onCreate(name);
             onOpenChange(false);
           })}
         >
@@ -255,14 +251,6 @@ export function CreateFolderDialog({
                   helperText={fieldState.error?.message}
                 />
               );
-            }}
-          />
-          <Controller
-            name="kind"
-            control={form.control}
-            render={({ field }) => {
-              const { ref, ...rest } = field;
-              return <KindSelect {...rest} inputRef={ref} label="Folder kind" kinds={kinds} />;
             }}
           />
           <DialogActions sx={{ px: 0, pb: 0 }}>

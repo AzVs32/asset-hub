@@ -1,12 +1,10 @@
 import type { CurrentUser, ManagedUser } from "@/domain/auth";
-import type { DefinitionOrigin } from "@/domain/definition";
-import type { Directory, DirectoryKind } from "@/domain/directory";
-import type { Resource, ResourceDraft, ResourceKind } from "@/domain/resource";
+import type { Directory } from "@/domain/directory";
+import type { Resource, ResourceDraft } from "@/domain/resource";
 import type { components } from "./generated";
 
 type Schemas = components["schemas"];
 type ApiResource = Schemas["ResourceResponse"];
-type ApiKind = Schemas["ResourceKindResponse"];
 
 export function mapCurrentUser(value: Schemas["AuthenticatedUser"]): CurrentUser {
   return {
@@ -34,35 +32,9 @@ export function mapDirectory(value: Schemas["DirectoryResponse"]): Directory {
     path: value.path,
     parentPath: value.parent_path,
     name: value.name,
-    kind: value.kind,
     createdAt: value.created_at,
     updatedAt: value.updated_at,
     revision: value.revision,
-  };
-}
-
-export function mapDirectoryKind(value: Schemas["DirectoryKindResponse"]): DirectoryKind {
-  return {
-    kind: value.kind,
-    parent: value.parent ?? null,
-    ancestors: value.ancestors,
-    allowedParentKinds: value.allowed_parent_kinds,
-    label: value.label,
-    origin: mapOrigin(value.origin),
-  };
-}
-
-export function mapKind(value: ApiKind): ResourceKind {
-  return {
-    kind: value.kind,
-    parent: value.parent ?? null,
-    ancestors: value.ancestors,
-    label: value.label,
-    supportsContent: value.supports_content,
-    origin: mapOrigin(value.origin),
-    detect: value.detect
-      ? { mimeTypes: value.detect.mime_types, extensions: value.detect.extensions }
-      : null,
   };
 }
 
@@ -72,7 +44,6 @@ export function mapResource(value: ApiResource): Resource {
     name: value.name,
     directoryId: value.directory_id,
     directory: value.directory,
-    kind: value.kind,
     state: {
       lifecycle: value.state.lifecycle,
       content: value.state.content,
@@ -101,14 +72,6 @@ export function resourceBody(
     expected_revision: expectedRevision,
     name: draft.name,
     directory_id: directoryId,
-    kind: draft.kind,
-  };
-}
-
-function mapOrigin(value: Schemas["DefinitionOriginResponse"]): DefinitionOrigin {
-  return {
-    kind: enumValue(value.kind, ["builtin", "plugin"]),
-    id: value.id,
   };
 }
 

@@ -21,13 +21,22 @@ assets. Preserve these dependency rules:
   API object.
 - `main.tsx` is the only browser composition root.
 
+## No kind or search UI
+
+The host UI does not expose Resource or Directory kinds: no kind filters, kind editors, kind
+badges, or kind columns, and no `/resource-kinds` or `/directory-kinds` requests. Do not read or
+render the `kind` fields from backend responses. The backend assigns and changes kinds on its own;
+resource edits send only name and directory, and folder creation sends only the name.
+
+The listing has no search box either: the frontend never sends the `q` listing parameter, and
+`ResourceFilters` carries only directory, page, and limit.
+
 ## State ownership
 
 Keep each state category with its current owner:
 
-- URL path/search parameters: current directory, search, kind filter, pagination, and selected
-  Resource or Directory.
-- TanStack Query: server-owned Resource, Directory, Kind, User, authorization, and session data.
+- URL path parameters: current directory, pagination, and selected Resource or Directory.
+- TanStack Query: server-owned Resource, Directory, User, authorization, and session data.
 - React Hook Form or local component state: create, edit, upload, and transient UI state.
 - Session Context: current authenticated user.
 
@@ -46,12 +55,12 @@ content metadata, or transport fallbacks.
   concurrency precondition. On `concurrency.revision_conflict`, refresh the authoritative snapshot
   before further editing.
 - After a successful mutation, update or invalidate the smallest necessary Query cache surface.
-- Do not reproduce authorization policy or Kind hierarchy rules in React components.
+- Do not reproduce authorization policy in React components.
 
 Current upload facts:
 
-- Browser uploads do not submit a Resource Kind. The backend detects it from MIME metadata and the
-  final Resource path, falling back to `core:resource` when no Kind matcher applies.
+- Browser uploads submit no kind metadata. The backend detects it from MIME metadata and the final
+  Resource path.
 - Uploads hash locally, create or resume a session, send checksum-verified chunks, complete the
   session, and poll until the Resource is published.
 - The resume fingerprint includes the complete-file SHA-256. Do not weaken it to filename and size.

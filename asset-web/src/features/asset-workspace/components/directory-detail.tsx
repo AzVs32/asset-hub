@@ -1,5 +1,4 @@
-import { Chip } from "@mui/material";
-import type { Directory, DirectoryKind } from "@/domain/directory";
+import type { Directory } from "@/domain/directory";
 import { formatDate } from "@/shared/format";
 import { DirectoryThumbnail } from "./asset-thumbnail";
 import {
@@ -10,20 +9,13 @@ import {
   DetailSection,
 } from "./detail-panel";
 
-export function DirectoryDetail({
-  directory,
-  kind,
-}: {
-  directory: Directory;
-  kind: DirectoryKind | null;
-}) {
+export function DirectoryDetail({ directory }: { directory: Directory }) {
   const path = formatDirectory(directory.path);
   return (
     <DetailPanel
       thumbnail={<DirectoryThumbnail size={48} />}
       title={directory.name || "Root"}
       subtitle={path}
-      badges={<Chip label={kind?.label ?? directory.kind} size="small" variant="outlined" />}
     >
       <DetailSection title="General">
         <DetailRow label="Created">{formatDate(directory.createdAt)}</DetailRow>
@@ -35,12 +27,6 @@ export function DirectoryDetail({
         </DetailRow>
         <DetailRow label="Parent ID">
           {directory.parentId ? <CopyableValue value={directory.parentId} /> : "—"}
-        </DetailRow>
-        <DetailRow label="Kind ID">
-          <CopyableValue value={directory.kind} />
-        </DetailRow>
-        <DetailRow label="Kind origin">
-          {kind ? `${kind.origin.kind}:${kind.origin.id}` : "—"}
         </DetailRow>
         <DetailRow label="Revision">{directory.revision}</DetailRow>
       </DetailAdvanced>

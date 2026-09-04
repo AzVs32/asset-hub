@@ -4,7 +4,6 @@ import ReactDOM from "react-dom/client";
 import { App } from "@/app/app";
 import { AppProviders } from "@/app/providers";
 import { createOpenApiGateways } from "@/infra/http/openapi-gateways";
-import "./styles.css";
 
 // 创建后端 API Gateway
 const gateways = createOpenApiGateways();

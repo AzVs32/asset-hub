@@ -1,4 +1,4 @@
-import type { Directory, DirectoryPatch } from "@/domain/directory";
+import type { Directory } from "@/domain/directory";
 import type {
   Resource,
   ResourceDraft,
@@ -10,13 +10,7 @@ import type { AssetWorkspaceGateway } from "@/shared/api/gateways";
 import type { BlobSha256, FileSha256 } from "./file-sha256";
 import type { OpenApiClient } from "./openapi-client";
 import { expectData, expectSuccess } from "./openapi-client";
-import {
-  mapDirectory,
-  mapDirectoryKind,
-  mapKind,
-  mapResource,
-  resourceBody,
-} from "./openapi-mappers";
+import { mapDirectory, mapResource, resourceBody } from "./openapi-mappers";
 import { ResumableUpload } from "./resumable-upload";
 
 export class OpenApiAssetWorkspaceGateway implements AssetWorkspaceGateway {
@@ -37,23 +31,11 @@ export class OpenApiAssetWorkspaceGateway implements AssetWorkspaceGateway {
     );
   }
 
-  async listResourceKinds() {
-    const result = await this.client.GET("/resource-kinds");
-    return expectData(result).items.map(mapKind);
-  }
-
-  async listDirectoryKinds() {
-    const result = await this.client.GET("/directory-kinds");
-    return expectData(result).items.map(mapDirectoryKind);
-  }
-
   async listDirectory(filters: ResourceFilters, signal?: AbortSignal) {
     const query = {
       path: filters.directory,
       page: filters.page,
       limit: filters.limit,
-      ...(filters.kind ? { kind: filters.kind } : {}),
-      ...(filters.query.trim() ? { q: filters.query.trim() } : {}),
     };
     const result = await this.client.GET("/directories", {
       params: { query },
@@ -113,22 +95,9 @@ export class OpenApiAssetWorkspaceGateway implements AssetWorkspaceGateway {
     return expectData(result).directory.id;
   }
 
-  async createDirectory(parent: Directory, name: string, kind?: string) {
+  async createDirectory(parent: Directory, name: string) {
     const result = await this.client.POST("/directories", {
-      body: { parent_id: parent.id, name, ...(kind ? { kind } : {}) },
-    });
-    return mapDirectory(expectData(result));
-  }
-
-  async updateDirectory(directory: Directory, patch: DirectoryPatch) {
-    const result = await this.client.PATCH("/directories/{id}", {
-      params: { path: { id: directory.id } },
-      body: {
-        expected_revision: directory.revision,
-        ...(patch.name !== undefined ? { name: patch.name } : {}),
-        ...(patch.parentId !== undefined ? { parent_id: patch.parentId } : {}),
-        ...(patch.kind !== undefined ? { kind: patch.kind } : {}),
-      },
+      body: { parent_id: parent.id, name },
     });
     return mapDirectory(expectData(result));
   }

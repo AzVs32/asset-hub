@@ -1,15 +1,9 @@
 import type { CurrentUser, ManagedUser, UserStatus } from "@/domain/auth";
-import type {
-  Directory,
-  DirectoryKind,
-  DirectoryListing,
-  DirectoryPatch,
-} from "@/domain/directory";
+import type { Directory, DirectoryListing } from "@/domain/directory";
 import type {
   Resource,
   ResourceDraft,
   ResourceFilters,
-  ResourceKind,
   UploadDraft,
   UploadProgress,
   UploadReceipt,
@@ -22,8 +16,6 @@ export interface AuthGateway {
 }
 
 export interface AssetWorkspaceGateway {
-  listResourceKinds(): Promise<ResourceKind[]>;
-  listDirectoryKinds(): Promise<DirectoryKind[]>;
   listDirectory(filters: ResourceFilters, signal?: AbortSignal): Promise<DirectoryListing>;
   findResource(id: string): Promise<Resource>;
   updateResource(resource: Resource, draft: ResourceDraft): Promise<Resource>;
@@ -34,8 +26,7 @@ export interface AssetWorkspaceGateway {
     onProgress?: (progress: UploadProgress) => void,
   ): Promise<UploadReceipt>;
   waitForUpload(id: string): Promise<Resource>;
-  createDirectory(parent: Directory, name: string, kind?: string): Promise<Directory>;
-  updateDirectory(directory: Directory, patch: DirectoryPatch): Promise<Directory>;
+  createDirectory(parent: Directory, name: string): Promise<Directory>;
   deleteDirectory(directory: Directory): Promise<void>;
   directoryDownloadUrl(directory: Directory): string;
 }
