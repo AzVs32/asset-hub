@@ -8,9 +8,7 @@ Read `README.md` for setup and validation commands.
 ## Architecture boundaries
 
 `asset-web` is the authenticated browser host for the asset workspace and user administration.
-It is a plugin-free host: it must not import the plugin SDKs, call plugin action endpoints
-(`/resources/{id}/actions/{action}`, `/directories/{id}/actions/{action}`), or load plugin web
-assets. Preserve these dependency rules:
+It is the browser host for the core HTTP API. Preserve these dependency rules:
 
 - Domain code must not depend on React, HTTP, OpenAPI DTOs, or backend transport details.
 - Features consume narrow interfaces from `shared/api/gateways.ts`; they must not call `fetch` or

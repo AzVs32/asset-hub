@@ -13,9 +13,8 @@ Construction is deterministic:
 4. schedule pending upload finalizations through the Runtime-owned supervisor;
 5. start optional storage synchronization only when the application surface requests it.
 
-Runtime startup does not discover package directories, validate Manifests, compile Wasm, construct
-a plugin Host, or retain browser asset snapshots. Core business operations are invoked directly
-through their authorization-bound services.
+Runtime startup invokes Core business operations directly through their authorization-bound
+services and does not retain extension-package lifecycle responsibilities.
 
 `UploadSession` owns durable upload state transitions. Runtime owns the deduplicating finalization
 supervisor and all spawned task lifetimes; application surfaces receive only the

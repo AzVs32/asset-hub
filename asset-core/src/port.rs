@@ -7,7 +7,7 @@
 //! - 身份：用户仓储、密码哈希
 //! - 幂等：`IdempotencyRepository`
 //!
-//! Port 只描述 Core 所需语义；OpenDAL、sqlx、Wasm runtime 等具体类型只能出现在
+//! Port 只描述 Core 所需语义；OpenDAL、sqlx 等具体类型只能出现在
 //! infrastructure adapter 中。所有公开端口统一从本模块 re-export。
 
 mod directory;

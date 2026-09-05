@@ -24,13 +24,12 @@ fn config_rejects_manually_configured_sqlite_path() {
 }
 
 #[test]
-fn config_rejects_unknown_top_level_and_kind_fields() {
+fn config_rejects_unknown_fields() {
     for source in [
         "unknown_section = true",
-        "[plugin]\nmax_concurrent_calls = 8",
-        "[kind]\nplugin_manifests = [\"plugin.json\"]",
-        "[kind]\nplugin_manifest = [\"plugin.json\"]",
-        "[[kind.definitions]]\nkind = \"doc:note\"",
+        "[legacy]\nmax_concurrent_calls = 8",
+        "[legacy]\nmanifest_paths = [\"extension.toml\"]",
+        "[[legacy.definitions]]\nname = \"note\"",
     ] {
         assert!(AssetInfraConfig::from_config_str(source).is_err());
     }
