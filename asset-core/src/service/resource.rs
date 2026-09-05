@@ -4,12 +4,11 @@
 //! every dependency. `ResourceService` itself owns only Resource metadata/lifecycle coordination.
 
 use crate::CoreError;
-use crate::domain::{ResourceContentEditPolicy, ResourceKind, ResourceKindDefinition};
+use crate::domain::ResourceContentEditPolicy;
 use crate::port::{
     BlobHealth, ContentObjectStore, ContentReader, ContentStagingStore, IdempotencyRepository,
-    ResourceContentReplacementRepository, ResourceKindRegistry, ResourceMaintenanceReadModel,
-    ResourceReadModel, ResourceRelocationStore, ResourceStore, StorageScanner,
-    UploadSessionRepository,
+    ResourceContentReplacementRepository, ResourceMaintenanceReadModel, ResourceReadModel,
+    ResourceRelocationStore, ResourceStore, StorageScanner, UploadSessionRepository,
 };
 use crate::service::{
     DirectoryIndexService, DirectoryProvisioningService, DirectoryService, IdempotencyService,
@@ -47,7 +46,6 @@ pub struct ResourceService {
     pub(crate) objects: Arc<dyn ContentObjectStore>,
     pub(crate) relocations: Arc<dyn ResourceRelocationStore>,
     pub(crate) directories: DirectoryService,
-    pub(crate) kind_registry: Arc<dyn ResourceKindRegistry>,
     pub(crate) storage_key_locks: Arc<StorageKeyLocks>,
 }
 
@@ -58,7 +56,6 @@ impl ResourceService {
         objects: Arc<dyn ContentObjectStore>,
         relocations: Arc<dyn ResourceRelocationStore>,
         directories: DirectoryService,
-        kind_registry: Arc<dyn ResourceKindRegistry>,
         storage_key_locks: Arc<StorageKeyLocks>,
     ) -> Self {
         Self {
@@ -67,7 +64,6 @@ impl ResourceService {
             objects,
             relocations,
             directories,
-            kind_registry,
             storage_key_locks,
         }
     }
@@ -78,26 +74,6 @@ impl ResourceService {
         context: &'a crate::domain::AccessContext,
     ) -> SecuredResourceService<'a> {
         SecuredResourceService::new(self, authorization, context)
-    }
-
-    pub fn kind_definitions(&self) -> &[ResourceKindDefinition] {
-        self.kind_registry.definitions()
-    }
-
-    pub fn kind_lineage(&self, kind: &ResourceKind) -> Vec<ResourceKind> {
-        self.kind_registry.lineage(kind)
-    }
-
-    pub(crate) fn validate_registered_kind(
-        &self,
-        kind: Option<ResourceKind>,
-    ) -> Result<ResourceKind, CoreError> {
-        let kind = kind.unwrap_or_default();
-        if self.kind_registry.supports(&kind) {
-            Ok(kind)
-        } else {
-            Err(CoreError::unsupported("resource kind", kind.to_string()))
-        }
     }
 }
 
@@ -126,7 +102,6 @@ impl ResourceServices {
         directories: DirectoryService,
         directory_index: DirectoryIndexService,
         directory_provisioning: DirectoryProvisioningService,
-        kind_registry: Arc<dyn ResourceKindRegistry>,
         upload_sessions: Arc<dyn UploadSessionRepository>,
         content_replacements: Arc<dyn ResourceContentReplacementRepository>,
         edit_policy: Arc<ResourceContentEditPolicy>,
@@ -144,7 +119,6 @@ impl ResourceServices {
             content_objects.clone(),
             relocation_store,
             directories.clone(),
-            kind_registry.clone(),
             locks.clone(),
         );
         let content = ContentService::new(
@@ -166,7 +140,6 @@ impl ResourceServices {
             content_objects.clone(),
             storage_scanner.clone(),
             directories.clone(),
-            kind_registry.clone(),
             upload_sessions,
             locks.clone(),
             idempotency.clone(),
@@ -181,7 +154,6 @@ impl ResourceServices {
             directories,
             directory_index,
             directory_provisioning,
-            kind_registry,
             locks,
         );
         Ok(Self {

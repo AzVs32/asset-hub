@@ -24,9 +24,8 @@ assets. Preserve these dependency rules:
 ## No kind or search UI
 
 The host UI does not expose Resource or Directory kinds: no kind filters, kind editors, kind
-badges, or kind columns, and no `/resource-kinds` or `/directory-kinds` requests. Do not read or
-render the `kind` fields from backend responses. The backend assigns and changes kinds on its own;
-resource edits send only name and directory, and folder creation sends only the name.
+badges, kind columns, kind fields, or `/resource-kinds` or `/directory-kinds` requests. Resource
+edits send only name and directory, and folder creation sends only the name.
 
 The listing has no search box either: the frontend never sends the `q` listing parameter, and
 `ResourceFilters` carries only directory, page, and limit.
@@ -59,8 +58,7 @@ content metadata, or transport fallbacks.
 
 Current upload facts:
 
-- Browser uploads submit no kind metadata. The backend detects it from MIME metadata and the final
-  Resource path.
+- Browser uploads submit no kind metadata.
 - Uploads hash locally, create or resume a session, send checksum-verified chunks, complete the
   session, and poll until the Resource is published.
 - The resume fingerprint includes the complete-file SHA-256. Do not weaken it to filename and size.

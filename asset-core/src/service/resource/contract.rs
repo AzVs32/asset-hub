@@ -1,12 +1,11 @@
 //! Public application contracts for the independently assembled Resource-related services.
 
-use crate::domain::{Checksum, DirectoryId, IdempotencyKey, ResourceKind};
+use crate::domain::{Checksum, DirectoryId, IdempotencyKey};
 use crate::port::BlobByteStream;
 
 #[derive(Debug, Clone)]
 pub struct CreateUpload {
     pub(super) name: String,
-    pub(super) kind: Option<ResourceKind>,
     pub(super) directory_id: DirectoryId,
     pub(super) mime_type: Option<String>,
     pub(super) expected_size: u64,
@@ -23,18 +22,12 @@ impl CreateUpload {
     ) -> Self {
         Self {
             name: name.into(),
-            kind: None,
             directory_id,
             mime_type: None,
             expected_size,
             expected_checksum,
             idempotency_key: None,
         }
-    }
-
-    pub fn with_kind(mut self, kind: ResourceKind) -> Self {
-        self.kind = Some(kind);
-        self
     }
 
     pub fn with_mime_type(mut self, mime_type: impl Into<String>) -> Self {
@@ -96,7 +89,6 @@ pub struct UpdateResource {
     pub(super) expected_revision: u64,
     pub(super) name: Option<String>,
     pub(super) directory_id: Option<DirectoryId>,
-    pub(super) kind: Option<ResourceKind>,
 }
 
 impl UpdateResource {
@@ -114,11 +106,6 @@ impl UpdateResource {
 
     pub fn with_directory_id(mut self, directory_id: DirectoryId) -> Self {
         self.directory_id = Some(directory_id);
-        self
-    }
-
-    pub fn with_kind(mut self, kind: ResourceKind) -> Self {
-        self.kind = Some(kind);
         self
     }
 

@@ -66,8 +66,7 @@ impl<'a> SecuredResourceService<'a> {
         let directory = self.service.directories.resolve_path(&absolute).await?;
         self.require(&directory, DirectoryOperation::ReadResource)
             .await?;
-        let query = ListResources::new(query.limit(), query.offset(), directory.id())
-            .with_kinds(query.kinds().to_vec());
+        let query = ListResources::new(query.limit(), query.offset(), directory.id());
         let query = query
             .q()
             .map(str::to_string)

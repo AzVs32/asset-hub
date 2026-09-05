@@ -2,7 +2,7 @@
 
 use super::{ResourceService, UpdateResource, path_resolver};
 use crate::CoreError;
-use crate::domain::{DirectoryId, Resource, ResourceId, ResourceKind};
+use crate::domain::{DirectoryId, Resource, ResourceId};
 use crate::port::{
     DirectoryLocation, ListResources, LocatedResource, ResourcePage, ResourceRelocation,
 };
@@ -16,13 +16,7 @@ impl ResourceService {
         self.read_model.find_by_id(id).await
     }
 
-    pub async fn list(&self, mut query: ListResources) -> Result<ResourcePage, CoreError> {
-        for kind in query.kinds() {
-            self.validate_registered_kind(Some(kind.clone()))?;
-        }
-        if let Some(kind) = query.kind().cloned() {
-            query = query.with_kinds(self.kind_registry.descendants(&kind));
-        }
+    pub async fn list(&self, query: ListResources) -> Result<ResourcePage, CoreError> {
         self.read_model.list(&query).await
     }
 
@@ -55,9 +49,6 @@ impl ResourceService {
         }
         if let Some(directory_id) = command.directory_id {
             desired.move_to_directory(directory_id)?;
-        }
-        if let Some(kind) = command.kind {
-            desired.change_kind(self.validate_registered_kind(Some(kind))?)?;
         }
         if desired.revision() == expected_revision {
             return Ok(desired);
@@ -269,11 +260,6 @@ impl ResourceService {
 pub(crate) fn build_resource(
     name: String,
     directory_id: DirectoryId,
-    kind: Option<ResourceKind>,
 ) -> crate::domain::ResourceBuilder {
-    let mut builder = Resource::builder(name).with_directory_id(directory_id);
-    if let Some(kind) = kind {
-        builder = builder.with_kind(kind);
-    }
-    builder
+    Resource::builder(name).with_directory_id(directory_id)
 }

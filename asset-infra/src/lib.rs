@@ -1,7 +1,5 @@
-pub mod builtin_catalog;
 pub mod config;
 mod directory_index;
-pub mod kind;
 pub mod migration;
 pub mod password;
 pub mod sqlite;

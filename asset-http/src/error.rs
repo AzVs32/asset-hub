@@ -92,9 +92,7 @@ impl HttpError {
 impl From<CoreError> for HttpError {
     fn from(error: CoreError) -> Self {
         let status = match &error {
-            CoreError::DefinitionOriginId(_)
-            | CoreError::KindId(_)
-            | CoreError::Directory(_)
+            CoreError::Directory(_)
             | CoreError::Resource(_)
             | CoreError::User(_)
             | CoreError::Unsupported { .. }

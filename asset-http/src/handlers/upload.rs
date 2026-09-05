@@ -31,9 +31,6 @@ pub(crate) async fn create_upload(
         request.size,
         expected_checksum,
     );
-    if let Some(kind) = request.kind {
-        command = command.with_kind(parse_kind(kind)?);
-    }
     if let Some(mime_type) = request.mime_type {
         command = command.with_mime_type(mime_type);
     }

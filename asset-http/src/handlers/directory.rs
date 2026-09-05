@@ -7,25 +7,6 @@ const DEFAULT_LIMIT: u32 = 50;
 const MAX_LIMIT: u32 = 100;
 
 /// 列出当前后端支持的目录类型。
-#[utoipa::path(
-    get,
-    path = "/directory-kinds",
-    tag = "directories",
-    responses((status = 200, description = "目录类型列表", body = DirectoryKindsResponse))
-)]
-pub(crate) async fn list_directory_kinds(
-    State(state): State<HttpState>,
-) -> Json<DirectoryKindsResponse> {
-    let directories = state.directories();
-    Json(DirectoryKindsResponse {
-        items: directories
-            .kind_definitions()
-            .iter()
-            .map(|definition| DirectoryKindResponse::from_definition(definition, directories))
-            .collect(),
-    })
-}
-
 /// 列出当前目录的直接子目录和资源。
 #[utoipa::path(
     get,
@@ -49,10 +30,6 @@ pub(crate) async fn list_directory(
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let offset = u64::from(page - 1) * u64::from(limit);
     let mut resources_query = ListResources::new(limit, offset, DirectoryId::root());
-
-    if let Some(kind) = query.kind {
-        resources_query = resources_query.with_kind(parse_kind(kind)?);
-    }
 
     if let Some(q) = query.q {
         resources_query = resources_query.with_q(q);
@@ -104,15 +81,7 @@ pub(crate) async fn create_directory(
     let parent_id = parse_directory_id(&payload.parent_id)?;
     let directory = state
         .secured_directories(&access.0)
-        .create(
-            &parent_id,
-            payload.name,
-            payload
-                .kind
-                .map(parse_directory_kind)
-                .transpose()?
-                .unwrap_or_default(),
-        )
+        .create(&parent_id, payload.name)
         .await?;
     Ok((
         StatusCode::CREATED,
@@ -175,9 +144,6 @@ pub(crate) async fn update_directory(
     if let Some(parent_id) = payload.parent_id {
         command = command.with_parent_id(parse_directory_id(&parent_id)?);
     }
-    if let Some(kind) = payload.kind {
-        command = command.with_kind(parse_directory_kind(kind)?);
-    }
     let directory = state
         .secured_directories(&access.0)
         .update(&id, command)
@@ -220,10 +186,6 @@ pub(crate) async fn delete_directory(
     }
 }
 
-pub(super) fn parse_directory_kind(value: impl Into<String>) -> Result<DirectoryKind, HttpError> {
-    DirectoryKind::try_new(value.into()).map_err(|error| CoreError::from(error).into())
-}
-
 pub(super) fn directory_response(
     workspace: &asset_core::service::WorkspaceScope,
     directory: &asset_core::port::LocatedDirectory,
@@ -235,7 +197,6 @@ pub(super) fn directory_response(
         path: path.path().to_owned(),
         parent_path: path.parent_path().to_owned(),
         name: path.name().to_owned(),
-        kind: directory.directory().kind().as_str().to_string(),
         created_at: directory.directory().created_at().to_rfc3339(),
         updated_at: directory.directory().updated_at().to_rfc3339(),
         revision: directory.directory().revision(),

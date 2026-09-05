@@ -15,13 +15,11 @@ CREATE TABLE directory_relocation_updates (
     expected_revision INTEGER NOT NULL CHECK (expected_revision > 0),
     parent_id TEXT,
     name TEXT NOT NULL,
-    kind TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     revision INTEGER NOT NULL CHECK (revision > expected_revision),
     PRIMARY KEY (relocation_directory_id, position),
     UNIQUE (relocation_directory_id, directory_id),
     FOREIGN KEY (relocation_directory_id) REFERENCES directory_relocations(directory_id)
-        ON DELETE CASCADE,
-    CHECK (kind LIKE '%:%')
+        ON DELETE CASCADE
 );

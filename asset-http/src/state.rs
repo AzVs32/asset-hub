@@ -141,10 +141,6 @@ impl HttpState {
         &self.services.resources.resources
     }
 
-    pub(crate) fn directories(&self) -> &DirectoryService {
-        &self.services.directories.directories
-    }
-
     pub(crate) async fn check_blob_storage_health(&self) -> Result<(), CoreError> {
         self.services
             .health

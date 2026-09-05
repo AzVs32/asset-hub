@@ -27,8 +27,6 @@ pub fn build_router(composition: HttpComposition, options: RouterOptions) -> Rou
     let router = Router::new()
         .route("/health", get(handlers::health))
         .route("/api-docs/openapi.json", get(openapi_document))
-        .route("/resource-kinds", get(handlers::list_resource_kinds))
-        .route("/directory-kinds", get(handlers::list_directory_kinds))
         .route(
             "/directories",
             get(handlers::list_directory).post(handlers::create_directory),

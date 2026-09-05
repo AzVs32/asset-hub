@@ -1,7 +1,7 @@
 use super::*;
 use asset_core::domain::{
     AccessContext, Checksum, DirectoryId, DirectoryPath, Resource, ResourceContent,
-    ResourceContentReplacement, ResourceKind, StorageKey, User, UserId, UserRole,
+    ResourceContentReplacement, StorageKey, User, UserId, UserRole,
 };
 use asset_core::port::{DirectoryRevisionUpdate, ListResources, ResourceRelocation};
 use asset_infra::AssetInfrastructure;
@@ -536,9 +536,7 @@ async fn resource_relocation_rolls_back_physical_move_when_a_newer_revision_wins
     .unwrap();
 
     let mut concurrent = resource.clone();
-    concurrent
-        .change_kind(ResourceKind::try_new("test:changed").unwrap())
-        .unwrap();
+    concurrent.rename("concurrent.txt").unwrap();
     assert!(
         infrastructure
             .resource_store()
@@ -560,7 +558,7 @@ async fn resource_relocation_rolls_back_physical_move_when_a_newer_revision_wins
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(current.kind(), concurrent.kind());
+    assert_eq!(current.name(), concurrent.name());
     assert_eq!(current.revision(), concurrent.revision());
     assert!(root.join(source_key.as_str()).is_file());
     assert!(!root.join(destination_key.as_str()).exists());
@@ -669,10 +667,10 @@ async fn find_resource(
     directory: &DirectoryPath,
     name: &str,
 ) -> Option<Resource> {
-    let service = runtime.resource_service();
     let authorization = runtime.authorization_service();
     let context = AccessContext::administrator(UserId::new());
-    let page = service
+    let page = runtime
+        .resource_service()
         .secured(&authorization, &context)
         .list(directory, ListResources::new(100, 0, DirectoryId::root()))
         .await
@@ -724,9 +722,6 @@ async fn local_storage_changes_are_synchronized_automatically() {
         ..AssetInfraConfig::default()
     };
     let mut runtime = AssetRuntime::new(config).await.unwrap();
-    let service = runtime.resource_service();
-    assert!(!service.kind_definitions().is_empty());
-    assert!(!runtime.directory_service().kind_definitions().is_empty());
     runtime.start_storage_sync().await.unwrap();
     let directory = DirectoryPath::from_path("documents").unwrap();
     let directory_path = root.join("documents");

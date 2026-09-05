@@ -91,7 +91,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 列出当前目录的直接子目录和资源。 */
+        /**
+         * 列出当前后端支持的目录类型。
+         *     列出当前目录的直接子目录和资源。
+         */
         get: operations["list_directory"];
         put?: never;
         /** 创建一个与存储侧实体对应的空目录。 */
@@ -121,23 +124,6 @@ export interface paths {
         patch: operations["update_directory"];
         trace?: never;
     };
-    "/directories/{id}/actions/{action}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** 执行目录插件动作。 */
-        post: operations["execute_directory_action"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/directories/{id}/download": {
         parameters: {
             query?: never;
@@ -155,23 +141,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/directory-kinds": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** 列出当前后端支持的目录类型。 */
-        get: operations["list_directory_kinds"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/health": {
         parameters: {
             query?: never;
@@ -181,23 +150,6 @@ export interface paths {
         };
         /** 健康检查。 */
         get: operations["health"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/resource-kinds": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** 列出当前后端支持的资源类型。 */
-        get: operations["list_resource_kinds"];
         put?: never;
         post?: never;
         delete?: never;
@@ -240,23 +192,6 @@ export interface paths {
         head?: never;
         /** 更新资源。 */
         patch: operations["update_resource"];
-        trace?: never;
-    };
-    "/resources/{id}/actions/{action}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** 执行资源插件动作。 */
-        post: operations["execute_resource_action"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
         trace?: never;
     };
     "/resources/{id}/content": {
@@ -365,8 +300,6 @@ export interface components {
         };
         /** @description 创建逻辑目录请求。 */
         CreateDirectoryRequest: {
-            /** @description 可选目录类型。 */
-            kind?: string | null;
             /** @description 新目录名称，只允许单个路径段。 */
             name: string;
             /** @description Stable parent Directory ID. */
@@ -377,7 +310,6 @@ export interface components {
             directory_id?: string;
             /** @description 客户端对完整本地文件增量计算出的 SHA-256。 */
             expected_sha256: string;
-            kind?: string | null;
             mime_type?: string | null;
             name: string;
             /** Format: int64 */
@@ -393,48 +325,6 @@ export interface components {
             password: string;
             username: string;
         };
-        DefinitionOriginResponse: {
-            id: string;
-            kind: string;
-        };
-        DirectoryActionAppliesToResponse: {
-            kinds: string[];
-        };
-        DirectoryActionDefinitionResponse: {
-            access: string;
-            applies_to: components["schemas"]["DirectoryActionAppliesToResponse"];
-            description?: string | null;
-            id: string;
-            label: string;
-            origin: components["schemas"]["DefinitionOriginResponse"];
-            output: components["schemas"]["ResourceActionOutputContractResponse"];
-            provides?: string | null;
-            requires: components["schemas"]["DirectoryActionRequirementsResponse"];
-            ui: components["schemas"]["ResourceActionUiResponse"];
-        };
-        DirectoryActionOutputResponse: {
-            action: string;
-            diagnostics: components["schemas"]["PluginDiagnosticResponse"][];
-            directory_id: string;
-            effects: string[];
-            view?: unknown;
-        };
-        DirectoryActionRequirementsResponse: {
-            children: boolean;
-            resources: components["schemas"]["DirectoryResourceAccessResponse"];
-        };
-        DirectoryKindResponse: {
-            actions: components["schemas"]["DirectoryActionDefinitionResponse"][];
-            allowed_parent_kinds: string[];
-            ancestors: string[];
-            kind: string;
-            label: string;
-            origin: components["schemas"]["DefinitionOriginResponse"];
-            parent?: string | null;
-        };
-        DirectoryKindsResponse: {
-            items: components["schemas"]["DirectoryKindResponse"][];
-        };
         /** @description 目录浏览响应。 */
         DirectoryListingResponse: {
             /** @description 当前目录。 */
@@ -446,15 +336,11 @@ export interface components {
             /** @description 当前目录下的资源分页。 */
             resources: components["schemas"]["ResourcePageResponse"];
         };
-        /** @enum {string} */
-        DirectoryResourceAccessResponse: "none" | "metadata" | "content";
         /** @description 逻辑目录响应。 */
         DirectoryResponse: {
-            actions: components["schemas"]["DirectoryActionDefinitionResponse"][];
             created_at: string;
             /** @description 稳定目录标识；目录移动或重命名后保持不变。 */
             id: string;
-            kind: string;
             /** @description 当前目录名。 */
             name: string;
             parent_id?: string | null;
@@ -472,38 +358,10 @@ export interface components {
             code?: string | null;
             /** @description Optional structured diagnostic context. */
             details?: unknown;
-            /** @description Additional structured diagnostics associated with the failure. */
-            diagnostics?: components["schemas"]["PluginDiagnosticResponse"][];
             /** @description 错误说明。 */
             error: string;
             /** @description Whether retrying the same operation may succeed. */
             retryable?: boolean | null;
-        };
-        ExecuteDirectoryActionRequest: {
-            /**
-             * Format: int64
-             * @description Optional for read actions and required for write actions.
-             */
-            expected_revision?: number | null;
-            input?: unknown;
-        };
-        /**
-         * @description 执行资源动作请求。
-         * @example {
-         *       "expected_revision": 7,
-         *       "input": {
-         *         "mode": "default"
-         *       }
-         *     }
-         */
-        ExecuteResourceActionRequest: {
-            /**
-             * Format: int64
-             * @description Optional for read actions and required for write actions.
-             */
-            expected_revision?: number | null;
-            /** @description 传递给插件 action handler 的 JSON 输入。 */
-            input?: unknown;
         };
         HealthComponentResponse: {
             status: string;
@@ -525,78 +383,6 @@ export interface components {
         };
         MeResponse: {
             user: components["schemas"]["AuthenticatedUser"];
-        };
-        /** @description 插件或宿主产生的结构化诊断信息。 */
-        PluginDiagnosticResponse: {
-            code: string;
-            details?: unknown;
-            message: string;
-            retryable: boolean;
-            severity: string;
-        };
-        /** @description 资源动作适用范围。 */
-        ResourceActionAppliesToResponse: {
-            extensions: string[];
-            kinds: string[];
-            mime_types: string[];
-        };
-        /** @description 资源动作定义响应。 */
-        ResourceActionDefinitionResponse: {
-            /** @description 访问边界。 */
-            access: string;
-            /** @description 资源和内容匹配条件。 */
-            applies_to: components["schemas"]["ResourceActionAppliesToResponse"];
-            /** @description 动作说明。 */
-            description?: string | null;
-            /** @description 动作 ID。 */
-            id: string;
-            /** @description 展示名称。 */
-            label: string;
-            origin: components["schemas"]["DefinitionOriginResponse"];
-            /** @description 输出约定。 */
-            output: components["schemas"]["ResourceActionOutputContractResponse"];
-            /** @description 此 Action 实现的单例 Host 能力。 */
-            provides?: string | null;
-            /** @description 动作所需数据。 */
-            requires: components["schemas"]["ResourceActionRequirementsResponse"];
-            /** @description UI 展示提示。 */
-            ui: components["schemas"]["ResourceActionUiResponse"];
-        };
-        ResourceActionOutputContractResponse: {
-            effects: string[];
-            views: string[];
-        };
-        /** @description 执行资源动作响应。 */
-        ResourceActionOutputResponse: {
-            /** @description 动作 ID。 */
-            action: string;
-            /** @description 插件返回的非致命诊断信息。 */
-            diagnostics: components["schemas"]["PluginDiagnosticResponse"][];
-            /** @description Host 已验证并应用的 effect 类型。 */
-            effects: string[];
-            /** @description 资源唯一标识。 */
-            resource_id: string;
-            /** @description 插件返回的 View。 */
-            view?: unknown;
-        };
-        ResourceActionRequirementsResponse: {
-            content: boolean;
-            content_delivery: string;
-        };
-        ResourceActionUiResponse: {
-            confirmation?: string | null;
-            destructive: boolean;
-            group?: string | null;
-            locations: string[];
-            /** Format: int32 */
-            order?: number | null;
-        };
-        /** @description 内容匹配条件。 */
-        ResourceContentMatcherResponse: {
-            /** @description 匹配的文件扩展名。 */
-            extensions: string[];
-            /** @description 匹配的 MIME 类型，支持 `image/*` 这类通配前缀。 */
-            mime_types: string[];
         };
         /** @description 资源内容引用响应。 */
         ResourceContentResponse: {
@@ -621,29 +407,6 @@ export interface components {
          * @enum {string}
          */
         ResourceEffectiveStateResponse: "no_content" | "verifying" | "ready" | "verification_failed";
-        /** @description 资源类型响应。 */
-        ResourceKindResponse: {
-            /** @description kind 支持的动作。 */
-            actions: components["schemas"]["ResourceActionDefinitionResponse"][];
-            /** @description 从直接父类型到根类型的完整祖先链。 */
-            ancestors: string[];
-            detect?: null | components["schemas"]["ResourceContentMatcherResponse"];
-            /** @description 资源类型值。 */
-            kind: string;
-            /** @description 展示名称。 */
-            label: string;
-            /** @description 定义来源：`builtin`、`config` 或 `plugin:<id>`。 */
-            origin: components["schemas"]["DefinitionOriginResponse"];
-            /** @description 直接父类型；根类型为 null。 */
-            parent?: string | null;
-            /** @description 是否允许上传文件内容。 */
-            supports_content: boolean;
-        };
-        /** @description 资源类型列表响应。 */
-        ResourceKindsResponse: {
-            /** @description 当前后端支持的资源类型。 */
-            items: components["schemas"]["ResourceKindResponse"][];
-        };
         /** @description 资源生命周期。 */
         ResourceLifecycleStateResponse: {
             /** @enum {string} */
@@ -671,8 +434,6 @@ export interface components {
         };
         /** @description 资源响应。 */
         ResourceResponse: {
-            /** @description 当前资源允许的操作。 */
-            actions: components["schemas"]["ResourceActionDefinitionResponse"][];
             content?: null | components["schemas"]["ResourceContentResponse"];
             /** @description 资源创建时间，RFC3339 格式。 */
             created_at: string;
@@ -682,8 +443,6 @@ export interface components {
             directory_id: string;
             /** @description 资源唯一标识。 */
             id: string;
-            /** @description 资源类型。 */
-            kind: string;
             /** @description 资源展示名。 */
             name: string;
             /**
@@ -705,15 +464,13 @@ export interface components {
         UpdateDirectoryRequest: {
             /** Format: int64 */
             expected_revision: number;
-            kind?: string | null;
             name?: string | null;
             parent_id?: string | null;
         };
         /**
          * @description 更新资源请求。
          * @example {
-         *       "name": "renamed.txt",
-         *       "kind": "core:resource"
+         *       "name": "renamed.txt"
          *     }
          */
         UpdateResourceRequest: {
@@ -724,8 +481,6 @@ export interface components {
              * @description Required optimistic-concurrency precondition.
              */
             expected_revision: number;
-            /** @description 可选新资源类型。 */
-            kind?: string | null;
             /** @description 可选新资源展示名。 */
             name?: string | null;
         };
@@ -927,8 +682,6 @@ export interface operations {
                 page?: number;
                 /** @description 每页资源数量。 */
                 limit?: number;
-                /** @description 可选资源类型过滤。 */
-                kind?: string;
                 /** @description 可选名称模糊搜索关键字。 */
                 q?: string;
             };
@@ -1181,54 +934,6 @@ export interface operations {
             };
         };
     };
-    execute_directory_action: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description 可选的幂等键，重复提交不会重复应用 Host effect */
-                "Idempotency-Key"?: string | null;
-            };
-            path: {
-                id: string;
-                action: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ExecuteDirectoryActionRequest"];
-            };
-        };
-        responses: {
-            /** @description 动作执行结果 */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DirectoryActionOutputResponse"];
-                };
-            };
-            /** @description 目录类型不支持该动作 */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description 目录不存在 */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
     download_directory: {
         parameters: {
             query?: never;
@@ -1288,26 +993,6 @@ export interface operations {
             };
         };
     };
-    list_directory_kinds: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description 目录类型列表 */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DirectoryKindsResponse"];
-                };
-            };
-        };
-    };
     health: {
         parameters: {
             query?: never;
@@ -1337,26 +1022,6 @@ export interface operations {
             };
         };
     };
-    list_resource_kinds: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description 资源类型列表 */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ResourceKindsResponse"];
-                };
-            };
-        };
-    };
     list_resources: {
         parameters: {
             query?: {
@@ -1364,8 +1029,6 @@ export interface operations {
                 page?: number;
                 /** @description 每页数量。 */
                 limit?: number;
-                /** @description 可选资源类型过滤。 */
-                kind?: string;
                 /** @description 可选名称模糊搜索关键字。 */
                 q?: string;
                 /** @description 相对于当前用户可见根目录的过滤路径；根目录为空字符串。 */
@@ -1561,74 +1224,6 @@ export interface operations {
                 };
             };
             /** @description 服务端错误 */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
-    execute_resource_action: {
-        parameters: {
-            query?: never;
-            header?: {
-                /** @description 可选的幂等键，重复提交不会重复应用 Host effect */
-                "Idempotency-Key"?: string | null;
-            };
-            path: {
-                /** @description 资源 ID */
-                id: string;
-                /** @description 动作 ID */
-                action: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ExecuteResourceActionRequest"];
-            };
-        };
-        responses: {
-            /** @description 动作执行结果 */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ResourceActionOutputResponse"];
-                };
-            };
-            /** @description 资源类型不支持该动作或动作未配置 */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description 资源不存在 */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description 资源版本已变化 */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description 插件或服务端错误 */
             500: {
                 headers: {
                     [name: string]: unknown;

@@ -3,7 +3,6 @@ CREATE TABLE resources (
     id TEXT PRIMARY KEY NOT NULL,
     name TEXT NOT NULL,
     directory_id TEXT NOT NULL,
-    kind TEXT NOT NULL,
     content_json TEXT,
     revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
     created_at TEXT NOT NULL,
@@ -11,9 +10,6 @@ CREATE TABLE resources (
 
     FOREIGN KEY (directory_id) REFERENCES directories(id) ON DELETE RESTRICT
 );
-
-CREATE INDEX idx_resources_kind
-ON resources(kind);
 
 CREATE INDEX idx_resources_directory_id
 ON resources(directory_id);

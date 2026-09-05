@@ -11,7 +11,6 @@ fn resource_rehydration_rejects_inconsistent_timestamps() {
             ResourceId::new(),
             "image.png".to_owned(),
             DirectoryId::root(),
-            ResourceKind::default(),
             None,
             created_at,
             created_at - chrono::Duration::seconds(1),

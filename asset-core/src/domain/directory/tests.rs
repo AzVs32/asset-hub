@@ -72,15 +72,7 @@ fn directory_rehydration_rejects_self_parent_and_inconsistent_timestamps() {
     let id = DirectoryId::new();
     let created_at = Utc::now();
     assert!(matches!(
-        Directory::rehydrate(
-            id,
-            Some(id),
-            "self".to_owned(),
-            DirectoryKind::default(),
-            created_at,
-            created_at,
-            1,
-        ),
+        Directory::rehydrate(id, Some(id), "self".to_owned(), created_at, created_at, 1,),
         Err(DirectoryError::InvalidFormat {
             field: "directory.parent_id",
             ..
@@ -92,7 +84,6 @@ fn directory_rehydration_rejects_self_parent_and_inconsistent_timestamps() {
             DirectoryId::new(),
             Some(DirectoryId::root()),
             "past".to_owned(),
-            DirectoryKind::default(),
             created_at,
             created_at - chrono::Duration::seconds(1),
             1,
@@ -108,7 +99,6 @@ fn directory_rehydration_rejects_self_parent_and_inconsistent_timestamps() {
             DirectoryId::new(),
             Some(DirectoryId::root()),
             "invalid revision".to_owned(),
-            DirectoryKind::default(),
             created_at,
             created_at,
             0,
@@ -132,6 +122,4 @@ fn directory_mutations_increment_revision_only_when_state_changes() {
     assert_eq!(directory.revision(), 2);
     directory.move_to(DirectoryId::new()).unwrap();
     assert_eq!(directory.revision(), 3);
-    directory.change_kind(DirectoryKind::try_new("core:collection").unwrap());
-    assert_eq!(directory.revision(), 4);
 }

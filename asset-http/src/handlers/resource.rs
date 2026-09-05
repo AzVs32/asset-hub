@@ -6,28 +6,6 @@ const DEFAULT_PAGE: u32 = 1;
 const DEFAULT_LIMIT: u32 = 50;
 const MAX_LIMIT: u32 = 100;
 
-/// 列出当前后端支持的资源类型。
-#[utoipa::path(
-    get,
-    path = "/resource-kinds",
-    tag = "resources",
-    responses(
-        (status = 200, description = "资源类型列表", body = ResourceKindsResponse)
-    )
-)]
-pub(crate) async fn list_resource_kinds(
-    State(state): State<HttpState>,
-) -> Json<ResourceKindsResponse> {
-    Json(ResourceKindsResponse {
-        items: state
-            .resources()
-            .kind_definitions()
-            .iter()
-            .map(|definition| ResourceKindResponse::from_definition(definition, state.resources()))
-            .collect(),
-    })
-}
-
 /// 分页列出资源。
 #[utoipa::path(
     get,
@@ -50,10 +28,6 @@ pub(crate) async fn list_resources(
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let offset = u64::from(page - 1) * u64::from(limit);
     let mut command = ListResources::new(limit, offset, DirectoryId::root());
-
-    if let Some(kind) = query.kind {
-        command = command.with_kind(parse_kind(kind)?);
-    }
 
     if let Some(q) = query.q {
         command = command.with_q(q);
@@ -129,10 +103,6 @@ pub(crate) async fn update_resource(
         command = command.with_name(name);
     }
 
-    if let Some(kind) = payload.kind {
-        command = command.with_kind(parse_kind(kind)?);
-    }
-
     if let Some(directory_id) = payload.directory_id {
         command = command.with_directory_id(parse_directory_id(&directory_id)?);
     }
@@ -183,10 +153,6 @@ pub(crate) async fn delete_resource(
     } else {
         Err(HttpError::not_found(format!("resource `{id}` not found")))
     }
-}
-
-pub(super) fn parse_kind(value: impl Into<String>) -> Result<ResourceKind, HttpError> {
-    ResourceKind::try_new(value.into()).map_err(|error| CoreError::from(error).into())
 }
 
 pub(super) fn resource_response(

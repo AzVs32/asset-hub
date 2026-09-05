@@ -12,8 +12,6 @@ CREATE TABLE upload_sessions (
     name TEXT NOT NULL,
     -- 目标目录稳定身份；最终 StorageKey 在发布时由当前目录投影解析。
     directory_id TEXT NOT NULL,
-    -- 最终 Resource 使用的已注册资源类型。
-    kind TEXT NOT NULL,
     -- 客户端声明的 MIME 类型；未提供时允许为空。
     mime_type TEXT,
     -- 客户端声明的文件总字节数，仅用于完整性校验，不作为上传大小上限。

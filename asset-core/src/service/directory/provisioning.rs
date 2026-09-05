@@ -1,7 +1,7 @@
 use super::{DirectoryKernel, DirectoryService};
 use crate::{
     CoreError,
-    domain::{Directory, DirectoryId, DirectoryKind, DirectoryPath},
+    domain::{Directory, DirectoryId, DirectoryPath},
     port::{DirectoryLocation, LocatedDirectory},
 };
 use std::sync::Arc;
@@ -56,8 +56,6 @@ impl DirectoryProvisioningService {
             return Ok(directory.location().clone());
         }
 
-        self.service
-            .ensure_kind_registered(&DirectoryKind::default())?;
         let mut parent = self
             .service
             .kernel
@@ -98,13 +96,7 @@ impl DirectoryProvisioningService {
                     .await?;
             }
 
-            let kind = self
-                .service
-                .kind_for_new_child(parent.directory().kind(), DirectoryKind::default());
-            self.service.ensure_kind_registered(&kind)?;
-            self.service
-                .ensure_parent_kind_allowed(&kind, parent.directory().kind())?;
-            let directory = Directory::new_with_kind(parent.id(), name, kind)?;
+            let directory = Directory::new(parent.id(), name)?;
             if let Err(error) = self.service.kernel.store.insert(&directory).await {
                 if !physically_existed {
                     let _ = self

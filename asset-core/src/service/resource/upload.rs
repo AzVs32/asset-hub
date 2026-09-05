@@ -6,13 +6,13 @@ use super::content::{
 use super::{CreateUpload, StorageKeyLocks, UploadLocks, path_resolver};
 use crate::CoreError;
 use crate::domain::{
-    AccessContext, Checksum, DirectoryOperation, IdempotencyKey, Resource, ResourceKind,
-    StorageKey, UploadId, UploadSession, UploadStatus, UserId,
+    AccessContext, Checksum, DirectoryOperation, IdempotencyKey, Resource, StorageKey, UploadId,
+    UploadSession, UploadStatus, UserId,
 };
 use crate::port::{
     BlobByteStream, ContentObjectStore, ContentReader, ContentStagingStore,
-    RESERVED_BLOB_STORAGE_PREFIX, ResourceKindRegistry, ResourceReadModel, ResourceStore,
-    StagedBlob, StorageScanner, UploadSessionRepository,
+    RESERVED_BLOB_STORAGE_PREFIX, ResourceReadModel, ResourceStore, StagedBlob, StorageScanner,
+    UploadSessionRepository,
 };
 use crate::service::{
     AuthorizationService, DirectoryService, IdempotencyOutcome, IdempotencyService, request_hash,
@@ -33,39 +33,10 @@ struct UploadDependencies {
     objects: Arc<dyn ContentObjectStore>,
     storage_scanner: Arc<dyn StorageScanner>,
     directories: DirectoryService,
-    kind_registry: Arc<dyn ResourceKindRegistry>,
     upload_sessions: Arc<dyn UploadSessionRepository>,
     storage_key_locks: Arc<StorageKeyLocks>,
     upload_locks: Arc<UploadLocks>,
     idempotency: IdempotencyService,
-}
-
-impl UploadDependencies {
-    fn resolve_content_kind(
-        &self,
-        kind: Option<ResourceKind>,
-        mime_type: Option<&str>,
-        storage_key: Option<&str>,
-    ) -> Result<ResourceKind, CoreError> {
-        let kind = match kind {
-            Some(kind) => kind,
-            None => self
-                .kind_registry
-                .detect_content_kind(mime_type, storage_key)?
-                .unwrap_or_default(),
-        };
-        let definition = self
-            .kind_registry
-            .get(&kind)
-            .ok_or_else(|| CoreError::unsupported("resource kind", kind.to_string()))?;
-        if !definition.supports_content() {
-            return Err(CoreError::unsupported(
-                "resource kind for content upload",
-                kind.to_string(),
-            ));
-        }
-        Ok(kind)
-    }
 }
 
 impl UploadService {
@@ -78,7 +49,6 @@ impl UploadService {
         objects: Arc<dyn ContentObjectStore>,
         storage_scanner: Arc<dyn StorageScanner>,
         directories: DirectoryService,
-        kind_registry: Arc<dyn ResourceKindRegistry>,
         upload_sessions: Arc<dyn UploadSessionRepository>,
         storage_key_locks: Arc<StorageKeyLocks>,
         idempotency: IdempotencyService,
@@ -92,7 +62,6 @@ impl UploadService {
                 objects,
                 storage_scanner,
                 directories,
-                kind_registry,
                 upload_sessions,
                 storage_key_locks,
                 upload_locks: Arc::new(UploadLocks::default()),
@@ -127,7 +96,6 @@ impl UploadService {
         };
         let hash = request_hash(&serde_json::json!({
             "name": &command.name,
-            "kind": command.kind.as_ref().map(|kind| kind.as_str()),
             "directory_id": command.directory_id.to_string(),
             "mime_type": &command.mime_type,
             "expected_size": command.expected_size,
@@ -194,7 +162,6 @@ impl UploadService {
         }
         let CreateUpload {
             name,
-            kind,
             directory_id,
             mime_type,
             expected_size,
@@ -204,12 +171,7 @@ impl UploadService {
         let directory = self.service.directories.locate_by_id(&directory_id).await?;
         let storage_key = path_resolver::resource_key(directory.path(), &name)?;
         reject_reserved_storage_key(&storage_key)?;
-        let kind = self.service.resolve_content_kind(
-            kind,
-            mime_type.as_deref(),
-            Some(storage_key.as_str()),
-        )?;
-        build_resource(name.clone(), directory.id(), Some(kind.clone())).build()?;
+        build_resource(name.clone(), directory.id()).build()?;
         if self
             .service
             .read_model
@@ -226,7 +188,6 @@ impl UploadService {
             owner_id,
             name,
             directory.id(),
-            kind,
             mime_type,
             expected_size,
             expected_checksum,
@@ -459,13 +420,9 @@ impl UploadService {
             .directories
             .locate_by_id(&session.directory_id())
             .await?;
-        let mut resource = build_resource(
-            session.name().to_string(),
-            directory.id(),
-            Some(session.kind().clone()),
-        )
-        .with_id(session.resource_id())
-        .build()?;
+        let mut resource = build_resource(session.name().to_string(), directory.id())
+            .with_id(session.resource_id())
+            .build()?;
         let storage_key = path_resolver::resource_key(directory.path(), session.name())?;
 
         let _storage_guard = self.service.storage_key_locks.lock(&storage_key).await;

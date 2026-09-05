@@ -8,9 +8,7 @@ use asset_core::service::{
     ResourceService, ResourceServices, StorageMaintenanceService, UploadService, UserService,
 };
 use asset_infra::AssetInfrastructure;
-use asset_infra::builtin_catalog::BuiltinCatalog;
 use asset_infra::config::{AssetInfraConfig, BlobBackend};
-use asset_infra::kind::build_kind_catalogs;
 use asset_infra::password::Argon2PasswordHasher;
 use asset_infra::storage::LocalStorageSync;
 use std::path::PathBuf;
@@ -66,10 +64,6 @@ impl AssetRuntime {
             }),
             BlobBackend::Local => None,
         };
-        let builtin_catalog = BuiltinCatalog::new()?;
-        let kind_catalogs = build_kind_catalogs(&builtin_catalog)?;
-        let resource_kind_registry = Arc::new(kind_catalogs.resource_kinds);
-        let directory_kind_registry = Arc::new(kind_catalogs.directory_kinds);
         let resource_content_edit_policy = Arc::new(
             ResourceContentEditPolicy::new(config.resource_edit.max_text_bytes)
                 .map_err(|error| CoreError::configuration(error.to_string()))?,
@@ -80,7 +74,6 @@ impl AssetRuntime {
             infrastructure.directory_index(),
             infrastructure.directory_storage(),
             infrastructure.directory_relocation_store(),
-            directory_kind_registry,
         );
         let directory_service = directory_services.directory_service();
         let directory_provisioning_service = directory_services.provisioning_service();
@@ -105,7 +98,6 @@ impl AssetRuntime {
             directory_service.clone(),
             directory_index_service.clone(),
             directory_provisioning_service.clone(),
-            resource_kind_registry,
             infrastructure.upload_session_repository(),
             infrastructure.content_replacement_repository(),
             resource_content_edit_policy,

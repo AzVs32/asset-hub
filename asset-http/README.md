@@ -4,10 +4,9 @@
 cookie authentication, the OpenAPI JSON contract, request limits, CORS, and the
 authentication-session store.
 
-Business handlers receive Core application services. Resource and Directory kind definitions are
-queried through `ResourceService`/`DirectoryService`, not through kind-registry Ports obtained from
-`AssetRuntime`. Upload completion receives the narrow `UploadFinalizationDispatcher` Host
-capability; HTTP does not depend on the concrete Runtime scheduler or supervisor.
+Business handlers receive Core application services. Upload completion receives the narrow
+`UploadFinalizationDispatcher` Host capability; HTTP does not depend on the concrete Runtime
+scheduler or supervisor.
 
 Resource and Directory handlers live in separate modules. HTTP state exposes separately secured
 Resource and Directory surfaces, plus `AssetWorkflowService` only for archive projections whose
@@ -21,8 +20,7 @@ When explicit CORS origins are configured, browser preflight requests may send t
 write precondition and upload headers, including `Idempotency-Key`.
 
 Resource and Directory contracts deliberately use the same shape where their semantics overlap.
-Both expose stable UUIDs, kind definitions with typed `origin` metadata, and monotonically
-increasing `revision` values. Directory creation accepts a stable `parent_id`;
+Both expose stable UUIDs and monotonically increasing `revision` values. Directory creation accepts a stable `parent_id`;
 `GET`, `PATCH`, and `DELETE /directories/{id}` address the aggregate by UUID. Mutating Resource and
 Directory requests require `expected_revision` (streaming content replacement uses `If-Match`) and
 return a coded revision conflict when another writer has advanced the aggregate. Path strings

@@ -1,10 +1,7 @@
 use super::*;
-use crate::domain::{
-    DefinitionOrigin, Directory, DirectoryId, DirectoryKind, DirectoryKindDefinition,
-    DirectoryPath, User, UserId, UserRole,
-};
+use crate::domain::{Directory, DirectoryId, DirectoryPath, User, UserId, UserRole};
 use crate::port::{
-    DirectoryIndex, DirectoryKindRegistry, DirectoryLocation, DirectoryQuery, DirectoryRelocation,
+    DirectoryIndex, DirectoryLocation, DirectoryQuery, DirectoryRelocation,
     DirectoryRelocationStore, DirectoryRevisionUpdate, DirectoryStorage, DirectoryStore,
     LocatedDirectory,
 };
@@ -257,24 +254,6 @@ impl DirectoryIndex for Directories {
     }
 }
 
-struct DirectoryKinds(Vec<DirectoryKindDefinition>);
-
-impl Default for DirectoryKinds {
-    fn default() -> Self {
-        Self(vec![DirectoryKindDefinition::new(
-            DirectoryKind::default(),
-            "Directory",
-            DefinitionOrigin::builtin_static("test"),
-        )])
-    }
-}
-
-impl DirectoryKindRegistry for DirectoryKinds {
-    fn definitions(&self) -> &[DirectoryKindDefinition] {
-        &self.0
-    }
-}
-
 fn authorization(users: Users, directories: Arc<Directories>) -> AuthorizationService {
     AuthorizationService::new(
         Arc::new(users),
@@ -283,7 +262,6 @@ fn authorization(users: Users, directories: Arc<Directories>) -> AuthorizationSe
             directories.clone(),
             directories.clone(),
             directories,
-            Arc::new(DirectoryKinds::default()),
         )
         .directory_service(),
     )

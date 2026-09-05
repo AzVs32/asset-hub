@@ -1,16 +1,14 @@
 use crate::dto::{
-    BinaryContent, CreateDirectoryRequest, CreateUploadRequest, DirectoryKindResponse,
-    DirectoryKindsResponse, DirectoryListingResponse, DirectoryResponse, ExpectedRevisionQuery,
-    HealthResponse, ListDirectoryQuery, ListResourcesQuery, ResourceKindResponse,
-    ResourceKindsResponse, ResourcePageResponse, ResourceResponse, UpdateDirectoryRequest,
+    BinaryContent, CreateDirectoryRequest, CreateUploadRequest, DirectoryListingResponse,
+    DirectoryResponse, ExpectedRevisionQuery, HealthResponse, ListDirectoryQuery,
+    ListResourcesQuery, ResourcePageResponse, ResourceResponse, UpdateDirectoryRequest,
     UpdateResourceRequest, UploadSessionResponse,
 };
 use crate::error::HttpError;
 use crate::state::HttpState;
 use asset_core::CoreError;
 use asset_core::domain::{
-    AccessContext, Checksum, DirectoryId, DirectoryKind, IdempotencyKey, ResourceId, ResourceKind,
-    UploadId, UploadSession,
+    AccessContext, Checksum, DirectoryId, IdempotencyKey, ResourceId, UploadId, UploadSession,
 };
 use asset_core::port::BlobByteStream;
 use asset_core::port::ListResources;
@@ -34,13 +32,10 @@ pub(crate) use content::{
     download_directory, download_resource_content, get_resource_content, replace_resource_content,
 };
 pub(crate) use directory::{
-    create_directory, delete_directory, find_directory, list_directory, list_directory_kinds,
-    update_directory,
+    create_directory, delete_directory, find_directory, list_directory, update_directory,
 };
 pub(crate) use maintenance::health;
-pub(crate) use resource::{
-    delete_resource, find_resource, list_resource_kinds, list_resources, update_resource,
-};
+pub(crate) use resource::{delete_resource, find_resource, list_resources, update_resource};
 pub(crate) use upload::{
     abort_upload, append_upload, complete_upload, create_upload, upload_status,
 };

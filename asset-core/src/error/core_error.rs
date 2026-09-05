@@ -1,5 +1,4 @@
 use super::{DirectoryError, ResourceError, UserError};
-use crate::domain::{DefinitionOriginIdError, KindIdError};
 use thiserror::Error;
 
 /// 核心层对外暴露的统一错误类型。
@@ -8,12 +7,6 @@ use thiserror::Error;
 /// 避免 OpenDAL、sqlx 等具体实现泄漏到核心端口签名中。
 #[derive(Error, Debug)]
 pub enum CoreError {
-    #[error(transparent)]
-    KindId(#[from] KindIdError),
-
-    #[error(transparent)]
-    DefinitionOriginId(#[from] DefinitionOriginIdError),
-
     /// 目录领域内的业务校验或树结构约束错误。
     #[error(transparent)]
     Directory(#[from] DirectoryError),

@@ -13,11 +13,10 @@ pub use secured::SecuredDirectoryService;
 
 use crate::{
     CoreError,
-    domain::{DirectoryId, DirectoryKind, DirectoryKindDefinition, DirectoryPath},
+    domain::{DirectoryId, DirectoryPath},
     port::{
-        DirectoryIndex, DirectoryKindRegistry, DirectoryLocation, DirectoryProjection,
-        DirectoryQuery, DirectoryRelocationStore, DirectoryStorage, DirectoryStore,
-        LocatedDirectory,
+        DirectoryIndex, DirectoryLocation, DirectoryProjection, DirectoryQuery,
+        DirectoryRelocationStore, DirectoryStorage, DirectoryStore, LocatedDirectory,
     },
 };
 use std::sync::Arc;
@@ -34,7 +33,6 @@ struct DirectoryKernel {
     query: Arc<dyn DirectoryQuery>,
     storage: Arc<dyn DirectoryStorage>,
     relocations: Arc<dyn DirectoryRelocationStore>,
-    kind_registry: Arc<dyn DirectoryKindRegistry>,
     mutation_lock: Arc<Mutex<()>>,
     index_service: DirectoryIndexService,
 }
@@ -52,7 +50,6 @@ impl DirectoryServices {
         index: Arc<dyn DirectoryProjection>,
         storage: Arc<dyn DirectoryStorage>,
         relocations: Arc<dyn DirectoryRelocationStore>,
-        kind_registry: Arc<dyn DirectoryKindRegistry>,
     ) -> Self {
         let query: Arc<dyn DirectoryQuery> = index.clone();
         let index_writer: Arc<dyn DirectoryIndex> = index;
@@ -62,7 +59,6 @@ impl DirectoryServices {
             query,
             storage,
             relocations,
-            kind_registry,
             mutation_lock: Arc::new(Mutex::new(())),
             index_service: index_service.clone(),
         });
@@ -95,14 +91,6 @@ impl DirectoryService {
         context: &'a crate::domain::AccessContext,
     ) -> SecuredDirectoryService<'a> {
         SecuredDirectoryService::new(self, authorization, context)
-    }
-
-    pub fn kind_definitions(&self) -> &[DirectoryKindDefinition] {
-        self.kernel.kind_registry.definitions()
-    }
-
-    pub fn kind_lineage(&self, kind: &DirectoryKind) -> Vec<DirectoryKind> {
-        self.kernel.kind_registry.lineage(kind)
     }
 
     pub async fn root(&self) -> Result<DirectoryLocation, CoreError> {
@@ -165,63 +153,6 @@ impl DirectoryService {
             .query
             .is_descendant_or_self(ancestor, candidate)
             .await
-    }
-
-    fn ensure_kind_registered(&self, kind: &DirectoryKind) -> Result<(), CoreError> {
-        if self.kernel.kind_registry.supports(kind) {
-            Ok(())
-        } else {
-            Err(CoreError::unsupported("directory kind", kind.to_string()))
-        }
-    }
-
-    fn kind_for_new_child(
-        &self,
-        parent_kind: &DirectoryKind,
-        requested_kind: DirectoryKind,
-    ) -> DirectoryKind {
-        if requested_kind == DirectoryKind::default() {
-            self.kernel
-                .kind_registry
-                .get(parent_kind)
-                .and_then(DirectoryKindDefinition::default_child_kind)
-                .cloned()
-                .unwrap_or(requested_kind)
-        } else {
-            requested_kind
-        }
-    }
-
-    fn ensure_parent_kind_allowed(
-        &self,
-        child_kind: &DirectoryKind,
-        parent_kind: &DirectoryKind,
-    ) -> Result<(), CoreError> {
-        let allowed = self
-            .kernel
-            .kind_registry
-            .lineage(child_kind)
-            .into_iter()
-            .find_map(|kind| {
-                let declared = self
-                    .kernel
-                    .kind_registry
-                    .get(&kind)
-                    .expect("registered kind lineage must contain definitions")
-                    .allowed_parent_kinds();
-                (!declared.is_empty()).then(|| declared.to_vec())
-            })
-            .unwrap_or_default();
-        if allowed.is_empty()
-            || allowed
-                .iter()
-                .any(|kind| self.kernel.kind_registry.is_a(parent_kind, kind))
-        {
-            return Ok(());
-        }
-        Err(CoreError::conflict(format!(
-            "directory kind `{child_kind}` does not allow parent kind `{parent_kind}`"
-        )))
     }
 
     async fn refresh_index(&self, id: &DirectoryId) -> Result<(), CoreError> {

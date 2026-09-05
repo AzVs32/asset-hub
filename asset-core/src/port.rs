@@ -4,7 +4,6 @@
 //! - 目录持久化与查询：`DirectoryStore`、`DirectoryQuery`、`DirectoryIndex`
 //! - 内容存储：`ContentReader`、`ContentStagingStore`、`ContentObjectStore`、`BlobHealth`、
 //!   `DirectoryStorage`、`StorageScanner`
-//! - 运行时注册：kind registry
 //! - 身份：用户仓储、密码哈希
 //! - 幂等：`IdempotencyRepository`
 //!
@@ -19,14 +18,13 @@ mod storage;
 mod upload;
 
 pub use directory::{
-    DirectoryIndex, DirectoryKindRegistry, DirectoryLocation, DirectoryProjection, DirectoryQuery,
-    DirectoryRelocation, DirectoryRelocationStore, DirectoryRevisionUpdate, DirectoryStore,
-    LocatedDirectory,
+    DirectoryIndex, DirectoryLocation, DirectoryProjection, DirectoryQuery, DirectoryRelocation,
+    DirectoryRelocationStore, DirectoryRevisionUpdate, DirectoryStore, LocatedDirectory,
 };
 pub use idempotency::{IdempotencyAcquire, IdempotencyRepository};
 pub use identity::{LocatedUser, PasswordHasher, UserQuery, UserRepository};
 pub use resource::{
-    ListResources, LocatedResource, ResourceContentReplacementRepository, ResourceKindRegistry,
+    ListResources, LocatedResource, ResourceContentReplacementRepository,
     ResourceMaintenanceReadModel, ResourcePage, ResourceReadModel, ResourceRelocation,
     ResourceRelocationStore, ResourceStore,
 };

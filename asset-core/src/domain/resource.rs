@@ -5,7 +5,6 @@
 //! [`crate::domain::UploadSession`] 聚合管理。
 
 mod content;
-mod kind;
 mod state;
 
 use crate::domain::DirectoryId;
@@ -17,7 +16,6 @@ pub use content::{
     Checksum, ChecksumKind, ContentVerificationStatus, ResourceContent, ResourceContentBuilder,
     StorageKey,
 };
-pub use kind::ResourceKind;
 pub use state::{ResourceEffectiveStatus, ResourceLifecycleStatus, ResourceState};
 
 /// 资源名称允许的最大字符数。
@@ -41,8 +39,6 @@ pub struct Resource {
     name: String,
     /// 资源所在目录的稳定标识。
     directory_id: DirectoryId,
-    /// 资源类型，用于区分图片、文档、音频等不同业务资源。
-    kind: ResourceKind,
     /// 资源内容引用；资源可以不包含对象内容。
     content: Option<ResourceContent>,
     /// 资源创建时间。
@@ -67,7 +63,6 @@ impl Resource {
         id: ResourceId,
         name: String,
         directory_id: DirectoryId,
-        kind: ResourceKind,
         content: Option<ResourceContent>,
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
@@ -91,7 +86,6 @@ impl Resource {
             id,
             name,
             directory_id,
-            kind,
             content,
             created_at,
             updated_at,
@@ -114,11 +108,6 @@ impl Resource {
     /// 返回资源所在目录的稳定标识。
     pub fn directory_id(&self) -> DirectoryId {
         self.directory_id
-    }
-
-    /// 返回资源类型。
-    pub fn kind(&self) -> &ResourceKind {
-        &self.kind
     }
 
     /// 返回资源内容引用。
@@ -171,17 +160,6 @@ impl Resource {
         Ok(())
     }
 
-    /// 修改资源类型。
-    ///
-    pub fn change_kind(&mut self, kind: ResourceKind) -> Result<(), ResourceError> {
-        if self.kind != kind {
-            self.kind = kind;
-            self.touch();
-        }
-
-        Ok(())
-    }
-
     /// 绑定或替换资源内容引用。
     pub fn attach_content(&mut self, content: ResourceContent) -> Result<(), ResourceError> {
         self.content = Some(content);
@@ -224,8 +202,6 @@ pub struct ResourceBuilder {
     id: Option<ResourceId>,
     /// 资源展示名。
     name: String,
-    /// 资源类型。
-    kind: ResourceKind,
     /// 初始逻辑目录。
     directory_id: DirectoryId,
     /// 初始内容引用。
@@ -238,7 +214,6 @@ impl ResourceBuilder {
         Self {
             id: None,
             name: name.into(),
-            kind: ResourceKind::default(),
             directory_id: DirectoryId::root(),
             content: None,
         }
@@ -247,12 +222,6 @@ impl ResourceBuilder {
     /// 使用持久化工作流预先分配的资源 ID。
     pub(crate) fn with_id(mut self, id: ResourceId) -> Self {
         self.id = Some(id);
-        self
-    }
-
-    /// 设置资源类型。
-    pub fn with_kind(mut self, kind: ResourceKind) -> Self {
-        self.kind = kind;
         self
     }
 
@@ -277,7 +246,6 @@ impl ResourceBuilder {
             id: self.id.unwrap_or_default(),
             name,
             directory_id: self.directory_id,
-            kind: self.kind,
             content: self.content,
             created_at: now,
             updated_at: now,

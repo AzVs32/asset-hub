@@ -7,7 +7,6 @@ CREATE TABLE resource_relocations (
     destination_key TEXT NOT NULL,
     name TEXT NOT NULL,
     directory_id TEXT NOT NULL,
-    kind TEXT NOT NULL,
     content_json TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,

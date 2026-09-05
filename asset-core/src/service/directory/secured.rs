@@ -3,7 +3,7 @@
 use super::{DirectoryService, UpdateDirectory};
 use crate::{
     CoreError,
-    domain::{AccessContext, DirectoryId, DirectoryKind, DirectoryOperation, DirectoryPath},
+    domain::{AccessContext, DirectoryId, DirectoryOperation, DirectoryPath},
     port::{DirectoryLocation, LocatedDirectory},
     service::AuthorizationService,
 };
@@ -71,7 +71,6 @@ impl<'a> SecuredDirectoryService<'a> {
         &self,
         parent_id: &DirectoryId,
         name: impl Into<String>,
-        kind: DirectoryKind,
     ) -> Result<LocatedDirectory, CoreError> {
         let parent = self.service.find_by_id(parent_id).await?;
         self.require(parent.location(), DirectoryOperation::CreateDirectory)
@@ -83,7 +82,7 @@ impl<'a> SecuredDirectoryService<'a> {
             .root()
             .id();
         self.service
-            .create_with_kind_in_scope(parent_id, name, kind, scope_root)
+            .create_in_scope(parent_id, name, scope_root)
             .await
     }
 

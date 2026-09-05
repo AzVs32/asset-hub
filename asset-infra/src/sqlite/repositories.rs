@@ -1,8 +1,7 @@
 use crate::migration;
 use asset_core::CoreError;
 use asset_core::domain::{
-    Directory, DirectoryId, DirectoryKind, DirectoryPath, Resource, ResourceContent, ResourceId,
-    ResourceKind,
+    Directory, DirectoryId, DirectoryPath, Resource, ResourceContent, ResourceId,
 };
 use asset_core::port::{
     DirectoryLocation, DirectoryRelocation, DirectoryRelocationStore, DirectoryRevisionUpdate,
@@ -33,7 +32,6 @@ const RESOURCE_SELECT: &str = r#"
         resources.name,
         resources.directory_id,
         directory_paths.path AS directory_path,
-        resources.kind,
         resources.content_json,
         resources.created_at,
         resources.updated_at,
@@ -47,7 +45,6 @@ const RESOURCE_AGGREGATE_SELECT: &str = r#"
         resources.id,
         resources.name,
         resources.directory_id,
-        resources.kind,
         resources.content_json,
         resources.created_at,
         resources.updated_at,
@@ -61,7 +58,6 @@ struct ResourceRow {
     id: String,
     name: String,
     directory_id: String,
-    kind: String,
     content_json: Option<String>,
     created_at: String,
     updated_at: String,
@@ -83,7 +79,6 @@ struct ResourceRelocationRow {
     destination_key: String,
     name: String,
     directory_id: String,
-    kind: String,
     content_json: Option<String>,
     created_at: String,
     updated_at: String,
@@ -96,7 +91,6 @@ struct DirectoryRow {
     id: String,
     parent_id: Option<String>,
     name: String,
-    kind: String,
     created_at: String,
     updated_at: String,
     revision: i64,
@@ -207,19 +201,17 @@ impl ResourceStore for SqliteResourceStore {
                 id,
                 name,
                 directory_id,
-                kind,
                 content_json,
                 created_at,
                 updated_at,
                 revision
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(resource.id().to_string())
         .bind(resource.name())
         .bind(resource.directory_id().to_string())
-        .bind(resource.kind().as_str())
         .bind(content_json)
         .bind(encode_timestamp(resource.created_at()))
         .bind(encode_timestamp(resource.updated_at()))
@@ -245,14 +237,13 @@ impl ResourceStore for SqliteResourceStore {
         let result = sqlx::query(
             r#"
             UPDATE resources SET
-                name = ?, directory_id = ?, kind = ?, content_json = ?,
+                name = ?, directory_id = ?, content_json = ?,
                 created_at = ?, updated_at = ?, revision = ?
             WHERE id = ? AND revision = ?
             "#,
         )
         .bind(resource.name())
         .bind(resource.directory_id().to_string())
-        .bind(resource.kind().as_str())
         .bind(content_json)
         .bind(encode_timestamp(resource.created_at()))
         .bind(encode_timestamp(resource.updated_at()))
@@ -373,8 +364,8 @@ impl ResourceRelocationStore for SqliteResourceStore {
             r#"
             INSERT INTO resource_relocations (
                 resource_id, expected_revision, source_key, destination_key,
-                name, directory_id, kind, content_json, created_at, updated_at, revision
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                name, directory_id, content_json, created_at, updated_at, revision
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(desired.id().to_string())
@@ -383,7 +374,6 @@ impl ResourceRelocationStore for SqliteResourceStore {
         .bind(relocation.destination_key().as_str())
         .bind(desired.name())
         .bind(desired.directory_id().to_string())
-        .bind(desired.kind().as_str())
         .bind(content_json)
         .bind(encode_timestamp(desired.created_at()))
         .bind(encode_timestamp(desired.updated_at()))
@@ -398,7 +388,7 @@ impl ResourceRelocationStore for SqliteResourceStore {
         let rows = sqlx::query_as::<_, ResourceRelocationRow>(
             r#"
             SELECT resource_id, expected_revision, source_key, destination_key,
-                   name, directory_id, kind, content_json, created_at, updated_at, revision
+                   name, directory_id, content_json, created_at, updated_at, revision
             FROM resource_relocations
             ORDER BY resource_id
             "#,
@@ -413,7 +403,6 @@ impl ResourceRelocationStore for SqliteResourceStore {
                     id: row.resource_id,
                     name: row.name,
                     directory_id: row.directory_id,
-                    kind: row.kind,
                     content_json: row.content_json,
                     created_at: row.created_at,
                     updated_at: row.updated_at,
@@ -443,7 +432,7 @@ impl ResourceRelocationStore for SqliteResourceStore {
 impl DirectoryStore for SqliteDirectoryStore {
     async fn load_all(&self) -> Result<Vec<Directory>, CoreError> {
         let rows = sqlx::query_as::<_, DirectoryRow>(
-            "SELECT id, parent_id, name, kind, created_at, updated_at, revision FROM directories",
+            "SELECT id, parent_id, name, created_at, updated_at, revision FROM directories",
         )
         .fetch_all(&self.pool)
         .await
@@ -453,7 +442,7 @@ impl DirectoryStore for SqliteDirectoryStore {
 
     async fn load(&self, id: &DirectoryId) -> Result<Option<Directory>, CoreError> {
         let row = sqlx::query_as::<_, DirectoryRow>(
-            "SELECT id, parent_id, name, kind, created_at, updated_at, revision FROM directories WHERE id = ?",
+            "SELECT id, parent_id, name, created_at, updated_at, revision FROM directories WHERE id = ?",
         )
         .bind(id.to_string())
         .fetch_optional(&self.pool)
@@ -466,14 +455,13 @@ impl DirectoryStore for SqliteDirectoryStore {
         sqlx::query(
             r#"
             INSERT INTO directories (
-                id, parent_id, name, kind, created_at, updated_at, revision
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                id, parent_id, name, created_at, updated_at, revision
+            ) VALUES (?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(directory.id().to_string())
         .bind(directory.parent_id().map(|id| id.to_string()))
         .bind(directory.name())
-        .bind(directory.kind().as_str())
         .bind(encode_timestamp(directory.created_at()))
         .bind(encode_timestamp(directory.updated_at()))
         .bind(encode_directory_revision(directory.revision())?)
@@ -527,13 +515,12 @@ impl DirectoryStore for SqliteDirectoryStore {
             let result = sqlx::query(
                 r#"
                 UPDATE directories
-                SET parent_id = ?, name = ?, kind = ?, updated_at = ?, revision = ?
+                SET parent_id = ?, name = ?, updated_at = ?, revision = ?
                 WHERE id = ? AND revision = ?
                 "#,
             )
             .bind(directory.parent_id().map(|id| id.to_string()))
             .bind(directory.name())
-            .bind(directory.kind().as_str())
             .bind(encode_timestamp(directory.updated_at()))
             .bind(encode_directory_revision(directory.revision())?)
             .bind(directory.id().to_string())
@@ -619,8 +606,8 @@ impl DirectoryRelocationStore for SqliteDirectoryStore {
                 r#"
                 INSERT INTO directory_relocation_updates (
                     relocation_directory_id, position, directory_id, expected_revision,
-                    parent_id, name, kind, created_at, updated_at, revision
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    parent_id, name, created_at, updated_at, revision
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 "#,
             )
             .bind(relocation.directory_id().to_string())
@@ -633,7 +620,6 @@ impl DirectoryRelocationStore for SqliteDirectoryStore {
             .bind(encode_directory_revision(update.expected_revision())?)
             .bind(directory.parent_id().map(|id| id.to_string()))
             .bind(directory.name())
-            .bind(directory.kind().as_str())
             .bind(encode_timestamp(directory.created_at()))
             .bind(encode_timestamp(directory.updated_at()))
             .bind(encode_directory_revision(directory.revision())?)
@@ -662,7 +648,6 @@ impl DirectoryRelocationStore for SqliteDirectoryStore {
             expected_revision: i64,
             parent_id: Option<String>,
             name: String,
-            kind: String,
             created_at: String,
             updated_at: String,
             revision: i64,
@@ -678,7 +663,7 @@ impl DirectoryRelocationStore for SqliteDirectoryStore {
         for row in rows {
             let update_rows = sqlx::query_as::<_, UpdateRow>(
                 r#"
-                SELECT directory_id, expected_revision, parent_id, name, kind,
+                SELECT directory_id, expected_revision, parent_id, name,
                        created_at, updated_at, revision
                 FROM directory_relocation_updates
                 WHERE relocation_directory_id = ?
@@ -695,7 +680,6 @@ impl DirectoryRelocationStore for SqliteDirectoryStore {
                     id: update.directory_id,
                     parent_id: update.parent_id,
                     name: update.name,
-                    kind: update.kind,
                     created_at: update.created_at,
                     updated_at: update.updated_at,
                     revision: update.revision,
@@ -754,16 +738,6 @@ fn build_list_select_query<'a>(query: &'a ListResources) -> QueryBuilder<'a, Sql
 fn push_list_where<'a>(builder: &mut QueryBuilder<'a, Sqlite>, query: &'a ListResources) {
     let mut has_where = false;
 
-    if !query.kinds().is_empty() {
-        push_condition_prefix(builder, &mut has_where);
-        builder.push("resources.kind IN (");
-        let mut separated = builder.separated(", ");
-        for kind in query.kinds() {
-            separated.push_bind(kind.as_str());
-        }
-        separated.push_unseparated(")");
-    }
-
     if let Some(q) = query.q() {
         push_condition_prefix(builder, &mut has_where);
         builder.push("resources.name LIKE ");
@@ -797,14 +771,11 @@ fn decode_resource(row: ResourceRow) -> Result<Resource, CoreError> {
         id,
         name,
         directory_id,
-        kind,
         content_json,
         created_at,
         updated_at,
         revision,
     } = row;
-    let kind = ResourceKind::try_new(kind)
-        .map_err(|error| CoreError::repository("resource.decode_kind", error))?;
     let content = decode_content(content_json)?;
     let revision = u64::try_from(revision)
         .map_err(|error| CoreError::repository("resource.decode_revision", error))?;
@@ -813,7 +784,6 @@ fn decode_resource(row: ResourceRow) -> Result<Resource, CoreError> {
         decode_id(&id)?,
         name,
         decode_directory_id(&directory_id)?,
-        kind,
         content,
         decode_timestamp("resource.decode_created_at", &created_at)?,
         decode_timestamp("resource.decode_updated_at", &updated_at)?,
@@ -853,8 +823,6 @@ fn decode_directory(row: DirectoryRow) -> Result<Directory, CoreError> {
             .map(decode_directory_id)
             .transpose()?,
         row.name,
-        DirectoryKind::try_new(row.kind)
-            .map_err(|error| CoreError::repository("directory.decode_kind", error))?,
         decode_timestamp("directory.decode_created_at", &row.created_at)?,
         decode_timestamp("directory.decode_updated_at", &row.updated_at)?,
         decode_revision(row.revision)?,

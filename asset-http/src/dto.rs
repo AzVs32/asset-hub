@@ -1,7 +1,6 @@
 use asset_core::domain::{
-    Checksum, ContentVerificationStatus, DefinitionOrigin, DirectoryKindDefinition, DirectoryPath,
-    Resource, ResourceContent, ResourceEffectiveStatus, ResourceKindDefinition,
-    ResourceLifecycleStatus,
+    Checksum, ContentVerificationStatus, DirectoryPath, Resource, ResourceContent,
+    ResourceEffectiveStatus, ResourceLifecycleStatus,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
@@ -19,8 +18,6 @@ pub(crate) struct CreateDirectoryRequest {
     pub(crate) parent_id: String,
     /// 新目录名称，只允许单个路径段。
     pub(crate) name: String,
-    /// 可选目录类型。
-    pub(crate) kind: Option<String>,
 }
 
 /// 资源列表查询参数。
@@ -31,8 +28,6 @@ pub(crate) struct ListResourcesQuery {
     pub(crate) page: Option<u32>,
     /// 每页数量。
     pub(crate) limit: Option<u32>,
-    /// 可选资源类型过滤。
-    pub(crate) kind: Option<String>,
     /// 可选名称模糊搜索关键字。
     pub(crate) q: Option<String>,
     /// 相对于当前用户可见根目录的过滤路径；根目录为空字符串。
@@ -51,8 +46,6 @@ pub(crate) struct ListDirectoryQuery {
     pub(crate) page: Option<u32>,
     /// 每页资源数量。
     pub(crate) limit: Option<u32>,
-    /// 可选资源类型过滤。
-    pub(crate) kind: Option<String>,
     /// 可选名称模糊搜索关键字。
     pub(crate) q: Option<String>,
 }
@@ -60,17 +53,12 @@ pub(crate) struct ListDirectoryQuery {
 /// 更新资源请求。
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
-#[schema(example = json!({
-    "name": "renamed.txt",
-    "kind": "core:resource"
-}))]
+#[schema(example = json!({"name": "renamed.txt"}))]
 pub(crate) struct UpdateResourceRequest {
     /// Required optimistic-concurrency precondition.
     pub(crate) expected_revision: u64,
     /// 可选新资源展示名。
     pub(crate) name: Option<String>,
-    /// 可选新资源类型。
-    pub(crate) kind: Option<String>,
     /// Optional stable destination Directory UUID.
     pub(crate) directory_id: Option<String>,
 }
@@ -81,7 +69,6 @@ pub(crate) struct UpdateDirectoryRequest {
     pub(crate) expected_revision: u64,
     pub(crate) name: Option<String>,
     pub(crate) parent_id: Option<String>,
-    pub(crate) kind: Option<String>,
 }
 
 #[derive(Debug, Deserialize, IntoParams)]
@@ -98,7 +85,6 @@ pub(crate) struct CreateUploadRequest {
     #[serde(default)]
     #[schema(value_type = String)]
     pub(crate) directory_id: String,
-    pub(crate) kind: Option<String>,
     pub(crate) mime_type: Option<String>,
     pub(crate) size: u64,
     /// 客户端对完整本地文件增量计算出的 SHA-256。
@@ -152,122 +138,6 @@ pub(crate) struct HealthComponentResponse {
     pub(crate) status: String,
 }
 
-/// 资源类型列表响应。
-#[derive(Debug, Serialize, ToSchema)]
-pub(crate) struct ResourceKindsResponse {
-    /// 当前后端支持的资源类型。
-    pub(crate) items: Vec<ResourceKindResponse>,
-}
-
-#[derive(Debug, Serialize, ToSchema)]
-pub(crate) struct DirectoryKindsResponse {
-    pub(crate) items: Vec<DirectoryKindResponse>,
-}
-
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub(crate) struct DirectoryKindResponse {
-    pub(crate) kind: String,
-    pub(crate) parent: Option<String>,
-    pub(crate) ancestors: Vec<String>,
-    pub(crate) allowed_parent_kinds: Vec<String>,
-    pub(crate) label: String,
-    pub(crate) origin: DefinitionOriginResponse,
-}
-
-impl DirectoryKindResponse {
-    pub(crate) fn from_definition(
-        definition: &DirectoryKindDefinition,
-        service: &asset_core::service::DirectoryService,
-    ) -> Self {
-        Self {
-            kind: definition.kind().as_str().to_string(),
-            parent: definition.parent().map(|kind| kind.as_str().to_string()),
-            ancestors: service
-                .kind_lineage(definition.kind())
-                .into_iter()
-                .skip(1)
-                .map(|kind| kind.as_str().to_string())
-                .collect(),
-            allowed_parent_kinds: definition
-                .allowed_parent_kinds()
-                .iter()
-                .map(|kind| kind.as_str().to_string())
-                .collect(),
-            label: definition.label().to_string(),
-            origin: DefinitionOriginResponse::from(definition.origin()),
-        }
-    }
-}
-
-/// 资源类型响应。
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub(crate) struct ResourceKindResponse {
-    /// 资源类型值。
-    pub(crate) kind: String,
-    /// 直接父类型；根类型为 null。
-    pub(crate) parent: Option<String>,
-    /// 从直接父类型到根类型的完整祖先链。
-    pub(crate) ancestors: Vec<String>,
-    /// 展示名称。
-    pub(crate) label: String,
-    /// 是否允许上传文件内容。
-    pub(crate) supports_content: bool,
-    /// 文件自动识别规则；为空时不会主动匹配，仅可作为手动选择或兜底。
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) detect: Option<ResourceContentMatcherResponse>,
-    /// 当前仅使用内置定义来源 `builtin`。
-    pub(crate) origin: DefinitionOriginResponse,
-}
-
-impl ResourceKindResponse {
-    pub(crate) fn from_definition(
-        definition: &ResourceKindDefinition,
-        service: &asset_core::service::ResourceService,
-    ) -> Self {
-        Self {
-            kind: definition.kind().as_str().to_string(),
-            parent: definition.parent().map(|parent| parent.as_str().to_owned()),
-            ancestors: service
-                .kind_lineage(definition.kind())
-                .into_iter()
-                .skip(1)
-                .map(|kind| kind.as_str().to_owned())
-                .collect(),
-            label: definition.label().to_string(),
-            supports_content: definition.supports_content(),
-            detect: (!definition.detect().is_empty()).then(|| ResourceContentMatcherResponse {
-                mime_types: definition.detect().mime_types().to_vec(),
-                extensions: definition.detect().extensions().to_vec(),
-            }),
-            origin: DefinitionOriginResponse::from(definition.origin()),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub(crate) struct DefinitionOriginResponse {
-    pub(crate) kind: String,
-    pub(crate) id: String,
-}
-
-impl From<&DefinitionOrigin> for DefinitionOriginResponse {
-    fn from(origin: &DefinitionOrigin) -> Self {
-        Self {
-            kind: origin.kind().to_string(),
-            id: origin.id().to_string(),
-        }
-    }
-}
-
-/// 内容匹配条件。
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub(crate) struct ResourceContentMatcherResponse {
-    /// 匹配的 MIME 类型，支持 `image/*` 这类通配前缀。
-    pub(crate) mime_types: Vec<String>,
-    /// 匹配的文件扩展名。
-    pub(crate) extensions: Vec<String>,
-}
-
 impl HealthResponse {
     pub(crate) fn new(
         database_ready: bool,
@@ -311,8 +181,6 @@ pub(crate) struct ResourceResponse {
     /// 相对于当前用户可见根目录的路径；根目录为空字符串。
     #[schema(value_type = String)]
     pub(crate) directory: DirectoryPath,
-    /// 资源类型。
-    pub(crate) kind: String,
     /// 由 Core 统一派生的资源生命周期、内容和有效状态。
     pub(crate) state: ResourceStateResponse,
     /// 资源内容引用。
@@ -385,7 +253,6 @@ pub(crate) struct DirectoryResponse {
     pub(crate) parent_path: String,
     /// 当前目录名。
     pub(crate) name: String,
-    pub(crate) kind: String,
     pub(crate) created_at: String,
     pub(crate) updated_at: String,
     pub(crate) revision: u64,
@@ -412,7 +279,6 @@ impl ResourceResponse {
             name: resource.name().to_string(),
             directory_id: resource.directory_id().to_string(),
             directory,
-            kind: resource.kind().as_str().to_string(),
             state: ResourceStateResponse::from(resource),
             content: resource.content().map(ResourceContentResponse::from),
             created_at: resource.created_at().to_rfc3339(),

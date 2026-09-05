@@ -8,11 +8,10 @@ Construction is deterministic:
 
 1. initialize the SQLite, local storage, index, and repository adapters through
    `AssetInfrastructure`;
-2. construct the Host-owned static Kind catalog and inject its registries into Core services;
-3. compose the three Directory services as one `DirectoryServices` bundle;
-4. recover pending Directory relocations, Resource relocations, and content replacements;
-5. schedule pending upload finalizations through the Runtime-owned supervisor;
-6. start optional storage synchronization only when the application surface requests it.
+2. compose the three Directory services as one `DirectoryServices` bundle;
+3. recover pending Directory relocations, Resource relocations, and content replacements;
+4. schedule pending upload finalizations through the Runtime-owned supervisor;
+5. start optional storage synchronization only when the application surface requests it.
 
 Runtime startup does not discover package directories, validate Manifests, compile Wasm, construct
 a plugin Host, or retain browser asset snapshots. Core business operations are invoked directly

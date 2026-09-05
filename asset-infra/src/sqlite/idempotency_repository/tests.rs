@@ -1,7 +1,7 @@
 use super::*;
 use crate::sqlite::{SqliteDatabase, SqliteUploadSessionRepository};
 use asset_core::domain::{
-    Checksum, DirectoryId, IdempotencyKey, IdempotencyRecord, ResourceKind, UploadSession, UserId,
+    Checksum, DirectoryId, IdempotencyKey, IdempotencyRecord, UploadSession, UserId,
 };
 use asset_core::port::{IdempotencyAcquire, IdempotencyRepository, UploadSessionRepository};
 use asset_core::service::{IdempotencyOutcome, IdempotencyService};
@@ -113,7 +113,6 @@ async fn upload_creation_key_recovers_the_durable_session_after_lease_takeover()
         UserId::new(),
         "document.txt",
         DirectoryId::root(),
-        ResourceKind::default(),
         Some("text/plain".to_string()),
         0,
         Checksum::sha256("0".repeat(64)).unwrap(),
