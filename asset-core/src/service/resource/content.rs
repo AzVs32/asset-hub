@@ -269,52 +269,6 @@ impl ContentService {
             .ok_or_else(|| CoreError::not_found("resource", resource_id.to_string()))
     }
 
-    pub(super) async fn replace_content_bytes_snapshot(
-        &self,
-        resource: &mut Resource,
-        target_key: &StorageKey,
-        content: ResourceContent,
-        data: Bytes,
-    ) -> Result<(), CoreError> {
-        let replacement_id = ResourceContentReplacementId::new();
-        let staging_key = path_resolver::replacement_staging_key(replacement_id)?;
-        let backup_key = path_resolver::replacement_backup_key(replacement_id)?;
-        let staging = self.staging.create_staged(&staging_key).await?;
-        let expected_size = data.len() as u64;
-        let staged = match self
-            .staging
-            .append_staged(
-                &staging_key,
-                0,
-                Box::pin(futures_util::stream::once(async move { Ok(data) })),
-            )
-            .await
-        {
-            Ok(staged) if staged.bytes_written() == expected_size => staged,
-            Ok(staged) => {
-                let _ = self.staging.discard_staged(&staged).await;
-                return Err(CoreError::conflict(format!(
-                    "content size mismatch: expected {expected_size}, received {}",
-                    staged.bytes_written()
-                )));
-            }
-            Err(error) => {
-                let _ = self.staging.discard_staged(&staging).await;
-                return Err(error);
-            }
-        };
-
-        self.commit_staged_replacement(
-            resource,
-            target_key.clone(),
-            staged,
-            replacement_id,
-            backup_key,
-            content,
-        )
-        .await
-    }
-
     async fn commit_staged_replacement(
         &self,
         resource: &mut Resource,
@@ -658,12 +612,6 @@ pub(super) fn content_type_for_media(content: &ResourceContent) -> String {
 }
 
 const CONTENT_CHECKSUM_KIND: ChecksumKind = ChecksumKind::Sha256;
-
-pub(super) fn calculate_checksum(data: &[u8]) -> Result<Checksum, CoreError> {
-    let mut state = ChecksumState::new(CONTENT_CHECKSUM_KIND);
-    state.update(data);
-    state.finish()
-}
 
 pub(super) fn stream_with_checksum_tracking(
     data: BlobByteStream,

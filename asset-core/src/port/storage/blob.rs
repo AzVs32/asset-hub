@@ -48,7 +48,7 @@ impl StagedBlob {
 // 对象内容存储的窄语义端口。
 //
 // 旧的整体 `BlobStorage` 被拆分为只读、暂存、对象搬迁和健康检查四个职责，避免
-// Content、Upload、Resource 搬迁与 Plugin 主机各自拿到超出所需的存储能力。
+// Content、Upload 和 Resource 搬迁各自拿到超出所需的存储能力。
 // 实现方应将 OpenDAL、文件系统、S3 等底层错误转换为 `CoreError::Storage`，
 // 不应把具体基础设施错误类型暴露到端口签名中。
 

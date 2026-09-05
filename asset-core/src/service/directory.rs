@@ -6,8 +6,7 @@ mod index;
 mod provisioning;
 mod secured;
 
-pub(crate) use contract::ExecutedDirectoryAction;
-pub use contract::{DirectoryActions, ExecuteDirectoryAction, UpdateDirectory};
+pub use contract::UpdateDirectory;
 pub use index::DirectoryIndexService;
 pub use provisioning::DirectoryProvisioningService;
 pub use secured::SecuredDirectoryService;
@@ -223,16 +222,6 @@ impl DirectoryService {
         Err(CoreError::conflict(format!(
             "directory kind `{child_kind}` does not allow parent kind `{parent_kind}`"
         )))
-    }
-
-    pub(crate) fn require_kind_registered(&self, kind: &DirectoryKind) -> Result<(), CoreError> {
-        if self.kernel.kind_registry.supports(kind) {
-            Ok(())
-        } else {
-            Err(CoreError::invariant(format!(
-                "persisted directory kind `{kind}` is not registered"
-            )))
-        }
     }
 
     async fn refresh_index(&self, id: &DirectoryId) -> Result<(), CoreError> {

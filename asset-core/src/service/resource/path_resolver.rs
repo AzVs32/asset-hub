@@ -47,14 +47,6 @@ pub(crate) fn upload_chunk_key(id: UploadId) -> Result<StorageKey, CoreError> {
     ))?)
 }
 
-/// Internal staging key for Host-generated content published by cross-aggregate workflows.
-pub(crate) fn generated_staging_key() -> Result<StorageKey, CoreError> {
-    Ok(StorageKey::new(format!(
-        "{RESERVED_BLOB_STORAGE_PREFIX}/uploads/generated-{}",
-        uuid::Uuid::now_v7()
-    ))?)
-}
-
 /// Internal deletion-marker key used to stage a Resource Blob before its aggregate is removed.
 pub(crate) fn deletion_key(id: ResourceId) -> Result<StorageKey, CoreError> {
     Ok(StorageKey::new(format!(

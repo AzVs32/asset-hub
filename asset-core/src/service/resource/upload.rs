@@ -17,9 +17,7 @@ use crate::port::{
 use crate::service::{
     AuthorizationService, DirectoryService, IdempotencyOutcome, IdempotencyService, request_hash,
 };
-use bytes::Bytes;
 use futures_util::StreamExt;
-use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -117,69 +115,6 @@ impl UploadService {
 
     pub async fn pending_finalizations(&self) -> Result<Vec<UploadId>, CoreError> {
         self.service.upload_sessions.list_finalizing().await
-    }
-
-    pub(crate) async fn create_generated(
-        &self,
-        directory: &crate::port::DirectoryLocation,
-        name: String,
-        kind: Option<ResourceKind>,
-        mime_type: Option<String>,
-        data: Bytes,
-    ) -> Result<crate::port::LocatedResource, CoreError> {
-        let storage_key = path_resolver::resource_key(directory.path(), &name)?;
-        let kind = self.service.resolve_content_kind(
-            kind,
-            mime_type.as_deref(),
-            Some(storage_key.as_str()),
-        )?;
-        let mut resource = build_resource(name.clone(), directory.id(), Some(kind)).build()?;
-        let checksum = Checksum::sha256(super::content::hex_digest(&Sha256::digest(&data)))?;
-        resource.attach_content(build_verified_content(
-            data.len() as u64,
-            mime_type,
-            checksum,
-            None,
-        )?)?;
-        let _guard = self.service.storage_key_locks.lock(&storage_key).await;
-        if self
-            .service
-            .read_model
-            .find_by_directory_and_name(directory.id(), &name)
-            .await?
-            .is_some()
-        {
-            return Err(CoreError::conflict(format!(
-                "resource path `{storage_key}` already exists"
-            )));
-        }
-        let staging_key = path_resolver::generated_staging_key()?;
-        let _staging = self.service.staging.create_staged(&staging_key).await?;
-        let expected_size = data.len() as u64;
-        let staged = self
-            .service
-            .staging
-            .append_staged(
-                &staging_key,
-                0,
-                Box::pin(futures_util::stream::once(async move { Ok(data) })),
-            )
-            .await?;
-        if staged.bytes_written() != expected_size {
-            let _ = self.service.staging.discard_staged(&staged).await;
-            return Err(CoreError::conflict("generated content size changed"));
-        }
-        self.service
-            .staging
-            .publish_staged_if_absent(&staged, &storage_key)
-            .await?;
-        if let Err(error) = self.service.store.insert(&resource).await {
-            let _ = self.service.objects.delete(&storage_key).await;
-            let _ = self.service.staging.discard_staged(&staged).await;
-            return Err(error);
-        }
-        self.service.staging.discard_staged(&staged).await?;
-        crate::port::LocatedResource::new(resource, directory.clone())
     }
 
     pub(crate) async fn create(

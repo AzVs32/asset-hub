@@ -8,16 +8,15 @@ Construction is deterministic:
 
 1. initialize the SQLite, local storage, index, and repository adapters through
    `AssetInfrastructure`;
-2. construct the Host-owned static Kind and Action catalog and inject its registries and handlers
-   into Core services;
+2. construct the Host-owned static Kind catalog and inject its registries into Core services;
 3. compose the three Directory services as one `DirectoryServices` bundle;
 4. recover pending Directory relocations, Resource relocations, and content replacements;
 5. schedule pending upload finalizations through the Runtime-owned supervisor;
 6. start optional storage synchronization only when the application surface requests it.
 
 Runtime startup does not discover package directories, validate Manifests, compile Wasm, construct
-a plugin Host, or retain browser asset snapshots. The static Kind and Action definitions remain
-temporarily because later removal steps still consume those Core contracts.
+a plugin Host, or retain browser asset snapshots. Core business operations are invoked directly
+through their authorization-bound services.
 
 `UploadSession` owns durable upload state transitions. Runtime owns the deduplicating finalization
 supervisor and all spawned task lifetimes; application surfaces receive only the

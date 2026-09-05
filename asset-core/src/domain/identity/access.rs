@@ -43,8 +43,6 @@ pub enum DirectoryOperation {
     ReadResource,
     UpdateResource,
     ReplaceResourceContent,
-    ExecuteDirectoryAction,
-    ExecuteResourceAction,
     DeleteResource,
 }
 
@@ -60,8 +58,6 @@ impl DirectoryOperation {
             Self::ReadResource => "read resource",
             Self::UpdateResource => "update resource",
             Self::ReplaceResourceContent => "replace resource content",
-            Self::ExecuteDirectoryAction => "execute directory action",
-            Self::ExecuteResourceAction => "execute resource action",
             Self::DeleteResource => "delete resource",
         }
     }

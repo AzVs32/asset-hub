@@ -4,7 +4,7 @@
 //! - 目录持久化与查询：`DirectoryStore`、`DirectoryQuery`、`DirectoryIndex`
 //! - 内容存储：`ContentReader`、`ContentStagingStore`、`ContentObjectStore`、`BlobHealth`、
 //!   `DirectoryStorage`、`StorageScanner`
-//! - 运行时注册与执行：kind/action registry、action executor
+//! - 运行时注册：kind registry
 //! - 身份：用户仓储、密码哈希
 //! - 幂等：`IdempotencyRepository`
 //!
@@ -19,18 +19,16 @@ mod storage;
 mod upload;
 
 pub use directory::{
-    DirectoryActionExecutor, DirectoryActionOutput, DirectoryActionRegistry,
-    DirectoryActionRequest, DirectoryIndex, DirectoryKindRegistry, DirectoryLocation,
-    DirectoryProjection, DirectoryQuery, DirectoryRelocation, DirectoryRelocationStore,
-    DirectoryRevisionUpdate, DirectoryStore, LocatedDirectory,
+    DirectoryIndex, DirectoryKindRegistry, DirectoryLocation, DirectoryProjection, DirectoryQuery,
+    DirectoryRelocation, DirectoryRelocationStore, DirectoryRevisionUpdate, DirectoryStore,
+    LocatedDirectory,
 };
 pub use idempotency::{IdempotencyAcquire, IdempotencyRepository};
 pub use identity::{LocatedUser, PasswordHasher, UserQuery, UserRepository};
 pub use resource::{
-    ListResources, LocatedResource, ResourceActionExecutor, ResourceActionOutput,
-    ResourceActionRegistry, ResourceActionRequest, ResourceContentReplacementRepository,
-    ResourceKindRegistry, ResourceMaintenanceReadModel, ResourcePage, ResourceReadModel,
-    ResourceRelocation, ResourceRelocationStore, ResourceStore,
+    ListResources, LocatedResource, ResourceContentReplacementRepository, ResourceKindRegistry,
+    ResourceMaintenanceReadModel, ResourcePage, ResourceReadModel, ResourceRelocation,
+    ResourceRelocationStore, ResourceStore,
 };
 pub use storage::{
     BlobByteStream, BlobHealth, ContentObjectStore, ContentReader, ContentStagingStore,

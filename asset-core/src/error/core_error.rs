@@ -1,6 +1,5 @@
 use super::{DirectoryError, ResourceError, UserError};
-use crate::domain::{ActionIdError, DefinitionOriginIdError, KindIdError};
-use asset_plugin_api::protocol::{PluginActionFailure, PluginDiagnostic};
+use crate::domain::{DefinitionOriginIdError, KindIdError};
 use thiserror::Error;
 
 /// 核心层对外暴露的统一错误类型。
@@ -9,9 +8,6 @@ use thiserror::Error;
 /// 避免 OpenDAL、sqlx 等具体实现泄漏到核心端口签名中。
 #[derive(Error, Debug)]
 pub enum CoreError {
-    #[error(transparent)]
-    ActionId(#[from] ActionIdError),
-
     #[error(transparent)]
     KindId(#[from] KindIdError),
 
@@ -114,19 +110,6 @@ pub enum CoreError {
     /// Core、持久化投影或受信任适配器违反了内部契约。
     #[error("internal invariant violated: {message}")]
     InvariantViolation { message: String },
-
-    /// 插件动作执行失败。
-    #[error("plugin `{plugin}` action `{action}` failed: {diagnostic}")]
-    Plugin {
-        /// 插件标识。
-        plugin: String,
-        /// 动作标识。
-        action: String,
-        /// Stable code, message, retry hint and optional machine-readable details.
-        diagnostic: Box<PluginDiagnostic>,
-        /// Additional diagnostics emitted while producing the primary failure.
-        diagnostics: Vec<PluginDiagnostic>,
-    },
 }
 
 impl CoreError {
@@ -215,51 +198,6 @@ impl CoreError {
     pub fn invariant(message: impl Into<String>) -> Self {
         Self::InvariantViolation {
             message: message.into(),
-        }
-    }
-
-    /// 创建插件执行错误。
-    pub fn plugin(
-        plugin: impl Into<String>,
-        action: impl Into<String>,
-        message: impl Into<String>,
-    ) -> Self {
-        Self::plugin_diagnostic(
-            plugin,
-            action,
-            PluginDiagnostic {
-                code: asset_plugin_api::protocol::diagnostic_codes::RUNTIME_FAILURE.to_string(),
-                message: message.into(),
-                severity: asset_plugin_api::protocol::PluginDiagnosticSeverity::Error,
-                retryable: false,
-                details: None,
-            },
-        )
-    }
-
-    pub fn plugin_diagnostic(
-        plugin: impl Into<String>,
-        action: impl Into<String>,
-        diagnostic: PluginDiagnostic,
-    ) -> Self {
-        Self::Plugin {
-            plugin: plugin.into(),
-            action: action.into(),
-            diagnostic: Box::new(diagnostic),
-            diagnostics: Vec::new(),
-        }
-    }
-
-    pub fn plugin_failure(
-        plugin: impl Into<String>,
-        action: impl Into<String>,
-        failure: PluginActionFailure,
-    ) -> Self {
-        Self::Plugin {
-            plugin: plugin.into(),
-            action: action.into(),
-            diagnostic: Box::new(failure.error),
-            diagnostics: failure.diagnostics,
         }
     }
 }

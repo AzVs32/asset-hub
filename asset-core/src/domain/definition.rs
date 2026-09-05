@@ -3,7 +3,7 @@ use thiserror::Error;
 
 const MAX_DEFINITION_ORIGIN_ID_LEN: usize = 256;
 
-/// Canonical identity of the built-in module or plugin that owns a definition.
+/// Canonical identity of the built-in module that owns a definition.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DefinitionOriginId(String);
 
@@ -59,18 +59,11 @@ impl DefinitionOriginId {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DefinitionOrigin {
     Builtin { id: DefinitionOriginId },
-    Plugin { id: DefinitionOriginId },
 }
 
 impl DefinitionOrigin {
     pub fn builtin(id: impl Into<String>) -> Result<Self, DefinitionOriginIdError> {
         Ok(Self::Builtin {
-            id: DefinitionOriginId::new(id)?,
-        })
-    }
-
-    pub fn plugin(id: impl Into<String>) -> Result<Self, DefinitionOriginIdError> {
-        Ok(Self::Plugin {
             id: DefinitionOriginId::new(id)?,
         })
     }
@@ -81,22 +74,15 @@ impl DefinitionOrigin {
         }
     }
 
-    pub fn plugin_static(id: &'static str) -> Self {
-        Self::Plugin {
-            id: DefinitionOriginId::from_static(id),
-        }
-    }
-
     pub fn kind(&self) -> &'static str {
         match self {
             Self::Builtin { .. } => "builtin",
-            Self::Plugin { .. } => "plugin",
         }
     }
 
     pub fn id(&self) -> &str {
         match self {
-            Self::Builtin { id } | Self::Plugin { id } => id.as_str(),
+            Self::Builtin { id } => id.as_str(),
         }
     }
 }
@@ -239,16 +225,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn definition_origins_reject_non_canonical_owner_ids() {
-        assert_eq!(
-            DefinitionOrigin::plugin("example.plugin")
-                .unwrap()
-                .to_string(),
-            "plugin:example.plugin"
-        );
-        for value in ["", " Plugin", "EXAMPLE.Plugin", "example/plugin"] {
+    fn definition_origins_reject_non_canonical_builtin_owner_ids() {
+        for value in ["", " Builtin", "EXAMPLE.Builtin", "example/builtin"] {
             assert!(
-                DefinitionOrigin::plugin(value).is_err(),
+                DefinitionOrigin::builtin(value).is_err(),
                 "`{value}` must be rejected"
             );
         }

@@ -1,6 +1,6 @@
 use super::*;
 use asset_core::domain::{
-    AccessContext, Checksum, DirectoryId, DirectoryKind, DirectoryPath, Resource, ResourceContent,
+    AccessContext, Checksum, DirectoryId, DirectoryPath, Resource, ResourceContent,
     ResourceContentReplacement, ResourceKind, StorageKey, User, UserId, UserRole,
 };
 use asset_core::port::{DirectoryRevisionUpdate, ListResources, ResourceRelocation};
@@ -66,27 +66,6 @@ async fn runtime_uses_the_configured_idempotency_lease_duration() {
 
     drop(runtime);
     let _ = std::fs::remove_dir_all(root);
-}
-
-#[tokio::test]
-async fn runtime_does_not_read_the_former_plugin_packages_directory() {
-    let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "asset-hub-plugin-directory-{}-{nonce}",
-        std::process::id()
-    ));
-    let package = root.join(".asset-hub/plugins/broken-package");
-    std::fs::create_dir_all(&package).unwrap();
-    std::fs::write(package.join("manifest.json"), b"not a manifest").unwrap();
-
-    let runtime = AssetRuntime::new(recovery_config(root.clone())).await;
-    assert!(runtime.is_ok());
-
-    drop(runtime);
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 fn verified_content(size: u64) -> ResourceContent {
@@ -747,19 +726,7 @@ async fn local_storage_changes_are_synchronized_automatically() {
     let mut runtime = AssetRuntime::new(config).await.unwrap();
     let service = runtime.resource_service();
     assert!(!service.kind_definitions().is_empty());
-    assert!(
-        !runtime
-            .action_orchestrator()
-            .describe_kind_actions(&ResourceKind::default())
-            .is_empty()
-    );
     assert!(!runtime.directory_service().kind_definitions().is_empty());
-    assert!(
-        !runtime
-            .action_orchestrator()
-            .describe_directory_kind_actions(&DirectoryKind::default())
-            .is_empty()
-    );
     runtime.start_storage_sync().await.unwrap();
     let directory = DirectoryPath::from_path("documents").unwrap();
     let directory_path = root.join("documents");

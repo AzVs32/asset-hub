@@ -1,8 +1,6 @@
 //! Public application contracts for the independently assembled Resource-related services.
 
-use crate::domain::{
-    Checksum, DirectoryId, IdempotencyKey, ResourceActionDefinition, ResourceActionId, ResourceKind,
-};
+use crate::domain::{Checksum, DirectoryId, IdempotencyKey, ResourceKind};
 use crate::port::BlobByteStream;
 
 #[derive(Debug, Clone)]
@@ -51,39 +49,6 @@ impl CreateUpload {
 
     pub fn directory_id(&self) -> DirectoryId {
         self.directory_id
-    }
-
-    pub fn idempotency_key(&self) -> Option<&IdempotencyKey> {
-        self.idempotency_key.as_ref()
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ExecuteResourceAction {
-    pub(super) action: ResourceActionId,
-    pub(super) input: serde_json::Value,
-    pub(super) expected_revision: Option<u64>,
-    pub(super) idempotency_key: Option<IdempotencyKey>,
-}
-
-impl ExecuteResourceAction {
-    pub fn new(action: ResourceActionId, expected_revision: Option<u64>) -> Self {
-        Self {
-            action,
-            input: serde_json::Value::Object(Default::default()),
-            expected_revision,
-            idempotency_key: None,
-        }
-    }
-
-    pub fn with_input(mut self, input: serde_json::Value) -> Self {
-        self.input = input;
-        self
-    }
-
-    pub fn with_idempotency_key(mut self, key: IdempotencyKey) -> Self {
-        self.idempotency_key = Some(key);
-        self
     }
 
     pub fn idempotency_key(&self) -> Option<&IdempotencyKey> {
@@ -159,21 +124,6 @@ impl UpdateResource {
 
     pub fn directory_id(&self) -> Option<DirectoryId> {
         self.directory_id
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct ResourceActions {
-    available_actions: Vec<ResourceActionDefinition>,
-}
-
-impl ResourceActions {
-    pub(super) fn new(available_actions: Vec<ResourceActionDefinition>) -> Self {
-        Self { available_actions }
-    }
-
-    pub fn available_actions(&self) -> &[ResourceActionDefinition] {
-        &self.available_actions
     }
 }
 

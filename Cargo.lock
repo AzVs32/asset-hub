@@ -120,7 +120,6 @@ dependencies = [
 name = "asset-core"
 version = "0.1.0"
 dependencies = [
- "asset-plugin-api",
  "async-trait",
  "base64 0.23.1",
  "bytes",
@@ -173,7 +172,6 @@ version = "0.1.0"
 dependencies = [
  "argon2",
  "asset-core",
- "asset-plugin-api",
  "async-trait",
  "bytes",
  "chrono",

@@ -57,7 +57,7 @@ impl DirectoryService {
             .is_some_and(|expected| expected != parent.directory().revision())
         {
             return Err(CoreError::conflict(format!(
-                "directory `{parent_id}` changed while its action was executing"
+                "directory `{parent_id}` changed while it was being created"
             )));
         }
         if let Some(ancestor_id) = required_parent_ancestor

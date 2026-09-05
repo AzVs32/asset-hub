@@ -312,8 +312,6 @@ async fn member_operations_are_allowed_only_inside_workspace_subtree() {
         DirectoryOperation::ReadResource,
         DirectoryOperation::UpdateResource,
         DirectoryOperation::ReplaceResourceContent,
-        DirectoryOperation::ExecuteDirectoryAction,
-        DirectoryOperation::ExecuteResourceAction,
         DirectoryOperation::DeleteResource,
     ] {
         assert!(service.require(&actor, &workspace, operation).await.is_ok());

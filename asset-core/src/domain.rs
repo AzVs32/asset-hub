@@ -1,22 +1,14 @@
-mod action;
 mod definition;
 mod directory;
 mod idempotency;
 mod identity;
 mod kind;
 mod resource;
-mod resource_action_policy;
 mod resource_content_edit_policy;
+mod resource_content_matcher;
 mod resource_content_replacement;
 mod upload;
 
-pub use action::{
-    ActionAccess, ActionCapabilityId, ActionDefinition, ActionId, ActionIdError,
-    ActionOutputContract, ActionUi, DirectoryActionAppliesTo, DirectoryActionDefinition,
-    DirectoryActionId, DirectoryActionRequirements, DirectoryResourceAccess,
-    ResourceActionAppliesTo, ResourceActionContentDelivery, ResourceActionDefinition,
-    ResourceActionId, ResourceActionRequirements, ResourceContentMatcher,
-};
 pub use definition::{
     DefinitionOrigin, DefinitionOriginId, DefinitionOriginIdError, DirectoryKindDefinition,
     ResourceKindDefinition,
@@ -35,9 +27,9 @@ pub use resource::{
     ResourceContentBuilder, ResourceEffectiveStatus, ResourceId, ResourceKind,
     ResourceLifecycleStatus, ResourceState, StorageKey,
 };
-pub use resource_action_policy::{InvalidResourceActionPolicy, ResourceActionPolicy};
 pub use resource_content_edit_policy::{
     InvalidResourceContentEditPolicy, ResourceContentEditPolicy,
 };
+pub use resource_content_matcher::ResourceContentMatcher;
 pub use resource_content_replacement::{ResourceContentReplacement, ResourceContentReplacementId};
 pub use upload::{UploadId, UploadSession, UploadSessionSnapshot, UploadStatus};

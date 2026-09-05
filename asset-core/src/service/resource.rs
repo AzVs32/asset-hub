@@ -1,15 +1,12 @@
-//! Resource, content, upload, action, and storage-maintenance application services.
+//! Resource, content, upload, and storage-maintenance application services.
 //!
 //! These services share narrow ports and path locks but do not borrow a single facade containing
 //! every dependency. `ResourceService` itself owns only Resource metadata/lifecycle coordination.
 
 use crate::CoreError;
-use crate::domain::{
-    ResourceActionPolicy, ResourceContentEditPolicy, ResourceKind, ResourceKindDefinition,
-};
+use crate::domain::{ResourceContentEditPolicy, ResourceKind, ResourceKindDefinition};
 use crate::port::{
-    BlobHealth, ContentObjectStore, ContentReader, ContentStagingStore, DirectoryActionExecutor,
-    DirectoryActionRegistry, IdempotencyRepository, ResourceActionExecutor, ResourceActionRegistry,
+    BlobHealth, ContentObjectStore, ContentReader, ContentStagingStore, IdempotencyRepository,
     ResourceContentReplacementRepository, ResourceKindRegistry, ResourceMaintenanceReadModel,
     ResourceReadModel, ResourceRelocationStore, ResourceStore, StorageScanner,
     UploadSessionRepository,
@@ -20,7 +17,6 @@ use crate::service::{
 use std::sync::Arc;
 use std::time::Duration;
 
-mod action;
 mod command;
 mod content;
 mod contract;
@@ -31,12 +27,8 @@ mod storage_key_locks;
 mod upload;
 mod upload_locks;
 
-pub use action::{ActionOrchestrator, SecuredActionOrchestrator};
 pub use content::{ContentService, SecuredContentService};
-pub use contract::{
-    CreateUpload, ExecuteResourceAction, ReplaceResourceContent, ResourceActions,
-    ResourceContentStream, UpdateResource,
-};
+pub use contract::{CreateUpload, ReplaceResourceContent, ResourceContentStream, UpdateResource};
 pub use reconciliation::{
     ResourceScanProgress, StorageMaintenanceService, StorageReconciliationReport,
 };
@@ -115,7 +107,6 @@ pub struct ResourceServices {
     resources: ResourceService,
     content: ContentService,
     uploads: UploadService,
-    actions: ActionOrchestrator,
     maintenance: StorageMaintenanceService,
     idempotency: IdempotencyService,
 }
@@ -138,11 +129,6 @@ impl ResourceServices {
         kind_registry: Arc<dyn ResourceKindRegistry>,
         upload_sessions: Arc<dyn UploadSessionRepository>,
         content_replacements: Arc<dyn ResourceContentReplacementRepository>,
-        action_registry: Arc<dyn ResourceActionRegistry>,
-        action_executor: Arc<dyn ResourceActionExecutor>,
-        directory_registry: Arc<dyn DirectoryActionRegistry>,
-        directory_executor: Arc<dyn DirectoryActionExecutor>,
-        action_policy: Arc<ResourceActionPolicy>,
         edit_policy: Arc<ResourceContentEditPolicy>,
         idempotency_repository: Arc<dyn IdempotencyRepository>,
         idempotency_lease_duration: Duration,
@@ -185,18 +171,6 @@ impl ResourceServices {
             locks.clone(),
             idempotency.clone(),
         );
-        let actions = ActionOrchestrator::new(
-            resources.clone(),
-            content.clone(),
-            directories.clone(),
-            action_registry,
-            action_executor,
-            directory_registry,
-            directory_executor,
-            action_policy,
-            edit_policy,
-            idempotency.clone(),
-        );
         let maintenance = StorageMaintenanceService::new(
             store,
             read_model,
@@ -214,7 +188,6 @@ impl ResourceServices {
             resources,
             content,
             uploads,
-            actions,
             maintenance,
             idempotency,
         })
@@ -228,9 +201,6 @@ impl ResourceServices {
     }
     pub fn upload_service(&self) -> UploadService {
         self.uploads.clone()
-    }
-    pub fn action_orchestrator(&self) -> ActionOrchestrator {
-        self.actions.clone()
     }
     pub fn storage_maintenance_service(&self) -> StorageMaintenanceService {
         self.maintenance.clone()

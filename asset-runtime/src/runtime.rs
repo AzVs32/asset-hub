@@ -1,18 +1,16 @@
 use crate::UploadFinalizationDispatcher;
 use crate::upload_finalization::UploadFinalizationScheduler;
 use asset_core::CoreError;
-use asset_core::domain::{ResourceActionPolicy, ResourceContentEditPolicy};
+use asset_core::domain::ResourceContentEditPolicy;
 use asset_core::service::{
-    ActionOrchestrator, AssetWorkflowService, AuthorizationService, ContentService,
-    DirectoryIndexService, DirectoryProvisioningService, DirectoryService, DirectoryServices,
-    IdempotencyService, ResourceService, ResourceServices, StorageMaintenanceService,
-    UploadService, UserService,
+    AssetWorkflowService, AuthorizationService, ContentService, DirectoryIndexService,
+    DirectoryProvisioningService, DirectoryService, DirectoryServices, IdempotencyService,
+    ResourceService, ResourceServices, StorageMaintenanceService, UploadService, UserService,
 };
 use asset_infra::AssetInfrastructure;
-use asset_infra::action::{DefaultDirectoryActionExecutor, DefaultResourceActionExecutor};
 use asset_infra::builtin_catalog::BuiltinCatalog;
 use asset_infra::config::{AssetInfraConfig, BlobBackend};
-use asset_infra::kind::build_capability_catalogs;
+use asset_infra::kind::build_kind_catalogs;
 use asset_infra::password::Argon2PasswordHasher;
 use asset_infra::storage::LocalStorageSync;
 use std::path::PathBuf;
@@ -27,7 +25,6 @@ pub struct AssetRuntime {
     resource_service: ResourceService,
     content_service: ContentService,
     upload_service: UploadService,
-    action_orchestrator: ActionOrchestrator,
     storage_maintenance_service: StorageMaintenanceService,
     directory_service: DirectoryService,
     directory_provisioning_service: DirectoryProvisioningService,
@@ -70,30 +67,13 @@ impl AssetRuntime {
             BlobBackend::Local => None,
         };
         let builtin_catalog = BuiltinCatalog::new()?;
-        let capability_catalogs = build_capability_catalogs(&builtin_catalog)?;
-        let resource_kind_registry = Arc::new(capability_catalogs.resource_kinds);
-        let directory_kind_registry = Arc::new(capability_catalogs.directory_kinds);
-        let resource_action_registry = Arc::new(capability_catalogs.resource_actions);
-        let directory_action_registry = Arc::new(capability_catalogs.directory_actions);
-        // The retained built-in Actions never request inline content. Keep the mandatory Core
-        // policy minimal without retaining the removed plugin execution-budget configuration.
-        let resource_action_policy = Arc::new(
-            ResourceActionPolicy::new(1, 1)
-                .map_err(|error| CoreError::configuration(error.to_string()))?,
-        );
+        let kind_catalogs = build_kind_catalogs(&builtin_catalog)?;
+        let resource_kind_registry = Arc::new(kind_catalogs.resource_kinds);
+        let directory_kind_registry = Arc::new(kind_catalogs.directory_kinds);
         let resource_content_edit_policy = Arc::new(
             ResourceContentEditPolicy::new(config.resource_edit.max_text_bytes)
                 .map_err(|error| CoreError::configuration(error.to_string()))?,
         );
-
-        let directory_action_executor = Arc::new(DefaultDirectoryActionExecutor::new(
-            builtin_catalog.directory_actions(),
-            directory_kind_registry.as_ref(),
-        ));
-        let resource_action_executor = Arc::new(DefaultResourceActionExecutor::new(
-            builtin_catalog.resource_actions(),
-            resource_kind_registry.as_ref(),
-        ));
 
         let directory_services = DirectoryServices::new(
             infrastructure.directory_store(),
@@ -128,11 +108,6 @@ impl AssetRuntime {
             resource_kind_registry,
             infrastructure.upload_session_repository(),
             infrastructure.content_replacement_repository(),
-            resource_action_registry,
-            resource_action_executor,
-            directory_action_registry,
-            directory_action_executor,
-            resource_action_policy,
             resource_content_edit_policy,
             infrastructure.idempotency_repository(),
             config.idempotency.lease_duration(),
@@ -140,7 +115,6 @@ impl AssetRuntime {
         let resource_service = resource_services.resource_service();
         let content_service = resource_services.content_service();
         let upload_service = resource_services.upload_service();
-        let action_orchestrator = resource_services.action_orchestrator();
         let storage_maintenance_service = resource_services.storage_maintenance_service();
         let idempotency_service = resource_services.idempotency_service();
         let recovered_resource_relocations = resource_service.recover_pending_relocations().await?;
@@ -158,13 +132,8 @@ impl AssetRuntime {
         );
         let authorization_service =
             AuthorizationService::new(infrastructure.user_repository(), directory_service.clone());
-        let asset_workflow_service = AssetWorkflowService::new(
-            resource_service.clone(),
-            upload_service.clone(),
-            action_orchestrator.clone(),
-            directory_service.clone(),
-            idempotency_service.clone(),
-        );
+        let asset_workflow_service =
+            AssetWorkflowService::new(resource_service.clone(), directory_service.clone());
         let replacements_resumed = content_service.resume_pending_replacements().await?;
         if replacements_resumed > 0 {
             tracing::info!(
@@ -186,7 +155,6 @@ impl AssetRuntime {
             resource_service,
             content_service,
             upload_service,
-            action_orchestrator,
             storage_maintenance_service,
             directory_service,
             directory_provisioning_service,
@@ -238,10 +206,6 @@ impl AssetRuntime {
 
     pub fn idempotency_service(&self) -> IdempotencyService {
         self.idempotency_service.clone()
-    }
-
-    pub fn action_orchestrator(&self) -> ActionOrchestrator {
-        self.action_orchestrator.clone()
     }
 
     pub fn storage_maintenance_service(&self) -> StorageMaintenanceService {

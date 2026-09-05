@@ -8,10 +8,9 @@ adapters. It does not assemble Core services or start background tasks; `asset-r
 composition and lifecycle. HTTP authentication sessions remain an `asset-http` concern and do not
 share the business database pool.
 
-The Host-owned static catalog currently defines the built-in Resource and Directory Kinds plus
-their download and delete Actions. It has no plugin catalog dependency, package installation or
-verification support, Wasm executor, Host ABI, permissions, execution budget, or browser-frame
-asset handling.
+The Host-owned static catalog currently defines the built-in Resource and Directory Kinds. It has
+no plugin catalog dependency, package installation or verification support, Wasm executor, Host
+ABI, permissions, execution budget, browser-frame asset handling, or Action executors.
 
 SQLite keeps Resource and Directory persistence boundaries separate despite sharing a connection
 pool. Directory relocation and Resource content replacement use durable intents so Runtime recovery

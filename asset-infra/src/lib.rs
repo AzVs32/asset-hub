@@ -1,4 +1,3 @@
-pub mod action;
 pub mod builtin_catalog;
 pub mod config;
 mod directory_index;

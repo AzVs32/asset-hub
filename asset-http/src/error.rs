@@ -92,8 +92,7 @@ impl HttpError {
 impl From<CoreError> for HttpError {
     fn from(error: CoreError) -> Self {
         let status = match &error {
-            CoreError::ActionId(_)
-            | CoreError::DefinitionOriginId(_)
+            CoreError::DefinitionOriginId(_)
             | CoreError::KindId(_)
             | CoreError::Directory(_)
             | CoreError::Resource(_)
@@ -108,8 +107,7 @@ impl From<CoreError> for HttpError {
             | CoreError::RevisionConflict { .. }
             | CoreError::LostIdempotencyLease { .. } => StatusCode::CONFLICT,
             CoreError::LimitExceeded { .. } => StatusCode::PAYLOAD_TOO_LARGE,
-            CoreError::Plugin { .. }
-            | CoreError::Storage { .. }
+            CoreError::Storage { .. }
             | CoreError::Repository { .. }
             | CoreError::Configuration { .. }
             | CoreError::InvariantViolation { .. } => StatusCode::INTERNAL_SERVER_ERROR,

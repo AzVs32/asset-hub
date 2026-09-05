@@ -16,42 +16,16 @@ pub use asset::{
     SecuredAssetWorkflowService,
 };
 pub use authorization::{AuthorizationService, WorkspaceScope};
-pub(crate) use directory::ExecutedDirectoryAction;
 pub use directory::{
-    DirectoryActions, DirectoryIndexService, DirectoryProvisioningService, DirectoryService,
-    DirectoryServices, ExecuteDirectoryAction, SecuredDirectoryService, UpdateDirectory,
+    DirectoryIndexService, DirectoryProvisioningService, DirectoryService, DirectoryServices,
+    SecuredDirectoryService, UpdateDirectory,
 };
 pub use idempotency::{IdempotencyOutcome, IdempotencyService, request_hash};
 pub use user::UserService;
 
 pub use resource::{
-    ActionOrchestrator, ContentService, CreateUpload, ExecuteResourceAction,
-    ReplaceResourceContent, ResourceActions, ResourceContentStream, ResourceScanProgress,
-    ResourceService, ResourceServices, SecuredActionOrchestrator, SecuredContentService,
+    ContentService, CreateUpload, ReplaceResourceContent, ResourceContentStream,
+    ResourceScanProgress, ResourceService, ResourceServices, SecuredContentService,
     SecuredResourceService, SecuredUploadService, StorageMaintenanceService,
     StorageReconciliationReport, UpdateResource, UploadService,
 };
-
-use crate::{CoreError, domain::ActionAccess};
-
-/// Enforce optimistic concurrency only when the action contract needs it.
-///
-/// Write actions always require a caller revision. Read actions may omit it to operate on the
-/// latest authorized snapshot; when supplied, it remains an explicit consistency precondition.
-fn validate_action_revision(
-    access: ActionAccess,
-    expected_revision: Option<u64>,
-    actual_revision: u64,
-    aggregate: &'static str,
-    id: impl Into<String>,
-) -> Result<(), CoreError> {
-    if access == ActionAccess::Write && expected_revision.is_none() {
-        return Err(CoreError::invalid_operation(
-            "expected_revision is required for write actions",
-        ));
-    }
-    if expected_revision.is_some_and(|expected| expected != actual_revision) {
-        return Err(CoreError::revision_conflict(aggregate, id));
-    }
-    Ok(())
-}
