@@ -82,7 +82,7 @@ pub enum CoreError {
         actual: u64,
     },
 
-    /// 调用方请求了 Host 当前不支持的类型、动作或能力。
+    /// 调用方请求了系统不支持的操作或值。
     #[error("unsupported {subject}: `{value}`")]
     Unsupported {
         subject: &'static str,

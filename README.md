@@ -5,16 +5,16 @@ and local administration commands.
 
 ## Getting started
 
+Create the first administrator. The command prompts twice for a password:
+
+```bash
+cargo run -p asset-cli --bin asset -- user --create admin --admin
+```
+
 Install the Web application's dependencies:
 
 ```bash
 npm --prefix asset-web ci
-```
-
-Create the first administrator:
-
-```bash
-cargo run -p asset-cli --bin asset -- user --create admin --admin
 ```
 
 Start the API:

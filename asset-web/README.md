@@ -1,6 +1,6 @@
 # Asset Web
 
-`asset-web` is the browser host for Asset Hub. It provides the authenticated asset workspace
+`asset-web` is the browser application for Asset Hub. It provides the authenticated asset workspace
 (directory browsing, resource upload and management) and user administration, speaking only to
 the core HTTP API.
 

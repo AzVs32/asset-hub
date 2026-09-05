@@ -4,16 +4,16 @@ Asset Hub 是一个以本地为主的资源管理系统，支持多个用户账�
 
 ## 入门指南
 
+先创建首位管理员。命令会两次提示输入密码：
+
+```bash
+cargo run -p asset-cli --bin asset -- user --create admin --admin
+```
+
 安装 Web 应用依赖：
 
 ```bash
 npm --prefix asset-web ci
-```
-
-创建首位管理员：
-
-```bash
-cargo run -p asset-cli --bin asset -- user --create admin --admin
 ```
 
 启动 API：

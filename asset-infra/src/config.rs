@@ -44,7 +44,7 @@ pub struct AssetInfraConfig {
     pub database: DatabaseConfig,
     /// 对象存储配置。
     pub blob: BlobConfig,
-    /// Host 交互式资源编辑策略。
+    /// 交互式资源文本编辑的大小限制。
     pub resource_edit: ResourceEditConfig,
     /// 持久请求幂等执行租约策略。
     pub idempotency: IdempotencyConfig,

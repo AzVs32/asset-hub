@@ -24,7 +24,7 @@ async fn fs_storage_preserves_spaces_in_the_physical_path() {
 async fn fs_storage_delete_removes_empty_sidecar_directories() {
     let (storage, root) = storage_with_root("fs-clean-sidecar");
     let key = StorageKey::new(format!(
-        ".asset-hub/action-effects/action-replacements/{}",
+        ".asset-hub/content-replacements/{}",
         uuid::Uuid::now_v7()
     ))
     .unwrap();

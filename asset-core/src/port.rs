@@ -1,4 +1,4 @@
-//! Core 依赖的 Host Port。
+//! Core 所需的基础设施端口。
 //!
 //! - 资源持久化：`ResourceStore`、`ResourceReadModel`、`ResourceRelocationStore`
 //! - 目录持久化与查询：`DirectoryStore`、`DirectoryQuery`、`DirectoryIndex`

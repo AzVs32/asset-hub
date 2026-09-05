@@ -17,7 +17,7 @@ type FinalizationResult = Result<asset_core::domain::Resource, CoreError>;
 // 则只能从 JoinError 中取得任务 ID，因此监督器还需要维护任务 ID 到上传 ID 的映射。
 type CompletedTask = Result<(TaskId, (UploadId, FinalizationResult)), JoinError>;
 
-/// Application Surface 提交上传最终化工作的窄 Host capability。
+/// Application Surface 提交上传最终化工作的窄接口。
 ///
 /// 调用方只知道“提交最终化”，不依赖 Runtime 使用的队列、监督器或任务实现。
 pub trait UploadFinalizationDispatcher: Send + Sync {

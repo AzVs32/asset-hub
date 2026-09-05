@@ -104,7 +104,7 @@ pub fn build_router(composition: HttpComposition, options: RouterOptions) -> Rou
         .with_state(HttpState::new(composition))
 }
 
-/// 为既有 API 增加由 host 提供的会话存储、登录接口和登录保护。
+/// 为 API 接入调用方提供的会话存储，并增加登录接口和登录保护。
 pub fn with_authentication<S>(
     router: Router,
     users: UserService,

@@ -2,7 +2,7 @@ import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import { Breadcrumbs, Link } from "@mui/material";
 import { breadcrumbs } from "@/domain/directory-path";
 
-/** Host-owned path navigation rendered in the primary Asset Hub header. */
+/** Directory path navigation rendered in the primary Asset Hub header. */
 export function DirectoryBreadcrumbs({
   path,
   onNavigate,

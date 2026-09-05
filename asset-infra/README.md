@@ -8,9 +8,6 @@ adapters. It does not assemble Core services or start background tasks; `asset-r
 composition and lifecycle. HTTP authentication sessions remain an `asset-http` concern and do not
 share the business database pool.
 
-It has no extension-package installation, verification, execution, browser-frame asset handling,
-Action executors, or Resource/Directory Kind registry.
-
 SQLite keeps Resource and Directory persistence boundaries separate despite sharing a connection
 pool. Directory relocation and Resource content replacement use durable intents so Runtime recovery
 can converge the database and local filesystem after interruption. `LocalStorageSync` remains the

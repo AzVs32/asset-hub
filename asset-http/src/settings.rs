@@ -81,8 +81,8 @@ impl Default for RouterOptions {
 
 /// HTTP 应用启动配置。
 ///
-/// 负责读取 HTTP 监听、路由和会话边界配置。业务和基础设施配置由外部 host 处理。
-/// 未通过命令行 `--config` 指定路径时，由 host 选择默认配置文件。
+/// 负责读取 HTTP 监听、路由和会话边界配置。业务和基础设施配置由应用入口加载。
+/// 未通过命令行 `--config` 指定路径时，由应用入口选择默认配置文件。
 pub struct HttpSettings {
     addr: SocketAddr,
     config_path: Option<PathBuf>,

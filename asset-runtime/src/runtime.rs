@@ -228,7 +228,7 @@ impl AssetRuntime {
         self.authorization_service.clone()
     }
 
-    /// 返回供 Application Surface 提交上传最终化工作的窄 Host capability。
+    /// 返回供 Application Surface 提交上传最终化工作的窄接口。
     pub fn upload_finalization_dispatcher(&self) -> Arc<dyn UploadFinalizationDispatcher> {
         self.upload_finalizations.clone()
     }

@@ -28,11 +28,11 @@ The important aggregates are:
 ## Repository map
 
 - `asset-core`: workspace-internal domain, ports, and application services.
-- `asset-infra`: concrete SQLx, OpenDAL, filesystem, and registry adapters.
+- `asset-infra`: concrete SQLx repositories, OpenDAL storage, filesystem, and directory-index adapters.
 - `asset-runtime`: reusable runtime assembly and background-task ownership.
 - `asset-http`: Axum transport, authentication, DTOs, OpenAPI, and HTTP executable.
 - `asset-cli`: administration commands and CLI executable.
-- `asset-web`: React host using domain/application/adapter boundaries.
+- `asset-web`: React application using domain/application/adapter boundaries.
 
 ## Dependency rules
 
@@ -40,7 +40,7 @@ MUST:
 
 - keep domain and service logic independent of Axum, SQLx, OpenDAL,
   and CLI parsing;
-- define host requirements as ports in `asset-core::port` and implement them in adapters;
+- define Core infrastructure requirements as ports in `asset-core::port` and implement them in adapters;
 - use `ResourceService::secured` or an equivalently authorization-bound core use case for
   user-scoped or untrusted resource mutations; trusted local maintenance commands must remain
   explicit administrative operations;

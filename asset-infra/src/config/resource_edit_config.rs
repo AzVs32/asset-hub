@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::DEFAULT_RESOURCE_EDIT_MAX_TEXT_BYTES;
 
-/// Host-owned interactive text editing limits.
+/// Size limits for interactive resource text editing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ResourceEditConfig {

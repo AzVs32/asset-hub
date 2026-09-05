@@ -1355,7 +1355,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description 文本超过 Host 编辑上限 */
+            /** @description 文本超过编辑大小上限 */
             413: {
                 headers: {
                     [name: string]: unknown;

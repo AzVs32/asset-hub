@@ -5,14 +5,14 @@ cookie authentication, the OpenAPI JSON contract, request limits, CORS, and the
 authentication-session store.
 
 Business handlers receive Core application services. Upload completion receives the narrow
-`UploadFinalizationDispatcher` Host capability; HTTP does not depend on the concrete Runtime
+`UploadFinalizationDispatcher` interface; HTTP does not depend on the concrete Runtime
 scheduler or supervisor.
 
 Resource and Directory handlers live in separate modules. HTTP state exposes separately secured
 Resource and Directory surfaces, plus `AssetWorkflowService` only for archive projections whose
 result spans both aggregates. Router construction receives one
 `HttpComposition` bundle: `ResourceHttpServices`, `DirectoryHttpServices`, the cross-aggregate
-workflow service, and the narrow health-only Blob readiness capability. These bundles organize
+workflow service, and the narrow health-only Blob readiness interface. These bundles organize
 transport dependencies only; they do not add business workflows or expose repositories, storage,
 recovery, or reconciliation operations to handlers.
 
@@ -31,8 +31,8 @@ lifecycle state, content state, and effective single-value state. HTTP does not 
 second content-verification status; clients must consume `state` instead of reconstructing
 precedence from independent transport fields.
 
-Resource and Directory deletion has no dedicated action surface: the HTTP use cases are the direct
-`DELETE /resources/{id}` and `DELETE /directories/{id}` endpoints.
+Resource and Directory deletion uses the direct `DELETE /resources/{id}` and
+`DELETE /directories/{id}` endpoints.
 
 Directory downloads use ordinary ZIP entries for directories and resources up to 4 GiB. ZIP64 is
 enabled only for an individual resource that exceeds the ZIP32 size limit, keeping ordinary

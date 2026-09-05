@@ -403,7 +403,7 @@ pub enum ChecksumKind {
 }
 
 impl ChecksumKind {
-    /// 返回跨 HTTP、持久化和插件边界使用的规范文本值。
+    /// 返回跨 HTTP 和持久化边界使用的规范文本值。
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Sha256 => "sha256",

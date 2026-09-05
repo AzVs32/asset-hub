@@ -25,7 +25,7 @@ pub struct DirectoryHttpServices {
     pub directories: DirectoryService,
 }
 
-/// The sole maintenance capability required by the public HTTP surface.
+/// The sole maintenance interface required by the public HTTP surface.
 ///
 /// It supports `/health` Blob readiness only. Recovery and reconciliation operations are not
 /// exposed to handlers or added as HTTP endpoints.

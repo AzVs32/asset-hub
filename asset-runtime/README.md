@@ -14,11 +14,11 @@ Construction is deterministic:
 5. start optional storage synchronization only when the application surface requests it.
 
 Runtime startup invokes Core business operations directly through their authorization-bound
-services and does not retain extension-package lifecycle responsibilities.
+services.
 
 `UploadSession` owns durable upload state transitions. Runtime owns the deduplicating finalization
 supervisor and all spawned task lifetimes; application surfaces receive only the
-`UploadFinalizationDispatcher` capability. `LocalStorageSync` remains an `asset-infra` driving
+`UploadFinalizationDispatcher` interface. `LocalStorageSync` remains an `asset-infra` driving
 adapter, but Runtime starts it with `ResourceService` and owns its lifetime.
 
 Run:

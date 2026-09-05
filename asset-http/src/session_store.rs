@@ -30,7 +30,7 @@ impl HttpSessionRuntime {
         Self::open(DEFAULT_SESSION_SQLITE_PATH).await
     }
 
-    /// Opens the fixed-format HTTP session store at an explicit host-provided path.
+    /// Opens the fixed-format HTTP session store at an explicit caller-provided path.
     ///
     /// The `asset-http` executable uses [`Self::new`]. This entry point lets embedders and tests
     /// select an isolated filesystem location without changing the executable configuration.

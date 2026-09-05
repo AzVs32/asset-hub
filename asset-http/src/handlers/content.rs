@@ -55,7 +55,7 @@ pub(crate) async fn get_resource_content(
         (status = 403, description = "当前工作区没有写权限", body = crate::dto::ErrorResponse),
         (status = 404, description = "资源不存在", body = crate::dto::ErrorResponse),
         (status = 409, description = "资源 revision、大小或摘要冲突", body = crate::dto::ErrorResponse),
-        (status = 413, description = "文本超过 Host 编辑上限", body = crate::dto::ErrorResponse),
+        (status = 413, description = "文本超过编辑大小上限", body = crate::dto::ErrorResponse),
         (status = 500, description = "服务端错误", body = crate::dto::ErrorResponse)
     )
 )]

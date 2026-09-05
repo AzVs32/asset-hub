@@ -19,7 +19,7 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
-    // 测试套件暂缺，待无插件版本稳定后重建；此时 npm test 直接通过。
+    // 测试套件暂缺；此时 npm test 直接通过。
     passWithNoTests: true,
   },
 });

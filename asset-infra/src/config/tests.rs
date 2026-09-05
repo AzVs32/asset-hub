@@ -27,9 +27,9 @@ fn config_rejects_manually_configured_sqlite_path() {
 fn config_rejects_unknown_fields() {
     for source in [
         "unknown_section = true",
-        "[legacy]\nmax_concurrent_calls = 8",
-        "[legacy]\nmanifest_paths = [\"extension.toml\"]",
-        "[[legacy.definitions]]\nname = \"note\"",
+        "[unsupported]\nmax_connections = 8",
+        "[unsupported]\npaths = [\"custom.toml\"]",
+        "[[unsupported.definitions]]\nname = \"note\"",
     ] {
         assert!(AssetInfraConfig::from_config_str(source).is_err());
     }

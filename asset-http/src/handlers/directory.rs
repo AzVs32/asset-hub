@@ -6,7 +6,6 @@ const DEFAULT_PAGE: u32 = 1;
 const DEFAULT_LIMIT: u32 = 50;
 const MAX_LIMIT: u32 = 100;
 
-/// 列出当前后端支持的目录类型。
 /// 列出当前目录的直接子目录和资源。
 #[utoipa::path(
     get,
