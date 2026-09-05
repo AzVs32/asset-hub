@@ -33,19 +33,19 @@ pub(crate) enum BuiltinDirectoryHandler {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct BuiltinResourceAction {
+pub struct BuiltinResourceAction {
     pub(crate) definition: ResourceActionDefinition,
     pub(crate) handler: BuiltinResourceHandler,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct BuiltinDirectoryAction {
+pub struct BuiltinDirectoryAction {
     pub(crate) definition: DirectoryActionDefinition,
     pub(crate) handler: BuiltinDirectoryHandler,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct BuiltinCatalog {
+pub struct BuiltinCatalog {
     pub(crate) resource_kinds: Vec<ResourceKindDefinition>,
     pub(crate) directory_kinds: Vec<DirectoryKindDefinition>,
     pub(crate) resource_actions: Vec<BuiltinResourceAction>,
@@ -53,7 +53,7 @@ pub(crate) struct BuiltinCatalog {
 }
 
 impl BuiltinCatalog {
-    pub(crate) fn new() -> Result<Self, CoreError> {
+    pub fn new() -> Result<Self, CoreError> {
         let resource_kind = ResourceKind::try_new(ResourceKind::DEFAULT)?;
         let directory_kind = DirectoryKind::default();
 
@@ -156,5 +156,13 @@ impl BuiltinCatalog {
             resource_actions,
             directory_actions,
         })
+    }
+
+    pub fn resource_actions(&self) -> &[BuiltinResourceAction] {
+        &self.resource_actions
+    }
+
+    pub fn directory_actions(&self) -> &[BuiltinDirectoryAction] {
+        &self.directory_actions
     }
 }

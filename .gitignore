@@ -42,6 +42,8 @@ config.toml
 
 # AI assistant local state
 .codex
+.claude
+.zcode
 .cline
 
 # macOS

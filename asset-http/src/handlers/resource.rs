@@ -2,7 +2,6 @@
 
 use super::*;
 
-pub(crate) const MAX_ACTION_REQUEST_BYTES: usize = 1024 * 1024;
 const DEFAULT_PAGE: u32 = 1;
 const DEFAULT_LIMIT: u32 = 50;
 const MAX_LIMIT: u32 = 100;
@@ -24,13 +23,7 @@ pub(crate) async fn list_resource_kinds(
             .resources()
             .kind_definitions()
             .iter()
-            .map(|definition| {
-                ResourceKindResponse::from_definition(
-                    definition,
-                    state.resources(),
-                    state.resource_actions(),
-                )
-            })
+            .map(|definition| ResourceKindResponse::from_definition(definition, state.resources()))
             .collect(),
     })
 }
@@ -73,13 +66,7 @@ pub(crate) async fn list_resources(
         .list(&directory, command)
         .await?;
 
-    Ok(Json(resource_page_response(
-        state.resources(),
-        state.resource_actions(),
-        &workspace,
-        page_result,
-        page,
-    )?))
+    Ok(Json(resource_page_response(&workspace, page_result, page)?))
 }
 
 /// 按 ID 查询资源。
@@ -106,12 +93,7 @@ pub(crate) async fn find_resource(
     let workspace = state.workspace(&access.0).await?;
 
     match state.secured_resources(&access.0).get(&id).await? {
-        Some(resource) => Ok(Json(resource_response(
-            state.resources(),
-            state.resource_actions(),
-            &workspace,
-            &resource,
-        )?)),
+        Some(resource) => Ok(Json(resource_response(&workspace, &resource)?)),
         None => Err(HttpError::not_found(format!("resource `{id}` not found"))),
     }
 }
@@ -161,69 +143,10 @@ pub(crate) async fn update_resource(
         .await?
     {
         Some(resource) => Ok(Json(
-            resource_snapshot_response(
-                state.resources(),
-                state.resource_actions(),
-                &workspace,
-                &resource,
-            )
-            .await?,
+            resource_snapshot_response(state.resources(), &workspace, &resource).await?,
         )),
         None => Err(HttpError::not_found(format!("resource `{id}` not found"))),
     }
-}
-
-/// 执行资源插件动作。
-#[utoipa::path(
-    post,
-    path = "/resources/{id}/actions/{action}",
-    tag = "resources",
-    request_body = ExecuteResourceActionRequest,
-    params(
-        ("id" = String, Path, description = "资源 ID"),
-        ("action" = String, Path, description = "动作 ID"),
-        ("Idempotency-Key" = Option<String>, Header, description = "可选的幂等键，重复提交不会重复应用 Host effect")
-    ),
-    responses(
-        (status = 200, description = "动作执行结果", body = ResourceActionOutputResponse),
-        (status = 400, description = "资源类型不支持该动作或动作未配置", body = crate::dto::ErrorResponse),
-        (status = 404, description = "资源不存在", body = crate::dto::ErrorResponse),
-        (status = 409, description = "资源版本已变化", body = crate::dto::ErrorResponse),
-        (status = 500, description = "插件或服务端错误", body = crate::dto::ErrorResponse)
-    )
-)]
-pub(crate) async fn execute_resource_action(
-    State(state): State<HttpState>,
-    access: Extension<AccessContext>,
-    Path((id, action)): Path<(String, String)>,
-    headers: HeaderMap,
-    payload: Result<Json<ExecuteResourceActionRequest>, JsonRejection>,
-) -> Result<Json<ResourceActionOutputResponse>, HttpError> {
-    let id = parse_resource_id(&id)?;
-    let payload = payload.map_err(|error| {
-        if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
-            HttpError::payload_too_large(error.body_text())
-        } else {
-            HttpError::bad_request(error.body_text())
-        }
-    })?;
-    let mut command = ExecuteResourceAction::new(
-        asset_core::domain::ResourceActionId::new(action).map_err(CoreError::from)?,
-        payload.expected_revision,
-    )
-    .with_input(payload.input.clone());
-    if let Some(key) = parse_idempotency_key(&headers)? {
-        command = command.with_idempotency_key(key);
-    }
-    let Some(output) = state
-        .secured_resource_actions(&access.0)
-        .execute(&id, command)
-        .await?
-    else {
-        return Err(HttpError::not_found(format!("resource `{id}` not found")));
-    };
-
-    Ok(Json(ResourceActionOutputResponse::from(&output)))
 }
 
 /// Permanently delete a Resource and its physical content.
@@ -267,49 +190,35 @@ pub(super) fn parse_kind(value: impl Into<String>) -> Result<ResourceKind, HttpE
 }
 
 pub(super) fn resource_response(
-    _service: &asset_core::service::ResourceService,
-    action_orchestrator: &asset_core::service::ActionOrchestrator,
     workspace: &asset_core::service::WorkspaceScope,
     resource: &asset_core::port::LocatedResource,
 ) -> Result<ResourceResponse, CoreError> {
-    let actions = action_orchestrator.describe_resource_actions(resource.resource())?;
     Ok(ResourceResponse::new(
         resource.resource(),
         workspace.project(resource.directory().path())?,
-        actions,
     ))
 }
 
 pub(super) async fn resource_snapshot_response(
     service: &asset_core::service::ResourceService,
-    action_orchestrator: &asset_core::service::ActionOrchestrator,
     workspace: &asset_core::service::WorkspaceScope,
     resource: &asset_core::domain::Resource,
 ) -> Result<ResourceResponse, CoreError> {
-    let actions = action_orchestrator.describe_resource_actions(resource)?;
     let directory = service.locate_resource_directory(resource).await?;
     Ok(ResourceResponse::new(
         resource,
         workspace.project(directory.path())?,
-        actions,
     ))
 }
 
 pub(super) fn resource_page_response(
-    service: &asset_core::service::ResourceService,
-    action_orchestrator: &asset_core::service::ActionOrchestrator,
     workspace: &asset_core::service::WorkspaceScope,
     page_result: asset_core::port::ResourcePage,
     page: u32,
 ) -> Result<ResourcePageResponse, CoreError> {
     let mut items = Vec::with_capacity(page_result.items.len());
     for resource in &page_result.items {
-        items.push(resource_response(
-            service,
-            action_orchestrator,
-            workspace,
-            resource,
-        )?);
+        items.push(resource_response(workspace, resource)?);
     }
     Ok(ResourcePageResponse {
         items,

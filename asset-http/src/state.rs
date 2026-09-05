@@ -1,12 +1,12 @@
 use asset_core::CoreError;
 use asset_core::domain::AccessContext;
 use asset_core::service::{
-    ActionOrchestrator, AssetWorkflowService, AuthorizationService, ContentService,
-    DirectoryService, ResourceService, SecuredActionOrchestrator, SecuredAssetWorkflowService,
-    SecuredContentService, SecuredDirectoryService, SecuredResourceService, SecuredUploadService,
-    StorageMaintenanceService, UploadService, WorkspaceScope,
+    AssetWorkflowService, AuthorizationService, ContentService, DirectoryService, ResourceService,
+    SecuredAssetWorkflowService, SecuredContentService, SecuredDirectoryService,
+    SecuredResourceService, SecuredUploadService, StorageMaintenanceService, UploadService,
+    WorkspaceScope,
 };
-use asset_runtime::{PluginWebAssets, UploadFinalizationDispatcher};
+use asset_runtime::UploadFinalizationDispatcher;
 use std::sync::Arc;
 
 /// HTTP routes that operate on Resource aggregates or their content.
@@ -17,7 +17,6 @@ pub struct ResourceHttpServices {
     pub resources: ResourceService,
     pub content: ContentService,
     pub uploads: UploadService,
-    pub actions: ActionOrchestrator,
 }
 
 /// HTTP routes that address Directory aggregates.
@@ -51,7 +50,6 @@ pub struct HttpServices {
 /// Unlike [`HttpState`], this is public because executable composition happens outside the library.
 pub struct HttpComposition {
     pub services: HttpServices,
-    pub plugin_web_assets: PluginWebAssets,
     pub authorization: AuthorizationService,
     pub upload_finalizations: Arc<dyn UploadFinalizationDispatcher>,
 }
@@ -63,7 +61,6 @@ pub struct HttpComposition {
 #[derive(Clone)]
 pub(crate) struct HttpState {
     services: HttpServices,
-    plugin_web_assets: Arc<PluginWebAssets>,
     authorization: AuthorizationService,
     upload_finalizations: Arc<dyn UploadFinalizationDispatcher>,
 }
@@ -72,7 +69,6 @@ impl HttpState {
     pub(crate) fn new(composition: HttpComposition) -> Self {
         Self {
             services: composition.services,
-            plugin_web_assets: Arc::new(composition.plugin_web_assets),
             authorization: composition.authorization,
             upload_finalizations: composition.upload_finalizations,
         }
@@ -118,16 +114,6 @@ impl HttpState {
             .secured(&self.authorization, context)
     }
 
-    pub(crate) fn secured_resource_actions<'a>(
-        &'a self,
-        context: &'a AccessContext,
-    ) -> SecuredActionOrchestrator<'a> {
-        self.services
-            .resources
-            .actions
-            .secured(&self.authorization, context)
-    }
-
     pub(crate) fn secured_asset_coordination<'a>(
         &'a self,
         context: &'a AccessContext,
@@ -155,10 +141,6 @@ impl HttpState {
         &self.services.resources.resources
     }
 
-    pub(crate) fn resource_actions(&self) -> &ActionOrchestrator {
-        &self.services.resources.actions
-    }
-
     pub(crate) fn directories(&self) -> &DirectoryService {
         &self.services.directories.directories
     }
@@ -169,13 +151,5 @@ impl HttpState {
             .storage_maintenance
             .check_blob_storage_health()
             .await
-    }
-
-    pub(crate) fn plugin_web_asset(
-        &self,
-        plugin_id: &str,
-        path: &std::path::Path,
-    ) -> Option<&Arc<[u8]>> {
-        self.plugin_web_assets.get(plugin_id)?.get(path)
     }
 }

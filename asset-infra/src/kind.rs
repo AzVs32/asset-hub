@@ -1,7 +1,6 @@
 mod builder;
 mod directory_action_registry;
 mod directory_registry;
-pub(crate) mod normalization;
 mod resource_action_registry;
 mod resource_registry;
 mod validation;
@@ -14,7 +13,3 @@ pub use resource_registry::DefaultResourceKindRegistry;
 
 use directory_registry::*;
 use resource_action_registry::*;
-use resource_registry::*;
-
-#[cfg(test)]
-mod tests;

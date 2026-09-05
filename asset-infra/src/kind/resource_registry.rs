@@ -1,5 +1,3 @@
-use super::validation::validate_hierarchy;
-use asset_core::CoreError;
 use asset_core::domain::{ResourceKind, ResourceKindDefinition};
 use asset_core::port::ResourceKindRegistry;
 use std::collections::HashMap;
@@ -56,23 +54,6 @@ impl DefaultResourceKindRegistry {
             descendants,
         }
     }
-}
-
-pub(super) fn validate_kind_hierarchy(
-    definitions: &[ResourceKindDefinition],
-) -> Result<(), CoreError> {
-    validate_hierarchy(
-        "resource",
-        definitions
-            .iter()
-            .map(|definition| {
-                (
-                    definition.kind().as_str(),
-                    definition.parent().map(|parent| parent.as_str()),
-                )
-            })
-            .collect(),
-    )
 }
 
 impl ResourceKindRegistry for DefaultResourceKindRegistry {

@@ -97,13 +97,7 @@ pub(crate) async fn replace_resource_content(
         return Err(HttpError::not_found(format!("resource `{id}` not found")));
     };
     Ok(Json(
-        resource_snapshot_response(
-            state.resources(),
-            state.resource_actions(),
-            &workspace,
-            &resource,
-        )
-        .await?,
+        resource_snapshot_response(state.resources(), &workspace, &resource).await?,
     ))
 }
 

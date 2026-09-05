@@ -31,7 +31,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     resources: runtime.resource_service(),
                     content: runtime.content_service(),
                     uploads: runtime.upload_service(),
-                    actions: runtime.action_orchestrator(),
                 },
                 directories: DirectoryHttpServices {
                     directories: runtime.directory_service(),
@@ -41,7 +40,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     storage_maintenance: runtime.storage_maintenance_service(),
                 },
             },
-            plugin_web_assets: runtime.plugin_web_assets(),
             authorization: authorization.clone(),
             upload_finalizations: runtime.upload_finalization_dispatcher(),
         },

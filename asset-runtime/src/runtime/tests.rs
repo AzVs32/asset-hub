@@ -68,6 +68,27 @@ async fn runtime_uses_the_configured_idempotency_lease_duration() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+#[tokio::test]
+async fn runtime_does_not_read_the_former_plugin_packages_directory() {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "asset-hub-plugin-directory-{}-{nonce}",
+        std::process::id()
+    ));
+    let package = root.join(".asset-hub/plugins/broken-package");
+    std::fs::create_dir_all(&package).unwrap();
+    std::fs::write(package.join("manifest.json"), b"not a manifest").unwrap();
+
+    let runtime = AssetRuntime::new(recovery_config(root.clone())).await;
+    assert!(runtime.is_ok());
+
+    drop(runtime);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 fn verified_content(size: u64) -> ResourceContent {
     ResourceContent::verified(size, Checksum::sha256("0".repeat(64)).unwrap())
         .build()

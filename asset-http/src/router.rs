@@ -24,13 +24,9 @@ async fn openapi_document() -> Json<utoipa::openapi::OpenApi> {
 
 /// Build the HTTP router from one explicit composition bundle and transport policy.
 pub fn build_router(composition: HttpComposition, options: RouterOptions) -> Router {
-    let mut router = Router::new()
+    let router = Router::new()
         .route("/health", get(handlers::health))
         .route("/api-docs/openapi.json", get(openapi_document))
-        .route(
-            "/plugins/{plugin_id}/{*path}",
-            get(handlers::plugin_web_asset),
-        )
         .route("/resource-kinds", get(handlers::list_resource_kinds))
         .route("/directory-kinds", get(handlers::list_directory_kinds))
         .route(
@@ -53,17 +49,7 @@ pub fn build_router(composition: HttpComposition, options: RouterOptions) -> Rou
         .route(
             "/resources/{id}/download",
             get(handlers::download_resource_content),
-        )
-        .route(
-            "/resources/{id}/actions/{action}",
-            post(handlers::execute_resource_action)
-                .layer(DefaultBodyLimit::max(handlers::MAX_ACTION_REQUEST_BYTES)),
         );
-    router = router.route(
-        "/directories/{id}/actions/{action}",
-        post(handlers::execute_directory_action)
-            .layer(DefaultBodyLimit::max(handlers::MAX_ACTION_REQUEST_BYTES)),
-    );
 
     let upload_router = Router::new()
         .route("/uploads", post(handlers::create_upload))

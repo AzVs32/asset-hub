@@ -21,13 +21,7 @@ pub(crate) async fn list_directory_kinds(
         items: directories
             .kind_definitions()
             .iter()
-            .map(|definition| {
-                DirectoryKindResponse::from_definition(
-                    definition,
-                    directories,
-                    state.resource_actions(),
-                )
-            })
+            .map(|definition| DirectoryKindResponse::from_definition(definition, directories))
             .collect(),
     })
 }
@@ -69,7 +63,7 @@ pub(crate) async fn list_directory(
         .list_children(&directory)
         .await?
         .into_iter()
-        .map(|directory| directory_response(state.resource_actions(), &workspace, &directory))
+        .map(|directory| directory_response(&workspace, &directory))
         .collect::<Result<Vec<_>, _>>()?;
     let current = state
         .secured_directories(&access.0)
@@ -82,15 +76,9 @@ pub(crate) async fn list_directory(
 
     Ok(Json(DirectoryListingResponse {
         path: directory,
-        directory: directory_response(state.resource_actions(), &workspace, &current)?,
+        directory: directory_response(&workspace, &current)?,
         folders,
-        resources: resource_page_response(
-            state.resources(),
-            state.resource_actions(),
-            &workspace,
-            resources,
-            page,
-        )?,
+        resources: resource_page_response(&workspace, resources, page)?,
     }))
 }
 
@@ -128,11 +116,7 @@ pub(crate) async fn create_directory(
         .await?;
     Ok((
         StatusCode::CREATED,
-        Json(directory_response(
-            state.resource_actions(),
-            &workspace,
-            &directory,
-        )?),
+        Json(directory_response(&workspace, &directory)?),
     ))
 }
 
@@ -157,11 +141,7 @@ pub(crate) async fn find_directory(
     let id = parse_directory_id(&id)?;
     let workspace = state.workspace(&access.0).await?;
     let directory = state.secured_directories(&access.0).find_by_id(&id).await?;
-    Ok(Json(directory_response(
-        state.resource_actions(),
-        &workspace,
-        &directory,
-    )?))
+    Ok(Json(directory_response(&workspace, &directory)?))
 }
 
 /// 以乐观并发方式更新目录元数据或父目录。
@@ -202,11 +182,7 @@ pub(crate) async fn update_directory(
         .secured_directories(&access.0)
         .update(&id, command)
         .await?;
-    Ok(Json(directory_response(
-        state.resource_actions(),
-        &workspace,
-        &directory,
-    )?))
+    Ok(Json(directory_response(&workspace, &directory)?))
 }
 
 /// 删除空目录。根目录和非空目录不可删除。
@@ -244,58 +220,15 @@ pub(crate) async fn delete_directory(
     }
 }
 
-/// 执行目录插件动作。
-#[utoipa::path(
-    post,
-    path = "/directories/{id}/actions/{action}",
-    tag = "directories",
-    request_body = ExecuteDirectoryActionRequest,
-    params(
-        ("id" = String, Path),
-        ("action" = String, Path),
-        ("Idempotency-Key" = Option<String>, Header, description = "可选的幂等键，重复提交不会重复应用 Host effect")
-    ),
-    responses(
-        (status = 200, description = "动作执行结果", body = DirectoryActionOutputResponse),
-        (status = 400, description = "目录类型不支持该动作", body = crate::dto::ErrorResponse),
-        (status = 404, description = "目录不存在", body = crate::dto::ErrorResponse)
-    )
-)]
-pub(crate) async fn execute_directory_action(
-    State(state): State<HttpState>,
-    access: Extension<AccessContext>,
-    Path((id, action)): Path<(String, String)>,
-    headers: HeaderMap,
-    payload: Result<Json<ExecuteDirectoryActionRequest>, JsonRejection>,
-) -> Result<Json<DirectoryActionOutputResponse>, HttpError> {
-    let id = parse_directory_id(&id)?;
-    let payload = parse_json_payload(payload)?;
-    let mut command = ExecuteDirectoryAction::new(
-        asset_core::domain::DirectoryActionId::new(action).map_err(CoreError::from)?,
-        payload.expected_revision,
-    )
-    .with_input(payload.input);
-    if let Some(key) = parse_idempotency_key(&headers)? {
-        command = command.with_idempotency_key(key);
-    }
-    let output = state
-        .secured_asset_coordination(&access.0)
-        .execute_directory_action(&id, command)
-        .await?;
-    Ok(Json(DirectoryActionOutputResponse::from(&output)))
-}
-
 pub(super) fn parse_directory_kind(value: impl Into<String>) -> Result<DirectoryKind, HttpError> {
     DirectoryKind::try_new(value.into()).map_err(|error| CoreError::from(error).into())
 }
 
 pub(super) fn directory_response(
-    orchestrator: &asset_core::service::ActionOrchestrator,
     workspace: &asset_core::service::WorkspaceScope,
     directory: &asset_core::port::LocatedDirectory,
 ) -> Result<DirectoryResponse, CoreError> {
     let path = workspace.project(directory.path())?;
-    let actions = orchestrator.describe_directory_actions(directory.directory())?;
     Ok(DirectoryResponse {
         id: directory.id().to_string(),
         parent_id: directory.directory().parent_id().map(|id| id.to_string()),
@@ -303,11 +236,6 @@ pub(super) fn directory_response(
         parent_path: path.parent_path().to_owned(),
         name: path.name().to_owned(),
         kind: directory.directory().kind().as_str().to_string(),
-        actions: actions
-            .available_actions()
-            .iter()
-            .map(crate::dto::DirectoryActionDefinitionResponse::from)
-            .collect(),
         created_at: directory.directory().created_at().to_rfc3339(),
         updated_at: directory.directory().updated_at().to_rfc3339(),
         revision: directory.directory().revision(),

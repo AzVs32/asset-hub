@@ -52,18 +52,6 @@ impl BuiltinResourceActionExecutor {
             bindings: Arc::new(bindings),
         }
     }
-
-    pub(crate) fn supports(&self, request: &ResourceActionRequest) -> bool {
-        let content = request.resource().content();
-        self.bindings.iter().any(|binding| {
-            binding.definition.id().as_str() == request.action().as_str()
-                && binding.definition.matches_resource(
-                    request.resource().kind().as_str(),
-                    content.and_then(|content| content.mime_type()),
-                    content.map(|_| request.storage_key().as_str()),
-                )
-        })
-    }
 }
 
 #[async_trait]
@@ -135,15 +123,6 @@ impl BuiltinDirectoryActionExecutor {
         Self {
             bindings: Arc::new(bindings),
         }
-    }
-
-    pub(crate) fn supports(&self, request: &DirectoryActionRequest) -> bool {
-        self.bindings.iter().any(|binding| {
-            binding.definition.id().as_str() == request.action().as_str()
-                && binding
-                    .definition
-                    .matches_exact_kind(request.directory().directory().kind().as_str())
-        })
     }
 }
 

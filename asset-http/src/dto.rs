@@ -1,16 +1,9 @@
 use asset_core::domain::{
-    ActionAccess, Checksum, ContentVerificationStatus, DefinitionOrigin, DirectoryActionDefinition,
-    DirectoryKindDefinition, DirectoryPath, Resource, ResourceActionContentDelivery,
-    ResourceActionDefinition, ResourceContent, ResourceEffectiveStatus, ResourceKindDefinition,
+    Checksum, ContentVerificationStatus, DefinitionOrigin, DirectoryKindDefinition, DirectoryPath,
+    Resource, ResourceContent, ResourceEffectiveStatus, ResourceKindDefinition,
     ResourceLifecycleStatus,
 };
-use asset_core::port::{DirectoryActionOutput, ResourceActionOutput};
-use asset_core::service::ResourceActions;
-use asset_plugin_api::protocol::{PluginDiagnostic, PluginDiagnosticSeverity};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-#[allow(unused_imports)]
-use serde_json::json;
 use utoipa::{IntoParams, ToSchema};
 
 /// OpenAPI 中表示原始二进制请求或响应体的 schema。
@@ -141,9 +134,6 @@ pub(crate) struct ErrorResponse {
     /// Optional structured diagnostic context.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) details: Option<serde_json::Value>,
-    /// Additional structured diagnostics associated with the failure.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) diagnostics: Vec<PluginDiagnosticResponse>,
 }
 
 /// 健康检查响应。
@@ -181,7 +171,6 @@ pub(crate) struct DirectoryKindResponse {
     pub(crate) ancestors: Vec<String>,
     pub(crate) allowed_parent_kinds: Vec<String>,
     pub(crate) label: String,
-    pub(crate) actions: Vec<DirectoryActionDefinitionResponse>,
     pub(crate) origin: DefinitionOriginResponse,
 }
 
@@ -189,7 +178,6 @@ impl DirectoryKindResponse {
     pub(crate) fn from_definition(
         definition: &DirectoryKindDefinition,
         service: &asset_core::service::DirectoryService,
-        actions: &asset_core::service::ActionOrchestrator,
     ) -> Self {
         Self {
             kind: definition.kind().as_str().to_string(),
@@ -206,11 +194,6 @@ impl DirectoryKindResponse {
                 .map(|kind| kind.as_str().to_string())
                 .collect(),
             label: definition.label().to_string(),
-            actions: actions
-                .describe_directory_kind_actions(definition.kind())
-                .iter()
-                .map(DirectoryActionDefinitionResponse::from)
-                .collect(),
             origin: DefinitionOriginResponse::from(definition.origin()),
         }
     }
@@ -232,9 +215,7 @@ pub(crate) struct ResourceKindResponse {
     /// 文件自动识别规则；为空时不会主动匹配，仅可作为手动选择或兜底。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) detect: Option<ResourceContentMatcherResponse>,
-    /// kind 支持的动作。
-    pub(crate) actions: Vec<ResourceActionDefinitionResponse>,
-    /// 定义来源：`builtin`、`config` 或 `plugin:<id>`。
+    /// 当前仅使用内置定义来源 `builtin`。
     pub(crate) origin: DefinitionOriginResponse,
 }
 
@@ -242,7 +223,6 @@ impl ResourceKindResponse {
     pub(crate) fn from_definition(
         definition: &ResourceKindDefinition,
         service: &asset_core::service::ResourceService,
-        actions: &asset_core::service::ActionOrchestrator,
     ) -> Self {
         Self {
             kind: definition.kind().as_str().to_string(),
@@ -259,11 +239,6 @@ impl ResourceKindResponse {
                 mime_types: definition.detect().mime_types().to_vec(),
                 extensions: definition.detect().extensions().to_vec(),
             }),
-            actions: actions
-                .describe_kind_actions(definition.kind())
-                .iter()
-                .map(ResourceActionDefinitionResponse::from)
-                .collect(),
             origin: DefinitionOriginResponse::from(definition.origin()),
         }
     }
@@ -284,125 +259,6 @@ impl From<&DefinitionOrigin> for DefinitionOriginResponse {
     }
 }
 
-/// 资源动作定义响应。
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub(crate) struct ResourceActionDefinitionResponse {
-    /// 动作 ID。
-    pub(crate) id: String,
-    pub(crate) origin: DefinitionOriginResponse,
-    /// 此 Action 实现的单例 Host 能力。
-    pub(crate) provides: Option<String>,
-    /// 展示名称。
-    pub(crate) label: String,
-    /// 动作说明。
-    pub(crate) description: Option<String>,
-    /// 访问边界。
-    pub(crate) access: String,
-    /// 动作所需数据。
-    pub(crate) requires: ResourceActionRequirementsResponse,
-    /// 输出约定。
-    pub(crate) output: ResourceActionOutputContractResponse,
-    /// UI 展示提示。
-    pub(crate) ui: ResourceActionUiResponse,
-    /// 资源和内容匹配条件。
-    pub(crate) applies_to: ResourceActionAppliesToResponse,
-}
-
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub(crate) struct DirectoryActionDefinitionResponse {
-    pub(crate) id: String,
-    pub(crate) origin: DefinitionOriginResponse,
-    pub(crate) provides: Option<String>,
-    pub(crate) label: String,
-    pub(crate) description: Option<String>,
-    pub(crate) access: String,
-    pub(crate) requires: DirectoryActionRequirementsResponse,
-    pub(crate) output: ResourceActionOutputContractResponse,
-    pub(crate) ui: ResourceActionUiResponse,
-    pub(crate) applies_to: DirectoryActionAppliesToResponse,
-}
-
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub(crate) struct DirectoryActionRequirementsResponse {
-    pub(crate) children: bool,
-    pub(crate) resources: DirectoryResourceAccessResponse,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum DirectoryResourceAccessResponse {
-    None,
-    Metadata,
-    Content,
-}
-
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub(crate) struct DirectoryActionAppliesToResponse {
-    pub(crate) kinds: Vec<String>,
-}
-
-impl From<&DirectoryActionDefinition> for DirectoryActionDefinitionResponse {
-    fn from(action: &DirectoryActionDefinition) -> Self {
-        Self {
-            id: action.id().as_str().to_string(),
-            origin: DefinitionOriginResponse::from(action.origin()),
-            provides: action.provides().map(|id| id.as_str().to_string()),
-            label: action.label().to_string(),
-            description: action.description().map(str::to_string),
-            access: action_access_text(action.access()).to_string(),
-            requires: DirectoryActionRequirementsResponse {
-                children: action.requirements().children,
-                resources: match action.requirements().resources {
-                    asset_core::domain::DirectoryResourceAccess::None => {
-                        DirectoryResourceAccessResponse::None
-                    }
-                    asset_core::domain::DirectoryResourceAccess::Metadata => {
-                        DirectoryResourceAccessResponse::Metadata
-                    }
-                    asset_core::domain::DirectoryResourceAccess::Content => {
-                        DirectoryResourceAccessResponse::Content
-                    }
-                },
-            },
-            output: ResourceActionOutputContractResponse {
-                views: action.output().views.clone(),
-                effects: action.output().effects.clone(),
-            },
-            ui: ResourceActionUiResponse {
-                group: action.ui().group.clone(),
-                order: action.ui().order,
-                locations: action.ui().locations.clone(),
-                destructive: action.ui().destructive,
-                confirmation: action.ui().confirmation.clone(),
-            },
-            applies_to: DirectoryActionAppliesToResponse {
-                kinds: action.kinds().to_vec(),
-            },
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub(crate) struct ResourceActionRequirementsResponse {
-    pub(crate) content: bool,
-    pub(crate) content_delivery: String,
-}
-
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub(crate) struct ResourceActionOutputContractResponse {
-    pub(crate) views: Vec<String>,
-    pub(crate) effects: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub(crate) struct ResourceActionUiResponse {
-    pub(crate) group: Option<String>,
-    pub(crate) order: Option<i32>,
-    pub(crate) locations: Vec<String>,
-    pub(crate) destructive: bool,
-    pub(crate) confirmation: Option<String>,
-}
-
 /// 内容匹配条件。
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub(crate) struct ResourceContentMatcherResponse {
@@ -410,63 +266,6 @@ pub(crate) struct ResourceContentMatcherResponse {
     pub(crate) mime_types: Vec<String>,
     /// 匹配的文件扩展名。
     pub(crate) extensions: Vec<String>,
-}
-
-/// 资源动作适用范围。
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub(crate) struct ResourceActionAppliesToResponse {
-    pub(crate) kinds: Vec<String>,
-    pub(crate) mime_types: Vec<String>,
-    pub(crate) extensions: Vec<String>,
-}
-
-impl From<&ResourceActionDefinition> for ResourceActionDefinitionResponse {
-    fn from(action: &ResourceActionDefinition) -> Self {
-        Self {
-            id: action.id().as_str().to_string(),
-            origin: DefinitionOriginResponse::from(action.origin()),
-            provides: action.provides().map(|id| id.as_str().to_string()),
-            label: action.label().to_string(),
-            description: action.description().map(str::to_string),
-            access: action_access_text(action.access()).to_string(),
-            requires: ResourceActionRequirementsResponse {
-                content: action.requirements().content,
-                content_delivery: content_delivery_text(action.requirements().content_delivery)
-                    .to_string(),
-            },
-            output: ResourceActionOutputContractResponse {
-                views: action.output().views.clone(),
-                effects: action.output().effects.clone(),
-            },
-            ui: ResourceActionUiResponse {
-                group: action.ui().group.clone(),
-                order: action.ui().order,
-                locations: action.ui().locations.clone(),
-                destructive: action.ui().destructive,
-                confirmation: action.ui().confirmation.clone(),
-            },
-            applies_to: ResourceActionAppliesToResponse {
-                kinds: action.applies_to().kinds().to_vec(),
-                mime_types: action.content_matcher().mime_types().to_vec(),
-                extensions: action.content_matcher().extensions().to_vec(),
-            },
-        }
-    }
-}
-
-fn action_access_text(access: ActionAccess) -> &'static str {
-    match access {
-        ActionAccess::Read => "read",
-        ActionAccess::Write => "write",
-    }
-}
-
-fn content_delivery_text(delivery: ResourceActionContentDelivery) -> &'static str {
-    match delivery {
-        ResourceActionContentDelivery::Auto => "auto",
-        ResourceActionContentDelivery::Inline => "inline",
-        ResourceActionContentDelivery::Reference => "reference",
-    }
 }
 
 impl HealthResponse {
@@ -518,8 +317,6 @@ pub(crate) struct ResourceResponse {
     pub(crate) state: ResourceStateResponse,
     /// 资源内容引用。
     pub(crate) content: Option<ResourceContentResponse>,
-    /// 当前资源允许的操作。
-    pub(crate) actions: Vec<ResourceActionDefinitionResponse>,
     /// 资源创建时间，RFC3339 格式。
     pub(crate) created_at: String,
     /// 资源最后更新时间，RFC3339 格式。
@@ -589,7 +386,6 @@ pub(crate) struct DirectoryResponse {
     /// 当前目录名。
     pub(crate) name: String,
     pub(crate) kind: String,
-    pub(crate) actions: Vec<DirectoryActionDefinitionResponse>,
     pub(crate) created_at: String,
     pub(crate) updated_at: String,
     pub(crate) revision: u64,
@@ -609,140 +405,8 @@ pub(crate) struct DirectoryListingResponse {
     pub(crate) resources: ResourcePageResponse,
 }
 
-/// 执行资源动作请求。
-#[derive(Debug, Deserialize, ToSchema)]
-#[schema(example = json!({
-    "expected_revision": 7,
-    "input": {
-        "mode": "default"
-    }
-}))]
-pub(crate) struct ExecuteResourceActionRequest {
-    /// Optional for read actions and required for write actions.
-    pub(crate) expected_revision: Option<u64>,
-    /// 传递给插件 action handler 的 JSON 输入。
-    #[serde(default)]
-    pub(crate) input: Value,
-}
-
-#[derive(Debug, Deserialize, ToSchema)]
-pub(crate) struct ExecuteDirectoryActionRequest {
-    /// Optional for read actions and required for write actions.
-    pub(crate) expected_revision: Option<u64>,
-    #[serde(default)]
-    pub(crate) input: Value,
-}
-
-/// 执行资源动作响应。
-#[derive(Debug, Serialize, ToSchema)]
-pub(crate) struct ResourceActionOutputResponse {
-    /// 资源唯一标识。
-    pub(crate) resource_id: String,
-    /// 动作 ID。
-    pub(crate) action: String,
-    /// 插件返回的 View。
-    pub(crate) view: Option<Value>,
-    /// Host 已验证并应用的 effect 类型。
-    pub(crate) effects: Vec<String>,
-    /// 插件返回的非致命诊断信息。
-    pub(crate) diagnostics: Vec<PluginDiagnosticResponse>,
-}
-
-#[derive(Debug, Serialize, ToSchema)]
-pub(crate) struct DirectoryActionOutputResponse {
-    pub(crate) directory_id: String,
-    pub(crate) action: String,
-    pub(crate) view: Option<Value>,
-    pub(crate) effects: Vec<String>,
-    pub(crate) diagnostics: Vec<PluginDiagnosticResponse>,
-}
-
-impl From<&DirectoryActionOutput> for DirectoryActionOutputResponse {
-    fn from(output: &DirectoryActionOutput) -> Self {
-        Self {
-            directory_id: output.directory_id().to_string(),
-            action: output.action().as_str().to_string(),
-            view: output
-                .output()
-                .view
-                .as_ref()
-                .map(|view| serde_json::to_value(view).expect("plugin view should serialize")),
-            effects: output
-                .output()
-                .effects
-                .iter()
-                .map(|effect| effect.kind().to_string())
-                .collect(),
-            diagnostics: output
-                .output()
-                .diagnostics
-                .iter()
-                .map(PluginDiagnosticResponse::from)
-                .collect(),
-        }
-    }
-}
-
-/// 插件或宿主产生的结构化诊断信息。
-#[derive(Debug, Serialize, ToSchema)]
-pub(crate) struct PluginDiagnosticResponse {
-    pub(crate) code: String,
-    pub(crate) message: String,
-    pub(crate) severity: String,
-    pub(crate) retryable: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) details: Option<Value>,
-}
-
-impl From<&PluginDiagnostic> for PluginDiagnosticResponse {
-    fn from(diagnostic: &PluginDiagnostic) -> Self {
-        Self {
-            code: diagnostic.code.clone(),
-            message: diagnostic.message.clone(),
-            severity: match diagnostic.severity {
-                PluginDiagnosticSeverity::Info => "info",
-                PluginDiagnosticSeverity::Warning => "warning",
-                PluginDiagnosticSeverity::Error => "error",
-            }
-            .to_string(),
-            retryable: diagnostic.retryable,
-            details: diagnostic.details.clone(),
-        }
-    }
-}
-
-impl From<&ResourceActionOutput> for ResourceActionOutputResponse {
-    fn from(output: &ResourceActionOutput) -> Self {
-        Self {
-            resource_id: output.resource_id().to_string(),
-            action: output.action().as_str().to_string(),
-            view: output
-                .output()
-                .view
-                .as_ref()
-                .map(|view| serde_json::to_value(view).expect("plugin view should serialize")),
-            effects: output
-                .output()
-                .effects
-                .iter()
-                .map(|effect| effect.kind().to_string())
-                .collect(),
-            diagnostics: output
-                .output()
-                .diagnostics
-                .iter()
-                .map(PluginDiagnosticResponse::from)
-                .collect(),
-        }
-    }
-}
-
 impl ResourceResponse {
-    pub(crate) fn new(
-        resource: &Resource,
-        directory: DirectoryPath,
-        actions: ResourceActions,
-    ) -> Self {
+    pub(crate) fn new(resource: &Resource, directory: DirectoryPath) -> Self {
         Self {
             id: resource.id().to_string(),
             name: resource.name().to_string(),
@@ -751,11 +415,6 @@ impl ResourceResponse {
             kind: resource.kind().as_str().to_string(),
             state: ResourceStateResponse::from(resource),
             content: resource.content().map(ResourceContentResponse::from),
-            actions: actions
-                .available_actions()
-                .iter()
-                .map(ResourceActionDefinitionResponse::from)
-                .collect(),
             created_at: resource.created_at().to_rfc3339(),
             updated_at: resource.updated_at().to_rfc3339(),
             revision: resource.revision(),

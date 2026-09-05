@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 mod commands;
 
-use commands::{config, plugin, system, user};
+use commands::{config, system, user};
 
 pub type CliResult<T = ()> = anyhow::Result<T>;
 
@@ -33,8 +33,6 @@ enum Command {
     System(system::Command),
     /// Manage Asset Hub users.
     User(user::Command),
-    /// List, install, or uninstall Asset Hub plugin packages.
-    Plugin(plugin::Command),
 }
 
 pub async fn run(cli: Cli) -> CliResult {
@@ -48,10 +46,6 @@ pub async fn run(cli: Cli) -> CliResult {
         Command::User(command) => {
             let runtime = maintenance_runtime(config_path).await?;
             user::run(command, runtime.user_service()).await
-        }
-        Command::Plugin(command) => {
-            let config = load_config(config_path)?.normalized()?;
-            plugin::run(command, &config.plugin_packages_path())
         }
     }
 }
@@ -67,6 +61,3 @@ fn load_config(config_path: Option<&Path>) -> Result<AssetInfraConfig, asset_cor
     };
     Ok(config)
 }
-
-#[cfg(test)]
-mod tests;

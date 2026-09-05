@@ -1,23 +1,12 @@
 pub mod action;
-mod builtin_catalog;
+pub mod builtin_catalog;
 pub mod config;
 mod directory_index;
 pub mod kind;
 pub mod migration;
 pub mod password;
-pub mod plugin;
-mod plugin_manifest;
 pub mod sqlite;
 pub mod storage;
-
-/// Shared filesystem boundary for installing, uninstalling, and loading plugin packages.
-pub mod plugin_package {
-    pub use crate::plugin_manifest::{
-        InstalledPluginPackage, LoadedPlugin, MAX_PLUGIN_LOCK_BYTES, MAX_PLUGIN_MANIFEST_BYTES,
-        MAX_PLUGIN_WASM_BYTES, MAX_PLUGIN_WEB_BYTES, PluginCatalog, generate_plugin_manifest_lock,
-        install_plugin_package, load_verified_plugin_package, uninstall_plugin_package,
-    };
-}
 
 use asset_core::{
     CoreError, port::BlobHealth, port::ContentObjectStore, port::ContentReader,
@@ -40,8 +29,7 @@ use storage::{FileSystemScanner, OpenDalBlobStorage};
 
 /// 根据配置的后端选型初始化具体基础设施适配器。
 ///
-/// 当前支持 SQLite 数据库和本地 Blob 存储。插件 catalog、运行时执行器和 Core service
-/// 由 `asset-runtime` 按确定顺序装配。
+/// 当前支持 SQLite 数据库和本地 Blob 存储；Core service 由 `asset-runtime` 装配。
 pub struct AssetInfrastructure {
     /// 实际生效的基础设施配置。
     config: AssetInfraConfig,

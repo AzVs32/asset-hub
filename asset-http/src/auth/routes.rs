@@ -126,12 +126,9 @@ pub(crate) async fn authorize_request(
     next: Next,
 ) -> Response {
     let path = request.uri().path();
-    // Plugin frames use an opaque sandbox origin; only immutable, verified Web snapshots are public.
-    let public_plugin_asset =
-        path.starts_with("/plugins/") && matches!(request.method(), &Method::GET | &Method::HEAD);
     let public_api_contract = matches!(request.method(), &Method::GET | &Method::HEAD)
         && path == "/api-docs/openapi.json";
-    if path == "/health" || public_plugin_asset || public_api_contract {
+    if path == "/health" || public_api_contract {
         return next.run(request).await;
     }
     let user = match require_user(&session) {

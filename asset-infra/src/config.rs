@@ -6,13 +6,11 @@ use std::path::{Path, PathBuf};
 mod blob_config;
 mod database_config;
 mod idempotency_config;
-mod plugin_host_config;
 mod resource_edit_config;
 
 pub use blob_config::{BlobBackend, BlobConfig, LocalBlobConfig, LocalBlobSyncConfig};
 pub use database_config::{DatabaseBackend, DatabaseConfig, SqliteDatabaseConfig};
 pub use idempotency_config::IdempotencyConfig;
-pub use plugin_host_config::{PluginHostConfig, PluginPermissionGrants};
 pub use resource_edit_config::ResourceEditConfig;
 
 /// 默认配置文件名。
@@ -25,26 +23,8 @@ const DEFAULT_LOCAL_SYNC_DEBOUNCE_MILLISECONDS: u64 = 1_000;
 const DEFAULT_LOCAL_SYNC_INTERVAL_SECONDS: u64 = 30 * 60;
 /// SQLite 数据库在本地 Blob 存储根目录中的固定相对路径。
 const SQLITE_DATABASE_RELATIVE_PATH: &str = ".asset-hub/asset-hub.sqlite";
-/// 插件安装目录在本地 Blob 根目录中的固定相对路径。
-const PLUGIN_PACKAGES_RELATIVE_PATH: &str = ".asset-hub/plugins";
 /// 默认 SQLite 连接池最大连接数。
 const DEFAULT_SQLITE_MAX_CONNECTIONS: u32 = 5;
-/// 默认单次插件动作可处理的资源内容最大字节数。
-const DEFAULT_PLUGIN_MAX_CONTENT_BYTES: u64 = 64 * 1024 * 1024;
-/// 默认允许直接内联到插件 JSON 请求中的资源内容最大字节数。
-const DEFAULT_PLUGIN_MAX_INLINE_CONTENT_BYTES: u64 = 4 * 1024 * 1024;
-/// 默认插件内容 ABI 单次读取允许返回的最大字节数。
-const DEFAULT_PLUGIN_MAX_CONTENT_READ_BYTES: u64 = 4 * 1024 * 1024;
-/// 默认插件调用序列化输入的最大字节数。
-const DEFAULT_PLUGIN_MAX_INPUT_BYTES: usize = 8 * 1024 * 1024;
-/// 默认插件调用序列化输出的最大字节数。
-const DEFAULT_PLUGIN_MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
-/// 默认允许同时执行的插件调用数量。
-const DEFAULT_PLUGIN_MAX_CONCURRENT_CALLS: usize = 8;
-/// 默认单个插件实例可使用的 WebAssembly 最大内存页数。
-const DEFAULT_PLUGIN_MEMORY_MAX_PAGES: u32 = 4096;
-/// 默认单次插件调用超时时间，单位为秒。
-const DEFAULT_PLUGIN_TIMEOUT_SECONDS: u64 = 20;
 /// 默认交互式文本编辑最大字节数。
 const DEFAULT_RESOURCE_EDIT_MAX_TEXT_BYTES: u64 = 4 * 1024 * 1024;
 
@@ -64,8 +44,6 @@ pub struct AssetInfraConfig {
     pub database: DatabaseConfig,
     /// 对象存储配置。
     pub blob: BlobConfig,
-    /// 插件执行预算和宿主批准的外部权限。
-    pub plugin: PluginHostConfig,
     /// Host 交互式资源编辑策略。
     pub resource_edit: ResourceEditConfig,
     /// 持久请求幂等执行租约策略。
@@ -121,7 +99,7 @@ impl AssetInfraConfig {
     /// 归一化配置。
     ///
     /// 当前主要处理路径：本地 Blob 根目录可以在配置中写相对路径，归一化后会基于当前
-    /// 工作目录转换成绝对路径。SQLite 和插件安装目录始终由归一化后的 Blob 根目录派生。
+    /// 工作目录转换成绝对路径。SQLite 路径始终由归一化后的 Blob 根目录派生。
     pub fn normalized(mut self) -> Result<Self, CoreError> {
         match self.database.backend {
             DatabaseBackend::Sqlite => {
@@ -138,7 +116,6 @@ impl AssetInfraConfig {
                 self.blob.local.sync.validate()?;
             }
         }
-        self.plugin.normalize_and_validate()?;
         self.resource_edit.validate()?;
         self.idempotency.validate()?;
         Ok(self)
@@ -150,13 +127,6 @@ impl AssetInfraConfig {
     pub fn sqlite_path(&self) -> PathBuf {
         match self.blob.backend {
             BlobBackend::Local => self.blob.local.root.join(SQLITE_DATABASE_RELATIVE_PATH),
-        }
-    }
-
-    /// 返回约定的插件安装目录 `<blob.local.root>/.asset-hub/plugins`。
-    pub fn plugin_packages_path(&self) -> PathBuf {
-        match self.blob.backend {
-            BlobBackend::Local => self.blob.local.root.join(PLUGIN_PACKAGES_RELATIVE_PATH),
         }
     }
 }
@@ -173,22 +143,6 @@ fn normalize_path(path: &Path) -> Result<PathBuf, CoreError> {
     std::env::current_dir()
         .map(|current_dir| current_dir.join(path))
         .map_err(|error| CoreError::configuration(error.to_string()))
-}
-
-fn normalize_permission_grant(path: &Path) -> Result<PathBuf, CoreError> {
-    let path = normalize_path(path)?;
-    if path.components().any(|component| {
-        matches!(
-            component,
-            std::path::Component::ParentDir | std::path::Component::CurDir
-        )
-    }) {
-        return Err(CoreError::configuration(format!(
-            "plugin filesystem grant `{}` must be canonical",
-            path.display()
-        )));
-    }
-    Ok(path)
 }
 
 fn build_config() -> ::config::ConfigBuilder<::config::builder::DefaultState> {

@@ -10,10 +10,6 @@ fn normalized_config_turns_relative_paths_into_absolute_paths() {
         config.sqlite_path(),
         config.blob.local.root.join(SQLITE_DATABASE_RELATIVE_PATH)
     );
-    assert_eq!(
-        config.plugin_packages_path(),
-        config.blob.local.root.join(PLUGIN_PACKAGES_RELATIVE_PATH)
-    );
 }
 
 #[test]
@@ -31,6 +27,7 @@ fn config_rejects_manually_configured_sqlite_path() {
 fn config_rejects_unknown_top_level_and_kind_fields() {
     for source in [
         "unknown_section = true",
+        "[plugin]\nmax_concurrent_calls = 8",
         "[kind]\nplugin_manifests = [\"plugin.json\"]",
         "[kind]\nplugin_manifest = [\"plugin.json\"]",
         "[[kind.definitions]]\nkind = \"doc:note\"",
@@ -58,29 +55,6 @@ fn config_rejects_unsupported_backends() {
     )
     .unwrap_err();
     assert!(blob_error.to_string().contains("s3"));
-}
-
-#[test]
-fn plugin_host_policy_rejects_unbounded_or_zero_values() {
-    let wildcard = AssetInfraConfig::from_config_str(
-        r#"
-        [plugin.grants]
-        network_hosts = ["*"]
-        "#,
-    )
-    .unwrap()
-    .normalized();
-    assert!(wildcard.is_err());
-
-    let zero = AssetInfraConfig::from_config_str(
-        r#"
-        [plugin]
-        max_concurrent_calls = 0
-        "#,
-    )
-    .unwrap()
-    .normalized();
-    assert!(zero.is_err());
 }
 
 #[test]

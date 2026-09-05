@@ -1,6 +1,7 @@
-use argon2::password_hash::{SaltString, rand_core::OsRng};
+use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHash, PasswordHasher as _, PasswordVerifier as _};
 use asset_core::{CoreError, port::PasswordHasher};
+use rand_core::OsRng;
 
 #[derive(Debug, Clone, Default)]
 pub struct Argon2PasswordHasher;

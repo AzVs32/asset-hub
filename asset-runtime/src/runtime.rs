@@ -1,5 +1,5 @@
+use crate::UploadFinalizationDispatcher;
 use crate::upload_finalization::UploadFinalizationScheduler;
-use crate::{PluginWebAssets, UploadFinalizationDispatcher};
 use asset_core::CoreError;
 use asset_core::domain::{ResourceActionPolicy, ResourceContentEditPolicy};
 use asset_core::service::{
@@ -10,24 +10,20 @@ use asset_core::service::{
 };
 use asset_infra::AssetInfrastructure;
 use asset_infra::action::{DefaultDirectoryActionExecutor, DefaultResourceActionExecutor};
+use asset_infra::builtin_catalog::BuiltinCatalog;
 use asset_infra::config::{AssetInfraConfig, BlobBackend};
 use asset_infra::kind::build_capability_catalogs;
 use asset_infra::password::Argon2PasswordHasher;
-use asset_infra::plugin::{ExtismActionExecutor, ExtismHost};
-use asset_infra::plugin_package::PluginCatalog;
 use asset_infra::storage::LocalStorageSync;
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// 应用运行时。
 ///
 /// `AssetRuntime` 负责根据调用方已经加载的配置组装基础设施与核心 service，并持有由
 /// 应用入口显式启动的后台任务。配置来源、命令行参数和传输层生命周期由各应用自行决定。
 pub struct AssetRuntime {
-    /// 已验证的浏览器静态资源快照
-    plugin_web_assets: PluginWebAssets,
     resource_service: ResourceService,
     content_service: ContentService,
     upload_service: UploadService,
@@ -73,59 +69,31 @@ impl AssetRuntime {
             }),
             BlobBackend::Local => None,
         };
-        let catalog_started = Instant::now();
-        let plugin_catalog = PluginCatalog::load(&config.plugin_packages_path())?;
-        tracing::info!(
-            elapsed_ms = catalog_started.elapsed().as_millis(),
-            plugins = plugin_catalog.plugin_count(),
-            "plugin artifacts verified"
-        );
-
-        let capability_catalogs = build_capability_catalogs(&plugin_catalog)?;
+        let builtin_catalog = BuiltinCatalog::new()?;
+        let capability_catalogs = build_capability_catalogs(&builtin_catalog)?;
         let resource_kind_registry = Arc::new(capability_catalogs.resource_kinds);
         let directory_kind_registry = Arc::new(capability_catalogs.directory_kinds);
         let resource_action_registry = Arc::new(capability_catalogs.resource_actions);
         let directory_action_registry = Arc::new(capability_catalogs.directory_actions);
-        let plugin_execution_policy = Arc::new(config.plugin.execution_policy()?);
+        // The retained built-in Actions never request inline content. Keep the mandatory Core
+        // policy minimal without retaining the removed plugin execution-budget configuration.
         let resource_action_policy = Arc::new(
-            ResourceActionPolicy::new(
-                plugin_execution_policy.max_content_bytes(),
-                plugin_execution_policy.max_inline_content_bytes(),
-            )
-            .map_err(|error| CoreError::configuration(error.to_string()))?,
+            ResourceActionPolicy::new(1, 1)
+                .map_err(|error| CoreError::configuration(error.to_string()))?,
         );
         let resource_content_edit_policy = Arc::new(
             ResourceContentEditPolicy::new(config.resource_edit.max_text_bytes)
                 .map_err(|error| CoreError::configuration(error.to_string()))?,
         );
 
-        let compile_started = Instant::now();
-        let extism_action_executor = ExtismActionExecutor::from_catalog(
-            &plugin_catalog,
-            resource_kind_registry.as_ref(),
-            directory_kind_registry.as_ref(),
-            ExtismHost::new(
-                infrastructure.directory_query(),
-                infrastructure.resource_read_model(),
-                infrastructure.content_reader(),
-                plugin_execution_policy.clone(),
-                config.plugin.grants.clone(),
-            ),
-        )?;
         let directory_action_executor = Arc::new(DefaultDirectoryActionExecutor::new(
-            &plugin_catalog,
+            builtin_catalog.directory_actions(),
             directory_kind_registry.as_ref(),
-            extism_action_executor.clone(),
         ));
         let resource_action_executor = Arc::new(DefaultResourceActionExecutor::new(
-            &plugin_catalog,
+            builtin_catalog.resource_actions(),
             resource_kind_registry.as_ref(),
-            extism_action_executor,
         ));
-        tracing::info!(
-            elapsed_ms = compile_started.elapsed().as_millis(),
-            "plugins compiled"
-        );
 
         let directory_services = DirectoryServices::new(
             infrastructure.directory_store(),
@@ -197,8 +165,6 @@ impl AssetRuntime {
             directory_service.clone(),
             idempotency_service.clone(),
         );
-        let plugin_web_assets = plugin_web_assets_from_catalog(&plugin_catalog)?;
-
         let replacements_resumed = content_service.resume_pending_replacements().await?;
         if replacements_resumed > 0 {
             tracing::info!(
@@ -217,7 +183,6 @@ impl AssetRuntime {
             tracing::info!(count = resumed, "scheduled pending upload finalizations");
         }
         Ok(Self {
-            plugin_web_assets,
             resource_service,
             content_service,
             upload_service,
@@ -311,30 +276,6 @@ impl AssetRuntime {
     pub fn upload_finalization_dispatcher(&self) -> Arc<dyn UploadFinalizationDispatcher> {
         self.upload_finalizations.clone()
     }
-
-    /// 返回启动时校验并冻结的插件浏览器静态资源。
-    pub fn plugin_web_assets(&self) -> PluginWebAssets {
-        self.plugin_web_assets.clone()
-    }
-}
-
-fn plugin_web_assets_from_catalog(catalog: &PluginCatalog) -> Result<PluginWebAssets, CoreError> {
-    let mut assets = HashMap::new();
-    for plugin in catalog.plugins() {
-        if plugin.web_assets().is_empty() {
-            continue;
-        }
-        let plugin_id = plugin.manifest().plugin_id();
-        if assets
-            .insert(plugin_id.to_string(), plugin.web_assets().clone())
-            .is_some()
-        {
-            return Err(CoreError::configuration(format!(
-                "duplicate plugin Web root `{plugin_id}`"
-            )));
-        }
-    }
-    Ok(assets)
 }
 
 #[cfg(test)]
