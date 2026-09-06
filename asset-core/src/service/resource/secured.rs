@@ -35,21 +35,13 @@ impl<'a> SecuredResourceService<'a> {
             .await
     }
 
-    async fn resource_for(
-        &self,
-        id: &ResourceId,
-        operation: DirectoryOperation,
-    ) -> Result<Option<LocatedResource>, CoreError> {
+    pub async fn get(&self, id: &ResourceId) -> Result<Option<LocatedResource>, CoreError> {
         let resource = self.service.get(id).await?;
         if let Some(resource) = &resource {
-            self.require(resource.directory(), operation).await?;
+            self.require(resource.directory(), DirectoryOperation::ReadResource)
+                .await?;
         }
         Ok(resource)
-    }
-
-    pub async fn get(&self, id: &ResourceId) -> Result<Option<LocatedResource>, CoreError> {
-        self.resource_for(id, DirectoryOperation::ReadResource)
-            .await
     }
 
     /// Resolve the caller-relative path at the authorization boundary, then query only by UUID.
@@ -80,28 +72,25 @@ impl<'a> SecuredResourceService<'a> {
         id: &ResourceId,
         command: UpdateResource,
     ) -> Result<Option<Resource>, CoreError> {
-        let Some(resource) = self
-            .resource_for(id, DirectoryOperation::UpdateResource)
-            .await?
-        else {
+        let Some(resource) = self.service.get(id).await? else {
             return Ok(None);
         };
+        self.require(resource.directory(), DirectoryOperation::UpdateResource)
+            .await?;
         if let Some(target_id) = command.directory_id() {
             let target = self.service.directories.locate_by_id(&target_id).await?;
             self.require(&target, DirectoryOperation::UpdateResource)
                 .await?;
         }
-        self.service.update(resource, command).await.map(Some)
+        self.service.update(id, command).await
     }
 
     pub async fn delete(&self, id: &ResourceId, expected_revision: u64) -> Result<bool, CoreError> {
-        let Some(resource) = self
-            .resource_for(id, DirectoryOperation::DeleteResource)
-            .await?
-        else {
+        let Some(resource) = self.service.get(id).await? else {
             return Ok(false);
         };
-        self.service.delete(resource, expected_revision).await?;
-        Ok(true)
+        self.require(resource.directory(), DirectoryOperation::DeleteResource)
+            .await?;
+        self.service.delete(id, expected_revision).await
     }
 }

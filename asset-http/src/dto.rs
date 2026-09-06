@@ -14,7 +14,7 @@ pub(crate) struct BinaryContent(Vec<u8>);
 /// 创建逻辑目录请求。
 #[derive(Debug, Deserialize, ToSchema)]
 pub(crate) struct CreateDirectoryRequest {
-    /// Stable parent Directory ID.
+    /// Stable global parent Directory ID.
     pub(crate) parent_id: String,
     /// 新目录名称，只允许单个路径段。
     pub(crate) name: String,
@@ -30,7 +30,7 @@ pub(crate) struct ListResourcesQuery {
     pub(crate) limit: Option<u32>,
     /// 可选名称模糊搜索关键字。
     pub(crate) q: Option<String>,
-    /// 相对于当前用户可见根目录的过滤路径；根目录为空字符串。
+    /// 相对于全局根目录的过滤路径；根目录为空字符串。
     #[param(value_type = Option<String>)]
     pub(crate) directory: Option<DirectoryPath>,
 }
@@ -39,7 +39,7 @@ pub(crate) struct ListResourcesQuery {
 #[derive(Debug, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub(crate) struct ListDirectoryQuery {
-    /// 相对于当前用户可见根目录的路径；根目录为空字符串。
+    /// 相对于全局根目录的路径；根目录为空字符串。
     #[param(value_type = Option<String>)]
     pub(crate) path: Option<DirectoryPath>,
     /// 资源页码，从 1 开始。
@@ -128,8 +128,6 @@ pub(crate) struct HealthResponse {
     /// 服务状态。
     pub(crate) status: String,
     pub(crate) database: HealthComponentResponse,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) session_store: Option<HealthComponentResponse>,
     pub(crate) blob_storage: HealthComponentResponse,
 }
 
@@ -139,14 +137,9 @@ pub(crate) struct HealthComponentResponse {
 }
 
 impl HealthResponse {
-    pub(crate) fn new(
-        database_ready: bool,
-        blob_storage_ready: bool,
-        session_store_ready: Option<bool>,
-    ) -> Self {
-        let session_ready = session_store_ready.unwrap_or(true);
+    pub(crate) fn new(database_ready: bool, blob_storage_ready: bool) -> Self {
         Self {
-            status: if database_ready && blob_storage_ready && session_ready {
+            status: if database_ready && blob_storage_ready {
                 "ready"
             } else {
                 "unavailable"
@@ -155,9 +148,6 @@ impl HealthResponse {
             database: HealthComponentResponse {
                 status: component_status(database_ready),
             },
-            session_store: session_store_ready.map(|ready| HealthComponentResponse {
-                status: component_status(ready),
-            }),
             blob_storage: HealthComponentResponse {
                 status: component_status(blob_storage_ready),
             },
@@ -176,9 +166,9 @@ pub(crate) struct ResourceResponse {
     pub(crate) id: String,
     /// 资源展示名。
     pub(crate) name: String,
-    /// Stable Directory identity; `directory` remains only the caller-relative display path.
+    /// Stable Directory identity; `directory` is the global relative display path.
     pub(crate) directory_id: String,
-    /// 相对于当前用户可见根目录的路径；根目录为空字符串。
+    /// 相对于全局根目录的路径；根目录为空字符串。
     #[schema(value_type = String)]
     pub(crate) directory: DirectoryPath,
     /// 由 Core 统一派生的资源生命周期、内容和有效状态。
@@ -247,9 +237,9 @@ pub(crate) struct DirectoryResponse {
     /// 稳定目录标识；目录移动或重命名后保持不变。
     pub(crate) id: String,
     pub(crate) parent_id: Option<String>,
-    /// 相对于当前用户可见根目录的路径。
+    /// 相对于全局根目录的路径。
     pub(crate) path: String,
-    /// 相对于当前用户可见根目录的父路径。
+    /// 相对于全局根目录的父路径。
     pub(crate) parent_path: String,
     /// 当前目录名。
     pub(crate) name: String,
@@ -261,7 +251,7 @@ pub(crate) struct DirectoryResponse {
 /// 目录浏览响应。
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct DirectoryListingResponse {
-    /// 相对于当前用户可见根目录的当前路径。
+    /// 相对于全局根目录的当前路径。
     #[schema(value_type = String)]
     pub(crate) path: DirectoryPath,
     /// 当前目录。

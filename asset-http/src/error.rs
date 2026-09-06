@@ -30,14 +30,6 @@ impl std::fmt::Display for HttpError {
 impl std::error::Error for HttpError {}
 
 impl HttpError {
-    pub(crate) fn unauthorized(message: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::UNAUTHORIZED,
-            message: message.into(),
-            diagnostic: None,
-        }
-    }
-
     pub(crate) fn internal(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
@@ -66,23 +58,6 @@ impl HttpError {
     pub(crate) fn not_found(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::NOT_FOUND,
-            message: message.into(),
-            diagnostic: None,
-        }
-    }
-
-    /// 构造 403 Forbidden。
-    pub(crate) fn forbidden(message: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::FORBIDDEN,
-            message: message.into(),
-            diagnostic: None,
-        }
-    }
-
-    pub(crate) fn too_many_requests(message: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::TOO_MANY_REQUESTS,
             message: message.into(),
             diagnostic: None,
         }

@@ -1,7 +1,5 @@
 import { normalizeDirectory } from "@/domain/directory-path";
 
-export const LOGIN_PATH = "/login";
-
 export function directoryPath(directory = ""): string {
   if (!directory) return "/";
   const encoded = directory.split("/").filter(Boolean).map(encodeURIComponent).join("/");

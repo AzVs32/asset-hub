@@ -6,20 +6,18 @@ use super::content::{
 use super::{CreateUpload, StorageKeyLocks, UploadLocks, path_resolver};
 use crate::CoreError;
 use crate::domain::{
-    AccessContext, Checksum, DirectoryOperation, IdempotencyKey, Resource, StorageKey, UploadId,
-    UploadSession, UploadStatus, UserId,
+    Checksum, IdempotencyKey, Resource, StorageKey, UploadId, UploadSession, UploadStatus,
 };
 use crate::port::{
     BlobByteStream, ContentObjectStore, ContentReader, ContentStagingStore,
     RESERVED_BLOB_STORAGE_PREFIX, ResourceReadModel, ResourceStore, StagedBlob, StorageScanner,
     UploadSessionRepository,
 };
-use crate::service::{
-    AuthorizationService, DirectoryService, IdempotencyOutcome, IdempotencyService, request_hash,
-};
+use crate::service::{DirectoryService, IdempotencyOutcome, IdempotencyService, request_hash};
 use futures_util::StreamExt;
 use std::sync::Arc;
 
+/// Resumable upload workflows with durable state and recovery, independent of a user context.
 #[derive(Clone)]
 pub struct UploadService {
     service: Arc<UploadDependencies>,
@@ -70,29 +68,14 @@ impl UploadService {
         }
     }
 
-    pub fn secured<'a>(
-        &'a self,
-        authorization: &'a AuthorizationService,
-        context: &'a AccessContext,
-    ) -> SecuredUploadService<'a> {
-        SecuredUploadService {
-            service: self,
-            authorization,
-            context,
-        }
-    }
-
     pub async fn pending_finalizations(&self) -> Result<Vec<UploadId>, CoreError> {
         self.service.upload_sessions.list_finalizing().await
     }
 
-    pub(crate) async fn create(
-        &self,
-        owner_id: UserId,
-        command: CreateUpload,
-    ) -> Result<UploadSession, CoreError> {
+    /// Create a resumable upload session without a user-context dependency.
+    pub async fn create(&self, command: CreateUpload) -> Result<UploadSession, CoreError> {
         let Some(key) = command.idempotency_key().cloned() else {
-            return self.create_session(owner_id, command, None).await;
+            return self.create_session(command, None).await;
         };
         let hash = request_hash(&serde_json::json!({
             "name": &command.name,
@@ -109,7 +92,7 @@ impl UploadService {
                     .execute_with_lease(
                         &key,
                         execution_id,
-                        self.create_session(owner_id, command, Some(&key)),
+                        self.create_session(command, Some(&key)),
                     )
                     .await
                 {
@@ -130,7 +113,7 @@ impl UploadService {
                     }
                 }
             }
-            IdempotencyOutcome::Replay(result) => self.replay_upload(&result, owner_id).await,
+            IdempotencyOutcome::Replay(result) => self.replay_upload(&result).await,
             IdempotencyOutcome::ConflictDifferentRequest => Err(CoreError::conflict(format!(
                 "idempotency key `{key}` was already used for a different request"
             ))),
@@ -142,7 +125,6 @@ impl UploadService {
 
     async fn create_session(
         &self,
-        owner_id: UserId,
         command: CreateUpload,
         idempotency_key: Option<&IdempotencyKey>,
     ) -> Result<UploadSession, CoreError> {
@@ -153,11 +135,6 @@ impl UploadService {
                 .find_by_idempotency_key(key)
                 .await?
         {
-            if session.owner_id() != owner_id {
-                return Err(CoreError::conflict(format!(
-                    "idempotency key `{key}` belongs to a different upload owner"
-                )));
-            }
             return Ok(session);
         }
         let CreateUpload {
@@ -185,7 +162,6 @@ impl UploadService {
         }
 
         let session = UploadSession::new(
-            owner_id,
             name,
             directory.id(),
             mime_type,
@@ -210,43 +186,34 @@ impl UploadService {
         Ok(session)
     }
 
-    async fn replay_upload(
-        &self,
-        result: &serde_json::Value,
-        owner_id: UserId,
-    ) -> Result<UploadSession, CoreError> {
+    async fn replay_upload(&self, result: &serde_json::Value) -> Result<UploadSession, CoreError> {
         let upload_id = result
             .get("upload_id")
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| CoreError::invariant("idempotency result is missing `upload_id`"))?;
         let upload_id = std::str::FromStr::from_str(upload_id)
             .map_err(|error| CoreError::invariant(format!("invalid stored upload id: {error}")))?;
-        self.load(owner_id, &upload_id).await
+        self.load(&upload_id).await
     }
 
-    pub(crate) async fn status(
-        &self,
-        owner_id: UserId,
-        id: &UploadId,
-    ) -> Result<UploadSession, CoreError> {
+    pub async fn status(&self, id: &UploadId) -> Result<UploadSession, CoreError> {
         let _guard = self.service.upload_locks.lock(id).await;
-        let session = self.load(owner_id, id).await?;
+        let session = self.load(id).await?;
         if session.status() != UploadStatus::Uploading {
             return Ok(session);
         }
         self.sync_offset(session).await
     }
 
-    pub(crate) async fn append(
+    pub async fn append(
         &self,
-        owner_id: UserId,
         id: &UploadId,
         requested_offset: u64,
         expected_chunk_checksum: Checksum,
         data: BlobByteStream,
     ) -> Result<UploadSession, CoreError> {
         let _guard = self.service.upload_locks.lock(id).await;
-        let session = self.load(owner_id, id).await?;
+        let session = self.load(id).await?;
         if session.status() != UploadStatus::Uploading {
             return Err(CoreError::conflict(format!(
                 "upload is not accepting chunks while its status is `{}`",
@@ -317,13 +284,12 @@ impl UploadService {
         Ok(session)
     }
 
-    pub(crate) async fn request_finalization(
+    pub async fn request_finalization(
         &self,
-        owner_id: UserId,
         id: &UploadId,
     ) -> Result<(UploadSession, bool), CoreError> {
         let _upload_guard = self.service.upload_locks.lock(id).await;
-        let session = self.load(owner_id, id).await?;
+        let session = self.load(id).await?;
         if matches!(
             session.status(),
             UploadStatus::Finalizing | UploadStatus::Completed
@@ -354,7 +320,7 @@ impl UploadService {
 
     pub async fn finalize(&self, id: &UploadId) -> Result<Resource, CoreError> {
         let _upload_guard = self.service.upload_locks.lock(id).await;
-        let mut session = self.load_unchecked(id).await?;
+        let mut session = self.load(id).await?;
         if session.status() == UploadStatus::Completed {
             return self.completed_resource(&session).await;
         }
@@ -508,9 +474,9 @@ impl UploadService {
         }
     }
 
-    pub(crate) async fn abort(&self, owner_id: UserId, id: &UploadId) -> Result<(), CoreError> {
+    pub async fn abort(&self, id: &UploadId) -> Result<(), CoreError> {
         let _guard = self.service.upload_locks.lock(id).await;
-        let session = self.load(owner_id, id).await?;
+        let session = self.load(id).await?;
         let staged = staged_for(session.id())?;
         let chunk = chunk_for(session.id())?;
         self.service.staging.discard_staged(&chunk).await?;
@@ -518,15 +484,7 @@ impl UploadService {
         self.service.upload_sessions.remove(id).await
     }
 
-    async fn load(&self, owner_id: UserId, id: &UploadId) -> Result<UploadSession, CoreError> {
-        let session = self.load_unchecked(id).await?;
-        if session.owner_id() != owner_id {
-            return Err(CoreError::not_found("upload", id.to_string()));
-        }
-        Ok(session)
-    }
-
-    async fn load_unchecked(&self, id: &UploadId) -> Result<UploadSession, CoreError> {
+    async fn load(&self, id: &UploadId) -> Result<UploadSession, CoreError> {
         self.service
             .upload_sessions
             .find_by_id(id)
@@ -588,59 +546,6 @@ impl UploadService {
             session.synchronize_offset(actual)?;
         }
         Ok(session)
-    }
-}
-
-pub struct SecuredUploadService<'a> {
-    service: &'a UploadService,
-    authorization: &'a AuthorizationService,
-    context: &'a AccessContext,
-}
-
-impl SecuredUploadService<'_> {
-    pub async fn create(&self, command: CreateUpload) -> Result<UploadSession, CoreError> {
-        let directory = self
-            .service
-            .service
-            .directories
-            .locate_by_id(&command.directory_id())
-            .await?;
-        self.authorization
-            .require(self.context, &directory, DirectoryOperation::CreateResource)
-            .await?;
-        self.service.create(self.context.user_id(), command).await
-    }
-
-    pub async fn status(&self, id: &UploadId) -> Result<UploadSession, CoreError> {
-        self.service.status(self.context.user_id(), id).await
-    }
-
-    pub async fn append(
-        &self,
-        id: &UploadId,
-        offset: u64,
-        expected_chunk_checksum: Checksum,
-        data: BlobByteStream,
-    ) -> Result<UploadSession, CoreError> {
-        self.service
-            .append(
-                self.context.user_id(),
-                id,
-                offset,
-                expected_chunk_checksum,
-                data,
-            )
-            .await
-    }
-
-    pub async fn complete(&self, id: &UploadId) -> Result<(UploadSession, bool), CoreError> {
-        self.service
-            .request_finalization(self.context.user_id(), id)
-            .await
-    }
-
-    pub async fn abort(&self, id: &UploadId) -> Result<(), CoreError> {
-        self.service.abort(self.context.user_id(), id).await
     }
 }
 

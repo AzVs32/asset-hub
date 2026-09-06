@@ -4,86 +4,6 @@
  */
 
 export interface paths {
-    "/auth/login": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["login"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/auth/logout": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["logout"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/auth/me": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["me"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/auth/users": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["list_users"];
-        put?: never;
-        post: operations["create_user"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/auth/users/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch: operations["update_user_status"];
-        trace?: never;
-    };
     "/directories": {
         parameters: {
             query?: never;
@@ -91,10 +11,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * 列出当前后端支持的目录类型。
-         *     列出当前目录的直接子目录和资源。
-         */
+        /** 列出当前目录的直接子目录和资源。 */
         get: operations["list_directory"];
         put?: never;
         /** 创建一个与存储侧实体对应的空目录。 */
@@ -281,11 +198,6 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        AuthenticatedUser: {
-            id: string;
-            is_admin: boolean;
-            username: string;
-        };
         /**
          * Format: binary
          * @description OpenAPI 中表示原始二进制请求或响应体的 schema。
@@ -302,7 +214,7 @@ export interface components {
         CreateDirectoryRequest: {
             /** @description 新目录名称，只允许单个路径段。 */
             name: string;
-            /** @description Stable parent Directory ID. */
+            /** @description Stable global parent Directory ID. */
             parent_id: string;
         };
         /** @description 创建断点续传会话。 */
@@ -315,23 +227,13 @@ export interface components {
             /** Format: int64 */
             size: number;
         };
-        CreateUserRequest: {
-            is_admin?: boolean;
-            password: string;
-            username: string;
-            workspace_directory?: string | null;
-        };
-        Credentials: {
-            password: string;
-            username: string;
-        };
         /** @description 目录浏览响应。 */
         DirectoryListingResponse: {
             /** @description 当前目录。 */
             directory: components["schemas"]["DirectoryResponse"];
             /** @description 直接子目录。 */
             folders: components["schemas"]["DirectoryResponse"][];
-            /** @description 相对于当前用户可见根目录的当前路径。 */
+            /** @description 相对于全局根目录的当前路径。 */
             path: string;
             /** @description 当前目录下的资源分页。 */
             resources: components["schemas"]["ResourcePageResponse"];
@@ -344,9 +246,9 @@ export interface components {
             /** @description 当前目录名。 */
             name: string;
             parent_id?: string | null;
-            /** @description 相对于当前用户可见根目录的父路径。 */
+            /** @description 相对于全局根目录的父路径。 */
             parent_path: string;
-            /** @description 相对于当前用户可见根目录的路径。 */
+            /** @description 相对于全局根目录的路径。 */
             path: string;
             /** Format: int64 */
             revision: number;
@@ -370,19 +272,8 @@ export interface components {
         HealthResponse: {
             blob_storage: components["schemas"]["HealthComponentResponse"];
             database: components["schemas"]["HealthComponentResponse"];
-            session_store?: null | components["schemas"]["HealthComponentResponse"];
             /** @description 服务状态。 */
             status: string;
-        };
-        ManagedUserResponse: {
-            id: string;
-            role: string;
-            status: string;
-            username: string;
-            workspace_directory: string;
-        };
-        MeResponse: {
-            user: components["schemas"]["AuthenticatedUser"];
         };
         /** @description 资源内容引用响应。 */
         ResourceContentResponse: {
@@ -437,9 +328,9 @@ export interface components {
             content?: null | components["schemas"]["ResourceContentResponse"];
             /** @description 资源创建时间，RFC3339 格式。 */
             created_at: string;
-            /** @description 相对于当前用户可见根目录的路径；根目录为空字符串。 */
+            /** @description 相对于全局根目录的路径；根目录为空字符串。 */
             directory: string;
-            /** @description Stable Directory identity; `directory` remains only the caller-relative display path. */
+            /** @description Stable Directory identity; `directory` is the global relative display path. */
             directory_id: string;
             /** @description 资源唯一标识。 */
             id: string;
@@ -484,9 +375,6 @@ export interface components {
             /** @description 可选新资源展示名。 */
             name?: string | null;
         };
-        UpdateUserStatusRequest: {
-            status: string;
-        };
         UploadSessionResponse: {
             /** @description 后台 finalization 的失败原因。 */
             error?: string | null;
@@ -509,174 +397,10 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    login: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["Credentials"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MeResponse"];
-                };
-            };
-            /** @description Invalid credentials */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Too many failed attempts */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    logout: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    me: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MeResponse"];
-                };
-            };
-        };
-    };
-    list_users: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ManagedUserResponse"][];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    create_user: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateUserRequest"];
-            };
-        };
-        responses: {
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MeResponse"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    update_user_status: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UpdateUserStatusRequest"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ManagedUserResponse"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
     list_directory: {
         parameters: {
             query?: {
-                /** @description 相对于当前用户可见根目录的路径；根目录为空字符串。 */
+                /** @description 相对于全局根目录的路径；根目录为空字符串。 */
                 path?: string;
                 /** @description 资源页码，从 1 开始。 */
                 page?: number;
@@ -751,15 +475,6 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description 没有父目录写权限 */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
         };
     };
     find_directory: {
@@ -785,15 +500,6 @@ export interface operations {
             };
             /** @description 目录 ID 无效 */
             400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description 没有目录读取权限 */
-            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -835,15 +541,6 @@ export interface operations {
             };
             /** @description 目录 ID 无效 */
             400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description 没有目录删除权限 */
-            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -905,15 +602,6 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description 没有目录写权限 */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
             /** @description 目录或父目录不存在 */
             404: {
                 headers: {
@@ -964,15 +652,6 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Directory is outside the current workspace */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
             /** @description Directory or resource content not found */
             404: {
                 headers: {
@@ -1011,7 +690,7 @@ export interface operations {
                     "application/json": components["schemas"]["HealthResponse"];
                 };
             };
-            /** @description 数据库、Session 存储或对象存储不可用 */
+            /** @description 数据库或对象存储不可用 */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -1031,7 +710,7 @@ export interface operations {
                 limit?: number;
                 /** @description 可选名称模糊搜索关键字。 */
                 q?: string;
-                /** @description 相对于当前用户可见根目录的过滤路径；根目录为空字符串。 */
+                /** @description 相对于全局根目录的过滤路径；根目录为空字符串。 */
                 directory?: string;
             };
             header?: never;
@@ -1321,15 +1000,6 @@ export interface operations {
             };
             /** @description 请求头或资源状态无效 */
             400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description 当前工作区没有写权限 */
-            403: {
                 headers: {
                     [name: string]: unknown;
                 };

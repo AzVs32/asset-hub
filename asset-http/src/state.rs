@@ -1,10 +1,7 @@
 use asset_core::CoreError;
-use asset_core::domain::AccessContext;
 use asset_core::service::{
-    AssetWorkflowService, AuthorizationService, ContentService, DirectoryService, ResourceService,
-    SecuredAssetWorkflowService, SecuredContentService, SecuredDirectoryService,
-    SecuredResourceService, SecuredUploadService, StorageMaintenanceService, UploadService,
-    WorkspaceScope,
+    AssetWorkflowService, ContentService, DirectoryService, ResourceService,
+    StorageMaintenanceService, UploadService,
 };
 use asset_runtime::UploadFinalizationDispatcher;
 use std::sync::Arc;
@@ -50,7 +47,6 @@ pub struct HttpServices {
 /// Unlike [`HttpState`], this is public because executable composition happens outside the library.
 pub struct HttpComposition {
     pub services: HttpServices,
-    pub authorization: AuthorizationService,
     pub upload_finalizations: Arc<dyn UploadFinalizationDispatcher>,
 }
 
@@ -61,7 +57,6 @@ pub struct HttpComposition {
 #[derive(Clone)]
 pub(crate) struct HttpState {
     services: HttpServices,
-    authorization: AuthorizationService,
     upload_finalizations: Arc<dyn UploadFinalizationDispatcher>,
 }
 
@@ -69,58 +64,8 @@ impl HttpState {
     pub(crate) fn new(composition: HttpComposition) -> Self {
         Self {
             services: composition.services,
-            authorization: composition.authorization,
             upload_finalizations: composition.upload_finalizations,
         }
-    }
-
-    pub(crate) fn secured_resources<'a>(
-        &'a self,
-        context: &'a AccessContext,
-    ) -> SecuredResourceService<'a> {
-        self.services
-            .resources
-            .resources
-            .secured(&self.authorization, context)
-    }
-
-    pub(crate) fn secured_directories<'a>(
-        &'a self,
-        context: &'a AccessContext,
-    ) -> SecuredDirectoryService<'a> {
-        self.services
-            .directories
-            .directories
-            .secured(&self.authorization, context)
-    }
-
-    pub(crate) fn secured_content<'a>(
-        &'a self,
-        context: &'a AccessContext,
-    ) -> SecuredContentService<'a> {
-        self.services
-            .resources
-            .content
-            .secured(&self.authorization, context)
-    }
-
-    pub(crate) fn secured_uploads<'a>(
-        &'a self,
-        context: &'a AccessContext,
-    ) -> SecuredUploadService<'a> {
-        self.services
-            .resources
-            .uploads
-            .secured(&self.authorization, context)
-    }
-
-    pub(crate) fn secured_asset_coordination<'a>(
-        &'a self,
-        context: &'a AccessContext,
-    ) -> SecuredAssetWorkflowService<'a> {
-        self.services
-            .workflows
-            .secured(&self.authorization, context)
     }
 
     pub(crate) fn dispatch_upload_finalization(
@@ -130,15 +75,26 @@ impl HttpState {
         self.upload_finalizations.dispatch(id)
     }
 
-    pub(crate) async fn workspace(
-        &self,
-        context: &AccessContext,
-    ) -> Result<WorkspaceScope, CoreError> {
-        self.authorization.workspace_scope(context).await
-    }
-
     pub(crate) fn resources(&self) -> &ResourceService {
         &self.services.resources.resources
+    }
+
+    pub(crate) fn directories(&self) -> &DirectoryService {
+        &self.services.directories.directories
+    }
+
+    pub(crate) fn content(&self) -> &ContentService {
+        &self.services.resources.content
+    }
+
+    pub(crate) fn workflows(&self) -> &AssetWorkflowService {
+        &self.services.workflows
+    }
+
+    /// Upload sessions have no Core owner boundary and are exposed through this direct application
+    /// service.
+    pub(crate) fn uploads(&self) -> &UploadService {
+        &self.services.resources.uploads
     }
 
     pub(crate) async fn check_blob_storage_health(&self) -> Result<(), CoreError> {

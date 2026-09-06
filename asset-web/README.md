@@ -1,8 +1,8 @@
 # Asset Web
 
-`asset-web` is the browser application for Asset Hub. It provides the authenticated asset workspace
-(directory browsing, resource upload and management) and user administration, speaking only to
-the core HTTP API.
+`asset-web` is the browser application for Asset Hub. It opens directly to the global asset
+workspace for directory browsing, resource upload, and resource management, speaking only to the
+core HTTP API.
 
 AI agents and maintainers should follow [`AGENTS.md`](AGENTS.md) for dependency rules and state
 ownership.

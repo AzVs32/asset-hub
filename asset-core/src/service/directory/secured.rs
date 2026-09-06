@@ -64,7 +64,7 @@ impl<'a> SecuredDirectoryService<'a> {
         path: &DirectoryPath,
     ) -> Result<Vec<LocatedDirectory>, CoreError> {
         let directory = self.find_by_path(path).await?;
-        self.service.list_located_children(&directory.id()).await
+        self.service.list_children(&directory.id()).await
     }
 
     pub async fn create(
@@ -101,7 +101,7 @@ impl<'a> SecuredDirectoryService<'a> {
             .root()
             .id();
         self.service
-            .update_expected(id, command, Some(scope_root))
+            .update_in_scope(id, command, Some(scope_root))
             .await
     }
 
@@ -113,8 +113,6 @@ impl<'a> SecuredDirectoryService<'a> {
         let directory = self.service.find_by_id(id).await?;
         self.require(directory.location(), DirectoryOperation::DeleteDirectory)
             .await?;
-        self.service
-            .delete_if_empty(id, Some(expected_revision))
-            .await
+        self.service.delete(id, expected_revision).await
     }
 }

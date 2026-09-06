@@ -13,6 +13,8 @@ pool. Directory relocation and Resource content replacement use durable intents 
 can converge the database and local filesystem after interruption. `LocalStorageSync` remains the
 filesystem event-to-reconciliation adapter; Runtime owns its guard and task lifetime.
 
+The SQLite upload-session table persists upload state and idempotency linkage, but no user owner.
+
 Run:
 
 ```bash

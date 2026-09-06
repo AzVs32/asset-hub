@@ -1,29 +1,9 @@
-import type { CurrentUser, ManagedUser } from "@/domain/auth";
 import type { Directory } from "@/domain/directory";
 import type { Resource, ResourceDraft } from "@/domain/resource";
 import type { components } from "./generated";
 
 type Schemas = components["schemas"];
 type ApiResource = Schemas["ResourceResponse"];
-
-export function mapCurrentUser(value: Schemas["AuthenticatedUser"]): CurrentUser {
-  return {
-    id: value.id,
-    username: value.username,
-    role: value.is_admin ? "administrator" : "member",
-    isAdmin: value.is_admin,
-  };
-}
-
-export function mapManagedUser(value: Schemas["ManagedUserResponse"]): ManagedUser {
-  return {
-    id: value.id,
-    username: value.username,
-    role: enumValue(value.role, ["administrator", "member"]),
-    status: enumValue(value.status, ["active", "disabled"]),
-    workspaceDirectory: value.workspace_directory,
-  };
-}
 
 export function mapDirectory(value: Schemas["DirectoryResponse"]): Directory {
   return {
@@ -73,10 +53,4 @@ export function resourceBody(
     name: draft.name,
     directory_id: directoryId,
   };
-}
-
-function enumValue<const T extends string>(value: string, values: readonly T[]): T {
-  const match = values.find((candidate) => candidate === value);
-  if (!match) throw new Error(`Unexpected API enum value: ${value}`);
-  return match;
 }

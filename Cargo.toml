@@ -37,7 +37,6 @@ async-trait = "0.1.92"
 bytes = "1.12.1"
 axum = "0.8.9"
 argon2 = "0.5.3"
-axum-login = "0.18.0"
 base64 = "0.23.1"
 config = { version = "0.15.25", default-features = false, features = ["toml"] }
 futures-core = "0.3.33"
@@ -48,10 +47,7 @@ tokio = { version = "1.53.1", features = ["fs", "io-util", "macros", "net", "rt-
 tokio-util = { version = "0.7.19", features = ["io"] }
 tempfile = "3.27.0"
 notify = "8.2.0"
-time = "0.3.55"
 tower = { version = "0.5.3", features = ["util"] }
-tower-sessions = "0.14.0"
-tower-sessions-sqlx-store = { version = "0.15.0", features = ["sqlite"] }
 tower-http = { version = "0.7.0", features = ["cors", "timeout", "trace"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }

@@ -29,7 +29,22 @@ impl ResourceService {
             .await
     }
 
+    /// Update a Resource by stable ID.
+    ///
+    /// The service loads the current location snapshot itself so callers do not need to depend on
+    /// a read-model projection to perform a lifecycle operation.
     pub async fn update(
+        &self,
+        id: &ResourceId,
+        command: UpdateResource,
+    ) -> Result<Option<Resource>, CoreError> {
+        let Some(located) = self.get(id).await? else {
+            return Ok(None);
+        };
+        self.update_located(located, command).await.map(Some)
+    }
+
+    async fn update_located(
         &self,
         located: LocatedResource,
         command: UpdateResource,
@@ -111,9 +126,19 @@ impl ResourceService {
         }
     }
 
-    /// Permanently delete the Resource and its local Blob. The Blob is first moved to an internal
-    /// staging key so a failed aggregate CAS can restore the visible file.
-    pub async fn delete(
+    /// Permanently delete a Resource by stable ID and its physical content.
+    ///
+    /// The Blob is first moved to an internal staging key so a failed aggregate CAS can restore
+    /// the visible file. The service loads the current location snapshot internally.
+    pub async fn delete(&self, id: &ResourceId, expected_revision: u64) -> Result<bool, CoreError> {
+        let Some(located) = self.get(id).await? else {
+            return Ok(false);
+        };
+        self.delete_located(located, expected_revision).await?;
+        Ok(true)
+    }
+
+    async fn delete_located(
         &self,
         located: LocatedResource,
         expected_revision: u64,

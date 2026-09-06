@@ -13,7 +13,7 @@ const MAX_DIRECTORY_SEGMENT_LEN: usize = 255;
 crate::gen_id_uuid_v7!(DirectoryId);
 
 impl DirectoryId {
-    /// 全局根目录使用固定标识，保证不同进程和首次建库得到相同的根节点。
+    /// 全局根目录使用 nil UUID，保证不同进程和首次建库得到相同的根节点。
     pub fn root() -> Self {
         Self::from_uuid(uuid::Uuid::nil())
     }

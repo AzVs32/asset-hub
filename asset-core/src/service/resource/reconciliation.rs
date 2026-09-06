@@ -10,7 +10,8 @@ use super::content::{
 use super::{StorageKeyLocks, build_resource};
 use crate::CoreError;
 use crate::domain::{
-    Checksum, ContentVerificationStatus, DirectoryPath, Resource, ResourceContent, StorageKey,
+    Checksum, ContentVerificationStatus, DirectoryId, DirectoryPath, Resource, ResourceContent,
+    StorageKey,
 };
 use crate::port::{
     BlobHealth, ContentReader, LocatedResource, ResourceMaintenanceReadModel, ResourceReadModel,
@@ -722,7 +723,12 @@ impl StorageMaintenanceService {
         physical_directories: HashSet<DirectoryPath>,
     ) -> Result<(), CoreError> {
         let mut stored = Vec::new();
-        let mut pending = vec![self.service.directories.root().await?];
+        let mut pending = vec![
+            self.service
+                .directories
+                .find_by_id(&DirectoryId::root())
+                .await?,
+        ];
         while let Some(parent) = pending.pop() {
             let children = self.service.directories.list_children(&parent.id()).await?;
             pending.extend(children.iter().cloned());
@@ -733,7 +739,7 @@ impl StorageMaintenanceService {
             if !physical_directories.contains(directory.path()) {
                 self.service
                     .directories
-                    .delete_if_empty(&directory.id(), None)
+                    .delete_if_empty_for_maintenance(&directory.id())
                     .await?;
             }
         }

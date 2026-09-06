@@ -7,8 +7,8 @@ Read `README.md` for setup and validation commands.
 
 ## Architecture boundaries
 
-`asset-web` is the authenticated browser application for the asset workspace and user administration.
-It consumes the core HTTP API. Preserve these dependency rules:
+`asset-web` is the browser application for the global asset workspace. It consumes the core HTTP
+API. Preserve these dependency rules:
 
 - Domain code must not depend on React, HTTP, OpenAPI DTOs, or backend transport details.
 - Features consume narrow interfaces from `shared/api/gateways.ts`; they must not call `fetch` or
@@ -24,9 +24,8 @@ It consumes the core HTTP API. Preserve these dependency rules:
 Keep each state category with its current owner:
 
 - URL path parameters: current directory, pagination, and selected Resource or Directory.
-- TanStack Query: server-owned Resource, Directory, User, authorization, and session data.
+- TanStack Query: server-owned Resource and Directory data.
 - React Hook Form or local component state: create, edit, upload, and transient UI state.
-- Session Context: current authenticated user.
 
 Do not introduce a global store that mixes server state, URL state, and form state. Resource and
 Directory selection are mutually exclusive. Directory navigation uses paths, while Directory
@@ -38,12 +37,12 @@ content metadata, or transport fallbacks.
 
 ## Resource and Directory mutations
 
-- Mutations go through the relevant gateway and backend authorization-bound use case.
+- Mutations go through the relevant gateway and Core use case.
 - Resource and Directory updates and deletions carry the current revision as the optimistic
   concurrency precondition. On `concurrency.revision_conflict`, refresh the authoritative snapshot
   before further editing.
 - After a successful mutation, update or invalidate the smallest necessary Query cache surface.
-- Do not reproduce authorization policy in React components.
+- Do not introduce authorization policy in React components.
 
 Current upload facts:
 

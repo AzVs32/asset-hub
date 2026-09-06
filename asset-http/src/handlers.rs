@@ -8,7 +8,7 @@ use crate::error::HttpError;
 use crate::state::HttpState;
 use asset_core::CoreError;
 use asset_core::domain::{
-    AccessContext, Checksum, DirectoryId, IdempotencyKey, ResourceId, UploadId, UploadSession,
+    Checksum, DirectoryId, IdempotencyKey, ResourceId, UploadId, UploadSession,
 };
 use asset_core::port::BlobByteStream;
 use asset_core::port::ListResources;
@@ -16,7 +16,7 @@ use asset_core::service::{CreateUpload, UpdateDirectory, UpdateResource};
 use axum::Json;
 use axum::body::Body;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Extension, Path, Query, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use futures_util::StreamExt;

@@ -20,6 +20,10 @@ use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 use std::sync::{Arc, Mutex};
 
+/// Resource-content reads, streams, and replacement workflows.
+///
+/// Its public use cases are context-free. Untrusted callers must use [`SecuredContentService`] to
+/// authorize the Resource directory before invoking them.
 #[derive(Clone)]
 pub struct ContentService {
     read_model: Arc<dyn ResourceReadModel>,
@@ -71,7 +75,44 @@ impl ContentService {
         }
     }
 
-    pub(crate) async fn get_resource_content_snapshot(
+    /// Read the complete content of a Resource by stable ID.
+    pub async fn get(&self, id: &ResourceId) -> Result<Option<Bytes>, CoreError> {
+        let Some(resource) = self.read_model.find_by_id(id).await? else {
+            return Ok(None);
+        };
+        self.get_resource_content_snapshot(&resource).await
+    }
+
+    /// Stream Resource content by stable ID, optionally constrained to an inclusive byte range.
+    pub async fn stream(
+        &self,
+        id: &ResourceId,
+        range: Option<(u64, u64)>,
+    ) -> Result<Option<ResourceContentStream>, CoreError> {
+        let Some(resource) = self.read_model.find_by_id(id).await? else {
+            return Ok(None);
+        };
+        self.get_resource_content_stream_snapshot(&resource, range)
+            .await
+    }
+
+    /// Replace Resource content by stable ID while preserving the streaming, size, checksum,
+    /// idempotency, and durable-recovery workflow.
+    pub async fn replace(
+        &self,
+        id: &ResourceId,
+        command: ReplaceResourceContent,
+        data: BlobByteStream,
+    ) -> Result<Option<Resource>, CoreError> {
+        let Some(resource) = self.read_model.find_by_id(id).await? else {
+            return Ok(None);
+        };
+        self.replace_content_snapshot(resource, command, data)
+            .await
+            .map(Some)
+    }
+
+    async fn get_resource_content_snapshot(
         &self,
         located: &LocatedResource,
     ) -> Result<Option<Bytes>, CoreError> {
@@ -83,7 +124,7 @@ impl ContentService {
         self.reader.get(&storage_key).await
     }
 
-    pub(crate) async fn get_resource_content_stream_snapshot(
+    async fn get_resource_content_stream_snapshot(
         &self,
         located: &LocatedResource,
         range: Option<(u64, u64)>,
@@ -111,7 +152,7 @@ impl ContentService {
         }))
     }
 
-    pub(crate) async fn replace_content_snapshot(
+    async fn replace_content_snapshot(
         &self,
         located: LocatedResource,
         command: ReplaceResourceContent,
@@ -482,13 +523,13 @@ impl SecuredContentService<'_> {
     }
 
     pub async fn get(&self, id: &ResourceId) -> Result<Option<Bytes>, CoreError> {
-        let Some(resource) = self
+        let Some(_resource) = self
             .resource_for(id, DirectoryOperation::ReadResource)
             .await?
         else {
             return Ok(None);
         };
-        self.service.get_resource_content_snapshot(&resource).await
+        self.service.get(id).await
     }
 
     pub async fn stream(
@@ -496,15 +537,13 @@ impl SecuredContentService<'_> {
         id: &ResourceId,
         range: Option<(u64, u64)>,
     ) -> Result<Option<ResourceContentStream>, CoreError> {
-        let Some(resource) = self
+        let Some(_resource) = self
             .resource_for(id, DirectoryOperation::ReadResource)
             .await?
         else {
             return Ok(None);
         };
-        self.service
-            .get_resource_content_stream_snapshot(&resource, range)
-            .await
+        self.service.stream(id, range).await
     }
 
     pub async fn replace(
@@ -513,16 +552,13 @@ impl SecuredContentService<'_> {
         command: ReplaceResourceContent,
         data: BlobByteStream,
     ) -> Result<Option<Resource>, CoreError> {
-        let Some(resource) = self
+        let Some(_resource) = self
             .resource_for(id, DirectoryOperation::ReplaceResourceContent)
             .await?
         else {
             return Ok(None);
         };
-        self.service
-            .replace_content_snapshot(resource, command, data)
-            .await
-            .map(Some)
+        self.service.replace(id, command, data).await
     }
 }
 

@@ -236,7 +236,7 @@ async fn directory_store_rejects_a_stale_aggregate_snapshot() {
     let repository = repository("conditional-directory-save").await;
     let directories = directory_service(repository.directories.clone()).await;
     let located = directories
-        .create_located(&DirectoryId::root(), "library")
+        .create(&DirectoryId::root(), "library")
         .await
         .unwrap();
     let expected = located.directory().revision();
@@ -275,11 +275,11 @@ async fn sqlite_directory_update_batch_rolls_back_when_one_cas_is_stale() {
     let repository = repository("directory-batch-cas-rollback").await;
     let directories = directory_service(repository.directories.clone()).await;
     let left = directories
-        .create_located(&DirectoryId::root(), "left")
+        .create(&DirectoryId::root(), "left")
         .await
         .unwrap();
     let right = directories
-        .create_located(&DirectoryId::root(), "right")
+        .create(&DirectoryId::root(), "right")
         .await
         .unwrap();
     let left_expected = left.directory().revision();

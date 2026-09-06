@@ -1,14 +1,9 @@
-import LogoutIcon from "@mui/icons-material/Logout";
-import PeopleIcon from "@mui/icons-material/People";
 import StorageRoundedIcon from "@mui/icons-material/StorageRounded";
-import { AppBar, Avatar, Box, Button, IconButton, Toolbar, Typography } from "@mui/material";
+import { AppBar, Avatar, Box, Toolbar, Typography } from "@mui/material";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import React from "react";
-import { toast } from "sonner";
 import type { Directory } from "@/domain/directory";
 import type { Resource } from "@/domain/resource";
-import { useSession } from "@/features/auth/session-context";
-import { useSignOut } from "@/features/auth/use-sign-out";
 import { useAssetWorkspaceGateway } from "@/shared/api/gateway-context";
 import { queryKeys } from "@/shared/api/query-keys";
 import { DirectoryDetail } from "./components/directory-detail";
@@ -19,22 +14,13 @@ import { ResourceList } from "./components/resource-list";
 import { useAssetWorkspaceCommands } from "./hooks/use-asset-workspace-commands";
 import { useAssetWorkspaceListing } from "./hooks/use-asset-workspace-listing";
 
-const UserAdministration = React.lazy(() =>
-  import("@/features/users/user-administration").then((module) => ({
-    default: module.UserAdministration,
-  })),
-);
-
 export function AssetWorkspace() {
   const gateway = useAssetWorkspaceGateway();
-  const user = useSession();
-  const signOut = useSignOut();
   const queryClient = useQueryClient();
   const browser = useAssetWorkspaceListing();
   const commands = useAssetWorkspaceCommands();
   const [uploadOpen, setUploadOpen] = React.useState(false);
   const [folderOpen, setFolderOpen] = React.useState(false);
-  const [usersOpen, setUsersOpen] = React.useState(false);
   const selected = useQuery({
     queryKey: queryKeys.resource(browser.selectedId ?? ""),
     queryFn: () => gateway.findResource(browser.selectedId ?? ""),
@@ -84,14 +70,6 @@ export function AssetWorkspace() {
     );
   }
 
-  async function logout() {
-    try {
-      await signOut();
-    } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "Sign out failed");
-    }
-  }
-
   return (
     <Box
       component="main"
@@ -112,22 +90,11 @@ export function AssetWorkspace() {
             <Typography variant="h6" component="h1" noWrap>
               Asset Hub
             </Typography>
-            <Typography variant="caption" color="text.secondary" noWrap>
-              {user.username}
-            </Typography>
           </Box>
           <DirectoryBreadcrumbs
             path={browser.filters.directory}
             onNavigate={browser.openDirectory}
           />
-          {user.isAdmin ? (
-            <Button color="inherit" startIcon={<PeopleIcon />} onClick={() => setUsersOpen(true)}>
-              Users
-            </Button>
-          ) : null}
-          <IconButton color="inherit" aria-label="Sign out" onClick={() => void logout()}>
-            <LogoutIcon />
-          </IconButton>
         </Toolbar>
       </AppBar>
       <Box
@@ -199,15 +166,6 @@ export function AssetWorkspace() {
           return commands.createFolder.mutateAsync({ parent, name });
         }}
       />
-      {usersOpen ? (
-        <React.Suspense fallback={null}>
-          <UserAdministration
-            open={usersOpen}
-            onOpenChange={setUsersOpen}
-            currentUserId={user.id}
-          />
-        </React.Suspense>
-      ) : null}
     </Box>
   );
 }

@@ -1,4 +1,4 @@
-use super::{Checksum, DirectoryId, Resource, ResourceContent, ResourceId, UserId};
+use super::{Checksum, DirectoryId, Resource, ResourceContent, ResourceId};
 use crate::ResourceError;
 use chrono::{DateTime, Utc};
 
@@ -28,7 +28,6 @@ impl UploadStatus {
 pub struct UploadSession {
     id: UploadId,
     resource_id: ResourceId,
-    owner_id: UserId,
     name: String,
     directory_id: DirectoryId,
     mime_type: Option<String>,
@@ -46,7 +45,6 @@ pub struct UploadSession {
 pub struct UploadSessionSnapshot {
     pub id: UploadId,
     pub resource_id: ResourceId,
-    pub owner_id: UserId,
     pub name: String,
     pub directory_id: DirectoryId,
     pub mime_type: Option<String>,
@@ -63,7 +61,6 @@ pub struct UploadSessionSnapshot {
 impl UploadSession {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        owner_id: UserId,
         name: impl Into<String>,
         directory_id: DirectoryId,
         mime_type: Option<String>,
@@ -74,7 +71,6 @@ impl UploadSession {
         Self::rehydrate(UploadSessionSnapshot {
             id: UploadId::new(),
             resource_id: ResourceId::new(),
-            owner_id,
             name: name.into(),
             directory_id,
             mime_type,
@@ -101,7 +97,6 @@ impl UploadSession {
         Ok(Self {
             id: snapshot.id,
             resource_id: snapshot.resource_id,
-            owner_id: snapshot.owner_id,
             name: snapshot.name,
             directory_id: snapshot.directory_id,
             mime_type: snapshot.mime_type,
@@ -121,9 +116,6 @@ impl UploadSession {
     }
     pub fn resource_id(&self) -> ResourceId {
         self.resource_id
-    }
-    pub fn owner_id(&self) -> UserId {
-        self.owner_id
     }
     pub fn name(&self) -> &str {
         &self.name
@@ -311,7 +303,6 @@ mod tests {
 
     fn session(expected_size: u64) -> UploadSession {
         UploadSession::new(
-            UserId::new(),
             "asset.bin",
             DirectoryId::root(),
             None,
@@ -348,7 +339,6 @@ mod tests {
         let snapshot = UploadSessionSnapshot {
             id: session.id(),
             resource_id: session.resource_id(),
-            owner_id: session.owner_id(),
             name: session.name().to_string(),
             directory_id: session.directory_id(),
             mime_type: None,

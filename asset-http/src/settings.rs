@@ -3,12 +3,10 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use axum::http::HeaderValue;
-use clap::{ArgAction, Parser};
+use clap::Parser;
 
 const DEFAULT_HTTP_ADDR: &str = "127.0.0.1:8080";
 const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 30;
-const DEFAULT_SESSION_INACTIVITY_SECS: u64 = 12 * 60 * 60;
-pub(crate) const DEFAULT_SESSION_SQLITE_PATH: &str = "data/.asset-hub/http-session.sqlite";
 
 #[derive(Debug, Parser)]
 #[command(name = "asset-http", version, about = "Run the Asset Hub HTTP service")]
@@ -28,24 +26,6 @@ struct HttpCli {
     /// HTTP request timeout in seconds. Streaming uploads are exempt from the total timeout.
     #[arg(long, default_value_t = DEFAULT_REQUEST_TIMEOUT_SECS)]
     request_timeout_secs: u64,
-
-    /// Mark session cookies as Secure.
-    #[arg(
-        long,
-        default_value_t = false,
-        num_args = 0..=1,
-        default_missing_value = "true",
-        action = ArgAction::Set
-    )]
-    cookie_secure: bool,
-
-    /// Session inactivity timeout in seconds.
-    #[arg(
-        long,
-        default_value_t = DEFAULT_SESSION_INACTIVITY_SECS,
-        value_parser = clap::value_parser!(u64).range(1..)
-    )]
-    session_inactivity_secs: u64,
 }
 
 /// HTTP CORS 策略。
@@ -64,12 +44,6 @@ pub struct RouterOptions {
     pub request_timeout: Duration,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SessionOptions {
-    pub cookie_secure: bool,
-    pub inactivity_timeout: Duration,
-}
-
 impl Default for RouterOptions {
     fn default() -> Self {
         Self {
@@ -81,13 +55,12 @@ impl Default for RouterOptions {
 
 /// HTTP 应用启动配置。
 ///
-/// 负责读取 HTTP 监听、路由和会话边界配置。业务和基础设施配置由应用入口加载。
+/// 负责读取 HTTP 监听和路由边界配置。业务和基础设施配置由应用入口加载。
 /// 未通过命令行 `--config` 指定路径时，由应用入口选择默认配置文件。
 pub struct HttpSettings {
     addr: SocketAddr,
     config_path: Option<PathBuf>,
     router_options: RouterOptions,
-    session_options: SessionOptions,
 }
 
 impl HttpSettings {
@@ -98,10 +71,6 @@ impl HttpSettings {
     /// - `--enable-purge`：是否开放物理删除接口，默认 `true`。
     /// - `--cors-allowed-origins`：逗号分隔的显式 origin，不允许 `*`。
     /// - `--request-timeout-secs`：普通请求总超时秒数，默认 `30`；不限制流式上传总时长。
-    /// - `--cookie-secure`：是否为会话 Cookie 添加 Secure，默认 `false`。
-    /// - `--session-inactivity-secs`：会话空闲超时秒数，默认 `43200`。
-    ///
-    /// 布尔选项省略可选值时表示 `true`，显式提供的值只接受 `true` 或 `false`。
     pub fn from_cli() -> Self {
         Self::from_cli_args(HttpCli::parse())
     }
@@ -111,15 +80,10 @@ impl HttpSettings {
             cors: cli.cors_allowed_origins.unwrap_or(CorsPolicy::None),
             request_timeout: Duration::from_secs(cli.request_timeout_secs),
         };
-        let session_options = SessionOptions {
-            cookie_secure: cli.cookie_secure,
-            inactivity_timeout: Duration::from_secs(cli.session_inactivity_secs),
-        };
         Self {
             addr: cli.addr,
             config_path: cli.config,
             router_options,
-            session_options,
         }
     }
 
@@ -137,10 +101,6 @@ impl HttpSettings {
     pub fn router_options(&self) -> &RouterOptions {
         &self.router_options
     }
-
-    pub fn session_options(&self) -> &SessionOptions {
-        &self.session_options
-    }
 }
 
 fn parse_cors_policy(value: &str) -> Result<CorsPolicy, String> {
@@ -153,10 +113,7 @@ fn parse_cors_policy(value: &str) -> Result<CorsPolicy, String> {
         return Ok(CorsPolicy::None);
     }
     if origins.contains(&"*") {
-        return Err(
-            "wildcard CORS is not supported with cookie authentication; configure explicit origins"
-                .to_string(),
-        );
+        return Err("wildcard CORS is not supported; configure explicit origins".to_string());
     }
 
     let origins = origins

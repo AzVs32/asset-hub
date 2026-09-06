@@ -4,8 +4,6 @@ CREATE TABLE upload_sessions (
     id TEXT PRIMARY KEY NOT NULL,
     -- finalization 开始前预先分配的 Resource ID；Resource 记录仅在内容发布成功后创建。
     resource_id TEXT NOT NULL UNIQUE,
-    -- 会话所有者；仅所有者可继续、完成或放弃上传。
-    owner_id TEXT NOT NULL,
     -- Optional durable link to the idempotent create-upload request that created this session.
     idempotency_key TEXT UNIQUE,
     -- 最终 Resource 的文件名。

@@ -1,4 +1,4 @@
-//! Narrow application coordinator for authorized cross-aggregate projections.
+//! Narrow application coordinator for cross-aggregate projections.
 
 use super::{AuthorizationService, DirectoryService, ResourceService};
 use crate::CoreError;
@@ -34,28 +34,17 @@ impl AssetWorkflowService {
             context,
         }
     }
-}
 
-/// Authorization-bound cross-aggregate projections.
-pub struct SecuredAssetWorkflowService<'a> {
-    workflows: &'a AssetWorkflowService,
-    authorization: &'a AuthorizationService,
-    context: &'a AccessContext,
-}
-
-impl SecuredAssetWorkflowService<'_> {
+    /// Build the point-in-time manifest for a directory tree addressed by its global stable ID.
+    ///
+    /// The manifest retains canonical archive-path validation and contains only Resources with
+    /// content. Untrusted callers must use [`SecuredAssetWorkflowService`] to authorize the root
+    /// directory first.
     pub async fn directory_archive_manifest(
         &self,
         id: &DirectoryId,
     ) -> Result<DirectoryArchiveManifest, CoreError> {
-        let root = self.workflows.directories.find_by_id(id).await?;
-        self.authorization
-            .require(
-                self.context,
-                root.location(),
-                DirectoryOperation::DownloadDirectory,
-            )
-            .await?;
+        let root = self.directories.find_by_id(id).await?;
         let archive_root = if root.id().is_root() {
             "asset-hub".to_string()
         } else {
@@ -68,12 +57,7 @@ impl SecuredAssetWorkflowService<'_> {
         let mut resources = Vec::new();
 
         while let Some(directory) = pending.pop_front() {
-            if !self
-                .workflows
-                .directories
-                .contains(id, &directory.id())
-                .await?
-            {
+            if !self.directories.contains(id, &directory.id()).await? {
                 continue;
             }
             let archive_path =
@@ -83,7 +67,6 @@ impl SecuredAssetWorkflowService<'_> {
             let mut offset = 0;
             loop {
                 let page = self
-                    .workflows
                     .resources
                     .list(ListResources::new(
                         DIRECTORY_ARCHIVE_PAGE_SIZE,
@@ -107,12 +90,7 @@ impl SecuredAssetWorkflowService<'_> {
                     break;
                 }
             }
-            pending.extend(
-                self.workflows
-                    .directories
-                    .list_located_children(&directory.id())
-                    .await?,
-            );
+            pending.extend(self.directories.list_children(&directory.id()).await?);
         }
 
         directories.sort();
@@ -122,6 +100,30 @@ impl SecuredAssetWorkflowService<'_> {
             directories,
             resources,
         ))
+    }
+}
+
+/// Authorization-bound cross-aggregate projections.
+pub struct SecuredAssetWorkflowService<'a> {
+    workflows: &'a AssetWorkflowService,
+    authorization: &'a AuthorizationService,
+    context: &'a AccessContext,
+}
+
+impl SecuredAssetWorkflowService<'_> {
+    pub async fn directory_archive_manifest(
+        &self,
+        id: &DirectoryId,
+    ) -> Result<DirectoryArchiveManifest, CoreError> {
+        let root = self.workflows.directories.find_by_id(id).await?;
+        self.authorization
+            .require(
+                self.context,
+                root.location(),
+                DirectoryOperation::DownloadDirectory,
+            )
+            .await?;
+        self.workflows.directory_archive_manifest(id).await
     }
 }
 

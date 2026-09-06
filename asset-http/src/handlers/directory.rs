@@ -20,41 +20,33 @@ const MAX_LIMIT: u32 = 100;
 )]
 pub(crate) async fn list_directory(
     State(state): State<HttpState>,
-    access: Extension<AccessContext>,
     Query(query): Query<ListDirectoryQuery>,
 ) -> Result<Json<DirectoryListingResponse>, HttpError> {
-    let workspace = state.workspace(&access.0).await?;
     let directory = query.path.unwrap_or_default();
     let page = query.page.unwrap_or(DEFAULT_PAGE).max(1);
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let offset = u64::from(page - 1) * u64::from(limit);
-    let mut resources_query = ListResources::new(limit, offset, DirectoryId::root());
+    let current = state.directories().find_by_path(&directory).await?;
+    let mut resources_query = ListResources::new(limit, offset, current.id());
 
     if let Some(q) = query.q {
         resources_query = resources_query.with_q(q);
     }
 
     let folders = state
-        .secured_directories(&access.0)
-        .list_children(&directory)
+        .directories()
+        .list_children(&current.id())
         .await?
         .into_iter()
-        .map(|directory| directory_response(&workspace, &directory))
-        .collect::<Result<Vec<_>, _>>()?;
-    let current = state
-        .secured_directories(&access.0)
-        .find_by_path(&directory)
-        .await?;
-    let resources = state
-        .secured_resources(&access.0)
-        .list(&directory, resources_query)
-        .await?;
+        .map(|directory| directory_response(&directory))
+        .collect();
+    let resources = state.resources().list(resources_query).await?;
 
     Ok(Json(DirectoryListingResponse {
         path: directory,
-        directory: directory_response(&workspace, &current)?,
+        directory: directory_response(&current),
         folders,
-        resources: resource_page_response(&workspace, resources, page)?,
+        resources: resource_page_response(resources, page),
     }))
 }
 
@@ -66,26 +58,17 @@ pub(crate) async fn list_directory(
     request_body = CreateDirectoryRequest,
     responses(
         (status = 201, description = "目录已创建", body = DirectoryResponse),
-        (status = 400, description = "目录名称无效", body = crate::dto::ErrorResponse),
-        (status = 403, description = "没有父目录写权限", body = crate::dto::ErrorResponse)
+        (status = 400, description = "目录名称无效", body = crate::dto::ErrorResponse)
     )
 )]
 pub(crate) async fn create_directory(
     State(state): State<HttpState>,
-    access: Extension<AccessContext>,
     payload: Result<Json<CreateDirectoryRequest>, JsonRejection>,
 ) -> Result<(StatusCode, Json<DirectoryResponse>), HttpError> {
     let payload = parse_json_payload(payload)?;
-    let workspace = state.workspace(&access.0).await?;
     let parent_id = parse_directory_id(&payload.parent_id)?;
-    let directory = state
-        .secured_directories(&access.0)
-        .create(&parent_id, payload.name)
-        .await?;
-    Ok((
-        StatusCode::CREATED,
-        Json(directory_response(&workspace, &directory)?),
-    ))
+    let directory = state.directories().create(&parent_id, payload.name).await?;
+    Ok((StatusCode::CREATED, Json(directory_response(&directory))))
 }
 
 /// 按稳定 ID 查询目录。
@@ -97,19 +80,16 @@ pub(crate) async fn create_directory(
     responses(
         (status = 200, description = "目录详情", body = DirectoryResponse),
         (status = 400, description = "目录 ID 无效", body = crate::dto::ErrorResponse),
-        (status = 403, description = "没有目录读取权限", body = crate::dto::ErrorResponse),
         (status = 404, description = "目录不存在", body = crate::dto::ErrorResponse)
     )
 )]
 pub(crate) async fn find_directory(
     State(state): State<HttpState>,
-    access: Extension<AccessContext>,
     Path(id): Path<String>,
 ) -> Result<Json<DirectoryResponse>, HttpError> {
     let id = parse_directory_id(&id)?;
-    let workspace = state.workspace(&access.0).await?;
-    let directory = state.secured_directories(&access.0).find_by_id(&id).await?;
-    Ok(Json(directory_response(&workspace, &directory)?))
+    let directory = state.directories().find_by_id(&id).await?;
+    Ok(Json(directory_response(&directory)))
 }
 
 /// 以乐观并发方式更新目录元数据或父目录。
@@ -122,20 +102,17 @@ pub(crate) async fn find_directory(
     responses(
         (status = 200, description = "目录已更新", body = DirectoryResponse),
         (status = 400, description = "请求参数无效", body = crate::dto::ErrorResponse),
-        (status = 403, description = "没有目录写权限", body = crate::dto::ErrorResponse),
         (status = 404, description = "目录或父目录不存在", body = crate::dto::ErrorResponse),
         (status = 409, description = "目录版本冲突或目标位置冲突", body = crate::dto::ErrorResponse)
     )
 )]
 pub(crate) async fn update_directory(
     State(state): State<HttpState>,
-    access: Extension<AccessContext>,
     Path(id): Path<String>,
     payload: Result<Json<UpdateDirectoryRequest>, JsonRejection>,
 ) -> Result<Json<DirectoryResponse>, HttpError> {
     let id = parse_directory_id(&id)?;
     let payload = parse_json_payload(payload)?;
-    let workspace = state.workspace(&access.0).await?;
     let mut command = UpdateDirectory::new(payload.expected_revision);
     if let Some(name) = payload.name {
         command = command.with_name(name);
@@ -143,11 +120,8 @@ pub(crate) async fn update_directory(
     if let Some(parent_id) = payload.parent_id {
         command = command.with_parent_id(parse_directory_id(&parent_id)?);
     }
-    let directory = state
-        .secured_directories(&access.0)
-        .update(&id, command)
-        .await?;
-    Ok(Json(directory_response(&workspace, &directory)?))
+    let directory = state.directories().update(&id, command).await?;
+    Ok(Json(directory_response(&directory)))
 }
 
 /// 删除空目录。根目录和非空目录不可删除。
@@ -162,20 +136,18 @@ pub(crate) async fn update_directory(
     responses(
         (status = 204, description = "空目录已删除"),
         (status = 400, description = "目录 ID 无效", body = crate::dto::ErrorResponse),
-        (status = 403, description = "没有目录删除权限", body = crate::dto::ErrorResponse),
         (status = 404, description = "目录不存在", body = crate::dto::ErrorResponse),
         (status = 409, description = "目录非空或版本已变化", body = crate::dto::ErrorResponse)
     )
 )]
 pub(crate) async fn delete_directory(
     State(state): State<HttpState>,
-    access: Extension<AccessContext>,
     Path(id): Path<String>,
     Query(query): Query<ExpectedRevisionQuery>,
 ) -> Result<StatusCode, HttpError> {
     let id = parse_directory_id(&id)?;
     if state
-        .secured_directories(&access.0)
+        .directories()
         .delete(&id, query.expected_revision)
         .await?
     {
@@ -186,11 +158,10 @@ pub(crate) async fn delete_directory(
 }
 
 pub(super) fn directory_response(
-    workspace: &asset_core::service::WorkspaceScope,
     directory: &asset_core::port::LocatedDirectory,
-) -> Result<DirectoryResponse, CoreError> {
-    let path = workspace.project(directory.path())?;
-    Ok(DirectoryResponse {
+) -> DirectoryResponse {
+    let path = directory.path();
+    DirectoryResponse {
         id: directory.id().to_string(),
         parent_id: directory.directory().parent_id().map(|id| id.to_string()),
         path: path.path().to_owned(),
@@ -199,7 +170,7 @@ pub(super) fn directory_response(
         created_at: directory.directory().created_at().to_rfc3339(),
         updated_at: directory.directory().updated_at().to_rfc3339(),
         revision: directory.directory().revision(),
-    })
+    }
 }
 
 pub(super) fn parse_directory_id(value: &str) -> Result<DirectoryId, HttpError> {

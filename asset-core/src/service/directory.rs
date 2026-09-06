@@ -22,7 +22,12 @@ use crate::{
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-/// Coordinates directory aggregates, the durable store, the query index, and physical storage.
+/// Coordinates global directory aggregates, the durable store, the query index, and physical
+/// storage.
+///
+/// Its public query and mutation use cases use stable IDs or global [`DirectoryPath`] values and
+/// do not require a user context. Untrusted callers must use [`SecuredDirectoryService`] so its
+/// workspace boundary is authorized before calling these operations.
 #[derive(Clone)]
 pub struct DirectoryService {
     kernel: Arc<DirectoryKernel>,
@@ -93,6 +98,7 @@ impl DirectoryService {
         SecuredDirectoryService::new(self, authorization, context)
     }
 
+    /// Locate the global root, whose identity is the nil UUID and whose path is empty.
     pub async fn root(&self) -> Result<DirectoryLocation, CoreError> {
         Ok(self
             .find_by_id(&DirectoryId::root())
@@ -101,6 +107,7 @@ impl DirectoryService {
             .clone())
     }
 
+    /// Find a directory by its global stable ID.
     pub async fn find_by_id(&self, id: &DirectoryId) -> Result<LocatedDirectory, CoreError> {
         self.kernel
             .query
@@ -113,6 +120,7 @@ impl DirectoryService {
         Ok(self.find_by_id(id).await?.location().clone())
     }
 
+    /// Find a directory by its global canonical path.
     pub async fn find_by_path(&self, path: &DirectoryPath) -> Result<LocatedDirectory, CoreError> {
         self.kernel
             .query
@@ -128,19 +136,8 @@ impl DirectoryService {
     pub async fn list_children(
         &self,
         parent_id: &DirectoryId,
-    ) -> Result<Vec<DirectoryLocation>, CoreError> {
-        Ok(self
-            .list_located_children(parent_id)
-            .await?
-            .into_iter()
-            .map(|directory| directory.location().clone())
-            .collect())
-    }
-
-    pub async fn list_located_children(
-        &self,
-        parent_id: &DirectoryId,
     ) -> Result<Vec<LocatedDirectory>, CoreError> {
+        self.find_by_id(parent_id).await?;
         self.kernel.query.list_children(parent_id).await
     }
 

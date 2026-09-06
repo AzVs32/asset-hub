@@ -10,3 +10,7 @@ asset-core.workspace = true
 asset-infra.workspace = true
 tracing.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
+bytes.workspace = true
+futures-util.workspace = true

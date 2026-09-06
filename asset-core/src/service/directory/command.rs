@@ -6,17 +6,9 @@ use crate::{
 };
 
 impl DirectoryService {
+    /// Create a direct child below a global parent ID and return its aggregate with the resolved
+    /// global location.
     pub async fn create(
-        &self,
-        parent_id: &DirectoryId,
-        name: impl Into<String>,
-    ) -> Result<DirectoryLocation, CoreError> {
-        self.create_located(parent_id, name)
-            .await
-            .map(|directory| directory.location().clone())
-    }
-
-    pub async fn create_located(
         &self,
         parent_id: &DirectoryId,
         name: impl Into<String>,
@@ -95,10 +87,10 @@ impl DirectoryService {
         id: &DirectoryId,
         command: UpdateDirectory,
     ) -> Result<LocatedDirectory, CoreError> {
-        self.update_expected(id, command, None).await
+        self.update_in_scope(id, command, None).await
     }
 
-    pub(crate) async fn update_expected(
+    pub(crate) async fn update_in_scope(
         &self,
         id: &DirectoryId,
         command: UpdateDirectory,
@@ -350,7 +342,25 @@ impl DirectoryService {
             .await
     }
 
-    pub async fn delete_if_empty(
+    /// Delete an empty non-root directory with an explicit revision precondition.
+    pub async fn delete(
+        &self,
+        id: &DirectoryId,
+        expected_revision: u64,
+    ) -> Result<bool, CoreError> {
+        self.delete_if_empty(id, Some(expected_revision)).await
+    }
+
+    /// Trusted storage maintenance may remove a directory only after its physical absence has
+    /// been reconciled. User-facing operations must use [`Self::delete`] instead.
+    pub(crate) async fn delete_if_empty_for_maintenance(
+        &self,
+        id: &DirectoryId,
+    ) -> Result<bool, CoreError> {
+        self.delete_if_empty(id, None).await
+    }
+
+    async fn delete_if_empty(
         &self,
         id: &DirectoryId,
         caller_revision: Option<u64>,

@@ -1,13 +1,16 @@
 use super::*;
 use asset_core::domain::{
-    AccessContext, Checksum, DirectoryId, DirectoryPath, Resource, ResourceContent,
-    ResourceContentReplacement, StorageKey, User, UserId, UserRole,
+    AccessContext, Checksum, DirectoryId, DirectoryPath, IdempotencyKey, Resource, ResourceContent,
+    ResourceContentReplacement, StorageKey, UploadStatus, User, UserId, UserRole,
 };
-use asset_core::port::{DirectoryRevisionUpdate, ListResources, ResourceRelocation};
+use asset_core::port::{
+    BlobByteStream, DirectoryRevisionUpdate, ListResources, ResourceRelocation,
+};
 use asset_infra::AssetInfrastructure;
 use asset_infra::config::{
     BlobConfig, DatabaseConfig, LocalBlobConfig, LocalBlobSyncConfig, SqliteDatabaseConfig,
 };
+use bytes::Bytes;
 use std::time::Duration;
 
 fn recovery_config(root: std::path::PathBuf) -> AssetInfraConfig {
@@ -78,6 +81,111 @@ fn write(root: &std::path::Path, key: &StorageKey, bytes: &[u8]) {
     let path = root.join(key.as_str());
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, bytes).unwrap();
+}
+
+fn upload_stream(bytes: &'static [u8]) -> BlobByteStream {
+    Box::pin(futures_util::stream::iter([Ok(Bytes::from_static(bytes))]))
+}
+
+#[tokio::test]
+async fn direct_upload_service_resumes_and_recovers_without_a_user_context() {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "asset-hub-direct-upload-{}-{nonce}",
+        std::process::id()
+    ));
+    let config = recovery_config(root.clone());
+    let runtime = AssetRuntime::new(config.clone()).await.unwrap();
+    let directory = runtime
+        .directory_service()
+        .create(&DirectoryId::root(), "uploads")
+        .await
+        .unwrap();
+    let checksum =
+        Checksum::sha256("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824")
+            .unwrap();
+    let command =
+        asset_core::service::CreateUpload::new("note.txt", directory.id(), 5, checksum.clone())
+            .with_idempotency_key(IdempotencyKey::new("direct-upload-note").unwrap());
+    let uploads = runtime.upload_service();
+    let session = uploads.create(command.clone()).await.unwrap();
+    let replay = uploads.create(command).await.unwrap();
+    assert_eq!(replay.id(), session.id());
+    assert_eq!(
+        uploads
+            .append(
+                &session.id(),
+                0,
+                Checksum::sha256(
+                    "372f7e2fd2d01ce2a1d71dc072acbba4c6fd25a1087cd7f153f4ec0ce37e1ede",
+                )
+                .unwrap(),
+                upload_stream(b"he"),
+            )
+            .await
+            .unwrap()
+            .offset(),
+        2
+    );
+
+    drop(runtime);
+
+    let runtime = AssetRuntime::new(config.clone()).await.unwrap();
+    let uploads = runtime.upload_service();
+    assert_eq!(uploads.status(&session.id()).await.unwrap().offset(), 2);
+    uploads
+        .append(
+            &session.id(),
+            2,
+            Checksum::sha256("13d896353557f29e6c8aac4bde65c743f4206df820ff8328ae567f924189d339")
+                .unwrap(),
+            upload_stream(b"llo"),
+        )
+        .await
+        .unwrap();
+    uploads.request_finalization(&session.id()).await.unwrap();
+
+    drop(runtime);
+
+    let runtime = AssetRuntime::new(config).await.unwrap();
+    let uploads = runtime.upload_service();
+    let mut completed = None;
+    for _ in 0..100 {
+        let status = uploads.status(&session.id()).await.unwrap();
+        if status.status() == UploadStatus::Completed {
+            completed = Some(status);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let completed = completed.expect("upload finalization was not recovered after restart");
+    assert!(
+        runtime
+            .resource_service()
+            .get(&completed.resource_id())
+            .await
+            .unwrap()
+            .is_some()
+    );
+
+    let cancelled = uploads
+        .create(asset_core::service::CreateUpload::new(
+            "cancelled.txt",
+            directory.id(),
+            0,
+            Checksum::sha256("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+                .unwrap(),
+        ))
+        .await
+        .unwrap();
+    uploads.abort(&cancelled.id()).await.unwrap();
+    assert!(uploads.status(&cancelled.id()).await.is_err());
+
+    drop(runtime);
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[tokio::test]
@@ -799,10 +907,11 @@ async fn local_storage_changes_are_synchronized_automatically() {
         .await
         .unwrap();
     assert!(root.join(managed_path.path()).is_dir());
+    let directories = runtime.directory_service();
+    let managed = directories.find_by_id(&managed.id()).await.unwrap();
     assert!(
-        runtime
-            .directory_service()
-            .delete_if_empty(&managed.id(), None)
+        directories
+            .delete(&managed.id(), managed.directory().revision())
             .await
             .unwrap()
     );

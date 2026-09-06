@@ -30,7 +30,7 @@ The important aggregates are:
 - `asset-core`: workspace-internal domain, ports, and application services.
 - `asset-infra`: concrete SQLx repositories, OpenDAL storage, filesystem, and directory-index adapters.
 - `asset-runtime`: reusable runtime assembly and background-task ownership.
-- `asset-http`: Axum transport, authentication, DTOs, OpenAPI, and HTTP executable.
+- `asset-http`: Axum transport, DTOs, OpenAPI, and HTTP executable.
 - `asset-cli`: administration commands and CLI executable.
 - `asset-web`: React application using domain/application/adapter boundaries.
 
@@ -59,7 +59,6 @@ Treat the following as facts until the implementation and documentation are chan
 
 - database backend: SQLite only;
 - blob backend: local filesystem through OpenDAL only;
-- HTTP session store: SQLite;
 - PostgreSQL migrations directory: placeholder only;
 - root directory ID: nil UUID `00000000-0000-0000-0000-000000000000`.
 

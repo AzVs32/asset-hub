@@ -32,13 +32,17 @@ pub use reconciliation::{
     ResourceScanProgress, StorageMaintenanceService, StorageReconciliationReport,
 };
 pub use secured::SecuredResourceService;
-pub use upload::{SecuredUploadService, UploadService};
+pub use upload::UploadService;
 
 pub(crate) use command::build_resource;
 pub(crate) use storage_key_locks::StorageKeyLocks;
 pub(crate) use upload_locks::UploadLocks;
 
 /// Resource metadata and lifecycle service.
+///
+/// Its public query, list, update, and delete use cases are context-free. Untrusted callers must
+/// use [`SecuredResourceService`] to authorize the relevant source and destination directories
+/// before invoking those use cases.
 #[derive(Clone)]
 pub struct ResourceService {
     pub(crate) store: Arc<dyn ResourceStore>,

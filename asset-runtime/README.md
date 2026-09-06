@@ -13,8 +13,7 @@ Construction is deterministic:
 4. schedule pending upload finalizations through the Runtime-owned supervisor;
 5. start optional storage synchronization only when the application surface requests it.
 
-Runtime startup invokes Core business operations directly through their authorization-bound
-services.
+Runtime startup invokes Core business operations directly through their Core service boundaries.
 
 `UploadSession` owns durable upload state transitions. Runtime owns the deduplicating finalization
 supervisor and all spawned task lifetimes; application surfaces receive only the

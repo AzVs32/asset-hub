@@ -1,8 +1,10 @@
 //! 应用服务与用例入口。
 //!
-//! service 层负责协调领域模型和端口完成完整业务动作。非可信应用入口应通过
-//! [`SecuredResourceService`] 只暴露资源元数据/生命周期；内容、上传与动作分别通过各自
-//! 的授权门面进入。该层不依赖 OpenDAL、sqlx 等具体基础设施实现。
+//! service 层负责协调领域模型和端口完成完整业务动作。`ResourceService`、
+//! `DirectoryService`、`ContentService` 和 `AssetWorkflowService` 提供无用户上下文的资源、
+//! 全局目录、内容和跨聚合投影用例；非可信应用入口必须分别通过对应的授权包装完成目录授权
+//! 后再调用它们。`UploadService` 也提供无用户上下文的上传用例。该层不依赖 OpenDAL、sqlx
+//! 等具体基础设施实现。
 
 mod asset;
 mod authorization;
@@ -26,6 +28,6 @@ pub use user::UserService;
 pub use resource::{
     ContentService, CreateUpload, ReplaceResourceContent, ResourceContentStream,
     ResourceScanProgress, ResourceService, ResourceServices, SecuredContentService,
-    SecuredResourceService, SecuredUploadService, StorageMaintenanceService,
-    StorageReconciliationReport, UpdateResource, UploadService,
+    SecuredResourceService, StorageMaintenanceService, StorageReconciliationReport, UpdateResource,
+    UploadService,
 };
