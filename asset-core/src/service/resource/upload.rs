@@ -72,7 +72,7 @@ impl UploadService {
         self.service.upload_sessions.list_finalizing().await
     }
 
-    /// Create a resumable upload session without an access-context dependency.
+    /// Create a resumable upload session for the requested resource and target directory.
     pub async fn create(&self, command: CreateUpload) -> Result<UploadSession, CoreError> {
         let Some(key) = command.idempotency_key().cloned() else {
             return self.create_session(command, None).await;

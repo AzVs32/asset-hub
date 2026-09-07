@@ -1,8 +1,8 @@
 //! 应用服务与用例入口。
 //!
 //! service 层负责协调领域模型和端口完成完整业务动作。`ResourceService`、
-//! `DirectoryService`、`ContentService` 和 `AssetWorkflowService` 提供无用户上下文的资源、
-//! 全局目录、内容和跨聚合投影用例；`UploadService` 也提供无用户上下文的上传用例。该层不
+//! `DirectoryService`、`ContentService` 和 `AssetWorkflowService` 分别提供资源、
+//! 目录、内容和跨聚合投影用例；`UploadService` 负责断点续传和上传完成流程。该层不
 //! 依赖 OpenDAL、sqlx 等具体基础设施实现。
 
 mod asset;

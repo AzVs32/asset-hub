@@ -23,8 +23,7 @@ use tokio::sync::Mutex;
 /// Coordinates global directory aggregates, the durable store, the query index, and physical
 /// storage.
 ///
-/// Its public query and mutation use cases use stable IDs or global [`DirectoryPath`] values and
-/// do not require an access context.
+/// Its public query and mutation use cases use stable IDs or global [`DirectoryPath`] values.
 #[derive(Clone)]
 pub struct DirectoryService {
     kernel: Arc<DirectoryKernel>,

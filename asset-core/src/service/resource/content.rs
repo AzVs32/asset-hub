@@ -20,8 +20,6 @@ use sha2::{Digest, Sha256};
 use std::sync::{Arc, Mutex};
 
 /// Resource-content reads, streams, and replacement workflows.
-///
-/// Its public use cases are context-free.
 #[derive(Clone)]
 pub struct ContentService {
     read_model: Arc<dyn ResourceReadModel>,

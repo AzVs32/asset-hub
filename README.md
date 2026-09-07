@@ -42,7 +42,7 @@ npm run dev
 
 Open `http://127.0.0.1:5173`. The browser opens directly to the global asset workspace: browse
 directories, upload resources, edit text content, and download or delete assets. Startup creates
-the required local data automatically; there is no account or permission configuration.
+the required local data automatically.
 
 ## Managing assets locally
 

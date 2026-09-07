@@ -88,7 +88,7 @@ fn upload_stream(bytes: &'static [u8]) -> BlobByteStream {
 }
 
 #[tokio::test]
-async fn direct_upload_service_resumes_and_recovers_without_an_access_context() {
+async fn upload_resumes_and_recovers_after_restart() {
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()

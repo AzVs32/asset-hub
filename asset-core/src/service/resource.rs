@@ -36,9 +36,7 @@ pub(crate) use command::build_resource;
 pub(crate) use storage_key_locks::StorageKeyLocks;
 pub(crate) use upload_locks::UploadLocks;
 
-/// Resource metadata and lifecycle service.
-///
-/// Its public query, list, update, and delete use cases are context-free.
+/// Resource metadata and lifecycle queries, listing, updates, and deletion.
 #[derive(Clone)]
 pub struct ResourceService {
     pub(crate) store: Arc<dyn ResourceStore>,
