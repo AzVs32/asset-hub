@@ -17,9 +17,11 @@ pub struct DirectoryPath {
 }
 
 impl DirectoryPath {
-    /// 返回根目录。
+    /// 返回全局根目录路径，即空字符串。
     pub fn root() -> Self {
-        Self::default()
+        Self {
+            path: String::new(),
+        }
     }
 
     /// 从完整目录路径创建值对象，并执行规范化和领域校验。

@@ -1,53 +1,42 @@
-//! Resource, content, upload, action, and storage-maintenance application services.
+//! Resource, content, upload, and storage-maintenance application services.
 //!
 //! These services share narrow ports and path locks but do not borrow a single facade containing
 //! every dependency. `ResourceService` itself owns only Resource metadata/lifecycle coordination.
 
 use crate::CoreError;
-use crate::domain::{
-    ResourceActionPolicy, ResourceContentEditPolicy, ResourceKind, ResourceKindDefinition,
-};
+use crate::domain::ResourceContentEditPolicy;
 use crate::port::{
-    BlobHealth, ContentObjectStore, ContentReader, ContentStagingStore, DirectoryActionExecutor,
-    DirectoryActionRegistry, IdempotencyRepository, ResourceActionExecutor, ResourceActionRegistry,
-    ResourceContentReplacementRepository, ResourceKindRegistry, ResourceMaintenanceReadModel,
-    ResourceReadModel, ResourceRelocationStore, ResourceStore, StorageScanner,
-    UploadSessionRepository,
+    BlobHealth, ContentObjectStore, ContentReader, ContentStagingStore, IdempotencyRepository,
+    ResourceContentReplacementRepository, ResourceMaintenanceReadModel, ResourceReadModel,
+    ResourceRelocationStore, ResourceStore, StorageScanner, UploadSessionRepository,
 };
 use crate::service::{
-    DirectoryIndexService, DirectoryProvisioningService, DirectoryService, IdempotencyService,
+    DirectoryImportService, DirectoryIndexService, DirectoryService, IdempotencyService,
 };
 use std::sync::Arc;
 use std::time::Duration;
 
-mod action;
 mod command;
 mod content;
 mod contract;
 mod path_resolver;
 mod reconciliation;
-mod secured;
 mod storage_key_locks;
 mod upload;
 mod upload_locks;
 
-pub use action::{ActionOrchestrator, SecuredActionOrchestrator};
-pub use content::{ContentService, SecuredContentService};
-pub use contract::{
-    CreateUpload, ExecuteResourceAction, ReplaceResourceContent, ResourceActions,
-    ResourceContentStream, UpdateResource,
-};
+pub use content::ContentService;
+pub use contract::{CreateUpload, ReplaceResourceContent, ResourceContentStream, UpdateResource};
 pub use reconciliation::{
     ResourceScanProgress, StorageMaintenanceService, StorageReconciliationReport,
 };
-pub use secured::SecuredResourceService;
-pub use upload::{SecuredUploadService, UploadService};
+pub use upload::UploadService;
 
 pub(crate) use command::build_resource;
 pub(crate) use storage_key_locks::StorageKeyLocks;
 pub(crate) use upload_locks::UploadLocks;
 
-/// Resource metadata and lifecycle service.
+/// Resource metadata and lifecycle queries, listing, updates, and deletion.
 #[derive(Clone)]
 pub struct ResourceService {
     pub(crate) store: Arc<dyn ResourceStore>,
@@ -55,7 +44,6 @@ pub struct ResourceService {
     pub(crate) objects: Arc<dyn ContentObjectStore>,
     pub(crate) relocations: Arc<dyn ResourceRelocationStore>,
     pub(crate) directories: DirectoryService,
-    pub(crate) kind_registry: Arc<dyn ResourceKindRegistry>,
     pub(crate) storage_key_locks: Arc<StorageKeyLocks>,
 }
 
@@ -66,7 +54,6 @@ impl ResourceService {
         objects: Arc<dyn ContentObjectStore>,
         relocations: Arc<dyn ResourceRelocationStore>,
         directories: DirectoryService,
-        kind_registry: Arc<dyn ResourceKindRegistry>,
         storage_key_locks: Arc<StorageKeyLocks>,
     ) -> Self {
         Self {
@@ -75,36 +62,7 @@ impl ResourceService {
             objects,
             relocations,
             directories,
-            kind_registry,
             storage_key_locks,
-        }
-    }
-
-    pub fn secured<'a>(
-        &'a self,
-        authorization: &'a crate::service::AuthorizationService,
-        context: &'a crate::domain::AccessContext,
-    ) -> SecuredResourceService<'a> {
-        SecuredResourceService::new(self, authorization, context)
-    }
-
-    pub fn kind_definitions(&self) -> &[ResourceKindDefinition] {
-        self.kind_registry.definitions()
-    }
-
-    pub fn kind_lineage(&self, kind: &ResourceKind) -> Vec<ResourceKind> {
-        self.kind_registry.lineage(kind)
-    }
-
-    pub(crate) fn validate_registered_kind(
-        &self,
-        kind: Option<ResourceKind>,
-    ) -> Result<ResourceKind, CoreError> {
-        let kind = kind.unwrap_or_default();
-        if self.kind_registry.supports(&kind) {
-            Ok(kind)
-        } else {
-            Err(CoreError::unsupported("resource kind", kind.to_string()))
         }
     }
 }
@@ -115,7 +73,6 @@ pub struct ResourceServices {
     resources: ResourceService,
     content: ContentService,
     uploads: UploadService,
-    actions: ActionOrchestrator,
     maintenance: StorageMaintenanceService,
     idempotency: IdempotencyService,
 }
@@ -134,15 +91,9 @@ impl ResourceServices {
         storage_scanner: Arc<dyn StorageScanner>,
         directories: DirectoryService,
         directory_index: DirectoryIndexService,
-        directory_provisioning: DirectoryProvisioningService,
-        kind_registry: Arc<dyn ResourceKindRegistry>,
+        directory_import: DirectoryImportService,
         upload_sessions: Arc<dyn UploadSessionRepository>,
         content_replacements: Arc<dyn ResourceContentReplacementRepository>,
-        action_registry: Arc<dyn ResourceActionRegistry>,
-        action_executor: Arc<dyn ResourceActionExecutor>,
-        directory_registry: Arc<dyn DirectoryActionRegistry>,
-        directory_executor: Arc<dyn DirectoryActionExecutor>,
-        action_policy: Arc<ResourceActionPolicy>,
         edit_policy: Arc<ResourceContentEditPolicy>,
         idempotency_repository: Arc<dyn IdempotencyRepository>,
         idempotency_lease_duration: Duration,
@@ -158,7 +109,6 @@ impl ResourceServices {
             content_objects.clone(),
             relocation_store,
             directories.clone(),
-            kind_registry.clone(),
             locks.clone(),
         );
         let content = ContentService::new(
@@ -180,21 +130,8 @@ impl ResourceServices {
             content_objects.clone(),
             storage_scanner.clone(),
             directories.clone(),
-            kind_registry.clone(),
             upload_sessions,
             locks.clone(),
-            idempotency.clone(),
-        );
-        let actions = ActionOrchestrator::new(
-            resources.clone(),
-            content.clone(),
-            directories.clone(),
-            action_registry,
-            action_executor,
-            directory_registry,
-            directory_executor,
-            action_policy,
-            edit_policy,
             idempotency.clone(),
         );
         let maintenance = StorageMaintenanceService::new(
@@ -206,15 +143,13 @@ impl ResourceServices {
             blob_health,
             directories,
             directory_index,
-            directory_provisioning,
-            kind_registry,
+            directory_import,
             locks,
         );
         Ok(Self {
             resources,
             content,
             uploads,
-            actions,
             maintenance,
             idempotency,
         })
@@ -229,9 +164,6 @@ impl ResourceServices {
     pub fn upload_service(&self) -> UploadService {
         self.uploads.clone()
     }
-    pub fn action_orchestrator(&self) -> ActionOrchestrator {
-        self.actions.clone()
-    }
     pub fn storage_maintenance_service(&self) -> StorageMaintenanceService {
         self.maintenance.clone()
     }
@@ -240,5 +172,4 @@ impl ResourceServices {
     }
 }
 
-// The old broad Resource service test harness encoded the removed facade.
 // Focused recovery and adapter tests live beside the owning relocation/store implementations.

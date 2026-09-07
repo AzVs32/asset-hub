@@ -1,8 +1,8 @@
-//! Host 文本内容编辑的运行时无关策略。
+//! 资源文本内容编辑的大小限制策略。
 
 use std::fmt;
 
-/// Limits for interactive text replacement independent of plugin execution budgets.
+/// Limits for interactive text replacement.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResourceContentEditPolicy {
     max_text_bytes: u64,

@@ -1,4 +1,4 @@
-use crate::dto::{ErrorResponse, PluginDiagnosticResponse};
+use crate::dto::ErrorResponse;
 use asset_core::CoreError;
 use axum::Json;
 use axum::http::StatusCode;
@@ -12,7 +12,6 @@ pub(crate) struct HttpError {
     status: StatusCode,
     message: String,
     diagnostic: Option<Box<HttpDiagnostic>>,
-    diagnostics: Vec<asset_plugin_api::protocol::PluginDiagnostic>,
 }
 
 #[derive(Debug)]
@@ -31,21 +30,11 @@ impl std::fmt::Display for HttpError {
 impl std::error::Error for HttpError {}
 
 impl HttpError {
-    pub(crate) fn unauthorized(message: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::UNAUTHORIZED,
-            message: message.into(),
-            diagnostic: None,
-            diagnostics: Vec::new(),
-        }
-    }
-
     pub(crate) fn internal(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             message: message.into(),
             diagnostic: None,
-            diagnostics: Vec::new(),
         }
     }
     /// 构造 400 Bad Request。
@@ -54,7 +43,6 @@ impl HttpError {
             status: StatusCode::BAD_REQUEST,
             message: message.into(),
             diagnostic: None,
-            diagnostics: Vec::new(),
         }
     }
 
@@ -63,7 +51,6 @@ impl HttpError {
             status: StatusCode::PAYLOAD_TOO_LARGE,
             message: message.into(),
             diagnostic: None,
-            diagnostics: Vec::new(),
         }
     }
 
@@ -73,26 +60,6 @@ impl HttpError {
             status: StatusCode::NOT_FOUND,
             message: message.into(),
             diagnostic: None,
-            diagnostics: Vec::new(),
-        }
-    }
-
-    /// 构造 403 Forbidden。
-    pub(crate) fn forbidden(message: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::FORBIDDEN,
-            message: message.into(),
-            diagnostic: None,
-            diagnostics: Vec::new(),
-        }
-    }
-
-    pub(crate) fn too_many_requests(message: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::TOO_MANY_REQUESTS,
-            message: message.into(),
-            diagnostic: None,
-            diagnostics: Vec::new(),
         }
     }
 }
@@ -100,23 +67,15 @@ impl HttpError {
 impl From<CoreError> for HttpError {
     fn from(error: CoreError) -> Self {
         let status = match &error {
-            CoreError::ActionId(_)
-            | CoreError::DefinitionOriginId(_)
-            | CoreError::KindId(_)
-            | CoreError::Directory(_)
+            CoreError::Directory(_)
             | CoreError::Resource(_)
-            | CoreError::User(_)
             | CoreError::Unsupported { .. }
-            | CoreError::InvalidOperation { .. }
-            | CoreError::WeakPassword => StatusCode::BAD_REQUEST,
-            CoreError::Unauthenticated => StatusCode::UNAUTHORIZED,
-            CoreError::Forbidden { .. } => StatusCode::FORBIDDEN,
+            | CoreError::InvalidOperation { .. } => StatusCode::BAD_REQUEST,
             CoreError::NotFound { .. } => StatusCode::NOT_FOUND,
             CoreError::Conflict { .. }
             | CoreError::RevisionConflict { .. }
             | CoreError::LostIdempotencyLease { .. } => StatusCode::CONFLICT,
             CoreError::LimitExceeded { .. } => StatusCode::PAYLOAD_TOO_LARGE,
-            CoreError::Plugin { diagnostic, .. } => plugin_status(&diagnostic.code),
             CoreError::Storage { .. }
             | CoreError::Repository { .. }
             | CoreError::Configuration { .. }
@@ -124,11 +83,6 @@ impl From<CoreError> for HttpError {
         };
 
         let diagnostic = match &error {
-            CoreError::Plugin { diagnostic, .. } => Some(Box::new(HttpDiagnostic {
-                code: diagnostic.code.clone(),
-                retryable: diagnostic.retryable,
-                details: diagnostic.details.clone(),
-            })),
             CoreError::RevisionConflict { .. } => Some(Box::new(HttpDiagnostic {
                 code: "concurrency.revision_conflict".to_string(),
                 retryable: true,
@@ -136,29 +90,11 @@ impl From<CoreError> for HttpError {
             })),
             _ => None,
         };
-        let diagnostics = match &error {
-            CoreError::Plugin { diagnostics, .. } => diagnostics.clone(),
-            _ => Vec::new(),
-        };
         Self {
             status,
             message: error.to_string(),
             diagnostic,
-            diagnostics,
         }
-    }
-}
-
-fn plugin_status(code: &str) -> StatusCode {
-    use asset_plugin_api::protocol::diagnostic_codes as codes;
-    match code {
-        codes::INVALID_INPUT | codes::CONTENT_RANGE_INVALID => StatusCode::BAD_REQUEST,
-        codes::PERMISSION_DENIED => StatusCode::FORBIDDEN,
-        codes::CONTENT_LIMIT_EXCEEDED
-        | codes::INPUT_LIMIT_EXCEEDED
-        | codes::OUTPUT_LIMIT_EXCEEDED => StatusCode::PAYLOAD_TOO_LARGE,
-        codes::TIMEOUT => StatusCode::GATEWAY_TIMEOUT,
-        _ => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
 
@@ -168,7 +104,6 @@ impl From<asset_core::ResourceError> for HttpError {
             status: StatusCode::BAD_REQUEST,
             message: error.to_string(),
             diagnostic: None,
-            diagnostics: Vec::new(),
         }
     }
 }
@@ -191,11 +126,6 @@ impl IntoResponse for HttpError {
                 code,
                 retryable,
                 details,
-                diagnostics: self
-                    .diagnostics
-                    .iter()
-                    .map(PluginDiagnosticResponse::from)
-                    .collect(),
             }),
         )
             .into_response()

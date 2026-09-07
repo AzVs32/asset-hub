@@ -24,7 +24,7 @@ async fn fs_storage_preserves_spaces_in_the_physical_path() {
 async fn fs_storage_delete_removes_empty_sidecar_directories() {
     let (storage, root) = storage_with_root("fs-clean-sidecar");
     let key = StorageKey::new(format!(
-        ".asset-hub/action-effects/action-replacements/{}",
+        ".asset-hub/content-replacements/{}",
         uuid::Uuid::now_v7()
     ))
     .unwrap();
@@ -39,7 +39,7 @@ async fn fs_storage_delete_removes_empty_sidecar_directories() {
 }
 
 #[tokio::test]
-async fn fs_storage_ensures_each_user_directory_segment() {
+async fn fs_storage_ensures_each_directory_segment() {
     let (storage, root) = storage_with_root("fs-ensure-directory");
     let directory = DirectoryPath::from_path("projects/design/assets").unwrap();
 
@@ -69,7 +69,7 @@ async fn fs_storage_moves_a_complete_directory_subtree() {
 }
 
 #[tokio::test]
-async fn fs_storage_deletes_only_an_empty_user_directory() {
+async fn fs_storage_deletes_only_an_empty_directory() {
     let (storage, root) = storage_with_root("fs-delete-empty-directory");
     let empty = DirectoryPath::from_path("projects/empty").unwrap();
     let occupied = DirectoryPath::from_path("projects/occupied").unwrap();
@@ -85,8 +85,8 @@ async fn fs_storage_deletes_only_an_empty_user_directory() {
 }
 
 #[tokio::test]
-async fn fs_blob_delete_preserves_empty_user_directories() {
-    let (storage, root) = storage_with_root("fs-preserve-user-directory");
+async fn fs_blob_delete_preserves_empty_directories() {
+    let (storage, root) = storage_with_root("fs-preserve-managed-directory");
     let key = StorageKey::new("drafts/readme.md").unwrap();
     storage
         .put(&key, Bytes::from_static(b"draft"))

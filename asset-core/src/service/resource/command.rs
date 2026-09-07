@@ -2,7 +2,7 @@
 
 use super::{ResourceService, UpdateResource, path_resolver};
 use crate::CoreError;
-use crate::domain::{DirectoryId, Resource, ResourceId, ResourceKind};
+use crate::domain::{DirectoryId, Resource, ResourceId};
 use crate::port::{
     DirectoryLocation, ListResources, LocatedResource, ResourcePage, ResourceRelocation,
 };
@@ -16,13 +16,7 @@ impl ResourceService {
         self.read_model.find_by_id(id).await
     }
 
-    pub async fn list(&self, mut query: ListResources) -> Result<ResourcePage, CoreError> {
-        for kind in query.kinds() {
-            self.validate_registered_kind(Some(kind.clone()))?;
-        }
-        if let Some(kind) = query.kind().cloned() {
-            query = query.with_kinds(self.kind_registry.descendants(&kind));
-        }
+    pub async fn list(&self, query: ListResources) -> Result<ResourcePage, CoreError> {
         self.read_model.list(&query).await
     }
 
@@ -35,7 +29,22 @@ impl ResourceService {
             .await
     }
 
+    /// Update a Resource by stable ID.
+    ///
+    /// The service loads the current location snapshot itself so callers do not need to depend on
+    /// a read-model projection to perform a lifecycle operation.
     pub async fn update(
+        &self,
+        id: &ResourceId,
+        command: UpdateResource,
+    ) -> Result<Option<Resource>, CoreError> {
+        let Some(located) = self.get(id).await? else {
+            return Ok(None);
+        };
+        self.update_located(located, command).await.map(Some)
+    }
+
+    async fn update_located(
         &self,
         located: LocatedResource,
         command: UpdateResource,
@@ -55,9 +64,6 @@ impl ResourceService {
         }
         if let Some(directory_id) = command.directory_id {
             desired.move_to_directory(directory_id)?;
-        }
-        if let Some(kind) = command.kind {
-            desired.change_kind(self.validate_registered_kind(Some(kind))?)?;
         }
         if desired.revision() == expected_revision {
             return Ok(desired);
@@ -120,9 +126,19 @@ impl ResourceService {
         }
     }
 
-    /// Permanently delete the Resource and its local Blob. The Blob is first moved to an internal
-    /// staging key so a failed aggregate CAS can restore the visible file.
-    pub async fn delete(
+    /// Permanently delete a Resource by stable ID and its physical content.
+    ///
+    /// The Blob is first moved to an internal staging key so a failed aggregate CAS can restore
+    /// the visible file. The service loads the current location snapshot internally.
+    pub async fn delete(&self, id: &ResourceId, expected_revision: u64) -> Result<bool, CoreError> {
+        let Some(located) = self.get(id).await? else {
+            return Ok(false);
+        };
+        self.delete_located(located, expected_revision).await?;
+        Ok(true)
+    }
+
+    async fn delete_located(
         &self,
         located: LocatedResource,
         expected_revision: u64,
@@ -269,11 +285,6 @@ impl ResourceService {
 pub(crate) fn build_resource(
     name: String,
     directory_id: DirectoryId,
-    kind: Option<ResourceKind>,
 ) -> crate::domain::ResourceBuilder {
-    let mut builder = Resource::builder(name).with_directory_id(directory_id);
-    if let Some(kind) = kind {
-        builder = builder.with_kind(kind);
-    }
-    builder
+    Resource::builder(name).with_directory_id(directory_id)
 }

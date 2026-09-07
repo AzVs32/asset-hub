@@ -1,6 +1,6 @@
 # Asset CLI
 
-`asset` 是 Asset Hub 的本地管理命令行入口。面向管理员、运维人员和插件开发者。
+`asset` 是 Asset Hub 的本地维护命令行入口，面向运维人员。
 
 ## 运行方式
 
@@ -25,26 +25,13 @@ asset [--config <PATH>]
 ├── config
 │   ├── --check
 │   └── --show
-├── system
-├── user
-│   ├── --list
-│   ├── --create <USERNAME> [--admin]
-│   ├── --password <USERNAME>
-│   ├── --enable <USERNAME>
-│   ├── --disable <USERNAME>
-│   └── --show <USERNAME>
-└── plugin
-    ├── --list
-    ├── --install <PATH>
-    └── --uninstall <PLUGIN_ID>
+└── system
 ```
 
 | 命令组 | 用途 |
 | --- | --- |
 | `asset config` | 检查和管理 Asset Hub 配置 |
 | `asset system` | 检查和维护本地 Asset Hub 系统 |
-| `asset user` | 管理 Asset Hub 用户 |
-| `asset plugin` | 查看、安装和卸载 Asset Hub 插件包 |
 
 需要读取 Asset Hub 配置的命令统一通过顶层 `--config <PATH>` 指定文件。未指定时尝试读取
 当前目录的 `config.toml`；文件不存在时使用内置默认配置。
@@ -62,8 +49,6 @@ asset --help
 ```bash
 asset config --help
 asset system --help
-asset user --help
-asset plugin --help
 ```
 
 ## 命令文档约定
@@ -124,8 +109,7 @@ asset --config config.toml config --show
 
 数据库和 Blob 存储分别通过 `database.backend` 与 `blob.backend` 选择后端；当前支持并
 默认使用 `sqlite` 与 `local`。SQLite 文件路径不属于可配置项，使用本地 Blob 后端时
-始终由 `blob.local.root` 派生为 `<blob.local.root>/.asset-hub/asset-hub.sqlite`。插件同样从
-`<blob.local.root>/.asset-hub/plugins/<plugin-id>` 自动发现，不存在 `[kind]` 插件路径配置。
+始终由 `blob.local.root` 派生为 `<blob.local.root>/.asset-hub/asset-hub.sqlite`。
 
 # `asset system` 命令
 
@@ -144,133 +128,3 @@ HTTP 服务启动和周期同步只比较物理文件修改时间与 `ResourceCo
 
 在交互式终端中，命令会先显示发现的文件数量；枚举完成后切换为文件进度条，并显示当前
 正在校验的对象路径。每完成一个文件，进度增加 1。
-
-# `asset user` 命令
-
-`asset user` 使用顶层 `--config` 指定的配置文件；未指定时读取当前目录的 `config.toml`
-（不存在时使用内置默认配置），然后初始化本地运行时。每次必须且只能选择一个操作。
-
-## `asset user --list`
-
-按用户名列出全部用户，以表格展示用户名、角色、状态、工作目录和用户 ID。该命令不会输出
-密码哈希。
-
-```bash
-asset user --list
-```
-
-## `asset user --create <USERNAME> [--admin]`
-
-默认创建启用状态的普通成员；增加 `--admin` 时创建管理员。普通成员的默认工作目录为
-`users/<username>`，管理员的工作目录为根目录 `/`。初始密码通过终端隐藏输入并要求二次
-确认，长度不得少于 4 个字符。
-
-```bash
-asset user --create alice
-asset user --create admin --admin
-asset --config config.toml user --create admin --admin
-```
-
-`--admin` 只能与 `--create` 一起使用。首次部署应先用它创建至少一个管理员，再登录 Web。
-该命令会创建用户数据库记录及其工作目录。
-
-## `asset user --password <USERNAME>`
-
-重置指定用户的密码；原密码存在时直接覆盖。新密码通过终端隐藏输入并要求二次确认，长度
-不得少于 4 个字符。
-
-```bash
-asset user --password alice
-```
-
-该命令会更新用户数据库记录。密码不会作为命令参数传递，因此不会进入 shell 历史或进程
-参数列表。密码更新会改变会话认证哈希，使已有会话在后续校验时失效。
-
-## `asset user --enable <USERNAME>`
-
-启用指定用户，使其可以重新登录。用户不存在时命令以非零状态退出。
-
-```bash
-asset user --enable alice
-```
-
-该命令会更新用户状态。
-
-## `asset user --disable <USERNAME>`
-
-禁用指定用户。禁用后该用户不能登录，已有会话会在后续用户状态校验时失效。用户不存在时
-命令以非零状态退出。
-
-```bash
-asset user --disable alice
-```
-
-该命令会更新用户状态。
-
-## `asset user --show <USERNAME>`
-
-展示指定用户的用户名、ID、角色、状态、工作目录及创建和更新时间。该命令不会输出任何密码
-信息。用户不存在时命令以非零状态退出。
-
-```bash
-asset user --show alice
-```
-
-# `asset plugin` 命令
-
-`asset plugin` 使用顶层 `--config` 指定的配置文件；未指定时读取当前目录的 `config.toml`
-（不存在时使用内置默认配置）。命令只初始化插件包文件系统操作，不初始化数据库、对象存储
-或完整应用运行时。
-
-安装输入是包含 `manifest.json`、`plugin.wasm` 和可选 Web 资源的本地目录。输入目录名称没有
-身份含义；CLI 从 Manifest 读取 `plugin.id`，在同一文件系统的临时目录快照输入文件、生成新的
-`manifest.lock.json` 并完整验证，然后安装到
-`<blob.local.root>/.asset-hub/plugins/<plugin-id>`。输入目录不会被修改。
-
-CLI 和 Runtime 共同调用 `asset-infra` 中唯一的包验证实现，因此目录遍历、符号链接规则、
-SHA-256、文件集合和大小限制完全一致：Manifest 最大 1 MiB、lock 最大 4 MiB、Wasm 最大
-64 MiB，Web 资源合计最大 64 MiB。
-
-## `asset [--config <PATH>] plugin --list`
-
-列出 canonical 安装目录中所有通过包完整性验证的外部插件，显示 ID、名称、版本和发布者：
-
-```bash
-asset plugin --list
-asset --config config.toml plugin --list
-```
-
-没有插件时输出 `no plugins installed`。列表不包含 Host 内置能力；任一已安装包损坏或 lock
-不匹配时命令返回错误，不会静默跳过。
-
-## `asset [--config <PATH>] plugin --install <PATH>`
-
-从本地目录安装插件。目录可以使用任意名称，例如插件开发目录中的
-`asset-plugin-target`：
-
-```bash
-asset plugin --install plugins/resource-text/asset-plugin-target
-asset --config config.toml plugin --install /tmp/downloaded-plugin
-```
-
-安装前会验证 Manifest、Wasm、Web 入口、大小和包内文件类型。源目录中的旧 lock 不会被信任或
-复制；安装快照会生成自己的 lock。目标插件已存在时，只有新快照成功生成 lock 并通过完整
-验证后才会替换旧安装；无效输入不会破坏现有安装。
-
-当前只支持本地目录。`https://`、Git 和 GitHub 等远程来源会被明确拒绝，后续可以在不改变
-本地安装语义的前提下增加下载适配器。
-
-## `asset [--config <PATH>] plugin --uninstall <PLUGIN_ID>`
-
-按 Manifest 插件 ID 删除 canonical 安装目录：
-
-```bash
-asset plugin --uninstall resource.text
-asset --config config.toml plugin --uninstall example.tools
-```
-
-`PLUGIN_ID` 必须是单个目录名，不能是绝对路径，也不能包含 `/`、`..` 等路径成分。卸载先将
-插件移出自动发现目录，再删除其文件；不存在的插件返回错误。
-
-Runtime 在启动时持有已验证的 Wasm/Web 内存快照，因此安装、替换或卸载后需要重启正在运行的
-Asset Hub 进程才能生效。

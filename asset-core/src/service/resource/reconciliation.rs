@@ -10,15 +10,15 @@ use super::content::{
 use super::{StorageKeyLocks, build_resource};
 use crate::CoreError;
 use crate::domain::{
-    Checksum, ContentVerificationStatus, DirectoryPath, Resource, ResourceContent, ResourceKind,
+    Checksum, ContentVerificationStatus, DirectoryId, DirectoryPath, Resource, ResourceContent,
     StorageKey,
 };
 use crate::port::{
-    BlobHealth, ContentReader, LocatedResource, ResourceKindRegistry, ResourceMaintenanceReadModel,
-    ResourceReadModel, ResourceStore, ScannedBlob, ScannedStorageEntry, StoragePrefix,
-    StorageScanStream, StorageScanner,
+    BlobHealth, ContentReader, LocatedResource, ResourceMaintenanceReadModel, ResourceReadModel,
+    ResourceStore, ScannedBlob, ScannedStorageEntry, StoragePrefix, StorageScanStream,
+    StorageScanner,
 };
-use crate::service::{DirectoryIndexService, DirectoryProvisioningService, DirectoryService};
+use crate::service::{DirectoryImportService, DirectoryIndexService, DirectoryService};
 use futures_util::StreamExt;
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
@@ -83,34 +83,11 @@ struct MaintenanceDependencies {
     blob_health: Arc<dyn BlobHealth>,
     directories: DirectoryService,
     directory_index: DirectoryIndexService,
-    directory_provisioning: DirectoryProvisioningService,
-    kind_registry: Arc<dyn ResourceKindRegistry>,
+    directory_import: DirectoryImportService,
     storage_key_locks: Arc<StorageKeyLocks>,
 }
 
 impl MaintenanceDependencies {
-    fn resolve_content_kind(
-        &self,
-        mime_type: Option<&str>,
-        storage_key: Option<&str>,
-    ) -> Result<ResourceKind, CoreError> {
-        let kind = self
-            .kind_registry
-            .detect_content_kind(mime_type, storage_key)?
-            .unwrap_or_default();
-        let definition = self
-            .kind_registry
-            .get(&kind)
-            .ok_or_else(|| CoreError::unsupported("resource kind", kind.to_string()))?;
-        if !definition.supports_content() {
-            return Err(CoreError::unsupported(
-                "resource kind for stored content",
-                kind.to_string(),
-            ));
-        }
-        Ok(kind)
-    }
-
     async fn find_by_path(
         &self,
         directory: &DirectoryPath,
@@ -138,8 +115,7 @@ impl StorageMaintenanceService {
         blob_health: Arc<dyn BlobHealth>,
         directories: DirectoryService,
         directory_index: DirectoryIndexService,
-        directory_provisioning: DirectoryProvisioningService,
-        kind_registry: Arc<dyn ResourceKindRegistry>,
+        directory_import: DirectoryImportService,
         storage_key_locks: Arc<StorageKeyLocks>,
     ) -> Self {
         Self {
@@ -152,8 +128,7 @@ impl StorageMaintenanceService {
                 blob_health,
                 directories,
                 directory_index,
-                directory_provisioning,
-                kind_registry,
+                directory_import,
                 storage_key_locks,
             }),
         }
@@ -204,8 +179,8 @@ impl StorageMaintenanceService {
             match entry? {
                 ScannedStorageEntry::Directory(directory) => {
                     self.service
-                        .directory_provisioning
-                        .import_storage_path(&directory)
+                        .directory_import
+                        .import_path(&directory)
                         .await?;
                     physical_directories.insert(directory);
                     report.directories += 1;
@@ -273,17 +248,13 @@ impl StorageMaintenanceService {
         }
         let content =
             build_pending_content(file.size, file.mime_type.clone(), Some(file.modified_at))?;
-        let kind = self
-            .service
-            .resolve_content_kind(content.mime_type(), Some(file.key.as_str()))?;
         let resource = build_resource(
             name,
             self.service
-                .directory_provisioning
-                .import_storage_path(&directory)
+                .directory_import
+                .import_path(&directory)
                 .await?
                 .id(),
-            Some(kind),
         )
         .with_content(content)
         .build()?;
@@ -328,8 +299,8 @@ impl StorageMaintenanceService {
             match entry? {
                 ScannedStorageEntry::Directory(directory) => {
                     self.service
-                        .directory_provisioning
-                        .import_storage_path(&directory)
+                        .directory_import
+                        .import_path(&directory)
                         .await?;
                     physical_directories.insert(directory);
                     report.directories += 1;
@@ -516,8 +487,8 @@ impl StorageMaintenanceService {
         resource.rename(to_name)?;
         let to_directory = self
             .service
-            .directory_provisioning
-            .import_storage_path(&to_directory)
+            .directory_import
+            .import_path(&to_directory)
             .await?;
         resource.move_to_directory(to_directory.id())?;
         let checksum = self.calculate_stored_blob_checksum(to, target.size).await?;
@@ -614,8 +585,8 @@ impl StorageMaintenanceService {
             resource.rename(name)?;
             let directory = self
                 .service
-                .directory_provisioning
-                .import_storage_path(&directory)
+                .directory_import
+                .import_path(&directory)
                 .await?;
             resource.move_to_directory(directory.id())?;
             resource.attach_content(content)?;
@@ -633,17 +604,13 @@ impl StorageMaintenanceService {
             return Ok(hash_elapsed);
         }
 
-        let kind = self
-            .service
-            .resolve_content_kind(content.mime_type(), Some(file.key.as_str()))?;
         let resource = build_resource(
             name,
             self.service
-                .directory_provisioning
-                .import_storage_path(&directory)
+                .directory_import
+                .import_path(&directory)
                 .await?
                 .id(),
-            Some(kind),
         )
         .with_content(content)
         .build()?;
@@ -688,17 +655,13 @@ impl StorageMaintenanceService {
             return Ok(());
         }
 
-        let kind = self
-            .service
-            .resolve_content_kind(content.mime_type(), Some(file.key.as_str()))?;
         let resource = build_resource(
             name,
             self.service
-                .directory_provisioning
-                .import_storage_path(&directory)
+                .directory_import
+                .import_path(&directory)
                 .await?
                 .id(),
-            Some(kind),
         )
         .with_content(content)
         .build()?;
@@ -760,7 +723,12 @@ impl StorageMaintenanceService {
         physical_directories: HashSet<DirectoryPath>,
     ) -> Result<(), CoreError> {
         let mut stored = Vec::new();
-        let mut pending = vec![self.service.directories.root().await?];
+        let mut pending = vec![
+            self.service
+                .directories
+                .find_by_id(&DirectoryId::root())
+                .await?,
+        ];
         while let Some(parent) = pending.pop() {
             let children = self.service.directories.list_children(&parent.id()).await?;
             pending.extend(children.iter().cloned());
@@ -771,7 +739,7 @@ impl StorageMaintenanceService {
             if !physical_directories.contains(directory.path()) {
                 self.service
                     .directories
-                    .delete_if_empty(&directory.id(), None)
+                    .delete_if_empty_for_maintenance(&directory.id())
                     .await?;
             }
         }

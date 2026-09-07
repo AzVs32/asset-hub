@@ -1,14 +1,11 @@
 //! Public application contracts for the independently assembled Resource-related services.
 
-use crate::domain::{
-    Checksum, DirectoryId, IdempotencyKey, ResourceActionDefinition, ResourceActionId, ResourceKind,
-};
+use crate::domain::{Checksum, DirectoryId, IdempotencyKey};
 use crate::port::BlobByteStream;
 
 #[derive(Debug, Clone)]
 pub struct CreateUpload {
     pub(super) name: String,
-    pub(super) kind: Option<ResourceKind>,
     pub(super) directory_id: DirectoryId,
     pub(super) mime_type: Option<String>,
     pub(super) expected_size: u64,
@@ -25,18 +22,12 @@ impl CreateUpload {
     ) -> Self {
         Self {
             name: name.into(),
-            kind: None,
             directory_id,
             mime_type: None,
             expected_size,
             expected_checksum,
             idempotency_key: None,
         }
-    }
-
-    pub fn with_kind(mut self, kind: ResourceKind) -> Self {
-        self.kind = Some(kind);
-        self
     }
 
     pub fn with_mime_type(mut self, mime_type: impl Into<String>) -> Self {
@@ -51,39 +42,6 @@ impl CreateUpload {
 
     pub fn directory_id(&self) -> DirectoryId {
         self.directory_id
-    }
-
-    pub fn idempotency_key(&self) -> Option<&IdempotencyKey> {
-        self.idempotency_key.as_ref()
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ExecuteResourceAction {
-    pub(super) action: ResourceActionId,
-    pub(super) input: serde_json::Value,
-    pub(super) expected_revision: Option<u64>,
-    pub(super) idempotency_key: Option<IdempotencyKey>,
-}
-
-impl ExecuteResourceAction {
-    pub fn new(action: ResourceActionId, expected_revision: Option<u64>) -> Self {
-        Self {
-            action,
-            input: serde_json::Value::Object(Default::default()),
-            expected_revision,
-            idempotency_key: None,
-        }
-    }
-
-    pub fn with_input(mut self, input: serde_json::Value) -> Self {
-        self.input = input;
-        self
-    }
-
-    pub fn with_idempotency_key(mut self, key: IdempotencyKey) -> Self {
-        self.idempotency_key = Some(key);
-        self
     }
 
     pub fn idempotency_key(&self) -> Option<&IdempotencyKey> {
@@ -131,7 +89,6 @@ pub struct UpdateResource {
     pub(super) expected_revision: u64,
     pub(super) name: Option<String>,
     pub(super) directory_id: Option<DirectoryId>,
-    pub(super) kind: Option<ResourceKind>,
 }
 
 impl UpdateResource {
@@ -152,28 +109,8 @@ impl UpdateResource {
         self
     }
 
-    pub fn with_kind(mut self, kind: ResourceKind) -> Self {
-        self.kind = Some(kind);
-        self
-    }
-
     pub fn directory_id(&self) -> Option<DirectoryId> {
         self.directory_id
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct ResourceActions {
-    available_actions: Vec<ResourceActionDefinition>,
-}
-
-impl ResourceActions {
-    pub(super) fn new(available_actions: Vec<ResourceActionDefinition>) -> Self {
-        Self { available_actions }
-    }
-
-    pub fn available_actions(&self) -> &[ResourceActionDefinition] {
-        &self.available_actions
     }
 }
 

@@ -1,16 +1,15 @@
 //! Resource aggregate persistence, read-model, and relocation ports.
 
 use crate::CoreError;
-use crate::domain::{DirectoryId, Resource, ResourceId, ResourceKind, StorageKey};
+use crate::domain::{DirectoryId, Resource, ResourceId, StorageKey};
 use crate::port::DirectoryLocation;
 
-/// Resource read-model filters. Directory identity is always a stable UUID; path resolution is
-/// performed by an authorization-bound service before constructing this value.
+/// Resource read-model filters. Directory identity is always a stable UUID; callers resolve
+/// global paths through `DirectoryService` before constructing this value.
 #[derive(Debug, Clone)]
 pub struct ListResources {
     limit: u32,
     offset: u64,
-    kinds: Vec<ResourceKind>,
     q: Option<String>,
     directory_id: DirectoryId,
 }
@@ -20,20 +19,9 @@ impl ListResources {
         Self {
             limit,
             offset,
-            kinds: Vec::new(),
             q: None,
             directory_id,
         }
-    }
-
-    pub fn with_kind(mut self, kind: ResourceKind) -> Self {
-        self.kinds = vec![kind];
-        self
-    }
-
-    pub fn with_kinds(mut self, kinds: Vec<ResourceKind>) -> Self {
-        self.kinds = kinds;
-        self
     }
 
     pub fn with_q(mut self, q: impl Into<String>) -> Self {
@@ -47,14 +35,6 @@ impl ListResources {
 
     pub fn offset(&self) -> u64 {
         self.offset
-    }
-
-    pub fn kind(&self) -> Option<&ResourceKind> {
-        self.kinds.first()
-    }
-
-    pub fn kinds(&self) -> &[ResourceKind] {
-        &self.kinds
     }
 
     pub fn q(&self) -> Option<&str> {

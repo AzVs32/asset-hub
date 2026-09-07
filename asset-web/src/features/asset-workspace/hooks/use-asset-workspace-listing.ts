@@ -17,22 +17,10 @@ export function useAssetWorkspaceListing() {
       directory: routeDirectory,
       page: positiveInteger(searchParams.get("page"), 1),
       limit: 30,
-      query: searchParams.get("q") ?? "",
-      kind: searchParams.get("kind") ?? "",
     }),
     [routeDirectory, searchParams],
   );
 
-  const kinds = useQuery({
-    queryKey: queryKeys.resourceKinds,
-    queryFn: () => gateway.listResourceKinds(),
-    staleTime: 5 * 60_000,
-  });
-  const directoryKinds = useQuery({
-    queryKey: queryKeys.directoryKinds,
-    queryFn: () => gateway.listDirectoryKinds(),
-    staleTime: 5 * 60_000,
-  });
   const listing = useQuery({
     queryKey: queryKeys.directory(filters),
     queryFn: ({ signal }) => gateway.listDirectory(filters, signal),
@@ -101,8 +89,6 @@ export function useAssetWorkspaceListing() {
     selectedId: searchParams.get("resource"),
     selectedDirectoryId: searchParams.get("folder"),
     listing,
-    kinds,
-    directoryKinds,
   };
 }
 
@@ -113,8 +99,6 @@ function searchParamsForFilters(
 ): URLSearchParams {
   const next = new URLSearchParams(current);
   const merged = { ...filters, ...patch };
-  setOrDelete(next, "q", merged.query);
-  setOrDelete(next, "kind", merged.kind);
   setOrDelete(next, "page", merged.page === 1 ? "" : String(merged.page));
   next.delete("resource");
   next.delete("folder");

@@ -1,81 +1,26 @@
 use super::{DirectoryService, UpdateDirectory};
 use crate::{
     CoreError,
-    domain::{Directory, DirectoryId, DirectoryKind},
+    domain::{Directory, DirectoryId},
     port::{DirectoryLocation, DirectoryRelocation, DirectoryRevisionUpdate, LocatedDirectory},
 };
 
 impl DirectoryService {
+    /// Create a direct child below a global parent ID and return its aggregate with the resolved
+    /// global location.
     pub async fn create(
         &self,
         parent_id: &DirectoryId,
         name: impl Into<String>,
-    ) -> Result<DirectoryLocation, CoreError> {
-        self.create_with_kind(parent_id, name, DirectoryKind::default())
-            .await
-            .map(|directory| directory.location().clone())
-    }
-
-    pub async fn create_with_kind(
-        &self,
-        parent_id: &DirectoryId,
-        name: impl Into<String>,
-        kind: DirectoryKind,
-    ) -> Result<LocatedDirectory, CoreError> {
-        self.create_with_kind_guarded(parent_id, name, kind, None, None)
-            .await
-    }
-
-    pub(crate) async fn create_with_kind_in_scope(
-        &self,
-        parent_id: &DirectoryId,
-        name: impl Into<String>,
-        kind: DirectoryKind,
-        scope_root: DirectoryId,
-    ) -> Result<LocatedDirectory, CoreError> {
-        self.create_with_kind_guarded(parent_id, name, kind, None, Some(scope_root))
-            .await
-    }
-
-    pub(crate) async fn create_with_kind_guarded(
-        &self,
-        parent_id: &DirectoryId,
-        name: impl Into<String>,
-        kind: DirectoryKind,
-        expected_parent_revision: Option<u64>,
-        required_parent_ancestor: Option<DirectoryId>,
     ) -> Result<LocatedDirectory, CoreError> {
         let _guard = self.kernel.mutation_lock.lock().await;
-        self.ensure_kind_registered(&kind)?;
         let parent = self
             .kernel
             .query
             .find_by_id(parent_id)
             .await?
             .ok_or_else(|| CoreError::not_found("directory", parent_id.to_string()))?;
-        if expected_parent_revision
-            .is_some_and(|expected| expected != parent.directory().revision())
-        {
-            return Err(CoreError::conflict(format!(
-                "directory `{parent_id}` changed while its action was executing"
-            )));
-        }
-        if let Some(ancestor_id) = required_parent_ancestor
-            && !self
-                .kernel
-                .query
-                .is_descendant_or_self(&ancestor_id, parent_id)
-                .await?
-        {
-            return Err(CoreError::forbidden(
-                "create directory",
-                parent.path().path(),
-            ));
-        }
-        let kind = self.kind_for_new_child(parent.directory().kind(), kind);
-        self.ensure_kind_registered(&kind)?;
-        self.ensure_parent_kind_allowed(&kind, parent.directory().kind())?;
-        let directory = Directory::new_with_kind(*parent_id, name, kind)?;
+        let directory = Directory::new(*parent_id, name)?;
         let path = parent.path().child(directory.name())?;
         if self.kernel.query.find_by_path(&path).await?.is_some() {
             return Err(CoreError::conflict(
@@ -103,15 +48,6 @@ impl DirectoryService {
         id: &DirectoryId,
         command: UpdateDirectory,
     ) -> Result<LocatedDirectory, CoreError> {
-        self.update_expected(id, command, None).await
-    }
-
-    pub(crate) async fn update_expected(
-        &self,
-        id: &DirectoryId,
-        command: UpdateDirectory,
-        required_parent_ancestor: Option<DirectoryId>,
-    ) -> Result<LocatedDirectory, CoreError> {
         let _guard = self.kernel.mutation_lock.lock().await;
         let located = self
             .kernel
@@ -125,25 +61,9 @@ impl DirectoryService {
             return Err(CoreError::revision_conflict("directory", id.to_string()));
         }
 
-        if directory.id().is_root()
-            && (command.name.is_some() || command.parent_id.is_some() || command.kind.is_some())
-        {
+        if directory.id().is_root() && (command.name.is_some() || command.parent_id.is_some()) {
             return Err(CoreError::conflict("root directory cannot be updated"));
         }
-        if let Some(ancestor_id) = required_parent_ancestor
-            && !self
-                .kernel
-                .query
-                .is_descendant_or_self(&ancestor_id, id)
-                .await?
-        {
-            return Err(CoreError::forbidden("update directory", from.path().path()));
-        }
-        let destination_kind = command
-            .kind
-            .clone()
-            .unwrap_or_else(|| directory.kind().clone());
-        self.ensure_kind_registered(&destination_kind)?;
         let parent_id = command
             .parent_id
             .or(directory.parent_id())
@@ -164,49 +84,6 @@ impl DirectoryService {
             .find_by_id(&parent_id)
             .await?
             .ok_or_else(|| CoreError::not_found("directory", parent_id.to_string()))?;
-        if let Some(ancestor_id) = required_parent_ancestor
-            && !self
-                .kernel
-                .query
-                .is_descendant_or_self(&ancestor_id, &parent_id)
-                .await?
-        {
-            return Err(CoreError::forbidden(
-                "update directory",
-                parent.path().path(),
-            ));
-        }
-        self.ensure_parent_kind_allowed(&destination_kind, parent.directory().kind())?;
-
-        let default_child_kind = command.kind.as_ref().and_then(|_| {
-            self.kernel
-                .kind_registry
-                .get(&destination_kind)
-                .and_then(|definition| definition.default_child_kind())
-                .cloned()
-        });
-        let mut child_updates = Vec::new();
-        for child in self.kernel.query.list_children(&directory.id()).await? {
-            let desired_kind = if child.directory().kind() == &DirectoryKind::default() {
-                default_child_kind
-                    .clone()
-                    .unwrap_or_else(|| child.directory().kind().clone())
-            } else {
-                child.directory().kind().clone()
-            };
-            self.ensure_kind_registered(&desired_kind)?;
-            self.ensure_parent_kind_allowed(&desired_kind, &destination_kind)?;
-            if desired_kind != *child.directory().kind() {
-                let expected = child.directory().revision();
-                let mut updated = child.into_directory();
-                updated.change_kind(desired_kind);
-                child_updates.push(DirectoryRevisionUpdate::new(updated, expected)?);
-            }
-        }
-
-        if let Some(kind) = command.kind {
-            directory.change_kind(kind);
-        }
         if let Some(name) = command.name {
             directory.rename(name)?;
         }
@@ -219,18 +96,17 @@ impl DirectoryService {
                 "a directory with the same name already exists",
             ));
         }
-        if directory.revision() == expected_revision && child_updates.is_empty() {
+        if directory.revision() == expected_revision {
             return LocatedDirectory::new(directory, from);
         }
 
-        let mut updates = Vec::with_capacity(1 + child_updates.len());
+        let mut updates = Vec::with_capacity(1);
         if directory.revision() > expected_revision {
             updates.push(DirectoryRevisionUpdate::new(
                 directory.clone(),
                 expected_revision,
             )?);
         }
-        updates.extend(child_updates);
         if destination == *from.path() {
             if !self
                 .kernel
@@ -397,7 +273,25 @@ impl DirectoryService {
             .await
     }
 
-    pub async fn delete_if_empty(
+    /// Delete an empty non-root directory with an explicit revision precondition.
+    pub async fn delete(
+        &self,
+        id: &DirectoryId,
+        expected_revision: u64,
+    ) -> Result<bool, CoreError> {
+        self.delete_if_empty(id, Some(expected_revision)).await
+    }
+
+    /// Trusted storage maintenance may remove a directory only after its physical absence has
+    /// been reconciled. Ordinary operations must use [`Self::delete`] instead.
+    pub(crate) async fn delete_if_empty_for_maintenance(
+        &self,
+        id: &DirectoryId,
+    ) -> Result<bool, CoreError> {
+        self.delete_if_empty(id, None).await
+    }
+
+    async fn delete_if_empty(
         &self,
         id: &DirectoryId,
         caller_revision: Option<u64>,

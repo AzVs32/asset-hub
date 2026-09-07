@@ -1,46 +1,32 @@
+use crate::UploadFinalizationDispatcher;
 use crate::upload_finalization::UploadFinalizationScheduler;
-use crate::{PluginWebAssets, UploadFinalizationDispatcher};
 use asset_core::CoreError;
-use asset_core::domain::{ResourceActionPolicy, ResourceContentEditPolicy};
+use asset_core::domain::ResourceContentEditPolicy;
 use asset_core::service::{
-    ActionOrchestrator, AssetWorkflowService, AuthorizationService, ContentService,
-    DirectoryIndexService, DirectoryProvisioningService, DirectoryService, DirectoryServices,
-    IdempotencyService, ResourceService, ResourceServices, StorageMaintenanceService,
-    UploadService, UserService,
+    AssetWorkflowService, ContentService, DirectoryIndexService, DirectoryService,
+    DirectoryServices, IdempotencyService, ResourceService, ResourceServices,
+    StorageMaintenanceService, UploadService,
 };
 use asset_infra::AssetInfrastructure;
-use asset_infra::action::{DefaultDirectoryActionExecutor, DefaultResourceActionExecutor};
 use asset_infra::config::{AssetInfraConfig, BlobBackend};
-use asset_infra::kind::build_capability_catalogs;
-use asset_infra::password::Argon2PasswordHasher;
-use asset_infra::plugin::{ExtismActionExecutor, ExtismHost};
-use asset_infra::plugin_package::PluginCatalog;
 use asset_infra::storage::LocalStorageSync;
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// 应用运行时。
 ///
 /// `AssetRuntime` 负责根据调用方已经加载的配置组装基础设施与核心 service，并持有由
 /// 应用入口显式启动的后台任务。配置来源、命令行参数和传输层生命周期由各应用自行决定。
 pub struct AssetRuntime {
-    /// 已验证的浏览器静态资源快照
-    plugin_web_assets: PluginWebAssets,
     resource_service: ResourceService,
     content_service: ContentService,
     upload_service: UploadService,
-    action_orchestrator: ActionOrchestrator,
     storage_maintenance_service: StorageMaintenanceService,
     directory_service: DirectoryService,
-    directory_provisioning_service: DirectoryProvisioningService,
     directory_index_service: DirectoryIndexService,
     idempotency_service: IdempotencyService,
     asset_workflow_service: AssetWorkflowService,
-    user_service: UserService,
-    /// 授权应用能力
-    authorization_service: AuthorizationService,
     /// 持有 supervisor 和子任务生命周期
     upload_finalizations: Arc<UploadFinalizationScheduler>,
     /// 启动同步所需的最小 effective settings
@@ -73,58 +59,9 @@ impl AssetRuntime {
             }),
             BlobBackend::Local => None,
         };
-        let catalog_started = Instant::now();
-        let plugin_catalog = PluginCatalog::load(&config.plugin_packages_path())?;
-        tracing::info!(
-            elapsed_ms = catalog_started.elapsed().as_millis(),
-            plugins = plugin_catalog.plugin_count(),
-            "plugin artifacts verified"
-        );
-
-        let capability_catalogs = build_capability_catalogs(&plugin_catalog)?;
-        let resource_kind_registry = Arc::new(capability_catalogs.resource_kinds);
-        let directory_kind_registry = Arc::new(capability_catalogs.directory_kinds);
-        let resource_action_registry = Arc::new(capability_catalogs.resource_actions);
-        let directory_action_registry = Arc::new(capability_catalogs.directory_actions);
-        let plugin_execution_policy = Arc::new(config.plugin.execution_policy()?);
-        let resource_action_policy = Arc::new(
-            ResourceActionPolicy::new(
-                plugin_execution_policy.max_content_bytes(),
-                plugin_execution_policy.max_inline_content_bytes(),
-            )
-            .map_err(|error| CoreError::configuration(error.to_string()))?,
-        );
         let resource_content_edit_policy = Arc::new(
             ResourceContentEditPolicy::new(config.resource_edit.max_text_bytes)
                 .map_err(|error| CoreError::configuration(error.to_string()))?,
-        );
-
-        let compile_started = Instant::now();
-        let extism_action_executor = ExtismActionExecutor::from_catalog(
-            &plugin_catalog,
-            resource_kind_registry.as_ref(),
-            directory_kind_registry.as_ref(),
-            ExtismHost::new(
-                infrastructure.directory_query(),
-                infrastructure.resource_read_model(),
-                infrastructure.content_reader(),
-                plugin_execution_policy.clone(),
-                config.plugin.grants.clone(),
-            ),
-        )?;
-        let directory_action_executor = Arc::new(DefaultDirectoryActionExecutor::new(
-            &plugin_catalog,
-            directory_kind_registry.as_ref(),
-            extism_action_executor.clone(),
-        ));
-        let resource_action_executor = Arc::new(DefaultResourceActionExecutor::new(
-            &plugin_catalog,
-            resource_kind_registry.as_ref(),
-            extism_action_executor,
-        ));
-        tracing::info!(
-            elapsed_ms = compile_started.elapsed().as_millis(),
-            "plugins compiled"
         );
 
         let directory_services = DirectoryServices::new(
@@ -132,10 +69,9 @@ impl AssetRuntime {
             infrastructure.directory_index(),
             infrastructure.directory_storage(),
             infrastructure.directory_relocation_store(),
-            directory_kind_registry,
         );
         let directory_service = directory_services.directory_service();
-        let directory_provisioning_service = directory_services.provisioning_service();
+        let directory_import_service = directory_services.storage_import_service();
         let directory_index_service = directory_services.index_service();
         let recovered_relocations = directory_service.recover_pending_relocations().await?;
         if recovered_relocations > 0 {
@@ -156,15 +92,9 @@ impl AssetRuntime {
             infrastructure.storage_scanner(),
             directory_service.clone(),
             directory_index_service.clone(),
-            directory_provisioning_service.clone(),
-            resource_kind_registry,
+            directory_import_service,
             infrastructure.upload_session_repository(),
             infrastructure.content_replacement_repository(),
-            resource_action_registry,
-            resource_action_executor,
-            directory_action_registry,
-            directory_action_executor,
-            resource_action_policy,
             resource_content_edit_policy,
             infrastructure.idempotency_repository(),
             config.idempotency.lease_duration(),
@@ -172,7 +102,6 @@ impl AssetRuntime {
         let resource_service = resource_services.resource_service();
         let content_service = resource_services.content_service();
         let upload_service = resource_services.upload_service();
-        let action_orchestrator = resource_services.action_orchestrator();
         let storage_maintenance_service = resource_services.storage_maintenance_service();
         let idempotency_service = resource_services.idempotency_service();
         let recovered_resource_relocations = resource_service.recover_pending_relocations().await?;
@@ -182,23 +111,8 @@ impl AssetRuntime {
                 "recovered pending resource relocations"
             );
         }
-        let user_service = UserService::new(
-            infrastructure.user_repository(),
-            infrastructure.user_query(),
-            Arc::new(Argon2PasswordHasher),
-            directory_provisioning_service.clone(),
-        );
-        let authorization_service =
-            AuthorizationService::new(infrastructure.user_repository(), directory_service.clone());
-        let asset_workflow_service = AssetWorkflowService::new(
-            resource_service.clone(),
-            upload_service.clone(),
-            action_orchestrator.clone(),
-            directory_service.clone(),
-            idempotency_service.clone(),
-        );
-        let plugin_web_assets = plugin_web_assets_from_catalog(&plugin_catalog)?;
-
+        let asset_workflow_service =
+            AssetWorkflowService::new(resource_service.clone(), directory_service.clone());
         let replacements_resumed = content_service.resume_pending_replacements().await?;
         if replacements_resumed > 0 {
             tracing::info!(
@@ -217,19 +131,14 @@ impl AssetRuntime {
             tracing::info!(count = resumed, "scheduled pending upload finalizations");
         }
         Ok(Self {
-            plugin_web_assets,
             resource_service,
             content_service,
             upload_service,
-            action_orchestrator,
             storage_maintenance_service,
             directory_service,
-            directory_provisioning_service,
             directory_index_service,
             idempotency_service,
             asset_workflow_service,
-            user_service,
-            authorization_service,
             upload_finalizations,
             storage_sync_settings,
             storage_sync: None,
@@ -275,20 +184,12 @@ impl AssetRuntime {
         self.idempotency_service.clone()
     }
 
-    pub fn action_orchestrator(&self) -> ActionOrchestrator {
-        self.action_orchestrator.clone()
-    }
-
     pub fn storage_maintenance_service(&self) -> StorageMaintenanceService {
         self.storage_maintenance_service.clone()
     }
 
     pub fn directory_service(&self) -> DirectoryService {
         self.directory_service.clone()
-    }
-
-    pub fn directory_provisioning_service(&self) -> DirectoryProvisioningService {
-        self.directory_provisioning_service.clone()
     }
 
     pub fn directory_index_service(&self) -> DirectoryIndexService {
@@ -299,42 +200,10 @@ impl AssetRuntime {
         self.asset_workflow_service.clone()
     }
 
-    pub fn user_service(&self) -> UserService {
-        self.user_service.clone()
-    }
-
-    pub fn authorization_service(&self) -> AuthorizationService {
-        self.authorization_service.clone()
-    }
-
-    /// 返回供 Application Surface 提交上传最终化工作的窄 Host capability。
+    /// 返回供 Application Surface 提交上传最终化工作的窄接口。
     pub fn upload_finalization_dispatcher(&self) -> Arc<dyn UploadFinalizationDispatcher> {
         self.upload_finalizations.clone()
     }
-
-    /// 返回启动时校验并冻结的插件浏览器静态资源。
-    pub fn plugin_web_assets(&self) -> PluginWebAssets {
-        self.plugin_web_assets.clone()
-    }
-}
-
-fn plugin_web_assets_from_catalog(catalog: &PluginCatalog) -> Result<PluginWebAssets, CoreError> {
-    let mut assets = HashMap::new();
-    for plugin in catalog.plugins() {
-        if plugin.web_assets().is_empty() {
-            continue;
-        }
-        let plugin_id = plugin.manifest().plugin_id();
-        if assets
-            .insert(plugin_id.to_string(), plugin.web_assets().clone())
-            .is_some()
-        {
-            return Err(CoreError::configuration(format!(
-                "duplicate plugin Web root `{plugin_id}`"
-            )));
-        }
-    }
-    Ok(assets)
 }
 
 #[cfg(test)]

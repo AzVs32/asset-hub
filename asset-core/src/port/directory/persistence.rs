@@ -68,8 +68,7 @@ impl DirectoryRevisionUpdate {
 
 /// Durable forward-recovery intent for a physical Directory relocation.
 ///
-/// The first update is always the moved Directory itself. Additional updates contain the direct
-/// child kind changes that must commit in the same database transaction.
+/// The first update is always the moved Directory itself.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DirectoryRelocation {
     directory_id: DirectoryId,

@@ -3,7 +3,7 @@ import type { paths } from "./generated";
 import { applicationError, HttpError } from "./http-error";
 
 export function createOpenApiClient(baseUrl: string) {
-  return createClient<paths>({ baseUrl, credentials: "include" });
+  return createClient<paths>({ baseUrl });
 }
 
 export type OpenApiClient = ReturnType<typeof createOpenApiClient>;

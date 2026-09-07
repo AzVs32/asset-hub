@@ -3,28 +3,27 @@
 mod command;
 mod contract;
 mod index;
-mod provisioning;
-mod secured;
+mod storage_import;
 
-pub(crate) use contract::ExecutedDirectoryAction;
-pub use contract::{DirectoryActions, ExecuteDirectoryAction, UpdateDirectory};
+pub use contract::UpdateDirectory;
 pub use index::DirectoryIndexService;
-pub use provisioning::DirectoryProvisioningService;
-pub use secured::SecuredDirectoryService;
+pub use storage_import::DirectoryImportService;
 
 use crate::{
     CoreError,
-    domain::{DirectoryId, DirectoryKind, DirectoryKindDefinition, DirectoryPath},
+    domain::{DirectoryId, DirectoryPath},
     port::{
-        DirectoryIndex, DirectoryKindRegistry, DirectoryLocation, DirectoryProjection,
-        DirectoryQuery, DirectoryRelocationStore, DirectoryStorage, DirectoryStore,
-        LocatedDirectory,
+        DirectoryIndex, DirectoryLocation, DirectoryProjection, DirectoryQuery,
+        DirectoryRelocationStore, DirectoryStorage, DirectoryStore, LocatedDirectory,
     },
 };
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-/// Coordinates directory aggregates, the durable store, the query index, and physical storage.
+/// Coordinates global directory aggregates, the durable store, the query index, and physical
+/// storage.
+///
+/// Its public query and mutation use cases use stable IDs or global [`DirectoryPath`] values.
 #[derive(Clone)]
 pub struct DirectoryService {
     kernel: Arc<DirectoryKernel>,
@@ -35,7 +34,6 @@ struct DirectoryKernel {
     query: Arc<dyn DirectoryQuery>,
     storage: Arc<dyn DirectoryStorage>,
     relocations: Arc<dyn DirectoryRelocationStore>,
-    kind_registry: Arc<dyn DirectoryKindRegistry>,
     mutation_lock: Arc<Mutex<()>>,
     index_service: DirectoryIndexService,
 }
@@ -43,7 +41,7 @@ struct DirectoryKernel {
 /// Composition-time bundle that guarantees all Directory services share one mutation boundary.
 pub struct DirectoryServices {
     directory: DirectoryService,
-    provisioning: DirectoryProvisioningService,
+    storage_import: DirectoryImportService,
     index: DirectoryIndexService,
 }
 
@@ -53,7 +51,6 @@ impl DirectoryServices {
         index: Arc<dyn DirectoryProjection>,
         storage: Arc<dyn DirectoryStorage>,
         relocations: Arc<dyn DirectoryRelocationStore>,
-        kind_registry: Arc<dyn DirectoryKindRegistry>,
     ) -> Self {
         let query: Arc<dyn DirectoryQuery> = index.clone();
         let index_writer: Arc<dyn DirectoryIndex> = index;
@@ -63,7 +60,6 @@ impl DirectoryServices {
             query,
             storage,
             relocations,
-            kind_registry,
             mutation_lock: Arc::new(Mutex::new(())),
             index_service: index_service.clone(),
         });
@@ -71,7 +67,7 @@ impl DirectoryServices {
             directory: DirectoryService {
                 kernel: kernel.clone(),
             },
-            provisioning: DirectoryProvisioningService::new(kernel),
+            storage_import: DirectoryImportService::new(kernel),
             index: index_service,
         }
     }
@@ -80,8 +76,8 @@ impl DirectoryServices {
         self.directory.clone()
     }
 
-    pub fn provisioning_service(&self) -> DirectoryProvisioningService {
-        self.provisioning.clone()
+    pub fn storage_import_service(&self) -> DirectoryImportService {
+        self.storage_import.clone()
     }
 
     pub fn index_service(&self) -> DirectoryIndexService {
@@ -90,22 +86,7 @@ impl DirectoryServices {
 }
 
 impl DirectoryService {
-    pub fn secured<'a>(
-        &'a self,
-        authorization: &'a crate::service::AuthorizationService,
-        context: &'a crate::domain::AccessContext,
-    ) -> SecuredDirectoryService<'a> {
-        SecuredDirectoryService::new(self, authorization, context)
-    }
-
-    pub fn kind_definitions(&self) -> &[DirectoryKindDefinition] {
-        self.kernel.kind_registry.definitions()
-    }
-
-    pub fn kind_lineage(&self, kind: &DirectoryKind) -> Vec<DirectoryKind> {
-        self.kernel.kind_registry.lineage(kind)
-    }
-
+    /// Locate the global root, whose identity is the nil UUID and whose path is empty.
     pub async fn root(&self) -> Result<DirectoryLocation, CoreError> {
         Ok(self
             .find_by_id(&DirectoryId::root())
@@ -114,6 +95,7 @@ impl DirectoryService {
             .clone())
     }
 
+    /// Find a directory by its global stable ID.
     pub async fn find_by_id(&self, id: &DirectoryId) -> Result<LocatedDirectory, CoreError> {
         self.kernel
             .query
@@ -126,6 +108,7 @@ impl DirectoryService {
         Ok(self.find_by_id(id).await?.location().clone())
     }
 
+    /// Find a directory by its global canonical path.
     pub async fn find_by_path(&self, path: &DirectoryPath) -> Result<LocatedDirectory, CoreError> {
         self.kernel
             .query
@@ -141,19 +124,8 @@ impl DirectoryService {
     pub async fn list_children(
         &self,
         parent_id: &DirectoryId,
-    ) -> Result<Vec<DirectoryLocation>, CoreError> {
-        Ok(self
-            .list_located_children(parent_id)
-            .await?
-            .into_iter()
-            .map(|directory| directory.location().clone())
-            .collect())
-    }
-
-    pub async fn list_located_children(
-        &self,
-        parent_id: &DirectoryId,
     ) -> Result<Vec<LocatedDirectory>, CoreError> {
+        self.find_by_id(parent_id).await?;
         self.kernel.query.list_children(parent_id).await
     }
 
@@ -166,73 +138,6 @@ impl DirectoryService {
             .query
             .is_descendant_or_self(ancestor, candidate)
             .await
-    }
-
-    fn ensure_kind_registered(&self, kind: &DirectoryKind) -> Result<(), CoreError> {
-        if self.kernel.kind_registry.supports(kind) {
-            Ok(())
-        } else {
-            Err(CoreError::unsupported("directory kind", kind.to_string()))
-        }
-    }
-
-    fn kind_for_new_child(
-        &self,
-        parent_kind: &DirectoryKind,
-        requested_kind: DirectoryKind,
-    ) -> DirectoryKind {
-        if requested_kind == DirectoryKind::default() {
-            self.kernel
-                .kind_registry
-                .get(parent_kind)
-                .and_then(DirectoryKindDefinition::default_child_kind)
-                .cloned()
-                .unwrap_or(requested_kind)
-        } else {
-            requested_kind
-        }
-    }
-
-    fn ensure_parent_kind_allowed(
-        &self,
-        child_kind: &DirectoryKind,
-        parent_kind: &DirectoryKind,
-    ) -> Result<(), CoreError> {
-        let allowed = self
-            .kernel
-            .kind_registry
-            .lineage(child_kind)
-            .into_iter()
-            .find_map(|kind| {
-                let declared = self
-                    .kernel
-                    .kind_registry
-                    .get(&kind)
-                    .expect("registered kind lineage must contain definitions")
-                    .allowed_parent_kinds();
-                (!declared.is_empty()).then(|| declared.to_vec())
-            })
-            .unwrap_or_default();
-        if allowed.is_empty()
-            || allowed
-                .iter()
-                .any(|kind| self.kernel.kind_registry.is_a(parent_kind, kind))
-        {
-            return Ok(());
-        }
-        Err(CoreError::conflict(format!(
-            "directory kind `{child_kind}` does not allow parent kind `{parent_kind}`"
-        )))
-    }
-
-    pub(crate) fn require_kind_registered(&self, kind: &DirectoryKind) -> Result<(), CoreError> {
-        if self.kernel.kind_registry.supports(kind) {
-            Ok(())
-        } else {
-            Err(CoreError::invariant(format!(
-                "persisted directory kind `{kind}` is not registered"
-            )))
-        }
     }
 
     async fn refresh_index(&self, id: &DirectoryId) -> Result<(), CoreError> {

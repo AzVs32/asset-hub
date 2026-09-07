@@ -23,12 +23,11 @@ const CONTENT_SHA256: header::HeaderName = header::HeaderName::from_static("cont
 )]
 pub(crate) async fn get_resource_content(
     State(state): State<HttpState>,
-    access: Extension<AccessContext>,
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Response, HttpError> {
     let id = parse_resource_id(&id)?;
-    let (response, _) = resource_content_response(&state, &access.0, &headers, &id).await?;
+    let (response, _) = resource_content_response(&state, &headers, &id).await?;
     Ok(response)
 }
 
@@ -52,16 +51,14 @@ pub(crate) async fn get_resource_content(
     responses(
         (status = 200, description = "资源内容已替换", body = ResourceResponse),
         (status = 400, description = "请求头或资源状态无效", body = crate::dto::ErrorResponse),
-        (status = 403, description = "当前工作区没有写权限", body = crate::dto::ErrorResponse),
         (status = 404, description = "资源不存在", body = crate::dto::ErrorResponse),
         (status = 409, description = "资源 revision、大小或摘要冲突", body = crate::dto::ErrorResponse),
-        (status = 413, description = "文本超过 Host 编辑上限", body = crate::dto::ErrorResponse),
+        (status = 413, description = "文本超过编辑大小上限", body = crate::dto::ErrorResponse),
         (status = 500, description = "服务端错误", body = crate::dto::ErrorResponse)
     )
 )]
 pub(crate) async fn replace_resource_content(
     State(state): State<HttpState>,
-    access: Extension<AccessContext>,
     Path(id): Path<String>,
     headers: HeaderMap,
     body: Body,
@@ -88,22 +85,15 @@ pub(crate) async fn replace_resource_content(
     if let Some(key) = parse_idempotency_key(&headers)? {
         command = command.with_idempotency_key(key);
     }
-    let workspace = state.workspace(&access.0).await?;
     let Some(resource) = state
-        .secured_content(&access.0)
+        .content()
         .replace(&id, command, body_stream(body))
         .await?
     else {
         return Err(HttpError::not_found(format!("resource `{id}` not found")));
     };
     Ok(Json(
-        resource_snapshot_response(
-            state.resources(),
-            state.resource_actions(),
-            &workspace,
-            &resource,
-        )
-        .await?,
+        resource_snapshot_response(state.resources(), &resource).await?,
     ))
 }
 
@@ -154,13 +144,11 @@ fn parse_if_match(headers: &HeaderMap) -> Result<u64, HttpError> {
 )]
 pub(crate) async fn download_resource_content(
     State(state): State<HttpState>,
-    access: Extension<AccessContext>,
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Response, HttpError> {
     let id = parse_resource_id(&id)?;
-    let (mut response, filename) =
-        resource_content_response(&state, &access.0, &headers, &id).await?;
+    let (mut response, filename) = resource_content_response(&state, &headers, &id).await?;
     response.headers_mut().insert(
         header::CONTENT_DISPOSITION,
         attachment_content_disposition(&filename),
@@ -177,21 +165,16 @@ pub(crate) async fn download_resource_content(
     responses(
         (status = 200, description = "Directory ZIP archive", content_type = "application/zip", body = BinaryContent),
         (status = 400, description = "Invalid directory ID", body = crate::dto::ErrorResponse),
-        (status = 403, description = "Directory is outside the current workspace", body = crate::dto::ErrorResponse),
         (status = 404, description = "Directory or resource content not found", body = crate::dto::ErrorResponse),
         (status = 500, description = "Archive generation failed", body = crate::dto::ErrorResponse)
     )
 )]
 pub(crate) async fn download_directory(
     State(state): State<HttpState>,
-    access: Extension<AccessContext>,
     Path(id): Path<String>,
 ) -> Result<Response, HttpError> {
     let id = parse_directory_id(&id)?;
-    let manifest = state
-        .secured_asset_coordination(&access.0)
-        .directory_archive_manifest(&id)
-        .await?;
+    let manifest = state.workflows().directory_archive_manifest(&id).await?;
     let filename = manifest.filename().to_string();
     let temporary = tempfile::NamedTempFile::new()
         .map_err(|error| CoreError::storage("directory.archive.create", error))?;
@@ -211,11 +194,7 @@ pub(crate) async fn download_directory(
         archive
             .start_file(entry.path(), file_options)
             .map_err(|error| CoreError::storage("directory.archive.start_file", error))?;
-        let Some(content) = state
-            .secured_content(&access.0)
-            .stream(&entry.resource_id(), None)
-            .await?
-        else {
+        let Some(content) = state.content().stream(&entry.resource_id(), None).await? else {
             return Err(HttpError::not_found(format!(
                 "resource content `{}` not found",
                 entry.resource_id()
@@ -275,11 +254,10 @@ pub(crate) async fn download_directory(
 
 async fn resource_content_response(
     state: &HttpState,
-    access: &AccessContext,
     headers: &HeaderMap,
     id: &ResourceId,
 ) -> Result<(Response, String), HttpError> {
-    let Some(resource) = state.secured_resources(access).get(id).await? else {
+    let Some(resource) = state.resources().get(id).await? else {
         return Err(HttpError::not_found(format!("resource `{id}` not found")));
     };
     let content_type = resource
@@ -297,7 +275,7 @@ async fn resource_content_response(
 
     let response = match range {
         ByteRangeRequest::Unsatisfiable => range_not_satisfiable_response(content_ref.size()),
-        ByteRangeRequest::None => match state.secured_content(access).stream(id, None).await? {
+        ByteRangeRequest::None => match state.content().stream(id, None).await? {
             Some(content) => binary_stream_response(
                 content_type,
                 Some(content.content_length()),
@@ -309,24 +287,22 @@ async fn resource_content_response(
                 )));
             }
         },
-        ByteRangeRequest::Range { start, end } => match state
-            .secured_content(access)
-            .stream(id, Some((start, end)))
-            .await?
-        {
-            Some(content) => range_stream_response(
-                content_type,
-                start,
-                end,
-                content.content_length(),
-                content.into_content(),
-            ),
-            None => {
-                return Err(HttpError::not_found(format!(
-                    "resource content `{id}` not found"
-                )));
+        ByteRangeRequest::Range { start, end } => {
+            match state.content().stream(id, Some((start, end))).await? {
+                Some(content) => range_stream_response(
+                    content_type,
+                    start,
+                    end,
+                    content.content_length(),
+                    content.into_content(),
+                ),
+                None => {
+                    return Err(HttpError::not_found(format!(
+                        "resource content `{id}` not found"
+                    )));
+                }
             }
-        },
+        }
     };
 
     Ok((response, resource.resource().name().to_owned()))

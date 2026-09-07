@@ -39,8 +39,6 @@ export function DirectorySelect({ value, onChange, ...props }: DirectorySelectPr
       directory,
       page: 1,
       limit: 1,
-      query: "",
-      kind: "",
     }),
     [directory],
   );

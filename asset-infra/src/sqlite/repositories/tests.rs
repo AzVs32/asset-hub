@@ -1,8 +1,8 @@
 use super::*;
-use asset_core::domain::{DefinitionOrigin, DirectoryKindDefinition, StorageKey};
+use asset_core::domain::StorageKey;
 use asset_core::port::{
-    DirectoryKindRegistry, DirectoryRelocation, DirectoryRelocationStore, DirectoryRevisionUpdate,
-    DirectoryStorage, DirectoryStore, ResourceStore,
+    DirectoryRelocation, DirectoryRelocationStore, DirectoryRevisionUpdate, DirectoryStorage,
+    DirectoryStore, ResourceStore,
 };
 use asset_core::service::{DirectoryService, DirectoryServices, UpdateDirectory};
 use std::collections::HashSet;
@@ -98,24 +98,6 @@ impl DirectoryStorage for TestDirectoryStorage {
     }
 }
 
-struct TestDirectoryKinds(Vec<DirectoryKindDefinition>);
-
-impl Default for TestDirectoryKinds {
-    fn default() -> Self {
-        Self(vec![DirectoryKindDefinition::new(
-            DirectoryKind::default(),
-            "Directory",
-            DefinitionOrigin::builtin_static("test"),
-        )])
-    }
-}
-
-impl DirectoryKindRegistry for TestDirectoryKinds {
-    fn definitions(&self) -> &[DirectoryKindDefinition] {
-        &self.0
-    }
-}
-
 async fn directory_service(repository: Arc<SqliteDirectoryStore>) -> DirectoryService {
     let index = Arc::new(
         crate::directory_index::InMemoryDirectoryIndex::from_directories(
@@ -128,7 +110,6 @@ async fn directory_service(repository: Arc<SqliteDirectoryStore>) -> DirectorySe
         index,
         Arc::new(TestDirectoryStorage::default()),
         repository,
-        Arc::new(TestDirectoryKinds::default()),
     )
     .directory_service()
 }
@@ -255,7 +236,7 @@ async fn directory_store_rejects_a_stale_aggregate_snapshot() {
     let repository = repository("conditional-directory-save").await;
     let directories = directory_service(repository.directories.clone()).await;
     let located = directories
-        .create_with_kind(&DirectoryId::root(), "library", DirectoryKind::default())
+        .create(&DirectoryId::root(), "library")
         .await
         .unwrap();
     let expected = located.directory().revision();
@@ -294,11 +275,11 @@ async fn sqlite_directory_update_batch_rolls_back_when_one_cas_is_stale() {
     let repository = repository("directory-batch-cas-rollback").await;
     let directories = directory_service(repository.directories.clone()).await;
     let left = directories
-        .create_with_kind(&DirectoryId::root(), "left", DirectoryKind::default())
+        .create(&DirectoryId::root(), "left")
         .await
         .unwrap();
     let right = directories
-        .create_with_kind(&DirectoryId::root(), "right", DirectoryKind::default())
+        .create(&DirectoryId::root(), "right")
         .await
         .unwrap();
     let left_expected = left.directory().revision();
@@ -474,13 +455,7 @@ async fn pending_directory_relocation_completes_after_the_physical_move() {
         .unwrap(),
     );
     let storage = Arc::new(TestDirectoryStorage::default());
-    let services = DirectoryServices::new(
-        store.clone(),
-        index,
-        storage.clone(),
-        store.clone(),
-        Arc::new(TestDirectoryKinds::default()),
-    );
+    let services = DirectoryServices::new(store.clone(), index, storage.clone(), store.clone());
     let directories = services.directory_service();
     let source = directories
         .create(&DirectoryId::root(), "source")

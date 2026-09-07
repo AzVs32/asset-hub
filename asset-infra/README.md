@@ -1,188 +1,21 @@
 # Asset Infrastructure
 
-`asset-infra` contains concrete adapters for the host side of Asset Hub. It initializes the current
-SQLite database, local OpenDAL blob storage, filesystem scanner/synchronizer, directory index,
-identity/upload repositories, the Host-owned built-in capability catalog, Extism executor,
-registries, and plugin package filesystem adapter.
+`asset-infra` contains the concrete SQLite, local OpenDAL storage, filesystem scanner/synchronizer,
+directory-index, upload, and recovery-repository adapters used by Asset Hub.
 
-Its business database schema does not contain HTTP authentication sessions. That surface-local
-state is stored and migrated independently by `asset-http`; infrastructure database pools are not
-exposed through `asset-runtime`.
+`AssetInfrastructure::new` normalizes already-loaded configuration and initializes only those
+adapters. It does not assemble Core services or start background tasks; `asset-runtime` owns both
+composition and lifecycle.
 
-It does not assemble Core services or decide application startup order. `AssetInfrastructure::new`
-normalizes already-loaded configuration and initializes only the database, storage, index, and
-repository adapters. `asset-runtime` consumes these ports and composes the plugin host and Core
-services; after injection, the `AssetInfrastructure` assembly object itself is construction-only.
+SQLite keeps Resource and Directory persistence boundaries separate despite sharing a connection
+pool. Directory relocation and Resource content replacement use durable intents so Runtime recovery
+can converge the database and local filesystem after interruption. `LocalStorageSync` remains the
+filesystem event-to-reconciliation adapter; Runtime owns its guard and task lifetime.
 
-SQLite connection and migration ownership is shared, while persistence ports are implemented by
-separate `SqliteResourceRepository` and `SqliteDirectoryStore` adapters. The Directory adapter
-supports atomic revision-update batches and the narrow `DirectoryRelocationStore`; sharing a pool
-does not merge Resource and Directory persistence boundaries.
+The storage scanner reports physical directories; Core imports those observed paths into Directory
+aggregates.
 
-Directory rename/move writes a `directory_relocations` intent and its desired aggregate updates
-before the local filesystem rename. Runtime recovery distinguishes the source/destination physical
-state from the expected/applied database revisions, completes the atomic batch, rebuilds the index,
-and only then removes the intent. `DirectoryStorage::delete_empty_directory` removes exactly one
-empty user directory, is idempotent for an absent path, and never recursively removes content or
-ancestors.
-
-`LocalStorageSync` still implements the local filesystem watcher and event-to-reconciliation
-driving adapter. `asset-runtime` starts it with `ResourceService` and owns its lifetime;
-`AssetInfrastructure` no longer accepts a Core service or starts background work.
-
-## Plugin package boundary
-
-Built-in kinds and actions are Rust Host definitions with private typed handler bindings. They are
-not parsed through `asset_plugin_api::manifest::PluginManifestDocument` and never appear in the external package
-catalog. Every filesystem package is an Extism/Wasm package; `runtime.type = "builtin"` is rejected.
-
-## Kind and capability catalogs
-
-`core:resource` is the Host-owned default Resource Kind. External Resource and Directory Kinds,
-Actions, and capability providers are discovered from verified plugin Manifests at runtime.
-Infrastructure must not assume that any particular external plugin is installed, so its catalog
-boundary does not define or enumerate a fixed external Kind tree.
-
-Resource capabilities are singleton providers, not generic action names. For each capability, the
-Host selects the provider declared on the nearest kind in the Resource lineage. A child provider
-therefore replaces, rather than coexists with, its ancestor's provider. The currently supported
-Resource capabilities are `thumbnail`, `view`, and `edit`.
-
-The supported Resource and Directory capability IDs are imported from
-`asset_plugin_api::manifest`; infrastructure does not maintain a second identifier catalog. SDK
-Manifest validation rejects unknown IDs and invalid provider declarations before catalog assembly.
-Infrastructure repeats the normalized provider invariants as a defensive Host boundary, then owns
-kind-lineage selection and tied-provider rejection.
-
-The Host-owned catalog provides no generic Resource or Directory thumbnail Action; any concrete
-thumbnail provider comes from an external Manifest. The Host declares `core.resource.delete` and
-`core.directory.delete` as ordinary write Actions in the same discovery catalogs. Their built-in
-handlers return no View and request one `delete` effect; Core applies it through the secured
-resource delete or empty-directory-delete use case. External plugins may declare and return
-the same effect only when their Manifest requests
-`resource.delete` or `directory.delete`, the corresponding `[plugin.grants]` switch is enabled,
-and the current user is authorized to delete that aggregate. Delete cannot be combined with a
-different effect in one action output.
-
-External actions retain their provider-owned IDs and may provide a Host-recognized capability for a
-more specific kind. Resource actions recognize `thumbnail`, `view`, and `edit`; Directory
-actions recognize `thumbnail` and `workspace`. A Directory `workspace` provider is read-only,
-effect-free, supports `plugin_frame`, and pairs capability `workspace` with the
-exclusive `directory_workspace` location. Resource resolution filters content requirements and matchers
-before selecting the nearest provider. Registry startup rejects unsupported capabilities, automatic
-thumbnail-slot actions that do not provide `thumbnail`, and tied nearest providers.
-Ordinary Resource and Directory actions declared on an ancestor kind are inherited by its
-descendants. Directory action discovery and execution use the same lineage-resolved set, so an
-inherited action does not need to repeat every descendant kind in its declaration.
-
-When a plugin Resource capability provider omits its Manifest label, catalog assembly inherits the
-normalized label from the nearest ancestor provider for that capability; an explicit label remains
-an override, and a missing ancestor is a startup error. A `view` provider must be effect-free,
-read-only, and support `plugin_frame`. An external `edit` provider must be effect-free,
-writable, support `plugin_frame`, and declare the specific `resource.content.replace` permission;
-generic Resource write permissions are not accepted.
-
-At the package boundary, infrastructure explicitly converts external Manifest capabilities into
-`asset-core` Action/Kind definitions. Extism handler names remain in private adapter bindings and
-are not copied into Core models.
-
-Extism memory, timeout, concurrency, serialized input/output, and Host ABI budgets are validated
-in infrastructure policy. Runtime assembly derives the smaller runtime-independent Core resource
-Action content policy from the same configured limits.
-
-Interactive text editing has a separate Host policy because browser editing is not a plugin
-execution budget. `[resource_edit].max_text_bytes` defaults to 4 MiB. Runtime passes that value to
-Core, which uses it both when discovering `edit` providers and when validating streamed
-replacement content. Resources above the limit therefore do not advertise `edit`.
-
-## Durable request idempotency
-
-The `[idempotency].lease_duration_seconds` setting defaults to five minutes and accepts values
-from one second through 24 hours. Each guarded write
-stores a random execution ID, lease expiry, and update timestamp in SQLite. A matching request can
-take over only an expired in-progress lease through a conditional SQLite write; a completed record
-continues to replay indefinitely, and a different request hash always conflicts. Runtime renews a
-live command's lease while its future is executing. Completion and abandonment require the current
-execution ID, so an executor that lost its lease cannot overwrite or delete the newer owner's
-result. A crashed process stops renewing; after the configured lease duration, a matching retry can
-safely resume its command. This lease answers whether a request may start and remains separate from
-the durable relocation and content-replacement recovery intents that repair cross-persistence
-workflows. Upload creation additionally records its idempotency key on the durable upload session,
-so a retry that takes over after a crash returns that existing session instead of creating a second
-upload workflow.
-
-Resource and Directory optimistic concurrency use persisted, monotonically increasing `revision`
-values; timestamps remain display and ordering metadata. Directory writes compare the expected
-revision atomically in SQLite, including effects applied after a directory Action returns.
-
-Core Action and capability identifiers are validated domain values. Dynamic identifiers reject
-empty, non-canonical, uppercase, or unsupported characters before reaching registries or executors;
-Host-owned static declarations assert the same invariant at construction.
-Resource and Directory Kind IDs use two or more lowercase colon-separated segments; the segments
-are identity only, while inheritance is declared explicitly through `parent`. Resource and
-Directory Action IDs use lowercase dot-separated provider names following `<plugin-id>.<verb>`.
-Runtime constructs all four registries
-as one validated capability-catalog unit, rejects duplicate IDs and invalid scopes before serving,
-and reports ambiguous content-kind detection instead of selecting by registration order.
-Definition origins also carry validated lowercase dot-separated owner IDs rather than unchecked
-strings.
-
-Directory Kind declarations may restrict direct placement with `allowed_parent_kinds`. Catalog
-assembly verifies every referenced parent Kind, and Core enforces the effective nearest constraint
-on create, move, and Kind changes. A parent descendant satisfies an allowed ancestor. No Resource
-filename, role, or required-file policy is normalized by the Host.
-
-Directory Actions choose resource exposure with `requires.resources = none | metadata | content`.
-Metadata mode exposes paged Resource identity, Kind, revision, and content metadata. Content mode
-also creates call-scoped handles and reuses the standard content open/read/close Host ABI; it
-requires both Resource read permissions in addition to Directory resource listing. Leases are
-destroyed when the Directory Action invocation ends, so plugins receive neither persistent handles
-nor storage paths. Interpretation of special files and Resource Kinds remains plugin-owned.
-Resource Action snapshots and Directory resource pages both receive the same Core-derived
-lifecycle, content, and effective state projection; content metadata does not duplicate verification
-status.
-
-Plugin loading intentionally remains atomic and fail-fast. Package verification, cross-plugin
-capability conflict checks, Wasm compilation, executor bindings, and verified Web snapshots all
-describe one runtime generation. Silently skipping a package in only one phase would expose a
-partially assembled catalog, so a broken or conflicting package prevents that generation from
-starting and must be fixed or removed explicitly.
-
-SQLite never deserializes persisted data directly into Resource, Directory, or User aggregates.
-Repository queries first map columns into adapter-owned row structures, parse their database
-representations into Core values, and then call the aggregate rehydration methods. Persisted Resource
-content, checksums, and storage keys likewise deserialize through their validating Core constructors.
-Invalid JSON, path-like keys, aggregate timestamps, or other inconsistent rows are reported as
-repository failures and no partially valid domain object is returned.
-
-Persisted upload sessions are rehydrated through the Core aggregate state machine. SQLite
-conditional updates only advance offsets while uploading, only enter finalization after all bytes
-arrive, and only complete a checksummed finalization; inconsistent persisted rows are reported as
-repository failures instead of being exposed as valid sessions.
-
-Content replacement, whether requested by an editor or returned by a write Action, writes a durable
-intent before moving the existing Blob. The intent stores the Resource ID, expected revision,
-target/staging/backup keys, and replacement content metadata.
-Runtime startup resolves every pending intent before upload recovery: a committed Resource keeps
-the published Blob, while an unchanged Resource is restored from its backup. Internal artifacts are
-removed only after the intent has reached a recoverable terminal state.
-
-`plugin_package` is the single public host boundary for package installation, uninstallation,
-discovery, and verification. Both the CLI and runtime use it. Its workflows are intentionally
-separate:
-
-- `install_plugin_package` accepts an arbitrarily named local source directory, snapshots its
-  validated Manifest/Wasm/Web bytes into same-filesystem staging, generates a fresh lock, verifies
-  the staged canonical package, and only then installs or replaces it. It never mutates the source.
-- `uninstall_plugin_package` moves one ID-addressed canonical package out of the discovery root
-  before deleting it.
-- `load_verified_plugin_package` and `PluginCatalog::load` are read-only, require an existing lock,
-  verify every declared digest and file, enforce the package layout and size limits, and retain
-  verified Wasm/Web byte snapshots.
-
-The fixed limits are 1 MiB for `manifest.json`, 4 MiB for `manifest.lock.json`, 64 MiB for
-`plugin.wasm`, and 64 MiB in aggregate for Web assets. Package trees cannot contain symbolic links
-or special files.
+The SQLite upload-session table persists upload state and idempotency linkage.
 
 Run:
 

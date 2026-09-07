@@ -1,13 +1,11 @@
 //! 目录聚合及其类型、路径值对象。
 
-mod kind;
 mod path;
 
 use crate::error::DirectoryError;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
-pub use kind::DirectoryKind;
 pub use path::{DirectoryPath, INTERNAL_STORAGE_DIRECTORY_NAME};
 
 const MAX_DIRECTORY_SEGMENT_LEN: usize = 255;
@@ -15,7 +13,7 @@ const MAX_DIRECTORY_SEGMENT_LEN: usize = 255;
 crate::gen_id_uuid_v7!(DirectoryId);
 
 impl DirectoryId {
-    /// 全局根目录使用固定标识，保证不同进程和首次建库得到相同的根节点。
+    /// 全局根目录使用 nil UUID，保证不同进程和首次建库得到相同的根节点。
     pub fn root() -> Self {
         Self::from_uuid(uuid::Uuid::nil())
     }
@@ -34,7 +32,6 @@ pub struct Directory {
     id: DirectoryId,
     parent_id: Option<DirectoryId>,
     name: String,
-    kind: DirectoryKind,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
     revision: u64,
@@ -42,20 +39,11 @@ pub struct Directory {
 
 impl Directory {
     pub fn new(parent_id: DirectoryId, name: impl Into<String>) -> Result<Self, DirectoryError> {
-        Self::new_with_kind(parent_id, name, DirectoryKind::default())
-    }
-
-    pub fn new_with_kind(
-        parent_id: DirectoryId,
-        name: impl Into<String>,
-        kind: DirectoryKind,
-    ) -> Result<Self, DirectoryError> {
         let now = Utc::now();
         Self::rehydrate(
             DirectoryId::new(),
             Some(parent_id),
             name.into(),
-            kind,
             now,
             now,
             1,
@@ -68,7 +56,6 @@ impl Directory {
             id: DirectoryId::root(),
             parent_id: None,
             name: String::new(),
-            kind: DirectoryKind::default(),
             created_at: now,
             updated_at: now,
             revision: 1,
@@ -81,7 +68,6 @@ impl Directory {
         id: DirectoryId,
         parent_id: Option<DirectoryId>,
         name: String,
-        kind: DirectoryKind,
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
         revision: u64,
@@ -124,7 +110,6 @@ impl Directory {
             id,
             parent_id,
             name,
-            kind,
             created_at,
             updated_at,
             revision,
@@ -143,10 +128,6 @@ impl Directory {
 
     pub fn name(&self) -> &str {
         &self.name
-    }
-
-    pub fn kind(&self) -> &DirectoryKind {
-        &self.kind
     }
 
     pub fn created_at(&self) -> DateTime<Utc> {
@@ -194,13 +175,6 @@ impl Directory {
             self.touch();
         }
         Ok(())
-    }
-
-    pub fn change_kind(&mut self, kind: DirectoryKind) {
-        if self.kind != kind {
-            self.kind = kind;
-            self.touch();
-        }
     }
 
     fn touch(&mut self) {

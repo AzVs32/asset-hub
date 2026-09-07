@@ -23,8 +23,7 @@ MUST:
 MUST NOT:
 
 - resolve configuration sources or parse surface-specific input;
-- choose transport, authentication-session, presentation, or interaction policy owned by an
-  application surface;
+- choose transport, presentation, or interaction policy owned by an application surface;
 - contain business workflows that belong in `asset-core::service`;
 - expose more concrete infrastructure than callers genuinely need;
 - retain construction-only catalogs, registries, executors, or the complete infrastructure
@@ -34,8 +33,8 @@ MUST NOT:
 ## Backend evolution
 
 The runtime does not expose concrete database pools. Application surfaces own their transport-local
-infrastructure, including HTTP authentication-session storage, and must inject only stable Core
-services or surface-local abstractions across this boundary.
+infrastructure and must inject only stable Core services or surface-local abstractions across this
+boundary.
 
 ## Tests
 

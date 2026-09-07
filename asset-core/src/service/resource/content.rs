@@ -5,21 +5,21 @@
 use super::{ReplaceResourceContent, ResourceContentStream, StorageKeyLocks, path_resolver};
 use crate::CoreError;
 use crate::domain::{
-    AccessContext, Checksum, ChecksumKind, DirectoryOperation, Resource, ResourceContent,
-    ResourceContentEditPolicy, ResourceContentReplacement, ResourceContentReplacementId,
-    ResourceId, StorageKey,
+    Checksum, ChecksumKind, Resource, ResourceContent, ResourceContentEditPolicy,
+    ResourceContentReplacement, ResourceContentReplacementId, ResourceId, StorageKey,
 };
 use crate::port::{
     BlobByteStream, ContentObjectStore, ContentReader, ContentStagingStore, LocatedResource,
     ResourceContentReplacementRepository, ResourceReadModel, ResourceStore, StagedBlob,
 };
-use crate::service::{AuthorizationService, IdempotencyOutcome, IdempotencyService, request_hash};
+use crate::service::{IdempotencyOutcome, IdempotencyService, request_hash};
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 use std::sync::{Arc, Mutex};
 
+/// Resource-content reads, streams, and replacement workflows.
 #[derive(Clone)]
 pub struct ContentService {
     read_model: Arc<dyn ResourceReadModel>,
@@ -59,19 +59,44 @@ impl ContentService {
         }
     }
 
-    pub fn secured<'a>(
-        &'a self,
-        authorization: &'a AuthorizationService,
-        context: &'a AccessContext,
-    ) -> SecuredContentService<'a> {
-        SecuredContentService {
-            service: self,
-            authorization,
-            context,
-        }
+    /// Read the complete content of a Resource by stable ID.
+    pub async fn get(&self, id: &ResourceId) -> Result<Option<Bytes>, CoreError> {
+        let Some(resource) = self.read_model.find_by_id(id).await? else {
+            return Ok(None);
+        };
+        self.get_resource_content_snapshot(&resource).await
     }
 
-    pub(crate) async fn get_resource_content_snapshot(
+    /// Stream Resource content by stable ID, optionally constrained to an inclusive byte range.
+    pub async fn stream(
+        &self,
+        id: &ResourceId,
+        range: Option<(u64, u64)>,
+    ) -> Result<Option<ResourceContentStream>, CoreError> {
+        let Some(resource) = self.read_model.find_by_id(id).await? else {
+            return Ok(None);
+        };
+        self.get_resource_content_stream_snapshot(&resource, range)
+            .await
+    }
+
+    /// Replace Resource content by stable ID while preserving the streaming, size, checksum,
+    /// idempotency, and durable-recovery workflow.
+    pub async fn replace(
+        &self,
+        id: &ResourceId,
+        command: ReplaceResourceContent,
+        data: BlobByteStream,
+    ) -> Result<Option<Resource>, CoreError> {
+        let Some(resource) = self.read_model.find_by_id(id).await? else {
+            return Ok(None);
+        };
+        self.replace_content_snapshot(resource, command, data)
+            .await
+            .map(Some)
+    }
+
+    async fn get_resource_content_snapshot(
         &self,
         located: &LocatedResource,
     ) -> Result<Option<Bytes>, CoreError> {
@@ -83,7 +108,7 @@ impl ContentService {
         self.reader.get(&storage_key).await
     }
 
-    pub(crate) async fn get_resource_content_stream_snapshot(
+    async fn get_resource_content_stream_snapshot(
         &self,
         located: &LocatedResource,
         range: Option<(u64, u64)>,
@@ -111,7 +136,7 @@ impl ContentService {
         }))
     }
 
-    pub(crate) async fn replace_content_snapshot(
+    async fn replace_content_snapshot(
         &self,
         located: LocatedResource,
         command: ReplaceResourceContent,
@@ -267,52 +292,6 @@ impl ContentService {
             .load(&resource_id)
             .await?
             .ok_or_else(|| CoreError::not_found("resource", resource_id.to_string()))
-    }
-
-    pub(super) async fn replace_content_bytes_snapshot(
-        &self,
-        resource: &mut Resource,
-        target_key: &StorageKey,
-        content: ResourceContent,
-        data: Bytes,
-    ) -> Result<(), CoreError> {
-        let replacement_id = ResourceContentReplacementId::new();
-        let staging_key = path_resolver::replacement_staging_key(replacement_id)?;
-        let backup_key = path_resolver::replacement_backup_key(replacement_id)?;
-        let staging = self.staging.create_staged(&staging_key).await?;
-        let expected_size = data.len() as u64;
-        let staged = match self
-            .staging
-            .append_staged(
-                &staging_key,
-                0,
-                Box::pin(futures_util::stream::once(async move { Ok(data) })),
-            )
-            .await
-        {
-            Ok(staged) if staged.bytes_written() == expected_size => staged,
-            Ok(staged) => {
-                let _ = self.staging.discard_staged(&staged).await;
-                return Err(CoreError::conflict(format!(
-                    "content size mismatch: expected {expected_size}, received {}",
-                    staged.bytes_written()
-                )));
-            }
-            Err(error) => {
-                let _ = self.staging.discard_staged(&staging).await;
-                return Err(error);
-            }
-        };
-
-        self.commit_staged_replacement(
-            resource,
-            target_key.clone(),
-            staged,
-            replacement_id,
-            backup_key,
-            content,
-        )
-        .await
     }
 
     async fn commit_staged_replacement(
@@ -506,72 +485,6 @@ impl ContentService {
     }
 }
 
-pub struct SecuredContentService<'a> {
-    service: &'a ContentService,
-    authorization: &'a AuthorizationService,
-    context: &'a AccessContext,
-}
-
-impl SecuredContentService<'_> {
-    async fn resource_for(
-        &self,
-        id: &ResourceId,
-        operation: DirectoryOperation,
-    ) -> Result<Option<LocatedResource>, CoreError> {
-        let resource = self.service.read_model.find_by_id(id).await?;
-        if let Some(resource) = &resource {
-            self.authorization
-                .require(self.context, resource.directory(), operation)
-                .await?;
-        }
-        Ok(resource)
-    }
-
-    pub async fn get(&self, id: &ResourceId) -> Result<Option<Bytes>, CoreError> {
-        let Some(resource) = self
-            .resource_for(id, DirectoryOperation::ReadResource)
-            .await?
-        else {
-            return Ok(None);
-        };
-        self.service.get_resource_content_snapshot(&resource).await
-    }
-
-    pub async fn stream(
-        &self,
-        id: &ResourceId,
-        range: Option<(u64, u64)>,
-    ) -> Result<Option<ResourceContentStream>, CoreError> {
-        let Some(resource) = self
-            .resource_for(id, DirectoryOperation::ReadResource)
-            .await?
-        else {
-            return Ok(None);
-        };
-        self.service
-            .get_resource_content_stream_snapshot(&resource, range)
-            .await
-    }
-
-    pub async fn replace(
-        &self,
-        id: &ResourceId,
-        command: ReplaceResourceContent,
-        data: BlobByteStream,
-    ) -> Result<Option<Resource>, CoreError> {
-        let Some(resource) = self
-            .resource_for(id, DirectoryOperation::ReplaceResourceContent)
-            .await?
-        else {
-            return Ok(None);
-        };
-        self.service
-            .replace_content_snapshot(resource, command, data)
-            .await
-            .map(Some)
-    }
-}
-
 fn stale_replacement(resource: &Resource) -> CoreError {
     CoreError::revision_conflict("resource", resource.id().to_string())
 }
@@ -658,12 +571,6 @@ pub(super) fn content_type_for_media(content: &ResourceContent) -> String {
 }
 
 const CONTENT_CHECKSUM_KIND: ChecksumKind = ChecksumKind::Sha256;
-
-pub(super) fn calculate_checksum(data: &[u8]) -> Result<Checksum, CoreError> {
-    let mut state = ChecksumState::new(CONTENT_CHECKSUM_KIND);
-    state.update(data);
-    state.finish()
-}
 
 pub(super) fn stream_with_checksum_tracking(
     data: BlobByteStream,

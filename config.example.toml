@@ -19,7 +19,7 @@ max_connections = 5
 # and Blob content can be migrated as one data domain.
 
 [resource_edit]
-# Maximum UTF-8 bytes accepted by interactive text editors and Plugin Frames.
+# Maximum UTF-8 bytes accepted by interactive text editors.
 max_text_bytes = 4194304
 
 [idempotency]
@@ -42,87 +42,3 @@ enabled = true
 debounce_milliseconds = 1000
 # Periodically reconcile the complete tree to recover changes missed while the app was stopped.
 reconcile_interval_seconds = 1800
-
-[plugin]
-# Hard execution budgets applied to every plugin call.
-max_content_bytes = 67108864
-# Content at or below this threshold may be embedded in the action JSON payload.
-max_inline_content_bytes = 4194304
-# Maximum raw byte chunk returned by one Wasm content_read call.
-max_content_read_bytes = 4194304
-max_input_bytes = 8388608
-max_output_bytes = 8388608
-max_concurrent_calls = 8
-memory_max_pages = 4096
-timeout_seconds = 20
-
-[plugin.grants]
-# A Manifest requests external access; the host grants it independently here.
-# Permit external plugins that request the matching delete permission. Built-in delete Actions do
-# not depend on these switches.
-resource_delete = false
-directory_delete = false
-# Requested hosts require exact matches. Wildcards are rejected.
-network_hosts = []
-# Filesystem requests must be absolute paths below one of these normalized roots.
-filesystem_read = []
-filesystem_write = []
-
-# Plugins are discovered from <blob.local.root>/.asset-hub/plugins/<plugin-id>/manifest.json.
-# Restart the service after installing, removing, or changing a plugin package.
-# Plugin manifest example (Manifest V3):
-# Use `capabilities.resource_kinds` for resource types, `capabilities.directory_kinds` for
-# directory types, `capabilities.resource_actions` for resource actions, and
-# `capabilities.directory_actions` for directory actions.
-# A kind-specific action can implement a singleton Host capability while retaining its own
-# provider-owned action ID. Resource actions recognize `thumbnail` and `edit`;
-# directory actions recognize `thumbnail` and `workspace`.
-# Build a local directory containing `manifest.json`, the fixed `plugin.wasm` runtime, and optional
-# root `index.html` plus Web assets. Run `asset plugin --install <path>`; the CLI snapshots and
-# verifies the directory, generates its installed lock, and resolves the canonical destination
-# below the configured Blob root. Startup only verifies the existing `manifest.lock.json` and never
-# modifies the package.
-#
-# {
-#   "manifest_version": 5,
-#   "plugin": {
-#     "id": "example.tools",
-#     "name": "Example Tools",
-#     "version": "0.1.0",
-#     "publisher": "example",
-#     "description": "Example external plugin."
-#   },
-#   "runtime": {
-#     "type": "extism",
-#     "plugin_api": "asset-hub.plugin-api@4"
-#   },
-#   "capabilities": {
-#     "resource_kinds": [
-#       {
-#         "kind": "example:document",
-#         "label": "Document",
-#         "supports_content": true
-#       }
-#     ],
-#     "resource_actions": [
-#       {
-#         "id": "example.tools.summarize",
-#         "label": "Summarize",
-#         "description": "Summarize this document",
-#         "handler": "summarize",
-#         "applies_to": {
-#           "kinds": ["example:document"]
-#         },
-#         "access": "read",
-#         "requires": {
-#           "content": true,
-#           "content_delivery": "reference"
-#         },
-#         "output": { "views": ["json"] }
-#       }
-#     ]
-#   },
-#   "permissions": {
-#     "allow": ["resource.read", "resource.content.read"]
-#   }
-# }

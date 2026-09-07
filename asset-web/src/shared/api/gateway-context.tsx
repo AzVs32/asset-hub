@@ -1,11 +1,5 @@
 import React from "react";
-import type {
-  AppGateways,
-  AssetWorkspaceGateway,
-  AuthGateway,
-  PluginHostGateway,
-  UserAdministrationGateway,
-} from "./gateways";
+import type { AppGateways, AssetWorkspaceGateway } from "./gateways";
 
 const GatewayContext = React.createContext<AppGateways | null>(null);
 
@@ -19,20 +13,8 @@ export function GatewayProvider({
   return <GatewayContext.Provider value={gateways}>{children}</GatewayContext.Provider>;
 }
 
-export function useAuthGateway(): AuthGateway {
-  return useGateways().auth;
-}
-
 export function useAssetWorkspaceGateway(): AssetWorkspaceGateway {
   return useGateways().assetWorkspace;
-}
-
-export function usePluginHostGateway(): PluginHostGateway {
-  return useGateways().pluginHost;
-}
-
-export function useUserAdministrationGateway(): UserAdministrationGateway {
-  return useGateways().userAdministration;
 }
 
 function useGateways(): AppGateways {

@@ -17,50 +17,38 @@ Before editing a module:
 
 ## Project model
 
-Asset Hub is a local-first asset management system implemented with
-hexagonal architecture and a microkernel-style plugin system.
+Asset Hub is a local-first asset management system implemented with hexagonal architecture.
 
 The important aggregates are:
 
 - `Resource`: an asset and its metadata/content reference.
 - `Directory`: an independent hierarchy aggregate identified by a stable UUID.
-- `User`: identity, role, status, and workspace boundary.
 
 ## Repository map
 
-- `asset-plugin-api`: runtime- and language-neutral plugin Manifest, protocol, and ABI contract.
-- `sdk/asset-rust-sdk`: public Rust plugin authoring SDK and runtime adapters.
-- `sdk/asset-web-sdk`: public browser Frame authoring SDK.
 - `asset-core`: workspace-internal domain, ports, and application services.
-- `asset-infra`: concrete SQLx, OpenDAL, filesystem, registry, manifest, and Extism adapters.
+- `asset-infra`: concrete SQLx repositories, OpenDAL storage, filesystem, and directory-index adapters.
 - `asset-runtime`: reusable runtime assembly and background-task ownership.
-- `asset-http`: Axum transport, authentication, DTOs, OpenAPI, and HTTP executable.
+- `asset-http`: Axum transport, DTOs, OpenAPI, and HTTP executable.
 - `asset-cli`: administration commands and CLI executable.
-- `asset-web`: React host using domain/application/adapter boundaries.
-- `plugins`: bundled external plugins that consume the authoring SDKs.
+- `asset-web`: React application using domain/application/adapter boundaries.
 
 ## Dependency rules
 
 MUST:
 
-- keep domain and service logic independent of Axum, SQLx, OpenDAL, Extism runtime objects, 
+- keep domain and service logic independent of Axum, SQLx, OpenDAL,
   and CLI parsing;
-- define host requirements as ports in `asset-core::port` and implement them in adapters;
-- keep external plugin contracts in `asset-plugin-api`;
-- use `ResourceService::secured` or an equivalently authorization-bound core use case for
-  user-scoped or untrusted resource mutations; trusted local maintenance commands must remain
-  explicit administrative operations;
+- define Core infrastructure requirements as ports in `asset-core::port` and implement them in adapters;
+- route resource and directory operations through their direct Core services; trusted local
+  maintenance commands must remain explicit administrative operations;
 - preserve a single composition root for each executable surface.
 
 MUST NOT:
 
-- make plugin runtimes depend on `asset-core`, `asset-infra`, `asset-runtime`, `asset-http`,
-  or `asset-cli`;
-- expose SQLx pools, OpenDAL operators, filesystem paths, Extism handles, or HTTP DTOs through
+- expose SQLx pools, OpenDAL operators, filesystem paths, or HTTP DTOs through
   core domain APIs;
-- duplicate authorization policy in a transport or repository adapter;
 - bypass core services by mutating repositories or blob storage directly from handlers or commands;
-- re-export plugin API types through unrelated host crates merely for convenience.
 
 ## Current implementation facts
 
@@ -68,9 +56,7 @@ Treat the following as facts until the implementation and documentation are chan
 
 - database backend: SQLite only;
 - blob backend: local filesystem through OpenDAL only;
-- HTTP session store: SQLite;
 - PostgreSQL migrations directory: placeholder only;
-- plugin runtime: Extism/Wasm;
 - root directory ID: nil UUID `00000000-0000-0000-0000-000000000000`.
 
 ## AI-first test policy
@@ -83,9 +69,9 @@ Keep a test only when reading or running it gives an AI material information tha
 obvious from the owning implementation and documentation. The strongest reasons to keep one are:
 
 - a non-obvious domain invariant, state transition, path/identity rule, or security boundary;
-- authorization, optimistic concurrency, recovery, compensation, or failure ordering;
+- optimistic concurrency, recovery, compensation, or failure ordering;
 - a small representative persistence, migration, streaming, or atomic-filesystem guarantee;
-- a public HTTP, OpenAPI, Plugin API, Manifest, ABI, golden-wire, or frame-host compatibility boundary;
+- a public HTTP, OpenAPI, golden-wire, or compatibility boundary;
 - a concise regression for a real bug whose cause would otherwise be easy for an AI to reintroduce.
 
 Delete or do not add tests that primarily create context noise, including:
@@ -115,5 +101,5 @@ After making changes:
 - run formatting and lint checks for every affected language;
 - run tests for the affected crates or packages;
 - run broader workspace checks when changing public contracts, shared ports, migrations, 
-  runtime assembly, or plugin protocols;
+  runtime assembly;
 - do not claim validation succeeded unless the command was actually run.

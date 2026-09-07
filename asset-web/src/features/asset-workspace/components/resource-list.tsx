@@ -1,8 +1,8 @@
 import CreateNewFolderIcon from "@mui/icons-material/CreateNewFolder";
+import DeleteIcon from "@mui/icons-material/DeleteOutline";
 import FolderIcon from "@mui/icons-material/Folder";
 import MoreVertIcon from "@mui/icons-material/MoreVert";
 import RefreshIcon from "@mui/icons-material/Refresh";
-import SearchIcon from "@mui/icons-material/Search";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
 import {
   Alert,
@@ -15,7 +15,6 @@ import {
   CircularProgress,
   Divider,
   IconButton,
-  InputAdornment,
   List,
   ListItem,
   ListItemAvatar,
@@ -25,22 +24,17 @@ import {
   MenuItem,
   Pagination,
   Stack,
-  TextField,
   Typography,
 } from "@mui/material";
 import React from "react";
-import type { Directory, DirectoryAction, DirectoryListing } from "@/domain/directory";
+import type { Directory, DirectoryListing } from "@/domain/directory";
 import { parentDirectory } from "@/domain/directory-path";
-import type { Resource, ResourceAction, ResourceFilters, ResourceKind } from "@/domain/resource";
-import { usePluginKernel } from "@/kernel/plugin-kernel";
-import { coreDirectoryWorkspaceSlots } from "@/kernel/slots";
+import type { Resource, ResourceFilters } from "@/domain/resource";
 import { formatBytes, formatDate } from "@/shared/format";
 import { DirectoryThumbnail, ResourceThumbnail } from "./asset-thumbnail";
-import { KindSelect } from "./kind-select";
 
 export function ResourceList({
   listing,
-  kinds,
   filters,
   selectedId,
   selectedDirectoryId,
@@ -50,14 +44,15 @@ export function ResourceList({
   onOpenDirectory,
   onSelect,
   onSelectDirectory,
-  onAction,
-  onDirectoryAction,
+  onDownloadResource,
+  onDeleteResource,
+  onDownloadDirectory,
+  onDeleteDirectory,
   onRefresh,
   onUpload,
   onCreateFolder,
 }: {
   listing: DirectoryListing | undefined;
-  kinds: ResourceKind[];
   filters: ResourceFilters;
   selectedId: string | null;
   selectedDirectoryId: string | null;
@@ -67,8 +62,10 @@ export function ResourceList({
   onOpenDirectory: (path: string) => void;
   onSelect: (resource: Resource) => void;
   onSelectDirectory: (directory: Directory) => void;
-  onAction: (resource: Resource, action: ResourceAction) => void;
-  onDirectoryAction: (directory: Directory, action: DirectoryAction) => void;
+  onDownloadResource: (resource: Resource) => void;
+  onDeleteResource: (resource: Resource) => void;
+  onDownloadDirectory: (directory: Directory) => void;
+  onDeleteDirectory: (directory: Directory) => void;
   onRefresh: () => void;
   onUpload: () => void;
   onCreateFolder: () => void;
@@ -102,38 +99,6 @@ export function ResourceList({
         }
       />
       <Divider />
-      <Box
-        sx={{
-          display: "grid",
-          gridTemplateColumns: { xs: "1fr", md: "1fr 1fr auto" },
-          gap: 1.5,
-          p: 2,
-        }}
-      >
-        <TextField
-          size="small"
-          placeholder="Search resources"
-          value={filters.query}
-          onChange={(event) => onFilters({ query: event.target.value, page: 1 })}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <SearchIcon fontSize="small" />
-              </InputAdornment>
-            ),
-          }}
-          inputProps={{ "aria-label": "Search resources" }}
-        />
-        <KindSelect
-          label="Resource kind"
-          kinds={kinds}
-          emptyOption={{ label: "All kinds" }}
-          size="small"
-          value={filters.kind}
-          onChange={(event) => onFilters({ kind: event.target.value, page: 1 })}
-        />
-      </Box>
-      <Divider />
       <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
         {error ? (
           <Alert severity="error" sx={{ m: 2 }}>
@@ -146,7 +111,7 @@ export function ResourceList({
           </Box>
         ) : null}
         <List disablePadding>
-          {parent !== null ? <FolderRow name=".." onClick={() => onOpenDirectory(parent)} /> : null}
+          {parent !== null ? <FolderRow name=".." onOpen={() => onOpenDirectory(parent)} /> : null}
           {listing?.folders.map((folder) => (
             <FolderRow
               key={folder.id}
@@ -155,7 +120,8 @@ export function ResourceList({
               selected={folder.id === selectedDirectoryId}
               onSelect={() => onSelectDirectory(folder)}
               onOpen={() => onOpenDirectory(folder.path)}
-              onAction={(action) => onDirectoryAction(folder, action)}
+              onDownload={() => onDownloadDirectory(folder)}
+              onDelete={() => onDeleteDirectory(folder)}
             />
           ))}
           {listing?.resources.items.map((resource) => (
@@ -164,7 +130,8 @@ export function ResourceList({
               resource={resource}
               selected={resource.id === selectedId}
               onSelect={() => onSelect(resource)}
-              onAction={(action) => onAction(resource, action)}
+              onDownload={() => onDownloadResource(resource)}
+              onDelete={() => onDeleteResource(resource)}
             />
           ))}
         </List>
@@ -198,35 +165,29 @@ function FolderRow({
   name,
   directory,
   selected = false,
-  onClick,
   onSelect,
   onOpen,
-  onAction,
+  onDownload,
+  onDelete,
 }: {
   name: string;
   directory?: Directory;
   selected?: boolean;
-  onClick?: () => void;
   onSelect?: () => void;
   onOpen?: () => void;
-  onAction?: (action: DirectoryAction) => void;
+  onDownload?: () => void;
+  onDelete?: () => void;
 }) {
-  const kernel = usePluginKernel();
-  const actions = directory
-    ? kernel.directoryActionsAtCoreSlot(directory, coreDirectoryWorkspaceSlots.directoryContextMenu)
-    : [];
   return (
     <ListItem
       disablePadding
       secondaryAction={
-        actions.length && onAction ? (
-          <ActionsMenu
-            items={actions.map((action) => ({
-              id: action.id,
-              label: action.label,
-              destructive: action.ui.destructive,
-              onSelect: () => onAction(action),
-            }))}
+        directory && onDownload && onDelete ? (
+          <RowActions
+            items={[
+              { id: "download", label: "Download", onSelect: onDownload },
+              { id: "delete", label: "Delete", destructive: true, onSelect: onDelete },
+            ]}
           />
         ) : null
       }
@@ -234,7 +195,7 @@ function FolderRow({
       <ListItemButton
         selected={selected}
         aria-pressed={directory ? selected : undefined}
-        onClick={onSelect ?? onClick}
+        onClick={onSelect}
         onDoubleClick={onOpen}
         onKeyDown={(event) => {
           if (event.key === "Enter" && onOpen) {
@@ -245,7 +206,7 @@ function FolderRow({
       >
         <ListItemAvatar>
           {directory ? (
-            <DirectoryThumbnail directory={directory} />
+            <DirectoryThumbnail />
           ) : (
             <Avatar
               sx={{
@@ -257,7 +218,7 @@ function FolderRow({
             </Avatar>
           )}
         </ListItemAvatar>
-        <ListItemText primary={name} secondary={directory?.kind ?? "Parent directory"} />
+        <ListItemText primary={name} />
       </ListItemButton>
     </ListItem>
   );
@@ -267,37 +228,29 @@ function ResourceRow({
   resource,
   selected,
   onSelect,
-  onAction,
+  onDownload,
+  onDelete,
 }: {
   resource: Resource;
   selected: boolean;
   onSelect: () => void;
-  onAction: (action: ResourceAction) => void;
+  onDownload: () => void;
+  onDelete: () => void;
 }) {
-  const kernel = usePluginKernel();
-  const actions = kernel.resourceActionsAtCoreSlot(
-    resource,
-    coreDirectoryWorkspaceSlots.resourceContextMenu,
-  );
   const status = resourceStatusLabel(resource.state.effective);
-  const menuItems = actions.map((action) => ({
-      id: action.id,
-      label: action.label,
-      destructive: action.ui.destructive,
-      onSelect: () => onAction(action),
-    }));
+  const items = [
+    ...(resource.content ? [{ id: "download", label: "Download", onSelect: onDownload }] : []),
+    { id: "delete", label: "Delete", destructive: true, onSelect: onDelete },
+  ];
   return (
-    <ListItem
-      disablePadding
-      secondaryAction={menuItems.length ? <ActionsMenu items={menuItems} /> : null}
-    >
+    <ListItem disablePadding secondaryAction={<RowActions items={items} />}>
       <ListItemButton selected={selected} onClick={onSelect}>
         <ListItemAvatar>
-          <ResourceThumbnail resource={resource} />
+          <ResourceThumbnail />
         </ListItemAvatar>
         <ListItemText
           primary={resource.name}
-          secondary={`${status}${resource.kind} · ${formatBytes(resource.content?.size ?? 0)} · ${formatDate(resource.updatedAt)}`}
+          secondary={`${status}${formatBytes(resource.content?.size ?? 0)} · ${formatDate(resource.updatedAt)}`}
         />
       </ListItemButton>
     </ListItem>
@@ -318,7 +271,7 @@ function resourceStatusLabel(status: Resource["state"]["effective"]): string {
   }
 }
 
-function ActionsMenu({
+function RowActions({
   items,
 }: {
   items: { id: string; label: string; destructive?: boolean; onSelect: () => void }[];
@@ -343,6 +296,7 @@ function ActionsMenu({
             }}
             sx={item.destructive ? { color: "error.main" } : undefined}
           >
+            {item.destructive ? <DeleteIcon fontSize="small" sx={{ mr: 1 }} /> : null}
             {item.label}
           </MenuItem>
         ))}

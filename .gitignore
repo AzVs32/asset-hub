@@ -6,8 +6,6 @@ asset-web/node_modules/
 asset-web/dist/
 asset-web/coverage/
 asset-web/*.tsbuildinfo
-sdk/asset-web-sdk/node_modules/
-sdk/asset-web-sdk/coverage/
 
 # Rust compiler and profiling artifacts
 **/*.rs.bk
@@ -42,6 +40,8 @@ config.toml
 
 # AI assistant local state
 .codex
+.claude
+.zcode
 .cline
 
 # macOS

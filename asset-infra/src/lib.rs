@@ -1,23 +1,8 @@
-pub mod action;
-mod builtin_catalog;
 pub mod config;
 mod directory_index;
-pub mod kind;
 pub mod migration;
-pub mod password;
-pub mod plugin;
-mod plugin_manifest;
 pub mod sqlite;
 pub mod storage;
-
-/// Shared filesystem boundary for installing, uninstalling, and loading plugin packages.
-pub mod plugin_package {
-    pub use crate::plugin_manifest::{
-        InstalledPluginPackage, LoadedPlugin, MAX_PLUGIN_LOCK_BYTES, MAX_PLUGIN_MANIFEST_BYTES,
-        MAX_PLUGIN_WASM_BYTES, MAX_PLUGIN_WEB_BYTES, PluginCatalog, generate_plugin_manifest_lock,
-        install_plugin_package, load_verified_plugin_package, uninstall_plugin_package,
-    };
-}
 
 use asset_core::{
     CoreError, port::BlobHealth, port::ContentObjectStore, port::ContentReader,
@@ -25,13 +10,12 @@ use asset_core::{
     port::DirectoryRelocationStore, port::DirectoryStorage, port::DirectoryStore,
     port::IdempotencyRepository, port::ResourceContentReplacementRepository,
     port::ResourceMaintenanceReadModel, port::ResourceReadModel, port::ResourceRelocationStore,
-    port::ResourceStore, port::StorageScanner, port::UploadSessionRepository, port::UserQuery,
-    port::UserRepository,
+    port::ResourceStore, port::StorageScanner, port::UploadSessionRepository,
 };
 use config::{AssetInfraConfig, BlobBackend, DatabaseBackend};
 use directory_index::InMemoryDirectoryIndex;
 use sqlite::{
-    SqliteDatabase, SqliteDirectoryStore, SqliteIdempotencyRepository, SqliteIdentityRepository,
+    SqliteDatabase, SqliteDirectoryStore, SqliteIdempotencyRepository,
     SqliteResourceContentReplacementRepository, SqliteResourceStore, SqliteUploadSessionRepository,
 };
 use std::sync::Arc;
@@ -40,15 +24,13 @@ use storage::{FileSystemScanner, OpenDalBlobStorage};
 
 /// 根据配置的后端选型初始化具体基础设施适配器。
 ///
-/// 当前支持 SQLite 数据库和本地 Blob 存储。插件 catalog、运行时执行器和 Core service
-/// 由 `asset-runtime` 按确定顺序装配。
+/// 当前支持 SQLite 数据库和本地 Blob 存储；Core service 由 `asset-runtime` 装配。
 pub struct AssetInfrastructure {
     /// 实际生效的基础设施配置。
     config: AssetInfraConfig,
     resource_store: Arc<SqliteResourceStore>,
     directory_store: Arc<SqliteDirectoryStore>,
     directory_index: Arc<InMemoryDirectoryIndex>,
-    identity_repository: Arc<SqliteIdentityRepository>,
     upload_session_repository: Arc<SqliteUploadSessionRepository>,
     content_replacement_repository: Arc<SqliteResourceContentReplacementRepository>,
     idempotency_repository: Arc<SqliteIdempotencyRepository>,
@@ -88,7 +70,6 @@ impl AssetInfrastructure {
         let directory_index = Arc::new(InMemoryDirectoryIndex::from_directories(
             directory_store.load_all().await?,
         )?);
-        let identity_repository = Arc::new(SqliteIdentityRepository::new(database.pool().clone()));
         let upload_session_repository =
             Arc::new(SqliteUploadSessionRepository::new(database.pool().clone()));
         let content_replacement_repository = Arc::new(
@@ -101,7 +82,6 @@ impl AssetInfrastructure {
             resource_store,
             directory_store,
             directory_index,
-            identity_repository,
             upload_session_repository,
             content_replacement_repository,
             idempotency_repository,
@@ -146,14 +126,6 @@ impl AssetInfrastructure {
 
     pub fn directory_query(&self) -> Arc<dyn DirectoryQuery> {
         self.directory_index.clone()
-    }
-
-    pub fn user_repository(&self) -> Arc<dyn UserRepository> {
-        self.identity_repository.clone()
-    }
-
-    pub fn user_query(&self) -> Arc<dyn UserQuery> {
-        self.identity_repository.clone()
     }
 
     /// 返回对象内容只读端口。

@@ -1,13 +1,16 @@
 use super::*;
 use asset_core::domain::{
-    AccessContext, Checksum, DirectoryId, DirectoryKind, DirectoryPath, Resource, ResourceContent,
-    ResourceContentReplacement, ResourceKind, StorageKey, User, UserId, UserRole,
+    Checksum, DirectoryId, DirectoryPath, IdempotencyKey, Resource, ResourceContent,
+    ResourceContentReplacement, StorageKey, UploadStatus,
 };
-use asset_core::port::{DirectoryRevisionUpdate, ListResources, ResourceRelocation};
+use asset_core::port::{
+    BlobByteStream, DirectoryRevisionUpdate, ListResources, ResourceRelocation,
+};
 use asset_infra::AssetInfrastructure;
 use asset_infra::config::{
     BlobConfig, DatabaseConfig, LocalBlobConfig, LocalBlobSyncConfig, SqliteDatabaseConfig,
 };
+use bytes::Bytes;
 use std::time::Duration;
 
 fn recovery_config(root: std::path::PathBuf) -> AssetInfraConfig {
@@ -78,6 +81,111 @@ fn write(root: &std::path::Path, key: &StorageKey, bytes: &[u8]) {
     let path = root.join(key.as_str());
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, bytes).unwrap();
+}
+
+fn upload_stream(bytes: &'static [u8]) -> BlobByteStream {
+    Box::pin(futures_util::stream::iter([Ok(Bytes::from_static(bytes))]))
+}
+
+#[tokio::test]
+async fn upload_resumes_and_recovers_after_restart() {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "asset-hub-direct-upload-{}-{nonce}",
+        std::process::id()
+    ));
+    let config = recovery_config(root.clone());
+    let runtime = AssetRuntime::new(config.clone()).await.unwrap();
+    let directory = runtime
+        .directory_service()
+        .create(&DirectoryId::root(), "uploads")
+        .await
+        .unwrap();
+    let checksum =
+        Checksum::sha256("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824")
+            .unwrap();
+    let command =
+        asset_core::service::CreateUpload::new("note.txt", directory.id(), 5, checksum.clone())
+            .with_idempotency_key(IdempotencyKey::new("direct-upload-note").unwrap());
+    let uploads = runtime.upload_service();
+    let session = uploads.create(command.clone()).await.unwrap();
+    let replay = uploads.create(command).await.unwrap();
+    assert_eq!(replay.id(), session.id());
+    assert_eq!(
+        uploads
+            .append(
+                &session.id(),
+                0,
+                Checksum::sha256(
+                    "372f7e2fd2d01ce2a1d71dc072acbba4c6fd25a1087cd7f153f4ec0ce37e1ede",
+                )
+                .unwrap(),
+                upload_stream(b"he"),
+            )
+            .await
+            .unwrap()
+            .offset(),
+        2
+    );
+
+    drop(runtime);
+
+    let runtime = AssetRuntime::new(config.clone()).await.unwrap();
+    let uploads = runtime.upload_service();
+    assert_eq!(uploads.status(&session.id()).await.unwrap().offset(), 2);
+    uploads
+        .append(
+            &session.id(),
+            2,
+            Checksum::sha256("13d896353557f29e6c8aac4bde65c743f4206df820ff8328ae567f924189d339")
+                .unwrap(),
+            upload_stream(b"llo"),
+        )
+        .await
+        .unwrap();
+    uploads.request_finalization(&session.id()).await.unwrap();
+
+    drop(runtime);
+
+    let runtime = AssetRuntime::new(config).await.unwrap();
+    let uploads = runtime.upload_service();
+    let mut completed = None;
+    for _ in 0..100 {
+        let status = uploads.status(&session.id()).await.unwrap();
+        if status.status() == UploadStatus::Completed {
+            completed = Some(status);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let completed = completed.expect("upload finalization was not recovered after restart");
+    assert!(
+        runtime
+            .resource_service()
+            .get(&completed.resource_id())
+            .await
+            .unwrap()
+            .is_some()
+    );
+
+    let cancelled = uploads
+        .create(asset_core::service::CreateUpload::new(
+            "cancelled.txt",
+            directory.id(),
+            0,
+            Checksum::sha256("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+                .unwrap(),
+        ))
+        .await
+        .unwrap();
+    uploads.abort(&cancelled.id()).await.unwrap();
+    assert!(uploads.status(&cancelled.id()).await.is_err());
+
+    drop(runtime);
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[tokio::test]
@@ -536,9 +644,7 @@ async fn resource_relocation_rolls_back_physical_move_when_a_newer_revision_wins
     .unwrap();
 
     let mut concurrent = resource.clone();
-    concurrent
-        .change_kind(ResourceKind::try_new("test:changed").unwrap())
-        .unwrap();
+    concurrent.rename("concurrent.txt").unwrap();
     assert!(
         infrastructure
             .resource_store()
@@ -560,7 +666,7 @@ async fn resource_relocation_rolls_back_physical_move_when_a_newer_revision_wins
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(current.kind(), concurrent.kind());
+    assert_eq!(current.name(), concurrent.name());
     assert_eq!(current.revision(), concurrent.revision());
     assert!(root.join(source_key.as_str()).is_file());
     assert!(!root.join(destination_key.as_str()).exists());
@@ -572,68 +678,6 @@ async fn resource_relocation_rolls_back_physical_move_when_a_newer_revision_wins
             .unwrap()
             .is_empty()
     );
-
-    drop(infrastructure);
-    drop(runtime);
-    std::fs::remove_dir_all(root).unwrap();
-}
-
-#[tokio::test]
-async fn secured_services_reject_foreign_workspace_ids() {
-    let (root, runtime, infrastructure) = recovery_environment("workspace-authorization").await;
-    let provisioning = runtime.directory_provisioning_service();
-    let alice_workspace = provisioning
-        .provision_path(&DirectoryPath::from_path("workspaces/alice").unwrap())
-        .await
-        .unwrap();
-    let bob_workspace = provisioning
-        .provision_path(&DirectoryPath::from_path("workspaces/bob").unwrap())
-        .await
-        .unwrap();
-    let alice = User::new(
-        "alice",
-        "credential-hash",
-        UserRole::Member,
-        alice_workspace.id(),
-    )
-    .unwrap();
-    infrastructure
-        .user_repository()
-        .create(&alice)
-        .await
-        .unwrap();
-    let foreign = Resource::builder("private.txt")
-        .with_directory_id(bob_workspace.id())
-        .build()
-        .unwrap();
-    infrastructure
-        .resource_store()
-        .insert(&foreign)
-        .await
-        .unwrap();
-
-    let context = AccessContext::member(alice.id());
-    let authorization = runtime.authorization_service();
-    let foreign_resource = runtime
-        .resource_service()
-        .secured(&authorization, &context)
-        .get(&foreign.id())
-        .await;
-    assert!(
-        matches!(
-            foreign_resource,
-            Err(asset_core::CoreError::Forbidden { .. })
-        ),
-        "foreign resource lookup result was {foreign_resource:?}"
-    );
-    assert!(matches!(
-        runtime
-            .directory_service()
-            .secured(&authorization, &context)
-            .find_by_id(&bob_workspace.id())
-            .await,
-        Err(asset_core::CoreError::Forbidden { .. })
-    ));
 
     drop(infrastructure);
     drop(runtime);
@@ -669,12 +713,14 @@ async fn find_resource(
     directory: &DirectoryPath,
     name: &str,
 ) -> Option<Resource> {
-    let service = runtime.resource_service();
-    let authorization = runtime.authorization_service();
-    let context = AccessContext::administrator(UserId::new());
-    let page = service
-        .secured(&authorization, &context)
-        .list(directory, ListResources::new(100, 0, DirectoryId::root()))
+    let directory = runtime
+        .directory_service()
+        .resolve_path(directory)
+        .await
+        .ok()?;
+    let page = runtime
+        .resource_service()
+        .list(ListResources::new(100, 0, directory.id()))
         .await
         .ok()?;
     page.items
@@ -724,21 +770,6 @@ async fn local_storage_changes_are_synchronized_automatically() {
         ..AssetInfraConfig::default()
     };
     let mut runtime = AssetRuntime::new(config).await.unwrap();
-    let service = runtime.resource_service();
-    assert!(!service.kind_definitions().is_empty());
-    assert!(
-        !runtime
-            .action_orchestrator()
-            .describe_kind_actions(&ResourceKind::default())
-            .is_empty()
-    );
-    assert!(!runtime.directory_service().kind_definitions().is_empty());
-    assert!(
-        !runtime
-            .action_orchestrator()
-            .describe_directory_kind_actions(&DirectoryKind::default())
-            .is_empty()
-    );
     runtime.start_storage_sync().await.unwrap();
     let directory = DirectoryPath::from_path("documents").unwrap();
     let directory_path = root.join("documents");
@@ -809,17 +840,18 @@ async fn local_storage_changes_are_synchronized_automatically() {
         "removed directory should be synchronized"
     );
 
-    let managed_path = DirectoryPath::from_path("managed-empty").unwrap();
     let managed = runtime
-        .directory_provisioning_service()
-        .provision_path(&managed_path)
+        .directory_service()
+        .create(&DirectoryId::root(), "managed-empty")
         .await
         .unwrap();
+    let managed_path = managed.path().clone();
     assert!(root.join(managed_path.path()).is_dir());
+    let directories = runtime.directory_service();
+    let managed = directories.find_by_id(&managed.id()).await.unwrap();
     assert!(
-        runtime
-            .directory_service()
-            .delete_if_empty(&managed.id(), None)
+        directories
+            .delete(&managed.id(), managed.directory().revision())
             .await
             .unwrap()
     );

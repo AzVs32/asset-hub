@@ -1,12 +1,3 @@
-import type { ActionAccess, ActionUi, DefinitionOrigin } from "./action";
-import type {
-  PluginViewKind,
-  ResourceActionCapabilityId,
-  ResourceActionEffectKind,
-} from "./plugin";
-
-export type { ResourceActionEffectKind } from "./plugin";
-
 export type ResourceContentDelivery = "auto" | "inline" | "reference";
 export type ResourceContentState = "absent" | "pending" | "verified" | "failed";
 export type ResourceEffectiveState =
@@ -30,42 +21,16 @@ export interface ResourceContent {
   verificationError: string | null;
 }
 
-export interface ResourceAction {
-  id: string;
-  origin: DefinitionOrigin;
-  provides: ResourceActionCapabilityId | null;
-  label: string;
-  description: string | null;
-  access: ActionAccess;
-  requires: { content: boolean; contentDelivery: ResourceContentDelivery };
-  output: { views: PluginViewKind[]; effects: ResourceActionEffectKind[] };
-  ui: ActionUi;
-  appliesTo: { kinds: string[]; mimeTypes: string[]; extensions: string[] };
-}
-
 export interface Resource {
   id: string;
   name: string;
   directoryId: string;
   directory: string;
-  kind: string;
   state: ResourceState;
   content: ResourceContent | null;
-  actions: ResourceAction[];
   createdAt: string;
   updatedAt: string;
   revision: number;
-}
-
-export interface ResourceKind {
-  kind: string;
-  parent: string | null;
-  ancestors: string[];
-  label: string;
-  supportsContent: boolean;
-  origin: DefinitionOrigin;
-  actions: ResourceAction[];
-  detect: { mimeTypes: string[]; extensions: string[] } | null;
 }
 
 export interface ResourcePage {
@@ -79,14 +44,11 @@ export interface ResourceFilters {
   directory: string;
   page: number;
   limit: number;
-  query: string;
-  kind: string;
 }
 
 export interface ResourceDraft {
   name: string;
   directory: string;
-  kind: string;
 }
 
 export interface UploadDraft {

@@ -3,7 +3,6 @@ CREATE TABLE directories (
     id TEXT PRIMARY KEY NOT NULL,
     parent_id TEXT,
     name TEXT NOT NULL,
-    kind TEXT NOT NULL,
     revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -13,18 +12,16 @@ CREATE TABLE directories (
         (id = '00000000-0000-0000-0000-000000000000' AND parent_id IS NULL AND name = '')
         OR
         (id <> '00000000-0000-0000-0000-000000000000' AND parent_id IS NOT NULL AND length(name) > 0)
-    ),
-    CHECK (kind LIKE '%:%')
+    )
 );
 
 -- 迁移直接建立唯一全局根节点。它是普通持久化聚合，而不是查询时伪造的隐式路径。
 INSERT INTO directories (
-    id, parent_id, name, kind, created_at, updated_at
+    id, parent_id, name, created_at, updated_at
 ) VALUES (
     '00000000-0000-0000-0000-000000000000',
     NULL,
     '',
-    'core:directory',
     strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
     strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 );

@@ -1,21 +1,15 @@
-use crate::auth::{self, AuthBackend};
 use crate::handlers;
 use crate::openapi::ApiDoc;
-use crate::session_store::SessionStoreHealth;
-use crate::settings::{CorsPolicy, RouterOptions, SessionOptions};
+use crate::settings::{CorsPolicy, RouterOptions};
 use crate::state::{HttpComposition, HttpState};
-use asset_core::service::UserService;
 use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderName, Method, StatusCode};
-use axum::middleware;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use axum_login::AuthManagerLayerBuilder;
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
-use tower_sessions::{Expiry, SessionManagerLayer, cookie::SameSite, session_store::SessionStore};
 use utoipa::OpenApi;
 
 async fn openapi_document() -> Json<utoipa::openapi::OpenApi> {
@@ -24,15 +18,9 @@ async fn openapi_document() -> Json<utoipa::openapi::OpenApi> {
 
 /// Build the HTTP router from one explicit composition bundle and transport policy.
 pub fn build_router(composition: HttpComposition, options: RouterOptions) -> Router {
-    let mut router = Router::new()
+    let router = Router::new()
         .route("/health", get(handlers::health))
         .route("/api-docs/openapi.json", get(openapi_document))
-        .route(
-            "/plugins/{plugin_id}/{*path}",
-            get(handlers::plugin_web_asset),
-        )
-        .route("/resource-kinds", get(handlers::list_resource_kinds))
-        .route("/directory-kinds", get(handlers::list_directory_kinds))
         .route(
             "/directories",
             get(handlers::list_directory).post(handlers::create_directory),
@@ -53,17 +41,7 @@ pub fn build_router(composition: HttpComposition, options: RouterOptions) -> Rou
         .route(
             "/resources/{id}/download",
             get(handlers::download_resource_content),
-        )
-        .route(
-            "/resources/{id}/actions/{action}",
-            post(handlers::execute_resource_action)
-                .layer(DefaultBodyLimit::max(handlers::MAX_ACTION_REQUEST_BYTES)),
         );
-    router = router.route(
-        "/directories/{id}/actions/{action}",
-        post(handlers::execute_directory_action)
-            .layer(DefaultBodyLimit::max(handlers::MAX_ACTION_REQUEST_BYTES)),
-    );
 
     let upload_router = Router::new()
         .route("/uploads", post(handlers::create_upload))
@@ -120,49 +98,6 @@ pub fn build_router(composition: HttpComposition, options: RouterOptions) -> Rou
         .with_state(HttpState::new(composition))
 }
 
-/// 为既有 API 增加由 host 提供的会话存储、登录接口和登录保护。
-pub fn with_authentication<S>(
-    router: Router,
-    users: UserService,
-    session_store: S,
-    session_health: SessionStoreHealth,
-    session_options: &SessionOptions,
-) -> Result<Router, Box<dyn std::error::Error>>
-where
-    S: SessionStore + Clone,
-{
-    let backend = AuthBackend::new(users);
-    let inactivity_seconds = i64::try_from(session_options.inactivity_timeout.as_secs())?;
-    let session_layer = SessionManagerLayer::new(session_store)
-        .with_secure(session_options.cookie_secure)
-        .with_http_only(true)
-        .with_same_site(SameSite::Strict)
-        .with_expiry(Expiry::OnInactivity(time::Duration::seconds(
-            inactivity_seconds,
-        )))
-        .with_name("asset_hub_session");
-    let auth_layer = AuthManagerLayerBuilder::new(backend, session_layer).build();
-
-    let protected = router.route_layer(middleware::from_fn(auth::authorize_request));
-    let public = Router::new()
-        .route(
-            "/auth/login",
-            post(auth::login).layer(DefaultBodyLimit::max(auth::MAX_LOGIN_REQUEST_BYTES)),
-        )
-        .route("/auth/logout", post(auth::logout))
-        .route("/auth/me", get(auth::me))
-        .route("/auth/users", get(auth::list_users).post(auth::create_user))
-        .route(
-            "/auth/users/{id}",
-            axum::routing::patch(auth::update_user_status),
-        );
-
-    Ok(protected
-        .merge(public)
-        .layer(auth_layer)
-        .layer(axum::Extension(session_health)))
-}
-
 fn cors_layer(policy: CorsPolicy) -> CorsLayer {
     let layer = CorsLayer::new()
         .allow_methods([
@@ -174,7 +109,6 @@ fn cors_layer(policy: CorsPolicy) -> CorsLayer {
         ])
         .allow_headers([
             HeaderName::from_static("content-type"),
-            HeaderName::from_static("authorization"),
             HeaderName::from_static("upload-offset"),
             HeaderName::from_static("upload-checksum"),
             HeaderName::from_static("content-sha256"),
@@ -188,7 +122,7 @@ fn cors_layer(policy: CorsPolicy) -> CorsLayer {
 
     match policy {
         CorsPolicy::None => layer,
-        CorsPolicy::Origins(origins) => layer.allow_origin(origins).allow_credentials(true),
+        CorsPolicy::Origins(origins) => layer.allow_origin(origins),
     }
 }
 

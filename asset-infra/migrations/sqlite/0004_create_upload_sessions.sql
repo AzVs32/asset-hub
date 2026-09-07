@@ -4,16 +4,12 @@ CREATE TABLE upload_sessions (
     id TEXT PRIMARY KEY NOT NULL,
     -- finalization 开始前预先分配的 Resource ID；Resource 记录仅在内容发布成功后创建。
     resource_id TEXT NOT NULL UNIQUE,
-    -- 会话所有者；仅所有者可继续、完成或放弃上传。
-    owner_id TEXT NOT NULL,
     -- Optional durable link to the idempotent create-upload request that created this session.
     idempotency_key TEXT UNIQUE,
     -- 最终 Resource 的文件名。
     name TEXT NOT NULL,
     -- 目标目录稳定身份；最终 StorageKey 在发布时由当前目录投影解析。
     directory_id TEXT NOT NULL,
-    -- 最终 Resource 使用的已注册资源类型。
-    kind TEXT NOT NULL,
     -- 客户端声明的 MIME 类型；未提供时允许为空。
     mime_type TEXT,
     -- 客户端声明的文件总字节数，仅用于完整性校验，不作为上传大小上限。

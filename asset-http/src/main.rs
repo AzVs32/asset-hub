@@ -1,6 +1,6 @@
 use asset_http::{
-    DirectoryHttpServices, HttpComposition, HttpHealthServices, HttpServices, HttpSessionRuntime,
-    HttpSettings, ResourceHttpServices, build_router, with_authentication,
+    DirectoryHttpServices, HttpComposition, HttpHealthServices, HttpServices, HttpSettings,
+    ResourceHttpServices, build_router,
 };
 use asset_infra::config::AssetInfraConfig;
 use asset_runtime::AssetRuntime;
@@ -19,11 +19,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // info!(config = ?config, "asset-http config");
     let mut runtime = AssetRuntime::new(config).await?;
     runtime.start_storage_sync().await?;
-    let session_runtime = HttpSessionRuntime::new().await?;
     let listener = tokio::net::TcpListener::bind(settings.addr()).await?;
 
     info!(addr = %settings.addr(), "asset-http listening");
-    let authorization = runtime.authorization_service();
     let app = build_router(
         HttpComposition {
             services: HttpServices {
@@ -31,7 +29,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     resources: runtime.resource_service(),
                     content: runtime.content_service(),
                     uploads: runtime.upload_service(),
-                    actions: runtime.action_orchestrator(),
                 },
                 directories: DirectoryHttpServices {
                     directories: runtime.directory_service(),
@@ -41,20 +38,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     storage_maintenance: runtime.storage_maintenance_service(),
                 },
             },
-            plugin_web_assets: runtime.plugin_web_assets(),
-            authorization: authorization.clone(),
             upload_finalizations: runtime.upload_finalization_dispatcher(),
         },
         settings.router_options().clone(),
     );
-    let app = with_authentication(
-        app,
-        runtime.user_service(),
-        session_runtime.store(),
-        session_runtime.health(),
-        settings.session_options(),
-    )?;
-
     axum::serve(listener, app).await?;
 
     Ok(())

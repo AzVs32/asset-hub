@@ -46,9 +46,7 @@ export class ResumableUpload {
     let offset = 0;
 
     if (uploadId) {
-      const response = await fetch(`${this.baseUrl}/uploads/${encodeURIComponent(uploadId)}`, {
-        credentials: "include",
-      });
+      const response = await fetch(`${this.baseUrl}/uploads/${encodeURIComponent(uploadId)}`);
       if (response.ok) {
         const session = parseUploadSession(await response.json());
         offset = session.offset;
@@ -68,7 +66,6 @@ export class ResumableUpload {
     if (!uploadId) {
       const response = await fetch(`${this.baseUrl}/uploads`, {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(metadata),
       });
@@ -87,7 +84,6 @@ export class ResumableUpload {
       for (let attempt = 1; attempt <= UPLOAD_CHUNK_CHECKSUM_ATTEMPTS; attempt += 1) {
         response = await fetch(`${this.baseUrl}/uploads/${encodeURIComponent(uploadId)}`, {
           method: "PATCH",
-          credentials: "include",
           headers: {
             "Content-Type": "application/octet-stream",
             "Upload-Offset": String(offset),
@@ -113,7 +109,7 @@ export class ResumableUpload {
     reportUploadProgress(onProgress, "finalizing", offset, file.size);
     const response = await fetch(
       `${this.baseUrl}/uploads/${encodeURIComponent(uploadId)}/complete`,
-      { method: "POST", credentials: "include" },
+      { method: "POST" },
     );
     if (!response.ok) throw await httpError(response);
     parseUploadSession(await response.json());
@@ -122,9 +118,7 @@ export class ResumableUpload {
 
   async waitForCompletion(id: string): Promise<Resource> {
     for (;;) {
-      const response = await fetch(`${this.baseUrl}/uploads/${encodeURIComponent(id)}`, {
-        credentials: "include",
-      });
+      const response = await fetch(`${this.baseUrl}/uploads/${encodeURIComponent(id)}`);
       if (!response.ok) throw await httpError(response);
       const session = parseUploadSession(await response.json());
       if (session.status === "failed") {
@@ -138,7 +132,6 @@ export class ResumableUpload {
         try {
           await fetch(`${this.baseUrl}/uploads/${encodeURIComponent(id)}`, {
             method: "DELETE",
-            credentials: "include",
           });
         } catch {
           // Resource 已确认创建；会话确认删除失败不影响最终结果。

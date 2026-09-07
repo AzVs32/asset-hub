@@ -1,4 +1,4 @@
-use super::{Checksum, DirectoryId, Resource, ResourceContent, ResourceId, ResourceKind, UserId};
+use super::{Checksum, DirectoryId, Resource, ResourceContent, ResourceId};
 use crate::ResourceError;
 use chrono::{DateTime, Utc};
 
@@ -28,10 +28,8 @@ impl UploadStatus {
 pub struct UploadSession {
     id: UploadId,
     resource_id: ResourceId,
-    owner_id: UserId,
     name: String,
     directory_id: DirectoryId,
-    kind: ResourceKind,
     mime_type: Option<String>,
     expected_size: u64,
     offset: u64,
@@ -47,10 +45,8 @@ pub struct UploadSession {
 pub struct UploadSessionSnapshot {
     pub id: UploadId,
     pub resource_id: ResourceId,
-    pub owner_id: UserId,
     pub name: String,
     pub directory_id: DirectoryId,
-    pub kind: ResourceKind,
     pub mime_type: Option<String>,
     pub expected_size: u64,
     pub offset: u64,
@@ -65,10 +61,8 @@ pub struct UploadSessionSnapshot {
 impl UploadSession {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        owner_id: UserId,
         name: impl Into<String>,
         directory_id: DirectoryId,
-        kind: ResourceKind,
         mime_type: Option<String>,
         expected_size: u64,
         expected_checksum: Checksum,
@@ -77,10 +71,8 @@ impl UploadSession {
         Self::rehydrate(UploadSessionSnapshot {
             id: UploadId::new(),
             resource_id: ResourceId::new(),
-            owner_id,
             name: name.into(),
             directory_id,
-            kind,
             mime_type,
             expected_size,
             offset: 0,
@@ -94,9 +86,7 @@ impl UploadSession {
     }
 
     pub fn rehydrate(snapshot: UploadSessionSnapshot) -> Result<Self, ResourceError> {
-        Resource::builder(snapshot.name.clone())
-            .with_kind(snapshot.kind.clone())
-            .build()?;
+        Resource::builder(snapshot.name.clone()).build()?;
         if let Some(mime_type) = &snapshot.mime_type {
             ResourceContent::pending(snapshot.expected_size)
                 .with_mime_type(mime_type.clone())
@@ -107,10 +97,8 @@ impl UploadSession {
         Ok(Self {
             id: snapshot.id,
             resource_id: snapshot.resource_id,
-            owner_id: snapshot.owner_id,
             name: snapshot.name,
             directory_id: snapshot.directory_id,
-            kind: snapshot.kind,
             mime_type: snapshot.mime_type,
             expected_size: snapshot.expected_size,
             offset: snapshot.offset,
@@ -129,17 +117,11 @@ impl UploadSession {
     pub fn resource_id(&self) -> ResourceId {
         self.resource_id
     }
-    pub fn owner_id(&self) -> UserId {
-        self.owner_id
-    }
     pub fn name(&self) -> &str {
         &self.name
     }
     pub fn directory_id(&self) -> DirectoryId {
         self.directory_id
-    }
-    pub fn kind(&self) -> &ResourceKind {
-        &self.kind
     }
     pub fn mime_type(&self) -> Option<&str> {
         self.mime_type.as_deref()
@@ -321,10 +303,8 @@ mod tests {
 
     fn session(expected_size: u64) -> UploadSession {
         UploadSession::new(
-            UserId::new(),
             "asset.bin",
             DirectoryId::root(),
-            ResourceKind::default(),
             None,
             expected_size,
             checksum('a'),
@@ -359,10 +339,8 @@ mod tests {
         let snapshot = UploadSessionSnapshot {
             id: session.id(),
             resource_id: session.resource_id(),
-            owner_id: session.owner_id(),
             name: session.name().to_string(),
             directory_id: session.directory_id(),
-            kind: session.kind().clone(),
             mime_type: None,
             expected_size: 4,
             offset: 4,
