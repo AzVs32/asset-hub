@@ -1,5 +1,5 @@
 import type { Directory } from "@/domain/directory";
-import { formatDate } from "@/shared/format";
+import { formatDate, formatDirectory } from "@/shared/format";
 import { DirectoryThumbnail } from "./asset-thumbnail";
 import {
   CopyableValue,
@@ -14,7 +14,7 @@ export function DirectoryDetail({ directory }: { directory: Directory }) {
   return (
     <DetailPanel
       thumbnail={<DirectoryThumbnail size={48} />}
-      title={directory.name || "Root"}
+      title={directory.path === "" ? "/" : directory.name}
       subtitle={path}
     >
       <DetailSection title="General">
@@ -32,8 +32,4 @@ export function DirectoryDetail({ directory }: { directory: Directory }) {
       </DetailAdvanced>
     </DetailPanel>
   );
-}
-
-function formatDirectory(directory: string): string {
-  return directory ? `/${directory}` : "/";
 }

@@ -19,7 +19,5 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
-    // 测试套件暂缺；此时 npm test 直接通过。
-    passWithNoTests: true,
   },
 });

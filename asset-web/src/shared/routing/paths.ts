@@ -6,10 +6,6 @@ export function directoryPath(directory = ""): string {
   return encoded ? `/${encoded}` : "/";
 }
 
-export function defaultDirectoryPath(): string {
-  return "/";
-}
-
 export function decodeDirectoryPath(pathname: string): string {
   return normalizeDirectory(
     pathname

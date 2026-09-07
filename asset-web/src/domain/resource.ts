@@ -1,4 +1,3 @@
-export type ResourceContentDelivery = "auto" | "inline" | "reference";
 export type ResourceContentState = "absent" | "pending" | "verified" | "failed";
 export type ResourceEffectiveState =
   | "deleted"
@@ -40,30 +39,7 @@ export interface ResourcePage {
   limit: number;
 }
 
-export interface ResourceFilters {
-  directory: string;
-  page: number;
-  limit: number;
-}
-
 export interface ResourceDraft {
   name: string;
   directory: string;
-}
-
-export interface UploadDraft {
-  file: File;
-  name: string;
-  directory: string;
-}
-
-export interface UploadProgress {
-  stage: "preparing" | "uploading" | "finalizing";
-  bytesSent: number;
-  totalBytes: number;
-}
-
-export interface UploadReceipt {
-  id: string;
-  name: string;
 }

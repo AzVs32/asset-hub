@@ -1,17 +1,13 @@
-import CreateNewFolderIcon from "@mui/icons-material/CreateNewFolder";
+import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import DeleteIcon from "@mui/icons-material/DeleteOutline";
 import FolderIcon from "@mui/icons-material/Folder";
 import MoreVertIcon from "@mui/icons-material/MoreVert";
-import RefreshIcon from "@mui/icons-material/Refresh";
-import UploadFileIcon from "@mui/icons-material/UploadFile";
 import {
   Alert,
   Avatar,
   Box,
-  Button,
   Card,
   CardActions,
-  CardHeader,
   CircularProgress,
   Divider,
   IconButton,
@@ -24,21 +20,23 @@ import {
   MenuItem,
   Pagination,
   Stack,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import React from "react";
-import type { Directory, DirectoryListing } from "@/domain/directory";
+import type { Directory, DirectoryListing, DirectoryListingQuery } from "@/domain/directory";
 import { parentDirectory } from "@/domain/directory-path";
-import type { Resource, ResourceFilters } from "@/domain/resource";
+import type { Resource } from "@/domain/resource";
 import { formatBytes, formatDate } from "@/shared/format";
 import { DirectoryThumbnail, ResourceThumbnail } from "./asset-thumbnail";
 
-export function ResourceList({
+export function WorkspaceList({
   listing,
   filters,
   selectedId,
   selectedDirectoryId,
   loading,
+  mutating,
   error,
   onFilters,
   onOpenDirectory,
@@ -48,17 +46,15 @@ export function ResourceList({
   onDeleteResource,
   onDownloadDirectory,
   onDeleteDirectory,
-  onRefresh,
-  onUpload,
-  onCreateFolder,
 }: {
   listing: DirectoryListing | undefined;
-  filters: ResourceFilters;
+  filters: DirectoryListingQuery;
   selectedId: string | null;
   selectedDirectoryId: string | null;
   loading: boolean;
+  mutating: boolean;
   error: unknown;
-  onFilters: (patch: Partial<ResourceFilters>) => void;
+  onFilters: (page: number) => void;
   onOpenDirectory: (path: string) => void;
   onSelect: (resource: Resource) => void;
   onSelectDirectory: (directory: Directory) => void;
@@ -66,39 +62,14 @@ export function ResourceList({
   onDeleteResource: (resource: Resource) => void;
   onDownloadDirectory: (directory: Directory) => void;
   onDeleteDirectory: (directory: Directory) => void;
-  onRefresh: () => void;
-  onUpload: () => void;
-  onCreateFolder: () => void;
 }) {
   const total = listing?.resources.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / filters.limit));
   const parent = parentDirectory(filters.directory);
+  const blocked = mutating || loading || Boolean(error);
 
   return (
     <Card sx={{ display: "flex", flexDirection: "column", minHeight: 0, minWidth: 0 }}>
-      <CardHeader
-        avatar={
-          <Avatar sx={{ bgcolor: "primary.main" }}>
-            <FolderIcon />
-          </Avatar>
-        }
-        title={listing?.directory.name || "Root"}
-        subheader={`${listing?.folders.length ?? 0} folders · ${total} assets`}
-        action={
-          <Stack direction="row" spacing={1}>
-            <IconButton aria-label="Refresh" onClick={onRefresh}>
-              <RefreshIcon />
-            </IconButton>
-            <Button startIcon={<CreateNewFolderIcon />} onClick={onCreateFolder}>
-              New folder
-            </Button>
-            <Button variant="contained" startIcon={<UploadFileIcon />} onClick={onUpload}>
-              Upload
-            </Button>
-          </Stack>
-        }
-      />
-      <Divider />
       <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
         {error ? (
           <Alert severity="error" sx={{ m: 2 }}>
@@ -116,6 +87,7 @@ export function ResourceList({
             <FolderRow
               key={folder.id}
               name={folder.name}
+              disabled={blocked}
               directory={folder}
               selected={folder.id === selectedDirectoryId}
               onSelect={() => onSelectDirectory(folder)}
@@ -127,6 +99,7 @@ export function ResourceList({
           {listing?.resources.items.map((resource) => (
             <ResourceRow
               key={resource.id}
+              disabled={blocked}
               resource={resource}
               selected={resource.id === selectedId}
               onSelect={() => onSelect(resource)}
@@ -135,7 +108,11 @@ export function ResourceList({
             />
           ))}
         </List>
-        {!loading && listing && !listing.folders.length && !listing.resources.items.length ? (
+        {!loading &&
+        !error &&
+        listing &&
+        !listing.folders.length &&
+        listing.resources.total === 0 ? (
           <Box sx={{ display: "grid", placeItems: "center", minHeight: 320 }}>
             <Stack alignItems="center" spacing={1.5}>
               <Avatar sx={{ width: 56, height: 56 }}>
@@ -152,9 +129,10 @@ export function ResourceList({
       <CardActions sx={{ justifyContent: "center" }}>
         <Pagination
           count={totalPages}
-          page={filters.page}
+          page={Math.min(filters.page, totalPages)}
+          disabled={loading}
           size="small"
-          onChange={(_event, page) => onFilters({ page })}
+          onChange={(_event, page) => onFilters(page)}
         />
       </CardActions>
     </Card>
@@ -164,6 +142,7 @@ export function ResourceList({
 function FolderRow({
   name,
   directory,
+  disabled = false,
   selected = false,
   onSelect,
   onOpen,
@@ -172,6 +151,7 @@ function FolderRow({
 }: {
   name: string;
   directory?: Directory;
+  disabled?: boolean;
   selected?: boolean;
   onSelect?: () => void;
   onOpen?: () => void;
@@ -183,19 +163,36 @@ function FolderRow({
       disablePadding
       secondaryAction={
         directory && onDownload && onDelete ? (
-          <RowActions
-            items={[
-              { id: "download", label: "Download", onSelect: onDownload },
-              { id: "delete", label: "Delete", destructive: true, onSelect: onDelete },
-            ]}
-          />
+          <Stack direction="row">
+            <Tooltip title="Open folder">
+              <span>
+                <IconButton
+                  size="small"
+                  disabled={disabled}
+                  aria-label={`Open ${name}`}
+                  onClick={onOpen}
+                >
+                  <ChevronRightIcon />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <RowActions
+              disabled={disabled}
+              items={[
+                { id: "download", label: "Download", onSelect: onDownload },
+                { id: "delete", label: "Delete", destructive: true, onSelect: onDelete },
+              ]}
+            />
+          </Stack>
         ) : null
       }
     >
       <ListItemButton
+        disabled={disabled}
         selected={selected}
         aria-pressed={directory ? selected : undefined}
-        onClick={onSelect}
+        sx={{ pr: directory ? 10 : 2 }}
+        onClick={directory ? onSelect : onOpen}
         onDoubleClick={onOpen}
         onKeyDown={(event) => {
           if (event.key === "Enter" && onOpen) {
@@ -205,18 +202,7 @@ function FolderRow({
         }}
       >
         <ListItemAvatar>
-          {directory ? (
-            <DirectoryThumbnail />
-          ) : (
-            <Avatar
-              sx={{
-                color: "warning.dark",
-                background: "linear-gradient(145deg, #fffbeb, #ffedd5)",
-              }}
-            >
-              <FolderIcon />
-            </Avatar>
-          )}
+          <DirectoryThumbnail />
         </ListItemAvatar>
         <ListItemText primary={name} />
       </ListItemButton>
@@ -226,12 +212,14 @@ function FolderRow({
 
 function ResourceRow({
   resource,
+  disabled,
   selected,
   onSelect,
   onDownload,
   onDelete,
 }: {
   resource: Resource;
+  disabled: boolean;
   selected: boolean;
   onSelect: () => void;
   onDownload: () => void;
@@ -243,14 +231,14 @@ function ResourceRow({
     { id: "delete", label: "Delete", destructive: true, onSelect: onDelete },
   ];
   return (
-    <ListItem disablePadding secondaryAction={<RowActions items={items} />}>
-      <ListItemButton selected={selected} onClick={onSelect}>
+    <ListItem disablePadding secondaryAction={<RowActions items={items} disabled={disabled} />}>
+      <ListItemButton disabled={disabled} selected={selected} onClick={onSelect}>
         <ListItemAvatar>
           <ResourceThumbnail />
         </ListItemAvatar>
         <ListItemText
           primary={resource.name}
-          secondary={`${status}${formatBytes(resource.content?.size ?? 0)} · ${formatDate(resource.updatedAt)}`}
+          secondary={`${status}${formatBytes(resource.content?.size)} · ${formatDate(resource.updatedAt)}`}
         />
       </ListItemButton>
     </ListItem>
@@ -273,20 +261,23 @@ function resourceStatusLabel(status: Resource["state"]["effective"]): string {
 
 function RowActions({
   items,
+  disabled,
 }: {
   items: { id: string; label: string; destructive?: boolean; onSelect: () => void }[];
+  disabled: boolean;
 }) {
   const [anchor, setAnchor] = React.useState<HTMLElement | null>(null);
   return (
     <>
       <IconButton
         size="small"
+        disabled={disabled}
         aria-label="Open actions"
         onClick={(event) => setAnchor(event.currentTarget)}
       >
         <MoreVertIcon fontSize="small" />
       </IconButton>
-      <Menu anchorEl={anchor} open={Boolean(anchor)} onClose={() => setAnchor(null)}>
+      <Menu anchorEl={anchor} open={Boolean(anchor) && !disabled} onClose={() => setAnchor(null)}>
         {items.map((item) => (
           <MenuItem
             key={item.id}

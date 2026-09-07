@@ -36,3 +36,39 @@ VITE_API_BASE_URL=http://127.0.0.1:8080 npm run dev
 | `npm test` | Run available package tests |
 | `npm run build` | Create a production build |
 | `npm run generate:api` | Regenerate HTTP-only OpenAPI declarations from a running API |
+
+## Browser architecture
+
+- `main.tsx` assembles the HTTP gateways and Query client; `app/` owns providers, routing, and
+  the route error boundary.
+- `domain/` contains Resource and Directory models and directory path rules. Browser upload
+  inputs and publication results live beside the gateway contracts in `shared/api/`.
+- `features/asset-workspace/` owns the workspace, its query/mutation hooks, and its components.
+  `workspace-cache.ts` scopes invalidation to affected directories and refreshes resource snapshots.
+- `infra/http/` owns HTTP and OpenAPI mapping and resumable upload transport. `infra/crypto/`
+  owns incremental hashing and its worker.
+
+Directory navigation uses the raw URL pathname, decoded once. Pagination and mutually exclusive
+Resource/Directory selection use query parameters. Switching directories clears the previous
+listing; deleting the last item on a page returns to the last valid page. Resource details use a
+side panel on desktop and a drawer on small screens.
+
+Edits retain the snapshot they started from. Background refreshes do not overwrite drafts; a
+changed revision blocks further editing until the user explicitly reloads the latest snapshot.
+Revision conflicts refresh the authoritative resource before retrying. Failed detail refreshes
+keep editing blocked and expose a retry action.
+
+## Upload recovery
+
+Uploads hash the complete file locally and retain checksum-verified chunk resume information in
+browser local storage. The workspace restores stored sessions on reopening. Incomplete transfers
+require choosing the same file, name, and destination again; files are not retained by the browser
+application. Publication status is owned by Query, with cancellable requests and automatic
+backoff/rechecking on connection errors. A connection error does not imply publication failure.
+Completed sessions are acknowledged only after the published resource reaches the Query cache.
+If local storage is unavailable, the current upload still works, but reload recovery is unavailable.
+
+The small regression suite covers URL/path identity, directory transitions, optimistic concurrency,
+draft preservation, and upload recovery. `npm test` fails if no tests are found. For production,
+configure the host to serve `index.html` for directory paths and proxy `/api` to `asset-http` (or
+set `VITE_API_BASE_URL` at build time); Vite's development proxy is not part of the built files.

@@ -1,11 +1,16 @@
-import type { Resource, UploadDraft, UploadProgress, UploadReceipt } from "@/domain/resource";
-import type { BlobSha256, FileSha256 } from "./file-sha256";
+import type { Resource } from "@/domain/resource";
+import type {
+  UploadDraft,
+  UploadProgress,
+  UploadPublication,
+  UploadReceipt,
+} from "@/shared/api/upload";
+import type { BlobSha256, FileSha256 } from "../crypto/file-sha256";
 import { httpError } from "./http-error";
 
 const UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024;
 const UPLOAD_CHUNK_CHECKSUM_ATTEMPTS = 3;
 const UPLOAD_RESUME_STORAGE_KEY = "asset-hub.upload-sessions";
-const UPLOAD_STATUS_POLL_MILLISECONDS = 1_000;
 
 interface ApiUploadSession {
   id: string;
@@ -21,7 +26,7 @@ export class ResumableUpload {
     private readonly baseUrl: string,
     private readonly hashFile: FileSha256,
     private readonly hashChunk: BlobSha256,
-    private readonly findResource: (id: string) => Promise<Resource>,
+    private readonly findResource: (id: string, signal?: AbortSignal) => Promise<Resource>,
     private readonly resolveDirectoryId: (path: string) => Promise<string>,
   ) {}
 
@@ -101,7 +106,8 @@ export class ResumableUpload {
       }
       if (!response?.ok) throw new Error("Upload chunk did not complete");
       const nextOffset = uploadOffset(response);
-      if (nextOffset <= offset) throw new Error("Upload server did not advance the file offset");
+      if (nextOffset <= offset || nextOffset > offset + chunk.size)
+        throw new Error("Upload server did not advance the file offset");
       offset = nextOffset;
       reportUploadProgress(onProgress, "uploading", offset, file.size);
     }
@@ -116,30 +122,59 @@ export class ResumableUpload {
     return { id: uploadId, name: metadata.name };
   }
 
-  async waitForCompletion(id: string): Promise<Resource> {
-    for (;;) {
-      const response = await fetch(`${this.baseUrl}/uploads/${encodeURIComponent(id)}`);
-      if (!response.ok) throw await httpError(response);
-      const session = parseUploadSession(await response.json());
-      if (session.status === "failed") {
-        throw new Error(session.error || "Resource publishing failed");
+  pendingUploads(): UploadReceipt[] {
+    return Object.entries(uploadSessions()).flatMap(([fingerprint, id]) => {
+      try {
+        const value: unknown = JSON.parse(fingerprint);
+        if (!value || typeof value !== "object" || !("resource" in value)) return [];
+        const metadata = value.resource;
+        if (
+          !metadata ||
+          typeof metadata !== "object" ||
+          !("name" in metadata) ||
+          typeof metadata.name !== "string"
+        )
+          return [];
+        return [{ id, name: metadata.name }];
+      } catch {
+        return [];
       }
-      if (session.status === "completed") {
-        if (!session.resource_id) {
-          throw new Error("Completed upload did not include a Resource ID");
-        }
-        const resource = await this.findResource(session.resource_id);
-        try {
-          await fetch(`${this.baseUrl}/uploads/${encodeURIComponent(id)}`, {
-            method: "DELETE",
-          });
-        } catch {
-          // Resource 已确认创建；会话确认删除失败不影响最终结果。
-        }
-        clearUploadIdById(id);
-        return resource;
-      }
-      await delay(UPLOAD_STATUS_POLL_MILLISECONDS);
+    });
+  }
+
+  async status(id: string, signal?: AbortSignal): Promise<UploadPublication> {
+    const response = await fetch(
+      `${this.baseUrl}/uploads/${encodeURIComponent(id)}`,
+      signal ? { signal } : {},
+    );
+    if (response.status === 404) {
+      return {
+        status: "failed",
+        message: "Upload session is unavailable. Choose the file again to restart.",
+      };
+    }
+    if (!response.ok) throw await httpError(response);
+    const session = parseUploadSession(await response.json());
+    if (session.status === "failed") {
+      return { status: "failed", message: session.error || "Resource publishing failed" };
+    }
+    if (session.status === "completed") {
+      if (!session.resource_id) throw new Error("Completed upload did not include a Resource ID");
+      return {
+        status: "completed",
+        resource: await this.findResource(session.resource_id, signal),
+      };
+    }
+    return { status: session.status };
+  }
+
+  async acknowledge(id: string): Promise<void> {
+    // Only called after the published Resource has reached the Query cache.
+    clearUploadIdById(id);
+    try {
+      await fetch(`${this.baseUrl}/uploads/${encodeURIComponent(id)}`, { method: "DELETE" });
+    } catch {
+      // Acknowledgement cleanup cannot undo successful publication.
     }
   }
 }
@@ -239,8 +274,4 @@ function saveUploadSessions(sessions: Record<string, string>): void {
   } catch {
     // 浏览器禁用持久化时仍允许当前上传继续。
   }
-}
-
-function delay(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => globalThis.setTimeout(resolve, milliseconds));
 }

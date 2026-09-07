@@ -17,3 +17,9 @@ export interface DirectoryListing {
   folders: Directory[];
   resources: ResourcePage;
 }
+
+export interface DirectoryListingQuery {
+  directory: string;
+  page: number;
+  limit: number;
+}

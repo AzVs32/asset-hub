@@ -1,13 +1,8 @@
-import type { Directory } from "@/domain/directory";
-import type {
-  Resource,
-  ResourceDraft,
-  ResourceFilters,
-  UploadDraft,
-  UploadProgress,
-} from "@/domain/resource";
+import type { Directory, DirectoryListingQuery } from "@/domain/directory";
+import type { Resource, ResourceDraft } from "@/domain/resource";
 import type { AssetWorkspaceGateway } from "@/shared/api/gateways";
-import type { BlobSha256, FileSha256 } from "./file-sha256";
+import type { UploadDraft, UploadProgress } from "@/shared/api/upload";
+import type { BlobSha256, FileSha256 } from "../crypto/file-sha256";
 import type { OpenApiClient } from "./openapi-client";
 import { expectData, expectSuccess } from "./openapi-client";
 import { mapDirectory, mapResource, resourceBody } from "./openapi-mappers";
@@ -26,12 +21,12 @@ export class OpenApiAssetWorkspaceGateway implements AssetWorkspaceGateway {
       baseUrl,
       hashFile,
       hashChunk,
-      (id) => this.findResource(id),
+      (id, signal) => this.findResource(id, signal),
       (path) => this.resolveDirectoryId(path),
     );
   }
 
-  async listDirectory(filters: ResourceFilters, signal?: AbortSignal) {
+  async listDirectory(filters: DirectoryListingQuery, signal?: AbortSignal) {
     const query = {
       path: filters.directory,
       page: filters.page,
@@ -55,8 +50,11 @@ export class OpenApiAssetWorkspaceGateway implements AssetWorkspaceGateway {
     };
   }
 
-  async findResource(id: string) {
-    const result = await this.client.GET("/resources/{id}", { params: { path: { id } } });
+  async findResource(id: string, signal?: AbortSignal) {
+    const result = await this.client.GET("/resources/{id}", {
+      params: { path: { id } },
+      ...(signal ? { signal } : {}),
+    });
     return mapResource(expectData(result));
   }
 
@@ -84,8 +82,16 @@ export class OpenApiAssetWorkspaceGateway implements AssetWorkspaceGateway {
     return this.#upload.upload(draft, onProgress);
   }
 
-  waitForUpload(id: string) {
-    return this.#upload.waitForCompletion(id);
+  pendingUploads() {
+    return this.#upload.pendingUploads();
+  }
+
+  uploadStatus(id: string, signal?: AbortSignal) {
+    return this.#upload.status(id, signal);
+  }
+
+  acknowledgeUpload(id: string) {
+    return this.#upload.acknowledge(id);
   }
 
   private async resolveDirectoryId(path: string): Promise<string> {

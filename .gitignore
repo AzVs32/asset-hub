@@ -1,12 +1,6 @@
 # Rust build output
 /target/
 
-# Frontend build output
-asset-web/node_modules/
-asset-web/dist/
-asset-web/coverage/
-asset-web/*.tsbuildinfo
-
 # Rust compiler and profiling artifacts
 **/*.rs.bk
 *.pdb

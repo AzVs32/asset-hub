@@ -2,98 +2,83 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import React from "react";
 import { toast } from "sonner";
 import type { Directory } from "@/domain/directory";
-import type { Resource, ResourceDraft, UploadDraft, UploadProgress } from "@/domain/resource";
+import type { Resource, ResourceDraft } from "@/domain/resource";
 import { ConcurrentModificationError } from "@/shared/api/errors";
 import { useAssetWorkspaceGateway } from "@/shared/api/gateway-context";
 import { queryKeys } from "@/shared/api/query-keys";
+import type { UploadDraft, UploadProgress } from "@/shared/api/upload";
+import { refreshDirectories, refreshResource } from "../workspace-cache";
 
 export function useAssetWorkspaceCommands() {
   const assetGateway = useAssetWorkspaceGateway();
   const queryClient = useQueryClient();
   const [uploadProgress, setUploadProgress] = React.useState<UploadProgress | null>(null);
 
-  const refresh = React.useCallback(
-    async (resourceId?: string) => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["directory"] }),
-        ...(resourceId
-          ? [queryClient.invalidateQueries({ queryKey: queryKeys.resource(resourceId) })]
-          : []),
-      ]);
-    },
-    [queryClient],
-  );
-  const handleMutationError = React.useCallback(
-    async (error: unknown) => {
-      if (error instanceof ConcurrentModificationError) await refresh();
-      notifyError(error);
-    },
-    [refresh],
-  );
+  async function handleResourceError(error: unknown, resource: Resource) {
+    if (error instanceof ConcurrentModificationError) {
+      try {
+        const latest = await refreshResource(queryClient, assetGateway, resource.id);
+        await refreshDirectories(queryClient, [resource.directory, latest.directory]);
+      } catch {
+        await refreshDirectories(queryClient, [resource.directory]);
+        toast.error("Unable to reload the resource. Retry loading its details before editing.");
+        return;
+      }
+    }
+    notifyError(error);
+  }
+
+  async function handleDirectoryError(error: unknown, paths: string[]) {
+    if (error instanceof ConcurrentModificationError) await refreshDirectories(queryClient, paths);
+    notifyError(error);
+  }
 
   const update = useMutation({
     mutationFn: ({ resource, draft }: { resource: Resource; draft: ResourceDraft }) =>
       assetGateway.updateResource(resource, draft),
-    onSuccess: async (resource) => {
+    onSuccess: async (resource, { resource: previous }) => {
       toast.success("Resource saved");
+      await queryClient.cancelQueries({ queryKey: queryKeys.resource(resource.id) });
       queryClient.setQueryData(queryKeys.resource(resource.id), resource);
-      await refresh(resource.id);
+      await refreshDirectories(queryClient, [previous.directory, resource.directory]);
     },
-    onError: handleMutationError,
+    onError: (error, { resource }) => handleResourceError(error, resource),
   });
   const upload = useMutation({
     mutationFn: (draft: UploadDraft) => assetGateway.uploadResource(draft, setUploadProgress),
     onMutate: (draft) => {
       setUploadProgress({ stage: "preparing", bytesSent: 0, totalBytes: draft.file.size });
     },
-    onSuccess: (receipt) => {
-      setUploadProgress(null);
-      const notification = toast.loading(
-        `${receipt.name} uploaded; verifying and publishing in the background`,
-      );
-      void assetGateway
-        .waitForUpload(receipt.id)
-        .then(async (resource) => {
-          toast.success(`${resource.name} is ready`, { id: notification });
-          await refresh(resource.id);
-        })
-        .catch((error) => {
-          toast.error(error instanceof Error ? error.message : "Resource publishing failed", {
-            id: notification,
-          });
-        });
-    },
-    onError: (error) => {
-      setUploadProgress(null);
-      void handleMutationError(error);
-    },
+    onSettled: () => setUploadProgress(null),
   });
+
   const createFolder = useMutation({
     mutationFn: ({ parent, name }: { parent: Directory; name: string }) =>
       assetGateway.createDirectory(parent, name),
-    onSuccess: async () => {
+    onSuccess: async (_directory, { parent }) => {
       toast.success("Folder created");
-      await refresh();
+      await refreshDirectories(queryClient, [parent.path]);
     },
-    onError: handleMutationError,
+    onError: (error, { parent }) => handleDirectoryError(error, [parent.path]),
   });
   const deleteResource = useMutation({
     mutationFn: ({ resource }: { resource: Resource }) => assetGateway.deleteResource(resource),
     onSuccess: async (_data, { resource }) => {
       toast.success(`${resource.name} deleted`);
       queryClient.removeQueries({ queryKey: queryKeys.resource(resource.id) });
-      await refresh();
+      await refreshDirectories(queryClient, [resource.directory]);
     },
-    onError: handleMutationError,
+    onError: (error, { resource }) => handleResourceError(error, resource),
   });
   const deleteDirectory = useMutation({
     mutationFn: ({ directory }: { directory: Directory }) =>
       assetGateway.deleteDirectory(directory),
     onSuccess: async (_data, { directory }) => {
       toast.success(`${directory.name} deleted`);
-      await refresh();
+      await refreshDirectories(queryClient, [directory.path, directory.parentPath]);
     },
-    onError: handleMutationError,
+    onError: (error, { directory }) =>
+      handleDirectoryError(error, [directory.path, directory.parentPath]),
   });
 
   return {
@@ -103,7 +88,6 @@ export function useAssetWorkspaceCommands() {
     createFolder,
     deleteResource,
     deleteDirectory,
-    refresh,
   };
 }
 

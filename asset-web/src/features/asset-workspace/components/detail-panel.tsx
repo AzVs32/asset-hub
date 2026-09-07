@@ -185,19 +185,6 @@ function copyWithSelection(value: string): boolean {
   }
 }
 
-export function DetailValueList({ values }: { values: readonly string[] }) {
-  if (values.length === 0) return <Typography variant="body2">—</Typography>;
-  return (
-    <Stack spacing={0.5}>
-      {values.map((value) => (
-        <Typography key={value} variant="body2" sx={{ wordBreak: "break-word" }}>
-          {value}
-        </Typography>
-      ))}
-    </Stack>
-  );
-}
-
 export function DetailEmptyState({ icon, message }: { icon: React.ReactNode; message: string }) {
   return (
     <Paper

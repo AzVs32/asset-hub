@@ -1,6 +1,6 @@
-import CreateNewFolderIcon from "@mui/icons-material/CreateNewFolder";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
 import {
+  Alert,
   Box,
   Button,
   CircularProgress,
@@ -15,7 +15,9 @@ import {
 } from "@mui/material";
 import React from "react";
 import { Controller, useForm } from "react-hook-form";
-import type { UploadDraft, UploadProgress } from "@/domain/resource";
+import type { UploadDraft, UploadProgress } from "@/shared/api/upload";
+import { formatBytes } from "@/shared/format";
+
 import { DirectorySelect } from "./directory-select";
 
 interface UploadForm {
@@ -64,15 +66,18 @@ export function UploadResourceDialog({
           onSubmit={form.handleSubmit(async (input) => {
             const selected = input.file.item(0);
             if (!selected) return;
-            await onUpload({
-              file: selected,
-              name: input.name,
-              directory: input.directory,
-            });
-            onOpenChange(false);
+            try {
+              await onUpload({ file: selected, name: input.name, directory: input.directory });
+              onOpenChange(false);
+            } catch (error) {
+              form.setError("root", {
+                message: error instanceof Error ? error.message : "Upload failed",
+              });
+            }
           })}
         >
           <Button
+            disabled={pending}
             component="label"
             variant="outlined"
             startIcon={<UploadFileIcon />}
@@ -80,6 +85,7 @@ export function UploadResourceDialog({
           >
             {file?.name ?? "Choose a file"}
             <input
+              disabled={pending}
               type="file"
               hidden
               {...form.register("file", {
@@ -99,6 +105,7 @@ export function UploadResourceDialog({
                 <TextField
                   {...rest}
                   inputRef={ref}
+                  disabled={pending}
                   label="Resource name"
                   placeholder={file?.name ?? "Defaults to filename"}
                 />
@@ -116,6 +123,9 @@ export function UploadResourceDialog({
             }}
           />
           {pending && progress ? <UploadProgressView progress={progress} /> : null}
+          {form.formState.errors.root ? (
+            <Alert severity="error">{form.formState.errors.root.message}</Alert>
+          ) : null}
           <DialogActions sx={{ px: 0, pb: 0 }}>
             <Button disabled={pending} onClick={() => onOpenChange(false)}>
               Cancel
@@ -185,87 +195,4 @@ function uploadButtonLabel(progress: UploadProgress): string {
       ? 0
       : Math.min(100, Math.floor((progress.bytesSent / progress.totalBytes) * 100));
   return `Uploading ${percentage}%…`;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ["KiB", "MiB", "GiB", "TiB"];
-  let value = bytes / 1024;
-  let unit = units[0];
-  for (let index = 1; index < units.length && value >= 1024; index += 1) {
-    value /= 1024;
-    unit = units[index];
-  }
-  return `${value >= 10 ? value.toFixed(1) : value.toFixed(2)} ${unit}`;
-}
-
-export function CreateFolderDialog({
-  open,
-  onOpenChange,
-  parent,
-  pending,
-  onCreate,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  parent: string;
-  pending: boolean;
-  onCreate: (name: string) => Promise<unknown>;
-}) {
-  const form = useForm<{ name: string }>({
-    defaultValues: { name: "" },
-  });
-  React.useEffect(() => {
-    if (open) form.reset();
-  }, [form, open]);
-  return (
-    <Dialog open={open} fullWidth maxWidth="xs" onClose={() => onOpenChange(false)}>
-      <DialogTitle>New folder</DialogTitle>
-      <DialogContent>
-        <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 2 }}>
-          Inside /{parent}
-        </Typography>
-        <Box
-          component="form"
-          sx={{ display: "grid", gap: 2, pt: 1 }}
-          onSubmit={form.handleSubmit(async ({ name }) => {
-            await onCreate(name);
-            onOpenChange(false);
-          })}
-        >
-          <Controller
-            name="name"
-            control={form.control}
-            rules={{
-              validate: (value) => value.trim().length > 0 || "Folder name is required",
-            }}
-            render={({ field, fieldState }) => {
-              const { ref, ...rest } = field;
-              return (
-                <TextField
-                  {...rest}
-                  inputRef={ref}
-                  label="Folder name"
-                  autoFocus
-                  error={Boolean(fieldState.error)}
-                  helperText={fieldState.error?.message}
-                />
-              );
-            }}
-          />
-          <DialogActions sx={{ px: 0, pb: 0 }}>
-            <Button onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button
-              type="submit"
-              variant="contained"
-              startIcon={<CreateNewFolderIcon />}
-              disabled={pending}
-            >
-              {pending ? "Creating…" : "Create"}
-            </Button>
-          </DialogActions>
-        </Box>
-      </DialogContent>
-    </Dialog>
-  );
 }

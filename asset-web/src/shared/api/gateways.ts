@@ -1,16 +1,15 @@
-import type { Directory, DirectoryListing } from "@/domain/directory";
+import type { Directory, DirectoryListing, DirectoryListingQuery } from "@/domain/directory";
+import type { Resource, ResourceDraft } from "@/domain/resource";
 import type {
-  Resource,
-  ResourceDraft,
-  ResourceFilters,
   UploadDraft,
   UploadProgress,
+  UploadPublication,
   UploadReceipt,
-} from "@/domain/resource";
+} from "@/shared/api/upload";
 
 export interface AssetWorkspaceGateway {
-  listDirectory(filters: ResourceFilters, signal?: AbortSignal): Promise<DirectoryListing>;
-  findResource(id: string): Promise<Resource>;
+  listDirectory(filters: DirectoryListingQuery, signal?: AbortSignal): Promise<DirectoryListing>;
+  findResource(id: string, signal?: AbortSignal): Promise<Resource>;
   updateResource(resource: Resource, draft: ResourceDraft): Promise<Resource>;
   deleteResource(resource: Resource): Promise<void>;
   resourceDownloadUrl(resource: Resource): string;
@@ -18,7 +17,9 @@ export interface AssetWorkspaceGateway {
     draft: UploadDraft,
     onProgress?: (progress: UploadProgress) => void,
   ): Promise<UploadReceipt>;
-  waitForUpload(id: string): Promise<Resource>;
+  pendingUploads(): UploadReceipt[];
+  uploadStatus(id: string, signal?: AbortSignal): Promise<UploadPublication>;
+  acknowledgeUpload(id: string): Promise<void>;
   createDirectory(parent: Directory, name: string): Promise<Directory>;
   deleteDirectory(directory: Directory): Promise<void>;
   directoryDownloadUrl(directory: Directory): string;

@@ -1,3 +1,5 @@
+import { ConcurrentModificationError } from "@/shared/api/errors";
+
 export class HttpError extends Error {
   readonly status: number;
   readonly code: string | null;
@@ -13,7 +15,10 @@ export class HttpError extends Error {
 }
 
 export async function httpError(response: Response, payload?: unknown): Promise<Error> {
-  const body = payload ?? (await parseBody(response));
+  return responseError(response, payload ?? (await parseBody(response)));
+}
+
+export function responseError(response: Response, body: unknown): Error {
   if (body && typeof body === "object" && "error" in body) {
     const document = body as { error?: unknown; code?: unknown; details?: unknown };
     return applicationError(
@@ -30,7 +35,7 @@ export async function httpError(response: Response, payload?: unknown): Promise<
   );
 }
 
-export function applicationError(error: HttpError): Error {
+function applicationError(error: HttpError): Error {
   if (error.code === "concurrency.revision_conflict") {
     return new ConcurrentModificationError();
   }
@@ -42,5 +47,3 @@ async function parseBody(response: Response): Promise<unknown> {
   if (!contentType.includes("application/json")) return undefined;
   return response.json().catch(() => undefined);
 }
-
-import { ConcurrentModificationError } from "@/shared/api/errors";

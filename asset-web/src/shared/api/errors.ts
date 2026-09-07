@@ -1,5 +1,5 @@
 export class ConcurrentModificationError extends Error {
-  constructor(message = "This item changed elsewhere. The latest version has been loaded.") {
+  constructor(message = "This item changed elsewhere. Review the latest version before retrying.") {
     super(message);
     this.name = "ConcurrentModificationError";
   }

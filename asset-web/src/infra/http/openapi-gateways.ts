@@ -4,7 +4,7 @@ import {
   calculateBlobSha256,
   calculateFileSha256,
   type FileSha256,
-} from "./file-sha256";
+} from "../crypto/file-sha256";
 import { OpenApiAssetWorkspaceGateway } from "./openapi-asset-workspace-gateway";
 import { createOpenApiClient } from "./openapi-client";
 
