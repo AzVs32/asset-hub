@@ -23,7 +23,6 @@ The important aggregates are:
 
 - `Resource`: an asset and its metadata/content reference.
 - `Directory`: an independent hierarchy aggregate identified by a stable UUID.
-- `User`: identity, role, status, and workspace boundary.
 
 ## Repository map
 
@@ -41,16 +40,14 @@ MUST:
 - keep domain and service logic independent of Axum, SQLx, OpenDAL,
   and CLI parsing;
 - define Core infrastructure requirements as ports in `asset-core::port` and implement them in adapters;
-- use `ResourceService::secured` or an equivalently authorization-bound core use case for
-  user-scoped or untrusted resource mutations; trusted local maintenance commands must remain
-  explicit administrative operations;
+- route resource and directory operations through their direct Core services; trusted local
+  maintenance commands must remain explicit administrative operations;
 - preserve a single composition root for each executable surface.
 
 MUST NOT:
 
 - expose SQLx pools, OpenDAL operators, filesystem paths, or HTTP DTOs through
   core domain APIs;
-- duplicate authorization policy in a transport or repository adapter;
 - bypass core services by mutating repositories or blob storage directly from handlers or commands;
 
 ## Current implementation facts
@@ -72,7 +69,7 @@ Keep a test only when reading or running it gives an AI material information tha
 obvious from the owning implementation and documentation. The strongest reasons to keep one are:
 
 - a non-obvious domain invariant, state transition, path/identity rule, or security boundary;
-- authorization, optimistic concurrency, recovery, compensation, or failure ordering;
+- optimistic concurrency, recovery, compensation, or failure ordering;
 - a small representative persistence, migration, streaming, or atomic-filesystem guarantee;
 - a public HTTP, OpenAPI, golden-wire, or compatibility boundary;
 - a concise regression for a real bug whose cause would otherwise be easy for an AI to reintroduce.

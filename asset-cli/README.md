@@ -1,6 +1,6 @@
 # Asset CLI
 
-`asset` 是 Asset Hub 的本地管理命令行入口。面向管理员和运维人员。
+`asset` 是 Asset Hub 的本地维护命令行入口，面向运维人员。
 
 ## 运行方式
 
@@ -25,21 +25,13 @@ asset [--config <PATH>]
 ├── config
 │   ├── --check
 │   └── --show
-├── system
-└── user
-    ├── --list
-    ├── --create <USERNAME> [--admin]
-    ├── --password <USERNAME>
-    ├── --enable <USERNAME>
-    ├── --disable <USERNAME>
-    └── --show <USERNAME>
+└── system
 ```
 
 | 命令组 | 用途 |
 | --- | --- |
 | `asset config` | 检查和管理 Asset Hub 配置 |
 | `asset system` | 检查和维护本地 Asset Hub 系统 |
-| `asset user` | 管理 Asset Hub 用户 |
 
 需要读取 Asset Hub 配置的命令统一通过顶层 `--config <PATH>` 指定文件。未指定时尝试读取
 当前目录的 `config.toml`；文件不存在时使用内置默认配置。
@@ -57,7 +49,6 @@ asset --help
 ```bash
 asset config --help
 asset system --help
-asset user --help
 ```
 
 ## 命令文档约定
@@ -137,74 +128,3 @@ HTTP 服务启动和周期同步只比较物理文件修改时间与 `ResourceCo
 
 在交互式终端中，命令会先显示发现的文件数量；枚举完成后切换为文件进度条，并显示当前
 正在校验的对象路径。每完成一个文件，进度增加 1。
-
-# `asset user` 命令
-
-`asset user` 使用顶层 `--config` 指定的配置文件；未指定时读取当前目录的 `config.toml`
-（不存在时使用内置默认配置），然后初始化本地运行时。每次必须且只能选择一个操作。
-
-## `asset user --list`
-
-按用户名列出全部用户，以表格展示用户名、角色、状态、工作目录和用户 ID。该命令不会输出
-密码哈希。
-
-```bash
-asset user --list
-```
-
-## `asset user --create <USERNAME> [--admin]`
-
-默认创建启用状态的普通成员；增加 `--admin` 时创建管理员。普通成员的默认工作目录为
-`users/<username>`，管理员的工作目录为根目录 `/`。初始密码通过终端隐藏输入并要求二次
-确认，长度不得少于 4 个字符。
-
-```bash
-asset user --create alice
-asset user --create admin --admin
-asset --config config.toml user --create admin --admin
-```
-
-`--admin` 只能与 `--create` 一起使用。首次部署应先用它创建至少一个管理员，再登录 Web。
-该命令会创建用户数据库记录及其工作目录。
-
-## `asset user --password <USERNAME>`
-
-重置指定用户的密码；原密码存在时直接覆盖。新密码通过终端隐藏输入并要求二次确认，长度
-不得少于 4 个字符。
-
-```bash
-asset user --password alice
-```
-
-该命令会更新用户数据库记录。密码不会作为命令参数传递，因此不会进入 shell 历史或进程
-参数列表。密码更新会改变会话认证哈希，使已有会话在后续校验时失效。
-
-## `asset user --enable <USERNAME>`
-
-启用指定用户，使其可以重新登录。用户不存在时命令以非零状态退出。
-
-```bash
-asset user --enable alice
-```
-
-该命令会更新用户状态。
-
-## `asset user --disable <USERNAME>`
-
-禁用指定用户。禁用后该用户不能登录，已有会话会在后续用户状态校验时失效。用户不存在时
-命令以非零状态退出。
-
-```bash
-asset user --disable alice
-```
-
-该命令会更新用户状态。
-
-## `asset user --show <USERNAME>`
-
-展示指定用户的用户名、ID、角色、状态、工作目录及创建和更新时间。该命令不会输出任何密码
-信息。用户不存在时命令以非零状态退出。
-
-```bash
-asset user --show alice
-```

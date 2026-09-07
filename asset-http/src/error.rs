@@ -69,12 +69,8 @@ impl From<CoreError> for HttpError {
         let status = match &error {
             CoreError::Directory(_)
             | CoreError::Resource(_)
-            | CoreError::User(_)
             | CoreError::Unsupported { .. }
-            | CoreError::InvalidOperation { .. }
-            | CoreError::WeakPassword => StatusCode::BAD_REQUEST,
-            CoreError::Unauthenticated => StatusCode::UNAUTHORIZED,
-            CoreError::Forbidden { .. } => StatusCode::FORBIDDEN,
+            | CoreError::InvalidOperation { .. } => StatusCode::BAD_REQUEST,
             CoreError::NotFound { .. } => StatusCode::NOT_FOUND,
             CoreError::Conflict { .. }
             | CoreError::RevisionConflict { .. }

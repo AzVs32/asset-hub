@@ -91,8 +91,7 @@ impl HttpState {
         &self.services.workflows
     }
 
-    /// Upload sessions have no Core owner boundary and are exposed through this direct application
-    /// service.
+    /// Upload sessions are exposed through this direct Core application service.
     pub(crate) fn uploads(&self) -> &UploadService {
         &self.services.resources.uploads
     }

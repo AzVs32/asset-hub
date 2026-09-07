@@ -42,7 +42,6 @@ content metadata, or transport fallbacks.
   concurrency precondition. On `concurrency.revision_conflict`, refresh the authoritative snapshot
   before further editing.
 - After a successful mutation, update or invalidate the smallest necessary Query cache surface.
-- Do not introduce authorization policy in React components.
 
 Current upload facts:
 

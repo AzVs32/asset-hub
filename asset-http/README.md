@@ -7,12 +7,10 @@ Business handlers receive Core application services. Upload completion receives 
 `UploadFinalizationDispatcher` interface; HTTP does not depend on the concrete Runtime
 scheduler or supervisor.
 
-Upload sessions are not owned by a user in Core or the business database. Upload routes invoke
-`UploadService` directly; their response and resumable-client contracts are unchanged.
+Upload routes invoke `UploadService` directly.
 
 Resource, Directory, Content, and archive handlers invoke their direct Core services with global
-directory paths: the nil UUID root is represented by an empty path. HTTP does not project paths into
-workspaces or pass user or authorization context to handlers. Router construction receives one
+directory paths: the nil UUID root is represented by an empty path. Router construction receives one
 `HttpComposition` bundle: `ResourceHttpServices`, `DirectoryHttpServices`, the cross-aggregate
 workflow service, and the narrow health-only Blob readiness interface. These bundles organize
 transport dependencies only; they do not add business workflows or expose repositories, storage,

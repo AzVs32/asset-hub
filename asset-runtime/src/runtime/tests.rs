@@ -1,7 +1,7 @@
 use super::*;
 use asset_core::domain::{
-    AccessContext, Checksum, DirectoryId, DirectoryPath, IdempotencyKey, Resource, ResourceContent,
-    ResourceContentReplacement, StorageKey, UploadStatus, User, UserId, UserRole,
+    Checksum, DirectoryId, DirectoryPath, IdempotencyKey, Resource, ResourceContent,
+    ResourceContentReplacement, StorageKey, UploadStatus,
 };
 use asset_core::port::{
     BlobByteStream, DirectoryRevisionUpdate, ListResources, ResourceRelocation,
@@ -88,7 +88,7 @@ fn upload_stream(bytes: &'static [u8]) -> BlobByteStream {
 }
 
 #[tokio::test]
-async fn direct_upload_service_resumes_and_recovers_without_a_user_context() {
+async fn direct_upload_service_resumes_and_recovers_without_an_access_context() {
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -684,68 +684,6 @@ async fn resource_relocation_rolls_back_physical_move_when_a_newer_revision_wins
     std::fs::remove_dir_all(root).unwrap();
 }
 
-#[tokio::test]
-async fn secured_services_reject_foreign_workspace_ids() {
-    let (root, runtime, infrastructure) = recovery_environment("workspace-authorization").await;
-    let provisioning = runtime.directory_provisioning_service();
-    let alice_workspace = provisioning
-        .provision_path(&DirectoryPath::from_path("workspaces/alice").unwrap())
-        .await
-        .unwrap();
-    let bob_workspace = provisioning
-        .provision_path(&DirectoryPath::from_path("workspaces/bob").unwrap())
-        .await
-        .unwrap();
-    let alice = User::new(
-        "alice",
-        "credential-hash",
-        UserRole::Member,
-        alice_workspace.id(),
-    )
-    .unwrap();
-    infrastructure
-        .user_repository()
-        .create(&alice)
-        .await
-        .unwrap();
-    let foreign = Resource::builder("private.txt")
-        .with_directory_id(bob_workspace.id())
-        .build()
-        .unwrap();
-    infrastructure
-        .resource_store()
-        .insert(&foreign)
-        .await
-        .unwrap();
-
-    let context = AccessContext::member(alice.id());
-    let authorization = runtime.authorization_service();
-    let foreign_resource = runtime
-        .resource_service()
-        .secured(&authorization, &context)
-        .get(&foreign.id())
-        .await;
-    assert!(
-        matches!(
-            foreign_resource,
-            Err(asset_core::CoreError::Forbidden { .. })
-        ),
-        "foreign resource lookup result was {foreign_resource:?}"
-    );
-    assert!(matches!(
-        runtime
-            .directory_service()
-            .secured(&authorization, &context)
-            .find_by_id(&bob_workspace.id())
-            .await,
-        Err(asset_core::CoreError::Forbidden { .. })
-    ));
-
-    drop(infrastructure);
-    drop(runtime);
-    std::fs::remove_dir_all(root).unwrap();
-}
-
 async fn wait_for_resource(
     runtime: &AssetRuntime,
     directory: &DirectoryPath,
@@ -775,12 +713,14 @@ async fn find_resource(
     directory: &DirectoryPath,
     name: &str,
 ) -> Option<Resource> {
-    let authorization = runtime.authorization_service();
-    let context = AccessContext::administrator(UserId::new());
+    let directory = runtime
+        .directory_service()
+        .resolve_path(directory)
+        .await
+        .ok()?;
     let page = runtime
         .resource_service()
-        .secured(&authorization, &context)
-        .list(directory, ListResources::new(100, 0, DirectoryId::root()))
+        .list(ListResources::new(100, 0, directory.id()))
         .await
         .ok()?;
     page.items
@@ -900,12 +840,12 @@ async fn local_storage_changes_are_synchronized_automatically() {
         "removed directory should be synchronized"
     );
 
-    let managed_path = DirectoryPath::from_path("managed-empty").unwrap();
     let managed = runtime
-        .directory_provisioning_service()
-        .provision_path(&managed_path)
+        .directory_service()
+        .create(&DirectoryId::root(), "managed-empty")
         .await
         .unwrap();
+    let managed_path = managed.path().clone();
     assert!(root.join(managed_path.path()).is_dir());
     let directories = runtime.directory_service();
     let managed = directories.find_by_id(&managed.id()).await.unwrap();

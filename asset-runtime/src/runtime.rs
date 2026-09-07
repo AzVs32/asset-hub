@@ -3,13 +3,12 @@ use crate::upload_finalization::UploadFinalizationScheduler;
 use asset_core::CoreError;
 use asset_core::domain::ResourceContentEditPolicy;
 use asset_core::service::{
-    AssetWorkflowService, AuthorizationService, ContentService, DirectoryIndexService,
-    DirectoryProvisioningService, DirectoryService, DirectoryServices, IdempotencyService,
-    ResourceService, ResourceServices, StorageMaintenanceService, UploadService, UserService,
+    AssetWorkflowService, ContentService, DirectoryIndexService, DirectoryService,
+    DirectoryServices, IdempotencyService, ResourceService, ResourceServices,
+    StorageMaintenanceService, UploadService,
 };
 use asset_infra::AssetInfrastructure;
 use asset_infra::config::{AssetInfraConfig, BlobBackend};
-use asset_infra::password::Argon2PasswordHasher;
 use asset_infra::storage::LocalStorageSync;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -25,13 +24,9 @@ pub struct AssetRuntime {
     upload_service: UploadService,
     storage_maintenance_service: StorageMaintenanceService,
     directory_service: DirectoryService,
-    directory_provisioning_service: DirectoryProvisioningService,
     directory_index_service: DirectoryIndexService,
     idempotency_service: IdempotencyService,
     asset_workflow_service: AssetWorkflowService,
-    user_service: UserService,
-    /// 授权应用能力
-    authorization_service: AuthorizationService,
     /// 持有 supervisor 和子任务生命周期
     upload_finalizations: Arc<UploadFinalizationScheduler>,
     /// 启动同步所需的最小 effective settings
@@ -76,7 +71,7 @@ impl AssetRuntime {
             infrastructure.directory_relocation_store(),
         );
         let directory_service = directory_services.directory_service();
-        let directory_provisioning_service = directory_services.provisioning_service();
+        let directory_import_service = directory_services.storage_import_service();
         let directory_index_service = directory_services.index_service();
         let recovered_relocations = directory_service.recover_pending_relocations().await?;
         if recovered_relocations > 0 {
@@ -97,7 +92,7 @@ impl AssetRuntime {
             infrastructure.storage_scanner(),
             directory_service.clone(),
             directory_index_service.clone(),
-            directory_provisioning_service.clone(),
+            directory_import_service,
             infrastructure.upload_session_repository(),
             infrastructure.content_replacement_repository(),
             resource_content_edit_policy,
@@ -116,14 +111,6 @@ impl AssetRuntime {
                 "recovered pending resource relocations"
             );
         }
-        let user_service = UserService::new(
-            infrastructure.user_repository(),
-            infrastructure.user_query(),
-            Arc::new(Argon2PasswordHasher),
-            directory_provisioning_service.clone(),
-        );
-        let authorization_service =
-            AuthorizationService::new(infrastructure.user_repository(), directory_service.clone());
         let asset_workflow_service =
             AssetWorkflowService::new(resource_service.clone(), directory_service.clone());
         let replacements_resumed = content_service.resume_pending_replacements().await?;
@@ -149,12 +136,9 @@ impl AssetRuntime {
             upload_service,
             storage_maintenance_service,
             directory_service,
-            directory_provisioning_service,
             directory_index_service,
             idempotency_service,
             asset_workflow_service,
-            user_service,
-            authorization_service,
             upload_finalizations,
             storage_sync_settings,
             storage_sync: None,
@@ -208,24 +192,12 @@ impl AssetRuntime {
         self.directory_service.clone()
     }
 
-    pub fn directory_provisioning_service(&self) -> DirectoryProvisioningService {
-        self.directory_provisioning_service.clone()
-    }
-
     pub fn directory_index_service(&self) -> DirectoryIndexService {
         self.directory_index_service.clone()
     }
 
     pub fn asset_workflow_service(&self) -> AssetWorkflowService {
         self.asset_workflow_service.clone()
-    }
-
-    pub fn user_service(&self) -> UserService {
-        self.user_service.clone()
-    }
-
-    pub fn authorization_service(&self) -> AuthorizationService {
-        self.authorization_service.clone()
     }
 
     /// 返回供 Application Surface 提交上传最终化工作的窄接口。

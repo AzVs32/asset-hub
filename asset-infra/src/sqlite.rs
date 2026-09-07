@@ -1,11 +1,9 @@
 mod idempotency_repository;
-mod identity_repository;
 mod repositories;
 mod resource_content_replacement_repository;
 mod upload_session_repository;
 
 pub use idempotency_repository::SqliteIdempotencyRepository;
-pub use identity_repository::SqliteIdentityRepository;
 pub(crate) use repositories::SqliteDatabase;
 pub use repositories::{SqliteDirectoryStore, SqliteResourceStore};
 pub use resource_content_replacement_repository::SqliteResourceContentReplacementRepository;

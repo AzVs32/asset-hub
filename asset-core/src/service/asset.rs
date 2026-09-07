@@ -1,8 +1,8 @@
 //! Narrow application coordinator for cross-aggregate projections.
 
-use super::{AuthorizationService, DirectoryService, ResourceService};
+use super::{DirectoryService, ResourceService};
 use crate::CoreError;
-use crate::domain::{AccessContext, DirectoryId, DirectoryOperation, ResourceId};
+use crate::domain::{DirectoryId, ResourceId};
 use crate::port::ListResources;
 use std::collections::VecDeque;
 
@@ -23,23 +23,10 @@ impl AssetWorkflowService {
         }
     }
 
-    pub fn secured<'a>(
-        &'a self,
-        authorization: &'a AuthorizationService,
-        context: &'a AccessContext,
-    ) -> SecuredAssetWorkflowService<'a> {
-        SecuredAssetWorkflowService {
-            workflows: self,
-            authorization,
-            context,
-        }
-    }
-
     /// Build the point-in-time manifest for a directory tree addressed by its global stable ID.
     ///
     /// The manifest retains canonical archive-path validation and contains only Resources with
-    /// content. Untrusted callers must use [`SecuredAssetWorkflowService`] to authorize the root
-    /// directory first.
+    /// content.
     pub async fn directory_archive_manifest(
         &self,
         id: &DirectoryId,
@@ -103,31 +90,7 @@ impl AssetWorkflowService {
     }
 }
 
-/// Authorization-bound cross-aggregate projections.
-pub struct SecuredAssetWorkflowService<'a> {
-    workflows: &'a AssetWorkflowService,
-    authorization: &'a AuthorizationService,
-    context: &'a AccessContext,
-}
-
-impl SecuredAssetWorkflowService<'_> {
-    pub async fn directory_archive_manifest(
-        &self,
-        id: &DirectoryId,
-    ) -> Result<DirectoryArchiveManifest, CoreError> {
-        let root = self.workflows.directories.find_by_id(id).await?;
-        self.authorization
-            .require(
-                self.context,
-                root.location(),
-                DirectoryOperation::DownloadDirectory,
-            )
-            .await?;
-        self.workflows.directory_archive_manifest(id).await
-    }
-}
-
-/// Authorized, point-in-time directory tree projection used to build a ZIP download.
+/// Point-in-time directory tree projection used to build a ZIP download.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirectoryArchiveManifest {
     filename: String,

@@ -3,13 +3,11 @@
 mod command;
 mod contract;
 mod index;
-mod provisioning;
-mod secured;
+mod storage_import;
 
 pub use contract::UpdateDirectory;
 pub use index::DirectoryIndexService;
-pub use provisioning::DirectoryProvisioningService;
-pub use secured::SecuredDirectoryService;
+pub use storage_import::DirectoryImportService;
 
 use crate::{
     CoreError,
@@ -26,8 +24,7 @@ use tokio::sync::Mutex;
 /// storage.
 ///
 /// Its public query and mutation use cases use stable IDs or global [`DirectoryPath`] values and
-/// do not require a user context. Untrusted callers must use [`SecuredDirectoryService`] so its
-/// workspace boundary is authorized before calling these operations.
+/// do not require an access context.
 #[derive(Clone)]
 pub struct DirectoryService {
     kernel: Arc<DirectoryKernel>,
@@ -45,7 +42,7 @@ struct DirectoryKernel {
 /// Composition-time bundle that guarantees all Directory services share one mutation boundary.
 pub struct DirectoryServices {
     directory: DirectoryService,
-    provisioning: DirectoryProvisioningService,
+    storage_import: DirectoryImportService,
     index: DirectoryIndexService,
 }
 
@@ -71,7 +68,7 @@ impl DirectoryServices {
             directory: DirectoryService {
                 kernel: kernel.clone(),
             },
-            provisioning: DirectoryProvisioningService::new(kernel),
+            storage_import: DirectoryImportService::new(kernel),
             index: index_service,
         }
     }
@@ -80,8 +77,8 @@ impl DirectoryServices {
         self.directory.clone()
     }
 
-    pub fn provisioning_service(&self) -> DirectoryProvisioningService {
-        self.provisioning.clone()
+    pub fn storage_import_service(&self) -> DirectoryImportService {
+        self.storage_import.clone()
     }
 
     pub fn index_service(&self) -> DirectoryIndexService {
@@ -90,14 +87,6 @@ impl DirectoryServices {
 }
 
 impl DirectoryService {
-    pub fn secured<'a>(
-        &'a self,
-        authorization: &'a crate::service::AuthorizationService,
-        context: &'a crate::domain::AccessContext,
-    ) -> SecuredDirectoryService<'a> {
-        SecuredDirectoryService::new(self, authorization, context)
-    }
-
     /// Locate the global root, whose identity is the nil UUID and whose path is empty.
     pub async fn root(&self) -> Result<DirectoryLocation, CoreError> {
         Ok(self

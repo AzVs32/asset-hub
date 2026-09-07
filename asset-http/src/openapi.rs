@@ -75,13 +75,6 @@ mod tests {
 
         assert!(document["paths"].get("/directories/{id}").is_some());
         assert!(document["paths"].get("/resources/{id}/content").is_some());
-        assert!(document["paths"].get("/auth/login").is_none());
-        assert!(document.get("security").is_none());
-        assert!(
-            document["components"]["schemas"]
-                .get("AuthenticatedUser")
-                .is_none()
-        );
     }
 
     #[test]

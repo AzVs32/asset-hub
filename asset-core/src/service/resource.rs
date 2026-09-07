@@ -11,7 +11,7 @@ use crate::port::{
     ResourceRelocationStore, ResourceStore, StorageScanner, UploadSessionRepository,
 };
 use crate::service::{
-    DirectoryIndexService, DirectoryProvisioningService, DirectoryService, IdempotencyService,
+    DirectoryImportService, DirectoryIndexService, DirectoryService, IdempotencyService,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -21,17 +21,15 @@ mod content;
 mod contract;
 mod path_resolver;
 mod reconciliation;
-mod secured;
 mod storage_key_locks;
 mod upload;
 mod upload_locks;
 
-pub use content::{ContentService, SecuredContentService};
+pub use content::ContentService;
 pub use contract::{CreateUpload, ReplaceResourceContent, ResourceContentStream, UpdateResource};
 pub use reconciliation::{
     ResourceScanProgress, StorageMaintenanceService, StorageReconciliationReport,
 };
-pub use secured::SecuredResourceService;
 pub use upload::UploadService;
 
 pub(crate) use command::build_resource;
@@ -40,9 +38,7 @@ pub(crate) use upload_locks::UploadLocks;
 
 /// Resource metadata and lifecycle service.
 ///
-/// Its public query, list, update, and delete use cases are context-free. Untrusted callers must
-/// use [`SecuredResourceService`] to authorize the relevant source and destination directories
-/// before invoking those use cases.
+/// Its public query, list, update, and delete use cases are context-free.
 #[derive(Clone)]
 pub struct ResourceService {
     pub(crate) store: Arc<dyn ResourceStore>,
@@ -71,14 +67,6 @@ impl ResourceService {
             storage_key_locks,
         }
     }
-
-    pub fn secured<'a>(
-        &'a self,
-        authorization: &'a crate::service::AuthorizationService,
-        context: &'a crate::domain::AccessContext,
-    ) -> SecuredResourceService<'a> {
-        SecuredResourceService::new(self, authorization, context)
-    }
 }
 
 /// Deterministic assembly bundle for the five independent Resource-related services. It is the
@@ -105,7 +93,7 @@ impl ResourceServices {
         storage_scanner: Arc<dyn StorageScanner>,
         directories: DirectoryService,
         directory_index: DirectoryIndexService,
-        directory_provisioning: DirectoryProvisioningService,
+        directory_import: DirectoryImportService,
         upload_sessions: Arc<dyn UploadSessionRepository>,
         content_replacements: Arc<dyn ResourceContentReplacementRepository>,
         edit_policy: Arc<ResourceContentEditPolicy>,
@@ -157,7 +145,7 @@ impl ResourceServices {
             blob_health,
             directories,
             directory_index,
-            directory_provisioning,
+            directory_import,
             locks,
         );
         Ok(Self {

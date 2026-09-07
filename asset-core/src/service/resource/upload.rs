@@ -17,7 +17,7 @@ use crate::service::{DirectoryService, IdempotencyOutcome, IdempotencyService, r
 use futures_util::StreamExt;
 use std::sync::Arc;
 
-/// Resumable upload workflows with durable state and recovery, independent of a user context.
+/// Resumable upload workflows with durable state and recovery.
 #[derive(Clone)]
 pub struct UploadService {
     service: Arc<UploadDependencies>,
@@ -72,7 +72,7 @@ impl UploadService {
         self.service.upload_sessions.list_finalizing().await
     }
 
-    /// Create a resumable upload session without a user-context dependency.
+    /// Create a resumable upload session without an access-context dependency.
     pub async fn create(&self, command: CreateUpload) -> Result<UploadSession, CoreError> {
         let Some(key) = command.idempotency_key().cloned() else {
             return self.create_session(command, None).await;

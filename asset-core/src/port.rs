@@ -4,7 +4,6 @@
 //! - 目录持久化与查询：`DirectoryStore`、`DirectoryQuery`、`DirectoryIndex`
 //! - 内容存储：`ContentReader`、`ContentStagingStore`、`ContentObjectStore`、`BlobHealth`、
 //!   `DirectoryStorage`、`StorageScanner`
-//! - 身份：用户仓储、密码哈希
 //! - 幂等：`IdempotencyRepository`
 //!
 //! Port 只描述 Core 所需语义；OpenDAL、sqlx 等具体类型只能出现在
@@ -12,7 +11,6 @@
 
 mod directory;
 mod idempotency;
-mod identity;
 mod resource;
 mod storage;
 mod upload;
@@ -22,7 +20,6 @@ pub use directory::{
     DirectoryRelocationStore, DirectoryRevisionUpdate, DirectoryStore, LocatedDirectory,
 };
 pub use idempotency::{IdempotencyAcquire, IdempotencyRepository};
-pub use identity::{LocatedUser, PasswordHasher, UserQuery, UserRepository};
 pub use resource::{
     ListResources, LocatedResource, ResourceContentReplacementRepository,
     ResourceMaintenanceReadModel, ResourcePage, ResourceReadModel, ResourceRelocation,

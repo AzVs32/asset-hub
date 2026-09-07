@@ -1,7 +1,6 @@
 pub mod config;
 mod directory_index;
 pub mod migration;
-pub mod password;
 pub mod sqlite;
 pub mod storage;
 
@@ -11,13 +10,12 @@ use asset_core::{
     port::DirectoryRelocationStore, port::DirectoryStorage, port::DirectoryStore,
     port::IdempotencyRepository, port::ResourceContentReplacementRepository,
     port::ResourceMaintenanceReadModel, port::ResourceReadModel, port::ResourceRelocationStore,
-    port::ResourceStore, port::StorageScanner, port::UploadSessionRepository, port::UserQuery,
-    port::UserRepository,
+    port::ResourceStore, port::StorageScanner, port::UploadSessionRepository,
 };
 use config::{AssetInfraConfig, BlobBackend, DatabaseBackend};
 use directory_index::InMemoryDirectoryIndex;
 use sqlite::{
-    SqliteDatabase, SqliteDirectoryStore, SqliteIdempotencyRepository, SqliteIdentityRepository,
+    SqliteDatabase, SqliteDirectoryStore, SqliteIdempotencyRepository,
     SqliteResourceContentReplacementRepository, SqliteResourceStore, SqliteUploadSessionRepository,
 };
 use std::sync::Arc;
@@ -33,7 +31,6 @@ pub struct AssetInfrastructure {
     resource_store: Arc<SqliteResourceStore>,
     directory_store: Arc<SqliteDirectoryStore>,
     directory_index: Arc<InMemoryDirectoryIndex>,
-    identity_repository: Arc<SqliteIdentityRepository>,
     upload_session_repository: Arc<SqliteUploadSessionRepository>,
     content_replacement_repository: Arc<SqliteResourceContentReplacementRepository>,
     idempotency_repository: Arc<SqliteIdempotencyRepository>,
@@ -73,7 +70,6 @@ impl AssetInfrastructure {
         let directory_index = Arc::new(InMemoryDirectoryIndex::from_directories(
             directory_store.load_all().await?,
         )?);
-        let identity_repository = Arc::new(SqliteIdentityRepository::new(database.pool().clone()));
         let upload_session_repository =
             Arc::new(SqliteUploadSessionRepository::new(database.pool().clone()));
         let content_replacement_repository = Arc::new(
@@ -86,7 +82,6 @@ impl AssetInfrastructure {
             resource_store,
             directory_store,
             directory_index,
-            identity_repository,
             upload_session_repository,
             content_replacement_repository,
             idempotency_repository,
@@ -131,14 +126,6 @@ impl AssetInfrastructure {
 
     pub fn directory_query(&self) -> Arc<dyn DirectoryQuery> {
         self.directory_index.clone()
-    }
-
-    pub fn user_repository(&self) -> Arc<dyn UserRepository> {
-        self.identity_repository.clone()
-    }
-
-    pub fn user_query(&self) -> Arc<dyn UserQuery> {
-        self.identity_repository.clone()
     }
 
     /// 返回对象内容只读端口。

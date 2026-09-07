@@ -6,52 +6,31 @@ use crate::{
 };
 use std::sync::Arc;
 
-/// Trusted system provisioning and storage-import use cases.
-///
-/// User-facing Resource, Upload, and Directory commands must not depend on this service.
+/// Imports physical directories observed by the storage scanner into Directory aggregates.
 #[derive(Clone)]
-pub struct DirectoryProvisioningService {
+pub struct DirectoryImportService {
     service: DirectoryService,
 }
 
-impl DirectoryProvisioningService {
+impl DirectoryImportService {
     pub(super) fn new(kernel: Arc<DirectoryKernel>) -> Self {
         Self {
             service: DirectoryService { kernel },
         }
     }
 
-    /// Create missing aggregate and physical path segments for trusted system provisioning.
-    pub async fn provision_path(
-        &self,
-        path: &DirectoryPath,
-    ) -> Result<DirectoryLocation, CoreError> {
-        self.materialize_path(path, false).await
-    }
-
     /// Import a path that a storage scan has already observed physically.
-    pub async fn import_storage_path(
-        &self,
-        path: &DirectoryPath,
-    ) -> Result<DirectoryLocation, CoreError> {
-        self.materialize_path(path, true).await
+    pub async fn import_path(&self, path: &DirectoryPath) -> Result<DirectoryLocation, CoreError> {
+        self.materialize_path(path).await
     }
 
-    async fn materialize_path(
-        &self,
-        path: &DirectoryPath,
-        importing: bool,
-    ) -> Result<DirectoryLocation, CoreError> {
+    async fn materialize_path(&self, path: &DirectoryPath) -> Result<DirectoryLocation, CoreError> {
         let _guard = self.service.kernel.mutation_lock.lock().await;
         if let Some(directory) = self.service.kernel.query.find_by_path(path).await? {
-            if importing {
-                if !self.service.kernel.storage.directory_exists(path).await? {
-                    return Err(CoreError::invariant(format!(
-                        "storage import path `{path}` no longer exists"
-                    )));
-                }
-            } else {
-                self.service.kernel.storage.ensure_directory(path).await?;
+            if !self.service.kernel.storage.directory_exists(path).await? {
+                return Err(CoreError::invariant(format!(
+                    "storage import path `{path}` no longer exists"
+                )));
             }
             return Ok(directory.location().clone());
         }
@@ -83,31 +62,14 @@ impl DirectoryProvisioningService {
                 .storage
                 .directory_exists(&current_path)
                 .await?;
-            if importing && !physically_existed {
+            if !physically_existed {
                 return Err(CoreError::invariant(format!(
                     "storage import path `{current_path}` no longer exists"
                 )));
             }
-            if !importing {
-                self.service
-                    .kernel
-                    .storage
-                    .ensure_directory(&current_path)
-                    .await?;
-            }
 
             let directory = Directory::new(parent.id(), name)?;
-            if let Err(error) = self.service.kernel.store.insert(&directory).await {
-                if !physically_existed {
-                    let _ = self
-                        .service
-                        .kernel
-                        .storage
-                        .delete_empty_directory(&current_path)
-                        .await;
-                }
-                return Err(error);
-            }
+            self.service.kernel.store.insert(&directory).await?;
             self.service.refresh_index(&directory.id()).await?;
             parent = LocatedDirectory::new(
                 directory.clone(),

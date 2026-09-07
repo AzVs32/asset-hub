@@ -33,6 +33,6 @@ VITE_API_BASE_URL=http://127.0.0.1:8080 npm run dev
 | --- | --- |
 | `npm run dev` | Start the local development server |
 | `npm run check` | Run formatting/lint checks and TypeScript validation |
-| `npm test` | Run the test suite (currently empty; tests will be reintroduced) |
+| `npm test` | Run available package tests |
 | `npm run build` | Create a production build |
 | `npm run generate:api` | Regenerate HTTP-only OpenAPI declarations from a running API |

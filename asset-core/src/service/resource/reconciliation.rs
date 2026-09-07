@@ -18,7 +18,7 @@ use crate::port::{
     ResourceStore, ScannedBlob, ScannedStorageEntry, StoragePrefix, StorageScanStream,
     StorageScanner,
 };
-use crate::service::{DirectoryIndexService, DirectoryProvisioningService, DirectoryService};
+use crate::service::{DirectoryImportService, DirectoryIndexService, DirectoryService};
 use futures_util::StreamExt;
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
@@ -83,7 +83,7 @@ struct MaintenanceDependencies {
     blob_health: Arc<dyn BlobHealth>,
     directories: DirectoryService,
     directory_index: DirectoryIndexService,
-    directory_provisioning: DirectoryProvisioningService,
+    directory_import: DirectoryImportService,
     storage_key_locks: Arc<StorageKeyLocks>,
 }
 
@@ -115,7 +115,7 @@ impl StorageMaintenanceService {
         blob_health: Arc<dyn BlobHealth>,
         directories: DirectoryService,
         directory_index: DirectoryIndexService,
-        directory_provisioning: DirectoryProvisioningService,
+        directory_import: DirectoryImportService,
         storage_key_locks: Arc<StorageKeyLocks>,
     ) -> Self {
         Self {
@@ -128,7 +128,7 @@ impl StorageMaintenanceService {
                 blob_health,
                 directories,
                 directory_index,
-                directory_provisioning,
+                directory_import,
                 storage_key_locks,
             }),
         }
@@ -179,8 +179,8 @@ impl StorageMaintenanceService {
             match entry? {
                 ScannedStorageEntry::Directory(directory) => {
                     self.service
-                        .directory_provisioning
-                        .import_storage_path(&directory)
+                        .directory_import
+                        .import_path(&directory)
                         .await?;
                     physical_directories.insert(directory);
                     report.directories += 1;
@@ -251,8 +251,8 @@ impl StorageMaintenanceService {
         let resource = build_resource(
             name,
             self.service
-                .directory_provisioning
-                .import_storage_path(&directory)
+                .directory_import
+                .import_path(&directory)
                 .await?
                 .id(),
         )
@@ -299,8 +299,8 @@ impl StorageMaintenanceService {
             match entry? {
                 ScannedStorageEntry::Directory(directory) => {
                     self.service
-                        .directory_provisioning
-                        .import_storage_path(&directory)
+                        .directory_import
+                        .import_path(&directory)
                         .await?;
                     physical_directories.insert(directory);
                     report.directories += 1;
@@ -487,8 +487,8 @@ impl StorageMaintenanceService {
         resource.rename(to_name)?;
         let to_directory = self
             .service
-            .directory_provisioning
-            .import_storage_path(&to_directory)
+            .directory_import
+            .import_path(&to_directory)
             .await?;
         resource.move_to_directory(to_directory.id())?;
         let checksum = self.calculate_stored_blob_checksum(to, target.size).await?;
@@ -585,8 +585,8 @@ impl StorageMaintenanceService {
             resource.rename(name)?;
             let directory = self
                 .service
-                .directory_provisioning
-                .import_storage_path(&directory)
+                .directory_import
+                .import_path(&directory)
                 .await?;
             resource.move_to_directory(directory.id())?;
             resource.attach_content(content)?;
@@ -607,8 +607,8 @@ impl StorageMaintenanceService {
         let resource = build_resource(
             name,
             self.service
-                .directory_provisioning
-                .import_storage_path(&directory)
+                .directory_import
+                .import_path(&directory)
                 .await?
                 .id(),
         )
@@ -658,8 +658,8 @@ impl StorageMaintenanceService {
         let resource = build_resource(
             name,
             self.service
-                .directory_provisioning
-                .import_storage_path(&directory)
+                .directory_import
+                .import_path(&directory)
                 .await?
                 .id(),
         )

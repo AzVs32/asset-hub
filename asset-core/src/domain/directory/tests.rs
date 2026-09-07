@@ -40,9 +40,9 @@ fn directory_path_rejects_internal_storage_namespace() {
 #[test]
 fn directory_path_contains_obeys_segment_boundaries() {
     let root = DirectoryPath::root();
-    let home = DirectoryPath::from_path("users/alice").unwrap();
-    let child = DirectoryPath::from_path("users/alice/photos").unwrap();
-    let sibling = DirectoryPath::from_path("users/alice2").unwrap();
+    let home = DirectoryPath::from_path("teams/alice").unwrap();
+    let child = DirectoryPath::from_path("teams/alice/photos").unwrap();
+    let sibling = DirectoryPath::from_path("teams/alice2").unwrap();
 
     assert!(root.contains(&home));
     assert!(home.contains(&home));

@@ -1,4 +1,4 @@
-use super::{DirectoryError, ResourceError, UserError};
+use super::{DirectoryError, ResourceError};
 use thiserror::Error;
 
 /// 核心层对外暴露的统一错误类型。
@@ -14,21 +14,6 @@ pub enum CoreError {
     /// 资源领域内的业务校验或状态流转错误。
     #[error(transparent)]
     Resource(#[from] ResourceError),
-
-    #[error(transparent)]
-    User(#[from] UserError),
-
-    #[error("password must contain at least 4 characters")]
-    WeakPassword,
-
-    #[error("authentication failed")]
-    Unauthenticated,
-
-    #[error("access denied for `{action}` on directory `{directory}`")]
-    Forbidden {
-        action: &'static str,
-        directory: String,
-    },
 
     /// 对象存储操作失败。
     #[error("storage operation `{operation}` failed: {source}")]
@@ -106,12 +91,6 @@ pub enum CoreError {
 }
 
 impl CoreError {
-    pub fn forbidden(action: &'static str, directory: impl Into<String>) -> Self {
-        Self::Forbidden {
-            action,
-            directory: directory.into(),
-        }
-    }
     /// 包装对象存储适配器返回的底层错误。
     pub fn storage(
         operation: &'static str,

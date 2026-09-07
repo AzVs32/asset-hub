@@ -4,8 +4,8 @@ use crate::CoreError;
 use crate::domain::{DirectoryId, Resource, ResourceId, StorageKey};
 use crate::port::DirectoryLocation;
 
-/// Resource read-model filters. Directory identity is always a stable UUID; path resolution is
-/// performed by an authorization-bound service before constructing this value.
+/// Resource read-model filters. Directory identity is always a stable UUID; callers resolve
+/// global paths through `DirectoryService` before constructing this value.
 #[derive(Debug, Clone)]
 pub struct ListResources {
     limit: u32,

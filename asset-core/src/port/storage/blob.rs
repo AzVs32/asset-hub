@@ -17,8 +17,8 @@ pub type BlobByteStream = Pin<Box<dyn Stream<Item = Result<Bytes, CoreError>> + 
 
 /// Blob storage namespace reserved for Asset Hub internals.
 ///
-/// User-managed resources must not use this prefix. Infrastructure adapters and scanners use the
-/// same value to keep internal temporary objects out of user-visible imports.
+/// Managed resources must not use this prefix. Infrastructure adapters and scanners use the
+/// same value to keep internal temporary objects out of public imports.
 pub const RESERVED_BLOB_STORAGE_PREFIX: &str = crate::domain::INTERNAL_STORAGE_DIRECTORY_NAME;
 
 /// 已完整写入内部暂存区、尚未发布到用户可见路径的 Blob。

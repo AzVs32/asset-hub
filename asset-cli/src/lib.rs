@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 mod commands;
 
-use commands::{config, system, user};
+use commands::{config, system};
 
 pub type CliResult<T = ()> = anyhow::Result<T>;
 
@@ -31,8 +31,6 @@ enum Command {
     Config(config::Command),
     /// Inspect and maintain the local Asset Hub system.
     System(system::Command),
-    /// Manage Asset Hub users.
-    User(user::Command),
 }
 
 pub async fn run(cli: Cli) -> CliResult {
@@ -42,10 +40,6 @@ pub async fn run(cli: Cli) -> CliResult {
         Command::System(command) => {
             let runtime = maintenance_runtime(config_path).await?;
             system::run(command, runtime.storage_maintenance_service()).await
-        }
-        Command::User(command) => {
-            let runtime = maintenance_runtime(config_path).await?;
-            user::run(command, runtime.user_service()).await
         }
     }
 }

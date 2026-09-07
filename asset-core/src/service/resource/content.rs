@@ -5,15 +5,14 @@
 use super::{ReplaceResourceContent, ResourceContentStream, StorageKeyLocks, path_resolver};
 use crate::CoreError;
 use crate::domain::{
-    AccessContext, Checksum, ChecksumKind, DirectoryOperation, Resource, ResourceContent,
-    ResourceContentEditPolicy, ResourceContentReplacement, ResourceContentReplacementId,
-    ResourceId, StorageKey,
+    Checksum, ChecksumKind, Resource, ResourceContent, ResourceContentEditPolicy,
+    ResourceContentReplacement, ResourceContentReplacementId, ResourceId, StorageKey,
 };
 use crate::port::{
     BlobByteStream, ContentObjectStore, ContentReader, ContentStagingStore, LocatedResource,
     ResourceContentReplacementRepository, ResourceReadModel, ResourceStore, StagedBlob,
 };
-use crate::service::{AuthorizationService, IdempotencyOutcome, IdempotencyService, request_hash};
+use crate::service::{IdempotencyOutcome, IdempotencyService, request_hash};
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use futures_util::StreamExt;
@@ -22,8 +21,7 @@ use std::sync::{Arc, Mutex};
 
 /// Resource-content reads, streams, and replacement workflows.
 ///
-/// Its public use cases are context-free. Untrusted callers must use [`SecuredContentService`] to
-/// authorize the Resource directory before invoking them.
+/// Its public use cases are context-free.
 #[derive(Clone)]
 pub struct ContentService {
     read_model: Arc<dyn ResourceReadModel>,
@@ -60,18 +58,6 @@ impl ContentService {
             storage_key_locks,
             edit_policy,
             idempotency,
-        }
-    }
-
-    pub fn secured<'a>(
-        &'a self,
-        authorization: &'a AuthorizationService,
-        context: &'a AccessContext,
-    ) -> SecuredContentService<'a> {
-        SecuredContentService {
-            service: self,
-            authorization,
-            context,
         }
     }
 
@@ -498,67 +484,6 @@ impl ContentService {
         );
         self.objects.delete(replacement.backup_key()).await?;
         self.staging.discard_staged(&staged).await
-    }
-}
-
-pub struct SecuredContentService<'a> {
-    service: &'a ContentService,
-    authorization: &'a AuthorizationService,
-    context: &'a AccessContext,
-}
-
-impl SecuredContentService<'_> {
-    async fn resource_for(
-        &self,
-        id: &ResourceId,
-        operation: DirectoryOperation,
-    ) -> Result<Option<LocatedResource>, CoreError> {
-        let resource = self.service.read_model.find_by_id(id).await?;
-        if let Some(resource) = &resource {
-            self.authorization
-                .require(self.context, resource.directory(), operation)
-                .await?;
-        }
-        Ok(resource)
-    }
-
-    pub async fn get(&self, id: &ResourceId) -> Result<Option<Bytes>, CoreError> {
-        let Some(_resource) = self
-            .resource_for(id, DirectoryOperation::ReadResource)
-            .await?
-        else {
-            return Ok(None);
-        };
-        self.service.get(id).await
-    }
-
-    pub async fn stream(
-        &self,
-        id: &ResourceId,
-        range: Option<(u64, u64)>,
-    ) -> Result<Option<ResourceContentStream>, CoreError> {
-        let Some(_resource) = self
-            .resource_for(id, DirectoryOperation::ReadResource)
-            .await?
-        else {
-            return Ok(None);
-        };
-        self.service.stream(id, range).await
-    }
-
-    pub async fn replace(
-        &self,
-        id: &ResourceId,
-        command: ReplaceResourceContent,
-        data: BlobByteStream,
-    ) -> Result<Option<Resource>, CoreError> {
-        let Some(_resource) = self
-            .resource_for(id, DirectoryOperation::ReplaceResourceContent)
-            .await?
-        else {
-            return Ok(None);
-        };
-        self.service.replace(id, command, data).await
     }
 }
 

@@ -9,14 +9,12 @@ authors.workspace = true
 asset-core.workspace = true
 
 async-trait.workspace = true
-argon2.workspace = true
 bytes.workspace = true
 chrono.workspace = true
 config.workspace = true
 futures-core.workspace = true
 futures-util.workspace = true
 opendal.workspace = true
-rand_core.workspace = true
 notify.workspace = true
 serde.workspace = true
 serde_json.workspace = true

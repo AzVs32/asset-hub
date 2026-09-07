@@ -13,26 +13,6 @@ impl DirectoryService {
         parent_id: &DirectoryId,
         name: impl Into<String>,
     ) -> Result<LocatedDirectory, CoreError> {
-        self.create_guarded(parent_id, name, None, None).await
-    }
-
-    pub(crate) async fn create_in_scope(
-        &self,
-        parent_id: &DirectoryId,
-        name: impl Into<String>,
-        scope_root: DirectoryId,
-    ) -> Result<LocatedDirectory, CoreError> {
-        self.create_guarded(parent_id, name, None, Some(scope_root))
-            .await
-    }
-
-    pub(crate) async fn create_guarded(
-        &self,
-        parent_id: &DirectoryId,
-        name: impl Into<String>,
-        expected_parent_revision: Option<u64>,
-        required_parent_ancestor: Option<DirectoryId>,
-    ) -> Result<LocatedDirectory, CoreError> {
         let _guard = self.kernel.mutation_lock.lock().await;
         let parent = self
             .kernel
@@ -40,25 +20,6 @@ impl DirectoryService {
             .find_by_id(parent_id)
             .await?
             .ok_or_else(|| CoreError::not_found("directory", parent_id.to_string()))?;
-        if expected_parent_revision
-            .is_some_and(|expected| expected != parent.directory().revision())
-        {
-            return Err(CoreError::conflict(format!(
-                "directory `{parent_id}` changed while it was being created"
-            )));
-        }
-        if let Some(ancestor_id) = required_parent_ancestor
-            && !self
-                .kernel
-                .query
-                .is_descendant_or_self(&ancestor_id, parent_id)
-                .await?
-        {
-            return Err(CoreError::forbidden(
-                "create directory",
-                parent.path().path(),
-            ));
-        }
         let directory = Directory::new(*parent_id, name)?;
         let path = parent.path().child(directory.name())?;
         if self.kernel.query.find_by_path(&path).await?.is_some() {
@@ -87,15 +48,6 @@ impl DirectoryService {
         id: &DirectoryId,
         command: UpdateDirectory,
     ) -> Result<LocatedDirectory, CoreError> {
-        self.update_in_scope(id, command, None).await
-    }
-
-    pub(crate) async fn update_in_scope(
-        &self,
-        id: &DirectoryId,
-        command: UpdateDirectory,
-        required_parent_ancestor: Option<DirectoryId>,
-    ) -> Result<LocatedDirectory, CoreError> {
         let _guard = self.kernel.mutation_lock.lock().await;
         let located = self
             .kernel
@@ -111,15 +63,6 @@ impl DirectoryService {
 
         if directory.id().is_root() && (command.name.is_some() || command.parent_id.is_some()) {
             return Err(CoreError::conflict("root directory cannot be updated"));
-        }
-        if let Some(ancestor_id) = required_parent_ancestor
-            && !self
-                .kernel
-                .query
-                .is_descendant_or_self(&ancestor_id, id)
-                .await?
-        {
-            return Err(CoreError::forbidden("update directory", from.path().path()));
         }
         let parent_id = command
             .parent_id
@@ -141,18 +84,6 @@ impl DirectoryService {
             .find_by_id(&parent_id)
             .await?
             .ok_or_else(|| CoreError::not_found("directory", parent_id.to_string()))?;
-        if let Some(ancestor_id) = required_parent_ancestor
-            && !self
-                .kernel
-                .query
-                .is_descendant_or_self(&ancestor_id, &parent_id)
-                .await?
-        {
-            return Err(CoreError::forbidden(
-                "update directory",
-                parent.path().path(),
-            ));
-        }
         if let Some(name) = command.name {
             directory.rename(name)?;
         }
@@ -352,7 +283,7 @@ impl DirectoryService {
     }
 
     /// Trusted storage maintenance may remove a directory only after its physical absence has
-    /// been reconciled. User-facing operations must use [`Self::delete`] instead.
+    /// been reconciled. Ordinary operations must use [`Self::delete`] instead.
     pub(crate) async fn delete_if_empty_for_maintenance(
         &self,
         id: &DirectoryId,
