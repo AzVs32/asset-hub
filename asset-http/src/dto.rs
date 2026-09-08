@@ -1,6 +1,9 @@
-use asset_core::domain::{
-    Checksum, ContentVerificationStatus, DirectoryPath, Resource, ResourceContent,
-    ResourceEffectiveStatus, ResourceLifecycleStatus,
+use asset_core::{
+    directory::domain::DirectoryPath,
+    resource::domain::{
+        Checksum, ContentVerificationStatus, Resource, ResourceContent, ResourceEffectiveStatus,
+        ResourceLifecycleStatus,
+    },
 };
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};

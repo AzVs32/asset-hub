@@ -5,13 +5,20 @@ pub mod sqlite;
 pub mod storage;
 
 use asset_core::{
-    CoreError, port::BlobHealth, port::ContentObjectStore, port::ContentReader,
-    port::ContentStagingStore, port::DirectoryProjection, port::DirectoryQuery,
-    port::DirectoryRelocationStore, port::DirectoryStorage, port::DirectoryStore,
-    port::IdempotencyRepository, port::ResourceContentReplacementRepository,
-    port::ResourceDeletionRepository, port::ResourceMaintenanceReadModel, port::ResourceReadModel,
-    port::ResourceRelocationStore, port::ResourceStore, port::StorageScanner,
-    port::UploadSessionRepository,
+    CoreError,
+    directory::port::{
+        DirectoryProjection, DirectoryQuery, DirectoryRelocationStore, DirectoryStore,
+    },
+    idempotency::port::IdempotencyRepository,
+    resource::port::{
+        ResourceContentReplacementRepository, ResourceDeletionRepository,
+        ResourceMaintenanceReadModel, ResourceReadModel, ResourceRelocationStore, ResourceStore,
+        UploadSessionRepository,
+    },
+    storage::port::{
+        BlobHealth, ContentObjectStore, ContentReader, ContentStagingStore, DirectoryStorage,
+        StorageScanner,
+    },
 };
 use config::{AssetInfraConfig, BlobBackend, DatabaseBackend};
 use directory_index::InMemoryDirectoryIndex;

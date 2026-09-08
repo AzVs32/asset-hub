@@ -1,8 +1,8 @@
 use asset_core::CoreError;
-use asset_core::domain::{
-    IdempotencyExecutionId, IdempotencyKey, IdempotencyRecord, IdempotencyStatus,
+use asset_core::idempotency::{
+    domain::{IdempotencyExecutionId, IdempotencyKey, IdempotencyRecord, IdempotencyStatus},
+    port::{IdempotencyAcquire, IdempotencyRepository},
 };
-use asset_core::port::{IdempotencyAcquire, IdempotencyRepository};
 use chrono::{DateTime, Utc};
 use sqlx::{Row, SqlitePool};
 use std::str::FromStr;

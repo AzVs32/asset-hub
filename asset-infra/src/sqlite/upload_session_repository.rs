@@ -1,9 +1,14 @@
 use asset_core::CoreError;
-use asset_core::domain::{
-    Checksum, DirectoryId, IdempotencyKey, ResourceId, UploadId, UploadSession,
-    UploadSessionSnapshot, UploadStatus,
+use asset_core::{
+    directory::domain::DirectoryId,
+    idempotency::domain::IdempotencyKey,
+    resource::{
+        domain::{
+            Checksum, ResourceId, UploadId, UploadSession, UploadSessionSnapshot, UploadStatus,
+        },
+        port::UploadSessionRepository,
+    },
 };
-use asset_core::port::UploadSessionRepository;
 use chrono::{DateTime, Utc};
 use sqlx::{Row, SqlitePool};
 use std::str::FromStr;

@@ -1,13 +1,21 @@
 use crate::migration;
 use asset_core::CoreError;
-use asset_core::domain::{
-    Directory, DirectoryId, DirectoryPath, Resource, ResourceContent, ResourceDeletion, ResourceId,
-};
-use asset_core::port::{
-    DirectoryLocation, DirectoryRelocation, DirectoryRelocationStore, DirectoryRevisionUpdate,
-    DirectoryStore, ListResources, LocatedResource, ResourceDeletionRepository,
-    ResourceMaintenanceReadModel, ResourcePage, ResourceReadModel, ResourceRelocation,
-    ResourceRelocationStore, ResourceStore,
+use asset_core::{
+    directory::{
+        domain::{Directory, DirectoryId, DirectoryPath},
+        port::{
+            DirectoryLocation, DirectoryRelocation, DirectoryRelocationStore,
+            DirectoryRevisionUpdate, DirectoryStore,
+        },
+    },
+    resource::{
+        domain::{Resource, ResourceContent, ResourceDeletion, ResourceId},
+        port::{
+            ListResources, LocatedResource, ResourceDeletionRepository,
+            ResourceMaintenanceReadModel, ResourcePage, ResourceReadModel, ResourceRelocation,
+            ResourceRelocationStore, ResourceStore,
+        },
+    },
 };
 use chrono::{DateTime, Utc};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
@@ -412,8 +420,8 @@ impl ResourceRelocationStore for SqliteResourceStore {
                 ResourceRelocation::new(
                     desired,
                     decode_revision(row.expected_revision)?,
-                    asset_core::domain::StorageKey::new(row.source_key)?,
-                    asset_core::domain::StorageKey::new(row.destination_key)?,
+                    asset_core::resource::domain::StorageKey::new(row.source_key)?,
+                    asset_core::resource::domain::StorageKey::new(row.destination_key)?,
                 )
             })
             .collect()
@@ -515,10 +523,12 @@ impl SqliteResourceStore {
 fn decode_resource_deletion(row: sqlx::sqlite::SqliteRow) -> Result<ResourceDeletion, CoreError> {
     let resource_id = decode_id(&row.get::<String, _>("resource_id"))?;
     let expected_revision = decode_revision(row.get("expected_revision"))?;
-    let source_key = asset_core::domain::StorageKey::new(row.get::<String, _>("source_key"))
-        .map_err(|error| CoreError::repository("resource_deletion.source_key", error))?;
-    let deletion_key = asset_core::domain::StorageKey::new(row.get::<String, _>("deletion_key"))
-        .map_err(|error| CoreError::repository("resource_deletion.deletion_key", error))?;
+    let source_key =
+        asset_core::resource::domain::StorageKey::new(row.get::<String, _>("source_key"))
+            .map_err(|error| CoreError::repository("resource_deletion.source_key", error))?;
+    let deletion_key =
+        asset_core::resource::domain::StorageKey::new(row.get::<String, _>("deletion_key"))
+            .map_err(|error| CoreError::repository("resource_deletion.deletion_key", error))?;
     ResourceDeletion::new(resource_id, expected_revision, source_key, deletion_key)
         .map_err(|error| CoreError::repository("resource_deletion.rehydrate", error))
 }

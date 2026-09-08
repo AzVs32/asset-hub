@@ -67,7 +67,7 @@ pub(crate) async fn replace_resource_content(
     let expected_checksum =
         Checksum::sha256(required_header(&headers, CONTENT_SHA256, "Content-SHA256")?)?;
     let expected_revision = parse_if_match(&headers)?;
-    let mut command = asset_core::service::ReplaceResourceContent::new(
+    let mut command = asset_core::resource::service::ReplaceResourceContent::new(
         expected_size,
         expected_checksum,
         expected_revision,

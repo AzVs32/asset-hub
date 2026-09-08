@@ -7,12 +7,16 @@ use crate::dto::{
 use crate::error::HttpError;
 use crate::state::HttpState;
 use asset_core::CoreError;
-use asset_core::domain::{
-    Checksum, DirectoryId, IdempotencyKey, ResourceId, UploadId, UploadSession,
+use asset_core::{
+    directory::{domain::DirectoryId, service::UpdateDirectory},
+    idempotency::domain::IdempotencyKey,
+    resource::{
+        domain::{Checksum, ResourceId, UploadId, UploadSession},
+        port::ListResources,
+        service::{CreateUpload, UpdateResource},
+    },
+    storage::port::BlobByteStream,
 };
-use asset_core::port::BlobByteStream;
-use asset_core::port::ListResources;
-use asset_core::service::{CreateUpload, UpdateDirectory, UpdateResource};
 use axum::Json;
 use axum::body::Body;
 use axum::extract::rejection::JsonRejection;

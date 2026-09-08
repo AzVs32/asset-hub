@@ -1,8 +1,11 @@
 use asset_core::CoreError;
-use asset_core::domain::{DirectoryPath, StorageKey};
-use asset_core::port::{
-    RESERVED_BLOB_STORAGE_PREFIX, ScannedBlob, ScannedStorageEntry, StoragePrefix,
-    StorageScanStream, StorageScanner,
+use asset_core::{
+    directory::domain::DirectoryPath,
+    resource::domain::StorageKey,
+    storage::port::{
+        RESERVED_BLOB_STORAGE_PREFIX, ScannedBlob, ScannedStorageEntry, StoragePrefix,
+        StorageScanStream, StorageScanner,
+    },
 };
 use chrono::{DateTime, Utc};
 use std::path::{Component, Path, PathBuf};

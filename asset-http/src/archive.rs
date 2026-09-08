@@ -3,8 +3,11 @@
 
 use crate::error::HttpError;
 use asset_core::CoreError;
-use asset_core::domain::{Checksum, DirectoryId};
-use asset_core::service::{AssetWorkflowService, ContentService, DirectoryArchiveManifest};
+use asset_core::{
+    directory::domain::DirectoryId,
+    resource::{domain::Checksum, service::ContentService},
+    workflow::service::{AssetWorkflowService, DirectoryArchiveManifest},
+};
 use axum::body::Body;
 use bytes::Bytes;
 use futures_util::StreamExt;

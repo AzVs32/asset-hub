@@ -1,11 +1,17 @@
 use crate::UploadFinalizationDispatcher;
 use crate::upload_finalization::UploadFinalizationScheduler;
 use asset_core::CoreError;
-use asset_core::domain::ResourceContentEditPolicy;
-use asset_core::service::{
-    AssetWorkflowService, ContentService, DirectoryIndexService, DirectoryService,
-    DirectoryServices, IdempotencyService, ResourceService, ResourceServices,
-    StorageMaintenanceService, UploadService,
+use asset_core::{
+    directory::service::{DirectoryIndexService, DirectoryService, DirectoryServices},
+    idempotency::service::IdempotencyService,
+    resource::{
+        domain::ResourceContentEditPolicy,
+        service::{
+            ContentService, ResourceService, ResourceServices, StorageMaintenanceService,
+            UploadService,
+        },
+    },
+    workflow::service::AssetWorkflowService,
 };
 use asset_infra::AssetInfrastructure;
 use asset_infra::config::{AssetInfraConfig, BlobBackend};

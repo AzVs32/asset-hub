@@ -158,7 +158,7 @@ pub(crate) async fn delete_directory(
 }
 
 pub(super) fn directory_response(
-    directory: &asset_core::port::LocatedDirectory,
+    directory: &asset_core::directory::port::LocatedDirectory,
 ) -> DirectoryResponse {
     let path = directory.path();
     DirectoryResponse {

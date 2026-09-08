@@ -141,20 +141,22 @@ pub(crate) async fn delete_resource(
     }
 }
 
-pub(super) fn resource_response(resource: &asset_core::port::LocatedResource) -> ResourceResponse {
+pub(super) fn resource_response(
+    resource: &asset_core::resource::port::LocatedResource,
+) -> ResourceResponse {
     ResourceResponse::new(resource.resource(), resource.directory().path().clone())
 }
 
 pub(super) async fn resource_snapshot_response(
-    service: &asset_core::service::ResourceService,
-    resource: &asset_core::domain::Resource,
+    service: &asset_core::resource::service::ResourceService,
+    resource: &asset_core::resource::domain::Resource,
 ) -> Result<ResourceResponse, CoreError> {
     let directory = service.locate_resource_directory(resource).await?;
     Ok(ResourceResponse::new(resource, directory.path().clone()))
 }
 
 pub(super) fn resource_page_response(
-    page_result: asset_core::port::ResourcePage,
+    page_result: asset_core::resource::port::ResourcePage,
     page: u32,
 ) -> ResourcePageResponse {
     let mut items = Vec::with_capacity(page_result.items.len());

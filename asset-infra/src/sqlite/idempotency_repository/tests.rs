@@ -1,8 +1,17 @@
 use super::*;
 use crate::sqlite::{SqliteDatabase, SqliteUploadSessionRepository};
-use asset_core::domain::{Checksum, DirectoryId, IdempotencyKey, IdempotencyRecord, UploadSession};
-use asset_core::port::{IdempotencyAcquire, IdempotencyRepository, UploadSessionRepository};
-use asset_core::service::{IdempotencyOutcome, IdempotencyService};
+use asset_core::{
+    directory::domain::DirectoryId,
+    idempotency::{
+        domain::{IdempotencyKey, IdempotencyRecord},
+        port::{IdempotencyAcquire, IdempotencyRepository},
+        service::{IdempotencyOutcome, IdempotencyService},
+    },
+    resource::{
+        domain::{Checksum, UploadSession},
+        port::UploadSessionRepository,
+    },
+};
 use chrono::{Duration, Utc};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -135,7 +144,7 @@ async fn acquire(
     service: &IdempotencyService,
     key: &IdempotencyKey,
     hash: &str,
-) -> asset_core::domain::IdempotencyExecutionId {
+) -> asset_core::idempotency::domain::IdempotencyExecutionId {
     match service.begin(key, hash).await.unwrap() {
         IdempotencyOutcome::Acquired { execution_id } => execution_id,
         _ => panic!("expected idempotency execution lease"),

@@ -1,10 +1,14 @@
 use super::*;
-use asset_core::domain::StorageKey;
-use asset_core::port::{
-    DirectoryRelocation, DirectoryRelocationStore, DirectoryRevisionUpdate, DirectoryStorage,
-    DirectoryStore, ResourceStore,
+use asset_core::{
+    directory::{
+        port::{
+            DirectoryRelocation, DirectoryRelocationStore, DirectoryRevisionUpdate, DirectoryStore,
+        },
+        service::{DirectoryService, DirectoryServices, UpdateDirectory},
+    },
+    resource::{domain::StorageKey, port::ResourceStore},
+    storage::port::DirectoryStorage,
 };
-use asset_core::service::{DirectoryService, DirectoryServices, UpdateDirectory};
 use std::collections::HashSet;
 use std::ops::Deref;
 use std::path::PathBuf;

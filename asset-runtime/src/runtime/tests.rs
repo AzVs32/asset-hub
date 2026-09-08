@@ -1,10 +1,18 @@
 use super::*;
-use asset_core::domain::{
-    Checksum, DirectoryId, DirectoryPath, IdempotencyKey, Resource, ResourceContent,
-    ResourceContentReplacement, ResourceDeletion, StorageKey, UploadStatus,
-};
-use asset_core::port::{
-    BlobByteStream, DirectoryRevisionUpdate, ListResources, ResourceRelocation,
+use asset_core::{
+    directory::{
+        domain::{DirectoryId, DirectoryPath},
+        port::DirectoryRevisionUpdate,
+    },
+    idempotency::domain::IdempotencyKey,
+    resource::{
+        domain::{
+            Checksum, Resource, ResourceContent, ResourceContentReplacement, ResourceDeletion,
+            StorageKey, UploadStatus,
+        },
+        port::{ListResources, ResourceRelocation},
+    },
+    storage::port::BlobByteStream,
 };
 use asset_infra::AssetInfrastructure;
 use asset_infra::config::{
@@ -106,7 +114,8 @@ async fn rejected_resource_rename_does_not_leave_a_startup_blocking_intent() {
         .resource_service()
         .update(
             &resource.id(),
-            asset_core::service::UpdateResource::new(resource.revision()).with_name("occupied.txt"),
+            asset_core::resource::service::UpdateResource::new(resource.revision())
+                .with_name("occupied.txt"),
         )
         .await;
     assert!(matches!(
@@ -152,7 +161,8 @@ async fn fresh_resource_rename_cannot_adopt_an_unrelated_destination_blob() {
         .resource_service()
         .update(
             &resource.id(),
-            asset_core::service::UpdateResource::new(resource.revision()).with_name("occupied.txt"),
+            asset_core::resource::service::UpdateResource::new(resource.revision())
+                .with_name("occupied.txt"),
         )
         .await;
     assert!(matches!(
@@ -193,7 +203,7 @@ async fn root_directory_empty_update_obeys_revision_without_requiring_a_parent()
     let unchanged = directories
         .update(
             &original.id(),
-            asset_core::service::UpdateDirectory::new(revision),
+            asset_core::directory::service::UpdateDirectory::new(revision),
         )
         .await
         .unwrap();
@@ -202,7 +212,7 @@ async fn root_directory_empty_update_obeys_revision_without_requiring_a_parent()
         directories
             .update(
                 &original.id(),
-                asset_core::service::UpdateDirectory::new(revision + 1)
+                asset_core::directory::service::UpdateDirectory::new(revision + 1)
             )
             .await,
         Err(asset_core::CoreError::RevisionConflict { .. })
@@ -211,7 +221,7 @@ async fn root_directory_empty_update_obeys_revision_without_requiring_a_parent()
         directories
             .update(
                 &original.id(),
-                asset_core::service::UpdateDirectory::new(revision).with_name("renamed")
+                asset_core::directory::service::UpdateDirectory::new(revision).with_name("renamed")
             )
             .await,
         Err(asset_core::CoreError::Conflict { .. })
@@ -426,9 +436,13 @@ async fn upload_resumes_and_recovers_after_restart() {
     let checksum =
         Checksum::sha256("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824")
             .unwrap();
-    let command =
-        asset_core::service::CreateUpload::new("note.txt", directory.id(), 5, checksum.clone())
-            .with_idempotency_key(IdempotencyKey::new("direct-upload-note").unwrap());
+    let command = asset_core::resource::service::CreateUpload::new(
+        "note.txt",
+        directory.id(),
+        5,
+        checksum.clone(),
+    )
+    .with_idempotency_key(IdempotencyKey::new("direct-upload-note").unwrap());
     let uploads = runtime.upload_service();
     let session = uploads.create(command.clone()).await.unwrap();
     let replay = uploads.create(command).await.unwrap();
@@ -491,7 +505,7 @@ async fn upload_resumes_and_recovers_after_restart() {
     );
 
     let cancelled = uploads
-        .create(asset_core::service::CreateUpload::new(
+        .create(asset_core::resource::service::CreateUpload::new(
             "cancelled.txt",
             directory.id(),
             0,
@@ -699,7 +713,7 @@ async fn directory_recovery_is_idempotent_after_filesystem_move() {
     let mut desired = current.directory().clone();
     desired.rename("destination").unwrap();
     let destination = DirectoryPath::from_path("destination").unwrap();
-    let relocation = asset_core::port::DirectoryRelocation::new(
+    let relocation = asset_core::directory::port::DirectoryRelocation::new(
         source.id(),
         source.path().clone(),
         destination.clone(),
@@ -762,7 +776,7 @@ async fn directory_recovery_moves_source_when_only_the_intent_was_persisted() {
     infrastructure
         .directory_relocation_store()
         .begin(
-            &asset_core::port::DirectoryRelocation::new(
+            &asset_core::directory::port::DirectoryRelocation::new(
                 source.id(),
                 source.path().clone(),
                 destination.clone(),
@@ -803,7 +817,7 @@ async fn directory_recovery_keeps_intent_when_source_and_destination_both_exist(
     infrastructure
         .directory_relocation_store()
         .begin(
-            &asset_core::port::DirectoryRelocation::new(
+            &asset_core::directory::port::DirectoryRelocation::new(
                 source.id(),
                 source.path().clone(),
                 destination,

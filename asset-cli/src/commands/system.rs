@@ -1,5 +1,5 @@
 use crate::CliResult;
-use asset_core::service::{
+use asset_core::resource::service::{
     ResourceScanProgress, StorageMaintenanceService, StorageReconciliationReport,
 };
 use clap::{ArgGroup, Args};

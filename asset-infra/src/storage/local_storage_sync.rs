@@ -1,6 +1,5 @@
 use asset_core::CoreError;
-use asset_core::domain::StorageKey;
-use asset_core::service::StorageMaintenanceService;
+use asset_core::resource::{domain::StorageKey, service::StorageMaintenanceService};
 use notify::event::{AccessKind, AccessMode, ModifyKind, RenameMode};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashSet;
@@ -226,7 +225,10 @@ async fn reconcile_all(
     Ok(())
 }
 
-fn log_reconciliation(phase: &str, report: &asset_core::service::StorageReconciliationReport) {
+fn log_reconciliation(
+    phase: &str,
+    report: &asset_core::resource::service::StorageReconciliationReport,
+) {
     tracing::info!(
         phase,
         files = report.files,
@@ -254,7 +256,9 @@ fn storage_key_from_path(root: &Path, path: &Path) -> Result<Option<StorageKey>,
                 let part = part.to_str().ok_or_else(|| {
                     CoreError::configuration("local storage path must be valid UTF-8")
                 })?;
-                if parts.is_empty() && part == asset_core::port::RESERVED_BLOB_STORAGE_PREFIX {
+                if parts.is_empty()
+                    && part == asset_core::storage::port::RESERVED_BLOB_STORAGE_PREFIX
+                {
                     return Ok(None);
                 }
                 parts.push(part);

@@ -24,7 +24,8 @@ MUST NOT:
 
 - resolve configuration sources or parse surface-specific input;
 - choose transport, presentation, or interaction policy owned by an application surface;
-- contain business workflows that belong in `asset-core::service`;
+- contain business workflows that belong in Asset Core's capability-scoped application services
+  (`asset-core::{directory,resource,workflow}::service`);
 - expose more concrete infrastructure than callers genuinely need;
 - retain construction-only catalogs, registries, executors, or the complete infrastructure
   aggregate after their owned ports and handlers have been injected;

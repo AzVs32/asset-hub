@@ -23,7 +23,8 @@ pub(crate) async fn create_upload(
     payload: Result<Json<CreateUploadRequest>, JsonRejection>,
 ) -> Result<(StatusCode, Json<UploadSessionResponse>), HttpError> {
     let request = parse_json_payload(payload)?;
-    let expected_checksum = asset_core::domain::Checksum::sha256(request.expected_sha256)?;
+    let expected_checksum =
+        asset_core::resource::domain::Checksum::sha256(request.expected_sha256)?;
     let mut command = CreateUpload::new(
         request.name,
         parse_directory_id(&request.directory_id)?,
@@ -158,13 +159,15 @@ fn parse_offset(headers: &HeaderMap) -> Result<u64, HttpError> {
         .map_err(|error| HttpError::bad_request(format!("invalid Upload-Offset: {error}")))
 }
 
-fn parse_checksum(headers: &HeaderMap) -> Result<asset_core::domain::Checksum, HttpError> {
+fn parse_checksum(
+    headers: &HeaderMap,
+) -> Result<asset_core::resource::domain::Checksum, HttpError> {
     let value = headers
         .get(&UPLOAD_CHECKSUM)
         .ok_or_else(|| HttpError::bad_request("missing Upload-Checksum header"))?
         .to_str()
         .map_err(|error| HttpError::bad_request(format!("invalid Upload-Checksum: {error}")))?;
-    asset_core::domain::Checksum::sha256(value)
+    asset_core::resource::domain::Checksum::sha256(value)
         .map_err(|error| HttpError::bad_request(format!("invalid Upload-Checksum: {error}")))
 }
 
@@ -189,7 +192,7 @@ fn session_response(session: &UploadSession) -> UploadSessionResponse {
         offset: session.offset(),
         size: session.expected_size(),
         status: session.status().as_str().to_string(),
-        resource_id: (session.status() == asset_core::domain::UploadStatus::Completed)
+        resource_id: (session.status() == asset_core::resource::domain::UploadStatus::Completed)
             .then(|| session.resource_id().to_string()),
         error: session.failure().map(str::to_string),
     }

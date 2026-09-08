@@ -19,7 +19,7 @@ impl Default for ResourceEditConfig {
 
 impl ResourceEditConfig {
     pub(super) fn validate(&self) -> Result<(), asset_core::CoreError> {
-        asset_core::domain::ResourceContentEditPolicy::new(self.max_text_bytes)
+        asset_core::resource::domain::ResourceContentEditPolicy::new(self.max_text_bytes)
             .map(|_| ())
             .map_err(|error| asset_core::CoreError::configuration(error.to_string()))
     }

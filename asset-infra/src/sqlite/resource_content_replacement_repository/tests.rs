@@ -1,7 +1,9 @@
 use super::*;
 use crate::sqlite::{SqliteDatabase, SqliteResourceStore};
-use asset_core::domain::{Checksum, Resource};
-use asset_core::port::ResourceStore;
+use asset_core::resource::{
+    domain::{Checksum, Resource},
+    port::ResourceStore,
+};
 
 #[tokio::test]
 async fn pending_replacement_roundtrips_and_is_unique_per_resource() {

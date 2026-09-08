@@ -5,14 +5,16 @@
 //! Tokio 任务，也不会因为请求处理结束而让关键的最终化任务失去所有者。
 
 use asset_core::CoreError;
-use asset_core::domain::UploadId;
-use asset_core::service::UploadService;
+use asset_core::resource::{
+    domain::{Resource, UploadId},
+    service::UploadService,
+};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tokio::task::{Id as TaskId, JoinError, JoinHandle, JoinSet};
 
-type FinalizationResult = Result<asset_core::domain::Resource, CoreError>;
+type FinalizationResult = Result<Resource, CoreError>;
 // JoinSet 正常返回任务产生的 (UploadId, FinalizationResult)；若任务 panic 或被取消，
 // 则只能从 JoinError 中取得任务 ID，因此监督器还需要维护任务 ID 到上传 ID 的映射。
 type CompletedTask = Result<(TaskId, (UploadId, FinalizationResult)), JoinError>;

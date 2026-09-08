@@ -1,7 +1,10 @@
 use asset_core::CoreError;
-use asset_core::service::{
-    AssetWorkflowService, ContentService, DirectoryService, ResourceService,
-    StorageMaintenanceService, UploadService,
+use asset_core::{
+    directory::service::DirectoryService,
+    resource::service::{
+        ContentService, ResourceService, StorageMaintenanceService, UploadService,
+    },
+    workflow::service::AssetWorkflowService,
 };
 use asset_runtime::UploadFinalizationDispatcher;
 use std::sync::Arc;
@@ -73,7 +76,7 @@ impl HttpState {
 
     pub(crate) fn dispatch_upload_finalization(
         &self,
-        id: asset_core::domain::UploadId,
+        id: asset_core::resource::domain::UploadId,
     ) -> Result<(), CoreError> {
         self.upload_finalizations.dispatch(id)
     }
