@@ -1,4 +1,6 @@
+use crate::ArchiveOptions;
 use std::net::SocketAddr;
+use std::num::{NonZeroU64, NonZeroUsize};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -26,6 +28,14 @@ struct HttpCli {
     /// HTTP request timeout in seconds. Streaming uploads are exempt from the total timeout.
     #[arg(long, default_value_t = DEFAULT_REQUEST_TIMEOUT_SECS)]
     request_timeout_secs: u64,
+
+    /// Maximum simultaneous ZIP generations/downloads (no waiting queue).
+    #[arg(long, default_value = "2")]
+    archive_max_concurrent: NonZeroUsize,
+
+    /// Per-archive limit for uncompressed resource bytes and generated ZIP bytes.
+    #[arg(long, default_value = "68719476736")]
+    archive_max_bytes: NonZeroU64,
 }
 
 /// HTTP CORS 策略。
@@ -61,6 +71,7 @@ pub struct HttpSettings {
     addr: SocketAddr,
     config_path: Option<PathBuf>,
     router_options: RouterOptions,
+    archive_options: ArchiveOptions,
 }
 
 impl HttpSettings {
@@ -68,7 +79,6 @@ impl HttpSettings {
     ///
     /// - `--addr`：监听地址，默认 `127.0.0.1:8080`。
     /// - `--config`：可选配置文件路径，未指定时使用默认 `config.toml`。
-    /// - `--enable-purge`：是否开放物理删除接口，默认 `true`。
     /// - `--cors-allowed-origins`：逗号分隔的显式 origin，不允许 `*`。
     /// - `--request-timeout-secs`：普通请求总超时秒数，默认 `30`；不限制流式上传总时长。
     pub fn from_cli() -> Self {
@@ -84,6 +94,10 @@ impl HttpSettings {
             addr: cli.addr,
             config_path: cli.config,
             router_options,
+            archive_options: ArchiveOptions {
+                max_concurrent: cli.archive_max_concurrent,
+                max_bytes: cli.archive_max_bytes,
+            },
         }
     }
 
@@ -95,6 +109,10 @@ impl HttpSettings {
     /// 返回可选配置文件路径。
     pub fn config_path(&self) -> Option<&Path> {
         self.config_path.as_deref()
+    }
+
+    pub fn archive_options(&self) -> &ArchiveOptions {
+        &self.archive_options
     }
 
     /// 返回 HTTP 路由边界配置。

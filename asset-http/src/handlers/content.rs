@@ -1,7 +1,4 @@
 use super::*;
-use std::io::{Seek, Write};
-use tokio_util::io::ReaderStream;
-use zip::write::SimpleFileOptions;
 
 pub(super) const DEFAULT_CONTENT_TYPE: &str = "application/octet-stream";
 const CONTENT_SHA256: header::HeaderName = header::HeaderName::from_static("content-sha256");
@@ -166,6 +163,9 @@ pub(crate) async fn download_resource_content(
         (status = 200, description = "Directory ZIP archive", content_type = "application/zip", body = BinaryContent),
         (status = 400, description = "Invalid directory ID", body = crate::dto::ErrorResponse),
         (status = 404, description = "Directory or resource content not found", body = crate::dto::ErrorResponse),
+        (status = 409, description = "Resource bytes changed since manifest enumeration; retry", body = crate::dto::ErrorResponse),
+        (status = 413, description = "Resource bytes or generated ZIP exceed the configured limit", body = crate::dto::ErrorResponse),
+        (status = 503, description = "Archive capacity unavailable or service stopping; retry later", body = crate::dto::ErrorResponse),
         (status = 500, description = "Archive generation failed", body = crate::dto::ErrorResponse)
     )
 )]
@@ -174,61 +174,11 @@ pub(crate) async fn download_directory(
     Path(id): Path<String>,
 ) -> Result<Response, HttpError> {
     let id = parse_directory_id(&id)?;
-    let manifest = state.workflows().directory_archive_manifest(&id).await?;
-    let filename = manifest.filename().to_string();
-    let temporary = tempfile::NamedTempFile::new()
-        .map_err(|error| CoreError::storage("directory.archive.create", error))?;
-    let (file, temporary_path) = temporary.into_parts();
-    let mut archive = zip::ZipWriter::new(file);
-    let directory_options = SimpleFileOptions::default();
-
-    for directory in manifest.directories() {
-        archive
-            .add_directory(directory, directory_options)
-            .map_err(|error| CoreError::storage("directory.archive.add_directory", error))?;
-    }
-    for entry in manifest.resources() {
-        let file_options = SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Deflated)
-            .large_file(entry.content_length() > zip::ZIP64_BYTES_THR);
-        archive
-            .start_file(entry.path(), file_options)
-            .map_err(|error| CoreError::storage("directory.archive.start_file", error))?;
-        let Some(content) = state.content().stream(&entry.resource_id(), None).await? else {
-            return Err(HttpError::not_found(format!(
-                "resource content `{}` not found",
-                entry.resource_id()
-            )));
-        };
-        let mut content = content.into_content();
-        while let Some(chunk) = content.next().await {
-            archive
-                .write_all(&chunk?)
-                .map_err(|error| CoreError::storage("directory.archive.write", error))?;
-        }
-    }
-
-    let mut file = archive
-        .finish()
-        .map_err(|error| CoreError::storage("directory.archive.finish", error))?;
-    file.seek(std::io::SeekFrom::Start(0))
-        .map_err(|error| CoreError::storage("directory.archive.rewind", error))?;
-    let content_length = file
-        .metadata()
-        .map_err(|error| CoreError::storage("directory.archive.metadata", error))?
-        .len();
-    let reader = ReaderStream::new(tokio::fs::File::from_std(file));
-    let content = futures_util::stream::try_unfold(
-        (reader, temporary_path),
-        |(mut reader, temporary_path)| async move {
-            match reader.next().await {
-                Some(Ok(chunk)) => Ok(Some((chunk, (reader, temporary_path)))),
-                Some(Err(error)) => Err(CoreError::storage("directory.archive.read", error)),
-                None => Ok(None),
-            }
-        },
-    );
-    let mut response = Body::from_stream(content).into_response();
+    let download = state
+        .archives()
+        .generate(state.workflows(), state.content(), &id)
+        .await?;
+    let mut response = download.body.into_response();
     let headers = response.headers_mut();
     headers.insert(
         header::CONTENT_TYPE,
@@ -236,14 +186,15 @@ pub(crate) async fn download_directory(
     );
     headers.insert(
         header::CONTENT_LENGTH,
-        content_length
+        download
+            .length
             .to_string()
             .parse()
             .expect("archive length is a valid header value"),
     );
     headers.insert(
         header::CONTENT_DISPOSITION,
-        attachment_content_disposition(&filename),
+        attachment_content_disposition(&download.filename),
     );
     headers.insert(
         header::CACHE_CONTROL,

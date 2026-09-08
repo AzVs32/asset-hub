@@ -2,7 +2,7 @@
 
 use super::{DirectoryService, ResourceService};
 use crate::CoreError;
-use crate::domain::{DirectoryId, ResourceId};
+use crate::domain::{Checksum, DirectoryId, ResourceId};
 use crate::port::ListResources;
 use std::collections::VecDeque;
 
@@ -23,10 +23,11 @@ impl AssetWorkflowService {
         }
     }
 
-    /// Build the point-in-time manifest for a directory tree addressed by its global stable ID.
+    /// Build a best-effort manifest for a directory tree addressed by its global stable ID.
     ///
     /// The manifest retains canonical archive-path validation and contains only Resources with
-    /// content.
+    /// content. Enumeration is not transactional; paths and content expectations are captured
+    /// per entry, not at a single point in time.
     pub async fn directory_archive_manifest(
         &self,
         id: &DirectoryId,
@@ -69,6 +70,7 @@ impl AssetWorkflowService {
                             resource.id(),
                             format!("{archive_path}/{}", resource.name()),
                             content.size(),
+                            content.checksum().cloned(),
                         )
                     })
                 }));
@@ -90,7 +92,7 @@ impl AssetWorkflowService {
     }
 }
 
-/// Point-in-time directory tree projection used to build a ZIP download.
+/// Best-effort directory projection with per-resource content expectations for ZIP generation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirectoryArchiveManifest {
     filename: String,
@@ -129,14 +131,21 @@ pub struct DirectoryArchiveResource {
     resource_id: ResourceId,
     path: String,
     content_length: u64,
+    checksum: Option<Checksum>,
 }
 
 impl DirectoryArchiveResource {
-    fn new(resource_id: ResourceId, path: String, content_length: u64) -> Self {
+    fn new(
+        resource_id: ResourceId,
+        path: String,
+        content_length: u64,
+        checksum: Option<Checksum>,
+    ) -> Self {
         Self {
             resource_id,
             path,
             content_length,
+            checksum,
         }
     }
 
@@ -146,6 +155,10 @@ impl DirectoryArchiveResource {
 
     pub fn path(&self) -> &str {
         &self.path
+    }
+
+    pub fn checksum(&self) -> Option<&Checksum> {
+        self.checksum.as_ref()
     }
 
     pub fn content_length(&self) -> u64 {

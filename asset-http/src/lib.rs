@@ -1,3 +1,5 @@
+mod archive;
+pub use archive::{ArchiveDownloads, ArchiveOptions, ArchiveRuntime};
 mod dto;
 mod error;
 mod handlers;

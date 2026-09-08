@@ -30,6 +30,18 @@ impl std::fmt::Display for HttpError {
 impl std::error::Error for HttpError {}
 
 impl HttpError {
+    pub(crate) fn unavailable(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            message: message.into(),
+            diagnostic: Some(Box::new(HttpDiagnostic {
+                code: "archive.unavailable".to_string(),
+                retryable: true,
+                details: None,
+            })),
+        }
+    }
+
     pub(crate) fn internal(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,

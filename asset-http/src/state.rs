@@ -48,6 +48,7 @@ pub struct HttpServices {
 pub struct HttpComposition {
     pub services: HttpServices,
     pub upload_finalizations: Arc<dyn UploadFinalizationDispatcher>,
+    pub archives: crate::archive::ArchiveDownloads,
 }
 
 /// HTTP handler shared state.
@@ -58,6 +59,7 @@ pub struct HttpComposition {
 pub(crate) struct HttpState {
     services: HttpServices,
     upload_finalizations: Arc<dyn UploadFinalizationDispatcher>,
+    archives: crate::archive::ArchiveDownloads,
 }
 
 impl HttpState {
@@ -65,6 +67,7 @@ impl HttpState {
         Self {
             services: composition.services,
             upload_finalizations: composition.upload_finalizations,
+            archives: composition.archives,
         }
     }
 
@@ -73,6 +76,10 @@ impl HttpState {
         id: asset_core::domain::UploadId,
     ) -> Result<(), CoreError> {
         self.upload_finalizations.dispatch(id)
+    }
+
+    pub(crate) fn archives(&self) -> &crate::archive::ArchiveDownloads {
+        &self.archives
     }
 
     pub(crate) fn resources(&self) -> &ResourceService {

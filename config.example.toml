@@ -5,7 +5,8 @@
 # - Otherwise the executable tries ./config.toml.
 # - If ./config.toml does not exist, built-in defaults are used.
 #
-# HTTP entrypoint settings are CLI options, not TOML. Run `asset-http --help` for the complete
+# HTTP entrypoint settings (including --archive-max-concurrent and --archive-max-bytes)
+# are CLI options, not TOML. Run `asset-http --help` for the complete
 # contract. Boolean options accept only `true` or `false`; omitting an optional boolean value means
 # `true`.
 
