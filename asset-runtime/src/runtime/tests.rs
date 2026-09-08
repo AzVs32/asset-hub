@@ -88,6 +88,140 @@ fn upload_stream(bytes: &'static [u8]) -> BlobByteStream {
 }
 
 #[tokio::test]
+async fn rejected_resource_rename_does_not_leave_a_startup_blocking_intent() {
+    let (root, runtime, infrastructure) = recovery_environment("rename-occupied").await;
+    let resource = Resource::builder("source.txt")
+        .with_content(verified_content(3))
+        .build()
+        .unwrap();
+    infrastructure
+        .resource_store()
+        .insert(&resource)
+        .await
+        .unwrap();
+    std::fs::write(root.join("source.txt"), b"old").unwrap();
+    // A local file can exist before filesystem synchronization imports it.
+    std::fs::write(root.join("occupied.txt"), b"unrelated").unwrap();
+    let result = runtime
+        .resource_service()
+        .update(
+            &resource.id(),
+            asset_core::service::UpdateResource::new(resource.revision()).with_name("occupied.txt"),
+        )
+        .await;
+    assert!(matches!(
+        result,
+        Err(asset_core::CoreError::Conflict { .. })
+    ));
+    assert!(
+        infrastructure
+            .resource_relocation_store()
+            .load_all()
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(std::fs::read(root.join("source.txt")).unwrap(), b"old");
+    assert_eq!(
+        std::fs::read(root.join("occupied.txt")).unwrap(),
+        b"unrelated"
+    );
+    drop(infrastructure);
+    drop(runtime);
+    let restarted = AssetRuntime::new(recovery_config(root.clone()))
+        .await
+        .unwrap();
+    drop(restarted);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn fresh_resource_rename_cannot_adopt_an_unrelated_destination_blob() {
+    let (root, runtime, infrastructure) = recovery_environment("rename-missing-source").await;
+    let resource = Resource::builder("missing.txt")
+        .with_content(verified_content(3))
+        .build()
+        .unwrap();
+    infrastructure
+        .resource_store()
+        .insert(&resource)
+        .await
+        .unwrap();
+    std::fs::write(root.join("occupied.txt"), b"unrelated").unwrap();
+    let result = runtime
+        .resource_service()
+        .update(
+            &resource.id(),
+            asset_core::service::UpdateResource::new(resource.revision()).with_name("occupied.txt"),
+        )
+        .await;
+    assert!(matches!(
+        result,
+        Err(asset_core::CoreError::Conflict { .. })
+    ));
+    assert_eq!(
+        infrastructure
+            .resource_store()
+            .load(&resource.id())
+            .await
+            .unwrap(),
+        Some(resource)
+    );
+    assert!(
+        infrastructure
+            .resource_relocation_store()
+            .load_all()
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        std::fs::read(root.join("occupied.txt")).unwrap(),
+        b"unrelated"
+    );
+    drop(infrastructure);
+    drop(runtime);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn root_directory_empty_update_obeys_revision_without_requiring_a_parent() {
+    let (root, runtime, infrastructure) = recovery_environment("root-empty-update").await;
+    let directories = runtime.directory_service();
+    let original = directories.find_by_id(&DirectoryId::root()).await.unwrap();
+    let revision = original.directory().revision();
+    let unchanged = directories
+        .update(
+            &original.id(),
+            asset_core::service::UpdateDirectory::new(revision),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unchanged.directory(), original.directory());
+    assert!(matches!(
+        directories
+            .update(
+                &original.id(),
+                asset_core::service::UpdateDirectory::new(revision + 1)
+            )
+            .await,
+        Err(asset_core::CoreError::RevisionConflict { .. })
+    ));
+    assert!(matches!(
+        directories
+            .update(
+                &original.id(),
+                asset_core::service::UpdateDirectory::new(revision).with_name("renamed")
+            )
+            .await,
+        Err(asset_core::CoreError::Conflict { .. })
+    ));
+    drop(infrastructure);
+    drop(runtime);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn resource_deletion_recovers_after_staging_before_database_commit() {
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

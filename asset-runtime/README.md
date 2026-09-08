@@ -16,6 +16,11 @@ Construction is deterministic:
 
 Runtime startup invokes Core business operations directly through their Core service boundaries.
 
+Before creating a Resource relocation intent, Core rechecks the current revision and source path
+under the Resource path locks, requires an existing source Blob, and rejects an occupied physical
+destination. These rejected requests leave no new recovery intent. Interpreting a destination-only
+state as an interrupted move is reserved for an intent that has already passed those checks.
+
 `UploadSession` owns durable upload state transitions. Runtime owns the deduplicating finalization
 supervisor and all spawned task lifetimes; application surfaces receive only the
 `UploadFinalizationDispatcher` interface. `LocalStorageSync` remains an `asset-infra` driving

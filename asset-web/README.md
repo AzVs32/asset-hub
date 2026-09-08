@@ -68,6 +68,11 @@ backoff/rechecking on connection errors. A connection error does not imply publi
 Completed sessions are acknowledged only after the published resource reaches the Query cache.
 If local storage is unavailable, the current upload still works, but reload recovery is unavailable.
 
+Choosing the same file after a terminal publication failure removes the failed session and its
+staging data, then starts a new upload. If cleanup fails, the saved session remains available for
+another retry. The workspace removes the replaced session's stale status entry. Temporary status
+request failures continue to preserve the existing resumable session.
+
 The small regression suite covers URL/path identity, directory transitions, optimistic concurrency,
 draft preservation, and upload recovery. `npm test` fails if no tests are found. For production,
 configure the host to serve `index.html` for directory paths and proxy `/api` to `asset-http` (or

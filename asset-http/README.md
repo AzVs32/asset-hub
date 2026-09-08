@@ -26,6 +26,10 @@ Directory requests require `expected_revision` (streaming content replacement us
 return a coded revision conflict when another writer has advanced the aggregate. Path strings
 remain navigation and display data, not Directory identity.
 
+A Directory PATCH containing only a matching `expected_revision` leaves the aggregate unchanged,
+including the root Directory. Root rename/move requests remain conflicts, and an outdated revision
+still returns `concurrency.revision_conflict`.
+
 Resource responses expose one authoritative `state` object derived by Core. It contains the
 lifecycle state, content state, and effective single-value state. HTTP does not also expose a
 second content-verification status; clients must consume `state` instead of reconstructing

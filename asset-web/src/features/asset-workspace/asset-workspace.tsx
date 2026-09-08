@@ -46,14 +46,25 @@ export function AssetWorkspace() {
     setUploads((current) => current.filter((upload) => upload.id !== id));
   }, []);
   async function uploadResource(draft: UploadDraft) {
+    const previousIds = new Set(gateway.pendingUploads().map((upload) => upload.id));
     let receipt: UploadReceipt | undefined;
     try {
       receipt = await commands.upload.mutateAsync(draft);
     } finally {
       const pending = gateway.pendingUploads();
       if (receipt) pending.push(receipt);
+      const pendingIds = new Set(pending.map((upload) => upload.id));
       setUploads((current) =>
-        Array.from(new Map([...current, ...pending].map((upload) => [upload.id, upload])).values()),
+        Array.from(
+          new Map(
+            [
+              ...current.filter(
+                (upload) => !previousIds.has(upload.id) || pendingIds.has(upload.id),
+              ),
+              ...pending,
+            ].map((upload) => [upload.id, upload]),
+          ).values(),
+        ),
       );
       for (const upload of pending)
         void queryClient.invalidateQueries({ queryKey: queryKeys.upload(upload.id) });

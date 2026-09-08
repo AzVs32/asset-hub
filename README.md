@@ -41,8 +41,11 @@ npm run dev
 ```
 
 Open `http://127.0.0.1:5173`. The browser opens directly to the global asset workspace: browse
-directories, upload resources, edit text content, and download or delete assets. Startup creates
+directories, upload resources, edit resource names and locations, and download or delete assets. Startup creates
 the required local data automatically.
+
+Text content replacement is available through the HTTP API; the Web interface currently edits
+resource metadata only.
 
 ## Managing assets locally
 

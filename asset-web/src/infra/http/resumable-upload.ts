@@ -55,6 +55,16 @@ export class ResumableUpload {
       if (response.ok) {
         const session = parseUploadSession(await response.json());
         offset = session.offset;
+        if (session.status === "failed") {
+          // Failed sessions are terminal on the server. Remove their staging data before retrying.
+          const cleanup = await fetch(`${this.baseUrl}/uploads/${encodeURIComponent(uploadId)}`, {
+            method: "DELETE",
+          });
+          if (!cleanup.ok && cleanup.status !== 404) throw await httpError(cleanup);
+          clearUploadId(fingerprint);
+          uploadId = null;
+          offset = 0;
+        }
         if (offset > file.size || session.size !== file.size) {
           clearUploadId(fingerprint);
           uploadId = null;

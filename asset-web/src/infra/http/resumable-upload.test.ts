@@ -73,3 +73,41 @@ it("passes cancellation through the status request", async () => {
   controller.abort();
   await expect(status).rejects.toMatchObject({ name: "AbortError" });
 });
+
+it("restarts a terminally failed session when the same file is selected again", async () => {
+  const storage = new Map<string, string>();
+  vi.stubGlobal("localStorage", {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => storage.set(key, value),
+  });
+  const fetch = vi.fn();
+  vi.stubGlobal("fetch", fetch);
+  const session = { id: "failed-session", offset: 0, size: 1, status: "uploading" };
+  fetch
+    .mockResolvedValueOnce(Response.json(session))
+    .mockResolvedValueOnce(new Response(null, { headers: { "Upload-Offset": "1" } }))
+    .mockResolvedValueOnce(Response.json({ ...session, offset: 1, status: "finalizing" }));
+  const upload = new ResumableUpload(
+    "/api",
+    async () => "file-hash",
+    async () => "chunk-hash",
+    vi.fn(),
+    async () => "directory",
+  );
+  const draft = { file: new File(["a"], "note.txt"), directory: "", name: "note.txt" };
+  await upload.upload(draft);
+  fetch.mockClear();
+  fetch
+    .mockResolvedValueOnce(Response.json({ ...session, offset: 1, status: "failed" }))
+    .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    .mockResolvedValueOnce(Response.json({ ...session, id: "new-session" }))
+    .mockResolvedValueOnce(new Response(null, { headers: { "Upload-Offset": "1" } }))
+    .mockResolvedValueOnce(
+      Response.json({ ...session, id: "new-session", offset: 1, status: "finalizing" }),
+    );
+  const receipt = await upload.upload(draft);
+  expect(fetch.mock.calls[1]).toMatchObject(["/api/uploads/failed-session", { method: "DELETE" }]);
+  expect(fetch.mock.calls[2]).toMatchObject(["/api/uploads", { method: "POST" }]);
+  expect(receipt.id).toBe("new-session");
+  expect(upload.pendingUploads()).toEqual([{ id: "new-session", name: "note.txt" }]);
+});

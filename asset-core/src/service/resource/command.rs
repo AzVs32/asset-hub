@@ -99,6 +99,29 @@ impl ResourceService {
                     .storage_key_locks
                     .lock_many(&[source_key.clone(), destination_key.clone()])
                     .await;
+                // Fresh requests must not interpret an unrelated destination as a recovered move.
+                // Recheck after acquiring the path locks: another writer may have changed the
+                // resource while this request was waiting.
+                let current = self.get(&desired.id()).await?;
+                if !matches!(current.as_ref(), Some(current)
+                    if current.resource().revision() == expected_revision
+                        && current.storage_key()? == source_key)
+                {
+                    return Err(CoreError::revision_conflict(
+                        "resource",
+                        desired.id().to_string(),
+                    ));
+                }
+                if !self.objects.exists(&source_key).await? {
+                    return Err(CoreError::conflict(format!(
+                        "physical source resource `{source_key}` is missing"
+                    )));
+                }
+                if self.objects.exists(&destination_key).await? {
+                    return Err(CoreError::conflict(format!(
+                        "physical destination resource `{destination_key}` already exists"
+                    )));
+                }
                 let relocation = ResourceRelocation::new(
                     desired.clone(),
                     expected_revision,

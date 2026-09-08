@@ -61,8 +61,11 @@ impl DirectoryService {
             return Err(CoreError::revision_conflict("directory", id.to_string()));
         }
 
-        if directory.id().is_root() && (command.name.is_some() || command.parent_id.is_some()) {
-            return Err(CoreError::conflict("root directory cannot be updated"));
+        if directory.id().is_root() {
+            if command.name.is_some() || command.parent_id.is_some() {
+                return Err(CoreError::conflict("root directory cannot be updated"));
+            }
+            return LocatedDirectory::new(directory, from);
         }
         let parent_id = command
             .parent_id
