@@ -1,7 +1,8 @@
 //! Durable intent for a permanent Resource deletion that crosses database and Blob storage.
 
 use crate::CoreError;
-use crate::resource::domain::{ResourceId, StorageKey};
+use crate::resource::domain::ResourceId;
+use crate::storage::StorageKey;
 
 /// A pending permanent deletion.
 ///

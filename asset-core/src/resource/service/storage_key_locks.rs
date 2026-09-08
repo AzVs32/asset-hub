@@ -1,16 +1,16 @@
-use crate::resource::domain::StorageKey;
+use crate::storage::StorageKey;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, Weak};
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 
 /// 仅串行化同一对象键上的上传、发布和存储协调。
 #[derive(Default)]
-pub(crate) struct StorageKeyLocks {
+pub(super) struct StorageKeyLocks {
     locks: Mutex<HashMap<StorageKey, Weak<AsyncMutex<()>>>>,
 }
 
 impl StorageKeyLocks {
-    pub(crate) async fn lock(&self, key: &StorageKey) -> OwnedMutexGuard<()> {
+    pub(super) async fn lock(&self, key: &StorageKey) -> OwnedMutexGuard<()> {
         let lock = {
             let mut locks = self
                 .locks
@@ -26,7 +26,7 @@ impl StorageKeyLocks {
         lock.lock_owned().await
     }
 
-    pub(crate) async fn lock_many(&self, keys: &[StorageKey]) -> Vec<OwnedMutexGuard<()>> {
+    pub(super) async fn lock_many(&self, keys: &[StorageKey]) -> Vec<OwnedMutexGuard<()>> {
         let mut keys = keys.to_vec();
         keys.sort_by(|left, right| left.as_str().cmp(right.as_str()));
         keys.dedup();

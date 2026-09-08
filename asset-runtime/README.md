@@ -14,7 +14,15 @@ Construction is deterministic:
 4. schedule pending upload finalizations through the Runtime-owned supervisor;
 5. start optional storage synchronization only when the application surface requests it.
 
-Runtime startup invokes Core business operations directly through their Core service boundaries.
+Runtime startup obtains Core's explicit recovery and upload-finalization management handles from
+the assembled service bundles. Ordinary application surfaces continue to receive only the business
+services. The health endpoint receives a narrow Blob readiness handle, while trusted local
+maintenance and storage synchronization retain `StorageMaintenanceService`.
+
+Runtime also creates the single configured `IdempotencyService` and injects it into consumers.
+The SQLite record key is currently global across command types, so callers must not reuse an
+idempotency key for a different operation. This contract does not add an operation namespace or
+change existing persisted records.
 
 Before creating a Resource relocation intent, Core rechecks the current revision and source path
 under the Resource path locks, requires an existing source Blob, and rejects an occupied physical
@@ -24,7 +32,7 @@ state as an interrupted move is reserved for an intent that has already passed t
 `UploadSession` owns durable upload state transitions. Runtime owns the deduplicating finalization
 supervisor and all spawned task lifetimes; application surfaces receive only the
 `UploadFinalizationDispatcher` interface. `LocalStorageSync` remains an `asset-infra` driving
-adapter, but Runtime starts it with `ResourceService` and owns its lifetime.
+adapter, but Runtime starts it with `StorageMaintenanceService` and owns its lifetime.
 
 Run:
 

@@ -17,8 +17,6 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
-const DEFAULT_LEASE_DURATION: Duration = Duration::from_secs(5 * 60);
-
 #[derive(Clone)]
 pub struct IdempotencyService {
     repository: Arc<dyn IdempotencyRepository>,
@@ -41,14 +39,7 @@ pub enum IdempotencyOutcome {
 }
 
 impl IdempotencyService {
-    pub fn new(repository: Arc<dyn IdempotencyRepository>) -> Self {
-        Self {
-            repository,
-            lease_duration: DEFAULT_LEASE_DURATION,
-            lease_chrono_duration: ChronoDuration::seconds(5 * 60),
-        }
-    }
-
+    /// Create the service with the lease policy chosen by the application composition root.
     pub fn with_lease_duration(
         repository: Arc<dyn IdempotencyRepository>,
         lease_duration: Duration,

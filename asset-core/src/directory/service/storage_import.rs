@@ -3,7 +3,7 @@ use crate::{
     CoreError,
     directory::{
         domain::{Directory, DirectoryId, DirectoryPath},
-        port::{DirectoryLocation, LocatedDirectory},
+        query::{DirectoryLocation, LocatedDirectory},
     },
 };
 use std::sync::Arc;

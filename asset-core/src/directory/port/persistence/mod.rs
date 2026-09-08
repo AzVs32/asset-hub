@@ -2,40 +2,11 @@
 
 use crate::{
     CoreError,
-    directory::domain::{Directory, DirectoryId, DirectoryPath},
+    directory::{
+        domain::{Directory, DirectoryId, DirectoryPath},
+        query::LocatedDirectory,
+    },
 };
-
-/// A directory's stable identity and current path projection.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DirectoryLocation {
-    id: DirectoryId,
-    path: DirectoryPath,
-}
-
-impl DirectoryLocation {
-    pub fn new(id: DirectoryId, path: DirectoryPath) -> Self {
-        Self { id, path }
-    }
-
-    pub fn root() -> Self {
-        Self::new(DirectoryId::root(), DirectoryPath::root())
-    }
-
-    pub fn id(&self) -> DirectoryId {
-        self.id
-    }
-
-    pub fn path(&self) -> &DirectoryPath {
-        &self.path
-    }
-}
-
-/// A complete directory aggregate paired with its current path projection.
-#[derive(Debug, Clone, PartialEq)]
-pub struct LocatedDirectory {
-    directory: Directory,
-    location: DirectoryLocation,
-}
 
 /// One optimistic-concurrency write in an atomic Directory update batch.
 #[derive(Debug, Clone, PartialEq)]
@@ -119,44 +90,6 @@ impl DirectoryRelocation {
 
     pub fn updates(&self) -> &[DirectoryRevisionUpdate] {
         &self.updates
-    }
-}
-
-impl LocatedDirectory {
-    pub fn new(directory: Directory, location: DirectoryLocation) -> Result<Self, CoreError> {
-        if directory.id() != location.id() {
-            return Err(CoreError::invariant(
-                "directory aggregate does not match its location projection",
-            ));
-        }
-        Ok(Self {
-            directory,
-            location,
-        })
-    }
-
-    pub fn directory(&self) -> &Directory {
-        &self.directory
-    }
-
-    pub fn location(&self) -> &DirectoryLocation {
-        &self.location
-    }
-
-    pub fn id(&self) -> DirectoryId {
-        self.directory.id()
-    }
-
-    pub fn path(&self) -> &DirectoryPath {
-        self.location.path()
-    }
-
-    pub fn into_directory(self) -> Directory {
-        self.directory
-    }
-
-    pub fn into_parts(self) -> (Directory, DirectoryLocation) {
-        (self.directory, self.location)
     }
 }
 

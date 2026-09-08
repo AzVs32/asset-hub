@@ -3,7 +3,8 @@ use crate::{
     CoreError,
     directory::{
         domain::{Directory, DirectoryId},
-        port::{DirectoryLocation, DirectoryRelocation, DirectoryRevisionUpdate, LocatedDirectory},
+        port::{DirectoryRelocation, DirectoryRevisionUpdate},
+        query::{DirectoryLocation, LocatedDirectory},
     },
 };
 
@@ -148,8 +149,7 @@ impl DirectoryService {
         )
     }
 
-    /// Complete every durable Directory relocation left by an interrupted process.
-    pub async fn recover_pending_relocations(&self) -> Result<u64, CoreError> {
+    pub(super) async fn recover_pending_relocations(&self) -> Result<u64, CoreError> {
         let _guard = self.kernel.mutation_lock.lock().await;
         let pending = self.kernel.relocations.load_pending().await?;
         for relocation in &pending {
@@ -289,7 +289,7 @@ impl DirectoryService {
 
     /// Trusted storage maintenance may remove a directory only after its physical absence has
     /// been reconciled. Ordinary operations must use [`Self::delete`] instead.
-    pub(crate) async fn delete_if_empty_for_maintenance(
+    pub(in crate::directory) async fn delete_if_empty_for_maintenance(
         &self,
         id: &DirectoryId,
     ) -> Result<bool, CoreError> {

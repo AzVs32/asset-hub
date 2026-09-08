@@ -1,11 +1,11 @@
 use asset_core::CoreError;
 use asset_core::{
     directory::domain::DirectoryPath,
-    resource::domain::StorageKey,
     storage::port::{
         BlobByteStream, BlobHealth, ContentObjectStore, ContentReader, ContentStagingStore,
-        DirectoryStorage, RESERVED_BLOB_STORAGE_PREFIX, StagedBlob,
+        DirectoryStorage, StagedBlob,
     },
+    storage::{RESERVED_BLOB_STORAGE_PREFIX, StorageKey},
 };
 use bytes::Bytes;
 use futures_util::{StreamExt, TryStreamExt};

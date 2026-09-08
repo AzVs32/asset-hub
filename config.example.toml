@@ -26,6 +26,7 @@ max_text_bytes = 4194304
 [idempotency]
 # Execution lease duration in seconds for an in-progress idempotent request.
 # Active executions renew this lease while they are running.
+# Idempotency keys are globally scoped across command types; callers must make them operation-unique.
 lease_duration_seconds = 300
 
 [blob]

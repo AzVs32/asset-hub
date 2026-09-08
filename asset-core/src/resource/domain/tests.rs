@@ -68,43 +68,6 @@ fn resource_name_must_be_a_single_file_name() {
 }
 
 #[test]
-fn storage_key_rejects_unsafe_paths() {
-    assert!(StorageKey::new("assets/image.png").is_ok());
-    assert_eq!(
-        StorageKey::new(" library / design 01.md ")
-            .unwrap()
-            .as_str(),
-        " library / design 01.md "
-    );
-    assert_eq!(
-        StorageKey::new("/absolute/path"),
-        Err(ResourceError::InvalidFormat {
-            field: "storage.key",
-            reason: "absolute paths are not allowed",
-        })
-    );
-    assert_eq!(
-        StorageKey::new("assets/../secret"),
-        Err(ResourceError::InvalidFormat {
-            field: "storage.key",
-            reason: "parent path segments are not allowed",
-        })
-    );
-}
-
-#[test]
-fn storage_key_deserialization_applies_path_validation() {
-    assert_eq!(
-        serde_json::from_str::<StorageKey>(r#""assets/image.png""#)
-            .unwrap()
-            .as_str(),
-        "assets/image.png"
-    );
-    assert!(serde_json::from_str::<StorageKey>(r#""/absolute/path""#).is_err());
-    assert!(serde_json::from_str::<StorageKey>(r#""assets/../secret""#).is_err());
-}
-
-#[test]
 fn checksum_validates_sha256_format() {
     let value = "a".repeat(64);
     let checksum = Checksum::sha256(&value).unwrap();

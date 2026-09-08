@@ -3,10 +3,14 @@
 mod command;
 mod contract;
 mod index;
+mod maintenance;
+mod recovery;
 mod storage_import;
 
 pub use contract::UpdateDirectory;
 pub use index::DirectoryIndexService;
+pub use maintenance::DirectoryMaintenanceService;
+pub use recovery::DirectoryRecoveryService;
 pub use storage_import::DirectoryImportService;
 
 use crate::{
@@ -14,9 +18,10 @@ use crate::{
     directory::{
         domain::{DirectoryId, DirectoryPath},
         port::{
-            DirectoryIndex, DirectoryLocation, DirectoryProjection, DirectoryQuery,
-            DirectoryRelocationStore, DirectoryStore, LocatedDirectory,
+            DirectoryIndex, DirectoryProjection, DirectoryQuery, DirectoryRelocationStore,
+            DirectoryStore,
         },
+        query::{DirectoryLocation, LocatedDirectory},
     },
     storage::port::DirectoryStorage,
 };
@@ -44,6 +49,8 @@ struct DirectoryKernel {
 /// Composition-time bundle that guarantees all Directory services share one mutation boundary.
 pub struct DirectoryServices {
     directory: DirectoryService,
+    maintenance: DirectoryMaintenanceService,
+    recovery: DirectoryRecoveryService,
     storage_import: DirectoryImportService,
     index: DirectoryIndexService,
 }
@@ -66,10 +73,13 @@ impl DirectoryServices {
             mutation_lock: Arc::new(Mutex::new(())),
             index_service: index_service.clone(),
         });
+        let directory = DirectoryService {
+            kernel: kernel.clone(),
+        };
         Self {
-            directory: DirectoryService {
-                kernel: kernel.clone(),
-            },
+            maintenance: DirectoryMaintenanceService::new(directory.clone()),
+            recovery: DirectoryRecoveryService::new(directory.clone()),
+            directory,
             storage_import: DirectoryImportService::new(kernel),
             index: index_service,
         }
@@ -77,6 +87,16 @@ impl DirectoryServices {
 
     pub fn directory_service(&self) -> DirectoryService {
         self.directory.clone()
+    }
+
+    /// Return trusted storage-reconciliation operations that share the Directory mutation lock.
+    pub fn maintenance_service(&self) -> DirectoryMaintenanceService {
+        self.maintenance.clone()
+    }
+
+    /// Return the explicit process-lifecycle recovery interface.
+    pub fn recovery_service(&self) -> DirectoryRecoveryService {
+        self.recovery.clone()
     }
 
     pub fn storage_import_service(&self) -> DirectoryImportService {

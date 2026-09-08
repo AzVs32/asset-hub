@@ -142,7 +142,7 @@ pub(crate) async fn delete_resource(
 }
 
 pub(super) fn resource_response(
-    resource: &asset_core::resource::port::LocatedResource,
+    resource: &asset_core::resource::query::LocatedResource,
 ) -> ResourceResponse {
     ResourceResponse::new(resource.resource(), resource.directory().path().clone())
 }
@@ -156,7 +156,7 @@ pub(super) async fn resource_snapshot_response(
 }
 
 pub(super) fn resource_page_response(
-    page_result: asset_core::resource::port::ResourcePage,
+    page_result: asset_core::resource::query::ResourcePage,
     page: u32,
 ) -> ResourcePageResponse {
     let mut items = Vec::with_capacity(page_result.items.len());

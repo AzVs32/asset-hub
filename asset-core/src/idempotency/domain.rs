@@ -5,7 +5,7 @@
 //! write, while an idempotency record answers *whether this exact command was already applied* and
 //! replays its result. They are never collapsed into one operation journal.
 
-use crate::ResourceError;
+use crate::IdempotencyError;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -13,30 +13,32 @@ use uuid::Uuid;
 /// Maximum accepted length for a client-supplied idempotency key.
 pub const MAX_IDEMPOTENCY_KEY_LEN: usize = 200;
 
-/// Client-supplied, business-scoped identity for one retryable write command.
+/// Client-supplied identity for one retryable write command.
 ///
-/// The same key identifies the same logical command across network retries. A key is only
-/// meaningful together with the command it guards; it is not a global operation identifier.
+/// The persisted schema currently has one global key namespace: the key is the sole record
+/// identity across every command type. Clients must therefore make keys unique across operations
+/// (for example, use an operation-specific prefix). Reusing a key for a different request is a
+/// durable conflict, not an implicit per-operation namespace.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct IdempotencyKey(String);
 
 impl IdempotencyKey {
-    pub fn new(value: impl Into<String>) -> Result<Self, ResourceError> {
+    pub fn new(value: impl Into<String>) -> Result<Self, IdempotencyError> {
         let value = value.into();
         if value.is_empty() {
-            return Err(ResourceError::InvalidFormat {
+            return Err(IdempotencyError::InvalidFormat {
                 field: "idempotency.key",
                 reason: "idempotency key must not be empty",
             });
         }
         if value.len() > MAX_IDEMPOTENCY_KEY_LEN {
-            return Err(ResourceError::InvalidFormat {
+            return Err(IdempotencyError::InvalidFormat {
                 field: "idempotency.key",
                 reason: "idempotency key exceeds the maximum length",
             });
         }
         if value.chars().any(char::is_control) {
-            return Err(ResourceError::InvalidFormat {
+            return Err(IdempotencyError::InvalidFormat {
                 field: "idempotency.key",
                 reason: "idempotency key must not contain control characters",
             });
@@ -56,7 +58,7 @@ impl std::fmt::Display for IdempotencyKey {
 }
 
 impl std::str::FromStr for IdempotencyKey {
-    type Err = ResourceError;
+    type Err = IdempotencyError;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         Self::new(value)

@@ -1,5 +1,4 @@
-use super::{normalize_required_text, validate_required_text_exact};
-use crate::directory::domain::DirectoryPath;
+use super::normalize_required_text;
 use crate::error::ResourceError;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -8,8 +7,6 @@ use std::str::FromStr;
 
 /// 内容描述类文本允许的最大字符数。
 const MAX_CONTENT_TEXT_LEN: usize = 255;
-/// 存储键允许的最大字符数。
-const MAX_STORAGE_KEY_LEN: usize = 1024;
 
 // ==================================================
 // 资源内容
@@ -247,96 +244,6 @@ impl ResourceContentBuilder {
             verification,
             modified_at: self.modified_at,
         })
-    }
-}
-
-/// 存储键值对象。
-///
-/// 存储键是面向存储适配器的相对路径或对象键，不允许使用绝对路径和父级路径片段。
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
-pub struct StorageKey(String);
-
-impl StorageKey {
-    /// 从资源逻辑目录和文件名生成唯一的对象存储键。
-    pub fn from_resource_path(
-        directory: &DirectoryPath,
-        name: &str,
-    ) -> Result<Self, ResourceError> {
-        let value = if directory.is_root() {
-            name.to_owned()
-        } else {
-            format!("{}/{name}", directory.path())
-        };
-        Self::new(value)
-    }
-
-    /// 创建并校验存储键。
-    pub fn new(value: impl Into<String>) -> Result<Self, ResourceError> {
-        let value =
-            validate_required_text_exact("storage.key", &value.into(), MAX_STORAGE_KEY_LEN)?;
-
-        if value.starts_with('/') {
-            return Err(ResourceError::InvalidFormat {
-                field: "storage.key",
-                reason: "absolute paths are not allowed",
-            });
-        }
-
-        if value.split('/').any(|part| part == "..") {
-            return Err(ResourceError::InvalidFormat {
-                field: "storage.key",
-                reason: "parent path segments are not allowed",
-            });
-        }
-
-        Ok(Self(value))
-    }
-
-    /// 返回存储键原始字符串。
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl std::fmt::Display for StorageKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl std::str::FromStr for StorageKey {
-    type Err = ResourceError;
-
-    /// 从字符串解析存储键。
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::new(s)
-    }
-}
-
-impl TryFrom<String> for StorageKey {
-    type Error = ResourceError;
-
-    /// 从 `String` 创建并校验存储键。
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        Self::new(value)
-    }
-}
-
-impl TryFrom<&str> for StorageKey {
-    type Error = ResourceError;
-
-    /// 从字符串切片创建并校验存储键。
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        Self::new(value)
-    }
-}
-
-impl<'de> Deserialize<'de> for StorageKey {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Self::new(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
     }
 }
 

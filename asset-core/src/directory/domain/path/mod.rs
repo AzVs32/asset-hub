@@ -1,12 +1,9 @@
 use super::{MAX_DIRECTORY_SEGMENT_LEN, validate_required_text_exact};
-use crate::error::DirectoryError;
+use crate::{error::DirectoryError, storage::RESERVED_BLOB_STORAGE_PREFIX};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{fmt, str::FromStr};
 
 const MAX_DIRECTORY_PATH_LEN: usize = 1024;
-/// Asset Hub 内部存储目录名，不属于用户可见资源目录空间。
-pub const INTERNAL_STORAGE_DIRECTORY_NAME: &str = ".asset-hub";
-
 /// 用户可见目录的规范化路径值对象。
 ///
 /// 路径用于 HTTP、对象存储和查询投影，不承担目录身份。目录身份由
@@ -157,7 +154,7 @@ fn normalize_path(value: String) -> Result<String, DirectoryError> {
     let path = parts.join("/");
     if parts
         .first()
-        .is_some_and(|part| part == INTERNAL_STORAGE_DIRECTORY_NAME)
+        .is_some_and(|part| part == RESERVED_BLOB_STORAGE_PREFIX)
     {
         return Err(DirectoryError::InvalidFormat {
             field: "directory.path",

@@ -1,8 +1,9 @@
 //! Pending Resource content replacement state used for crash recovery.
 
 use crate::error::ResourceError;
+use crate::storage::StorageKey;
 
-use super::{ResourceContent, ResourceId, StorageKey};
+use super::{ResourceContent, ResourceId};
 
 crate::gen_id_uuid_v7!(ResourceContentReplacementId);
 

@@ -15,11 +15,12 @@ use asset_core::{
 use chrono::{Duration, Utc};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration as StdDuration;
 
 #[tokio::test]
 async fn sqlite_leases_preserve_replay_and_reject_active_or_different_requests() {
     let repository = repository("idempotency-active").await;
-    let service = IdempotencyService::new(repository);
+    let service = service(repository);
     let key = key("active");
 
     let execution_id = acquire(&service, &key, "hash-a").await;
@@ -61,7 +62,7 @@ async fn sqlite_expired_lease_can_be_taken_over_but_stale_owner_cannot_mutate_it
         IdempotencyAcquire::Acquired
     ));
 
-    let service = IdempotencyService::new(repository.clone());
+    let service = service(repository.clone());
     let new_execution_id = acquire(&service, &key, "hash").await;
     assert_ne!(old_execution_id, new_execution_id);
     assert!(matches!(
@@ -155,6 +156,10 @@ async fn repository(name: &str) -> Arc<SqliteIdempotencyRepository> {
     let path = unique_temp_path(name).join("asset-hub.sqlite");
     let database = SqliteDatabase::connect(&path, 4).await.unwrap();
     Arc::new(SqliteIdempotencyRepository::new(database.pool().clone()))
+}
+
+fn service(repository: Arc<SqliteIdempotencyRepository>) -> IdempotencyService {
+    IdempotencyService::with_lease_duration(repository, StdDuration::from_secs(5 * 60)).unwrap()
 }
 
 fn key(name: &str) -> IdempotencyKey {

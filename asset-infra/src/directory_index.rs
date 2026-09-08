@@ -1,7 +1,8 @@
 use asset_core::CoreError;
 use asset_core::directory::{
     domain::{Directory, DirectoryId, DirectoryPath},
-    port::{DirectoryIndex, DirectoryLocation, DirectoryQuery, LocatedDirectory},
+    port::{DirectoryIndex, DirectoryQuery},
+    query::{DirectoryLocation, LocatedDirectory},
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::RwLock;

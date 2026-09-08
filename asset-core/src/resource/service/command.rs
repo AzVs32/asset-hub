@@ -3,12 +3,36 @@
 use super::{ResourceService, UpdateResource, path_resolver};
 use crate::CoreError;
 use crate::{
-    directory::{domain::DirectoryId, port::DirectoryLocation},
+    directory::{domain::DirectoryId, query::DirectoryLocation},
     resource::{
         domain::{Resource, ResourceDeletion, ResourceId},
-        port::{ListResources, LocatedResource, ResourcePage, ResourceRelocation},
+        port::ResourceRelocation,
+        query::{ListResources, LocatedResource, ResourcePage},
     },
 };
+
+/// Process-lifecycle recovery for interrupted Resource relocations and deletions.
+///
+/// The handle shares the Resource service assembled by [`ResourceServices`](super::ResourceServices),
+/// including its ports and storage-key locks.
+#[derive(Clone)]
+pub struct ResourceRecoveryService {
+    resources: ResourceService,
+}
+
+impl ResourceRecoveryService {
+    pub(super) fn new(resources: ResourceService) -> Self {
+        Self { resources }
+    }
+
+    pub async fn recover_pending_relocations(&self) -> Result<usize, CoreError> {
+        self.resources.recover_pending_relocations().await
+    }
+
+    pub async fn recover_pending_deletions(&self) -> Result<usize, CoreError> {
+        self.resources.recover_pending_deletions().await
+    }
+}
 
 impl ResourceService {
     pub async fn check_repository_health(&self) -> Result<(), CoreError> {
@@ -211,7 +235,7 @@ impl ResourceService {
         self.recover_deletion_locked(&deletion).await
     }
 
-    pub async fn recover_pending_relocations(&self) -> Result<usize, CoreError> {
+    async fn recover_pending_relocations(&self) -> Result<usize, CoreError> {
         let relocations = self.relocations.load_all().await?;
         let count = relocations.len();
         for relocation in relocations {
@@ -229,7 +253,7 @@ impl ResourceService {
 
     /// Complete or safely abandon permanent deletions that were interrupted between moving a Blob,
     /// committing the Resource CAS, and removing the internal staged file.
-    pub async fn recover_pending_deletions(&self) -> Result<usize, CoreError> {
+    async fn recover_pending_deletions(&self) -> Result<usize, CoreError> {
         let deletions = self.deletions.list_pending().await?;
         let count = deletions.len();
         for deletion in deletions {
@@ -404,7 +428,7 @@ impl ResourceService {
     }
 }
 
-pub(crate) fn build_resource(
+pub(super) fn build_resource(
     name: String,
     directory_id: DirectoryId,
 ) -> crate::resource::domain::ResourceBuilder {

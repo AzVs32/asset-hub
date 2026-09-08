@@ -12,7 +12,7 @@ use asset_core::{
     idempotency::domain::IdempotencyKey,
     resource::{
         domain::{Checksum, ResourceId, UploadId, UploadSession},
-        port::ListResources,
+        query::ListResources,
         service::{CreateUpload, UpdateResource},
     },
     storage::port::BlobByteStream,

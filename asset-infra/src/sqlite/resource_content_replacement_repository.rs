@@ -2,10 +2,10 @@ use asset_core::CoreError;
 use asset_core::resource::{
     domain::{
         ResourceContent, ResourceContentReplacement, ResourceContentReplacementId, ResourceId,
-        StorageKey,
     },
     port::ResourceContentReplacementRepository,
 };
+use asset_core::storage::StorageKey;
 use sqlx::{Row, SqlitePool};
 use std::str::FromStr;
 

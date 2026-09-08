@@ -2,13 +2,13 @@ use crate::UploadFinalizationDispatcher;
 use crate::upload_finalization::UploadFinalizationScheduler;
 use asset_core::CoreError;
 use asset_core::{
-    directory::service::{DirectoryIndexService, DirectoryService, DirectoryServices},
+    directory::service::{DirectoryRecoveryService, DirectoryService, DirectoryServices},
     idempotency::service::IdempotencyService,
     resource::{
         domain::ResourceContentEditPolicy,
         service::{
-            ContentService, ResourceService, ResourceServices, StorageMaintenanceService,
-            UploadService,
+            ContentRecoveryService, ContentService, ResourceRecoveryService, ResourceService,
+            ResourceServices, StorageHealthService, StorageMaintenanceService, UploadService,
         },
     },
     workflow::service::AssetWorkflowService,
@@ -29,8 +29,11 @@ pub struct AssetRuntime {
     content_service: ContentService,
     upload_service: UploadService,
     storage_maintenance_service: StorageMaintenanceService,
+    storage_health_service: StorageHealthService,
     directory_service: DirectoryService,
-    directory_index_service: DirectoryIndexService,
+    directory_recovery_service: DirectoryRecoveryService,
+    resource_recovery_service: ResourceRecoveryService,
+    content_recovery_service: ContentRecoveryService,
     idempotency_service: IdempotencyService,
     asset_workflow_service: AssetWorkflowService,
     /// 持有 supervisor 和子任务生命周期
@@ -77,15 +80,23 @@ impl AssetRuntime {
             infrastructure.directory_relocation_store(),
         );
         let directory_service = directory_services.directory_service();
+        let directory_maintenance_service = directory_services.maintenance_service();
+        let directory_recovery_service = directory_services.recovery_service();
         let directory_import_service = directory_services.storage_import_service();
         let directory_index_service = directory_services.index_service();
-        let recovered_relocations = directory_service.recover_pending_relocations().await?;
+        let recovered_relocations = directory_recovery_service
+            .recover_pending_relocations()
+            .await?;
         if recovered_relocations > 0 {
             tracing::info!(
                 count = recovered_relocations,
                 "recovered pending directory relocations"
             );
         }
+        let idempotency_service = IdempotencyService::with_lease_duration(
+            infrastructure.idempotency_repository(),
+            config.idempotency.lease_duration(),
+        )?;
         let resource_services = ResourceServices::new(
             infrastructure.resource_store(),
             infrastructure.resource_read_model(),
@@ -98,27 +109,34 @@ impl AssetRuntime {
             infrastructure.blob_health(),
             infrastructure.storage_scanner(),
             directory_service.clone(),
+            directory_maintenance_service,
             directory_index_service.clone(),
             directory_import_service,
             infrastructure.upload_session_repository(),
             infrastructure.content_replacement_repository(),
             resource_content_edit_policy,
-            infrastructure.idempotency_repository(),
-            config.idempotency.lease_duration(),
-        )?;
+            idempotency_service.clone(),
+        );
         let resource_service = resource_services.resource_service();
         let content_service = resource_services.content_service();
         let upload_service = resource_services.upload_service();
         let storage_maintenance_service = resource_services.storage_maintenance_service();
-        let idempotency_service = resource_services.idempotency_service();
-        let recovered_resource_relocations = resource_service.recover_pending_relocations().await?;
+        let storage_health_service = resource_services.storage_health_service();
+        let resource_recovery_service = resource_services.resource_recovery_service();
+        let content_recovery_service = resource_services.content_recovery_service();
+        let upload_finalization_service = resource_services.upload_finalization_service();
+        let recovered_resource_relocations = resource_recovery_service
+            .recover_pending_relocations()
+            .await?;
         if recovered_resource_relocations > 0 {
             tracing::info!(
                 count = recovered_resource_relocations,
                 "recovered pending resource relocations"
             );
         }
-        let recovered_resource_deletions = resource_service.recover_pending_deletions().await?;
+        let recovered_resource_deletions = resource_recovery_service
+            .recover_pending_deletions()
+            .await?;
         if recovered_resource_deletions > 0 {
             tracing::info!(
                 count = recovered_resource_deletions,
@@ -127,17 +145,20 @@ impl AssetRuntime {
         }
         let asset_workflow_service =
             AssetWorkflowService::new(resource_service.clone(), directory_service.clone());
-        let replacements_resumed = content_service.resume_pending_replacements().await?;
+        let replacements_resumed = content_recovery_service
+            .resume_pending_replacements()
+            .await?;
         if replacements_resumed > 0 {
             tracing::info!(
                 count = replacements_resumed,
                 "recovered pending content replacements"
             );
         }
-        let pending_finalizations = upload_service.pending_finalizations().await?;
+        let pending_finalizations = upload_finalization_service.pending_finalizations().await?;
         let resumed = pending_finalizations.len();
-        let upload_finalizations =
-            Arc::new(UploadFinalizationScheduler::new(upload_service.clone()));
+        let upload_finalizations = Arc::new(UploadFinalizationScheduler::new(
+            upload_finalization_service,
+        ));
         for id in pending_finalizations {
             upload_finalizations.dispatch(id)?;
         }
@@ -149,8 +170,11 @@ impl AssetRuntime {
             content_service,
             upload_service,
             storage_maintenance_service,
+            storage_health_service,
             directory_service,
-            directory_index_service,
+            directory_recovery_service,
+            resource_recovery_service,
+            content_recovery_service,
             idempotency_service,
             asset_workflow_service,
             upload_finalizations,
@@ -194,6 +218,7 @@ impl AssetRuntime {
         self.upload_service.clone()
     }
 
+    /// Return the shared, runtime-configured idempotency capability for composition-time injection.
     pub fn idempotency_service(&self) -> IdempotencyService {
         self.idempotency_service.clone()
     }
@@ -202,12 +227,28 @@ impl AssetRuntime {
         self.storage_maintenance_service.clone()
     }
 
+    /// Return the narrow Blob readiness interface required by transport composition.
+    pub fn storage_health_service(&self) -> StorageHealthService {
+        self.storage_health_service.clone()
+    }
+
     pub fn directory_service(&self) -> DirectoryService {
         self.directory_service.clone()
     }
 
-    pub fn directory_index_service(&self) -> DirectoryIndexService {
-        self.directory_index_service.clone()
+    /// Return the explicit Runtime recovery interface for Directory relocations.
+    pub fn directory_recovery_service(&self) -> DirectoryRecoveryService {
+        self.directory_recovery_service.clone()
+    }
+
+    /// Return the explicit Runtime recovery interface for Resource relocation and deletion intents.
+    pub fn resource_recovery_service(&self) -> ResourceRecoveryService {
+        self.resource_recovery_service.clone()
+    }
+
+    /// Return the explicit Runtime recovery interface for content replacement intents.
+    pub fn content_recovery_service(&self) -> ContentRecoveryService {
+        self.content_recovery_service.clone()
     }
 
     pub fn asset_workflow_service(&self) -> AssetWorkflowService {

@@ -18,7 +18,6 @@ use serde::Serialize;
 
 pub use content::{
     Checksum, ChecksumKind, ContentVerificationStatus, ResourceContent, ResourceContentBuilder,
-    StorageKey,
 };
 pub use content_edit_policy::{InvalidResourceContentEditPolicy, ResourceContentEditPolicy};
 pub use content_replacement::{ResourceContentReplacement, ResourceContentReplacementId};
@@ -228,7 +227,7 @@ impl ResourceBuilder {
     }
 
     /// 使用持久化工作流预先分配的资源 ID。
-    pub(crate) fn with_id(mut self, id: ResourceId) -> Self {
+    pub(in crate::resource) fn with_id(mut self, id: ResourceId) -> Self {
         self.id = Some(id);
         self
     }

@@ -5,7 +5,7 @@ use crate::{
     directory::{domain::DirectoryId, service::DirectoryService},
     resource::{
         domain::{Checksum, ResourceId},
-        port::ListResources,
+        query::ListResources,
         service::ResourceService,
     },
 };

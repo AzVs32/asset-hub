@@ -5,8 +5,7 @@ mod directory;
 mod scanner;
 
 pub use blob::{
-    BlobByteStream, BlobHealth, ContentObjectStore, ContentReader, ContentStagingStore,
-    RESERVED_BLOB_STORAGE_PREFIX, StagedBlob,
+    BlobByteStream, BlobHealth, ContentObjectStore, ContentReader, ContentStagingStore, StagedBlob,
 };
 pub use directory::DirectoryStorage;
 pub use scanner::{

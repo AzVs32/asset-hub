@@ -9,12 +9,12 @@ use crate::{
     resource::{
         domain::{
             Checksum, ChecksumKind, Resource, ResourceContent, ResourceContentEditPolicy,
-            ResourceContentReplacement, ResourceContentReplacementId, ResourceId, StorageKey,
+            ResourceContentReplacement, ResourceContentReplacementId, ResourceId,
         },
-        port::{
-            LocatedResource, ResourceContentReplacementRepository, ResourceReadModel, ResourceStore,
-        },
+        port::{ResourceContentReplacementRepository, ResourceReadModel, ResourceStore},
+        query::LocatedResource,
     },
+    storage::StorageKey,
     storage::port::{
         BlobByteStream, ContentObjectStore, ContentReader, ContentStagingStore, StagedBlob,
     },
@@ -24,6 +24,22 @@ use chrono::{DateTime, Utc};
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 use std::sync::{Arc, Mutex};
+
+/// Process-lifecycle recovery for interrupted content replacements.
+#[derive(Clone)]
+pub struct ContentRecoveryService {
+    content: ContentService,
+}
+
+impl ContentRecoveryService {
+    pub(super) fn new(content: ContentService) -> Self {
+        Self { content }
+    }
+
+    pub async fn resume_pending_replacements(&self) -> Result<usize, CoreError> {
+        self.content.resume_pending_replacements().await
+    }
+}
 
 /// Resource-content reads, streams, and replacement workflows.
 #[derive(Clone)]
@@ -41,7 +57,7 @@ pub struct ContentService {
 
 impl ContentService {
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
+    pub(super) fn new(
         read_model: Arc<dyn ResourceReadModel>,
         store: Arc<dyn ResourceStore>,
         reader: Arc<dyn ContentReader>,
@@ -401,7 +417,7 @@ impl ContentService {
         Err(error)
     }
 
-    pub async fn resume_pending_replacements(&self) -> Result<usize, CoreError> {
+    async fn resume_pending_replacements(&self) -> Result<usize, CoreError> {
         let replacements = self.content_replacements.list_pending().await?;
         let count = replacements.len();
         for replacement in replacements {

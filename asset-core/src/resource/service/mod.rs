@@ -3,10 +3,12 @@
 //! These services share narrow ports and path locks but do not borrow a single facade containing
 //! every dependency. `ResourceService` itself owns only Resource metadata/lifecycle coordination.
 
-use crate::CoreError;
 use crate::{
-    directory::service::{DirectoryImportService, DirectoryIndexService, DirectoryService},
-    idempotency::{port::IdempotencyRepository, service::IdempotencyService},
+    directory::service::{
+        DirectoryImportService, DirectoryIndexService, DirectoryMaintenanceService,
+        DirectoryService,
+    },
+    idempotency::service::IdempotencyService,
     resource::{
         domain::ResourceContentEditPolicy,
         port::{
@@ -20,7 +22,6 @@ use crate::{
     },
 };
 use std::sync::Arc;
-use std::time::Duration;
 
 mod command;
 mod content;
@@ -31,31 +32,33 @@ mod storage_key_locks;
 mod upload;
 mod upload_locks;
 
-pub use content::ContentService;
+pub use command::ResourceRecoveryService;
+pub use content::{ContentRecoveryService, ContentService};
 pub use contract::{CreateUpload, ReplaceResourceContent, ResourceContentStream, UpdateResource};
 pub use reconciliation::{
-    ResourceScanProgress, StorageMaintenanceService, StorageReconciliationReport,
+    ResourceScanProgress, StorageHealthService, StorageMaintenanceService,
+    StorageReconciliationReport,
 };
-pub use upload::UploadService;
+pub use upload::{UploadFinalizationService, UploadService};
 
-pub(crate) use command::build_resource;
-pub(crate) use storage_key_locks::StorageKeyLocks;
-pub(crate) use upload_locks::UploadLocks;
+use command::build_resource;
+use storage_key_locks::StorageKeyLocks;
+use upload_locks::UploadLocks;
 
 /// Resource metadata and lifecycle queries, listing, updates, and deletion.
 #[derive(Clone)]
 pub struct ResourceService {
-    pub(crate) store: Arc<dyn ResourceStore>,
-    pub(crate) read_model: Arc<dyn ResourceReadModel>,
-    pub(crate) objects: Arc<dyn ContentObjectStore>,
-    pub(crate) relocations: Arc<dyn ResourceRelocationStore>,
-    pub(crate) deletions: Arc<dyn ResourceDeletionRepository>,
-    pub(crate) directories: DirectoryService,
-    pub(crate) storage_key_locks: Arc<StorageKeyLocks>,
+    store: Arc<dyn ResourceStore>,
+    read_model: Arc<dyn ResourceReadModel>,
+    objects: Arc<dyn ContentObjectStore>,
+    relocations: Arc<dyn ResourceRelocationStore>,
+    deletions: Arc<dyn ResourceDeletionRepository>,
+    directories: DirectoryService,
+    storage_key_locks: Arc<StorageKeyLocks>,
 }
 
 impl ResourceService {
-    pub(crate) fn new(
+    fn new(
         store: Arc<dyn ResourceStore>,
         read_model: Arc<dyn ResourceReadModel>,
         objects: Arc<dyn ContentObjectStore>,
@@ -83,7 +86,10 @@ pub struct ResourceServices {
     content: ContentService,
     uploads: UploadService,
     maintenance: StorageMaintenanceService,
-    idempotency: IdempotencyService,
+    resource_recovery: ResourceRecoveryService,
+    content_recovery: ContentRecoveryService,
+    upload_finalization: UploadFinalizationService,
+    storage_health: StorageHealthService,
 }
 
 impl ResourceServices {
@@ -100,19 +106,15 @@ impl ResourceServices {
         blob_health: Arc<dyn BlobHealth>,
         storage_scanner: Arc<dyn StorageScanner>,
         directories: DirectoryService,
+        directory_maintenance: DirectoryMaintenanceService,
         directory_index: DirectoryIndexService,
         directory_import: DirectoryImportService,
         upload_sessions: Arc<dyn UploadSessionRepository>,
         content_replacements: Arc<dyn ResourceContentReplacementRepository>,
         edit_policy: Arc<ResourceContentEditPolicy>,
-        idempotency_repository: Arc<dyn IdempotencyRepository>,
-        idempotency_lease_duration: Duration,
-    ) -> Result<Self, CoreError> {
+        idempotency: IdempotencyService,
+    ) -> Self {
         let locks = Arc::new(StorageKeyLocks::default());
-        let idempotency = IdempotencyService::with_lease_duration(
-            idempotency_repository,
-            idempotency_lease_duration,
-        )?;
         let resources = ResourceService::new(
             store.clone(),
             read_model.clone(),
@@ -151,19 +153,26 @@ impl ResourceServices {
             maintenance_read_model,
             storage_scanner,
             content_reader,
-            blob_health,
             directories,
+            directory_maintenance,
             directory_index,
             directory_import,
             locks,
         );
-        Ok(Self {
+        let resource_recovery = ResourceRecoveryService::new(resources.clone());
+        let content_recovery = ContentRecoveryService::new(content.clone());
+        let upload_finalization = UploadFinalizationService::new(uploads.clone());
+        let storage_health = StorageHealthService::new(blob_health);
+        Self {
             resources,
             content,
             uploads,
             maintenance,
-            idempotency,
-        })
+            resource_recovery,
+            content_recovery,
+            upload_finalization,
+            storage_health,
+        }
     }
 
     pub fn resource_service(&self) -> ResourceService {
@@ -178,8 +187,21 @@ impl ResourceServices {
     pub fn storage_maintenance_service(&self) -> StorageMaintenanceService {
         self.maintenance.clone()
     }
-    pub fn idempotency_service(&self) -> IdempotencyService {
-        self.idempotency.clone()
+    /// Return the explicit recovery interface for Resource metadata lifecycle intents.
+    pub fn resource_recovery_service(&self) -> ResourceRecoveryService {
+        self.resource_recovery.clone()
+    }
+    /// Return the explicit recovery interface for Resource content replacement intents.
+    pub fn content_recovery_service(&self) -> ContentRecoveryService {
+        self.content_recovery.clone()
+    }
+    /// Return the background finalization interface for uploads in `Finalizing` state.
+    pub fn upload_finalization_service(&self) -> UploadFinalizationService {
+        self.upload_finalization.clone()
+    }
+    /// Return the narrow Blob readiness interface required by HTTP composition.
+    pub fn storage_health_service(&self) -> StorageHealthService {
+        self.storage_health.clone()
     }
 }
 

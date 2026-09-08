@@ -1,9 +1,7 @@
 use asset_core::CoreError;
 use asset_core::{
     directory::service::DirectoryService,
-    resource::service::{
-        ContentService, ResourceService, StorageMaintenanceService, UploadService,
-    },
+    resource::service::{ContentService, ResourceService, StorageHealthService, UploadService},
     workflow::service::AssetWorkflowService,
 };
 use asset_runtime::UploadFinalizationDispatcher;
@@ -31,7 +29,7 @@ pub struct DirectoryHttpServices {
 /// exposed to handlers or added as HTTP endpoints.
 #[derive(Clone)]
 pub struct HttpHealthServices {
-    pub storage_maintenance: StorageMaintenanceService,
+    pub storage_health: StorageHealthService,
 }
 
 /// Application services consumed by HTTP routes, grouped only by transport dependency shape.
@@ -109,7 +107,7 @@ impl HttpState {
     pub(crate) async fn check_blob_storage_health(&self) -> Result<(), CoreError> {
         self.services
             .health
-            .storage_maintenance
+            .storage_health
             .check_blob_storage_health()
             .await
     }

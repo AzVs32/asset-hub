@@ -6,7 +6,7 @@ use crate::error::DirectoryError;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
-pub use path::{DirectoryPath, INTERNAL_STORAGE_DIRECTORY_NAME};
+pub use path::DirectoryPath;
 
 const MAX_DIRECTORY_SEGMENT_LEN: usize = 255;
 

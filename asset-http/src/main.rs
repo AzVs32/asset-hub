@@ -48,7 +48,7 @@ async fn serve(
                 },
                 workflows: runtime.asset_workflow_service(),
                 health: HttpHealthServices {
-                    storage_maintenance: runtime.storage_maintenance_service(),
+                    storage_health: runtime.storage_health_service(),
                 },
             },
             upload_finalizations: runtime.upload_finalization_dispatcher(),

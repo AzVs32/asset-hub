@@ -7,7 +7,7 @@
 use asset_core::CoreError;
 use asset_core::resource::{
     domain::{Resource, UploadId},
-    service::UploadService,
+    service::UploadFinalizationService,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -46,7 +46,7 @@ struct SchedulerInner {
 }
 
 impl UploadFinalizationScheduler {
-    pub(crate) fn new(service: UploadService) -> Self {
+    pub(crate) fn new(service: UploadFinalizationService) -> Self {
         // 调度接口是同步方法，因此使用无界 channel 将“提交请求”和“执行最终化”解耦。
         // receiver 只交给下面启动的唯一监督器，所有 scheduler clone 都复用这个队列。
         let (sender, receiver) = mpsc::unbounded_channel();
@@ -105,7 +105,7 @@ impl Drop for SchedulerInner {
 }
 
 async fn run_supervisor(
-    service: UploadService,
+    service: UploadFinalizationService,
     mut receiver: mpsc::UnboundedReceiver<UploadId>,
     scheduled: Arc<Mutex<HashSet<UploadId>>>,
 ) {

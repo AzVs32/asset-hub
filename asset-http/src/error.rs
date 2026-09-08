@@ -81,6 +81,8 @@ impl From<CoreError> for HttpError {
         let status = match &error {
             CoreError::Directory(_)
             | CoreError::Resource(_)
+            | CoreError::Idempotency(_)
+            | CoreError::StorageValue(_)
             | CoreError::Unsupported { .. }
             | CoreError::InvalidOperation { .. } => StatusCode::BAD_REQUEST,
             CoreError::NotFound { .. } => StatusCode::NOT_FOUND,

@@ -7,8 +7,8 @@ mod upload;
 
 pub use deletion::ResourceDeletionRepository;
 pub use persistence::{
-    ListResources, LocatedResource, ResourceMaintenanceReadModel, ResourcePage, ResourceReadModel,
-    ResourceRelocation, ResourceRelocationStore, ResourceStore,
+    ResourceMaintenanceReadModel, ResourceReadModel, ResourceRelocation, ResourceRelocationStore,
+    ResourceStore,
 };
 pub use replacement::ResourceContentReplacementRepository;
 pub use upload::UploadSessionRepository;

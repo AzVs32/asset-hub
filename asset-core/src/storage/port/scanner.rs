@@ -1,5 +1,5 @@
-use crate::{CoreError, ResourceError};
-use crate::{directory::domain::DirectoryPath, resource::domain::StorageKey};
+use crate::{CoreError, StorageError};
+use crate::{directory::domain::DirectoryPath, storage::StorageKey};
 use chrono::{DateTime, Utc};
 use futures_core::Stream;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -14,7 +14,7 @@ impl StoragePrefix {
         Self::default()
     }
 
-    pub fn new(value: impl Into<String>) -> Result<Self, ResourceError> {
+    pub fn new(value: impl Into<String>) -> Result<Self, StorageError> {
         let value = value.into();
         if value.is_empty() {
             return Ok(Self::root());
@@ -22,7 +22,7 @@ impl StoragePrefix {
         let key = StorageKey::new(&value)?;
         let value = key.as_str().trim_end_matches('/');
         if value.split('/').any(|part| part.is_empty() || part == ".") {
-            return Err(ResourceError::InvalidFormat {
+            return Err(StorageError::InvalidFormat {
                 field: "storage.prefix",
                 reason: "prefix must contain canonical non-empty path segments",
             });

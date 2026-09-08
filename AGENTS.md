@@ -39,7 +39,9 @@ MUST:
 
 - keep domain and service logic independent of Axum, SQLx, OpenDAL,
   and CLI parsing;
-- define Core infrastructure requirements as ports in `asset-core::port` and implement them in adapters;
+- define Core infrastructure requirements in the owning capability's port namespace (for example,
+  `asset_core::resource::port`, `asset_core::directory::port`, or `asset_core::storage::port`) and
+  implement them in adapters;
 - route resource and directory operations through their direct Core services; trusted local
   maintenance commands must remain explicit administrative operations;
 - preserve a single composition root for each executable surface.

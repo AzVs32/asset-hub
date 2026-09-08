@@ -8,11 +8,12 @@ use asset_core::{
     resource::{
         domain::{
             Checksum, Resource, ResourceContent, ResourceContentReplacement, ResourceDeletion,
-            StorageKey, UploadStatus,
+            UploadStatus,
         },
-        port::{ListResources, ResourceRelocation},
+        port::ResourceRelocation,
+        query::ListResources,
     },
-    storage::port::BlobByteStream,
+    storage::{StorageKey, port::BlobByteStream},
 };
 use asset_infra::AssetInfrastructure;
 use asset_infra::config::{
@@ -330,7 +331,7 @@ async fn resource_deletion_recovers_after_database_commit_without_removing_new_v
     );
 
     runtime
-        .resource_service()
+        .resource_recovery_service()
         .recover_pending_deletions()
         .await
         .unwrap();
@@ -389,7 +390,10 @@ async fn resource_deletion_conflict_restores_to_the_newer_resource_path() {
     );
 
     assert!(matches!(
-        runtime.resource_service().recover_pending_deletions().await,
+        runtime
+            .resource_recovery_service()
+            .recover_pending_deletions()
+            .await,
         Err(asset_core::CoreError::RevisionConflict { .. })
     ));
     let current = infrastructure
@@ -560,7 +564,7 @@ async fn content_replacement_recovers_after_post_publish_crash_and_is_idempotent
 
     assert_eq!(
         runtime
-            .content_service()
+            .content_recovery_service()
             .resume_pending_replacements()
             .await
             .unwrap(),
@@ -568,7 +572,7 @@ async fn content_replacement_recovers_after_post_publish_crash_and_is_idempotent
     );
     assert_eq!(
         runtime
-            .content_service()
+            .content_recovery_service()
             .resume_pending_replacements()
             .await
             .unwrap(),
@@ -650,7 +654,7 @@ async fn content_replacement_recovers_after_intent_before_filesystem_change() {
 
     assert_eq!(
         runtime
-            .content_service()
+            .content_recovery_service()
             .resume_pending_replacements()
             .await
             .unwrap(),
@@ -727,8 +731,22 @@ async fn directory_recovery_is_idempotent_after_filesystem_move() {
         .unwrap();
 
     std::fs::rename(root.join("source"), root.join("destination")).unwrap();
-    assert_eq!(directories.recover_pending_relocations().await.unwrap(), 1);
-    assert_eq!(directories.recover_pending_relocations().await.unwrap(), 0);
+    assert_eq!(
+        runtime
+            .directory_recovery_service()
+            .recover_pending_relocations()
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        runtime
+            .directory_recovery_service()
+            .recover_pending_relocations()
+            .await
+            .unwrap(),
+        0
+    );
     assert_eq!(
         directories.locate_by_id(&source.id()).await.unwrap().path(),
         &destination
@@ -787,7 +805,14 @@ async fn directory_recovery_moves_source_when_only_the_intent_was_persisted() {
         .await
         .unwrap();
 
-    assert_eq!(directories.recover_pending_relocations().await.unwrap(), 1);
+    assert_eq!(
+        runtime
+            .directory_recovery_service()
+            .recover_pending_relocations()
+            .await
+            .unwrap(),
+        1
+    );
     assert!(!root.join("source").exists());
     assert!(root.join("destination").is_dir());
     assert_eq!(
@@ -830,7 +855,10 @@ async fn directory_recovery_keeps_intent_when_source_and_destination_both_exist(
     std::fs::create_dir(root.join("destination")).unwrap();
 
     assert!(matches!(
-        directories.recover_pending_relocations().await,
+        runtime
+            .directory_recovery_service()
+            .recover_pending_relocations()
+            .await,
         Err(asset_core::CoreError::Conflict { .. })
     ));
     assert!(
@@ -899,7 +927,7 @@ async fn resource_relocation_recovers_after_filesystem_move_without_overwriting_
 
     assert_eq!(
         runtime
-            .resource_service()
+            .resource_recovery_service()
             .recover_pending_relocations()
             .await
             .unwrap(),
@@ -907,7 +935,7 @@ async fn resource_relocation_recovers_after_filesystem_move_without_overwriting_
     );
     assert_eq!(
         runtime
-            .resource_service()
+            .resource_recovery_service()
             .recover_pending_relocations()
             .await
             .unwrap(),
@@ -988,7 +1016,7 @@ async fn resource_relocation_rolls_back_physical_move_when_a_newer_revision_wins
 
     assert!(matches!(
         runtime
-            .resource_service()
+            .resource_recovery_service()
             .recover_pending_relocations()
             .await,
         Err(asset_core::CoreError::RevisionConflict { .. })

@@ -4,7 +4,7 @@
 //! OpenDAL 的 Fs、S3 等能力应通过该 trait 适配进来，应用层只依赖这里定义的语义。
 
 use crate::CoreError;
-use crate::resource::domain::StorageKey;
+use crate::storage::StorageKey;
 use bytes::Bytes;
 use futures_core::Stream;
 use std::pin::Pin;
@@ -14,13 +14,6 @@ use std::pin::Pin;
 /// 该类型用于大文件上传场景。每个 chunk 都是已经从调用入口读取到的一段二进制内容；
 /// stream 中的错误会中止写入，并由具体存储适配器负责清理未完成写入。
 pub type BlobByteStream = Pin<Box<dyn Stream<Item = Result<Bytes, CoreError>> + Send + 'static>>;
-
-/// Blob storage namespace reserved for Asset Hub internals.
-///
-/// Managed resources must not use this prefix. Infrastructure adapters and scanners use the
-/// same value to keep internal temporary objects out of public imports.
-pub const RESERVED_BLOB_STORAGE_PREFIX: &str =
-    crate::directory::domain::INTERNAL_STORAGE_DIRECTORY_NAME;
 
 /// 已完整写入内部暂存区、尚未发布到用户可见路径的 Blob。
 #[derive(Debug, Clone, PartialEq, Eq)]

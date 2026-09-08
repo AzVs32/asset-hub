@@ -12,16 +12,40 @@ use crate::{
         service::{IdempotencyOutcome, IdempotencyService, request_hash},
     },
     resource::{
-        domain::{Checksum, Resource, StorageKey, UploadId, UploadSession, UploadStatus},
+        domain::{Checksum, Resource, UploadId, UploadSession, UploadStatus},
         port::{ResourceReadModel, ResourceStore, UploadSessionRepository},
     },
     storage::port::{
-        BlobByteStream, ContentObjectStore, ContentReader, ContentStagingStore,
-        RESERVED_BLOB_STORAGE_PREFIX, StagedBlob, StorageScanner,
+        BlobByteStream, ContentObjectStore, ContentReader, ContentStagingStore, StagedBlob,
+        StorageScanner,
     },
+    storage::{RESERVED_BLOB_STORAGE_PREFIX, StorageKey},
 };
 use futures_util::StreamExt;
 use std::sync::Arc;
+
+/// Background finalization operations for uploads already in `Finalizing` state.
+///
+/// Runtime owns scheduling; this handle shares the ordinary upload service's locks and durable
+/// session repository rather than rebuilding a second upload service.
+#[derive(Clone)]
+pub struct UploadFinalizationService {
+    uploads: UploadService,
+}
+
+impl UploadFinalizationService {
+    pub(super) fn new(uploads: UploadService) -> Self {
+        Self { uploads }
+    }
+
+    pub async fn pending_finalizations(&self) -> Result<Vec<UploadId>, CoreError> {
+        self.uploads.pending_finalizations().await
+    }
+
+    pub async fn finalize(&self, id: &UploadId) -> Result<Resource, CoreError> {
+        self.uploads.finalize(id).await
+    }
+}
 
 /// Resumable upload workflows with durable state and recovery.
 #[derive(Clone)]
@@ -45,7 +69,7 @@ struct UploadDependencies {
 
 impl UploadService {
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
+    pub(super) fn new(
         store: Arc<dyn ResourceStore>,
         read_model: Arc<dyn ResourceReadModel>,
         staging: Arc<dyn ContentStagingStore>,
@@ -74,7 +98,7 @@ impl UploadService {
         }
     }
 
-    pub async fn pending_finalizations(&self) -> Result<Vec<UploadId>, CoreError> {
+    async fn pending_finalizations(&self) -> Result<Vec<UploadId>, CoreError> {
         self.service.upload_sessions.list_finalizing().await
     }
 
@@ -324,7 +348,7 @@ impl UploadService {
         Ok((session, true))
     }
 
-    pub async fn finalize(&self, id: &UploadId) -> Result<Resource, CoreError> {
+    async fn finalize(&self, id: &UploadId) -> Result<Resource, CoreError> {
         let _upload_guard = self.service.upload_locks.lock(id).await;
         let mut session = self.load(id).await?;
         if session.status() == UploadStatus::Completed {

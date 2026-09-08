@@ -12,12 +12,17 @@ use crate::CoreError;
 use crate::{
     directory::{
         domain::{DirectoryId, DirectoryPath},
-        service::{DirectoryImportService, DirectoryIndexService, DirectoryService},
+        service::{
+            DirectoryImportService, DirectoryIndexService, DirectoryMaintenanceService,
+            DirectoryService,
+        },
     },
     resource::{
-        domain::{Checksum, ContentVerificationStatus, Resource, ResourceContent, StorageKey},
-        port::{LocatedResource, ResourceMaintenanceReadModel, ResourceReadModel, ResourceStore},
+        domain::{Checksum, ContentVerificationStatus, Resource, ResourceContent},
+        port::{ResourceMaintenanceReadModel, ResourceReadModel, ResourceStore},
+        query::LocatedResource,
     },
+    storage::StorageKey,
     storage::port::{
         BlobHealth, ContentReader, ScannedBlob, ScannedStorageEntry, StoragePrefix,
         StorageScanStream, StorageScanner,
@@ -78,14 +83,34 @@ pub struct StorageMaintenanceService {
     service: Arc<MaintenanceDependencies>,
 }
 
+/// The narrow readiness probe required by transport composition.
+///
+/// It is separate from storage reconciliation so HTTP health checks do not receive maintenance
+/// and catalog-rebuild capabilities.
+#[derive(Clone)]
+pub struct StorageHealthService {
+    blob_health: Arc<dyn BlobHealth>,
+}
+
+impl StorageHealthService {
+    pub(super) fn new(blob_health: Arc<dyn BlobHealth>) -> Self {
+        Self { blob_health }
+    }
+
+    /// Check whether the configured Blob storage backend is reachable.
+    pub async fn check_blob_storage_health(&self) -> Result<(), CoreError> {
+        self.blob_health.health_check().await
+    }
+}
+
 struct MaintenanceDependencies {
     repository: Arc<dyn ResourceStore>,
     query: Arc<dyn ResourceReadModel>,
     maintenance_read_model: Arc<dyn ResourceMaintenanceReadModel>,
     storage_scanner: Arc<dyn StorageScanner>,
     reader: Arc<dyn ContentReader>,
-    blob_health: Arc<dyn BlobHealth>,
     directories: DirectoryService,
+    directory_maintenance: DirectoryMaintenanceService,
     directory_index: DirectoryIndexService,
     directory_import: DirectoryImportService,
     storage_key_locks: Arc<StorageKeyLocks>,
@@ -110,14 +135,14 @@ impl MaintenanceDependencies {
 
 impl StorageMaintenanceService {
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
+    pub(super) fn new(
         repository: Arc<dyn ResourceStore>,
         query: Arc<dyn ResourceReadModel>,
         maintenance_read_model: Arc<dyn ResourceMaintenanceReadModel>,
         storage_scanner: Arc<dyn StorageScanner>,
         reader: Arc<dyn ContentReader>,
-        blob_health: Arc<dyn BlobHealth>,
         directories: DirectoryService,
+        directory_maintenance: DirectoryMaintenanceService,
         directory_index: DirectoryIndexService,
         directory_import: DirectoryImportService,
         storage_key_locks: Arc<StorageKeyLocks>,
@@ -129,18 +154,13 @@ impl StorageMaintenanceService {
                 maintenance_read_model,
                 storage_scanner,
                 reader,
-                blob_health,
                 directories,
+                directory_maintenance,
                 directory_index,
                 directory_import,
                 storage_key_locks,
             }),
         }
-    }
-
-    /// 检查对象存储后端是否可访问；供应用就绪探针使用。
-    pub async fn check_blob_storage_health(&self) -> Result<(), CoreError> {
-        self.service.blob_health.health_check().await
     }
 
     /// 从权威 `DirectoryStore` 完整重建非权威的目录查询投影。
@@ -742,8 +762,8 @@ impl StorageMaintenanceService {
         for directory in stored {
             if !physical_directories.contains(directory.path()) {
                 self.service
-                    .directories
-                    .delete_if_empty_for_maintenance(&directory.id())
+                    .directory_maintenance
+                    .delete_if_empty_after_storage_reconciliation(&directory.id())
                     .await?;
             }
         }

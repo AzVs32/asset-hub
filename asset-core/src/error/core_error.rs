@@ -1,4 +1,4 @@
-use super::{DirectoryError, ResourceError};
+use super::{DirectoryError, IdempotencyError, ResourceError, StorageError};
 use thiserror::Error;
 
 /// 核心层对外暴露的统一错误类型。
@@ -14,6 +14,14 @@ pub enum CoreError {
     /// 资源领域内的业务校验或状态流转错误。
     #[error(transparent)]
     Resource(#[from] ResourceError),
+
+    /// Durable idempotency key validation failed.
+    #[error(transparent)]
+    Idempotency(#[from] IdempotencyError),
+
+    /// Storage key or prefix validation failed before any backend operation occurred.
+    #[error(transparent)]
+    StorageValue(#[from] StorageError),
 
     /// 对象存储操作失败。
     #[error("storage operation `{operation}` failed: {source}")]

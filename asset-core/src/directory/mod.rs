@@ -2,4 +2,5 @@
 
 pub mod domain;
 pub mod port;
+pub mod query;
 pub mod service;

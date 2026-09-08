@@ -3,6 +3,6 @@
 mod persistence;
 
 pub use persistence::{
-    DirectoryIndex, DirectoryLocation, DirectoryProjection, DirectoryQuery, DirectoryRelocation,
-    DirectoryRelocationStore, DirectoryRevisionUpdate, DirectoryStore, LocatedDirectory,
+    DirectoryIndex, DirectoryProjection, DirectoryQuery, DirectoryRelocation,
+    DirectoryRelocationStore, DirectoryRevisionUpdate, DirectoryStore,
 };

@@ -6,8 +6,8 @@ use asset_core::{
         },
         service::{DirectoryService, DirectoryServices, UpdateDirectory},
     },
-    resource::{domain::StorageKey, port::ResourceStore},
-    storage::port::DirectoryStorage,
+    resource::port::ResourceStore,
+    storage::{StorageKey, port::DirectoryStorage},
 };
 use std::collections::HashSet;
 use std::ops::Deref;
@@ -124,7 +124,12 @@ async fn resource_storage_key(repository: &TestRepositories, resource: &Resource
         .locate_by_id(&resource.directory_id())
         .await
         .unwrap();
-    StorageKey::from_resource_path(directory.path(), resource.name()).unwrap()
+    let value = if directory.path().is_root() {
+        resource.name().to_owned()
+    } else {
+        format!("{}/{}", directory.path().path(), resource.name())
+    };
+    StorageKey::new(value).unwrap()
 }
 
 #[tokio::test]
@@ -485,7 +490,14 @@ async fn pending_directory_relocation_completes_after_the_physical_move() {
         .await
         .unwrap();
 
-    assert_eq!(directories.recover_pending_relocations().await.unwrap(), 1);
+    assert_eq!(
+        services
+            .recovery_service()
+            .recover_pending_relocations()
+            .await
+            .unwrap(),
+        1
+    );
     assert_eq!(
         directories.locate_by_id(&source.id()).await.unwrap().path(),
         &destination

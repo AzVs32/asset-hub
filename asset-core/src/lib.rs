@@ -12,4 +12,4 @@ pub mod workflow;
 
 mod utils;
 
-pub use error::{CoreError, DirectoryError, ResourceError};
+pub use error::{CoreError, DirectoryError, IdempotencyError, ResourceError, StorageError};
