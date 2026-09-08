@@ -3,6 +3,7 @@ mod idempotency;
 mod resource;
 mod resource_content_edit_policy;
 mod resource_content_replacement;
+mod resource_deletion;
 mod upload;
 
 pub use directory::{Directory, DirectoryId, DirectoryPath, INTERNAL_STORAGE_DIRECTORY_NAME};
@@ -19,4 +20,5 @@ pub use resource_content_edit_policy::{
     InvalidResourceContentEditPolicy, ResourceContentEditPolicy,
 };
 pub use resource_content_replacement::{ResourceContentReplacement, ResourceContentReplacementId};
+pub use resource_deletion::ResourceDeletion;
 pub use upload::{UploadId, UploadSession, UploadSessionSnapshot, UploadStatus};

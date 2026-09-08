@@ -9,8 +9,9 @@ use asset_core::{
     port::ContentStagingStore, port::DirectoryProjection, port::DirectoryQuery,
     port::DirectoryRelocationStore, port::DirectoryStorage, port::DirectoryStore,
     port::IdempotencyRepository, port::ResourceContentReplacementRepository,
-    port::ResourceMaintenanceReadModel, port::ResourceReadModel, port::ResourceRelocationStore,
-    port::ResourceStore, port::StorageScanner, port::UploadSessionRepository,
+    port::ResourceDeletionRepository, port::ResourceMaintenanceReadModel, port::ResourceReadModel,
+    port::ResourceRelocationStore, port::ResourceStore, port::StorageScanner,
+    port::UploadSessionRepository,
 };
 use config::{AssetInfraConfig, BlobBackend, DatabaseBackend};
 use directory_index::InMemoryDirectoryIndex;
@@ -105,6 +106,10 @@ impl AssetInfrastructure {
     }
 
     pub fn resource_relocation_store(&self) -> Arc<dyn ResourceRelocationStore> {
+        self.resource_store.clone()
+    }
+
+    pub fn resource_deletion_repository(&self) -> Arc<dyn ResourceDeletionRepository> {
         self.resource_store.clone()
     }
 

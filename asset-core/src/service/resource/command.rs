@@ -2,7 +2,7 @@
 
 use super::{ResourceService, UpdateResource, path_resolver};
 use crate::CoreError;
-use crate::domain::{DirectoryId, Resource, ResourceId};
+use crate::domain::{DirectoryId, Resource, ResourceDeletion, ResourceId};
 use crate::port::{
     DirectoryLocation, ListResources, LocatedResource, ResourcePage, ResourceRelocation,
 };
@@ -128,8 +128,9 @@ impl ResourceService {
 
     /// Permanently delete a Resource by stable ID and its physical content.
     ///
-    /// The Blob is first moved to an internal staging key so a failed aggregate CAS can restore
-    /// the visible file. The service loads the current location snapshot internally.
+    /// A durable intent is saved before the visible Blob enters the internal deletion namespace.
+    /// Recovery always moves forward after a database failure or interruption; a stale revision is
+    /// resolved by preserving the newer Resource and never overwriting its visible Blob.
     pub async fn delete(&self, id: &ResourceId, expected_revision: u64) -> Result<bool, CoreError> {
         let Some(located) = self.get(id).await? else {
             return Ok(false);
@@ -150,50 +151,38 @@ impl ResourceService {
                 resource.id().to_string(),
             ));
         }
-        let source_key = resource
+        let Some(source_key) = resource
             .content()
             .map(|_| located.storage_key())
-            .transpose()?;
-        let deletion_key = source_key
-            .as_ref()
-            .map(|_| path_resolver::deletion_key(resource.id()))
-            .transpose()?;
-        let keys = source_key
-            .iter()
-            .chain(deletion_key.iter())
-            .cloned()
-            .collect::<Vec<_>>();
-        let _guards = self.storage_key_locks.lock_many(&keys).await;
-
-        let moved = if let (Some(source), Some(staged)) = (&source_key, &deletion_key) {
-            if self.objects.exists(source).await? {
-                self.objects.move_if_absent(source, staged).await?;
-                true
-            } else {
-                false
+            .transpose()?
+        else {
+            if !self
+                .store
+                .delete_if_revision(&resource.id(), expected_revision)
+                .await?
+            {
+                return Err(CoreError::revision_conflict(
+                    "resource",
+                    resource.id().to_string(),
+                ));
             }
-        } else {
-            false
+            return Ok(());
         };
-
-        if !self
-            .store
-            .delete_if_revision(&resource.id(), expected_revision)
-            .await?
-        {
-            if moved && let (Some(source), Some(staged)) = (&source_key, &deletion_key) {
-                self.objects.move_if_absent(staged, source).await?;
-            }
-            return Err(CoreError::revision_conflict(
-                "resource",
-                resource.id().to_string(),
-            ));
-        }
-
-        if let Some(staged) = deletion_key {
-            self.objects.delete(&staged).await?;
-        }
-        Ok(())
+        let deletion = ResourceDeletion::new(
+            resource.id(),
+            expected_revision,
+            source_key,
+            path_resolver::deletion_key(resource.id())?,
+        )?;
+        let _guards = self
+            .storage_key_locks
+            .lock_many(&[
+                deletion.source_key().clone(),
+                deletion.deletion_key().clone(),
+            ])
+            .await;
+        self.deletions.save(&deletion).await?;
+        self.recover_deletion_locked(&deletion).await
     }
 
     pub async fn recover_pending_relocations(&self) -> Result<usize, CoreError> {
@@ -210,6 +199,113 @@ impl ResourceService {
             self.recover_relocation_locked(&relocation).await?;
         }
         Ok(count)
+    }
+
+    /// Complete or safely abandon permanent deletions that were interrupted between moving a Blob,
+    /// committing the Resource CAS, and removing the internal staged file.
+    pub async fn recover_pending_deletions(&self) -> Result<usize, CoreError> {
+        let deletions = self.deletions.list_pending().await?;
+        let count = deletions.len();
+        for deletion in deletions {
+            let _guards = self
+                .storage_key_locks
+                .lock_many(&[
+                    deletion.source_key().clone(),
+                    deletion.deletion_key().clone(),
+                ])
+                .await;
+            self.recover_deletion_locked(&deletion).await?;
+        }
+        Ok(count)
+    }
+
+    async fn recover_deletion_locked(&self, deletion: &ResourceDeletion) -> Result<(), CoreError> {
+        let Some(current) = self.store.load(&deletion.resource_id()).await? else {
+            // The database CAS committed before cleanup. Never delete a newly-created visible file
+            // at the old path; only the private staged object belongs to this intent.
+            self.objects.delete(deletion.deletion_key()).await?;
+            self.deletions.remove(&deletion.resource_id()).await?;
+            return Ok(());
+        };
+
+        if current.revision() != deletion.expected_revision() {
+            return self.resolve_stale_deletion_locked(deletion).await;
+        }
+
+        let source_exists = self.objects.exists(deletion.source_key()).await?;
+        let staged_exists = self.objects.exists(deletion.deletion_key()).await?;
+        match (source_exists, staged_exists) {
+            (true, false) => {
+                self.objects
+                    .move_if_absent(deletion.source_key(), deletion.deletion_key())
+                    .await?
+            }
+            (false, true) => {}
+            (false, false) => tracing::warn!(
+                resource_id = %deletion.resource_id(),
+                source_key = %deletion.source_key(),
+                "permanent deletion found an already-missing physical Blob; committing metadata deletion"
+            ),
+            (true, true) => {
+                return Err(CoreError::conflict(format!(
+                    "resource deletion `{}` has both visible and staged Blob objects",
+                    deletion.resource_id()
+                )));
+            }
+        }
+
+        if self
+            .store
+            .delete_if_revision(&deletion.resource_id(), deletion.expected_revision())
+            .await?
+        {
+            self.objects.delete(deletion.deletion_key()).await?;
+            self.deletions.remove(&deletion.resource_id()).await?;
+            return Ok(());
+        }
+
+        // A false CAS is either a committed delete observed through another connection or a newer
+        // revision. Re-read before deciding whether this intent may be removed.
+        if self.store.load(&deletion.resource_id()).await?.is_none() {
+            self.objects.delete(deletion.deletion_key()).await?;
+            self.deletions.remove(&deletion.resource_id()).await?;
+            return Ok(());
+        }
+        self.resolve_stale_deletion_locked(deletion).await
+    }
+
+    async fn resolve_stale_deletion_locked(
+        &self,
+        deletion: &ResourceDeletion,
+    ) -> Result<(), CoreError> {
+        let current_key = self
+            .get(&deletion.resource_id())
+            .await?
+            .map(|located| located.storage_key())
+            .transpose()?;
+        let staged_exists = self.objects.exists(deletion.deletion_key()).await?;
+
+        // A newer Resource may have moved or renamed the same Blob after this deletion staged it.
+        // Restore to its current key only when that key is vacant; `move_if_absent` preserves any
+        // independently written replacement content.
+        if staged_exists {
+            if let Some(current_key) = current_key {
+                if self.objects.exists(&current_key).await? {
+                    self.objects.delete(deletion.deletion_key()).await?;
+                } else {
+                    self.objects
+                        .move_if_absent(deletion.deletion_key(), &current_key)
+                        .await?;
+                }
+            } else {
+                self.objects.delete(deletion.deletion_key()).await?;
+            }
+        }
+        self.deletions.remove(&deletion.resource_id()).await?;
+        Err(CoreError::revision_conflict(
+            "resource",
+            deletion.resource_id().to_string(),
+        ))
     }
 
     async fn recover_relocation_locked(

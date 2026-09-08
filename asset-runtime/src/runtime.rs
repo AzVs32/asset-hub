@@ -85,6 +85,7 @@ impl AssetRuntime {
             infrastructure.resource_read_model(),
             infrastructure.resource_maintenance_read_model(),
             infrastructure.resource_relocation_store(),
+            infrastructure.resource_deletion_repository(),
             infrastructure.content_reader(),
             infrastructure.content_staging_store(),
             infrastructure.content_object_store(),
@@ -109,6 +110,13 @@ impl AssetRuntime {
             tracing::info!(
                 count = recovered_resource_relocations,
                 "recovered pending resource relocations"
+            );
+        }
+        let recovered_resource_deletions = resource_service.recover_pending_deletions().await?;
+        if recovered_resource_deletions > 0 {
+            tracing::info!(
+                count = recovered_resource_deletions,
+                "recovered pending resource deletions"
             );
         }
         let asset_workflow_service =

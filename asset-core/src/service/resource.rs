@@ -7,8 +7,9 @@ use crate::CoreError;
 use crate::domain::ResourceContentEditPolicy;
 use crate::port::{
     BlobHealth, ContentObjectStore, ContentReader, ContentStagingStore, IdempotencyRepository,
-    ResourceContentReplacementRepository, ResourceMaintenanceReadModel, ResourceReadModel,
-    ResourceRelocationStore, ResourceStore, StorageScanner, UploadSessionRepository,
+    ResourceContentReplacementRepository, ResourceDeletionRepository, ResourceMaintenanceReadModel,
+    ResourceReadModel, ResourceRelocationStore, ResourceStore, StorageScanner,
+    UploadSessionRepository,
 };
 use crate::service::{
     DirectoryImportService, DirectoryIndexService, DirectoryService, IdempotencyService,
@@ -43,6 +44,7 @@ pub struct ResourceService {
     pub(crate) read_model: Arc<dyn ResourceReadModel>,
     pub(crate) objects: Arc<dyn ContentObjectStore>,
     pub(crate) relocations: Arc<dyn ResourceRelocationStore>,
+    pub(crate) deletions: Arc<dyn ResourceDeletionRepository>,
     pub(crate) directories: DirectoryService,
     pub(crate) storage_key_locks: Arc<StorageKeyLocks>,
 }
@@ -53,6 +55,7 @@ impl ResourceService {
         read_model: Arc<dyn ResourceReadModel>,
         objects: Arc<dyn ContentObjectStore>,
         relocations: Arc<dyn ResourceRelocationStore>,
+        deletions: Arc<dyn ResourceDeletionRepository>,
         directories: DirectoryService,
         storage_key_locks: Arc<StorageKeyLocks>,
     ) -> Self {
@@ -61,6 +64,7 @@ impl ResourceService {
             read_model,
             objects,
             relocations,
+            deletions,
             directories,
             storage_key_locks,
         }
@@ -84,6 +88,7 @@ impl ResourceServices {
         read_model: Arc<dyn ResourceReadModel>,
         maintenance_read_model: Arc<dyn ResourceMaintenanceReadModel>,
         relocation_store: Arc<dyn ResourceRelocationStore>,
+        deletion_repository: Arc<dyn ResourceDeletionRepository>,
         content_reader: Arc<dyn ContentReader>,
         content_staging: Arc<dyn ContentStagingStore>,
         content_objects: Arc<dyn ContentObjectStore>,
@@ -108,6 +113,7 @@ impl ResourceServices {
             read_model.clone(),
             content_objects.clone(),
             relocation_store,
+            deletion_repository,
             directories.clone(),
             locks.clone(),
         );

@@ -22,8 +22,8 @@ pub use directory::{
 pub use idempotency::{IdempotencyAcquire, IdempotencyRepository};
 pub use resource::{
     ListResources, LocatedResource, ResourceContentReplacementRepository,
-    ResourceMaintenanceReadModel, ResourcePage, ResourceReadModel, ResourceRelocation,
-    ResourceRelocationStore, ResourceStore,
+    ResourceDeletionRepository, ResourceMaintenanceReadModel, ResourcePage, ResourceReadModel,
+    ResourceRelocation, ResourceRelocationStore, ResourceStore,
 };
 pub use storage::{
     BlobByteStream, BlobHealth, ContentObjectStore, ContentReader, ContentStagingStore,

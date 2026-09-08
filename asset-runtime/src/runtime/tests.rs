@@ -1,7 +1,7 @@
 use super::*;
 use asset_core::domain::{
     Checksum, DirectoryId, DirectoryPath, IdempotencyKey, Resource, ResourceContent,
-    ResourceContentReplacement, StorageKey, UploadStatus,
+    ResourceContentReplacement, ResourceDeletion, StorageKey, UploadStatus,
 };
 use asset_core::port::{
     BlobByteStream, DirectoryRevisionUpdate, ListResources, ResourceRelocation,
@@ -85,6 +85,191 @@ fn write(root: &std::path::Path, key: &StorageKey, bytes: &[u8]) {
 
 fn upload_stream(bytes: &'static [u8]) -> BlobByteStream {
     Box::pin(futures_util::stream::iter([Ok(Bytes::from_static(bytes))]))
+}
+
+#[tokio::test]
+async fn resource_deletion_recovers_after_staging_before_database_commit() {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "asset-hub-resource-deletion-pre-commit-{}-{nonce}",
+        std::process::id()
+    ));
+    let config = recovery_config(root.clone());
+    let infrastructure = AssetInfrastructure::new(config.clone()).await.unwrap();
+    let source = StorageKey::new("note.txt").unwrap();
+    let staged = StorageKey::new(".asset-hub/deletions/note.txt").unwrap();
+    let resource = Resource::builder("note.txt")
+        .with_content(verified_content(3))
+        .build()
+        .unwrap();
+    infrastructure
+        .resource_store()
+        .insert(&resource)
+        .await
+        .unwrap();
+    write(&root, &source, b"old");
+    let deletion = ResourceDeletion::new(
+        resource.id(),
+        resource.revision(),
+        source.clone(),
+        staged.clone(),
+    )
+    .unwrap();
+    infrastructure
+        .resource_deletion_repository()
+        .save(&deletion)
+        .await
+        .unwrap();
+    infrastructure
+        .resource_deletion_repository()
+        .save(&deletion)
+        .await
+        .unwrap();
+    std::fs::create_dir_all(root.join(".asset-hub/deletions")).unwrap();
+    std::fs::rename(root.join(source.as_str()), root.join(staged.as_str())).unwrap();
+    drop(infrastructure);
+
+    let runtime = AssetRuntime::new(config).await.unwrap();
+    assert!(
+        runtime
+            .resource_service()
+            .get(&resource.id())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(!root.join(source.as_str()).exists());
+    assert!(!root.join(staged.as_str()).exists());
+
+    drop(runtime);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn resource_deletion_recovers_after_database_commit_without_removing_new_visible_content() {
+    let (root, runtime, infrastructure) =
+        recovery_environment("resource-deletion-post-commit").await;
+    let source = StorageKey::new("note.txt").unwrap();
+    let staged = StorageKey::new(".asset-hub/deletions/note.txt").unwrap();
+    let resource = Resource::builder("note.txt")
+        .with_content(verified_content(3))
+        .build()
+        .unwrap();
+    infrastructure
+        .resource_store()
+        .insert(&resource)
+        .await
+        .unwrap();
+    let deletion = ResourceDeletion::new(
+        resource.id(),
+        resource.revision(),
+        source.clone(),
+        staged.clone(),
+    )
+    .unwrap();
+    infrastructure
+        .resource_deletion_repository()
+        .save(&deletion)
+        .await
+        .unwrap();
+    write(&root, &staged, b"old");
+    write(&root, &source, b"new");
+    assert!(
+        infrastructure
+            .resource_store()
+            .delete_if_revision(&resource.id(), resource.revision())
+            .await
+            .unwrap()
+    );
+
+    runtime
+        .resource_service()
+        .recover_pending_deletions()
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read(root.join(source.as_str())).unwrap(), b"new");
+    assert!(!root.join(staged.as_str()).exists());
+    assert!(
+        infrastructure
+            .resource_deletion_repository()
+            .list_pending()
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    drop(infrastructure);
+    drop(runtime);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn resource_deletion_conflict_restores_to_the_newer_resource_path() {
+    let (root, runtime, infrastructure) = recovery_environment("resource-deletion-conflict").await;
+    let source = StorageKey::new("note.txt").unwrap();
+    let staged = StorageKey::new(".asset-hub/deletions/note.txt").unwrap();
+    let target = StorageKey::new("renamed.txt").unwrap();
+    let resource = Resource::builder("note.txt")
+        .with_content(verified_content(3))
+        .build()
+        .unwrap();
+    infrastructure
+        .resource_store()
+        .insert(&resource)
+        .await
+        .unwrap();
+    let deletion = ResourceDeletion::new(
+        resource.id(),
+        resource.revision(),
+        source.clone(),
+        staged.clone(),
+    )
+    .unwrap();
+    infrastructure
+        .resource_deletion_repository()
+        .save(&deletion)
+        .await
+        .unwrap();
+    write(&root, &staged, b"old");
+    let mut concurrent = resource.clone();
+    concurrent.rename("renamed.txt").unwrap();
+    assert!(
+        infrastructure
+            .resource_store()
+            .update_if_revision(&concurrent, resource.revision())
+            .await
+            .unwrap()
+    );
+
+    assert!(matches!(
+        runtime.resource_service().recover_pending_deletions().await,
+        Err(asset_core::CoreError::RevisionConflict { .. })
+    ));
+    let current = infrastructure
+        .resource_store()
+        .load(&resource.id())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(current.name(), "renamed.txt");
+    assert_eq!(std::fs::read(root.join(target.as_str())).unwrap(), b"old");
+    assert!(!root.join(source.as_str()).exists());
+    assert!(!root.join(staged.as_str()).exists());
+    assert!(
+        infrastructure
+            .resource_deletion_repository()
+            .list_pending()
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    drop(infrastructure);
+    drop(runtime);
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[tokio::test]

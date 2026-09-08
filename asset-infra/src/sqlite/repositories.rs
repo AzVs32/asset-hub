@@ -1,16 +1,17 @@
 use crate::migration;
 use asset_core::CoreError;
 use asset_core::domain::{
-    Directory, DirectoryId, DirectoryPath, Resource, ResourceContent, ResourceId,
+    Directory, DirectoryId, DirectoryPath, Resource, ResourceContent, ResourceDeletion, ResourceId,
 };
 use asset_core::port::{
     DirectoryLocation, DirectoryRelocation, DirectoryRelocationStore, DirectoryRevisionUpdate,
-    DirectoryStore, ListResources, LocatedResource, ResourceMaintenanceReadModel, ResourcePage,
-    ResourceReadModel, ResourceRelocation, ResourceRelocationStore, ResourceStore,
+    DirectoryStore, ListResources, LocatedResource, ResourceDeletionRepository,
+    ResourceMaintenanceReadModel, ResourcePage, ResourceReadModel, ResourceRelocation,
+    ResourceRelocationStore, ResourceStore,
 };
 use chrono::{DateTime, Utc};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
-use sqlx::{QueryBuilder, Sqlite, SqlitePool};
+use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 use std::path::Path;
 
 const RESOURCE_SELECT: &str = r#"
@@ -426,6 +427,100 @@ impl ResourceRelocationStore for SqliteResourceStore {
             .map_err(|error| CoreError::repository("resource.relocation.complete", error))?;
         Ok(())
     }
+}
+
+#[async_trait::async_trait]
+impl ResourceDeletionRepository for SqliteResourceStore {
+    async fn save(&self, deletion: &ResourceDeletion) -> Result<(), CoreError> {
+        let result = sqlx::query(
+            r#"
+            INSERT INTO resource_deletions (
+                resource_id, expected_revision, source_key, deletion_key
+            ) VALUES (?, ?, ?, ?)
+            ON CONFLICT(resource_id) DO NOTHING
+            "#,
+        )
+        .bind(deletion.resource_id().to_string())
+        .bind(encode_revision(deletion.expected_revision())?)
+        .bind(deletion.source_key().as_str())
+        .bind(deletion.deletion_key().as_str())
+        .execute(&self.pool)
+        .await
+        .map_err(|error| CoreError::repository("resource_deletion.save", error))?;
+        if result.rows_affected() == 1 {
+            return Ok(());
+        }
+
+        let existing = self
+            .load_resource_deletion(&deletion.resource_id())
+            .await?
+            .ok_or_else(|| {
+                CoreError::invariant("resource deletion insert conflict lost its row")
+            })?;
+        if existing == *deletion {
+            Ok(())
+        } else {
+            Err(CoreError::conflict(format!(
+                "resource deletion `{}` conflicts with an existing pending intent",
+                deletion.resource_id()
+            )))
+        }
+    }
+
+    async fn list_pending(&self) -> Result<Vec<ResourceDeletion>, CoreError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT resource_id, expected_revision, source_key, deletion_key
+            FROM resource_deletions
+            ORDER BY resource_id
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|error| CoreError::repository("resource_deletion.list", error))?;
+        rows.into_iter().map(decode_resource_deletion).collect()
+    }
+
+    async fn remove(&self, resource_id: &ResourceId) -> Result<(), CoreError> {
+        sqlx::query("DELETE FROM resource_deletions WHERE resource_id = ?")
+            .bind(resource_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map(|_| ())
+            .map_err(|error| CoreError::repository("resource_deletion.remove", error))
+    }
+}
+
+impl SqliteResourceStore {
+    async fn load_resource_deletion(
+        &self,
+        resource_id: &ResourceId,
+    ) -> Result<Option<ResourceDeletion>, CoreError> {
+        sqlx::query(
+            r#"
+            SELECT resource_id, expected_revision, source_key, deletion_key
+            FROM resource_deletions
+            WHERE resource_id = ?
+            "#,
+        )
+        .bind(resource_id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| CoreError::repository("resource_deletion.load", error))?
+        .map(decode_resource_deletion)
+        .transpose()
+    }
+}
+
+fn decode_resource_deletion(row: sqlx::sqlite::SqliteRow) -> Result<ResourceDeletion, CoreError> {
+    let resource_id = decode_id(&row.get::<String, _>("resource_id"))?;
+    let expected_revision = decode_revision(row.get("expected_revision"))?;
+    let source_key = asset_core::domain::StorageKey::new(row.get::<String, _>("source_key"))
+        .map_err(|error| CoreError::repository("resource_deletion.source_key", error))?;
+    let deletion_key = asset_core::domain::StorageKey::new(row.get::<String, _>("deletion_key"))
+        .map_err(|error| CoreError::repository("resource_deletion.deletion_key", error))?;
+    ResourceDeletion::new(resource_id, expected_revision, source_key, deletion_key)
+        .map_err(|error| CoreError::repository("resource_deletion.rehydrate", error))
 }
 
 #[async_trait::async_trait]

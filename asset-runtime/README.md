@@ -9,7 +9,8 @@ Construction is deterministic:
 1. initialize the SQLite, local storage, index, and repository adapters through
    `AssetInfrastructure`;
 2. compose the Directory query, storage-import, and index services as one `DirectoryServices` bundle;
-3. recover pending Directory relocations, Resource relocations, and content replacements;
+3. recover pending Directory relocations, Resource relocations, permanent Resource deletions, and
+   content replacements before optional filesystem synchronization;
 4. schedule pending upload finalizations through the Runtime-owned supervisor;
 5. start optional storage synchronization only when the application surface requests it.
 
