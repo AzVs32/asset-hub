@@ -6,7 +6,6 @@ use asset_core::{
         port::{
             DirectoryRelocation, DirectoryRelocationStore, DirectoryRevisionUpdate, DirectoryStore,
         },
-        query::DirectoryLocation,
     },
     resource::query::{ListResources, LocatedResource, ResourcePage},
     resource::{
@@ -667,9 +666,6 @@ impl DirectoryStore for SqliteDirectoryStore {
         id: &DirectoryId,
         expected_revision: u64,
     ) -> Result<bool, CoreError> {
-        if id.is_root() {
-            return Ok(false);
-        }
         let result = sqlx::query(
             r#"
             DELETE FROM directories
@@ -897,14 +893,10 @@ fn decode_resource(row: ResourceRow) -> Result<Resource, CoreError> {
 }
 
 fn decode_located_resource(row: LocatedResourceRow) -> Result<LocatedResource, CoreError> {
-    let directory_id = decode_directory_id(&row.resource.directory_id)?;
     let directory_path = DirectoryPath::from_path(row.directory_path)
         .map_err(|error| CoreError::repository("resource.decode_directory_path", error))?;
     let resource = decode_resource(row.resource)?;
-    LocatedResource::new(
-        resource,
-        DirectoryLocation::new(directory_id, directory_path),
-    )
+    Ok(LocatedResource::new(resource, directory_path))
 }
 
 fn decode_id(value: &str) -> Result<ResourceId, CoreError> {

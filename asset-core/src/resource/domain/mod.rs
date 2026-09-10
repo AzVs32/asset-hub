@@ -11,7 +11,7 @@ mod deletion;
 mod state;
 mod upload;
 
-use crate::directory::domain::DirectoryId;
+use crate::directory::domain::{Directory, DirectoryId};
 use crate::error::ResourceError;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -32,7 +32,7 @@ const MAX_RESOURCE_NAME_LEN: usize = 255;
 // 核心聚合根
 // ==================================================
 
-crate::gen_id_uuid_v7!(ResourceId);
+crate::gen_id_uuid_v7!(ResourceId, ResourceIdSlot);
 
 /// 资源聚合根。
 ///
@@ -221,7 +221,7 @@ impl ResourceBuilder {
         Self {
             id: None,
             name: name.into(),
-            directory_id: DirectoryId::root(),
+            directory_id: Directory::root().id(),
             content: None,
         }
     }

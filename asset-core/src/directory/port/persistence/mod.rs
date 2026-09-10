@@ -1,4 +1,4 @@
-//! Directory aggregate persistence, relocation recovery, query projections, and rebuildable index ports.
+//! 目录聚合持久化、移动恢复、查询投影及可重建索引端口。
 
 use crate::{
     CoreError,
@@ -8,7 +8,7 @@ use crate::{
     },
 };
 
-/// One optimistic-concurrency write in an atomic Directory update batch.
+/// 原子目录更新批次中的一次乐观并发写入。
 #[derive(Debug, Clone, PartialEq)]
 pub struct DirectoryRevisionUpdate {
     directory: Directory,
@@ -37,9 +37,9 @@ impl DirectoryRevisionUpdate {
     }
 }
 
-/// Durable forward-recovery intent for a physical Directory relocation.
+/// 物理目录移动的持久化前向恢复意图。
 ///
-/// The first update is always the moved Directory itself.
+/// 第一项更新始终是被移动的目录本身。
 #[derive(Debug, Clone, PartialEq)]
 pub struct DirectoryRelocation {
     directory_id: DirectoryId,
@@ -55,9 +55,6 @@ impl DirectoryRelocation {
         destination: DirectoryPath,
         updates: Vec<DirectoryRevisionUpdate>,
     ) -> Result<Self, CoreError> {
-        if directory_id.is_root() {
-            return Err(CoreError::invariant("root directory cannot be relocated"));
-        }
         if source == destination {
             return Err(CoreError::invariant(
                 "a directory relocation must change the physical path",
@@ -67,6 +64,9 @@ impl DirectoryRelocation {
             return Err(CoreError::invariant(
                 "the first relocation update must be the relocated directory",
             ));
+        }
+        if updates[0].directory().is_root() {
+            return Err(CoreError::invariant("root directory cannot be relocated"));
         }
         Ok(Self {
             directory_id,
@@ -101,7 +101,7 @@ pub trait DirectoryStore: Send + Sync {
     /// 加载全部目录聚合，用于启动时重建查询索引。
     async fn load_all(&self) -> Result<Vec<Directory>, CoreError>;
 
-    /// Load one authoritative aggregate for recovery and consistency checks.
+    /// 加载一个权威聚合，用于恢复和一致性检查。
     async fn load(&self, id: &DirectoryId) -> Result<Option<Directory>, CoreError>;
 
     /// 插入一个新目录聚合；ID 或同级名称冲突应返回 `CoreError::Conflict`。
@@ -110,15 +110,15 @@ pub trait DirectoryStore: Send + Sync {
     /// 仅当持久化版本仍等于 `expected_revision` 时原子保存聚合。
     ///
     /// 保存成功返回 `true`；记录不存在或版本已变化返回 `false`。
-    /// Atomically apply every revision update or apply none of them.
+    /// 原子应用全部版本更新，或全部不应用。
     ///
-    /// An empty batch succeeds. A missing aggregate or stale revision returns `false`.
+    /// 空批次视为成功；聚合不存在或版本已过期时返回 `false`。
     async fn update_batch_if_unchanged(
         &self,
         updates: &[DirectoryRevisionUpdate],
     ) -> Result<bool, CoreError>;
 
-    /// Return whether the Directory currently has neither child Directories nor Resources.
+    /// 返回目录当前是否既没有子目录，也没有资源。
     async fn is_empty(&self, id: &DirectoryId) -> Result<bool, CoreError>;
 
     /// 仅当目录不存在子目录和资源时原子删除；实际删除返回 `true`。
@@ -129,16 +129,16 @@ pub trait DirectoryStore: Send + Sync {
     ) -> Result<bool, CoreError>;
 }
 
-/// Pending physical relocations persisted before the filesystem rename begins.
+/// 在文件系统重命名开始前持久化的待处理物理目录移动。
 #[async_trait::async_trait]
 pub trait DirectoryRelocationStore: Send + Sync {
-    /// Persist a new relocation and all of its atomic database updates.
+    /// 持久化新的目录移动及其全部原子数据库更新。
     async fn begin(&self, relocation: &DirectoryRelocation) -> Result<(), CoreError>;
 
-    /// Load every unfinished relocation for startup recovery.
+    /// 加载所有未完成的目录移动，用于启动恢复。
     async fn load_pending(&self) -> Result<Vec<DirectoryRelocation>, CoreError>;
 
-    /// Remove a completed or safely abandoned relocation.
+    /// 移除已经完成或可安全放弃的目录移动。
     async fn complete(&self, directory_id: &DirectoryId) -> Result<(), CoreError>;
 }
 
@@ -172,7 +172,7 @@ pub trait DirectoryQuery: Send + Sync {
 
 /// 可从 `DirectoryStore` 完整重建的目录查询索引端口。
 ///
-/// Service 只在持久化写入成功后更新该索引，因此实现不应把它视为权威数据源。
+/// 应用服务只在持久化写入成功后更新该索引，因此实现不应把它视为权威数据源。
 #[async_trait::async_trait]
 pub trait DirectoryIndex: Send + Sync {
     /// 使用完整聚合集合重建并替换当前索引。
@@ -185,7 +185,7 @@ pub trait DirectoryIndex: Send + Sync {
     async fn remove(&self, id: &DirectoryId) -> Result<(), CoreError>;
 }
 
-/// Adapter composition contract for one projection object with separate read and write ports.
+/// 同一投影对象分别实现读写端口时使用的适配器组合约定。
 pub trait DirectoryProjection: DirectoryQuery + DirectoryIndex {}
 
 impl<T> DirectoryProjection for T where T: DirectoryQuery + DirectoryIndex + ?Sized {}

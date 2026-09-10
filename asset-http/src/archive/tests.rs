@@ -1,4 +1,5 @@
 use super::*;
+use asset_core::directory::domain::Directory;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use std::io::Read;
@@ -177,7 +178,7 @@ async fn missing_source_preserves_404_while_cancelling_worker() {
         .generate(
             &runtime.asset_workflow_service(),
             &runtime.content_service(),
-            &DirectoryId::root(),
+            &Directory::root().id(),
         )
         .await
         .err()

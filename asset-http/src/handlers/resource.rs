@@ -26,7 +26,7 @@ pub(crate) async fn list_resources(
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let offset = u64::from(page - 1) * u64::from(limit);
     let directory = query.directory.unwrap_or_default();
-    let directory = state.directories().resolve_path(&directory).await?;
+    let directory = state.directories().find_by_path(&directory).await?;
     let mut command = ListResources::new(limit, offset, directory.id());
 
     if let Some(q) = query.q {
@@ -144,15 +144,15 @@ pub(crate) async fn delete_resource(
 pub(super) fn resource_response(
     resource: &asset_core::resource::query::LocatedResource,
 ) -> ResourceResponse {
-    ResourceResponse::new(resource.resource(), resource.directory().path().clone())
+    ResourceResponse::new(resource.resource(), resource.directory_path().clone())
 }
 
 pub(super) async fn resource_snapshot_response(
     service: &asset_core::resource::service::ResourceService,
     resource: &asset_core::resource::domain::Resource,
 ) -> Result<ResourceResponse, CoreError> {
-    let directory = service.locate_resource_directory(resource).await?;
-    Ok(ResourceResponse::new(resource, directory.path().clone()))
+    let directory = service.directory_path_for(resource).await?;
+    Ok(ResourceResponse::new(resource, directory))
 }
 
 pub(super) fn resource_page_response(

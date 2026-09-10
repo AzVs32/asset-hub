@@ -38,7 +38,7 @@ impl AssetWorkflowService {
         id: &DirectoryId,
     ) -> Result<DirectoryArchiveManifest, CoreError> {
         let root = self.directories.find_by_id(id).await?;
-        let archive_root = if root.id().is_root() {
+        let archive_root = if root.directory().is_root() {
             "asset-hub".to_string()
         } else {
             root.directory().name().to_string()

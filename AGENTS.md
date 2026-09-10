@@ -59,7 +59,8 @@ Treat the following as facts until the implementation and documentation are chan
 - database backend: SQLite only;
 - blob backend: local filesystem through OpenDAL only;
 - PostgreSQL migrations directory: placeholder only;
-- root directory ID: nil UUID `00000000-0000-0000-0000-000000000000`.
+- root directory identity: `DirectoryIdSlot::Slot0`, serialized and persisted as nil UUID
+  `00000000-0000-0000-0000-000000000000`.
 
 ## AI-first test policy
 

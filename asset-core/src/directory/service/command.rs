@@ -4,7 +4,7 @@ use crate::{
     directory::{
         domain::{Directory, DirectoryId},
         port::{DirectoryRelocation, DirectoryRevisionUpdate},
-        query::{DirectoryLocation, LocatedDirectory},
+        query::LocatedDirectory,
     },
 };
 
@@ -40,10 +40,7 @@ impl DirectoryService {
             return Err(error);
         }
         self.refresh_index(&directory.id()).await?;
-        LocatedDirectory::new(
-            directory.clone(),
-            DirectoryLocation::new(directory.id(), path),
-        )
+        Ok(LocatedDirectory::new(directory, path))
     }
 
     pub async fn update(
@@ -64,11 +61,11 @@ impl DirectoryService {
             return Err(CoreError::revision_conflict("directory", id.to_string()));
         }
 
-        if directory.id().is_root() {
+        if directory.is_root() {
             if command.name.is_some() || command.parent_id.is_some() {
                 return Err(CoreError::conflict("root directory cannot be updated"));
             }
-            return LocatedDirectory::new(directory, from);
+            return Ok(LocatedDirectory::new(directory, from));
         }
         let parent_id = command
             .parent_id
@@ -103,7 +100,7 @@ impl DirectoryService {
             ));
         }
         if directory.revision() == expected_revision {
-            return LocatedDirectory::new(directory, from);
+            return Ok(LocatedDirectory::new(directory, from));
         }
 
         let mut updates = Vec::with_capacity(1);
@@ -113,7 +110,7 @@ impl DirectoryService {
                 expected_revision,
             )?);
         }
-        if destination == *from.path() {
+        if destination == from {
             if !self
                 .kernel
                 .store
@@ -126,10 +123,10 @@ impl DirectoryService {
             }
             self.kernel.index_service.rebuild().await?;
         } else {
-            if !self.kernel.storage.directory_exists(from.path()).await? {
+            if !self.kernel.storage.directory_exists(&from).await? {
                 return Err(CoreError::conflict(format!(
                     "physical source directory `{}` is missing",
-                    from.path()
+                    from
                 )));
             }
             if self.kernel.storage.directory_exists(&destination).await? {
@@ -137,16 +134,12 @@ impl DirectoryService {
                     "physical destination directory `{destination}` already exists"
                 )));
             }
-            let relocation =
-                DirectoryRelocation::new(*id, from.path().clone(), destination.clone(), updates)?;
+            let relocation = DirectoryRelocation::new(*id, from, destination.clone(), updates)?;
             self.kernel.relocations.begin(&relocation).await?;
             self.finish_relocation(&relocation, false).await?;
         }
 
-        LocatedDirectory::new(
-            directory.clone(),
-            DirectoryLocation::new(directory.id(), destination),
-        )
+        Ok(LocatedDirectory::new(directory, destination))
     }
 
     pub(super) async fn recover_pending_relocations(&self) -> Result<u64, CoreError> {
@@ -301,9 +294,6 @@ impl DirectoryService {
         id: &DirectoryId,
         caller_revision: Option<u64>,
     ) -> Result<bool, CoreError> {
-        if id.is_root() {
-            return Ok(false);
-        }
         let _guard = self.kernel.mutation_lock.lock().await;
         let current = self
             .kernel
@@ -312,6 +302,9 @@ impl DirectoryService {
             .await?
             .ok_or_else(|| CoreError::not_found("directory", id.to_string()))?;
         let revision = current.directory().revision();
+        if current.directory().is_root() {
+            return Ok(false);
+        }
         if caller_revision.is_some_and(|expected| expected != revision) {
             return Err(CoreError::revision_conflict("directory", id.to_string()));
         }

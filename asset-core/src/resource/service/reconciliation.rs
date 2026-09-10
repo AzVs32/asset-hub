@@ -11,7 +11,7 @@ use super::{StorageKeyLocks, build_resource};
 use crate::CoreError;
 use crate::{
     directory::{
-        domain::{DirectoryId, DirectoryPath},
+        domain::DirectoryPath,
         service::{
             DirectoryImportService, DirectoryIndexService, DirectoryMaintenanceService,
             DirectoryService,
@@ -122,13 +122,13 @@ impl MaintenanceDependencies {
         directory: &DirectoryPath,
         name: &str,
     ) -> Result<Option<LocatedResource>, CoreError> {
-        let location = match self.directories.resolve_path(directory).await {
-            Ok(location) => location,
+        let located = match self.directories.find_by_path(directory).await {
+            Ok(located) => located,
             Err(CoreError::NotFound { .. }) => return Ok(None),
             Err(error) => return Err(error),
         };
         self.query
-            .find_by_directory_and_name(location.id(), name)
+            .find_by_directory_and_name(located.id(), name)
             .await
     }
 }
@@ -750,7 +750,7 @@ impl StorageMaintenanceService {
         let mut pending = vec![
             self.service
                 .directories
-                .find_by_id(&DirectoryId::root())
+                .find_by_path(&DirectoryPath::root())
                 .await?,
         ];
         while let Some(parent) = pending.pop() {

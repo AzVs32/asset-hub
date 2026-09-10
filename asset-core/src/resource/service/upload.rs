@@ -175,7 +175,7 @@ impl UploadService {
             expected_checksum,
             ..
         } = command;
-        let directory = self.service.directories.locate_by_id(&directory_id).await?;
+        let directory = self.service.directories.find_by_id(&directory_id).await?;
         let storage_key = path_resolver::resource_key(directory.path(), &name)?;
         reject_reserved_storage_key(&storage_key)?;
         build_resource(name.clone(), directory.id()).build()?;
@@ -414,7 +414,7 @@ impl UploadService {
         let directory = self
             .service
             .directories
-            .locate_by_id(&session.directory_id())
+            .find_by_id(&session.directory_id())
             .await?;
         let mut resource = build_resource(session.name().to_string(), directory.id())
             .with_id(session.resource_id())

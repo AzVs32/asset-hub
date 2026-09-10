@@ -2,7 +2,7 @@ use super::{Checksum, DirectoryId, Resource, ResourceContent, ResourceId};
 use crate::ResourceError;
 use chrono::{DateTime, Utc};
 
-crate::gen_id_uuid_v7!(UploadId);
+crate::gen_id_uuid_v7!(UploadId, UploadIdSlot);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UploadStatus {
@@ -296,6 +296,7 @@ fn invalid_upload_state(reason: &'static str) -> ResourceError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::directory::domain::Directory;
 
     fn checksum(value: char) -> Checksum {
         Checksum::sha256(value.to_string().repeat(64)).unwrap()
@@ -304,7 +305,7 @@ mod tests {
     fn session(expected_size: u64) -> UploadSession {
         UploadSession::new(
             "asset.bin",
-            DirectoryId::root(),
+            Directory::root().id(),
             None,
             expected_size,
             checksum('a'),

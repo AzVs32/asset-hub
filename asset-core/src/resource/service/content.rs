@@ -235,7 +235,7 @@ impl ContentService {
                 command.expected_size,
             ));
         }
-        let target_key = path_resolver::resource_key(directory.path(), resource.name())?;
+        let target_key = path_resolver::resource_key(&directory, resource.name())?;
         let replacement_id = ResourceContentReplacementId::new();
         let backup_key = path_resolver::replacement_backup_key(replacement_id)?;
         let staging_key = path_resolver::replacement_staging_key(replacement_id)?;

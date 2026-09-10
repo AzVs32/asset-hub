@@ -1,7 +1,7 @@
 use super::*;
 use asset_core::{
     directory::{
-        domain::{DirectoryId, DirectoryPath},
+        domain::{Directory, DirectoryPath},
         port::DirectoryRevisionUpdate,
     },
     idempotency::domain::IdempotencyKey,
@@ -199,7 +199,10 @@ async fn fresh_resource_rename_cannot_adopt_an_unrelated_destination_blob() {
 async fn root_directory_empty_update_obeys_revision_without_requiring_a_parent() {
     let (root, runtime, infrastructure) = recovery_environment("root-empty-update").await;
     let directories = runtime.directory_service();
-    let original = directories.find_by_id(&DirectoryId::root()).await.unwrap();
+    let original = directories
+        .find_by_id(&Directory::root().id())
+        .await
+        .unwrap();
     let revision = original.directory().revision();
     let unchanged = directories
         .update(
@@ -434,7 +437,7 @@ async fn upload_resumes_and_recovers_after_restart() {
     let runtime = AssetRuntime::new(config.clone()).await.unwrap();
     let directory = runtime
         .directory_service()
-        .create(&DirectoryId::root(), "uploads")
+        .create(&Directory::root().id(), "uploads")
         .await
         .unwrap();
     let checksum =
@@ -698,7 +701,7 @@ async fn directory_recovery_is_idempotent_after_filesystem_move() {
         recovery_environment("directory-relocation-recovery").await;
     let directories = runtime.directory_service();
     let source = directories
-        .create(&DirectoryId::root(), "source")
+        .create(&Directory::root().id(), "source")
         .await
         .unwrap();
     let child = directories.create(&source.id(), "child").await.unwrap();
@@ -748,12 +751,12 @@ async fn directory_recovery_is_idempotent_after_filesystem_move() {
         0
     );
     assert_eq!(
-        directories.locate_by_id(&source.id()).await.unwrap().path(),
+        directories.find_by_id(&source.id()).await.unwrap().path(),
         &destination
     );
     assert_eq!(
         directories
-            .locate_by_id(&child.id())
+            .find_by_id(&child.id())
             .await
             .unwrap()
             .path()
@@ -783,7 +786,7 @@ async fn directory_recovery_moves_source_when_only_the_intent_was_persisted() {
     let (root, runtime, infrastructure) = recovery_environment("directory-relocation-intent").await;
     let directories = runtime.directory_service();
     let source = directories
-        .create(&DirectoryId::root(), "source")
+        .create(&Directory::root().id(), "source")
         .await
         .unwrap();
     let current = directories.find_by_id(&source.id()).await.unwrap();
@@ -816,7 +819,7 @@ async fn directory_recovery_moves_source_when_only_the_intent_was_persisted() {
     assert!(!root.join("source").exists());
     assert!(root.join("destination").is_dir());
     assert_eq!(
-        directories.locate_by_id(&source.id()).await.unwrap().path(),
+        directories.find_by_id(&source.id()).await.unwrap().path(),
         &destination
     );
 
@@ -831,7 +834,7 @@ async fn directory_recovery_keeps_intent_when_source_and_destination_both_exist(
         recovery_environment("directory-relocation-ambiguous").await;
     let directories = runtime.directory_service();
     let source = directories
-        .create(&DirectoryId::root(), "source")
+        .create(&Directory::root().id(), "source")
         .await
         .unwrap();
     let current = directories.find_by_id(&source.id()).await.unwrap();
@@ -884,11 +887,11 @@ async fn resource_relocation_recovers_after_filesystem_move_without_overwriting_
         recovery_environment("resource-relocation-recovery").await;
     let directories = runtime.directory_service();
     let source = directories
-        .create(&DirectoryId::root(), "source")
+        .create(&Directory::root().id(), "source")
         .await
         .unwrap();
     let destination = directories
-        .create(&DirectoryId::root(), "destination")
+        .create(&Directory::root().id(), "destination")
         .await
         .unwrap();
     let resource = Resource::builder("note.txt")
@@ -962,11 +965,11 @@ async fn resource_relocation_rolls_back_physical_move_when_a_newer_revision_wins
     let (root, runtime, infrastructure) = recovery_environment("resource-relocation-stale").await;
     let directories = runtime.directory_service();
     let source = directories
-        .create(&DirectoryId::root(), "source")
+        .create(&Directory::root().id(), "source")
         .await
         .unwrap();
     let destination = directories
-        .create(&DirectoryId::root(), "destination")
+        .create(&Directory::root().id(), "destination")
         .await
         .unwrap();
     let resource = Resource::builder("note.txt")
@@ -1076,7 +1079,7 @@ async fn find_resource(
 ) -> Option<Resource> {
     let directory = runtime
         .directory_service()
-        .resolve_path(directory)
+        .find_by_path(directory)
         .await
         .ok()?;
     let page = runtime
@@ -1203,7 +1206,7 @@ async fn local_storage_changes_are_synchronized_automatically() {
 
     let managed = runtime
         .directory_service()
-        .create(&DirectoryId::root(), "managed-empty")
+        .create(&Directory::root().id(), "managed-empty")
         .await
         .unwrap();
     let managed_path = managed.path().clone();

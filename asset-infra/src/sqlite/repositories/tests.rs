@@ -121,7 +121,7 @@ async fn directory_service(repository: Arc<SqliteDirectoryStore>) -> DirectorySe
 async fn resource_storage_key(repository: &TestRepositories, resource: &Resource) -> StorageKey {
     let directory = directory_service(repository.directories.clone())
         .await
-        .locate_by_id(&resource.directory_id())
+        .find_by_id(&resource.directory_id())
         .await
         .unwrap();
     let value = if directory.path().is_root() {
@@ -245,7 +245,7 @@ async fn directory_store_rejects_a_stale_aggregate_snapshot() {
     let repository = repository("conditional-directory-save").await;
     let directories = directory_service(repository.directories.clone()).await;
     let located = directories
-        .create(&DirectoryId::root(), "library")
+        .create(&Directory::root().id(), "library")
         .await
         .unwrap();
     let expected = located.directory().revision();
@@ -284,11 +284,11 @@ async fn sqlite_directory_update_batch_rolls_back_when_one_cas_is_stale() {
     let repository = repository("directory-batch-cas-rollback").await;
     let directories = directory_service(repository.directories.clone()).await;
     let left = directories
-        .create(&DirectoryId::root(), "left")
+        .create(&Directory::root().id(), "left")
         .await
         .unwrap();
     let right = directories
-        .create(&DirectoryId::root(), "right")
+        .create(&Directory::root().id(), "right")
         .await
         .unwrap();
     let left_expected = left.directory().revision();
@@ -372,13 +372,13 @@ async fn directory_tree_derives_paths_from_stable_ids_after_rename_and_move() {
     let repository = repository("directory-tree").await;
     let directories = directory_service(repository.directories.clone()).await;
     let collections = directories
-        .create(&DirectoryId::root(), "Collections")
+        .create(&Directory::root().id(), "Collections")
         .await
         .unwrap();
     let item = directories.create(&collections.id(), "Item").await.unwrap();
     let content = directories.create(&item.id(), "content").await.unwrap();
     let archive = directories
-        .create(&DirectoryId::root(), "Archive")
+        .create(&Directory::root().id(), "Archive")
         .await
         .unwrap();
     let resource = Resource::builder("asset.bin")
@@ -403,7 +403,7 @@ async fn directory_tree_derives_paths_from_stable_ids_after_rename_and_move() {
 
     assert_eq!(
         directories
-            .locate_by_id(&item.id())
+            .find_by_id(&item.id())
             .await
             .unwrap()
             .path()
@@ -412,7 +412,7 @@ async fn directory_tree_derives_paths_from_stable_ids_after_rename_and_move() {
     );
     assert_eq!(
         directories
-            .locate_by_id(&content.id())
+            .find_by_id(&content.id())
             .await
             .unwrap()
             .path()
@@ -444,7 +444,7 @@ async fn directory_tree_derives_paths_from_stable_ids_after_rename_and_move() {
         .unwrap();
     assert_eq!(
         directories
-            .locate_by_id(&content.id())
+            .find_by_id(&content.id())
             .await
             .unwrap()
             .path()
@@ -467,7 +467,7 @@ async fn pending_directory_relocation_completes_after_the_physical_move() {
     let services = DirectoryServices::new(store.clone(), index, storage.clone(), store.clone());
     let directories = services.directory_service();
     let source = directories
-        .create(&DirectoryId::root(), "source")
+        .create(&Directory::root().id(), "source")
         .await
         .unwrap();
     let current = directories.find_by_id(&source.id()).await.unwrap();
@@ -499,7 +499,7 @@ async fn pending_directory_relocation_completes_after_the_physical_move() {
         1
     );
     assert_eq!(
-        directories.locate_by_id(&source.id()).await.unwrap().path(),
+        directories.find_by_id(&source.id()).await.unwrap().path(),
         &destination
     );
     assert!(
@@ -515,7 +515,7 @@ async fn directory_store_rejects_cycles() {
     let repository = repository("directory-cycle").await;
     let directories = directory_service(repository.directories.clone()).await;
     let parent = directories
-        .create(&DirectoryId::root(), "parent")
+        .create(&Directory::root().id(), "parent")
         .await
         .unwrap();
     let child = directories.create(&parent.id(), "child").await.unwrap();
@@ -541,7 +541,7 @@ async fn directory_store_rejects_cycles() {
 #[tokio::test]
 async fn directory_store_rejects_invalid_persisted_self_parent() {
     let repository = repository("directory-self-parent").await;
-    let directory = Directory::new(DirectoryId::root(), "self").unwrap();
+    let directory = Directory::new(Directory::root().id(), "self").unwrap();
     DirectoryStore::insert(repository.directories.as_ref(), &directory)
         .await
         .unwrap();

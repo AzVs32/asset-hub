@@ -39,6 +39,10 @@ Resource owns only the conversion from a resolved Directory path plus Resource n
 Blob key. `DirectoryStorage` remains a physical-storage port because it abstracts directory
 existence, creation, moves, and empty-directory deletion for the Directory service.
 
+The `Directory` aggregate owns root-directory semantics: `Directory::root()` assigns
+`DirectoryIdSlot::Slot0`, and `Directory::is_root()` identifies that aggregate. `DirectoryId`
+exposes only generic reserved-slot operations and does not define `root` or `is_root` behavior.
+
 Runtime is the composition owner for `IdempotencyService`: it creates one service from the
 idempotency repository and configured lease duration, then injects that shared capability into
 the Resource content and upload services. The persisted key is globally scoped across command
@@ -66,6 +70,11 @@ Ordinary business services do not expose repositories, Blob ports, locks, recove
 operations. Query inputs and projections belong to the aggregate `query` modules rather than a
 repository port. Management handles clone the already-assembled aggregate state; callers never
 reconstruct a second service merely to obtain a narrower interface.
+
+Directory query results avoid duplicating aggregate identity: `LocatedDirectory` pairs a
+`Directory` directly with its current `DirectoryPath`, while `LocatedResource` pairs a `Resource`
+with its current Directory path. Stable Directory IDs remain on the owning aggregates, and full
+paths remain rebuildable query projections rather than persisted aggregate state.
 
 ## Assembly and consistency boundaries
 

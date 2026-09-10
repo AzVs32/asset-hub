@@ -5,7 +5,10 @@ use crate::storage::StorageKey;
 
 use super::{ResourceContent, ResourceId};
 
-crate::gen_id_uuid_v7!(ResourceContentReplacementId);
+crate::gen_id_uuid_v7!(
+    ResourceContentReplacementId,
+    ResourceContentReplacementIdSlot
+);
 
 /// Durable intent recorded before any content replacement mutates the public Blob path.
 #[derive(Debug, Clone, PartialEq)]

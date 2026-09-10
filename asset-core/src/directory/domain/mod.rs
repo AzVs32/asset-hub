@@ -4,24 +4,14 @@ mod path;
 
 use crate::error::DirectoryError;
 use chrono::{DateTime, Utc};
+pub use path::DirectoryPath;
 use serde::Serialize;
 
-pub use path::DirectoryPath;
+// 允许的最大 directory.name 长度
+const MAX_DIRECTORY_NAME_LEN: usize = 255;
 
-const MAX_DIRECTORY_SEGMENT_LEN: usize = 255;
-
-crate::gen_id_uuid_v7!(DirectoryId);
-
-impl DirectoryId {
-    /// 全局根目录使用 nil UUID，保证不同进程和首次建库得到相同的根节点。
-    pub fn root() -> Self {
-        Self::from_uuid(uuid::Uuid::nil())
-    }
-
-    pub fn is_root(self) -> bool {
-        self == Self::root()
-    }
-}
+// 约定：Slot0 为 root 目录的固定 ID
+crate::gen_id_uuid_v7!(DirectoryId, DirectoryIdSlot);
 
 /// 独立的目录聚合根。
 ///
@@ -39,27 +29,72 @@ pub struct Directory {
 
 impl Directory {
     pub fn new(parent_id: DirectoryId, name: impl Into<String>) -> Result<Self, DirectoryError> {
+        let name = name.into();
+        Self::validate_name(&name)?;
         let now = Utc::now();
-        Self::rehydrate(
-            DirectoryId::new(),
-            Some(parent_id),
-            name.into(),
-            now,
-            now,
-            1,
-        )
+        Ok(Self {
+            id: DirectoryId::new(),
+            parent_id: Some(parent_id),
+            name,
+            created_at: now,
+            updated_at: now,
+            revision: 1,
+        })
     }
 
     pub fn root() -> Self {
         let now = Utc::now();
         Self {
-            id: DirectoryId::root(),
+            id: DirectoryId::from_slot(DirectoryIdSlot::Slot0),
             parent_id: None,
             name: String::new(),
             created_at: now,
             updated_at: now,
             revision: 1,
         }
+    }
+
+    /// 判断当前 directory 是否为 root
+    pub fn is_root(&self) -> bool {
+        self.id.slot() == Some(DirectoryIdSlot::Slot0)
+    }
+
+    /// 给 directory 重命名
+    pub fn rename(&mut self, name: impl Into<String>) -> Result<(), DirectoryError> {
+        if self.is_root() {
+            return Err(DirectoryError::InvalidFormat {
+                field: "directory.name",
+                reason: "root directory cannot be renamed",
+            });
+        }
+        let name = name.into();
+        Self::validate_name(&name)?;
+        if self.name != name {
+            self.name = name;
+            self.touch();
+        }
+        Ok(())
+    }
+
+    /// 移动 directory 的位置
+    pub fn move_to(&mut self, parent_id: DirectoryId) -> Result<(), DirectoryError> {
+        if self.is_root() {
+            return Err(DirectoryError::InvalidFormat {
+                field: "directory.parent_id",
+                reason: "root directory cannot be moved",
+            });
+        }
+        if self.id == parent_id {
+            return Err(DirectoryError::InvalidFormat {
+                field: "directory.parent_id",
+                reason: "directory cannot be its own parent",
+            });
+        }
+        if self.parent_id != Some(parent_id) {
+            self.parent_id = Some(parent_id);
+            self.touch();
+        }
+        Ok(())
     }
 
     /// 从持久化适配器已解析的完整状态还原目录聚合。
@@ -72,48 +107,49 @@ impl Directory {
         updated_at: DateTime<Utc>,
         revision: u64,
     ) -> Result<Self, DirectoryError> {
-        if id.is_root() {
-            if parent_id.is_some() || !name.is_empty() {
-                return Err(DirectoryError::InvalidFormat {
-                    field: "directory.root",
-                    reason: "root directory cannot have a parent or name",
-                });
-            }
-        } else {
-            if parent_id.is_none() {
-                return Err(DirectoryError::InvalidFormat {
-                    field: "directory.parent_id",
-                    reason: "non-root directory must have a parent",
-                });
-            }
-            if parent_id == Some(id) {
-                return Err(DirectoryError::InvalidFormat {
-                    field: "directory.parent_id",
-                    reason: "directory cannot be its own parent",
-                });
-            }
-            validate_directory_name(&name)?;
-        }
-        if updated_at < created_at {
-            return Err(DirectoryError::InvalidFormat {
-                field: "directory.updated_at",
-                reason: "updated timestamp cannot precede creation",
-            });
-        }
-        if revision == 0 {
-            return Err(DirectoryError::InvalidFormat {
-                field: "directory.revision",
-                reason: "directory revision must be greater than zero",
-            });
-        }
-        Ok(Self {
+        let directory = Self {
             id,
             parent_id,
             name,
             created_at,
             updated_at,
             revision,
-        })
+        };
+        if directory.is_root() {
+            if directory.parent_id.is_some() || !directory.name.is_empty() {
+                return Err(DirectoryError::InvalidFormat {
+                    field: "directory.root",
+                    reason: "root directory cannot have a parent or name",
+                });
+            }
+        } else {
+            if directory.parent_id.is_none() {
+                return Err(DirectoryError::InvalidFormat {
+                    field: "directory.parent_id",
+                    reason: "non-root directory must have a parent",
+                });
+            }
+            if directory.parent_id == Some(directory.id) {
+                return Err(DirectoryError::InvalidFormat {
+                    field: "directory.parent_id",
+                    reason: "directory cannot be its own parent",
+                });
+            }
+            Self::validate_name(&directory.name)?;
+        }
+        if directory.updated_at < directory.created_at {
+            return Err(DirectoryError::InvalidFormat {
+                field: "directory.updated_at",
+                reason: "updated timestamp cannot precede creation",
+            });
+        }
+        if directory.revision == 0 {
+            return Err(DirectoryError::InvalidFormat {
+                field: "directory.revision",
+                reason: "directory revision must be greater than zero",
+            });
+        }
+        Ok(directory)
     }
 }
 
@@ -142,41 +178,43 @@ impl Directory {
         self.revision
     }
 
-    pub fn rename(&mut self, name: impl Into<String>) -> Result<(), DirectoryError> {
-        if self.id.is_root() {
+    fn validate_name(value: &str) -> Result<(), DirectoryError> {
+        // 文件命名拦截：不能是单独的(.)和(..)，不能嵌套(/)和(\)。
+        if value == "." || value == ".." || value.contains('/') || value.contains('\\') {
             return Err(DirectoryError::InvalidFormat {
                 field: "directory.name",
-                reason: "root directory cannot be renamed",
+                reason: "directory name must be a single path segment",
             });
         }
-        let name = validate_directory_name(&name.into())?;
-        if self.name != name {
-            self.name = name;
-            self.touch();
+        Self::validate_required_text(value)
+    }
+
+    fn validate_required_text(value: &str) -> Result<(), DirectoryError> {
+        // 拒绝空字符
+        if value.trim().is_empty() {
+            return Err(DirectoryError::InvalidFormat {
+                field: "directory.name",
+                reason: "cannot be blank",
+            });
+        }
+        // Unicode 安全的长度计算
+        if value.chars().count() > MAX_DIRECTORY_NAME_LEN {
+            return Err(DirectoryError::TooLong {
+                field: "directory.name",
+                max: MAX_DIRECTORY_NAME_LEN,
+            });
+        }
+        // 控制字符 黑名单
+        if value.chars().any(char::is_control) {
+            return Err(DirectoryError::InvalidFormat {
+                field: "directory.name",
+                reason: "control characters are not allowed",
+            });
         }
         Ok(())
     }
 
-    pub fn move_to(&mut self, parent_id: DirectoryId) -> Result<(), DirectoryError> {
-        if self.id.is_root() {
-            return Err(DirectoryError::InvalidFormat {
-                field: "directory.parent_id",
-                reason: "root directory cannot be moved",
-            });
-        }
-        if self.id == parent_id {
-            return Err(DirectoryError::InvalidFormat {
-                field: "directory.parent_id",
-                reason: "directory cannot be its own parent",
-            });
-        }
-        if self.parent_id != Some(parent_id) {
-            self.parent_id = Some(parent_id);
-            self.touch();
-        }
-        Ok(())
-    }
-
+    /// 当 directory 出现变更，推进“版本号” 及 更新“最后修改时间”。
     fn touch(&mut self) {
         self.updated_at = Utc::now();
         self.revision = self
@@ -184,36 +222,6 @@ impl Directory {
             .checked_add(1)
             .expect("directory revision should not exhaust u64");
     }
-}
-
-fn validate_directory_name(value: &str) -> Result<String, DirectoryError> {
-    if value == "." || value == ".." || value.contains('/') || value.contains('\\') {
-        return Err(DirectoryError::InvalidFormat {
-            field: "directory.name",
-            reason: "directory name must be a single path segment",
-        });
-    }
-    validate_required_text_exact("directory.name", value, MAX_DIRECTORY_SEGMENT_LEN)
-}
-
-fn validate_required_text_exact(
-    field: &'static str,
-    value: &str,
-    max: usize,
-) -> Result<String, DirectoryError> {
-    if value.trim().is_empty() {
-        return Err(DirectoryError::Blank { field });
-    }
-    if value.chars().count() > max {
-        return Err(DirectoryError::TooLong { field, max });
-    }
-    if value.chars().any(char::is_control) {
-        return Err(DirectoryError::InvalidFormat {
-            field,
-            reason: "control characters are not allowed",
-        });
-    }
-    Ok(value.to_owned())
 }
 
 #[cfg(test)]

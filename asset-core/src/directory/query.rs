@@ -1,61 +1,21 @@
-//! Directory query inputs and projections shared by application services and read-model adapters.
+//! 应用服务和读取模型适配器共享的目录查询结果。
 
-use crate::{
-    CoreError,
-    directory::domain::{Directory, DirectoryId, DirectoryPath},
-};
+use crate::directory::domain::{Directory, DirectoryId, DirectoryPath};
 
-/// A directory's stable identity and current path projection.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DirectoryLocation {
-    id: DirectoryId,
-    path: DirectoryPath,
-}
-
-impl DirectoryLocation {
-    pub fn new(id: DirectoryId, path: DirectoryPath) -> Self {
-        Self { id, path }
-    }
-
-    pub fn root() -> Self {
-        Self::new(DirectoryId::root(), DirectoryPath::root())
-    }
-
-    pub fn id(&self) -> DirectoryId {
-        self.id
-    }
-
-    pub fn path(&self) -> &DirectoryPath {
-        &self.path
-    }
-}
-
-/// A complete directory aggregate paired with its current path projection.
+/// 一个完整的目录聚合及其当前的路径投影。
 #[derive(Debug, Clone, PartialEq)]
 pub struct LocatedDirectory {
     directory: Directory,
-    location: DirectoryLocation,
+    path: DirectoryPath,
 }
 
 impl LocatedDirectory {
-    pub fn new(directory: Directory, location: DirectoryLocation) -> Result<Self, CoreError> {
-        if directory.id() != location.id() {
-            return Err(CoreError::invariant(
-                "directory aggregate does not match its location projection",
-            ));
-        }
-        Ok(Self {
-            directory,
-            location,
-        })
+    pub fn new(directory: Directory, path: DirectoryPath) -> Self {
+        Self { directory, path }
     }
 
     pub fn directory(&self) -> &Directory {
         &self.directory
-    }
-
-    pub fn location(&self) -> &DirectoryLocation {
-        &self.location
     }
 
     pub fn id(&self) -> DirectoryId {
@@ -63,14 +23,14 @@ impl LocatedDirectory {
     }
 
     pub fn path(&self) -> &DirectoryPath {
-        self.location.path()
+        &self.path
     }
 
     pub fn into_directory(self) -> Directory {
         self.directory
     }
 
-    pub fn into_parts(self) -> (Directory, DirectoryLocation) {
-        (self.directory, self.location)
+    pub fn into_parts(self) -> (Directory, DirectoryPath) {
+        (self.directory, self.path)
     }
 }

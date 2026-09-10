@@ -10,7 +10,7 @@ scheduler or supervisor.
 Upload routes invoke `UploadService` directly.
 
 Resource, Directory, Content, and archive handlers invoke their direct Core services with global
-directory paths: the nil UUID root is represented by an empty path. Router construction receives one
+directory paths: the root Directory's canonical path is empty. Router construction receives one
 `HttpComposition` bundle: `ResourceHttpServices`, `DirectoryHttpServices`, the cross-aggregate
 workflow service, and the narrow health-only Blob readiness interface. These bundles organize
 transport dependencies only; they do not add business workflows or expose repositories, storage,

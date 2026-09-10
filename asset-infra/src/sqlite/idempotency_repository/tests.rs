@@ -1,7 +1,7 @@
 use super::*;
 use crate::sqlite::{SqliteDatabase, SqliteUploadSessionRepository};
 use asset_core::{
-    directory::domain::DirectoryId,
+    directory::domain::Directory,
     idempotency::{
         domain::{IdempotencyKey, IdempotencyRecord},
         port::{IdempotencyAcquire, IdempotencyRepository},
@@ -119,7 +119,7 @@ async fn upload_creation_key_recovers_the_durable_session_after_lease_takeover()
     let key = key("upload-link");
     let session = UploadSession::new(
         "document.txt",
-        DirectoryId::root(),
+        Directory::root().id(),
         Some("text/plain".to_string()),
         0,
         Checksum::sha256("0".repeat(64)).unwrap(),

@@ -2,8 +2,8 @@ use super::{DirectoryKernel, DirectoryService};
 use crate::{
     CoreError,
     directory::{
-        domain::{Directory, DirectoryId, DirectoryPath},
-        query::{DirectoryLocation, LocatedDirectory},
+        domain::{Directory, DirectoryPath},
+        query::LocatedDirectory,
     },
 };
 use std::sync::Arc;
@@ -22,11 +22,11 @@ impl DirectoryImportService {
     }
 
     /// Import a path that a storage scan has already observed physically.
-    pub async fn import_path(&self, path: &DirectoryPath) -> Result<DirectoryLocation, CoreError> {
+    pub async fn import_path(&self, path: &DirectoryPath) -> Result<LocatedDirectory, CoreError> {
         self.materialize_path(path).await
     }
 
-    async fn materialize_path(&self, path: &DirectoryPath) -> Result<DirectoryLocation, CoreError> {
+    async fn materialize_path(&self, path: &DirectoryPath) -> Result<LocatedDirectory, CoreError> {
         let _guard = self.service.kernel.mutation_lock.lock().await;
         if let Some(directory) = self.service.kernel.query.find_by_path(path).await? {
             if !self.service.kernel.storage.directory_exists(path).await? {
@@ -34,14 +34,14 @@ impl DirectoryImportService {
                     "storage import path `{path}` no longer exists"
                 )));
             }
-            return Ok(directory.location().clone());
+            return Ok(directory);
         }
 
         let mut parent = self
             .service
             .kernel
             .query
-            .find_by_id(&DirectoryId::root())
+            .find_by_path(&DirectoryPath::root())
             .await?
             .ok_or_else(|| CoreError::invariant("root directory is missing"))?;
         let mut current_path = DirectoryPath::root();
@@ -73,11 +73,8 @@ impl DirectoryImportService {
             let directory = Directory::new(parent.id(), name)?;
             self.service.kernel.store.insert(&directory).await?;
             self.service.refresh_index(&directory.id()).await?;
-            parent = LocatedDirectory::new(
-                directory.clone(),
-                DirectoryLocation::new(directory.id(), current_path.clone()),
-            )?;
+            parent = LocatedDirectory::new(directory, current_path.clone());
         }
-        Ok(parent.location().clone())
+        Ok(parent)
     }
 }

@@ -2,7 +2,7 @@
 
 use crate::{
     CoreError,
-    directory::{domain::DirectoryId, query::DirectoryLocation},
+    directory::domain::{DirectoryId, DirectoryPath},
     resource::domain::Resource,
     storage::StorageKey,
 };
@@ -49,36 +49,31 @@ impl ListResources {
     }
 }
 
-/// A Resource aggregate paired with its current Directory projection.
+/// 资源聚合及其当前目录路径投影。
 #[derive(Debug, Clone)]
 pub struct LocatedResource {
     resource: Resource,
-    directory: DirectoryLocation,
+    directory_path: DirectoryPath,
 }
 
 impl LocatedResource {
-    pub fn new(resource: Resource, directory: DirectoryLocation) -> Result<Self, CoreError> {
-        if resource.directory_id() != directory.id() {
-            return Err(CoreError::invariant(
-                "resource directory does not match its location projection",
-            ));
-        }
-        Ok(Self {
+    pub fn new(resource: Resource, directory_path: DirectoryPath) -> Self {
+        Self {
             resource,
-            directory,
-        })
+            directory_path,
+        }
     }
 
     pub fn resource(&self) -> &Resource {
         &self.resource
     }
 
-    pub fn directory(&self) -> &DirectoryLocation {
-        &self.directory
+    pub fn directory_path(&self) -> &DirectoryPath {
+        &self.directory_path
     }
 
     pub fn storage_key(&self) -> Result<StorageKey, CoreError> {
-        super::storage_key_from_resource_path(self.directory.path(), self.resource.name())
+        super::storage_key_from_resource_path(&self.directory_path, self.resource.name())
             .map_err(Into::into)
     }
 
@@ -86,8 +81,8 @@ impl LocatedResource {
         self.resource
     }
 
-    pub fn into_parts(self) -> (Resource, DirectoryLocation) {
-        (self.resource, self.directory)
+    pub fn into_parts(self) -> (Resource, DirectoryPath) {
+        (self.resource, self.directory_path)
     }
 }
 

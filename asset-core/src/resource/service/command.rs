@@ -3,7 +3,7 @@
 use super::{ResourceService, UpdateResource, path_resolver};
 use crate::CoreError;
 use crate::{
-    directory::{domain::DirectoryId, query::DirectoryLocation},
+    directory::domain::{DirectoryId, DirectoryPath},
     resource::{
         domain::{Resource, ResourceDeletion, ResourceId},
         port::ResourceRelocation,
@@ -47,13 +47,16 @@ impl ResourceService {
         self.read_model.list(&query).await
     }
 
-    pub async fn locate_resource_directory(
+    pub async fn directory_path_for(
         &self,
         resource: &Resource,
-    ) -> Result<DirectoryLocation, CoreError> {
-        self.directories
-            .locate_by_id(&resource.directory_id())
-            .await
+    ) -> Result<DirectoryPath, CoreError> {
+        Ok(self
+            .directories
+            .find_by_id(&resource.directory_id())
+            .await?
+            .path()
+            .clone())
     }
 
     /// Update a Resource by stable ID.
@@ -96,10 +99,7 @@ impl ResourceService {
             return Ok(desired);
         }
 
-        let destination_directory = self
-            .directories
-            .locate_by_id(&desired.directory_id())
-            .await?;
+        let destination_directory = self.directories.find_by_id(&desired.directory_id()).await?;
         if let Some(occupant) = self
             .read_model
             .find_by_directory_and_name(destination_directory.id(), desired.name())
@@ -114,7 +114,7 @@ impl ResourceService {
 
         let has_content = desired.content().is_some();
         let source_key = has_content
-            .then(|| path_resolver::resource_key(source_directory.path(), &source_name))
+            .then(|| path_resolver::resource_key(&source_directory, &source_name))
             .transpose()?;
         let destination_key = has_content
             .then(|| path_resolver::resource_key(destination_directory.path(), desired.name()))

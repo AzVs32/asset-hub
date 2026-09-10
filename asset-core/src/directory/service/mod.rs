@@ -21,17 +21,16 @@ use crate::{
             DirectoryIndex, DirectoryProjection, DirectoryQuery, DirectoryRelocationStore,
             DirectoryStore,
         },
-        query::{DirectoryLocation, LocatedDirectory},
+        query::LocatedDirectory,
     },
     storage::port::DirectoryStorage,
 };
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-/// Coordinates global directory aggregates, the durable store, the query index, and physical
-/// storage.
+/// 协调全局目录聚合、持久化存储、查询索引和物理存储。
 ///
-/// Its public query and mutation use cases use stable IDs or global [`DirectoryPath`] values.
+/// 其公共查询和变更用例使用稳定的ID或全局 [`DirectoryPath`] 值。
 #[derive(Clone)]
 pub struct DirectoryService {
     kernel: Arc<DirectoryKernel>,
@@ -46,7 +45,7 @@ struct DirectoryKernel {
     index_service: DirectoryIndexService,
 }
 
-/// Composition-time bundle that guarantees all Directory services share one mutation boundary.
+/// 组合时间绑定，保证所有目录服务共享一个变更边界。
 pub struct DirectoryServices {
     directory: DirectoryService,
     maintenance: DirectoryMaintenanceService,
@@ -109,13 +108,9 @@ impl DirectoryServices {
 }
 
 impl DirectoryService {
-    /// Locate the global root, whose identity is the nil UUID and whose path is empty.
-    pub async fn root(&self) -> Result<DirectoryLocation, CoreError> {
-        Ok(self
-            .find_by_id(&DirectoryId::root())
-            .await?
-            .location()
-            .clone())
+    /// Locate the global root directory, whose canonical path is empty.
+    pub async fn root(&self) -> Result<LocatedDirectory, CoreError> {
+        self.find_by_path(&DirectoryPath::root()).await
     }
 
     /// Find a directory by its global stable ID.
@@ -127,10 +122,6 @@ impl DirectoryService {
             .ok_or_else(|| CoreError::not_found("directory", id.to_string()))
     }
 
-    pub async fn locate_by_id(&self, id: &DirectoryId) -> Result<DirectoryLocation, CoreError> {
-        Ok(self.find_by_id(id).await?.location().clone())
-    }
-
     /// Find a directory by its global canonical path.
     pub async fn find_by_path(&self, path: &DirectoryPath) -> Result<LocatedDirectory, CoreError> {
         self.kernel
@@ -138,10 +129,6 @@ impl DirectoryService {
             .find_by_path(path)
             .await?
             .ok_or_else(|| CoreError::not_found("directory", path.path()))
-    }
-
-    pub async fn resolve_path(&self, path: &DirectoryPath) -> Result<DirectoryLocation, CoreError> {
-        Ok(self.find_by_path(path).await?.location().clone())
     }
 
     pub async fn list_children(

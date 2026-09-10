@@ -1,4 +1,4 @@
--- 目录是独立聚合。固定 nil UUID 表示全局根目录；其余节点通过 parent_id 组成邻接树。
+-- 目录是独立聚合。使用特殊值作为根目录ID；其余节点通过 parent_id 组成邻接树。
 CREATE TABLE directories (
     id TEXT PRIMARY KEY NOT NULL,
     parent_id TEXT,

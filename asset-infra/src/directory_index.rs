@@ -2,7 +2,7 @@ use asset_core::CoreError;
 use asset_core::directory::{
     domain::{Directory, DirectoryId, DirectoryPath},
     port::{DirectoryIndex, DirectoryQuery},
-    query::{DirectoryLocation, LocatedDirectory},
+    query::LocatedDirectory,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::RwLock;
@@ -55,7 +55,10 @@ impl DirectoryQuery for InMemoryDirectoryIndex {
         path: &DirectoryPath,
     ) -> Result<Option<LocatedDirectory>, CoreError> {
         let state = self.state()?;
-        let mut id = DirectoryId::root();
+        let Some(root) = state.nodes.values().find(|directory| directory.is_root()) else {
+            return Ok(None);
+        };
+        let mut id = root.id();
         for name in path.path().split('/').filter(|name| !name.is_empty()) {
             let Some(child) = state
                 .children
@@ -141,12 +144,12 @@ impl DirectoryIndex for InMemoryDirectoryIndex {
     }
 
     async fn remove(&self, id: &DirectoryId) -> Result<(), CoreError> {
-        if id.is_root() {
+        let mut state = self.state_mut()?;
+        if state.nodes.get(id).is_some_and(Directory::is_root) {
             return Err(CoreError::configuration(
                 "root directory cannot be removed from the index",
             ));
         }
-        let mut state = self.state_mut()?;
         if state
             .children
             .get(id)
@@ -176,7 +179,7 @@ fn build_state(directories: Vec<Directory>) -> Result<DirectoryIndexState, CoreE
             ));
         }
     }
-    let Some(root) = nodes.get(&DirectoryId::root()) else {
+    let Some(root) = nodes.values().find(|directory| directory.is_root()) else {
         return Err(CoreError::configuration("root directory is missing"));
     };
     if root.parent_id().is_some() || !root.name().is_empty() {
@@ -184,7 +187,7 @@ fn build_state(directories: Vec<Directory>) -> Result<DirectoryIndexState, CoreE
     }
 
     let mut children = HashMap::<DirectoryId, BTreeMap<String, DirectoryId>>::new();
-    for directory in nodes.values().filter(|directory| !directory.id().is_root()) {
+    for directory in nodes.values().filter(|directory| !directory.is_root()) {
         let parent_id = directory
             .parent_id()
             .ok_or_else(|| CoreError::configuration("non-root directory is missing its parent"))?;
@@ -216,10 +219,10 @@ fn located(
     state: &DirectoryIndexState,
     directory: &Directory,
 ) -> Result<LocatedDirectory, CoreError> {
-    LocatedDirectory::new(
+    Ok(LocatedDirectory::new(
         directory.clone(),
-        DirectoryLocation::new(directory.id(), path_for(state, &directory.id())?),
-    )
+        path_for(state, &directory.id())?,
+    ))
 }
 
 fn path_for(
@@ -238,7 +241,7 @@ fn path_for(
         let directory = state.nodes.get(&id).ok_or_else(|| {
             CoreError::configuration(format!("directory index is missing node `{id}`"))
         })?;
-        if !id.is_root() {
+        if !directory.is_root() {
             names.push(directory.name());
         }
         current = directory.parent_id();

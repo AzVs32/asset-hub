@@ -1,5 +1,5 @@
 use super::*;
-use crate::directory::domain::DirectoryId;
+use crate::directory::domain::Directory;
 use crate::error::ResourceError;
 
 #[test]
@@ -10,7 +10,7 @@ fn resource_rehydration_rejects_inconsistent_timestamps() {
         Resource::rehydrate(
             ResourceId::new(),
             "image.png".to_owned(),
-            DirectoryId::root(),
+            Directory::root().id(),
             None,
             created_at,
             created_at - chrono::Duration::seconds(1),

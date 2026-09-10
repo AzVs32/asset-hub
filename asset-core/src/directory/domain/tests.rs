@@ -16,8 +16,10 @@ fn directory_path_is_built_from_parent_and_single_name() {
 fn directory_path_supports_root_and_normalizes_segments() {
     assert!(DirectoryPath::from_path("").unwrap().is_root());
     assert!(DirectoryPath::from_path("  ").is_err());
+    assert!(DirectoryPath::from_path("/projects/images").is_err());
+    assert!(DirectoryPath::from_path("projects/../images").is_err());
     assert_eq!(
-        DirectoryPath::from_path("projects\\images/./raw")
+        DirectoryPath::from_path("projects\\images//./raw/")
             .unwrap()
             .path(),
         "projects/images/raw"
@@ -54,7 +56,8 @@ fn directory_path_contains_obeys_segment_boundaries() {
 fn root_directory_has_fixed_identity_and_cannot_be_mutated_as_a_child() {
     let mut root = Directory::root();
 
-    assert_eq!(root.id(), DirectoryId::root());
+    assert_eq!(root.id().slot(), Some(DirectoryIdSlot::Slot0));
+    assert!(root.is_root());
     assert!(root.parent_id().is_none());
     assert!(root.rename("root").is_err());
     assert!(root.move_to(DirectoryId::new()).is_err());
@@ -62,7 +65,7 @@ fn root_directory_has_fixed_identity_and_cannot_be_mutated_as_a_child() {
 
 #[test]
 fn directory_rejects_self_parent() {
-    let mut directory = Directory::new(DirectoryId::root(), "Games").unwrap();
+    let mut directory = Directory::new(Directory::root().id(), "Games").unwrap();
 
     assert!(directory.move_to(directory.id()).is_err());
 }
@@ -82,7 +85,7 @@ fn directory_rehydration_rejects_self_parent_and_inconsistent_timestamps() {
     assert!(matches!(
         Directory::rehydrate(
             DirectoryId::new(),
-            Some(DirectoryId::root()),
+            Some(Directory::root().id()),
             "past".to_owned(),
             created_at,
             created_at - chrono::Duration::seconds(1),
@@ -97,7 +100,7 @@ fn directory_rehydration_rejects_self_parent_and_inconsistent_timestamps() {
     assert!(matches!(
         Directory::rehydrate(
             DirectoryId::new(),
-            Some(DirectoryId::root()),
+            Some(Directory::root().id()),
             "invalid revision".to_owned(),
             created_at,
             created_at,
@@ -112,7 +115,7 @@ fn directory_rehydration_rejects_self_parent_and_inconsistent_timestamps() {
 
 #[test]
 fn directory_mutations_increment_revision_only_when_state_changes() {
-    let mut directory = Directory::new(DirectoryId::root(), "library").unwrap();
+    let mut directory = Directory::new(Directory::root().id(), "library").unwrap();
     assert_eq!(directory.revision(), 1);
 
     directory.rename("library").unwrap();
