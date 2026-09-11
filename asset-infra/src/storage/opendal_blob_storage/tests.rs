@@ -13,7 +13,7 @@ async fn fs_storage_preserves_spaces_in_the_physical_path() {
 
     stage_and_publish(&storage, &key, stream).await;
 
-    assert_eq!(storage.get(&key).await.unwrap(), Some(data.clone()));
+    assert_eq!(read_all(&storage, &key).await, Some(data.clone()));
     assert_eq!(std::fs::read(root.join(key.as_str())).unwrap(), data);
     assert!(!root.join("library/project A/design  01.md").exists());
 
@@ -112,7 +112,7 @@ async fn fs_storage_writes_streaming_blob_content() {
 
     assert_eq!(staged.bytes_written(), 16);
     assert_eq!(
-        storage.get(&key).await.unwrap(),
+        read_all(&storage, &key).await,
         Some(Bytes::from_static(b"large file bytes"))
     );
 }
@@ -200,7 +200,7 @@ async fn fs_storage_streams_blob_byte_range() {
         .await
         .unwrap();
 
-    let stream = storage.get_range_stream(&key, 2, 5).await.unwrap().unwrap();
+    let stream = storage.get_range_stream(&key, 2..6).await.unwrap().unwrap();
     let chunks = stream.try_collect::<Vec<_>>().await.unwrap();
     let bytes = chunks.into_iter().fold(Vec::new(), |mut bytes, chunk| {
         bytes.extend_from_slice(&chunk);
@@ -208,6 +208,30 @@ async fn fs_storage_streams_blob_byte_range() {
     });
 
     assert_eq!(bytes, b"2345");
+}
+
+#[tokio::test]
+async fn fs_storage_caps_content_read_chunks() {
+    let storage = storage("fs-read-chunk-limit");
+    let key = StorageKey::new("assets/large.bin").unwrap();
+    let data = Bytes::from(vec![b'x'; MAX_CONTENT_READ_CHUNK_SIZE + 1]);
+    storage.put(&key, data.clone()).await.unwrap();
+
+    let chunks = storage
+        .get_stream(&key)
+        .await
+        .unwrap()
+        .unwrap()
+        .try_collect::<Vec<_>>()
+        .await
+        .unwrap();
+
+    assert!(
+        chunks
+            .iter()
+            .all(|chunk| chunk.len() <= MAX_CONTENT_READ_CHUNK_SIZE)
+    );
+    assert_eq!(chunks.iter().map(Bytes::len).sum::<usize>(), data.len());
 }
 
 #[tokio::test]
@@ -234,7 +258,7 @@ async fn fs_storage_atomic_publish_rejects_existing_blob() {
         other => panic!("expected conflict, got {other:?}"),
     }
     assert_eq!(
-        storage.get(&key).await.unwrap(),
+        read_all(&storage, &key).await,
         Some(Bytes::from_static(b"first"))
     );
 }
@@ -251,9 +275,9 @@ async fn fs_storage_moves_blob_without_overwriting_target() {
 
     storage.move_if_absent(&source, &target).await.unwrap();
 
-    assert_eq!(storage.get(&source).await.unwrap(), None);
+    assert_eq!(read_all(&storage, &source).await, None);
     assert_eq!(
-        storage.get(&target).await.unwrap(),
+        read_all(&storage, &target).await,
         Some(Bytes::from_static(b"source"))
     );
     assert!(root.join("drafts").is_dir());
@@ -267,11 +291,11 @@ async fn fs_storage_moves_blob_without_overwriting_target() {
 
     assert!(matches!(error, CoreError::Conflict { .. }));
     assert_eq!(
-        storage.get(&another).await.unwrap(),
+        read_all(&storage, &another).await,
         Some(Bytes::from_static(b"another"))
     );
     assert_eq!(
-        storage.get(&target).await.unwrap(),
+        read_all(&storage, &target).await,
         Some(Bytes::from_static(b"source"))
     );
 }
@@ -298,6 +322,21 @@ async fn stage(storage: &OpenDalBlobStorage, stream: BlobByteStream) -> StagedBl
     let key = upload_key();
     storage.create_staged(&key).await.unwrap();
     storage.append_staged(&key, 0, stream).await.unwrap()
+}
+
+async fn read_all(storage: &OpenDalBlobStorage, key: &StorageKey) -> Option<Bytes> {
+    let chunks = storage
+        .get_stream(key)
+        .await
+        .unwrap()?
+        .try_collect::<Vec<_>>()
+        .await
+        .unwrap();
+    let mut data = Vec::with_capacity(chunks.iter().map(Bytes::len).sum());
+    for chunk in chunks {
+        data.extend_from_slice(&chunk);
+    }
+    Some(Bytes::from(data))
 }
 
 fn upload_key() -> StorageKey {

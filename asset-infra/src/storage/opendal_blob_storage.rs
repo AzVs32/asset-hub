@@ -3,7 +3,7 @@ use asset_core::{
     directory::domain::DirectoryPath,
     storage::port::{
         BlobByteStream, BlobHealth, ContentObjectStore, ContentReader, ContentStagingStore,
-        DirectoryStorage, StagedBlob,
+        DirectoryStorage, MAX_CONTENT_READ_CHUNK_SIZE, StagedBlob,
     },
     storage::{RESERVED_BLOB_STORAGE_PREFIX, StorageKey},
 };
@@ -223,21 +223,6 @@ impl ContentStagingStore for OpenDalBlobStorage {
 
 #[async_trait::async_trait]
 impl ContentReader for OpenDalBlobStorage {
-    async fn get(&self, key: &StorageKey) -> Result<Option<Bytes>, CoreError> {
-        if let Some(root) = &self.local_root {
-            return match tokio::fs::read(root.join(key.as_str())).await {
-                Ok(data) => Ok(Some(Bytes::from(data))),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-                Err(error) => Err(CoreError::storage("get", error)),
-            };
-        }
-        match self.operator.read(key.as_str()).await {
-            Ok(buffer) => Ok(Some(buffer.to_bytes())),
-            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(CoreError::storage("get", error)),
-        }
-    }
-
     async fn get_stream(&self, key: &StorageKey) -> Result<Option<BlobByteStream>, CoreError> {
         if let Some(root) = &self.local_root {
             let file = match tokio::fs::File::open(root.join(key.as_str())).await {
@@ -250,7 +235,7 @@ impl ContentReader for OpenDalBlobStorage {
         let reader = match self
             .operator
             .reader_with(key.as_str())
-            .chunk(256 * 1024)
+            .chunk(MAX_CONTENT_READ_CHUNK_SIZE)
             .await
         {
             Ok(reader) => reader,
@@ -269,20 +254,20 @@ impl ContentReader for OpenDalBlobStorage {
     async fn get_range_stream(
         &self,
         key: &StorageKey,
-        start: u64,
-        end: u64,
+        range: std::ops::Range<u64>,
     ) -> Result<Option<BlobByteStream>, CoreError> {
         if let Some(root) = &self.local_root {
-            let length = end
-                .checked_sub(start)
-                .and_then(|length| length.checked_add(1))
+            let length = range
+                .end
+                .checked_sub(range.start)
+                .filter(|length| *length > 0)
                 .ok_or_else(|| CoreError::configuration("invalid blob byte range"))?;
             let mut file = match tokio::fs::File::open(root.join(key.as_str())).await {
                 Ok(file) => file,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
                 Err(error) => return Err(CoreError::storage("get_range_stream.open", error)),
             };
-            file.seek(std::io::SeekFrom::Start(start))
+            file.seek(std::io::SeekFrom::Start(range.start))
                 .await
                 .map_err(|error| CoreError::storage("get_range_stream.seek", error))?;
             return Ok(Some(local_file_stream(
@@ -294,7 +279,7 @@ impl ContentReader for OpenDalBlobStorage {
         let reader = match self
             .operator
             .reader_with(key.as_str())
-            .chunk(256 * 1024)
+            .chunk(MAX_CONTENT_READ_CHUNK_SIZE)
             .await
         {
             Ok(reader) => reader,
@@ -302,7 +287,7 @@ impl ContentReader for OpenDalBlobStorage {
             Err(error) => return Err(CoreError::storage("get_range_stream.open", error)),
         };
         let stream = reader
-            .into_bytes_stream(start..end + 1)
+            .into_bytes_stream(range)
             .await
             .map_err(|error| CoreError::storage("get_range_stream.open", error))?
             .map_err(|error| CoreError::storage("get_range_stream.read", error));
@@ -405,8 +390,8 @@ fn local_file_stream(
                 return Ok(None);
             }
             let capacity = remaining
-                .map(|remaining| remaining.min(256 * 1024) as usize)
-                .unwrap_or(256 * 1024);
+                .map(|remaining| remaining.min(MAX_CONTENT_READ_CHUNK_SIZE as u64) as usize)
+                .unwrap_or(MAX_CONTENT_READ_CHUNK_SIZE);
             let mut buffer = vec![0_u8; capacity];
             let read = file
                 .read(&mut buffer)

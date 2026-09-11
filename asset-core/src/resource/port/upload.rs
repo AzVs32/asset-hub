@@ -6,7 +6,7 @@ use crate::{
 
 /// 上传会话持久化端口。
 #[async_trait::async_trait]
-pub trait UploadSessionRepository: Send + Sync {
+pub trait UploadSessionStore: Send + Sync {
     async fn save(&self, session: &UploadSession) -> Result<(), CoreError>;
     /// Persist a newly-created session together with the request key that created it.
     ///

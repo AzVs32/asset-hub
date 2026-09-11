@@ -7,13 +7,12 @@ pub mod storage;
 use asset_core::{
     CoreError,
     directory::port::{
-        DirectoryProjection, DirectoryQuery, DirectoryRelocationStore, DirectoryStore,
+        DirectoryProjection, DirectoryReadModel, DirectoryRelocationStore, DirectoryStore,
     },
     idempotency::port::IdempotencyRepository,
     resource::port::{
-        ResourceContentReplacementRepository, ResourceDeletionRepository,
-        ResourceMaintenanceReadModel, ResourceReadModel, ResourceRelocationStore, ResourceStore,
-        UploadSessionRepository,
+        ResourceContentReplacementStore, ResourceDeletionStore, ResourceMaintenanceReadModel,
+        ResourceReadModel, ResourceRelocationStore, ResourceStore, UploadSessionStore,
     },
     storage::port::{
         BlobHealth, ContentObjectStore, ContentReader, ContentStagingStore, DirectoryStorage,
@@ -24,7 +23,7 @@ use config::{AssetInfraConfig, BlobBackend, DatabaseBackend};
 use directory_index::InMemoryDirectoryIndex;
 use sqlite::{
     SqliteDatabase, SqliteDirectoryStore, SqliteIdempotencyRepository,
-    SqliteResourceContentReplacementRepository, SqliteResourceStore, SqliteUploadSessionRepository,
+    SqliteResourceContentReplacementStore, SqliteResourceStore, SqliteUploadSessionStore,
 };
 use std::sync::Arc;
 use std::time::Instant;
@@ -39,8 +38,8 @@ pub struct AssetInfrastructure {
     resource_store: Arc<SqliteResourceStore>,
     directory_store: Arc<SqliteDirectoryStore>,
     directory_index: Arc<InMemoryDirectoryIndex>,
-    upload_session_repository: Arc<SqliteUploadSessionRepository>,
-    content_replacement_repository: Arc<SqliteResourceContentReplacementRepository>,
+    upload_session_store: Arc<SqliteUploadSessionStore>,
+    content_replacement_store: Arc<SqliteResourceContentReplacementStore>,
     idempotency_repository: Arc<SqliteIdempotencyRepository>,
     /// 对象存储适配器。
     blob_storage: Arc<OpenDalBlobStorage>,
@@ -78,11 +77,10 @@ impl AssetInfrastructure {
         let directory_index = Arc::new(InMemoryDirectoryIndex::from_directories(
             directory_store.load_all().await?,
         )?);
-        let upload_session_repository =
-            Arc::new(SqliteUploadSessionRepository::new(database.pool().clone()));
-        let content_replacement_repository = Arc::new(
-            SqliteResourceContentReplacementRepository::new(database.pool().clone()),
-        );
+        let upload_session_store = Arc::new(SqliteUploadSessionStore::new(database.pool().clone()));
+        let content_replacement_store = Arc::new(SqliteResourceContentReplacementStore::new(
+            database.pool().clone(),
+        ));
         let idempotency_repository =
             Arc::new(SqliteIdempotencyRepository::new(database.pool().clone()));
         Ok(Self {
@@ -90,8 +88,8 @@ impl AssetInfrastructure {
             resource_store,
             directory_store,
             directory_index,
-            upload_session_repository,
-            content_replacement_repository,
+            upload_session_store,
+            content_replacement_store,
             idempotency_repository,
             blob_storage,
             storage_scanner,
@@ -116,7 +114,7 @@ impl AssetInfrastructure {
         self.resource_store.clone()
     }
 
-    pub fn resource_deletion_repository(&self) -> Arc<dyn ResourceDeletionRepository> {
+    pub fn resource_deletion_store(&self) -> Arc<dyn ResourceDeletionStore> {
         self.resource_store.clone()
     }
 
@@ -136,7 +134,7 @@ impl AssetInfrastructure {
         self.directory_index.clone()
     }
 
-    pub fn directory_query(&self) -> Arc<dyn DirectoryQuery> {
+    pub fn directory_read_model(&self) -> Arc<dyn DirectoryReadModel> {
         self.directory_index.clone()
     }
 
@@ -168,12 +166,12 @@ impl AssetInfrastructure {
         self.storage_scanner.clone()
     }
 
-    pub fn upload_session_repository(&self) -> Arc<dyn UploadSessionRepository> {
-        self.upload_session_repository.clone()
+    pub fn upload_session_store(&self) -> Arc<dyn UploadSessionStore> {
+        self.upload_session_store.clone()
     }
 
-    pub fn content_replacement_repository(&self) -> Arc<dyn ResourceContentReplacementRepository> {
-        self.content_replacement_repository.clone()
+    pub fn content_replacement_store(&self) -> Arc<dyn ResourceContentReplacementStore> {
+        self.content_replacement_store.clone()
     }
 
     pub fn idempotency_repository(&self) -> Arc<dyn IdempotencyRepository> {

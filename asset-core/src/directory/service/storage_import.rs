@@ -28,7 +28,7 @@ impl DirectoryImportService {
 
     async fn materialize_path(&self, path: &DirectoryPath) -> Result<LocatedDirectory, CoreError> {
         let _guard = self.service.kernel.mutation_lock.lock().await;
-        if let Some(directory) = self.service.kernel.query.find_by_path(path).await? {
+        if let Some(directory) = self.service.kernel.read_model.find_by_path(path).await? {
             if !self.service.kernel.storage.directory_exists(path).await? {
                 return Err(CoreError::invariant(format!(
                     "storage import path `{path}` no longer exists"
@@ -40,7 +40,7 @@ impl DirectoryImportService {
         let mut parent = self
             .service
             .kernel
-            .query
+            .read_model
             .find_by_path(&DirectoryPath::root())
             .await?
             .ok_or_else(|| CoreError::invariant("root directory is missing"))?;
@@ -50,7 +50,7 @@ impl DirectoryImportService {
             if let Some(existing) = self
                 .service
                 .kernel
-                .query
+                .read_model
                 .find_by_path(&current_path)
                 .await?
             {

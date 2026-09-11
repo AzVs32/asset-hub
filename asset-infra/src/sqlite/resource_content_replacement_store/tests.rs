@@ -15,7 +15,7 @@ async fn pending_replacement_roundtrips_and_is_unique_per_resource() {
         .join("asset-hub.sqlite");
     let database = SqliteDatabase::connect(&path, 1).await.unwrap();
     let resources = SqliteResourceStore::new(database.pool().clone());
-    let repository = SqliteResourceContentReplacementRepository::new(database.pool().clone());
+    let store = SqliteResourceContentReplacementStore::new(database.pool().clone());
     let content = ResourceContent::verified(3, Checksum::sha256("a".repeat(64)).unwrap())
         .with_mime_type("text/plain")
         .build()
@@ -35,16 +35,13 @@ async fn pending_replacement_roundtrips_and_is_unique_per_resource() {
     )
     .unwrap();
 
-    repository.save(&pending).await.unwrap();
-    assert!(repository.save(&pending).await.is_err());
-    assert_eq!(
-        repository.list_pending().await.unwrap(),
-        vec![pending.clone()]
-    );
+    store.save(&pending).await.unwrap();
+    assert!(store.save(&pending).await.is_err());
+    assert_eq!(store.list_pending().await.unwrap(), vec![pending.clone()]);
 
-    repository.remove(&pending.id()).await.unwrap();
-    repository.remove(&pending.id()).await.unwrap();
-    assert!(repository.list_pending().await.unwrap().is_empty());
+    store.remove(&pending.id()).await.unwrap();
+    store.remove(&pending.id()).await.unwrap();
+    assert!(store.list_pending().await.unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -57,7 +54,7 @@ async fn invalid_persisted_replacement_content_is_rejected() {
         .join("asset-hub.sqlite");
     let database = SqliteDatabase::connect(&path, 1).await.unwrap();
     let resources = SqliteResourceStore::new(database.pool().clone());
-    let repository = SqliteResourceContentReplacementRepository::new(database.pool().clone());
+    let store = SqliteResourceContentReplacementStore::new(database.pool().clone());
     let content = ResourceContent::pending(3).build().unwrap();
     let resource = Resource::builder("note.txt")
         .with_content(content.clone())
@@ -73,7 +70,7 @@ async fn invalid_persisted_replacement_content_is_rejected() {
         content,
     )
     .unwrap();
-    repository.save(&pending).await.unwrap();
+    store.save(&pending).await.unwrap();
     sqlx::query(
         r#"
         UPDATE resource_content_replacements
@@ -87,7 +84,7 @@ async fn invalid_persisted_replacement_content_is_rejected() {
     .unwrap();
 
     assert!(matches!(
-        repository.list_pending().await,
+        store.list_pending().await,
         Err(CoreError::Repository {
             operation: "content_replacement.decode_content",
             ..

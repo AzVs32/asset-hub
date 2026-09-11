@@ -3,25 +3,25 @@ use asset_core::resource::{
     domain::{
         ResourceContent, ResourceContentReplacement, ResourceContentReplacementId, ResourceId,
     },
-    port::ResourceContentReplacementRepository,
+    port::ResourceContentReplacementStore,
 };
 use asset_core::storage::StorageKey;
 use sqlx::{Row, SqlitePool};
 use std::str::FromStr;
 
 #[derive(Clone)]
-pub struct SqliteResourceContentReplacementRepository {
+pub struct SqliteResourceContentReplacementStore {
     pool: SqlitePool,
 }
 
-impl SqliteResourceContentReplacementRepository {
+impl SqliteResourceContentReplacementStore {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 }
 
 #[async_trait::async_trait]
-impl ResourceContentReplacementRepository for SqliteResourceContentReplacementRepository {
+impl ResourceContentReplacementStore for SqliteResourceContentReplacementStore {
     async fn save(&self, replacement: &ResourceContentReplacement) -> Result<(), CoreError> {
         let content = serde_json::to_string(replacement.replacement_content())
             .map_err(|error| CoreError::repository("content_replacement.encode_content", error))?;

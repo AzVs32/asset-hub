@@ -238,12 +238,19 @@ async fn resource_content_response(
                 )));
             }
         },
-        ByteRangeRequest::Range { start, end } => {
-            match state.content().stream(id, Some((start, end))).await? {
+        ByteRangeRequest::Range {
+            start,
+            end_exclusive,
+        } => {
+            match state
+                .content()
+                .stream(id, Some(start..end_exclusive))
+                .await?
+            {
                 Some(content) => range_stream_response(
                     content_type,
                     start,
-                    end,
+                    end_exclusive,
                     content.content_length(),
                     content.into_content(),
                 ),
@@ -336,16 +343,17 @@ fn encode_rfc5987(value: &str) -> String {
 pub(super) fn range_stream_response(
     content_type: String,
     start: u64,
-    end: u64,
+    end_exclusive: u64,
     total_len: u64,
     content: BlobByteStream,
 ) -> Response {
-    let content_length = end - start + 1;
+    let content_length = end_exclusive - start;
+    let end_inclusive = end_exclusive - 1;
     let mut response = binary_stream_response(content_type, Some(content_length), content);
     *response.status_mut() = StatusCode::PARTIAL_CONTENT;
     response.headers_mut().insert(
         header::CONTENT_RANGE,
-        format!("bytes {start}-{end}/{total_len}")
+        format!("bytes {start}-{end_inclusive}/{total_len}")
             .parse()
             .expect("content range should be a valid header value"),
     );
@@ -369,7 +377,7 @@ pub(super) fn range_not_satisfiable_response(total_len: u64) -> Response {
 
 pub(super) enum ByteRangeRequest {
     None,
-    Range { start: u64, end: u64 },
+    Range { start: u64, end_exclusive: u64 },
     Unsatisfiable,
 }
 
@@ -399,7 +407,7 @@ pub(super) fn requested_byte_range(headers: &HeaderMap, content_len: u64) -> Byt
         let start = content_len.saturating_sub(suffix_len);
         return ByteRangeRequest::Range {
             start,
-            end: content_len - 1,
+            end_exclusive: content_len,
         };
     }
 
@@ -409,23 +417,27 @@ pub(super) fn requested_byte_range(headers: &HeaderMap, content_len: u64) -> Byt
     if start >= content_len {
         return ByteRangeRequest::Unsatisfiable;
     }
-    let end = if end.is_empty() {
-        content_len - 1
+    let end_exclusive = if end.is_empty() {
+        content_len
     } else {
-        let Ok(end) = end.parse::<u64>() else {
+        let Ok(end_inclusive) = end.parse::<u64>() else {
             return ByteRangeRequest::Unsatisfiable;
         };
-        end.min(content_len - 1)
+        end_inclusive.min(content_len - 1) + 1
     };
-    if end < start {
+    if end_exclusive <= start {
         return ByteRangeRequest::Unsatisfiable;
     }
-    ByteRangeRequest::Range { start, end }
+    ByteRangeRequest::Range {
+        start,
+        end_exclusive,
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::attachment_content_disposition;
+    use super::{ByteRangeRequest, attachment_content_disposition, requested_byte_range};
+    use axum::http::{HeaderMap, HeaderValue, header};
 
     #[test]
     fn attachment_filename_has_safe_ascii_and_utf8_forms() {
@@ -435,5 +447,19 @@ mod tests {
             value.to_str().unwrap(),
             "attachment; filename=\"___2026_.txt\"; filename*=UTF-8''%E6%8A%A5%E5%91%8A%202026%22.txt"
         );
+    }
+
+    #[test]
+    fn http_range_is_converted_to_a_half_open_core_range() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::RANGE, HeaderValue::from_static("bytes=2-5"));
+
+        assert!(matches!(
+            requested_byte_range(&headers, 10),
+            ByteRangeRequest::Range {
+                start: 2,
+                end_exclusive: 6
+            }
+        ));
     }
 }

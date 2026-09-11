@@ -12,9 +12,8 @@ use crate::{
     resource::{
         domain::ResourceContentEditPolicy,
         port::{
-            ResourceContentReplacementRepository, ResourceDeletionRepository,
-            ResourceMaintenanceReadModel, ResourceReadModel, ResourceRelocationStore,
-            ResourceStore, UploadSessionRepository,
+            ResourceContentReplacementStore, ResourceDeletionStore, ResourceMaintenanceReadModel,
+            ResourceReadModel, ResourceRelocationStore, ResourceStore, UploadSessionStore,
         },
     },
     storage::port::{
@@ -52,7 +51,7 @@ pub struct ResourceService {
     read_model: Arc<dyn ResourceReadModel>,
     objects: Arc<dyn ContentObjectStore>,
     relocations: Arc<dyn ResourceRelocationStore>,
-    deletions: Arc<dyn ResourceDeletionRepository>,
+    deletions: Arc<dyn ResourceDeletionStore>,
     directories: DirectoryService,
     storage_key_locks: Arc<StorageKeyLocks>,
 }
@@ -63,7 +62,7 @@ impl ResourceService {
         read_model: Arc<dyn ResourceReadModel>,
         objects: Arc<dyn ContentObjectStore>,
         relocations: Arc<dyn ResourceRelocationStore>,
-        deletions: Arc<dyn ResourceDeletionRepository>,
+        deletions: Arc<dyn ResourceDeletionStore>,
         directories: DirectoryService,
         storage_key_locks: Arc<StorageKeyLocks>,
     ) -> Self {
@@ -99,7 +98,7 @@ impl ResourceServices {
         read_model: Arc<dyn ResourceReadModel>,
         maintenance_read_model: Arc<dyn ResourceMaintenanceReadModel>,
         relocation_store: Arc<dyn ResourceRelocationStore>,
-        deletion_repository: Arc<dyn ResourceDeletionRepository>,
+        deletion_store: Arc<dyn ResourceDeletionStore>,
         content_reader: Arc<dyn ContentReader>,
         content_staging: Arc<dyn ContentStagingStore>,
         content_objects: Arc<dyn ContentObjectStore>,
@@ -109,8 +108,8 @@ impl ResourceServices {
         directory_maintenance: DirectoryMaintenanceService,
         directory_index: DirectoryIndexService,
         directory_import: DirectoryImportService,
-        upload_sessions: Arc<dyn UploadSessionRepository>,
-        content_replacements: Arc<dyn ResourceContentReplacementRepository>,
+        upload_sessions: Arc<dyn UploadSessionStore>,
+        content_replacements: Arc<dyn ResourceContentReplacementStore>,
         edit_policy: Arc<ResourceContentEditPolicy>,
         idempotency: IdempotencyService,
     ) -> Self {
@@ -120,7 +119,7 @@ impl ResourceServices {
             read_model.clone(),
             content_objects.clone(),
             relocation_store,
-            deletion_repository,
+            deletion_store,
             directories.clone(),
             locks.clone(),
         );

@@ -4,7 +4,7 @@ use crate::CoreError;
 use crate::resource::domain::{ResourceContentReplacement, ResourceContentReplacementId};
 
 #[async_trait::async_trait]
-pub trait ResourceContentReplacementRepository: Send + Sync {
+pub trait ResourceContentReplacementStore: Send + Sync {
     /// Insert one pending replacement. Implementations must allow at most one per Resource.
     async fn save(&self, replacement: &ResourceContentReplacement) -> Result<(), CoreError>;
 

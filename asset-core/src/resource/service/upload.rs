@@ -13,7 +13,7 @@ use crate::{
     },
     resource::{
         domain::{Checksum, Resource, UploadId, UploadSession, UploadStatus},
-        port::{ResourceReadModel, ResourceStore, UploadSessionRepository},
+        port::{ResourceReadModel, ResourceStore, UploadSessionStore},
     },
     storage::port::{
         BlobByteStream, ContentObjectStore, ContentReader, ContentStagingStore, StagedBlob,
@@ -61,7 +61,7 @@ struct UploadDependencies {
     objects: Arc<dyn ContentObjectStore>,
     storage_scanner: Arc<dyn StorageScanner>,
     directories: DirectoryService,
-    upload_sessions: Arc<dyn UploadSessionRepository>,
+    upload_sessions: Arc<dyn UploadSessionStore>,
     storage_key_locks: Arc<StorageKeyLocks>,
     upload_locks: Arc<UploadLocks>,
     idempotency: IdempotencyService,
@@ -77,7 +77,7 @@ impl UploadService {
         objects: Arc<dyn ContentObjectStore>,
         storage_scanner: Arc<dyn StorageScanner>,
         directories: DirectoryService,
-        upload_sessions: Arc<dyn UploadSessionRepository>,
+        upload_sessions: Arc<dyn UploadSessionStore>,
         storage_key_locks: Arc<StorageKeyLocks>,
         idempotency: IdempotencyService,
     ) -> Self {

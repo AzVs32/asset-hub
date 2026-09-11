@@ -11,7 +11,7 @@ use asset_core::{
     resource::{
         domain::{Resource, ResourceContent, ResourceDeletion, ResourceId},
         port::{
-            ResourceDeletionRepository, ResourceMaintenanceReadModel, ResourceReadModel,
+            ResourceDeletionStore, ResourceMaintenanceReadModel, ResourceReadModel,
             ResourceRelocation, ResourceRelocationStore, ResourceStore,
         },
     },
@@ -438,7 +438,7 @@ impl ResourceRelocationStore for SqliteResourceStore {
 }
 
 #[async_trait::async_trait]
-impl ResourceDeletionRepository for SqliteResourceStore {
+impl ResourceDeletionStore for SqliteResourceStore {
     async fn save(&self, deletion: &ResourceDeletion) -> Result<(), CoreError> {
         let result = sqlx::query(
             r#"

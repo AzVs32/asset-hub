@@ -7,12 +7,14 @@ use crate::CoreError;
 use crate::storage::StorageKey;
 use bytes::Bytes;
 use futures_core::Stream;
-use std::pin::Pin;
+use std::{ops::Range, pin::Pin};
+
+/// 内容读取流中单个字节块允许的最大长度。
+///
+/// 该限制只约束 [`ContentReader`] 的输出，不约束上传等输入流。
+pub const MAX_CONTENT_READ_CHUNK_SIZE: usize = 256 * 1024;
 
 /// 对象内容字节流。
-///
-/// 该类型用于大文件上传场景。每个 chunk 都是已经从调用入口读取到的一段二进制内容；
-/// stream 中的错误会中止写入，并由具体存储适配器负责清理未完成写入。
 pub type BlobByteStream = Pin<Box<dyn Stream<Item = Result<Bytes, CoreError>> + Send + 'static>>;
 
 /// 已完整写入内部暂存区、尚未发布到用户可见路径的 Blob。
@@ -39,36 +41,23 @@ impl StagedBlob {
     }
 }
 
-// 对象内容存储的窄语义端口。
-//
-// 旧的整体 `BlobStorage` 被拆分为只读、暂存、对象搬迁和健康检查四个职责，避免
-// Content、Upload 和 Resource 搬迁各自拿到超出所需的存储能力。
-// 实现方应将 OpenDAL、文件系统、S3 等底层错误转换为 `CoreError::Storage`，
-// 不应把具体基础设施错误类型暴露到端口签名中。
-
 /// 只读访问已发布内容 Blob 的端口。
 #[async_trait::async_trait]
 pub trait ContentReader: Send + Sync {
-    /// 读取指定存储键对应的对象内容。
-    ///
-    /// 当对象不存在时返回 `Ok(None)`，这表示“正常查无结果”。只有存储系统自身故障
-    /// 才返回 `Err`，例如连接失败、权限不足或读取过程中发生 I/O 错误。
-    async fn get(&self, key: &StorageKey) -> Result<Option<Bytes>, CoreError>;
-
     /// 流式读取指定存储键对应的对象内容。
     ///
-    /// 用于预览、下载等大对象读取场景，避免把完整对象一次性加载到内存中。
+    /// 用于预览、下载等对象读取场景，避免把完整对象一次性加载到内存中。每个输出块
+    /// 不得超过 [`MAX_CONTENT_READ_CHUNK_SIZE`]；对象不存在时返回 `Ok(None)`。
     async fn get_stream(&self, key: &StorageKey) -> Result<Option<BlobByteStream>, CoreError>;
 
-    /// 流式读取指定存储键的一段字节范围，范围是闭区间 `[start, end]`。
+    /// 流式读取指定存储键的一段左闭右开字节范围 `[range.start, range.end)`。
     ///
-    /// 调用方负责保证 `start <= end` 且范围不超过对象大小。实现只负责从底层存储
-    /// 请求对应范围并以流返回，避免为了 HTTP Range 响应加载完整对象。
+    /// 调用方负责保证 `range.start < range.end` 且 `range.end` 不超过对象大小。实现
+    /// 返回的每个块不得超过 [`MAX_CONTENT_READ_CHUNK_SIZE`]，并且不能返回范围外字节。
     async fn get_range_stream(
         &self,
         key: &StorageKey,
-        start: u64,
-        end: u64,
+        range: Range<u64>,
     ) -> Result<Option<BlobByteStream>, CoreError>;
 }
 

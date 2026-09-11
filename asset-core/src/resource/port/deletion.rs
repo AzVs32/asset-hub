@@ -4,7 +4,7 @@ use crate::CoreError;
 use crate::resource::domain::{ResourceDeletion, ResourceId};
 
 #[async_trait::async_trait]
-pub trait ResourceDeletionRepository: Send + Sync {
+pub trait ResourceDeletionStore: Send + Sync {
     /// Persist an intent before moving a visible Blob into the internal deletion namespace.
     /// Repeating the exact same intent must succeed so a caller can retry after a database or
     /// cleanup failure; a different pending intent for the same Resource must conflict.

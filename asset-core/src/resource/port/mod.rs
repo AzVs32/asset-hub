@@ -1,14 +1,14 @@
-//! 资源聚合、查询与类型运行时端口。
+//! 资源聚合持久化、读取模型与生命周期状态端口。
 
 mod deletion;
 mod persistence;
 mod replacement;
 mod upload;
 
-pub use deletion::ResourceDeletionRepository;
+pub use deletion::ResourceDeletionStore;
 pub use persistence::{
     ResourceMaintenanceReadModel, ResourceReadModel, ResourceRelocation, ResourceRelocationStore,
     ResourceStore,
 };
-pub use replacement::ResourceContentReplacementRepository;
-pub use upload::UploadSessionRepository;
+pub use replacement::ResourceContentReplacementStore;
+pub use upload::UploadSessionStore;

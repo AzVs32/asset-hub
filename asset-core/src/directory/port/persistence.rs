@@ -1,4 +1,4 @@
-//! 目录聚合持久化、移动恢复、查询投影及可重建索引端口。
+//! 目录聚合持久化、移动恢复、读取模型及可重建索引端口。
 
 use crate::{
     CoreError,
@@ -146,7 +146,7 @@ pub trait DirectoryRelocationStore: Send + Sync {
 ///
 /// 查询适配器负责根据目录聚合构造稳定 ID 与当前完整路径一致的 `LocatedDirectory`。
 #[async_trait::async_trait]
-pub trait DirectoryQuery: Send + Sync {
+pub trait DirectoryReadModel: Send + Sync {
     /// 按稳定目录 ID 查询聚合及当前位置；不存在时返回 `None`。
     async fn find_by_id(&self, id: &DirectoryId) -> Result<Option<LocatedDirectory>, CoreError>;
 
@@ -186,6 +186,6 @@ pub trait DirectoryIndex: Send + Sync {
 }
 
 /// 同一投影对象分别实现读写端口时使用的适配器组合约定。
-pub trait DirectoryProjection: DirectoryQuery + DirectoryIndex {}
+pub trait DirectoryProjection: DirectoryReadModel + DirectoryIndex {}
 
-impl<T> DirectoryProjection for T where T: DirectoryQuery + DirectoryIndex + ?Sized {}
+impl<T> DirectoryProjection for T where T: DirectoryReadModel + DirectoryIndex + ?Sized {}

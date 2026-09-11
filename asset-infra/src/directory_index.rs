@@ -1,7 +1,7 @@
 use asset_core::CoreError;
 use asset_core::directory::{
     domain::{Directory, DirectoryId, DirectoryPath},
-    port::{DirectoryIndex, DirectoryQuery},
+    port::{DirectoryIndex, DirectoryReadModel},
     query::LocatedDirectory,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -40,7 +40,7 @@ impl InMemoryDirectoryIndex {
 }
 
 #[async_trait::async_trait]
-impl DirectoryQuery for InMemoryDirectoryIndex {
+impl DirectoryReadModel for InMemoryDirectoryIndex {
     async fn find_by_id(&self, id: &DirectoryId) -> Result<Option<LocatedDirectory>, CoreError> {
         let state = self.state()?;
         state

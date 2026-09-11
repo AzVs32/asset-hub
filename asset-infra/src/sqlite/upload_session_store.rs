@@ -6,7 +6,7 @@ use asset_core::{
         domain::{
             Checksum, ResourceId, UploadId, UploadSession, UploadSessionSnapshot, UploadStatus,
         },
-        port::UploadSessionRepository,
+        port::UploadSessionStore,
     },
 };
 use chrono::{DateTime, Utc};
@@ -14,18 +14,18 @@ use sqlx::{Row, SqlitePool};
 use std::str::FromStr;
 
 #[derive(Clone)]
-pub struct SqliteUploadSessionRepository {
+pub struct SqliteUploadSessionStore {
     pool: SqlitePool,
 }
 
-impl SqliteUploadSessionRepository {
+impl SqliteUploadSessionStore {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 }
 
 #[async_trait::async_trait]
-impl UploadSessionRepository for SqliteUploadSessionRepository {
+impl UploadSessionStore for SqliteUploadSessionStore {
     async fn save(&self, session: &UploadSession) -> Result<(), CoreError> {
         self.save_with_key(session, None).await
     }
@@ -196,7 +196,7 @@ impl UploadSessionRepository for SqliteUploadSessionRepository {
     }
 }
 
-impl SqliteUploadSessionRepository {
+impl SqliteUploadSessionStore {
     async fn save_with_key(
         &self,
         session: &UploadSession,

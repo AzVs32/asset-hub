@@ -13,13 +13,17 @@ use asset_core::{
         port::ResourceRelocation,
         query::ListResources,
     },
-    storage::{StorageKey, port::BlobByteStream},
+    storage::{
+        StorageKey,
+        port::{BlobByteStream, ContentReader},
+    },
 };
 use asset_infra::AssetInfrastructure;
 use asset_infra::config::{
     BlobConfig, DatabaseConfig, LocalBlobConfig, LocalBlobSyncConfig, SqliteDatabaseConfig,
 };
 use bytes::Bytes;
+use futures_util::TryStreamExt;
 use std::time::Duration;
 
 fn recovery_config(root: std::path::PathBuf) -> AssetInfraConfig {
@@ -90,6 +94,21 @@ fn write(root: &std::path::Path, key: &StorageKey, bytes: &[u8]) {
     let path = root.join(key.as_str());
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, bytes).unwrap();
+}
+
+async fn read_all(reader: &dyn ContentReader, key: &StorageKey) -> Option<Bytes> {
+    let chunks = reader
+        .get_stream(key)
+        .await
+        .unwrap()?
+        .try_collect::<Vec<_>>()
+        .await
+        .unwrap();
+    let mut data = Vec::with_capacity(chunks.iter().map(Bytes::len).sum());
+    for chunk in chunks {
+        data.extend_from_slice(&chunk);
+    }
+    Some(Bytes::from(data))
 }
 
 fn upload_stream(bytes: &'static [u8]) -> BlobByteStream {
@@ -267,12 +286,12 @@ async fn resource_deletion_recovers_after_staging_before_database_commit() {
     )
     .unwrap();
     infrastructure
-        .resource_deletion_repository()
+        .resource_deletion_store()
         .save(&deletion)
         .await
         .unwrap();
     infrastructure
-        .resource_deletion_repository()
+        .resource_deletion_store()
         .save(&deletion)
         .await
         .unwrap();
@@ -319,7 +338,7 @@ async fn resource_deletion_recovers_after_database_commit_without_removing_new_v
     )
     .unwrap();
     infrastructure
-        .resource_deletion_repository()
+        .resource_deletion_store()
         .save(&deletion)
         .await
         .unwrap();
@@ -342,7 +361,7 @@ async fn resource_deletion_recovers_after_database_commit_without_removing_new_v
     assert!(!root.join(staged.as_str()).exists());
     assert!(
         infrastructure
-            .resource_deletion_repository()
+            .resource_deletion_store()
             .list_pending()
             .await
             .unwrap()
@@ -377,7 +396,7 @@ async fn resource_deletion_conflict_restores_to_the_newer_resource_path() {
     )
     .unwrap();
     infrastructure
-        .resource_deletion_repository()
+        .resource_deletion_store()
         .save(&deletion)
         .await
         .unwrap();
@@ -411,7 +430,7 @@ async fn resource_deletion_conflict_restores_to_the_newer_resource_path() {
     assert!(!root.join(staged.as_str()).exists());
     assert!(
         infrastructure
-            .resource_deletion_repository()
+            .resource_deletion_store()
             .list_pending()
             .await
             .unwrap()
@@ -555,7 +574,7 @@ async fn content_replacement_recovers_after_post_publish_crash_and_is_idempotent
     )
     .unwrap();
     infrastructure
-        .content_replacement_repository()
+        .content_replacement_store()
         .save(&replacement)
         .await
         .unwrap();
@@ -590,29 +609,17 @@ async fn content_replacement_recovers_after_post_publish_crash_and_is_idempotent
     assert_eq!(recovered.revision(), resource.revision());
     assert_eq!(recovered.content(), Some(&old_content));
     assert_eq!(
-        infrastructure
-            .content_reader()
-            .get(&target)
-            .await
-            .unwrap()
-            .unwrap()
-            .as_ref(),
-        b"old"
+        read_all(infrastructure.content_reader().as_ref(), &target).await,
+        Some(Bytes::from_static(b"old"))
     );
     assert!(
-        infrastructure
-            .content_reader()
-            .get(&backup)
+        read_all(infrastructure.content_reader().as_ref(), &backup)
             .await
-            .unwrap()
             .is_none()
     );
     assert!(
-        infrastructure
-            .content_reader()
-            .get(&staged)
+        read_all(infrastructure.content_reader().as_ref(), &staged)
             .await
-            .unwrap()
             .is_none()
     );
 
@@ -638,7 +645,7 @@ async fn content_replacement_recovers_after_intent_before_filesystem_change() {
         .await
         .unwrap();
     infrastructure
-        .content_replacement_repository()
+        .content_replacement_store()
         .save(
             &ResourceContentReplacement::new(
                 resource.id(),
@@ -664,29 +671,17 @@ async fn content_replacement_recovers_after_intent_before_filesystem_change() {
         1
     );
     assert_eq!(
-        infrastructure
-            .content_reader()
-            .get(&target)
-            .await
-            .unwrap()
-            .unwrap()
-            .as_ref(),
-        b"old"
+        read_all(infrastructure.content_reader().as_ref(), &target).await,
+        Some(Bytes::from_static(b"old"))
     );
     assert!(
-        infrastructure
-            .content_reader()
-            .get(&staged)
+        read_all(infrastructure.content_reader().as_ref(), &staged)
             .await
-            .unwrap()
             .is_none()
     );
     assert!(
-        infrastructure
-            .content_reader()
-            .get(&backup)
+        read_all(infrastructure.content_reader().as_ref(), &backup)
             .await
-            .unwrap()
             .is_none()
     );
 

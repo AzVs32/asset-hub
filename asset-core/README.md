@@ -21,6 +21,11 @@ the capability-scoped paths, for example `asset_core::resource::service::Resourc
 `asset_core::directory::port::DirectoryStore`, rather than a crate-wide domain, port, or service
 namespace.
 
+Resource and Directory persistence ports use the `Store` suffix. Rebuildable query interfaces use
+the `ReadModel` suffix; a `Projection` is the adapter-side composition of a read model and its
+index-writing capability. Port files remain grouped by cohesive lifecycle capability rather than
+placing every trait in a separate file.
+
 Service dependencies, path-lock registries, constructors, and storage-key helpers are private to
 their owning aggregate. Other Core modules collaborate through the aggregate's public application
 services, while adapters implement only its public ports.
@@ -38,6 +43,10 @@ They are used directly by Blob ports and adapters, without a dependency on `reso
 Resource owns only the conversion from a resolved Directory path plus Resource name into a visible
 Blob key. `DirectoryStorage` remains a physical-storage port because it abstracts directory
 existence, creation, moves, and empty-directory deletion for the Directory service.
+
+Content reads are streaming-only. Every chunk returned by `ContentReader` is bounded by
+`MAX_CONTENT_READ_CHUNK_SIZE`, while callers must not depend on exact chunk boundaries. Range
+reads use half-open `[start, end)` intervals.
 
 The `Directory` aggregate owns root-directory semantics: `Directory::root()` assigns
 `DirectoryIdSlot::Slot0`, and `Directory::is_root()` identifies that aggregate. `DirectoryId`

@@ -1,5 +1,5 @@
 use super::*;
-use crate::sqlite::{SqliteDatabase, SqliteUploadSessionRepository};
+use crate::sqlite::{SqliteDatabase, SqliteUploadSessionStore};
 use asset_core::{
     directory::domain::Directory,
     idempotency::{
@@ -9,7 +9,7 @@ use asset_core::{
     },
     resource::{
         domain::{Checksum, UploadSession},
-        port::UploadSessionRepository,
+        port::UploadSessionStore,
     },
 };
 use chrono::{Duration, Utc};
@@ -115,7 +115,7 @@ async fn sqlite_conditional_takeover_grants_only_one_expired_lease_owner() {
 async fn upload_creation_key_recovers_the_durable_session_after_lease_takeover() {
     let path = unique_temp_path("idempotency-upload-link").join("asset-hub.sqlite");
     let database = SqliteDatabase::connect(&path, 1).await.unwrap();
-    let uploads = SqliteUploadSessionRepository::new(database.pool().clone());
+    let uploads = SqliteUploadSessionStore::new(database.pool().clone());
     let key = key("upload-link");
     let session = UploadSession::new(
         "document.txt",

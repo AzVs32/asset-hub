@@ -11,7 +11,7 @@ use crate::{
             Checksum, ChecksumKind, Resource, ResourceContent, ResourceContentEditPolicy,
             ResourceContentReplacement, ResourceContentReplacementId, ResourceId,
         },
-        port::{ResourceContentReplacementRepository, ResourceReadModel, ResourceStore},
+        port::{ResourceContentReplacementStore, ResourceReadModel, ResourceStore},
         query::LocatedResource,
     },
     storage::StorageKey,
@@ -19,11 +19,13 @@ use crate::{
         BlobByteStream, ContentObjectStore, ContentReader, ContentStagingStore, StagedBlob,
     },
 };
-use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
-use std::sync::{Arc, Mutex};
+use std::{
+    ops::Range,
+    sync::{Arc, Mutex},
+};
 
 /// Process-lifecycle recovery for interrupted content replacements.
 #[derive(Clone)]
@@ -49,7 +51,7 @@ pub struct ContentService {
     reader: Arc<dyn ContentReader>,
     staging: Arc<dyn ContentStagingStore>,
     objects: Arc<dyn ContentObjectStore>,
-    content_replacements: Arc<dyn ResourceContentReplacementRepository>,
+    content_replacements: Arc<dyn ResourceContentReplacementStore>,
     storage_key_locks: Arc<StorageKeyLocks>,
     edit_policy: Arc<ResourceContentEditPolicy>,
     idempotency: IdempotencyService,
@@ -63,7 +65,7 @@ impl ContentService {
         reader: Arc<dyn ContentReader>,
         staging: Arc<dyn ContentStagingStore>,
         objects: Arc<dyn ContentObjectStore>,
-        content_replacements: Arc<dyn ResourceContentReplacementRepository>,
+        content_replacements: Arc<dyn ResourceContentReplacementStore>,
         storage_key_locks: Arc<StorageKeyLocks>,
         edit_policy: Arc<ResourceContentEditPolicy>,
         idempotency: IdempotencyService,
@@ -81,19 +83,11 @@ impl ContentService {
         }
     }
 
-    /// Read the complete content of a Resource by stable ID.
-    pub async fn get(&self, id: &ResourceId) -> Result<Option<Bytes>, CoreError> {
-        let Some(resource) = self.read_model.find_by_id(id).await? else {
-            return Ok(None);
-        };
-        self.get_resource_content_snapshot(&resource).await
-    }
-
-    /// Stream Resource content by stable ID, optionally constrained to an inclusive byte range.
+    /// Stream Resource content by stable ID, optionally constrained to a half-open byte range.
     pub async fn stream(
         &self,
         id: &ResourceId,
-        range: Option<(u64, u64)>,
+        range: Option<Range<u64>>,
     ) -> Result<Option<ResourceContentStream>, CoreError> {
         let Some(resource) = self.read_model.find_by_id(id).await? else {
             return Ok(None);
@@ -118,22 +112,10 @@ impl ContentService {
             .map(Some)
     }
 
-    async fn get_resource_content_snapshot(
-        &self,
-        located: &LocatedResource,
-    ) -> Result<Option<Bytes>, CoreError> {
-        let resource = located.resource();
-        if resource.content().is_none() {
-            return Ok(None);
-        }
-        let storage_key = located.storage_key()?;
-        self.reader.get(&storage_key).await
-    }
-
     async fn get_resource_content_stream_snapshot(
         &self,
         located: &LocatedResource,
-        range: Option<(u64, u64)>,
+        range: Option<Range<u64>>,
     ) -> Result<Option<ResourceContentStream>, CoreError> {
         let resource = located.resource();
         let Some(content) = resource.content() else {
@@ -141,10 +123,8 @@ impl ContentService {
         };
 
         let storage_key = located.storage_key()?;
-        let stream = if let Some((start, end)) = range {
-            self.reader
-                .get_range_stream(&storage_key, start, end)
-                .await?
+        let stream = if let Some(range) = range {
+            self.reader.get_range_stream(&storage_key, range).await?
         } else {
             self.reader.get_stream(&storage_key).await?
         };

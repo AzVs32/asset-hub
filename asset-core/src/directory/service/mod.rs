@@ -18,7 +18,7 @@ use crate::{
     directory::{
         domain::{DirectoryId, DirectoryPath},
         port::{
-            DirectoryIndex, DirectoryProjection, DirectoryQuery, DirectoryRelocationStore,
+            DirectoryIndex, DirectoryProjection, DirectoryReadModel, DirectoryRelocationStore,
             DirectoryStore,
         },
         query::LocatedDirectory,
@@ -38,7 +38,7 @@ pub struct DirectoryService {
 
 struct DirectoryKernel {
     store: Arc<dyn DirectoryStore>,
-    query: Arc<dyn DirectoryQuery>,
+    read_model: Arc<dyn DirectoryReadModel>,
     storage: Arc<dyn DirectoryStorage>,
     relocations: Arc<dyn DirectoryRelocationStore>,
     mutation_lock: Arc<Mutex<()>>,
@@ -61,12 +61,12 @@ impl DirectoryServices {
         storage: Arc<dyn DirectoryStorage>,
         relocations: Arc<dyn DirectoryRelocationStore>,
     ) -> Self {
-        let query: Arc<dyn DirectoryQuery> = index.clone();
+        let read_model: Arc<dyn DirectoryReadModel> = index.clone();
         let index_writer: Arc<dyn DirectoryIndex> = index;
         let index_service = DirectoryIndexService::new(store.clone(), index_writer);
         let kernel = Arc::new(DirectoryKernel {
             store,
-            query,
+            read_model,
             storage,
             relocations,
             mutation_lock: Arc::new(Mutex::new(())),
@@ -116,7 +116,7 @@ impl DirectoryService {
     /// Find a directory by its global stable ID.
     pub async fn find_by_id(&self, id: &DirectoryId) -> Result<LocatedDirectory, CoreError> {
         self.kernel
-            .query
+            .read_model
             .find_by_id(id)
             .await?
             .ok_or_else(|| CoreError::not_found("directory", id.to_string()))
@@ -125,7 +125,7 @@ impl DirectoryService {
     /// Find a directory by its global canonical path.
     pub async fn find_by_path(&self, path: &DirectoryPath) -> Result<LocatedDirectory, CoreError> {
         self.kernel
-            .query
+            .read_model
             .find_by_path(path)
             .await?
             .ok_or_else(|| CoreError::not_found("directory", path.path()))
@@ -136,7 +136,7 @@ impl DirectoryService {
         parent_id: &DirectoryId,
     ) -> Result<Vec<LocatedDirectory>, CoreError> {
         self.find_by_id(parent_id).await?;
-        self.kernel.query.list_children(parent_id).await
+        self.kernel.read_model.list_children(parent_id).await
     }
 
     pub async fn contains(
@@ -145,7 +145,7 @@ impl DirectoryService {
         candidate: &DirectoryId,
     ) -> Result<bool, CoreError> {
         self.kernel
-            .query
+            .read_model
             .is_descendant_or_self(ancestor, candidate)
             .await
     }

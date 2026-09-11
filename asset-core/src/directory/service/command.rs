@@ -19,13 +19,13 @@ impl DirectoryService {
         let _guard = self.kernel.mutation_lock.lock().await;
         let parent = self
             .kernel
-            .query
+            .read_model
             .find_by_id(parent_id)
             .await?
             .ok_or_else(|| CoreError::not_found("directory", parent_id.to_string()))?;
         let directory = Directory::new(*parent_id, name)?;
         let path = parent.path().child(directory.name())?;
-        if self.kernel.query.find_by_path(&path).await?.is_some() {
+        if self.kernel.read_model.find_by_path(&path).await?.is_some() {
             return Err(CoreError::conflict(
                 "a directory with the same name already exists",
             ));
@@ -51,7 +51,7 @@ impl DirectoryService {
         let _guard = self.kernel.mutation_lock.lock().await;
         let located = self
             .kernel
-            .query
+            .read_model
             .find_by_id(id)
             .await?
             .ok_or_else(|| CoreError::not_found("directory", id.to_string()))?;
@@ -73,7 +73,7 @@ impl DirectoryService {
             .ok_or_else(|| CoreError::invariant("non-root directory is missing its parent"))?;
         if self
             .kernel
-            .query
+            .read_model
             .is_descendant_or_self(&directory.id(), &parent_id)
             .await?
         {
@@ -83,7 +83,7 @@ impl DirectoryService {
         }
         let parent = self
             .kernel
-            .query
+            .read_model
             .find_by_id(&parent_id)
             .await?
             .ok_or_else(|| CoreError::not_found("directory", parent_id.to_string()))?;
@@ -92,7 +92,7 @@ impl DirectoryService {
         }
         directory.move_to(parent_id)?;
         let destination = parent.path().child(directory.name())?;
-        if let Some(existing) = self.kernel.query.find_by_path(&destination).await?
+        if let Some(existing) = self.kernel.read_model.find_by_path(&destination).await?
             && existing.id() != directory.id()
         {
             return Err(CoreError::conflict(
@@ -297,7 +297,7 @@ impl DirectoryService {
         let _guard = self.kernel.mutation_lock.lock().await;
         let current = self
             .kernel
-            .query
+            .read_model
             .find_by_id(id)
             .await?
             .ok_or_else(|| CoreError::not_found("directory", id.to_string()))?;
