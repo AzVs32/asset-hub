@@ -26,8 +26,8 @@ use bytes::Bytes;
 use futures_util::TryStreamExt;
 use std::time::Duration;
 
-fn recovery_config(root: std::path::PathBuf) -> AssetInfraConfig {
-    AssetInfraConfig {
+fn recovery_config(root: std::path::PathBuf) -> AssetConfig {
+    AssetConfig {
         database: DatabaseConfig {
             sqlite: SqliteDatabaseConfig { max_connections: 4 },
             ..DatabaseConfig::default()
@@ -42,7 +42,7 @@ fn recovery_config(root: std::path::PathBuf) -> AssetInfraConfig {
             },
             ..BlobConfig::default()
         },
-        ..AssetInfraConfig::default()
+        ..AssetConfig::default()
     }
 }
 
@@ -57,7 +57,8 @@ async fn recovery_environment(
         std::env::temp_dir().join(format!("asset-hub-{name}-{}-{nonce}", std::process::id()));
     let config = recovery_config(root.clone());
     let runtime = AssetRuntime::new(config.clone()).await.unwrap();
-    let infrastructure = AssetInfrastructure::new(config).await.unwrap();
+    let AssetConfig { database, blob, .. } = config;
+    let infrastructure = AssetInfrastructure::new(database, blob).await.unwrap();
     (root, runtime, infrastructure)
 }
 
@@ -82,6 +83,28 @@ async fn runtime_uses_the_configured_idempotency_lease_duration() {
 
     drop(runtime);
     let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn runtime_rejects_direct_invalid_config_before_initializing_infrastructure() {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "asset-hub-invalid-runtime-config-{}-{nonce}",
+        std::process::id()
+    ));
+    let mut config = recovery_config(root.clone());
+    config.idempotency.lease_duration_seconds = 24 * 60 * 60 + 1;
+
+    let error = match AssetRuntime::new(config).await {
+        Ok(_) => panic!("invalid direct configuration must be rejected"),
+        Err(error) => error,
+    };
+
+    assert!(error.to_string().contains("between 1 and 86400 seconds"));
+    assert!(!root.join(".asset-hub/asset-hub.sqlite").exists());
 }
 
 fn verified_content(size: u64) -> ResourceContent {
@@ -405,7 +428,8 @@ async fn resource_deletion_recovers_dual_links_but_preserves_independent_files()
         std::process::id()
     ));
     let config = recovery_config(root.clone());
-    let infrastructure = AssetInfrastructure::new(config.clone()).await.unwrap();
+    let AssetConfig { database, blob, .. } = config.clone();
+    let infrastructure = AssetInfrastructure::new(database, blob).await.unwrap();
     let source = StorageKey::new("note.txt").unwrap();
     let staged = StorageKey::new(".asset-hub/deletions/note.txt").unwrap();
     let resource = Resource::builder("note.txt")
@@ -1276,7 +1300,7 @@ async fn local_storage_changes_are_synchronized_automatically() {
         "asset-hub-auto-sync-{}-{nonce}",
         std::process::id()
     ));
-    let config = AssetInfraConfig {
+    let config = AssetConfig {
         database: DatabaseConfig {
             sqlite: SqliteDatabaseConfig { max_connections: 1 },
             ..DatabaseConfig::default()
@@ -1292,7 +1316,7 @@ async fn local_storage_changes_are_synchronized_automatically() {
             },
             ..BlobConfig::default()
         },
-        ..AssetInfraConfig::default()
+        ..AssetConfig::default()
     };
     let mut runtime = AssetRuntime::new(config).await.unwrap();
     runtime.start_storage_sync().await.unwrap();

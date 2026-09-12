@@ -3,6 +3,11 @@
 `asset-http` is the Axum transport and the composition root for HTTP-only policy. It owns routing,
 the OpenAPI JSON contract, request limits, and CORS.
 
+`asset-http` owns `HttpConfig` and implements the strongly typed `[http]` section. Its executable
+registers both `HttpConfig` and the core `AssetConfig`, then loads the shared TOML document once
+through `asset-config`; neither configuration type depends on the other. The command line accepts
+only `--config <PATH>`.
+
 Business handlers receive Core application services. Upload completion receives the narrow
 `UploadFinalizationDispatcher` interface; HTTP does not depend on the concrete Runtime
 scheduler or supervisor.
@@ -70,12 +75,15 @@ content chunks; the producer and consumer each retain at most their current chun
 storage adapter's source buffer). File bytes are never collected into a complete in-memory file.
 Manifest and ZIP entry metadata still scale with the number of entries.
 
-HTTP CLI options (not TOML):
+HTTP configuration (`[http]` in TOML):
 
-| Option | Default | Meaning |
+| Key | Default | Meaning |
 | --- | --- | --- |
-| `--archive-max-concurrent` | `2` | Maximum simultaneous archive requests, including manifest enumeration, generation and completed ZIPs still being downloaded |
-| `--archive-max-bytes` | `68719476736` (64 GiB) | Per-request limit for both total uncompressed Resource bytes and the generated ZIP file length, including headers and central-directory metadata |
+| `addr` | `127.0.0.1:8080` | HTTP listen address |
+| `cors_allowed_origins` | `[]` | Explicit allowed origins; wildcard origins are rejected |
+| `request_timeout_seconds` | `30` | Total timeout for non-streaming requests |
+| `archive.max_concurrent` | `2` | Maximum simultaneous archive requests, including manifest enumeration, generation and completed ZIPs still being downloaded |
+| `archive.max_bytes` | `68719476736` (64 GiB) | Per-request limit for both total uncompressed Resource bytes and the generated ZIP file length, including headers and central-directory metadata |
 
 Both values must be nonzero. There is no waiting queue: exhausted capacity or shutdown returns
 `503` with `archive.unavailable` and `retryable: true`. Resource sizes are checked before generation;
@@ -85,8 +93,10 @@ limit returns `413`, without sending a partial ZIP. With defaults, these request
 OS temporary space or other storage failures still return `500`. Operators can lower both limits
 for their available temporary filesystem, for example:
 
-```bash
-asset-http --archive-max-concurrent 1 --archive-max-bytes 8589934592
+```toml
+[http.archive]
+max_concurrent = 1
+max_bytes = 8589934592
 ```
 
 The complete archive is generated before the `200` response, preserving `Content-Length`,

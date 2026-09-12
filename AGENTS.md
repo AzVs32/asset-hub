@@ -28,6 +28,7 @@ The important aggregates are:
 ## Repository map
 
 - `asset-core`: workspace-internal domain, ports, and application services.
+- `asset-config`: generic configuration loading and extensible typed section registry.
 - `asset-infra`: concrete SQLx repositories, OpenDAL storage, filesystem, and directory-index adapters.
 - `asset-runtime`: reusable runtime assembly and background-task ownership.
 - `asset-http`: Axum transport, DTOs, OpenAPI, and HTTP executable.

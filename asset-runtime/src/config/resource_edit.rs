@@ -1,8 +1,9 @@
+//! Resource 文本编辑策略的运行时配置。
+
 use serde::{Deserialize, Serialize};
 
 use super::DEFAULT_RESOURCE_EDIT_MAX_TEXT_BYTES;
 
-/// Size limits for interactive resource text editing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ResourceEditConfig {
@@ -18,9 +19,9 @@ impl Default for ResourceEditConfig {
 }
 
 impl ResourceEditConfig {
-    pub(super) fn validate(&self) -> Result<(), asset_core::CoreError> {
+    pub(super) fn validate(&self) -> Result<(), String> {
         asset_core::resource::domain::ResourceContentEditPolicy::new(self.max_text_bytes)
             .map(|_| ())
-            .map_err(|error| asset_core::CoreError::configuration(error.to_string()))
+            .map_err(|error| error.to_string())
     }
 }

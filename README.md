@@ -31,9 +31,8 @@ Start the HTTP service:
 cargo run -p asset-http --bin asset-http
 ```
 
-It listens on `http://127.0.0.1:8080` by default. `--addr` changes the listen address, `--config`
-selects a configuration file, and `asset-http --help` shows the full contract. In another terminal,
-start the Web interface:
+It listens on `http://127.0.0.1:8080` by default. HTTP behavior is configured under `[http]`;
+`--config` selects the shared configuration file. In another terminal, start the Web interface:
 
 ```bash
 cd asset-web
@@ -57,19 +56,24 @@ cargo run -p asset-cli --bin asset -- config --check
 cargo run -p asset-cli --bin asset -- system --scan-resource
 ```
 
-`asset config` validates and shows the effective configuration; `asset system --scan-resource`
-re-scans blob storage, recomputes every SHA-256, and reconciles the resource database. See
+`asset config` validates and shows the effective `[asset]` core configuration while retaining
+unregistered extension sections; `asset system --scan-resource` re-scans blob storage, recomputes
+every SHA-256, and reconciles the resource database. See
 [asset-cli/README.md](asset-cli/README.md) for the full command reference.
 
 ## Configuration
 
 The executables read `--config <PATH>` when given, then `./config.toml`, then built-in defaults.
-[config.example.toml](config.example.toml) documents every key:
+[config.example.toml](config.example.toml) documents every built-in key. Each component owns a
+strongly typed section; each executable registers the sections it consumes and loads the shared
+document once:
 
-- `[database]` selects the backend (SQLite) and its connection pool size.
-- `[resource_edit]` limits interactive text edits; `[idempotency]` controls request leases.
-- `[blob]` selects the backend (local filesystem) and its root directory; `[blob.local.sync]` keeps
-  the database reconciled with changes made directly in the file system.
+- `[asset]` contains the core runtime settings: database, Blob storage, editing, and idempotency.
+- `[http]` contains the HTTP listener, CORS, request timeout, and archive limits.
+
+Additional terminals and plugins can register independent sections without adding fields or
+dependencies to either built-in configuration type. A registered section strictly validates its
+own subtree; unregistered sections remain available for another executable or a later-loaded plugin.
 
 ## Repository map
 
@@ -77,6 +81,7 @@ The executables read `--config <PATH>` when given, then `./config.toml`, then bu
   each keep their domain, ports, and application services together; `storage` contains storage
   ports and `workflow` contains cross-aggregate application workflows. See
   [asset-core AI development instructions](asset-core/AGENTS.md).
+- `asset-config`: generic shared configuration loading and extensible typed section registration.
 - `asset-infra`: SQLite repositories, OpenDAL storage, and filesystem adapters.
 - `asset-runtime`: reusable runtime assembly and background-task ownership.
 - `asset-http`: Axum transport, DTOs, OpenAPI, and the HTTP executable.

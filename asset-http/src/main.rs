@@ -1,9 +1,9 @@
+use asset_config::ConfigRegistry;
 use asset_http::{
-    ArchiveRuntime, DirectoryHttpServices, HttpComposition, HttpHealthServices, HttpServices,
-    HttpSettings, ResourceHttpServices, build_router,
+    ArchiveRuntime, DirectoryHttpServices, HttpArgs, HttpComposition, HttpConfig,
+    HttpHealthServices, HttpRuntimeOptions, HttpServices, ResourceHttpServices, build_router,
 };
-use asset_infra::config::AssetInfraConfig;
-use asset_runtime::AssetRuntime;
+use asset_runtime::{AssetConfig, AssetRuntime};
 use std::future::IntoFuture;
 use std::time::Duration;
 use tracing::info;
@@ -12,15 +12,24 @@ use tracing::info;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_tracing();
 
-    let settings = HttpSettings::from_cli();
-    let config = match settings.config_path() {
-        Some(path) => AssetInfraConfig::from_config_file(path)?,
-        None => AssetInfraConfig::from_default_config_file()?,
-    }
-    .normalized()?;
-    let mut runtime = AssetRuntime::new(config).await?;
-    let mut archives = ArchiveRuntime::new(settings.archive_options().clone());
-    let result = serve(&mut runtime, &archives, settings).await;
+    let args = HttpArgs::from_cli();
+    let config = ConfigRegistry::new()
+        .with::<AssetConfig>()?
+        .with::<HttpConfig>()?
+        .load(args.config_path())?;
+    let asset_config = config.section::<AssetConfig>()?.clone();
+    let HttpRuntimeOptions {
+        addr,
+        archive,
+        router,
+    } = config
+        .section::<HttpConfig>()?
+        .clone()
+        .into_runtime_options()?;
+
+    let mut runtime = AssetRuntime::new(asset_config).await?;
+    let mut archives = ArchiveRuntime::new(archive);
+    let result = serve(&mut runtime, &archives, addr, router).await;
     // Also clean up on listener/startup errors. Keep the task owner alive until all workers exit.
     archives.shutdown().await;
     result
@@ -29,12 +38,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn serve(
     runtime: &mut AssetRuntime,
     archives: &ArchiveRuntime,
-    settings: HttpSettings,
+    addr: std::net::SocketAddr,
+    router_options: asset_http::RouterOptions,
 ) -> Result<(), Box<dyn std::error::Error>> {
     runtime.start_storage_sync().await?;
-    let listener = tokio::net::TcpListener::bind(settings.addr()).await?;
+    let listener = tokio::net::TcpListener::bind(addr).await?;
 
-    info!(addr = %settings.addr(), "asset-http listening");
+    info!(addr = %addr, "asset-http listening");
     let app = build_router(
         HttpComposition {
             services: HttpServices {
@@ -54,7 +64,7 @@ async fn serve(
             upload_finalizations: runtime.upload_finalization_dispatcher(),
             archives: archives.downloads(),
         },
-        settings.router_options().clone(),
+        router_options,
     );
     let (stop, stopped) = tokio::sync::oneshot::channel();
     let server = axum::serve(listener, app)

@@ -1,5 +1,5 @@
-use asset_infra::config::AssetInfraConfig;
-use asset_runtime::AssetRuntime;
+use asset_config::{ConfigRegistry, LoadedConfig};
+use asset_runtime::{AssetConfig, AssetRuntime};
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 
@@ -45,13 +45,13 @@ pub async fn run(cli: Cli) -> CliResult {
 }
 
 async fn maintenance_runtime(config_path: Option<&Path>) -> CliResult<AssetRuntime> {
-    Ok(AssetRuntime::new(load_config(config_path)?).await?)
+    let config = load_config(config_path)?;
+    let asset_config = config.section::<AssetConfig>()?.clone();
+    Ok(AssetRuntime::new(asset_config).await?)
 }
 
-fn load_config(config_path: Option<&Path>) -> Result<AssetInfraConfig, asset_core::CoreError> {
-    let config = match config_path {
-        Some(path) => AssetInfraConfig::from_config_file(path)?,
-        None => AssetInfraConfig::from_default_config_file()?,
-    };
-    Ok(config)
+pub(crate) fn load_config(config_path: Option<&Path>) -> CliResult<LoadedConfig> {
+    Ok(ConfigRegistry::new()
+        .with::<AssetConfig>()?
+        .load(config_path)?)
 }

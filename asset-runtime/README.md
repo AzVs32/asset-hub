@@ -1,8 +1,14 @@
 # Asset Runtime
 
-`asset-runtime` is the reusable application assembly layer. Each executable surface loads its own
-configuration and creates one `AssetRuntime`; the runtime remains independent of HTTP routing, CLI
-parsing, and presentation policy.
+`asset-runtime` is the reusable application assembly layer. Each executable surface assembles an
+`asset-config` registry, loads the shared configuration document once, and passes the normalized
+`[asset]` section into one `AssetRuntime`. Runtime remains independent of HTTP routing, CLI parsing,
+configuration sources, and presentation policy.
+
+Runtime owns `AssetConfig` and implements the `[asset]` `ConfigSection`; each executable registers
+that type in its own composition root. `AssetConfig` composes the database and Blob
+sub-configuration owned by `asset-infra` with Runtime's Resource editing and idempotency policies.
+`asset-config` remains independent of all of these concrete settings.
 
 Construction is deterministic:
 

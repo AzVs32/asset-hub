@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "asset-core",
+    "asset-config",
     "asset-infra",
     "asset-runtime",
     "asset-http",
@@ -15,7 +16,8 @@ license = "Apache-2.0"
 authors = ["AzVs"]
 
 [workspace.dependencies]
-asset-core = { path = "asset-core"}
+asset-core = { path = "asset-core" }
+asset-config = { path = "asset-config" }
 asset-infra = { path = "asset-infra" }
 asset-runtime = { path = "asset-runtime" }
 
@@ -32,7 +34,6 @@ clap = { version = "4.6.6", features = ["derive"] }
 async-trait = "0.1.92"
 bytes = "1.12.1"
 axum = "0.8.9"
-config = { version = "0.15.25", default-features = false, features = ["toml"] }
 futures-core = "0.3.33"
 futures-util = "0.3.33"
 opendal = { version = "0.58.1", default-features = false, features = ["services-fs"] }

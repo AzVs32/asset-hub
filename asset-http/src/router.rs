@@ -1,6 +1,6 @@
+use crate::config::{CorsPolicy, RouterOptions};
 use crate::handlers;
 use crate::openapi::ApiDoc;
-use crate::settings::{CorsPolicy, RouterOptions};
 use crate::state::{HttpComposition, HttpState};
 use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderName, Method, StatusCode};

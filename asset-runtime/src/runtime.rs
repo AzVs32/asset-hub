@@ -1,5 +1,7 @@
 use crate::UploadFinalizationDispatcher;
+use crate::config::AssetConfig;
 use crate::upload_finalization::UploadFinalizationScheduler;
+use asset_config::ConfigSection;
 use asset_core::CoreError;
 use asset_core::{
     directory::service::{DirectoryRecoveryService, DirectoryService, DirectoryServices},
@@ -13,9 +15,8 @@ use asset_core::{
     },
     workflow::service::AssetWorkflowService,
 };
-use asset_infra::AssetInfrastructure;
-use asset_infra::config::{AssetInfraConfig, BlobBackend};
 use asset_infra::storage::LocalStorageSync;
+use asset_infra::{AssetInfrastructure, config::BlobBackend};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -55,9 +56,8 @@ impl AssetRuntime {
     ///
     /// 创建运行时时不会自动启动后台任务；长生命周期应用应按需显式调用
     /// [`AssetRuntime::start_storage_sync`]。
-    pub async fn new(config: AssetInfraConfig) -> Result<Self, CoreError> {
-        let infrastructure = AssetInfrastructure::new(config).await?;
-        let config = infrastructure.config();
+    pub async fn new(config: AssetConfig) -> Result<Self, CoreError> {
+        let config = config.normalize().map_err(CoreError::configuration)?;
         let storage_sync_settings = match config.blob.backend {
             BlobBackend::Local if config.blob.local.sync.enabled => Some(StorageSyncSettings {
                 root: config.blob.local.root.clone(),
@@ -68,8 +68,15 @@ impl AssetRuntime {
             }),
             BlobBackend::Local => None,
         };
+        let AssetConfig {
+            database,
+            blob,
+            resource_edit,
+            idempotency,
+        } = config;
+        let infrastructure = AssetInfrastructure::new(database, blob).await?;
         let resource_content_edit_policy = Arc::new(
-            ResourceContentEditPolicy::new(config.resource_edit.max_text_bytes)
+            ResourceContentEditPolicy::new(resource_edit.max_text_bytes)
                 .map_err(|error| CoreError::configuration(error.to_string()))?,
         );
 
@@ -95,7 +102,7 @@ impl AssetRuntime {
         }
         let idempotency_service = IdempotencyService::with_lease_duration(
             infrastructure.idempotency_repository(),
-            config.idempotency.lease_duration(),
+            idempotency.lease_duration(),
         )?;
         let resource_services = ResourceServices::new(
             infrastructure.resource_store(),

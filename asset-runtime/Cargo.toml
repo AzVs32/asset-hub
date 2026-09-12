@@ -6,8 +6,10 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+asset-config.workspace = true
 asset-core.workspace = true
 asset-infra.workspace = true
+serde.workspace = true
 tracing.workspace = true
 tokio.workspace = true
 
