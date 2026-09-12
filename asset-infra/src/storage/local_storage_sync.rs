@@ -1,8 +1,11 @@
 use asset_core::CoreError;
 use asset_core::{resource::service::StorageMaintenanceService, storage::StorageKey};
+use futures_util::StreamExt;
 use notify::event::{AccessKind, AccessMode, ModifyKind, RenameMode};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashSet;
+use std::future::Future;
+use std::panic::AssertUnwindSafe;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -10,6 +13,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 const EVENT_QUEUE_CAPACITY: usize = 2_048;
+const MAX_CONCURRENT_CHECKSUMS: usize = 4;
 
 /// 保持本地文件系统监听器和后台协调任务存活。
 pub struct LocalStorageSync {
@@ -49,32 +53,40 @@ impl LocalStorageSync {
 
         tracing::info!("incremental storage reconciliation started");
         let task = tokio::spawn(async move {
-            let known_directories = match service.reconcile_storage_on_startup().await {
+            let (known_directories, pending) = match service.reconcile_storage_on_startup().await {
                 Ok(report) => {
                     log_reconciliation("initial", &report);
-                    for key in report.pending_verification_keys() {
-                        spawn_checksum_verification(service.clone(), key.clone());
-                    }
-                    report.directory_keys().iter().cloned().collect()
+                    (
+                        report.directory_keys().iter().cloned().collect(),
+                        report.pending_verification_keys().to_vec(),
+                    )
                 }
                 Err(error) => {
                     tracing::error!(
                         error = %error,
                         "initial local storage reconciliation failed; periodic reconciliation will retry"
                     );
-                    HashSet::new()
+                    (HashSet::new(), Vec::new())
                 }
             };
-            run_sync_loop(
-                root,
-                service,
-                receiver,
-                overflowed,
-                known_directories,
-                debounce,
-                reconcile_interval,
-            )
-            .await;
+            // Both futures are owned by this task. Aborting it drops all in-flight checks;
+            // no per-file task can retain a service beyond the synchronization owner's lifetime.
+            let verification_service = service.clone();
+            tokio::join!(
+                verify_pending(pending, move |key| {
+                    let service = verification_service.clone();
+                    async move { service.reconcile_storage_keys(&[key]).await }
+                }),
+                run_sync_loop(
+                    root,
+                    service,
+                    receiver,
+                    overflowed,
+                    known_directories,
+                    debounce,
+                    reconcile_interval,
+                )
+            );
         });
 
         Ok(Self {
@@ -84,23 +96,25 @@ impl LocalStorageSync {
     }
 }
 
-fn spawn_checksum_verification(service: StorageMaintenanceService, key: StorageKey) {
-    tokio::spawn(async move {
-        match service
-            .reconcile_storage_keys(std::slice::from_ref(&key))
-            .await
-        {
-            Ok(()) => tracing::info!(
-                storage_key = %key,
-                "background content checksum verification completed"
-            ),
-            Err(error) => tracing::error!(
-                storage_key = %key,
-                error = %error,
-                "background content checksum verification failed"
-            ),
-        }
-    });
+async fn verify_pending<F>(keys: Vec<StorageKey>, mut verify: impl FnMut(StorageKey) -> F)
+where
+    F: Future<Output = Result<(), CoreError>>,
+{
+    use futures_util::FutureExt;
+    futures_util::stream::iter(keys)
+        .map(move |key| {
+            let operation = verify(key.clone());
+            async move {
+                match AssertUnwindSafe(operation).catch_unwind().await {
+                    Ok(Ok(())) => tracing::info!(storage_key = %key, "background content checksum verification completed"),
+                    Ok(Err(error)) => tracing::error!(storage_key = %key, error = %error, "background content checksum verification failed"),
+                    Err(_) => tracing::error!(storage_key = %key, "background content checksum verification panicked"),
+                }
+            }
+        })
+        .buffer_unordered(MAX_CONCURRENT_CHECKSUMS)
+        .for_each(|()| async {})
+        .await;
 }
 
 impl Drop for LocalStorageSync {
@@ -289,6 +303,71 @@ fn event_affects_storage_state(kind: EventKind) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Prevent detached or eagerly spawned per-file work, and a single failure stopping the queue.
+    #[tokio::test]
+    async fn verification_is_bounded_survives_failures_and_drops_with_its_owner() {
+        use std::sync::atomic::AtomicUsize;
+        struct Active(Arc<AtomicUsize>);
+        impl Drop for Active {
+            fn drop(&mut self) {
+                self.0.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+        let active = Arc::new(AtomicUsize::new(0));
+        let completed = Arc::new(AtomicUsize::new(0));
+        let permits = Arc::new(tokio::sync::Semaphore::new(0));
+        let (started, mut starts) = mpsc::unbounded_channel();
+        let keys = (0..MAX_CONCURRENT_CHECKSUMS * 2)
+            .map(|n| StorageKey::new(n.to_string()).unwrap())
+            .collect();
+        let owner = tokio::spawn(verify_pending(keys, {
+            let active = active.clone();
+            let completed = completed.clone();
+            let permits = permits.clone();
+            move |key| {
+                let active = active.clone();
+                let completed = completed.clone();
+                let permits = permits.clone();
+                let started = started.clone();
+                async move {
+                    active.fetch_add(1, Ordering::SeqCst);
+                    let _guard = Active(active);
+                    started.send(()).unwrap();
+                    permits.acquire().await.unwrap().forget();
+                    match key.as_str() {
+                        "0" => Err(CoreError::invariant("test verification failure")),
+                        "1" => panic!("test verification panic"),
+                        _ => {
+                            completed.fetch_add(1, Ordering::SeqCst);
+                            Ok(())
+                        }
+                    }
+                }
+            }
+        }));
+        for _ in 0..MAX_CONCURRENT_CHECKSUMS {
+            tokio::time::timeout(Duration::from_secs(2), starts.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        }
+        assert_eq!(active.load(Ordering::SeqCst), MAX_CONCURRENT_CHECKSUMS);
+        assert!(starts.try_recv().is_err());
+        permits.add_permits(2);
+        for _ in 0..2 {
+            tokio::time::timeout(Duration::from_secs(2), starts.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        }
+        assert_eq!(active.load(Ordering::SeqCst), MAX_CONCURRENT_CHECKSUMS);
+        owner.abort();
+        assert!(owner.await.unwrap_err().is_cancelled());
+        assert_eq!(active.load(Ordering::SeqCst), 0);
+        assert_eq!(completed.load(Ordering::SeqCst), 0);
+        assert!(starts.try_recv().is_err());
+    }
 
     #[test]
     fn read_events_do_not_trigger_checksum_reconciliation() {

@@ -164,6 +164,146 @@ async fn rejected_resource_rename_does_not_leave_a_startup_blocking_intent() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+// Prevent existence checks from silently trimming a valid path before relocation or deletion.
+#[tokio::test]
+async fn spaced_resource_paths_survive_rename_and_are_physically_deleted() {
+    let (root, runtime, infrastructure) = recovery_environment("spaced-resource").await;
+    let resource = Resource::builder(" spaced.txt ")
+        .with_content(verified_content(3))
+        .build()
+        .unwrap();
+    infrastructure
+        .resource_store()
+        .insert(&resource)
+        .await
+        .unwrap();
+    std::fs::write(root.join(" spaced.txt "), b"old").unwrap();
+    std::fs::write(root.join("renamed.txt"), b"independent").unwrap();
+    let renamed = runtime
+        .resource_service()
+        .update(
+            &resource.id(),
+            asset_core::resource::service::UpdateResource::new(resource.revision())
+                .with_name(" renamed.txt "),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!root.join(" spaced.txt ").exists());
+    assert_eq!(std::fs::read(root.join(" renamed.txt ")).unwrap(), b"old");
+    assert!(
+        runtime
+            .resource_service()
+            .delete(&renamed.id(), renamed.revision())
+            .await
+            .unwrap()
+    );
+    assert!(!root.join(" renamed.txt ").exists());
+    assert!(
+        runtime
+            .resource_service()
+            .get(&renamed.id())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        std::fs::read(root.join("renamed.txt")).unwrap(),
+        b"independent"
+    );
+    drop(infrastructure);
+    drop(runtime);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+// Prevent a chunk-local UTF-8 check, or validation after publication, from damaging text edits.
+#[tokio::test]
+async fn text_replacement_validates_utf8_across_chunks_before_publication() {
+    use asset_core::resource::service::ReplaceResourceContent;
+    use sha2::{Digest, Sha256};
+    let (root, runtime, infrastructure) = recovery_environment("utf8-replacement").await;
+    let resource = Resource::builder("note.txt")
+        .with_content(verified_content(3))
+        .build()
+        .unwrap();
+    infrastructure
+        .resource_store()
+        .insert(&resource)
+        .await
+        .unwrap();
+    std::fs::write(root.join("note.txt"), b"old").unwrap();
+    // First reject a malformed continuation after a valid prefix, then an incomplete final code point.
+    for bytes in [b"prefix\xe4x".as_slice(), b"prefix\xf0\x9f".as_slice()] {
+        let checksum = Checksum::sha256(
+            Sha256::digest(bytes)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>(),
+        )
+        .unwrap();
+        let result = runtime
+            .content_service()
+            .replace(
+                &resource.id(),
+                ReplaceResourceContent::new(bytes.len() as u64, checksum, resource.revision()),
+                Box::pin(futures_util::stream::iter(
+                    bytes
+                        .chunks(1)
+                        .map(|chunk| Ok(Bytes::copy_from_slice(chunk)))
+                        .collect::<Vec<_>>(),
+                )),
+            )
+            .await;
+        assert!(matches!(result, Err(CoreError::InvalidOperation { .. })));
+        assert_eq!(
+            infrastructure
+                .resource_store()
+                .load(&resource.id())
+                .await
+                .unwrap(),
+            Some(resource.clone())
+        );
+        assert_eq!(std::fs::read(root.join("note.txt")).unwrap(), b"old");
+        assert!(
+            infrastructure
+                .content_replacement_store()
+                .list_pending()
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(!root.join(".asset-hub/uploads").exists());
+    }
+    let bytes = "A中🙂éZ".as_bytes();
+    let checksum = Checksum::sha256(
+        Sha256::digest(bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>(),
+    )
+    .unwrap();
+    let updated = runtime
+        .content_service()
+        .replace(
+            &resource.id(),
+            ReplaceResourceContent::new(bytes.len() as u64, checksum, resource.revision()),
+            Box::pin(futures_util::stream::iter(
+                bytes
+                    .chunks(1)
+                    .map(|chunk| Ok(Bytes::copy_from_slice(chunk)))
+                    .collect::<Vec<_>>(),
+            )),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(updated.revision(), resource.revision() + 1);
+    assert_eq!(std::fs::read(root.join("note.txt")).unwrap(), bytes);
+    drop(infrastructure);
+    drop(runtime);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[tokio::test]
 async fn fresh_resource_rename_cannot_adopt_an_unrelated_destination_blob() {
     let (root, runtime, infrastructure) = recovery_environment("rename-missing-source").await;
@@ -255,7 +395,7 @@ async fn root_directory_empty_update_obeys_revision_without_requiring_a_parent()
 }
 
 #[tokio::test]
-async fn resource_deletion_recovers_after_staging_before_database_commit() {
+async fn resource_deletion_recovers_dual_links_but_preserves_independent_files() {
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -296,7 +436,25 @@ async fn resource_deletion_recovers_after_staging_before_database_commit() {
         .await
         .unwrap();
     std::fs::create_dir_all(root.join(".asset-hub/deletions")).unwrap();
-    std::fs::rename(root.join(source.as_str()), root.join(staged.as_str())).unwrap();
+    // Equal contents alone are insufficient proof that a move was interrupted.
+    write(&root, &staged, b"old");
+    assert!(matches!(
+        AssetRuntime::new(config.clone()).await,
+        Err(CoreError::Conflict { .. })
+    ));
+    assert_eq!(std::fs::read(root.join(source.as_str())).unwrap(), b"old");
+    assert_eq!(std::fs::read(root.join(staged.as_str())).unwrap(), b"old");
+    assert_eq!(
+        infrastructure
+            .resource_deletion_store()
+            .list_pending()
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    std::fs::remove_file(root.join(staged.as_str())).unwrap();
+    std::fs::hard_link(root.join(source.as_str()), root.join(staged.as_str())).unwrap();
     drop(infrastructure);
 
     let runtime = AssetRuntime::new(config).await.unwrap();
@@ -310,6 +468,14 @@ async fn resource_deletion_recovers_after_staging_before_database_commit() {
     );
     assert!(!root.join(source.as_str()).exists());
     assert!(!root.join(staged.as_str()).exists());
+    assert_eq!(
+        runtime
+            .resource_recovery_service()
+            .recover_pending_deletions()
+            .await
+            .unwrap(),
+        0
+    );
 
     drop(runtime);
     std::fs::remove_dir_all(root).unwrap();
@@ -877,7 +1043,7 @@ async fn directory_recovery_keeps_intent_when_source_and_destination_both_exist(
 }
 
 #[tokio::test]
-async fn resource_relocation_recovers_after_filesystem_move_without_overwriting_a_stale_revision() {
+async fn resource_relocation_recovers_interrupted_hard_link_move() {
     let (root, runtime, infrastructure) =
         recovery_environment("resource-relocation-recovery").await;
     let directories = runtime.directory_service();
@@ -917,7 +1083,7 @@ async fn resource_relocation_recovers_after_filesystem_move_without_overwriting_
         .save(&relocation)
         .await
         .unwrap();
-    std::fs::rename(
+    std::fs::hard_link(
         root.join(source_key.as_str()),
         root.join(destination_key.as_str()),
     )

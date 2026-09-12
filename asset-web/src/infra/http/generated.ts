@@ -1025,7 +1025,7 @@ export interface operations {
                     "application/json": components["schemas"]["ResourceResponse"];
                 };
             };
-            /** @description 请求头或资源状态无效 */
+            /** @description 请求头、资源状态无效或内容不是完整 UTF-8 文本 */
             400: {
                 headers: {
                     [name: string]: unknown;

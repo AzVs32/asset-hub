@@ -76,7 +76,7 @@ The executables read `--config <PATH>` when given, then `./config.toml`, then bu
 - `asset-core`: capability-oriented domain kernel. `directory`, `resource`, and `idempotency`
   each keep their domain, ports, and application services together; `storage` contains storage
   ports and `workflow` contains cross-aggregate application workflows. See
-  [asset-core/README.md](asset-core/README.md).
+  [asset-core AI development instructions](asset-core/AGENTS.md).
 - `asset-infra`: SQLite repositories, OpenDAL storage, and filesystem adapters.
 - `asset-runtime`: reusable runtime assembly and background-task ownership.
 - `asset-http`: Axum transport, DTOs, OpenAPI, and the HTTP executable.

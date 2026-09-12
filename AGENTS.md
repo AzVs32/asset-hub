@@ -10,7 +10,8 @@ public contracts, configuration, or operational procedures change.
 Before editing a module:
 
 1. Read this file and the nearest nested `AGENTS.md`.
-2. Read the module README or architecture document referenced by that file.
+2. Read the module README or architecture document referenced by that file. For `asset-core`,
+   `asset-core/AGENTS.md` is the architecture guide; no separate README is required.
 3. Distinguish current implementation facts from planned extension points.
 4. Do not describe a planned backend or extension point as supported until 
    its runtime wiring, tests, configuration, and documentation are complete.

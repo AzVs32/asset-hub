@@ -47,7 +47,7 @@ pub(crate) async fn get_resource_content(
     ),
     responses(
         (status = 200, description = "资源内容已替换", body = ResourceResponse),
-        (status = 400, description = "请求头或资源状态无效", body = crate::dto::ErrorResponse),
+        (status = 400, description = "请求头、资源状态无效或内容不是完整 UTF-8 文本", body = crate::dto::ErrorResponse),
         (status = 404, description = "资源不存在", body = crate::dto::ErrorResponse),
         (status = 409, description = "资源 revision、大小或摘要冲突", body = crate::dto::ErrorResponse),
         (status = 413, description = "文本超过编辑大小上限", body = crate::dto::ErrorResponse),

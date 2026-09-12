@@ -158,6 +158,8 @@ dependencies = [
  "futures-util",
  "notify",
  "opendal",
+ "rustix",
+ "same-file",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -175,6 +177,7 @@ dependencies = [
  "asset-infra",
  "bytes",
  "futures-util",
+ "sha2 0.11.0",
  "tokio",
  "tracing",
 ]

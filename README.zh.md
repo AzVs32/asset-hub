@@ -69,7 +69,7 @@ SHA-256，并把结果协调回资源数据库。完整命令说明见
 
 - `asset-core`：按能力边界组织的领域内核。`directory`、`resource`、`idempotency` 各自
   就近包含领域、端口与应用服务；`storage` 只包含存储端口，`workflow` 包含跨聚合的应用
-  工作流。详见 [asset-core/README.md](asset-core/README.md)。
+  工作流。AI 开发约束详见 [asset-core/AGENTS.md](asset-core/AGENTS.md)。
 - `asset-infra`：SQLite 仓储、OpenDAL 存储与文件系统适配器。
 - `asset-runtime`：可复用运行时组装与后台任务所有权。
 - `asset-http`：Axum 传输、DTO、OpenAPI 与 HTTP 可执行文件。

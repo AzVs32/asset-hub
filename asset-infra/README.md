@@ -24,6 +24,22 @@ aggregates.
 
 The SQLite upload-session table persists upload state and idempotency linkage.
 
+Local Blob operations preserve storage-key spelling, including leading and trailing spaces, for
+existence checks as well as reads, moves and deletes. Linux, Android and Apple targets use an
+atomic no-replace rename for Blob moves; errors are propagated without an overwrite fallback.
+Other targets retain the hard-link/unlink protocol. Recovery recognizes its interrupted dual-link
+state by physical file identity, never by matching content. Symlinks and independent files are
+rejected without deleting either path. These filesystem operations run on blocking workers.
+Only the Linux implementation has been validated in this development environment.
+
+Startup checksum verification runs at most four checks concurrently, alongside the ordinary serial
+event/periodic reconciliation loop. Checks are bounded futures owned by the synchronization task,
+not detached per-file tasks. Individual errors and unwinding panics are logged without stopping the
+remaining queue; periodic reconciliation can retry failed verification. Dropping `LocalStorageSync`
+cancels the owner and drops its checks when cancellation is polled. Already-running OS I/O may
+finish, but the cancelled verification futures do not continue their workflow. Initial scanning and
+verification remain in the background and do not delay HTTP listener startup.
+
 Run:
 
 ```bash

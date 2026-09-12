@@ -299,6 +299,11 @@ impl ContentReader for OpenDalBlobStorage {
 #[async_trait::async_trait]
 impl ContentObjectStore for OpenDalBlobStorage {
     async fn exists(&self, key: &StorageKey) -> Result<bool, CoreError> {
+        if let Some(root) = &self.local_root {
+            return tokio::fs::try_exists(root.join(key.as_str()))
+                .await
+                .map_err(|error| CoreError::storage("blob.exists", error));
+        }
         self.operator
             .exists(key.as_str())
             .await
@@ -307,27 +312,31 @@ impl ContentObjectStore for OpenDalBlobStorage {
 
     async fn move_if_absent(&self, from: &StorageKey, to: &StorageKey) -> Result<(), CoreError> {
         if let Some(root) = &self.local_root {
+            let root = root.clone();
             let source = root.join(from.as_str());
             let target = root.join(to.as_str());
-            if let Some(parent) = target.parent() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|error| CoreError::storage("move_if_absent.create_parent", error))?;
-            }
-            std::fs::hard_link(&source, &target).map_err(|error| {
-                if error.kind() == std::io::ErrorKind::AlreadyExists {
-                    CoreError::conflict(format!("storage key `{to}` already exists"))
-                } else {
-                    CoreError::storage("move_if_absent.link", error)
+            let internal_source = is_internal_key(from);
+            let to = to.clone();
+            return tokio::task::spawn_blocking(move || {
+                if let Some(parent) = target.parent() {
+                    std::fs::create_dir_all(parent).map_err(|error| {
+                        CoreError::storage("move_if_absent.create_parent", error)
+                    })?;
                 }
-            })?;
-            if let Err(error) = std::fs::remove_file(&source) {
-                let _ = std::fs::remove_file(&target);
-                return Err(CoreError::storage("move_if_absent.remove_source", error));
-            }
-            if is_internal_key(from) {
-                cleanup_internal_fs_parents(root, &source)?;
-            }
-            return Ok(());
+                move_local_if_absent(&source, &target).map_err(|error| {
+                    if error.kind() == std::io::ErrorKind::AlreadyExists {
+                        CoreError::conflict(format!("storage key `{to}` already exists"))
+                    } else {
+                        CoreError::storage("move_if_absent.move", error)
+                    }
+                })?;
+                if internal_source {
+                    cleanup_internal_fs_parents(&root, &source)?;
+                }
+                Ok(())
+            })
+            .await
+            .map_err(|error| CoreError::storage("move_if_absent.task", error))?;
         }
 
         self.operator
@@ -350,6 +359,44 @@ impl ContentObjectStore for OpenDalBlobStorage {
             .rename(from.as_str(), to.as_str())
             .await
             .map_err(|error| CoreError::storage("move_if_absent.rename", error))
+    }
+
+    async fn finish_interrupted_move(
+        &self,
+        from: &StorageKey,
+        to: &StorageKey,
+    ) -> Result<(), CoreError> {
+        let root = self.local_root.clone().ok_or_else(|| {
+            CoreError::configuration("interrupted move recovery requires local blob storage")
+        })?;
+        let from = from.clone();
+        let to = to.clone();
+        tokio::task::spawn_blocking(move || {
+            let source = root.join(from.as_str());
+            let target = root.join(to.as_str());
+            let source_meta = std::fs::symlink_metadata(&source)
+                .map_err(|error| CoreError::storage("move_recovery.source", error))?;
+            let target_meta = std::fs::symlink_metadata(&target)
+                .map_err(|error| CoreError::storage("move_recovery.target", error))?;
+            if from == to
+                || !source_meta.is_file()
+                || !target_meta.is_file()
+                || !same_file::is_same_file(&source, &target)
+                    .map_err(|error| CoreError::storage("move_recovery.identity", error))?
+            {
+                return Err(CoreError::conflict(format!(
+                    "interrupted move `{from}` -> `{to}` has distinct or non-file objects"
+                )));
+            }
+            std::fs::remove_file(&source)
+                .map_err(|error| CoreError::storage("move_recovery.remove_source", error))?;
+            if is_internal_key(&from) {
+                cleanup_internal_fs_parents(&root, &source)?;
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|error| CoreError::storage("move_recovery.task", error))?
     }
 
     async fn delete(&self, key: &StorageKey) -> Result<(), CoreError> {
@@ -376,6 +423,26 @@ impl ContentObjectStore for OpenDalBlobStorage {
         }
         Ok(())
     }
+}
+
+// A no-replace rename closes the old hard-link/unlink interruption window on these platforms.
+// Do not fall back on syscall errors: in particular, never turn an occupied target into a write.
+#[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
+fn move_local_if_absent(source: &Path, target: &Path) -> std::io::Result<()> {
+    use rustix::fs::{CWD, RenameFlags, renameat_with};
+    renameat_with(CWD, source, CWD, target, RenameFlags::NOREPLACE).map_err(Into::into)
+}
+
+// Other platforms retain the no-overwrite hard-link protocol. Durable intents can recover its
+// dual-link state through `finish_interrupted_move`; it is not claimed to be an atomic rename.
+#[cfg(not(any(target_os = "linux", target_os = "android", target_vendor = "apple")))]
+fn move_local_if_absent(source: &Path, target: &Path) -> std::io::Result<()> {
+    std::fs::hard_link(source, target)?;
+    if let Err(error) = std::fs::remove_file(source) {
+        let _ = std::fs::remove_file(target);
+        return Err(error);
+    }
+    Ok(())
 }
 
 fn local_file_stream(

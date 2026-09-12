@@ -28,11 +28,18 @@ Before creating a Resource relocation intent, Core rechecks the current revision
 under the Resource path locks, requires an existing source Blob, and rejects an occupied physical
 destination. These rejected requests leave no new recovery intent. Interpreting a destination-only
 state as an interrupted move is reserved for an intent that has already passed those checks.
+Recovery also recognizes the two-hard-link state left by older Blob moves interrupted before
+source removal. It finishes the move only when the adapter verifies physical file identity;
+independent objects remain a conflict and the intent is retained for inspection.
 
 `UploadSession` owns durable upload state transitions. Runtime owns the deduplicating finalization
 supervisor and all spawned task lifetimes; application surfaces receive only the
 `UploadFinalizationDispatcher` interface. `LocalStorageSync` remains an `asset-infra` driving
 adapter, but Runtime starts it with `StorageMaintenanceService` and owns its lifetime.
+The synchronization owner also owns its bounded startup verification futures (four at a time).
+Dropping it cancels those workflows as well as the event loop; individual checksum errors or
+unwinding panics do not stop the rest of the verification queue. Startup remains non-blocking with
+respect to the HTTP listener. In-flight OS operations can finish after cancellation.
 
 Run:
 

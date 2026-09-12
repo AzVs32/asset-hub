@@ -38,6 +38,11 @@ precedence from independent transport fields.
 Resource and Directory deletion uses the direct `DELETE /resources/{id}` and
 `DELETE /directories/{id}` endpoints.
 
+`PUT /resources/{id}/content` accepts UTF-8 text, including characters split across transport
+chunks. Invalid UTF-8 or an incomplete final character returns `400`; the original content and
+revision remain unchanged, and temporary replacement content is cleaned up. The endpoint still
+requires the declared length, SHA-256 and revision precondition. Binary uploads use `/uploads`.
+
 Directory downloads use ordinary ZIP entries for directories and resources up to 4 GiB. ZIP64 is
 enabled only for an individual resource that exceeds the ZIP32 size limit, keeping ordinary
 downloads compatible with desktop archive tools without removing large-resource support.

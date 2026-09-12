@@ -109,6 +109,17 @@ pub trait ContentObjectStore: Send + Sync {
     /// 成功后源键不再存在；目标键已经存在时返回 `CoreError::Conflict`，不得覆盖。
     async fn move_if_absent(&self, from: &StorageKey, to: &StorageKey) -> Result<(), CoreError>;
 
+    /// Finish a durable move interrupted with both keys still present.
+    ///
+    /// Remove `from` only if both distinct keys identify the very same physical file, never
+    /// merely files with equal contents. Otherwise return a conflict without changing either.
+    /// This recovery-only operation must not weaken `move_if_absent` for fresh requests.
+    async fn finish_interrupted_move(
+        &self,
+        from: &StorageKey,
+        to: &StorageKey,
+    ) -> Result<(), CoreError>;
+
     /// 删除指定存储键对应的对象。
     ///
     /// 删除操作必须保持幂等：对象不存在时也应返回 `Ok(())`。这能让上层 usecase

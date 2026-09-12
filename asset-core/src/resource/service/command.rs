@@ -297,10 +297,9 @@ impl ResourceService {
                 "permanent deletion found an already-missing physical Blob; committing metadata deletion"
             ),
             (true, true) => {
-                return Err(CoreError::conflict(format!(
-                    "resource deletion `{}` has both visible and staged Blob objects",
-                    deletion.resource_id()
-                )));
+                self.objects
+                    .finish_interrupted_move(deletion.source_key(), deletion.deletion_key())
+                    .await?;
             }
         }
 
@@ -368,8 +367,23 @@ impl ResourceService {
             .load(&id)
             .await?
             .ok_or_else(|| CoreError::not_found("resource relocation", id.to_string()))?;
-        let source_exists = self.objects.exists(relocation.source_key()).await?;
-        let destination_exists = self.objects.exists(relocation.destination_key()).await?;
+        let mut source_exists = self.objects.exists(relocation.source_key()).await?;
+        let mut destination_exists = self.objects.exists(relocation.destination_key()).await?;
+        if source_exists && destination_exists {
+            if current != *relocation.desired()
+                && current.revision() != relocation.expected_revision()
+            {
+                self.objects
+                    .finish_interrupted_move(relocation.destination_key(), relocation.source_key())
+                    .await?;
+                destination_exists = false;
+            } else {
+                self.objects
+                    .finish_interrupted_move(relocation.source_key(), relocation.destination_key())
+                    .await?;
+                source_exists = false;
+            }
+        }
 
         if current == *relocation.desired() {
             match (source_exists, destination_exists) {

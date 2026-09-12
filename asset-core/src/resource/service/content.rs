@@ -496,26 +496,60 @@ fn limit_replacement_stream(
     expected_size: u64,
     max_size: u64,
 ) -> BlobByteStream {
-    let mut received = 0_u64;
-    Box::pin(data.map(move |chunk| {
-        let chunk = chunk?;
-        received = received
-            .checked_add(chunk.len() as u64)
-            .ok_or_else(|| CoreError::invariant("content replacement size overflow"))?;
-        if received > expected_size {
-            return Err(CoreError::conflict(
-                "content replacement exceeds its declared size",
-            ));
+    Box::pin(futures_util::stream::try_unfold(
+        (data, 0_u64, Vec::with_capacity(4)),
+        move |(mut data, received, mut utf8_tail)| async move {
+            let Some(chunk) = data.next().await else {
+                if !utf8_tail.is_empty() {
+                    return Err(invalid_replacement_utf8());
+                }
+                return Ok(None);
+            };
+            let chunk = chunk?;
+            let received = received
+                .checked_add(chunk.len() as u64)
+                .ok_or_else(|| CoreError::invariant("content replacement size overflow"))?;
+            if received > expected_size {
+                return Err(CoreError::conflict(
+                    "content replacement exceeds its declared size",
+                ));
+            }
+            if received > max_size {
+                return Err(CoreError::limit_exceeded(
+                    "resource text content",
+                    max_size,
+                    received,
+                ));
+            }
+            validate_utf8_chunk(&chunk, &mut utf8_tail)?;
+            Ok(Some((chunk, (data, received, utf8_tail))))
+        },
+    ))
+}
+
+// Retain only an unfinished code point (at most three bytes) between arbitrary input chunks.
+fn validate_utf8_chunk(mut bytes: &[u8], tail: &mut Vec<u8>) -> Result<(), CoreError> {
+    while !tail.is_empty() && !bytes.is_empty() {
+        tail.push(bytes[0]);
+        bytes = &bytes[1..];
+        match std::str::from_utf8(tail) {
+            Ok(_) => tail.clear(),
+            Err(error) if error.error_len().is_none() => {}
+            Err(_) => return Err(invalid_replacement_utf8()),
         }
-        if received > max_size {
-            return Err(CoreError::limit_exceeded(
-                "resource text content",
-                max_size,
-                received,
-            ));
+    }
+    match std::str::from_utf8(bytes) {
+        Ok(_) => Ok(()),
+        Err(error) if error.error_len().is_none() => {
+            tail.extend_from_slice(&bytes[error.valid_up_to()..]);
+            Ok(())
         }
-        Ok(chunk)
-    }))
+        Err(_) => Err(invalid_replacement_utf8()),
+    }
+}
+
+fn invalid_replacement_utf8() -> CoreError {
+    CoreError::invalid_operation("replacement content must be valid UTF-8 text")
 }
 
 pub(super) fn build_verified_content(
