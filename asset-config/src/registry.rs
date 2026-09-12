@@ -1,14 +1,19 @@
-//! 配置分区的注册与统一加载。
+//! 配置分区的注册、默认来源策略与统一加载。
 
-use crate::document::{paths_overlap, validate_section_name};
-use crate::registration::{SectionRegistration, TypedRegistration};
 use crate::{ConfigError, ConfigSection, LoadedConfig};
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::path::Path;
 
-/// 可执行程序未指定配置路径时使用的默认配置文件。
-pub const DEFAULT_CONFIG_FILE: &str = "config.toml";
+mod document;
+mod registration;
+
+pub(crate) use document::insert_path;
+use document::{paths_overlap, validate_section_name};
+pub(crate) use registration::StoredSection;
+use registration::{SectionRegistration, TypedRegistration};
+
+const DEFAULT_CONFIG_FILE: &str = "config.toml";
 
 /// 由可执行程序按照实际包含的模块装配的配置注册表。
 #[derive(Default)]
@@ -62,9 +67,8 @@ impl ConfigRegistry {
         Ok(self)
     }
 
-    /// 加载显式指定的文件；`path` 为 `None` 时尝试加载可选的 `./config.toml`。
-    ///
-    /// 显式指定的文件必须存在。默认文件不存在时，根据所有已注册分区的默认值生成配置。
+    /// 加载配置。显式路径必须存在；未指定路径时尝试读取当前目录的 `config.toml`，
+    /// 不存在则按照空文档加载所有已注册分区的默认配置。
     pub fn load(&self, path: Option<&Path>) -> Result<LoadedConfig, ConfigError> {
         match path {
             Some(path) => self.load_file(path),
@@ -72,6 +76,7 @@ impl ConfigRegistry {
         }
     }
 
+    /// 加载指定文件。文件必须存在。
     pub fn load_file(&self, path: impl AsRef<Path>) -> Result<LoadedConfig, ConfigError> {
         let path = path.as_ref();
         let source = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
@@ -81,6 +86,7 @@ impl ConfigRegistry {
         self.load_str(&source)
     }
 
+    /// 加载指定文件；文件不存在时按照空文档加载所有已注册分区的默认配置。
     pub fn load_optional_file(&self, path: impl AsRef<Path>) -> Result<LoadedConfig, ConfigError> {
         let path = path.as_ref();
         match std::fs::read_to_string(path) {

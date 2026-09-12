@@ -2,14 +2,13 @@
 //!
 //! 本模块只处理资源内容引用与 Blob 之间的编排；后台扫描协调位于 `reconciliation`。
 
-use super::{ReplaceResourceContent, ResourceContentStream, StorageKeyLocks, path_resolver};
+use super::{ResourceContentStream, StorageKeyLocks, path_resolver};
 use crate::CoreError;
 use crate::{
-    idempotency::service::{IdempotencyOutcome, IdempotencyService, request_hash},
     resource::{
         domain::{
-            Checksum, ChecksumKind, Resource, ResourceContent, ResourceContentEditPolicy,
-            ResourceContentReplacement, ResourceContentReplacementId, ResourceId,
+            Checksum, ChecksumKind, Resource, ResourceContent, ResourceContentReplacement,
+            ResourceContentReplacementId, ResourceId, UploadSession,
         },
         port::{ResourceContentReplacementStore, ResourceReadModel, ResourceStore},
         query::LocatedResource,
@@ -53,8 +52,6 @@ pub struct ContentService {
     objects: Arc<dyn ContentObjectStore>,
     content_replacements: Arc<dyn ResourceContentReplacementStore>,
     storage_key_locks: Arc<StorageKeyLocks>,
-    edit_policy: Arc<ResourceContentEditPolicy>,
-    idempotency: IdempotencyService,
 }
 
 impl ContentService {
@@ -67,8 +64,6 @@ impl ContentService {
         objects: Arc<dyn ContentObjectStore>,
         content_replacements: Arc<dyn ResourceContentReplacementStore>,
         storage_key_locks: Arc<StorageKeyLocks>,
-        edit_policy: Arc<ResourceContentEditPolicy>,
-        idempotency: IdempotencyService,
     ) -> Self {
         Self {
             read_model,
@@ -78,8 +73,6 @@ impl ContentService {
             objects,
             content_replacements,
             storage_key_locks,
-            edit_policy,
-            idempotency,
         }
     }
 
@@ -94,22 +87,6 @@ impl ContentService {
         };
         self.get_resource_content_stream_snapshot(&resource, range)
             .await
-    }
-
-    /// Replace Resource content by stable ID while preserving the streaming, size, checksum,
-    /// idempotency, and durable-recovery workflow.
-    pub async fn replace(
-        &self,
-        id: &ResourceId,
-        command: ReplaceResourceContent,
-        data: BlobByteStream,
-    ) -> Result<Option<Resource>, CoreError> {
-        let Some(resource) = self.read_model.find_by_id(id).await? else {
-            return Ok(None);
-        };
-        self.replace_content_snapshot(resource, command, data)
-            .await
-            .map(Some)
     }
 
     async fn get_resource_content_stream_snapshot(
@@ -138,138 +115,38 @@ impl ContentService {
         }))
     }
 
-    async fn replace_content_snapshot(
+    pub(super) async fn commit_replacement_upload(
         &self,
-        located: LocatedResource,
-        command: ReplaceResourceContent,
-        data: BlobByteStream,
+        session: &UploadSession,
+        staged: StagedBlob,
+        checksum: Checksum,
     ) -> Result<Resource, CoreError> {
-        let Some(key) = command.idempotency_key().cloned() else {
-            return self
-                .replace_content_snapshot_inner(located, command, data)
-                .await;
-        };
-        let resource_id = located.resource().id();
-        let hash = request_hash(&serde_json::json!({
-            "resource_id": resource_id.to_string(),
-            "expected_size": command.expected_size,
-            "expected_checksum": command.expected_checksum.value(),
-            "expected_revision": command.expected_revision,
-            "mime_type": &command.mime_type,
-        }));
-        match self.idempotency.begin(&key, &hash).await? {
-            IdempotencyOutcome::Acquired { execution_id } => {
-                match self
-                    .idempotency
-                    .execute_with_lease(
-                        &key,
-                        execution_id,
-                        self.replace_content_snapshot_inner(located, command, data),
-                    )
-                    .await
-                {
-                    Ok(resource) => {
-                        self.idempotency
-                            .complete(
-                                &key,
-                                execution_id,
-                                serde_json::json!({ "resource_id": resource.id().to_string() }),
-                            )
-                            .await?;
-                        Ok(resource)
-                    }
-                    Err(error) => {
-                        self.idempotency.abandon(&key, execution_id).await?;
-                        Err(error)
-                    }
-                }
-            }
-            IdempotencyOutcome::Replay(result) => self.replay_replacement(&result).await,
-            IdempotencyOutcome::ConflictDifferentRequest => Err(CoreError::conflict(format!(
-                "idempotency key `{key}` was already used for a different request"
-            ))),
-            IdempotencyOutcome::AlreadyInProgress => Err(CoreError::conflict(format!(
-                "idempotency key `{key}` is currently executing"
-            ))),
-        }
-    }
-
-    async fn replace_content_snapshot_inner(
-        &self,
-        located: LocatedResource,
-        command: ReplaceResourceContent,
-        data: BlobByteStream,
-    ) -> Result<Resource, CoreError> {
+        let expected_revision = session.purpose().expected_revision().ok_or_else(|| {
+            CoreError::invariant("content replacement requires a replacement upload session")
+        })?;
+        let located = self
+            .read_model
+            .find_by_id(&session.resource_id())
+            .await?
+            .ok_or_else(|| CoreError::not_found("resource", session.resource_id().to_string()))?;
         let (mut resource, directory) = located.into_parts();
-        if resource.revision() != command.expected_revision {
+        if resource.revision() != expected_revision {
             return Err(stale_replacement(&resource));
         }
-        let current_content = resource.content().cloned().ok_or_else(|| {
-            CoreError::invalid_operation("resource content replacement requires existing content")
-        })?;
-        let max_text_bytes = self.edit_policy.max_text_bytes();
-        if command.expected_size > max_text_bytes {
-            return Err(CoreError::limit_exceeded(
-                "resource text content",
-                max_text_bytes,
-                command.expected_size,
+        if resource.content().is_none() {
+            return Err(CoreError::invalid_operation(
+                "resource content replacement requires existing content",
             ));
         }
         let target_key = path_resolver::resource_key(&directory, resource.name())?;
         let replacement_id = ResourceContentReplacementId::new();
         let backup_key = path_resolver::replacement_backup_key(replacement_id)?;
-        let staging_key = path_resolver::replacement_staging_key(replacement_id)?;
-        let staging = self.staging.create_staged(&staging_key).await?;
-        let (tracked, checksum_state) = stream_with_checksum_tracking(limit_replacement_stream(
-            data,
-            command.expected_size,
-            max_text_bytes,
-        ));
-        let staged = match self.staging.append_staged(&staging_key, 0, tracked).await {
-            Ok(staged) => staged,
-            Err(error) => {
-                let _ = self.staging.discard_staged(&staging).await;
-                return Err(error);
-            }
-        };
-        let actual_checksum = match finalize_tracked_checksum(checksum_state) {
-            Ok(checksum) => checksum,
-            Err(error) => {
-                let _ = self.staging.discard_staged(&staged).await;
-                return Err(error);
-            }
-        };
-        if staged.bytes_written() != command.expected_size {
-            let _ = self.staging.discard_staged(&staged).await;
-            return Err(CoreError::conflict(format!(
-                "content size mismatch: expected {}, received {}",
-                command.expected_size,
-                staged.bytes_written()
-            )));
-        }
-        if actual_checksum != command.expected_checksum {
-            let _ = self.staging.discard_staged(&staged).await;
-            return Err(CoreError::conflict(format!(
-                "content checksum mismatch: expected {}, actual {}",
-                command.expected_checksum.value(),
-                actual_checksum.value()
-            )));
-        }
-
-        let content = match build_verified_content(
-            staged.bytes_written(),
-            command
-                .mime_type
-                .or_else(|| current_content.mime_type().map(str::to_string)),
-            actual_checksum,
+        let content = build_verified_content(
+            session.expected_size(),
+            session.mime_type().map(str::to_string),
+            checksum,
             None,
-        ) {
-            Ok(content) => content,
-            Err(error) => {
-                let _ = self.staging.discard_staged(&staged).await;
-                return Err(error);
-            }
-        };
+        )?;
         self.commit_staged_replacement(
             &mut resource,
             target_key,
@@ -280,20 +157,6 @@ impl ContentService {
         )
         .await?;
         Ok(resource)
-    }
-
-    async fn replay_replacement(&self, result: &serde_json::Value) -> Result<Resource, CoreError> {
-        let resource_id = result
-            .get("resource_id")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| CoreError::invariant("idempotency result is missing `resource_id`"))?;
-        let resource_id = std::str::FromStr::from_str(resource_id).map_err(|error| {
-            CoreError::invariant(format!("invalid stored resource id: {error}"))
-        })?;
-        self.store
-            .load(&resource_id)
-            .await?
-            .ok_or_else(|| CoreError::not_found("resource", resource_id.to_string()))
     }
 
     async fn commit_staged_replacement(
@@ -489,67 +352,6 @@ impl ContentService {
 
 fn stale_replacement(resource: &Resource) -> CoreError {
     CoreError::revision_conflict("resource", resource.id().to_string())
-}
-
-fn limit_replacement_stream(
-    data: BlobByteStream,
-    expected_size: u64,
-    max_size: u64,
-) -> BlobByteStream {
-    Box::pin(futures_util::stream::try_unfold(
-        (data, 0_u64, Vec::with_capacity(4)),
-        move |(mut data, received, mut utf8_tail)| async move {
-            let Some(chunk) = data.next().await else {
-                if !utf8_tail.is_empty() {
-                    return Err(invalid_replacement_utf8());
-                }
-                return Ok(None);
-            };
-            let chunk = chunk?;
-            let received = received
-                .checked_add(chunk.len() as u64)
-                .ok_or_else(|| CoreError::invariant("content replacement size overflow"))?;
-            if received > expected_size {
-                return Err(CoreError::conflict(
-                    "content replacement exceeds its declared size",
-                ));
-            }
-            if received > max_size {
-                return Err(CoreError::limit_exceeded(
-                    "resource text content",
-                    max_size,
-                    received,
-                ));
-            }
-            validate_utf8_chunk(&chunk, &mut utf8_tail)?;
-            Ok(Some((chunk, (data, received, utf8_tail))))
-        },
-    ))
-}
-
-// Retain only an unfinished code point (at most three bytes) between arbitrary input chunks.
-fn validate_utf8_chunk(mut bytes: &[u8], tail: &mut Vec<u8>) -> Result<(), CoreError> {
-    while !tail.is_empty() && !bytes.is_empty() {
-        tail.push(bytes[0]);
-        bytes = &bytes[1..];
-        match std::str::from_utf8(tail) {
-            Ok(_) => tail.clear(),
-            Err(error) if error.error_len().is_none() => {}
-            Err(_) => return Err(invalid_replacement_utf8()),
-        }
-    }
-    match std::str::from_utf8(bytes) {
-        Ok(_) => Ok(()),
-        Err(error) if error.error_len().is_none() => {
-            tail.extend_from_slice(&bytes[error.valid_up_to()..]);
-            Ok(())
-        }
-        Err(_) => Err(invalid_replacement_utf8()),
-    }
-}
-
-fn invalid_replacement_utf8() -> CoreError {
-    CoreError::invalid_operation("replacement content must be valid UTF-8 text")
 }
 
 pub(super) fn build_verified_content(

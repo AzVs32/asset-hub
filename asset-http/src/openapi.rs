@@ -1,7 +1,7 @@
 use crate::dto::{
-    BinaryContent, ChecksumResponse, CreateDirectoryRequest, CreateUploadRequest,
-    DirectoryListingResponse, DirectoryResponse, ErrorResponse, HealthComponentResponse,
-    HealthResponse, ResourceContentResponse, ResourceContentStateResponse,
+    BinaryContent, ChecksumResponse, CreateContentReplacementUploadRequest, CreateDirectoryRequest,
+    CreateUploadRequest, DirectoryListingResponse, DirectoryResponse, ErrorResponse,
+    HealthComponentResponse, HealthResponse, ResourceContentResponse, ResourceContentStateResponse,
     ResourceEffectiveStateResponse, ResourceLifecycleStateResponse, ResourcePageResponse,
     ResourceResponse, ResourceStateResponse, UpdateDirectoryRequest, UpdateResourceRequest,
     UploadSessionResponse,
@@ -21,6 +21,7 @@ use utoipa::OpenApi;
         handlers::directory::update_directory,
         handlers::directory::delete_directory,
         handlers::upload::create_upload,
+        handlers::upload::create_content_replacement_upload,
         handlers::upload::upload_status,
         handlers::upload::append_upload,
         handlers::upload::complete_upload,
@@ -28,7 +29,6 @@ use utoipa::OpenApi;
         handlers::resource::find_resource,
         handlers::resource::update_resource,
         handlers::content::get_resource_content,
-        handlers::content::replace_resource_content,
         handlers::content::download_resource_content,
         handlers::content::download_directory,
         handlers::resource::delete_resource
@@ -53,6 +53,7 @@ use utoipa::OpenApi;
             ResourceResponse,
             UpdateResourceRequest,
             CreateUploadRequest,
+            CreateContentReplacementUploadRequest,
             UploadSessionResponse
         )
     ),
@@ -75,6 +76,16 @@ mod tests {
 
         assert!(document["paths"].get("/directories/{id}").is_some());
         assert!(document["paths"].get("/resources/{id}/content").is_some());
+        assert!(
+            document["paths"]["/resources/{id}/content"]
+                .get("put")
+                .is_none()
+        );
+        assert!(
+            document["paths"]["/resources/{id}/content/uploads"]
+                .get("post")
+                .is_some()
+        );
     }
 
     #[test]

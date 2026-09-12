@@ -1,4 +1,4 @@
-//! TOML 分区路径的校验、读取与回写。
+//! 注册与加载过程中使用的 TOML 分区路径操作。
 
 use crate::ConfigError;
 

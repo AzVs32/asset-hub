@@ -82,10 +82,13 @@ let config = ConfigRegistry::new()
 ```
 
 `load()` 只读取并解析一次共享 TOML 文档，然后依次反序列化、归一化和校验所有已注册分区。
-显式传入的文件必须存在；传入 `None` 时尝试读取 `./config.toml`，该文件不存在则使用所有
-已注册类型的默认值。
+显式路径必须存在；路径为 `None` 时统一尝试读取当前目录的 `config.toml`，文件不存在则按照空
+文档加载所有已注册类型的默认值。默认文件名属于 `asset-config` 的内部约定，不作为常量暴露。
 
-注册必须发生在 `load()` 之前。分区不能重复，也不能存在父子所有权重叠。例如可以同时注册
+需要不同来源策略时，也可以调用 `load_file(path)`、`load_optional_file(path)`，或者使用
+`load_str(source)` 从已有 TOML 字符串加载。
+
+注册必须发生在加载之前。分区不能重复，也不能存在父子所有权重叠。例如可以同时注册
 `plugins.preview` 和 `plugins.search`，但不能同时注册 `plugins` 和 `plugins.preview`。
 
 ## 模块如何取得自己的配置

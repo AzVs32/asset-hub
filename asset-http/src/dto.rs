@@ -94,6 +94,17 @@ pub(crate) struct CreateUploadRequest {
     pub(crate) expected_sha256: String,
 }
 
+/// 为已有资源创建分块内容替换会话。
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CreateContentReplacementUploadRequest {
+    pub(crate) expected_revision: u64,
+    pub(crate) mime_type: Option<String>,
+    pub(crate) size: u64,
+    /// 客户端对完整替换内容增量计算出的 SHA-256。
+    pub(crate) expected_sha256: String,
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct UploadSessionResponse {
     pub(crate) id: String,
@@ -101,7 +112,7 @@ pub(crate) struct UploadSessionResponse {
     pub(crate) size: u64,
     /// uploading、finalizing、completed 或 failed。
     pub(crate) status: String,
-    /// finalization 完成后创建的 Resource ID。
+    /// finalization 完成后创建或更新的 Resource ID。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) resource_id: Option<String>,
     /// 后台 finalization 的失败原因。

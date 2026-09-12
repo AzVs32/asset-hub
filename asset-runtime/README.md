@@ -7,8 +7,9 @@ configuration sources, and presentation policy.
 
 Runtime owns `AssetConfig` and implements the `[asset]` `ConfigSection`; each executable registers
 that type in its own composition root. `AssetConfig` composes the database and Blob
-sub-configuration owned by `asset-infra` with Runtime's Resource editing and idempotency policies.
-`asset-config` remains independent of all of these concrete settings.
+sub-configuration owned by `asset-infra` with Runtime's idempotency policy. Resource content
+replacement uses the same durable upload-session workflow as resource creation and has no
+Runtime size-limit configuration. `asset-config` remains independent of these concrete settings.
 
 Construction is deterministic:
 
@@ -38,7 +39,8 @@ Recovery also recognizes the two-hard-link state left by older Blob moves interr
 source removal. It finishes the move only when the adapter verifies physical file identity;
 independent objects remain a conflict and the intent is retained for inspection.
 
-`UploadSession` owns durable upload state transitions. Runtime owns the deduplicating finalization
+`UploadSession` owns durable upload state transitions for both resource creation and content
+replacement. Runtime owns the deduplicating finalization
 supervisor and all spawned task lifetimes; application surfaces receive only the
 `UploadFinalizationDispatcher` interface. `LocalStorageSync` remains an `asset-infra` driving
 adapter, but Runtime starts it with `StorageMaintenanceService` and owns its lifetime.

@@ -9,12 +9,9 @@ use crate::{
         DirectoryService,
     },
     idempotency::service::IdempotencyService,
-    resource::{
-        domain::ResourceContentEditPolicy,
-        port::{
-            ResourceContentReplacementStore, ResourceDeletionStore, ResourceMaintenanceReadModel,
-            ResourceReadModel, ResourceRelocationStore, ResourceStore, UploadSessionStore,
-        },
+    resource::port::{
+        ResourceContentReplacementStore, ResourceDeletionStore, ResourceMaintenanceReadModel,
+        ResourceReadModel, ResourceRelocationStore, ResourceStore, UploadSessionStore,
     },
     storage::port::{
         BlobHealth, ContentObjectStore, ContentReader, ContentStagingStore, StorageScanner,
@@ -33,7 +30,9 @@ mod upload_locks;
 
 pub use command::ResourceRecoveryService;
 pub use content::{ContentRecoveryService, ContentService};
-pub use contract::{CreateUpload, ReplaceResourceContent, ResourceContentStream, UpdateResource};
+pub use contract::{
+    CreateContentReplacementUpload, CreateUpload, ResourceContentStream, UpdateResource,
+};
 pub use reconciliation::{
     ResourceScanProgress, StorageHealthService, StorageMaintenanceService,
     StorageReconciliationReport,
@@ -110,7 +109,6 @@ impl ResourceServices {
         directory_import: DirectoryImportService,
         upload_sessions: Arc<dyn UploadSessionStore>,
         content_replacements: Arc<dyn ResourceContentReplacementStore>,
-        edit_policy: Arc<ResourceContentEditPolicy>,
         idempotency: IdempotencyService,
     ) -> Self {
         let locks = Arc::new(StorageKeyLocks::default());
@@ -131,8 +129,6 @@ impl ResourceServices {
             content_objects.clone(),
             content_replacements,
             locks.clone(),
-            edit_policy.clone(),
-            idempotency.clone(),
         );
         let uploads = UploadService::new(
             store.clone(),
@@ -144,6 +140,7 @@ impl ResourceServices {
             directories.clone(),
             upload_sessions,
             locks.clone(),
+            content.clone(),
             idempotency.clone(),
         );
         let maintenance = StorageMaintenanceService::new(

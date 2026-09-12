@@ -5,7 +5,6 @@
 //! [`crate::resource::domain::UploadSession`] 聚合管理。
 
 mod content;
-mod content_edit_policy;
 mod content_replacement;
 mod deletion;
 mod state;
@@ -19,11 +18,10 @@ use serde::Serialize;
 pub use content::{
     Checksum, ChecksumKind, ContentVerificationStatus, ResourceContent, ResourceContentBuilder,
 };
-pub use content_edit_policy::{InvalidResourceContentEditPolicy, ResourceContentEditPolicy};
 pub use content_replacement::{ResourceContentReplacement, ResourceContentReplacementId};
 pub use deletion::ResourceDeletion;
 pub use state::{ResourceEffectiveStatus, ResourceLifecycleStatus, ResourceState};
-pub use upload::{UploadId, UploadSession, UploadSessionSnapshot, UploadStatus};
+pub use upload::{UploadId, UploadPurpose, UploadSession, UploadSessionSnapshot, UploadStatus};
 
 /// 资源名称允许的最大字符数。
 const MAX_RESOURCE_NAME_LEN: usize = 255;

@@ -29,7 +29,8 @@ owns its guard and task lifetime.
 The storage scanner reports physical directories; Core imports those observed paths into Directory
 aggregates.
 
-The SQLite upload-session table persists upload state and idempotency linkage.
+The SQLite upload-session table persists upload state, target purpose, replacement revision
+preconditions, and idempotency linkage for both resource creation and content replacement.
 
 Local Blob operations preserve storage-key spelling, including leading and trailing spaces, for
 existence checks as well as reads, moves and deletes. Linux, Android and Apple targets use an

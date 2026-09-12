@@ -1,9 +1,10 @@
 //! 将不同的强类型配置分区转换为注册表可统一处理的内部表示。
 
-use crate::document::find_path;
 use crate::{ConfigError, ConfigSection};
 use std::any::{Any, TypeId};
 use std::marker::PhantomData;
+
+use super::document::find_path;
 
 pub(crate) trait SectionRegistration: Send + Sync {
     fn section(&self) -> &'static str;

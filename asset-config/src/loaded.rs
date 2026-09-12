@@ -1,7 +1,6 @@
 //! 已加载配置的强类型访问与 TOML 输出。
 
-use crate::document::insert_path;
-use crate::registration::StoredSection;
+use crate::registry::{StoredSection, insert_path};
 use crate::{ConfigError, ConfigSection};
 use std::any::TypeId;
 use std::collections::HashMap;

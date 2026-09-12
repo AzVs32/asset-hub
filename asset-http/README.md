@@ -27,7 +27,8 @@ write precondition and upload headers, including `Idempotency-Key`.
 Resource and Directory contracts deliberately use the same shape where their semantics overlap.
 Both expose stable UUIDs and monotonically increasing `revision` values. Directory creation accepts a stable `parent_id`;
 `GET`, `PATCH`, and `DELETE /directories/{id}` address the aggregate by UUID. Mutating Resource and
-Directory requests require `expected_revision` (streaming content replacement uses `If-Match`) and
+Directory requests require `expected_revision`; content-replacement upload creation carries the same
+revision precondition in its JSON body and
 return a coded revision conflict when another writer has advanced the aggregate. Path strings
 remain navigation and display data, not Directory identity.
 
@@ -43,10 +44,12 @@ precedence from independent transport fields.
 Resource and Directory deletion uses the direct `DELETE /resources/{id}` and
 `DELETE /directories/{id}` endpoints.
 
-`PUT /resources/{id}/content` accepts UTF-8 text, including characters split across transport
-chunks. Invalid UTF-8 or an incomplete final character returns `400`; the original content and
-revision remain unchanged, and temporary replacement content is cleaned up. The endpoint still
-requires the declared length, SHA-256 and revision precondition. Binary uploads use `/uploads`.
+Content replacement starts with `POST /resources/{id}/content/uploads`, declaring the Resource
+revision, total byte length, whole-content SHA-256 and optional MIME type. The returned session uses
+the same `PATCH /uploads/{id}` offset and per-chunk checksum protocol as a new Resource upload, then
+`POST /uploads/{id}/complete` schedules finalization. Replacement accepts arbitrary binary content,
+has no editing-size configuration, and advances the existing Resource revision only after checksum
+verification and atomic publication succeed.
 
 Directory downloads use ordinary ZIP entries for directories and resources up to 4 GiB. ZIP64 is
 enabled only for an individual resource that exceeds the ZIP32 size limit, keeping ordinary

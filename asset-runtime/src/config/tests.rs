@@ -33,9 +33,6 @@ fn asset_section_enforces_non_obvious_runtime_constraints() {
     let unsupported = load("[asset.database]\nbackend = \"postgresql\"").unwrap_err();
     assert!(unsupported.to_string().contains("postgresql"));
 
-    let zero_edit_limit = load("[asset.resource_edit]\nmax_text_bytes = 0").unwrap_err();
-    assert!(zero_edit_limit.to_string().contains("greater than zero"));
-
     for seconds in [0, 86_401, i64::MAX as u64] {
         let error = load(&format!(
             "[asset.idempotency]\nlease_duration_seconds = {seconds}"

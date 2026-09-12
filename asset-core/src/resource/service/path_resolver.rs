@@ -16,15 +16,6 @@ pub(super) fn resource_key(directory: &DirectoryPath, name: &str) -> Result<Stor
     super::super::storage_key_from_resource_path(directory, name).map_err(Into::into)
 }
 
-/// Internal staging key for a content replacement.
-pub(super) fn replacement_staging_key(
-    id: ResourceContentReplacementId,
-) -> Result<StorageKey, CoreError> {
-    Ok(StorageKey::new(format!(
-        "{RESERVED_BLOB_STORAGE_PREFIX}/uploads/replacement-{id}"
-    ))?)
-}
-
 /// Internal backup key for a content replacement.
 pub(super) fn replacement_backup_key(
     id: ResourceContentReplacementId,

@@ -1,7 +1,6 @@
 use super::*;
 
 pub(super) const DEFAULT_CONTENT_TYPE: &str = "application/octet-stream";
-const CONTENT_SHA256: header::HeaderName = header::HeaderName::from_static("content-sha256");
 
 /// 读取资源内容。
 #[utoipa::path(
@@ -26,101 +25,6 @@ pub(crate) async fn get_resource_content(
     let id = parse_resource_id(&id)?;
     let (response, _) = resource_content_response(&state, &headers, &id).await?;
     Ok(response)
-}
-
-/// 流式替换资源文本内容。
-#[utoipa::path(
-    put,
-    path = "/resources/{id}/content",
-    tag = "resources",
-    params(
-        ("id" = String, Path, description = "资源 ID"),
-        ("If-Match" = String, Header, description = "带双引号的资源 revision"),
-        ("Content-SHA256" = String, Header, description = "64 位小写十六进制 SHA-256"),
-        ("Content-Length" = u64, Header, description = "原始内容字节数"),
-        ("Idempotency-Key" = Option<String>, Header, description = "可选的幂等键，重复请求返回首次结果")
-    ),
-    request_body(
-        content = inline(BinaryContent),
-        content_type = "application/octet-stream",
-        description = "替换后的原始 UTF-8 文本字节"
-    ),
-    responses(
-        (status = 200, description = "资源内容已替换", body = ResourceResponse),
-        (status = 400, description = "请求头、资源状态无效或内容不是完整 UTF-8 文本", body = crate::dto::ErrorResponse),
-        (status = 404, description = "资源不存在", body = crate::dto::ErrorResponse),
-        (status = 409, description = "资源 revision、大小或摘要冲突", body = crate::dto::ErrorResponse),
-        (status = 413, description = "文本超过编辑大小上限", body = crate::dto::ErrorResponse),
-        (status = 500, description = "服务端错误", body = crate::dto::ErrorResponse)
-    )
-)]
-pub(crate) async fn replace_resource_content(
-    State(state): State<HttpState>,
-    Path(id): Path<String>,
-    headers: HeaderMap,
-    body: Body,
-) -> Result<Json<ResourceResponse>, HttpError> {
-    let id = parse_resource_id(&id)?;
-    let expected_size = required_header(&headers, header::CONTENT_LENGTH, "Content-Length")?
-        .parse::<u64>()
-        .map_err(|_| HttpError::bad_request("Content-Length must be an unsigned integer"))?;
-    let expected_checksum =
-        Checksum::sha256(required_header(&headers, CONTENT_SHA256, "Content-SHA256")?)?;
-    let expected_revision = parse_if_match(&headers)?;
-    let mut command = asset_core::resource::service::ReplaceResourceContent::new(
-        expected_size,
-        expected_checksum,
-        expected_revision,
-    );
-    if let Some(content_type) = headers.get(header::CONTENT_TYPE) {
-        command = command.with_mime_type(
-            content_type
-                .to_str()
-                .map_err(|_| HttpError::bad_request("Content-Type must be valid ASCII"))?,
-        );
-    }
-    if let Some(key) = parse_idempotency_key(&headers)? {
-        command = command.with_idempotency_key(key);
-    }
-    let Some(resource) = state
-        .content()
-        .replace(&id, command, body_stream(body))
-        .await?
-    else {
-        return Err(HttpError::not_found(format!("resource `{id}` not found")));
-    };
-    Ok(Json(
-        resource_snapshot_response(state.resources(), &resource).await?,
-    ))
-}
-
-fn body_stream(body: Body) -> BlobByteStream {
-    Box::pin(body.into_data_stream().map(|chunk| {
-        chunk.map_err(|error| CoreError::storage("http.resource_content_body", error))
-    }))
-}
-
-fn required_header<'a>(
-    headers: &'a HeaderMap,
-    name: header::HeaderName,
-    label: &str,
-) -> Result<&'a str, HttpError> {
-    headers
-        .get(name)
-        .ok_or_else(|| HttpError::bad_request(format!("missing {label} header")))?
-        .to_str()
-        .map_err(|_| HttpError::bad_request(format!("{label} must be valid ASCII")))
-}
-
-fn parse_if_match(headers: &HeaderMap) -> Result<u64, HttpError> {
-    let value = required_header(headers, header::IF_MATCH, "If-Match")?;
-    let revision = value
-        .strip_prefix('"')
-        .and_then(|value| value.strip_suffix('"'))
-        .ok_or_else(|| HttpError::bad_request("If-Match must contain a quoted revision"))?;
-    revision
-        .parse()
-        .map_err(|_| HttpError::bad_request("If-Match revision must be an unsigned integer"))
 }
 
 /// 下载资源内容。

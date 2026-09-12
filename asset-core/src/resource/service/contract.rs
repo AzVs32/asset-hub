@@ -52,7 +52,7 @@ impl CreateUpload {
 }
 
 #[derive(Debug, Clone)]
-pub struct ReplaceResourceContent {
+pub struct CreateContentReplacementUpload {
     pub(super) expected_size: u64,
     pub(super) expected_checksum: Checksum,
     pub(super) expected_revision: u64,
@@ -60,7 +60,7 @@ pub struct ReplaceResourceContent {
     pub(super) idempotency_key: Option<IdempotencyKey>,
 }
 
-impl ReplaceResourceContent {
+impl CreateContentReplacementUpload {
     pub fn new(expected_size: u64, expected_checksum: Checksum, expected_revision: u64) -> Self {
         Self {
             expected_size,

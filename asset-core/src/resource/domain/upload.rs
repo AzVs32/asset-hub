@@ -12,6 +12,29 @@ pub enum UploadStatus {
     Failed,
 }
 
+/// 上传会话最终化时要执行的资源操作。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UploadPurpose {
+    CreateResource,
+    ReplaceContent { expected_revision: u64 },
+}
+
+impl UploadPurpose {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::CreateResource => "create_resource",
+            Self::ReplaceContent { .. } => "replace_content",
+        }
+    }
+
+    pub fn expected_revision(self) -> Option<u64> {
+        match self {
+            Self::CreateResource => None,
+            Self::ReplaceContent { expected_revision } => Some(expected_revision),
+        }
+    }
+}
+
 impl UploadStatus {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -23,10 +46,11 @@ impl UploadStatus {
     }
 }
 
-/// 尚未发布为 Resource 的持久化上传会话。
+/// 持久化的分块上传会话，可用于创建 Resource 或替换已有 Resource 的内容。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UploadSession {
     id: UploadId,
+    purpose: UploadPurpose,
     resource_id: ResourceId,
     name: String,
     directory_id: DirectoryId,
@@ -44,6 +68,7 @@ pub struct UploadSession {
 #[derive(Debug, Clone)]
 pub struct UploadSessionSnapshot {
     pub id: UploadId,
+    pub purpose: UploadPurpose,
     pub resource_id: ResourceId,
     pub name: String,
     pub directory_id: DirectoryId,
@@ -60,7 +85,7 @@ pub struct UploadSessionSnapshot {
 
 impl UploadSession {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub fn for_resource_creation(
         name: impl Into<String>,
         directory_id: DirectoryId,
         mime_type: Option<String>,
@@ -70,7 +95,37 @@ impl UploadSession {
         let now = Utc::now();
         Self::rehydrate(UploadSessionSnapshot {
             id: UploadId::new(),
+            purpose: UploadPurpose::CreateResource,
             resource_id: ResourceId::new(),
+            name: name.into(),
+            directory_id,
+            mime_type,
+            expected_size,
+            offset: 0,
+            status: UploadStatus::Uploading,
+            expected_checksum,
+            actual_checksum: None,
+            failure: None,
+            created_at: now,
+            updated_at: now,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn for_content_replacement(
+        resource_id: ResourceId,
+        expected_revision: u64,
+        name: impl Into<String>,
+        directory_id: DirectoryId,
+        mime_type: Option<String>,
+        expected_size: u64,
+        expected_checksum: Checksum,
+    ) -> Result<Self, ResourceError> {
+        let now = Utc::now();
+        Self::rehydrate(UploadSessionSnapshot {
+            id: UploadId::new(),
+            purpose: UploadPurpose::ReplaceContent { expected_revision },
+            resource_id,
             name: name.into(),
             directory_id,
             mime_type,
@@ -96,6 +151,7 @@ impl UploadSession {
 
         Ok(Self {
             id: snapshot.id,
+            purpose: snapshot.purpose,
             resource_id: snapshot.resource_id,
             name: snapshot.name,
             directory_id: snapshot.directory_id,
@@ -113,6 +169,9 @@ impl UploadSession {
 
     pub fn id(&self) -> UploadId {
         self.id
+    }
+    pub fn purpose(&self) -> UploadPurpose {
+        self.purpose
     }
     pub fn resource_id(&self) -> ResourceId {
         self.resource_id
@@ -224,6 +283,17 @@ impl UploadSession {
 }
 
 fn validate_upload_state(snapshot: &UploadSessionSnapshot) -> Result<(), ResourceError> {
+    if matches!(
+        snapshot.purpose,
+        UploadPurpose::ReplaceContent {
+            expected_revision: 0
+        }
+    ) {
+        return Err(ResourceError::InvalidFormat {
+            field: "upload.expected_revision",
+            reason: "expected revision must be greater than zero",
+        });
+    }
     if snapshot.updated_at < snapshot.created_at {
         return Err(invalid_upload_state(
             "updated timestamp cannot precede creation",
@@ -303,7 +373,7 @@ mod tests {
     }
 
     fn session(expected_size: u64) -> UploadSession {
-        UploadSession::new(
+        UploadSession::for_resource_creation(
             "asset.bin",
             Directory::root().id(),
             None,
@@ -339,6 +409,7 @@ mod tests {
         let now = Utc::now();
         let snapshot = UploadSessionSnapshot {
             id: session.id(),
+            purpose: session.purpose(),
             resource_id: session.resource_id(),
             name: session.name().to_string(),
             directory_id: session.directory_id(),

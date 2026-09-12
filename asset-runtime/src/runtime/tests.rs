@@ -239,13 +239,13 @@ async fn spaced_resource_paths_survive_rename_and_are_physically_deleted() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
-// Prevent a chunk-local UTF-8 check, or validation after publication, from damaging text edits.
+// Content replacement must share the resumable upload path and accept arbitrary binary bytes.
 #[tokio::test]
-async fn text_replacement_validates_utf8_across_chunks_before_publication() {
-    use asset_core::resource::service::ReplaceResourceContent;
+async fn content_replacement_accepts_binary_chunks_and_updates_the_existing_resource() {
+    use asset_core::resource::service::CreateContentReplacementUpload;
     use sha2::{Digest, Sha256};
-    let (root, runtime, infrastructure) = recovery_environment("utf8-replacement").await;
-    let resource = Resource::builder("note.txt")
+    let (root, runtime, infrastructure) = recovery_environment("binary-replacement").await;
+    let resource = Resource::builder("asset.bin")
         .with_content(verified_content(3))
         .build()
         .unwrap();
@@ -254,74 +254,69 @@ async fn text_replacement_validates_utf8_across_chunks_before_publication() {
         .insert(&resource)
         .await
         .unwrap();
-    std::fs::write(root.join("note.txt"), b"old").unwrap();
-    // First reject a malformed continuation after a valid prefix, then an incomplete final code point.
-    for bytes in [b"prefix\xe4x".as_slice(), b"prefix\xf0\x9f".as_slice()] {
-        let checksum = Checksum::sha256(
-            Sha256::digest(bytes)
+    std::fs::write(root.join("asset.bin"), b"old").unwrap();
+
+    const FIRST: &[u8] = &[0, 255, 128];
+    const SECOND: &[u8] = &[1, 2, 254, 3];
+    let bytes = [FIRST, SECOND].concat();
+    let checksum_for = |value: &[u8]| {
+        Checksum::sha256(
+            Sha256::digest(value)
                 .iter()
                 .map(|byte| format!("{byte:02x}"))
                 .collect::<String>(),
         )
-        .unwrap();
-        let result = runtime
-            .content_service()
-            .replace(
-                &resource.id(),
-                ReplaceResourceContent::new(bytes.len() as u64, checksum, resource.revision()),
-                Box::pin(futures_util::stream::iter(
-                    bytes
-                        .chunks(1)
-                        .map(|chunk| Ok(Bytes::copy_from_slice(chunk)))
-                        .collect::<Vec<_>>(),
-                )),
-            )
-            .await;
-        assert!(matches!(result, Err(CoreError::InvalidOperation { .. })));
-        assert_eq!(
-            infrastructure
-                .resource_store()
-                .load(&resource.id())
-                .await
-                .unwrap(),
-            Some(resource.clone())
-        );
-        assert_eq!(std::fs::read(root.join("note.txt")).unwrap(), b"old");
-        assert!(
-            infrastructure
-                .content_replacement_store()
-                .list_pending()
-                .await
-                .unwrap()
-                .is_empty()
-        );
-        assert!(!root.join(".asset-hub/uploads").exists());
-    }
-    let bytes = "A中🙂éZ".as_bytes();
-    let checksum = Checksum::sha256(
-        Sha256::digest(bytes)
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>(),
-    )
-    .unwrap();
-    let updated = runtime
-        .content_service()
-        .replace(
+        .unwrap()
+    };
+    let uploads = runtime.upload_service();
+    let session = uploads
+        .create_content_replacement(
             &resource.id(),
-            ReplaceResourceContent::new(bytes.len() as u64, checksum, resource.revision()),
-            Box::pin(futures_util::stream::iter(
-                bytes
-                    .chunks(1)
-                    .map(|chunk| Ok(Bytes::copy_from_slice(chunk)))
-                    .collect::<Vec<_>>(),
-            )),
+            CreateContentReplacementUpload::new(
+                bytes.len() as u64,
+                checksum_for(&bytes),
+                resource.revision(),
+            )
+            .with_mime_type("application/octet-stream"),
         )
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(updated.revision(), resource.revision() + 1);
-    assert_eq!(std::fs::read(root.join("note.txt")).unwrap(), bytes);
+    uploads
+        .append(&session.id(), 0, checksum_for(FIRST), upload_stream(FIRST))
+        .await
+        .unwrap();
+    uploads
+        .append(
+            &session.id(),
+            FIRST.len() as u64,
+            checksum_for(SECOND),
+            upload_stream(SECOND),
+        )
+        .await
+        .unwrap();
+    let (_, dispatch) = uploads.request_finalization(&session.id()).await.unwrap();
+    assert!(dispatch);
+    runtime
+        .upload_finalization_dispatcher()
+        .dispatch(session.id())
+        .unwrap();
+
+    let mut updated = None;
+    for _ in 0..100 {
+        if uploads.status(&session.id()).await.unwrap().status() == UploadStatus::Completed {
+            updated = runtime
+                .resource_service()
+                .get(&resource.id())
+                .await
+                .unwrap();
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let updated = updated.expect("replacement upload did not finalize");
+    assert_eq!(updated.resource().revision(), resource.revision() + 1);
+    assert_eq!(std::fs::read(root.join("asset.bin")).unwrap(), bytes);
     drop(infrastructure);
     drop(runtime);
     std::fs::remove_dir_all(root).unwrap();

@@ -120,9 +120,24 @@ export interface paths {
         };
         /** 读取资源内容。 */
         get: operations["get_resource_content"];
-        /** 流式替换资源文本内容。 */
-        put: operations["replace_resource_content"];
+        put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/resources/{id}/content/uploads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["create_content_replacement_upload"];
         delete?: never;
         options?: never;
         head?: never;
@@ -209,6 +224,16 @@ export interface components {
             kind: string;
             /** @description 校验和值。 */
             value: string;
+        };
+        /** @description 为已有资源创建分块内容替换会话。 */
+        CreateContentReplacementUploadRequest: {
+            /** Format: int64 */
+            expected_revision: number;
+            /** @description 客户端对完整替换内容增量计算出的 SHA-256。 */
+            expected_sha256: string;
+            mime_type?: string | null;
+            /** Format: int64 */
+            size: number;
         };
         /** @description 创建逻辑目录请求。 */
         CreateDirectoryRequest: {
@@ -381,7 +406,7 @@ export interface components {
             id: string;
             /** Format: int64 */
             offset: number;
-            /** @description finalization 完成后创建的 Resource ID。 */
+            /** @description finalization 完成后创建或更新的 Resource ID。 */
             resource_id?: string | null;
             /** Format: int64 */
             size: number;
@@ -990,42 +1015,35 @@ export interface operations {
             };
         };
     };
-    replace_resource_content: {
+    create_content_replacement_upload: {
         parameters: {
             query?: never;
-            header: {
-                /** @description 带双引号的资源 revision */
-                "If-Match": string;
-                /** @description 64 位小写十六进制 SHA-256 */
-                "Content-SHA256": string;
-                /** @description 原始内容字节数 */
-                "Content-Length": number;
-                /** @description 可选的幂等键，重复请求返回首次结果 */
+            header?: {
+                /** @description 可选的幂等键，重复请求返回首次创建的会话 */
                 "Idempotency-Key"?: string | null;
             };
             path: {
-                /** @description 资源 ID */
+                /** @description 要替换内容的资源 ID */
                 id: string;
             };
             cookie?: never;
         };
-        /** @description 替换后的原始 UTF-8 文本字节 */
         requestBody: {
             content: {
-                "application/octet-stream": string;
+                "application/json": components["schemas"]["CreateContentReplacementUploadRequest"];
             };
         };
         responses: {
-            /** @description 资源内容已替换 */
-            200: {
+            /** @description 内容替换上传会话已创建 */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ResourceResponse"];
+                    "application/json": components["schemas"]["UploadSessionResponse"];
                 };
             };
-            /** @description 请求头、资源状态无效或内容不是完整 UTF-8 文本 */
+            /** @description 请求参数无效 */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -1043,26 +1061,8 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description 资源 revision、大小或摘要冲突 */
+            /** @description 资源 revision 冲突或资源没有可替换内容 */
             409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description 文本超过编辑大小上限 */
-            413: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description 服务端错误 */
-            500: {
                 headers: {
                     [name: string]: unknown;
                 };

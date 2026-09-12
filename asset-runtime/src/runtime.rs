@@ -6,12 +6,9 @@ use asset_core::CoreError;
 use asset_core::{
     directory::service::{DirectoryRecoveryService, DirectoryService, DirectoryServices},
     idempotency::service::IdempotencyService,
-    resource::{
-        domain::ResourceContentEditPolicy,
-        service::{
-            ContentRecoveryService, ContentService, ResourceRecoveryService, ResourceService,
-            ResourceServices, StorageHealthService, StorageMaintenanceService, UploadService,
-        },
+    resource::service::{
+        ContentRecoveryService, ContentService, ResourceRecoveryService, ResourceService,
+        ResourceServices, StorageHealthService, StorageMaintenanceService, UploadService,
     },
     workflow::service::AssetWorkflowService,
 };
@@ -71,14 +68,9 @@ impl AssetRuntime {
         let AssetConfig {
             database,
             blob,
-            resource_edit,
             idempotency,
         } = config;
         let infrastructure = AssetInfrastructure::new(database, blob).await?;
-        let resource_content_edit_policy = Arc::new(
-            ResourceContentEditPolicy::new(resource_edit.max_text_bytes)
-                .map_err(|error| CoreError::configuration(error.to_string()))?,
-        );
 
         let directory_services = DirectoryServices::new(
             infrastructure.directory_store(),
@@ -121,7 +113,6 @@ impl AssetRuntime {
             directory_import_service,
             infrastructure.upload_session_store(),
             infrastructure.content_replacement_store(),
-            resource_content_edit_policy,
             idempotency_service.clone(),
         );
         let resource_service = resource_services.resource_service();

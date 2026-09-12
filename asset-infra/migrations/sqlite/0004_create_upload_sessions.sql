@@ -1,9 +1,13 @@
--- 上传会话：在 Resource 创建前持久化目标元数据和已接收偏移，支持服务重启后继续分片上传。
+-- 上传会话：持久化新建或替换目标及已接收偏移，支持服务重启后继续分片上传和最终化。
 CREATE TABLE upload_sessions (
     -- UUID v7 上传会话标识。
     id TEXT PRIMARY KEY NOT NULL,
-    -- finalization 开始前预先分配的 Resource ID；Resource 记录仅在内容发布成功后创建。
-    resource_id TEXT NOT NULL UNIQUE,
+    -- create_resource 或 replace_content，决定最终化时创建资源还是替换已有资源内容。
+    purpose TEXT NOT NULL,
+    -- 新建时为预分配的 Resource ID；替换时为已有 Resource ID。
+    resource_id TEXT NOT NULL,
+    -- 替换内容时要求的 Resource revision；新建资源时为空。
+    expected_revision INTEGER,
     -- Optional durable link to the idempotent create-upload request that created this session.
     idempotency_key TEXT UNIQUE,
     -- 最终 Resource 的文件名。
@@ -33,6 +37,11 @@ CREATE TABLE upload_sessions (
     CHECK (expected_size >= 0),
     CHECK (offset >= 0 AND offset <= expected_size),
     CHECK (status IN ('uploading', 'finalizing', 'completed', 'failed')),
+    CHECK (purpose IN ('create_resource', 'replace_content')),
+    CHECK (
+        (purpose = 'create_resource' AND expected_revision IS NULL)
+        OR (purpose = 'replace_content' AND expected_revision > 0)
+    ),
     -- SHA-256 使用 64 位小写十六进制；精确格式同时由领域对象校验。
     CHECK (length(expected_checksum_value) = 64),
     CHECK (actual_checksum_value IS NULL OR length(actual_checksum_value) = 64),
