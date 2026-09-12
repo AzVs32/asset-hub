@@ -732,6 +732,82 @@ async fn upload_resumes_and_recovers_after_restart() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+// Completed upload history is diagnostic state, not ownership of the target Directory.
+#[tokio::test]
+async fn completed_upload_does_not_prevent_deleting_an_empty_directory() {
+    let (root, runtime, infrastructure) = recovery_environment("upload-directory-lifecycle").await;
+    let directory = runtime
+        .directory_service()
+        .create(&Directory::root().id(), "temporary")
+        .await
+        .unwrap();
+    let uploads = runtime.upload_service();
+    let session = uploads
+        .create(asset_core::resource::service::CreateUpload::new(
+            "empty.bin",
+            directory.id(),
+            0,
+            Checksum::sha256("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+                .unwrap(),
+        ))
+        .await
+        .unwrap();
+    let (_, dispatch) = uploads.request_finalization(&session.id()).await.unwrap();
+    assert!(dispatch);
+    runtime
+        .upload_finalization_dispatcher()
+        .dispatch(session.id())
+        .unwrap();
+
+    let mut completed = None;
+    for _ in 0..100 {
+        let status = uploads.status(&session.id()).await.unwrap();
+        if status.status() == UploadStatus::Completed {
+            completed = Some(status);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let completed = completed.expect("empty upload did not finalize");
+    let resource = runtime
+        .resource_service()
+        .get(&completed.resource_id())
+        .await
+        .unwrap()
+        .unwrap()
+        .into_resource();
+    assert!(
+        runtime
+            .resource_service()
+            .delete(&resource.id(), resource.revision())
+            .await
+            .unwrap()
+    );
+    let current_directory = runtime
+        .directory_service()
+        .find_by_id(&directory.id())
+        .await
+        .unwrap();
+    assert!(
+        runtime
+            .directory_service()
+            .delete(
+                &current_directory.id(),
+                current_directory.directory().revision(),
+            )
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        uploads.status(&session.id()).await.unwrap().status(),
+        UploadStatus::Completed
+    );
+
+    drop(infrastructure);
+    drop(runtime);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[tokio::test]
 async fn content_replacement_recovers_after_post_publish_crash_and_is_idempotent() {
     let (root, runtime, infrastructure) = recovery_environment("content-recovery-publish").await;

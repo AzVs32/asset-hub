@@ -118,11 +118,12 @@ pub(crate) async fn upload_status(
     request_body(
         content = inline(BinaryContent),
         content_type = "application/octet-stream",
-        description = "从 Upload-Offset 开始的原始文件分片"
+        description = "从 Upload-Offset 开始的原始文件分片；单个分片最多 8 MiB"
     ),
     responses(
         (status = 204, description = "分片已持久化"),
-        (status = 409, description = "上传偏移或分片摘要冲突", body = crate::dto::ErrorResponse)
+        (status = 409, description = "上传偏移或分片摘要冲突", body = crate::dto::ErrorResponse),
+        (status = 413, description = "分片超过固定的 8 MiB 上限", body = crate::dto::ErrorResponse)
     )
 )]
 pub(crate) async fn append_upload(

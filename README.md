@@ -44,7 +44,8 @@ directories, upload resources, edit resource names and locations, and download o
 the required local data automatically.
 
 Resumable binary content replacement is available through the HTTP upload API; the Web interface
-currently edits resource metadata only.
+currently edits resource metadata only. New resources and replacement content use sequential
+8 MiB-or-smaller chunks without imposing a total resource-size limit.
 
 ## Managing assets locally
 

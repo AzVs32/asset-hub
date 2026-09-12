@@ -4,8 +4,8 @@ use super::content::{
     stream_with_checksum_tracking,
 };
 use super::{
-    ContentService, CreateContentReplacementUpload, CreateUpload, StorageKeyLocks, UploadLocks,
-    path_resolver,
+    ContentService, CreateContentReplacementUpload, CreateUpload, MAX_UPLOAD_CHUNK_SIZE,
+    StorageKeyLocks, UploadLocks, path_resolver,
 };
 use crate::CoreError;
 use crate::{
@@ -812,6 +812,40 @@ fn limit_stream(data: BlobByteStream, remaining: u64) -> BlobByteStream {
                 "upload chunk exceeds the declared upload size",
             ));
         }
+        if received > MAX_UPLOAD_CHUNK_SIZE {
+            return Err(CoreError::limit_exceeded(
+                "upload chunk",
+                MAX_UPLOAD_CHUNK_SIZE,
+                received,
+            ));
+        }
         Ok(chunk)
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+    use futures_util::{StreamExt, stream};
+
+    #[tokio::test]
+    async fn rejects_a_chunk_larger_than_the_fixed_protocol_limit() {
+        let data: BlobByteStream = Box::pin(stream::iter([
+            Ok(Bytes::from(vec![0; MAX_UPLOAD_CHUNK_SIZE as usize])),
+            Ok(Bytes::from_static(&[0])),
+        ]));
+        let mut limited = limit_stream(data, MAX_UPLOAD_CHUNK_SIZE + 1);
+
+        assert!(limited.next().await.unwrap().is_ok());
+        let error = limited.next().await.unwrap().unwrap_err();
+        assert!(matches!(
+            error,
+            CoreError::LimitExceeded {
+                resource: "upload chunk",
+                limit: MAX_UPLOAD_CHUNK_SIZE,
+                actual
+            } if actual == MAX_UPLOAD_CHUNK_SIZE + 1
+        ));
+    }
 }

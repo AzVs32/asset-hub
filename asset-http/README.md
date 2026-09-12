@@ -49,7 +49,9 @@ revision, total byte length, whole-content SHA-256 and optional MIME type. The r
 the same `PATCH /uploads/{id}` offset and per-chunk checksum protocol as a new Resource upload, then
 `POST /uploads/{id}/complete` schedules finalization. Replacement accepts arbitrary binary content,
 has no editing-size configuration, and advances the existing Resource revision only after checksum
-verification and atomic publication succeed.
+verification and atomic publication succeed. `PATCH /uploads/{id}` accepts sequential chunks of at
+most 8 MiB. The fixed per-request limit bounds temporary chunk storage; it is not configurable and
+does not limit the complete resource size.
 
 Directory downloads use ordinary ZIP entries for directories and resources up to 4 GiB. ZIP64 is
 enabled only for an individual resource that exceeds the ZIP32 size limit, keeping ordinary

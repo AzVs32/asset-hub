@@ -13,10 +13,10 @@ use crate::{
         port::{ResourceContentReplacementStore, ResourceReadModel, ResourceStore},
         query::LocatedResource,
     },
-    storage::StorageKey,
     storage::port::{
         BlobByteStream, ContentObjectStore, ContentReader, ContentStagingStore, StagedBlob,
     },
+    storage::{StorageKey, StorageMutationCoordinator},
 };
 use chrono::{DateTime, Utc};
 use futures_util::StreamExt;
@@ -52,6 +52,7 @@ pub struct ContentService {
     objects: Arc<dyn ContentObjectStore>,
     content_replacements: Arc<dyn ResourceContentReplacementStore>,
     storage_key_locks: Arc<StorageKeyLocks>,
+    storage_mutations: StorageMutationCoordinator,
 }
 
 impl ContentService {
@@ -64,6 +65,7 @@ impl ContentService {
         objects: Arc<dyn ContentObjectStore>,
         content_replacements: Arc<dyn ResourceContentReplacementStore>,
         storage_key_locks: Arc<StorageKeyLocks>,
+        storage_mutations: StorageMutationCoordinator,
     ) -> Self {
         Self {
             read_model,
@@ -73,6 +75,7 @@ impl ContentService {
             objects,
             content_replacements,
             storage_key_locks,
+            storage_mutations,
         }
     }
 
@@ -168,6 +171,9 @@ impl ContentService {
         backup_key: StorageKey,
         content: ResourceContent,
     ) -> Result<(), CoreError> {
+        // 目录搬迁会改变 Resource ID 对应的可见 Blob 路径；在重新确认路径到完成发布
+        // 期间阻止目录搬迁，避免把新内容发布回已经失效的旧路径。
+        let _storage_mutation_guard = self.storage_mutations.enter().await;
         let expected_revision = resource.revision();
         if let Err(error) = resource.attach_content(content) {
             let _ = self.staging.discard_staged(&staged).await;
@@ -264,6 +270,7 @@ impl ContentService {
         let replacements = self.content_replacements.list_pending().await?;
         let count = replacements.len();
         for replacement in replacements {
+            let _storage_mutation_guard = self.storage_mutations.enter().await;
             let _storage_guard = self.storage_key_locks.lock(replacement.target_key()).await;
             self.recover_replacement(&replacement).await?;
         }

@@ -30,7 +30,10 @@ The storage scanner reports physical directories; Core imports those observed pa
 aggregates.
 
 The SQLite upload-session table persists upload state, target purpose, replacement revision
-preconditions, and idempotency linkage for both resource creation and content replacement.
+preconditions, and idempotency linkage for both resource creation and content replacement. Its
+`directory_id` is an operation target or historical snapshot, not a foreign-key owner of the
+Directory lifecycle; terminal upload history therefore cannot prevent deletion of an otherwise
+empty Directory.
 
 Local Blob operations preserve storage-key spelling, including leading and trailing spaces, for
 existence checks as well as reads, moves and deletes. Linux, Android and Apple targets use an

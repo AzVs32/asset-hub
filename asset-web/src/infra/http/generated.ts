@@ -1253,7 +1253,7 @@ export interface operations {
             };
             cookie?: never;
         };
-        /** @description 从 Upload-Offset 开始的原始文件分片 */
+        /** @description 从 Upload-Offset 开始的原始文件分片；单个分片最多 8 MiB */
         requestBody: {
             content: {
                 "application/octet-stream": string;
@@ -1269,6 +1269,15 @@ export interface operations {
             };
             /** @description 上传偏移或分片摘要冲突 */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 分片超过固定的 8 MiB 上限 */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };

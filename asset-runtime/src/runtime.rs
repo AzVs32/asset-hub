@@ -10,6 +10,7 @@ use asset_core::{
         ContentRecoveryService, ContentService, ResourceRecoveryService, ResourceService,
         ResourceServices, StorageHealthService, StorageMaintenanceService, UploadService,
     },
+    storage::StorageMutationCoordinator,
     workflow::service::AssetWorkflowService,
 };
 use asset_infra::storage::LocalStorageSync;
@@ -71,12 +72,14 @@ impl AssetRuntime {
             idempotency,
         } = config;
         let infrastructure = AssetInfrastructure::new(database, blob).await?;
+        let storage_mutations = StorageMutationCoordinator::new();
 
         let directory_services = DirectoryServices::new(
             infrastructure.directory_store(),
             infrastructure.directory_index(),
             infrastructure.directory_storage(),
             infrastructure.directory_relocation_store(),
+            storage_mutations.clone(),
         );
         let directory_service = directory_services.directory_service();
         let directory_maintenance_service = directory_services.maintenance_service();
@@ -114,6 +117,7 @@ impl AssetRuntime {
             infrastructure.upload_session_store(),
             infrastructure.content_replacement_store(),
             idempotency_service.clone(),
+            storage_mutations,
         );
         let resource_service = resource_services.resource_service();
         let content_service = resource_services.content_service();

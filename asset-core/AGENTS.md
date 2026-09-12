@@ -83,7 +83,8 @@ ports. Follow these boundaries:
 - Use half-open `[start, end)` byte ranges.
 - Use the durable `UploadSession` state machine for both new resources and replacement content.
   Replacement uploads accept arbitrary binary bytes and share the offset and per-chunk checksum
-  protocol with ordinary uploads.
+  protocol with ordinary uploads. A single chunk is limited by the fixed protocol constant
+  `MAX_UPLOAD_CHUNK_SIZE` (8 MiB); this is not a total Resource-size limit or configuration value.
 - Preserve whole-content size and checksum validation, Resource revision checks, atomic publication,
   and durable replacement recovery before advancing the existing Resource revision.
 
@@ -91,6 +92,9 @@ ports. Follow these boundaries:
 
 - Preserve durable intents, revision-checked updates, and recovery for Resource and Directory
   relocation. Do not describe them as one transaction across aggregates and filesystem storage.
+- Directory relocation and Resource-content publication must share the composition-root-provided
+  `StorageMutationCoordinator` so a resolved Resource Blob path remains stable through publication
+  and replacement recovery.
 - Treat an empty-directory precheck as advisory. The conditional repository deletion must check
   both emptiness and revision before authorizing the database deletion.
 - Preserve per-key locking and compare-and-swap updates during storage reconciliation. Reconciliation

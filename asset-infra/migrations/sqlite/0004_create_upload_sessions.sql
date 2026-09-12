@@ -13,6 +13,7 @@ CREATE TABLE upload_sessions (
     -- 最终 Resource 的文件名。
     name TEXT NOT NULL,
     -- 目标目录稳定身份；最终 StorageKey 在发布时由当前目录投影解析。
+    -- 这是操作快照而非生命周期所有权，因此不设置外键，避免终态会话阻止空目录删除。
     directory_id TEXT NOT NULL,
     -- 客户端声明的 MIME 类型；未提供时允许为空。
     mime_type TEXT,
@@ -53,8 +54,7 @@ CREATE TABLE upload_sessions (
             AND actual_checksum_value = expected_checksum_value
         )
     ),
-    CHECK (status != 'failed' OR failure IS NOT NULL),
-    FOREIGN KEY (directory_id) REFERENCES directories(id) ON DELETE RESTRICT
+    CHECK (status != 'failed' OR failure IS NOT NULL)
 );
 
 -- 加速服务启动时恢复尚未完成的后台 finalization。

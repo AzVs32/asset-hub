@@ -21,6 +21,11 @@ Construction is deterministic:
 4. schedule pending upload finalizations through the Runtime-owned supervisor;
 5. start optional storage synchronization only when the application surface requests it.
 
+Runtime creates one process-wide `StorageMutationCoordinator` and injects it into both Directory
+and Resource service bundles. Directory relocation and Resource-content publication hold this
+shared coordination boundary across their filesystem and database steps, so publication cannot use
+a directory path that is being relocated concurrently.
+
 Runtime startup obtains Core's explicit recovery and upload-finalization management handles from
 the assembled service bundles. Ordinary application surfaces continue to receive only the business
 services. The health endpoint receives a narrow Blob readiness handle, while trusted local

@@ -23,7 +23,7 @@ use crate::{
         },
         query::LocatedDirectory,
     },
-    storage::port::DirectoryStorage,
+    storage::{StorageMutationCoordinator, port::DirectoryStorage},
 };
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -42,10 +42,12 @@ struct DirectoryKernel {
     storage: Arc<dyn DirectoryStorage>,
     relocations: Arc<dyn DirectoryRelocationStore>,
     mutation_lock: Arc<Mutex<()>>,
+    storage_mutations: StorageMutationCoordinator,
     index_service: DirectoryIndexService,
 }
 
-/// 组合时间绑定，保证所有目录服务共享一个变更边界。
+/// 组合时间绑定，保证所有目录服务共享目录变更边界，并接入跨 Resource/Directory 的
+/// 物理存储变更协调器。
 pub struct DirectoryServices {
     directory: DirectoryService,
     maintenance: DirectoryMaintenanceService,
@@ -60,6 +62,7 @@ impl DirectoryServices {
         index: Arc<dyn DirectoryProjection>,
         storage: Arc<dyn DirectoryStorage>,
         relocations: Arc<dyn DirectoryRelocationStore>,
+        storage_mutations: StorageMutationCoordinator,
     ) -> Self {
         let read_model: Arc<dyn DirectoryReadModel> = index.clone();
         let index_writer: Arc<dyn DirectoryIndex> = index;
@@ -70,6 +73,7 @@ impl DirectoryServices {
             storage,
             relocations,
             mutation_lock: Arc::new(Mutex::new(())),
+            storage_mutations,
             index_service: index_service.clone(),
         });
         let directory = DirectoryService {
