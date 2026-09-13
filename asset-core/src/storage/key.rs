@@ -1,25 +1,25 @@
-//! Canonical object-storage key values and internal namespace ownership.
-
 use crate::error::StorageError;
 use serde::{Deserialize, Deserializer, Serialize};
 
-/// Blob storage namespace reserved for Asset Hub internals.
-///
-/// Resource-visible keys must not use this prefix. Storage adapters and scanners use the same
-/// value to exclude staging and recovery artifacts from user-visible scans.
-pub const RESERVED_BLOB_STORAGE_PREFIX: &str = ".asset-hub";
+const INTERNAL_BLOB_STORAGE_PREFIX: &str = ".asset-hub";
 
 const MAX_STORAGE_KEY_LEN: usize = 1024;
 
-/// A validated relative object-storage key.
-///
-/// This value is deliberately independent of Resource: Blob ports, adapters, and scanners all
-/// use it without importing a business aggregate.
+pub(crate) fn is_internal(path: &str) -> bool {
+    path == INTERNAL_BLOB_STORAGE_PREFIX
+        || path
+            .strip_prefix(INTERNAL_BLOB_STORAGE_PREFIX)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+/// 一个经过验证的相对对象存储键。
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct StorageKey(String);
 
 impl StorageKey {
-    /// Create and validate a storage key without normalizing its spelling.
+    /// 此构造函数接受用户可见键和内部键；
+    /// 在派生用户可见的资源键时，请使用[`Self::visible`]；
+    /// 在创建内部键时，请使用[`Self::internal`]。
     pub fn new(value: impl Into<String>) -> Result<Self, StorageError> {
         let value = value.into();
         if value.trim().is_empty() {
@@ -57,6 +57,50 @@ impl StorageKey {
     /// Return the original validated key spelling.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+    /// Create a key for user-visible Resource content.
+    pub fn visible(value: impl Into<String>) -> Result<Self, StorageError> {
+        let key = Self::new(value)?;
+        if key.is_internal() {
+            return Err(StorageError::InvalidFormat {
+                field: "storage.key",
+                reason: "internal storage keys are not user-visible",
+            });
+        }
+        Ok(key)
+    }
+
+    /// Create a key below the internal Blob namespace.
+    pub fn internal(suffix: impl AsRef<str>) -> Result<Self, StorageError> {
+        let suffix = Self::new(suffix.as_ref())?;
+        if suffix.is_internal() {
+            return Err(StorageError::InvalidFormat {
+                field: "storage.key",
+                reason: "an internal key suffix must not include the internal namespace",
+            });
+        }
+        Self::new(format!(
+            "{INTERNAL_BLOB_STORAGE_PREFIX}/{}",
+            suffix.as_str()
+        ))
+    }
+
+    /// Return the root key of the internal Blob namespace.
+    pub fn internal_root() -> Self {
+        Self(INTERNAL_BLOB_STORAGE_PREFIX.to_owned())
+    }
+
+    /// 是否属于内部命名空间。
+    pub fn is_internal(&self) -> bool {
+        is_internal(self.as_str())
+    }
+
+    /// Whether this key has the shape accepted by the staging-storage port.
+    pub fn is_upload_staging(&self) -> bool {
+        self.as_str()
+            .strip_prefix(INTERNAL_BLOB_STORAGE_PREFIX)
+            .and_then(|suffix| suffix.strip_prefix("/uploads/"))
+            .is_some_and(|suffix| !suffix.is_empty() && !suffix.contains('/'))
     }
 }
 
@@ -137,5 +181,22 @@ mod tests {
             r#""assets/image.png""#
         );
         assert!(serde_json::from_str::<StorageKey>(r#""/absolute/path""#).is_err());
+    }
+
+    #[test]
+    fn separates_user_visible_and_internal_keys() {
+        let internal = StorageKey::internal("uploads/session").unwrap();
+
+        assert_eq!(internal.as_str(), ".asset-hub/uploads/session");
+        assert!(internal.is_internal());
+        assert!(internal.is_upload_staging());
+        assert!(StorageKey::internal("/uploads/session").is_err());
+        assert!(
+            !StorageKey::internal("content-backups/session")
+                .unwrap()
+                .is_upload_staging()
+        );
+        assert!(StorageKey::visible(".asset-hub/uploads/session").is_err());
+        assert!(StorageKey::internal(".asset-hub/uploads/session").is_err());
     }
 }

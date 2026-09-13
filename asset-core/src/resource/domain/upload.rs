@@ -2,7 +2,7 @@ use super::{Checksum, DirectoryId, Resource, ResourceContent, ResourceId};
 use crate::ResourceError;
 use chrono::{DateTime, Utc};
 
-crate::gen_id_uuid_v7!(UploadId, UploadIdSlot);
+crate::gen_id_uuid_v7!(UploadId);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UploadStatus {

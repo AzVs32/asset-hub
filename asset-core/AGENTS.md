@@ -61,14 +61,14 @@ ports. Follow these boundaries:
 ## Identity and storage rules
 
 - Keep root-directory semantics on the `Directory` aggregate: `Directory::root()` assigns
-  `DirectoryIdSlot::Slot0`; `Directory::is_root()` identifies it. `DirectoryId` exposes generic
-  reserved-slot operations, not root-specific behavior.
+  `DirectoryIdSlot::Slot0`; `Directory::is_root()` identifies it. `DirectoryId` keeps generic
+  crate-internal reserved-slot operations, not root-specific behavior.
 - Keep stable Directory IDs on aggregates and paths in rebuildable query projections.
   `LocatedDirectory` pairs a `Directory` with its current `DirectoryPath`; `LocatedResource` pairs a
   `Resource` with its current Directory path. Do not persist full paths as aggregate state or
   duplicate identity in these projections.
-- Keep `StorageKey` and `RESERVED_BLOB_STORAGE_PREFIX` in `storage`. Blob ports and adapters use
-  those values directly, without depending on `resource::domain`.
+- Keep `StorageKey` and the internal Blob-namespace API in `storage`. Blob ports and adapters use
+  that API directly, without depending on `resource::domain`.
 - Keep conversion from a resolved Directory path plus Resource name to a visible Blob key inside
   Resource. Keep physical directory existence, creation, moves, and empty deletion behind
   `DirectoryStorage`.

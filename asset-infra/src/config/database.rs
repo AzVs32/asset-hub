@@ -1,10 +1,11 @@
 //! 数据库适配器配置。
 
+use asset_core::storage::StorageKey;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 const DEFAULT_SQLITE_MAX_CONNECTIONS: u32 = 5;
-const SQLITE_DATABASE_RELATIVE_PATH: &str = ".asset-hub/asset-hub.sqlite";
+const SQLITE_DATABASE_FILE_NAME: &str = "asset-hub.sqlite";
 
 /// 数据库适配器配置。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,7 +56,11 @@ impl DatabaseConfig {
 
     pub(crate) fn sqlite_path_in(&self, data_root: &Path) -> PathBuf {
         match self.backend {
-            DatabaseBackend::Sqlite => data_root.join(SQLITE_DATABASE_RELATIVE_PATH),
+            DatabaseBackend::Sqlite => data_root.join(
+                StorageKey::internal(SQLITE_DATABASE_FILE_NAME)
+                    .expect("the built-in SQLite key must be valid")
+                    .as_str(),
+            ),
         }
     }
 }

@@ -1,10 +1,10 @@
 use asset_core::CoreError;
 use asset_core::{
     directory::domain::DirectoryPath,
+    storage::StorageKey,
     storage::port::{
         ScannedBlob, ScannedStorageEntry, StoragePrefix, StorageScanStream, StorageScanner,
     },
-    storage::{RESERVED_BLOB_STORAGE_PREFIX, StorageKey},
 };
 use chrono::{DateTime, Utc};
 use std::path::{Component, Path, PathBuf};
@@ -57,11 +57,7 @@ impl StorageScanner for FileSystemScanner {
 }
 
 fn inspect_file(root: &Path, key: &StorageKey) -> Result<Option<ScannedBlob>, CoreError> {
-    if key.as_str() == RESERVED_BLOB_STORAGE_PREFIX
-        || key
-            .as_str()
-            .starts_with(&format!("{RESERVED_BLOB_STORAGE_PREFIX}/"))
-    {
+    if key.is_internal() {
         return Ok(None);
     }
 
@@ -99,7 +95,7 @@ fn visit_storage_entries(
     prefix: &StoragePrefix,
     emit: &mut impl FnMut(ScannedStorageEntry) -> bool,
 ) -> Result<(), CoreError> {
-    if prefix_in_reserved_namespace(prefix) {
+    if prefix_is_internal(prefix) {
         return Ok(());
     }
 
@@ -136,7 +132,12 @@ fn visit_directory(
         std::fs::read_dir(current).map_err(|error| CoreError::storage("scan.read_dir", error))?
     {
         let entry = entry.map_err(|error| CoreError::storage("scan.read_dir_entry", error))?;
-        if current == root && entry.file_name().to_str() == Some(RESERVED_BLOB_STORAGE_PREFIX) {
+        if current == root
+            && entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name == StorageKey::internal_root().as_str())
+        {
             continue;
         }
         let path = entry.path();
@@ -196,11 +197,8 @@ fn relative_storage_path(root: &Path, path: &Path) -> Result<String, CoreError> 
         .map(|parts| parts.join("/"))
 }
 
-fn prefix_in_reserved_namespace(prefix: &StoragePrefix) -> bool {
-    prefix.as_str() == RESERVED_BLOB_STORAGE_PREFIX
-        || prefix
-            .as_str()
-            .starts_with(&format!("{RESERVED_BLOB_STORAGE_PREFIX}/"))
+fn prefix_is_internal(prefix: &StoragePrefix) -> bool {
+    prefix.is_internal()
 }
 
 fn content_type_from_path(path: &Path) -> Option<&'static str> {

@@ -29,8 +29,8 @@ async fn pending_replacement_roundtrips_and_is_unique_per_resource() {
         resource.id(),
         resource.revision(),
         StorageKey::new("note.txt").unwrap(),
-        StorageKey::new(".asset-hub/uploads/replacement-test").unwrap(),
-        StorageKey::new(".asset-hub/content-backups/replacement-test").unwrap(),
+        StorageKey::internal("uploads/replacement-test").unwrap(),
+        StorageKey::internal("content-backups/replacement-test").unwrap(),
         content,
     )
     .unwrap();
@@ -65,8 +65,8 @@ async fn invalid_persisted_replacement_content_is_rejected() {
         resource.id(),
         resource.revision(),
         StorageKey::new("note.txt").unwrap(),
-        StorageKey::new(".asset-hub/uploads/invalid-replacement").unwrap(),
-        StorageKey::new(".asset-hub/content-backups/invalid-replacement").unwrap(),
+        StorageKey::internal("uploads/invalid-replacement").unwrap(),
+        StorageKey::internal("content-backups/invalid-replacement").unwrap(),
         content,
     )
     .unwrap();

@@ -264,13 +264,14 @@ fn storage_key_from_path(root: &Path, path: &Path) -> Result<Option<StorageKey>,
         Err(_) => return Ok(None),
     };
     let mut parts = Vec::new();
+    let internal_root = StorageKey::internal_root();
     for component in relative.components() {
         match component {
             Component::Normal(part) => {
                 let part = part.to_str().ok_or_else(|| {
                     CoreError::configuration("local storage path must be valid UTF-8")
                 })?;
-                if parts.is_empty() && part == asset_core::storage::RESERVED_BLOB_STORAGE_PREFIX {
+                if parts.is_empty() && part == internal_root.as_str() {
                     return Ok(None);
                 }
                 parts.push(part);
@@ -393,7 +394,11 @@ mod tests {
             Some(StorageKey::new("docs/readme.md").unwrap())
         );
         assert_eq!(
-            storage_key_from_path(root, &root.join(".asset-hub/asset-hub.sqlite")).unwrap(),
+            storage_key_from_path(
+                root,
+                &root.join(StorageKey::internal("asset-hub.sqlite").unwrap().as_str())
+            )
+            .unwrap(),
             None
         );
     }

@@ -1,50 +1,40 @@
 /// 生成基于 UUID v7 的强类型 ID。
 ///
-/// `$name`：生成的 ID 类型，例如 `DirectoryId`。
-/// `$slot`：生成的保留槽位类型，例如 `DirectoryIdSlot`。
+/// `$name`：生成的 ID 类型，例如 `NodeId`。
+/// 可选的 `$slot`：生成 crate 内可见的保留槽位，例如 `NodeIdSlot`。
 ///
 /// # 约定
 ///
-/// - 正常 ID 通过 UUID v7 生成；
-/// - `Slot0` 映射到 UUID nil；
-/// - `Slot1` 映射到 UUID max；
-/// - 槽位本身不携带任何领域语义，具体用途由上层领域定义。
+/// - 普通 ID 只生成 UUID v7 强类型包装；
+/// - 带 `$slot` 的 ID
+///     - 把 `Slot0` 映射到 `uuid::Uuid::nil()`
+///     - 把 `Slot1` 映射到 `uuid::Uuid::max()`
 ///
 /// # Example
 ///
 /// ```ignore
-/// gen_id_uuid_v7!(DirectoryId, DirectoryIdSlot);
-///
-/// let id = DirectoryId::new();
-/// assert!(id.slot().is_none());
-///
-/// let reserved = DirectoryId::from_slot(DirectoryIdSlot::Slot0);
-/// assert_eq!(reserved.slot(), Some(DirectoryIdSlot::Slot0));
+/// gen_id_uuid_v7!(Node1Id);
+/// gen_id_uuid_v7!(Node2Id, Node2IdSlot);
 /// ```
 #[macro_export]
 macro_rules! gen_id_uuid_v7 {
+    ($name:ident) => {
+        $crate::gen_id_uuid_v7!(@id $name);
+    };
+
     ($name:ident, $slot:ident) => {
+        $crate::gen_id_uuid_v7!(@id $name);
+
         /// 当前 ID 类型预留的特殊槽位。
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-        pub enum $slot {
+        pub(crate) enum $slot {
             Slot0,
             Slot1,
         }
 
-        /// 基于 UUID v7 的强类型 ID。
-        ///
-        /// 正常实例通过 UUID v7 生成，同时保留少量特殊值供领域层使用。
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-        pub struct $name(uuid::Uuid);
-
         impl $name {
-            /// 创建一个新的 UUID v7 ID。
-            pub fn new() -> Self {
-                Self(uuid::Uuid::now_v7())
-            }
-
             /// 根据保留槽位创建 ID。
-            pub fn from_slot(slot: $slot) -> Self {
+            pub(crate) fn from_slot(slot: $slot) -> Self {
                 match slot {
                     $slot::Slot0 => Self(uuid::Uuid::nil()),
                     $slot::Slot1 => Self(uuid::Uuid::max()),
@@ -52,7 +42,7 @@ macro_rules! gen_id_uuid_v7 {
             }
 
             /// 如果当前 ID 对应某个保留槽位，则返回该槽位。
-            pub fn slot(self) -> Option<$slot> {
+            pub(crate) fn slot(self) -> Option<$slot> {
                 if self.0 == uuid::Uuid::nil() {
                     Some($slot::Slot0)
                 } else if self.0 == uuid::Uuid::max() {
@@ -61,16 +51,21 @@ macro_rules! gen_id_uuid_v7 {
                     None
                 }
             }
+        }
+    };
 
-            /// 当前 ID 是否属于保留槽位。
-            pub fn is_slot(self) -> bool {
-                self.slot().is_some()
+    (@id $name:ident) => {
+        /// 基于 UUID v7 的强类型 ID。
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+        pub struct $name(uuid::Uuid);
+
+        impl $name {
+            /// 创建一个新的 ID。
+            pub fn new() -> Self {
+                Self(uuid::Uuid::now_v7())
             }
 
             /// 从原始 UUID 构造强类型 ID。
-            ///
-            /// 该方法不会拒绝 nil/max；
-            /// 如果传入对应值，之后 `slot()` 会识别为保留槽位。
             pub fn from_uuid(id: uuid::Uuid) -> Self {
                 Self(id)
             }

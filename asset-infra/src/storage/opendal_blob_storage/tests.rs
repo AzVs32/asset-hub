@@ -23,11 +23,8 @@ async fn fs_storage_preserves_spaces_in_the_physical_path() {
 #[tokio::test]
 async fn fs_storage_delete_removes_empty_sidecar_directories() {
     let (storage, root) = storage_with_root("fs-clean-sidecar");
-    let key = StorageKey::new(format!(
-        ".asset-hub/content-replacements/{}",
-        uuid::Uuid::now_v7()
-    ))
-    .unwrap();
+    let key =
+        StorageKey::internal(format!("content-replacements/{}", uuid::Uuid::now_v7())).unwrap();
 
     storage
         .put(&key, Bytes::from_static(b"temporary"))
@@ -35,7 +32,7 @@ async fn fs_storage_delete_removes_empty_sidecar_directories() {
         .unwrap();
     storage.delete(&key).await.unwrap();
 
-    assert!(!root.join(".asset-hub").exists());
+    assert!(!root.join(StorageKey::internal_root().as_str()).exists());
 }
 
 #[tokio::test]
@@ -340,11 +337,7 @@ async fn read_all(storage: &OpenDalBlobStorage, key: &StorageKey) -> Option<Byte
 }
 
 fn upload_key() -> StorageKey {
-    StorageKey::new(format!(
-        "{RESERVED_BLOB_STORAGE_PREFIX}/uploads/{}",
-        uuid::Uuid::now_v7()
-    ))
-    .unwrap()
+    StorageKey::internal(format!("uploads/{}", uuid::Uuid::now_v7())).unwrap()
 }
 
 fn storage_with_root(name: &str) -> (OpenDalBlobStorage, PathBuf) {

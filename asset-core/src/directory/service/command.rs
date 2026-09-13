@@ -6,6 +6,7 @@ use crate::{
         port::{DirectoryRelocation, DirectoryRevisionUpdate},
         query::LocatedDirectory,
     },
+    storage::StorageKey,
 };
 
 impl DirectoryService {
@@ -25,6 +26,7 @@ impl DirectoryService {
             .ok_or_else(|| CoreError::not_found("directory", parent_id.to_string()))?;
         let directory = Directory::new(*parent_id, name)?;
         let path = parent.path().child(directory.name())?;
+        StorageKey::visible(path.path())?;
         if self.kernel.read_model.find_by_path(&path).await?.is_some() {
             return Err(CoreError::conflict(
                 "a directory with the same name already exists",
@@ -93,6 +95,7 @@ impl DirectoryService {
         }
         directory.move_to(parent_id)?;
         let destination = parent.path().child(directory.name())?;
+        StorageKey::visible(destination.path())?;
         if let Some(existing) = self.kernel.read_model.find_by_path(&destination).await?
             && existing.id() != directory.id()
         {

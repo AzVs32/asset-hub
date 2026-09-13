@@ -1,5 +1,5 @@
 use super::Directory;
-use crate::{error::DirectoryError, storage::RESERVED_BLOB_STORAGE_PREFIX};
+use crate::error::DirectoryError;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{fmt, str::FromStr};
 
@@ -149,15 +149,14 @@ impl DirectoryPath {
 
     /// 校验规范化后的目录路径是否满足 [`DirectoryPath`] 的领域约束。
     ///
-    /// - 路径必须是相对路径；
     /// - 不允许 `..` 路径段；
     /// - 每个路径段必须满足目录名称规则；
-    /// - 根级 `.asset-hub` 命名空间保留给内部存储；
-    /// - 完整路径长度不能超过上限。
     fn validate(value: &str) -> Result<(), DirectoryError> {
         if value.is_empty() {
             return Ok(());
         }
+
+        // 路径必须是相对路径；
         if value.starts_with('/') {
             return Err(DirectoryError::InvalidFormat {
                 field: "directory.path",
@@ -174,12 +173,7 @@ impl DirectoryPath {
             Directory::validate_name(part)?;
         }
 
-        if first == RESERVED_BLOB_STORAGE_PREFIX {
-            return Err(DirectoryError::InvalidFormat {
-                field: "directory.path",
-                reason: "the .asset-hub directory is reserved for internal storage",
-            });
-        }
+        // 完整路径长度不能超过上限。
         if value.chars().count() > MAX_DIRECTORY_PATH_LEN {
             return Err(DirectoryError::TooLong {
                 field: "directory.path",

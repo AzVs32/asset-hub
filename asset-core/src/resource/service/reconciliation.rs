@@ -247,7 +247,7 @@ impl StorageMaintenanceService {
 
         report.directory_keys = physical_directories
             .iter()
-            .map(|directory| StorageKey::new(directory.path().to_owned()))
+            .map(|directory| StorageKey::visible(directory.path().to_owned()))
             .collect::<Result<Vec<_>, _>>()?;
         report
             .directory_keys
@@ -400,7 +400,7 @@ impl StorageMaintenanceService {
         }
         report.directory_keys = physical_directories
             .iter()
-            .map(|directory| StorageKey::new(directory.path().to_owned()))
+            .map(|directory| StorageKey::visible(directory.path().to_owned()))
             .collect::<Result<Vec<_>, _>>()?;
         report
             .directory_keys

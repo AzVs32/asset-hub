@@ -38,6 +38,11 @@ impl StoragePrefix {
         self.0.is_empty()
     }
 
+    /// Whether this prefix addresses the internal Blob namespace.
+    pub fn is_internal(&self) -> bool {
+        crate::storage::is_internal(self.as_str())
+    }
+
     pub fn contains(&self, key: &StorageKey) -> bool {
         self.is_root()
             || key.as_str() == self.as_str()
@@ -100,7 +105,7 @@ pub type StorageScanStream =
 /// 扫描只报告事实，不得直接创建、更新或删除资源聚合。
 #[async_trait::async_trait]
 pub trait StorageScanner: Send + Sync {
-    /// 流式扫描用户可见的目录和普通文件；内部 `.asset-hub` 命名空间必须排除。
+    /// 流式扫描用户可见的目录和普通文件；内部 Blob 命名空间必须排除。
     fn scan(&self, prefix: &StoragePrefix) -> StorageScanStream;
 
     /// 读取单个对象的当前状态；路径不存在或不是普通文件时返回 `None`。

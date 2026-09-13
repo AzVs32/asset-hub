@@ -30,7 +30,7 @@ const MAX_RESOURCE_NAME_LEN: usize = 255;
 // 核心聚合根
 // ==================================================
 
-crate::gen_id_uuid_v7!(ResourceId, ResourceIdSlot);
+crate::gen_id_uuid_v7!(ResourceId);
 
 /// 资源聚合根。
 ///

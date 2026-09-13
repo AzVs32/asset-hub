@@ -1,11 +1,11 @@
 use asset_core::CoreError;
 use asset_core::{
     directory::domain::DirectoryPath,
+    storage::StorageKey,
     storage::port::{
         BlobByteStream, BlobHealth, ContentObjectStore, ContentReader, ContentStagingStore,
         DirectoryStorage, MAX_CONTENT_READ_CHUNK_SIZE, StagedBlob,
     },
-    storage::{RESERVED_BLOB_STORAGE_PREFIX, StorageKey},
 };
 use bytes::Bytes;
 use futures_util::{StreamExt, TryStreamExt};
@@ -315,7 +315,7 @@ impl ContentObjectStore for OpenDalBlobStorage {
             let root = root.clone();
             let source = root.join(from.as_str());
             let target = root.join(to.as_str());
-            let internal_source = is_internal_key(from);
+            let internal_source = from.is_internal();
             let to = to.clone();
             return tokio::task::spawn_blocking(move || {
                 if let Some(parent) = target.parent() {
@@ -390,7 +390,7 @@ impl ContentObjectStore for OpenDalBlobStorage {
             }
             std::fs::remove_file(&source)
                 .map_err(|error| CoreError::storage("move_recovery.remove_source", error))?;
-            if is_internal_key(&from) {
+            if from.is_internal() {
                 cleanup_internal_fs_parents(&root, &source)?;
             }
             Ok(())
@@ -407,7 +407,7 @@ impl ContentObjectStore for OpenDalBlobStorage {
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => return Err(CoreError::storage("delete", error)),
             }
-            if is_internal_key(key) {
+            if key.is_internal() {
                 cleanup_internal_fs_parents(root, &path)?;
             }
             return Ok(());
@@ -417,7 +417,7 @@ impl ContentObjectStore for OpenDalBlobStorage {
             .await
             .map_err(|error| CoreError::storage("delete", error))?;
         if let Some(root) = &self.local_root
-            && is_internal_key(key)
+            && key.is_internal()
         {
             cleanup_internal_fs_parents(root, &root.join(key.as_str()))?;
         }
@@ -599,22 +599,8 @@ impl DirectoryStorage for OpenDalBlobStorage {
     }
 }
 
-fn is_internal_key(key: &StorageKey) -> bool {
-    key.as_str() == RESERVED_BLOB_STORAGE_PREFIX
-        || key
-            .as_str()
-            .strip_prefix(RESERVED_BLOB_STORAGE_PREFIX)
-            .is_some_and(|suffix| suffix.starts_with('/'))
-}
-
-fn is_upload_staging_key(key: &StorageKey) -> bool {
-    key.as_str()
-        .strip_prefix(&format!("{RESERVED_BLOB_STORAGE_PREFIX}/uploads/"))
-        .is_some_and(|suffix| !suffix.is_empty() && !suffix.contains('/'))
-}
-
 fn require_upload_staging_key(key: &StorageKey) -> Result<(), CoreError> {
-    if is_upload_staging_key(key) {
+    if key.is_upload_staging() {
         Ok(())
     } else {
         Err(CoreError::configuration(format!(
@@ -623,13 +609,13 @@ fn require_upload_staging_key(key: &StorageKey) -> Result<(), CoreError> {
     }
 }
 
-/// `.asset-hub` 不属于用户目录模型，可以在内部对象删除后清理其空目录。
+/// 内部 Blob 命名空间不属于用户目录模型，可以在内部对象删除后清理其空目录。
 /// 用户可见目录绝不在 Blob 操作中隐式删除。
 fn cleanup_internal_fs_parents(
     root: &std::path::Path,
     blob: &std::path::Path,
 ) -> Result<(), CoreError> {
-    let internal_root = root.join(RESERVED_BLOB_STORAGE_PREFIX);
+    let internal_root = root.join(StorageKey::internal_root().as_str());
     let mut current = blob.parent();
     while let Some(directory) = current {
         if !directory.starts_with(&internal_root) {

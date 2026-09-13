@@ -20,7 +20,7 @@ pub(in crate::resource) fn storage_key_from_resource_path(
     } else {
         format!("{}/{}", directory.path(), name)
     };
-    StorageKey::new(value)
+    StorageKey::visible(value)
 }
 
 #[cfg(test)]
@@ -43,6 +43,13 @@ mod storage_key_tests {
             .unwrap()
             .as_str(),
             "documents/reports/note.txt"
+        );
+        assert!(
+            storage_key_from_resource_path(
+                &DirectoryPath::from_path(".asset-hub").unwrap(),
+                "note.txt",
+            )
+            .is_err()
         );
     }
 }

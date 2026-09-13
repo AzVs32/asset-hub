@@ -104,7 +104,11 @@ async fn runtime_rejects_direct_invalid_config_before_initializing_infrastructur
     };
 
     assert!(error.to_string().contains("between 1 and 86400 seconds"));
-    assert!(!root.join(".asset-hub/asset-hub.sqlite").exists());
+    assert!(
+        !root
+            .join(StorageKey::internal("asset-hub.sqlite").unwrap().as_str())
+            .exists()
+    );
 }
 
 fn verified_content(size: u64) -> ResourceContent {
@@ -426,7 +430,7 @@ async fn resource_deletion_recovers_dual_links_but_preserves_independent_files()
     let AssetConfig { database, blob, .. } = config.clone();
     let infrastructure = AssetInfrastructure::new(database, blob).await.unwrap();
     let source = StorageKey::new("note.txt").unwrap();
-    let staged = StorageKey::new(".asset-hub/deletions/note.txt").unwrap();
+    let staged = StorageKey::internal("deletions/note.txt").unwrap();
     let resource = Resource::builder("note.txt")
         .with_content(verified_content(3))
         .build()
@@ -454,7 +458,8 @@ async fn resource_deletion_recovers_dual_links_but_preserves_independent_files()
         .save(&deletion)
         .await
         .unwrap();
-    std::fs::create_dir_all(root.join(".asset-hub/deletions")).unwrap();
+    std::fs::create_dir_all(root.join(StorageKey::internal("deletions").unwrap().as_str()))
+        .unwrap();
     // Equal contents alone are insufficient proof that a move was interrupted.
     write(&root, &staged, b"old");
     assert!(matches!(
@@ -505,7 +510,7 @@ async fn resource_deletion_recovers_after_database_commit_without_removing_new_v
     let (root, runtime, infrastructure) =
         recovery_environment("resource-deletion-post-commit").await;
     let source = StorageKey::new("note.txt").unwrap();
-    let staged = StorageKey::new(".asset-hub/deletions/note.txt").unwrap();
+    let staged = StorageKey::internal("deletions/note.txt").unwrap();
     let resource = Resource::builder("note.txt")
         .with_content(verified_content(3))
         .build()
@@ -562,7 +567,7 @@ async fn resource_deletion_recovers_after_database_commit_without_removing_new_v
 async fn resource_deletion_conflict_restores_to_the_newer_resource_path() {
     let (root, runtime, infrastructure) = recovery_environment("resource-deletion-conflict").await;
     let source = StorageKey::new("note.txt").unwrap();
-    let staged = StorageKey::new(".asset-hub/deletions/note.txt").unwrap();
+    let staged = StorageKey::internal("deletions/note.txt").unwrap();
     let target = StorageKey::new("renamed.txt").unwrap();
     let resource = Resource::builder("note.txt")
         .with_content(verified_content(3))
@@ -812,8 +817,8 @@ async fn completed_upload_does_not_prevent_deleting_an_empty_directory() {
 async fn content_replacement_recovers_after_post_publish_crash_and_is_idempotent() {
     let (root, runtime, infrastructure) = recovery_environment("content-recovery-publish").await;
     let target = StorageKey::new("note.txt").unwrap();
-    let staged = StorageKey::new(".asset-hub/uploads/replacement-publish").unwrap();
-    let backup = StorageKey::new(".asset-hub/content-backups/replacement-publish").unwrap();
+    let staged = StorageKey::internal("uploads/replacement-publish").unwrap();
+    let backup = StorageKey::internal("content-backups/replacement-publish").unwrap();
     let old_content = verified_content(3);
     let new_content = verified_content(4);
     let resource = Resource::builder("note.txt")
@@ -893,8 +898,8 @@ async fn content_replacement_recovers_after_post_publish_crash_and_is_idempotent
 async fn content_replacement_recovers_after_intent_before_filesystem_change() {
     let (root, runtime, infrastructure) = recovery_environment("content-recovery-intent").await;
     let target = StorageKey::new("note.txt").unwrap();
-    let staged = StorageKey::new(".asset-hub/uploads/replacement-intent").unwrap();
-    let backup = StorageKey::new(".asset-hub/content-backups/replacement-intent").unwrap();
+    let staged = StorageKey::internal("uploads/replacement-intent").unwrap();
+    let backup = StorageKey::internal("content-backups/replacement-intent").unwrap();
     let old_content = verified_content(3);
     let resource = Resource::builder("note.txt")
         .with_content(old_content.clone())

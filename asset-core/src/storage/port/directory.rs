@@ -6,7 +6,7 @@ use crate::directory::domain::DirectoryPath;
 /// 用户可见目录在对象存储中的持久化端口。
 ///
 /// 文件系统实现创建真实目录；没有原生目录概念的对象存储实现应创建目录标记。
-/// `.asset-hub` 属于内部 Blob 命名空间，不通过本端口管理。
+/// 内部 Blob 命名空间不通过本端口管理。
 #[async_trait::async_trait]
 pub trait DirectoryStorage: Send + Sync {
     /// Return whether the exact physical Directory currently exists.

@@ -5,5 +5,6 @@ mod mutation;
 
 pub mod port;
 
-pub use key::{RESERVED_BLOB_STORAGE_PREFIX, StorageKey};
+pub use key::StorageKey;
+pub(crate) use key::is_internal;
 pub use mutation::StorageMutationCoordinator;

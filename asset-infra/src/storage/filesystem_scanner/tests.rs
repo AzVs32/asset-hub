@@ -4,15 +4,16 @@ use futures_util::StreamExt;
 #[test]
 fn scan_skips_reserved_asset_hub_directory() {
     let root = unique_temp_path("scanner-reserved");
+    let internal_root = StorageKey::internal_root();
     std::fs::create_dir_all(root.join("docs")).unwrap();
     std::fs::create_dir_all(
-        root.join(RESERVED_BLOB_STORAGE_PREFIX)
+        root.join(internal_root.as_str())
             .join("content-replacements"),
     )
     .unwrap();
     std::fs::write(root.join("docs/readme.md"), b"# Readme").unwrap();
     std::fs::write(
-        root.join(RESERVED_BLOB_STORAGE_PREFIX)
+        root.join(internal_root.as_str())
             .join("content-replacements/temp"),
         b"scratch",
     )
@@ -89,22 +90,20 @@ fn scan_preserves_spaces_in_directory_and_file_names() {
 #[test]
 fn scan_reserved_directory_returns_no_files() {
     let root = unique_temp_path("scanner-reserved-direct");
+    let internal_root = StorageKey::internal_root();
     std::fs::create_dir_all(
-        root.join(RESERVED_BLOB_STORAGE_PREFIX)
+        root.join(internal_root.as_str())
             .join("content-replacements"),
     )
     .unwrap();
     std::fs::write(
-        root.join(RESERVED_BLOB_STORAGE_PREFIX)
+        root.join(internal_root.as_str())
             .join("content-replacements/temp"),
         b"scratch",
     )
     .unwrap();
 
-    let entries = scanned_entries(
-        &root,
-        &StoragePrefix::new(RESERVED_BLOB_STORAGE_PREFIX).unwrap(),
-    );
+    let entries = scanned_entries(&root, &StoragePrefix::new(internal_root.as_str()).unwrap());
 
     assert!(entries.is_empty());
     std::fs::remove_dir_all(root).unwrap();

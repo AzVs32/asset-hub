@@ -20,11 +20,11 @@ use crate::{
         },
         port::{ResourceReadModel, ResourceStore, UploadSessionStore},
     },
+    storage::StorageKey,
     storage::port::{
         BlobByteStream, ContentObjectStore, ContentReader, ContentStagingStore, StagedBlob,
         StorageScanner,
     },
-    storage::{RESERVED_BLOB_STORAGE_PREFIX, StorageKey},
 };
 use futures_util::StreamExt;
 use std::sync::Arc;
@@ -253,7 +253,6 @@ impl UploadService {
         } = command;
         let directory = self.service.directories.find_by_id(&directory_id).await?;
         let storage_key = path_resolver::resource_key(directory.path(), &name)?;
-        reject_reserved_storage_key(&storage_key)?;
         build_resource(name.clone(), directory.id()).build()?;
         if self
             .service
@@ -785,19 +784,6 @@ fn staged_for(id: UploadId) -> Result<StagedBlob, CoreError> {
 
 fn chunk_for(id: UploadId) -> Result<StagedBlob, CoreError> {
     Ok(StagedBlob::new(path_resolver::upload_chunk_key(id)?, 0))
-}
-
-fn reject_reserved_storage_key(key: &StorageKey) -> Result<(), CoreError> {
-    if key.as_str() == RESERVED_BLOB_STORAGE_PREFIX
-        || key
-            .as_str()
-            .starts_with(&format!("{RESERVED_BLOB_STORAGE_PREFIX}/"))
-    {
-        return Err(CoreError::invalid_operation(format!(
-            "storage key `{key}` uses reserved Asset Hub namespace"
-        )));
-    }
-    Ok(())
 }
 
 fn limit_stream(data: BlobByteStream, remaining: u64) -> BlobByteStream {

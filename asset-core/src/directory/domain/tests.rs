@@ -27,19 +27,6 @@ fn directory_path_supports_root_and_normalizes_segments() {
 }
 
 #[test]
-fn directory_path_rejects_internal_storage_namespace() {
-    for path in [".asset-hub", ".asset-hub/trash"] {
-        assert!(matches!(
-            DirectoryPath::from_path(path),
-            Err(DirectoryError::InvalidFormat {
-                field: "directory.path",
-                ..
-            })
-        ));
-    }
-}
-
-#[test]
 fn directory_path_contains_obeys_segment_boundaries() {
     let root = DirectoryPath::root();
     let home = DirectoryPath::from_path("teams/alice").unwrap();
