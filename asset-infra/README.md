@@ -3,9 +3,16 @@
 `asset-infra` contains the concrete SQLite, local OpenDAL storage, filesystem scanner/synchronizer,
 directory-index, upload, and recovery-repository adapters used by Asset Hub.
 
-`AssetInfrastructure::new` normalizes already-loaded configuration and initializes only those
-adapters. It does not assemble Core services or start background tasks; `asset-runtime` owns both
+`asset-infra` owns the database and Blob configuration types consumed by its adapters.
+`asset-runtime` includes those types in its `[asset]` configuration and passes `DatabaseConfig` and
+`BlobConfig` directly to `AssetInfrastructure::new`. Both public construction boundaries validate
+the configuration before initialization. Infrastructure initializes only adapters; it does not load
+configuration sources, assemble Core services, or start background tasks. Runtime owns service
 composition and lifecycle.
+
+`DatabaseConfig` and `BlobConfig` are Serde models embedded in `asset-runtime::AssetConfig`.
+They own their backend-specific defaults, normalization, and validation. Neither type is registered
+as a separate configuration section because both belong to the `[asset]` subtree.
 
 Adapters implement capability-scoped Core ports. Blob adapters and scanners use
 `storage::StorageKey` directly; they do not depend on the Resource domain merely to validate a
@@ -22,7 +29,11 @@ owns its guard and task lifetime.
 The storage scanner reports physical directories; Core imports those observed paths into Directory
 aggregates.
 
-The SQLite upload-session table persists upload state and idempotency linkage.
+The SQLite upload-session table persists upload state, target purpose, replacement revision
+preconditions, and idempotency linkage for both resource creation and content replacement. Its
+`directory_id` is an operation target or historical snapshot, not a foreign-key owner of the
+Directory lifecycle; terminal upload history therefore cannot prevent deletion of an otherwise
+empty Directory.
 
 Local Blob operations preserve storage-key spelling, including leading and trailing spaces, for
 existence checks as well as reads, moves and deletes. Linux, Android and Apple targets use an

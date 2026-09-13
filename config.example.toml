@@ -5,42 +5,52 @@
 # - Otherwise the executable tries ./config.toml.
 # - If ./config.toml does not exist, built-in defaults are used.
 #
-# HTTP entrypoint settings (including --archive-max-concurrent and --archive-max-bytes)
-# are CLI options, not TOML. Run `asset-http --help` for the complete
-# contract. Boolean options accept only `true` or `false`; omitting an optional boolean value means
-# `true`.
+# Components own independent sections in this shared document. Each executable registers the
+# sections it consumes. `[asset]` contains the core runtime configuration; `[http]` is consumed only
+# by the HTTP application. Future terminals and plugins can add sections without changing either
+# built-in type.
 
-[database]
+[asset.database]
 backend = "sqlite"
 
-[database.sqlite]
+[asset.database.sqlite]
 # SQLite connection pool size.
 max_connections = 5
 # SQLite is always stored at <blob.local.root>/.asset-hub/asset-hub.sqlite so database metadata
 # and Blob content can be migrated as one data domain.
 
-[resource_edit]
-# Maximum UTF-8 bytes accepted by interactive text editors.
-max_text_bytes = 4194304
-
-[idempotency]
+[asset.idempotency]
 # Execution lease duration in seconds for an in-progress idempotent request.
 # Active executions renew this lease while they are running.
 # Idempotency keys are globally scoped across command types; callers must make them operation-unique.
 lease_duration_seconds = 300
 
-[blob]
+[asset.blob]
 backend = "local"
 
-[blob.local]
+[asset.blob.local]
 # Local Blob storage root directory.
 # Relative paths are resolved from the current working directory.
 root = "data"
 
-[blob.local.sync]
+[asset.blob.local.sync]
 # Keep the Resource database synchronized with changes made through the operating system.
 enabled = true
 # Coalesce bursts produced by editors and file managers before recalculating checksums.
 debounce_milliseconds = 1000
 # Periodically reconcile the complete tree to recover changes missed while the app was stopped.
 reconcile_interval_seconds = 1800
+
+[http]
+# HTTP behavior is configured here; the command line only selects the configuration file.
+addr = "127.0.0.1:8080"
+# Empty means that CORS response headers are disabled. Wildcards are not supported.
+cors_allowed_origins = []
+# Total timeout for ordinary requests. Streaming uploads are exempt.
+request_timeout_seconds = 30
+
+[http.archive]
+# Maximum simultaneous archive requests. There is no waiting queue.
+max_concurrent = 2
+# Limit for both uncompressed Resource bytes and generated ZIP bytes per request (64 GiB).
+max_bytes = 68719476736

@@ -49,6 +49,7 @@ impl DirectoryService {
         command: UpdateDirectory,
     ) -> Result<LocatedDirectory, CoreError> {
         let _guard = self.kernel.mutation_lock.lock().await;
+        let _storage_guard = self.kernel.storage_mutations.enter().await;
         let located = self
             .kernel
             .read_model
@@ -144,6 +145,7 @@ impl DirectoryService {
 
     pub(super) async fn recover_pending_relocations(&self) -> Result<u64, CoreError> {
         let _guard = self.kernel.mutation_lock.lock().await;
+        let _storage_guard = self.kernel.storage_mutations.enter().await;
         let pending = self.kernel.relocations.load_pending().await?;
         for relocation in &pending {
             self.finish_relocation(relocation, true).await?;

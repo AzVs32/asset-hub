@@ -11,12 +11,11 @@ name = "asset"
 path = "src/main.rs"
 
 [dependencies]
+asset-config.workspace = true
 asset-core.workspace = true
-asset-infra.workspace = true
 asset-runtime.workspace = true
 
 anyhow.workspace = true
 clap.workspace = true
 indicatif.workspace = true
 tokio.workspace = true
-toml.workspace = true

@@ -1,14 +1,19 @@
--- 上传会话：在 Resource 创建前持久化目标元数据和已接收偏移，支持服务重启后继续分片上传。
+-- 上传会话：持久化新建或替换目标及已接收偏移，支持服务重启后继续分片上传和最终化。
 CREATE TABLE upload_sessions (
     -- UUID v7 上传会话标识。
     id TEXT PRIMARY KEY NOT NULL,
-    -- finalization 开始前预先分配的 Resource ID；Resource 记录仅在内容发布成功后创建。
-    resource_id TEXT NOT NULL UNIQUE,
+    -- create_resource 或 replace_content，决定最终化时创建资源还是替换已有资源内容。
+    purpose TEXT NOT NULL,
+    -- 新建时为预分配的 Resource ID；替换时为已有 Resource ID。
+    resource_id TEXT NOT NULL,
+    -- 替换内容时要求的 Resource revision；新建资源时为空。
+    expected_revision INTEGER,
     -- Optional durable link to the idempotent create-upload request that created this session.
     idempotency_key TEXT UNIQUE,
     -- 最终 Resource 的文件名。
     name TEXT NOT NULL,
     -- 目标目录稳定身份；最终 StorageKey 在发布时由当前目录投影解析。
+    -- 这是操作快照而非生命周期所有权，因此不设置外键，避免终态会话阻止空目录删除。
     directory_id TEXT NOT NULL,
     -- 客户端声明的 MIME 类型；未提供时允许为空。
     mime_type TEXT,
@@ -33,6 +38,11 @@ CREATE TABLE upload_sessions (
     CHECK (expected_size >= 0),
     CHECK (offset >= 0 AND offset <= expected_size),
     CHECK (status IN ('uploading', 'finalizing', 'completed', 'failed')),
+    CHECK (purpose IN ('create_resource', 'replace_content')),
+    CHECK (
+        (purpose = 'create_resource' AND expected_revision IS NULL)
+        OR (purpose = 'replace_content' AND expected_revision > 0)
+    ),
     -- SHA-256 使用 64 位小写十六进制；精确格式同时由领域对象校验。
     CHECK (length(expected_checksum_value) = 64),
     CHECK (actual_checksum_value IS NULL OR length(actual_checksum_value) = 64),
@@ -44,8 +54,7 @@ CREATE TABLE upload_sessions (
             AND actual_checksum_value = expected_checksum_value
         )
     ),
-    CHECK (status != 'failed' OR failure IS NOT NULL),
-    FOREIGN KEY (directory_id) REFERENCES directories(id) ON DELETE RESTRICT
+    CHECK (status != 'failed' OR failure IS NOT NULL)
 );
 
 -- 加速服务启动时恢复尚未完成的后台 finalization。

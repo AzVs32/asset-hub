@@ -1,21 +1,20 @@
 use crate::UploadFinalizationDispatcher;
+use crate::config::AssetConfig;
 use crate::upload_finalization::UploadFinalizationScheduler;
+use asset_config::ConfigSection;
 use asset_core::CoreError;
 use asset_core::{
     directory::service::{DirectoryRecoveryService, DirectoryService, DirectoryServices},
     idempotency::service::IdempotencyService,
-    resource::{
-        domain::ResourceContentEditPolicy,
-        service::{
-            ContentRecoveryService, ContentService, ResourceRecoveryService, ResourceService,
-            ResourceServices, StorageHealthService, StorageMaintenanceService, UploadService,
-        },
+    resource::service::{
+        ContentRecoveryService, ContentService, ResourceRecoveryService, ResourceService,
+        ResourceServices, StorageHealthService, StorageMaintenanceService, UploadService,
     },
+    storage::StorageMutationCoordinator,
     workflow::service::AssetWorkflowService,
 };
-use asset_infra::AssetInfrastructure;
-use asset_infra::config::{AssetInfraConfig, BlobBackend};
 use asset_infra::storage::LocalStorageSync;
+use asset_infra::{AssetInfrastructure, config::BlobBackend};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -55,9 +54,8 @@ impl AssetRuntime {
     ///
     /// 创建运行时时不会自动启动后台任务；长生命周期应用应按需显式调用
     /// [`AssetRuntime::start_storage_sync`]。
-    pub async fn new(config: AssetInfraConfig) -> Result<Self, CoreError> {
-        let infrastructure = AssetInfrastructure::new(config).await?;
-        let config = infrastructure.config();
+    pub async fn new(config: AssetConfig) -> Result<Self, CoreError> {
+        let config = config.normalize().map_err(CoreError::configuration)?;
         let storage_sync_settings = match config.blob.backend {
             BlobBackend::Local if config.blob.local.sync.enabled => Some(StorageSyncSettings {
                 root: config.blob.local.root.clone(),
@@ -68,16 +66,20 @@ impl AssetRuntime {
             }),
             BlobBackend::Local => None,
         };
-        let resource_content_edit_policy = Arc::new(
-            ResourceContentEditPolicy::new(config.resource_edit.max_text_bytes)
-                .map_err(|error| CoreError::configuration(error.to_string()))?,
-        );
+        let AssetConfig {
+            database,
+            blob,
+            idempotency,
+        } = config;
+        let infrastructure = AssetInfrastructure::new(database, blob).await?;
+        let storage_mutations = StorageMutationCoordinator::new();
 
         let directory_services = DirectoryServices::new(
             infrastructure.directory_store(),
             infrastructure.directory_index(),
             infrastructure.directory_storage(),
             infrastructure.directory_relocation_store(),
+            storage_mutations.clone(),
         );
         let directory_service = directory_services.directory_service();
         let directory_maintenance_service = directory_services.maintenance_service();
@@ -95,7 +97,7 @@ impl AssetRuntime {
         }
         let idempotency_service = IdempotencyService::with_lease_duration(
             infrastructure.idempotency_repository(),
-            config.idempotency.lease_duration(),
+            idempotency.lease_duration(),
         )?;
         let resource_services = ResourceServices::new(
             infrastructure.resource_store(),
@@ -114,8 +116,8 @@ impl AssetRuntime {
             directory_import_service,
             infrastructure.upload_session_store(),
             infrastructure.content_replacement_store(),
-            resource_content_edit_policy,
             idempotency_service.clone(),
+            storage_mutations,
         );
         let resource_service = resource_services.resource_service();
         let content_service = resource_services.content_service();

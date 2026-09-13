@@ -3,6 +3,11 @@
 `asset-http` is the Axum transport and the composition root for HTTP-only policy. It owns routing,
 the OpenAPI JSON contract, request limits, and CORS.
 
+`asset-http` owns `HttpConfig` and implements the strongly typed `[http]` section. Its executable
+registers both `HttpConfig` and the core `AssetConfig`, then loads the shared TOML document once
+through `asset-config`; neither configuration type depends on the other. The command line accepts
+only `--config <PATH>`.
+
 Business handlers receive Core application services. Upload completion receives the narrow
 `UploadFinalizationDispatcher` interface; HTTP does not depend on the concrete Runtime
 scheduler or supervisor.
@@ -22,7 +27,8 @@ write precondition and upload headers, including `Idempotency-Key`.
 Resource and Directory contracts deliberately use the same shape where their semantics overlap.
 Both expose stable UUIDs and monotonically increasing `revision` values. Directory creation accepts a stable `parent_id`;
 `GET`, `PATCH`, and `DELETE /directories/{id}` address the aggregate by UUID. Mutating Resource and
-Directory requests require `expected_revision` (streaming content replacement uses `If-Match`) and
+Directory requests require `expected_revision`; content-replacement upload creation carries the same
+revision precondition in its JSON body and
 return a coded revision conflict when another writer has advanced the aggregate. Path strings
 remain navigation and display data, not Directory identity.
 
@@ -38,10 +44,14 @@ precedence from independent transport fields.
 Resource and Directory deletion uses the direct `DELETE /resources/{id}` and
 `DELETE /directories/{id}` endpoints.
 
-`PUT /resources/{id}/content` accepts UTF-8 text, including characters split across transport
-chunks. Invalid UTF-8 or an incomplete final character returns `400`; the original content and
-revision remain unchanged, and temporary replacement content is cleaned up. The endpoint still
-requires the declared length, SHA-256 and revision precondition. Binary uploads use `/uploads`.
+Content replacement starts with `POST /resources/{id}/content/uploads`, declaring the Resource
+revision, total byte length, whole-content SHA-256 and optional MIME type. The returned session uses
+the same `PATCH /uploads/{id}` offset and per-chunk checksum protocol as a new Resource upload, then
+`POST /uploads/{id}/complete` schedules finalization. Replacement accepts arbitrary binary content,
+has no editing-size configuration, and advances the existing Resource revision only after checksum
+verification and atomic publication succeed. `PATCH /uploads/{id}` accepts sequential chunks of at
+most 8 MiB. The fixed per-request limit bounds temporary chunk storage; it is not configurable and
+does not limit the complete resource size.
 
 Directory downloads use ordinary ZIP entries for directories and resources up to 4 GiB. ZIP64 is
 enabled only for an individual resource that exceeds the ZIP32 size limit, keeping ordinary
@@ -70,12 +80,15 @@ content chunks; the producer and consumer each retain at most their current chun
 storage adapter's source buffer). File bytes are never collected into a complete in-memory file.
 Manifest and ZIP entry metadata still scale with the number of entries.
 
-HTTP CLI options (not TOML):
+HTTP configuration (`[http]` in TOML):
 
-| Option | Default | Meaning |
+| Key | Default | Meaning |
 | --- | --- | --- |
-| `--archive-max-concurrent` | `2` | Maximum simultaneous archive requests, including manifest enumeration, generation and completed ZIPs still being downloaded |
-| `--archive-max-bytes` | `68719476736` (64 GiB) | Per-request limit for both total uncompressed Resource bytes and the generated ZIP file length, including headers and central-directory metadata |
+| `addr` | `127.0.0.1:8080` | HTTP listen address |
+| `cors_allowed_origins` | `[]` | Explicit allowed origins; wildcard origins are rejected |
+| `request_timeout_seconds` | `30` | Total timeout for non-streaming requests |
+| `archive.max_concurrent` | `2` | Maximum simultaneous archive requests, including manifest enumeration, generation and completed ZIPs still being downloaded |
+| `archive.max_bytes` | `68719476736` (64 GiB) | Per-request limit for both total uncompressed Resource bytes and the generated ZIP file length, including headers and central-directory metadata |
 
 Both values must be nonzero. There is no waiting queue: exhausted capacity or shutdown returns
 `503` with `archive.unavailable` and `retryable: true`. Resource sizes are checked before generation;
@@ -85,8 +98,10 @@ limit returns `413`, without sending a partial ZIP. With defaults, these request
 OS temporary space or other storage failures still return `500`. Operators can lower both limits
 for their available temporary filesystem, for example:
 
-```bash
-asset-http --archive-max-concurrent 1 --archive-max-bytes 8589934592
+```toml
+[http.archive]
+max_concurrent = 1
+max_bytes = 8589934592
 ```
 
 The complete archive is generated before the `200` response, preserving `Content-Length`,

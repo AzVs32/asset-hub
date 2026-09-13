@@ -4,6 +4,7 @@
 
 `asset-runtime` assembles initialized infrastructure and Core services for application surfaces.
 It owns background-task/guard lifetimes that must survive for the running application.
+It also owns the core `[asset]` configuration assembled by those application surfaces.
 
 It is reusable by current and future application surfaces; therefore it MUST remain independent of
 transport routing, argument parsing, presentation logic, and surface-specific lifecycle policy.
@@ -12,7 +13,7 @@ transport routing, argument parsing, presentation logic, and surface-specific li
 
 MUST:
 
-- accept already-loaded infrastructure configuration from the caller;
+- accept the already-loaded and normalized core `[asset]` configuration from the caller;
 - construct `AssetInfrastructure`, inject its ports into stable Core services, and expose those
   application services rather than the underlying registries;
 - explicitly own long-lived synchronization guards/tasks;

@@ -114,6 +114,7 @@ async fn directory_service(repository: Arc<SqliteDirectoryStore>) -> DirectorySe
         index,
         Arc::new(TestDirectoryStorage::default()),
         repository,
+        asset_core::storage::StorageMutationCoordinator::new(),
     )
     .directory_service()
 }
@@ -464,7 +465,13 @@ async fn pending_directory_relocation_completes_after_the_physical_move() {
         .unwrap(),
     );
     let storage = Arc::new(TestDirectoryStorage::default());
-    let services = DirectoryServices::new(store.clone(), index, storage.clone(), store.clone());
+    let services = DirectoryServices::new(
+        store.clone(),
+        index,
+        storage.clone(),
+        store.clone(),
+        asset_core::storage::StorageMutationCoordinator::new(),
+    );
     let directories = services.directory_service();
     let source = directories
         .create(&Directory::root().id(), "source")

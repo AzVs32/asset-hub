@@ -3,7 +3,10 @@ use super::content::{
     build_verified_content, calculate_stream_checksum, finalize_tracked_checksum,
     stream_with_checksum_tracking,
 };
-use super::{CreateUpload, StorageKeyLocks, UploadLocks, path_resolver};
+use super::{
+    ContentService, CreateContentReplacementUpload, CreateUpload, MAX_UPLOAD_CHUNK_SIZE,
+    StorageKeyLocks, UploadLocks, path_resolver,
+};
 use crate::CoreError;
 use crate::{
     directory::service::DirectoryService,
@@ -12,7 +15,9 @@ use crate::{
         service::{IdempotencyOutcome, IdempotencyService, request_hash},
     },
     resource::{
-        domain::{Checksum, Resource, UploadId, UploadSession, UploadStatus},
+        domain::{
+            Checksum, Resource, ResourceId, UploadId, UploadPurpose, UploadSession, UploadStatus,
+        },
         port::{ResourceReadModel, ResourceStore, UploadSessionStore},
     },
     storage::port::{
@@ -64,6 +69,7 @@ struct UploadDependencies {
     upload_sessions: Arc<dyn UploadSessionStore>,
     storage_key_locks: Arc<StorageKeyLocks>,
     upload_locks: Arc<UploadLocks>,
+    content: ContentService,
     idempotency: IdempotencyService,
 }
 
@@ -79,6 +85,7 @@ impl UploadService {
         directories: DirectoryService,
         upload_sessions: Arc<dyn UploadSessionStore>,
         storage_key_locks: Arc<StorageKeyLocks>,
+        content: ContentService,
         idempotency: IdempotencyService,
     ) -> Self {
         Self {
@@ -93,6 +100,7 @@ impl UploadService {
                 upload_sessions,
                 storage_key_locks,
                 upload_locks: Arc::new(UploadLocks::default()),
+                content,
                 idempotency,
             }),
         }
@@ -108,6 +116,7 @@ impl UploadService {
             return self.create_session(command, None).await;
         };
         let hash = request_hash(&serde_json::json!({
+            "operation": "create_resource",
             "name": &command.name,
             "directory_id": command.directory_id.to_string(),
             "mime_type": &command.mime_type,
@@ -153,6 +162,73 @@ impl UploadService {
         }
     }
 
+    /// 为已有资源创建可恢复、可分片的内容替换会话。
+    pub async fn create_content_replacement(
+        &self,
+        resource_id: &ResourceId,
+        command: CreateContentReplacementUpload,
+    ) -> Result<Option<UploadSession>, CoreError> {
+        let Some(located) = self.service.read_model.find_by_id(resource_id).await? else {
+            return Ok(None);
+        };
+        let Some(key) = command.idempotency_key().cloned() else {
+            return self
+                .create_replacement_session(located, command, None)
+                .await
+                .map(Some);
+        };
+        let hash = request_hash(&serde_json::json!({
+            "operation": "replace_resource_content",
+            "resource_id": resource_id.to_string(),
+            "expected_size": command.expected_size,
+            "expected_checksum": command.expected_checksum.value(),
+            "expected_revision": command.expected_revision,
+            "mime_type": &command.mime_type,
+        }));
+        let session = match self.service.idempotency.begin(&key, &hash).await? {
+            IdempotencyOutcome::Acquired { execution_id } => {
+                match self
+                    .service
+                    .idempotency
+                    .execute_with_lease(
+                        &key,
+                        execution_id,
+                        self.create_replacement_session(located, command, Some(&key)),
+                    )
+                    .await
+                {
+                    Ok(session) => {
+                        self.service
+                            .idempotency
+                            .complete(
+                                &key,
+                                execution_id,
+                                serde_json::json!({ "upload_id": session.id().to_string() }),
+                            )
+                            .await?;
+                        session
+                    }
+                    Err(error) => {
+                        self.service.idempotency.abandon(&key, execution_id).await?;
+                        return Err(error);
+                    }
+                }
+            }
+            IdempotencyOutcome::Replay(result) => self.replay_upload(&result).await?,
+            IdempotencyOutcome::ConflictDifferentRequest => {
+                return Err(CoreError::conflict(format!(
+                    "idempotency key `{key}` was already used for a different request"
+                )));
+            }
+            IdempotencyOutcome::AlreadyInProgress => {
+                return Err(CoreError::conflict(format!(
+                    "idempotency key `{key}` is currently executing"
+                )));
+            }
+        };
+        Ok(Some(session))
+    }
+
     async fn create_session(
         &self,
         command: CreateUpload,
@@ -191,13 +267,65 @@ impl UploadService {
             )));
         }
 
-        let session = UploadSession::new(
+        let session = UploadSession::for_resource_creation(
             name,
             directory.id(),
             mime_type,
             expected_size,
             expected_checksum,
         )?;
+        self.persist_new_session(session, idempotency_key).await
+    }
+
+    async fn create_replacement_session(
+        &self,
+        located: crate::resource::query::LocatedResource,
+        command: CreateContentReplacementUpload,
+        idempotency_key: Option<&IdempotencyKey>,
+    ) -> Result<UploadSession, CoreError> {
+        if let Some(key) = idempotency_key
+            && let Some(session) = self
+                .service
+                .upload_sessions
+                .find_by_idempotency_key(key)
+                .await?
+        {
+            return Ok(session);
+        }
+        let CreateContentReplacementUpload {
+            expected_size,
+            expected_checksum,
+            expected_revision,
+            mime_type,
+            ..
+        } = command;
+        let resource = located.resource();
+        if resource.revision() != expected_revision {
+            return Err(CoreError::revision_conflict(
+                "resource",
+                resource.id().to_string(),
+            ));
+        }
+        let current_content = resource.content().ok_or_else(|| {
+            CoreError::invalid_operation("resource content replacement requires existing content")
+        })?;
+        let session = UploadSession::for_content_replacement(
+            resource.id(),
+            expected_revision,
+            resource.name(),
+            resource.directory_id(),
+            mime_type.or_else(|| current_content.mime_type().map(str::to_string)),
+            expected_size,
+            expected_checksum,
+        )?;
+        self.persist_new_session(session, idempotency_key).await
+    }
+
+    async fn persist_new_session(
+        &self,
+        session: UploadSession,
+        idempotency_key: Option<&IdempotencyKey>,
+    ) -> Result<UploadSession, CoreError> {
         let staged = staged_for(session.id())?;
         self.service.staging.create_staged(staged.key()).await?;
         let save = match idempotency_key {
@@ -378,6 +506,18 @@ impl UploadService {
     }
 
     async fn finalize_session(&self, session: &mut UploadSession) -> Result<Resource, CoreError> {
+        match session.purpose() {
+            UploadPurpose::CreateResource => self.finalize_resource_creation(session).await,
+            UploadPurpose::ReplaceContent { .. } => {
+                self.finalize_content_replacement(session).await
+            }
+        }
+    }
+
+    async fn finalize_resource_creation(
+        &self,
+        session: &mut UploadSession,
+    ) -> Result<Resource, CoreError> {
         let id = session.id();
         if let Some(resource) = self.service.store.load(&session.resource_id()).await? {
             self.service.upload_sessions.mark_completed(&id).await?;
@@ -504,6 +644,66 @@ impl UploadService {
         }
     }
 
+    async fn finalize_content_replacement(
+        &self,
+        session: &mut UploadSession,
+    ) -> Result<Resource, CoreError> {
+        let id = session.id();
+        let expected_revision = session.purpose().expected_revision().ok_or_else(|| {
+            CoreError::invariant("replacement finalization requires an expected revision")
+        })?;
+        let completed_revision = expected_revision
+            .checked_add(1)
+            .ok_or_else(|| CoreError::invariant("resource revision overflow"))?;
+        if let Some(resource) = self.service.store.load(&session.resource_id()).await?
+            && resource.revision() == completed_revision
+            && resource.content().is_some_and(|content| {
+                content.size() == session.expected_size()
+                    && content.checksum() == Some(session.expected_checksum())
+                    && content.mime_type() == session.mime_type()
+            })
+        {
+            self.service.upload_sessions.mark_completed(&id).await?;
+            let _ = self.service.staging.discard_staged(&staged_for(id)?).await;
+            return Ok(resource);
+        }
+
+        let staged = staged_for(id)?;
+        let checksum = match session.actual_checksum() {
+            Some(checksum) => checksum.clone(),
+            None => {
+                let checksum_stream = self
+                    .service
+                    .reader
+                    .get_stream(staged.key())
+                    .await?
+                    .ok_or_else(|| CoreError::not_found("staged upload", id.to_string()))?;
+                let checksum = calculate_stream_checksum(checksum_stream).await?;
+                self.service
+                    .upload_sessions
+                    .save_actual_checksum(&id, &checksum)
+                    .await?;
+                session.set_actual_checksum(checksum.clone())?;
+                checksum
+            }
+        };
+        if checksum != *session.expected_checksum() {
+            return Err(CoreError::conflict(format!(
+                "upload checksum mismatch: expected {}, actual {}",
+                session.expected_checksum().value(),
+                checksum.value()
+            )));
+        }
+
+        let resource = self
+            .service
+            .content
+            .commit_replacement_upload(session, staged, checksum)
+            .await?;
+        self.service.upload_sessions.mark_completed(&id).await?;
+        Ok(resource)
+    }
+
     pub async fn abort(&self, id: &UploadId) -> Result<(), CoreError> {
         let _guard = self.service.upload_locks.lock(id).await;
         let session = self.load(id).await?;
@@ -612,6 +812,40 @@ fn limit_stream(data: BlobByteStream, remaining: u64) -> BlobByteStream {
                 "upload chunk exceeds the declared upload size",
             ));
         }
+        if received > MAX_UPLOAD_CHUNK_SIZE {
+            return Err(CoreError::limit_exceeded(
+                "upload chunk",
+                MAX_UPLOAD_CHUNK_SIZE,
+                received,
+            ));
+        }
         Ok(chunk)
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+    use futures_util::{StreamExt, stream};
+
+    #[tokio::test]
+    async fn rejects_a_chunk_larger_than_the_fixed_protocol_limit() {
+        let data: BlobByteStream = Box::pin(stream::iter([
+            Ok(Bytes::from(vec![0; MAX_UPLOAD_CHUNK_SIZE as usize])),
+            Ok(Bytes::from_static(&[0])),
+        ]));
+        let mut limited = limit_stream(data, MAX_UPLOAD_CHUNK_SIZE + 1);
+
+        assert!(limited.next().await.unwrap().is_ok());
+        let error = limited.next().await.unwrap().unwrap_err();
+        assert!(matches!(
+            error,
+            CoreError::LimitExceeded {
+                resource: "upload chunk",
+                limit: MAX_UPLOAD_CHUNK_SIZE,
+                actual
+            } if actual == MAX_UPLOAD_CHUNK_SIZE + 1
+        ));
+    }
 }

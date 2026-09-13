@@ -1,6 +1,6 @@
+use crate::config::{CorsPolicy, RouterOptions};
 use crate::handlers;
 use crate::openapi::ApiDoc;
-use crate::settings::{CorsPolicy, RouterOptions};
 use crate::state::{HttpComposition, HttpState};
 use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderName, Method, StatusCode};
@@ -41,6 +41,14 @@ pub fn build_router(composition: HttpComposition, options: RouterOptions) -> Rou
         .route(
             "/resources/{id}/download",
             get(handlers::download_resource_content),
+        )
+        .route(
+            "/resources/{id}/content",
+            get(handlers::get_resource_content),
+        )
+        .route(
+            "/resources/{id}/content/uploads",
+            post(handlers::create_content_replacement_upload),
         );
 
     let upload_router = Router::new()
@@ -52,18 +60,6 @@ pub fn build_router(composition: HttpComposition, options: RouterOptions) -> Rou
                 .delete(handlers::abort_upload),
         )
         .route("/uploads/{id}/complete", post(handlers::complete_upload))
-        .layer(
-            ServiceBuilder::new()
-                .layer(TraceLayer::new_for_http())
-                .layer(cors_layer(options.cors.clone()))
-                .layer(DefaultBodyLimit::disable()),
-        );
-
-    let resource_content_router = Router::new()
-        .route(
-            "/resources/{id}/content",
-            get(handlers::get_resource_content).put(handlers::replace_resource_content),
-        )
         .layer(
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
@@ -93,20 +89,13 @@ pub fn build_router(composition: HttpComposition, options: RouterOptions) -> Rou
                 .layer(cors_layer(options.cors)),
         )
         .merge(upload_router)
-        .merge(resource_content_router)
         .merge(directory_download_router)
         .with_state(HttpState::new(composition))
 }
 
 fn cors_layer(policy: CorsPolicy) -> CorsLayer {
     let layer = CorsLayer::new()
-        .allow_methods([
-            Method::GET,
-            Method::POST,
-            Method::PUT,
-            Method::PATCH,
-            Method::DELETE,
-        ])
+        .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE])
         .allow_headers([
             HeaderName::from_static("content-type"),
             HeaderName::from_static("upload-offset"),

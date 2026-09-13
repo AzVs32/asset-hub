@@ -1,8 +1,8 @@
 use crate::dto::{
-    BinaryContent, CreateDirectoryRequest, CreateUploadRequest, DirectoryListingResponse,
-    DirectoryResponse, ExpectedRevisionQuery, HealthResponse, ListDirectoryQuery,
-    ListResourcesQuery, ResourcePageResponse, ResourceResponse, UpdateDirectoryRequest,
-    UpdateResourceRequest, UploadSessionResponse,
+    BinaryContent, CreateContentReplacementUploadRequest, CreateDirectoryRequest,
+    CreateUploadRequest, DirectoryListingResponse, DirectoryResponse, ExpectedRevisionQuery,
+    HealthResponse, ListDirectoryQuery, ListResourcesQuery, ResourcePageResponse, ResourceResponse,
+    UpdateDirectoryRequest, UpdateResourceRequest, UploadSessionResponse,
 };
 use crate::error::HttpError;
 use crate::state::HttpState;
@@ -13,7 +13,7 @@ use asset_core::{
     resource::{
         domain::{Checksum, ResourceId, UploadId, UploadSession},
         query::ListResources,
-        service::{CreateUpload, UpdateResource},
+        service::{CreateContentReplacementUpload, CreateUpload, UpdateResource},
     },
     storage::port::BlobByteStream,
 };
@@ -32,16 +32,15 @@ pub(crate) mod maintenance;
 pub(crate) mod resource;
 pub(crate) mod upload;
 
-pub(crate) use content::{
-    download_directory, download_resource_content, get_resource_content, replace_resource_content,
-};
+pub(crate) use content::{download_directory, download_resource_content, get_resource_content};
 pub(crate) use directory::{
     create_directory, delete_directory, find_directory, list_directory, update_directory,
 };
 pub(crate) use maintenance::health;
 pub(crate) use resource::{delete_resource, find_resource, list_resources, update_resource};
 pub(crate) use upload::{
-    abort_upload, append_upload, complete_upload, create_upload, upload_status,
+    abort_upload, append_upload, complete_upload, create_content_replacement_upload, create_upload,
+    upload_status,
 };
 
 use directory::*;

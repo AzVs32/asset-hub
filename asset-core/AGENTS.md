@@ -81,16 +81,20 @@ ports. Follow these boundaries:
 - Keep content reads streaming-only. Each `ContentReader` output chunk must be no larger than
   `MAX_CONTENT_READ_CHUNK_SIZE`; callers must not depend on exact chunk boundaries.
 - Use half-open `[start, end)` byte ranges.
-- Validate replacement content as UTF-8 across arbitrary input chunks. Retain at most three
-  unfinished UTF-8 bytes between chunks; reject malformed sequences and incomplete final characters.
-- On invalid text, discard temporary content before creating a replacement intent or mutating
-  visible content. Preserve size, checksum, revision, and idempotency checks.
-- Keep ordinary uploads capable of accepting binary content; text validation applies to replacement.
+- Use the durable `UploadSession` state machine for both new resources and replacement content.
+  Replacement uploads accept arbitrary binary bytes and share the offset and per-chunk checksum
+  protocol with ordinary uploads. A single chunk is limited by the fixed protocol constant
+  `MAX_UPLOAD_CHUNK_SIZE` (8 MiB); this is not a total Resource-size limit or configuration value.
+- Preserve whole-content size and checksum validation, Resource revision checks, atomic publication,
+  and durable replacement recovery before advancing the existing Resource revision.
 
 ## Recovery and consistency contracts
 
 - Preserve durable intents, revision-checked updates, and recovery for Resource and Directory
   relocation. Do not describe them as one transaction across aggregates and filesystem storage.
+- Directory relocation and Resource-content publication must share the composition-root-provided
+  `StorageMutationCoordinator` so a resolved Resource Blob path remains stable through publication
+  and replacement recovery.
 - Treat an empty-directory precheck as advisory. The conditional repository deletion must check
   both emptiness and revision before authorizing the database deletion.
 - Preserve per-key locking and compare-and-swap updates during storage reconciliation. Reconciliation

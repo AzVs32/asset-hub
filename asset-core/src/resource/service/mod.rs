@@ -9,15 +9,15 @@ use crate::{
         DirectoryService,
     },
     idempotency::service::IdempotencyService,
-    resource::{
-        domain::ResourceContentEditPolicy,
-        port::{
-            ResourceContentReplacementStore, ResourceDeletionStore, ResourceMaintenanceReadModel,
-            ResourceReadModel, ResourceRelocationStore, ResourceStore, UploadSessionStore,
-        },
+    resource::port::{
+        ResourceContentReplacementStore, ResourceDeletionStore, ResourceMaintenanceReadModel,
+        ResourceReadModel, ResourceRelocationStore, ResourceStore, UploadSessionStore,
     },
-    storage::port::{
-        BlobHealth, ContentObjectStore, ContentReader, ContentStagingStore, StorageScanner,
+    storage::{
+        StorageMutationCoordinator,
+        port::{
+            BlobHealth, ContentObjectStore, ContentReader, ContentStagingStore, StorageScanner,
+        },
     },
 };
 use std::sync::Arc;
@@ -33,7 +33,10 @@ mod upload_locks;
 
 pub use command::ResourceRecoveryService;
 pub use content::{ContentRecoveryService, ContentService};
-pub use contract::{CreateUpload, ReplaceResourceContent, ResourceContentStream, UpdateResource};
+pub use contract::{
+    CreateContentReplacementUpload, CreateUpload, MAX_UPLOAD_CHUNK_SIZE, ResourceContentStream,
+    UpdateResource,
+};
 pub use reconciliation::{
     ResourceScanProgress, StorageHealthService, StorageMaintenanceService,
     StorageReconciliationReport,
@@ -78,8 +81,9 @@ impl ResourceService {
     }
 }
 
-/// Deterministic assembly bundle for the five independent Resource-related services. It is the
-/// only public constructor that creates their shared ordered path-lock registry.
+/// Deterministic assembly bundle for the independent Resource-related services. It creates their
+/// shared ordered path-lock registry and receives the process-wide storage mutation coordinator
+/// used to exclude Directory relocation from content publication.
 pub struct ResourceServices {
     resources: ResourceService,
     content: ContentService,
@@ -110,8 +114,8 @@ impl ResourceServices {
         directory_import: DirectoryImportService,
         upload_sessions: Arc<dyn UploadSessionStore>,
         content_replacements: Arc<dyn ResourceContentReplacementStore>,
-        edit_policy: Arc<ResourceContentEditPolicy>,
         idempotency: IdempotencyService,
+        storage_mutations: StorageMutationCoordinator,
     ) -> Self {
         let locks = Arc::new(StorageKeyLocks::default());
         let resources = ResourceService::new(
@@ -131,8 +135,7 @@ impl ResourceServices {
             content_objects.clone(),
             content_replacements,
             locks.clone(),
-            edit_policy.clone(),
-            idempotency.clone(),
+            storage_mutations,
         );
         let uploads = UploadService::new(
             store.clone(),
@@ -144,6 +147,7 @@ impl ResourceServices {
             directories.clone(),
             upload_sessions,
             locks.clone(),
+            content.clone(),
             idempotency.clone(),
         );
         let maintenance = StorageMaintenanceService::new(

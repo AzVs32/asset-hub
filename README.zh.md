@@ -29,8 +29,8 @@ npm --prefix asset-web ci
 cargo run -p asset-http --bin asset-http
 ```
 
-默认监听 `http://127.0.0.1:8080`。`--addr` 修改监听地址，`--config` 指定配置文件，
-`asset-http --help` 查看完整参数。在另一个终端启动 Web 页面：
+默认监听 `http://127.0.0.1:8080`。HTTP 行为在 `[http]` 分区中配置，`--config` 选择共享
+配置文件。在另一个终端启动 Web 页面：
 
 ```bash
 cd asset-web
@@ -40,7 +40,7 @@ npm run dev
 打开 `http://127.0.0.1:5173`。浏览器直接进入全局资源工作区：浏览目录、上传资源、修改资源
 名称和所在目录、下载或删除资源。启动会自动创建所需本地数据。
 
-文本内容替换可通过 HTTP API 使用；当前 Web 界面仅支持资源元数据编辑。
+可通过 HTTP 上传接口分块替换任意二进制内容；当前 Web 界面仅支持资源元数据编辑。
 
 ## 本地管理资源
 
@@ -51,25 +51,28 @@ cargo run -p asset-cli --bin asset -- config --check
 cargo run -p asset-cli --bin asset -- system --scan-resource
 ```
 
-`asset config` 校验并输出生效配置；`asset system --scan-resource` 重新遍历 Blob 存储、重算全部
-SHA-256，并把结果协调回资源数据库。完整命令说明见
+`asset config` 校验并输出生效的 `[asset]` 核心配置，同时保留未注册的扩展分区；
+`asset system --scan-resource` 重新遍历 Blob 存储、重算全部 SHA-256，并把结果协调回资源数据库。完整命令说明见
 [asset-cli/README.md](asset-cli/README.md)。
 
 ## 配置
 
 可执行文件依次读取 `--config <PATH>`、`./config.toml`、内置默认值。
-[config.example.toml](config.example.toml) 说明了全部配置项：
+[config.example.toml](config.example.toml) 说明了全部内置配置项。各组件拥有自己的强类型配置分区，
+各可执行程序注册自己消费的分区，并只加载一次共享配置文档：
 
-- `[database]` 选择数据库后端（SQLite）及连接池大小。
-- `[resource_edit]` 限制交互式文本编辑；`[idempotency]` 控制请求租约。
-- `[blob]` 选择 Blob 后端（本地文件系统）及其根目录；`[blob.local.sync]` 保持数据库与文件系统
-  中的直接变更保持一致。
+- `[asset]` 包含数据库、Blob 存储和幂等策略等核心运行配置。
+- `[http]` 包含 HTTP 监听、CORS、请求超时和归档限制。
+
+其他终端和插件可以注册独立分区，不需要给内置配置类型增加字段或依赖。已注册分区会严格
+校验自己的完整子树；未注册分区会保留，供其他可执行程序或稍后加载的插件使用。
 
 ## 仓库结构
 
 - `asset-core`：按能力边界组织的领域内核。`directory`、`resource`、`idempotency` 各自
   就近包含领域、端口与应用服务；`storage` 只包含存储端口，`workflow` 包含跨聚合的应用
   工作流。AI 开发约束详见 [asset-core/AGENTS.md](asset-core/AGENTS.md)。
+- `asset-config`：通用的共享配置加载与可扩展强类型分区注册工具。
 - `asset-infra`：SQLite 仓储、OpenDAL 存储与文件系统适配器。
 - `asset-runtime`：可复用运行时组装与后台任务所有权。
 - `asset-http`：Axum 传输、DTO、OpenAPI 与 HTTP 可执行文件。

@@ -84,8 +84,10 @@ asset <group> <command> [OPTIONS]
 
 ## `asset [--config <PATH>] config --check`
 
-读取并校验 Asset Hub 配置，同时完成路径归一化，但不会初始化数据库、对象存储或应用
-运行时。配置有效时输出 `configuration is valid`，配置无效时输出错误并以非零状态退出。
+读取并校验 CLI 消费的 `[asset]` 核心配置分区，同时完成路径归一化，但不会初始化数据库、
+对象存储或应用运行时。配置有效时输出
+`[asset] configuration is valid; unregistered sections were not validated`，配置无效时输出错误并以
+非零状态退出。其他终端或插件拥有的未注册分区会保留，但不由该命令进行语义校验。
 
 ```bash
 asset config --check
@@ -97,8 +99,8 @@ asset --config config.toml config --check
 
 ## `asset [--config <PATH>] config --show`
 
-读取并校验配置，然后以 TOML 输出填充默认值且完成路径归一化后的完整配置。该命令
-同样不会初始化数据库、对象存储或应用运行时。
+读取并校验 `[asset]` 分区，然后以 TOML 输出该分区填充默认值并完成路径归一化后的共享
+配置文档。未注册分区按原值保留。该命令同样不会初始化数据库、对象存储或应用运行时。
 
 ```bash
 asset config --show
@@ -107,9 +109,9 @@ asset --config config.toml config --show
 
 `--check` 与 `--show` 互斥，并且执行 `asset config` 时必须选择其中一个。
 
-数据库和 Blob 存储分别通过 `database.backend` 与 `blob.backend` 选择后端；当前支持并
+数据库和 Blob 存储分别通过 `asset.database.backend` 与 `asset.blob.backend` 选择后端；当前支持并
 默认使用 `sqlite` 与 `local`。SQLite 文件路径不属于可配置项，使用本地 Blob 后端时
-始终由 `blob.local.root` 派生为 `<blob.local.root>/.asset-hub/asset-hub.sqlite`。
+始终由 `asset.blob.local.root` 派生为 `<blob.local.root>/.asset-hub/asset-hub.sqlite`。
 
 # `asset system` 命令
 

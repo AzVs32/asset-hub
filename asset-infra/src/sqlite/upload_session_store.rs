@@ -4,7 +4,8 @@ use asset_core::{
     idempotency::domain::IdempotencyKey,
     resource::{
         domain::{
-            Checksum, ResourceId, UploadId, UploadSession, UploadSessionSnapshot, UploadStatus,
+            Checksum, ResourceId, UploadId, UploadPurpose, UploadSession, UploadSessionSnapshot,
+            UploadStatus,
         },
         port::UploadSessionStore,
     },
@@ -205,14 +206,23 @@ impl SqliteUploadSessionStore {
         sqlx::query(
             r#"
             INSERT INTO upload_sessions (
-                id, resource_id, idempotency_key, name, directory_id, mime_type,
+                id, purpose, resource_id, expected_revision, idempotency_key,
+                name, directory_id, mime_type,
                 expected_size, offset, status, expected_checksum_value, actual_checksum_value,
                 failure, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(session.id().to_string())
+        .bind(session.purpose().as_str())
         .bind(session.resource_id().to_string())
+        .bind(
+            session
+                .purpose()
+                .expected_revision()
+                .map(encode_revision)
+                .transpose()?,
+        )
         .bind(idempotency_key.map(IdempotencyKey::as_str))
         .bind(session.name())
         .bind(session.directory_id().to_string())
@@ -239,7 +249,7 @@ impl SqliteUploadSessionStore {
     ) -> Result<Option<UploadSession>, CoreError> {
         let row = sqlx::query(&format!(
             r#"
-            SELECT id, resource_id, name, directory_id, mime_type,
+            SELECT id, purpose, resource_id, expected_revision, name, directory_id, mime_type,
                    expected_size, offset, status, expected_checksum_value, actual_checksum_value,
                    failure, created_at, updated_at
             FROM upload_sessions
@@ -267,6 +277,7 @@ fn decode_session(row: sqlx::sqlite::SqliteRow) -> Result<UploadSession, CoreErr
     };
     UploadSession::rehydrate(UploadSessionSnapshot {
         id: UploadId::from_uuid(parse_id("upload_session.id", row.get("id"))?),
+        purpose: decode_purpose(row.get("purpose"), row.get("expected_revision"))?,
         resource_id: ResourceId::from_uuid(parse_id(
             "upload_session.resource_id",
             row.get("resource_id"),
@@ -292,6 +303,25 @@ fn decode_session(row: sqlx::sqlite::SqliteRow) -> Result<UploadSession, CoreErr
     .map_err(|error| CoreError::repository("upload_session.rehydrate", error))
 }
 
+fn decode_purpose(
+    value: String,
+    expected_revision: Option<i64>,
+) -> Result<UploadPurpose, CoreError> {
+    match (value.as_str(), expected_revision) {
+        ("create_resource", None) => Ok(UploadPurpose::CreateResource),
+        ("replace_content", Some(revision)) => Ok(UploadPurpose::ReplaceContent {
+            expected_revision: decode_u64("upload_session.expected_revision", revision)?,
+        }),
+        _ => Err(CoreError::repository(
+            "upload_session.purpose",
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("invalid upload purpose `{value}` and expected revision"),
+            ),
+        )),
+    }
+}
+
 fn decode_status(value: String) -> Result<UploadStatus, CoreError> {
     match value.as_str() {
         "uploading" => Ok(UploadStatus::Uploading),
@@ -311,6 +341,11 @@ fn decode_status(value: String) -> Result<UploadStatus, CoreError> {
 fn encode_u64(value: u64) -> Result<i64, CoreError> {
     i64::try_from(value)
         .map_err(|_| CoreError::configuration("upload size exceeds SQLite INTEGER range"))
+}
+
+fn encode_revision(value: u64) -> Result<i64, CoreError> {
+    i64::try_from(value)
+        .map_err(|_| CoreError::configuration("resource revision exceeds SQLite INTEGER range"))
 }
 
 fn decode_u64(field: &'static str, value: i64) -> Result<u64, CoreError> {

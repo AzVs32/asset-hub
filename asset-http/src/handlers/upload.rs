@@ -42,6 +42,52 @@ pub(crate) async fn create_upload(
 }
 
 #[utoipa::path(
+    post,
+    path = "/resources/{id}/content/uploads",
+    tag = "uploads",
+    params(
+        ("id" = String, Path, description = "要替换内容的资源 ID"),
+        ("Idempotency-Key" = Option<String>, Header, description = "可选的幂等键，重复请求返回首次创建的会话")
+    ),
+    request_body = CreateContentReplacementUploadRequest,
+    responses(
+        (status = 201, description = "内容替换上传会话已创建", body = UploadSessionResponse),
+        (status = 400, description = "请求参数无效", body = crate::dto::ErrorResponse),
+        (status = 404, description = "资源不存在", body = crate::dto::ErrorResponse),
+        (status = 409, description = "资源 revision 冲突或资源没有可替换内容", body = crate::dto::ErrorResponse)
+    )
+)]
+pub(crate) async fn create_content_replacement_upload(
+    State(state): State<HttpState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    payload: Result<Json<CreateContentReplacementUploadRequest>, JsonRejection>,
+) -> Result<(StatusCode, Json<UploadSessionResponse>), HttpError> {
+    let id = parse_resource_id(&id)?;
+    let request = parse_json_payload(payload)?;
+    let expected_checksum = Checksum::sha256(request.expected_sha256)?;
+    let mut command = CreateContentReplacementUpload::new(
+        request.size,
+        expected_checksum,
+        request.expected_revision,
+    );
+    if let Some(mime_type) = request.mime_type {
+        command = command.with_mime_type(mime_type);
+    }
+    if let Some(key) = parse_idempotency_key(&headers)? {
+        command = command.with_idempotency_key(key);
+    }
+    let Some(session) = state
+        .uploads()
+        .create_content_replacement(&id, command)
+        .await?
+    else {
+        return Err(HttpError::not_found(format!("resource `{id}` not found")));
+    };
+    Ok((StatusCode::CREATED, Json(session_response(&session))))
+}
+
+#[utoipa::path(
     get,
     path = "/uploads/{id}",
     tag = "uploads",
@@ -72,11 +118,12 @@ pub(crate) async fn upload_status(
     request_body(
         content = inline(BinaryContent),
         content_type = "application/octet-stream",
-        description = "从 Upload-Offset 开始的原始文件分片"
+        description = "从 Upload-Offset 开始的原始文件分片；单个分片最多 8 MiB"
     ),
     responses(
         (status = 204, description = "分片已持久化"),
-        (status = 409, description = "上传偏移或分片摘要冲突", body = crate::dto::ErrorResponse)
+        (status = 409, description = "上传偏移或分片摘要冲突", body = crate::dto::ErrorResponse),
+        (status = 413, description = "分片超过固定的 8 MiB 上限", body = crate::dto::ErrorResponse)
     )
 )]
 pub(crate) async fn append_upload(

@@ -162,7 +162,7 @@ fn zip64_is_selected_only_above_the_zip32_entry_threshold() {
 async fn missing_source_preserves_404_while_cancelling_worker() {
     let root = tempfile::tempdir().unwrap();
     std::fs::write(root.path().join("note.txt"), b"old").unwrap();
-    let mut config = asset_infra::config::AssetInfraConfig::default();
+    let mut config = asset_runtime::AssetConfig::default();
     config.blob.local.root = root.path().to_owned();
     config.blob.local.sync.enabled = false;
     let runtime = asset_runtime::AssetRuntime::new(config).await.unwrap();

@@ -19,7 +19,7 @@ use asset_core::{
         StorageScanner,
     },
 };
-use config::{AssetInfraConfig, BlobBackend, DatabaseBackend};
+use config::{BlobBackend, BlobConfig, DatabaseBackend, DatabaseConfig};
 use directory_index::InMemoryDirectoryIndex;
 use sqlite::{
     SqliteDatabase, SqliteDirectoryStore, SqliteIdempotencyRepository,
@@ -33,8 +33,6 @@ use storage::{FileSystemScanner, OpenDalBlobStorage};
 ///
 /// 当前支持 SQLite 数据库和本地 Blob 存储；Core service 由 `asset-runtime` 装配。
 pub struct AssetInfrastructure {
-    /// 实际生效的基础设施配置。
-    config: AssetInfraConfig,
     resource_store: Arc<SqliteResourceStore>,
     directory_store: Arc<SqliteDirectoryStore>,
     directory_index: Arc<InMemoryDirectoryIndex>,
@@ -47,24 +45,28 @@ pub struct AssetInfrastructure {
 }
 
 impl AssetInfrastructure {
-    /// 使用给定配置创建基础设施组合。
-    ///
-    /// 调用方可以传入 `AssetInfraConfig::default()` 使用默认本地配置。
-    pub async fn new(config: AssetInfraConfig) -> Result<Self, CoreError> {
-        let config = config.normalized()?;
-        let (blob_storage, storage_scanner) = match config.blob.backend {
+    /// 使用给定的数据库和 Blob 配置创建基础设施组合。
+    pub async fn new(
+        database_config: DatabaseConfig,
+        blob_config: BlobConfig,
+    ) -> Result<Self, CoreError> {
+        database_config
+            .validate()
+            .map_err(CoreError::configuration)?;
+        let blob_config = blob_config.normalize().map_err(CoreError::configuration)?;
+        let (blob_storage, storage_scanner) = match blob_config.backend {
             BlobBackend::Local => (
                 Arc::new(OpenDalBlobStorage::from_local_root(
-                    &config.blob.local.root,
+                    &blob_config.local.root,
                 )?),
-                Arc::new(FileSystemScanner::new(config.blob.local.root.clone())),
+                Arc::new(FileSystemScanner::new(blob_config.local.root.clone())),
             ),
         };
         let sqlite_started = Instant::now();
-        let database = match config.database.backend {
+        let database = match database_config.backend {
             DatabaseBackend::Sqlite => {
-                let sqlite_path = config.sqlite_path();
-                SqliteDatabase::connect(&sqlite_path, config.database.sqlite.max_connections)
+                let sqlite_path = database_config.sqlite_path_in(blob_config.local_root());
+                SqliteDatabase::connect(&sqlite_path, database_config.sqlite.max_connections)
                     .await?
             }
         };
@@ -84,7 +86,6 @@ impl AssetInfrastructure {
         let idempotency_repository =
             Arc::new(SqliteIdempotencyRepository::new(database.pool().clone()));
         Ok(Self {
-            config,
             resource_store,
             directory_store,
             directory_index,
@@ -94,11 +95,6 @@ impl AssetInfrastructure {
             blob_storage,
             storage_scanner,
         })
-    }
-
-    /// 返回实际生效的基础设施配置。
-    pub fn config(&self) -> &AssetInfraConfig {
-        &self.config
     }
 
     /// 返回资源仓储端口对象。

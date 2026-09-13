@@ -117,7 +117,7 @@ async fn upload_creation_key_recovers_the_durable_session_after_lease_takeover()
     let database = SqliteDatabase::connect(&path, 1).await.unwrap();
     let uploads = SqliteUploadSessionStore::new(database.pool().clone());
     let key = key("upload-link");
-    let session = UploadSession::new(
+    let session = UploadSession::for_resource_creation(
         "document.txt",
         Directory::root().id(),
         Some("text/plain".to_string()),

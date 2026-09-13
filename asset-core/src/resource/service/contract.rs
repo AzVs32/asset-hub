@@ -5,6 +5,11 @@ use crate::{
     resource::domain::Checksum, storage::port::BlobByteStream,
 };
 
+/// 单次追加上传允许的最大分片长度：8 MiB。
+///
+/// 该值是上传协议的一部分，用于限制分片临时文件和单次请求的资源占用，不限制资源总大小。
+pub const MAX_UPLOAD_CHUNK_SIZE: u64 = 8 * 1024 * 1024;
+
 #[derive(Debug, Clone)]
 pub struct CreateUpload {
     pub(super) name: String,
@@ -52,7 +57,7 @@ impl CreateUpload {
 }
 
 #[derive(Debug, Clone)]
-pub struct ReplaceResourceContent {
+pub struct CreateContentReplacementUpload {
     pub(super) expected_size: u64,
     pub(super) expected_checksum: Checksum,
     pub(super) expected_revision: u64,
@@ -60,7 +65,7 @@ pub struct ReplaceResourceContent {
     pub(super) idempotency_key: Option<IdempotencyKey>,
 }
 
-impl ReplaceResourceContent {
+impl CreateContentReplacementUpload {
     pub fn new(expected_size: u64, expected_checksum: Checksum, expected_revision: u64) -> Self {
         Self {
             expected_size,

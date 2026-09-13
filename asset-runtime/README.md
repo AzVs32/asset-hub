@@ -1,8 +1,15 @@
 # Asset Runtime
 
-`asset-runtime` is the reusable application assembly layer. Each executable surface loads its own
-configuration and creates one `AssetRuntime`; the runtime remains independent of HTTP routing, CLI
-parsing, and presentation policy.
+`asset-runtime` is the reusable application assembly layer. Each executable surface assembles an
+`asset-config` registry, loads the shared configuration document once, and passes the normalized
+`[asset]` section into one `AssetRuntime`. Runtime remains independent of HTTP routing, CLI parsing,
+configuration sources, and presentation policy.
+
+Runtime owns `AssetConfig` and implements the `[asset]` `ConfigSection`; each executable registers
+that type in its own composition root. `AssetConfig` composes the database and Blob
+sub-configuration owned by `asset-infra` with Runtime's idempotency policy. Resource content
+replacement uses the same durable upload-session workflow as resource creation and has no
+Runtime size-limit configuration. `asset-config` remains independent of these concrete settings.
 
 Construction is deterministic:
 
@@ -13,6 +20,11 @@ Construction is deterministic:
    content replacements before optional filesystem synchronization;
 4. schedule pending upload finalizations through the Runtime-owned supervisor;
 5. start optional storage synchronization only when the application surface requests it.
+
+Runtime creates one process-wide `StorageMutationCoordinator` and injects it into both Directory
+and Resource service bundles. Directory relocation and Resource-content publication hold this
+shared coordination boundary across their filesystem and database steps, so publication cannot use
+a directory path that is being relocated concurrently.
 
 Runtime startup obtains Core's explicit recovery and upload-finalization management handles from
 the assembled service bundles. Ordinary application surfaces continue to receive only the business
@@ -32,7 +44,8 @@ Recovery also recognizes the two-hard-link state left by older Blob moves interr
 source removal. It finishes the move only when the adapter verifies physical file identity;
 independent objects remain a conflict and the intent is retained for inspection.
 
-`UploadSession` owns durable upload state transitions. Runtime owns the deduplicating finalization
+`UploadSession` owns durable upload state transitions for both resource creation and content
+replacement. Runtime owns the deduplicating finalization
 supervisor and all spawned task lifetimes; application surfaces receive only the
 `UploadFinalizationDispatcher` interface. `LocalStorageSync` remains an `asset-infra` driving
 adapter, but Runtime starts it with `StorageMaintenanceService` and owns its lifetime.
