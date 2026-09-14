@@ -1,0 +1,19 @@
+[package]
+name = "utils"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[features]
+default = []
+gen_id_uuid_v7 = [
+    "dep:uuid",
+    "dep:serde",
+]
+
+[dependencies]
+uuid = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+thiserror.workspace = true

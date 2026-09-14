@@ -1,0 +1,17 @@
+[workspace]
+resolver = "3"
+members = ["core", "utils"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/AzVs32/asset-hub"
+authors = ["AzVs"]
+
+[workspace.dependencies]
+utils = { path = "utils" }
+uuid = { version = "1.26.1", features = ["v7", "serde"] }
+serde = { version = "1.0.229", features = ["derive"] }
+thiserror = "2.0.20"
+getset = "0.1.7"

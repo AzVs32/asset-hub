@@ -1,0 +1,15 @@
+[package]
+name = "core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+name = "asset_core"
+
+[dependencies]
+utils = { workspace = true, features = ["gen_id_uuid_v7"] }
+thiserror.workspace = true
+getset.workspace = true

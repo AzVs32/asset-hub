@@ -1,4 +1,7 @@
 /data/
+/temp/
+
+/target/
 
 # RustRover
 .idea/
