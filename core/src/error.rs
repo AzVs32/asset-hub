@@ -1,12 +1,10 @@
 use thiserror::Error;
 
+use crate::mount::error::DomainError;
+
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum CoreError {
     #[error(transparent)]
-    Storage(#[from] StorageError),
-}
-
-#[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StorageError {
-
+    Mount(#[from] DomainError),
 }
