@@ -1,11 +1,16 @@
 mod args;
+mod auto;
 mod expand;
 mod paths;
 mod serde;
 
 use proc_macro::TokenStream;
 
-/// Implements `ConfigSection` for a struct, using `key` and an optional `validate` function.
+/// Implements `ConfigSection` for a struct and registers it for automatic loading.
+///
+/// `key` is required. `validate` names an optional validation function. Set
+/// `auto = false` to exclude this section from automatic loading and register
+/// a concrete type with `Registry` instead.
 ///
 /// Place this attribute before any `#[derive(...)]` on the struct so existing Serde derives
 /// are visible and are not generated a second time.

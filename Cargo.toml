@@ -16,6 +16,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.20"
 getset = "0.1.7"
 config = { version = "0.15.25", default-features = false, features = ["toml"] }
+linkme = "0.3.37"
 proc-macro2 = "1.0.107"
 proc-macro-crate = "3.5.0"
 quote = "1.0.47"

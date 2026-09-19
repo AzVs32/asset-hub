@@ -12,5 +12,6 @@ name = "asset_config"
 [dependencies]
 asset-config-macros = { path = "../asset-config-macros" }
 config.workspace = true
+linkme.workspace = true
 thiserror.workspace = true
 serde.workspace = true
