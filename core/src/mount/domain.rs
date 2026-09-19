@@ -1,12 +1,9 @@
-mod d_path;
 mod driver_kind;
-mod v_path;
 
+use crate::path::domain::{DPath, VPath};
 use getset::{CopyGetters, Getters};
 
-pub use d_path::DPath;
 pub use driver_kind::DriverKind;
-pub use v_path::VPath;
 
 #[derive(Debug, Clone, PartialEq, Eq, Getters, CopyGetters)]
 pub struct Mount {

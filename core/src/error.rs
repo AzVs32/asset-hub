@@ -1,10 +1,10 @@
 use thiserror::Error;
 
-use crate::mount::error::DomainError;
+use crate::path::error::DomainError;
 
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum CoreError {
     #[error(transparent)]
-    Mount(#[from] DomainError),
+    Path(#[from] DomainError),
 }

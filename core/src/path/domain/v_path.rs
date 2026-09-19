@@ -1,4 +1,4 @@
-use crate::mount::error::DomainError;
+use crate::path::error::DomainError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VPath(String);
