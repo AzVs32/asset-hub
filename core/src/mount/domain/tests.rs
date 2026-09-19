@@ -7,7 +7,7 @@ fn mount_at(path: &str) -> Mount {
         MountId::new(),
         VPath::parse(path).unwrap(),
         DriverKind,
-        DPath,
+        DPath::new("driver-specific-root"),
         true,
     )
 }

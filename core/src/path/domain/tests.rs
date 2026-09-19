@@ -1,6 +1,19 @@
 use crate::path::error::DomainError;
 
-use super::VPath;
+use super::{DPath, VPath};
+
+#[test]
+fn d_path_preserves_driver_specific_syntax() {
+    let raw = r"bucket/prefix\\..//object";
+    let path = DPath::new(raw);
+
+    assert_eq!(path.as_str(), raw);
+}
+
+#[test]
+fn d_path_allows_an_empty_driver_root() {
+    assert_eq!(DPath::new("").as_str(), "");
+}
 
 #[test]
 fn v_path_parse_normalizes_separators_and_segments() {

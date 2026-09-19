@@ -13,14 +13,14 @@ pub struct Mount {
     v_path: VPath,
     #[getset(get_copy = "pub")]
     driver: DriverKind,
-    #[getset(get_copy = "pub")]
+    #[getset(get = "pub")]
     d_path: DPath,
     #[getset(get_copy = "pub")]
     enabled: bool,
 }
 
 impl Mount {
-    /// Creates a mount from validated domain values.
+    /// Creates a mount; its driver validates the driver path when bound.
     pub fn new(
         id: MountId,
         v_path: VPath,
