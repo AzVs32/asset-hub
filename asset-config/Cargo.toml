@@ -1,0 +1,16 @@
+[package]
+name = "asset-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+name = "asset_config"
+
+[dependencies]
+asset-config-macros = { path = "../asset-config-macros" }
+config.workspace = true
+thiserror.workspace = true
+serde.workspace = true
