@@ -1,0 +1,13 @@
+use thiserror::Error;
+
+use crate::mount::domain::MountId;
+use crate::path::domain::VPath;
+
+#[derive(Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ServiceError {
+    #[error("duplicate mount ID: {0}")]
+    DuplicateMountId(MountId),
+    #[error("duplicate mount path: {}", .0.as_str())]
+    DuplicateMountPath(VPath),
+}
