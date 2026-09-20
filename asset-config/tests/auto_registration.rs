@@ -48,6 +48,12 @@ struct CacheConfig {
     enabled: bool,
 }
 
+#[config(key = "explicit", auto = true)]
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct ExplicitAutoConfig {
+    enabled: bool,
+}
+
 #[config(key = "manual", auto = false)]
 #[derive(Default)]
 struct ManualConfig {
@@ -68,6 +74,7 @@ fn discovers_sections_and_uses_defaults_without_a_file() {
     assert_eq!(http.host, "127.0.0.1");
     assert_eq!(http.port, 8080);
     assert!(!loaded.get::<CacheConfig>().unwrap().enabled);
+    assert!(!loaded.get::<ExplicitAutoConfig>().unwrap().enabled);
     assert!(matches!(
         loaded.get::<ManualConfig>(),
         Err(ConfigError::NotRegistered("manual"))
@@ -107,5 +114,17 @@ fn manual_registry_can_select_a_section() {
     assert!(matches!(
         loaded.get::<HttpConfig>(),
         Err(ConfigError::NotRegistered("http"))
+    ));
+}
+
+#[test]
+fn repeated_registration_reports_the_type_name() {
+    let mut registry = Registry::default();
+    registry.register::<ManualConfig>().unwrap();
+
+    assert!(matches!(
+        registry.register::<ManualConfig>(),
+        Err(ConfigError::AlreadyRegistered(name))
+            if name == std::any::type_name::<ManualConfig>()
     ));
 }

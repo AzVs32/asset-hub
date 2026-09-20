@@ -2,7 +2,7 @@ use crate::error::ConfigError;
 use crate::loaded::LoadedConfig;
 use crate::section::ConfigSection;
 use config::{Config, File, Value};
-use std::any::TypeId;
+use std::any::{TypeId, type_name};
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -30,7 +30,7 @@ impl Registry {
     {
         let type_id = TypeId::of::<T>();
         if self.types.contains(&type_id) {
-            return Err(ConfigError::AlreadyRegistered(T::KEY));
+            return Err(ConfigError::AlreadyRegistered(type_name::<T>()));
         }
 
         if self.keys.contains(&T::KEY) {

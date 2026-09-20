@@ -13,7 +13,7 @@ pub(crate) fn config(args: TokenStream, input: TokenStream) -> syn::Result<Token
         key,
         validate,
         auto,
-    } = ConfigArgs::parse(args)?;
+    } = ConfigArgs::parse(args.into())?;
     let mut item: ItemStruct = syn::parse(input)?;
     if auto && !item.generics.params.is_empty() {
         return Err(syn::Error::new_spanned(
