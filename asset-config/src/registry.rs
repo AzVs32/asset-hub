@@ -2,7 +2,7 @@ use crate::error::ConfigError;
 use crate::loaded::LoadedConfig;
 use crate::section::ConfigSection;
 use config::{Config, File, Value};
-use std::any::{TypeId, type_name};
+use std::any::TypeId;
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -19,7 +19,6 @@ struct Registration {
 pub struct Registry {
     registrations: Vec<Registration>,
     keys: HashSet<&'static str>,
-    types: HashSet<TypeId>,
 }
 
 impl Registry {
@@ -28,15 +27,24 @@ impl Registry {
     where
         T: ConfigSection,
     {
+        if !valid_key(T::KEY) {
+            return Err(ConfigError::InvalidKey(T::KEY));
+        }
+
+        if let Some(existing) = self
+            .keys
+            .iter()
+            .filter(|&&key| key == T::KEY || is_ancestor(key, T::KEY) || is_ancestor(T::KEY, key))
+            .min()
+            .copied()
+        {
+            return Err(ConfigError::KeyConflict {
+                existing,
+                incoming: T::KEY,
+            });
+        }
+
         let type_id = TypeId::of::<T>();
-        if self.types.contains(&type_id) {
-            return Err(ConfigError::AlreadyRegistered(type_name::<T>()));
-        }
-
-        if self.keys.contains(&T::KEY) {
-            return Err(ConfigError::DuplicateKey(T::KEY));
-        }
-
         let default = Config::try_from(&T::default())?.cache;
         let validate: Validator = Box::new(|config| {
             let value = config.get::<T>(T::KEY)?;
@@ -49,7 +57,6 @@ impl Registry {
             default,
             validate,
         });
-        self.types.insert(type_id);
         self.keys.insert(T::KEY);
         Ok(self)
     }
@@ -72,4 +79,19 @@ impl Registry {
         let registered = self.registrations.into_iter().map(|r| r.type_id).collect();
         Ok(LoadedConfig { inner, registered })
     }
+}
+
+fn valid_key(key: &str) -> bool {
+    key.split('.').all(|segment| {
+        !segment.is_empty()
+            && segment
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+    })
+}
+
+fn is_ancestor(parent: &str, child: &str) -> bool {
+    child
+        .strip_prefix(parent)
+        .is_some_and(|suffix| suffix.starts_with('.'))
 }

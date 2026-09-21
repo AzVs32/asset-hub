@@ -4,13 +4,18 @@ pub enum ConfigError {
     #[error(transparent)]
     Backend(#[from] config::ConfigError),
 
-    /// Two different configurations used the same key
-    #[error("config key `{0}` is already registered")]
-    DuplicateKey(&'static str),
+    /// A configuration section uses the same key as, or overlaps, another section.
+    #[error("config key `{incoming}` conflicts with registered key `{existing}`")]
+    KeyConflict {
+        existing: &'static str,
+        incoming: &'static str,
+    },
 
-    /// Repeated registration of the same configuration type
-    #[error("config type `{0}` is already registered")]
-    AlreadyRegistered(&'static str),
+    /// A section key is not a dot-separated path of bare key segments.
+    #[error(
+        "invalid config key `{0}`: use non-empty dot-separated segments containing only ASCII letters, digits, `_`, or `-`"
+    )]
+    InvalidKey(&'static str),
 
     /// At `get::<T>()`, `T` is not registered
     #[error("config `{0}` is not registered")]

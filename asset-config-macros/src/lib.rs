@@ -8,7 +8,10 @@ use proc_macro::TokenStream;
 
 /// Implements `ConfigSection` for a struct and registers it for automatic loading.
 ///
-/// `key` is required. `validate` names an optional validation function. Set
+/// At registration, `key` must be a case-sensitive, dot-separated path of
+/// ASCII letters, digits, `_`, and `-`. Registered keys cannot overlap as
+/// parent and child paths.
+/// `validate` names an optional validation function. Set
 /// `auto = false` to exclude this section from automatic loading and register
 /// a concrete type with `Registry` instead.
 ///

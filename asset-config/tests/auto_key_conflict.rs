@@ -1,24 +1,24 @@
 use asset_config::{ConfigError, config, load};
 
-#[config(key = "duplicate")]
+#[config(key = "server")]
 #[derive(Default)]
-struct First {
+struct Server {
     value: bool,
 }
 
-#[config(key = "duplicate")]
+#[config(key = "server.http")]
 #[derive(Default)]
-struct Second {
+struct Http {
     value: bool,
 }
 
 #[test]
-fn duplicate_auto_keys_are_rejected() {
+fn auto_registration_rejects_parent_and_child_keys() {
     assert!(matches!(
         load("missing-config.toml"),
         Err(ConfigError::KeyConflict {
-            existing: "duplicate",
-            incoming: "duplicate"
+            existing: "server",
+            incoming: "server.http"
         })
     ));
 }

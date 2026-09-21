@@ -118,13 +118,15 @@ fn manual_registry_can_select_a_section() {
 }
 
 #[test]
-fn repeated_registration_reports_the_type_name() {
+fn repeated_registration_reports_the_key_conflict() {
     let mut registry = Registry::default();
     registry.register::<ManualConfig>().unwrap();
 
     assert!(matches!(
         registry.register::<ManualConfig>(),
-        Err(ConfigError::AlreadyRegistered(name))
-            if name == std::any::type_name::<ManualConfig>()
+        Err(ConfigError::KeyConflict {
+            existing: "manual",
+            incoming: "manual"
+        })
     ));
 }

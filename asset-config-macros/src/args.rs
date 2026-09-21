@@ -41,14 +41,11 @@ impl ConfigArgs {
         parser.parse2(args)?;
         let key: LitStr =
             key.ok_or_else(|| syn::Error::new(Span::call_site(), "missing `key = \"...\"`"))?;
-        if key.value().trim().is_empty() {
-            return Err(syn::Error::new(key.span(), "`key` cannot be empty"));
-        }
 
         Ok(Self {
             key,
             validate,
-            auto: auto.map_or(true, |value| value.value),
+            auto: auto.is_none_or(|v| v.value),
         })
     }
 }
@@ -80,13 +77,23 @@ mod tests {
                 .unwrap()
                 .auto
         );
+
+        for key in [
+            "server.http_api",
+            "server.http-api",
+            "Server.123",
+            "server..http",
+            "  ",
+        ] {
+            let args = quote!(key = #key);
+            assert_eq!(ConfigArgs::parse(args).unwrap().key.value(), key);
+        }
     }
 
     #[test]
     fn rejects_invalid_options() {
         for (args, message) in [
             (quote!(), "missing `key = \"...\"`"),
-            (quote!(key = "  "), "`key` cannot be empty"),
             (quote!(key = "a", key = "b"), "duplicate `key`"),
             (
                 quote!(key = "a", auto = true, auto = false),

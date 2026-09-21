@@ -36,7 +36,7 @@ pub use section::ConfigSection;
 /// }
 /// ```
 ///
-/// The `key` argument is required and must not be empty.
+/// The `key` argument is required. Its format is checked when the section is registered.
 ///
 /// ```compile_fail
 /// use asset_config::config;
@@ -44,14 +44,6 @@ pub use section::ConfigSection;
 /// #[config]
 /// #[derive(Default)]
 /// struct MissingKey;
-/// ```
-///
-/// ```compile_fail
-/// use asset_config::config;
-///
-/// #[config(key = "  ")]
-/// #[derive(Default)]
-/// struct EmptyKey;
 /// ```
 pub use asset_config_macros::config;
 
