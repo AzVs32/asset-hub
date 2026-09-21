@@ -231,3 +231,28 @@ fn v_path_ancestor_checks_use_complete_segments() {
     assert!(!a.is_ancestor_of(&similar));
     assert!(!a.is_ancestor_or_self_of(&similar));
 }
+
+#[test]
+fn v_path_strips_ancestor_prefixes_into_relative_paths() {
+    let root = VPath::root();
+    let movies = VPath::try_from("/movies").unwrap();
+    let file = VPath::try_from("/movies/2026/a.mp4").unwrap();
+    let similar = VPath::try_from("/movie").unwrap();
+
+    let from_mount = file.strip_prefix(&movies).unwrap();
+    assert_eq!(from_mount.as_str(), "2026/a.mp4");
+    assert_eq!(from_mount.depth(), 2);
+    assert_eq!(from_mount.name(), Some("a.mp4"));
+    assert_eq!(from_mount.to_string(), "2026/a.mp4");
+    assert_eq!(from_mount.as_ref(), "2026/a.mp4");
+
+    let from_root = file.strip_prefix(&root).unwrap();
+    assert_eq!(from_root.as_str(), "movies/2026/a.mp4");
+
+    let mount_root = movies.strip_prefix(&movies).unwrap();
+    assert!(mount_root.is_empty());
+    assert_eq!(mount_root.depth(), 0);
+    assert_eq!(mount_root.name(), None);
+
+    assert_eq!(file.strip_prefix(&similar), None);
+}

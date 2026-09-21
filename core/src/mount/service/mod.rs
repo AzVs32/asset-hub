@@ -2,33 +2,24 @@ use std::collections::HashSet;
 
 use crate::mount::domain::Mount;
 use crate::mount::error::ServiceError;
-use crate::path::domain::{DPath, VPath};
+use crate::path::domain::{VPath, VRelativePath};
 
 /// A mount together with the path it should handle.
 #[derive(Debug, PartialEq, Eq)]
 pub struct ResolvedMount<'a> {
     mount: &'a Mount,
-    relative_path: DPath,
+    relative_path: VRelativePath,
 }
 
 impl<'a> ResolvedMount<'a> {
     fn new(mount: &'a Mount, path: &VPath) -> Self {
-        let relative_path = if mount.v_path() == path {
-            ""
-        } else if mount.v_path().is_root() {
-            path.as_str()
-                .strip_prefix('/')
-                .expect("a virtual path is always absolute")
-        } else {
-            path.as_str()
-                .strip_prefix(mount.v_path().as_str())
-                .and_then(|path| path.strip_prefix('/'))
-                .expect("a resolved mount always covers the path")
-        };
+        let relative_path = path
+            .strip_prefix(mount.v_path())
+            .expect("a resolved mount always covers the path");
 
         Self {
             mount,
-            relative_path: DPath::new(relative_path),
+            relative_path,
         }
     }
 
@@ -37,8 +28,8 @@ impl<'a> ResolvedMount<'a> {
         self.mount
     }
 
-    /// Returns the normalized path relative to the mount point.
-    pub fn relative_path(&self) -> &DPath {
+    /// Returns the canonical virtual path relative to the mount point.
+    pub fn relative_path(&self) -> &VRelativePath {
         &self.relative_path
     }
 }

@@ -1,5 +1,7 @@
 use crate::path::error::DomainError;
 
+use super::v_relative_path::VRelativePath;
+
 const MAX_BYTES: usize = 4096;
 const MAX_SEGMENT_BYTES: usize = 255;
 
@@ -80,6 +82,19 @@ impl VPath {
         };
 
         Ok(Self(joined))
+    }
+
+    /// Removes an ancestor prefix and returns the remaining relative path.
+    pub fn strip_prefix(&self, base: &Self) -> Option<VRelativePath> {
+        let relative_path = if self == base {
+            ""
+        } else if base.is_root() {
+            self.0.strip_prefix('/')?
+        } else {
+            self.0.strip_prefix(base.as_str())?.strip_prefix('/')?
+        };
+
+        Some(VRelativePath::from_validated(relative_path))
     }
 
     /// Returns whether this path is a strict ancestor of the other path.
