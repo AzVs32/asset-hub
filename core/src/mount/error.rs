@@ -8,6 +8,6 @@ use crate::path::domain::VPath;
 pub enum ServiceError {
     #[error("duplicate mount ID: {0}")]
     DuplicateMountId(MountId),
-    #[error("duplicate mount path: {}", .0.as_str())]
+    #[error("duplicate mount path: {0}")]
     DuplicateMountPath(VPath),
 }

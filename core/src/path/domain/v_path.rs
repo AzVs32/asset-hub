@@ -1,46 +1,24 @@
 use crate::path::error::DomainError;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+const MAX_BYTES: usize = 4096;
+const MAX_SEGMENT_BYTES: usize = 255;
+
+/// A canonical, absolute path in the platform-independent virtual namespace.
+///
+/// Paths are case-sensitive, preserve spaces exactly, and measure limits in
+/// UTF-8 bytes. Unicode is preserved without normalization. `/` is the only
+/// separator; trailing separators, empty segments, dot segments, backslashes,
+/// and control characters are rejected.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct VPath(String);
 
 impl VPath {
-    /// Parses and normalizes an absolute virtual path.
-    pub fn parse(path: impl AsRef<str>) -> Result<Self, DomainError> {
-        let path = path.as_ref();
-
-        // 接受两种路径分隔符，但必须以其中一种开头以保证路径是绝对路径。
-        if !matches!(path.as_bytes().first(), Some(b'/' | b'\\')) {
-            return Err(DomainError::VPathNotAbsolute);
-        }
-
-        // 同时按正斜杠和反斜杠拆分，为后续生成统一格式的路径段做准备。
-        let mut segments = Vec::new();
-        for segment in path.split(['/', '\\']) {
-            match segment {
-                // 忽略空路径段以折叠重复分隔符，并移除表示当前目录的点路径段。
-                "" | "." => {}
-                // 禁止双点路径段，避免路径向虚拟父级跳转。
-                ".." => return Err(DomainError::VPathContainsDotDotSegment),
-                segment => segments.push(segment),
-            }
-        }
-
-        // 使用正斜杠重新连接路径段；没有有效路径段时规范化为根路径。
-        let normalized = if segments.is_empty() {
-            "/".to_owned()
-        } else {
-            format!("/{}", segments.join("/"))
-        };
-
-        Ok(Self(normalized))
-    }
-
     /// Returns the root virtual path.
     pub fn root() -> Self {
         Self("/".to_owned())
     }
 
-    /// Returns the normalized string representation.
+    /// Returns the canonical string representation.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -82,6 +60,28 @@ impl VPath {
         }
     }
 
+    /// Appends one validated segment to this path.
+    pub fn join_segment(&self, segment: impl AsRef<str>) -> Result<Self, DomainError> {
+        let segment = segment.as_ref();
+        Self::validate_segment(segment)?;
+
+        let length = self.0.len() + usize::from(!self.is_root()) + segment.len();
+        if length > MAX_BYTES {
+            return Err(DomainError::VPathTooLong {
+                length,
+                max: MAX_BYTES,
+            });
+        }
+
+        let joined = if self.is_root() {
+            format!("/{segment}")
+        } else {
+            format!("{}/{segment}", self.0)
+        };
+
+        Ok(Self(joined))
+    }
+
     /// Returns whether this path is a strict ancestor of the other path.
     pub fn is_ancestor_of(&self, other: &Self) -> bool {
         self != other && self.is_ancestor_or_self_of(other)
@@ -97,5 +97,89 @@ impl VPath {
             .as_str()
             .strip_prefix(self.as_str())
             .is_some_and(|remaining| remaining.starts_with('/'))
+    }
+
+    fn validate_segment(segment: &str) -> Result<(), DomainError> {
+        if segment.is_empty() {
+            return Err(DomainError::VPathSegmentEmpty);
+        }
+
+        if segment.contains('/') {
+            return Err(DomainError::VPathSegmentContainsSeparator);
+        }
+
+        if segment.contains('\\') {
+            return Err(DomainError::VPathContainsBackslash);
+        }
+
+        if segment.chars().any(char::is_control) {
+            return Err(DomainError::VPathContainsControlCharacter);
+        }
+
+        match segment {
+            "." => return Err(DomainError::VPathContainsDotSegment),
+            ".." => return Err(DomainError::VPathContainsDotDotSegment),
+            _ => {}
+        }
+
+        if segment.len() > MAX_SEGMENT_BYTES {
+            return Err(DomainError::VPathSegmentTooLong {
+                length: segment.len(),
+                max: MAX_SEGMENT_BYTES,
+            });
+        }
+
+        Ok(())
+    }
+}
+
+impl std::fmt::Display for VPath {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl AsRef<str> for VPath {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<&str> for VPath {
+    type Error = DomainError;
+
+    fn try_from(path: &str) -> Result<Self, Self::Error> {
+        if path.len() > MAX_BYTES {
+            return Err(DomainError::VPathTooLong {
+                length: path.len(),
+                max: MAX_BYTES,
+            });
+        }
+
+        if path.starts_with('\\') {
+            return Err(DomainError::VPathContainsBackslash);
+        }
+
+        if !path.starts_with('/') {
+            return Err(DomainError::VPathNotAbsolute);
+        }
+
+        if path == "/" {
+            return Ok(Self::root());
+        }
+
+        if path.contains("//") {
+            return Err(DomainError::VPathContainsRepeatedSeparator);
+        }
+
+        if path.ends_with('/') {
+            return Err(DomainError::VPathHasTrailingSeparator);
+        }
+
+        for segment in path[1..].split('/') {
+            Self::validate_segment(segment)?;
+        }
+
+        Ok(Self(path.to_owned()))
     }
 }

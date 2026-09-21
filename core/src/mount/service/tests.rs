@@ -7,7 +7,7 @@ use super::{MountResolution, MountService};
 fn mount_at(path: &str, enabled: bool) -> Mount {
     Mount::new(
         MountId::new(),
-        VPath::parse(path).unwrap(),
+        VPath::try_from(path).unwrap(),
         DriverKind,
         DPath::new("driver-specific-root"),
         enabled,
@@ -15,7 +15,7 @@ fn mount_at(path: &str, enabled: bool) -> Mount {
 }
 
 fn path(value: &str) -> VPath {
-    VPath::parse(value).unwrap()
+    VPath::try_from(value).unwrap()
 }
 
 fn names(paths: Vec<VPath>) -> Vec<String> {
@@ -32,13 +32,49 @@ fn resolve_prefers_the_deepest_enabled_mount() {
     let MountResolution::Mounted(deepest) = service.resolve(&path("/a/b/file.txt")) else {
         panic!("expected a mounted path");
     };
-    assert_eq!(deepest.v_path().as_str(), "/a/b");
+    assert_eq!(deepest.mount().v_path().as_str(), "/a/b");
+    assert_eq!(deepest.relative_path().as_str(), "file.txt");
 
     let MountResolution::Mounted(ancestor) = service.resolve(&path("/a/other.txt")) else {
         panic!("expected a mounted path");
     };
-    assert_eq!(ancestor.v_path().as_str(), "/a");
+    assert_eq!(ancestor.mount().v_path().as_str(), "/a");
+    assert_eq!(ancestor.relative_path().as_str(), "other.txt");
     assert_eq!(service.resolve(&path("/abc")), MountResolution::NotFound);
+}
+
+#[test]
+fn resolve_returns_the_path_relative_to_the_mount_point() {
+    let service = MountService::new(vec![mount_at("/movies", true)]).unwrap();
+
+    let MountResolution::Mounted(resolved) = service.resolve(&path("/movies/2026/a.mp4")) else {
+        panic!("expected a mounted path");
+    };
+
+    assert_eq!(resolved.mount().v_path().as_str(), "/movies");
+    assert_eq!(resolved.relative_path().as_str(), "2026/a.mp4");
+}
+
+#[test]
+fn resolving_a_mount_point_returns_an_empty_relative_path() {
+    let service = MountService::new(vec![mount_at("/movies", true)]).unwrap();
+
+    let MountResolution::Mounted(resolved) = service.resolve(&path("/movies")) else {
+        panic!("expected a mounted path");
+    };
+
+    assert_eq!(resolved.relative_path().as_str(), "");
+}
+
+#[test]
+fn resolving_through_the_root_mount_omits_the_leading_separator() {
+    let service = MountService::new(vec![mount_at("/", true)]).unwrap();
+
+    let MountResolution::Mounted(resolved) = service.resolve(&path("/movies/2026/a.mp4")) else {
+        panic!("expected a mounted path");
+    };
+
+    assert_eq!(resolved.relative_path().as_str(), "movies/2026/a.mp4");
 }
 
 #[test]
@@ -79,7 +115,8 @@ fn virtual_directories_retain_the_underlying_mount() {
     else {
         panic!("expected a virtual directory over a mounted path");
     };
-    assert_eq!(underlying.v_path().as_str(), "/");
+    assert_eq!(underlying.mount().v_path().as_str(), "/");
+    assert_eq!(underlying.relative_path().as_str(), "c");
     assert_eq!(names(service.virtual_children(&VPath::root())), vec!["/c"]);
     assert!(matches!(
         service.resolve(&VPath::root()),
@@ -110,7 +147,8 @@ fn disabled_mounts_do_not_participate_in_resolution() {
     let MountResolution::Mounted(mount) = service.resolve(&path("/a/b/file.txt")) else {
         panic!("expected the enabled ancestor mount");
     };
-    assert_eq!(mount.v_path().as_str(), "/a");
+    assert_eq!(mount.mount().v_path().as_str(), "/a");
+    assert_eq!(mount.relative_path().as_str(), "b/file.txt");
     assert!(service.virtual_children(&path("/a")).is_empty());
 
     let disabled_only = MountService::new(vec![mount_at("/c/b/a", false)]).unwrap();

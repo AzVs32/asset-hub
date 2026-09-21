@@ -2,17 +2,56 @@ use std::collections::HashSet;
 
 use crate::mount::domain::Mount;
 use crate::mount::error::ServiceError;
-use crate::path::domain::VPath;
+use crate::path::domain::{DPath, VPath};
+
+/// A mount together with the path it should handle.
+#[derive(Debug, PartialEq, Eq)]
+pub struct ResolvedMount<'a> {
+    mount: &'a Mount,
+    relative_path: DPath,
+}
+
+impl<'a> ResolvedMount<'a> {
+    fn new(mount: &'a Mount, path: &VPath) -> Self {
+        let relative_path = if mount.v_path() == path {
+            ""
+        } else if mount.v_path().is_root() {
+            path.as_str()
+                .strip_prefix('/')
+                .expect("a virtual path is always absolute")
+        } else {
+            path.as_str()
+                .strip_prefix(mount.v_path().as_str())
+                .and_then(|path| path.strip_prefix('/'))
+                .expect("a resolved mount always covers the path")
+        };
+
+        Self {
+            mount,
+            relative_path: DPath::new(relative_path),
+        }
+    }
+
+    /// Returns the resolved mount.
+    pub fn mount(&self) -> &'a Mount {
+        self.mount
+    }
+
+    /// Returns the normalized path relative to the mount point.
+    pub fn relative_path(&self) -> &DPath {
+        &self.relative_path
+    }
+}
 
 /// The result of resolving a path in the virtual mount namespace.
 #[derive(Debug, PartialEq, Eq)]
 pub enum MountResolution<'a> {
-    /// The deepest enabled mount that covers the path.
-    Mounted(&'a Mount),
+    /// The deepest enabled mount that covers the path and its relative path.
+    Mounted(ResolvedMount<'a>),
     /// A directory synthesized from the ancestors of enabled mount points.
     VirtualDirectory {
         /// The covering mount whose entries may be merged into this directory.
-        underlying_mount: Option<&'a Mount>,
+        underlying_mount: Option<ResolvedMount<'a>>,
     },
     /// A path with no enabled mount or synthesized directory.
     NotFound,
@@ -34,7 +73,7 @@ impl MountService {
             if !ids.insert(mount.id()) {
                 return Err(ServiceError::DuplicateMountId(mount.id()));
             }
-            if !paths.insert(mount.v_path().as_str()) {
+            if !paths.insert(mount.v_path()) {
                 return Err(ServiceError::DuplicateMountPath(mount.v_path().clone()));
             }
         }
@@ -57,12 +96,12 @@ impl MountService {
         if let Some(mount) = covering_mount
             && (mount.v_path() == path || !has_nested_mount)
         {
-            return MountResolution::Mounted(mount);
+            return MountResolution::Mounted(ResolvedMount::new(mount, path));
         }
 
         if path.is_root() || has_nested_mount {
             MountResolution::VirtualDirectory {
-                underlying_mount: covering_mount,
+                underlying_mount: covering_mount.map(|mount| ResolvedMount::new(mount, path)),
             }
         } else {
             MountResolution::NotFound
@@ -83,12 +122,11 @@ impl MountService {
                 child = child.parent().expect("an ancestor has a direct child");
             }
 
-            if !children.contains(&child) {
-                children.push(child);
-            }
+            children.push(child);
         }
 
-        children.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        children.sort();
+        children.dedup();
         children
     }
 }
