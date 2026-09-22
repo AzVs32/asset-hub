@@ -1,38 +1,8 @@
 use std::collections::HashSet;
 
-use crate::mount::domain::Mount;
+use crate::mount::domain::{Mount, ResolvedMount};
 use crate::mount::error::ServiceError;
-use crate::namespace::domain::{VirtualPath, VirtualRelativePath};
-
-/// A mount together with the path it should handle.
-#[derive(Debug, PartialEq, Eq)]
-pub struct ResolvedMount<'a> {
-    mount: &'a Mount,
-    relative_path: VirtualRelativePath,
-}
-
-impl<'a> ResolvedMount<'a> {
-    fn new(mount: &'a Mount, path: &VirtualPath) -> Self {
-        let relative_path = path
-            .strip_prefix(mount.virtual_path())
-            .expect("a resolved mount always covers the path");
-
-        Self {
-            mount,
-            relative_path,
-        }
-    }
-
-    /// Returns the resolved mount.
-    pub fn mount(&self) -> &'a Mount {
-        self.mount
-    }
-
-    /// Returns the canonical virtual path relative to the mount point.
-    pub fn relative_path(&self) -> &VirtualRelativePath {
-        &self.relative_path
-    }
-}
+use crate::namespace::domain::VirtualPath;
 
 /// The result of resolving a path in the virtual mount namespace.
 #[derive(Debug, PartialEq, Eq)]
@@ -89,12 +59,18 @@ impl MountService {
         if let Some(mount) = covering_mount
             && (mount.virtual_path() == path || !has_nested_mount)
         {
-            return MountResolution::Mounted(ResolvedMount::new(mount, path));
+            return MountResolution::Mounted(
+                ResolvedMount::new(mount, path)
+                    .expect("a covering mount must resolve the requested path"),
+            );
         }
 
         if path.is_root() || has_nested_mount {
             MountResolution::VirtualDirectory {
-                underlying_mount: covering_mount.map(|mount| ResolvedMount::new(mount, path)),
+                underlying_mount: covering_mount.map(|mount| {
+                    ResolvedMount::new(mount, path)
+                        .expect("a covering mount must resolve the requested path")
+                }),
             }
         } else {
             MountResolution::NotFound

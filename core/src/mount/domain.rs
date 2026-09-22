@@ -1,9 +1,11 @@
 mod driver_kind;
+mod resolved_mount;
 
 use crate::namespace::domain::{DriverPath, VirtualPath};
 use getset::{CopyGetters, Getters};
 
 pub use driver_kind::DriverKind;
+pub use resolved_mount::ResolvedMount;
 
 #[derive(Debug, Clone, PartialEq, Eq, Getters, CopyGetters)]
 pub struct Mount {
