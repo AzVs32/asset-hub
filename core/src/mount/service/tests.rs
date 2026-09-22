@@ -78,6 +78,52 @@ fn resolving_through_the_root_mount_omits_the_leading_separator() {
 }
 
 #[test]
+fn exact_mount_points_remain_mounted_and_expose_nested_mounts_as_virtual_children() {
+    let mount_a = mount_at("/movies", true);
+    let mount_a_id = mount_a.id();
+    let mount_b = mount_at("/movies/archive", true);
+    let mount_b_id = mount_b.id();
+    let service = MountService::new(vec![mount_a, mount_b]).unwrap();
+
+    let MountResolution::Mounted(resolved_a) = service.resolve(&path("/movies")) else {
+        panic!("expected mount A");
+    };
+    assert_eq!(resolved_a.mount().id(), mount_a_id);
+    assert!(resolved_a.relative_path().is_empty());
+    assert_eq!(
+        names(service.virtual_children(&path("/movies"))),
+        vec!["/movies/archive"]
+    );
+
+    let MountResolution::Mounted(resolved_b) = service.resolve(&path("/movies/archive")) else {
+        panic!("expected mount B");
+    };
+    assert_eq!(resolved_b.mount().id(), mount_b_id);
+    assert!(resolved_b.relative_path().is_empty());
+}
+
+#[test]
+fn ancestors_of_nested_mounts_are_virtual_directories_over_the_covering_mount() {
+    let mount_a = mount_at("/movies", true);
+    let mount_a_id = mount_a.id();
+    let mount_b = mount_at("/movies/archive/2026", true);
+    let service = MountService::new(vec![mount_a, mount_b]).unwrap();
+
+    let MountResolution::VirtualDirectory {
+        underlying_mount: Some(underlying),
+    } = service.resolve(&path("/movies/archive"))
+    else {
+        panic!("expected a virtual directory over mount A");
+    };
+    assert_eq!(underlying.mount().id(), mount_a_id);
+    assert_eq!(underlying.relative_path().as_str(), "archive");
+    assert_eq!(
+        names(service.virtual_children(&path("/movies/archive"))),
+        vec!["/movies/archive/2026"]
+    );
+}
+
+#[test]
 fn resolve_synthesizes_missing_ancestors() {
     let service = MountService::new(vec![mount_at("/c/b/a", true)]).unwrap();
 
