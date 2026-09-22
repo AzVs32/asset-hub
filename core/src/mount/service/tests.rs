@@ -1,4 +1,5 @@
-use crate::mount::domain::{DriverKind, Mount, MountId};
+use crate::driver::domain::DriverKind;
+use crate::mount::domain::{Mount, MountId};
 use crate::mount::error::ServiceError;
 use crate::namespace::domain::{DriverPath, VirtualPath};
 
@@ -8,7 +9,7 @@ fn mount_at(path: &str, enabled: bool) -> Mount {
     Mount::new(
         MountId::new(),
         VirtualPath::try_from(path).unwrap(),
-        DriverKind,
+        DriverKind::try_from("test").unwrap(),
         DriverPath::new("driver-specific-root"),
         enabled,
     )
@@ -225,7 +226,7 @@ fn duplicate_mount_identity_and_path_are_rejected() {
     let same_id = Mount::new(
         first.id(),
         path("/b"),
-        DriverKind,
+        DriverKind::try_from("test").unwrap(),
         DriverPath::new("other-root"),
         true,
     );
