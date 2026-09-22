@@ -1,7 +1,7 @@
 use crate::path::error::DomainError;
 use std::collections::{BTreeSet, HashSet};
 
-use super::{DPath, VPath};
+use super::{DPath, EntryName, VPath};
 
 #[test]
 fn d_path_preserves_driver_specific_syntax() {
@@ -40,11 +40,11 @@ fn v_path_try_from_rejects_relative_paths() {
 fn v_path_try_from_rejects_backslashes() {
     assert_eq!(
         VPath::try_from(r"\assets\images").unwrap_err(),
-        DomainError::VPathContainsBackslash
+        DomainError::VPathNotAbsolute
     );
     assert_eq!(
         VPath::try_from(r"/assets\images").unwrap_err(),
-        DomainError::VPathContainsBackslash
+        DomainError::EntryNameContainsBackslash
     );
 }
 
@@ -64,7 +64,7 @@ fn v_path_try_from_rejects_repeated_and_trailing_separators() {
 fn v_path_try_from_rejects_dot_segments() {
     assert_eq!(
         VPath::try_from("/assets/./images").unwrap_err(),
-        DomainError::VPathContainsDotSegment
+        DomainError::EntryNameIsDot
     );
 }
 
@@ -72,7 +72,7 @@ fn v_path_try_from_rejects_dot_segments() {
 fn v_path_try_from_rejects_dot_dot_segments() {
     assert_eq!(
         VPath::try_from("/assets/../images").unwrap_err(),
-        DomainError::VPathContainsDotDotSegment
+        DomainError::EntryNameIsDotDot
     );
 }
 
@@ -80,11 +80,11 @@ fn v_path_try_from_rejects_dot_dot_segments() {
 fn v_path_try_from_rejects_nul_and_control_characters() {
     assert_eq!(
         VPath::try_from("/assets/\0images").unwrap_err(),
-        DomainError::VPathContainsControlCharacter
+        DomainError::EntryNameContainsControlCharacter
     );
     assert_eq!(
         VPath::try_from("/assets/new\nline").unwrap_err(),
-        DomainError::VPathContainsControlCharacter
+        DomainError::EntryNameContainsControlCharacter
     );
 }
 
@@ -115,7 +115,7 @@ fn v_path_enforces_path_and_segment_byte_limits() {
     let oversized_segment = "a".repeat(MAX_SEGMENT_BYTES + 1);
     assert_eq!(
         VPath::try_from(format!("/{oversized_segment}").as_str()).unwrap_err(),
-        DomainError::VPathSegmentTooLong {
+        DomainError::EntryNameTooLong {
             length: MAX_SEGMENT_BYTES + 1,
             max: MAX_SEGMENT_BYTES,
         }
@@ -165,36 +165,64 @@ fn v_path_joins_one_validated_segment() {
     assert_eq!(file.as_str(), "/Asset Library/My File.mp4");
     assert_eq!(
         assets.join_segment("").unwrap_err(),
-        DomainError::VPathSegmentEmpty
+        DomainError::EntryNameEmpty
     );
     assert_eq!(
         assets.join_segment("a/b").unwrap_err(),
-        DomainError::VPathSegmentContainsSeparator
+        DomainError::EntryNameContainsSeparator
     );
     assert_eq!(
         assets.join_segment(".").unwrap_err(),
-        DomainError::VPathContainsDotSegment
+        DomainError::EntryNameIsDot
     );
     assert_eq!(
         assets.join_segment("..").unwrap_err(),
-        DomainError::VPathContainsDotDotSegment
+        DomainError::EntryNameIsDotDot
     );
     assert_eq!(
         assets.join_segment(r"a\b").unwrap_err(),
-        DomainError::VPathContainsBackslash
+        DomainError::EntryNameContainsBackslash
     );
     assert_eq!(
         assets.join_segment("new\nline").unwrap_err(),
-        DomainError::VPathContainsControlCharacter
+        DomainError::EntryNameContainsControlCharacter
     );
     let oversized_segment = "a".repeat(MAX_SEGMENT_BYTES + 1);
     assert_eq!(
         assets.join_segment(&oversized_segment).unwrap_err(),
-        DomainError::VPathSegmentTooLong {
+        DomainError::EntryNameTooLong {
             length: MAX_SEGMENT_BYTES + 1,
             max: MAX_SEGMENT_BYTES,
         }
     );
+}
+
+#[test]
+fn entry_name_is_a_validated_virtual_path_segment() {
+    let name = EntryName::try_from("My File.mp4").unwrap();
+
+    assert_eq!(name.as_str(), "My File.mp4");
+    assert_eq!(name.as_ref(), "My File.mp4");
+    assert_eq!(name.to_string(), "My File.mp4");
+    assert_eq!(
+        EntryName::try_from("nested/file").unwrap_err(),
+        DomainError::EntryNameContainsSeparator
+    );
+    assert_eq!(
+        EntryName::try_from("..").unwrap_err(),
+        DomainError::EntryNameIsDotDot
+    );
+}
+
+#[test]
+fn v_path_joins_an_already_validated_entry_name() {
+    let name = EntryName::try_from("cover.jpg").unwrap();
+    let path = VPath::try_from("/assets")
+        .unwrap()
+        .join_name(&name)
+        .unwrap();
+
+    assert_eq!(path.as_str(), "/assets/cover.jpg");
 }
 
 #[test]

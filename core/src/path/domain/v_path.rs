@@ -1,9 +1,8 @@
 use crate::path::error::DomainError;
 
-use super::v_relative_path::VRelativePath;
+use super::{entry_name::EntryName, v_relative_path::VRelativePath};
 
 const MAX_BYTES: usize = 4096;
-const MAX_SEGMENT_BYTES: usize = 255;
 
 /// A canonical, absolute path in the platform-independent virtual namespace.
 ///
@@ -62,12 +61,17 @@ impl VPath {
         }
     }
 
-    /// Appends one validated segment to this path.
+    /// Validates and appends one raw segment to this path.
     pub fn join_segment(&self, segment: impl AsRef<str>) -> Result<Self, DomainError> {
-        let segment = segment.as_ref();
-        Self::validate_segment(segment)?;
+        let name = EntryName::try_from(segment.as_ref())?;
+        self.join_name(&name)
+    }
 
-        let length = self.0.len() + usize::from(!self.is_root()) + segment.len();
+    /// Appends an already validated entry name to this path.
+    pub fn join_name(&self, name: &EntryName) -> Result<Self, DomainError> {
+        let name = name.as_str();
+
+        let length = self.0.len() + usize::from(!self.is_root()) + name.len();
         if length > MAX_BYTES {
             return Err(DomainError::VPathTooLong {
                 length,
@@ -76,9 +80,9 @@ impl VPath {
         }
 
         let joined = if self.is_root() {
-            format!("/{segment}")
+            format!("/{name}")
         } else {
-            format!("{}/{segment}", self.0)
+            format!("{}/{name}", self.0)
         };
 
         Ok(Self(joined))
@@ -113,39 +117,6 @@ impl VPath {
             .strip_prefix(self.as_str())
             .is_some_and(|remaining| remaining.starts_with('/'))
     }
-
-    fn validate_segment(segment: &str) -> Result<(), DomainError> {
-        if segment.is_empty() {
-            return Err(DomainError::VPathSegmentEmpty);
-        }
-
-        if segment.contains('/') {
-            return Err(DomainError::VPathSegmentContainsSeparator);
-        }
-
-        if segment.contains('\\') {
-            return Err(DomainError::VPathContainsBackslash);
-        }
-
-        if segment.chars().any(char::is_control) {
-            return Err(DomainError::VPathContainsControlCharacter);
-        }
-
-        match segment {
-            "." => return Err(DomainError::VPathContainsDotSegment),
-            ".." => return Err(DomainError::VPathContainsDotDotSegment),
-            _ => {}
-        }
-
-        if segment.len() > MAX_SEGMENT_BYTES {
-            return Err(DomainError::VPathSegmentTooLong {
-                length: segment.len(),
-                max: MAX_SEGMENT_BYTES,
-            });
-        }
-
-        Ok(())
-    }
 }
 
 impl std::fmt::Display for VPath {
@@ -171,10 +142,6 @@ impl TryFrom<&str> for VPath {
             });
         }
 
-        if path.starts_with('\\') {
-            return Err(DomainError::VPathContainsBackslash);
-        }
-
         if !path.starts_with('/') {
             return Err(DomainError::VPathNotAbsolute);
         }
@@ -192,7 +159,7 @@ impl TryFrom<&str> for VPath {
         }
 
         for segment in path[1..].split('/') {
-            Self::validate_segment(segment)?;
+            EntryName::validate(segment)?;
         }
 
         Ok(Self(path.to_owned()))
