@@ -1,12 +1,13 @@
+use crate::driver::domain::DriverKind;
 use crate::namespace::domain::{DriverPath, VirtualPath};
 
-use super::{DriverKind, Mount, MountId, ResolvedMount};
+use super::{Mount, MountId, ResolvedMount};
 
 fn mount_at(path: &str) -> Mount {
     Mount::new(
         MountId::new(),
         VirtualPath::try_from(path).unwrap(),
-        DriverKind,
+        DriverKind::try_from("test").unwrap(),
         DriverPath::new("driver-specific-root"),
         true,
     )
