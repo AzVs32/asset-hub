@@ -1,6 +1,6 @@
 mod driver_kind;
 
-use crate::path::domain::{DPath, VPath};
+use crate::namespace::domain::{DriverPath, VirtualPath};
 use getset::{CopyGetters, Getters};
 
 pub use driver_kind::DriverKind;
@@ -10,11 +10,11 @@ pub struct Mount {
     #[getset(get_copy = "pub")]
     id: MountId,
     #[getset(get = "pub")]
-    v_path: VPath,
+    virtual_path: VirtualPath,
     #[getset(get_copy = "pub")]
     driver: DriverKind,
     #[getset(get = "pub")]
-    d_path: DPath,
+    driver_path: DriverPath,
     #[getset(get_copy = "pub")]
     enabled: bool,
 }
@@ -23,16 +23,16 @@ impl Mount {
     /// Creates a mount; its driver validates the driver path when bound.
     pub fn new(
         id: MountId,
-        v_path: VPath,
+        virtual_path: VirtualPath,
         driver: DriverKind,
-        d_path: DPath,
+        driver_path: DriverPath,
         enabled: bool,
     ) -> Self {
         Self {
             id,
-            v_path,
+            virtual_path,
             driver,
-            d_path,
+            driver_path,
             enabled,
         }
     }
@@ -48,8 +48,8 @@ impl Mount {
     }
 
     /// Returns whether the path is located at or below this mount point.
-    pub fn covers(&self, path: &VPath) -> bool {
-        self.v_path.is_ancestor_or_self_of(path)
+    pub fn covers(&self, path: &VirtualPath) -> bool {
+        self.virtual_path.is_ancestor_or_self_of(path)
     }
 }
 

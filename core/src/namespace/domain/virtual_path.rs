@@ -1,6 +1,6 @@
-use crate::path::error::DomainError;
+use crate::namespace::error::NamespaceError;
 
-use super::{entry_name::EntryName, v_relative_path::VRelativePath};
+use super::{entry_name::EntryName, virtual_relative_path::VirtualRelativePath};
 
 const MAX_BYTES: usize = 4096;
 
@@ -11,9 +11,9 @@ const MAX_BYTES: usize = 4096;
 /// separator; trailing separators, empty segments, dot segments, backslashes,
 /// and control characters are rejected.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct VPath(String);
+pub struct VirtualPath(String);
 
-impl VPath {
+impl VirtualPath {
     /// Returns the root virtual path.
     pub fn root() -> Self {
         Self("/".to_owned())
@@ -44,7 +44,7 @@ impl VPath {
             return None;
         }
 
-        let separator = self.0.rfind('/').expect("a VPath is always absolute");
+        let separator = self.0.rfind('/').expect("a VirtualPath is always absolute");
         if separator == 0 {
             Some(Self::root())
         } else {
@@ -62,18 +62,18 @@ impl VPath {
     }
 
     /// Validates and appends one raw segment to this path.
-    pub fn join_segment(&self, segment: impl AsRef<str>) -> Result<Self, DomainError> {
+    pub fn join_segment(&self, segment: impl AsRef<str>) -> Result<Self, NamespaceError> {
         let name = EntryName::try_from(segment.as_ref())?;
         self.join_name(&name)
     }
 
     /// Appends an already validated entry name to this path.
-    pub fn join_name(&self, name: &EntryName) -> Result<Self, DomainError> {
+    pub fn join_name(&self, name: &EntryName) -> Result<Self, NamespaceError> {
         let name = name.as_str();
 
         let length = self.0.len() + usize::from(!self.is_root()) + name.len();
         if length > MAX_BYTES {
-            return Err(DomainError::VPathTooLong {
+            return Err(NamespaceError::VirtualPathTooLong {
                 length,
                 max: MAX_BYTES,
             });
@@ -89,7 +89,7 @@ impl VPath {
     }
 
     /// Removes an ancestor prefix and returns the remaining relative path.
-    pub fn strip_prefix(&self, base: &Self) -> Option<VRelativePath> {
+    pub fn strip_prefix(&self, base: &Self) -> Option<VirtualRelativePath> {
         let relative_path = if self == base {
             ""
         } else if base.is_root() {
@@ -98,7 +98,7 @@ impl VPath {
             self.0.strip_prefix(base.as_str())?.strip_prefix('/')?
         };
 
-        Some(VRelativePath::from_validated(relative_path))
+        Some(VirtualRelativePath::from_validated(relative_path))
     }
 
     /// Returns whether this path is a strict ancestor of the other path.
@@ -119,31 +119,31 @@ impl VPath {
     }
 }
 
-impl std::fmt::Display for VPath {
+impl std::fmt::Display for VirtualPath {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(&self.0)
     }
 }
 
-impl AsRef<str> for VPath {
+impl AsRef<str> for VirtualPath {
     fn as_ref(&self) -> &str {
         &self.0
     }
 }
 
-impl TryFrom<&str> for VPath {
-    type Error = DomainError;
+impl TryFrom<&str> for VirtualPath {
+    type Error = NamespaceError;
 
     fn try_from(path: &str) -> Result<Self, Self::Error> {
         if path.len() > MAX_BYTES {
-            return Err(DomainError::VPathTooLong {
+            return Err(NamespaceError::VirtualPathTooLong {
                 length: path.len(),
                 max: MAX_BYTES,
             });
         }
 
         if !path.starts_with('/') {
-            return Err(DomainError::VPathNotAbsolute);
+            return Err(NamespaceError::VirtualPathNotAbsolute);
         }
 
         if path == "/" {
@@ -151,11 +151,11 @@ impl TryFrom<&str> for VPath {
         }
 
         if path.contains("//") {
-            return Err(DomainError::VPathContainsRepeatedSeparator);
+            return Err(NamespaceError::VirtualPathContainsRepeatedSeparator);
         }
 
         if path.ends_with('/') {
-            return Err(DomainError::VPathHasTrailingSeparator);
+            return Err(NamespaceError::VirtualPathHasTrailingSeparator);
         }
 
         for segment in path[1..].split('/') {

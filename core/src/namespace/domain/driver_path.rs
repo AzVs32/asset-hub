@@ -1,8 +1,8 @@
 /// A driver-specific path whose syntax is interpreted by the selected driver.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DPath(String);
+pub struct DriverPath(String);
 
-impl DPath {
+impl DriverPath {
     /// Creates an opaque driver path without normalizing or validating its syntax.
     pub fn new(raw: impl Into<String>) -> Self {
         Self(raw.into())

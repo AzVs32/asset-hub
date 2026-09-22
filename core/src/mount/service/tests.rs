@@ -1,24 +1,24 @@
 use crate::mount::domain::{DriverKind, Mount, MountId};
 use crate::mount::error::ServiceError;
-use crate::path::domain::{DPath, VPath};
+use crate::namespace::domain::{DriverPath, VirtualPath};
 
 use super::{MountResolution, MountService};
 
 fn mount_at(path: &str, enabled: bool) -> Mount {
     Mount::new(
         MountId::new(),
-        VPath::try_from(path).unwrap(),
+        VirtualPath::try_from(path).unwrap(),
         DriverKind,
-        DPath::new("driver-specific-root"),
+        DriverPath::new("driver-specific-root"),
         enabled,
     )
 }
 
-fn path(value: &str) -> VPath {
-    VPath::try_from(value).unwrap()
+fn path(value: &str) -> VirtualPath {
+    VirtualPath::try_from(value).unwrap()
 }
 
-fn names(paths: Vec<VPath>) -> Vec<String> {
+fn names(paths: Vec<VirtualPath>) -> Vec<String> {
     paths
         .into_iter()
         .map(|path| path.as_str().to_owned())
@@ -32,13 +32,13 @@ fn resolve_prefers_the_deepest_enabled_mount() {
     let MountResolution::Mounted(deepest) = service.resolve(&path("/a/b/file.txt")) else {
         panic!("expected a mounted path");
     };
-    assert_eq!(deepest.mount().v_path().as_str(), "/a/b");
+    assert_eq!(deepest.mount().virtual_path().as_str(), "/a/b");
     assert_eq!(deepest.relative_path().as_str(), "file.txt");
 
     let MountResolution::Mounted(ancestor) = service.resolve(&path("/a/other.txt")) else {
         panic!("expected a mounted path");
     };
-    assert_eq!(ancestor.mount().v_path().as_str(), "/a");
+    assert_eq!(ancestor.mount().virtual_path().as_str(), "/a");
     assert_eq!(ancestor.relative_path().as_str(), "other.txt");
     assert_eq!(service.resolve(&path("/abc")), MountResolution::NotFound);
 }
@@ -51,7 +51,7 @@ fn resolve_returns_the_path_relative_to_the_mount_point() {
         panic!("expected a mounted path");
     };
 
-    assert_eq!(resolved.mount().v_path().as_str(), "/movies");
+    assert_eq!(resolved.mount().virtual_path().as_str(), "/movies");
     assert_eq!(resolved.relative_path().as_str(), "2026/a.mp4");
 }
 
@@ -128,7 +128,7 @@ fn resolve_synthesizes_missing_ancestors() {
     let service = MountService::new(vec![mount_at("/c/b/a", true)]).unwrap();
 
     assert_eq!(
-        service.resolve(&VPath::root()),
+        service.resolve(&VirtualPath::root()),
         MountResolution::VirtualDirectory {
             underlying_mount: None
         }
@@ -143,7 +143,10 @@ fn resolve_synthesizes_missing_ancestors() {
         service.resolve(&path("/c/b/a")),
         MountResolution::Mounted(_)
     ));
-    assert_eq!(names(service.virtual_children(&VPath::root())), vec!["/c"]);
+    assert_eq!(
+        names(service.virtual_children(&VirtualPath::root())),
+        vec!["/c"]
+    );
     assert_eq!(names(service.virtual_children(&path("/c"))), vec!["/c/b"]);
     assert_eq!(
         names(service.virtual_children(&path("/c/b"))),
@@ -161,11 +164,14 @@ fn virtual_directories_retain_the_underlying_mount() {
     else {
         panic!("expected a virtual directory over a mounted path");
     };
-    assert_eq!(underlying.mount().v_path().as_str(), "/");
+    assert_eq!(underlying.mount().virtual_path().as_str(), "/");
     assert_eq!(underlying.relative_path().as_str(), "c");
-    assert_eq!(names(service.virtual_children(&VPath::root())), vec!["/c"]);
+    assert_eq!(
+        names(service.virtual_children(&VirtualPath::root())),
+        vec!["/c"]
+    );
     assert!(matches!(
-        service.resolve(&VPath::root()),
+        service.resolve(&VirtualPath::root()),
         MountResolution::Mounted(_)
     ));
 }
@@ -179,7 +185,10 @@ fn virtual_children_are_unique_and_sorted() {
     ])
     .unwrap();
 
-    assert_eq!(names(service.virtual_children(&VPath::root())), vec!["/c"]);
+    assert_eq!(
+        names(service.virtual_children(&VirtualPath::root())),
+        vec!["/c"]
+    );
     assert_eq!(
         names(service.virtual_children(&path("/c"))),
         vec!["/c/b", "/c/d"]
@@ -193,7 +202,7 @@ fn disabled_mounts_do_not_participate_in_resolution() {
     let MountResolution::Mounted(mount) = service.resolve(&path("/a/b/file.txt")) else {
         panic!("expected the enabled ancestor mount");
     };
-    assert_eq!(mount.mount().v_path().as_str(), "/a");
+    assert_eq!(mount.mount().virtual_path().as_str(), "/a");
     assert_eq!(mount.relative_path().as_str(), "b/file.txt");
     assert!(service.virtual_children(&path("/a")).is_empty());
 
@@ -203,7 +212,7 @@ fn disabled_mounts_do_not_participate_in_resolution() {
         MountResolution::NotFound
     );
     assert_eq!(
-        disabled_only.resolve(&VPath::root()),
+        disabled_only.resolve(&VirtualPath::root()),
         MountResolution::VirtualDirectory {
             underlying_mount: None
         }
@@ -217,7 +226,7 @@ fn duplicate_mount_identity_and_path_are_rejected() {
         first.id(),
         path("/b"),
         DriverKind,
-        DPath::new("other-root"),
+        DriverPath::new("other-root"),
         true,
     );
     let duplicate_id = same_id.id();

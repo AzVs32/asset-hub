@@ -1,5 +1,5 @@
 use super::{Entry, EntryKind};
-use crate::path::domain::EntryName;
+use crate::namespace::domain::EntryName;
 
 #[test]
 fn file_entry_may_expose_a_known_size() {

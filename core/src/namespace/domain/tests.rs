@@ -1,106 +1,106 @@
-use crate::path::error::DomainError;
+use crate::namespace::error::NamespaceError;
 use std::collections::{BTreeSet, HashSet};
 
-use super::{DPath, EntryName, VPath};
+use super::{DriverPath, EntryName, VirtualPath};
 
 #[test]
-fn d_path_preserves_driver_specific_syntax() {
+fn driver_path_preserves_driver_specific_syntax() {
     let raw = r"bucket/prefix\\..//object";
-    let path = DPath::new(raw);
+    let path = DriverPath::new(raw);
 
     assert_eq!(path.as_str(), raw);
 }
 
 #[test]
-fn d_path_allows_an_empty_driver_root() {
-    assert_eq!(DPath::new("").as_str(), "");
+fn driver_path_allows_an_empty_driver_root() {
+    assert_eq!(DriverPath::new("").as_str(), "");
 }
 
 #[test]
-fn v_path_try_from_preserves_a_canonical_path() {
-    let path = VPath::try_from("/assets/images/cover.png").unwrap();
+fn virtual_path_try_from_preserves_a_canonical_path() {
+    let path = VirtualPath::try_from("/assets/images/cover.png").unwrap();
 
     assert_eq!(path.as_str(), "/assets/images/cover.png");
 }
 
 #[test]
-fn v_path_try_from_preserves_root() {
-    assert_eq!(VPath::try_from("/").unwrap().as_str(), "/");
+fn virtual_path_try_from_preserves_root() {
+    assert_eq!(VirtualPath::try_from("/").unwrap().as_str(), "/");
 }
 
 #[test]
-fn v_path_try_from_rejects_relative_paths() {
+fn virtual_path_try_from_rejects_relative_paths() {
     assert_eq!(
-        VPath::try_from("assets/images").unwrap_err(),
-        DomainError::VPathNotAbsolute
-    );
-}
-
-#[test]
-fn v_path_try_from_rejects_backslashes() {
-    assert_eq!(
-        VPath::try_from(r"\assets\images").unwrap_err(),
-        DomainError::VPathNotAbsolute
-    );
-    assert_eq!(
-        VPath::try_from(r"/assets\images").unwrap_err(),
-        DomainError::EntryNameContainsBackslash
+        VirtualPath::try_from("assets/images").unwrap_err(),
+        NamespaceError::VirtualPathNotAbsolute
     );
 }
 
 #[test]
-fn v_path_try_from_rejects_repeated_and_trailing_separators() {
+fn virtual_path_try_from_rejects_backslashes() {
     assert_eq!(
-        VPath::try_from("/assets//images").unwrap_err(),
-        DomainError::VPathContainsRepeatedSeparator
+        VirtualPath::try_from(r"\assets\images").unwrap_err(),
+        NamespaceError::VirtualPathNotAbsolute
     );
     assert_eq!(
-        VPath::try_from("/assets/").unwrap_err(),
-        DomainError::VPathHasTrailingSeparator
-    );
-}
-
-#[test]
-fn v_path_try_from_rejects_dot_segments() {
-    assert_eq!(
-        VPath::try_from("/assets/./images").unwrap_err(),
-        DomainError::EntryNameIsDot
+        VirtualPath::try_from(r"/assets\images").unwrap_err(),
+        NamespaceError::EntryNameContainsBackslash
     );
 }
 
 #[test]
-fn v_path_try_from_rejects_dot_dot_segments() {
+fn virtual_path_try_from_rejects_repeated_and_trailing_separators() {
     assert_eq!(
-        VPath::try_from("/assets/../images").unwrap_err(),
-        DomainError::EntryNameIsDotDot
+        VirtualPath::try_from("/assets//images").unwrap_err(),
+        NamespaceError::VirtualPathContainsRepeatedSeparator
+    );
+    assert_eq!(
+        VirtualPath::try_from("/assets/").unwrap_err(),
+        NamespaceError::VirtualPathHasTrailingSeparator
     );
 }
 
 #[test]
-fn v_path_try_from_rejects_nul_and_control_characters() {
+fn virtual_path_try_from_rejects_dot_segments() {
     assert_eq!(
-        VPath::try_from("/assets/\0images").unwrap_err(),
-        DomainError::EntryNameContainsControlCharacter
-    );
-    assert_eq!(
-        VPath::try_from("/assets/new\nline").unwrap_err(),
-        DomainError::EntryNameContainsControlCharacter
+        VirtualPath::try_from("/assets/./images").unwrap_err(),
+        NamespaceError::EntryNameIsDot
     );
 }
 
 #[test]
-fn v_path_try_from_preserves_spaces_and_is_case_sensitive() {
-    let spaced = VPath::try_from("/Asset Library/My File.mp4").unwrap();
-    let lower = VPath::try_from("/asset library/my file.mp4").unwrap();
+fn virtual_path_try_from_rejects_dot_dot_segments() {
+    assert_eq!(
+        VirtualPath::try_from("/assets/../images").unwrap_err(),
+        NamespaceError::EntryNameIsDotDot
+    );
+}
+
+#[test]
+fn virtual_path_try_from_rejects_nul_and_control_characters() {
+    assert_eq!(
+        VirtualPath::try_from("/assets/\0images").unwrap_err(),
+        NamespaceError::EntryNameContainsControlCharacter
+    );
+    assert_eq!(
+        VirtualPath::try_from("/assets/new\nline").unwrap_err(),
+        NamespaceError::EntryNameContainsControlCharacter
+    );
+}
+
+#[test]
+fn virtual_path_try_from_preserves_spaces_and_is_case_sensitive() {
+    let spaced = VirtualPath::try_from("/Asset Library/My File.mp4").unwrap();
+    let lower = VirtualPath::try_from("/asset library/my file.mp4").unwrap();
 
     assert_eq!(spaced.as_str(), "/Asset Library/My File.mp4");
     assert_ne!(spaced, lower);
 }
 
 #[test]
-fn v_path_try_from_preserves_unicode_without_normalization() {
-    let composed = VPath::try_from("/caf\u{e9}").unwrap();
-    let decomposed = VPath::try_from("/cafe\u{301}").unwrap();
+fn virtual_path_try_from_preserves_unicode_without_normalization() {
+    let composed = VirtualPath::try_from("/caf\u{e9}").unwrap();
+    let decomposed = VirtualPath::try_from("/cafe\u{301}").unwrap();
 
     assert_ne!(composed, decomposed);
     assert_eq!(composed.as_str(), "/caf\u{e9}");
@@ -108,14 +108,14 @@ fn v_path_try_from_preserves_unicode_without_normalization() {
 }
 
 #[test]
-fn v_path_enforces_path_and_segment_byte_limits() {
+fn virtual_path_enforces_path_and_segment_byte_limits() {
     const MAX_PATH_BYTES: usize = 4096;
     const MAX_SEGMENT_BYTES: usize = 255;
 
     let oversized_segment = "a".repeat(MAX_SEGMENT_BYTES + 1);
     assert_eq!(
-        VPath::try_from(format!("/{oversized_segment}").as_str()).unwrap_err(),
-        DomainError::EntryNameTooLong {
+        VirtualPath::try_from(format!("/{oversized_segment}").as_str()).unwrap_err(),
+        NamespaceError::EntryNameTooLong {
             length: MAX_SEGMENT_BYTES + 1,
             max: MAX_SEGMENT_BYTES,
         }
@@ -124,28 +124,28 @@ fn v_path_enforces_path_and_segment_byte_limits() {
     let segment = "a".repeat(MAX_SEGMENT_BYTES);
     let maximum_path = format!("/{}", vec![segment.clone(); 16].join("/"));
     assert_eq!(maximum_path.len(), MAX_PATH_BYTES);
-    let maximum_path = VPath::try_from(maximum_path.as_str()).unwrap();
+    let maximum_path = VirtualPath::try_from(maximum_path.as_str()).unwrap();
     assert_eq!(
         maximum_path.join_segment("b").unwrap_err(),
-        DomainError::VPathTooLong {
+        NamespaceError::VirtualPathTooLong {
             length: MAX_PATH_BYTES + 2,
             max: MAX_PATH_BYTES,
         }
     );
 
-    let oversized_path = format!("/{}", vec![segment; 17].join("/"));
+    let oversizedriver_path = format!("/{}", vec![segment; 17].join("/"));
     assert_eq!(
-        VPath::try_from(oversized_path.as_str()).unwrap_err(),
-        DomainError::VPathTooLong {
-            length: oversized_path.len(),
+        VirtualPath::try_from(oversizedriver_path.as_str()).unwrap_err(),
+        NamespaceError::VirtualPathTooLong {
+            length: oversizedriver_path.len(),
             max: MAX_PATH_BYTES,
         }
     );
 }
 
 #[test]
-fn v_path_supports_standard_string_interfaces_and_ordered_keys() {
-    let path = VPath::try_from("/assets/file.txt").unwrap();
+fn virtual_path_supports_standard_string_interfaces_and_ordered_keys() {
+    let path = VirtualPath::try_from("/assets/file.txt").unwrap();
 
     assert_eq!(path.to_string(), "/assets/file.txt");
     assert_eq!(path.as_ref(), "/assets/file.txt");
@@ -154,10 +154,10 @@ fn v_path_supports_standard_string_interfaces_and_ordered_keys() {
 }
 
 #[test]
-fn v_path_joins_one_validated_segment() {
+fn virtual_path_joins_one_validated_segment() {
     const MAX_SEGMENT_BYTES: usize = 255;
 
-    let root = VPath::root();
+    let root = VirtualPath::root();
     let assets = root.join_segment("Asset Library").unwrap();
     let file = assets.join_segment("My File.mp4").unwrap();
 
@@ -165,32 +165,32 @@ fn v_path_joins_one_validated_segment() {
     assert_eq!(file.as_str(), "/Asset Library/My File.mp4");
     assert_eq!(
         assets.join_segment("").unwrap_err(),
-        DomainError::EntryNameEmpty
+        NamespaceError::EntryNameEmpty
     );
     assert_eq!(
         assets.join_segment("a/b").unwrap_err(),
-        DomainError::EntryNameContainsSeparator
+        NamespaceError::EntryNameContainsSeparator
     );
     assert_eq!(
         assets.join_segment(".").unwrap_err(),
-        DomainError::EntryNameIsDot
+        NamespaceError::EntryNameIsDot
     );
     assert_eq!(
         assets.join_segment("..").unwrap_err(),
-        DomainError::EntryNameIsDotDot
+        NamespaceError::EntryNameIsDotDot
     );
     assert_eq!(
         assets.join_segment(r"a\b").unwrap_err(),
-        DomainError::EntryNameContainsBackslash
+        NamespaceError::EntryNameContainsBackslash
     );
     assert_eq!(
         assets.join_segment("new\nline").unwrap_err(),
-        DomainError::EntryNameContainsControlCharacter
+        NamespaceError::EntryNameContainsControlCharacter
     );
     let oversized_segment = "a".repeat(MAX_SEGMENT_BYTES + 1);
     assert_eq!(
         assets.join_segment(&oversized_segment).unwrap_err(),
-        DomainError::EntryNameTooLong {
+        NamespaceError::EntryNameTooLong {
             length: MAX_SEGMENT_BYTES + 1,
             max: MAX_SEGMENT_BYTES,
         }
@@ -206,18 +206,18 @@ fn entry_name_is_a_validated_virtual_path_segment() {
     assert_eq!(name.to_string(), "My File.mp4");
     assert_eq!(
         EntryName::try_from("nested/file").unwrap_err(),
-        DomainError::EntryNameContainsSeparator
+        NamespaceError::EntryNameContainsSeparator
     );
     assert_eq!(
         EntryName::try_from("..").unwrap_err(),
-        DomainError::EntryNameIsDotDot
+        NamespaceError::EntryNameIsDotDot
     );
 }
 
 #[test]
-fn v_path_joins_an_already_validated_entry_name() {
+fn virtual_path_joins_an_already_validated_entry_name() {
     let name = EntryName::try_from("cover.jpg").unwrap();
-    let path = VPath::try_from("/assets")
+    let path = VirtualPath::try_from("/assets")
         .unwrap()
         .join_name(&name)
         .unwrap();
@@ -226,8 +226,8 @@ fn v_path_joins_an_already_validated_entry_name() {
 }
 
 #[test]
-fn v_path_root_has_no_parent_or_name() {
-    let root = VPath::root();
+fn virtual_path_root_has_no_parent_or_name() {
+    let root = VirtualPath::root();
 
     assert!(root.is_root());
     assert_eq!(root.depth(), 0);
@@ -236,8 +236,8 @@ fn v_path_root_has_no_parent_or_name() {
 }
 
 #[test]
-fn v_path_exposes_its_structure() {
-    let path = VPath::try_from("/a/b/c").unwrap();
+fn virtual_path_exposes_its_structure() {
+    let path = VirtualPath::try_from("/a/b/c").unwrap();
 
     assert!(!path.is_root());
     assert_eq!(path.depth(), 3);
@@ -246,11 +246,11 @@ fn v_path_exposes_its_structure() {
 }
 
 #[test]
-fn v_path_ancestor_checks_use_complete_segments() {
-    let root = VPath::root();
-    let a = VPath::try_from("/a").unwrap();
-    let nested = VPath::try_from("/a/b").unwrap();
-    let similar = VPath::try_from("/abc").unwrap();
+fn virtual_path_ancestor_checks_use_complete_segments() {
+    let root = VirtualPath::root();
+    let a = VirtualPath::try_from("/a").unwrap();
+    let nested = VirtualPath::try_from("/a/b").unwrap();
+    let similar = VirtualPath::try_from("/abc").unwrap();
 
     assert!(root.is_ancestor_of(&a));
     assert!(a.is_ancestor_of(&nested));
@@ -261,11 +261,11 @@ fn v_path_ancestor_checks_use_complete_segments() {
 }
 
 #[test]
-fn v_path_strips_ancestor_prefixes_into_relative_paths() {
-    let root = VPath::root();
-    let movies = VPath::try_from("/movies").unwrap();
-    let file = VPath::try_from("/movies/2026/a.mp4").unwrap();
-    let similar = VPath::try_from("/movie").unwrap();
+fn virtual_path_strips_ancestor_prefixes_into_relative_paths() {
+    let root = VirtualPath::root();
+    let movies = VirtualPath::try_from("/movies").unwrap();
+    let file = VirtualPath::try_from("/movies/2026/a.mp4").unwrap();
+    let similar = VirtualPath::try_from("/movie").unwrap();
 
     let from_mount = file.strip_prefix(&movies).unwrap();
     assert_eq!(from_mount.as_str(), "2026/a.mp4");

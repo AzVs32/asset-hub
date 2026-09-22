@@ -1,4 +1,4 @@
-use crate::path::error::DomainError;
+use crate::namespace::error::NamespaceError;
 
 const MAX_BYTES: usize = 255;
 
@@ -16,31 +16,31 @@ impl EntryName {
         &self.0
     }
 
-    pub(super) fn validate(name: &str) -> Result<(), DomainError> {
+    pub(super) fn validate(name: &str) -> Result<(), NamespaceError> {
         if name.is_empty() {
-            return Err(DomainError::EntryNameEmpty);
+            return Err(NamespaceError::EntryNameEmpty);
         }
 
         if name.contains('/') {
-            return Err(DomainError::EntryNameContainsSeparator);
+            return Err(NamespaceError::EntryNameContainsSeparator);
         }
 
         if name.contains('\\') {
-            return Err(DomainError::EntryNameContainsBackslash);
+            return Err(NamespaceError::EntryNameContainsBackslash);
         }
 
         if name.chars().any(char::is_control) {
-            return Err(DomainError::EntryNameContainsControlCharacter);
+            return Err(NamespaceError::EntryNameContainsControlCharacter);
         }
 
         match name {
-            "." => return Err(DomainError::EntryNameIsDot),
-            ".." => return Err(DomainError::EntryNameIsDotDot),
+            "." => return Err(NamespaceError::EntryNameIsDot),
+            ".." => return Err(NamespaceError::EntryNameIsDotDot),
             _ => {}
         }
 
         if name.len() > MAX_BYTES {
-            return Err(DomainError::EntryNameTooLong {
+            return Err(NamespaceError::EntryNameTooLong {
                 length: name.len(),
                 max: MAX_BYTES,
             });
@@ -63,7 +63,7 @@ impl AsRef<str> for EntryName {
 }
 
 impl TryFrom<&str> for EntryName {
-    type Error = DomainError;
+    type Error = NamespaceError;
 
     fn try_from(name: &str) -> Result<Self, Self::Error> {
         Self::validate(name)?;

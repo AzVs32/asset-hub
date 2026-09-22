@@ -2,19 +2,19 @@ use std::collections::HashSet;
 
 use crate::mount::domain::Mount;
 use crate::mount::error::ServiceError;
-use crate::path::domain::{VPath, VRelativePath};
+use crate::namespace::domain::{VirtualPath, VirtualRelativePath};
 
 /// A mount together with the path it should handle.
 #[derive(Debug, PartialEq, Eq)]
 pub struct ResolvedMount<'a> {
     mount: &'a Mount,
-    relative_path: VRelativePath,
+    relative_path: VirtualRelativePath,
 }
 
 impl<'a> ResolvedMount<'a> {
-    fn new(mount: &'a Mount, path: &VPath) -> Self {
+    fn new(mount: &'a Mount, path: &VirtualPath) -> Self {
         let relative_path = path
-            .strip_prefix(mount.v_path())
+            .strip_prefix(mount.virtual_path())
             .expect("a resolved mount always covers the path");
 
         Self {
@@ -29,7 +29,7 @@ impl<'a> ResolvedMount<'a> {
     }
 
     /// Returns the canonical virtual path relative to the mount point.
-    pub fn relative_path(&self) -> &VRelativePath {
+    pub fn relative_path(&self) -> &VirtualRelativePath {
         &self.relative_path
     }
 }
@@ -64,8 +64,10 @@ impl MountService {
             if !ids.insert(mount.id()) {
                 return Err(ServiceError::DuplicateMountId(mount.id()));
             }
-            if !paths.insert(mount.v_path()) {
-                return Err(ServiceError::DuplicateMountPath(mount.v_path().clone()));
+            if !paths.insert(mount.virtual_path()) {
+                return Err(ServiceError::DuplicateMountPath(
+                    mount.virtual_path().clone(),
+                ));
             }
         }
 
@@ -73,19 +75,19 @@ impl MountService {
     }
 
     /// Finds the deepest enabled mount or a synthesized virtual directory.
-    pub fn resolve(&self, path: &VPath) -> MountResolution<'_> {
+    pub fn resolve(&self, path: &VirtualPath) -> MountResolution<'_> {
         let covering_mount = self
             .mounts
             .iter()
             .filter(|mount| mount.enabled() && mount.covers(path))
-            .max_by_key(|mount| mount.v_path().depth());
+            .max_by_key(|mount| mount.virtual_path().depth());
         let has_nested_mount = self
             .mounts
             .iter()
-            .any(|mount| mount.enabled() && path.is_ancestor_of(mount.v_path()));
+            .any(|mount| mount.enabled() && path.is_ancestor_of(mount.virtual_path()));
 
         if let Some(mount) = covering_mount
-            && (mount.v_path() == path || !has_nested_mount)
+            && (mount.virtual_path() == path || !has_nested_mount)
         {
             return MountResolution::Mounted(ResolvedMount::new(mount, path));
         }
@@ -100,15 +102,15 @@ impl MountService {
     }
 
     /// Lists the direct virtual children needed to expose enabled mount points.
-    pub fn virtual_children(&self, parent: &VPath) -> Vec<VPath> {
+    pub fn virtual_children(&self, parent: &VirtualPath) -> Vec<VirtualPath> {
         let mut children = Vec::new();
 
         for mount in self
             .mounts
             .iter()
-            .filter(|mount| mount.enabled() && parent.is_ancestor_of(mount.v_path()))
+            .filter(|mount| mount.enabled() && parent.is_ancestor_of(mount.virtual_path()))
         {
-            let mut child = mount.v_path().clone();
+            let mut child = mount.virtual_path().clone();
             while child.parent().as_ref() != Some(parent) {
                 child = child.parent().expect("an ancestor has a direct child");
             }

@@ -1,12 +1,12 @@
 /// A canonical path relative to a point in the virtual namespace.
 ///
-/// A relative virtual path is derived from validated [`super::VPath`] values,
+/// A relative virtual path is derived from validated [`super::VirtualPath`] values,
 /// so it inherits their segment, case, Unicode, and length rules. The empty
 /// path represents the relative root.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct VRelativePath(String);
+pub struct VirtualRelativePath(String);
 
-impl VRelativePath {
+impl VirtualRelativePath {
     pub(super) fn from_validated(path: &str) -> Self {
         debug_assert!(!path.starts_with('/'));
         debug_assert!(path.is_empty() || !path.ends_with('/'));
@@ -43,13 +43,13 @@ impl VRelativePath {
     }
 }
 
-impl std::fmt::Display for VRelativePath {
+impl std::fmt::Display for VirtualRelativePath {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(&self.0)
     }
 }
 
-impl AsRef<str> for VRelativePath {
+impl AsRef<str> for VirtualRelativePath {
     fn as_ref(&self) -> &str {
         &self.0
     }

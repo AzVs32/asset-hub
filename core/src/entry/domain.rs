@@ -1,4 +1,4 @@
-use crate::path::domain::EntryName;
+use crate::namespace::domain::EntryName;
 
 /// The kind of object represented by an [`Entry`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

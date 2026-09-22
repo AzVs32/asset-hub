@@ -2,15 +2,15 @@ use thiserror::Error;
 
 #[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum DomainError {
+pub enum NamespaceError {
     #[error("virtual path must be absolute")]
-    VPathNotAbsolute,
+    VirtualPathNotAbsolute,
     #[error("virtual path must not contain repeated `/` separators")]
-    VPathContainsRepeatedSeparator,
+    VirtualPathContainsRepeatedSeparator,
     #[error("virtual path must not end with `/` unless it is the root path")]
-    VPathHasTrailingSeparator,
+    VirtualPathHasTrailingSeparator,
     #[error("virtual path is {length} bytes, exceeding the {max}-byte limit")]
-    VPathTooLong { length: usize, max: usize },
+    VirtualPathTooLong { length: usize, max: usize },
     #[error("entry name must not be empty")]
     EntryNameEmpty,
     #[error("entry name must not contain `/`")]
