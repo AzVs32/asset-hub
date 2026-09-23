@@ -99,6 +99,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "driver-conformance"
+version = "0.1.0"
+dependencies = [
+ "core",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -199,6 +206,7 @@ version = "0.1.0"
 dependencies = [
  "cap-std",
  "core",
+ "driver-conformance",
  "tempfile",
 ]
 

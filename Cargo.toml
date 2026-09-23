@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["asset-config", "asset-config-macros", "core", "infra", "utils"]
+members = ["asset-config", "asset-config-macros", "core", "driver-conformance", "infra", "utils"]
 
 [workspace.package]
 version = "0.1.0"

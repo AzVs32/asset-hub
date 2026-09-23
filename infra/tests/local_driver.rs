@@ -1,11 +1,10 @@
 use std::fs;
-use std::io::Read;
 
 use asset_core::driver::Driver;
 use asset_core::driver::error::DriverError;
-use asset_core::entry::domain::EntryKind;
 use asset_core::namespace::domain::{DriverPath, VirtualPath, VirtualRelativePath};
 use asset_infra::driver::LocalDriver;
+use driver_conformance::Fixture;
 
 fn relative(value: &str) -> VirtualRelativePath {
     VirtualPath::try_from(value)
@@ -14,77 +13,57 @@ fn relative(value: &str) -> VirtualRelativePath {
         .unwrap()
 }
 
-#[test]
-fn lists_and_reads_files_below_a_bound_root() {
-    let root = tempfile::tempdir().unwrap();
-    fs::create_dir(root.path().join("子目录")).unwrap();
-    fs::write(root.path().join("z.txt"), b"hello").unwrap();
-    fs::write(root.path().join("a.txt"), []).unwrap();
-    fs::write(root.path().join("子目录").join("nested.txt"), b"nested").unwrap();
-
-    let driver = LocalDriver::new();
-    let backend = driver
-        .bind(&DriverPath::new(root.path().to_str().unwrap()))
-        .unwrap();
-    let entries = backend.list(&relative("/")).unwrap();
-    assert_eq!(entries.len(), 3);
-    assert_eq!(entries[0].name().as_str(), "a.txt");
-    assert_eq!(entries[0].kind(), EntryKind::File);
-    assert_eq!(entries[0].size(), Some(0));
-    assert_eq!(entries[1].name().as_str(), "z.txt");
-    assert_eq!(entries[1].size(), Some(5));
-    assert_eq!(entries[2].name().as_str(), "子目录");
-    assert_eq!(entries[2].kind(), EntryKind::Directory);
-    assert_eq!(entries[2].size(), None);
-
-    let nested = backend.list(&relative("/子目录")).unwrap();
-    assert_eq!(nested.len(), 1);
-    assert_eq!(nested[0].name().as_str(), "nested.txt");
-
-    let mut contents = String::new();
-    backend
-        .read(&relative("/子目录/nested.txt"))
-        .unwrap()
-        .read_to_string(&mut contents)
-        .unwrap();
-    assert_eq!(contents, "nested");
+struct LocalFixture {
+    directory: tempfile::TempDir,
+    driver: LocalDriver,
 }
 
+impl Fixture for LocalFixture {
+    fn new() -> Self {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("albums");
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(root.join("2026")).unwrap();
+        fs::create_dir(root.join("子目录")).unwrap();
+        fs::create_dir(directory.path().join("other")).unwrap();
+        fs::write(root.join("a.txt"), []).unwrap();
+        fs::write(root.join("z.txt"), b"hello").unwrap();
+        fs::write(root.join("2026").join("nested.txt"), b"nested").unwrap();
+        fs::write(root.join("子目录").join("文件.txt"), b"unicode").unwrap();
+        Self {
+            directory,
+            driver: LocalDriver::new(),
+        }
+    }
+
+    fn driver(&self) -> &dyn Driver {
+        &self.driver
+    }
+
+    fn root(&self) -> DriverPath {
+        DriverPath::new(self.directory.path().join("albums").to_str().unwrap())
+    }
+
+    fn other_root(&self) -> DriverPath {
+        DriverPath::new(self.directory.path().join("other").to_str().unwrap())
+    }
+
+    fn file_root(&self) -> DriverPath {
+        DriverPath::new(self.directory.path().join("albums/a.txt").to_str().unwrap())
+    }
+
+    fn missing_root(&self) -> DriverPath {
+        DriverPath::new(self.directory.path().join("missing").to_str().unwrap())
+    }
+}
+
+driver_conformance::driver_conformance_tests!(LocalFixture);
+
 #[test]
-fn reports_root_and_entry_errors() {
-    let root = tempfile::tempdir().unwrap();
-    fs::write(root.path().join("file"), b"x").unwrap();
-    let driver = LocalDriver::new();
-
+fn rejects_empty_root() {
     assert!(matches!(
-        driver.bind(&DriverPath::new("")),
+        LocalDriver::new().bind(&DriverPath::new("")),
         Err(DriverError::InvalidDriverPath)
-    ));
-    assert!(matches!(
-        driver.bind(&DriverPath::new(
-            root.path().join("missing").to_str().unwrap()
-        )),
-        Err(DriverError::NotFound)
-    ));
-    assert!(matches!(
-        driver.bind(&DriverPath::new(root.path().join("file").to_str().unwrap())),
-        Err(DriverError::NotDirectory)
-    ));
-
-    let backend = driver
-        .bind(&DriverPath::new(root.path().to_str().unwrap()))
-        .unwrap();
-    assert!(matches!(
-        backend.list(&relative("/file")),
-        Err(DriverError::NotDirectory)
-    ));
-    assert!(matches!(
-        backend.read(&relative("/")),
-        Err(DriverError::IsDirectory)
-    ));
-    assert!(matches!(
-        backend.read(&relative("/missing")),
-        Err(DriverError::NotFound)
     ));
 }
 

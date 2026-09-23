@@ -1,18 +1,10 @@
 [package]
-name = "infra"
+name = "driver-conformance"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
-[lib]
-name = "asset_infra"
-
 [dependencies]
 asset-core.workspace = true
-cap-std = "3.4.5"
-
-[dev-dependencies]
-driver-conformance = { path = "../driver-conformance" }
-tempfile = "3.27.0"
