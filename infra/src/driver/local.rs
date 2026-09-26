@@ -1,9 +1,9 @@
 use std::io::{self, Read};
 
-use asset_core::driver::error::DriverError;
-use asset_core::driver::{BoundDriver, Driver};
-use asset_core::entry::domain::Entry;
-use asset_core::namespace::domain::{DriverPath, EntryName, VirtualRelativePath};
+use asset_core::domain::Entry;
+use asset_core::domain::{DriverPath, EntryName, VirtualRelativePath};
+use asset_core::error::CoreError;
+use asset_core::port::{BoundDriver, Driver};
 use cap_std::ambient_authority;
 use cap_std::fs::Dir;
 
@@ -23,9 +23,9 @@ impl LocalDriver {
 }
 
 impl Driver for LocalDriver {
-    fn bind(&self, root: &DriverPath) -> Result<Box<dyn BoundDriver>, DriverError> {
+    fn bind(&self, root: &DriverPath) -> Result<Box<dyn BoundDriver>, CoreError> {
         if root.as_str().is_empty() {
-            return Err(DriverError::InvalidDriverPath);
+            return Err(CoreError::driver_invalid_path());
         }
 
         let directory =
@@ -39,7 +39,7 @@ struct LocalBoundDriver {
 }
 
 impl BoundDriver for LocalBoundDriver {
-    fn list(&self, path: &VirtualRelativePath) -> Result<Vec<Entry>, DriverError> {
+    fn list(&self, path: &VirtualRelativePath) -> Result<Vec<Entry>, CoreError> {
         if path.is_empty() {
             list_directory(&self.directory)
         } else {
@@ -54,9 +54,9 @@ impl BoundDriver for LocalBoundDriver {
     fn read(
         &self,
         path: &VirtualRelativePath,
-    ) -> Result<Box<dyn Read + Send + 'static>, DriverError> {
+    ) -> Result<Box<dyn Read + Send + 'static>, CoreError> {
         if path.is_empty() {
-            return Err(DriverError::IsDirectory);
+            return Err(CoreError::driver_is_directory());
         }
 
         let metadata = self
@@ -64,7 +64,7 @@ impl BoundDriver for LocalBoundDriver {
             .metadata(path.as_str())
             .map_err(driver_error)?;
         if metadata.is_dir() {
-            return Err(DriverError::IsDirectory);
+            return Err(CoreError::driver_is_directory());
         }
         if !metadata.is_file() {
             return Err(unsupported_entry());
@@ -73,7 +73,7 @@ impl BoundDriver for LocalBoundDriver {
         let file = self.directory.open(path.as_str()).map_err(driver_error)?;
         let metadata = file.metadata().map_err(driver_error)?;
         if metadata.is_dir() {
-            return Err(DriverError::IsDirectory);
+            return Err(CoreError::driver_is_directory());
         }
         if !metadata.is_file() {
             return Err(unsupported_entry());
@@ -82,7 +82,7 @@ impl BoundDriver for LocalBoundDriver {
     }
 }
 
-fn list_directory(directory: &Dir) -> Result<Vec<Entry>, DriverError> {
+fn list_directory(directory: &Dir) -> Result<Vec<Entry>, CoreError> {
     let mut entries = Vec::new();
     for item in directory.entries().map_err(driver_error)? {
         let item = item.map_err(driver_error)?;
@@ -94,9 +94,9 @@ fn list_directory(directory: &Dir) -> Result<Vec<Entry>, DriverError> {
         let name = item
             .file_name()
             .into_string()
-            .map_err(|_| DriverError::UnrepresentableName)?;
-        let name =
-            EntryName::try_from(name.as_str()).map_err(|_| DriverError::UnrepresentableName)?;
+            .map_err(|_| CoreError::driver_unrepresentable_name())?;
+        let name = EntryName::try_from(name.as_str())
+            .map_err(|_| CoreError::driver_unrepresentable_name())?;
         entries.push(if file_type.is_dir() {
             Entry::directory(name)
         } else {
@@ -108,24 +108,24 @@ fn list_directory(directory: &Dir) -> Result<Vec<Entry>, DriverError> {
     Ok(entries)
 }
 
-fn driver_error(error: io::Error) -> DriverError {
+fn driver_error(error: io::Error) -> CoreError {
     match error.kind() {
-        io::ErrorKind::NotFound => DriverError::NotFound,
-        io::ErrorKind::NotADirectory => DriverError::NotDirectory,
-        _ => DriverError::backend(error),
+        io::ErrorKind::NotFound => CoreError::driver_not_found(),
+        io::ErrorKind::NotADirectory => CoreError::driver_not_directory(),
+        _ => CoreError::backend(error),
     }
 }
 
-fn bind_error(error: io::Error) -> DriverError {
+fn bind_error(error: io::Error) -> CoreError {
     if error.kind() == io::ErrorKind::InvalidInput {
-        DriverError::InvalidDriverPath
+        CoreError::driver_invalid_path()
     } else {
         driver_error(error)
     }
 }
 
-fn unsupported_entry() -> DriverError {
-    DriverError::backend(io::Error::new(
+fn unsupported_entry() -> CoreError {
+    CoreError::backend(io::Error::new(
         io::ErrorKind::Unsupported,
         "entry is not a regular file",
     ))

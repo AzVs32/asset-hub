@@ -18,10 +18,9 @@
 
 use std::io::Read;
 
-use asset_core::driver::Driver;
-use asset_core::driver::error::DriverError;
-use asset_core::entry::domain::{Entry, EntryKind};
-use asset_core::namespace::domain::{DriverPath, VirtualPath, VirtualRelativePath};
+use asset_core::domain::{DriverPath, VirtualPath, VirtualRelativePath};
+use asset_core::domain::{Entry, EntryKind};
+use asset_core::port::Driver;
 
 /// Supplies the same directory tree using a concrete driver's native storage.
 pub trait Fixture: Sized {
@@ -96,7 +95,7 @@ pub fn check_root_isolation(fixture: &impl Fixture) {
     assert!(other.list(&relative("/")).unwrap().is_empty());
     assert!(matches!(
         other.read(&relative("/z.txt")),
-        Err(DriverError::NotFound)
+        Err(error) if error.is_not_found()
     ));
 }
 
@@ -104,33 +103,33 @@ pub fn check_root_isolation(fixture: &impl Fixture) {
 pub fn check_errors(fixture: &impl Fixture) {
     assert!(matches!(
         fixture.driver().bind(&fixture.missing_root()),
-        Err(DriverError::NotFound)
+        Err(error) if error.is_not_found()
     ));
     assert!(matches!(
         fixture.driver().bind(&fixture.file_root()),
-        Err(DriverError::NotDirectory)
+        Err(error) if error.is_not_directory()
     ));
 
     let backend = fixture.driver().bind(&fixture.root()).unwrap();
     assert!(matches!(
         backend.list(&relative("/a.txt")),
-        Err(DriverError::NotDirectory)
+        Err(error) if error.is_not_directory()
     ));
     assert!(matches!(
         backend.read(&relative("/")),
-        Err(DriverError::IsDirectory)
+        Err(error) if error.is_directory()
     ));
     assert!(matches!(
         backend.read(&relative("/2026")),
-        Err(DriverError::IsDirectory)
+        Err(error) if error.is_directory()
     ));
     assert!(matches!(
         backend.list(&relative("/missing")),
-        Err(DriverError::NotFound)
+        Err(error) if error.is_not_found()
     ));
     assert!(matches!(
         backend.read(&relative("/missing")),
-        Err(DriverError::NotFound)
+        Err(error) if error.is_not_found()
     ));
 }
 

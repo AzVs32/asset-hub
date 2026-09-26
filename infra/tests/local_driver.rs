@@ -1,8 +1,7 @@
 use std::fs;
 
-use asset_core::driver::Driver;
-use asset_core::driver::error::DriverError;
-use asset_core::namespace::domain::{DriverPath, VirtualPath, VirtualRelativePath};
+use asset_core::domain::{DriverPath, VirtualPath, VirtualRelativePath};
+use asset_core::port::Driver;
 use asset_infra::driver::LocalDriver;
 use driver_conformance::Fixture;
 
@@ -63,7 +62,7 @@ driver_conformance::driver_conformance_tests!(LocalFixture);
 fn rejects_empty_root() {
     assert!(matches!(
         LocalDriver::new().bind(&DriverPath::new("")),
-        Err(DriverError::InvalidDriverPath)
+        Err(error) if error.is_invalid_driver_path()
     ));
 }
 
@@ -100,6 +99,6 @@ fn rejects_names_that_the_virtual_namespace_cannot_represent() {
         .unwrap();
     assert!(matches!(
         backend.list(&relative("/")),
-        Err(DriverError::UnrepresentableName)
+        Err(error) if error.is_unrepresentable_name()
     ));
 }

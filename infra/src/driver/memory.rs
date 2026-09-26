@@ -2,10 +2,10 @@ use std::collections::BTreeMap;
 use std::io::{Cursor, Error, Read};
 use std::sync::{Arc, RwLock};
 
-use asset_core::driver::error::DriverError;
-use asset_core::driver::{BoundDriver, Driver};
-use asset_core::entry::domain::Entry;
-use asset_core::namespace::domain::{DriverPath, EntryName, VirtualPath, VirtualRelativePath};
+use asset_core::domain::Entry;
+use asset_core::domain::{DriverPath, EntryName, VirtualPath, VirtualRelativePath};
+use asset_core::error::CoreError;
+use asset_core::port::{BoundDriver, Driver};
 
 #[derive(Clone)]
 enum Node {
@@ -35,12 +35,12 @@ impl MemoryDriver {
     }
 
     /// Creates a directory. Creating an existing directory succeeds.
-    pub fn create_directory(&self, path: &VirtualPath) -> Result<(), DriverError> {
+    pub fn create_directory(&self, path: &VirtualPath) -> Result<(), CoreError> {
         let mut nodes = self.tree.write().map_err(lock_error)?;
         if let Some(node) = nodes.get(path.as_str()) {
             return match node {
                 Node::Directory => Ok(()),
-                Node::File(_) => Err(DriverError::NotDirectory),
+                Node::File(_) => Err(CoreError::driver_not_directory()),
             };
         }
 
@@ -54,14 +54,14 @@ impl MemoryDriver {
         &self,
         path: &VirtualPath,
         contents: impl Into<Vec<u8>>,
-    ) -> Result<(), DriverError> {
+    ) -> Result<(), CoreError> {
         if path.is_root() {
-            return Err(DriverError::IsDirectory);
+            return Err(CoreError::driver_is_directory());
         }
 
         let mut nodes = self.tree.write().map_err(lock_error)?;
         if matches!(nodes.get(path.as_str()), Some(Node::Directory)) {
-            return Err(DriverError::IsDirectory);
+            return Err(CoreError::driver_is_directory());
         }
         ensure_parent_directory(&nodes, path)?;
         nodes.insert(
@@ -79,11 +79,11 @@ impl Default for MemoryDriver {
 }
 
 impl Driver for MemoryDriver {
-    fn bind(&self, root: &DriverPath) -> Result<Box<dyn BoundDriver>, DriverError> {
+    fn bind(&self, root: &DriverPath) -> Result<Box<dyn BoundDriver>, CoreError> {
         let path = if root.as_str().is_empty() {
             VirtualPath::root()
         } else {
-            VirtualPath::try_from(root.as_str()).map_err(|_| DriverError::InvalidDriverPath)?
+            VirtualPath::try_from(root.as_str()).map_err(|_| CoreError::driver_invalid_path())?
         };
 
         let nodes = self.tree.read().map_err(lock_error)?;
@@ -92,8 +92,8 @@ impl Driver for MemoryDriver {
                 tree: Arc::clone(&self.tree),
                 root: path.as_str().to_owned(),
             })),
-            Some(Node::File(_)) => Err(DriverError::NotDirectory),
-            None => Err(DriverError::NotFound),
+            Some(Node::File(_)) => Err(CoreError::driver_not_directory()),
+            None => Err(CoreError::driver_not_found()),
         }
     }
 }
@@ -116,13 +116,13 @@ impl MemoryBoundDriver {
 }
 
 impl BoundDriver for MemoryBoundDriver {
-    fn list(&self, path: &VirtualRelativePath) -> Result<Vec<Entry>, DriverError> {
+    fn list(&self, path: &VirtualRelativePath) -> Result<Vec<Entry>, CoreError> {
         let directory = self.resolve(path);
         let nodes = self.tree.read().map_err(lock_error)?;
         match nodes.get(&directory) {
             Some(Node::Directory) => {}
-            Some(Node::File(_)) => return Err(DriverError::NotDirectory),
-            None => return Err(DriverError::NotFound),
+            Some(Node::File(_)) => return Err(CoreError::driver_not_directory()),
+            None => return Err(CoreError::driver_not_found()),
         }
 
         let prefix = if directory == "/" {
@@ -139,8 +139,8 @@ impl BoundDriver for MemoryBoundDriver {
                 continue;
             }
 
-            let entry_name =
-                EntryName::try_from(remainder).map_err(|_| DriverError::UnrepresentableName)?;
+            let entry_name = EntryName::try_from(remainder)
+                .map_err(|_| CoreError::driver_unrepresentable_name())?;
             entries.push(match node {
                 Node::Directory => Entry::directory(entry_name),
                 Node::File(contents) => Entry::file(entry_name, Some(contents.len() as u64)),
@@ -152,13 +152,13 @@ impl BoundDriver for MemoryBoundDriver {
     fn read(
         &self,
         path: &VirtualRelativePath,
-    ) -> Result<Box<dyn Read + Send + 'static>, DriverError> {
+    ) -> Result<Box<dyn Read + Send + 'static>, CoreError> {
         let file = self.resolve(path);
         let nodes = self.tree.read().map_err(lock_error)?;
         match nodes.get(&file) {
             Some(Node::File(contents)) => Ok(Box::new(Cursor::new(Arc::clone(contents)))),
-            Some(Node::Directory) => Err(DriverError::IsDirectory),
-            None => Err(DriverError::NotFound),
+            Some(Node::Directory) => Err(CoreError::driver_is_directory()),
+            None => Err(CoreError::driver_not_found()),
         }
     }
 }
@@ -166,15 +166,15 @@ impl BoundDriver for MemoryBoundDriver {
 fn ensure_parent_directory(
     nodes: &BTreeMap<String, Node>,
     path: &VirtualPath,
-) -> Result<(), DriverError> {
-    let parent = path.parent().ok_or(DriverError::IsDirectory)?;
+) -> Result<(), CoreError> {
+    let parent = path.parent().ok_or(CoreError::driver_is_directory())?;
     match nodes.get(parent.as_str()) {
         Some(Node::Directory) => Ok(()),
-        Some(Node::File(_)) => Err(DriverError::NotDirectory),
-        None => Err(DriverError::NotFound),
+        Some(Node::File(_)) => Err(CoreError::driver_not_directory()),
+        None => Err(CoreError::driver_not_found()),
     }
 }
 
-fn lock_error<T>(_: std::sync::PoisonError<T>) -> DriverError {
-    DriverError::backend(Error::other("memory driver lock poisoned"))
+fn lock_error<T>(_: std::sync::PoisonError<T>) -> CoreError {
+    CoreError::backend(Error::other("memory driver lock poisoned"))
 }

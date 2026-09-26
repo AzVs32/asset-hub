@@ -1,5 +1,6 @@
 /// Generate a strongly typed `ID` based on `UUID v7`
 /// + `$name`：required, The type of the generated `ID`.
+/// + `$error` and `$invalid`: optionally customize the parse error type and value.
 /// + `$slot`：optional, Generate reserved slots visible within the `crate`.
 ///     + `Slot0` maps to `uuid::Uuid::nil()`
 ///     + `Slot1` maps to `uuid::Uuid::max()`
@@ -7,6 +8,10 @@
 macro_rules! gen_id_uuid_v7 {
     ($name:ident) => {
         $crate::gen_id_uuid_v7!(@id $name);
+    };
+
+    ($name:ident, error = $error:ty, invalid = $invalid:expr) => {
+        $crate::gen_id_uuid_v7!(@id $name, $error, $invalid);
     };
 
     ($name:ident, $slot:ident) => {
@@ -41,6 +46,10 @@ macro_rules! gen_id_uuid_v7 {
     };
 
     (@id $name:ident) => {
+        $crate::gen_id_uuid_v7!(@id $name, $crate::UtilsError, $crate::ParseIdError.into());
+    };
+
+    (@id $name:ident, $error:ty, $invalid:expr) => {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
         pub struct $name($crate::__private::uuid::Uuid);
 
@@ -58,11 +67,11 @@ macro_rules! gen_id_uuid_v7 {
         }
 
         impl ::std::str::FromStr for $name {
-            type Err = $crate::UtilsError;
+            type Err = $error;
             fn from_str(s: &str) -> ::std::result::Result<Self, Self::Err> {
                 $crate::__private::uuid::Uuid::parse_str(s)
                     .map(Self)
-                    .map_err(|_| $crate::ParseIdError.into())
+                    .map_err(|_| $invalid)
             }
         }
 
@@ -91,3 +100,6 @@ macro_rules! gen_id_uuid_v7 {
         }
     };
 }
+
+#[cfg(test)]
+mod tests;

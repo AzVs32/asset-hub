@@ -1,8 +1,7 @@
 use std::io::Read;
 
-use asset_core::driver::Driver;
-use asset_core::driver::error::DriverError;
-use asset_core::namespace::domain::{DriverPath, VirtualPath, VirtualRelativePath};
+use asset_core::domain::{DriverPath, VirtualPath, VirtualRelativePath};
+use asset_core::port::Driver;
 use asset_infra::driver::MemoryDriver;
 use driver_conformance::Fixture;
 
@@ -108,18 +107,18 @@ fn rejects_invalid_tree_operations_and_supports_empty_root_alias() {
     assert!(driver.bind(&DriverPath::new("")).is_ok());
     assert!(matches!(
         driver.bind(&DriverPath::new("relative")),
-        Err(DriverError::InvalidDriverPath)
+        Err(error) if error.is_invalid_driver_path()
     ));
     assert!(matches!(
         driver.create_directory(&path("/file/child")),
-        Err(DriverError::NotDirectory)
+        Err(error) if error.is_not_directory()
     ));
     assert!(matches!(
         driver.insert_file(&path("/missing/child"), Vec::new()),
-        Err(DriverError::NotFound)
+        Err(error) if error.is_not_found()
     ));
     assert!(matches!(
         driver.insert_file(&path("/"), Vec::new()),
-        Err(DriverError::IsDirectory)
+        Err(error) if error.is_directory()
     ));
 }
