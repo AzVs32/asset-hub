@@ -1,5 +1,5 @@
 use crate::error::VfsError;
-use crate::namespace::error::NamespaceError;
+use crate::namespace::NamespaceError;
 
 use crate::namespace::{EntryName, VirtualRelativePath};
 

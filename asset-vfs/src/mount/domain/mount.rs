@@ -1,6 +1,6 @@
 use crate::driver::{DriverKind, DriverPath};
 use crate::error::VfsError;
-use crate::mount::error::MountError;
+use crate::mount::MountError;
 use crate::namespace::VirtualPath;
 use getset::{CopyGetters, Getters};
 

@@ -1,4 +1,5 @@
 mod domain;
-pub(crate) mod error;
+mod error;
 
 pub use domain::{Mount, MountId, ResolvedMount};
+pub use error::MountError;

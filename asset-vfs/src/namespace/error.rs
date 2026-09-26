@@ -1,9 +1,8 @@
-// These payload types must be `pub` so external callers can match VfsError.
-// Their module is crate-private, so callers cannot import the types directly.
-
 use thiserror::Error;
 
+/// Errors from namespace validation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[non_exhaustive]
 pub enum NamespaceError {
     #[error("virtual path must be absolute and use canonical `/` separators")]
     InvalidVirtualPath,

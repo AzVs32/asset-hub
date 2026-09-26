@@ -1,6 +1,6 @@
 use super::EntryName;
 use crate::error::VfsError;
-use crate::namespace::error::NamespaceError;
+use crate::namespace::NamespaceError;
 
 #[test]
 fn entry_name_is_a_validated_virtual_path_segment() {

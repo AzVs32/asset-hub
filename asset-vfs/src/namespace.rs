@@ -1,4 +1,5 @@
 mod domain;
-pub(crate) mod error;
+mod error;
 
 pub use domain::{EntryName, VirtualPath, VirtualRelativePath};
+pub use error::NamespaceError;

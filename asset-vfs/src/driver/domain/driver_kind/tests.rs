@@ -1,5 +1,5 @@
 use super::DriverKind;
-use crate::driver::error::DriverError;
+use crate::driver::DriverError;
 use crate::error::VfsError;
 
 #[test]

@@ -1,4 +1,4 @@
-use crate::driver::error::DriverError;
+use crate::driver::DriverError;
 use crate::error::VfsError;
 
 const MAX_BYTES: usize = 64;

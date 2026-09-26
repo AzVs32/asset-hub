@@ -1,14 +1,12 @@
-use crate::driver::error::DriverError;
-use crate::mount::error::MountError;
-use crate::namespace::error::NamespaceError;
-use thiserror::Error;
+use crate::driver::DriverError;
+use crate::mount::MountError;
+use crate::namespace::NamespaceError;
 
 /// The public error boundary for VFS operations.
 ///
-/// Each variant groups errors from one domain. Domain errors are not exported
-/// as standalone types; their details are
-/// available through [`std::error::Error::source`].
-#[derive(Debug, Error)]
+/// Each variant groups errors from one domain. Domain error types are exported
+/// from their domain entry points for construction and matching.
+#[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum VfsError {
     #[error("namespace error: {0}")]

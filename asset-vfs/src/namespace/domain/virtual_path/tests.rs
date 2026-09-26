@@ -1,7 +1,7 @@
 use super::VirtualPath;
 use crate::error::VfsError;
 use crate::namespace::EntryName;
-use crate::namespace::error::NamespaceError;
+use crate::namespace::NamespaceError;
 use std::collections::{BTreeSet, HashSet};
 
 #[test]
