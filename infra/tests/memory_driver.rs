@@ -1,8 +1,9 @@
 use std::io::Read;
 
-use asset_core::domain::{DriverPath, VirtualPath, VirtualRelativePath};
-use asset_core::port::Driver;
 use asset_infra::driver::MemoryDriver;
+use asset_vfs::driver::{Driver, DriverError, DriverPath};
+use asset_vfs::error::VfsError;
+use asset_vfs::namespace::{VirtualPath, VirtualRelativePath};
 use driver_conformance::Fixture;
 
 fn path(value: &str) -> VirtualPath {
@@ -107,18 +108,18 @@ fn rejects_invalid_tree_operations_and_supports_empty_root_alias() {
     assert!(driver.bind(&DriverPath::new("")).is_ok());
     assert!(matches!(
         driver.bind(&DriverPath::new("relative")),
-        Err(error) if error.is_invalid_driver_path()
+        Err(VfsError::Driver(DriverError::InvalidPath))
     ));
     assert!(matches!(
         driver.create_directory(&path("/file/child")),
-        Err(error) if error.is_not_directory()
+        Err(VfsError::Driver(DriverError::NotDirectory))
     ));
     assert!(matches!(
         driver.insert_file(&path("/missing/child"), Vec::new()),
-        Err(error) if error.is_not_found()
+        Err(VfsError::Driver(DriverError::NotFound))
     ));
     assert!(matches!(
         driver.insert_file(&path("/"), Vec::new()),
-        Err(error) if error.is_directory()
+        Err(VfsError::Driver(DriverError::IsDirectory))
     ));
 }

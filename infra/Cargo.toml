@@ -10,7 +10,7 @@ authors.workspace = true
 name = "asset_infra"
 
 [dependencies]
-asset-core.workspace = true
+asset-vfs.workspace = true
 cap-std = "3.4.5"
 
 [dev-dependencies]

@@ -11,7 +11,7 @@ authors = ["AzVs"]
 
 [workspace.dependencies]
 utils = { path = "utils" }
-asset-core = { package = "core", path = "core" }
+asset-vfs = { path = "asset-vfs" }
 uuid = { version = "1.26.1", features = ["v7", "serde"] }
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.20"

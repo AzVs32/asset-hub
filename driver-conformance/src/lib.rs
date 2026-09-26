@@ -18,9 +18,10 @@
 
 use std::io::Read;
 
-use asset_core::domain::{DriverPath, VirtualPath, VirtualRelativePath};
-use asset_core::domain::{Entry, EntryKind};
-use asset_core::port::Driver;
+use asset_vfs::driver::{Driver, DriverError, DriverPath};
+use asset_vfs::entry::{Entry, EntryKind};
+use asset_vfs::error::VfsError;
+use asset_vfs::namespace::{VirtualPath, VirtualRelativePath};
 
 /// Supplies the same directory tree using a concrete driver's native storage.
 pub trait Fixture: Sized {
@@ -95,7 +96,7 @@ pub fn check_root_isolation(fixture: &impl Fixture) {
     assert!(other.list(&relative("/")).unwrap().is_empty());
     assert!(matches!(
         other.read(&relative("/z.txt")),
-        Err(error) if error.is_not_found()
+        Err(VfsError::Driver(DriverError::NotFound))
     ));
 }
 
@@ -103,33 +104,33 @@ pub fn check_root_isolation(fixture: &impl Fixture) {
 pub fn check_errors(fixture: &impl Fixture) {
     assert!(matches!(
         fixture.driver().bind(&fixture.missing_root()),
-        Err(error) if error.is_not_found()
+        Err(VfsError::Driver(DriverError::NotFound))
     ));
     assert!(matches!(
         fixture.driver().bind(&fixture.file_root()),
-        Err(error) if error.is_not_directory()
+        Err(VfsError::Driver(DriverError::NotDirectory))
     ));
 
     let backend = fixture.driver().bind(&fixture.root()).unwrap();
     assert!(matches!(
         backend.list(&relative("/a.txt")),
-        Err(error) if error.is_not_directory()
+        Err(VfsError::Driver(DriverError::NotDirectory))
     ));
     assert!(matches!(
         backend.read(&relative("/")),
-        Err(error) if error.is_directory()
+        Err(VfsError::Driver(DriverError::IsDirectory))
     ));
     assert!(matches!(
         backend.read(&relative("/2026")),
-        Err(error) if error.is_directory()
+        Err(VfsError::Driver(DriverError::IsDirectory))
     ));
     assert!(matches!(
         backend.list(&relative("/missing")),
-        Err(error) if error.is_not_found()
+        Err(VfsError::Driver(DriverError::NotFound))
     ));
     assert!(matches!(
         backend.read(&relative("/missing")),
-        Err(error) if error.is_not_found()
+        Err(VfsError::Driver(DriverError::NotFound))
     ));
 }
 

@@ -111,7 +111,7 @@ dependencies = [
 name = "driver-conformance"
 version = "0.1.0"
 dependencies = [
- "core",
+ "asset-vfs",
 ]
 
 [[package]]
@@ -213,8 +213,8 @@ dependencies = [
 name = "infra"
 version = "0.1.0"
 dependencies = [
+ "asset-vfs",
  "cap-std",
- "core",
  "driver-conformance",
  "tempfile",
 ]
