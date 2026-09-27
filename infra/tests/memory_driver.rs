@@ -1,5 +1,3 @@
-use std::io::Read;
-
 use asset_infra::driver::MemoryDriver;
 use asset_vfs::driver::{Driver, DriverError, DriverPath};
 use asset_vfs::error::VfsError;
@@ -65,39 +63,19 @@ driver_conformance::driver_conformance_tests!(MemoryFixture);
 fn clones_share_updates_with_existing_bound_backends() {
     let fixture = MemoryFixture::new();
     let backend = fixture.driver.bind(&fixture.root()).unwrap();
+    let reader = backend.reader();
     fixture
         .driver
         .clone()
         .insert_file(&path("/albums/new.txt"), b"new")
         .unwrap();
 
-    let mut contents = String::new();
-    backend
-        .read(&relative("/new.txt"))
-        .unwrap()
-        .read_to_string(&mut contents)
-        .unwrap();
-    assert_eq!(contents, "new");
-}
-
-#[test]
-fn open_readers_keep_their_snapshot_after_file_replacement() {
-    let driver = MemoryDriver::new();
-    driver.insert_file(&path("/file"), b"before").unwrap();
-    let backend = driver.bind(&DriverPath::new("/")).unwrap();
-    let mut old_reader = backend.read(&relative("/file")).unwrap();
-
-    driver.insert_file(&path("/file"), b"after").unwrap();
-    let mut before = String::new();
-    old_reader.read_to_string(&mut before).unwrap();
-    let mut after = String::new();
-    backend
-        .read(&relative("/file"))
-        .unwrap()
-        .read_to_string(&mut after)
-        .unwrap();
-    assert_eq!(before, "before");
-    assert_eq!(after, "after");
+    let entries = reader.list(&relative("/")).unwrap();
+    let new_file = entries
+        .iter()
+        .find(|entry| entry.name().as_str() == "new.txt")
+        .expect("existing bound backends must observe shared tree updates");
+    assert_eq!(new_file.size(), Some(3));
 }
 
 #[test]

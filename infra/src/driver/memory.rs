@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
-use std::io::{Cursor, Error, Read};
+use std::io::Error;
 use std::sync::{Arc, RwLock};
 
-use asset_vfs::driver::{BoundDriver, Driver, DriverError, DriverPath};
+use asset_vfs::driver::{BoundDriver, Driver, DriverError, DriverPath, ReadDriver};
 use asset_vfs::entry::Entry;
 use asset_vfs::error::VfsError;
 use asset_vfs::namespace::{EntryName, VirtualPath, VirtualRelativePath};
@@ -15,10 +15,10 @@ enum Node {
 
 type Tree = Arc<RwLock<BTreeMap<String, Node>>>;
 
-/// A mutable in-memory tree that provides read-only bound drivers.
+/// A mutable in-memory tree that provides bound directory listings.
 ///
 /// Directories must be created before their children. Clones share the same
-/// tree, while open readers retain a snapshot of the file they opened.
+/// tree, so existing bound backends observe updates in subsequent listings.
 #[derive(Clone)]
 pub struct MemoryDriver {
     tree: Tree,
@@ -116,6 +116,12 @@ impl MemoryBoundDriver {
 }
 
 impl BoundDriver for MemoryBoundDriver {
+    fn reader(&self) -> &dyn ReadDriver {
+        self
+    }
+}
+
+impl ReadDriver for MemoryBoundDriver {
     fn list(&self, path: &VirtualRelativePath) -> Result<Vec<Entry>, VfsError> {
         let directory = self.resolve(path);
         let nodes = self.tree.read().map_err(lock_error)?;
@@ -147,16 +153,6 @@ impl BoundDriver for MemoryBoundDriver {
             });
         }
         Ok(entries)
-    }
-
-    fn read(&self, path: &VirtualRelativePath) -> Result<Box<dyn Read + Send + 'static>, VfsError> {
-        let file = self.resolve(path);
-        let nodes = self.tree.read().map_err(lock_error)?;
-        match nodes.get(&file) {
-            Some(Node::File(contents)) => Ok(Box::new(Cursor::new(Arc::clone(contents)))),
-            Some(Node::Directory) => Err(DriverError::IsDirectory.into()),
-            None => Err(DriverError::NotFound.into()),
-        }
     }
 }
 

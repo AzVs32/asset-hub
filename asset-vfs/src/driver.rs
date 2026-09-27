@@ -4,4 +4,4 @@ mod port;
 
 pub use domain::{DriverKind, DriverPath};
 pub use error::DriverError;
-pub use port::{BoundDriver, Driver};
+pub use port::{BoundDriver, Driver, ReadDriver, WriteDriver};

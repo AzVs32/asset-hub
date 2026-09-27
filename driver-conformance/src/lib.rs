@@ -1,4 +1,5 @@
-//! Shared behavioral checks for concrete [`Driver`] implementations.
+//! Shared behavioral checks for concrete [`Driver`] implementations and their
+//! required directory-listing interfaces.
 //!
 //! Each fixture must create this tree under its bound root:
 //!
@@ -15,8 +16,6 @@
 //! `other_root` is an empty sibling directory. `file_root` points to a file,
 //! and `missing_root` points to a nonexistent path. The fixture owns any
 //! temporary resources for the duration of each check.
-
-use std::io::Read;
 
 use asset_vfs::driver::{Driver, DriverError, DriverPath};
 use asset_vfs::entry::{Entry, EntryKind};
@@ -49,7 +48,8 @@ fn assert_file(entry: &Entry, name: &str, size: u64) {
 /// Checks direct children, ordering, directory metadata, and nested listing.
 pub fn check_listing(fixture: &impl Fixture) {
     let backend = fixture.driver().bind(&fixture.root()).unwrap();
-    let entries = backend.list(&relative("/")).unwrap();
+    let reader = backend.reader();
+    let entries = reader.list(&relative("/")).unwrap();
     assert_eq!(entries.len(), 4);
     assert_eq!(entries[0].name().as_str(), "2026");
     assert_eq!(entries[0].kind(), EntryKind::Directory);
@@ -60,42 +60,23 @@ pub fn check_listing(fixture: &impl Fixture) {
     assert_eq!(entries[3].kind(), EntryKind::Directory);
     assert_eq!(entries[3].size(), None);
 
-    let nested = backend.list(&relative("/2026")).unwrap();
+    let nested = reader.list(&relative("/2026")).unwrap();
     assert_eq!(nested.len(), 1);
     assert_file(&nested[0], "nested.txt", 6);
 
-    let unicode = backend.list(&relative("/子目录")).unwrap();
+    let unicode = reader.list(&relative("/子目录")).unwrap();
     assert_eq!(unicode.len(), 1);
     assert_file(&unicode[0], "文件.txt", 7);
-}
-
-/// Checks reads from the root and a nested directory.
-pub fn check_reading(fixture: &impl Fixture) {
-    let backend = fixture.driver().bind(&fixture.root()).unwrap();
-    for (path, expected) in [
-        ("/a.txt", &b""[..]),
-        ("/z.txt", &b"hello"[..]),
-        ("/2026/nested.txt", &b"nested"[..]),
-        ("/子目录/文件.txt", &b"unicode"[..]),
-    ] {
-        let mut contents = Vec::new();
-        backend
-            .read(&relative(path))
-            .unwrap()
-            .read_to_end(&mut contents)
-            .unwrap();
-        assert_eq!(contents, expected, "read {path}");
-    }
 }
 
 /// Checks that a bound backend cannot see a sibling root's contents.
 pub fn check_root_isolation(fixture: &impl Fixture) {
     let root = fixture.driver().bind(&fixture.root()).unwrap();
     let other = fixture.driver().bind(&fixture.other_root()).unwrap();
-    assert_eq!(root.list(&relative("/")).unwrap().len(), 4);
-    assert!(other.list(&relative("/")).unwrap().is_empty());
+    assert_eq!(root.reader().list(&relative("/")).unwrap().len(), 4);
+    assert!(other.reader().list(&relative("/")).unwrap().is_empty());
     assert!(matches!(
-        other.read(&relative("/z.txt")),
+        other.reader().list(&relative("/2026")),
         Err(VfsError::Driver(DriverError::NotFound))
     ));
 }
@@ -112,24 +93,13 @@ pub fn check_errors(fixture: &impl Fixture) {
     ));
 
     let backend = fixture.driver().bind(&fixture.root()).unwrap();
+    let reader = backend.reader();
     assert!(matches!(
-        backend.list(&relative("/a.txt")),
+        reader.list(&relative("/a.txt")),
         Err(VfsError::Driver(DriverError::NotDirectory))
     ));
     assert!(matches!(
-        backend.read(&relative("/")),
-        Err(VfsError::Driver(DriverError::IsDirectory))
-    ));
-    assert!(matches!(
-        backend.read(&relative("/2026")),
-        Err(VfsError::Driver(DriverError::IsDirectory))
-    ));
-    assert!(matches!(
-        backend.list(&relative("/missing")),
-        Err(VfsError::Driver(DriverError::NotFound))
-    ));
-    assert!(matches!(
-        backend.read(&relative("/missing")),
+        reader.list(&relative("/missing")),
         Err(VfsError::Driver(DriverError::NotFound))
     ));
 }
@@ -145,12 +115,6 @@ macro_rules! driver_conformance_tests {
             fn listing() {
                 let fixture = <$fixture as $crate::Fixture>::new();
                 $crate::check_listing(&fixture);
-            }
-
-            #[test]
-            fn reading() {
-                let fixture = <$fixture as $crate::Fixture>::new();
-                $crate::check_reading(&fixture);
             }
 
             #[test]

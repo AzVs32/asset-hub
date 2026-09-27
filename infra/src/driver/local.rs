@@ -1,13 +1,13 @@
-use std::io::{self, Read};
+use std::io;
 
-use asset_vfs::driver::{BoundDriver, Driver, DriverError, DriverPath};
+use asset_vfs::driver::{BoundDriver, Driver, DriverError, DriverPath, ReadDriver};
 use asset_vfs::entry::Entry;
 use asset_vfs::error::VfsError;
 use asset_vfs::namespace::{EntryName, VirtualRelativePath};
 use cap_std::ambient_authority;
 use cap_std::fs::Dir;
 
-/// A read-only driver for a directory on the local filesystem.
+/// A directory-listing driver for the local filesystem.
 ///
 /// `DriverPath` is a filesystem directory path, resolved when `bind` is called.
 /// Relative paths are resolved against the process working directory at that
@@ -39,6 +39,12 @@ struct LocalBoundDriver {
 }
 
 impl BoundDriver for LocalBoundDriver {
+    fn reader(&self) -> &dyn ReadDriver {
+        self
+    }
+}
+
+impl ReadDriver for LocalBoundDriver {
     fn list(&self, path: &VirtualRelativePath) -> Result<Vec<Entry>, VfsError> {
         if path.is_empty() {
             Ok(list_directory(&self.directory)?)
@@ -49,33 +55,6 @@ impl BoundDriver for LocalBoundDriver {
                 .map_err(driver_error)?;
             Ok(list_directory(&child)?)
         }
-    }
-
-    fn read(&self, path: &VirtualRelativePath) -> Result<Box<dyn Read + Send + 'static>, VfsError> {
-        if path.is_empty() {
-            return Err(DriverError::IsDirectory.into());
-        }
-
-        let metadata = self
-            .directory
-            .metadata(path.as_str())
-            .map_err(driver_error)?;
-        if metadata.is_dir() {
-            return Err(DriverError::IsDirectory.into());
-        }
-        if !metadata.is_file() {
-            return Err(unsupported_entry().into());
-        }
-
-        let file = self.directory.open(path.as_str()).map_err(driver_error)?;
-        let metadata = file.metadata().map_err(driver_error)?;
-        if metadata.is_dir() {
-            return Err(DriverError::IsDirectory.into());
-        }
-        if !metadata.is_file() {
-            return Err(unsupported_entry().into());
-        }
-        Ok(Box::new(file))
     }
 }
 
@@ -119,11 +98,4 @@ fn bind_error(error: io::Error) -> DriverError {
     } else {
         driver_error(error)
     }
-}
-
-fn unsupported_entry() -> DriverError {
-    DriverError::backend(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "entry is not a regular file",
-    ))
 }

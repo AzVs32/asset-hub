@@ -69,7 +69,7 @@ fn rejects_empty_root() {
 
 #[cfg(unix)]
 #[test]
-fn symlinks_outside_the_root_are_not_listed_or_readable() {
+fn symlinks_outside_the_root_are_not_listed_or_traversed() {
     use std::os::unix::fs::symlink;
 
     let root = tempfile::tempdir().unwrap();
@@ -81,10 +81,9 @@ fn symlinks_outside_the_root_are_not_listed_or_readable() {
     let backend = LocalDriver
         .bind(&DriverPath::new(root.path().to_str().unwrap()))
         .unwrap();
-    assert!(backend.list(&relative("/")).unwrap().is_empty());
-    assert!(backend.read(&relative("/escape/secret")).is_err());
-    assert!(backend.read(&relative("/shortcut")).is_err());
-    assert!(backend.list(&relative("/escape")).is_err());
+    let reader = backend.reader();
+    assert!(reader.list(&relative("/")).unwrap().is_empty());
+    assert!(reader.list(&relative("/escape")).is_err());
 }
 
 #[cfg(unix)]
@@ -98,8 +97,9 @@ fn rejects_names_that_the_virtual_namespace_cannot_represent() {
     let backend = LocalDriver
         .bind(&DriverPath::new(root.path().to_str().unwrap()))
         .unwrap();
+    let reader = backend.reader();
     assert!(matches!(
-        backend.list(&relative("/")),
+        reader.list(&relative("/")),
         Err(VfsError::Driver(DriverError::UnrepresentableName))
     ));
 }
