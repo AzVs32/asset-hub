@@ -14,5 +14,5 @@ asset-vfs.workspace = true
 cap-std = "3.4.5"
 
 [dev-dependencies]
-driver-conformance = { path = "../driver-conformance" }
+asset-vfs-conformance.workspace = true
 tempfile = "3.27.0"
