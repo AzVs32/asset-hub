@@ -19,6 +19,10 @@ impl Driver for MissingDriver {
         false
     }
 
+    fn validate_path(&self, _root: &DriverPath) -> Result<(), VfsError> {
+        Ok(())
+    }
+
     fn bind(&self, _root: &DriverPath) -> Result<Box<dyn BoundDriver>, VfsError> {
         Err(DriverError::NotFound.into())
     }

@@ -13,8 +13,14 @@ pub enum MountError {
     InvalidId,
     #[error("mount ID already exists: {0}")]
     DuplicateId(MountId),
-    #[error("mount path already exists: {0}")]
+    #[error("an enabled mount already exists at: {0}")]
     DuplicatePath(VirtualPath),
+    #[error("multiple disabled mounts exist at {0}; use a mount ID")]
+    AmbiguousPath(VirtualPath),
+    #[error("mount at {0} does not allow submounts")]
+    SubmountNotAllowed(VirtualPath),
+    #[error("the enabled root mount must be preserved")]
+    RootRequired,
     #[error("stored mount contains an invalid {column}")]
     InvalidStoredMount { column: &'static str },
     #[error("mount storage operation failed: {0}")]

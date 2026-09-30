@@ -10,7 +10,8 @@ use std::sync::Arc;
 use asset_infra::driver::{LocalDriver, MemoryDriver};
 use asset_infra::repository::SqliteMountRepository;
 use asset_vfs::driver::{Driver, DriverKind, DriverPath};
-use asset_vfs::mount::{Mount, MountId, MountRepository};
+use asset_vfs::error::VfsError;
+use asset_vfs::mount::{Mount, MountError, MountId, MountRepository};
 use asset_vfs::namespace::VirtualPath;
 use asset_vfs::{DriverService, MountService};
 
@@ -37,23 +38,22 @@ pub struct Runtime {
 }
 
 impl Runtime {
-    /// Loads configuration and opens storage. Relative paths use the process
-    /// working directory, not the configuration file's parent directory.
+    /// Loads configuration and opens storage using absolute directory paths.
     /// Ensures an enabled, persisted local root mount matches configuration.
     pub async fn initialize(options: RuntimeOptions) -> Result<Self, RuntimeError> {
         let loaded = asset_config::load(&options.config_file)?;
         let config = loaded.get::<AssetConfig>()?;
-        if config.config_dir.as_os_str().is_empty() {
+        if !config.config_dir.is_absolute() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                "asset.config_dir must not be empty",
+                "asset.config_dir must be an absolute path",
             )
             .into());
         }
-        if config.root_mount_path.as_os_str().is_empty() {
+        if !config.root_mount_path.is_absolute() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                "asset.root_mount_path must not be empty",
+                "asset.root_mount_path must be an absolute path",
             )
             .into());
         }
@@ -78,10 +78,11 @@ impl Runtime {
                 Arc::new(SqliteMountRepository::open(config.sqlite_path()).await?)
             }
         };
-        ensure_root_mount(repository.as_ref(), root_driver_kind, root).await?;
+        let mount_service = MountService::new(repository, Arc::clone(&drivers));
+        ensure_root_mount(&mount_service, root_driver_kind, root).await?;
         Ok(Self {
-            driver_service: Arc::clone(&drivers),
-            mount_service: MountService::new(repository, drivers),
+            driver_service: drivers,
+            mount_service,
         })
     }
 
@@ -96,13 +97,31 @@ impl Runtime {
 
 /// Runtime policy: the configured local root must exist and be enabled.
 async fn ensure_root_mount(
-    repository: &dyn MountRepository,
+    service: &MountService,
     driver: DriverKind,
     root: DriverPath,
 ) -> Result<(), RuntimeError> {
-    let mount = Mount::new(MountId::new(), VirtualPath::root(), driver, root, true);
-    repository.upsert_by_path(&mount).await?;
-    Ok(())
+    let active = service.resolve_mount(&VirtualPath::root()).await?;
+    let id = active
+        .as_ref()
+        .map_or_else(MountId::new, |resolved| resolved.mount().id());
+    let definition = |id| Mount::new(id, VirtualPath::root(), driver.clone(), root.clone(), true);
+    match service.mount(definition(id)).await {
+        Ok(_) => Ok(()),
+        Err(error)
+            if active.is_none()
+                && matches!(&error, VfsError::Mount(MountError::DuplicatePath(path)) if path.is_root()) =>
+        {
+            // Another runtime created the enabled root after our query.
+            // Service operations preserve that root, so reuse its ID.
+            let Some(active) = service.resolve_mount(&VirtualPath::root()).await? else {
+                return Err(error.into());
+            };
+            service.mount(definition(active.mount().id())).await?;
+            Ok(())
+        }
+        Err(error) => Err(error.into()),
+    }
 }
 
 impl RuntimeOptions {

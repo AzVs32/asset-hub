@@ -40,12 +40,20 @@ pub trait Fixture: Sized {
 pub fn check_bind_directory(fixture: &impl Fixture) {
     fixture
         .driver()
+        .validate_path(&fixture.root())
+        .expect("an existing directory root must have valid syntax");
+    fixture
+        .driver()
         .bind(&fixture.root())
         .expect("binding an existing directory must succeed");
 }
 
 /// Checks that binding an absent root reports `NotFound`.
 pub fn check_bind_missing_root(fixture: &impl Fixture) {
+    fixture
+        .driver()
+        .validate_path(&fixture.missing_root())
+        .expect("a missing root must still have valid syntax");
     assert!(
         matches!(
             fixture.driver().bind(&fixture.missing_root()),
@@ -57,6 +65,10 @@ pub fn check_bind_missing_root(fixture: &impl Fixture) {
 
 /// Checks that binding a file reports `NotDirectory`.
 pub fn check_bind_file_root(fixture: &impl Fixture) {
+    fixture
+        .driver()
+        .validate_path(&fixture.file_root())
+        .expect("a file root must still have valid syntax");
     assert!(
         matches!(
             fixture.driver().bind(&fixture.file_root()),
@@ -70,6 +82,13 @@ pub fn check_bind_file_root(fixture: &impl Fixture) {
 ///
 /// This check is opt-in: no string is assumed to be invalid for every driver.
 pub fn check_bind_invalid_root(fixture: &impl Fixture, invalid_root: &DriverPath) {
+    assert!(
+        matches!(
+            fixture.driver().validate_path(invalid_root),
+            Err(VfsError::Driver(DriverError::InvalidPath))
+        ),
+        "validating an invalid root must return DriverError::InvalidPath"
+    );
     assert!(
         matches!(
             fixture.driver().bind(invalid_root),

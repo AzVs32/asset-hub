@@ -30,6 +30,10 @@ impl Driver for TestDriver {
         self.allows_submounts
     }
 
+    fn validate_path(&self, _root: &DriverPath) -> Result<(), VfsError> {
+        Ok(())
+    }
+
     fn bind(&self, _root: &DriverPath) -> Result<Box<dyn BoundDriver>, VfsError> {
         self.bind_calls.fetch_add(1, Ordering::Relaxed);
         Err(DriverError::NotFound.into())

@@ -16,11 +16,15 @@ impl Driver for TestDriver {
         true
     }
 
-    fn bind(&self, root: &DriverPath) -> Result<Box<dyn BoundDriver>, VfsError> {
+    fn validate_path(&self, root: &DriverPath) -> Result<(), VfsError> {
         if root.as_str() == "invalid" {
             return Err(DriverError::InvalidPath.into());
         }
+        Ok(())
+    }
 
+    fn bind(&self, root: &DriverPath) -> Result<Box<dyn BoundDriver>, VfsError> {
+        self.validate_path(root)?;
         Ok(Box::new(TestBackend))
     }
 }

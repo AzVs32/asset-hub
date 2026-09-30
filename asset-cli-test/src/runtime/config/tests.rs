@@ -20,9 +20,12 @@ fn auto_registration_uses_defaults_without_a_file() {
         .get::<AssetConfig>()
         .unwrap();
     assert_eq!(config.database, DatabaseKind::Sqlite);
-    assert_eq!(config.root_mount_path, PathBuf::from("data"));
-    assert_eq!(config.config_dir, PathBuf::from("conf"));
-    assert_eq!(config.sqlite_path(), PathBuf::from("conf/vfs.db"));
+    assert_eq!(config.root_mount_path, PathBuf::from("/asset-hub-data"));
+    assert_eq!(config.config_dir, PathBuf::from("/asset-hub-conf"));
+    assert_eq!(
+        config.sqlite_path(),
+        PathBuf::from("/asset-hub-conf/asset.db")
+    );
 }
 
 #[test]
@@ -30,17 +33,17 @@ fn file_overrides_paths_and_preserves_database_default() {
     let path = test_path();
     std::fs::write(
         &path,
-        "[asset]\nroot_mount_path = 'storage'\nconfig_dir = 'custom'\nsqlite_path = 'custom/metadata.db'\n",
+        "[asset]\nroot_mount_path = '/storage'\nconfig_dir = '/custom'\nsqlite_path = '/custom/metadata.db'\n",
     )
     .unwrap();
     let loaded = asset_config::load(&path);
     std::fs::remove_file(path).unwrap();
     let config = loaded.unwrap().get::<AssetConfig>().unwrap();
     assert_eq!(config.database, DatabaseKind::Sqlite);
-    assert_eq!(config.root_mount_path, PathBuf::from("storage"));
-    assert_eq!(config.config_dir, PathBuf::from("custom"));
+    assert_eq!(config.root_mount_path, PathBuf::from("/storage"));
+    assert_eq!(config.config_dir, PathBuf::from("/custom"));
     // A file path in the configuration cannot override the fixed filename.
-    assert_eq!(config.sqlite_path(), PathBuf::from("custom/vfs.db"));
+    assert_eq!(config.sqlite_path(), PathBuf::from("/custom/asset.db"));
 }
 
 #[test]

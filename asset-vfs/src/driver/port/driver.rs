@@ -25,6 +25,14 @@ pub trait Driver: Send + Sync {
     /// policy.
     fn allows_submounts(&self) -> bool;
 
+    /// Validates the driver-specific path syntax without accessing a backend.
+    ///
+    /// Invalid syntax returns [`crate::driver::DriverError::InvalidPath`].
+    /// A valid path may refer to an unavailable backend. Mount management calls
+    /// this for both enabled and disabled definitions; binding must also reject
+    /// invalid syntax before accessing the backend.
+    fn validate_path(&self, root: &DriverPath) -> Result<(), VfsError>;
+
     /// Creates a backend bound to `root`.
     ///
     /// Contract:

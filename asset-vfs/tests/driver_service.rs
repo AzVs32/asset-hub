@@ -18,6 +18,10 @@ impl Driver for MetadataOnlyDriver {
         self.allows_submounts
     }
 
+    fn validate_path(&self, _root: &DriverPath) -> Result<(), VfsError> {
+        panic!("driver metadata queries must not validate backend paths")
+    }
+
     fn bind(&self, _root: &DriverPath) -> Result<Box<dyn BoundDriver>, VfsError> {
         panic!("driver service must not bind backends")
     }

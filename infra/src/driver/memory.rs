@@ -88,13 +88,12 @@ impl Driver for MemoryDriver {
         false
     }
 
-    fn bind(&self, root: &DriverPath) -> Result<Box<dyn BoundDriver>, VfsError> {
-        let path = if root.as_str().is_empty() {
-            VirtualPath::root()
-        } else {
-            VirtualPath::try_from(root.as_str()).map_err(|_| DriverError::InvalidPath)?
-        };
+    fn validate_path(&self, root: &DriverPath) -> Result<(), VfsError> {
+        parse_root(root).map(|_| ())
+    }
 
+    fn bind(&self, root: &DriverPath) -> Result<Box<dyn BoundDriver>, VfsError> {
+        let path = parse_root(root)?;
         let nodes = self.tree.read().map_err(lock_error)?;
         match nodes.get(path.as_str()) {
             Some(Node::Directory) => Ok(Box::new(MemoryBoundDriver {
@@ -110,6 +109,14 @@ impl Driver for MemoryDriver {
 struct MemoryBoundDriver {
     tree: Tree,
     root: String,
+}
+
+fn parse_root(root: &DriverPath) -> Result<VirtualPath, VfsError> {
+    if root.as_str().is_empty() {
+        Ok(VirtualPath::root())
+    } else {
+        VirtualPath::try_from(root.as_str()).map_err(|_| DriverError::InvalidPath.into())
+    }
 }
 
 impl MemoryBoundDriver {

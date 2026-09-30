@@ -227,8 +227,29 @@ mod conformance {
 }
 
 #[test]
-fn rejects_empty_root() {
-    binding::check_bind_invalid_root(&LocalDriverFixture::new(), &DriverPath::new(""));
+fn rejects_empty_and_relative_roots() {
+    let fixture = LocalDriverFixture::new();
+    for path in ["", ".", "..", "data", "./data", "../data"] {
+        let root = DriverPath::new(path);
+        assert!(matches!(
+            fixture.driver().validate_path(&root),
+            Err(VfsError::Driver(DriverError::InvalidPath))
+        ));
+        binding::check_bind_invalid_root(&fixture, &root);
+    }
+}
+
+#[test]
+fn absolute_path_validation_does_not_require_an_existing_directory() {
+    let directory = tempfile::tempdir().unwrap();
+    let missing = directory.path().join("missing");
+    let root = DriverPath::new(missing.to_str().unwrap());
+    LocalDriver.validate_path(&root).unwrap();
+    assert!(!missing.exists());
+    assert!(matches!(
+        LocalDriver.bind(&root),
+        Err(VfsError::Driver(DriverError::NotFound))
+    ));
 }
 
 #[cfg(unix)]

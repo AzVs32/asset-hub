@@ -4,11 +4,11 @@ use std::time::Duration;
 
 use asset_vfs::driver::{DriverKind, DriverPath};
 use asset_vfs::error::VfsError;
-use asset_vfs::mount::{Mount, MountError, MountId, MountRepository};
+use asset_vfs::mount::{Mount, MountError, MountId, MountRepository, MountTransaction};
 use asset_vfs::namespace::VirtualPath;
 use sqlx::migrate::Migrator;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteRow};
-use sqlx::{Row, SqlitePool};
+use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations/sqlite");
 
@@ -21,7 +21,7 @@ pub struct SqliteMountRepository {
 }
 
 impl SqliteMountRepository {
-    /// Opens or creates a SQLite database at `path` and applies embedded migrations.
+    /// Opens or creates a SQLite database at `path` with the current schema.
     pub async fn open(path: impl AsRef<Path>) -> Result<Self, VfsError> {
         if path.as_ref().as_os_str().is_empty() {
             return Err(MountError::backend(io::Error::new(
@@ -49,93 +49,9 @@ impl SqliteMountRepository {
 #[async_trait::async_trait]
 impl MountRepository for SqliteMountRepository {
     async fn insert(&self, mount: &Mount) -> Result<(), VfsError> {
-        let mut transaction = self
-            .pool
-            .begin_with("BEGIN IMMEDIATE")
-            .await
-            .map_err(MountError::backend)?;
-        let id = mount.id().to_string();
-        let virtual_path = mount.virtual_path().as_str();
-
-        let id_exists: Option<i64> = sqlx::query_scalar("SELECT 1 FROM mounts WHERE id = ?1")
-            .bind(&id)
-            .fetch_optional(&mut *transaction)
-            .await
-            .map_err(MountError::backend)?;
-        if id_exists.is_some() {
-            return Err(MountError::DuplicateId(mount.id()).into());
-        }
-
-        let path_exists: Option<i64> =
-            sqlx::query_scalar("SELECT 1 FROM mounts WHERE virtual_path = ?1")
-                .bind(virtual_path)
-                .fetch_optional(&mut *transaction)
-                .await
-                .map_err(MountError::backend)?;
-        if path_exists.is_some() {
-            return Err(MountError::DuplicatePath(mount.virtual_path().clone()).into());
-        }
-
-        sqlx::query(
-            "INSERT INTO mounts (id, virtual_path, driver_kind, driver_path, enabled)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-        )
-        .bind(id)
-        .bind(virtual_path)
-        .bind(mount.driver().as_str())
-        .bind(mount.driver_path().as_str())
-        .bind(i64::from(mount.enabled()))
-        .execute(&mut *transaction)
-        .await
-        .map_err(MountError::backend)?;
-        transaction.commit().await.map_err(MountError::backend)?;
-        Ok(())
-    }
-
-    async fn upsert_by_path(&self, mount: &Mount) -> Result<(), VfsError> {
-        let mut transaction = self
-            .pool
-            .begin_with("BEGIN IMMEDIATE")
-            .await
-            .map_err(MountError::backend)?;
-        let existing_id: Option<String> =
-            sqlx::query_scalar("SELECT id FROM mounts WHERE virtual_path = ?1")
-                .bind(mount.virtual_path().as_str())
-                .fetch_optional(&mut *transaction)
-                .await
-                .map_err(MountError::backend)?;
-        let id = match existing_id {
-            Some(id) => id,
-            None => {
-                let id = mount.id().to_string();
-                let exists: Option<i64> = sqlx::query_scalar("SELECT 1 FROM mounts WHERE id = ?1")
-                    .bind(&id)
-                    .fetch_optional(&mut *transaction)
-                    .await
-                    .map_err(MountError::backend)?;
-                if exists.is_some() {
-                    return Err(MountError::DuplicateId(mount.id()).into());
-                }
-                id
-            }
-        };
-        sqlx::query(
-            "INSERT INTO mounts (id, virtual_path, driver_kind, driver_path, enabled)
-             VALUES (?1, ?2, ?3, ?4, ?5)
-             ON CONFLICT(virtual_path) DO UPDATE SET
-                 driver_kind = excluded.driver_kind,
-                 driver_path = excluded.driver_path, enabled = excluded.enabled",
-        )
-        .bind(id)
-        .bind(mount.virtual_path().as_str())
-        .bind(mount.driver().as_str())
-        .bind(mount.driver_path().as_str())
-        .bind(i64::from(mount.enabled()))
-        .execute(&mut *transaction)
-        .await
-        .map_err(MountError::backend)?;
-        transaction.commit().await.map_err(MountError::backend)?;
-        Ok(())
+        let mut transaction = self.begin().await?;
+        transaction.insert(mount).await?;
+        transaction.commit().await
     }
 
     async fn remove(&self, id: MountId) -> Result<bool, VfsError> {
@@ -164,7 +80,7 @@ impl MountRepository for SqliteMountRepository {
     async fn list(&self) -> Result<Vec<Mount>, VfsError> {
         let rows = sqlx::query(
             "SELECT id, virtual_path, driver_kind, driver_path, enabled
-             FROM mounts ORDER BY virtual_path",
+             FROM mounts ORDER BY virtual_path, enabled DESC, id",
         )
         .fetch_all(&self.pool)
         .await
@@ -173,6 +89,91 @@ impl MountRepository for SqliteMountRepository {
             .map(|row| RawMount::from_row(row)?.decode())
             .collect::<Result<Vec<_>, MountError>>()
             .map_err(Into::into)
+    }
+
+    async fn begin(&self) -> Result<Box<dyn MountTransaction>, VfsError> {
+        let transaction = self
+            .pool
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .map_err(MountError::backend)?;
+        Ok(Box::new(SqliteMountTransaction { transaction }))
+    }
+}
+
+struct SqliteMountTransaction {
+    transaction: Transaction<'static, Sqlite>,
+}
+
+impl SqliteMountTransaction {
+    async fn write(&mut self, mount: &Mount, update: bool) -> Result<bool, VfsError> {
+        let id = mount.id().to_string();
+        let exists: Option<i64> = sqlx::query_scalar("SELECT 1 FROM mounts WHERE id = ?1")
+            .bind(&id)
+            .fetch_optional(&mut *self.transaction)
+            .await
+            .map_err(MountError::backend)?;
+        match (update, exists.is_some()) {
+            (false, true) => return Err(MountError::DuplicateId(mount.id()).into()),
+            (true, false) => return Ok(false),
+            _ => {}
+        }
+        if mount.enabled() {
+            let conflict: Option<i64> = sqlx::query_scalar(
+                "SELECT 1 FROM mounts WHERE virtual_path = ?1 AND enabled = 1 AND id != ?2",
+            )
+            .bind(mount.virtual_path().as_str())
+            .bind(&id)
+            .fetch_optional(&mut *self.transaction)
+            .await
+            .map_err(MountError::backend)?;
+            if conflict.is_some() {
+                return Err(MountError::DuplicatePath(mount.virtual_path().clone()).into());
+            }
+        }
+        let statement = if update {
+            "UPDATE mounts SET virtual_path = ?2, driver_kind = ?3, driver_path = ?4, enabled = ?5 WHERE id = ?1"
+        } else {
+            "INSERT INTO mounts (id, virtual_path, driver_kind, driver_path, enabled) VALUES (?1, ?2, ?3, ?4, ?5)"
+        };
+        sqlx::query(statement)
+            .bind(id)
+            .bind(mount.virtual_path().as_str())
+            .bind(mount.driver().as_str())
+            .bind(mount.driver_path().as_str())
+            .bind(i64::from(mount.enabled()))
+            .execute(&mut *self.transaction)
+            .await
+            .map_err(MountError::backend)?;
+        Ok(true)
+    }
+}
+
+#[async_trait::async_trait]
+impl MountTransaction for SqliteMountTransaction {
+    async fn list(&mut self) -> Result<Vec<Mount>, VfsError> {
+        let rows = sqlx::query("SELECT id, virtual_path, driver_kind, driver_path, enabled FROM mounts ORDER BY virtual_path, enabled DESC, id")
+            .fetch_all(&mut *self.transaction).await.map_err(MountError::backend)?;
+        rows.iter()
+            .map(|row| RawMount::from_row(row)?.decode())
+            .collect::<Result<Vec<_>, MountError>>()
+            .map_err(Into::into)
+    }
+
+    async fn insert(&mut self, mount: &Mount) -> Result<(), VfsError> {
+        self.write(mount, false).await.map(|_| ())
+    }
+
+    async fn update(&mut self, mount: &Mount) -> Result<bool, VfsError> {
+        self.write(mount, true).await
+    }
+
+    async fn commit(self: Box<Self>) -> Result<(), VfsError> {
+        self.transaction
+            .commit()
+            .await
+            .map_err(MountError::backend)?;
+        Ok(())
     }
 }
 

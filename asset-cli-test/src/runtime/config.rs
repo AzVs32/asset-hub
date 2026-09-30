@@ -2,7 +2,7 @@
 //!
 //! Local root directories and metadata database selection belong to this
 //! runtime. The VFS core only receives driver paths and repository interfaces.
-//! Relative paths are resolved against the process working directory.
+//! Storage directories must use absolute paths.
 //! Loading configuration does not create directories or open the database.
 
 use std::path::PathBuf;
@@ -22,9 +22,9 @@ pub(super) enum DatabaseKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct AssetConfig {
     pub database: DatabaseKind,
-    /// Local directory mounted at the virtual root `/`.
+    /// Absolute local directory mounted at the virtual root `/`.
     pub root_mount_path: PathBuf,
-    /// Shared directory for configuration, plugins, and the SQLite database.
+    /// Absolute shared directory for configuration, plugins, and SQLite.
     pub config_dir: PathBuf,
 }
 
@@ -35,8 +35,8 @@ impl Default for AssetConfig {
     fn default() -> Self {
         Self {
             database: DatabaseKind::Sqlite,
-            root_mount_path: PathBuf::from("data"),
-            config_dir: PathBuf::from("conf"),
+            root_mount_path: PathBuf::from("/asset-hub-data"),
+            config_dir: PathBuf::from("/asset-hub-conf"),
         }
     }
 }
@@ -44,6 +44,6 @@ impl Default for AssetConfig {
 impl AssetConfig {
     /// Returns the database path using the fixed, non-configurable filename.
     pub fn sqlite_path(&self) -> PathBuf {
-        self.config_dir.join("vfs.db")
+        self.config_dir.join("asset.db")
     }
 }

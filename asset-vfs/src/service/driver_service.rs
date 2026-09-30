@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::driver::{Driver, DriverInfo, DriverKind, DriverRegistry};
+use crate::driver::{BoundDriver, Driver, DriverInfo, DriverKind, DriverPath, DriverRegistry};
 use crate::error::VfsError;
 
 /// Public entry point for querying registered driver kinds and declarations.
@@ -60,5 +60,23 @@ impl DriverService {
     /// Returns whether no driver kinds are registered.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// Internal syntax validation without binding or backend access.
+    pub(crate) fn validate_path(
+        &self,
+        kind: &DriverKind,
+        root: &DriverPath,
+    ) -> Result<(), VfsError> {
+        self.drivers.require(kind)?.validate_path(root)
+    }
+
+    /// Internal backend binding for VFS use cases; factories remain private.
+    pub(crate) fn bind(
+        &self,
+        kind: &DriverKind,
+        root: &DriverPath,
+    ) -> Result<Box<dyn BoundDriver>, VfsError> {
+        self.drivers.require(kind)?.bind(root)
     }
 }

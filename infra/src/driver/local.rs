@@ -1,4 +1,5 @@
 use std::io;
+use std::path::Path;
 
 use asset_vfs::driver::{BoundDriver, Driver, DriverError, DriverKind, DriverPath, ReadDriver};
 use asset_vfs::entry::Entry;
@@ -9,9 +10,8 @@ use cap_std::fs::Dir;
 
 /// A directory-listing driver for the local filesystem.
 ///
-/// `DriverPath` is a filesystem directory path, resolved when `bind` is called.
-/// Relative paths are resolved against the process working directory at that
-/// time. Bound operations stay within the opened directory; symbolic links are
+/// `DriverPath` must be an absolute filesystem directory path.
+/// Bound operations stay within the opened directory; symbolic links are
 /// omitted from listings.
 /// Mounts using this driver allow descendant mounts.
 #[derive(Debug, Default, Clone, Copy)]
@@ -32,11 +32,15 @@ impl Driver for LocalDriver {
         true
     }
 
-    fn bind(&self, root: &DriverPath) -> Result<Box<dyn BoundDriver>, VfsError> {
-        if root.as_str().is_empty() {
+    fn validate_path(&self, root: &DriverPath) -> Result<(), VfsError> {
+        if !Path::new(root.as_str()).is_absolute() {
             return Err(DriverError::InvalidPath.into());
         }
+        Ok(())
+    }
 
+    fn bind(&self, root: &DriverPath) -> Result<Box<dyn BoundDriver>, VfsError> {
+        self.validate_path(root)?;
         let directory =
             Dir::open_ambient_dir(root.as_str(), ambient_authority()).map_err(bind_error)?;
         Ok(Box::new(LocalBoundDriver { directory }))
