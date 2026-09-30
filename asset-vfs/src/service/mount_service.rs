@@ -1,13 +1,23 @@
+use std::sync::Arc;
+
+use crate::error::VfsError;
+use crate::mount::{Mount, MountId, MountRepository};
+
 /// Public entry point for managing mounts.
 ///
-/// This is an API placeholder. Method arguments, return types, and shared
-/// state will be defined when mount behavior is designed.
-#[derive(Debug)]
+/// Queries read the current persisted definitions, including disabled mounts.
+/// They do not bind drivers or check backend availability. Mutation and
+/// path-resolution methods remain API placeholders.
 pub struct MountService {
-    _private: (),
+    repository: Arc<dyn MountRepository>,
 }
 
 impl MountService {
+    /// Creates a service using the shared mount repository.
+    pub fn new(repository: Arc<dyn MountRepository>) -> Self {
+        Self { repository }
+    }
+
     /// Mounts a backend in the virtual namespace.
     pub async fn mount(&self) {
         todo!("MountService::mount")
@@ -18,14 +28,19 @@ impl MountService {
         todo!("MountService::unmount")
     }
 
-    /// Lists configured mounts.
-    pub async fn list_mounts(&self) {
-        todo!("MountService::list_mounts")
+    /// Lists all configured mounts in ascending virtual-path order.
+    ///
+    /// Includes disabled mounts. Repository errors are returned unchanged.
+    pub async fn list_mounts(&self) -> Result<Vec<Mount>, VfsError> {
+        self.repository.list().await
     }
 
     /// Returns information about one mount.
-    pub async fn mount_info(&self) {
-        todo!("MountService::mount_info")
+    ///
+    /// Returns `None` for an unknown ID, and includes disabled mounts.
+    /// Repository errors are returned unchanged.
+    pub async fn mount_info(&self, id: MountId) -> Result<Option<Mount>, VfsError> {
+        self.repository.get(id).await
     }
 
     /// Resolves a virtual path to its covering mount.
