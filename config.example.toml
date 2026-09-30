@@ -1,5 +1,5 @@
 # Copy to config.toml to customize. All values below match the defaults.
-[vfs]
+[asset]
 database = "sqlite"
 # Local directory mounted at the virtual root `/`.
 root_mount_path = "data"

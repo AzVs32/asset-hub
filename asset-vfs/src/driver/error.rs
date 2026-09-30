@@ -2,7 +2,9 @@ use std::error::Error;
 
 use thiserror::Error;
 
-/// Errors from driver validation and backend operations.
+use crate::driver::DriverKind;
+
+/// Errors from driver validation, registration, and backend operations.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum DriverError {
@@ -12,6 +14,10 @@ pub enum DriverError {
     InvalidKind,
     #[error("driver kind is {length} bytes, exceeding the {max}-byte limit")]
     KindTooLong { length: usize, max: usize },
+    #[error("driver kind is already registered: {0}")]
+    DuplicateKind(DriverKind),
+    #[error("driver kind is not registered: {0}")]
+    UnregisteredKind(DriverKind),
 
     #[error("driver path is invalid for this driver")]
     InvalidPath,

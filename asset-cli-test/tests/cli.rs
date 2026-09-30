@@ -85,6 +85,26 @@ fn table_rows(output: &str) -> Vec<Vec<&str>> {
         .collect()
 }
 
+#[test]
+fn driver_list_exposes_registered_kinds_and_submount_declarations() {
+    let directory = tempdir().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_asset-cli-test"))
+        .current_dir(directory.path())
+        .args(["driver", "list"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let listing = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        table_rows(&listing),
+        [
+            vec!["DRIVER", "ALLOWS_SUBMOUNTS"],
+            vec!["local", "true"],
+            vec!["memory", "false"],
+        ]
+    );
+}
+
 #[tokio::test]
 async fn list_and_info_show_driver_policy_without_binding_or_changing_mounts() {
     let directory = tempdir().unwrap();
@@ -145,7 +165,7 @@ async fn list_and_info_show_driver_policy_without_binding_or_changing_mounts() {
 fn custom_config_controls_storage_and_invalid_config_fails() {
     let directory = tempdir().unwrap();
     let config = directory.path().join("custom.toml");
-    std::fs::write(&config, "[vfs]\nconfig_dir = 'custom-conf'\n").unwrap();
+    std::fs::write(&config, "[asset]\nconfig_dir = 'custom-conf'\n").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_asset-cli-test"))
         .current_dir(directory.path())
         .args(["mount", "list", "--config", "custom.toml"])
@@ -155,7 +175,7 @@ fn custom_config_controls_storage_and_invalid_config_fails() {
     assert!(directory.path().join("custom-conf/vfs.db").is_file());
     assert!(!directory.path().join("conf").exists());
 
-    std::fs::write(&config, "[vfs]\ndatabase = 'unknown'\n").unwrap();
+    std::fs::write(&config, "[asset]\ndatabase = 'unknown'\n").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_asset-cli-test"))
         .current_dir(directory.path())
         .args(["--config", "custom.toml", "mount", "list"])
@@ -195,7 +215,7 @@ async fn startup_repairs_root_from_config_without_changing_id_or_other_mounts() 
     for path in ["new-root", "changed-root"] {
         std::fs::write(
             directory.path().join("config.toml"),
-            format!("[vfs]\nroot_mount_path = '{path}'\n"),
+            format!("[asset]\nroot_mount_path = '{path}'\n"),
         )
         .unwrap();
         let output = Command::new(env!("CARGO_BIN_EXE_asset-cli-test"))
@@ -229,7 +249,7 @@ fn invalid_root_prevents_successful_startup() {
         std::fs::write(directory.path().join("file-root"), "not a directory").unwrap();
         std::fs::write(
             directory.path().join("config.toml"),
-            format!("[vfs]\nroot_mount_path = '{root}'\n"),
+            format!("[asset]\nroot_mount_path = '{root}'\n"),
         )
         .unwrap();
         let output = Command::new(env!("CARGO_BIN_EXE_asset-cli-test"))

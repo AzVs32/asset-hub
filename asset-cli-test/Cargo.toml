@@ -8,6 +8,7 @@ authors.workspace = true
 
 [dependencies]
 asset-config.workspace = true
+serde.workspace = true
 asset-vfs.workspace = true
 asset-infra = { package = "infra", path = "../infra" }
 clap.workspace = true
