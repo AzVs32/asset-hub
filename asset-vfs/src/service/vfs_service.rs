@@ -9,32 +9,32 @@ pub struct VfsService {
 
 impl VfsService {
     /// Lists the children of a virtual directory.
-    pub fn list(&self) {
+    pub async fn list(&self) {
         todo!("VfsService::list")
     }
 
     /// Reads a virtual file.
-    pub fn read(&self) {
+    pub async fn read(&self) {
         todo!("VfsService::read")
     }
 
     /// Writes a virtual file.
-    pub fn write(&self) {
+    pub async fn write(&self) {
         todo!("VfsService::write")
     }
 
     /// Creates a virtual directory.
-    pub fn mkdir(&self) {
+    pub async fn mkdir(&self) {
         todo!("VfsService::mkdir")
     }
 
     /// Removes a virtual entry.
-    pub fn remove(&self) {
+    pub async fn remove(&self) {
         todo!("VfsService::remove")
     }
 
     /// Renames a virtual entry.
-    pub fn rename(&self) {
+    pub async fn rename(&self) {
         todo!("VfsService::rename")
     }
 }

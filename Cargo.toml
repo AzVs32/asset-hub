@@ -16,6 +16,7 @@ asset-vfs-conformance = { path = "asset-vfs-conformance" }
 uuid = { version = "1.26.1", features = ["v7", "serde"] }
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.20"
+async-trait = "0.1.92"
 getset = "0.1.7"
 config = { version = "0.15.25", default-features = false, features = ["toml"] }
 linkme = "0.3.37"
