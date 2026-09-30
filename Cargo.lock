@@ -39,8 +39,10 @@ dependencies = [
 name = "asset-vfs"
 version = "0.1.0"
 dependencies = [
+ "asset-config",
  "async-trait",
  "getset",
+ "serde",
  "thiserror",
  "utils",
 ]

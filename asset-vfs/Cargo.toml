@@ -7,6 +7,8 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+asset-config.workspace = true
+serde.workspace = true
 utils = { workspace = true, features = ["gen_id_uuid_v7"] }
 thiserror.workspace = true
 getset.workspace = true

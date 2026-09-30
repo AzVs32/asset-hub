@@ -10,6 +10,7 @@ repository = "https://github.com/AzVs32/asset-hub"
 authors = ["AzVs"]
 
 [workspace.dependencies]
+asset-config = { path = "asset-config" }
 utils = { path = "utils" }
 asset-vfs = { path = "asset-vfs" }
 asset-vfs-conformance = { path = "asset-vfs-conformance" }
