@@ -18,6 +18,68 @@ fn mount(path: &str, enabled: bool) -> Mount {
 }
 
 #[tokio::test]
+async fn upsert_by_path_preserves_identity_and_accepts_arbitrary_mount_fields() {
+    let directory = tempdir().unwrap();
+    let file = directory.path().join("mounts.sqlite");
+    let repository = SqliteMountRepository::open(&file).await.unwrap();
+    let assets = mount("/assets", true);
+    let other = mount("/other", true);
+    repository.upsert_by_path(&assets).await.unwrap();
+    repository.insert(&other).await.unwrap();
+
+    // The incoming ID is ignored for an existing path, even if used elsewhere.
+    let update = Mount::new(
+        other.id(),
+        assets.virtual_path().clone(),
+        DriverKind::try_from("memory").unwrap(),
+        DriverPath::new("another-root"),
+        false,
+    );
+    repository.upsert_by_path(&update).await.unwrap();
+    let reopened = SqliteMountRepository::open(&file).await.unwrap();
+    let persisted = reopened.get(assets.id()).await.unwrap().unwrap();
+    assert_eq!(persisted.driver(), update.driver());
+    assert_eq!(persisted.driver_path(), update.driver_path());
+    assert!(!persisted.enabled());
+    assert_eq!(reopened.get(other.id()).await.unwrap(), Some(other));
+    assert_eq!(reopened.list().await.unwrap().len(), 2);
+
+    let conflict = Mount::new(
+        assets.id(),
+        VirtualPath::try_from("/new").unwrap(),
+        assets.driver().clone(),
+        assets.driver_path().clone(),
+        true,
+    );
+    let before = repository.list().await.unwrap();
+    assert!(matches!(
+        repository.upsert_by_path(&conflict).await,
+        Err(VfsError::Mount(MountError::DuplicateId(id))) if id == assets.id()
+    ));
+    assert_eq!(repository.list().await.unwrap(), before);
+}
+
+#[tokio::test]
+async fn concurrent_upserts_keep_one_definition_per_path() {
+    let directory = tempdir().unwrap();
+    let file = directory.path().join("mounts.sqlite");
+    let first = SqliteMountRepository::open(&file).await.unwrap();
+    let second = SqliteMountRepository::open(&file).await.unwrap();
+    let a = mount("/shared", true);
+    let b = mount("/shared", false);
+    let (left, right) = tokio::join!(first.upsert_by_path(&a), second.upsert_by_path(&b));
+    left.unwrap();
+    right.unwrap();
+    let mounts = first.list().await.unwrap();
+    assert_eq!(mounts.len(), 1);
+    assert!(mounts[0].id() == a.id() || mounts[0].id() == b.id());
+    let id = mounts[0].id();
+    second.upsert_by_path(&b).await.unwrap();
+    let saved = first.get(id).await.unwrap().unwrap();
+    assert!(!saved.enabled());
+}
+
+#[tokio::test]
 async fn mounts_round_trip_across_reopened_database_and_remove_reports_presence() {
     let directory = tempdir().unwrap();
     let file = directory.path().join("mounts.sqlite");

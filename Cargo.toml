@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["asset-config", "asset-config-macros", "asset-vfs", "asset-vfs-conformance", "infra", "utils"]
+members = ["asset-cli-test", "asset-config", "asset-config-macros", "asset-vfs", "asset-vfs-conformance", "infra", "utils"]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,6 +10,7 @@ repository = "https://github.com/AzVs32/asset-hub"
 authors = ["AzVs"]
 
 [workspace.dependencies]
+clap = { version = "4.6", features = ["derive"] }
 asset-config = { path = "asset-config" }
 utils = { path = "utils" }
 asset-vfs = { path = "asset-vfs" }

@@ -27,6 +27,17 @@ pub trait MountRepository: Send + Sync {
     /// Storage failures may be wrapped with [`crate::mount::MountError::backend`].
     async fn insert(&self, mount: &Mount) -> Result<(), VfsError>;
 
+    /// Atomically inserts or updates a definition by its virtual path.
+    ///
+    /// If the path exists, preserve its stored ID and replace the driver,
+    /// driver path, and enabled state with the supplied values; the supplied
+    /// ID is ignored. Otherwise insert all supplied fields, rejecting an ID
+    /// already used by another path with [`crate::mount::MountError::DuplicateId`].
+    /// Leave other definitions unchanged. Failures must not partially update
+    /// storage. These guarantees apply across repository instances/processes.
+    /// No path, driver, or enabled state receives special treatment.
+    async fn upsert_by_path(&self, mount: &Mount) -> Result<(), VfsError>;
+
     /// Removes the mount with `id`.
     ///
     /// Returns `true` only if a definition was removed. An unknown ID returns

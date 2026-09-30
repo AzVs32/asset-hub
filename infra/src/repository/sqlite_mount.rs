@@ -92,6 +92,52 @@ impl MountRepository for SqliteMountRepository {
         Ok(())
     }
 
+    async fn upsert_by_path(&self, mount: &Mount) -> Result<(), VfsError> {
+        let mut transaction = self
+            .pool
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .map_err(MountError::backend)?;
+        let existing_id: Option<String> =
+            sqlx::query_scalar("SELECT id FROM mounts WHERE virtual_path = ?1")
+                .bind(mount.virtual_path().as_str())
+                .fetch_optional(&mut *transaction)
+                .await
+                .map_err(MountError::backend)?;
+        let id = match existing_id {
+            Some(id) => id,
+            None => {
+                let id = mount.id().to_string();
+                let exists: Option<i64> = sqlx::query_scalar("SELECT 1 FROM mounts WHERE id = ?1")
+                    .bind(&id)
+                    .fetch_optional(&mut *transaction)
+                    .await
+                    .map_err(MountError::backend)?;
+                if exists.is_some() {
+                    return Err(MountError::DuplicateId(mount.id()).into());
+                }
+                id
+            }
+        };
+        sqlx::query(
+            "INSERT INTO mounts (id, virtual_path, driver_kind, driver_path, enabled)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(virtual_path) DO UPDATE SET
+                 driver_kind = excluded.driver_kind,
+                 driver_path = excluded.driver_path, enabled = excluded.enabled",
+        )
+        .bind(id)
+        .bind(mount.virtual_path().as_str())
+        .bind(mount.driver().as_str())
+        .bind(mount.driver_path().as_str())
+        .bind(i64::from(mount.enabled()))
+        .execute(&mut *transaction)
+        .await
+        .map_err(MountError::backend)?;
+        transaction.commit().await.map_err(MountError::backend)?;
+        Ok(())
+    }
+
     async fn remove(&self, id: MountId) -> Result<bool, VfsError> {
         let result = sqlx::query("DELETE FROM mounts WHERE id = ?1")
             .bind(id.to_string())
