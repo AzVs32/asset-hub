@@ -1,4 +1,4 @@
-use crate::driver::{DriverPath, ReadDriver, WriteDriver};
+use crate::driver::{DriverKind, DriverPath, ReadDriver, WriteDriver};
 use crate::error::VfsError;
 
 /// A factory for backends rooted at driver-specific locations.
@@ -9,6 +9,22 @@ use crate::error::VfsError;
 /// contents beneath it. Driver errors are converted into [`VfsError`] with
 /// `?` or `.into()`.
 pub trait Driver: Send + Sync {
+    /// Returns the stable identifier of this driver implementation.
+    ///
+    /// The kind is independent of bound roots and backend contents, and must
+    /// remain the same across instances and calls. Mount definitions persist
+    /// this identifier to select the corresponding driver implementation.
+    fn kind(&self) -> DriverKind;
+
+    /// Returns whether mounts using this driver allow descendant mounts.
+    ///
+    /// This is a fixed policy for the driver kind, independent of the bound
+    /// root or backend contents, and can be queried without binding a backend.
+    /// It describes this driver as a parent; it does not restrict where a mount
+    /// using this driver may be placed. Mount management must enforce this
+    /// policy.
+    fn allows_submounts(&self) -> bool;
+
     /// Creates a backend bound to `root`.
     ///
     /// Contract:

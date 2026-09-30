@@ -1,4 +1,4 @@
-use crate::driver::{DriverError, DriverPath, ReadDriver};
+use crate::driver::{DriverError, DriverKind, DriverPath, ReadDriver};
 use crate::entry::{Entry, EntryKind};
 use crate::error::VfsError;
 use crate::namespace::{EntryName, VirtualPath, VirtualRelativePath};
@@ -8,6 +8,14 @@ use super::{BoundDriver, Driver};
 struct TestDriver;
 
 impl Driver for TestDriver {
+    fn kind(&self) -> DriverKind {
+        DriverKind::try_from("test").unwrap()
+    }
+
+    fn allows_submounts(&self) -> bool {
+        true
+    }
+
     fn bind(&self, root: &DriverPath) -> Result<Box<dyn BoundDriver>, VfsError> {
         if root.as_str() == "invalid" {
             return Err(DriverError::InvalidPath.into());
@@ -37,6 +45,8 @@ impl ReadDriver for TestBackend {
 #[test]
 fn driver_binds_once_and_exposes_object_safe_listing() {
     let driver: Box<dyn Driver> = Box::new(TestDriver);
+    assert_eq!(driver.kind().as_str(), "test");
+    assert!(driver.allows_submounts());
     let backend = driver.bind(&DriverPath::new("root")).unwrap();
 
     let root = VirtualPath::root();

@@ -5,11 +5,12 @@ use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use asset_infra::driver::LocalDriver;
+use asset_infra::driver::{LocalDriver, MemoryDriver};
 use asset_infra::repository::SqliteMountRepository;
 use asset_vfs::MountService;
 use asset_vfs::config::{DatabaseKind, VfsConfig};
 use asset_vfs::driver::{Driver, DriverKind, DriverPath};
+use asset_vfs::error::VfsError;
 use asset_vfs::mount::{Mount, MountId, MountRepository};
 use asset_vfs::namespace::VirtualPath;
 
@@ -30,6 +31,29 @@ impl Default for RuntimeOptions {
 
 pub struct Runtime {
     mount_service: MountService,
+    driver_metadata: [DriverMetadata; 2],
+}
+
+/// CLI view of a persisted mount and its driver's declared submount policy.
+pub struct MountView {
+    pub mount: Mount,
+    /// `None` when the driver kind is not known to this runtime.
+    pub allows_submounts: Option<bool>,
+}
+
+// Display metadata only; obtaining it does not bind or retain a backend.
+struct DriverMetadata {
+    kind: DriverKind,
+    allows_submounts: bool,
+}
+
+impl DriverMetadata {
+    fn from_driver(driver: &dyn Driver) -> Self {
+        Self {
+            kind: driver.kind(),
+            allows_submounts: driver.allows_submounts(),
+        }
+    }
 }
 
 impl Runtime {
@@ -70,11 +94,47 @@ impl Runtime {
         ensure_root_mount(repository.as_ref(), root).await?;
         Ok(Self {
             mount_service: MountService::new(repository),
+            driver_metadata: [
+                DriverMetadata::from_driver(&LocalDriver),
+                DriverMetadata::from_driver(&MemoryDriver::new()),
+            ],
         })
     }
 
     pub fn mount_service(&self) -> &MountService {
         &self.mount_service
+    }
+
+    /// Lists persisted mounts with display metadata, without binding their drivers.
+    pub async fn list_mounts(&self) -> Result<Vec<MountView>, VfsError> {
+        Ok(self
+            .mount_service()
+            .list_mounts()
+            .await?
+            .into_iter()
+            .map(|mount| self.mount_view(mount))
+            .collect())
+    }
+
+    /// Loads one persisted mount with the same display metadata used by listing.
+    pub async fn mount_info(&self, id: MountId) -> Result<Option<MountView>, VfsError> {
+        Ok(self
+            .mount_service()
+            .mount_info(id)
+            .await?
+            .map(|mount| self.mount_view(mount)))
+    }
+
+    fn mount_view(&self, mount: Mount) -> MountView {
+        let allows_submounts = self
+            .driver_metadata
+            .iter()
+            .find(|metadata| &metadata.kind == mount.driver())
+            .map(|metadata| metadata.allows_submounts);
+        MountView {
+            mount,
+            allows_submounts,
+        }
     }
 }
 
@@ -86,7 +146,7 @@ async fn ensure_root_mount(
     let mount = Mount::new(
         MountId::new(),
         VirtualPath::root(),
-        DriverKind::try_from("local")?,
+        LocalDriver.kind(),
         root,
         true,
     );

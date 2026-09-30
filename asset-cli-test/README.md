@@ -19,3 +19,8 @@ cargo run -p asset-cli-test -- --config config.toml mount info <ID>
 启动时会创建并验证根目录（默认 `data`），并确保数据库存在已启用的 `/` 本地挂载。
 根挂载由 `vfs.root_mount_path` 配置决定；重复启动保留其 ID，修改配置会更新数据库中的路径，
 不会移动原目录中的文件。其他挂载不受影响。未实现的 Service 操作暂不暴露命令。
+
+`mount list` 和 `mount info` 均展示 `ALLOWS_SUBMOUNTS` 列：内置 `local` 驱动为
+`true`，`memory` 驱动为 `false`，未识别的驱动为 `unknown`。这些值由 runtime
+读取驱动自身的声明，禁用挂载仍展示该信息，补充展示信息时不绑定对应的 backend。
+该列表示驱动声明；实际子挂载校验尚待挂载操作实现。

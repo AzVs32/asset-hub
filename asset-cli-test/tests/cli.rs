@@ -32,7 +32,18 @@ fn default_startup_creates_database_and_unknown_mount_fails() {
     let listing = String::from_utf8(output.stdout).unwrap();
     let rows = table_rows(&listing);
     assert_eq!(rows.len(), 2);
-    assert_eq!(&rows[1][1..], ["/", "local", "data", "true"]);
+    assert_eq!(
+        rows[0],
+        [
+            "ID",
+            "VIRTUAL_PATH",
+            "DRIVER",
+            "DRIVER_PATH",
+            "ENABLED",
+            "ALLOWS_SUBMOUNTS",
+        ]
+    );
+    assert_eq!(&rows[1][1..], ["/", "local", "data", "true", "true"]);
     assert!(directory.path().join("conf/vfs.db").is_file());
     assert!(directory.path().join("data").is_dir());
 
@@ -72,6 +83,62 @@ fn table_rows(output: &str) -> Vec<Vec<&str>> {
         .filter(|line| line.starts_with('│'))
         .map(|line| line.trim_matches('│').split('┆').map(str::trim).collect())
         .collect()
+}
+
+#[tokio::test]
+async fn list_and_info_show_driver_policy_without_binding_or_changing_mounts() {
+    let directory = tempdir().unwrap();
+    let storage = directory.path().join("conf");
+    std::fs::create_dir_all(&storage).unwrap();
+    let repository = SqliteMountRepository::open(storage.join("vfs.db"))
+        .await
+        .unwrap();
+    let cases = [
+        ("/offline", "local", "missing-directory", false, "true"),
+        ("/memory", "memory", "invalid-memory-root", true, "false"),
+        ("/unknown", "unavailable", "unknown-root", true, "unknown"),
+    ];
+    let mut mounts = Vec::new();
+    for (virtual_path, kind, root, enabled, expected) in cases {
+        let mount = Mount::new(
+            MountId::new(),
+            VirtualPath::try_from(virtual_path).unwrap(),
+            DriverKind::try_from(kind).unwrap(),
+            DriverPath::new(root),
+            enabled,
+        );
+        repository.insert(&mount).await.unwrap();
+        mounts.push((mount, expected));
+    }
+
+    let listing = Command::new(env!("CARGO_BIN_EXE_asset-cli-test"))
+        .current_dir(directory.path())
+        .args(["mount", "list"])
+        .output()
+        .unwrap();
+    assert!(listing.status.success(), "{listing:?}");
+    let listing = String::from_utf8(listing.stdout).unwrap();
+    let rows = table_rows(&listing);
+    // Header, automatically created root mount, and the three stored mounts.
+    assert_eq!(rows.len(), 5);
+    for (mount, expected) in mounts {
+        let id = mount.id().to_string();
+        let row = rows.iter().find(|row| row[0] == id).unwrap();
+        assert_eq!(row[5], expected);
+        let info = Command::new(env!("CARGO_BIN_EXE_asset-cli-test"))
+            .current_dir(directory.path())
+            .args(["mount", "info", &id])
+            .output()
+            .unwrap();
+        assert!(info.status.success(), "{info:?}");
+        let info = String::from_utf8(info.stdout).unwrap();
+        let info_rows = table_rows(&info);
+        assert_eq!(info_rows.len(), 2);
+        assert_eq!(info_rows[0], rows[0]);
+        assert_eq!(&info_rows[1], row);
+        assert_eq!(repository.get(mount.id()).await.unwrap(), Some(mount));
+    }
+    assert!(!directory.path().join("missing-directory").exists());
 }
 
 #[test]

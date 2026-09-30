@@ -1,6 +1,6 @@
 use std::io;
 
-use asset_vfs::driver::{BoundDriver, Driver, DriverError, DriverPath, ReadDriver};
+use asset_vfs::driver::{BoundDriver, Driver, DriverError, DriverKind, DriverPath, ReadDriver};
 use asset_vfs::entry::Entry;
 use asset_vfs::error::VfsError;
 use asset_vfs::namespace::{EntryName, VirtualRelativePath};
@@ -13,6 +13,7 @@ use cap_std::fs::Dir;
 /// Relative paths are resolved against the process working directory at that
 /// time. Bound operations stay within the opened directory; symbolic links are
 /// omitted from listings.
+/// Mounts using this driver allow descendant mounts.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct LocalDriver;
 
@@ -23,6 +24,14 @@ impl LocalDriver {
 }
 
 impl Driver for LocalDriver {
+    fn kind(&self) -> DriverKind {
+        DriverKind::try_from("local").expect("local is a valid driver kind")
+    }
+
+    fn allows_submounts(&self) -> bool {
+        true
+    }
+
     fn bind(&self, root: &DriverPath) -> Result<Box<dyn BoundDriver>, VfsError> {
         if root.as_str().is_empty() {
             return Err(DriverError::InvalidPath.into());

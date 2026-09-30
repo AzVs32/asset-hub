@@ -1,7 +1,9 @@
 use std::error::Error;
 use std::io;
 
-use asset_vfs::driver::{BoundDriver, Driver, DriverError, DriverPath, ReadDriver, WriteDriver};
+use asset_vfs::driver::{
+    BoundDriver, Driver, DriverError, DriverKind, DriverPath, ReadDriver, WriteDriver,
+};
 use asset_vfs::entry::Entry;
 use asset_vfs::error::VfsError;
 use asset_vfs::namespace::{VirtualPath, VirtualRelativePath};
@@ -9,6 +11,14 @@ use asset_vfs::namespace::{VirtualPath, VirtualRelativePath};
 struct MissingDriver;
 
 impl Driver for MissingDriver {
+    fn kind(&self) -> DriverKind {
+        DriverKind::try_from("missing").unwrap()
+    }
+
+    fn allows_submounts(&self) -> bool {
+        false
+    }
+
     fn bind(&self, _root: &DriverPath) -> Result<Box<dyn BoundDriver>, VfsError> {
         Err(DriverError::NotFound.into())
     }
@@ -17,6 +27,8 @@ impl Driver for MissingDriver {
 #[test]
 fn external_drivers_construct_and_match_contract_errors() {
     let driver: Box<dyn Driver> = Box::new(MissingDriver);
+    assert_eq!(driver.kind().as_str(), "missing");
+    assert!(!driver.allows_submounts());
     let Err(error) = driver.bind(&DriverPath::new("missing")) else {
         panic!("expected a missing root error");
     };

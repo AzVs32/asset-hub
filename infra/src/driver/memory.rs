@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::io::Error;
 use std::sync::{Arc, RwLock};
 
-use asset_vfs::driver::{BoundDriver, Driver, DriverError, DriverPath, ReadDriver};
+use asset_vfs::driver::{BoundDriver, Driver, DriverError, DriverKind, DriverPath, ReadDriver};
 use asset_vfs::entry::Entry;
 use asset_vfs::error::VfsError;
 use asset_vfs::namespace::{EntryName, VirtualPath, VirtualRelativePath};
@@ -19,6 +19,7 @@ type Tree = Arc<RwLock<BTreeMap<String, Node>>>;
 ///
 /// Directories must be created before their children. Clones share the same
 /// tree, so existing bound backends observe updates in subsequent listings.
+/// Mounts using this driver do not allow descendant mounts.
 #[derive(Clone)]
 pub struct MemoryDriver {
     tree: Tree,
@@ -79,6 +80,14 @@ impl Default for MemoryDriver {
 }
 
 impl Driver for MemoryDriver {
+    fn kind(&self) -> DriverKind {
+        DriverKind::try_from("memory").expect("memory is a valid driver kind")
+    }
+
+    fn allows_submounts(&self) -> bool {
+        false
+    }
+
     fn bind(&self, root: &DriverPath) -> Result<Box<dyn BoundDriver>, VfsError> {
         let path = if root.as_str().is_empty() {
             VirtualPath::root()
