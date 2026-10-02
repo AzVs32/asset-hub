@@ -91,6 +91,7 @@ fn borrowed_and_owned_string_validation_errors_become_owned_sources() {
             &error,
             ConfigError::Validation { key: actual, .. } if *actual == key
         ));
+        assert_eq!(error.to_string(), format!("invalid config `{key}`"));
         assert_eq!(error.source().unwrap().to_string(), message);
     }
 }
@@ -111,5 +112,8 @@ fn typed_and_boxed_validation_errors_keep_the_original_type_and_nested_source() 
         let cause_error = source.source().unwrap();
         assert!(cause_error.downcast_ref::<std::io::Error>().is_some());
         assert_eq!(cause_error.to_string(), cause);
+        let report = format!("{error}: {source}: {cause_error}");
+        assert_eq!(report.matches("user validation failed").count(), 1);
+        assert_eq!(report.matches(cause).count(), 1);
     }
 }

@@ -9,7 +9,7 @@ pub struct AutoRegistration {
 }
 
 #[linkme::distributed_slice]
-pub static AUTO_REGISTRATIONS: [AutoRegistration];
+pub static ASSET_CONFIG_AUTO_REGISTRATIONS: [AutoRegistration];
 
 /// Loads concrete sections registered by `#[config]` or `register!`.
 ///
@@ -20,12 +20,16 @@ pub static AUTO_REGISTRATIONS: [AutoRegistration];
 /// Every call reads the file independently and returns a fresh [`LoadedConfig`],
 /// even when the path is unchanged. There is no global configuration cache.
 pub fn load(path: impl AsRef<Path>) -> Result<LoadedConfig, ConfigError> {
-    let mut registrations: Vec<_> = AUTO_REGISTRATIONS.iter().collect();
+    Registry::from_auto()?.load(path)
+}
+
+pub(crate) fn collect(registrations: &[AutoRegistration]) -> Result<Registry, ConfigError> {
+    let mut registrations: Vec<_> = registrations.iter().collect();
     registrations.sort_unstable_by_key(|registration| registration.key);
 
-    let mut registry = Registry::default();
+    let mut registry = Registry::new();
     for registration in registrations {
         (registration.register)(&mut registry)?;
     }
-    registry.load(path)
+    Ok(registry)
 }

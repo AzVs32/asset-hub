@@ -25,34 +25,41 @@ fn expand(args: ConfigArgs, mut item: ItemStruct, paths: ConfigPaths) -> syn::Re
         validate,
         auto,
     } = args;
+    let is_generic = !item.generics.params.is_empty();
+    if is_generic && let Some(auto) = auto.as_ref().filter(|auto| auto.value) {
+        return Err(syn::Error::new_spanned(
+            auto,
+            "generic configuration cannot use `auto = true`; omit `auto` and register a concrete instance with `register!(Type<Concrete>)`",
+        ));
+    }
     let cfg = cfg::attributes(&item.attrs)?;
     let crate_path = &paths.crate_path;
     ensure_derives(&mut item, crate_path, &paths.serde_path)?;
 
     let ident = &item.ident;
     let mut generics = item.generics.clone();
-    if !generics.params.is_empty() {
+    if is_generic {
         let (_, ty_generics, _) = item.generics.split_for_impl();
         generics
             .make_where_clause()
             .predicates
             .push(syn::parse_quote!(
-                #ident #ty_generics: Default
+                #ident #ty_generics: ::core::default::Default
                     + #crate_path::__private::serde::Serialize
                     + #crate_path::__private::serde::de::DeserializeOwned
-                    + Send + Sync + 'static
+                    + ::core::marker::Send + ::core::marker::Sync + 'static
             ));
     }
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
     let validate_impl = validate.map(|validate_fn| {
         quote! {
-            fn validate(&self) -> Result<(), #crate_path::ConfigError> {
+            fn validate(&self) -> ::core::result::Result<(), #crate_path::ConfigError> {
                 #validate_fn(self)
                     .map_err(|error| #crate_path::ConfigError::validate(Self::KEY, error))
             }
         }
     });
-    let auto_registration = (auto && item.generics.params.is_empty()).then(|| {
+    let auto_registration = (!is_generic && auto.is_none_or(|auto| auto.value)).then(|| {
         let registration = registration(&syn::parse_quote!(#ident), crate_path);
         quote! {
             #(#cfg)*
@@ -150,7 +157,7 @@ mod tests {
                 ),
             ),
             (
-                quote!(key = "generic", auto = true),
+                quote!(key = "generic", auto = false),
                 quote!(
                     struct Generic<T> {
                         value: T,
@@ -184,6 +191,44 @@ mod tests {
                 quote!(#(#attrs)*).to_string(),
                 quote!(#[cfg(any())]).to_string()
             );
+        }
+    }
+
+    #[test]
+    fn generic_definitions_reject_explicit_automatic_registration() {
+        for input in [
+            quote!(
+                struct Generic<T> {
+                    value: T,
+                }
+            ),
+            quote!(
+                struct ConstGeneric<const N: usize> {
+                    value: [u32; N],
+                }
+            ),
+            quote!(
+                struct Borrowed<'a> {
+                    value: &'a str,
+                }
+            ),
+        ] {
+            let paths = ConfigPaths {
+                crate_path: quote!(::asset_config),
+                serde_path: LitStr::new("asset_config::__private::serde", Span::call_site()),
+            };
+            let error = expand(
+                ConfigArgs::parse(quote!(key = "generic", auto = true)).unwrap(),
+                syn::parse2(input).unwrap(),
+                paths,
+            )
+            .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("generic configuration cannot use `auto = true`")
+            );
+            assert!(error.to_string().contains("register!(Type<Concrete>)"));
         }
     }
 }

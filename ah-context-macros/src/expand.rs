@@ -47,14 +47,14 @@ fn registration(ty: &Type, init: Option<Path>) -> syn::Result<TokenStream> {
     Ok(quote! {
         const _: () = {
             fn register(builder: &mut #crate_path::ContextBuilder)
-                -> Result<(), #crate_path::ContextError>
+                -> ::core::result::Result<(), #crate_path::ContextError>
             {
                 #register
-                Ok(())
+                ::core::result::Result::Ok(())
             }
 
             #[#crate_path::__private::linkme::distributed_slice(
-                #crate_path::__private::AUTO_REGISTRATIONS
+                #crate_path::__private::AH_CONTEXT_AUTO_REGISTRATIONS
             )]
             #[linkme(crate = #crate_path::__private::linkme)]
             static REGISTRATION: #crate_path::__private::AutoRegistration =

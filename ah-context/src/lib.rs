@@ -77,10 +77,10 @@ pub use ah_context_macros::register;
 pub use builder::ContextBuilder;
 pub use context::Context;
 pub use error::ContextError;
-pub use global::{get, load};
+pub use global::{get, load, load_with};
 
 #[doc(hidden)]
 pub mod __private {
-    pub use crate::auto::{AUTO_REGISTRATIONS, AutoRegistration};
+    pub use crate::auto::{AH_CONTEXT_AUTO_REGISTRATIONS, AutoRegistration};
     pub use linkme;
 }

@@ -1,3 +1,4 @@
+use crate::auto::{self, ASSET_CONFIG_AUTO_REGISTRATIONS};
 use crate::error::ConfigError;
 use crate::loaded::{LoadedConfig, SharedValue};
 use crate::section::ConfigSection;
@@ -18,17 +19,19 @@ struct Registration {
 
 /// Selects configuration sections for one independent load.
 ///
-/// A default registry starts empty and ignores automatic declarations. Register
+/// A new registry starts empty and ignores automatic declarations. Register
 /// selected types with [`Self::register`], then consume it with [`Self::load`].
 /// This is useful for tests, loading a subset of sections, and selecting concrete
 /// generic instances. Create a new registry to read the file again.
+/// [`Self::from_auto`] starts with automatic declarations and allows adding
+/// selected types before loading.
 ///
 /// ```
 /// #[asset_config::config(key = "registry_example", auto = false)]
 /// #[derive(Default)]
 /// struct Settings { enabled: bool }
 ///
-/// let mut registry = asset_config::Registry::default();
+/// let mut registry = asset_config::Registry::new();
 /// registry.register::<Settings>()?;
 /// let configs = registry.load(std::env::temp_dir().join("registry-example.toml"))?;
 /// let first = configs.get::<Settings>()?;
@@ -43,6 +46,25 @@ pub struct Registry {
 }
 
 impl Registry {
+    /// Creates an empty registry without collecting automatic declarations.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Collects declarations made with `#[config]` and `register!`.
+    ///
+    /// Registers concrete sections in key order, checking their keys and recording
+    /// serialized defaults without reading a file or running validators. The
+    /// registry can be extended with [`Self::register`] before [`Self::load`].
+    ///
+    /// # Errors
+    ///
+    /// Returns registration errors described by [`Self::register`], including
+    /// invalid or conflicting keys and failures to serialize default values.
+    pub fn from_auto() -> Result<Self, ConfigError> {
+        auto::collect(&ASSET_CONFIG_AUTO_REGISTRATIONS)
+    }
+
     /// Registers a concrete configuration type and records its serialized defaults.
     ///
     /// Key checks happen immediately. `T::default()` and serialization run during

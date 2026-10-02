@@ -1,4 +1,4 @@
-use asset_config::{ConfigError, config, load};
+use asset_config::{ConfigError, Registry, config, load};
 
 #[config(key = "duplicate")]
 #[derive(Default)]
@@ -16,11 +16,16 @@ asset_config::register!(Second<u32>);
 
 #[test]
 fn explicit_and_attribute_registration_reject_duplicate_keys() {
-    assert!(matches!(
-        load("missing-config.toml"),
-        Err(ConfigError::KeyConflict {
-            existing: "duplicate",
-            incoming: "duplicate"
-        })
-    ));
+    for result in [
+        Registry::from_auto().map(|_| ()),
+        load("missing-config.toml").map(|_| ()),
+    ] {
+        assert!(matches!(
+            result,
+            Err(ConfigError::KeyConflict {
+                existing: "duplicate",
+                incoming: "duplicate"
+            })
+        ));
+    }
 }

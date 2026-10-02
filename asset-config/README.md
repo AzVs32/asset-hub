@@ -70,14 +70,16 @@ port = 9090
 - `validate = path` 指定接受 `&T`、返回 `Result<(), E>` 的校验函数，其中
   `E: Into<Box<dyn std::error::Error + Send + Sync>>`。`&str`、`String`、满足
   `Send + Sync + 'static` 的错误和已装箱错误均可使用；`Validation { key, source }`
-  保留原始错误链。
+  保留原始错误链。该错误的 `Display` 只描述失败的配置节，具体原因通过
+  `std::error::Error::source()` 或错误链报告器展示，避免同一原因重复打印。
 - 查询未登记的具体类型时返回 `NotRegistered { type_name, key }`。`ConfigError` 标记为
   `#[non_exhaustive]`，匹配时需要保留兜底分支。
 
 ### 具体泛型实例
 
 泛型定义只生成 `ConfigSection` 实现，在模块顶层用 `register!` 登记具体实例，流程
-仍为声明 → `load` → `get`：
+仍为声明 → `load` → `get`。泛型定义应省略 `auto`；显式写 `auto = true` 会编译报错，
+避免自动登记请求被静默忽略：
 
 ```rust
 #[asset_config::config(key = "limits")]
@@ -100,8 +102,8 @@ fn main() -> Result<(), asset_config::ConfigError> {
 
 ### 按需加载
 
-`auto = false` 将非泛型配置留给测试或按需组装。`Registry` 从空集合开始，可以选择
-非泛型类型或具体泛型实例；它的 `load(path)` 只加载当前集合，并消费 Registry：
+`auto = false` 将非泛型配置留给测试或按需组装。`Registry::new()` 从空集合开始，
+可以选择非泛型类型或具体泛型实例；它的 `load(path)` 只加载当前集合，并消费 Registry：
 
 ```rust
 #[asset_config::config(key = "test", auto = false)]
@@ -111,10 +113,15 @@ struct TestConfig {
 }
 
 fn main() -> Result<(), asset_config::ConfigError> {
-    let mut registry = asset_config::Registry::default();
+    let mut registry = asset_config::Registry::new();
     registry.register::<TestConfig>()?;
     let configs = registry.load("test-config.toml")?;
     assert!(!configs.get::<TestConfig>()?.enabled);
     Ok(())
 }
 ```
+
+`Registry::from_auto()` 收集 `#[config]` 和 `register!` 的自动登记项，不读取配置文件
+或执行校验；它仍会在登记时生成并序列化默认值。可以在 `load(path)` 前继续登记
+`auto = false` 的类型或其他具体泛型实例。模块级 `load(path)` 就是
+`Registry::from_auto()?.load(path)`。

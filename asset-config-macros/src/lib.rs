@@ -17,6 +17,7 @@ use proc_macro::TokenStream;
 /// `auto = false` to use a non-generic section only in selected registries.
 /// Generic definitions generate the trait implementation without registering a
 /// type; use `register!(Generic<Concrete>)` to select an automatic instance.
+/// Explicit `auto = true` on a generic definition is a compile-time error.
 ///
 /// Conditional-compilation attributes (`cfg` and nested `cfg_attr`) also gate
 /// the generated implementation and automatic registration.

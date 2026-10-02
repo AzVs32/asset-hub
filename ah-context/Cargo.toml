@@ -10,3 +10,6 @@ authors.workspace = true
 ah-context-macros = { path = "../ah-context-macros" }
 linkme.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+asset-config.workspace = true

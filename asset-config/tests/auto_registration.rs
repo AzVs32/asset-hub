@@ -125,6 +125,30 @@ fn manual_registry_can_select_a_section() {
 }
 
 #[test]
+fn new_registry_starts_empty_without_automatic_sections() {
+    let loaded = Registry::new().load(test_path()).unwrap();
+    assert!(matches!(
+        loaded.get::<HttpConfig>(),
+        Err(ConfigError::NotRegistered { type_name: name, key: "http" })
+            if name == type_name::<HttpConfig>()
+    ));
+}
+
+#[test]
+fn collected_registry_can_add_manual_and_concrete_generic_sections() {
+    let mut registry = Registry::from_auto().unwrap();
+    registry.register::<ManualConfig>().unwrap();
+    registry.register::<GenericConfig<u32>>().unwrap();
+    let loaded = registry.load(test_path()).unwrap();
+
+    assert_eq!(loaded.get::<HttpConfig>().unwrap().port, 8080);
+    assert!(!loaded.get::<CacheConfig>().unwrap().enabled);
+    assert!(!loaded.get::<ExplicitAutoConfig>().unwrap().enabled);
+    assert!(!loaded.get::<ManualConfig>().unwrap().enabled);
+    assert_eq!(loaded.get::<GenericConfig<u32>>().unwrap().value, 0);
+}
+
+#[test]
 fn repeated_registration_reports_the_key_conflict() {
     let mut registry = Registry::default();
     registry.register::<ManualConfig>().unwrap();

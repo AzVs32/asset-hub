@@ -6,6 +6,8 @@ use std::error::Error;
 /// failures or a user's validation error; accessing an absent type reports
 /// [`Self::NotRegistered`]. Validation errors preserve the original boxed source
 /// and its error chain through [`Error::source`].
+/// Their display text identifies the section without repeating the validator's
+/// reason; use `source()` or an error-chain reporter to include that reason.
 ///
 /// This enum is non-exhaustive; callers matching variants must include a fallback.
 #[derive(Debug, thiserror::Error)]
@@ -40,7 +42,7 @@ pub enum ConfigError {
     },
 
     /// A user validation function rejected a configuration section.
-    #[error("invalid config `{key}`: {source}")]
+    #[error("invalid config `{key}`")]
     Validation {
         /// The section path that failed validation.
         key: &'static str,
@@ -62,6 +64,7 @@ impl ConfigError {
     ///
     /// let error = asset_config::ConfigError::validate("http", "port must be positive");
     /// assert!(matches!(&error, asset_config::ConfigError::Validation { key: "http", .. }));
+    /// assert_eq!(error.to_string(), "invalid config `http`");
     /// assert_eq!(error.source().unwrap().to_string(), "port must be positive");
     /// ```
     pub fn validate(key: &'static str, error: impl Into<Box<dyn Error + Send + Sync>>) -> Self {

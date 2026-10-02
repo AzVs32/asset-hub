@@ -7,7 +7,7 @@ use syn::{
 pub(crate) struct ConfigArgs {
     pub(crate) key: LitStr,
     pub(crate) validate: Option<Path>,
-    pub(crate) auto: bool,
+    pub(crate) auto: Option<LitBool>,
 }
 
 pub(crate) struct RegisterArgs {
@@ -62,7 +62,7 @@ impl ConfigArgs {
         Ok(Self {
             key,
             validate,
-            auto: auto.is_none_or(|v| v.value),
+            auto,
         })
     }
 }
@@ -77,13 +77,13 @@ mod tests {
     fn parses_defaults_and_explicit_options() {
         let default = ConfigArgs::parse(quote!(key = "http")).unwrap();
         assert_eq!(default.key.value(), "http");
-        assert!(default.auto);
+        assert!(default.auto.is_none());
         assert!(default.validate.is_none());
 
         let explicit =
             ConfigArgs::parse(quote!(key = "cache", validate = check_cache, auto = false)).unwrap();
         assert_eq!(explicit.key.value(), "cache");
-        assert!(!explicit.auto);
+        assert!(!explicit.auto.unwrap().value);
         assert_eq!(
             explicit.validate.unwrap().get_ident().unwrap().to_string(),
             "check_cache"
@@ -93,6 +93,8 @@ mod tests {
             ConfigArgs::parse(quote!(key = "database", auto = true))
                 .unwrap()
                 .auto
+                .unwrap()
+                .value
         );
 
         for key in [

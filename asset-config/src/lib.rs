@@ -33,6 +33,8 @@ pub use section::ConfigSection;
 ///
 /// Generic definitions only generate the trait implementation. Use
 /// [`register!`] to register a concrete instance for automatic loading.
+/// Explicit `auto = true` is rejected for generic definitions instead of
+/// silently skipping registration.
 /// `auto = false` excludes non-generic sections from automatic loading, for
 /// tests or selected [`Registry`] instances.
 ///
@@ -48,6 +50,14 @@ pub use section::ConfigSection;
 /// let loaded = asset_config::load(std::env::temp_dir().join("generic-example.toml"))?;
 /// assert_eq!(loaded.get::<Generic<u32>>()?.value, 0);
 /// # Ok::<(), asset_config::ConfigError>(())
+/// ```
+///
+/// ```compile_fail
+/// #[asset_config::config(key = "generic", auto = true)]
+/// #[derive(Default)]
+/// struct Generic<T> {
+///     value: T,
+/// }
 /// ```
 ///
 /// The `key` argument is required. Its format is checked when the section is registered.
@@ -78,7 +88,7 @@ pub use asset_config_macros::register;
 
 #[doc(hidden)]
 pub mod __private {
-    pub use crate::auto::{AUTO_REGISTRATIONS, AutoRegistration};
+    pub use crate::auto::{ASSET_CONFIG_AUTO_REGISTRATIONS, AutoRegistration};
     pub use linkme;
     pub use serde;
 }

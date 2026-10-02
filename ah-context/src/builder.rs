@@ -4,7 +4,7 @@ use std::convert::Infallible;
 use std::error::Error;
 use std::sync::Arc;
 
-use crate::auto::{self, AUTO_REGISTRATIONS};
+use crate::auto::{self, AH_CONTEXT_AUTO_REGISTRATIONS};
 use crate::context::SharedValue;
 use crate::{Context, ContextError};
 
@@ -19,6 +19,8 @@ struct Registration {
 ///
 /// A new builder starts empty and does not access the global context.
 /// Registration checks duplicates immediately; constructors run only in [`Self::build`].
+/// Use `build()` for an independent context or [`crate::load_with`] to publish
+/// the builder's values globally.
 ///
 /// ```
 /// use ah_context::ContextBuilder;
@@ -52,7 +54,7 @@ impl ContextBuilder {
     /// Returns a duplicate-registration error before running any constructor.
     /// The builder can be extended and built without publishing a global context.
     pub fn from_auto() -> Result<Self, ContextError> {
-        auto::collect(&AUTO_REGISTRATIONS)
+        auto::collect(&AH_CONTEXT_AUTO_REGISTRATIONS)
     }
 
     /// Registers a type to be constructed using `Default` during [`Self::build`].

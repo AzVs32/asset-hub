@@ -1,4 +1,4 @@
-use asset_config::{ConfigError, config, load};
+use asset_config::{ConfigError, Registry, config, load};
 
 #[config(key = "server..http")]
 #[derive(Default)]
@@ -10,8 +10,13 @@ asset_config::register!(InvalidKey<u32>);
 
 #[test]
 fn explicit_registration_rejects_invalid_keys() {
-    assert!(matches!(
-        load("missing-config.toml"),
-        Err(ConfigError::InvalidKey("server..http"))
-    ));
+    for result in [
+        Registry::from_auto().map(|_| ()),
+        load("missing-config.toml").map(|_| ()),
+    ] {
+        assert!(matches!(
+            result,
+            Err(ConfigError::InvalidKey("server..http"))
+        ));
+    }
 }

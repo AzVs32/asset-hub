@@ -1,9 +1,25 @@
 use std::any::type_name;
+use std::convert::Infallible;
 use std::error::Error;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 
 use ah_context::{ContextBuilder, ContextError, context};
+
+#[asset_config::config(key = "http")]
+struct HttpConfig {
+    port: u16,
+}
+
+impl Default for HttpConfig {
+    fn default() -> Self {
+        Self { port: 8080 }
+    }
+}
+
+struct HttpClient {
+    config: Arc<HttpConfig>,
+}
 
 static CONSTRUCTIONS: AtomicUsize = AtomicUsize::new(0);
 static STARTUP_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
@@ -89,11 +105,18 @@ struct DisabledByCfgAttr;
 struct DisabledByNestedCfgAttr;
 
 #[test]
-fn global_loading_retries_failed_builds_then_publishes_once_under_concurrency() {
+fn global_loading_retries_failed_builds_then_publishes_a_configured_builder() {
     assert!(matches!(
         ah_context::get::<DriverCatalog>(),
         Err(ContextError::NotInitialized)
     ));
+    let mut failed = ContextBuilder::new();
+    failed
+        .register_with(|| Err::<HttpClient, _>("client not ready"))
+        .unwrap();
+    let error = ah_context::load_with(failed).err().unwrap();
+    assert!(matches!(&error, ContextError::Initialization { .. }));
+    assert_eq!(error.source().unwrap().to_string(), "client not ready");
     let Err(error) = ah_context::load() else {
         panic!("the first initialization must fail");
     };
@@ -107,6 +130,30 @@ fn global_loading_retries_failed_builds_then_publishes_once_under_concurrency() 
         ah_context::get::<DriverCatalog>(),
         Err(ContextError::NotInitialized)
     ));
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "ah-context-http-{}-{timestamp}.toml",
+        std::process::id()
+    ));
+    std::fs::write(&path, "[http]\nport = 9090\n").unwrap();
+    let configs = asset_config::load(&path);
+    std::fs::remove_file(&path).unwrap();
+    let http = configs.unwrap().get::<HttpConfig>().unwrap();
+    let captured = Arc::clone(&http);
+    let mut builder = ContextBuilder::from_auto().unwrap();
+    builder
+        .register_with(move || Ok::<_, Infallible>(HttpClient { config: captured }))
+        .unwrap();
+    let published = ah_context::load_with(builder).unwrap();
+    let client = ah_context::get::<HttpClient>().unwrap();
+    assert_eq!(client.config.port, 9090);
+    assert!(Arc::ptr_eq(&http, &client.config));
+    assert!(std::ptr::eq(published, ah_context::load().unwrap()));
+
     let barrier = Arc::new(Barrier::new(24));
     let threads: Vec<_> = (0..24)
         .map(|_| {
@@ -149,6 +196,25 @@ fn global_loading_retries_failed_builds_then_publishes_once_under_concurrency() 
     assert_eq!(ah_context::get::<vfs_core::Catalog<u32>>().unwrap().0, 0);
     assert!(matches!(
         ah_context::get::<Unregistered>(),
+        Err(ContextError::NotRegistered { .. })
+    ));
+
+    let rejected_calls = Arc::new(AtomicUsize::new(0));
+    let count = Arc::clone(&rejected_calls);
+    let mut rejected = ContextBuilder::new();
+    rejected
+        .register_with(move || {
+            count.fetch_add(1, Ordering::SeqCst);
+            Ok::<_, Infallible>(Label("ignored".into()))
+        })
+        .unwrap();
+    assert!(matches!(
+        ah_context::load_with(rejected),
+        Err(ContextError::AlreadyInitialized)
+    ));
+    assert_eq!(rejected_calls.load(Ordering::SeqCst), 0);
+    assert!(matches!(
+        ah_context::get::<Label>(),
         Err(ContextError::NotRegistered { .. })
     ));
 }
@@ -332,6 +398,13 @@ fn initializer_errors_accept_strings_and_preserve_typed_or_boxed_error_chains() 
             ContextError::Initialization { type_name: name, .. }
                 if *name == type_name::<Label>()
         ));
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "failed to initialize context type `{}`",
+                type_name::<Label>()
+            )
+        );
         assert_eq!(error.source().unwrap().to_string(), message);
     }
 
@@ -358,5 +431,8 @@ fn initializer_errors_accept_strings_and_preserve_typed_or_boxed_error_chains() 
         let cause_error = source.source().unwrap();
         assert!(cause_error.downcast_ref::<std::io::Error>().is_some());
         assert_eq!(cause_error.to_string(), cause);
+        let report = format!("{error}: {source}: {cause_error}");
+        assert_eq!(report.matches("user initialization failed").count(), 1);
+        assert_eq!(report.matches(cause).count(), 1);
     }
 }
