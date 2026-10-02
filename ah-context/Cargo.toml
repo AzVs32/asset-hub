@@ -1,0 +1,12 @@
+[package]
+name = "ah-context"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+ah-context-macros = { path = "../ah-context-macros" }
+linkme.workspace = true
+thiserror.workspace = true
