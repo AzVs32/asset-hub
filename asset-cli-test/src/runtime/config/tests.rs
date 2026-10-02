@@ -54,7 +54,7 @@ fn example_config_matches_defaults() {
         .unwrap()
         .get::<AssetConfig>()
         .unwrap();
-    assert_eq!(config, AssetConfig::default());
+    assert_eq!(config.as_ref(), &AssetConfig::default());
 }
 
 #[test]

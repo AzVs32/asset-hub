@@ -1,12 +1,11 @@
 # ah-context
 
-自动登记类型，在应用启动时创建全局共享上下文。使用流程：声明注册 → `load()`
-初始化 → `get::<T>()` 获取共享实例。
+按类型声明、加载和共享应用上下文，使用流程为：声明 → `load` → `get`。
 
 ## 使用示例
 
-`#[context()]` 在定义结构体时登记；`register!` 在模块顶层登记已有类型。
-两种方式都默认使用 `Default`，也都支持 `init = path` 自定义初始化。
+`#[context()]` 声明结构体并自动登记；`register!` 在模块顶层登记已有类型。
+两种方式默认使用 `Default`，也都支持 `init = path` 自定义初始化。
 
 添加 `ah-context` 依赖后，以下代码可以直接作为 `main.rs`：
 
@@ -28,12 +27,13 @@ struct Greeting {
 
 ah_context::register!(Greeting, init = create_greeting);
 
-fn create_greeting() -> Result<Greeting, std::io::Error> {
+fn create_greeting() -> Result<Greeting, &'static str> {
     Ok(Greeting { text: "hello".into() })
 }
 
 fn main() -> Result<(), ah_context::ContextError> {
-    ah_context::load()?;
+    let context = ah_context::load()?;
+    assert!(std::ptr::eq(context, ah_context::load()?));
 
     let first = ah_context::get::<Counter>()?;
     let second = ah_context::get::<Counter>()?;
@@ -47,21 +47,61 @@ fn main() -> Result<(), ah_context::ContextError> {
 }
 ```
 
-类型本身仍是普通 Rust 类型；context 持有共享实例，每次获取返回同一实例的 `Arc<T>`。
+类型本身仍是普通 Rust 类型；同一上下文的 `get::<T>()` 返回同一实例的 `Arc<T>`。
 共享内容需要修改时，使用锁或原子类型等内部可变性。
 
 ## 注意事项
 
-- 类型须满足 `Send + Sync + 'static`，由编译器自动检查。`'static` 要求不借用短生命周期
-  数据，不要求声明为 `static`；`String`、`Vec<String>` 可在运行时创建并满足这些约束。
-- `#[context()]` 用于非泛型结构体；`register!` 支持具体类型，包括 `Container<u32>`
-  等确定的泛型实例。同一类型只登记一次，否则 `load()` 返回重复注册错误。
+- 使用流程是声明 → `load` → `get`。`load()` 收集自动登记项，通过
+  `ContextBuilder::build()` 构造全部实例，再发布全局上下文。
+- **加载生命周期不同：ah-context 的 `load()` 是进程级全局幂等的，成功后重复或并发调用
+  返回同一个 `Context`；asset-config 的 `load(path)` 每次独立读取文件并返回新的
+  `LoadedConfig`，即使路径相同也重新加载。** ah-context 成功加载后不会重新运行构造函数。
+- 类型须满足 `Send + Sync + 'static`。`'static` 要求不借用短生命周期数据，不要求声明
+  为 `static`；`String`、`Vec<String>` 可在运行时创建并满足这些约束。
+- `#[context()]` 用于非泛型结构体；`register!` 支持已有类型及 `Container<u32>` 等
+  具体泛型实例。登记阶段检查全部类型是否重复，任何构造函数运行前就会返回重复错误。
 - 默认初始化需要 `Default`；指定 `init` 后不要求 `Default`。`init` 是无参同步函数，
-  返回 `Result<T, E>`，其中 `E: std::error::Error + Send + Sync + 'static`。
-- 启动时先调用 `load()`，再使用 `get()`。未初始化或查询未登记类型时，`get()` 返回错误。
-  重复或并发调用 `load()` 返回同一个已成功初始化的上下文。
-- 初始化函数不能递归调用 `load()`，也不能从尚未发布的上下文获取其他内容；
-  需要的依赖应提前准备好，不要依赖注册声明的顺序。
+  返回 `Result<T, E>`，其中 `E: Into<Box<dyn std::error::Error + Send + Sync>>`。
+  `&str`、`String`、满足 `Send + Sync + 'static` 的错误和已装箱错误均可使用；
+  `Initialization { type_name, source }` 保留原始错误链。
+- 全局 `get()` 必须在 `load()` 成功后调用，否则返回 `NotInitialized`。查询未登记类型
+  返回 `NotRegistered { type_name }`。`ContextError` 标记为 `#[non_exhaustive]`，匹配时
+  需要保留兜底分支。
+- 初始化函数不能递归调用全局 `load()`，也不能从尚未发布的上下文获取其他内容；
+  需要的依赖应提前准备好，不要依赖自动登记声明的顺序。
 - 全部构造成功后才发布上下文。初始化返回错误时可以重试，但构造函数可能重跑，
   外部副作用不回滚；panic 不提供恢复机制。
-- 注册声明在构建和链接时自动收集，初始化后集合固定，不支持运行时新增或移除类型。
+- 自动登记声明在构建和链接时收集，已构建的 `Context` 集合固定。测试或按需组装可用
+  `ContextBuilder` 创建独立上下文。
+
+### 独立上下文
+
+`ContextBuilder` 从空集合开始；`register::<T>()` 使用 `Default`，
+`register_with(init)` 接受返回 `Result<T, E>` 的无参同步闭包，可以捕获拥有所有权的
+依赖，闭包须满足 `FnOnce + Send + 'static`，错误类型约束与自动初始化一致：
+
+```rust
+use ah_context::ContextBuilder;
+
+#[derive(Default)]
+struct Counter(std::sync::atomic::AtomicUsize);
+struct Settings(String);
+
+fn main() -> Result<(), ah_context::ContextError> {
+    let label = String::from("test");
+    let mut builder = ContextBuilder::new();
+    builder.register::<Counter>()?;
+    builder.register_with(move || Ok::<_, &'static str>(Settings(label)))?;
+    let context = builder.build()?;
+    assert_eq!(context.get::<Settings>()?.0, "test");
+    Ok(())
+}
+```
+
+登记时立即检查重复类型，尚不执行构造函数。`build()` 消费 Builder，按登记顺序构造
+实例，全部成功后返回 `Context`。失败时丢弃已经构造的实例；重试需要重新创建 Builder，
+外部副作用不回滚。不同 Builder 创建的上下文相互独立，不会发布或修改全局上下文。
+
+`ContextBuilder::from_auto()` 收集属性宏和 `register!` 的登记项，可在 `build()` 前
+继续登记其他类型，也可构建独立实例；它同样先检查全部登记项，再开始构造。

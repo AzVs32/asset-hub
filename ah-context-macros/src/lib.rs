@@ -9,7 +9,8 @@ use proc_macro::TokenStream;
 ///
 /// Registration is always automatic. Without `init`, the type must implement
 /// `Default`. `init = path` accepts a function returning `Result<Self, E>`,
-/// where `E: Error + Send + Sync + 'static`. All values must be `Send + Sync + 'static`.
+/// where `E: Into<Box<dyn std::error::Error + Send + Sync>>`.
+/// All values must be `Send + Sync + 'static`.
 /// The struct must be non-generic so its concrete type can be registered.
 #[proc_macro_attribute]
 pub fn context(args: TokenStream, input: TokenStream) -> TokenStream {

@@ -1,4 +1,7 @@
+use std::any::type_name;
+use std::error::Error;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -60,7 +63,7 @@ struct ManualConfig {
     enabled: bool,
 }
 
-#[config(key = "generic", auto = false)]
+#[config(key = "generic")]
 #[derive(Default)]
 struct GenericConfig<T> {
     value: T,
@@ -71,13 +74,15 @@ fn discovers_sections_and_uses_defaults_without_a_file() {
     let loaded = load(test_path()).unwrap();
 
     let http = loaded.get::<HttpConfig>().unwrap();
+    assert!(Arc::ptr_eq(&http, &loaded.get::<HttpConfig>().unwrap()));
     assert_eq!(http.host, "127.0.0.1");
     assert_eq!(http.port, 8080);
     assert!(!loaded.get::<CacheConfig>().unwrap().enabled);
     assert!(!loaded.get::<ExplicitAutoConfig>().unwrap().enabled);
     assert!(matches!(
         loaded.get::<ManualConfig>(),
-        Err(ConfigError::NotRegistered("manual"))
+        Err(ConfigError::NotRegistered { type_name: name, key: "manual" })
+            if name == type_name::<ManualConfig>()
     ));
 }
 
@@ -97,9 +102,10 @@ fn file_overrides_defaults_and_validation_runs() {
     let error = load(&path).err().unwrap();
     std::fs::remove_file(&path).unwrap();
     assert!(matches!(
-        error,
-        ConfigError::Validation { key: "http", msg } if msg == "port must be positive"
+        &error,
+        ConfigError::Validation { key: "http", .. }
     ));
+    assert_eq!(error.source().unwrap().to_string(), "port must be positive");
 }
 
 #[test]
@@ -113,7 +119,8 @@ fn manual_registry_can_select_a_section() {
     assert_eq!(loaded.get::<GenericConfig<u32>>().unwrap().value, 0);
     assert!(matches!(
         loaded.get::<HttpConfig>(),
-        Err(ConfigError::NotRegistered("http"))
+        Err(ConfigError::NotRegistered { type_name: name, key: "http" })
+            if name == type_name::<HttpConfig>()
     ));
 }
 

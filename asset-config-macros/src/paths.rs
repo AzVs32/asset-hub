@@ -18,7 +18,10 @@ impl ConfigPaths {
         })?;
 
         let (crate_path, serde_path) = match found {
-            FoundCrate::Itself => (quote!(crate), "crate::__private::serde".to_owned()),
+            FoundCrate::Itself => (
+                quote!(::asset_config),
+                "asset_config::__private::serde".to_owned(),
+            ),
             FoundCrate::Name(name) => {
                 let ident = syn::Ident::new(&name, Span::call_site());
                 (quote!(::#ident), format!("{name}::__private::serde"))

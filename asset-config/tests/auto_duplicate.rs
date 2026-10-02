@@ -8,12 +8,14 @@ struct First {
 
 #[config(key = "duplicate")]
 #[derive(Default)]
-struct Second {
-    value: bool,
+struct Second<T> {
+    value: T,
 }
 
+asset_config::register!(Second<u32>);
+
 #[test]
-fn duplicate_auto_keys_are_rejected() {
+fn explicit_and_attribute_registration_reject_duplicate_keys() {
     assert!(matches!(
         load("missing-config.toml"),
         Err(ConfigError::KeyConflict {

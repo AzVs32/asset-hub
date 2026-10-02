@@ -11,10 +11,14 @@ pub struct AutoRegistration {
 #[linkme::distributed_slice]
 pub static AUTO_REGISTRATIONS: [AutoRegistration];
 
-/// Loads all configuration sections declared with `#[config]`.
+/// Loads concrete sections registered by `#[config]` or `register!`.
 ///
-/// Sections marked `auto = false` are excluded. Use `Registry` to load a
+/// Non-generic sections marked `auto = false` and generic definitions without
+/// an explicit `register!` declaration are excluded. Use `Registry` to load a
 /// selected set of sections instead.
+/// Each section is deserialized and validated once, then stored as a shared instance.
+/// Every call reads the file independently and returns a fresh [`LoadedConfig`],
+/// even when the path is unchanged. There is no global configuration cache.
 pub fn load(path: impl AsRef<Path>) -> Result<LoadedConfig, ConfigError> {
     let mut registrations: Vec<_> = AUTO_REGISTRATIONS.iter().collect();
     registrations.sort_unstable_by_key(|registration| registration.key);

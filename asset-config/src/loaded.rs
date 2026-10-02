@@ -1,22 +1,43 @@
 use crate::error::ConfigError;
 use crate::section::ConfigSection;
-use config::Config;
-use std::any::TypeId;
-use std::collections::HashSet;
+use std::any::{Any, TypeId, type_name};
+use std::collections::HashMap;
+use std::sync::Arc;
 
+pub(crate) type SharedValue = Arc<dyn Any + Send + Sync>;
+
+/// Shared configuration instances deserialized and validated during loading.
+///
+/// Created by [`crate::load`] or [`crate::Registry::load`] only after every
+/// registered section has loaded successfully. Each load creates an independent
+/// set of instances; later file changes do not affect this result.
+///
+/// [`Self::get`] clones the stored `Arc` without deserializing or validating again.
+/// Returned handles can outlive this container, and the registered type set is fixed.
 pub struct LoadedConfig {
-    pub(crate) inner: Config,
-    pub(crate) registered: HashSet<TypeId>,
+    pub(crate) values: HashMap<TypeId, SharedValue>,
 }
 
 impl LoadedConfig {
-    pub fn get<T>(&self) -> Result<T, ConfigError>
+    /// Returns an `Arc` pointing to this type's validated configuration instance.
+    ///
+    /// Repeated reads share the same instance and do not deserialize or validate again.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::NotRegistered`] if this concrete type was not
+    /// registered for this load, even when another type uses the same section key.
+    pub fn get<T>(&self) -> Result<Arc<T>, ConfigError>
     where
         T: ConfigSection,
     {
-        if !self.registered.contains(&TypeId::of::<T>()) {
-            return Err(ConfigError::NotRegistered(T::KEY));
-        }
-        Ok(self.inner.get::<T>(T::KEY)?)
+        let value = self
+            .values
+            .get(&TypeId::of::<T>())
+            .ok_or(ConfigError::NotRegistered {
+                type_name: type_name::<T>(),
+                key: T::KEY,
+            })?;
+        Ok(Arc::clone(value).downcast::<T>().unwrap())
     }
 }

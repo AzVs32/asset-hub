@@ -1,20 +1,41 @@
 use crate::error::ConfigError;
-use crate::loaded::LoadedConfig;
+use crate::loaded::{LoadedConfig, SharedValue};
 use crate::section::ConfigSection;
 use config::{Config, File, Value};
 use std::any::TypeId;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::Arc;
 
-type Validator = Box<dyn Fn(&Config) -> Result<(), ConfigError> + Send + Sync>;
+type SectionLoader = fn(&Config) -> Result<SharedValue, ConfigError>;
 
 struct Registration {
     key: &'static str,
     type_id: TypeId,
     default: Value,
-    validate: Validator,
+    load: SectionLoader,
 }
 
+/// Selects configuration sections for one independent load.
+///
+/// A default registry starts empty and ignores automatic declarations. Register
+/// selected types with [`Self::register`], then consume it with [`Self::load`].
+/// This is useful for tests, loading a subset of sections, and selecting concrete
+/// generic instances. Create a new registry to read the file again.
+///
+/// ```
+/// #[asset_config::config(key = "registry_example", auto = false)]
+/// #[derive(Default)]
+/// struct Settings { enabled: bool }
+///
+/// let mut registry = asset_config::Registry::default();
+/// registry.register::<Settings>()?;
+/// let configs = registry.load(std::env::temp_dir().join("registry-example.toml"))?;
+/// let first = configs.get::<Settings>()?;
+/// let second = configs.get::<Settings>()?;
+/// assert!(std::sync::Arc::ptr_eq(&first, &second));
+/// # Ok::<(), asset_config::ConfigError>(())
+/// ```
 #[derive(Default)]
 pub struct Registry {
     registrations: Vec<Registration>,
@@ -22,7 +43,16 @@ pub struct Registry {
 }
 
 impl Registry {
-    /// Register a configuration type.
+    /// Registers a concrete configuration type and records its serialized defaults.
+    ///
+    /// Key checks happen immediately. `T::default()` and serialization run during
+    /// registration; file reading, deserialization, and validation run in [`Self::load`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::InvalidKey`] for an invalid section path,
+    /// [`ConfigError::KeyConflict`] for duplicate or overlapping paths, or
+    /// [`ConfigError::Backend`] if the default value cannot be serialized.
     pub fn register<T>(&mut self) -> Result<&mut Self, ConfigError>
     where
         T: ConfigSection,
@@ -46,23 +76,34 @@ impl Registry {
 
         let type_id = TypeId::of::<T>();
         let default = Config::try_from(&T::default())?.cache;
-        let validate: Validator = Box::new(|config| {
+        let load: SectionLoader = |config| {
             let value = config.get::<T>(T::KEY)?;
-            value.validate()
-        });
+            value.validate()?;
+            Ok(Arc::new(value))
+        };
 
         self.registrations.push(Registration {
             key: T::KEY,
             type_id,
             default,
-            validate,
+            load,
         });
         self.keys.insert(T::KEY);
         Ok(self)
     }
 
-    /// Loading configuration.
-    /// Priority: config.toml > T:default()
+    /// Loads, deserializes, and validates each registered section once.
+    ///
+    /// File values override `T::default()`. Returns shared instances only after
+    /// every section succeeds; later reads do not deserialize or validate again.
+    /// The registry is consumed. A missing file uses the registered defaults;
+    /// each new load reads the file independently and creates a fresh [`LoadedConfig`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::Backend`] for file, parsing, or deserialization
+    /// failures, or [`ConfigError::Validation`] if a user validator rejects a section.
+    /// Previously loaded instances are dropped when a later section fails.
     pub fn load(self, path: impl AsRef<Path>) -> Result<LoadedConfig, ConfigError> {
         let mut builder = Config::builder();
 
@@ -73,11 +114,11 @@ impl Registry {
 
         let inner = builder.build()?;
 
-        for registration in &self.registrations {
-            (registration.validate)(&inner)?;
+        let mut values = HashMap::with_capacity(self.registrations.len());
+        for registration in self.registrations {
+            values.insert(registration.type_id, (registration.load)(&inner)?);
         }
-        let registered = self.registrations.into_iter().map(|r| r.type_id).collect();
-        Ok(LoadedConfig { inner, registered })
+        Ok(LoadedConfig { values })
     }
 }
 

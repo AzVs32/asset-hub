@@ -1,37 +1,19 @@
-//! Automatically registered, process-wide shared context values.
-//!
-//! Call [`load`] during startup, then use [`get`] to retrieve shared values.
-//! Types declared with [`context`] or [`register`] are collected automatically;
-//! the set is fixed after loading.
-//!
-//! ```
-//! use std::sync::{Arc, atomic::AtomicUsize};
-//!
-//! #[ah_context::context()]
-//! #[derive(Default)]
-//! struct DriverCatalog {
-//!     count: AtomicUsize,
-//! }
-//!
-//! ah_context::load()?;
-//! let first = ah_context::get::<DriverCatalog>()?;
-//! let second = ah_context::get::<DriverCatalog>()?;
-//! assert!(Arc::ptr_eq(&first, &second));
-//! # Ok::<(), ah_context::ContextError>(())
-//! ```
+#![doc = include_str!("../README.md")]
 
 extern crate self as ah_context;
 
+mod auto;
+mod builder;
 mod context;
 mod error;
 mod global;
-mod registration;
 
 /// Automatically registers a concrete struct, preserving its fields and visibility.
 ///
 /// Default construction requires `Default`. For fallible initialization, use
 /// `init = path` naming a zero-argument function returning `Result<Self, E>`,
-/// where `E: std::error::Error + Send + Sync + 'static`.
+/// where `E: Into<Box<dyn std::error::Error + Send + Sync>>`.
+/// String messages and typed or boxed errors are preserved as the error source.
 ///
 /// ```
 /// #[ah_context::context(init = build)]
@@ -92,12 +74,13 @@ pub use ah_context_macros::context;
 /// # Ok::<(), ah_context::ContextError>(())
 /// ```
 pub use ah_context_macros::register;
+pub use builder::ContextBuilder;
 pub use context::Context;
 pub use error::ContextError;
 pub use global::{get, load};
 
 #[doc(hidden)]
 pub mod __private {
-    pub use crate::registration::{REGISTRATIONS, Registration};
+    pub use crate::auto::{AUTO_REGISTRATIONS, AutoRegistration};
     pub use linkme;
 }

@@ -1,10 +1,27 @@
 use proc_macro2::{Span, TokenStream};
-use syn::{LitBool, LitStr, Path, parse::Parser};
+use syn::{
+    LitBool, LitStr, Path, Token, Type,
+    parse::{Parse, ParseStream, Parser},
+};
 
 pub(crate) struct ConfigArgs {
     pub(crate) key: LitStr,
     pub(crate) validate: Option<Path>,
     pub(crate) auto: bool,
+}
+
+pub(crate) struct RegisterArgs {
+    pub(crate) ty: Type,
+}
+
+impl Parse for RegisterArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let ty = input.parse()?;
+        if !input.is_empty() {
+            input.parse::<Token![,]>()?;
+        }
+        Ok(Self { ty })
+    }
 }
 
 impl ConfigArgs {
@@ -54,7 +71,7 @@ impl ConfigArgs {
 mod tests {
     use quote::quote;
 
-    use super::ConfigArgs;
+    use super::{ConfigArgs, RegisterArgs};
 
     #[test]
     fn parses_defaults_and_explicit_options() {
@@ -109,5 +126,25 @@ mod tests {
         }
 
         assert!(ConfigArgs::parse(quote!(key = "a", auto = "yes")).is_err());
+    }
+
+    #[test]
+    fn concrete_registration_accepts_types_and_a_trailing_comma_only() {
+        for input in [
+            quote!(Config),
+            quote!(module::GenericConfig<u32>),
+            quote!(module::GenericConfig<u32>,),
+        ] {
+            let args: RegisterArgs = syn::parse2(input).unwrap();
+            assert!(matches!(args.ty, syn::Type::Path(_)));
+        }
+        for input in [
+            quote!(),
+            quote!(Config, Other),
+            quote!(Config, key = "config"),
+            quote!(Config,,),
+        ] {
+            assert!(syn::parse2::<RegisterArgs>(input).is_err());
+        }
     }
 }

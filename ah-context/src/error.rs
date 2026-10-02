@@ -1,7 +1,8 @@
 use std::error::Error;
 
-/// Errors from loading or accessing the global context.
+/// Errors from registering, constructing, or accessing context values.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum ContextError {
     #[error("call ah_context::load() before accessing the context")]
     NotInitialized,

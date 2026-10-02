@@ -39,30 +39,28 @@ pub(crate) fn register(input: TokenStream) -> syn::Result<TokenStream> {
 
 fn registration(ty: &Type, init: Option<Path>) -> syn::Result<TokenStream> {
     let crate_path = paths::resolve()?;
-    let create = match init {
-        Some(init) => quote! {
-            #init().map_err(|source| #crate_path::ContextError::Initialization {
-                type_name: ::core::any::type_name::<#ty>(),
-                source: ::std::boxed::Box::new(source),
-            })?
-        },
-        None => quote!(<#ty as ::core::default::Default>::default()),
+    let register = match init {
+        Some(init) => quote!(builder.register_with::<#ty, _>(#init)?;),
+        None => quote!(builder.register::<#ty>()?;),
     };
 
     Ok(quote! {
         const _: () = {
+            fn register(builder: &mut #crate_path::ContextBuilder)
+                -> Result<(), #crate_path::ContextError>
+            {
+                #register
+                Ok(())
+            }
+
             #[#crate_path::__private::linkme::distributed_slice(
-                #crate_path::__private::REGISTRATIONS
+                #crate_path::__private::AUTO_REGISTRATIONS
             )]
             #[linkme(crate = #crate_path::__private::linkme)]
-            static REGISTRATION: #crate_path::__private::Registration =
-                #crate_path::__private::Registration {
-                    type_id: ::core::any::TypeId::of::<#ty>,
+            static REGISTRATION: #crate_path::__private::AutoRegistration =
+                #crate_path::__private::AutoRegistration {
                     type_name: ::core::any::type_name::<#ty>,
-                    create: || {
-                        let value: #ty = #create;
-                        ::core::result::Result::Ok(::std::sync::Arc::new(value))
-                    },
+                    register,
                 };
         };
     })
