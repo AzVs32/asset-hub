@@ -56,7 +56,7 @@ port = 9090
 
 - 使用流程是声明 → `load` → `get`。`#[config]` 声明配置节并默认自动登记非泛型类型，
   `load(path)` 加载全部自动登记项，随后通过返回的 `LoadedConfig` 获取 `Arc<T>`。
-- **加载生命周期不同：ah-context 的 `load()` 是进程级全局幂等的，成功后重复或并发调用
+- **加载生命周期不同：asset-context 的 `load()` 是进程级全局幂等的，成功后重复或并发调用
   返回同一个 `Context`；asset-config 的 `load(path)` 每次独立读取文件并返回新的
   `LoadedConfig`，即使路径相同也重新加载。** 修改文件不会改变已加载的配置实例。
 - 类型须满足 `Default + Serialize + DeserializeOwned + Send + Sync + 'static`。

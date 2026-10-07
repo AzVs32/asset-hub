@@ -9,3 +9,6 @@
 | 主题 | 文档 | 何时必读 |
 |---|---|---|
 | 错误处理 | `agents-docs/error-handling.md` | 涉及错误类型、`Result` 返回值、错误展示、错误日志的设计、实现、评审或测试 |
+| 全新项目产品与软件需求 | `agents-docs/requirements.md` | 涉及重新设计的产品范围、VFS 行为、插件、访问入口、权限边界或验收 |
+| 全新项目技术选型 | `agents-docs/technology-selection.md` | 涉及客户端、服务端、CLI、TUI、实体构造与访问器、插件交付或其他技术选择及验证 |
+| 全新项目架构设计 | `agents-docs/architecture.md` | 涉及重新设计的模块职责、依赖、运行流程、部署或插件边界 |
