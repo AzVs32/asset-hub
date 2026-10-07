@@ -16,7 +16,9 @@ ah-context = { path = "ah-context" }
 utils = { path = "utils" }
 asset-vfs = { path = "asset-vfs" }
 asset-vfs-conformance = { path = "asset-vfs-conformance" }
-uuid = { version = "1.26.1", features = ["v7", "serde"] }
+uuid = { version = "1.26.1", features = ["v7"] }
+ulid = "3.0.0"
+nid = "5.0.0"
 serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.20"
 async-trait = "0.1.92"

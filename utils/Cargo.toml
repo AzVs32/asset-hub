@@ -8,12 +8,12 @@ authors.workspace = true
 
 [features]
 default = []
-gen_id_uuid_v7 = [
-    "dep:uuid",
-    "dep:serde",
-]
+uuid_v7 = ["dep:uuid"]
+ulid = ["dep:ulid"]
+nanoid = ["dep:nid"]
 
 [dependencies]
 uuid = { workspace = true, optional = true }
-serde = { workspace = true, optional = true }
+ulid = { workspace = true, optional = true }
+nid = { workspace = true, optional = true }
 thiserror.workspace = true

@@ -1,6 +1,4 @@
 use crate::driver::{DriverKind, DriverPath};
-use crate::error::VfsError;
-use crate::mount::MountError;
 use crate::namespace::VirtualPath;
 use getset::{CopyGetters, Getters};
 
@@ -52,11 +50,7 @@ impl Mount {
     }
 }
 
-utils::gen_id_uuid_v7!(
-    MountId,
-    error = VfsError,
-    invalid = MountError::InvalidId.into()
-);
+utils::gen_id!(utils::UUID_v7, MountId);
 
 #[cfg(test)]
 mod tests;

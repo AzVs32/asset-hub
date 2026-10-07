@@ -62,7 +62,7 @@ impl std::str::FromStr for MountSelector {
         if value.starts_with('/') {
             Ok(Self::Path(VirtualPath::try_from(value)?))
         } else {
-            Ok(Self::Id(value.parse()?))
+            Ok(Self::Id(value.parse().map_err(|_| MountError::InvalidId)?))
         }
     }
 }

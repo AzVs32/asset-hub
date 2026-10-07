@@ -7,7 +7,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-utils = { workspace = true, features = ["gen_id_uuid_v7"] }
+utils = { workspace = true, features = ["uuid_v7"] }
 thiserror.workspace = true
 getset.workspace = true
 async-trait.workspace = true

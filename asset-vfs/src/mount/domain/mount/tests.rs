@@ -1,6 +1,4 @@
 use crate::driver::{DriverKind, DriverPath};
-use crate::error::VfsError;
-use crate::mount::MountError;
 use crate::namespace::VirtualPath;
 
 use super::{Mount, MountId};
@@ -45,11 +43,6 @@ fn mount_id_parses_and_round_trips() {
 }
 
 #[test]
-fn mount_id_parse_failure_returns_vfs_error() {
-    let result: Result<MountId, VfsError> = "invalid-id".parse();
-
-    assert!(matches!(
-        result,
-        Err(VfsError::Mount(MountError::InvalidId))
-    ));
+fn mount_id_parse_failure_returns_parse_id_error() {
+    assert_eq!("invalid-id".parse::<MountId>(), Err(utils::ParseIdError));
 }

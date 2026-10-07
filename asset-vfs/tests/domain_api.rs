@@ -3,7 +3,7 @@ use std::error::Error;
 use asset_vfs::driver::{DriverError, DriverKind, DriverPath};
 use asset_vfs::entry::{Entry, EntryKind};
 use asset_vfs::error::VfsError;
-use asset_vfs::mount::{Mount, MountError, MountId};
+use asset_vfs::mount::{Mount, MountError, MountId, MountSelector};
 use asset_vfs::namespace::{EntryName, NamespaceError, VirtualPath, VirtualRelativePath};
 
 #[test]
@@ -50,7 +50,7 @@ fn fallible_domain_operations_return_vfs_errors_with_component_sources() {
         error.source().unwrap().to_string(),
         "driver kind must be non-empty and contain only lowercase ASCII letters, digits, `.`, `-`, or `_`"
     );
-    let invalid_id: Result<MountId, VfsError> = "invalid".parse();
+    let invalid_id: Result<MountSelector, VfsError> = "invalid".parse();
     let error = invalid_id.unwrap_err();
     assert!(matches!(error, VfsError::Mount(MountError::InvalidId)));
     assert_eq!(

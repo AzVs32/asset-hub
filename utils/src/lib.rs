@@ -1,12 +1,12 @@
-mod error;
-pub use error::{ParseIdError, UtilsError};
+mod gen_id;
 
-#[cfg(feature = "gen_id_uuid_v7")]
+#[cfg(feature = "nanoid")]
+pub use gen_id::NanoID;
+pub use gen_id::ParseIdError;
+#[cfg(feature = "ulid")]
+pub use gen_id::ULID;
+#[cfg(feature = "uuid_v7")]
+pub use gen_id::UUID_v7;
+
 #[doc(hidden)]
-pub mod __private {
-    pub use serde;
-    pub use uuid;
-}
-
-#[cfg(feature = "gen_id_uuid_v7")]
-mod gen_id_uuid_v7;
+pub use gen_id::strategy as __private;
