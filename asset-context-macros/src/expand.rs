@@ -54,7 +54,7 @@ fn registration(ty: &Type, init: Option<Path>) -> syn::Result<TokenStream> {
             }
 
             #[#crate_path::__private::linkme::distributed_slice(
-                #crate_path::__private::AH_CONTEXT_AUTO_REGISTRATIONS
+                #crate_path::__private::ASSET_CONTEXT_AUTO_REGISTRATIONS
             )]
             #[linkme(crate = #crate_path::__private::linkme)]
             static REGISTRATION: #crate_path::__private::AutoRegistration =

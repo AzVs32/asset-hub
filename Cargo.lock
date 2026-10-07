@@ -3,26 +3,6 @@
 version = 4
 
 [[package]]
-name = "ah-context"
-version = "0.1.0"
-dependencies = [
- "ah-context-macros",
- "asset-config",
- "linkme",
- "thiserror",
-]
-
-[[package]]
-name = "ah-context-macros"
-version = "0.1.0"
-dependencies = [
- "proc-macro-crate",
- "proc-macro2",
- "quote",
- "syn 3.0.6",
-]
-
-[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -111,6 +91,26 @@ dependencies = [
 
 [[package]]
 name = "asset-config-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn 3.0.6",
+]
+
+[[package]]
+name = "asset-context"
+version = "0.1.0"
+dependencies = [
+ "asset-config",
+ "asset-context-macros",
+ "linkme",
+ "thiserror",
+]
+
+[[package]]
+name = "asset-context-macros"
 version = "0.1.0"
 dependencies = [
  "proc-macro-crate",

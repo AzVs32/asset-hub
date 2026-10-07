@@ -8,7 +8,9 @@ use std::error::Error;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ContextError {
-    #[error("call ah_context::load() or ah_context::load_with() before accessing the context")]
+    #[error(
+        "call asset_context::load() or asset_context::load_with() before accessing the context"
+    )]
     NotInitialized,
     /// A custom builder was submitted after the global context was published.
     #[error("the global context is already initialized")]

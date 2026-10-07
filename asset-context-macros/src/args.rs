@@ -37,7 +37,7 @@ impl ContextArgs {
                 init = Some(meta.value()?.parse()?);
                 return Ok(());
             }
-            Err(meta.error("unsupported ah_context option"))
+            Err(meta.error("unsupported asset_context option"))
         });
         parser.parse2(args)?;
         Ok(Self { init })

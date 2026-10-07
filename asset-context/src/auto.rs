@@ -7,7 +7,7 @@ pub struct AutoRegistration {
 }
 
 #[linkme::distributed_slice]
-pub static AH_CONTEXT_AUTO_REGISTRATIONS: [AutoRegistration];
+pub static ASSET_CONTEXT_AUTO_REGISTRATIONS: [AutoRegistration];
 
 pub(crate) fn collect(registrations: &[AutoRegistration]) -> Result<ContextBuilder, ContextError> {
     let mut registrations: Vec<_> = registrations.iter().collect();

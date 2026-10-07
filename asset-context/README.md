@@ -1,4 +1,4 @@
-# ah-context
+# asset-context
 
 按类型声明、加载和共享应用上下文，使用流程为：声明 → `load` → `get`。
 
@@ -7,7 +7,7 @@
 `#[context()]` 声明结构体并自动登记；`register!` 在模块顶层登记已有类型。
 两种方式默认使用 `Default`，也都支持 `init = path` 自定义初始化。
 
-添加 `ah-context` 依赖后，以下代码可以直接作为 `main.rs`：
+添加 `asset-context` 依赖后，以下代码可以直接作为 `main.rs`：
 
 ```rust
 use std::sync::{
@@ -15,7 +15,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-#[ah_context::context()]
+#[asset_context::context()]
 #[derive(Default)]
 struct Counter {
     value: AtomicUsize,
@@ -25,23 +25,23 @@ struct Greeting {
     text: String,
 }
 
-ah_context::register!(Greeting, init = create_greeting);
+asset_context::register!(Greeting, init = create_greeting);
 
 fn create_greeting() -> Result<Greeting, &'static str> {
     Ok(Greeting { text: "hello".into() })
 }
 
-fn main() -> Result<(), ah_context::ContextError> {
-    let context = ah_context::load()?;
-    assert!(std::ptr::eq(context, ah_context::load()?));
+fn main() -> Result<(), asset_context::ContextError> {
+    let context = asset_context::load()?;
+    assert!(std::ptr::eq(context, asset_context::load()?));
 
-    let first = ah_context::get::<Counter>()?;
-    let second = ah_context::get::<Counter>()?;
+    let first = asset_context::get::<Counter>()?;
+    let second = asset_context::get::<Counter>()?;
     first.value.fetch_add(1, Ordering::Relaxed);
     assert!(Arc::ptr_eq(&first, &second));
     assert_eq!(second.value.load(Ordering::Relaxed), 1);
 
-    let greeting = ah_context::get::<Greeting>()?;
+    let greeting = asset_context::get::<Greeting>()?;
     assert_eq!(greeting.text, "hello");
     Ok(())
 }
@@ -54,9 +54,9 @@ fn main() -> Result<(), ah_context::ContextError> {
 
 - 使用流程是声明 → `load` → `get`。`load()` 收集自动登记项，通过
   `ContextBuilder::build()` 构造全部实例，再发布全局上下文。
-- **加载生命周期不同：ah-context 的 `load()` 是进程级全局幂等的，成功后重复或并发调用
+- **加载生命周期不同：asset-context 的 `load()` 是进程级全局幂等的，成功后重复或并发调用
   返回同一个 `Context`；asset-config 的 `load(path)` 每次独立读取文件并返回新的
-  `LoadedConfig`，即使路径相同也重新加载。** ah-context 成功加载后不会重新运行构造函数。
+  `LoadedConfig`，即使路径相同也重新加载。** asset-context 成功加载后不会重新运行构造函数。
 - 类型须满足 `Send + Sync + 'static`。`'static` 要求不借用短生命周期数据，不要求声明
   为 `static`；`String`、`Vec<String>` 可在运行时创建并满足这些约束。
 - `#[context()]` 用于非泛型结构体；`register!` 支持已有类型及 `Container<u32>` 等
@@ -89,13 +89,13 @@ fn main() -> Result<(), ah_context::ContextError> {
 依赖，闭包须满足 `FnOnce + Send + 'static`，错误类型约束与自动初始化一致：
 
 ```rust
-use ah_context::ContextBuilder;
+use asset_context::ContextBuilder;
 
 #[derive(Default)]
 struct Counter(std::sync::atomic::AtomicUsize);
 struct Settings(String);
 
-fn main() -> Result<(), ah_context::ContextError> {
+fn main() -> Result<(), asset_context::ContextError> {
     let label = String::from("test");
     let mut builder = ContextBuilder::new();
     builder.register::<Counter>()?;
@@ -140,13 +140,13 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let configs = asset_config::load("config.toml")?;
     let http = configs.get::<HttpConfig>()?;
 
-    let mut builder = ah_context::ContextBuilder::from_auto()?;
+    let mut builder = asset_context::ContextBuilder::from_auto()?;
     builder.register_with(move || Ok::<_, Infallible>(HttpClient(http)))?;
-    let context = ah_context::load_with(builder)?;
+    let context = asset_context::load_with(builder)?;
 
-    let client = ah_context::get::<HttpClient>()?;
+    let client = asset_context::get::<HttpClient>()?;
     assert!(Arc::ptr_eq(&client.0, &configs.get::<HttpConfig>()?));
-    assert!(std::ptr::eq(context, ah_context::load()?));
+    assert!(std::ptr::eq(context, asset_context::load()?));
     println!("HTTP port: {}", client.0.port);
     Ok(())
 }

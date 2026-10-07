@@ -4,7 +4,7 @@ use std::error::Error;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 
-use ah_context::{ContextBuilder, ContextError, context};
+use asset_context::{ContextBuilder, ContextError, context};
 
 #[asset_config::config(key = "http")]
 struct HttpConfig {
@@ -71,8 +71,8 @@ mod vfs_core {
     pub struct Catalog<T>(pub T);
 }
 
-ah_context::register!(vfs_core::DriverKinds, init = create);
-ah_context::register!(vfs_core::Catalog<u32>);
+asset_context::register!(vfs_core::DriverKinds, init = create);
+asset_context::register!(vfs_core::Catalog<u32>);
 
 fn create() -> Result<vfs_core::DriverKinds, std::io::Error> {
     Ok(vfs_core::DriverKinds {
@@ -81,13 +81,13 @@ fn create() -> Result<vfs_core::DriverKinds, std::io::Error> {
 }
 
 mod first {
-    #[ah_context::context()]
+    #[asset_context::context()]
     #[derive(Default)]
     pub struct SameName;
 }
 
 mod second {
-    #[ah_context::context()]
+    #[asset_context::context()]
     #[derive(Default)]
     pub struct SameName;
 }
@@ -107,17 +107,17 @@ struct DisabledByNestedCfgAttr;
 #[test]
 fn global_loading_retries_failed_builds_then_publishes_a_configured_builder() {
     assert!(matches!(
-        ah_context::get::<DriverCatalog>(),
+        asset_context::get::<DriverCatalog>(),
         Err(ContextError::NotInitialized)
     ));
     let mut failed = ContextBuilder::new();
     failed
         .register_with(|| Err::<HttpClient, _>("client not ready"))
         .unwrap();
-    let error = ah_context::load_with(failed).err().unwrap();
+    let error = asset_context::load_with(failed).err().unwrap();
     assert!(matches!(&error, ContextError::Initialization { .. }));
     assert_eq!(error.source().unwrap().to_string(), "client not ready");
-    let Err(error) = ah_context::load() else {
+    let Err(error) = asset_context::load() else {
         panic!("the first initialization must fail");
     };
     assert!(matches!(
@@ -127,7 +127,7 @@ fn global_loading_retries_failed_builds_then_publishes_a_configured_builder() {
     ));
     assert_eq!(error.source().unwrap().to_string(), "not ready");
     assert!(matches!(
-        ah_context::get::<DriverCatalog>(),
+        asset_context::get::<DriverCatalog>(),
         Err(ContextError::NotInitialized)
     ));
 
@@ -136,7 +136,7 @@ fn global_loading_retries_failed_builds_then_publishes_a_configured_builder() {
         .unwrap()
         .as_nanos();
     let path = std::env::temp_dir().join(format!(
-        "ah-context-http-{}-{timestamp}.toml",
+        "asset-context-http-{}-{timestamp}.toml",
         std::process::id()
     ));
     std::fs::write(&path, "[http]\nport = 9090\n").unwrap();
@@ -148,11 +148,11 @@ fn global_loading_retries_failed_builds_then_publishes_a_configured_builder() {
     builder
         .register_with(move || Ok::<_, Infallible>(HttpClient { config: captured }))
         .unwrap();
-    let published = ah_context::load_with(builder).unwrap();
-    let client = ah_context::get::<HttpClient>().unwrap();
+    let published = asset_context::load_with(builder).unwrap();
+    let client = asset_context::get::<HttpClient>().unwrap();
     assert_eq!(client.config.port, 9090);
     assert!(Arc::ptr_eq(&http, &client.config));
-    assert!(std::ptr::eq(published, ah_context::load().unwrap()));
+    assert!(std::ptr::eq(published, asset_context::load().unwrap()));
 
     let barrier = Arc::new(Barrier::new(24));
     let threads: Vec<_> = (0..24)
@@ -160,8 +160,8 @@ fn global_loading_retries_failed_builds_then_publishes_a_configured_builder() {
             let barrier = Arc::clone(&barrier);
             std::thread::spawn(move || {
                 barrier.wait();
-                let context = ah_context::load().unwrap();
-                let catalog = ah_context::get::<DriverCatalog>().unwrap();
+                let context = asset_context::load().unwrap();
+                let catalog = asset_context::get::<DriverCatalog>().unwrap();
                 assert!(Arc::ptr_eq(
                     &catalog,
                     &context.get::<DriverCatalog>().unwrap()
@@ -177,25 +177,28 @@ fn global_loading_retries_failed_builds_then_publishes_a_configured_builder() {
         .collect();
     assert_eq!(CONSTRUCTIONS.load(Ordering::SeqCst), 1);
     assert_eq!(STARTUP_ATTEMPTS.load(Ordering::SeqCst), 2);
-    assert_eq!(ah_context::get::<AStartupGate>().unwrap().0, 42);
+    assert_eq!(asset_context::get::<AStartupGate>().unwrap().0, 42);
     assert_eq!(instances[0].entries.load(Ordering::SeqCst), 24);
     for instance in &instances {
         assert!(Arc::ptr_eq(instance, &instances[0]));
     }
     assert!(std::ptr::eq(
-        ah_context::load().unwrap(),
-        ah_context::load().unwrap()
+        asset_context::load().unwrap(),
+        asset_context::load().unwrap()
     ));
-    assert_eq!(ah_context::get::<Settings>().unwrap().label, "configured");
-    assert!(ah_context::get::<first::SameName>().is_ok());
-    assert!(ah_context::get::<second::SameName>().is_ok());
     assert_eq!(
-        ah_context::get::<vfs_core::DriverKinds>().unwrap().kinds,
+        asset_context::get::<Settings>().unwrap().label,
+        "configured"
+    );
+    assert!(asset_context::get::<first::SameName>().is_ok());
+    assert!(asset_context::get::<second::SameName>().is_ok());
+    assert_eq!(
+        asset_context::get::<vfs_core::DriverKinds>().unwrap().kinds,
         ["local", "memory"]
     );
-    assert_eq!(ah_context::get::<vfs_core::Catalog<u32>>().unwrap().0, 0);
+    assert_eq!(asset_context::get::<vfs_core::Catalog<u32>>().unwrap().0, 0);
     assert!(matches!(
-        ah_context::get::<Unregistered>(),
+        asset_context::get::<Unregistered>(),
         Err(ContextError::NotRegistered { .. })
     ));
 
@@ -209,12 +212,12 @@ fn global_loading_retries_failed_builds_then_publishes_a_configured_builder() {
         })
         .unwrap();
     assert!(matches!(
-        ah_context::load_with(rejected),
+        asset_context::load_with(rejected),
         Err(ContextError::AlreadyInitialized)
     ));
     assert_eq!(rejected_calls.load(Ordering::SeqCst), 0);
     assert!(matches!(
-        ah_context::get::<Label>(),
+        asset_context::get::<Label>(),
         Err(ContextError::NotRegistered { .. })
     ));
 }

@@ -4,7 +4,7 @@ use std::convert::Infallible;
 use std::error::Error;
 use std::sync::Arc;
 
-use crate::auto::{self, AH_CONTEXT_AUTO_REGISTRATIONS};
+use crate::auto::{self, ASSET_CONTEXT_AUTO_REGISTRATIONS};
 use crate::context::SharedValue;
 use crate::{Context, ContextError};
 
@@ -23,7 +23,7 @@ struct Registration {
 /// the builder's values globally.
 ///
 /// ```
-/// use ah_context::ContextBuilder;
+/// use asset_context::ContextBuilder;
 ///
 /// #[derive(Default)]
 /// struct Counter(std::sync::atomic::AtomicUsize);
@@ -35,7 +35,7 @@ struct Registration {
 /// builder.register_with(move || Ok::<_, std::io::Error>(Label(label)))?;
 /// let context = builder.build()?;
 /// assert_eq!(context.get::<Label>()?.0, "local");
-/// # Ok::<(), ah_context::ContextError>(())
+/// # Ok::<(), asset_context::ContextError>(())
 /// ```
 #[derive(Default)]
 pub struct ContextBuilder {
@@ -54,7 +54,7 @@ impl ContextBuilder {
     /// Returns a duplicate-registration error before running any constructor.
     /// The builder can be extended and built without publishing a global context.
     pub fn from_auto() -> Result<Self, ContextError> {
-        auto::collect(&AH_CONTEXT_AUTO_REGISTRATIONS)
+        auto::collect(&ASSET_CONTEXT_AUTO_REGISTRATIONS)
     }
 
     /// Registers a type to be constructed using `Default` during [`Self::build`].
