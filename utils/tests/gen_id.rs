@@ -1,5 +1,5 @@
 #[cfg(any(feature = "uuid_v7", feature = "ulid", feature = "nanoid"))]
-use std::collections::HashSet;
+use std::{collections::HashSet, error::Error};
 
 // The macro must be importable even without a generation implementation enabled.
 #[allow(unused_imports)]
@@ -13,12 +13,19 @@ gen_id!(utils::ULID, EventId);
 gen_id!(utils::NanoID, TokenId);
 
 #[cfg(any(feature = "uuid_v7", feature = "ulid", feature = "nanoid"))]
+#[cfg(test)]
 fn check_ids<T>(generate: fn() -> T)
 where
     T: Copy + Eq + Ord + std::hash::Hash + std::fmt::Debug + std::fmt::Display,
     T: std::str::FromStr<Err = utils::ParseIdError>,
 {
-    assert_eq!("invalid-id".parse::<T>(), Err(utils::ParseIdError));
+    for invalid in ["", "invalid-id", "token=private-value;path=/private/secret"] {
+        let error = invalid.parse::<T>().unwrap_err();
+        assert_eq!(error, utils::ParseIdError);
+        assert!(error.source().is_none());
+        assert!(!error.to_string().contains("private"));
+        assert!(!format!("{error:?}").contains("private"));
+    }
     assert_eq!(
         (0..256).map(|_| generate()).collect::<HashSet<_>>().len(),
         256

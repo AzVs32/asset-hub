@@ -5,6 +5,10 @@
 /// Each identifier implements `Copy`, comparison and hashing, and parses with
 /// [`crate::ParseIdError`]. Nano IDs use 21 URL-safe characters.
 ///
+/// Parsing validates the selected strategy's representation. Invalid input
+/// returns `ParseIdError` without retaining the input or a backend error. The
+/// calling operation is responsible for mapping it to a business error.
+///
 /// ```
 /// # #[cfg(feature = "uuid_v7")]
 /// # {

@@ -9,6 +9,11 @@ license = "Apache-2.0"
 repository = "https://github.com/AzVs32/asset-hub"
 authors = ["AzVs"]
 
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "warn"
+panic = "warn"
+
 [workspace.dependencies]
 clap = { version = "4.6", features = ["derive"] }
 asset-config = { path = "asset-config" }
