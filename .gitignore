@@ -1,8 +1,6 @@
 /data/
 /conf/
-/config.toml
 /temp/
-
 /target/
 
 # RustRover

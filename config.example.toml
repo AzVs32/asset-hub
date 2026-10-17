@@ -1,7 +1,0 @@
-# Copy to config.toml to customize. All values below match the defaults.
-[asset]
-database = "sqlite"
-# Absolute local directory mounted at the virtual root `/`.
-root_mount_path = "/asset-hub-data"
-# Absolute shared directory for configuration, plugins, and SQLite.
-config_dir = "/asset-hub-conf"
