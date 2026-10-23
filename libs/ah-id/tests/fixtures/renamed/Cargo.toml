@@ -1,0 +1,10 @@
+[package]
+name = "ah-id-renamed-check"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+ids = { package = "ah-id", path = "../../..", features = ["uuid_v7"] }

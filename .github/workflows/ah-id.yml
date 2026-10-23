@@ -1,0 +1,27 @@
+name: ah-id CI
+
+on:
+  push:
+    paths: ['libs/ah-id/**', '.github/checks/**', '.github/workflows/ah-id.yml']
+  pull_request:
+    paths: ['libs/ah-id/**', '.github/checks/**', '.github/workflows/ah-id.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: python libs/ah-id/ci/check.py

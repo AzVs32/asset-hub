@@ -1,0 +1,23 @@
+[package]
+name = "ah-id-macros"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94.1"
+license = "Apache-2.0"
+repository = "https://github.com/AzVs32/asset-hub"
+authors = ["AzVs"]
+description = "Derive implementation for ah-id"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1.0.107"
+quote = "1.0.47"
+syn = "3.0.9"
+proc-macro-crate = "3.5.0"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "warn"
+panic = "warn"

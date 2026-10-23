@@ -1,0 +1,64 @@
+[package]
+name = "ah-id"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94.1"
+license = "Apache-2.0"
+repository = "https://github.com/AzVs32/asset-hub"
+authors = ["AzVs"]
+description = "Typed identifiers with explicit capabilities and validated UUID v7, ULID and NanoID values"
+readme = "README.md"
+exclude = ["/ci"]
+keywords = ["asset-hub", "ah", "id"]
+categories = ["data-structures"]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[[example]]
+name = "vector"
+required-features = ["derive"]
+test = true
+
+[[example]]
+name = "order_line"
+required-features = ["derive", "nanoid"]
+test = true
+
+[[example]]
+name = "uuid_v7"
+required-features = ["uuid_v7"]
+test = true
+
+[[example]]
+name = "ulid"
+required-features = ["ulid"]
+test = true
+
+[[example]]
+name = "nanoid"
+required-features = ["nanoid"]
+test = true
+
+[workspace]
+resolver = "3"
+members = ["macros"]
+
+[features]
+default = ["derive"]
+derive = ["dep:ah-id-macros"]
+uuid_v7 = ["dep:uuid"]
+ulid = ["dep:ulid"]
+nanoid = ["dep:nid"]
+
+[dependencies]
+ah-id-macros = { path = "macros", version = "0.1.0", optional = true }
+thiserror = "2.0.21"
+uuid = { version = "1.28.0", features = ["v7"], optional = true }
+ulid = { version = "3.0.0", optional = true }
+nid = { version = "5.0.0", optional = true }
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "warn"
+panic = "warn"
