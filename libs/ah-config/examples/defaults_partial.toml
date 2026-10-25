@@ -1,0 +1,7 @@
+[client]
+timeout_ms = 1000
+# An explicit empty list replaces the fallback list.
+mirrors = []
+
+[client.retry]
+attempts = 5

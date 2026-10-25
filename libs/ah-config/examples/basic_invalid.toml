@@ -1,0 +1,8 @@
+[service.http]
+host = "localhost"
+# A valid u16, but not a usable port for this application's configured endpoint.
+port = 0
+
+[service.http.tls]
+certificate_file = "server.crt"
+private_key_file = "server.key"

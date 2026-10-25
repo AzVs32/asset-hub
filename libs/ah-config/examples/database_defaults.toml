@@ -1,0 +1,3 @@
+# The database section is intentionally omitted to use its declared defaults.
+[application]
+name = "example"

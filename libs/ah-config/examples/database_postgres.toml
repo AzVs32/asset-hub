@@ -1,0 +1,3 @@
+[database]
+backend = "postgres"
+url = "postgresql://app:example@localhost:5432/example"

@@ -1,0 +1,65 @@
+[package]
+name = "ah-config"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94.1"
+license = "Apache-2.0"
+repository = "https://github.com/AzVs32/asset-hub"
+authors = ["AzVs"]
+description = "Typed TOML configuration declarations with isolated spaces and shared snapshots"
+readme = "README.md"
+keywords = ["config", "toml", "configuration", "serde"]
+categories = ["config"]
+exclude = ["/ci"]
+
+[workspace]
+resolver = "3"
+members = ["macros"]
+
+[features]
+default = ["derive"]
+derive = ["dep:ah-config-macros", "serde/derive"]
+
+[dependencies]
+ah-config-macros = { path = "macros", version = "=0.1.0", optional = true }
+figment = { version = "0.10.19", default-features = false, features = ["toml"] }
+linkme = "0.3.37"
+serde = "1.0.229"
+thiserror = "2.0.21"
+
+[dev-dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+tempfile = "3.27.0"
+
+[[example]]
+name = "basic"
+required-features = ["derive"]
+test = true
+
+[[example]]
+name = "defaults"
+required-features = ["derive"]
+test = true
+
+[[example]]
+name = "database"
+required-features = ["derive"]
+test = true
+
+[[example]]
+name = "spaces"
+required-features = ["derive"]
+test = true
+
+[[example]]
+name = "snapshots"
+required-features = ["derive"]
+test = true
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "warn"
+panic = "warn"
+
+[package.metadata.docs.rs]
+all-features = true

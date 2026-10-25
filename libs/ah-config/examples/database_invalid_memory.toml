@@ -1,0 +1,4 @@
+[database]
+backend = "memory"
+capacity = 0
+# The default unit applies, but the invalid capacity still rejects this variant.

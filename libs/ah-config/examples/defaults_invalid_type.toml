@@ -1,0 +1,3 @@
+[client]
+# Type conversion fails before the section validator can run.
+timeout_ms = "fast"

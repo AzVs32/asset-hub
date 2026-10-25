@@ -1,0 +1,8 @@
+[http]
+port = 8080
+
+[plugin_runtime]
+directory = "plugins"
+
+[logging]
+level = "info"

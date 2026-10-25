@@ -1,0 +1,27 @@
+name: ah-config CI
+
+on:
+  push:
+    paths: ['libs/ah-config/**', '.github/checks/**', '.github/workflows/ah-config.yml']
+  pull_request:
+    paths: ['libs/ah-config/**', '.github/checks/**', '.github/workflows/ah-config.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: python libs/ah-config/ci/check.py

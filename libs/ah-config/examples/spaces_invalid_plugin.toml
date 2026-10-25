@@ -1,0 +1,9 @@
+[http]
+port = 8080
+
+[plugin_runtime]
+# This rejects the plugins space but is ignored by the default space.
+directory = ""
+
+[logging]
+level = "info"

@@ -5,3 +5,4 @@
 `libs/` holds utility libraries decoupled from `Asset Hub` business logic that can be published independently.
 
 - [ah-id](ah-id/README.md): typed IDs with explicit capabilities and optional UUID v7, ULID and NanoID value types.
+- [ah-config](ah-config/README.md): typed TOML configuration with isolated spaces, validated snapshots and derive macros.

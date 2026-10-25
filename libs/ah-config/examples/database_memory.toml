@@ -1,0 +1,4 @@
+[database]
+backend = "memory"
+capacity = 512
+unit = "MB"

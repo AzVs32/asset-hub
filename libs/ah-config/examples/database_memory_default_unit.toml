@@ -1,0 +1,3 @@
+[database]
+backend = "memory"
+capacity = 512

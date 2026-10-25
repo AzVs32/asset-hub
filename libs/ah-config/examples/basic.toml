@@ -1,0 +1,7 @@
+[service.http]
+host = "localhost"
+port = 8443
+
+[service.http.tls]
+certificate_file = "server.crt"
+private_key_file = "server.key"

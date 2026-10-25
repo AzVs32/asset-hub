@@ -1,0 +1,3 @@
+[client]
+# An explicit invalid value must not restore the default of 5000 ms.
+timeout_ms = 0
