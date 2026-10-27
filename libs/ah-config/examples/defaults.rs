@@ -62,6 +62,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let defaults = Registry::for_space("default")?
         .with_base_dir(directory.path())
         .load_optional("missing.toml")?;
+    for warning in defaults.warnings() {
+        eprintln!("warning: {warning}");
+    }
     let client = defaults.get::<ClientConfig>()?;
     assert_eq!(client.endpoint, "https://primary.example.com");
     assert_eq!(client.timeout_ms, 5_000);

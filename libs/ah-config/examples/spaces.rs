@@ -49,7 +49,18 @@ fn validate_plugin_runtime(config: &PluginRuntimeConfig) -> Result<(), &'static 
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let host = Registry::for_space("default")?.load_required("examples/spaces.toml")?;
+    println!("Available spaces: {:?}", Registry::spaces());
+    for section in Registry::declarations() {
+        println!(
+            "{}: {} in {:?}",
+            section.key(),
+            section.type_name(),
+            section.spaces()
+        );
+    }
+    let registry = Registry::for_space("default")?;
+    assert_eq!(registry.sections().len(), 2);
+    let host = registry.load_required("examples/spaces.toml")?;
     let plugins = Registry::for_space("plugins")?.load_required("examples/spaces.toml")?;
     assert_eq!(host.space(), "default");
     assert_eq!(plugins.space(), "plugins");

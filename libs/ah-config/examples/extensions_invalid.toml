@@ -1,0 +1,2 @@
+[vfs.wasm.limits]
+memory_limit_mb = 0

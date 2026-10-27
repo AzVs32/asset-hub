@@ -29,11 +29,11 @@ impl Source {
         })
     }
 
-    pub(crate) fn file(path: &Path, required: bool) -> Result<Self, ConfigError> {
-        let text = match std::fs::read_to_string(path) {
-            Ok(text) => text,
+    pub(crate) fn file(path: &Path, required: bool) -> Result<(Self, bool), ConfigError> {
+        let (text, missing) = match std::fs::read_to_string(path) {
+            Ok(text) => (text, false),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound && !required => {
-                String::new()
+                (String::new(), true)
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 return Err(ConfigError::file(ConfigErrorKind::MissingFile, path, error));
@@ -43,10 +43,13 @@ impl Source {
         let data = Toml::string(&text)
             .data()
             .map_err(|error| ConfigError::file(ConfigErrorKind::Parse, path, error))?;
-        Ok(Self {
-            metadata: Metadata::from("TOML configuration", path),
-            data,
-        })
+        Ok((
+            Self {
+                metadata: Metadata::from("TOML configuration", path),
+                data,
+            },
+            missing,
+        ))
     }
 
     pub(crate) fn contains(&self, key: &str) -> bool {

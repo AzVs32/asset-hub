@@ -14,6 +14,15 @@
 `validate` 接受函数路径。字段和变体固定使用 snake_case；
 `rename` 指定单个名称，包括 MiB 等标准符号。
 
+子配置节使用 `#[config(parent = ParentConfig, key = "child")]`。父类型必须是未启用
+`deny_unknown_fields` 的 `Config` 具名字段结构体；扩展许可与父字段重名检查均在编译期
+完成，支持跨 crate 引用。Key 必须是单个路径段，已有裸点分 key 应改为显式父类型声明。
+`ConfigValue` 继续用于配置节内部拥有的字段。
+
+`Config` 同时实现公开的 `ConfigSection` trait，提供完整的 `KEY`。
+`LoadedConfig::get<T>()` 要求这个 trait，普通类型和 `ConfigValue` 类型会编译失败。
+泛型读取辅助函数可使用 `T: ah_config::ConfigSection`。
+
 使用方式见 [API 参考文档](https://docs.rs/ah-config/latest/ah_config/)、
 [使用指南](https://github.com/AzVs32/asset-hub/blob/main/libs/ah-config/README.zh.md)
 及[独立案例](https://github.com/AzVs32/asset-hub/tree/main/libs/ah-config/examples)。

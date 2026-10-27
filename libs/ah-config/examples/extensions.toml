@@ -1,0 +1,8 @@
+[vfs]
+enabled = true
+
+[vfs.rpc]
+timeout_ms = 3000
+
+[vfs.wasm.limits]
+memory_limit_mb = 256

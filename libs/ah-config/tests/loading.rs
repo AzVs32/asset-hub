@@ -22,8 +22,12 @@ fn kind(result: Result<ah_config::LoadedConfig, Box<dyn Error>>) -> Option<Kind>
         .and_then(|error| error.downcast_ref::<ConfigError>().map(ConfigError::kind))
 }
 
+#[derive(ah_config::Config)]
+#[config(key = "service", spaces = ["namespace"])]
+struct Service {}
+
 #[derive(ah_config::Config, Default)]
-#[config(key = "service.http", spaces = ["required"])]
+#[config(parent = Service, key = "http", spaces = ["required"])]
 #[config(deny_unknown_fields)]
 struct Required {
     port: u16,
@@ -188,6 +192,29 @@ fn optional_only_tolerates_missing_files_and_still_requires_sections() -> TestRe
             .map(|error| error.kind()),
         Some(Kind::Read)
     );
+    Ok(())
+}
+
+#[test]
+fn missing_optional_files_return_a_warning_after_validating_defaults() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("config.toml");
+    let defaults = Registry::for_space("struct_defaults")?.load_optional(&path)?;
+    assert_eq!(defaults.get::<StructDefaults>()?.count, 12);
+    assert!(
+        matches!(defaults.warnings(), [ah_config::ConfigWarning::MissingFile { path: missing }] if missing == &path)
+    );
+    assert!(
+        defaults.warnings()[0]
+            .to_string()
+            .contains("using declared defaults")
+    );
+
+    // An existing empty file is different from a missing optional file.
+    std::fs::write(&path, "")?;
+    let present = Registry::for_space("struct_defaults")?.load_optional(&path)?;
+    assert!(present.warnings().is_empty());
+    assert_eq!(defaults.warnings().len(), 1);
     Ok(())
 }
 

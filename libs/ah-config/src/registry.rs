@@ -1,11 +1,11 @@
 use crate::{
-    ConfigError, ConfigErrorKind, LoadedConfig,
+    ConfigError, ConfigErrorKind, ConfigWarning, LoadedConfig, SectionInfo,
     declaration::{DECLARATIONS, Prepared},
     source::Source,
 };
 use figment::Figment;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     fmt, io,
     path::{Component, Path, PathBuf},
 };
@@ -19,10 +19,48 @@ use std::{
 pub struct Registry {
     space: String,
     sections: Vec<Prepared>,
+    section_info: Vec<SectionInfo>,
     base_dir: Option<PathBuf>,
 }
 
 impl Registry {
+    /// List all linked space names in sorted, deduplicated order.
+    ///
+    /// This does not read files or run default factories and validators.
+    pub fn spaces() -> Vec<&'static str> {
+        DECLARATIONS
+            .iter()
+            .flat_map(|declaration| declaration.spaces.iter().copied())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
+
+    /// List all linked declarations, sorted by key, type name and space memberships.
+    ///
+    /// Queries do not prepare defaults, validate values or reject conflicting keys.
+    /// Conflicting declarations remain visible so they can be diagnosed.
+    /// Only crates linked into the current program contribute declarations.
+    pub fn declarations() -> Vec<SectionInfo> {
+        let mut declarations: Vec<_> = DECLARATIONS
+            .iter()
+            .map(|declaration| declaration.info())
+            .collect();
+        declarations.sort_by(|left, right| {
+            (left.key(), left.type_name(), left.spaces()).cmp(&(
+                right.key(),
+                right.type_name(),
+                right.spaces(),
+            ))
+        });
+        declarations
+    }
+
+    /// Inspect declarations selected for this loading plan without running factories again.
+    pub fn sections(&self) -> &[SectionInfo] {
+        &self.section_info
+    }
+
     /// Collect linked declarations for `space`, check conflicts, and prepare defaults.
     ///
     /// Names are case-sensitive and contain no whitespace or control characters.
@@ -49,18 +87,16 @@ impl Registry {
                 ConfigErrorKind::UnknownSpace,
                 format!("no linked declarations for space {space:?}"),
             )
+            .with_available_spaces(Self::spaces())
             .with_space(space));
         }
         declarations.sort_unstable_by_key(|declaration| declaration.key);
         let mut types = HashSet::new();
         for (index, declaration) in declarations.iter().enumerate() {
-            if let Some(previous) = declarations[..index].iter().find(|previous| {
-                declaration.key == previous.key
-                    || declaration
-                        .key
-                        .strip_prefix(previous.key)
-                        .is_some_and(|suffix| suffix.starts_with('.'))
-            }) {
+            if let Some(previous) = declarations[..index]
+                .iter()
+                .find(|previous| declaration.key == previous.key)
+            {
                 return Err(ConfigError::message(
                     ConfigErrorKind::KeyConflict,
                     format!(
@@ -83,6 +119,10 @@ impl Registry {
                 .with_space(space));
             }
         }
+        let section_info = declarations
+            .iter()
+            .map(|declaration| declaration.info())
+            .collect();
         let sections = declarations
             .into_iter()
             .map(|declaration| {
@@ -93,6 +133,7 @@ impl Registry {
         Ok(Self {
             space: space.into(),
             sections,
+            section_info,
             base_dir: None,
         })
     }
@@ -120,6 +161,8 @@ impl Registry {
     ///
     /// Missing required fields still fail. Read, syntax, type and validation failures
     /// never fall back to defaults. Paths follow the same rules as [`Self::load_required`].
+    /// A successful default-only load records [`ConfigWarning::MissingFile`];
+    /// inspect the snapshot's warnings to emit it through your own logger.
     pub fn load_optional(self, path: impl AsRef<Path>) -> Result<LoadedConfig, ConfigError> {
         self.load(path.as_ref(), false)
     }
@@ -128,7 +171,8 @@ impl Registry {
         let path = self.resolve_path(path).map_err(|error| {
             ConfigError::file(ConfigErrorKind::Read, path, error).with_space(&self.space)
         })?;
-        let file = Source::file(&path, required).map_err(|error| error.with_space(&self.space))?;
+        let (file, missing) =
+            Source::file(&path, required).map_err(|error| error.with_space(&self.space))?;
         let mut config = Figment::new();
         for section in &mut self.sections {
             let supplied = file
@@ -164,6 +208,12 @@ impl Registry {
         }
         Ok(LoadedConfig {
             space: self.space,
+            sections: self.section_info,
+            warnings: if missing {
+                vec![ConfigWarning::MissingFile { path: path.clone() }]
+            } else {
+                Vec::new()
+            },
             path,
             values,
         })

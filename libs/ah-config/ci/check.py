@@ -90,7 +90,7 @@ def check_packages(ctx):
 def check_package(ctx):
     """统一覆盖常规测试、独立使用方、宏错误契约与发布归档。"""
     ctx.cargo("格式检查", "fmt", "--all", "--", "--check", locked=False)
-    # 默认功能即全部功能；这些测试也执行五个案例中的行为测试和文档测试。
+    # 默认功能即全部功能；这些测试也执行案例中的行为测试和文档测试。
     ctx.cargo("全部功能测试", "test", "--workspace", "--all-features")
     ctx.cargo("无默认功能测试", "test", "-p", "ah-config", "--no-default-features")
     for release in (False, True):
@@ -110,6 +110,12 @@ def check_package(ctx):
     check_compile_failure(ctx, "wrong_value_default", "mismatched types", "E0308")
     for binary in ("implicit_default", "implicit_value_default"):
         check_compile_failure(ctx, binary, "Default", "E0277")
+    for binary in ("closed_parent", "value_parent", "enum_parent"):
+        check_compile_failure(ctx, binary, "must be a Config named struct without deny_unknown_fields", "E0277")
+    check_compile_failure(ctx, "owned_child", "child section key is already owned by a parent field", "E0080")
+    check_compile_failure(ctx, "dotted_key", "key must be a single path segment")
+    for binary in ("get_value", "get_plain_type"):
+        check_compile_failure(ctx, binary, "is not a configuration section", "E0277")
     ctx.cargo("Clippy 检查", "clippy", "--workspace", "--all-targets",
               "--all-features", "--", "-D", "warnings")
     ctx.env["RUSTDOCFLAGS"] = (ctx.env.get("RUSTDOCFLAGS", "") + " -D warnings").strip()

@@ -24,6 +24,7 @@ impl DefaultValue {
 #[derive(Default)]
 struct Options {
     key: Option<LitStr>,
+    parent: Option<syn::TypePath>,
     spaces: Option<Vec<LitStr>>,
     default: Option<DefaultValue>,
     validate: Option<ExprPath>,
@@ -69,6 +70,8 @@ impl Options {
                     set_once(&mut options.rename, meta.value()?.parse()?, &meta)?;
                 } else if meta.path.is_ident("key") && matches!(location, Location::Config) {
                     set_once(&mut options.key, meta.value()?.parse()?, &meta)?;
+                } else if meta.path.is_ident("parent") && matches!(location, Location::Config) {
+                    set_once(&mut options.parent, meta.value()?.parse()?, &meta)?;
                 } else if meta.path.is_ident("spaces") && matches!(location, Location::Config) {
                     if options.spaces.is_some() { return Err(meta.error("duplicate spaces option")); }
                     let content;
@@ -579,17 +582,54 @@ fn declaration(
     let key = args.key.as_ref().ok_or_else(|| {
         syn::Error::new_spanned(name, "Config requires #[config(key = \"section\")]")
     })?;
-    if !key.value().split('.').all(|part| {
-        !part.is_empty()
-            && part
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
-    }) {
+    if key.value().contains('.') {
         return Err(syn::Error::new_spanned(
             key,
-            "key must be dot-separated non-empty ASCII letters, digits, underscores or hyphens",
+            "key must be a single path segment; use parent = ParentConfig for child sections",
         ));
     }
+    if key.value().is_empty()
+        || !key
+            .value()
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+    {
+        return Err(syn::Error::new_spanned(
+            key,
+            "key must contain non-empty ASCII letters, digits, underscores or hyphens",
+        ));
+    }
+    let field_names: Vec<_> = if let Data::Struct(data) = &input.data {
+        data.fields
+            .iter()
+            .filter_map(|field| field.ident.as_ref().map(|ident| (field, ident)))
+            .map(|(field, ident)| {
+                let options = Options::parse(&field.attrs, Location::Field)?;
+                Ok(external_name(ident, options.rename))
+            })
+            .collect::<syn::Result<_>>()?
+    } else {
+        Vec::new()
+    };
+    let full_key = if let Some(parent) = &args.parent {
+        quote!({
+            const LENGTH: usize = <#parent as #runtime::ConfigSection>::KEY.len() + 1 + #key.len();
+            const BYTES: [u8; LENGTH] = #runtime::__private::child_key::<#parent, LENGTH>(#key);
+            match ::core::str::from_utf8(&BYTES) {
+                ::core::result::Result::Ok(key) => key,
+                ::core::result::Result::Err(_) => ::core::panic!("invalid configuration key"),
+            }
+        })
+    } else {
+        quote!(#key)
+    };
+    let extensible = if matches!(&input.data, Data::Struct(data) if matches!(data.fields, Fields::Named(_)))
+        && !args.deny_unknown_fields
+    {
+        quote!(impl #runtime::__private::ExtensibleSection for #name {})
+    } else {
+        TokenStream::new()
+    };
     let spaces = args
         .spaces
         .clone()
@@ -630,12 +670,22 @@ fn declaration(
     )).unwrap_or_else(|| quote!(::core::option::Option::None));
     let replace = matches!(input.data, Data::Enum(_));
     Ok(quote! {
+        impl #runtime::ConfigSection for #name {
+            const KEY: &'static str = #full_key;
+        }
+        impl #runtime::__private::SectionFields for #name {
+            const FIELDS: &'static [&'static str] = &[#(#field_names),*];
+        }
+        #extensible
         #[#runtime::__private::linkme::distributed_slice(#runtime::__private::DECLARATIONS)]
         #[linkme(crate = #runtime::__private::linkme)]
         static DECLARATION: #runtime::__private::Declaration =
             #runtime::__private::Declaration::new::<#name>(
-                #key, &[#(#spaces),*], || {
-                    #runtime::__private::prepare::<#name>(#key, #defaults, #validate, #replace)
+                <#name as #runtime::ConfigSection>::KEY, &[#(#spaces),*], || {
+                    #runtime::__private::prepare::<#name>(
+                        <#name as #runtime::ConfigSection>::KEY,
+                        #defaults, #validate, #replace
+                    )
                 }
             );
     })
@@ -787,7 +837,7 @@ mod tests {
                     #[config(key = "a..b")]
                     struct A {}
                 ),
-                "dot-separated",
+                "single path segment",
             ),
             (
                 quote!(

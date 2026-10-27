@@ -9,6 +9,10 @@ use std::{
 
 type TestResult = Result<(), Box<dyn Error>>;
 
+#[derive(ah_config::Config)]
+#[config(key = "service", spaces = ["namespace"])]
+struct Service {}
+
 #[derive(ah_config::ConfigValue, Debug, PartialEq)]
 #[config(tag = "kind", deny_unknown_fields)]
 enum Storage {
@@ -39,7 +43,7 @@ struct Wrapped(Storage);
 type OptionalStorage = Option<Box<Storage>>;
 
 #[derive(ah_config::Config)]
-#[config(key = "service.app", spaces = ["nested"], default = app_defaults())]
+#[config(parent = Service, key = "app", spaces = ["nested"], default = app_defaults())]
 struct App {
     pool: Pool,
     optional: OptionalStorage,

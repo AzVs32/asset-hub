@@ -1,7 +1,8 @@
 //! Declare a section, select a space, load a file, then get its typed configuration.
 //!
-//! Config registers HttpConfig at service.http. ConfigValue describes TlsConfig
-//! as a nested value, accessed through http.tls rather than a separate section.
+//! Config registers HttpConfig under ServiceConfig at service.http. ConfigValue
+//! describes TlsConfig as a nested value, accessed through http.tls. Trying to
+//! retrieve TlsConfig independently with get is a compile-time error.
 //! Rust fields and TOML keys share snake_case names.
 //!
 //! All fields except public_url are required; an omitted Option becomes None.
@@ -12,11 +13,15 @@
 //! Read basic.toml alongside this file.
 //! Run from the ah-config source root: `cargo run --example basic`.
 
-use ah_config::{ConfigErrorKind, Registry};
+use ah_config::Registry;
 use std::path::{Path, PathBuf};
 
 #[derive(ah_config::Config)]
-#[config(key = "service.http", validate = validate_http)]
+#[config(key = "service")]
+struct ServiceConfig {}
+
+#[derive(ah_config::Config)]
+#[config(parent = ServiceConfig, key = "http", validate = validate_http)]
 struct HttpConfig {
     host: String,
     port: u16,
@@ -54,11 +59,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(http.tls.certificate_file, Path::new("server.crt"));
     assert_eq!(http.tls.private_key_file, Path::new("server.key"));
 
-    // ConfigValue does not register an independently retrievable section.
-    assert_eq!(
-        config.get::<TlsConfig>().err().map(|error| error.kind()),
-        Some(ConfigErrorKind::NotRegistered)
-    );
     println!(
         "HTTPS endpoint: {}:{}, certificate: {}",
         http.host,
@@ -81,7 +81,7 @@ mod tests {
             .load_required("examples/basic_invalid.toml")
             .err()
             .ok_or("expected HTTP validation to fail")?;
-        assert_eq!(error.kind(), super::ConfigErrorKind::Validation);
+        assert_eq!(error.kind(), ah_config::ConfigErrorKind::Validation);
         Ok(())
     }
 }

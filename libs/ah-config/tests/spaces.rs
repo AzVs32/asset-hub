@@ -220,7 +220,7 @@ struct Parent {
     value: u16,
 }
 #[derive(ah_config::Config)]
-#[config(key = "parent.child", spaces = ["overlap"])]
+#[config(parent = Parent, key = "child", spaces = ["overlap"])]
 struct Child {
     value: u16,
 }
@@ -229,12 +229,6 @@ struct Child {
 fn conflicts_are_scoped_and_rejected_before_defaults_are_prepared() {
     assert_eq!(
         Registry::for_space("conflict")
-            .err()
-            .map(|error| error.kind()),
-        Some(Kind::KeyConflict)
-    );
-    assert_eq!(
-        Registry::for_space("overlap")
             .err()
             .map(|error| error.kind()),
         Some(Kind::KeyConflict)
@@ -263,4 +257,15 @@ fn unknown_and_invalid_space_names_do_not_silently_select_default() {
 #[config(key = "duplicate", spaces = ["conflict"])]
 struct DisabledDeclaration {
     value: DoesNotExist,
+}
+
+#[test]
+fn explicit_parent_and_child_sections_coexist() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("config.toml");
+    std::fs::write(&path, "[parent]\nvalue=1\n[parent.child]\nvalue=2")?;
+    let config = Registry::for_space("overlap")?.load_required(path)?;
+    assert_eq!(config.get::<Parent>()?.value, 1);
+    assert_eq!(config.get::<Child>()?.value, 2);
+    Ok(())
 }

@@ -16,6 +16,16 @@ parent field. Calling `Default::default()` does not run configuration validation
 `validate` accepts a function path. Field and variant names always use snake_case;
 `rename` sets one explicit name, including standard symbols such as MiB.
 
+Child sections use `#[config(parent = ParentConfig, key = "child")]`. Their parent
+must be a named `Config` struct without `deny_unknown_fields`; permission and
+collisions with parent fields are checked at compile time, including across
+crates. Keys are single path segments; replace bare dotted keys with explicit
+parent declarations. `ConfigValue` remains for fields owned by a section.
+
+`Config` also implements the public `ConfigSection` trait with the complete `KEY`.
+`LoadedConfig::get<T>()` requires this trait; ordinary types and `ConfigValue`
+types fail to compile. Generic read helpers can use `T: ah_config::ConfigSection`.
+
 See the [API reference](https://docs.rs/ah-config/latest/ah_config/),
 [usage guide](https://github.com/AzVs32/asset-hub/blob/main/libs/ah-config/README.md)
 and [examples](https://github.com/AzVs32/asset-hub/tree/main/libs/ah-config/examples).

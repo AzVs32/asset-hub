@@ -1,7 +1,9 @@
 # Independent consumer checks
 
 This unpublished fixture uses `ah-config` as `settings` and links a declaration-only
-extension crate. Neither consumer crate directly depends on Serde.
+extension crate. Neither consumer crate directly depends on Serde. The extension
+exports a parent configuration; the binary registers a child using that type,
+verifying cross-crate extension with the renamed dependency.
 
 All checks below are automated by `python3 ci/check.py` from the ah-config source
 root in the full repository. The entry point also validates the expected compiler
@@ -31,12 +33,23 @@ cargo check --bin missing_variant_default_field --locked --offline
 cargo check --bin wrong_value_default --locked --offline
 cargo check --bin implicit_default --locked --offline
 cargo check --bin implicit_value_default --locked --offline
+cargo check --bin closed_parent --locked --offline
+cargo check --bin value_parent --locked --offline
+cargo check --bin enum_parent --locked --offline
+cargo check --bin owned_child --locked --offline
+cargo check --bin dotted_key --locked --offline
+cargo check --bin get_value --locked --offline
+cargo check --bin get_plain_type --locked --offline
 ```
 
 The default checks cover duplicate implementations for both derives, required
 fields in automatically constructed defaults, expression return types, and the
 absence of an implicit `Default` when only field defaults are declared. The valid
-binary also uses the registered section's generated `Default` directly.
+binary also uses the registered section's generated `Default` directly. Parent
+checks reject closed parents across crates, ConfigValue and enum parents, child
+keys owned by a renamed parent field, and dotted keys bypassing parent checks.
+Typed reads reject ConfigValue and ordinary types at compile time. The valid
+binary exercises the public ConfigSection bound through a generic read helper.
 
 Select a binary explicitly when checking this fixture; checking all binaries also
 selects the intentionally invalid inputs. No command publishes.

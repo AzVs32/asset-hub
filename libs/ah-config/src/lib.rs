@@ -8,6 +8,16 @@
 //! optional file. All selected sections are decoded and validated before a
 //! [`LoadedConfig`] is returned. [`LoadedConfig::get`] shares an already loaded
 //! value through [`std::sync::Arc`]; it never reads the file again.
+//! [`Registry::spaces`] and [`Registry::declarations`] inspect linked metadata
+//! without evaluating defaults. Registries and snapshots expose selected
+//! declarations through `sections()`. Optional missing files use validated
+//! defaults and record [`ConfigWarning::MissingFile`] in the snapshot's warnings.
+//! Child sections use `#[config(parent = ParentConfig, key = "child")]`.
+//! Their parent must be a named `Config` struct without `deny_unknown_fields`;
+//! extension permission and collisions with parent fields are checked at compile
+//! time. Each key is one path segment, and each section is retrieved independently.
+//! [`ConfigSection`] is generated for section types and bounds typed reads;
+//! ordinary types and `ConfigValue` types cannot be passed to `get`.
 //!
 //! ```
 //! # #[cfg(feature = "derive")]
@@ -49,8 +59,9 @@
 //! not implicitly default a registered section or an unmarked parent field.
 //! Direct `Default` construction does not run configuration validation.
 //!
-//! [`ConfigError`] exposes optional file, section and space context. Its
-//! [`std::error::Error::source`] chain retains parser, I/O and validation causes.
+//! [`ConfigError`] displays available file, section, field and space context
+//! without input values. Its location getters provide the same structured data.
+//! Its [`std::error::Error::source`] chain retains parser, I/O and validation causes.
 //! Attribute placement and generated implementations are documented on the
 //! derive macros. The [usage guide and examples](https://github.com/AzVs32/asset-hub/tree/main/libs/ah-config)
 //! cover complete configuration scenarios.
@@ -63,18 +74,24 @@ mod loaded;
 mod merge;
 mod registry;
 mod source;
+mod warning;
 
 #[cfg(feature = "derive")]
 #[doc(inline)]
 pub use ah_config_macros::{Config, ConfigValue};
+pub use declaration::{ConfigSection, SectionInfo};
 pub use error::{ConfigError, ConfigErrorKind};
 pub use loaded::LoadedConfig;
 pub use registry::Registry;
+pub use warning::ConfigWarning;
 
 /// Implementation details used by the derive macro, not a manual registration API.
 #[doc(hidden)]
 pub mod __private {
-    pub use crate::declaration::{DECLARATIONS, Declaration, Prepared, ValidationError, prepare};
+    pub use crate::declaration::{
+        DECLARATIONS, Declaration, ExtensibleSection, Prepared, SectionFields, ValidationError,
+        child_key, prepare,
+    };
     pub use crate::merge::{DefaultMerge, MergeProbe, PrepareDefaults};
     pub use figment::value::Value;
     pub use linkme;
