@@ -1,3 +1,4 @@
+#![cfg(any(target_os = "linux", target_os = "windows"))]
 use ah_vfs::application::mount_runtime::MountRuntime;
 mod common;
 
@@ -31,7 +32,7 @@ impl Fixture {
         let driver: Arc<dyn Driver> = if memory {
             Arc::new(MemoryDriver::from_pool(pool.clone()).await?)
         } else {
-            Arc::new(vfs_driver_local::LocalDriver::from_pool(pool.clone()).await?)
+            Arc::new(NativeLocalDriver::from_pool(pool.clone()).await?)
         };
         let repository = Arc::new(SqliteMountRepository::from_pool(pool.clone()).await?);
         let mut catalog = DriverCatalog::new();

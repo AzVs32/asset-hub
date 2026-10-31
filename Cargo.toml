@@ -13,7 +13,8 @@ members = [
     "crates/vfs-plugin-wasm",
     "crates/vfs-plugin-loader",
     "crates/vfs-integration-tests",
-    "plugins/vfs-driver-local",
+    "plugins/vfs-driver-local-linux",
+    "plugins/vfs-driver-local-windows",
     "plugins/vfs-driver-s3",
     "plugins/vfs-driver-webdav",
 ]

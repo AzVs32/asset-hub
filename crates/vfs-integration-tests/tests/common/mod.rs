@@ -8,20 +8,28 @@ use ah_vfs::{
     domain::StoragePath,
 };
 
+#[cfg(target_os = "linux")]
+pub use vfs_driver_local_linux::LinuxLocalDriver as NativeLocalDriver;
+#[cfg(target_os = "windows")]
+pub use vfs_driver_local_windows::WindowsLocalDriver as NativeLocalDriver;
+
 pub type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 pub struct LocalPlugin {
     pub driver: std::sync::Arc<vfs_plugin_host::PluginDriver>,
     task: tokio::task::JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>>,
 }
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 impl Drop for LocalPlugin {
     fn drop(&mut self) {
         self.task.abort();
     }
 }
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 impl LocalPlugin {
     pub async fn start(pool: sqlx::SqlitePool) -> TestResult<Self> {
-        let native = std::sync::Arc::new(vfs_driver_local::LocalDriver::from_pool(pool).await?);
+        let native = std::sync::Arc::new(NativeLocalDriver::from_pool(pool).await?);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let endpoint = format!("http://{}", listener.local_addr()?);
         let task = tokio::spawn(vfs_plugin_grpc_server::serve(

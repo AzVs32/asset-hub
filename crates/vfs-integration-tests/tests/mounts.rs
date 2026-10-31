@@ -1,3 +1,4 @@
+#![cfg(any(target_os = "linux", target_os = "windows"))]
 mod common;
 
 use ah_vfs::{

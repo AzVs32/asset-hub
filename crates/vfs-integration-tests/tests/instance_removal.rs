@@ -1,3 +1,4 @@
+#![cfg(any(target_os = "linux", target_os = "windows"))]
 use ah_vfs::application::mount_runtime::MountRuntime;
 mod common;
 
@@ -49,7 +50,7 @@ impl Fixture {
                 .clone();
             (driver, target, other)
         } else {
-            let driver = Arc::new(vfs_driver_local::LocalDriver::from_pool(pool.clone()).await?);
+            let driver = Arc::new(NativeLocalDriver::from_pool(pool.clone()).await?);
             let target = driver
                 .create_instance(common::local_config(root.path())?)
                 .await?

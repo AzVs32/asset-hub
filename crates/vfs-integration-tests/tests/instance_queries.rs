@@ -1,3 +1,4 @@
+#![cfg(any(target_os = "linux", target_os = "windows"))]
 mod common;
 
 use ah_vfs::{
@@ -30,7 +31,7 @@ impl Fixture {
             )
         } else {
             (
-                Arc::new(vfs_driver_local::LocalDriver::from_pool(pool.clone()).await?),
+                Arc::new(NativeLocalDriver::from_pool(pool.clone()).await?),
                 "local_instances",
             )
         };

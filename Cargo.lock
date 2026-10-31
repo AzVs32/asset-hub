@@ -3032,7 +3032,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "vfs-driver-local"
+name = "vfs-driver-local-linux"
 version = "0.1.0"
 dependencies = [
  "ah-config",
@@ -3051,6 +3051,28 @@ dependencies = [
  "vfs-plugin-grpc",
  "vfs-plugin-grpc-server",
  "vfs-plugin-host",
+]
+
+[[package]]
+name = "vfs-driver-local-windows"
+version = "0.1.0"
+dependencies = [
+ "ah-config",
+ "ah-id",
+ "ah-vfs",
+ "cap-fs-ext",
+ "cap-std",
+ "semver",
+ "serde_json",
+ "sqlx",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "vfs-driver-kit",
+ "vfs-plugin-grpc",
+ "vfs-plugin-grpc-server",
+ "vfs-plugin-host",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3114,7 +3136,8 @@ dependencies = [
  "sqlx",
  "tempfile",
  "tokio",
- "vfs-driver-local",
+ "vfs-driver-local-linux",
+ "vfs-driver-local-windows",
  "vfs-driver-memory",
  "vfs-plugin-grpc",
  "vfs-plugin-grpc-server",
