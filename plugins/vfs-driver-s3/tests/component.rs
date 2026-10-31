@@ -1,4 +1,4 @@
-//! Build the guest with `cargo build -p vfs-driver-s3 --target
+//! From this plugin's directory, build the guest with `cargo build --locked --target
 //! wasm32-unknown-unknown` before explicitly running these external-server tests.
 mod common;
 use ah_vfs::{
@@ -91,7 +91,7 @@ async fn component(origins: Vec<String>) -> Result<Arc<PluginDriver>> {
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../target/wasm32-unknown-unknown/debug/vfs_driver_s3.wasm")
+                .join("target/wasm32-unknown-unknown/debug/vfs_driver_s3.wasm")
         });
     let bytes = std::fs::read(path)?;
     Ok(Arc::new(

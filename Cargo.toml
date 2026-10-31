@@ -12,13 +12,8 @@ members = [
     "crates/vfs-plugin-grpc-server",
     "crates/vfs-plugin-wasm",
     "crates/vfs-plugin-loader",
-    "crates/vfs-integration-tests",
-    "plugins/vfs-driver-local-linux",
-    "plugins/vfs-driver-local-windows",
-    "plugins/vfs-driver-s3",
-    "plugins/vfs-driver-webdav",
 ]
-exclude = ["libs", "crates-local"]
+exclude = ["libs", "plugins", "crates-local"]
 
 [workspace.package]
 version = "0.1.0"

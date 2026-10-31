@@ -1,17 +1,22 @@
 [package]
 name = "vfs-driver-webdav"
 description = "Portable WebDAV VFS Component Model plugin"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-repository.workspace = true
-authors.workspace = true
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/AzVs32/asset-hub"
+authors = ["AzVs"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
-[lints]
-workspace = true
+[workspace]
+resolver = "3"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "warn"
+panic = "warn"
 
 [dependencies]
 vfs-plugin-protocol = { path = "../../crates/vfs-plugin-protocol", version = "0.1.0" }
