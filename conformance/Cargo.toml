@@ -1,0 +1,27 @@
+[workspace]
+resolver = "3"
+members = ["model", "native", "wasm", "suite"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+conformance-model = { path = "model", version = "0.1.0" }
+conformance-native = { path = "native", version = "0.1.0" }
+ah-vfs = { path = "../crates/ah-vfs", version = "0.1.0" }
+vfs-plugin-protocol = { path = "../crates/vfs-plugin-protocol", version = "0.1.0" }
+vfs-plugin-codec = { path = "../crates/vfs-plugin-codec", version = "0.1.0" }
+vfs-plugin-host = { path = "../crates/vfs-plugin-host", version = "0.1.0" }
+vfs-plugin-grpc = { path = "../crates/vfs-plugin-grpc", version = "0.1.0" }
+vfs-plugin-grpc-server = { path = "../crates/vfs-plugin-grpc-server", version = "0.1.0" }
+vfs-plugin-wasm = { path = "../crates/vfs-plugin-wasm", version = "0.1.0" }
+vfs-plugin-loader = { path = "../crates/vfs-plugin-loader", version = "0.1.0" }
+serde_json = "1.0.154"
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "net", "io-util", "sync", "time", "fs"] }
+
+[profile.release]
+opt-level = "s"
+strip = "debuginfo"
+

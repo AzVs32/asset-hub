@@ -147,6 +147,14 @@ struct State {
     generation: String,
 }
 impl State {
+    async fn drop_resource(&mut self, value: ResourceAny) -> Result<(), DriverError> {
+        // A destructor is guest execution too. Its trap invalidates this store,
+        // including when the primary operation already returned successfully.
+        value
+            .resource_drop_async(&mut self.store)
+            .await
+            .map_err(|_| StorageError::new(StorageErrorKind::StaleHandle).into())
+    }
     fn resource(&mut self, kind: p::ResourceKind, handle: u64) -> Result<ResourceAny, DriverError> {
         let r = self
             .resources
@@ -164,10 +172,14 @@ impl State {
         value: ResourceAny,
     ) -> Result<u64, DriverError> {
         if self.resources.len() >= p::MAX_RESOURCES {
-            let _ = value.resource_drop_async(&mut self.store).await;
+            self.drop_resource(value).await?;
             return Err(StorageError::new(StorageErrorKind::CapacityExceeded).into());
         }
-        self.next = self.next.checked_add(1).ok_or_else(c::invalid)?;
+        let Some(next) = self.next.checked_add(1) else {
+            self.drop_resource(value).await?;
+            return Err(c::invalid());
+        };
+        self.next = next;
         self.resources.insert(
             self.next,
             Resource {
@@ -187,10 +199,7 @@ impl State {
             .collect();
         for id in expired {
             if let Some(r) = self.resources.remove(&id) {
-                r.value
-                    .resource_drop_async(&mut self.store)
-                    .await
-                    .map_err(|_| c::invalid())?;
+                self.drop_resource(r.value).await?;
             }
         }
         let g = self.bindings.assethub_vfs_driver();
@@ -199,7 +208,7 @@ impl State {
                 let bytes = g
                     .call_describe(&mut self.store)
                     .await
-                    .map_err(|_| c::invalid())?;
+                    .map_err(|_| StorageError::new(StorageErrorKind::StaleHandle))?;
                 let mut description: p::Description = json(&bytes)?;
                 description.generation = self.generation.clone();
                 Value::Description { description }
@@ -257,8 +266,14 @@ impl State {
                     .storage()
                     .call_info(&mut self.store, resource)
                     .await
-                    .map_err(|_| c::invalid())?;
-                let info = json(&bytes)?;
+                    .map_err(|_| StorageError::new(StorageErrorKind::StaleHandle))?;
+                let info = match json(&bytes) {
+                    Ok(info) => info,
+                    Err(error) => {
+                        self.drop_resource(resource).await?;
+                        return Err(error);
+                    }
+                };
                 let handle = self.insert(p::ResourceKind::Storage, resource).await?;
                 Value::Storage { handle, info }
             }
@@ -361,25 +376,22 @@ impl State {
                     result(g.writer().call_abort(&mut self.store, resource).await, None)
                         .map(|()| Value::Unit)
                 };
-                let dropped = resource.resource_drop_async(&mut self.store).await;
+                self.drop_resource(resource).await?;
                 match outcome {
-                    Ok(value) => {
-                        dropped.map_err(|_| c::invalid())?;
-                        value
-                    }
+                    Ok(value) => value,
                     Err(error) => return Err(error),
                 }
             }
             Op::Release { kind, handle } => {
+                if self
+                    .resources
+                    .get(&handle)
+                    .is_some_and(|resource| resource.kind != kind)
+                {
+                    return Err(c::invalid());
+                }
                 if let Some(resource) = self.resources.remove(&handle) {
-                    if resource.kind != kind {
-                        return Err(c::invalid());
-                    }
-                    resource
-                        .value
-                        .resource_drop_async(&mut self.store)
-                        .await
-                        .map_err(|_| c::invalid())?;
+                    self.drop_resource(resource.value).await?;
                 }
                 Value::Unit
             }

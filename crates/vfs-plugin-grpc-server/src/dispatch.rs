@@ -1,15 +1,20 @@
 //! Native server dispatch with generation-scoped, bounded, expiring resources.
-use vfs_plugin_codec as c;
 use ah_vfs::{
     application::{dto::*, port::*},
     domain::*,
 };
+use futures_util::FutureExt;
 use std::{
     collections::HashMap,
-    sync::Arc,
+    panic::AssertUnwindSafe,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 use tokio::sync::Mutex;
+use vfs_plugin_codec as c;
 use vfs_plugin_protocol::{self as p, Operation as Op, Value};
 
 type Reader = Arc<Mutex<Box<dyn StorageFileReader>>>;
@@ -26,6 +31,17 @@ struct Resources {
     writers: HashMap<u64, Slot<Writer>>,
 }
 impl Resources {
+    fn kind(&self, handle: u64) -> Option<p::ResourceKind> {
+        if self.storage.contains_key(&handle) {
+            Some(p::ResourceKind::Storage)
+        } else if self.readers.contains_key(&handle) {
+            Some(p::ResourceKind::Reader)
+        } else if self.writers.contains_key(&handle) {
+            Some(p::ResourceKind::Writer)
+        } else {
+            None
+        }
+    }
     fn expire(&mut self, ttl: Duration) {
         self.storage.retain(|_, s| s.touched.elapsed() < ttl);
         self.readers.retain(|_, s| s.touched.elapsed() < ttl);
@@ -69,6 +85,7 @@ pub struct Dispatcher {
     initialized: Mutex<bool>,
     resources: Mutex<Resources>,
     ttl: Duration,
+    poisoned: AtomicBool,
 }
 impl Dispatcher {
     pub fn new(driver: Arc<dyn Driver>) -> Result<Self, DriverError> {
@@ -88,6 +105,7 @@ impl Dispatcher {
             initialized: Mutex::new(false),
             resources: Mutex::new(Resources::default()),
             ttl,
+            poisoned: AtomicBool::new(false),
         })
     }
     pub async fn expire(&self) {
@@ -109,6 +127,33 @@ impl Dispatcher {
         get(&mut self.resources.lock().await.storage, handle)
     }
     pub async fn call(
+        &self,
+        generation: &str,
+        op: Op,
+        data: Vec<u8>,
+    ) -> Result<p::Reply, DriverError> {
+        if self.poisoned.load(Ordering::Acquire) && !matches!(&op, Op::Release { .. }) {
+            return Err(StorageError::new(StorageErrorKind::StaleHandle).into());
+        }
+        let mutates = op.mutates();
+        // An unwinding backend must not reset the RPC stream and masquerade as
+        // caller cancellation. Never expose its panic payload or replay a write.
+        AssertUnwindSafe(self.call_inner(generation, op, data))
+            .catch_unwind()
+            .await
+            .unwrap_or_else(|_| {
+                // Retained handles must never resume against possibly corrupted
+                // backend state. Releases remain available for best-effort cleanup.
+                self.poisoned.store(true, Ordering::Release);
+                Err(StorageError::new(if mutates {
+                    StorageErrorKind::OutcomeUnknown
+                } else {
+                    StorageErrorKind::Unavailable
+                })
+                .into())
+            })
+    }
+    async fn call_inner(
         &self,
         generation: &str,
         op: Op,
@@ -328,6 +373,9 @@ impl Dispatcher {
             }
             Op::Release { kind, handle } => {
                 let mut resources = self.resources.lock().await;
+                if resources.kind(handle).is_some_and(|actual| actual != kind) {
+                    return Err(c::invalid());
+                }
                 match kind {
                     p::ResourceKind::Storage => {
                         resources.storage.remove(&handle);

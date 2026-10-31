@@ -1,0 +1,10 @@
+[package]
+name = "conformance-model"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+vfs-plugin-protocol.workspace = true
+serde_json.workspace = true
+

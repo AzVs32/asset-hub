@@ -3135,6 +3135,7 @@ name = "vfs-plugin-grpc-server"
 version = "0.1.0"
 dependencies = [
  "ah-vfs",
+ "futures-util",
  "serde_json",
  "tokio",
  "tokio-stream",
