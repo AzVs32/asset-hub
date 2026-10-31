@@ -1,0 +1,21 @@
+[package]
+name = "vfs-integration-tests"
+description = "Cross-driver integration tests for Asset Hub VFS"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+ah-vfs = { path = "../ah-vfs", features = ["testing"] }
+vfs-driver-local = { path = "../vfs-driver-local", version = "0.1.0" }
+vfs-driver-memory = { path = "../vfs-driver-memory", version = "0.1.0" }
+serde_json = "1.0.154"
+sqlx = { version = "0.9.0", default-features = false, features = ["sqlite-bundled", "runtime-tokio"] }
+tempfile = "3.27.0"
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "sync"] }

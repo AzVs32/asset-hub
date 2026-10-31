@@ -1,0 +1,15 @@
+[package]
+name = "vfs-driver-kit"
+description = "Shared instance persistence helpers for Asset Hub storage drivers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+ah-vfs = { path = "../ah-vfs", version = "0.1.0" }
+sqlx = { version = "0.9.0", default-features = false, features = ["sqlite-bundled", "runtime-tokio"] }

@@ -1,7 +1,13 @@
 [workspace]
 resolver = "3"
-members = ["crates/*"]
-exclude = ["libs"]
+members = [
+    "crates/ah-vfs",
+    "crates/vfs-driver-local",
+    "crates/vfs-driver-memory",
+    "crates/vfs-driver-kit",
+    "crates/vfs-integration-tests",
+]
+exclude = ["libs", "crates-local"]
 
 [workspace.package]
 version = "0.1.0"
@@ -9,6 +15,14 @@ edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/AzVs32/asset-hub"
 authors = ["AzVs"]
+
+[workspace.dependencies]
+ah-id = "0.1.0"
+bon = "3.10.2"
+getset = "0.1.7"
+derive_more = { version = "2.1.1", default-features = false }
+thiserror = "2.0.21"
+semver = "1.0.28"
 
 [workspace.lints.clippy]
 unwrap_used = "deny"

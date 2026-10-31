@@ -1,0 +1,131 @@
+//! Instance-local requests and results, independent of global VFS views.
+
+use super::{DEFAULT_DIR_PAGE_LIMIT, validate_dir_page_limit};
+use crate::domain::{StorageError, StoragePath};
+use std::{num::NonZeroUsize, time::SystemTime};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StorageEntryKind {
+    File,
+    Dir,
+    Symlink,
+    Other,
+}
+
+/// Metadata of an entry without following its final symbolic link.
+#[derive(Clone, Debug)]
+pub struct StorageEntry {
+    pub path: StoragePath,
+    pub kind: StorageEntryKind,
+    /// Byte length for regular files; absent for other entry kinds.
+    pub size: Option<u64>,
+    pub modified: Option<SystemTime>,
+}
+
+pub struct StorageStatEntryRequest {
+    pub path: StoragePath,
+}
+
+/// Immediate children in ascending UTF-8 name order.
+///
+/// `after` is the previous page's last name, exclusively. This is a live listing,
+/// not a snapshot; concurrent changes can affect later pages.
+pub struct StorageDirQuery {
+    pub path: StoragePath,
+    pub after: Option<String>,
+    /// Maximum entries per page, bounded by [`super::MAX_DIR_PAGE_LIMIT`].
+    pub limit: NonZeroUsize,
+}
+impl StorageDirQuery {
+    pub fn new(path: StoragePath) -> Self {
+        Self {
+            path,
+            after: None,
+            limit: DEFAULT_DIR_PAGE_LIMIT,
+        }
+    }
+
+    /// Validate the page limit and exclusive child-name cursor before backend I/O.
+    /// Oversized pages return InvalidRequest; invalid cursors or joined paths
+    /// return InvalidPath with their original validation error as the source.
+    pub fn validate(&self) -> Result<(), StorageError> {
+        validate_dir_page_limit(self.limit)?;
+        if let Some(after) = &self.after {
+            self.path.join(after)?;
+        }
+        Ok(())
+    }
+}
+pub struct StorageDirPage {
+    pub entries: Vec<StorageEntry>,
+    /// Pass as `after`; `None` means there are no more entries now.
+    pub next_after: Option<String>,
+}
+
+/// Read a byte range. An offset beyond EOF or zero length gives an empty stream.
+pub struct StorageReadFileRequest {
+    pub path: StoragePath,
+    pub offset: u64,
+    pub length: Option<u64>,
+}
+impl StorageReadFileRequest {
+    pub fn new(path: StoragePath) -> Self {
+        Self {
+            path,
+            offset: 0,
+            length: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StorageWriteFileMode {
+    /// Fail if any destination entry exists when opening or publishing the write.
+    CreateNew,
+    /// Publish a complete replacement; an existing regular file may be replaced.
+    Replace,
+}
+/// A complete-file write published only by `StorageFileWriter::commit`.
+pub struct StorageWriteFileRequest {
+    /// Require atomic complete-file publication. Never emulate with incremental overwrite.
+    pub require_atomic_publish: bool,
+    pub path: StoragePath,
+    pub mode: StorageWriteFileMode,
+}
+impl StorageWriteFileRequest {
+    pub fn new(path: StoragePath) -> Self {
+        Self {
+            path,
+            require_atomic_publish: false,
+            mode: StorageWriteFileMode::CreateNew,
+        }
+    }
+}
+
+/// Create a backend directory without overwriting file contents.
+/// Recursive requests accept existing directories, including the instance root;
+/// an existing file at the target or in its parent chain returns NotDir.
+/// Non-recursive requests require existing parents and an absent target;
+/// existing targets, including the instance root, return AlreadyExists.
+pub struct StorageCreateDirRequest {
+    pub path: StoragePath,
+    /// Create missing parents and accept existing directories when true.
+    pub recursive: bool,
+}
+/// Remove a file, symbolic link, or empty directory. The root is protected.
+pub struct StorageRemoveEntryRequest {
+    pub path: StoragePath,
+}
+
+/// Rename within an instance. Both roots are protected; parents must exist.
+/// For supported requests with identical non-root paths, a missing source returns
+/// NotFound. An existing source returns AlreadyExists when replace is false,
+/// or succeeds without modification when replace is true.
+pub struct StorageMoveEntryRequest {
+    pub source: StoragePath,
+    pub destination: StoragePath,
+    /// Atomically replace a compatible destination entry when true.
+    /// False requires an absent destination and atomic no-replace rename,
+    /// which may be unsupported by a backend.
+    pub replace: bool,
+}
