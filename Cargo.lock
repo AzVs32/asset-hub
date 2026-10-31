@@ -3091,6 +3091,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "vfs-driver-webdav"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "percent-encoding",
+ "quick-xml",
+ "serde",
+ "serde_json",
+ "time",
+ "url",
+ "vfs-plugin-protocol",
+ "wit-bindgen",
+]
+
+[[package]]
 name = "vfs-integration-tests"
 version = "0.1.0"
 dependencies = [

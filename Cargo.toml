@@ -15,6 +15,7 @@ members = [
     "crates/vfs-integration-tests",
     "plugins/vfs-driver-local",
     "plugins/vfs-driver-s3",
+    "plugins/vfs-driver-webdav",
 ]
 exclude = ["libs", "crates-local"]
 
