@@ -2,8 +2,7 @@ name: ah-id CI
 
 on:
   push:
-    paths: ['libs/ah-id/**', '.github/checks/**', '.github/workflows/ah-id.yml']
-  pull_request:
+    branches: [main]
     paths: ['libs/ah-id/**', '.github/checks/**', '.github/workflows/ah-id.yml']
   workflow_dispatch:
 

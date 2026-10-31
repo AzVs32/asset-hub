@@ -2,8 +2,7 @@ name: ah-config CI
 
 on:
   push:
-    paths: ['libs/ah-config/**', '.github/checks/**', '.github/workflows/ah-config.yml']
-  pull_request:
+    branches: [main]
     paths: ['libs/ah-config/**', '.github/checks/**', '.github/workflows/ah-config.yml']
   workflow_dispatch:
 

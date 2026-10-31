@@ -1,7 +1,7 @@
 /data/
-/conf/
-/temp/
+/config/
 /target/
+/crates-local/
 
 # RustRover
 .idea/
@@ -25,6 +25,7 @@
 # AI assistant local state
 .codex/
 .claude/
+.agents/
 
 # Environments & Secrets
 .env
