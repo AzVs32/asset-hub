@@ -10,6 +10,35 @@ use ah_vfs::{
 
 pub type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
+pub struct LocalPlugin {
+    pub driver: std::sync::Arc<vfs_plugin_host::PluginDriver>,
+    task: tokio::task::JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>>,
+}
+impl Drop for LocalPlugin {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+impl LocalPlugin {
+    pub async fn start(pool: sqlx::SqlitePool) -> TestResult<Self> {
+        let native = std::sync::Arc::new(vfs_driver_local::LocalDriver::from_pool(pool).await?);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let endpoint = format!("http://{}", listener.local_addr()?);
+        let task = tokio::spawn(vfs_plugin_grpc_server::serve(
+            listener,
+            native,
+            "isolated-mount-test",
+            std::future::pending(),
+        ));
+        let transport =
+            vfs_plugin_grpc::GrpcTransport::connect(endpoint, "isolated-mount-test").await?;
+        let driver = std::sync::Arc::new(
+            vfs_plugin_host::PluginDriver::connect(std::sync::Arc::new(transport)).await?,
+        );
+        Ok(Self { driver, task })
+    }
+}
+
 pub fn local_config(
     root: &std::path::Path,
 ) -> TestResult<ah_vfs::application::dto::InstanceConfig> {

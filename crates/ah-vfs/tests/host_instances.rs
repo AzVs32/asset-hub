@@ -135,18 +135,66 @@ impl InstanceProvisioner for Provisioner {
         &self,
         _from: u32,
         config: InstanceConfig,
-    ) -> Result<InstanceConfig, DriverError> {
-        self.migrations.fetch_add(1, Ordering::SeqCst);
-        if self.fail_migration.load(Ordering::SeqCst) {
-            return Err(StorageError::with_source(
-                StorageErrorKind::Backend,
-                std::io::Error::other("secret-migration-diagnostic"),
-            )
-            .into());
-        }
-        Ok(config)
+    ) -> DriverFuture<'_, InstanceConfig> {
+        Box::pin(async move {
+            self.migrations.fetch_add(1, Ordering::SeqCst);
+            if self.fail_migration.load(Ordering::SeqCst) {
+                return Err(StorageError::with_source(
+                    StorageErrorKind::Backend,
+                    std::io::Error::other("secret-migration-diagnostic"),
+                )
+                .into());
+            }
+            Ok(config)
+        })
     }
 }
+
+struct AsyncProvisioner {
+    validation: Provisioner,
+    entered: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+    migrations: AtomicUsize,
+    result: Result<InstanceConfig, StorageErrorKind>,
+    prepare_error: Option<StorageErrorKind>,
+}
+impl AsyncProvisioner {
+    fn new(result: Result<InstanceConfig, StorageErrorKind>) -> Self {
+        Self {
+            validation: Provisioner::default(),
+            entered: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
+            migrations: AtomicUsize::new(0),
+            result,
+            prepare_error: None,
+        }
+    }
+}
+impl InstanceProvisioner for AsyncProvisioner {
+    fn prepare(&self, config: InstanceConfig) -> DriverFuture<'_, PreparedConfig> {
+        if let Some(kind) = self.prepare_error {
+            return Box::pin(async move { Err(StorageError::new(kind).into()) });
+        }
+        self.validation.prepare(config)
+    }
+
+    fn migrate_config(
+        &self,
+        _from: u32,
+        _config: InstanceConfig,
+    ) -> DriverFuture<'_, InstanceConfig> {
+        Box::pin(async move {
+            self.migrations.fetch_add(1, Ordering::SeqCst);
+            self.entered.notify_one();
+            self.release.notified().await;
+            self.result.clone().map_err(|kind| {
+                StorageError::with_source(kind, std::io::Error::other("private-plugin-diagnostic"))
+                    .into()
+            })
+        })
+    }
+}
+
 fn schema(secret: bool) -> InstanceConfigSchema {
     BTreeMap::from([
         ("type".into(), "object".into()),
@@ -398,7 +446,7 @@ async fn schema_migration_is_per_instance_and_independent_of_record_revision() -
         .err()
         .ok_or("migration failure")?;
     assert!(
-        matches!(error,DriverError::Storage(error) if error.kind()==StorageErrorKind::InvalidData && !format!("{error:?}").contains("secret-migration-diagnostic"))
+        matches!(error,DriverError::Storage(error) if error.kind()==StorageErrorKind::Backend && !format!("{error:?}").contains("secret-migration-diagnostic"))
     );
     assert_eq!(
         f.records
@@ -423,6 +471,168 @@ async fn schema_migration_is_per_instance_and_independent_of_record_revision() -
     let migrated = f.records.get(reference).await?.ok_or("record")?;
     assert_eq!(migrated.config_version(), 2);
     assert_eq!(migrated.revision(), 5);
+    Ok(())
+}
+
+#[tokio::test]
+async fn cancelled_async_migration_leaves_records_unchanged_and_can_be_retried() -> TestResult {
+    let f = Fixture::new(true, true).await?;
+    let created = f
+        .service()
+        .create_instance(f.driver.info.key(), config())
+        .await?;
+    let reference = f.reference(created.id.clone());
+    let before = f.records.get(reference.clone()).await?.ok_or("record")?;
+    let mut fields = config().into_object();
+    fields.insert("label".into(), " migrated ".into());
+    let provisioner = Arc::new(AsyncProvisioner::new(Ok(fields.into())));
+    let registry = HostInstanceRegistry::new(
+        &info(2, true)?,
+        provisioner.clone(),
+        f.records.clone(),
+        f.cipher.clone(),
+    );
+
+    let mut opening = Box::pin(registry.open_context(created.id.clone()));
+    tokio::select! {
+        result = &mut opening => return Err(format!("migration did not wait: {result:?}").into()),
+        () = provisioner.entered.notified() => {}
+    }
+    // Other record reads remain available while plugin execution is suspended.
+    assert!(registry.get(created.id.clone()).await?.is_some());
+    assert_eq!(provisioner.validation.prepares.load(Ordering::SeqCst), 0);
+    drop(opening);
+    let cancelled = f.records.get(reference.clone()).await?.ok_or("record")?;
+    assert_eq!(cancelled.config_json(), before.config_json());
+    assert_eq!(cancelled.config_version(), before.config_version());
+    assert_eq!(cancelled.revision(), before.revision());
+    assert_eq!(cancelled.updated_at(), before.updated_at());
+
+    provisioner.release.notify_one();
+    let context = registry.open_context(created.id).await?;
+    assert_eq!(context.config().ok_or("config")?["label"], "migrated");
+    let migrated = f.records.get(reference).await?.ok_or("record")?;
+    assert_eq!(migrated.config_version(), 2);
+    assert_eq!(migrated.revision(), before.revision() + 1);
+    assert_eq!(provisioner.migrations.load(Ordering::SeqCst), 2);
+    assert_eq!(provisioner.validation.prepares.load(Ordering::SeqCst), 1);
+    assert_eq!(f.driver.opens.load(Ordering::SeqCst), 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn async_migration_preserves_runtime_errors_and_rejects_invalid_results() -> TestResult {
+    let f = Fixture::new(true, true).await?;
+    let created = f
+        .service()
+        .create_instance(f.driver.info.key(), config())
+        .await?;
+    let reference = f.reference(created.id.clone());
+    let before = f.records.get(reference.clone()).await?.ok_or("record")?;
+    for kind in [
+        StorageErrorKind::Unavailable,
+        StorageErrorKind::TimedOut,
+        StorageErrorKind::Cancelled,
+        StorageErrorKind::OutcomeUnknown,
+        StorageErrorKind::StaleHandle,
+        StorageErrorKind::Backend,
+    ] {
+        for fail_prepare in [false, true] {
+            let mut provisioner = AsyncProvisioner::new(if fail_prepare {
+                Ok(config())
+            } else {
+                Err(kind)
+            });
+            provisioner.prepare_error = fail_prepare.then_some(kind);
+            provisioner.release.notify_one();
+            let registry = HostInstanceRegistry::new(
+                &info(2, true)?,
+                Arc::new(provisioner),
+                f.records.clone(),
+                f.cipher.clone(),
+            );
+            let error = registry
+                .open_context(created.id.clone())
+                .await
+                .err()
+                .ok_or("migration failure")?;
+            assert_eq!(error.storage_error().ok_or("category")?.kind(), kind);
+            assert!(!format!("{error:?}").contains("private-plugin-diagnostic"));
+            let unchanged = f.records.get(reference.clone()).await?.ok_or("record")?;
+            assert_eq!(unchanged.config_json(), before.config_json());
+            assert_eq!(unchanged.config_version(), before.config_version());
+            assert_eq!(unchanged.revision(), before.revision());
+        }
+    }
+
+    let mut fields = config().into_object();
+    fields.insert("label".into(), 42.into());
+    let provisioner = AsyncProvisioner::new(Ok(fields.into()));
+    provisioner.release.notify_one();
+    let registry = HostInstanceRegistry::new(
+        &info(2, true)?,
+        Arc::new(provisioner),
+        f.records.clone(),
+        f.cipher.clone(),
+    );
+    let error = registry
+        .open_context(created.id)
+        .await
+        .err()
+        .ok_or("invalid migrated config")?;
+    assert_eq!(
+        error.storage_error().ok_or("category")?.kind(),
+        StorageErrorKind::InvalidData
+    );
+    let unchanged = f.records.get(reference).await?.ok_or("record")?;
+    assert_eq!(unchanged.config_json(), before.config_json());
+    assert_eq!(unchanged.config_version(), before.config_version());
+    assert_eq!(unchanged.revision(), before.revision());
+    Ok(())
+}
+
+#[tokio::test]
+async fn async_migration_cannot_overwrite_an_update_made_while_waiting() -> TestResult {
+    let f = Fixture::new(true, true).await?;
+    let created = f
+        .service()
+        .create_instance(f.driver.info.key(), config())
+        .await?;
+    let reference = f.reference(created.id.clone());
+    let provisioner = Arc::new(AsyncProvisioner::new(Ok(config())));
+    let registry = HostInstanceRegistry::new(
+        &info(2, true)?,
+        provisioner.clone(),
+        f.records.clone(),
+        f.cipher.clone(),
+    );
+    let mut opening = Box::pin(registry.open_context(created.id));
+    tokio::select! {
+        result = &mut opening => return Err(format!("migration did not wait: {result:?}").into()),
+        () = provisioner.entered.notified() => {}
+    }
+    let mut fields = config().into_object();
+    fields.insert("label".into(), "competing-update".into());
+    f.service()
+        .update_instance(&reference, fields.into())
+        .await?;
+    provisioner.release.notify_one();
+    let error = opening.await.err().ok_or("revision conflict")?;
+    assert_eq!(
+        error.storage_error().ok_or("category")?.kind(),
+        StorageErrorKind::Conflict
+    );
+    let retained = f.records.get(reference.clone()).await?.ok_or("record")?;
+    assert_eq!(retained.config_version(), 1);
+    assert_eq!(retained.revision(), 2);
+    assert_eq!(
+        f.service()
+            .get_instance(&reference)
+            .await?
+            .ok_or("instance")?
+            .details["label"],
+        "competing-update"
+    );
     Ok(())
 }
 
@@ -805,7 +1015,7 @@ impl InstanceProvisioner for DefaultProvisioner {
 async fn optional_provisioner_defaults_are_explicit_and_side_effect_free() -> TestResult {
     let provisioner = DefaultProvisioner;
     let config = config();
-    assert_eq!(provisioner.migrate_config(1, config.clone())?, config);
+    assert_eq!(provisioner.migrate_config(1, config.clone()).await?, config);
     assert!(
         matches!(provisioner.test_connection(&config).await,Err(DriverError::Storage(error)) if error.kind()==StorageErrorKind::UnsupportedOperation)
     );

@@ -33,6 +33,10 @@ impl DriverCatalog {
         if self.drivers.contains_key(&key) {
             return Err(DriverCatalogError::AlreadyRegistered(key));
         }
+        if let Some(schema) = driver.info().instance_config_schema() {
+            super::schema::validate_instance_config_schema(schema)
+                .map_err(DriverCatalogError::InvalidDeclaration)?;
+        }
         driver
             .initialize(settings)
             .await

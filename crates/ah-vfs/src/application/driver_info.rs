@@ -23,7 +23,8 @@ pub struct DriverInfo {
     /// Implementation upper bound; inspect the opened Storage for instance support.
     #[getset(get_copy = "pub")]
     capabilities: StorageCapabilities,
-    /// Stable creation metadata. None explicitly disables instance creation.
+    /// Stable creation metadata using the shared annotation profile.
+    /// Incompatible metadata prevents registration. None disables creation.
     instance_config_schema: Option<InstanceConfigSchema>,
     /// Plugin-wide settings metadata, independent of instance creation parameters.
     settings_schema: Option<DriverSettingsSchema>,
@@ -39,7 +40,8 @@ impl DriverInfo {
     pub fn settings_schema(&self) -> Option<&DriverSettingsSchema> {
         self.settings_schema.as_ref()
     }
-    /// Borrow immutable creation metadata; None means creation is unsupported.
+    /// Borrow immutable creation metadata under `assethub.config.annotations.v1`;
+    /// None means creation is unsupported.
     pub fn instance_config_schema(&self) -> Option<&InstanceConfigSchema> {
         self.instance_config_schema.as_ref()
     }

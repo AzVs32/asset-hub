@@ -1,0 +1,186 @@
+use ah_vfs::{
+    application::{dto::*, port::*},
+    domain::*,
+};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::{Duration, UNIX_EPOCH},
+};
+use vfs_plugin_host::{PluginDriver, Transport, TransportFuture, convert};
+use vfs_plugin_protocol::{self as p, Operation as Op, Value};
+type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
+enum Fault {
+    Version,
+    Capabilities,
+    Commit,
+    Reader,
+}
+struct Peer {
+    fault: Fault,
+    commits: AtomicUsize,
+}
+impl Transport for Peer {
+    fn call<'a>(&'a self, _generation: &'a str, op: Op, _data: Vec<u8>) -> TransportFuture<'a> {
+        Box::pin(async move {
+            Ok(p::Reply::new(match op {
+                Op::Describe => Value::Description {
+                    description: p::Description {
+                        major: if matches!(self.fault, Fault::Version) {
+                            2
+                        } else {
+                            1
+                        },
+                        minor: 0,
+                        required_features: vec![],
+                        features: vec![],
+                        required_host_capabilities: vec![],
+                        instance_schema_profile: p::INSTANCE_SCHEMA_PROFILE.into(),
+                        generation: "one-runtime".into(),
+                        key: "opaque".into(),
+                        name: "Opaque peer".into(),
+                        version: "1.0.0".into(),
+                        child_mounts: true,
+                        capabilities: vec!["stat".into(), "range_read".into(), "write_new".into()],
+                        ownership: p::Ownership::Plugin,
+                        settings_schema: None,
+                        instance_schema: None,
+                        config_version: 1,
+                    },
+                },
+                Op::Open { .. } => Value::Storage {
+                    handle: 1,
+                    info: p::StorageInfo {
+                        capabilities: if matches!(self.fault, Fault::Capabilities) {
+                            vec!["rename_replace".into()]
+                        } else {
+                            vec!["stat".into(), "range_read".into(), "write_new".into()]
+                        },
+                        chunk_size: 65536,
+                    },
+                },
+                Op::Write { .. } => Value::Writer { handle: 2 },
+                Op::Read { .. } => Value::Reader { handle: 3 },
+                Op::ReaderNext { .. } => Value::Chunk { eof: false },
+                Op::Commit { .. } => {
+                    self.commits.fetch_add(1, Ordering::Relaxed);
+                    Value::Unit
+                }
+                _ => Value::Unit,
+            }))
+        })
+    }
+}
+async fn peer(fault: Fault) -> Result<(PluginDriver, Arc<Peer>)> {
+    let peer = Arc::new(Peer {
+        fault,
+        commits: AtomicUsize::new(0),
+    });
+    let driver = PluginDriver::connect(peer.clone()).await?;
+    driver.initialize(Default::default()).await?;
+    Ok((driver, peer))
+}
+#[tokio::test]
+async fn incompatible_versions_and_false_capabilities_are_rejected() -> Result {
+    let error = peer(Fault::Version)
+        .await
+        .err()
+        .ok_or("version rejection")?;
+    assert_eq!(
+        error
+            .downcast_ref::<DriverError>()
+            .ok_or("driver error")?
+            .storage_error()
+            .ok_or("category")?
+            .kind(),
+        StorageErrorKind::UnsupportedOperation
+    );
+    let (driver, _) = peer(Fault::Capabilities).await?;
+    let error = driver
+        .open(InstanceId::parse("instance")?.into())
+        .await
+        .err()
+        .ok_or("capability rejection")?;
+    assert_eq!(
+        error.storage_error().ok_or("category")?.kind(),
+        StorageErrorKind::InvalidData
+    );
+    Ok(())
+}
+#[tokio::test]
+async fn malformed_commit_response_is_unknown_and_is_never_replayed() -> Result {
+    let (driver, peer) = peer(Fault::Commit).await?;
+    let storage = driver.open(InstanceId::parse("instance")?.into()).await?;
+    let mut writer = storage
+        .write_file(StorageWriteFileRequest::new(StoragePath::parse("file")?))
+        .await?;
+    writer.write_chunk(b"accepted").await?;
+    assert_eq!(
+        writer.commit().await.err().ok_or("unknown outcome")?.kind(),
+        StorageErrorKind::OutcomeUnknown
+    );
+    assert_eq!(
+        writer.commit().await.err().ok_or("terminal")?.kind(),
+        StorageErrorKind::SessionClosed
+    );
+    assert_eq!(peer.commits.load(Ordering::Relaxed), 1);
+    Ok(())
+}
+#[tokio::test]
+async fn empty_non_eof_chunks_close_the_read_session() -> Result {
+    let (driver, _) = peer(Fault::Reader).await?;
+    let storage = driver.open(InstanceId::parse("instance")?.into()).await?;
+    let mut reader = storage
+        .read_file(StorageReadFileRequest::new(StoragePath::parse("file")?))
+        .await?;
+    assert_eq!(
+        reader
+            .next_chunk()
+            .await
+            .err()
+            .ok_or("invalid chunk")?
+            .kind(),
+        StorageErrorKind::InvalidData
+    );
+    assert_eq!(
+        reader.next_chunk().await.err().ok_or("closed")?.kind(),
+        StorageErrorKind::SessionClosed
+    );
+    Ok(())
+}
+#[test]
+fn timestamps_and_unknown_error_codes_preserve_boundary_semantics() -> Result {
+    for time in [
+        UNIX_EPOCH,
+        UNIX_EPOCH - Duration::from_nanos(1),
+        UNIX_EPOCH - Duration::from_millis(1500),
+        UNIX_EPOCH + Duration::from_nanos(1),
+    ] {
+        let entry = StorageEntry {
+            path: StoragePath::parse("file")?,
+            kind: StorageEntryKind::File,
+            size: Some(u64::MAX),
+            modified: Some(time),
+        };
+        let encoded = convert::entry(entry)?;
+        let bytes = serde_json::to_vec(&encoded)?;
+        let decoded = convert::decode_entry(serde_json::from_slice(&bytes)?)?;
+        assert_eq!(decoded.modified, Some(time));
+        assert_eq!(decoded.size, Some(u64::MAX));
+    }
+    assert_eq!(
+        convert::error_kind("future_unknown_category"),
+        StorageErrorKind::Backend
+    );
+    assert!(convert::decode_capabilities(&["permissions_write".into()]).is_err());
+    let mut caps = convert::decode_capabilities(&["future_optional_capability".into()])?;
+    assert_eq!(caps, StorageCapabilities::default());
+    caps.stat_entry = true;
+    assert_eq!(
+        convert::decode_capabilities(&convert::capabilities(caps))?,
+        caps
+    );
+    Ok(())
+}

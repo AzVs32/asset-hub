@@ -14,6 +14,8 @@ pub enum DriverCatalogError {
     NotRegistered(DriverKey),
     #[error("driver initialization failed")]
     Initialization(#[source] crate::domain::DriverError),
+    #[error("driver declaration is incompatible with the host")]
+    InvalidDeclaration(#[source] crate::domain::DriverError),
 }
 
 impl std::fmt::Debug for DriverCatalogError {
@@ -23,6 +25,10 @@ impl std::fmt::Debug for DriverCatalogError {
             Self::NotRegistered(key) => f.debug_tuple("NotRegistered").field(key).finish(),
             Self::Initialization(_) => f
                 .debug_tuple("Initialization")
+                .field(&"[REDACTED]")
+                .finish(),
+            Self::InvalidDeclaration(_) => f
+                .debug_tuple("InvalidDeclaration")
                 .field(&"[REDACTED]")
                 .finish(),
         }

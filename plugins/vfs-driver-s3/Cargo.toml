@@ -1,0 +1,35 @@
+[package]
+name = "vfs-driver-s3"
+description = "Portable S3 VFS Component Model plugin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+vfs-plugin-protocol = { path = "../../crates/vfs-plugin-protocol", version = "0.1.0" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+wit-bindgen = "0.63"
+sha2 = "0.10.9"
+hmac = "0.12"
+hex = "0.4.3"
+url = "2.5.8"
+quick-xml = { version = "0.38", features = ["serialize"] }
+time = { version = "0.3", features = ["formatting", "parsing"] }
+
+[dev-dependencies]
+ah-vfs = { path = "../../crates/ah-vfs", version = "0.1.0", features = ["testing"] }
+vfs-plugin-host = { path = "../../crates/vfs-plugin-host", version = "0.1.0" }
+vfs-plugin-wasm = { path = "../../crates/vfs-plugin-wasm", version = "0.1.0" }
+sqlx = { version = "0.9.0", default-features = false, features = ["sqlite-bundled", "runtime-tokio"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "time"] }
+aes-gcm = { version = "0.10.3", default-features = false, features = ["aes", "alloc"] }

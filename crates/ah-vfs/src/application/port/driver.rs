@@ -13,9 +13,12 @@ pub type DriverFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, DriverError
 /// Queries expose public instance records without opening storage or returning
 /// backend-specific Rust types.
 /// Storage handles and their streams must keep backend resources alive.
+/// Plugin adapters follow the loading and resource contract in this port module.
 pub trait Driver: Send + Sync {
     /// Borrow this driver's declarations. All fields must remain stable for the
     /// driver's lifetime, including while it is registered or opened handles exist.
+    /// Remote adapters fetch and validate these before construction; this getter
+    /// never performs I/O and initialization must not replace the declarations.
     fn info(&self) -> &DriverInfo;
 
     /// Initialize plugin-wide resources once before registration. Settings are

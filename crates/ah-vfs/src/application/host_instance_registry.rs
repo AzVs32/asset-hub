@@ -4,6 +4,7 @@ mod envelope;
 pub(super) mod record;
 
 use envelope::Envelope;
+use super::schema::{has_annotation, validate_annotations};
 
 use super::{
     driver_info::DriverInfo,
@@ -40,52 +41,14 @@ fn cipher_failure(source: DriverError) -> DriverError {
 fn invalid() -> DriverError {
     failure(StorageErrorKind::InvalidData)
 }
+fn migration_failure(source: DriverError) -> DriverError {
+    match source {
+        error @ DriverError::Storage(_) => error,
+        error => StorageError::with_source(StorageErrorKind::InvalidData, error).into(),
+    }
+}
 fn pointer(base: &str, key: &str) -> String {
     format!("{base}/{}", key.replace('~', "~0").replace('/', "~1"))
-}
-fn has_annotation(value: &Value, name: &str) -> bool {
-    match value {
-        Value::Object(map) => {
-            map.get(name) == Some(&Value::Bool(true))
-                || map.values().any(|v| has_annotation(v, name))
-        }
-        Value::Array(values) => values.iter().any(|v| has_annotation(v, name)),
-        _ => false,
-    }
-}
-// Fail closed for annotations hidden in combinators, references or patterns whose
-// instance locations cannot be determined by this deliberately bounded walker.
-fn validate_annotations(schema: &Value) -> Result<(), DriverError> {
-    if let Some(object) = schema.as_object() {
-        for (key, value) in object {
-            match key.as_str() {
-                "properties" => {
-                    let properties = value.as_object().ok_or_else(invalid)?;
-                    for child in properties.values() {
-                        validate_annotations(child)?;
-                    }
-                }
-                "items" | "additionalProperties" => {
-                    if value.is_object() {
-                        validate_annotations(value)?;
-                    } else if !value.is_boolean() {
-                        return Err(failure(StorageErrorKind::UnsupportedOperation));
-                    }
-                }
-                "$ref" => return Err(failure(StorageErrorKind::UnsupportedOperation)),
-                "x-secret" | "x-immutable" => {
-                    if !value.is_boolean() {
-                        return Err(invalid());
-                    }
-                }
-                _ if has_annotation(value, "x-secret") || has_annotation(value, "x-immutable") => {
-                    return Err(failure(StorageErrorKind::UnsupportedOperation));
-                }
-                _ => {}
-            }
-        }
-    }
-    Ok(())
 }
 fn paths(schema: &Value, value: &Value, name: &str, base: &str, output: &mut Vec<String>) {
     if schema.get(name) == Some(&Value::Bool(true)) {
@@ -362,8 +325,10 @@ impl HostInstanceRegistry {
         self.repository.update(next, old.revision()).await?;
         Ok(info)
     }
-    /// Decrypt and migrate only the requested instance. Failed migrations return
-    /// InvalidData and do not change records or interfere with other instances.
+    /// Decrypt and migrate only the requested instance. Invalid configuration
+    /// returns InvalidData; runtime failures retain their storage category.
+    /// Failure or cancellation before persistence leaves records unchanged.
+    /// Cancellation during persistence can have an unknown write outcome.
     pub async fn open_context(&self, id: InstanceId) -> Result<OpenContext, DriverError> {
         let (_, config) = self.load_current(&id).await?;
         Ok(OpenContext::host_managed(id, config))
@@ -383,19 +348,14 @@ impl HostInstanceRegistry {
             config = self
                 .provisioner
                 .migrate_config(record.config_version(), config)
-                .map_err(|source| {
-                    StorageError::with_source(StorageErrorKind::InvalidData, source)
-                })?;
+                .await
+                .map_err(migration_failure)?;
             let prepared = self
                 .provisioner
                 .prepare(config.clone())
                 .await
-                .map_err(|source| {
-                    StorageError::with_source(StorageErrorKind::InvalidData, source)
-                })?;
-            let envelope = self.encode(id, prepared, &config).await.map_err(|source| {
-                StorageError::with_source(StorageErrorKind::InvalidData, source)
-            })?;
+                .map_err(migration_failure)?;
+            let envelope = self.encode(id, prepared, &config).await?;
             let migrated = InstanceRecord::from_envelope(
                 self.reference(id.clone()),
                 self.version,

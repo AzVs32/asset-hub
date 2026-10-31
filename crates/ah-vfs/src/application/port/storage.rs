@@ -20,6 +20,7 @@ pub type StorageFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, StorageErr
 pub trait Storage: Send + Sync {
     /// Effective instance support, stable for this handle. Authorization and
     /// path/device-specific restrictions are checked by the operation itself.
+    /// Plugin proxies cache this declaration during open; this getter performs no I/O.
     fn capabilities(&self) -> StorageCapabilities;
 
     /// A typed extension must be present exactly when permissions support is
@@ -33,7 +34,8 @@ pub trait Storage: Send + Sync {
         None
     }
 
-    /// Preferred transfer chunk size, shared by reads and writes.
+    /// Preferred transfer chunk size, shared by reads and writes. Plugin proxies
+    /// cache a validated, bounded value during open; this getter performs no I/O.
     fn chunk_size(&self) -> NonZeroUsize;
 
     /// Retrieve entry metadata without following its final symbolic link.
@@ -92,6 +94,9 @@ pub trait StorageFileReader: Send {
 /// a session error. Dropping an unfinished session must not publish its data;
 /// cleanup is best effort. Cancellation during commit may leave publication's
 /// outcome unknown; callers must inspect the target before retrying.
+/// Once execution starts, cancellation of commit or abort makes the local session
+/// terminal. A remote resource is tied to its original runtime generation and must not be
+/// transparently reopened after a crash. See the port module's plugin contract.
 pub trait StorageFileWriter: Send {
     /// Accept bytes for the pending write, including a final partial chunk.
     fn write_chunk<'a>(&'a mut self, data: &'a [u8]) -> StorageFuture<'a, ()>;

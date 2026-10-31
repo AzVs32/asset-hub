@@ -52,9 +52,11 @@ impl std::fmt::Debug for InstanceConfig {
 }
 
 /// A driver-owned JSON Schema object describing its creation parameters.
-/// It uses object/properties/required descriptors and may include constraints
-/// or secret-field annotations. This is discovery metadata, not a promise that
-/// the host evaluates a schema dialect. Authoritative validation stays in Driver.
+/// The `assethub.config.annotations.v1` profile locates x-secret/x-immutable
+/// through properties, items and additionalProperties. References and annotations
+/// inside other schema constructs are unsupported and rejected before registration.
+/// The host does not evaluate a complete JSON Schema dialect: authoritative
+/// value validation stays in the driver or provisioner.
 pub type InstanceConfigSchema = BTreeMap<String, serde_json::Value>;
 
 /// Reject unknown parameter names without copying their values into errors.

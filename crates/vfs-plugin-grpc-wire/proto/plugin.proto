@@ -1,0 +1,21 @@
+syntax = "proto3";
+package assethub.vfs.v1;
+
+// Control is the versioned, tagged UTF-8 JSON value contract in vfs-plugin-protocol.
+// Data is binary and bounded independently. No Rust type layout crosses this API.
+message Call {
+  string generation = 1;
+  bytes control = 2;
+  bytes data = 3;
+}
+message Reply {
+  bytes control = 1;
+  bytes data = 2;
+  bool failed = 3;
+}
+service Plugin {
+  rpc Invoke(Call) returns (Reply);
+  // One stream contains bounded chunks for a single reader or writer resource.
+  rpc Read(Call) returns (stream Reply);
+  rpc Write(stream Call) returns (Reply);
+}

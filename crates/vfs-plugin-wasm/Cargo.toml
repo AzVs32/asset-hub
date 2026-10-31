@@ -1,0 +1,24 @@
+[package]
+name = "vfs-plugin-wasm"
+description = "WIT Component Model host for VFS plugins"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+ah-vfs = { path = "../ah-vfs", version = "0.1.0" }
+vfs-plugin-protocol = { path = "../vfs-plugin-protocol", version = "0.1.0" }
+vfs-plugin-host = { path = "../vfs-plugin-host", version = "0.1.0" }
+serde_json = "1.0.154"
+serde = "1.0.229"
+wasmtime = { version = "50", default-features = false, features = ["async", "component-model", "cranelift", "runtime", "std"] }
+wit-component = "0.262"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+getrandom = "0.4.3"
+tokio = { version = "1.54.1", features = ["rt", "sync", "time"] }
+

@@ -8,5 +8,6 @@ pub mod mount_runtime;
 pub mod port;
 pub mod service;
 pub mod session;
+pub mod schema;
 
 pub mod host_instance_registry;

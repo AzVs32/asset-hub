@@ -1,0 +1,181 @@
+//! End-to-end checks use the actual native plugin executable and a TCP channel.
+use ah_vfs::{
+    application::{driver_catalog::DriverCatalog, dto::*, port::*},
+    domain::*,
+};
+use std::{
+    io::{BufRead, BufReader},
+    process::{Child, Command, Stdio},
+    sync::Arc,
+};
+use vfs_plugin_grpc::GrpcTransport;
+use vfs_plugin_host::PluginDriver;
+type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
+struct Process {
+    child: Child,
+    endpoint: String,
+}
+impl Drop for Process {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+impl Process {
+    fn start(database: &std::path::Path, address: &str) -> Result<Self> {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_vfs-driver-local"))
+            .arg(address)
+            .arg(database)
+            .env("VFS_PLUGIN_TOKEN", "isolated-test-token")
+            .stdout(Stdio::piped())
+            .spawn()?;
+        let mut line = String::new();
+        BufReader::new(child.stdout.take().ok_or("stdout")?).read_line(&mut line)?;
+        if line.trim().is_empty() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("plugin failed to start".into());
+        }
+        Ok(Self {
+            child,
+            endpoint: format!("http://{}", line.trim()),
+        })
+    }
+    async fn driver(&self) -> Result<Arc<PluginDriver>> {
+        Ok(Arc::new(
+            PluginDriver::connect(Arc::new(
+                GrpcTransport::connect(self.endpoint.clone(), "isolated-test-token").await?,
+            ))
+            .await?,
+        ))
+    }
+}
+async fn storage(driver: &dyn Driver, root: &std::path::Path) -> Result<Arc<dyn Storage>> {
+    let instance = driver
+        .instances()
+        .registry()?
+        .create(InstanceConfig::from([(
+            "root_path".into(),
+            root.to_str().ok_or("utf8")?.into(),
+        )]))
+        .await?;
+    Ok(driver.open(instance.id.into()).await?)
+}
+#[tokio::test]
+async fn native_process_passes_shared_storage_contracts_over_grpc() -> Result {
+    let workspace = tempfile::tempdir()?;
+    let process = Process::start(&workspace.path().join("records.sqlite"), "127.0.0.1:0")?;
+    let driver = process.driver().await?;
+    let mut catalog = DriverCatalog::new();
+    catalog.register(driver.clone(), Default::default()).await?;
+    let root = tempfile::tempdir()?;
+    ah_vfs::testing::assert_range_read_contract(
+        storage(driver.as_ref(), root.path()).await?.as_ref(),
+    )
+    .await?;
+    let root = tempfile::tempdir()?;
+    ah_vfs::testing::assert_create_dir_contract(
+        storage(driver.as_ref(), root.path()).await?.as_ref(),
+    )
+    .await?;
+    let root = tempfile::tempdir()?;
+    ah_vfs::testing::assert_pagination_contract(
+        storage(driver.as_ref(), root.path()).await?.as_ref(),
+    )
+    .await?;
+    let root = tempfile::tempdir()?;
+    ah_vfs::testing::assert_same_path_rename_contract(
+        storage(driver.as_ref(), root.path()).await?.as_ref(),
+    )
+    .await?;
+    let root = tempfile::tempdir()?;
+    let storage = storage(driver.as_ref(), root.path()).await?;
+    let mut writer = storage
+        .write_file(StorageWriteFileRequest::new(StoragePath::parse(
+            "retained",
+        )?))
+        .await?;
+    writer.write_chunk(b"independent session").await?;
+    let key = driver.info().key().clone();
+    catalog.unregister(&key)?;
+    drop(driver);
+    drop(catalog);
+    writer.commit().await?;
+    let mut reader = storage
+        .read_file(StorageReadFileRequest::new(StoragePath::parse("retained")?))
+        .await?;
+    drop(storage);
+    let mut bytes = Vec::new();
+    while let Some(chunk) = reader.next_chunk().await? {
+        bytes.extend(chunk);
+    }
+    assert_eq!(bytes, b"independent session");
+    assert!(reader.next_chunk().await?.is_none());
+    let denied = PluginDriver::connect(Arc::new(
+        GrpcTransport::connect(process.endpoint.clone(), "wrong-token").await?,
+    ))
+    .await
+    .err()
+    .ok_or("authentication must fail")?;
+    assert_eq!(
+        denied.storage_error().ok_or("category")?.kind(),
+        StorageErrorKind::PermissionDenied
+    );
+    Ok(())
+}
+#[tokio::test]
+async fn process_restart_rejects_old_resources_without_replaying_commit() -> Result {
+    let workspace = tempfile::tempdir()?;
+    let database = workspace.path().join("records.sqlite");
+    let mut process = Process::start(&database, "127.0.0.1:0")?;
+    let address = process
+        .endpoint
+        .strip_prefix("http://")
+        .ok_or("address")?
+        .to_owned();
+    let driver = process.driver().await?;
+    let mut catalog = DriverCatalog::new();
+    catalog.register(driver.clone(), Default::default()).await?;
+    let root = tempfile::tempdir()?;
+    let storage = storage(driver.as_ref(), root.path()).await?;
+    let mut pending = storage
+        .write_file(StorageWriteFileRequest::new(StoragePath::parse(
+            "uncertain",
+        )?))
+        .await?;
+    pending.write_chunk(b"unpublished").await?;
+    process.child.kill()?;
+    process.child.wait()?;
+    let error = pending.commit().await.err().ok_or("commit must fail")?;
+    assert_eq!(error.kind(), StorageErrorKind::OutcomeUnknown);
+    assert_eq!(
+        pending.commit().await.err().ok_or("terminal")?.kind(),
+        StorageErrorKind::SessionClosed
+    );
+    assert!(!root.path().join("uncertain").exists());
+    let restarted = Process::start(&database, &address)?;
+    let fresh = restarted.driver().await?;
+    let mut fresh_catalog = DriverCatalog::new();
+    fresh_catalog
+        .register(fresh.clone(), Default::default())
+        .await?;
+    let old = storage
+        .stat_entry(StorageStatEntryRequest {
+            path: StoragePath::root(),
+        })
+        .await
+        .err()
+        .ok_or("old generation must fail")?;
+    assert_eq!(old.kind(), StorageErrorKind::StaleHandle);
+    assert_eq!(
+        fresh
+            .instances()
+            .registry()?
+            .list(InstanceQuery::default())
+            .await?
+            .instances
+            .len(),
+        1
+    );
+    Ok(())
+}

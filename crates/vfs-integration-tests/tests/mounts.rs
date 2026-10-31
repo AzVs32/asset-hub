@@ -55,20 +55,23 @@ async fn read(entries: &EntryService, value: &str) -> TestResult<Vec<u8>> {
 }
 
 #[tokio::test]
-async fn local_and_memory_work_through_the_same_unmodified_services_and_traits() -> TestResult {
+async fn local_plugin_and_builtin_memory_share_the_same_services_and_traits() -> TestResult {
     let pool = pool().await?;
     let dir = tempfile::tempdir()?;
-    let local = Arc::new(vfs_driver_local::LocalDriver::from_pool(pool.clone()).await?);
-    let local_instance = local
-        .create_instance(common::local_config(dir.path())?)
-        .await?;
+    let plugin = LocalPlugin::start(pool.clone()).await?;
+    let local = plugin.driver.clone();
     let memory = Arc::new(MemoryDriver::from_pool(pool.clone()).await?);
     let memory_instance = memory
         .create_instance(common::memory_config(4, CapacityUnit::KiB))
         .await?;
     let mut catalog = DriverCatalog::new();
-    ah_vfs::testing::register_driver(&mut catalog, local)?;
-    ah_vfs::testing::register_driver(&mut catalog, memory.clone())?;
+    catalog.register(local.clone(), Default::default()).await?;
+    catalog.register(memory.clone(), Default::default()).await?;
+    let local_instance = local
+        .instances()
+        .registry()?
+        .create(common::local_config(dir.path())?)
+        .await?;
     let catalog = Arc::new(catalog);
     let repository = Arc::new(SqliteMountRepository::from_pool(pool.clone()).await?);
     let runtime = Arc::new(MountRuntime::new(repository, catalog));

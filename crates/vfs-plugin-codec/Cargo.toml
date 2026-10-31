@@ -1,0 +1,16 @@
+[package]
+name = "vfs-plugin-codec"
+description = "Checked VFS value conversions shared by host proxies and plugin servers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+ah-vfs = { path = "../ah-vfs", version = "0.1.0" }
+vfs-plugin-protocol = { path = "../vfs-plugin-protocol", version = "0.1.0" }
+semver.workspace = true

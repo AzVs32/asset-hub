@@ -2,7 +2,7 @@
 use super::DriverFuture;
 use crate::{
     application::dto::InstanceConfig,
-    domain::{DriverError, StorageError, StorageErrorKind},
+    domain::{StorageError, StorageErrorKind},
 };
 use std::collections::BTreeMap;
 
@@ -43,13 +43,17 @@ pub trait InstanceProvisioner: Send + Sync {
     fn test_connection<'a>(&'a self, _config: &'a InstanceConfig) -> DriverFuture<'a, ()> {
         Box::pin(async { Err(StorageError::new(StorageErrorKind::UnsupportedOperation).into()) })
     }
-    /// Upgrade one older schema. The host revalidates and persists the result;
-    /// failure prevents only this instance from opening. Default leaves input intact.
+    /// Upgrade one older schema without persisting records or opening storage.
+    /// This may await plugin execution. Cancellation must leave host records
+    /// unchanged, and a retry may receive the same input. The host revalidates
+    /// the result before a revision-checked write. Invalid configuration becomes
+    /// InvalidData; storage/transport errors retain their categories. The default
+    /// leaves input intact for backward-compatible schemas.
     fn migrate_config(
         &self,
         _from_version: u32,
         config: InstanceConfig,
-    ) -> Result<InstanceConfig, DriverError> {
-        Ok(config)
+    ) -> DriverFuture<'_, InstanceConfig> {
+        Box::pin(async move { Ok(config) })
     }
 }

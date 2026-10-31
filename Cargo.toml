@@ -2,10 +2,19 @@
 resolver = "3"
 members = [
     "crates/ah-vfs",
-    "crates/vfs-driver-local",
     "crates/vfs-driver-memory",
     "crates/vfs-driver-kit",
+    "crates/vfs-plugin-protocol",
+    "crates/vfs-plugin-codec",
+    "crates/vfs-plugin-host",
+    "crates/vfs-plugin-grpc-wire",
+    "crates/vfs-plugin-grpc",
+    "crates/vfs-plugin-grpc-server",
+    "crates/vfs-plugin-wasm",
+    "crates/vfs-plugin-loader",
     "crates/vfs-integration-tests",
+    "plugins/vfs-driver-local",
+    "plugins/vfs-driver-s3",
 ]
 exclude = ["libs", "crates-local"]
 
