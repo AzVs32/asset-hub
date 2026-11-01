@@ -2,7 +2,7 @@
 //! Adding a backend changes entries and artifacts, never this Rust type.
 use serde::{Deserialize, Serialize};
 use std::{fmt, path::PathBuf};
-use vfs_plugin_protocol::Object;
+use vfs_plugin_protocol::JsonObject;
 use vfs_plugin_wasm::HostGrants;
 
 /// Configure `[[vfs.plugins.entries]]` in a host using ah-config. The enclosing
@@ -23,7 +23,7 @@ pub struct PluginSpec {
     pub source: PluginSource,
     /// Plugin-defined values, validated by initialize using its described schema.
     #[serde(default)]
-    pub settings: Object,
+    pub settings: JsonObject,
 }
 impl fmt::Debug for PluginSpec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

@@ -26,12 +26,12 @@ impl Transport for Peer {
     fn call<'a>(&'a self, _generation: &'a str, op: Op, _data: Vec<u8>) -> TransportFuture<'a> {
         Box::pin(async move {
             Ok(p::Reply::new(match op {
-                Op::Describe => Value::Description {
-                    description: p::Description {
+                Op::Describe(p::Empty {}) => Value::Description(
+                    p::Description {
                         major: if matches!(self.fault, Fault::Version) {
-                            2
+                            p::PROTOCOL_MAJOR + 1
                         } else {
-                            1
+                            p::PROTOCOL_MAJOR
                         },
                         minor: 0,
                         required_features: vec![],
@@ -43,32 +43,41 @@ impl Transport for Peer {
                         name: "Opaque peer".into(),
                         version: "1.0.0".into(),
                         child_mounts: true,
-                        capabilities: vec!["stat".into(), "range_read".into(), "write_new".into()],
-                        ownership: p::Ownership::Plugin,
+                        capabilities: vec![
+                            p::Capability::Stat as i32,
+                            p::Capability::RangeRead as i32,
+                            p::Capability::WriteNew as i32,
+                        ],
+                        ownership: p::Ownership::Plugin as i32,
                         settings_schema: None,
                         instance_schema: None,
                         config_version: 1,
-                    },
-                },
-                Op::Open { .. } => Value::Storage {
+                    }
+                    .into(),
+                ),
+                Op::Open(_) => Value::Storage(p::Storage {
                     handle: 1,
-                    info: p::StorageInfo {
+                    info: Some(p::StorageInfo {
                         capabilities: if matches!(self.fault, Fault::Capabilities) {
-                            vec!["rename_replace".into()]
+                            vec![p::Capability::RenameReplace as i32]
                         } else {
-                            vec!["stat".into(), "range_read".into(), "write_new".into()]
+                            vec![
+                                p::Capability::Stat as i32,
+                                p::Capability::RangeRead as i32,
+                                p::Capability::WriteNew as i32,
+                            ]
                         },
                         chunk_size: 65536,
-                    },
-                },
-                Op::Write { .. } => Value::Writer { handle: 2 },
-                Op::Read { .. } => Value::Reader { handle: 3 },
-                Op::ReaderNext { .. } => Value::Chunk { eof: false },
-                Op::Commit { .. } => {
+                    }),
+                }),
+                Op::Write(_) => Value::Writer(p::Handle { handle: 2 }),
+                Op::Read(_) => Value::Reader(p::Handle { handle: 3 }),
+                Op::ReaderNext(_) => Value::Chunk(p::Chunk { eof: false }),
+                Op::Commit(_) => {
                     self.commits.fetch_add(1, Ordering::Relaxed);
-                    Value::Unit
+                    Value::Unit(p::Empty {})
                 }
-                _ => Value::Unit,
+                _ => Value::Unit(p::Empty {}),
             }))
         })
     }
@@ -165,17 +174,23 @@ fn timestamps_and_unknown_error_codes_preserve_boundary_semantics() -> Result {
             modified: Some(time),
         };
         let encoded = convert::entry(entry)?;
-        let bytes = serde_json::to_vec(&encoded)?;
-        let decoded = convert::decode_entry(serde_json::from_slice(&bytes)?)?;
+        let bytes = p::encode_reply(Ok(p::Reply::new(Value::Entry(encoded))))?;
+        let value = p::decode_reply(&bytes)?
+            .map_err(|error| convert::driver_error(error, None))?
+            .into_value()?;
+        let Value::Entry(entry) = value else {
+            return Err("entry reply".into());
+        };
+        let decoded = convert::decode_entry(entry)?;
         assert_eq!(decoded.modified, Some(time));
         assert_eq!(decoded.size, Some(u64::MAX));
     }
     assert_eq!(
-        convert::error_kind("future_unknown_category"),
+        convert::error_kind(p::FailureCode::Unspecified),
         StorageErrorKind::Backend
     );
-    assert!(convert::decode_capabilities(&["permissions_write".into()]).is_err());
-    let mut caps = convert::decode_capabilities(&["future_optional_capability".into()])?;
+    assert!(convert::decode_capabilities(&[p::Capability::PermissionsWrite as i32]).is_err());
+    let mut caps = convert::decode_capabilities(&[i32::MAX])?;
     assert_eq!(caps, StorageCapabilities::default());
     caps.stat_entry = true;
     assert_eq!(

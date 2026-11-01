@@ -14,15 +14,15 @@ pub(super) struct Client {
     access: String,
     secret: String,
 }
-fn text(fields: &p::Object, name: &str) -> Result<String> {
+fn text(fields: &p::JsonObject, name: &str) -> Result<String> {
     let value = fields
         .get(name)
-        .ok_or_else(|| invalid(name, "missing_field"))?;
+        .ok_or_else(|| invalid(name, p::ConfigErrorKind::MissingField))?;
     let text = value
         .as_str()
-        .ok_or_else(|| invalid(name, "invalid_type"))?;
+        .ok_or_else(|| invalid(name, p::ConfigErrorKind::InvalidType))?;
     if text.is_empty() {
-        return Err(invalid(name, "invalid_value"));
+        return Err(invalid(name, p::ConfigErrorKind::InvalidValue));
     }
     Ok(text.into())
 }
@@ -41,12 +41,13 @@ fn percent(value: &str, slash: bool) -> String {
     out
 }
 fn hmac(key: &[u8], bytes: &[u8]) -> Result<Vec<u8>> {
-    let mut h = Hmac::<Sha256>::new_from_slice(key).map_err(|_| failure("backend"))?;
+    let mut h =
+        Hmac::<Sha256>::new_from_slice(key).map_err(|_| failure(p::FailureCode::Backend))?;
     h.update(bytes);
     Ok(h.finalize().into_bytes().to_vec())
 }
 fn xml(bytes: &[u8]) -> Result<&str> {
-    std::str::from_utf8(bytes).map_err(|_| failure("invalid_data"))
+    std::str::from_utf8(bytes).map_err(|_| failure(p::FailureCode::InvalidData))
 }
 fn header(response: &http::Response, key: &str) -> Option<String> {
     response
@@ -56,14 +57,15 @@ fn header(response: &http::Response, key: &str) -> Option<String> {
         .map(|h| h.value.clone())
 }
 impl Client {
-    pub fn parse(fields: &p::Object) -> Result<Self> {
+    pub fn parse(fields: &p::JsonObject) -> Result<Self> {
         if fields.keys().any(|k| {
             !["endpoint", "bucket", "region", "access_key", "secret_key"].contains(&k.as_str())
         }) {
-            return Err(invalid("", "unknown_field"));
+            return Err(invalid("", p::ConfigErrorKind::UnknownField));
         }
         let endpoint = text(fields, "endpoint")?;
-        let url = url::Url::parse(&endpoint).map_err(|_| invalid("endpoint", "invalid_value"))?;
+        let url = url::Url::parse(&endpoint)
+            .map_err(|_| invalid("endpoint", p::ConfigErrorKind::InvalidValue))?;
         if !matches!(url.scheme(), "http" | "https")
             || url.host_str().is_none()
             || url.path() != "/"
@@ -72,7 +74,7 @@ impl Client {
             || !url.username().is_empty()
             || url.password().is_some()
         {
-            return Err(invalid("endpoint", "invalid_value"));
+            return Err(invalid("endpoint", p::ConfigErrorKind::InvalidValue));
         }
         let bucket = text(fields, "bucket")?;
         if !(3..=63).contains(&bucket.len())
@@ -80,7 +82,7 @@ impl Client {
                 .bytes()
                 .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'-' | b'.'))
         {
-            return Err(invalid("bucket", "invalid_value"));
+            return Err(invalid("bucket", p::ConfigErrorKind::InvalidValue));
         }
         let region = text(fields, "region")?;
         if region.len() > 64
@@ -88,7 +90,7 @@ impl Client {
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b == b'-')
         {
-            return Err(invalid("region", "invalid_value"));
+            return Err(invalid("region", p::ConfigErrorKind::InvalidValue));
         }
         Ok(Self {
             endpoint: url.origin().ascii_serialization(),
@@ -109,27 +111,25 @@ impl Client {
         let request = self.sign(method, key, query, extra, body, clock::unix_time())?;
         let mutation = !matches!(method, "GET" | "HEAD");
         let response = http::request_http(&request).map_err(|code| {
-            failure(
-                if mutation && matches!(code.as_str(), "timed_out" | "unavailable") {
-                    "outcome_unknown"
-                } else {
-                    &code
-                },
-            )
+            if mutation && matches!(code.as_str(), "timed_out" | "unavailable") {
+                failure(p::FailureCode::OutcomeUnknown)
+            } else {
+                api::host_failure(&code)
+            }
         })?;
         match response.status {
             200..=299 => Ok(response),
-            403 => Err(failure("permission_denied")),
-            404 => Err(failure("not_found")),
-            409 => Err(failure("conflict")),
-            412 => Err(failure("already_exists")),
-            429 => Err(failure("rate_limited")),
+            403 => Err(failure(p::FailureCode::PermissionDenied)),
+            404 => Err(failure(p::FailureCode::NotFound)),
+            409 => Err(failure(p::FailureCode::Conflict)),
+            412 => Err(failure(p::FailureCode::AlreadyExists)),
+            429 => Err(failure(p::FailureCode::RateLimited)),
             500..=599 => Err(failure(if mutation {
-                "outcome_unknown"
+                p::FailureCode::OutcomeUnknown
             } else {
-                "unavailable"
+                p::FailureCode::Unavailable
             })),
-            _ => Err(failure("backend")),
+            _ => Err(failure(p::FailureCode::Backend)),
         }
     }
     fn sign(
@@ -141,14 +141,18 @@ impl Client {
         body: Vec<u8>,
         now: i64,
     ) -> Result<http::Request> {
-        let time = OffsetDateTime::from_unix_timestamp(now).map_err(|_| failure("invalid_data"))?;
+        let time = OffsetDateTime::from_unix_timestamp(now)
+            .map_err(|_| failure(p::FailureCode::InvalidData))?;
         let format = time::format_description::parse_borrowed::<2>(
             "[year][month][day]T[hour][minute][second]Z",
         )
-        .map_err(|_| failure("backend"))?;
-        let timestamp = time.format(&format).map_err(|_| failure("backend"))?;
+        .map_err(|_| failure(p::FailureCode::Backend))?;
+        let timestamp = time
+            .format(&format)
+            .map_err(|_| failure(p::FailureCode::Backend))?;
         let date = &timestamp[..8];
-        let url = url::Url::parse(&self.endpoint).map_err(|_| failure("invalid_data"))?;
+        let url =
+            url::Url::parse(&self.endpoint).map_err(|_| failure(p::FailureCode::InvalidData))?;
         let host = url[url::Position::BeforeHost..url::Position::AfterPort].to_owned();
         let uri = format!("/{}/{}", self.bucket, percent(key, true));
         let mut query: Vec<_> = query
@@ -214,12 +218,12 @@ impl Client {
         path(name)?;
         let response = match self.request("HEAD", name, vec![], vec![], vec![]) {
             Ok(r) => r,
-            Err(e) if e.code == "not_found" => return Ok(None),
+            Err(e) if e.code == p::FailureCode::NotFound as i32 => return Ok(None),
             Err(e) => return Err(e),
         };
         let size = header(&response, "content-length")
             .and_then(|s| s.parse().ok())
-            .ok_or_else(|| failure("invalid_data"))?;
+            .ok_or_else(|| failure(p::FailureCode::InvalidData))?;
         let modified = header(&response, "last-modified")
             .and_then(|s| {
                 OffsetDateTime::parse(&s, &time::format_description::well_known::Rfc2822).ok()
@@ -230,7 +234,7 @@ impl Client {
             });
         Ok(Some(p::Entry {
             path: name.into(),
-            kind: p::EntryKind::File,
+            kind: p::EntryKind::File as i32,
             size: Some(size),
             modified,
         }))
@@ -254,14 +258,14 @@ impl Client {
             query.push(("start-after".into(), format!("{prefix}{after}")));
         }
         let r = self.request("GET", "", query, vec![], vec![])?;
-        quick_xml::de::from_str(xml(&r.body)?).map_err(|_| failure("invalid_data"))
+        quick_xml::de::from_str(xml(&r.body)?).map_err(|_| failure(p::FailureCode::InvalidData))
     }
     pub fn stat(&self, name: &str) -> Result<p::Entry> {
         path(name)?;
         if name.is_empty() {
             return Ok(p::Entry {
                 path: String::new(),
-                kind: p::EntryKind::Dir,
+                kind: p::EntryKind::Dir as i32,
                 size: None,
                 modified: None,
             });
@@ -271,15 +275,15 @@ impl Client {
         let list = self.listing(&prefix, None, 1, None)?;
         let directory = !list.contents.is_empty() || !list.common_prefixes.is_empty();
         match (file, directory) {
-            (Some(_), true) => Err(failure("invalid_data")),
+            (Some(_), true) => Err(failure(p::FailureCode::InvalidData)),
             (Some(file), false) => Ok(file),
             (None, true) => Ok(p::Entry {
                 path: name.into(),
-                kind: p::EntryKind::Dir,
+                kind: p::EntryKind::Dir as i32,
                 size: None,
                 modified: None,
             }),
-            (None, false) => Err(failure("not_found")),
+            (None, false) => Err(failure(p::FailureCode::NotFound)),
         }
     }
     pub fn list(
@@ -289,17 +293,17 @@ impl Client {
         limit: u32,
     ) -> Result<(Vec<p::Entry>, Option<String>)> {
         if limit == 0 || limit > 1000 {
-            return Err(failure("invalid_request"));
+            return Err(failure(p::FailureCode::InvalidRequest));
         }
         path(name)?;
         if let Some(after) = after {
             if after.is_empty() || after.contains('/') {
-                return Err(failure("invalid_path"));
+                return Err(failure(p::FailureCode::InvalidPath));
             }
             path(after)?;
         }
-        if self.stat(name)?.kind != p::EntryKind::Dir {
-            return Err(failure("not_dir"));
+        if self.stat(name)?.kind != p::EntryKind::Dir as i32 {
+            return Err(failure(p::FailureCode::NotDir));
         }
         let prefix = if name.is_empty() {
             String::new()
@@ -317,9 +321,9 @@ impl Client {
                 let child = content
                     .key
                     .strip_prefix(&prefix)
-                    .ok_or_else(|| failure("invalid_data"))?;
+                    .ok_or_else(|| failure(p::FailureCode::InvalidData))?;
                 if child.is_empty() || child.contains('/') {
-                    return Err(failure("invalid_data"));
+                    return Err(failure(p::FailureCode::InvalidData));
                 }
                 path(&content.key)?;
                 if after.is_some_and(|a| child <= a) {
@@ -327,24 +331,24 @@ impl Client {
                 }
                 let entry = p::Entry {
                     path: content.key.clone(),
-                    kind: p::EntryKind::File,
+                    kind: p::EntryKind::File as i32,
                     size: Some(content.size),
                     modified: None,
                 };
                 if entries.insert(child.to_owned(), entry).is_some() {
-                    return Err(failure("invalid_data"));
+                    return Err(failure(p::FailureCode::InvalidData));
                 }
             }
             for common in list.common_prefixes {
                 let key = common
                     .prefix
                     .strip_suffix('/')
-                    .ok_or_else(|| failure("invalid_data"))?;
+                    .ok_or_else(|| failure(p::FailureCode::InvalidData))?;
                 let child = key
                     .strip_prefix(&prefix)
-                    .ok_or_else(|| failure("invalid_data"))?;
+                    .ok_or_else(|| failure(p::FailureCode::InvalidData))?;
                 if child.is_empty() || child.contains('/') {
-                    return Err(failure("invalid_data"));
+                    return Err(failure(p::FailureCode::InvalidData));
                 }
                 path(key)?;
                 if after.is_some_and(|a| child <= a) {
@@ -352,12 +356,12 @@ impl Client {
                 }
                 let entry = p::Entry {
                     path: key.into(),
-                    kind: p::EntryKind::Dir,
+                    kind: p::EntryKind::Dir as i32,
                     size: None,
                     modified: None,
                 };
                 if entries.insert(child.into(), entry).is_some() {
-                    return Err(failure("invalid_data"));
+                    return Err(failure(p::FailureCode::InvalidData));
                 }
             }
             if entries.len() > limit as usize || !list.is_truncated {
@@ -365,9 +369,9 @@ impl Client {
             }
             let next = list
                 .next_continuation_token
-                .ok_or_else(|| failure("invalid_data"))?;
+                .ok_or_else(|| failure(p::FailureCode::InvalidData))?;
             if token.as_ref() == Some(&next) {
-                return Err(failure("invalid_data"));
+                return Err(failure(p::FailureCode::InvalidData));
             }
             token = Some(next);
         }
@@ -391,10 +395,10 @@ impl Client {
             vec![],
             vec![],
         )?;
-        let upload: Initiated =
-            quick_xml::de::from_str(xml(&r.body)?).map_err(|_| failure("invalid_data"))?;
+        let upload: Initiated = quick_xml::de::from_str(xml(&r.body)?)
+            .map_err(|_| failure(p::FailureCode::InvalidData))?;
         if upload.upload_id.is_empty() {
-            return Err(failure("invalid_data"));
+            return Err(failure(p::FailureCode::InvalidData));
         }
         Ok(upload.upload_id)
     }
@@ -415,7 +419,7 @@ impl Client {
             vec![],
             data,
         )?;
-        header(&r, "etag").ok_or_else(|| failure("invalid_data"))
+        header(&r, "etag").ok_or_else(|| failure(p::FailureCode::InvalidData))
     }
     pub fn abort_upload(&self, name: &str, upload: &str) -> Result<()> {
         match self.request(
@@ -426,7 +430,7 @@ impl Client {
             vec![],
         ) {
             Ok(_) => Ok(()),
-            Err(e) if e.code == "not_found" => Ok(()),
+            Err(e) if e.code == p::FailureCode::NotFound as i32 => Ok(()),
             Err(e) => Err(e),
         }
     }
@@ -458,7 +462,7 @@ impl Client {
             body.into_bytes(),
         )?;
         if xml(&r.body)?.contains("<Error>") {
-            return Err(failure("backend"));
+            return Err(failure(p::FailureCode::Backend));
         }
         Ok(())
     }

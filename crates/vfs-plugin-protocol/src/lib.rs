@@ -1,15 +1,21 @@
-//! Portable plugin values. This crate has no host database or runtime dependency.
-//! Control values use lossless UTF-8 JSON; file data travels in separate binary
-//! frames. gRPC and WIT provide framing and resource ownership, respectively.
+//! Shared protobuf messages, validation and VFS protocol semantics.
+pub mod wire {
+    include!(concat!(env!("OUT_DIR"), "/assethub.vfs.v2.rs"));
+}
+pub use wire::*;
+pub use wire::{reply::Result as Value, request::Operation, storage_call::Operation as StorageOp};
+mod codec;
+pub use codec::*;
+/// Protoc descriptor set for language-independent tooling and generators.
+pub const FILE_DESCRIPTOR_SET: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/plugin.bin"));
+/// JSON values at application/configuration boundaries, never a wire message.
+pub type JsonObject = std::collections::BTreeMap<String, serde_json::Value>;
 
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
-
-pub type Object = BTreeMap<String, serde_json::Value>;
-pub const PROTOCOL_MAJOR: u32 = 1;
-pub const PROTOCOL_MINOR: u32 = 1;
+pub const PROTOCOL_MAJOR: u32 = 2;
+pub const PROTOCOL_MINOR: u32 = 0;
 pub const MAX_CONTROL_BYTES: usize = 1024 * 1024;
 pub const MAX_DATA_BYTES: usize = 8 * 1024 * 1024;
+pub const MAX_FRAME_BYTES: usize = MAX_CONTROL_BYTES + MAX_DATA_BYTES + 1024;
 pub const MAX_RESOURCES: usize = 1024;
 pub const INSTANCE_SCHEMA_PROFILE: &str = "assethub.config.annotations.v1";
 pub const WASM_HOST_PROFILE: &str = "assethub.service.v1";
@@ -25,16 +31,9 @@ pub const PROTOCOL_FEATURES: &[&str] = &[
     INSTANCE_SCHEMA_PROFILE,
 ];
 
-fn schema_profile() -> String {
-    INSTANCE_SCHEMA_PROFILE.into()
-}
-fn baseline_features() -> Vec<String> {
-    PROTOCOL_FEATURES.iter().map(|feature| (*feature).into()).collect()
-}
-
 /// Selected backward-compatible protocol revision. Minor revisions may add
 /// optional data but cannot change existing operation meanings or encodings.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct NegotiatedProtocol {
     pub major: u32,
     pub minor: u32,
@@ -42,7 +41,7 @@ pub struct NegotiatedProtocol {
     pub instance_schema_profile: String,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum IncompatiblePlugin {
     MajorVersion,
     RequiredFeature,
@@ -57,8 +56,11 @@ pub fn negotiate(
     host_capabilities: &[&str],
 ) -> Result<NegotiatedProtocol, IncompatiblePlugin> {
     let negotiated = negotiate_protocol(description)?;
-    if description.required_host_capabilities.iter()
-        .any(|capability| !host_capabilities.contains(&capability.as_str())) {
+    if description
+        .required_host_capabilities
+        .iter()
+        .any(|capability| !host_capabilities.contains(&capability.as_str()))
+    {
         return Err(IncompatiblePlugin::HostCapability);
     }
     Ok(negotiated)
@@ -73,8 +75,7 @@ pub fn negotiate_protocol(
         return Err(IncompatiblePlugin::MajorVersion);
     }
     if description.required_features.iter().any(|feature| {
-        !PROTOCOL_FEATURES.contains(&feature.as_str())
-            || !description.features.contains(feature)
+        !PROTOCOL_FEATURES.contains(&feature.as_str()) || !description.features.contains(feature)
     }) {
         return Err(IncompatiblePlugin::RequiredFeature);
     }
@@ -83,330 +84,113 @@ pub fn negotiate_protocol(
     }
     Ok(NegotiatedProtocol {
         major: PROTOCOL_MAJOR,
-        minor: PROTOCOL_MINOR.min(description.minor),
-        features: description.features.iter()
+        // The initial v2 revision is zero, so every peer minor negotiates to zero.
+        minor: PROTOCOL_MINOR,
+        features: description
+            .features
+            .iter()
             .filter(|feature| PROTOCOL_FEATURES.contains(&feature.as_str()))
-            .cloned().collect(),
+            .cloned()
+            .collect(),
         instance_schema_profile: description.instance_schema_profile.clone(),
     })
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum Ownership {
-    Host,
-    Plugin,
-}
-
-/// Capabilities use named strings, not compiler-assigned enum ordinals.
-/// Unknown names do not grant support. Permission/xattr reads and writes have
-/// separate names; directory models and read modes remain exclusive.
-pub type Capabilities = Vec<String>;
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct Description {
-    pub major: u32,
-    pub minor: u32,
-    pub required_features: Vec<String>,
-    #[serde(default = "baseline_features")]
-    pub features: Vec<String>,
-    #[serde(default)]
-    pub required_host_capabilities: Vec<String>,
-    #[serde(default = "schema_profile")]
-    pub instance_schema_profile: String,
-    pub generation: String,
-    pub key: String,
-    pub name: String,
-    pub version: String,
-    pub child_mounts: bool,
-    pub capabilities: Capabilities,
-    pub ownership: Ownership,
-    pub settings_schema: Option<Object>,
-    pub instance_schema: Option<Object>,
-    pub config_version: u32,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct StorageInfo {
-    pub capabilities: Capabilities,
-    pub chunk_size: u32,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Timestamp {
-    pub seconds: i64,
-    pub nanos: u32,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum EntryKind {
-    File,
-    Dir,
-    Symlink,
-    Other,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Entry {
-    pub path: String,
-    pub kind: EntryKind,
-    pub size: Option<u64>,
-    pub modified: Option<Timestamp>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct Instance {
-    pub id: String,
-    pub details: Object,
-}
-
-/// Error fields contain categories and safe field identifiers only. Transport
-/// adapters must not serialize backend diagnostic chains or request values.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Failure {
-    pub code: String,
-    pub field: Option<String>,
-    pub config_kind: Option<String>,
-}
 impl Failure {
-    pub fn new(code: &str) -> Self {
+    pub fn new(code: FailureCode) -> Self {
         Self {
-            code: code.into(),
+            code: code as i32,
             field: None,
             config_kind: None,
         }
     }
 }
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(tag = "operation", rename_all = "snake_case")]
-pub enum StorageOp {
-    Stat {
-        path: String,
-    },
-    List {
-        path: String,
-        after: Option<String>,
-        limit: u32,
-    },
-    CreateDir {
-        path: String,
-        recursive: bool,
-    },
-    Remove {
-        path: String,
-    },
-    Move {
-        source: String,
-        destination: String,
-        replace: bool,
-    },
-    GetPermissions {
-        path: String,
-    },
-    SetPermissions {
-        path: String,
-        mode: u32,
-    },
-    ListXattrs {
-        path: String,
-        max_bytes: u32,
-    },
-    GetXattr {
-        path: String,
-        name: String,
-        max_bytes: u32,
-    },
-    SetXattr {
-        path: String,
-        name: String,
-        mode: String,
-    },
-    RemoveXattr {
-        path: String,
-        name: String,
-    },
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(tag = "operation", rename_all = "snake_case")]
-pub enum Operation {
-    Describe,
-    Initialize {
-        settings: Object,
-    },
-    Prepare {
-        config: Object,
-    },
-    Migrate {
-        from_version: u32,
-        config: Object,
-    },
-    TestConnection {
-        config: Object,
-    },
-    GetInstance {
-        id: String,
-    },
-    ListInstances {
-        after: Option<String>,
-        limit: u32,
-    },
-    CreateInstance {
-        config: Object,
-    },
-    RemoveInstance {
-        id: String,
-    },
-    Open {
-        id: String,
-        config: Option<Object>,
-    },
-    Storage {
-        handle: u64,
-        request: StorageOp,
-    },
-    Read {
-        handle: u64,
-        path: String,
-        offset: u64,
-        length: Option<u64>,
-    },
-    Write {
-        handle: u64,
-        path: String,
-        replace: bool,
-        atomic: bool,
-    },
-    ReaderNext {
-        handle: u64,
-    },
-    WriterChunk {
-        handle: u64,
-    },
-    Commit {
-        handle: u64,
-    },
-    Abort {
-        handle: u64,
-    },
-    Release {
-        kind: ResourceKind,
-        handle: u64,
-    },
-    Renew {
-        resources: Vec<ResourceRef>,
-    },
-}
-impl Operation {
-    /// An ambiguous failure after dispatch of these operations cannot prove rollback.
-    pub fn mutates(&self) -> bool {
-        match self {
-            Self::Initialize { .. }
-            | Self::CreateInstance { .. }
-            | Self::RemoveInstance { .. }
-            | Self::Write { .. }
-            | Self::WriterChunk { .. }
-            | Self::Commit { .. }
-            | Self::Abort { .. } => true,
-            Self::Storage { request, .. } => matches!(
-                request,
-                StorageOp::CreateDir { .. }
-                    | StorageOp::Remove { .. }
-                    | StorageOp::Move { .. }
-                    | StorageOp::SetPermissions { .. }
-                    | StorageOp::SetXattr { .. }
-                    | StorageOp::RemoveXattr { .. }
-            ),
-            _ => false,
-        }
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "plugin failure: {}", self.code().as_str_name())
     }
 }
-
-#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[serde(rename_all = "snake_case")]
-pub enum ResourceKind {
-    Storage,
-    Reader,
-    Writer,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct ResourceRef {
-    pub kind: ResourceKind,
-    pub handle: u64,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(tag = "result", rename_all = "snake_case")]
-pub enum Value {
-    Description {
-        description: Description,
-    },
-    Prepared {
-        config: Object,
-        details: Object,
-    },
-    Config {
-        config: Object,
-    },
-    Instance {
-        instance: Instance,
-    },
-    MaybeInstance {
-        instance: Option<Instance>,
-    },
-    Instances {
-        instances: Vec<Instance>,
-        next_after: Option<String>,
-    },
-    Removed {
-        removed: bool,
-    },
-    Storage {
-        handle: u64,
-        info: StorageInfo,
-    },
-    Reader {
-        handle: u64,
-    },
-    Writer {
-        handle: u64,
-    },
-    Entry {
-        entry: Entry,
-    },
-    Page {
-        entries: Vec<Entry>,
-        next_after: Option<String>,
-    },
-    Permissions {
-        mode: u32,
-    },
-    Names {
-        names: Vec<String>,
-    },
-    Bytes,
-    Chunk {
-        eof: bool,
-    },
-    Unit,
-}
-
-/// Binary data is deliberately excluded from control serialization.
-pub struct Reply {
-    pub value: Value,
-    pub data: Vec<u8>,
-}
+impl std::error::Error for Failure {}
 impl Reply {
     pub fn new(value: Value) -> Self {
         Self {
-            value,
-            data: Vec::new(),
+            result: Some(value),
+            data: vec![],
         }
     }
     pub fn unit() -> Self {
-        Self::new(Value::Unit)
+        Self::new(Value::Unit(Empty {}))
+    }
+    pub fn into_value(self) -> Result<Value, Failure> {
+        match self.result {
+            Some(Value::Failure(error)) => Err(error),
+            Some(value) => Ok(value),
+            None => Err(Failure::new(FailureCode::InvalidData)),
+        }
+    }
+}
+impl Operation {
+    /// Check the result alternative before exposing a transport response.
+    pub fn accepts_reply(&self, value: &Value) -> bool {
+        match self {
+            Self::Describe(_) => matches!(value, Value::Description(_)),
+            Self::Initialize(_)
+            | Self::TestConnection(_)
+            | Self::WriterChunk(_)
+            | Self::Abort(_)
+            | Self::Release(_)
+            | Self::Renew(_) => matches!(value, Value::Unit(_)),
+            Self::Prepare(_) => matches!(value, Value::Prepared(_)),
+            Self::Migrate(_) => matches!(value, Value::Config(_)),
+            Self::GetInstance(_) => matches!(value, Value::MaybeInstance(_)),
+            Self::ListInstances(_) => matches!(value, Value::Instances(_)),
+            Self::CreateInstance(_) => matches!(value, Value::Instance(_)),
+            Self::RemoveInstance(_) => matches!(value, Value::Removed(_)),
+            Self::Open(_) => matches!(value, Value::Storage(_)),
+            Self::Read(_) => matches!(value, Value::Reader(_)),
+            Self::Write(_) => matches!(value, Value::Writer(_)),
+            Self::ReaderNext(_) => matches!(value, Value::Chunk(_)),
+            Self::Commit(_) => matches!(value, Value::Entry(_)),
+            Self::Storage(call) => match &call.operation {
+                Some(StorageOp::Stat(_) | StorageOp::CreateDir(_) | StorageOp::Move(_)) => {
+                    matches!(value, Value::Entry(_))
+                }
+                Some(StorageOp::List(_)) => matches!(value, Value::Page(_)),
+                Some(StorageOp::GetPermissions(_)) => matches!(value, Value::Permissions(_)),
+                Some(StorageOp::ListXattrs(_)) => matches!(value, Value::Names(_)),
+                Some(StorageOp::GetXattr(_)) => matches!(value, Value::Bytes(_)),
+                Some(
+                    StorageOp::Remove(_)
+                    | StorageOp::SetPermissions(_)
+                    | StorageOp::SetXattr(_)
+                    | StorageOp::RemoveXattr(_),
+                ) => matches!(value, Value::Unit(_)),
+                None => false,
+            },
+        }
+    }
+    /// Ambiguous failures cannot prove that these mutations were rolled back.
+    pub fn mutates(&self) -> bool {
+        match self {
+            Self::Initialize(_)
+            | Self::CreateInstance(_)
+            | Self::RemoveInstance(_)
+            | Self::Write(_)
+            | Self::WriterChunk(_)
+            | Self::Commit(_)
+            | Self::Abort(_) => true,
+            Self::Storage(call) => matches!(
+                call.operation,
+                Some(
+                    StorageOp::CreateDir(_)
+                        | StorageOp::Remove(_)
+                        | StorageOp::Move(_)
+                        | StorageOp::SetPermissions(_)
+                        | StorageOp::SetXattr(_)
+                        | StorageOp::RemoveXattr(_)
+                )
+            ),
+            _ => false,
+        }
     }
 }

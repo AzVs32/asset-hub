@@ -12,32 +12,23 @@ use std::{
 };
 use vfs_plugin_protocol::{self as p, Value};
 
-wit_bindgen::generate!({path:"../../crates/vfs-plugin-protocol/wit",world:"plugin"});
+vfs_plugin_guest::export_plugin!(S3Driver, "../../crates/vfs-plugin-protocol/wit");
 use assethub::vfs::{clock, http};
-use exports::assethub::vfs::driver::{self as api, Guest, GuestReader, GuestStorage, GuestWriter};
+use vfs_plugin_guest::api::{self, Guest, GuestReader, GuestStorage, GuestWriter};
 type Result<T> = std::result::Result<T, api::Failure>;
-fn failure(code: &str) -> api::Failure {
+fn failure(code: p::FailureCode) -> api::Failure {
     api::Failure {
-        code: code.into(),
+        code: code as i32,
         field: None,
         config_kind: None,
     }
 }
-fn invalid(field: &str, kind: &str) -> api::Failure {
+fn invalid(field: &str, kind: p::ConfigErrorKind) -> api::Failure {
     api::Failure {
-        code: "invalid_instance_config".into(),
+        code: p::FailureCode::InvalidInstanceConfig as i32,
         field: Some(field.into()),
-        config_kind: Some(kind.into()),
+        config_kind: Some(kind as i32),
     }
-}
-fn encode(value: &impl serde::Serialize) -> Result<Vec<u8>> {
-    serde_json::to_vec(value).map_err(|_| failure("invalid_data"))
-}
-fn object(bytes: &[u8]) -> Result<p::Object> {
-    if bytes.len() > p::MAX_CONTROL_BYTES {
-        return Err(failure("too_large"));
-    }
-    serde_json::from_slice(bytes).map_err(|_| failure("invalid_request"))
 }
 fn path(path: &str) -> Result<()> {
     if path.len() > 4096
@@ -45,31 +36,28 @@ fn path(path: &str) -> Result<()> {
         || path.contains(['\\', ':', '\0'])
         || (!path.is_empty() && path.split('/').any(|s| matches!(s, "" | "." | "..")))
     {
-        return Err(failure("invalid_path"));
+        return Err(failure(p::FailureCode::InvalidPath));
     }
     Ok(())
 }
-fn caps() -> Vec<String> {
+fn caps() -> Vec<i32> {
     [
-        "stat",
-        "list",
-        "range_read",
-        "write_new",
-        "write_replace",
-        "atomic_publish",
-        "prefix",
-        "remove",
+        p::Capability::Stat,
+        p::Capability::List,
+        p::Capability::RangeRead,
+        p::Capability::WriteNew,
+        p::Capability::WriteReplace,
+        p::Capability::AtomicPublish,
+        p::Capability::Prefix,
+        p::Capability::Remove,
     ]
     .into_iter()
-    .map(str::to_owned)
+    .map(Into::into)
     .collect()
 }
 struct S3Driver;
 impl Guest for S3Driver {
-    type Storage = S3Storage;
-    type Reader = S3Reader;
-    type Writer = S3Writer;
-    fn describe() -> Vec<u8> {
+    fn describe() -> p::Description {
         let mut properties = serde_json::Map::new();
         for key in ["endpoint", "bucket", "region", "access_key", "secret_key"] {
             let secret = matches!(key, "access_key" | "secret_key");
@@ -87,11 +75,14 @@ impl Guest for S3Driver {
             ),
             ("additionalProperties".into(), false.into()),
         ]);
-        encode(&p::Description {
+        p::Description {
             major: p::PROTOCOL_MAJOR,
             minor: p::PROTOCOL_MINOR,
             required_features: vec![],
-            features: p::PROTOCOL_FEATURES.iter().map(|feature| (*feature).into()).collect(),
+            features: p::PROTOCOL_FEATURES
+                .iter()
+                .map(|feature| (*feature).into())
+                .collect(),
             required_host_capabilities: vec![p::HOST_HTTP.into(), p::HOST_CLOCK.into()],
             instance_schema_profile: p::INSTANCE_SCHEMA_PROFILE.into(),
             generation: String::new(),
@@ -100,48 +91,49 @@ impl Guest for S3Driver {
             version: env!("CARGO_PKG_VERSION").into(),
             child_mounts: true,
             capabilities: caps(),
-            ownership: p::Ownership::Host,
+            ownership: p::Ownership::Host as i32,
             settings_schema: None,
-            instance_schema: Some(schema),
+            instance_schema: Some(schema.into()),
             config_version: 1,
-        })
-        .unwrap_or_default()
+        }
     }
-    fn initialize(settings: Vec<u8>) -> Result<()> {
-        if object(&settings)?.is_empty() {
+    fn initialize(settings: p::Object) -> Result<()> {
+        if settings.fields.is_empty() {
             Ok(())
         } else {
-            Err(failure("unsupported_operation"))
+            Err(failure(p::FailureCode::UnsupportedOperation))
         }
     }
-    fn prepare(config: Vec<u8>) -> Result<Vec<u8>> {
-        let fields = object(&config)?;
+    fn prepare(config: p::Object) -> Result<p::Prepared> {
+        let fields = p::json_object(config)?;
         let client = s3::Client::parse(&fields)?;
-        encode(&Value::Prepared {
-            config: fields,
-            details: BTreeMap::from([
-                ("endpoint".into(), client.endpoint.into()),
-                ("bucket".into(), client.bucket.into()),
-            ]),
+        Ok(p::Prepared {
+            config: Some(fields.into()),
+            details: Some(
+                BTreeMap::from([
+                    ("endpoint".into(), client.endpoint.into()),
+                    ("bucket".into(), client.bucket.into()),
+                ])
+                .into(),
+            ),
         })
     }
-    fn migrate(from_version: u32, config: Vec<u8>) -> Result<Vec<u8>> {
+    fn migrate(from_version: u32, config: p::Object) -> Result<p::Object> {
         if from_version != 1 {
-            return Err(failure("unsupported_operation"));
+            return Err(failure(p::FailureCode::UnsupportedOperation));
         }
-        let fields = object(&config)?;
+        let fields = p::json_object(config)?;
         s3::Client::parse(&fields)?;
-        encode(&fields)
+        Ok(fields.into())
     }
-    fn test_connection(config: Vec<u8>) -> Result<()> {
-        s3::Client::parse(&object(&config)?)?.check_bucket()
+    fn test_connection(config: p::Object) -> Result<()> {
+        s3::Client::parse(&p::json_object(config)?)?.check_bucket()
     }
-    fn instances(_control: Vec<u8>) -> Result<Vec<u8>> {
-        Err(failure("unsupported_operation"))
-    }
-    fn open(_id: String, config: Option<Vec<u8>>) -> Result<api::Storage> {
-        let config = config.ok_or_else(|| failure("invalid_request"))?;
-        let client = s3::Client::parse(&object(&config)?)?;
+
+    fn open(_id: String, config: Option<p::Object>) -> Result<api::Storage> {
+        let config =
+            p::json_object(config.ok_or_else(|| failure(p::FailureCode::InvalidRequest))?)?;
+        let client = s3::Client::parse(&config)?;
         client.check_bucket()?;
         Ok(api::Storage::new(S3Storage { client }))
     }
@@ -150,55 +142,49 @@ struct S3Storage {
     client: s3::Client,
 }
 impl GuestStorage for S3Storage {
-    fn info(&self) -> Vec<u8> {
-        encode(&p::StorageInfo {
+    fn info(&self) -> p::StorageInfo {
+        p::StorageInfo {
             capabilities: caps(),
             chunk_size: 64 * 1024,
-        })
-        .unwrap_or_default()
-    }
-    fn call(&self, control: Vec<u8>, data: Vec<u8>) -> Result<api::Reply> {
-        if control.len() > p::MAX_CONTROL_BYTES || !data.is_empty() {
-            return Err(failure("invalid_request"));
         }
-        let request: p::StorageOp =
-            serde_json::from_slice(&control).map_err(|_| failure("invalid_request"))?;
+    }
+    fn call(&self, request: p::StorageOp, data: Vec<u8>) -> Result<p::Reply> {
+        if !data.is_empty() {
+            return Err(failure(p::FailureCode::InvalidRequest));
+        }
         let value = match request {
-            p::StorageOp::Stat { path } => Value::Entry {
-                entry: self.client.stat(&path)?,
-            },
-            p::StorageOp::List { path, after, limit } => {
+            p::StorageOp::Stat(p::Path { path }) => Value::Entry(self.client.stat(&path)?),
+            p::StorageOp::List(p::List { path, after, limit }) => {
                 let (entries, next_after) = self.client.list(&path, after.as_deref(), limit)?;
-                Value::Page {
+                Value::Page(p::Page {
                     entries,
                     next_after,
-                }
+                })
             }
-            p::StorageOp::Remove { path } => {
+            p::StorageOp::Remove(p::Path { path }) => {
                 let entry = self.client.stat(&path)?;
                 if path.is_empty() {
-                    return Err(failure("root_protected"));
+                    return Err(failure(p::FailureCode::RootProtected));
                 }
-                if entry.kind == p::EntryKind::Dir {
-                    return Err(failure("unsupported_operation"));
+                if entry.kind == p::EntryKind::Dir as i32 {
+                    return Err(failure(p::FailureCode::UnsupportedOperation));
                 }
                 self.client
                     .request("DELETE", &path, vec![], vec![], vec![])?;
-                Value::Unit
+                Value::Unit(p::Empty {})
             }
-            _ => return Err(failure("unsupported_operation")),
+            _ => return Err(failure(p::FailureCode::UnsupportedOperation)),
         };
-        Ok(api::Reply {
-            control: encode(&value)?,
-            data: vec![],
-        })
+        Ok(p::Reply::new(value))
     }
     fn read(&self, path: String, offset: u64, length: Option<u64>) -> Result<api::Reader> {
         let entry = self.client.stat(&path)?;
-        if entry.kind != p::EntryKind::File {
-            return Err(failure("is_dir"));
+        if entry.kind != p::EntryKind::File as i32 {
+            return Err(failure(p::FailureCode::IsDir));
         }
-        let size = entry.size.ok_or_else(|| failure("invalid_data"))?;
+        let size = entry
+            .size
+            .ok_or_else(|| failure(p::FailureCode::InvalidData))?;
         Ok(api::Reader::new(S3Reader {
             client: self.client.clone(),
             path,
@@ -225,23 +211,23 @@ impl GuestStorage for S3Storage {
 fn path_check_target(client: &s3::Client, name: &str, replace: bool) -> Result<()> {
     path(name)?;
     if name.is_empty() {
-        return Err(failure("root_protected"));
+        return Err(failure(p::FailureCode::RootProtected));
     }
     for (index, _) in name.match_indices('/') {
         if client.head(&name[..index])?.is_some() {
-            return Err(failure("not_dir"));
+            return Err(failure(p::FailureCode::NotDir));
         }
     }
     match client.stat(name) {
         Ok(entry) => {
             if !replace {
-                return Err(failure("already_exists"));
+                return Err(failure(p::FailureCode::AlreadyExists));
             }
-            if entry.kind != p::EntryKind::File {
-                return Err(failure("is_dir"));
+            if entry.kind != p::EntryKind::File as i32 {
+                return Err(failure(p::FailureCode::IsDir));
             }
         }
-        Err(e) if e.code == "not_found" => (),
+        Err(e) if e.code == p::FailureCode::NotFound as i32 => (),
         Err(e) => return Err(e),
     }
     Ok(())
@@ -274,7 +260,7 @@ impl GuestReader for S3Reader {
         )?;
         if response.status != 206 || response.body.is_empty() || response.body.len() as u64 > length
         {
-            return Err(failure("invalid_data"));
+            return Err(failure(p::FailureCode::InvalidData));
         }
         self.offset.set(offset + response.body.len() as u64);
         self.remaining.set(remaining - response.body.len() as u64);
@@ -294,7 +280,7 @@ struct Upload {
 impl Upload {
     fn upload_part(&mut self, bytes: Vec<u8>) -> Result<()> {
         if self.parts.len() >= 10_000 {
-            return Err(failure("capacity_exceeded"));
+            return Err(failure(p::FailureCode::CapacityExceeded));
         }
         let etag =
             self.client
@@ -312,14 +298,16 @@ struct S3Writer {
 impl GuestWriter for S3Writer {
     fn write(&self, data: Vec<u8>) -> Result<()> {
         if data.len() > p::MAX_DATA_BYTES {
-            return Err(failure("too_large"));
+            return Err(failure(p::FailureCode::TooLarge));
         }
         let mut pending = self.session.borrow_mut();
-        let s = pending.as_mut().ok_or_else(|| failure("session_closed"))?;
+        let s = pending
+            .as_mut()
+            .ok_or_else(|| failure(p::FailureCode::SessionClosed))?;
         s.size = s
             .size
             .checked_add(data.len() as u64)
-            .ok_or_else(|| failure("too_large"))?;
+            .ok_or_else(|| failure(p::FailureCode::TooLarge))?;
         s.buffer.extend_from_slice(&data);
         while s.buffer.len() >= PART_SIZE {
             let part = s.buffer.drain(..PART_SIZE).collect();
@@ -327,12 +315,12 @@ impl GuestWriter for S3Writer {
         }
         Ok(())
     }
-    fn commit(&self) -> Result<Vec<u8>> {
+    fn commit(&self) -> Result<p::Entry> {
         let mut s = self
             .session
             .borrow_mut()
             .take()
-            .ok_or_else(|| failure("session_closed"))?;
+            .ok_or_else(|| failure(p::FailureCode::SessionClosed))?;
         let outcome = (|| {
             path_check_target(&s.client, &s.path, s.replace)?;
             if s.size == 0 {
@@ -353,18 +341,18 @@ impl GuestWriter for S3Writer {
             }
             s.client
                 .stat(&s.path)
-                .map_err(|_| failure("outcome_unknown"))
+                .map_err(|_| failure(p::FailureCode::OutcomeUnknown))
         })();
         if outcome.is_err() {
             let _ = s.abort();
         }
-        encode(&outcome?)
+        outcome
     }
     fn abort(&self) -> Result<()> {
         self.session
             .borrow_mut()
             .take()
-            .ok_or_else(|| failure("session_closed"))?
+            .ok_or_else(|| failure(p::FailureCode::SessionClosed))?
             .abort()
     }
 }
@@ -375,6 +363,3 @@ impl Drop for S3Writer {
         }
     }
 }
-
-#[cfg(target_arch = "wasm32")]
-export!(S3Driver);

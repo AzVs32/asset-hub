@@ -109,6 +109,35 @@ async fn component(origins: Vec<String>) -> Result<Arc<PluginDriver>> {
         .await?,
     ))
 }
+
+#[tokio::test]
+#[ignore = "requires the built S3 WASM component; no external service"]
+async fn protobuf_bootstrap_uses_the_shared_description_and_config_messages() -> Result {
+    let driver = component(vec![]).await?;
+    assert_eq!(
+        driver.negotiated_protocol().major,
+        vfs_plugin_protocol::PROTOCOL_MAJOR
+    );
+    driver.initialize(Default::default()).await?;
+    let InstanceManagement::HostManaged(provisioner) = driver.instances() else {
+        return Err("host ownership".into());
+    };
+    let config = InstanceConfig::from([
+        ("endpoint".into(), "http://127.0.0.1:9".into()),
+        ("bucket".into(), "fixture".into()),
+        ("region".into(), "us-east-1".into()),
+        ("access_key".into(), "test-access".into()),
+        ("secret_key".into(), "test-secret".into()),
+    ]);
+    let prepared = provisioner.prepare(config.clone()).await?;
+    assert_eq!(prepared.config(), &config);
+    assert_eq!(
+        prepared.details().get("bucket").and_then(|v| v.as_str()),
+        Some("fixture")
+    );
+    assert_eq!(provisioner.migrate_config(1, config.clone()).await?, config);
+    Ok(())
+}
 async fn put(s: &dyn Storage, name: &str, bytes: &[u8]) -> Result {
     let mut w = s
         .write_file(StorageWriteFileRequest::new(StoragePath::parse(name)?))

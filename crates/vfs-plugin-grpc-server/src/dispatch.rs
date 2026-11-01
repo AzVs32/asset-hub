@@ -148,7 +148,7 @@ impl Dispatcher {
         data: Vec<u8>,
     ) -> Result<p::Reply, DriverError> {
         let mut current = self.snapshot();
-        if matches!(op, Op::Describe)
+        if matches!(op, Op::Describe(p::Empty {}))
             && current.poisoned.load(Ordering::Acquire)
             && let Some(factory) = &self.factory
         {
@@ -234,7 +234,7 @@ impl Generation {
         op: Op,
         data: Vec<u8>,
     ) -> Result<p::Reply, DriverError> {
-        if self.poisoned.load(Ordering::Acquire) && !matches!(&op, Op::Release { .. }) {
+        if self.poisoned.load(Ordering::Acquire) && !matches!(&op, Op::Release(_)) {
             return Err(StorageError::new(StorageErrorKind::StaleHandle).into());
         }
         let mutates = op.mutates();
@@ -264,10 +264,10 @@ impl Generation {
         if data.len() > p::MAX_DATA_BYTES {
             return Err(StorageError::new(StorageErrorKind::TooLarge).into());
         }
-        if matches!(op, Op::Describe) {
-            return Ok(p::Reply::new(Value::Description {
-                description: self.description.clone(),
-            }));
+        if matches!(op, Op::Describe(p::Empty {})) {
+            return Ok(p::Reply::new(Value::Description(
+                self.description.clone().into(),
+            )));
         }
         if generation != self.generation() {
             return Err(StorageError::new(StorageErrorKind::StaleHandle).into());
@@ -275,17 +275,20 @@ impl Generation {
         if !data.is_empty()
             && !matches!(
                 op,
-                Op::WriterChunk { .. }
-                    | Op::Storage {
-                        request: p::StorageOp::SetXattr { .. },
+                Op::WriterChunk(_)
+                    | Op::Storage(p::StorageCall {
+                        operation: Some(p::StorageOp::SetXattr(_)),
                         ..
-                    }
+                    })
             )
         {
             return Err(StorageError::new(StorageErrorKind::InvalidRequest).into());
         }
         self.expire().await;
-        if let Op::Initialize { settings } = op {
+        if let Op::Initialize(p::Initialize {
+            settings: Some(settings),
+        }) = op
+        {
             let mut initialized = self.initialized.lock().await;
             if let Some(previous) = &*initialized {
                 return if previous == &settings {
@@ -298,7 +301,10 @@ impl Generation {
                 poisoned: &self.poisoned,
                 completed: false,
             };
-            let outcome = self.driver.initialize(settings.clone().into()).await;
+            let outcome = self
+                .driver
+                .initialize(c::object(Some(settings.clone()))?.into())
+                .await;
             guard.completed = true;
             outcome?;
             *initialized = Some(settings);
@@ -308,55 +314,72 @@ impl Generation {
             return Err(StorageError::new(StorageErrorKind::Unavailable).into());
         }
         let value = match op {
-            Op::Prepare { config } => {
-                let prepared = self.provisioner()?.prepare(config.into()).await?;
-                Value::Prepared {
-                    config: prepared.config().clone().into_object(),
-                    details: prepared.details().clone(),
-                }
-            }
-            Op::Migrate {
-                from_version,
-                config,
-            } => Value::Config {
-                config: self
+            Op::Prepare(p::Config {
+                config: Some(config),
+            }) => {
+                let prepared = self
                     .provisioner()?
-                    .migrate_config(from_version, config.into())
-                    .await?
-                    .into_object(),
-            },
-            Op::TestConnection { config } => {
-                self.provisioner()?.test_connection(&config.into()).await?;
-                Value::Unit
+                    .prepare(c::object(Some(config))?.into())
+                    .await?;
+                Value::Prepared(p::Prepared {
+                    config: Some(prepared.config().clone().into_object().into()),
+                    details: Some(prepared.details().clone().into()),
+                })
             }
-            Op::GetInstance { id: raw } => Value::MaybeInstance {
+            Op::Migrate(p::Migrate {
+                from_version,
+                config: Some(config),
+            }) => Value::Config(p::Config {
+                config: Some(
+                    self.provisioner()?
+                        .migrate_config(from_version, c::object(Some(config))?.into())
+                        .await?
+                        .into_object()
+                        .into(),
+                ),
+            }),
+            Op::TestConnection(p::Config {
+                config: Some(config),
+            }) => {
+                self.provisioner()?
+                    .test_connection(&c::object(Some(config))?.into())
+                    .await?;
+                Value::Unit(p::Empty {})
+            }
+            Op::GetInstance(p::InstanceId { id: raw }) => Value::MaybeInstance(p::MaybeInstance {
                 instance: self.registry()?.get(id(&raw)?).await?.map(c::instance),
-            },
-            Op::ListInstances { after, limit } => {
+            }),
+            Op::ListInstances(p::ListInstances { after, limit }) => {
                 let mut q = InstanceQuery::new(c::limit(limit)?)?;
                 if let Some(after) = after {
                     q = q.with_after(id(&after)?);
                 }
                 let page = self.registry()?.list(q).await?;
-                Value::Instances {
+                Value::Instances(p::Instances {
                     instances: page.instances.into_iter().map(c::instance).collect(),
                     next_after: page.next_after.map(|id| id.as_str().into()),
-                }
+                })
             }
-            Op::CreateInstance { config } => Value::Instance {
-                instance: c::instance(self.registry()?.create(config.into()).await?),
-            },
-            Op::RemoveInstance { id: raw } => Value::Removed {
+            Op::CreateInstance(p::Config {
+                config: Some(config),
+            }) => Value::Instance(c::instance(
+                self.registry()?
+                    .create(c::object(Some(config))?.into())
+                    .await?,
+            )),
+            Op::RemoveInstance(p::InstanceId { id: raw }) => Value::Removed(p::Removed {
                 removed: self.registry()?.remove(id(&raw)?).await?
                     == RemoveInstanceOutcome::Removed,
-            },
-            Op::Open { id: raw, config } => {
-                let host = self.description.ownership == p::Ownership::Host;
+            }),
+            Op::Open(p::Open { id: raw, config }) => {
+                let host = self.description.ownership == p::Ownership::Host as i32;
                 if host != config.is_some() {
                     return Err(StorageError::new(StorageErrorKind::InvalidRequest).into());
                 }
                 let context = match config {
-                    Some(config) => OpenContext::host_managed(id(&raw)?, config.into()),
+                    Some(config) => {
+                        OpenContext::host_managed(id(&raw)?, c::object(Some(config))?.into())
+                    }
                     None => OpenContext::self_managed(id(&raw)?),
                 };
                 let storage = self.driver.open(context).await?;
@@ -373,19 +396,25 @@ impl Generation {
                 let mut resources = self.resources.lock().await;
                 let handle = resources.allocate()?;
                 resources.storage.insert(handle, slot(storage));
-                Value::Storage { handle, info }
+                Value::Storage(p::Storage {
+                    handle,
+                    info: Some(info),
+                })
             }
-            Op::Storage { handle, request } => {
+            Op::Storage(p::StorageCall {
+                handle,
+                operation: Some(request),
+            }) => {
                 return self
                     .storage_op(self.storage(handle).await?, request, data)
                     .await;
             }
-            Op::Read {
+            Op::Read(p::Read {
                 handle,
                 path: raw,
                 offset,
                 length,
-            } => {
+            }) => {
                 let reader = self
                     .storage(handle)
                     .await?
@@ -400,14 +429,14 @@ impl Generation {
                 resources
                     .readers
                     .insert(handle, slot(Arc::new(Mutex::new(reader))));
-                Value::Reader { handle }
+                Value::Reader(p::Handle { handle })
             }
-            Op::Write {
+            Op::Write(p::Write {
                 handle,
                 path: raw,
                 replace,
                 atomic,
-            } => {
+            }) => {
                 let writer = self
                     .storage(handle)
                     .await?
@@ -426,21 +455,21 @@ impl Generation {
                 resources
                     .writers
                     .insert(handle, slot(Arc::new(Mutex::new(writer))));
-                Value::Writer { handle }
+                Value::Writer(p::Handle { handle })
             }
-            Op::ReaderNext { handle } => {
+            Op::ReaderNext(p::Handle { handle }) => {
                 let reader = get(&mut self.resources.lock().await.readers, handle)?;
                 let result = reader.lock().await.next_chunk().await;
                 match result {
                     Ok(Some(data)) if !data.is_empty() && data.len() <= p::MAX_DATA_BYTES => {
                         return Ok(p::Reply {
-                            value: Value::Chunk { eof: false },
+                            result: Some(Value::Chunk(p::Chunk { eof: false })),
                             data,
                         });
                     }
                     Ok(None) => {
                         self.resources.lock().await.readers.remove(&handle);
-                        Value::Chunk { eof: true }
+                        Value::Chunk(p::Chunk { eof: true })
                     }
                     Ok(_) => {
                         self.resources.lock().await.readers.remove(&handle);
@@ -452,12 +481,12 @@ impl Generation {
                     }
                 }
             }
-            Op::WriterChunk { handle } => {
+            Op::WriterChunk(p::Handle { handle }) => {
                 let writer = get(&mut self.resources.lock().await.writers, handle)?;
                 writer.lock().await.write_chunk(&data).await?;
-                Value::Unit
+                Value::Unit(p::Empty {})
             }
-            Op::Commit { handle } => {
+            Op::Commit(p::Handle { handle }) => {
                 let writer = self
                     .resources
                     .lock()
@@ -467,11 +496,9 @@ impl Generation {
                     .ok_or_else(missing)?
                     .value;
                 let entry = writer.lock().await.commit().await?;
-                Value::Entry {
-                    entry: c::entry(entry)?,
-                }
+                Value::Entry(c::entry(entry)?)
             }
-            Op::Abort { handle } => {
+            Op::Abort(p::Handle { handle }) => {
                 let writer = self
                     .resources
                     .lock()
@@ -481,14 +508,17 @@ impl Generation {
                     .ok_or_else(missing)?
                     .value;
                 writer.lock().await.abort().await?;
-                Value::Unit
+                Value::Unit(p::Empty {})
             }
-            Op::Release { kind, handle } => {
+            Op::Release(p::ResourceRef { kind, handle }) => {
                 let mut resources = self.resources.lock().await;
-                if resources.kind(handle).is_some_and(|actual| actual != kind) {
+                if resources
+                    .kind(handle)
+                    .is_some_and(|actual| actual as i32 != kind)
+                {
                     return Err(c::invalid());
                 }
-                match kind {
+                match p::ResourceKind::try_from(kind).map_err(|_| c::invalid())? {
                     p::ResourceKind::Storage => {
                         resources.storage.remove(&handle);
                     }
@@ -498,16 +528,17 @@ impl Generation {
                     p::ResourceKind::Writer => {
                         resources.writers.remove(&handle);
                     }
+                    _ => return Err(c::invalid()),
                 }
-                Value::Unit
+                Value::Unit(p::Empty {})
             }
-            Op::Renew { resources } => {
+            Op::Renew(p::Renew { resources }) => {
                 if resources.len() > p::MAX_RESOURCES {
                     return Err(c::invalid());
                 }
                 let mut table = self.resources.lock().await;
                 for r in resources {
-                    match r.kind {
+                    match p::ResourceKind::try_from(r.kind).map_err(|_| c::invalid())? {
                         p::ResourceKind::Storage => {
                             if let Some(slot) = table.storage.get_mut(&r.handle) {
                                 slot.touched = Instant::now();
@@ -523,11 +554,12 @@ impl Generation {
                                 slot.touched = Instant::now();
                             }
                         }
+                        _ => return Err(c::invalid()),
                     }
                 }
-                Value::Unit
+                Value::Unit(p::Empty {})
             }
-            Op::Describe | Op::Initialize { .. } => return Err(c::invalid()),
+            _ => return Err(c::invalid()),
         };
         Ok(p::Reply::new(value))
     }
@@ -537,19 +569,16 @@ impl Generation {
         op: p::StorageOp,
         data: Vec<u8>,
     ) -> Result<p::Reply, DriverError> {
-        use p::StorageOp::*;
         let value = match op {
-            Stat { path: raw } => Value::Entry {
-                entry: c::entry(
-                    s.stat_entry(StorageStatEntryRequest { path: path(&raw)? })
-                        .await?,
-                )?,
-            },
-            List {
+            p::StorageOp::Stat(p::Path { path: raw }) => Value::Entry(c::entry(
+                s.stat_entry(StorageStatEntryRequest { path: path(&raw)? })
+                    .await?,
+            )?),
+            p::StorageOp::List(p::List {
                 path: raw,
                 after,
                 limit,
-            } => {
+            }) => {
                 let q = StorageDirQuery {
                     path: path(&raw)?,
                     after,
@@ -557,65 +586,63 @@ impl Generation {
                 };
                 q.validate()?;
                 let page = s.list_entries(q).await?;
-                Value::Page {
+                Value::Page(p::Page {
                     entries: page
                         .entries
                         .into_iter()
                         .map(c::entry)
                         .collect::<Result<_, _>>()?,
                     next_after: page.next_after,
-                }
+                })
             }
-            CreateDir {
+            p::StorageOp::CreateDir(p::CreateDir {
                 path: raw,
                 recursive,
-            } => Value::Entry {
-                entry: c::entry(
-                    s.create_dir(StorageCreateDirRequest {
-                        path: path(&raw)?,
-                        recursive,
-                    })
-                    .await?,
-                )?,
-            },
-            Remove { path: raw } => {
+            }) => Value::Entry(c::entry(
+                s.create_dir(StorageCreateDirRequest {
+                    path: path(&raw)?,
+                    recursive,
+                })
+                .await?,
+            )?),
+            p::StorageOp::Remove(p::Path { path: raw }) => {
                 s.remove_entry(StorageRemoveEntryRequest { path: path(&raw)? })
                     .await?;
-                Value::Unit
+                Value::Unit(p::Empty {})
             }
-            Move {
+            p::StorageOp::Move(p::Move {
                 source,
                 destination,
                 replace,
-            } => Value::Entry {
-                entry: c::entry(
-                    s.move_entry(StorageMoveEntryRequest {
-                        source: path(&source)?,
-                        destination: path(&destination)?,
-                        replace,
-                    })
-                    .await?,
-                )?,
-            },
-            GetPermissions { path: raw } => Value::Permissions {
-                mode: s
-                    .permissions()
-                    .ok_or_else(unsupported)?
-                    .get_permissions(path(&raw)?)
-                    .await?
-                    .bits(),
-            },
-            SetPermissions { path: raw, mode } => {
+            }) => Value::Entry(c::entry(
+                s.move_entry(StorageMoveEntryRequest {
+                    source: path(&source)?,
+                    destination: path(&destination)?,
+                    replace,
+                })
+                .await?,
+            )?),
+            p::StorageOp::GetPermissions(p::Path { path: raw }) => {
+                Value::Permissions(p::Permissions {
+                    mode: s
+                        .permissions()
+                        .ok_or_else(unsupported)?
+                        .get_permissions(path(&raw)?)
+                        .await?
+                        .bits(),
+                })
+            }
+            p::StorageOp::SetPermissions(p::SetPermissions { path: raw, mode }) => {
                 s.permissions()
                     .ok_or_else(unsupported)?
                     .set_permissions(path(&raw)?, EntryPermissions::new(mode)?)
                     .await?;
-                Value::Unit
+                Value::Unit(p::Empty {})
             }
-            ListXattrs {
+            p::StorageOp::ListXattrs(p::ListXattrs {
                 path: raw,
                 max_bytes,
-            } => Value::Names {
+            }) => Value::Names(p::Names {
                 names: s
                     .xattrs()
                     .ok_or_else(unsupported)?
@@ -624,14 +651,14 @@ impl Generation {
                     .into_iter()
                     .map(|n| n.as_str().into())
                     .collect(),
-            },
-            GetXattr {
+            }),
+            p::StorageOp::GetXattr(p::GetXattr {
                 path: raw,
                 name,
                 max_bytes,
-            } => {
+            }) => {
                 return Ok(p::Reply {
-                    value: Value::Bytes,
+                    result: Some(Value::Bytes(p::Empty {})),
                     data: s
                         .xattrs()
                         .ok_or_else(unsupported)?
@@ -639,29 +666,29 @@ impl Generation {
                         .await?,
                 });
             }
-            SetXattr {
+            p::StorageOp::SetXattr(p::SetXattr {
                 path: raw,
                 name,
                 mode,
-            } => {
-                let mode = match mode.as_str() {
-                    "upsert" => XattrWriteMode::Upsert,
-                    "create_new" => XattrWriteMode::CreateNew,
-                    "replace" => XattrWriteMode::Replace,
+            }) => {
+                let mode = match p::XattrWriteMode::try_from(mode) {
+                    Ok(p::XattrWriteMode::Upsert) => XattrWriteMode::Upsert,
+                    Ok(p::XattrWriteMode::CreateNew) => XattrWriteMode::CreateNew,
+                    Ok(p::XattrWriteMode::Replace) => XattrWriteMode::Replace,
                     _ => return Err(StorageError::new(StorageErrorKind::InvalidRequest).into()),
                 };
                 s.xattrs()
                     .ok_or_else(unsupported)?
                     .set_xattr(path(&raw)?, XattrName::parse(&name)?, data, mode)
                     .await?;
-                Value::Unit
+                Value::Unit(p::Empty {})
             }
-            RemoveXattr { path: raw, name } => {
+            p::StorageOp::RemoveXattr(p::RemoveXattr { path: raw, name }) => {
                 s.xattrs()
                     .ok_or_else(unsupported)?
                     .remove_xattr(path(&raw)?, XattrName::parse(&name)?)
                     .await?;
-                Value::Unit
+                Value::Unit(p::Empty {})
             }
         };
         Ok(p::Reply::new(value))

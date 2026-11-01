@@ -5,7 +5,8 @@
 //! Native drivers implement these Rust ports directly. RPC and WASM adapters
 //! implement the same ports on the host; Rust objects, references and futures
 //! never cross the plugin boundary. RPC bindings use Protobuf messages and
-//! streaming file transfers; WASM bindings use WIT interfaces and owned resources.
+//! streaming file transfers. Both transports use the shared protobuf schema;
+//! WIT supplies the WASM call export and explicitly granted host services.
 //! Bindings must preserve the following shared semantics.
 //!
 //! ## Loading and declarations

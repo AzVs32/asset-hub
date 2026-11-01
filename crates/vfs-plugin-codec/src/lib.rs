@@ -19,94 +19,99 @@ pub fn storage_invalid() -> StorageError {
 pub fn failure(error: DriverError) -> p::Failure {
     match error {
         DriverError::Storage(error) => p::Failure::new(error_code(error.kind())),
-        DriverError::InstanceNotFound(_) => p::Failure::new("instance_not_found"),
+        DriverError::InstanceNotFound(_) => p::Failure::new(p::FailureCode::InstanceNotFound),
         DriverError::InvalidInstanceConfig { field, kind } => p::Failure {
-            code: "invalid_instance_config".into(),
+            code: p::FailureCode::InvalidInstanceConfig as i32,
             field: Some(field),
             config_kind: Some(
                 match kind {
-                    InstanceConfigErrorKind::MissingField => "missing_field",
-                    InstanceConfigErrorKind::UnknownField => "unknown_field",
-                    InstanceConfigErrorKind::InvalidType => "invalid_type",
-                    InstanceConfigErrorKind::InvalidValue => "invalid_value",
+                    InstanceConfigErrorKind::MissingField => p::ConfigErrorKind::MissingField,
+                    InstanceConfigErrorKind::UnknownField => p::ConfigErrorKind::UnknownField,
+                    InstanceConfigErrorKind::InvalidType => p::ConfigErrorKind::InvalidType,
+                    InstanceConfigErrorKind::InvalidValue => p::ConfigErrorKind::InvalidValue,
                 }
                 .into(),
             ),
         },
     }
 }
-pub fn error_code(kind: StorageErrorKind) -> &'static str {
+pub fn error_code(kind: StorageErrorKind) -> p::FailureCode {
     match kind {
-        StorageErrorKind::NotFound => "not_found",
-        StorageErrorKind::AlreadyExists => "already_exists",
-        StorageErrorKind::PermissionDenied => "permission_denied",
-        StorageErrorKind::NotDir => "not_dir",
-        StorageErrorKind::IsDir => "is_dir",
-        StorageErrorKind::DirNotEmpty => "dir_not_empty",
-        StorageErrorKind::InvalidPath => "invalid_path",
-        StorageErrorKind::InvalidRequest => "invalid_request",
-        StorageErrorKind::InvalidNameEncoding => "invalid_name_encoding",
-        StorageErrorKind::InvalidData => "invalid_data",
-        StorageErrorKind::RootProtected => "root_protected",
-        StorageErrorKind::SessionClosed => "session_closed",
-        StorageErrorKind::UnsupportedOperation => "unsupported_operation",
-        StorageErrorKind::StaleHandle => "stale_handle",
-        StorageErrorKind::TimedOut => "timed_out",
-        StorageErrorKind::Unavailable => "unavailable",
-        StorageErrorKind::RateLimited => "rate_limited",
-        StorageErrorKind::Conflict => "conflict",
-        StorageErrorKind::CapacityExceeded => "capacity_exceeded",
-        StorageErrorKind::CrossDevice => "cross_device",
-        StorageErrorKind::Cancelled => "cancelled",
-        StorageErrorKind::OutcomeUnknown => "outcome_unknown",
-        StorageErrorKind::AttributeNotFound => "attribute_not_found",
-        StorageErrorKind::TooLarge => "too_large",
-        StorageErrorKind::Backend => "backend",
-        _ => "backend",
+        StorageErrorKind::NotFound => p::FailureCode::NotFound,
+        StorageErrorKind::AlreadyExists => p::FailureCode::AlreadyExists,
+        StorageErrorKind::PermissionDenied => p::FailureCode::PermissionDenied,
+        StorageErrorKind::NotDir => p::FailureCode::NotDir,
+        StorageErrorKind::IsDir => p::FailureCode::IsDir,
+        StorageErrorKind::DirNotEmpty => p::FailureCode::DirNotEmpty,
+        StorageErrorKind::InvalidPath => p::FailureCode::InvalidPath,
+        StorageErrorKind::InvalidRequest => p::FailureCode::InvalidRequest,
+        StorageErrorKind::InvalidNameEncoding => p::FailureCode::InvalidNameEncoding,
+        StorageErrorKind::InvalidData => p::FailureCode::InvalidData,
+        StorageErrorKind::RootProtected => p::FailureCode::RootProtected,
+        StorageErrorKind::SessionClosed => p::FailureCode::SessionClosed,
+        StorageErrorKind::UnsupportedOperation => p::FailureCode::UnsupportedOperation,
+        StorageErrorKind::StaleHandle => p::FailureCode::StaleHandle,
+        StorageErrorKind::TimedOut => p::FailureCode::TimedOut,
+        StorageErrorKind::Unavailable => p::FailureCode::Unavailable,
+        StorageErrorKind::RateLimited => p::FailureCode::RateLimited,
+        StorageErrorKind::Conflict => p::FailureCode::Conflict,
+        StorageErrorKind::CapacityExceeded => p::FailureCode::CapacityExceeded,
+        StorageErrorKind::CrossDevice => p::FailureCode::CrossDevice,
+        StorageErrorKind::Cancelled => p::FailureCode::Cancelled,
+        StorageErrorKind::OutcomeUnknown => p::FailureCode::OutcomeUnknown,
+        StorageErrorKind::AttributeNotFound => p::FailureCode::AttributeNotFound,
+        StorageErrorKind::TooLarge => p::FailureCode::TooLarge,
+        StorageErrorKind::Backend => p::FailureCode::Backend,
+        _ => p::FailureCode::Backend,
     }
 }
-pub fn error_kind(code: &str) -> StorageErrorKind {
+pub fn error_kind(code: p::FailureCode) -> StorageErrorKind {
     match code {
-        "not_found" => StorageErrorKind::NotFound,
-        "already_exists" => StorageErrorKind::AlreadyExists,
-        "permission_denied" => StorageErrorKind::PermissionDenied,
-        "not_dir" => StorageErrorKind::NotDir,
-        "is_dir" => StorageErrorKind::IsDir,
-        "dir_not_empty" => StorageErrorKind::DirNotEmpty,
-        "invalid_path" => StorageErrorKind::InvalidPath,
-        "invalid_request" => StorageErrorKind::InvalidRequest,
-        "invalid_name_encoding" => StorageErrorKind::InvalidNameEncoding,
-        "invalid_data" => StorageErrorKind::InvalidData,
-        "root_protected" => StorageErrorKind::RootProtected,
-        "session_closed" => StorageErrorKind::SessionClosed,
-        "unsupported_operation" => StorageErrorKind::UnsupportedOperation,
-        "stale_handle" => StorageErrorKind::StaleHandle,
-        "timed_out" => StorageErrorKind::TimedOut,
-        "unavailable" => StorageErrorKind::Unavailable,
-        "rate_limited" => StorageErrorKind::RateLimited,
-        "conflict" => StorageErrorKind::Conflict,
-        "capacity_exceeded" => StorageErrorKind::CapacityExceeded,
-        "cross_device" => StorageErrorKind::CrossDevice,
-        "cancelled" => StorageErrorKind::Cancelled,
-        "outcome_unknown" => StorageErrorKind::OutcomeUnknown,
-        "attribute_not_found" => StorageErrorKind::AttributeNotFound,
-        "too_large" => StorageErrorKind::TooLarge,
-        "backend" => StorageErrorKind::Backend,
+        p::FailureCode::NotFound => StorageErrorKind::NotFound,
+        p::FailureCode::AlreadyExists => StorageErrorKind::AlreadyExists,
+        p::FailureCode::PermissionDenied => StorageErrorKind::PermissionDenied,
+        p::FailureCode::NotDir => StorageErrorKind::NotDir,
+        p::FailureCode::IsDir => StorageErrorKind::IsDir,
+        p::FailureCode::DirNotEmpty => StorageErrorKind::DirNotEmpty,
+        p::FailureCode::InvalidPath => StorageErrorKind::InvalidPath,
+        p::FailureCode::InvalidRequest => StorageErrorKind::InvalidRequest,
+        p::FailureCode::InvalidNameEncoding => StorageErrorKind::InvalidNameEncoding,
+        p::FailureCode::InvalidData => StorageErrorKind::InvalidData,
+        p::FailureCode::RootProtected => StorageErrorKind::RootProtected,
+        p::FailureCode::SessionClosed => StorageErrorKind::SessionClosed,
+        p::FailureCode::UnsupportedOperation => StorageErrorKind::UnsupportedOperation,
+        p::FailureCode::StaleHandle => StorageErrorKind::StaleHandle,
+        p::FailureCode::TimedOut => StorageErrorKind::TimedOut,
+        p::FailureCode::Unavailable => StorageErrorKind::Unavailable,
+        p::FailureCode::RateLimited => StorageErrorKind::RateLimited,
+        p::FailureCode::Conflict => StorageErrorKind::Conflict,
+        p::FailureCode::CapacityExceeded => StorageErrorKind::CapacityExceeded,
+        p::FailureCode::CrossDevice => StorageErrorKind::CrossDevice,
+        p::FailureCode::Cancelled => StorageErrorKind::Cancelled,
+        p::FailureCode::OutcomeUnknown => StorageErrorKind::OutcomeUnknown,
+        p::FailureCode::AttributeNotFound => StorageErrorKind::AttributeNotFound,
+        p::FailureCode::TooLarge => StorageErrorKind::TooLarge,
+        p::FailureCode::Backend => StorageErrorKind::Backend,
         _ => StorageErrorKind::Backend,
     }
 }
 pub fn driver_error(error: p::Failure, instance: Option<&str>) -> DriverError {
-    match error.code.as_str() {
-        "instance_not_found" => match instance.and_then(|id| InstanceId::parse(id).ok()) {
-            Some(id) => DriverError::InstanceNotFound(id),
-            None => invalid(),
-        },
-        "invalid_instance_config" => {
-            let kind = match error.config_kind.as_deref() {
-                Some("missing_field") => InstanceConfigErrorKind::MissingField,
-                Some("unknown_field") => InstanceConfigErrorKind::UnknownField,
-                Some("invalid_type") => InstanceConfigErrorKind::InvalidType,
-                Some("invalid_value") => InstanceConfigErrorKind::InvalidValue,
+    match error.code() {
+        p::FailureCode::InstanceNotFound => {
+            match instance.and_then(|id| InstanceId::parse(id).ok()) {
+                Some(id) => DriverError::InstanceNotFound(id),
+                None => invalid(),
+            }
+        }
+        p::FailureCode::InvalidInstanceConfig => {
+            let kind = match error
+                .config_kind
+                .and_then(|v| p::ConfigErrorKind::try_from(v).ok())
+            {
+                Some(p::ConfigErrorKind::MissingField) => InstanceConfigErrorKind::MissingField,
+                Some(p::ConfigErrorKind::UnknownField) => InstanceConfigErrorKind::UnknownField,
+                Some(p::ConfigErrorKind::InvalidType) => InstanceConfigErrorKind::InvalidType,
+                Some(p::ConfigErrorKind::InvalidValue) => InstanceConfigErrorKind::InvalidValue,
                 _ => return invalid(),
             };
             DriverError::InvalidInstanceConfig {
@@ -114,26 +119,26 @@ pub fn driver_error(error: p::Failure, instance: Option<&str>) -> DriverError {
                 kind,
             }
         }
-        _ => StorageError::new(error_kind(&error.code)).into(),
+        _ => StorageError::new(error_kind(error.code())).into(),
     }
 }
-pub fn capabilities(c: StorageCapabilities) -> p::Capabilities {
+pub fn capabilities(c: StorageCapabilities) -> Vec<i32> {
     let mut names = Vec::new();
     for (enabled, name) in [
-        (c.stat_entry, "stat"),
-        (c.list_entries, "list"),
-        (c.create_dir, "create_dir"),
-        (c.remove_entry, "remove"),
-        (c.persistent_empty_dirs, "empty_dirs"),
-        (c.write_file.create_new, "write_new"),
-        (c.write_file.replace, "write_replace"),
-        (c.write_file.atomic_publish, "atomic_publish"),
-        (c.rename.no_replace, "rename_new"),
-        (c.rename.replace, "rename_replace"),
-        (c.permissions.can_read(), "permissions_read"),
-        (c.permissions.can_write(), "permissions_write"),
-        (c.xattrs.can_read(), "xattrs_read"),
-        (c.xattrs.can_write(), "xattrs_write"),
+        (c.stat_entry, p::Capability::Stat),
+        (c.list_entries, p::Capability::List),
+        (c.create_dir, p::Capability::CreateDir),
+        (c.remove_entry, p::Capability::Remove),
+        (c.persistent_empty_dirs, p::Capability::EmptyDirs),
+        (c.write_file.create_new, p::Capability::WriteNew),
+        (c.write_file.replace, p::Capability::WriteReplace),
+        (c.write_file.atomic_publish, p::Capability::AtomicPublish),
+        (c.rename.no_replace, p::Capability::RenameNew),
+        (c.rename.replace, p::Capability::RenameReplace),
+        (c.permissions.can_read(), p::Capability::PermissionsRead),
+        (c.permissions.can_write(), p::Capability::PermissionsWrite),
+        (c.xattrs.can_read(), p::Capability::XattrsRead),
+        (c.xattrs.can_write(), p::Capability::XattrsWrite),
     ] {
         if enabled {
             names.push(name.into());
@@ -141,66 +146,73 @@ pub fn capabilities(c: StorageCapabilities) -> p::Capabilities {
     }
     match c.read_file {
         FileReadSupport::None => (),
-        FileReadSupport::Sequential => names.push("read".into()),
-        FileReadSupport::Range => names.push("range_read".into()),
+        FileReadSupport::Sequential => names.push(p::Capability::Read.into()),
+        FileReadSupport::Range => names.push(p::Capability::RangeRead.into()),
     }
     match c.dir_model {
         DirModel::None => (),
-        DirModel::Hierarchical => names.push("hierarchical".into()),
-        DirModel::Prefix => names.push("prefix".into()),
+        DirModel::Hierarchical => names.push(p::Capability::Hierarchical.into()),
+        DirModel::Prefix => names.push(p::Capability::Prefix.into()),
     }
     names
 }
-pub fn decode_capabilities(names: &[String]) -> Result<StorageCapabilities, DriverError> {
-    let set: BTreeSet<_> = names.iter().map(String::as_str).collect();
+pub fn decode_capabilities(names: &[i32]) -> Result<StorageCapabilities, DriverError> {
+    let set: BTreeSet<_> = names.iter().copied().collect();
     if set.len() != names.len()
-        || (set.contains("prefix") && set.contains("hierarchical"))
-        || (set.contains("range_read") && set.contains("read"))
-        || (set.contains("permissions_write") && !set.contains("permissions_read"))
-        || (set.contains("xattrs_write") && !set.contains("xattrs_read"))
+        || (set.contains(&(p::Capability::Prefix as i32))
+            && set.contains(&(p::Capability::Hierarchical as i32)))
+        || (set.contains(&(p::Capability::RangeRead as i32))
+            && set.contains(&(p::Capability::Read as i32)))
+        || (set.contains(&(p::Capability::PermissionsWrite as i32))
+            && !set.contains(&(p::Capability::PermissionsRead as i32)))
+        || (set.contains(&(p::Capability::XattrsWrite as i32))
+            && !set.contains(&(p::Capability::XattrsRead as i32)))
     {
         return Err(invalid());
     }
-    let attr = |r, w| {
-        if set.contains(w) {
+    let attr = |r: p::Capability, w: p::Capability| {
+        if set.contains(&(w as i32)) {
             AttributeSupport::ReadWrite
-        } else if set.contains(r) {
+        } else if set.contains(&(r as i32)) {
             AttributeSupport::Read
         } else {
             AttributeSupport::None
         }
     };
     Ok(StorageCapabilities {
-        stat_entry: set.contains("stat"),
-        list_entries: set.contains("list"),
-        read_file: if set.contains("range_read") {
+        stat_entry: set.contains(&(p::Capability::Stat as i32)),
+        list_entries: set.contains(&(p::Capability::List as i32)),
+        read_file: if set.contains(&(p::Capability::RangeRead as i32)) {
             FileReadSupport::Range
-        } else if set.contains("read") {
+        } else if set.contains(&(p::Capability::Read as i32)) {
             FileReadSupport::Sequential
         } else {
             FileReadSupport::None
         },
         write_file: FileWriteSupport {
-            create_new: set.contains("write_new"),
-            replace: set.contains("write_replace"),
-            atomic_publish: set.contains("atomic_publish"),
+            create_new: set.contains(&(p::Capability::WriteNew as i32)),
+            replace: set.contains(&(p::Capability::WriteReplace as i32)),
+            atomic_publish: set.contains(&(p::Capability::AtomicPublish as i32)),
         },
-        dir_model: if set.contains("hierarchical") {
+        dir_model: if set.contains(&(p::Capability::Hierarchical as i32)) {
             DirModel::Hierarchical
-        } else if set.contains("prefix") {
+        } else if set.contains(&(p::Capability::Prefix as i32)) {
             DirModel::Prefix
         } else {
             DirModel::None
         },
-        persistent_empty_dirs: set.contains("empty_dirs"),
-        create_dir: set.contains("create_dir"),
-        remove_entry: set.contains("remove"),
+        persistent_empty_dirs: set.contains(&(p::Capability::EmptyDirs as i32)),
+        create_dir: set.contains(&(p::Capability::CreateDir as i32)),
+        remove_entry: set.contains(&(p::Capability::Remove as i32)),
         rename: RenameSupport {
-            no_replace: set.contains("rename_new"),
-            replace: set.contains("rename_replace"),
+            no_replace: set.contains(&(p::Capability::RenameNew as i32)),
+            replace: set.contains(&(p::Capability::RenameReplace as i32)),
         },
-        permissions: attr("permissions_read", "permissions_write"),
-        xattrs: attr("xattrs_read", "xattrs_write"),
+        permissions: attr(
+            p::Capability::PermissionsRead,
+            p::Capability::PermissionsWrite,
+        ),
+        xattrs: attr(p::Capability::XattrsRead, p::Capability::XattrsWrite),
     })
 }
 pub fn describe(driver: &dyn Driver, generation: String) -> p::Description {
@@ -209,7 +221,10 @@ pub fn describe(driver: &dyn Driver, generation: String) -> p::Description {
         major: p::PROTOCOL_MAJOR,
         minor: p::PROTOCOL_MINOR,
         required_features: vec![],
-        features: p::PROTOCOL_FEATURES.iter().map(|feature| (*feature).into()).collect(),
+        features: p::PROTOCOL_FEATURES
+            .iter()
+            .map(|feature| (*feature).into())
+            .collect(),
         required_host_capabilities: vec![],
         instance_schema_profile: p::INSTANCE_SCHEMA_PROFILE.into(),
         generation,
@@ -219,22 +234,31 @@ pub fn describe(driver: &dyn Driver, generation: String) -> p::Description {
         child_mounts: info.child_mount_policy() == ChildMountPolicy::Allow,
         capabilities: capabilities(info.capabilities()),
         ownership: match driver.instances() {
-            InstanceManagement::HostManaged(_) => p::Ownership::Host,
-            InstanceManagement::SelfManaged(_) => p::Ownership::Plugin,
+            InstanceManagement::HostManaged(_) => p::Ownership::Host as i32,
+            InstanceManagement::SelfManaged(_) => p::Ownership::Plugin as i32,
         },
-        settings_schema: info.settings_schema().cloned(),
-        instance_schema: info.instance_config_schema().cloned(),
+        settings_schema: info.settings_schema().cloned().map(Into::into),
+        instance_schema: info.instance_config_schema().cloned().map(Into::into),
         config_version: info.instance_config_version().get(),
     }
 }
 pub fn driver_info(d: &p::Description) -> Result<DriverInfo, DriverError> {
     // Import availability is transport-specific; portable declarations are not.
-    p::negotiate_protocol(d)
-        .map_err(|_| DriverError::from(StorageError::new(StorageErrorKind::UnsupportedOperation)))?;
+    p::negotiate_protocol(d).map_err(|_| {
+        DriverError::from(StorageError::new(StorageErrorKind::UnsupportedOperation))
+    })?;
     if let Some(schema) = &d.instance_schema {
-        ah_vfs::application::schema::validate_instance_config_schema(schema)?;
+        ah_vfs::application::schema::validate_instance_config_schema(
+            &p::json_object(schema.clone()).map_err(|_| invalid())?,
+        )?;
     }
-    if d.generation.is_empty() || d.generation.len() > 128 || d.name.len() > 4096 {
+    if !matches!(
+        p::Ownership::try_from(d.ownership),
+        Ok(p::Ownership::Host | p::Ownership::Plugin)
+    ) || d.generation.is_empty()
+        || d.generation.len() > 128
+        || d.name.len() > 4096
+    {
         return Err(invalid());
     }
     Ok(DriverInfo::builder()
@@ -247,8 +271,20 @@ pub fn driver_info(d: &p::Description) -> Result<DriverInfo, DriverError> {
             ChildMountPolicy::Deny
         })
         .capabilities(decode_capabilities(&d.capabilities)?)
-        .maybe_settings_schema(d.settings_schema.clone())
-        .maybe_instance_config_schema(d.instance_schema.clone())
+        .maybe_settings_schema(
+            d.settings_schema
+                .clone()
+                .map(p::json_object)
+                .transpose()
+                .map_err(|_| invalid())?,
+        )
+        .maybe_instance_config_schema(
+            d.instance_schema
+                .clone()
+                .map(p::json_object)
+                .transpose()
+                .map_err(|_| invalid())?,
+        )
         .instance_config_version(NonZeroU32::new(d.config_version).ok_or_else(invalid)?)
         .build())
 }
@@ -277,10 +313,10 @@ pub fn entry(e: StorageEntry) -> Result<p::Entry, DriverError> {
     Ok(p::Entry {
         path: e.path.as_str().into(),
         kind: match e.kind {
-            StorageEntryKind::File => p::EntryKind::File,
-            StorageEntryKind::Dir => p::EntryKind::Dir,
-            StorageEntryKind::Symlink => p::EntryKind::Symlink,
-            StorageEntryKind::Other => p::EntryKind::Other,
+            StorageEntryKind::File => p::EntryKind::File as i32,
+            StorageEntryKind::Dir => p::EntryKind::Dir as i32,
+            StorageEntryKind::Symlink => p::EntryKind::Symlink as i32,
+            StorageEntryKind::Other => p::EntryKind::Other as i32,
         },
         size: e.size,
         modified,
@@ -306,16 +342,17 @@ pub fn decode_entry(e: p::Entry) -> Result<StorageEntry, StorageError> {
             time.ok_or_else(storage_invalid)
         })
         .transpose()?;
-    if e.kind != p::EntryKind::File && e.size.is_some() {
+    if e.kind != p::EntryKind::File as i32 && e.size.is_some() {
         return Err(storage_invalid());
     }
     Ok(StorageEntry {
         path: StoragePath::parse(&e.path).map_err(|_| storage_invalid())?,
-        kind: match e.kind {
+        kind: match e.kind() {
             p::EntryKind::File => StorageEntryKind::File,
             p::EntryKind::Dir => StorageEntryKind::Dir,
             p::EntryKind::Symlink => StorageEntryKind::Symlink,
             p::EntryKind::Other => StorageEntryKind::Other,
+            _ => return Err(storage_invalid()),
         },
         size: e.size,
         modified,
@@ -324,13 +361,13 @@ pub fn decode_entry(e: p::Entry) -> Result<StorageEntry, StorageError> {
 pub fn instance(i: InstanceInfo) -> p::Instance {
     p::Instance {
         id: i.id.as_str().into(),
-        details: i.details,
+        details: Some(i.details.into()),
     }
 }
 pub fn decode_instance(i: p::Instance) -> Result<InstanceInfo, DriverError> {
     Ok(InstanceInfo {
         id: InstanceId::parse(&i.id).map_err(|_| invalid())?,
-        details: i.details,
+        details: object(i.details)?,
     })
 }
 pub fn limit(value: u32) -> Result<NonZeroUsize, StorageError> {
@@ -342,4 +379,9 @@ pub fn storage_error(error: DriverError) -> StorageError {
         DriverError::Storage(e) => e,
         _ => storage_invalid(),
     }
+}
+
+/// Decode required configuration objects at the VFS application boundary.
+pub fn object(value: Option<p::Object>) -> Result<p::JsonObject, DriverError> {
+    p::json_object(value.ok_or_else(invalid)?).map_err(|_| invalid())
 }

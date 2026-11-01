@@ -1,2 +1,3 @@
-//! Shared Protobuf framing for the gRPC client and plugin server SDK.
-tonic::include_proto!("assethub.vfs.v1");
+//! gRPC services generated from the shared plugin schema; messages are defined once.
+pub use vfs_plugin_protocol::wire::*;
+tonic::include_proto!("assethub.vfs.v2");

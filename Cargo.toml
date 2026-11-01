@@ -5,6 +5,7 @@ members = [
     "crates/vfs-driver-memory",
     "crates/vfs-driver-kit",
     "crates/vfs-plugin-protocol",
+    "crates/vfs-plugin-guest",
     "crates/vfs-plugin-codec",
     "crates/vfs-plugin-host",
     "crates/vfs-plugin-grpc-wire",

@@ -60,9 +60,13 @@ impl Peer {
             capabilities: if self.changed.load(Ordering::SeqCst) {
                 vec![]
             } else {
-                vec!["stat".into(), "range_read".into(), "write_new".into()]
+                vec![
+                    p::Capability::Stat as i32,
+                    p::Capability::RangeRead as i32,
+                    p::Capability::WriteNew as i32,
+                ]
             },
-            ownership: p::Ownership::Host,
+            ownership: p::Ownership::Host as i32,
             settings_schema: None,
             instance_schema: None,
             config_version: 1,
@@ -73,20 +77,20 @@ impl Transport for Peer {
     fn call<'a>(&'a self, generation: &'a str, op: Op, _data: Vec<u8>) -> TransportFuture<'a> {
         Box::pin(async move {
             let current = self.generation.load(Ordering::SeqCst);
-            if matches!(op, Op::Describe) {
+            if matches!(op, Op::Describe(p::Empty {})) {
                 self.descriptions.fetch_add(1, Ordering::SeqCst);
                 if self.fail_describe.swap(false, Ordering::SeqCst) {
                     return Err(StorageError::new(StorageErrorKind::Unavailable).into());
                 }
-                return Ok(p::Reply::new(Value::Description {
-                    description: self.description(),
-                }));
+                return Ok(p::Reply::new(Value::Description(self.description().into())));
             }
             if generation != current.to_string() {
                 return Err(StorageError::new(StorageErrorKind::StaleHandle).into());
             }
             let value = match op {
-                Op::Initialize { settings } => {
+                Op::Initialize(p::Initialize {
+                    settings: Some(settings),
+                }) => {
                     self.initialized
                         .lock()
                         .map_err(|_| vfs_plugin_host::convert::invalid())?
@@ -95,38 +99,36 @@ impl Transport for Peer {
                         self.initializing.notify_one();
                         self.resume.notified().await;
                     }
-                    Value::Unit
+                    Value::Unit(p::Empty {})
                 }
-                Op::Open { .. } => Value::Storage {
+                Op::Open(_) => Value::Storage(p::Storage {
                     handle: self.next.fetch_add(1, Ordering::SeqCst),
-                    info: p::StorageInfo {
+                    info: Some(p::StorageInfo {
                         capabilities: self.description().capabilities,
                         chunk_size: 65536,
-                    },
-                },
-                Op::Storage {
-                    request: p::StorageOp::Stat { path },
+                    }),
+                }),
+                Op::Storage(p::StorageCall {
+                    operation: Some(p::StorageOp::Stat(p::Path { path })),
                     ..
-                } => Value::Entry {
-                    entry: p::Entry {
-                        path,
-                        kind: p::EntryKind::File,
-                        size: Some(current as u64),
-                        modified: None,
-                    },
-                },
-                Op::Read { .. } => Value::Reader {
+                }) => Value::Entry(p::Entry {
+                    path,
+                    kind: p::EntryKind::File as i32,
+                    size: Some(current as u64),
+                    modified: None,
+                }),
+                Op::Read(_) => Value::Reader(p::Handle {
                     handle: self.next.fetch_add(1, Ordering::SeqCst),
-                },
-                Op::Write { .. } => Value::Writer {
+                }),
+                Op::Write(_) => Value::Writer(p::Handle {
                     handle: self.next.fetch_add(1, Ordering::SeqCst),
-                },
-                Op::Commit { .. } => {
+                }),
+                Op::Commit(_) => {
                     self.commits.fetch_add(1, Ordering::SeqCst);
                     self.restart();
                     return Err(StorageError::new(StorageErrorKind::OutcomeUnknown).into());
                 }
-                _ => Value::Unit,
+                _ => Value::Unit(p::Empty {}),
             };
             Ok(p::Reply::new(value))
         })

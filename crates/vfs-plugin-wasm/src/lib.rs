@@ -1,4 +1,4 @@
-//! WIT resource adapter with bounded execution and explicitly granted HTTP origins.
+//! Protobuf-over-WIT adapter with bounded execution and explicitly granted HTTP origins.
 use ah_vfs::domain::{DriverError, StorageError, StorageErrorKind, new_instance_id};
 use std::{
     collections::HashMap,
@@ -7,7 +7,7 @@ use std::{
 use tokio::sync::Mutex;
 use vfs_plugin_host::{Transport, TransportFuture, convert as c};
 use vfs_plugin_protocol::{self as p, Operation as Op, Value};
-use wasmtime::component::{Component, Linker, ResourceAny};
+use wasmtime::component::{Component, Linker};
 use wasmtime::{Config, Engine, Store, StoreLimits, StoreLimitsBuilder};
 
 wasmtime::component::bindgen!({
@@ -18,7 +18,6 @@ wasmtime::component::bindgen!({
 });
 use assethub::vfs::http;
 use assethub::vfs::{clock, random};
-use exports::assethub::vfs::driver as guest;
 
 /// Permissions for the stable service.v1 profile. HTTP, clock and bounded random
 /// services are always linked; only explicitly granted HTTP origins are reachable.
@@ -42,9 +41,6 @@ struct Host {
     limits: StoreLimits,
 }
 impl http::Host for Host {
-    async fn unix_time(&mut self) -> wasmtime::Result<i64> {
-        unix_time()
-    }
     async fn request_http(
         &mut self,
         request: http::Request,
@@ -136,7 +132,6 @@ impl random::Host for Host {
 }
 struct Resource {
     kind: p::ResourceKind,
-    value: ResourceAny,
     touched: Instant,
 }
 struct State {
@@ -146,306 +141,206 @@ struct State {
     next: u64,
     initialized: Option<p::Object>,
     poisoned: bool,
+    faulted: bool,
     generation: String,
 }
 impl State {
-    async fn drop_resource(&mut self, value: ResourceAny) -> Result<(), DriverError> {
-        // A destructor is guest execution too. Its trap invalidates this store,
-        // including when the primary operation already returned successfully.
-        value
-            .resource_drop_async(&mut self.store)
-            .await
-            .map_err(|_| StorageError::new(StorageErrorKind::StaleHandle).into())
-    }
-    fn resource(&mut self, kind: p::ResourceKind, handle: u64) -> Result<ResourceAny, DriverError> {
-        let r = self
+    fn resource(&mut self, kind: p::ResourceKind, handle: u64) -> Result<(), DriverError> {
+        let resource = self
             .resources
             .get_mut(&handle)
             .ok_or_else(|| StorageError::new(StorageErrorKind::SessionClosed))?;
-        if r.kind != kind {
+        if resource.kind != kind {
             return Err(c::invalid());
         }
-        r.touched = Instant::now();
-        Ok(r.value)
+        resource.touched = Instant::now();
+        Ok(())
     }
-    async fn insert(
-        &mut self,
-        kind: p::ResourceKind,
-        value: ResourceAny,
-    ) -> Result<u64, DriverError> {
-        if self.resources.len() >= p::MAX_RESOURCES {
-            self.drop_resource(value).await?;
-            return Err(StorageError::new(StorageErrorKind::CapacityExceeded).into());
-        }
-        let Some(next) = self.next.checked_add(1) else {
-            self.drop_resource(value).await?;
-            return Err(c::invalid());
+    fn invalid_reply(&mut self, op: &Op) -> DriverError {
+        self.faulted = true;
+        StorageError::new(if op.mutates() {
+            StorageErrorKind::OutcomeUnknown
+        } else {
+            StorageErrorKind::InvalidData
+        })
+        .into()
+    }
+    async fn invoke(&mut self, op: &Op, data: Vec<u8>) -> Result<p::Reply, DriverError> {
+        let bytes = p::encode_request(&self.generation, op, data).map_err(|error| {
+            StorageError::new(match error {
+                p::CodecError::TooLarge => StorageErrorKind::TooLarge,
+                p::CodecError::InvalidData => StorageErrorKind::InvalidRequest,
+            })
+        })?;
+        let response = self
+            .bindings
+            .assethub_vfs_driver()
+            .call_call(&mut self.store, &bytes)
+            .await
+            .map_err(|_| StorageError::new(StorageErrorKind::StaleHandle))?;
+        let id = match op {
+            Op::GetInstance(p::InstanceId { id })
+            | Op::RemoveInstance(p::InstanceId { id })
+            | Op::Open(p::Open { id, .. }) => Some(id.as_str()),
+            _ => None,
         };
-        self.next = next;
-        self.resources.insert(
-            self.next,
-            Resource {
-                kind,
-                value,
-                touched: Instant::now(),
-            },
-        );
-        Ok(self.next)
+        let reply = p::decode_reply(&response)
+            .map_err(|_| self.invalid_reply(op))?
+            .map_err(|failure| c::driver_error(failure, id))?;
+        if !reply
+            .result
+            .as_ref()
+            .is_some_and(|value| op.accepts_reply(value))
+        {
+            return Err(self.invalid_reply(op));
+        }
+        Ok(reply)
     }
     async fn execute(&mut self, op: Op, data: Vec<u8>) -> Result<p::Reply, DriverError> {
         let expired: Vec<_> = self
             .resources
             .iter()
-            .filter(|(_, r)| r.touched.elapsed() > Duration::from_secs(300))
-            .map(|(id, _)| *id)
+            .filter(|(_, resource)| resource.touched.elapsed() > Duration::from_secs(300))
+            .map(|(handle, resource)| (*handle, resource.kind))
             .collect();
-        for id in expired {
-            if let Some(r) = self.resources.remove(&id) {
-                self.drop_resource(r.value).await?;
-            }
+        for (handle, kind) in expired {
+            self.resources.remove(&handle);
+            self.invoke(
+                &Op::Release(p::ResourceRef {
+                    kind: kind as i32,
+                    handle,
+                }),
+                vec![],
+            )
+            .await?;
         }
-        let g = self.bindings.assethub_vfs_driver();
-        let value = match op {
-            Op::Describe => {
-                let bytes = g
-                    .call_describe(&mut self.store)
-                    .await
-                    .map_err(|_| StorageError::new(StorageErrorKind::StaleHandle))?;
-                let mut description: p::Description = json(&bytes)?;
-                description.generation = self.generation.clone();
-                Value::Description { description }
+        if let Op::Initialize(p::Initialize {
+            settings: Some(settings),
+        }) = &op
+            && let Some(previous) = &self.initialized
+        {
+            return if previous == settings {
+                Ok(p::Reply::unit())
+            } else {
+                Err(StorageError::new(StorageErrorKind::Conflict).into())
+            };
+        }
+        if !matches!(op, Op::Describe(p::Empty {}) | Op::Initialize(_))
+            && self.initialized.is_none()
+        {
+            return Err(StorageError::new(StorageErrorKind::Unavailable).into());
+        }
+        match &op {
+            Op::Storage(p::StorageCall { handle, .. })
+            | Op::Read(p::Read { handle, .. })
+            | Op::Write(p::Write { handle, .. }) => {
+                self.resource(p::ResourceKind::Storage, *handle)?
             }
-            Op::Initialize { settings } => {
-                if let Some(previous) = &self.initialized {
-                    return if previous == &settings {
-                        Ok(p::Reply::unit())
-                    } else {
-                        Err(StorageError::new(StorageErrorKind::Conflict).into())
-                    };
-                }
-                result(
-                    g.call_initialize(&mut self.store, &encode(&settings)?)
-                        .await,
-                    None,
-                )?;
-                self.initialized = Some(settings);
-                Value::Unit
+            Op::ReaderNext(p::Handle { handle }) => {
+                self.resource(p::ResourceKind::Reader, *handle)?
             }
-            _ if self.initialized.is_none() => {
-                return Err(StorageError::new(StorageErrorKind::Unavailable).into());
+            Op::WriterChunk(p::Handle { handle }) => {
+                self.resource(p::ResourceKind::Writer, *handle)?
             }
-            Op::Prepare { config } => {
-                let bytes = result(
-                    g.call_prepare(&mut self.store, &encode(&config)?).await,
-                    None,
-                )?;
-                json(&bytes)?
+            Op::Commit(p::Handle { handle }) | Op::Abort(p::Handle { handle }) => {
+                self.resource(p::ResourceKind::Writer, *handle)?;
+                self.resources.remove(handle);
             }
-            Op::Migrate {
-                from_version,
-                config,
-            } => {
-                let bytes = result(
-                    g.call_migrate(&mut self.store, from_version, &encode(&config)?)
-                        .await,
-                    None,
-                )?;
-                Value::Config {
-                    config: json(&bytes)?,
-                }
-            }
-            Op::TestConnection { config } => {
-                result(
-                    g.call_test_connection(&mut self.store, &encode(&config)?)
-                        .await,
-                    None,
-                )?;
-                Value::Unit
-            }
-            Op::Open { id, config } => {
-                let config = config.as_ref().map(encode).transpose()?;
-                let resource = result(
-                    g.call_open(&mut self.store, &id, config.as_deref()).await,
-                    Some(&id),
-                )?;
-                let bytes = g
-                    .storage()
-                    .call_info(&mut self.store, resource)
-                    .await
-                    .map_err(|_| StorageError::new(StorageErrorKind::StaleHandle))?;
-                let info = match json(&bytes) {
-                    Ok(info) => info,
-                    Err(error) => {
-                        self.drop_resource(resource).await?;
-                        return Err(error);
-                    }
-                };
-                let handle = self.insert(p::ResourceKind::Storage, resource).await?;
-                Value::Storage { handle, info }
-            }
-            op @ (Op::GetInstance { .. }
-            | Op::ListInstances { .. }
-            | Op::CreateInstance { .. }
-            | Op::RemoveInstance { .. }) => {
-                let id = match &op {
-                    Op::GetInstance { id } | Op::RemoveInstance { id } => Some(id.as_str()),
-                    _ => None,
-                };
-                let bytes = result(g.call_instances(&mut self.store, &encode(&op)?).await, id)?;
-                json(&bytes)?
-            }
-            Op::Storage { handle, request } => {
-                let resource = self.resource(p::ResourceKind::Storage, handle)?;
-                let g = self.bindings.assethub_vfs_driver();
-                let reply = result(
-                    g.storage()
-                        .call_call(&mut self.store, resource, &encode(&request)?, &data)
-                        .await,
-                    None,
-                )?;
-                return Ok(p::Reply {
-                    value: json(&reply.control)?,
-                    data: reply.data,
-                });
-            }
-            Op::Read {
-                handle,
-                path,
-                offset,
-                length,
-            } => {
-                let resource = self.resource(p::ResourceKind::Storage, handle)?;
-                let g = self.bindings.assethub_vfs_driver();
-                let reader = result(
-                    g.storage()
-                        .call_read(&mut self.store, resource, &path, offset, length)
-                        .await,
-                    None,
-                )?;
-                let handle = self.insert(p::ResourceKind::Reader, reader).await?;
-                Value::Reader { handle }
-            }
-            Op::Write {
-                handle,
-                path,
-                replace,
-                atomic,
-            } => {
-                let resource = self.resource(p::ResourceKind::Storage, handle)?;
-                let g = self.bindings.assethub_vfs_driver();
-                let writer = result(
-                    g.storage()
-                        .call_write(&mut self.store, resource, &path, replace, atomic)
-                        .await,
-                    None,
-                )?;
-                let handle = self.insert(p::ResourceKind::Writer, writer).await?;
-                Value::Writer { handle }
-            }
-            Op::ReaderNext { handle } => {
-                let resource = self.resource(p::ResourceKind::Reader, handle)?;
-                let g = self.bindings.assethub_vfs_driver();
-                let chunk = result(g.reader().call_next(&mut self.store, resource).await, None)?;
-                return Ok(p::Reply {
-                    value: Value::Chunk {
-                        eof: chunk.is_none(),
-                    },
-                    data: chunk.unwrap_or_default(),
-                });
-            }
-            Op::WriterChunk { handle } => {
-                let resource = self.resource(p::ResourceKind::Writer, handle)?;
-                let g = self.bindings.assethub_vfs_driver();
-                result(
-                    g.writer()
-                        .call_write(&mut self.store, resource, &data)
-                        .await,
-                    None,
-                )?;
-                Value::Unit
-            }
-            Op::Commit { handle } | Op::Abort { handle } => {
-                let resource = self.resource(p::ResourceKind::Writer, handle)?;
-                self.resources.remove(&handle);
-                let g = self.bindings.assethub_vfs_driver();
-                let outcome = if matches!(op, Op::Commit { .. }) {
-                    result(
-                        g.writer().call_commit(&mut self.store, resource).await,
-                        None,
-                    )
-                    .and_then(|bytes| {
-                        json(&bytes)
-                            .map(|entry| Value::Entry { entry })
-                            .map_err(|_| StorageError::new(StorageErrorKind::OutcomeUnknown).into())
-                    })
-                } else {
-                    result(g.writer().call_abort(&mut self.store, resource).await, None)
-                        .map(|()| Value::Unit)
-                };
-                self.drop_resource(resource).await?;
-                match outcome {
-                    Ok(value) => value,
-                    Err(error) => return Err(error),
-                }
-            }
-            Op::Release { kind, handle } => {
+            Op::Release(p::ResourceRef { handle, kind }) => {
                 if self
                     .resources
-                    .get(&handle)
-                    .is_some_and(|resource| resource.kind != kind)
+                    .get(handle)
+                    .is_some_and(|resource| resource.kind as i32 != *kind)
                 {
                     return Err(c::invalid());
                 }
-                if let Some(resource) = self.resources.remove(&handle) {
-                    self.drop_resource(resource.value).await?;
-                }
-                Value::Unit
+                self.resources.remove(handle);
             }
-            Op::Renew { resources } => {
+            Op::Renew(p::Renew { resources }) => {
                 if resources.len() > p::MAX_RESOURCES {
                     return Err(c::invalid());
                 }
-                for r in resources {
-                    if let Some(resource) = self.resources.get_mut(&r.handle)
-                        && resource.kind == r.kind
+                for resource in resources {
+                    if self
+                        .resources
+                        .get(&resource.handle)
+                        .is_some_and(|entry| entry.kind as i32 == resource.kind)
                     {
-                        resource.touched = Instant::now();
+                        self.resource(resource.kind(), resource.handle)?;
                     }
                 }
-                Value::Unit
             }
-        };
-        Ok(p::Reply::new(value))
+            _ => {}
+        }
+        if matches!(op, Op::Open(_) | Op::Read(_) | Op::Write(_))
+            && self.resources.len() >= p::MAX_RESOURCES
+        {
+            return Err(StorageError::new(StorageErrorKind::CapacityExceeded).into());
+        }
+        let result = self.invoke(&op, data).await;
+        if let Op::ReaderNext(p::Handle { handle }) = &op
+            && (result.is_err()
+                || matches!(
+                    &result,
+                    Ok(p::Reply {
+                        result: Some(Value::Chunk(p::Chunk { eof: true })),
+                        ..
+                    })
+                ))
+        {
+            self.resources.remove(handle);
+            // Guests close failed/finished readers; release is also idempotent for
+            // other implementations and never reopens or advances a stream.
+            if !self.faulted
+                && result.as_ref().err().is_none_or(|error| {
+                    error
+                        .storage_error()
+                        .is_none_or(|error| error.kind() != StorageErrorKind::StaleHandle)
+                })
+            {
+                self.invoke(
+                    &Op::Release(p::ResourceRef {
+                        kind: p::ResourceKind::Reader as i32,
+                        handle: *handle,
+                    }),
+                    vec![],
+                )
+                .await?;
+            }
+        }
+        let mut reply = result?;
+        match reply.result.as_mut().ok_or_else(c::invalid)? {
+            Value::Description(description) => description.generation = self.generation.clone(),
+            Value::Storage(p::Storage { handle, .. })
+            | Value::Reader(p::Handle { handle })
+            | Value::Writer(p::Handle { handle }) => {
+                let kind = match op {
+                    Op::Open(_) => p::ResourceKind::Storage,
+                    Op::Read(_) => p::ResourceKind::Reader,
+                    _ => p::ResourceKind::Writer,
+                };
+                if *handle <= self.next {
+                    return Err(self.invalid_reply(&op));
+                }
+                self.next = *handle;
+                self.resources.insert(
+                    *handle,
+                    Resource {
+                        kind,
+                        touched: Instant::now(),
+                    },
+                );
+            }
+            _ => {}
+        }
+        if let Op::Initialize(p::Initialize {
+            settings: Some(settings),
+        }) = op
+        {
+            self.initialized = Some(settings);
+        }
+        Ok(reply)
     }
-}
-fn encode(value: &impl serde::Serialize) -> Result<Vec<u8>, DriverError> {
-    let bytes = serde_json::to_vec(value).map_err(|_| c::invalid())?;
-    if bytes.len() > p::MAX_CONTROL_BYTES {
-        return Err(StorageError::new(StorageErrorKind::TooLarge).into());
-    }
-    Ok(bytes)
-}
-fn json<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, DriverError> {
-    if bytes.len() > p::MAX_CONTROL_BYTES {
-        return Err(c::invalid());
-    }
-    serde_json::from_slice(bytes).map_err(|_| c::invalid())
-}
-fn result<T>(
-    r: wasmtime::Result<Result<T, guest::Failure>>,
-    id: Option<&str>,
-) -> Result<T, DriverError> {
-    r.map_err(|_| StorageError::new(StorageErrorKind::StaleHandle))?
-        .map_err(|e| {
-            c::driver_error(
-                p::Failure {
-                    code: e.code,
-                    field: e.field,
-                    config_kind: e.config_kind,
-                },
-                id,
-            )
-        })
 }
 
 pub struct WasmTransport {
@@ -499,6 +394,7 @@ impl InstanceFactory {
             next: 0,
             initialized: None,
             poisoned: false,
+            faulted: false,
             generation: new_instance_id()?.as_str().into(),
         })
     }
@@ -603,12 +499,14 @@ impl Transport for WasmTransport {
             let mut state = tokio::time::timeout(Duration::from_secs(30), self.state.lock())
                 .await
                 .map_err(|_| StorageError::new(StorageErrorKind::TimedOut))?;
-            if state.poisoned && matches!(op, Op::Describe) {
+            if state.poisoned && matches!(op, Op::Describe(p::Empty {})) {
                 // Discard the entire failed store. Guest resources and execution
                 // state are never reused, including after caller cancellation.
                 *state = self.factory.instantiate().await?;
             }
-            if state.poisoned || (!matches!(op, Op::Describe) && generation != state.generation) {
+            if state.poisoned
+                || (!matches!(op, Op::Describe(p::Empty {})) && generation != state.generation)
+            {
                 return Err(StorageError::new(StorageErrorKind::StaleHandle).into());
             }
             state
@@ -635,7 +533,7 @@ impl Transport for WasmTransport {
                     }
                 }
                 Ok(result) => {
-                    state.poisoned = false;
+                    state.poisoned = state.faulted;
                     result
                 }
                 Err(_) => Err(StorageError::new(if mutates {

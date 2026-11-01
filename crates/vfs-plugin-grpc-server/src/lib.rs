@@ -71,41 +71,24 @@ impl PluginService {
         }
         Ok(permit)
     }
-    fn decode(&self, r: wire::Call) -> Result<(String, Op, Vec<u8>), Status> {
-        if r.control.len() > p::MAX_CONTROL_BYTES
-            || r.data.len() > p::MAX_DATA_BYTES
-            || r.generation.len() > 128
-        {
-            return Err(Status::invalid_argument("plugin frame is too large"));
-        }
-        let op = serde_json::from_slice(&r.control)
-            .map_err(|_| Status::invalid_argument("invalid plugin operation"))?;
-        Ok((r.generation, op, r.data))
+    fn decode(&self, request: wire::Request) -> Result<(String, Op, Vec<u8>), Status> {
+        p::from_request(request).map_err(|error| match error {
+            p::CodecError::TooLarge => Status::resource_exhausted("plugin frame is too large"),
+            p::CodecError::InvalidData => Status::invalid_argument("invalid plugin request"),
+        })
     }
 }
 fn encode(reply: Result<p::Reply, DriverError>) -> Result<wire::Reply, Status> {
-    let result = match reply {
-        Ok(r) => wire::Reply {
-            control: serde_json::to_vec(&r.value)
-                .map_err(|_| Status::internal("invalid plugin response"))?,
-            data: r.data,
-            failed: false,
-        },
-        Err(e) => wire::Reply {
-            control: serde_json::to_vec(&c::failure(e))
-                .map_err(|_| Status::internal("invalid plugin error"))?,
-            data: vec![],
-            failed: true,
-        },
-    };
-    if result.control.len() > p::MAX_CONTROL_BYTES || result.data.len() > p::MAX_DATA_BYTES {
-        return Err(Status::resource_exhausted("plugin response is too large"));
-    }
-    Ok(result)
+    p::to_reply(reply.map_err(c::failure))
+        .map_err(|_| Status::resource_exhausted("invalid or oversized plugin response"))
 }
+
 #[tonic::async_trait]
 impl wire::plugin_server::Plugin for PluginService {
-    async fn invoke(&self, request: Request<wire::Call>) -> Result<Response<wire::Reply>, Status> {
+    async fn invoke(
+        &self,
+        request: Request<wire::Request>,
+    ) -> Result<Response<wire::Reply>, Status> {
         let _permit = self.admit(&request)?;
         let (generation, op, data) = self.decode(request.into_inner())?;
         Ok(Response::new(encode(
@@ -120,11 +103,11 @@ impl wire::plugin_server::Plugin for PluginService {
     type ReadStream = ReadStream;
     async fn read(
         &self,
-        request: Request<wire::Call>,
+        request: Request<wire::Request>,
     ) -> Result<Response<Self::ReadStream>, Status> {
         let permit = self.admit(&request)?;
         let (generation, op, data) = self.decode(request.into_inner())?;
-        let Op::ReaderNext { handle } = op else {
+        let Op::ReaderNext(p::Handle { handle }) = op else {
             return Err(Status::invalid_argument("expected reader operation"));
         };
         if !data.is_empty() {
@@ -150,13 +133,13 @@ impl wire::plugin_server::Plugin for PluginService {
                 }
                 let result = tokio::select! {
                     ()=tx.closed()=>break,
-                    result=tokio::time::timeout(admission.limits.request_timeout, dispatcher.call(&generation,Op::ReaderNext{handle},vec![]))=>
+                    result=tokio::time::timeout(admission.limits.request_timeout, dispatcher.call(&generation,Op::ReaderNext(p::Handle {handle}),vec![]))=>
                         result.unwrap_or_else(|_| Err(StorageError::new(StorageErrorKind::TimedOut).into())),
                 };
                 let done = !matches!(
                     &result,
                     Ok(p::Reply {
-                        value: Value::Chunk { eof: false },
+                        result: Some(Value::Chunk(p::Chunk { eof: false })),
                         ..
                     })
                 );
@@ -176,10 +159,10 @@ impl wire::plugin_server::Plugin for PluginService {
                 admission.limits.request_timeout,
                 dispatcher.call(
                     &generation,
-                    Op::Release {
-                        kind: p::ResourceKind::Reader,
+                    Op::Release(p::ResourceRef {
+                        kind: p::ResourceKind::Reader as i32,
                         handle,
-                    },
+                    }),
                     vec![],
                 ),
             )
@@ -192,7 +175,7 @@ impl wire::plugin_server::Plugin for PluginService {
     }
     async fn write(
         &self,
-        request: Request<tonic::Streaming<wire::Call>>,
+        request: Request<tonic::Streaming<wire::Request>>,
     ) -> Result<Response<wire::Reply>, Status> {
         let _permit = self.admit(&request)?;
         let mut stream = request.into_inner();
@@ -204,7 +187,7 @@ impl wire::plugin_server::Plugin for PluginService {
         {
             self.admission.operation()?;
             let (generation, op, data) = self.decode(frame)?;
-            let Op::WriterChunk { handle } = op else {
+            let Op::WriterChunk(p::Handle { handle }) = op else {
                 return Err(Status::invalid_argument("expected writer operation"));
             };
             if identity
@@ -217,7 +200,7 @@ impl wire::plugin_server::Plugin for PluginService {
             if let Err(error) = tokio::time::timeout(
                 self.admission.limits.request_timeout,
                 self.dispatcher
-                    .call(&generation, Op::WriterChunk { handle }, data),
+                    .call(&generation, Op::WriterChunk(p::Handle { handle }), data),
             )
             .await
             .map_err(|_| Status::deadline_exceeded("plugin operation timed out"))?

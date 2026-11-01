@@ -2243,7 +2243,6 @@ name = "vfs-plugin-grpc"
 version = "0.1.0"
 dependencies = [
  "ah-vfs",
- "serde_json",
  "tokio",
  "tokio-stream",
  "tonic",
@@ -2260,7 +2259,6 @@ version = "0.1.0"
 dependencies = [
  "ah-vfs",
  "futures-util",
- "serde_json",
  "sha2",
  "subtle",
  "tokio",
@@ -2275,11 +2273,11 @@ dependencies = [
 name = "vfs-plugin-grpc-wire"
 version = "0.1.0"
 dependencies = [
- "prost",
  "protoc-bin-vendored",
  "tonic",
  "tonic-prost",
  "tonic-prost-build",
+ "vfs-plugin-protocol",
 ]
 
 [[package]]
@@ -2287,7 +2285,6 @@ name = "vfs-plugin-host"
 version = "0.1.0"
 dependencies = [
  "ah-vfs",
- "serde_json",
  "tokio",
  "vfs-plugin-codec",
  "vfs-plugin-protocol",
@@ -2297,7 +2294,9 @@ dependencies = [
 name = "vfs-plugin-protocol"
 version = "0.1.0"
 dependencies = [
- "serde",
+ "prost",
+ "prost-build",
+ "protoc-bin-vendored",
  "serde_json",
 ]
 

@@ -1,12 +1,10 @@
-package assethub:vfs@1.0.0;
+package assethub:vfs@2.0.0;
 
 interface http {
     record header { name: string, value: string }
     record request { method: string, url: string, headers: list<header>, body: list<u8> }
     record response { status: u16, headers: list<header>, body: list<u8> }
     request-http: func(request: request) -> result<response, string>;
-    // Compatibility alias for early v1 guests; new guests use the clock interface.
-    unix-time: func() -> s64;
 }
 
 interface clock {
@@ -19,31 +17,10 @@ interface random {
 }
 
 interface driver {
-    // Control values are lossless JSON matching vfs-plugin-protocol. Binary
-    // file chunks remain lists of bytes, never JSON arrays or base64 strings.
-    record failure { code: string, field: option<string>, config-kind: option<string> }
-    record reply { control: list<u8>, data: list<u8> }
-    resource reader {
-        next: func() -> result<option<list<u8>>, failure>;
-    }
-    resource writer {
-        write: func(data: list<u8>) -> result<_, failure>;
-        commit: func() -> result<list<u8>, failure>;
-        abort: func() -> result<_, failure>;
-    }
-    resource storage {
-        info: func() -> list<u8>;
-        call: func(control: list<u8>, data: list<u8>) -> result<reply, failure>;
-        read: func(path: string, offset: u64, length: option<u64>) -> result<reader, failure>;
-        write: func(path: string, replace: bool, atomic: bool) -> result<writer, failure>;
-    }
-    describe: func() -> list<u8>;
-    initialize: func(settings: list<u8>) -> result<_, failure>;
-    prepare: func(config: list<u8>) -> result<list<u8>, failure>;
-    migrate: func(from-version: u32, config: list<u8>) -> result<list<u8>, failure>;
-    test-connection: func(config: list<u8>) -> result<_, failure>;
-    instances: func(control: list<u8>) -> result<list<u8>, failure>;
-    open: func(id: string, config: option<list<u8>>) -> result<storage, failure>;
+    // Request and Reply are protobuf assethub.vfs.v2 messages from plugin.proto.
+    // The host owns the Store generation. Guest resource IDs are scoped to it.
+    // Both directions use one envelope, including metadata, errors and commit.
+    call: func(request: list<u8>) -> list<u8>;
 }
 
 world plugin {

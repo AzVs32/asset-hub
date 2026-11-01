@@ -26,28 +26,28 @@ impl Metadata {
 }
 pub(super) enum WriteCondition { Absent, Match(String) }
 struct Reply { url: Url, response: http::Response }
-fn optional_text(fields: &p::Object, field: &str) -> Result<Option<String>> {
+fn optional_text(fields: &p::JsonObject, field: &str) -> Result<Option<String>> {
     fields.get(field).map(|value| {
-        let value = value.as_str().ok_or_else(|| invalid(field, "invalid_type"))?;
-        if value.len() > 4096 { return Err(invalid(field, "invalid_value")); }
+        let value = value.as_str().ok_or_else(|| invalid(field, p::ConfigErrorKind::InvalidType))?;
+        if value.len() > 4096 { return Err(invalid(field, p::ConfigErrorKind::InvalidValue)); }
         Ok(value.to_owned())
     }).transpose()
 }
 fn decoded_segments(url: &Url) -> Result<Vec<String>> {
     let mut segments = vec![];
-    let raw = url.path().strip_prefix('/').ok_or_else(|| failure("invalid_data"))?;
+    let raw = url.path().strip_prefix('/').ok_or_else(|| failure(p::FailureCode::InvalidData))?;
     let raw = raw.strip_suffix('/').unwrap_or(raw);
     if raw.is_empty() { return Ok(segments); }
     for segment in raw.split('/') {
-        if segment.is_empty() { return Err(failure("invalid_data")); }
+        if segment.is_empty() { return Err(failure(p::FailureCode::InvalidData)); }
         let bytes = segment.as_bytes();
         for (index, byte) in bytes.iter().enumerate() {
             if *byte == b'%' && (index + 2 >= bytes.len() || !bytes[index + 1].is_ascii_hexdigit() || !bytes[index + 2].is_ascii_hexdigit()) {
-                return Err(failure("invalid_data"));
+                return Err(failure(p::FailureCode::InvalidData));
             }
         }
-        let decoded = percent_decode_str(segment).decode_utf8().map_err(|_| failure("invalid_name_encoding"))?;
-        if decoded.contains(['/', '\\', '\0']) || matches!(decoded.as_ref(), "." | "..") { return Err(failure("invalid_data")); }
+        let decoded = percent_decode_str(segment).decode_utf8().map_err(|_| failure(p::FailureCode::InvalidNameEncoding))?;
+        if decoded.contains(['/', '\\', '\0']) || matches!(decoded.as_ref(), "." | "..") { return Err(failure(p::FailureCode::InvalidData)); }
         segments.push(decoded.into_owned());
     }
     Ok(segments)
@@ -60,33 +60,33 @@ fn header<'a>(response: &'a http::Response, name: &str) -> Option<&'a str> {
 }
 fn status_error(status: u16, mutation: bool) -> api::Failure {
     failure(match status {
-        400 | 422 => "invalid_request",
-        401 | 403 => "permission_denied",
-        404 | 410 => "not_found",
-        405 | 415 | 501 => "unsupported_operation",
-        408 if !mutation => "timed_out",
-        409 | 412 | 423 | 424 => "conflict",
-        413 => "too_large",
-        429 => "rate_limited",
-        507 => "capacity_exceeded",
-        500..=599 if !mutation => "unavailable",
-        _ if mutation => "outcome_unknown",
-        _ => "backend",
+        400 | 422 => p::FailureCode::InvalidRequest,
+        401 | 403 => p::FailureCode::PermissionDenied,
+        404 | 410 => p::FailureCode::NotFound,
+        405 | 415 | 501 => p::FailureCode::UnsupportedOperation,
+        408 if !mutation => p::FailureCode::TimedOut,
+        409 | 412 | 423 | 424 => p::FailureCode::Conflict,
+        413 => p::FailureCode::TooLarge,
+        429 => p::FailureCode::RateLimited,
+        507 => p::FailureCode::CapacityExceeded,
+        500..=599 if !mutation => p::FailureCode::Unavailable,
+        _ if mutation => p::FailureCode::OutcomeUnknown,
+        _ => p::FailureCode::Backend,
     })
 }
 impl Client {
-    pub fn parse(fields: &p::Object) -> Result<Self> {
+    pub fn parse(fields: &p::JsonObject) -> Result<Self> {
         if let Some(field) = fields.keys().find(|field| !["endpoint", "username", "password", "bearer_token", "max_write_bytes"].contains(&field.as_str())) {
-            return Err(invalid(field, "unknown_field"));
+            return Err(invalid(field, p::ConfigErrorKind::UnknownField));
         }
-        let endpoint = optional_text(fields, "endpoint")?.ok_or_else(|| invalid("endpoint", "missing_field"))?;
-        let mut endpoint = Url::parse(&endpoint).map_err(|_| invalid("endpoint", "invalid_value"))?;
+        let endpoint = optional_text(fields, "endpoint")?.ok_or_else(|| invalid("endpoint", p::ConfigErrorKind::MissingField))?;
+        let mut endpoint = Url::parse(&endpoint).map_err(|_| invalid("endpoint", p::ConfigErrorKind::InvalidValue))?;
         if !matches!(endpoint.scheme(), "http" | "https") || endpoint.host_str().is_none()
             || !endpoint.username().is_empty() || endpoint.password().is_some() || endpoint.query().is_some() || endpoint.fragment().is_some() {
-            return Err(invalid("endpoint", "invalid_value"));
+            return Err(invalid("endpoint", p::ConfigErrorKind::InvalidValue));
         }
-        let root_segments = decoded_segments(&endpoint).map_err(|_| invalid("endpoint", "invalid_value"))?;
-        if !endpoint.path().ends_with('/') { endpoint.path_segments_mut().map_err(|_| invalid("endpoint", "invalid_value"))?.push(""); }
+        let root_segments = decoded_segments(&endpoint).map_err(|_| invalid("endpoint", p::ConfigErrorKind::InvalidValue))?;
+        if !endpoint.path().ends_with('/') { endpoint.path_segments_mut().map_err(|_| invalid("endpoint", p::ConfigErrorKind::InvalidValue))?.push(""); }
         let username = optional_text(fields, "username")?;
         let password = optional_text(fields, "password")?;
         let bearer = optional_text(fields, "bearer_token")?;
@@ -94,24 +94,24 @@ impl Client {
             (None, None, None) => None,
             (Some(username), Some(password), None) => {
                 if username.is_empty() || username.contains(':') || username.chars().any(char::is_control) {
-                    return Err(invalid("username", "invalid_value"));
+                    return Err(invalid("username", p::ConfigErrorKind::InvalidValue));
                 }
-                if password.chars().any(char::is_control) { return Err(invalid("password", "invalid_value")); }
+                if password.chars().any(char::is_control) { return Err(invalid("password", p::ConfigErrorKind::InvalidValue)); }
                 Some(format!("Basic {}", STANDARD.encode(format!("{username}:{password}"))))
             }
             (None, None, Some(token)) => {
-                if token.is_empty() || !token.bytes().all(|byte| byte.is_ascii_graphic()) { return Err(invalid("bearer_token", "invalid_value")); }
+                if token.is_empty() || !token.bytes().all(|byte| byte.is_ascii_graphic()) { return Err(invalid("bearer_token", p::ConfigErrorKind::InvalidValue)); }
                 Some(format!("Bearer {token}"))
             }
-            (Some(_), None, None) => return Err(invalid("password", "missing_field")),
-            (None, Some(_), None) => return Err(invalid("username", "missing_field")),
-            _ => return Err(invalid("bearer_token", "invalid_value")),
+            (Some(_), None, None) => return Err(invalid("password", p::ConfigErrorKind::MissingField)),
+            (None, Some(_), None) => return Err(invalid("username", p::ConfigErrorKind::MissingField)),
+            _ => return Err(invalid("bearer_token", p::ConfigErrorKind::InvalidValue)),
         };
         let max_write_bytes = match fields.get("max_write_bytes") {
             None => p::MAX_DATA_BYTES,
             Some(value) => {
-                let value = value.as_u64().ok_or_else(|| invalid("max_write_bytes", if value.is_number() { "invalid_value" } else { "invalid_type" }))?;
-                if value == 0 || value > p::MAX_DATA_BYTES as u64 { return Err(invalid("max_write_bytes", "invalid_value")); }
+                let value = value.as_u64().ok_or_else(|| invalid("max_write_bytes", if value.is_number() { p::ConfigErrorKind::InvalidValue } else { p::ConfigErrorKind::InvalidType }))?;
+                if value == 0 || value > p::MAX_DATA_BYTES as u64 { return Err(invalid("max_write_bytes", p::ConfigErrorKind::InvalidValue)); }
                 value as usize
             }
         };
@@ -121,7 +121,7 @@ impl Client {
         path(relative)?;
         let mut url = self.endpoint.clone();
         if !relative.is_empty() {
-            let mut segments = url.path_segments_mut().map_err(|_| failure("invalid_data"))?;
+            let mut segments = url.path_segments_mut().map_err(|_| failure(p::FailureCode::InvalidData))?;
             segments.pop_if_empty();
             for segment in relative.split('/') { segments.push(segment); }
             if collection { segments.push(""); }
@@ -130,15 +130,15 @@ impl Client {
     }
     fn relative(&self, url: &Url) -> Result<String> {
         if url.origin() != self.endpoint.origin() || !url.username().is_empty() || url.password().is_some()
-            || url.query().is_some() || url.fragment().is_some() { return Err(failure("invalid_data")); }
+            || url.query().is_some() || url.fragment().is_some() { return Err(failure(p::FailureCode::InvalidData)); }
         let segments = decoded_segments(url)?;
-        if !segments.starts_with(&self.root_segments) { return Err(failure("invalid_data")); }
+        if !segments.starts_with(&self.root_segments) { return Err(failure(p::FailureCode::InvalidData)); }
         let relative = segments[self.root_segments.len()..].join("/");
-        path(&relative).map_err(|_| failure("invalid_name_encoding"))?;
+        path(&relative).map_err(|_| failure(p::FailureCode::InvalidNameEncoding))?;
         Ok(relative)
     }
     fn request(&self, method: &str, mut url: Url, extra: Vec<(&str, String)>, body: Vec<u8>) -> Result<Reply> {
-        if body.len() > p::MAX_DATA_BYTES { return Err(failure("too_large")); }
+        if body.len() > p::MAX_DATA_BYTES { return Err(failure(p::FailureCode::TooLarge)); }
         let mutation = !matches!(method, "GET" | "HEAD" | "PROPFIND" | "OPTIONS");
         let original = self.relative(&url)?;
         for attempt in 0..=3 {
@@ -149,38 +149,38 @@ impl Client {
             let response = http::request_http(&request).map_err(|code| {
                 // Host limits may fail while reading a response after a mutation
                 // was applied; do not misreport these as safe-to-retry failures.
-                if mutation && !matches!(code.as_str(), "permission_denied" | "invalid_request") { failure("outcome_unknown") } else { failure(&code) }
+                if mutation && !matches!(code.as_str(), "permission_denied" | "invalid_request") { failure(p::FailureCode::OutcomeUnknown) } else { api::host_failure(&code) }
             })?;
             if matches!(response.status, 301 | 302 | 307 | 308) && !mutation {
-                if attempt == 3 { return Err(failure("invalid_data")); }
-                let destination = url.join(header(&response, "location").ok_or_else(|| failure("invalid_data"))?).map_err(|_| failure("invalid_data"))?;
+                if attempt == 3 { return Err(failure(p::FailureCode::InvalidData)); }
+                let destination = url.join(header(&response, "location").ok_or_else(|| failure(p::FailureCode::InvalidData))?).map_err(|_| failure(p::FailureCode::InvalidData))?;
                 // Only canonical-slash redirects of the same confined resource
                 // are followed. Credentials never follow an origin/base change.
-                if self.relative(&destination)? != original { return Err(failure("permission_denied")); }
+                if self.relative(&destination)? != original { return Err(failure(p::FailureCode::PermissionDenied)); }
                 url = destination;
                 continue;
             }
             return Ok(Reply { url, response });
         }
-        Err(failure("invalid_data"))
+        Err(failure(p::FailureCode::InvalidData))
     }
     fn propfind(&self, relative: &str, depth: u8) -> Result<Vec<Metadata>> {
         let reply = self.request("PROPFIND", self.url(relative, depth == 1)?, vec![("depth", depth.to_string()), ("content-type", "application/xml; charset=utf-8".into())], PROPERTIES.to_vec())?;
         if reply.response.status != 207 { return Err(status_error(reply.response.status, false)); }
         let mut metadata = vec![];
         for response in multistatus::parse(&reply.response.body)? {
-            let href = response.href.ok_or_else(|| failure("invalid_data"))?;
-            let url = reply.url.join(href.trim()).map_err(|_| failure("invalid_data"))?;
+            let href = response.href.ok_or_else(|| failure(p::FailureCode::InvalidData))?;
+            let url = reply.url.join(href.trim()).map_err(|_| failure(p::FailureCode::InvalidData))?;
             let path = self.relative(&url)?;
             if let Some(status) = response.status {
                 let status = multistatus::status(&status)?;
                 if !(200..300).contains(&status) { return Err(status_error(status, false)); }
             }
             let properties = response.properties;
-            let collection = properties.collection.ok_or_else(|| failure("invalid_data"))?;
-            let kind = if properties.other_type { p::EntryKind::Other } else if collection { p::EntryKind::Dir } else { p::EntryKind::File };
-            let size = if kind == p::EntryKind::File {
-                properties.length.map(|value| value.trim().parse::<u64>().map_err(|_| failure("invalid_data"))).transpose()?
+            let collection = properties.collection.ok_or_else(|| failure(p::FailureCode::InvalidData))?;
+            let kind = if properties.other_type { p::EntryKind::Other as i32 } else if collection { p::EntryKind::Dir as i32 } else { p::EntryKind::File as i32 };
+            let size = if kind == p::EntryKind::File as i32 {
+                properties.length.map(|value| value.trim().parse::<u64>().map_err(|_| failure(p::FailureCode::InvalidData))).transpose()?
             } else { None };
             metadata.push(Metadata {
                 entry: p::Entry { path, kind, size, modified: properties.modified.as_deref().and_then(modified) },
@@ -192,35 +192,35 @@ impl Client {
     pub fn stat(&self, relative: &str) -> Result<Metadata> {
         path(relative)?;
         let mut entries = self.propfind(relative, 0)?;
-        if entries.len() != 1 || entries[0].entry.path != relative { return Err(failure("invalid_data")); }
-        entries.pop().ok_or_else(|| failure("invalid_data"))
+        if entries.len() != 1 || entries[0].entry.path != relative { return Err(failure(p::FailureCode::InvalidData)); }
+        entries.pop().ok_or_else(|| failure(p::FailureCode::InvalidData))
     }
     pub fn check_root(&self) -> Result<()> {
-        if self.stat("")?.entry.kind != p::EntryKind::Dir { return Err(failure("not_dir")); }
+        if self.stat("")?.entry.kind != p::EntryKind::Dir as i32 { return Err(failure(p::FailureCode::NotDir)); }
         Ok(())
     }
     pub fn list(&self, relative: &str, after: Option<&str>, limit: u32) -> Result<(Vec<p::Entry>, Option<String>)> {
         path(relative)?;
-        if limit == 0 || limit > 1000 { return Err(failure("invalid_request")); }
+        if limit == 0 || limit > 1000 { return Err(failure(p::FailureCode::InvalidRequest)); }
         if let Some(after) = after {
-            if after.is_empty() || after.contains('/') { return Err(failure("invalid_path")); }
+            if after.is_empty() || after.contains('/') { return Err(failure(p::FailureCode::InvalidPath)); }
             path(&if relative.is_empty() { after.into() } else { format!("{relative}/{after}") })?;
         }
-        if self.stat(relative)?.entry.kind != p::EntryKind::Dir { return Err(failure("not_dir")); }
+        if self.stat(relative)?.entry.kind != p::EntryKind::Dir as i32 { return Err(failure(p::FailureCode::NotDir)); }
         let mut parent = false;
         let mut children = BTreeMap::new();
         let prefix = if relative.is_empty() { String::new() } else { format!("{relative}/") };
         for metadata in self.propfind(relative, 1)? {
             if metadata.entry.path == relative {
-                if parent { return Err(failure("invalid_data")); }
-                if metadata.entry.kind != p::EntryKind::Dir { return Err(failure("not_dir")); }
+                if parent { return Err(failure(p::FailureCode::InvalidData)); }
+                if metadata.entry.kind != p::EntryKind::Dir as i32 { return Err(failure(p::FailureCode::NotDir)); }
                 parent = true;
                 continue;
             }
-            let name = metadata.entry.path.strip_prefix(&prefix).ok_or_else(|| failure("invalid_data"))?.to_owned();
-            if name.is_empty() || name.contains('/') || children.insert(name, metadata.entry).is_some() { return Err(failure("invalid_data")); }
+            let name = metadata.entry.path.strip_prefix(&prefix).ok_or_else(|| failure(p::FailureCode::InvalidData))?.to_owned();
+            if name.is_empty() || name.contains('/') || children.insert(name, metadata.entry).is_some() { return Err(failure(p::FailureCode::InvalidData)); }
         }
-        if !parent { return Err(failure("invalid_data")); }
+        if !parent { return Err(failure(p::FailureCode::InvalidData)); }
         let mut candidates = children.into_iter().filter(|(name, _)| after.is_none_or(|after| name.as_str() > after)).peekable();
         let mut entries = vec![];
         let mut bytes = 0usize;
@@ -228,71 +228,71 @@ impl Client {
         while let Some((name, entry)) = candidates.peek() {
             // The requested count is an upper bound. Keep full-path metadata
             // within the common control-frame limit even for deep directories.
-            let size = serde_json::to_vec(entry).map_err(|_| failure("invalid_data"))?.len();
+            let size = p::entry_encoded_len(entry);
             if entries.len() == limit as usize || bytes.saturating_add(size) > p::MAX_CONTROL_BYTES / 2 { break; }
             last_name = Some(name.clone());
             bytes += size + 1;
-            let (_, entry) = candidates.next().ok_or_else(|| failure("invalid_data"))?;
+            let (_, entry) = candidates.next().ok_or_else(|| failure(p::FailureCode::InvalidData))?;
             entries.push(entry);
         }
-        if entries.is_empty() && candidates.peek().is_some() { return Err(failure("too_large")); }
+        if entries.is_empty() && candidates.peek().is_some() { return Err(failure(p::FailureCode::TooLarge)); }
         let next = if candidates.peek().is_some() { last_name } else { None };
         Ok((entries, next))
     }
     fn parent(&self, relative: &str) -> Result<()> {
         let parent = relative.rsplit_once('/').map_or("", |(parent, _)| parent);
-        if self.stat(parent)?.entry.kind != p::EntryKind::Dir { return Err(failure("not_dir")); }
+        if self.stat(parent)?.entry.kind != p::EntryKind::Dir as i32 { return Err(failure(p::FailureCode::NotDir)); }
         Ok(())
     }
     pub fn write_condition(&self, relative: &str, replace: bool) -> Result<WriteCondition> {
         path(relative)?;
-        if relative.is_empty() { return Err(failure("root_protected")); }
+        if relative.is_empty() { return Err(failure(p::FailureCode::RootProtected)); }
         self.parent(relative)?;
         match self.stat(relative) {
-            Ok(_) if !replace => Err(failure("already_exists")),
-            Ok(metadata) if metadata.entry.kind == p::EntryKind::Dir => Err(failure("is_dir")),
-            Ok(metadata) if metadata.entry.kind == p::EntryKind::File => metadata.strong_etag().map(WriteCondition::Match).ok_or_else(|| failure("unsupported_operation")),
-            Ok(_) => Err(failure("unsupported_operation")),
-            Err(error) if error.code == "not_found" => Ok(WriteCondition::Absent),
+            Ok(_) if !replace => Err(failure(p::FailureCode::AlreadyExists)),
+            Ok(metadata) if metadata.entry.kind == p::EntryKind::Dir as i32 => Err(failure(p::FailureCode::IsDir)),
+            Ok(metadata) if metadata.entry.kind == p::EntryKind::File as i32 => metadata.strong_etag().map(WriteCondition::Match).ok_or_else(|| failure(p::FailureCode::UnsupportedOperation)),
+            Ok(_) => Err(failure(p::FailureCode::UnsupportedOperation)),
+            Err(error) if error.code == p::FailureCode::NotFound as i32 => Ok(WriteCondition::Absent),
             Err(error) => Err(error),
         }
     }
     pub fn put_file(&self, relative: &str, condition: WriteCondition, bytes: Vec<u8>) -> Result<p::Entry> {
         let size = bytes.len();
-        if size > self.max_write_bytes { return Err(failure("too_large")); }
+        if size > self.max_write_bytes { return Err(failure(p::FailureCode::TooLarge)); }
         let absent = matches!(&condition, WriteCondition::Absent);
         let conditional = match condition { WriteCondition::Absent => ("if-none-match", "*".into()), WriteCondition::Match(etag) => ("if-match", etag) };
         let reply = self.request("PUT", self.url(relative, false)?, vec![conditional, ("content-type", "application/octet-stream".into())], bytes)?;
-        if reply.response.status == 412 { return Err(failure(if absent { "already_exists" } else { "conflict" })); }
+        if reply.response.status == 412 { return Err(failure(if absent { p::FailureCode::AlreadyExists } else { p::FailureCode::Conflict })); }
         if !matches!(reply.response.status, 200 | 201 | 204) { return Err(status_error(reply.response.status, true)); }
         // A successful PUT is already a known publication. Avoid a follow-up
         // PROPFIND turning a successful commit into a misleading read failure.
-        Ok(p::Entry { path: relative.into(), kind: p::EntryKind::File, size: Some(size as u64), modified: header(&reply.response, "last-modified").and_then(modified) })
+        Ok(p::Entry { path: relative.into(), kind: p::EntryKind::File as i32, size: Some(size as u64), modified: header(&reply.response, "last-modified").and_then(modified) })
     }
     fn make_collection(&self, relative: &str) -> Result<p::Entry> {
         let reply = self.request("MKCOL", self.url(relative, true)?, vec![], vec![])?;
         if reply.response.status == 405 {
             return match self.stat(relative) {
-                Ok(_) => Err(failure("already_exists")),
-                Err(error) if error.code == "not_found" => Err(failure("unsupported_operation")),
+                Ok(_) => Err(failure(p::FailureCode::AlreadyExists)),
+                Err(error) if error.code == p::FailureCode::NotFound as i32 => Err(failure(p::FailureCode::UnsupportedOperation)),
                 Err(error) => Err(error),
             };
         }
         if reply.response.status != 201 { return Err(status_error(reply.response.status, true)); }
-        Ok(p::Entry { path: relative.into(), kind: p::EntryKind::Dir, size: None, modified: None })
+        Ok(p::Entry { path: relative.into(), kind: p::EntryKind::Dir as i32, size: None, modified: None })
     }
     pub fn create_dir(&self, relative: &str, recursive: bool) -> Result<p::Entry> {
         path(relative)?;
         if relative.is_empty() {
-            if !recursive { return Err(failure("already_exists")); }
+            if !recursive { return Err(failure(p::FailureCode::AlreadyExists)); }
             let root = self.stat("")?.entry;
-            if root.kind != p::EntryKind::Dir { return Err(failure("not_dir")); }
+            if root.kind != p::EntryKind::Dir as i32 { return Err(failure(p::FailureCode::NotDir)); }
             return Ok(root);
         }
         if !recursive {
             match self.stat(relative) {
-                Ok(_) => return Err(failure("already_exists")),
-                Err(error) if error.code == "not_found" => {},
+                Ok(_) => return Err(failure(p::FailureCode::AlreadyExists)),
+                Err(error) if error.code == p::FailureCode::NotFound as i32 => {},
                 Err(error) => return Err(error),
             }
             self.parent(relative)?;
@@ -305,48 +305,48 @@ impl Client {
             prefix.push_str(name);
             let metadata = match self.stat(&prefix) {
                 Ok(metadata) => metadata.entry,
-                Err(error) if error.code == "not_found" => match self.make_collection(&prefix) {
+                Err(error) if error.code == p::FailureCode::NotFound as i32 => match self.make_collection(&prefix) {
                     Ok(entry) => entry,
-                    Err(error) if error.code == "already_exists" => self.stat(&prefix)?.entry,
+                    Err(error) if error.code == p::FailureCode::AlreadyExists as i32 => self.stat(&prefix)?.entry,
                     Err(error) => return Err(error),
                 },
                 Err(error) => return Err(error),
             };
-            if metadata.kind != p::EntryKind::Dir { return Err(failure("not_dir")); }
+            if metadata.kind != p::EntryKind::Dir as i32 { return Err(failure(p::FailureCode::NotDir)); }
             result = Some(metadata);
         }
-        result.ok_or_else(|| failure("invalid_data"))
+        result.ok_or_else(|| failure(p::FailureCode::InvalidData))
     }
     pub fn read_range(&self, relative: &str, offset: u64, length: u64, size: u64, etag: Option<&str>) -> Result<(Vec<u8>, Option<Vec<u8>>)> {
-        let end = offset.checked_add(length).and_then(|n| n.checked_sub(1)).ok_or_else(|| failure("invalid_request"))?;
+        let end = offset.checked_add(length).and_then(|n| n.checked_sub(1)).ok_or_else(|| failure(p::FailureCode::InvalidRequest))?;
         let mut headers = vec![("range", format!("bytes={offset}-{end}"))];
         if let Some(etag) = etag { headers.push(("if-match", etag.into())); }
         let reply = self.request("GET", self.url(relative, false)?, headers, vec![])?;
         let response = reply.response;
-        if response.status == 412 || response.status == 416 { return Err(failure("conflict")); }
+        if response.status == 412 || response.status == 416 { return Err(failure(p::FailureCode::Conflict)); }
         if !matches!(response.status, 200 | 206) { return Err(status_error(response.status, false)); }
         if let Some(encoding) = header(&response, "content-encoding") {
-            if !encoding.eq_ignore_ascii_case("identity") { return Err(failure("unsupported_operation")); }
+            if !encoding.eq_ignore_ascii_case("identity") { return Err(failure(p::FailureCode::UnsupportedOperation)); }
         }
-        if etag.is_some_and(|etag| header(&response, "etag").is_some_and(|actual| actual != etag)) { return Err(failure("conflict")); }
+        if etag.is_some_and(|etag| header(&response, "etag").is_some_and(|actual| actual != etag)) { return Err(failure(p::FailureCode::Conflict)); }
         match response.status {
             206 => {
-                let range = header(&response, "content-range").and_then(|value| value.strip_prefix("bytes ")).ok_or_else(|| failure("invalid_data"))?;
-                let (bounds, total) = range.split_once('/').ok_or_else(|| failure("invalid_data"))?;
-                let (start, last) = bounds.split_once('-').ok_or_else(|| failure("invalid_data"))?;
-                let parse = |value: &str| value.parse::<u64>().map_err(|_| failure("invalid_data"));
-                if parse(total)? != size { return Err(failure("conflict")); }
-                if parse(start)? != offset || parse(last)? != end || response.body.len() as u64 != length { return Err(failure("invalid_data")); }
+                let range = header(&response, "content-range").and_then(|value| value.strip_prefix("bytes ")).ok_or_else(|| failure(p::FailureCode::InvalidData))?;
+                let (bounds, total) = range.split_once('/').ok_or_else(|| failure(p::FailureCode::InvalidData))?;
+                let (start, last) = bounds.split_once('-').ok_or_else(|| failure(p::FailureCode::InvalidData))?;
+                let parse = |value: &str| value.parse::<u64>().map_err(|_| failure(p::FailureCode::InvalidData));
+                if parse(total)? != size { return Err(failure(p::FailureCode::Conflict)); }
+                if parse(start)? != offset || parse(last)? != end || response.body.len() as u64 != length { return Err(failure(p::FailureCode::InvalidData)); }
                 Ok((response.body, None))
             }
             200 => {
                 // Servers may ignore Range. Only accept an entire, bounded body
                 // whose size matches the discovered representation; never return
                 // the beginning of the file for a nonzero requested offset.
-                if response.body.len() as u64 != size { return Err(failure("conflict")); }
-                let start = usize::try_from(offset).map_err(|_| failure("too_large"))?;
-                let end = start.checked_add(length as usize).ok_or_else(|| failure("invalid_data"))?;
-                let bytes = response.body.get(start..end).ok_or_else(|| failure("invalid_data"))?.to_vec();
+                if response.body.len() as u64 != size { return Err(failure(p::FailureCode::Conflict)); }
+                let start = usize::try_from(offset).map_err(|_| failure(p::FailureCode::TooLarge))?;
+                let end = start.checked_add(length as usize).ok_or_else(|| failure(p::FailureCode::InvalidData))?;
+                let bytes = response.body.get(start..end).ok_or_else(|| failure(p::FailureCode::InvalidData))?.to_vec();
                 Ok((bytes, Some(response.body)))
             }
             status => Err(status_error(status, false)),

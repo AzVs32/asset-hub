@@ -1,0 +1,192 @@
+syntax = "proto3";
+package assethub.vfs.v2;
+
+// The sole plugin message schema, shared by gRPC and the WASM call export.
+// Request/Reply control fields are limited to 1 MiB, data to 8 MiB. Missing
+// operations, results, required message fields and unknown resource kinds fail
+// validation. Optional fields distinguish absence from zero and empty values.
+message Empty {}
+
+// Lossless dynamic settings and JSON Schema values. Unlike protobuf Struct,
+// integers never pass through double; uint64 and sint64 retain all 64 bits.
+// Values may nest at most 24 levels. Missing kinds and non-finite reals fail.
+message Object { map<string, JsonValue> fields = 1; }
+message Array { repeated JsonValue values = 1; }
+message JsonValue {
+  oneof kind {
+    Empty null_value = 1;
+    bool boolean = 2;
+    string text = 3;
+    sint64 integer = 4;
+    uint64 unsigned_integer = 5;
+    double real = 6; // Must be finite.
+    Object object = 7;
+    Array array = 8;
+  }
+}
+enum Ownership { OWNERSHIP_UNSPECIFIED = 0; OWNERSHIP_HOST = 1; OWNERSHIP_PLUGIN = 2; }
+enum Capability {
+  CAPABILITY_UNSPECIFIED = 0; CAPABILITY_STAT = 1; CAPABILITY_LIST = 2;
+  CAPABILITY_READ = 3; CAPABILITY_RANGE_READ = 4;
+  CAPABILITY_WRITE_NEW = 5; CAPABILITY_WRITE_REPLACE = 6; CAPABILITY_ATOMIC_PUBLISH = 7;
+  CAPABILITY_HIERARCHICAL = 8; CAPABILITY_PREFIX = 9; CAPABILITY_EMPTY_DIRS = 10;
+  CAPABILITY_CREATE_DIR = 11; CAPABILITY_REMOVE = 12;
+  CAPABILITY_RENAME_NEW = 13; CAPABILITY_RENAME_REPLACE = 14;
+  CAPABILITY_PERMISSIONS_READ = 15; CAPABILITY_PERMISSIONS_WRITE = 16;
+  CAPABILITY_XATTRS_READ = 17; CAPABILITY_XATTRS_WRITE = 18;
+}
+enum EntryKind {
+  ENTRY_KIND_UNSPECIFIED = 0; ENTRY_KIND_FILE = 1; ENTRY_KIND_DIR = 2;
+  ENTRY_KIND_SYMLINK = 3; ENTRY_KIND_OTHER = 4;
+}
+enum ResourceKind {
+  RESOURCE_KIND_UNSPECIFIED = 0; RESOURCE_KIND_STORAGE = 1;
+  RESOURCE_KIND_READER = 2; RESOURCE_KIND_WRITER = 3;
+}
+enum XattrWriteMode {
+  XATTR_WRITE_MODE_UNSPECIFIED = 0; XATTR_WRITE_MODE_UPSERT = 1;
+  XATTR_WRITE_MODE_CREATE_NEW = 2; XATTR_WRITE_MODE_REPLACE = 3;
+}
+enum FailureCode {
+  FAILURE_CODE_UNSPECIFIED = 0;
+  FAILURE_CODE_NOT_FOUND = 1; FAILURE_CODE_ALREADY_EXISTS = 2;
+  FAILURE_CODE_PERMISSION_DENIED = 3; FAILURE_CODE_NOT_DIR = 4;
+  FAILURE_CODE_IS_DIR = 5; FAILURE_CODE_DIR_NOT_EMPTY = 6;
+  FAILURE_CODE_INVALID_PATH = 7; FAILURE_CODE_INVALID_REQUEST = 8;
+  FAILURE_CODE_INVALID_NAME_ENCODING = 9; FAILURE_CODE_INVALID_DATA = 10;
+  FAILURE_CODE_ROOT_PROTECTED = 11; FAILURE_CODE_SESSION_CLOSED = 12;
+  FAILURE_CODE_UNSUPPORTED_OPERATION = 13; FAILURE_CODE_STALE_HANDLE = 14;
+  FAILURE_CODE_TIMED_OUT = 15; FAILURE_CODE_UNAVAILABLE = 16;
+  FAILURE_CODE_RATE_LIMITED = 17; FAILURE_CODE_CONFLICT = 18;
+  FAILURE_CODE_CAPACITY_EXCEEDED = 19; FAILURE_CODE_CROSS_DEVICE = 20;
+  FAILURE_CODE_CANCELLED = 21; FAILURE_CODE_OUTCOME_UNKNOWN = 22;
+  FAILURE_CODE_ATTRIBUTE_NOT_FOUND = 23; FAILURE_CODE_TOO_LARGE = 24;
+  FAILURE_CODE_BACKEND = 25; FAILURE_CODE_INSTANCE_NOT_FOUND = 26;
+  FAILURE_CODE_INVALID_INSTANCE_CONFIG = 27;
+}
+enum ConfigErrorKind {
+  CONFIG_ERROR_KIND_UNSPECIFIED = 0; CONFIG_ERROR_KIND_MISSING_FIELD = 1;
+  CONFIG_ERROR_KIND_UNKNOWN_FIELD = 2; CONFIG_ERROR_KIND_INVALID_TYPE = 3;
+  CONFIG_ERROR_KIND_INVALID_VALUE = 4;
+}
+message Failure {
+  FailureCode code = 1;
+  optional string field = 2; // Safe configuration field identifier, never a value.
+  optional ConfigErrorKind config_kind = 3;
+}
+message Description {
+  uint32 major = 1; uint32 minor = 2; // This schema uses major 2, minor 0.
+  // Feature identifiers: instances.host-managed.v1, instances.self-managed.v1,
+  // streams.chunked.v1, resources.leases.v1, assethub.config.annotations.v1.
+  // Unknown required identifiers reject loading; optional ones grant no support.
+  repeated string required_features = 3;
+  repeated string features = 4;
+  // Host service names: http.v1, clock.wall.v1, random.v1.
+  repeated string required_host_capabilities = 5;
+  string instance_schema_profile = 6; // assethub.config.annotations.v1
+  string generation = 7;
+  string key = 8; string name = 9; string version = 10;
+  bool child_mounts = 11;
+  // Unknown numeric capabilities grant no support. Read modes and dir models
+  // are exclusive; writable attributes require their corresponding read flag.
+  repeated Capability capabilities = 12;
+  Ownership ownership = 13;
+  Object settings_schema = 14; Object instance_schema = 15;
+  uint32 config_version = 16; // Positive schema version, independent of protocol/software.
+}
+// Effective instance capabilities must be covered by Description. Chunk size
+// must be 1..8 MiB and remains stable for the opened handle.
+message StorageInfo { repeated Capability capabilities = 1; uint32 chunk_size = 2; }
+message Timestamp { sint64 seconds = 1; uint32 nanos = 2; } // nanos < 1,000,000,000.
+message Entry {
+  string path = 1; EntryKind kind = 2;
+  optional uint64 size = 3; Timestamp modified = 4;
+}
+message Instance { string id = 1; Object details = 2; }
+message ResourceRef { ResourceKind kind = 1; uint64 handle = 2; }
+message Initialize { Object settings = 1; }
+message Config { Object config = 1; }
+message Migrate { uint32 from_version = 1; Object config = 2; }
+message InstanceId { string id = 1; }
+message ListInstances { optional string after = 1; uint32 limit = 2; }
+message Open { string id = 1; Object config = 2; } // config present iff host-managed.
+// Paths are instance-relative UTF-8, at most 4096 bytes; empty denotes the root.
+// Absolute paths, empty components, dot/dot-dot, backslash, colon and NUL fail.
+message Path { string path = 1; }
+// Immediate children sorted by name; after is a basename cursor, limit is 1..1000.
+message List { string path = 1; optional string after = 2; uint32 limit = 3; }
+message CreateDir { string path = 1; bool recursive = 2; }
+message Move { string source = 1; string destination = 2; bool replace = 3; }
+message SetPermissions { string path = 1; uint32 mode = 2; }
+message ListXattrs { string path = 1; uint32 max_bytes = 2; }
+message GetXattr { string path = 1; string name = 2; uint32 max_bytes = 3; }
+message SetXattr { string path = 1; string name = 2; XattrWriteMode mode = 3; }
+message RemoveXattr { string path = 1; string name = 2; }
+message StorageCall {
+  uint64 handle = 1;
+  oneof operation {
+    Path stat = 10; // Metadata without following the final symbolic link.
+    List list = 11; CreateDir create_dir = 12;
+    Path remove = 13; // File, link itself or empty dir only; preserve the root.
+    Move move = 14; // Atomic rename within the instance, never copy/delete.
+    Path get_permissions = 15;
+    SetPermissions set_permissions = 16; ListXattrs list_xattrs = 17;
+    GetXattr get_xattr = 18; SetXattr set_xattr = 19; RemoveXattr remove_xattr = 20;
+  }
+}
+// File-byte range. Absent length reads through EOF; present zero is an empty
+// range. Streams retain their original generation and are never reopened/replayed.
+message Read { uint64 handle = 1; string path = 2; uint64 offset = 3; optional uint64 length = 4; }
+// Writes stage a whole file until Commit. Unsupported atomic/mode requests fail
+// before staging. Commit and Abort are terminal, including errors/cancellation;
+// uncertain mutation results are OUTCOME_UNKNOWN and must never be replayed.
+message Write { uint64 handle = 1; string path = 2; bool replace = 3; bool atomic = 4; }
+// Allocated handles are nonzero and strictly increase across all resource kinds
+// within a generation, including after release; they are never rebound.
+message Handle { uint64 handle = 1; }
+message Renew { repeated ResourceRef resources = 1; }
+message Request {
+  // Required for all operations except Describe. The RPC dispatcher chooses its
+  // generation. A WASM host chooses one per Store and supplies it to the guest,
+  // including Describe.
+  string generation = 1;
+  // Binary bytes for WriterChunk/SetXattr only; all other requests leave it empty.
+  bytes data = 2;
+  oneof operation {
+    Empty describe = 10; Initialize initialize = 11; Config prepare = 12;
+    Migrate migrate = 13; Config test_connection = 14;
+    InstanceId get_instance = 15; ListInstances list_instances = 16;
+    Config create_instance = 17; InstanceId remove_instance = 18;
+    Open open = 19; StorageCall storage = 20; Read read = 21; Write write = 22;
+    Handle reader_next = 23; Handle writer_chunk = 24; Handle commit = 25;
+    Handle abort = 26; ResourceRef release = 27; Renew renew = 28;
+  }
+}
+message Prepared { Object config = 1; Object details = 2; }
+message MaybeInstance { Instance instance = 1; }
+message Instances { repeated Instance instances = 1; optional string next_after = 2; }
+message Removed { bool removed = 1; }
+message Storage { uint64 handle = 1; StorageInfo info = 2; }
+message Page { repeated Entry entries = 1; optional string next_after = 2; }
+message Permissions { uint32 mode = 1; }
+message Names { repeated string names = 1; }
+message Chunk { bool eof = 1; } // eof => empty data; !eof => nonempty data.
+// Every response, including describe, storage information and commit, uses this
+// envelope. No endpoint returns a bare Description, StorageInfo, Entry or JSON.
+message Reply {
+  bytes data = 1; // Bytes/Chunk results only.
+  oneof result {
+    Description description = 10; Prepared prepared = 11; Config config = 12;
+    Instance instance = 13; MaybeInstance maybe_instance = 14; Instances instances = 15;
+    Removed removed = 16; Storage storage = 17; Handle reader = 18; Handle writer = 19;
+    Entry entry = 20; Page page = 21; Permissions permissions = 22; Names names = 23;
+    Empty bytes = 24; Chunk chunk = 25; Empty unit = 26; Failure failure = 27;
+  }
+}
+service Plugin {
+  rpc Invoke(Request) returns (Reply);
+  // Read accepts ReaderNext only; Write accepts WriterChunk only, for one handle
+  // and generation throughout the stream. Frames preserve binary data/backpressure.
+  rpc Read(Request) returns (stream Reply);
+  rpc Write(stream Request) returns (Reply);
+}

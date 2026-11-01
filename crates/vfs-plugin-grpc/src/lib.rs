@@ -87,15 +87,18 @@ impl GrpcTransport {
         r.set_timeout(self.timeout);
         r
     }
-    fn encode(&self, generation: &str, op: &Op, data: Vec<u8>) -> Result<wire::Call, DriverError> {
-        let control = serde_json::to_vec(op).map_err(|_| c::invalid())?;
-        if control.len() > p::MAX_CONTROL_BYTES || data.len() > p::MAX_DATA_BYTES {
-            return Err(StorageError::new(StorageErrorKind::TooLarge).into());
-        }
-        Ok(wire::Call {
-            generation: generation.into(),
-            control,
-            data,
+    fn encode(
+        &self,
+        generation: &str,
+        op: &Op,
+        data: Vec<u8>,
+    ) -> Result<wire::Request, DriverError> {
+        p::to_request(generation, op, data).map_err(|error| {
+            StorageError::new(match error {
+                p::CodecError::TooLarge => StorageErrorKind::TooLarge,
+                p::CodecError::InvalidData => StorageErrorKind::InvalidRequest,
+            })
+            .into()
         })
     }
 }
@@ -156,31 +159,32 @@ fn decode(reply: wire::Reply, op: &Op) -> Result<p::Reply, DriverError> {
             c::invalid()
         }
     };
-    if reply.control.len() > p::MAX_CONTROL_BYTES || reply.data.len() > p::MAX_DATA_BYTES {
+    let id = match op {
+        Op::GetInstance(p::InstanceId { id })
+        | Op::RemoveInstance(p::InstanceId { id })
+        | Op::Open(p::Open { id, .. }) => Some(id.as_str()),
+        _ => None,
+    };
+    let reply = p::from_reply(reply)
+        .map_err(|_| invalid())?
+        .map_err(|error| c::driver_error(error, id))?;
+    if !reply
+        .result
+        .as_ref()
+        .is_some_and(|value| op.accepts_reply(value))
+    {
         return Err(invalid());
     }
-    if reply.failed {
-        let failure = serde_json::from_slice(&reply.control).map_err(|_| invalid())?;
-        let id = match op {
-            Op::GetInstance { id } | Op::RemoveInstance { id } | Op::Open { id, .. } => {
-                Some(id.as_str())
-            }
-            _ => None,
-        };
-        return Err(c::driver_error(failure, id));
-    }
-    Ok(p::Reply {
-        value: serde_json::from_slice(&reply.control).map_err(|_| invalid())?,
-        data: reply.data,
-    })
+    Ok(reply)
 }
+
 impl Transport for GrpcTransport {
     fn call<'a>(&'a self, generation: &'a str, op: Op, data: Vec<u8>) -> TransportFuture<'a> {
         Box::pin(async move {
             let call = self.encode(generation, &op, data)?;
             let mut client = self.client.clone();
             let reply = match &op {
-                Op::ReaderNext { handle } => {
+                Op::ReaderNext(p::Handle { handle }) => {
                     let key = (generation.to_owned(), *handle);
                     let existing = {
                         let readers = self.readers.lock().await;
@@ -223,7 +227,7 @@ impl Transport for GrpcTransport {
                     };
                     match result {
                         Ok(Some(reply)) => {
-                            if reply.failed {
+                            if matches!(&reply.result, Some(wire::reply::Result::Failure(_))) {
                                 self.readers.lock().await.streams.remove(&key);
                             }
                             reply
@@ -238,15 +242,14 @@ impl Transport for GrpcTransport {
                         }
                     }
                 }
-                Op::WriterChunk { .. } => client
+                Op::WriterChunk(_) => client
                     .write(self.request(tokio_stream::iter([call])))
                     .await
                     .map_err(|s| transport_error(s, true))?
                     .into_inner(),
-                Op::Release {
-                    kind: p::ResourceKind::Reader,
-                    handle,
-                } => {
+                Op::Release(p::ResourceRef { kind, handle })
+                    if *kind == p::ResourceKind::Reader as i32 =>
+                {
                     self.readers
                         .lock()
                         .await
@@ -266,7 +269,7 @@ impl Transport for GrpcTransport {
             };
             let result = decode(reply, &op);
             if let Ok(p::Reply {
-                value: Value::Description { description },
+                result: Some(Value::Description(description)),
                 ..
             }) = &result
             {
@@ -276,11 +279,11 @@ impl Transport for GrpcTransport {
                     .streams
                     .retain(|(generation, _), _| generation == &description.generation);
             }
-            if let Op::ReaderNext { handle } = op
+            if let Op::ReaderNext(p::Handle { handle }) = op
                 && !matches!(
                     &result,
                     Ok(p::Reply {
-                        value: Value::Chunk { eof: false },
+                        result: Some(Value::Chunk(p::Chunk { eof: false })),
                         ..
                     })
                 )

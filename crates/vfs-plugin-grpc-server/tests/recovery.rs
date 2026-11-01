@@ -42,12 +42,32 @@ struct Backend {
 }
 impl Backend {
     fn new(marker: usize, faults: Arc<Faults>) -> Result<Self> {
-        let description: p::Description = serde_json::from_value(serde_json::json!({
-            "major": 1, "minor": 1, "required_features": [], "generation": "fixture",
-            "key": "native.recovery", "name": "Recovery fixture", "version": "1.0.0",
-            "child_mounts": true, "capabilities": ["stat", "range_read", "write_new", "remove"],
-            "ownership": "host", "settings_schema": null, "instance_schema": null, "config_version": 1
-        }))?;
+        let description = p::Description {
+            major: p::PROTOCOL_MAJOR,
+            minor: p::PROTOCOL_MINOR,
+            required_features: vec![],
+            features: p::PROTOCOL_FEATURES.iter().map(|v| (*v).into()).collect(),
+            required_host_capabilities: vec![],
+            instance_schema_profile: p::INSTANCE_SCHEMA_PROFILE.into(),
+            generation: "fixture".into(),
+            key: "native.recovery".into(),
+            name: "Recovery fixture".into(),
+            version: "1.0.0".into(),
+            child_mounts: true,
+            capabilities: [
+                p::Capability::Stat,
+                p::Capability::RangeRead,
+                p::Capability::WriteNew,
+                p::Capability::Remove,
+            ]
+            .into_iter()
+            .map(Into::into)
+            .collect(),
+            ownership: p::Ownership::Host as i32,
+            settings_schema: None,
+            instance_schema: None,
+            config_version: 1,
+        };
         Ok(Self {
             info: c::driver_info(&description)?,
             marker,
@@ -334,10 +354,10 @@ async fn grpc_generation_changes_do_not_rebind_streams_or_release_new_handles() 
         transport
             .call(
                 &generation,
-                Op::Release {
-                    kind: p::ResourceKind::Reader,
+                Op::Release(p::ResourceRef {
+                    kind: p::ResourceKind::Reader as i32,
                     handle: 2
-                },
+                }),
                 vec![]
             )
             .await
@@ -399,9 +419,9 @@ async fn cancelled_initialization_requires_a_fresh_backend_and_acks_are_idempote
     let old = dispatcher.generation();
     let mut call = Box::pin(dispatcher.call(
         &old,
-        Op::Initialize {
-            settings: Default::default(),
-        },
+        Op::Initialize(p::Initialize {
+            settings: Some(Default::default()),
+        }),
         vec![],
     ));
     std::future::poll_fn(|cx| {
@@ -410,7 +430,12 @@ async fn cancelled_initialization_requires_a_fresh_backend_and_acks_are_idempote
     })
     .await;
     drop(call);
-    assert!(dispatcher.call("", Op::Describe, vec![]).await.is_err());
+    assert!(
+        dispatcher
+            .call("", Op::Describe(p::Empty {}), vec![])
+            .await
+            .is_err()
+    );
     assert!(dispatcher.replace_driver(original).await.is_err());
     faults.suspend_initialize.store(false, Ordering::SeqCst);
     dispatcher
@@ -422,9 +447,9 @@ async fn cancelled_initialization_requires_a_fresh_backend_and_acks_are_idempote
         dispatcher
             .call(
                 &new,
-                Op::Initialize {
-                    settings: Default::default(),
-                },
+                Op::Initialize(p::Initialize {
+                    settings: Some(Default::default()),
+                }),
                 vec![],
             )
             .await?;
@@ -433,9 +458,9 @@ async fn cancelled_initialization_requires_a_fresh_backend_and_acks_are_idempote
     let error = dispatcher
         .call(
             &new,
-            Op::Initialize {
-                settings: p::Object::from([("different".into(), true.into())]),
-            },
+            Op::Initialize(p::Initialize {
+                settings: Some(p::Object::from([("different".into(), true.into())])),
+            }),
             vec![],
         )
         .await
@@ -448,9 +473,9 @@ async fn cancelled_initialization_requires_a_fresh_backend_and_acks_are_idempote
     dispatcher
         .call(
             &new,
-            Op::TestConnection {
-                config: Default::default(),
-            },
+            Op::TestConnection(p::Config {
+                config: Some(Default::default()),
+            }),
             vec![],
         )
         .await?;
@@ -458,12 +483,8 @@ async fn cancelled_initialization_requires_a_fresh_backend_and_acks_are_idempote
 }
 
 type Client = wire::plugin_client::PluginClient<tonic::transport::Channel>;
-fn request(generation: &str, operation: Op) -> Result<tonic::Request<wire::Call>> {
-    let mut request = tonic::Request::new(wire::Call {
-        generation: generation.into(),
-        control: serde_json::to_vec(&operation)?,
-        data: vec![],
-    });
+fn request(generation: &str, operation: Op) -> Result<tonic::Request<wire::Request>> {
+    let mut request = tonic::Request::new(p::to_request(generation, &operation, vec![])?);
     request
         .metadata_mut()
         .insert("authorization", "Bearer test-token".parse()?);
@@ -474,12 +495,13 @@ async fn rpc(client: &mut Client, generation: &str, operation: Op) -> Result<p::
         .invoke(request(generation, operation)?)
         .await?
         .into_inner();
-    assert!(!reply.failed);
-    Ok(serde_json::from_slice(&reply.control)?)
+    Ok(p::from_reply(reply)?
+        .map_err(|error| c::driver_error(error, None))?
+        .into_value()?)
 }
 async fn describe(client: &mut Client) -> Result<String> {
-    match rpc(client, "", Op::Describe).await? {
-        p::Value::Description { description } => Ok(description.generation),
+    match rpc(client, "", Op::Describe(p::Empty {})).await? {
+        p::Value::Description(description) => Ok(description.generation),
         _ => Err("description".into()),
     }
 }
@@ -523,10 +545,10 @@ async fn failed_authentication_consumes_shared_rate_budget_before_decoding() -> 
             ..Default::default()
         },
     )?;
-    let mut bad = request("", Op::Describe)?;
+    let mut bad = request("", Op::Describe(p::Empty {}))?;
     bad.metadata_mut()
         .insert("authorization", "Bearer wrong-token".parse()?);
-    bad.get_mut().control = b"invalid control".to_vec();
+    bad.get_mut().operation = None;
     assert_eq!(
         service
             .invoke(bad)
@@ -539,7 +561,7 @@ async fn failed_authentication_consumes_shared_rate_budget_before_decoding() -> 
     assert_eq!(
         service
             .clone()
-            .invoke(request("", Op::Describe)?)
+            .invoke(request("", Op::Describe(p::Empty {}))?)
             .await
             .err()
             .ok_or("rate limit")?
@@ -547,7 +569,9 @@ async fn failed_authentication_consumes_shared_rate_budget_before_decoding() -> 
         tonic::Code::ResourceExhausted
     );
     tokio::time::advance(std::time::Duration::from_secs(1)).await;
-    service.invoke(request("", Op::Describe)?).await?;
+    service
+        .invoke(request("", Op::Describe(p::Empty {}))?)
+        .await?;
     Ok(())
 }
 
@@ -571,13 +595,13 @@ async fn read_response_keeps_its_global_slot_after_returning_headers() -> Result
     let response = service
         .read(request(
             &dispatcher.generation(),
-            Op::ReaderNext { handle: 2 },
+            Op::ReaderNext(p::Handle { handle: 2 }),
         )?)
         .await?;
     assert_eq!(
         service
             .clone()
-            .invoke(request("", Op::Describe)?)
+            .invoke(request("", Op::Describe(p::Empty {}))?)
             .await
             .err()
             .ok_or("active reader")?
@@ -586,7 +610,9 @@ async fn read_response_keeps_its_global_slot_after_returning_headers() -> Result
     );
     drop(response);
     tokio::task::yield_now().await;
-    service.invoke(request("", Op::Describe)?).await?;
+    service
+        .invoke(request("", Op::Describe(p::Empty {}))?)
+        .await?;
     drop(reader);
     Ok(())
 }
@@ -614,7 +640,11 @@ async fn streamed_write_frames_cannot_bypass_the_rate_limit() -> Result {
     )?;
     let server = start_service(listener, service).await?;
     let mut client = Client::connect(endpoint).await?;
-    let frame = request(&dispatcher.generation(), Op::WriterChunk { handle: 2 })?.into_inner();
+    let frame = request(
+        &dispatcher.generation(),
+        Op::WriterChunk(p::Handle { handle: 2 }),
+    )?
+    .into_inner();
     let mut request = tonic::Request::new(tokio_stream::iter([frame.clone(), frame]));
     request
         .metadata_mut()
@@ -655,8 +685,14 @@ async fn idle_writers_hold_a_global_slot_and_release_it_on_timeout() -> Result {
     let mut client = Client::connect(endpoint).await?;
     let mut writer_client = client.clone();
     let (tx, rx) = tokio::sync::mpsc::channel(1);
-    tx.send(request(&dispatcher.generation(), Op::WriterChunk { handle: 2 })?.into_inner())
-        .await?;
+    tx.send(
+        request(
+            &dispatcher.generation(),
+            Op::WriterChunk(p::Handle { handle: 2 }),
+        )?
+        .into_inner(),
+    )
+    .await?;
     let mut request = tonic::Request::new(tokio_stream::wrappers::ReceiverStream::new(rx));
     request
         .metadata_mut()
@@ -665,7 +701,7 @@ async fn idle_writers_hold_a_global_slot_and_release_it_on_timeout() -> Result {
     tokio::time::timeout(std::time::Duration::from_secs(1), faults.writing.notified()).await?;
     assert_eq!(
         client
-            .invoke(self::request("", Op::Describe)?)
+            .invoke(self::request("", Op::Describe(p::Empty {}))?)
             .await
             .err()
             .ok_or("writer slot")?
@@ -702,9 +738,9 @@ async fn global_concurrency_is_shared_across_connections() -> Result {
             .invoke(
                 request(
                     &generation,
-                    Op::Initialize {
-                        settings: Default::default(),
-                    },
+                    Op::Initialize(p::Initialize {
+                        settings: Some(Default::default()),
+                    }),
                 )
                 .map_err(|_| tonic::Status::internal("fixture"))?,
             )
@@ -717,7 +753,7 @@ async fn global_concurrency_is_shared_across_connections() -> Result {
     .await?;
     assert_eq!(
         second
-            .invoke(request("", Op::Describe)?)
+            .invoke(request("", Op::Describe(p::Empty {}))?)
             .await
             .err()
             .ok_or("global concurrency")?
@@ -783,41 +819,44 @@ async fn production_http2_stream_limit_applies_until_a_read_stream_closes() -> R
     rpc(
         &mut client,
         &generation,
-        Op::Initialize {
-            settings: Default::default(),
-        },
+        Op::Initialize(p::Initialize {
+            settings: Some(Default::default()),
+        }),
     )
     .await?;
     let storage = match rpc(
         &mut client,
         &generation,
-        Op::Open {
+        Op::Open(p::Open {
             id: "instance".into(),
             config: Some(Default::default()),
-        },
+        }),
     )
     .await?
     {
-        p::Value::Storage { handle, .. } => handle,
+        p::Value::Storage(p::Storage { handle, .. }) => handle,
         _ => return Err("storage".into()),
     };
     let reader = match rpc(
         &mut client,
         &generation,
-        Op::Read {
+        Op::Read(p::Read {
             handle: storage,
             path: "file".into(),
             offset: 0,
             length: None,
-        },
+        }),
     )
     .await?
     {
-        p::Value::Reader { handle } => handle,
+        p::Value::Reader(p::Handle { handle }) => handle,
         _ => return Err("reader".into()),
     };
     let stream = client
-        .read(request(&generation, Op::ReaderNext { handle: reader })?)
+        .read(request(
+            &generation,
+            Op::ReaderNext(p::Handle { handle: reader }),
+        )?)
         .await?
         .into_inner();
     tokio::time::timeout(std::time::Duration::from_secs(1), faults.reading.notified()).await?;
@@ -839,11 +878,11 @@ async fn authentication_precedes_protobuf_decoding_and_applies_to_every_rpc() ->
     let mut client = Client::connect(endpoint)
         .await?
         .max_encoding_message_size(p::MAX_CONTROL_BYTES + p::MAX_DATA_BYTES + 4096);
-    let mut oversized = request("", Op::Describe)?;
+    let mut oversized = request("", Op::Describe(p::Empty {}))?;
     oversized
         .metadata_mut()
         .insert("authorization", "Bearer wrong-token".parse()?);
-    oversized.get_mut().control = vec![0; p::MAX_CONTROL_BYTES + p::MAX_DATA_BYTES + 2048];
+    oversized.get_mut().data = vec![0; p::MAX_CONTROL_BYTES + p::MAX_DATA_BYTES + 2048];
     assert_eq!(
         client
             .invoke(oversized)
@@ -853,7 +892,7 @@ async fn authentication_precedes_protobuf_decoding_and_applies_to_every_rpc() ->
             .code(),
         tonic::Code::Unauthenticated
     );
-    let mut bad_read = request("", Op::ReaderNext { handle: 1 })?;
+    let mut bad_read = request("", Op::ReaderNext(p::Handle { handle: 1 }))?;
     bad_read
         .metadata_mut()
         .insert("authorization", "Bearer wrong-token".parse()?);
@@ -866,7 +905,7 @@ async fn authentication_precedes_protobuf_decoding_and_applies_to_every_rpc() ->
             .code(),
         tonic::Code::Unauthenticated
     );
-    let mut bad_write = tonic::Request::new(tokio_stream::empty::<wire::Call>());
+    let mut bad_write = tonic::Request::new(tokio_stream::empty::<wire::Request>());
     bad_write
         .metadata_mut()
         .insert("authorization", "Bearer wrong-token".parse()?);

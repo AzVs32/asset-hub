@@ -14,7 +14,6 @@ workspace = true
 ah-vfs = { path = "../ah-vfs", version = "0.1.0" }
 vfs-plugin-protocol = { path = "../vfs-plugin-protocol", version = "0.1.0" }
 vfs-plugin-host = { path = "../vfs-plugin-host", version = "0.1.0" }
-serde_json = "1.0.154"
 serde = "1.0.229"
 wasmtime = { version = "50", default-features = false, features = ["async", "component-model", "cranelift", "runtime", "std"] }
 wit-component = "0.262"

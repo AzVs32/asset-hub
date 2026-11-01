@@ -15,7 +15,6 @@ ah-vfs = { path = "../ah-vfs", version = "0.1.0" }
 vfs-plugin-codec = { path = "../vfs-plugin-codec", version = "0.1.0" }
 vfs-plugin-protocol = { path = "../vfs-plugin-protocol", version = "0.1.0" }
 vfs-plugin-grpc-wire = { path = "../vfs-plugin-grpc-wire", version = "0.1.0" }
-serde_json = "1.0.154"
 sha2 = "0.10.9"
 subtle = "2.6.1"
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }

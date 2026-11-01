@@ -6,12 +6,32 @@ use vfs_plugin_wasm::WasmTransport;
 
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 fn fixture(prepare: &str, initialize: &str) -> Result<Vec<u8>> {
-    let description = serde_json::to_vec(&serde_json::json!({
-        "major": 1, "minor": 1, "required_features": [], "generation": "overridden",
-        "key": "wasm.recovery", "name": "Recovery fixture", "version": "1.0.0",
-        "child_mounts": true, "capabilities": [], "ownership": "host",
-        "settings_schema": null, "instance_schema": null, "config_version": 1
-    }))?;
+    let description = p::encode_reply(Ok(p::Reply::new(Value::Description(
+        p::Description {
+            major: p::PROTOCOL_MAJOR,
+            minor: p::PROTOCOL_MINOR,
+            required_features: vec![],
+            features: p::PROTOCOL_FEATURES.iter().map(|v| (*v).into()).collect(),
+            required_host_capabilities: vec![],
+            instance_schema_profile: p::INSTANCE_SCHEMA_PROFILE.into(),
+            generation: "overridden".into(),
+            key: "wasm.recovery".into(),
+            name: "Recovery fixture".into(),
+            version: "1.0.0".into(),
+            child_mounts: true,
+            capabilities: vec![],
+            ownership: p::Ownership::Host as i32,
+            settings_schema: None,
+            instance_schema: None,
+            config_version: 1,
+        }
+        .into(),
+    ))))?;
+    let unit = p::encode_reply(Ok(p::Reply::unit()))?;
+    let unit_escaped = unit
+        .iter()
+        .map(|byte| format!("\\{byte:02x}"))
+        .collect::<String>();
     let escaped = description
         .iter()
         .map(|byte| format!("\\{byte:02x}"))
@@ -19,6 +39,8 @@ fn fixture(prepare: &str, initialize: &str) -> Result<Vec<u8>> {
     let wat = include_str!("fixtures/recovery.wat")
         .replace("@@DESCRIPTION@@", &escaped)
         .replace("@@DESCRIPTION_LENGTH@@", &description.len().to_string())
+        .replace("@@UNIT@@", &unit_escaped)
+        .replace("@@UNIT_LENGTH@@", &unit.len().to_string())
         .replace("@@PREPARE@@", prepare)
         .replace("@@INITIALIZE@@", initialize);
     let mut bytes = wat::parse_str(wat)?;
@@ -38,9 +60,11 @@ fn fixture(prepare: &str, initialize: &str) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 async fn generation(transport: &WasmTransport) -> Result<String> {
-    let reply = transport.call("", Op::Describe, vec![]).await?;
-    match reply.value {
-        Value::Description { description } => Ok(description.generation),
+    let reply = transport
+        .call("", Op::Describe(p::Empty {}), vec![])
+        .await?;
+    match reply.into_value()? {
+        Value::Description(description) => Ok(description.generation),
         _ => Err("description".into()),
     }
 }
@@ -48,9 +72,9 @@ async fn initialize(transport: &WasmTransport, generation: &str) -> Result {
     transport
         .call(
             generation,
-            Op::Initialize {
-                settings: Default::default(),
-            },
+            Op::Initialize(p::Initialize {
+                settings: Some(Default::default()),
+            }),
             vec![],
         )
         .await?;
@@ -60,9 +84,9 @@ async fn probe(transport: &WasmTransport, generation: &str) -> Result {
     transport
         .call(
             generation,
-            Op::TestConnection {
-                config: Default::default(),
-            },
+            Op::TestConnection(p::Config {
+                config: Some(Default::default()),
+            }),
             vec![],
         )
         .await?;
@@ -100,9 +124,9 @@ async fn trap_rebuilds_the_store_and_host_provisioning_recovers() -> Result {
         transport
             .call(
                 &old,
-                Op::TestConnection {
-                    config: Default::default()
-                },
+                Op::TestConnection(p::Config {
+                    config: Some(Default::default())
+                }),
                 vec![]
             )
             .await
@@ -124,9 +148,9 @@ async fn timeout_rebuilds_instead_of_reusing_incomplete_guest_execution() -> Res
     initialize(&transport, &old).await?;
     let mut call = transport.call(
         &old,
-        Op::Prepare {
-            config: Default::default(),
-        },
+        Op::Prepare(p::Config {
+            config: Some(Default::default()),
+        }),
         vec![],
     );
     poll_fn(|cx| {
@@ -159,9 +183,9 @@ async fn cancelled_execution_and_mutation_traps_also_allow_a_new_generation() ->
     initialize(&transport, &old).await?;
     let mut call = transport.call(
         &old,
-        Op::Prepare {
-            config: Default::default(),
-        },
+        Op::Prepare(p::Config {
+            config: Some(Default::default()),
+        }),
         vec![],
     );
     poll_fn(|cx| {
@@ -180,9 +204,9 @@ async fn cancelled_execution_and_mutation_traps_also_allow_a_new_generation() ->
     let error = transport
         .call(
             &old,
-            Op::Initialize {
-                settings: p::Object::new(),
-            },
+            Op::Initialize(p::Initialize {
+                settings: Some(p::Object::new()),
+            }),
             vec![],
         )
         .await
@@ -206,9 +230,9 @@ async fn initialize_acknowledges_identical_settings_without_reexecuting_the_gues
     let error = transport
         .call(
             &generation,
-            Op::Initialize {
-                settings: p::Object::from([("different".into(), true.into())]),
-            },
+            Op::Initialize(p::Initialize {
+                settings: Some(p::Object::from([("different".into(), true.into())])),
+            }),
             vec![],
         )
         .await

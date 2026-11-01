@@ -77,12 +77,14 @@ impl Runtime {
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .iter()
                     .map(|(kind, handle)| p::ResourceRef {
-                        kind: *kind,
+                        kind: *kind as i32,
                         handle: *handle,
                     })
                     .collect::<Vec<_>>();
                 if !resources.is_empty() {
-                    let _ = runtime.call(Op::Renew { resources }, vec![]).await;
+                    let _ = runtime
+                        .call(Op::Renew(p::Renew { resources }), vec![])
+                        .await;
                 }
             }
         });
@@ -93,7 +95,7 @@ impl Runtime {
         runtime
     }
     async fn call(&self, op: Op, data: Vec<u8>) -> Result<p::Reply, DriverError> {
-        if self.is_stale() && !matches!(op, Op::Release { .. }) {
+        if self.is_stale() && !matches!(op, Op::Release(_)) {
             return Err(StorageError::new(StorageErrorKind::StaleHandle).into());
         }
         if data.len() > p::MAX_DATA_BYTES {
@@ -102,7 +104,7 @@ impl Runtime {
         let mutates = op.mutates();
         let reply = self
             .transport
-            .call(&self.generation, op, data)
+            .call(&self.generation, op.clone(), data)
             .await
             .inspect_err(|error| {
                 if error.storage_error().is_some_and(|error| {
@@ -117,7 +119,12 @@ impl Runtime {
                     self.stale.store(true, Ordering::Release);
                 }
             })?;
-        if reply.data.len() > p::MAX_DATA_BYTES {
+        if p::validate_reply(&reply).is_err()
+            || !reply
+                .result
+                .as_ref()
+                .is_some_and(|value| op.accepts_reply(value))
+        {
             return Err(bad_response(mutates).into());
         }
         Ok(reply)
@@ -131,12 +138,12 @@ impl Runtime {
         if !r.data.is_empty() {
             return Err(bad_response(mutates).into());
         }
-        Ok(r.value)
+        Ok(r.result.ok_or_else(convert::storage_invalid)?)
     }
     async fn unit(&self, op: Op) -> Result<(), DriverError> {
         let mutates = op.mutates();
         match self.value(op).await? {
-            Value::Unit => Ok(()),
+            Value::Unit(p::Empty {}) => Ok(()),
             _ => Err(bad_response(mutates).into()),
         }
     }
@@ -175,7 +182,7 @@ impl PluginDriver {
                     settings: None,
                 })),
             }),
-            ownership: description.ownership,
+            ownership: description.ownership(),
             negotiated,
         })
     }
@@ -191,9 +198,12 @@ impl PluginDriver {
     }
 }
 async fn describe(transport: &dyn Transport) -> Result<p::Description, DriverError> {
-    let reply = transport.call("", Op::Describe, vec![]).await?;
-    match reply.value {
-        Value::Description { description } if reply.data.is_empty() => Ok(description),
+    let reply = transport
+        .call("", Op::Describe(p::Empty {}), vec![])
+        .await?;
+    p::validate_reply(&reply).map_err(|_| convert::invalid())?;
+    match reply.result.ok_or_else(convert::storage_invalid)? {
+        Value::Description(description) if reply.data.is_empty() => Ok(*description),
         _ => Err(convert::invalid()),
     }
 }
@@ -204,7 +214,7 @@ impl Driver for PluginDriver {
     fn instances(&self) -> InstanceManagement {
         match self.ownership {
             p::Ownership::Host => InstanceManagement::HostManaged(self.remote.clone()),
-            p::Ownership::Plugin => InstanceManagement::SelfManaged(self.remote.clone()),
+            _ => InstanceManagement::SelfManaged(self.remote.clone()),
         }
     }
     fn initialize(&self, settings: DriverSettings) -> DriverFuture<'_, ()> {
@@ -213,12 +223,12 @@ impl Driver for PluginDriver {
             if connection.settings.is_some() {
                 return Err(StorageError::new(StorageErrorKind::Conflict).into());
             }
-            let settings = settings.into_object();
+            let settings: p::Object = settings.into_object().into();
             connection
                 .runtime
-                .unit(Op::Initialize {
-                    settings: settings.clone(),
-                })
+                .unit(Op::Initialize(p::Initialize {
+                    settings: Some(settings.clone()),
+                }))
                 .await?;
             connection.settings = Some(settings);
             Ok(())
@@ -231,12 +241,19 @@ impl Driver for PluginDriver {
             }
             let runtime = self.remote.runtime().await?;
             let value = runtime
-                .value(Op::Open {
+                .value(Op::Open(p::Open {
                     id: context.instance_id().as_str().into(),
-                    config: context.config().cloned().map(InstanceConfig::into_object),
-                })
+                    config: context
+                        .config()
+                        .cloned()
+                        .map(|config| config.into_object().into()),
+                }))
                 .await?;
-            let Value::Storage { handle, info } = value else {
+            let Value::Storage(p::Storage {
+                handle,
+                info: Some(info),
+            }) = value
+            else {
                 return Err(convert::invalid());
             };
             let lease = Lease::new(runtime, p::ResourceKind::Storage, handle)?;
@@ -298,9 +315,7 @@ impl RemoteInstances {
             convert::driver_info(&description)?;
             expected.generation.clear();
             description.generation.clear();
-            if serde_json::to_value(&expected).map_err(|_| convert::invalid())?
-                != serde_json::to_value(&description).map_err(|_| convert::invalid())?
-            {
+            if expected != description {
                 return Err(convert::invalid());
             }
             if !changed && !connection.runtime.is_stale() {
@@ -309,9 +324,9 @@ impl RemoteInstances {
             let runtime = Runtime::new(transport, generation);
             if changed && let Some(settings) = &connection.settings {
                 runtime
-                    .unit(Op::Initialize {
-                        settings: settings.clone(),
-                    })
+                    .unit(Op::Initialize(p::Initialize {
+                        settings: Some(settings.clone()),
+                    }))
                     .await?;
             }
             connection.runtime = runtime.clone();
@@ -325,14 +340,18 @@ impl InstanceProvisioner for RemoteInstances {
     fn prepare(&self, config: InstanceConfig) -> DriverFuture<'_, PreparedConfig> {
         Box::pin(async move {
             match self
-                .value(Op::Prepare {
-                    config: config.into_object(),
-                })
+                .value(Op::Prepare(p::Config {
+                    config: Some(config.into_object().into()),
+                }))
                 .await?
             {
-                Value::Prepared { config, details } => {
-                    Ok(PreparedConfig::new(config.into(), details))
-                }
+                Value::Prepared(p::Prepared {
+                    config: Some(config),
+                    details: Some(details),
+                }) => Ok(PreparedConfig::new(
+                    convert::object(Some(config))?.into(),
+                    convert::object(Some(details))?,
+                )),
                 _ => Err(convert::invalid()),
             }
         })
@@ -344,13 +363,15 @@ impl InstanceProvisioner for RemoteInstances {
     ) -> DriverFuture<'_, InstanceConfig> {
         Box::pin(async move {
             match self
-                .value(Op::Migrate {
+                .value(Op::Migrate(p::Migrate {
                     from_version,
-                    config: config.into_object(),
-                })
+                    config: Some(config.into_object().into()),
+                }))
                 .await?
             {
-                Value::Config { config } => Ok(config.into()),
+                Value::Config(p::Config {
+                    config: Some(config),
+                }) => Ok(convert::object(Some(config))?.into()),
                 _ => Err(convert::invalid()),
             }
         })
@@ -359,9 +380,9 @@ impl InstanceProvisioner for RemoteInstances {
         Box::pin(async move {
             self.runtime()
                 .await?
-                .unit(Op::TestConnection {
-                    config: config.clone().into_object(),
-                })
+                .unit(Op::TestConnection(p::Config {
+                    config: Some(config.clone().into_object().into()),
+                }))
                 .await
         })
     }
@@ -370,12 +391,12 @@ impl InstanceRegistry for RemoteInstances {
     fn get(&self, id: InstanceId) -> DriverFuture<'_, Option<InstanceInfo>> {
         Box::pin(async move {
             match self
-                .value(Op::GetInstance {
+                .value(Op::GetInstance(p::InstanceId {
                     id: id.as_str().into(),
-                })
+                }))
                 .await?
             {
-                Value::MaybeInstance { instance } => {
+                Value::MaybeInstance(p::MaybeInstance { instance }) => {
                     let result = instance.map(convert::decode_instance).transpose()?;
                     if result.as_ref().is_some_and(|v| v.id != id) {
                         return Err(convert::invalid());
@@ -389,16 +410,16 @@ impl InstanceRegistry for RemoteInstances {
     fn list(&self, query: InstanceQuery) -> DriverFuture<'_, InstancePage> {
         Box::pin(async move {
             match self
-                .value(Op::ListInstances {
+                .value(Op::ListInstances(p::ListInstances {
                     after: query.after().map(|id| id.as_str().into()),
                     limit: query.limit().get() as u32,
-                })
+                }))
                 .await?
             {
-                Value::Instances {
+                Value::Instances(p::Instances {
                     instances,
                     next_after,
-                } => {
+                }) => {
                     let instances = instances
                         .into_iter()
                         .map(convert::decode_instance)
@@ -430,12 +451,12 @@ impl InstanceRegistry for RemoteInstances {
     fn create(&self, config: InstanceConfig) -> DriverFuture<'_, InstanceInfo> {
         Box::pin(async move {
             match self
-                .value(Op::CreateInstance {
-                    config: config.into_object(),
-                })
+                .value(Op::CreateInstance(p::Config {
+                    config: Some(config.into_object().into()),
+                }))
                 .await?
             {
-                Value::Instance { instance } => {
+                Value::Instance(instance) => {
                     convert::decode_instance(instance).map_err(|_| bad_response(true).into())
                 }
                 _ => Err(bad_response(true).into()),
@@ -445,12 +466,12 @@ impl InstanceRegistry for RemoteInstances {
     fn remove(&self, id: InstanceId) -> DriverFuture<'_, RemoveInstanceOutcome> {
         Box::pin(async move {
             match self
-                .value(Op::RemoveInstance {
+                .value(Op::RemoveInstance(p::InstanceId {
                     id: id.as_str().into(),
-                })
+                }))
                 .await?
             {
-                Value::Removed { removed } => Ok(if removed {
+                Value::Removed(p::Removed { removed }) => Ok(if removed {
                     RemoveInstanceOutcome::Removed
                 } else {
                     RemoveInstanceOutcome::AlreadyAbsent
@@ -498,10 +519,10 @@ impl Drop for Lease {
             .remove(&(self.kind, self.handle));
         if let Ok(executor) = tokio::runtime::Handle::try_current() {
             let runtime = self.runtime.clone();
-            let operation = Op::Release {
-                kind: self.kind,
+            let operation = Op::Release(p::ResourceRef {
+                kind: self.kind as i32,
                 handle: self.handle,
-            };
+            });
             executor.spawn(async move {
                 let _ = runtime.call(operation, vec![]).await;
             });
@@ -519,10 +540,10 @@ impl RemoteStorage {
         self.lease
             .runtime
             .call(
-                Op::Storage {
+                Op::Storage(p::StorageCall {
                     handle: self.lease.handle,
-                    request,
-                },
+                    operation: Some(request),
+                }),
                 data,
             )
             .await
@@ -533,10 +554,10 @@ impl RemoteStorage {
         request: p::StorageOp,
         path: StoragePath,
     ) -> Result<StorageEntry, StorageError> {
-        let mutates = !matches!(request, p::StorageOp::Stat { .. });
+        let mutates = !matches!(request, p::StorageOp::Stat(_));
         let r = self.call(request, vec![]).await?;
-        match r.value {
-            Value::Entry { entry } if r.data.is_empty() => {
+        match r.result.ok_or_else(convert::storage_invalid)? {
+            Value::Entry(entry) if r.data.is_empty() => {
                 let entry = convert::decode_entry(entry).map_err(|_| bad_response(mutates))?;
                 if entry.path != path {
                     return Err(bad_response(mutates));
@@ -548,8 +569,8 @@ impl RemoteStorage {
     }
     async fn unit(&self, request: p::StorageOp, data: Vec<u8>) -> Result<(), StorageError> {
         let r = self.call(request, data).await?;
-        match r.value {
-            Value::Unit if r.data.is_empty() => Ok(()),
+        match r.result.ok_or_else(convert::storage_invalid)? {
+            Value::Unit(p::Empty {}) if r.data.is_empty() => Ok(()),
             _ => Err(bad_response(true)),
         }
     }
@@ -573,9 +594,9 @@ impl Storage for RemoteStorage {
     fn stat_entry(&self, r: StorageStatEntryRequest) -> StorageFuture<'_, StorageEntry> {
         Box::pin(async move {
             self.entry(
-                p::StorageOp::Stat {
+                p::StorageOp::Stat(p::Path {
                     path: r.path.as_str().into(),
-                },
+                }),
                 r.path,
             )
             .await
@@ -584,10 +605,10 @@ impl Storage for RemoteStorage {
     fn create_dir(&self, r: StorageCreateDirRequest) -> StorageFuture<'_, StorageEntry> {
         Box::pin(async move {
             self.entry(
-                p::StorageOp::CreateDir {
+                p::StorageOp::CreateDir(p::CreateDir {
                     path: r.path.as_str().into(),
                     recursive: r.recursive,
-                },
+                }),
                 r.path,
             )
             .await
@@ -596,11 +617,11 @@ impl Storage for RemoteStorage {
     fn move_entry(&self, r: StorageMoveEntryRequest) -> StorageFuture<'_, StorageEntry> {
         Box::pin(async move {
             self.entry(
-                p::StorageOp::Move {
+                p::StorageOp::Move(p::Move {
                     source: r.source.as_str().into(),
                     destination: r.destination.as_str().into(),
                     replace: r.replace,
-                },
+                }),
                 r.destination,
             )
             .await
@@ -609,9 +630,9 @@ impl Storage for RemoteStorage {
     fn remove_entry(&self, r: StorageRemoveEntryRequest) -> StorageFuture<'_, ()> {
         Box::pin(async move {
             self.unit(
-                p::StorageOp::Remove {
+                p::StorageOp::Remove(p::Path {
                     path: r.path.as_str().into(),
-                },
+                }),
                 vec![],
             )
             .await
@@ -622,18 +643,18 @@ impl Storage for RemoteStorage {
             r.validate()?;
             let reply = self
                 .call(
-                    p::StorageOp::List {
+                    p::StorageOp::List(p::List {
                         path: r.path.as_str().into(),
                         after: r.after.clone(),
                         limit: r.limit.get() as u32,
-                    },
+                    }),
                     vec![],
                 )
                 .await?;
-            let Value::Page {
+            let Value::Page(p::Page {
                 entries,
                 next_after,
-            } = reply.value
+            }) = reply.result.ok_or_else(convert::storage_invalid)?
             else {
                 return Err(convert::storage_invalid());
             };
@@ -676,23 +697,24 @@ impl Storage for RemoteStorage {
             let value = self
                 .lease
                 .runtime
-                .value(Op::Read {
+                .value(Op::Read(p::Read {
                     handle: self.lease.handle,
                     path: r.path.as_str().into(),
                     offset: r.offset,
                     length: r.length,
-                })
+                }))
                 .await
                 .map_err(convert::storage_error)?;
             match value {
-                Value::Reader { handle } => Ok(Box::new(RemoteReader {
+                Value::Reader(p::Handle { handle }) => Ok(Box::new(RemoteReader {
                     lease: Some(
                         Lease::new(self.lease.runtime.clone(), p::ResourceKind::Reader, handle)
                             .map_err(convert::storage_error)?,
                     ),
                     eof: false,
                     remaining: r.length,
-                }) as Box<dyn StorageFileReader>),
+                })
+                    as Box<dyn StorageFileReader>),
                 _ => Err(convert::storage_invalid()),
             }
         })
@@ -705,22 +727,23 @@ impl Storage for RemoteStorage {
             let value = self
                 .lease
                 .runtime
-                .value(Op::Write {
+                .value(Op::Write(p::Write {
                     handle: self.lease.handle,
                     path: r.path.as_str().into(),
                     replace: r.mode == StorageWriteFileMode::Replace,
                     atomic: r.require_atomic_publish,
-                })
+                }))
                 .await
                 .map_err(convert::storage_error)?;
             match value {
-                Value::Writer { handle } => Ok(Box::new(RemoteWriter {
+                Value::Writer(p::Handle { handle }) => Ok(Box::new(RemoteWriter {
                     lease: Some(
                         Lease::new(self.lease.runtime.clone(), p::ResourceKind::Writer, handle)
                             .map_err(convert::storage_error)?,
                     ),
                     path: r.path,
-                }) as Box<dyn StorageFileWriter>),
+                })
+                    as Box<dyn StorageFileWriter>),
                 _ => Err(convert::storage_invalid()),
             }
         })
@@ -744,19 +767,19 @@ impl StorageFileReader for RemoteReader {
             let reply = lease
                 .runtime
                 .call(
-                    Op::ReaderNext {
+                    Op::ReaderNext(p::Handle {
                         handle: lease.handle,
-                    },
+                    }),
                     vec![],
                 )
                 .await
                 .map_err(convert::storage_error)?;
-            match reply.value {
-                Value::Chunk { eof: true } if reply.data.is_empty() => {
+            match reply.result.ok_or_else(convert::storage_invalid)? {
+                Value::Chunk(p::Chunk { eof: true }) if reply.data.is_empty() => {
                     self.eof = true;
                     Ok(None)
                 }
-                Value::Chunk { eof: false } if !reply.data.is_empty() => {
+                Value::Chunk(p::Chunk { eof: false }) if !reply.data.is_empty() => {
                     if let Some(remaining) = self.remaining.as_mut() {
                         *remaining = remaining
                             .checked_sub(reply.data.len() as u64)
@@ -782,14 +805,18 @@ impl StorageFileWriter for RemoteWriter {
                 let reply = lease
                     .runtime
                     .call(
-                        Op::WriterChunk {
+                        Op::WriterChunk(p::Handle {
                             handle: lease.handle,
-                        },
+                        }),
                         chunk.to_vec(),
                     )
                     .await
                     .map_err(convert::storage_error)?;
-                if !matches!(reply.value, Value::Unit) || !reply.data.is_empty() {
+                if !matches!(
+                    reply.result.ok_or_else(convert::storage_invalid)?,
+                    Value::Unit(p::Empty {})
+                ) || !reply.data.is_empty()
+                {
                     return Err(bad_response(true));
                 }
             }
@@ -802,13 +829,13 @@ impl StorageFileWriter for RemoteWriter {
             let lease = self.lease.take().ok_or_else(closed)?;
             let reply = lease
                 .runtime
-                .value(Op::Commit {
+                .value(Op::Commit(p::Handle {
                     handle: lease.handle,
-                })
+                }))
                 .await
                 .map_err(convert::storage_error)?;
             match reply {
-                Value::Entry { entry } => {
+                Value::Entry(entry) => {
                     let entry = convert::decode_entry(entry).map_err(|_| bad_response(true))?;
                     if entry.path != self.path {
                         return Err(bad_response(true));
@@ -824,9 +851,9 @@ impl StorageFileWriter for RemoteWriter {
             let lease = self.lease.take().ok_or_else(closed)?;
             lease
                 .runtime
-                .unit(Op::Abort {
+                .unit(Op::Abort(p::Handle {
                     handle: lease.handle,
-                })
+                }))
                 .await
                 .map_err(convert::storage_error)
         })
@@ -838,14 +865,14 @@ impl StoragePermissions for RemoteStorage {
         Box::pin(async move {
             let r = self
                 .call(
-                    p::StorageOp::GetPermissions {
+                    p::StorageOp::GetPermissions(p::Path {
                         path: path.as_str().into(),
-                    },
+                    }),
                     vec![],
                 )
                 .await?;
-            match r.value {
-                Value::Permissions { mode } if r.data.is_empty() => {
+            match r.result.ok_or_else(convert::storage_invalid)? {
+                Value::Permissions(p::Permissions { mode }) if r.data.is_empty() => {
                     EntryPermissions::new(mode).map_err(|_| convert::storage_invalid())
                 }
                 _ => Err(convert::storage_invalid()),
@@ -859,10 +886,10 @@ impl StoragePermissions for RemoteStorage {
     ) -> StorageFuture<'_, ()> {
         Box::pin(async move {
             self.unit(
-                p::StorageOp::SetPermissions {
+                p::StorageOp::SetPermissions(p::SetPermissions {
                     path: path.as_str().into(),
                     mode: permissions.bits(),
-                },
+                }),
                 vec![],
             )
             .await
@@ -880,15 +907,15 @@ impl StorageXattrs for RemoteStorage {
                 .map_err(|_| StorageError::new(StorageErrorKind::TooLarge))?;
             let r = self
                 .call(
-                    p::StorageOp::ListXattrs {
+                    p::StorageOp::ListXattrs(p::ListXattrs {
                         path: path.as_str().into(),
                         max_bytes,
-                    },
+                    }),
                     vec![],
                 )
                 .await?;
-            match r.value {
-                Value::Names { names } if r.data.is_empty() => {
+            match r.result.ok_or_else(convert::storage_invalid)? {
+                Value::Names(p::Names { names }) if r.data.is_empty() => {
                     if names.windows(2).any(|v| v[0] >= v[1])
                         || names.iter().map(|n| n.len() + 1).sum::<usize>() > max_bytes as usize
                     {
@@ -914,15 +941,19 @@ impl StorageXattrs for RemoteStorage {
                 .map_err(|_| StorageError::new(StorageErrorKind::TooLarge))?;
             let r = self
                 .call(
-                    p::StorageOp::GetXattr {
+                    p::StorageOp::GetXattr(p::GetXattr {
                         path: path.as_str().into(),
                         name: name.as_str().into(),
                         max_bytes,
-                    },
+                    }),
                     vec![],
                 )
                 .await?;
-            if matches!(r.value, Value::Bytes) && r.data.len() <= max_bytes as usize {
+            if matches!(
+                r.result.ok_or_else(convert::storage_invalid)?,
+                Value::Bytes(p::Empty {})
+            ) && r.data.len() <= max_bytes as usize
+            {
                 Ok(r.data)
             } else {
                 Err(convert::storage_invalid())
@@ -938,16 +969,16 @@ impl StorageXattrs for RemoteStorage {
     ) -> StorageFuture<'_, ()> {
         Box::pin(async move {
             self.unit(
-                p::StorageOp::SetXattr {
+                p::StorageOp::SetXattr(p::SetXattr {
                     path: path.as_str().into(),
                     name: name.as_str().into(),
                     mode: match mode {
-                        XattrWriteMode::Upsert => "upsert",
-                        XattrWriteMode::CreateNew => "create_new",
-                        XattrWriteMode::Replace => "replace",
+                        XattrWriteMode::Upsert => p::XattrWriteMode::Upsert,
+                        XattrWriteMode::CreateNew => p::XattrWriteMode::CreateNew,
+                        XattrWriteMode::Replace => p::XattrWriteMode::Replace,
                     }
                     .into(),
-                },
+                }),
                 value,
             )
             .await
@@ -956,10 +987,10 @@ impl StorageXattrs for RemoteStorage {
     fn remove_xattr(&self, path: StoragePath, name: XattrName) -> StorageFuture<'_, ()> {
         Box::pin(async move {
             self.unit(
-                p::StorageOp::RemoveXattr {
+                p::StorageOp::RemoveXattr(p::RemoveXattr {
                     path: path.as_str().into(),
                     name: name.as_str().into(),
-                },
+                }),
                 vec![],
             )
             .await
