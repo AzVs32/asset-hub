@@ -11,7 +11,10 @@ use std::{
     future::Future,
     num::NonZeroUsize,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 use vfs_plugin_protocol::{self as p, Operation as Op, Value};
@@ -21,7 +24,9 @@ pub type TransportFuture<'a> =
 pub trait Transport: Send + Sync {
     /// Services this execution environment supplies to guest code. Native RPC
     /// plugins own their process resources and do not import host services.
-    fn host_capabilities(&self) -> &[&str] { &[] }
+    fn host_capabilities(&self) -> &[&str] {
+        &[]
+    }
     fn call<'a>(&'a self, generation: &'a str, operation: Op, data: Vec<u8>)
     -> TransportFuture<'a>;
 }
@@ -31,6 +36,7 @@ struct Runtime {
     generation: String,
     leases: Mutex<HashSet<(p::ResourceKind, u64)>>,
     heartbeat: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    stale: AtomicBool,
 }
 impl Drop for Runtime {
     fn drop(&mut self) {
@@ -51,6 +57,7 @@ impl Runtime {
             generation,
             leases: Mutex::new(HashSet::new()),
             heartbeat: Mutex::new(None),
+            stale: AtomicBool::new(false),
         });
         let weak = Arc::downgrade(&runtime);
         let task = tokio::spawn(async move {
@@ -61,6 +68,9 @@ impl Runtime {
                 let Some(runtime) = weak.upgrade() else {
                     break;
                 };
+                if runtime.is_stale() {
+                    break;
+                }
                 let resources = runtime
                     .leases
                     .lock()
@@ -83,15 +93,37 @@ impl Runtime {
         runtime
     }
     async fn call(&self, op: Op, data: Vec<u8>) -> Result<p::Reply, DriverError> {
+        if self.is_stale() && !matches!(op, Op::Release { .. }) {
+            return Err(StorageError::new(StorageErrorKind::StaleHandle).into());
+        }
         if data.len() > p::MAX_DATA_BYTES {
             return Err(StorageError::new(StorageErrorKind::TooLarge).into());
         }
         let mutates = op.mutates();
-        let reply = self.transport.call(&self.generation, op, data).await?;
+        let reply = self
+            .transport
+            .call(&self.generation, op, data)
+            .await
+            .inspect_err(|error| {
+                if error.storage_error().is_some_and(|error| {
+                    matches!(
+                        error.kind(),
+                        StorageErrorKind::StaleHandle
+                            | StorageErrorKind::Unavailable
+                            | StorageErrorKind::TimedOut
+                            | StorageErrorKind::OutcomeUnknown
+                    )
+                }) {
+                    self.stale.store(true, Ordering::Release);
+                }
+            })?;
         if reply.data.len() > p::MAX_DATA_BYTES {
             return Err(bad_response(mutates).into());
         }
         Ok(reply)
+    }
+    fn is_stale(&self) -> bool {
+        self.stale.load(Ordering::Acquire)
     }
     async fn value(&self, op: Op) -> Result<Value, DriverError> {
         let mutates = op.mutates();
@@ -118,6 +150,8 @@ fn bad_response(mutates: bool) -> StorageError {
 }
 
 /// A fully described plugin. Register it normally to initialize plugin settings.
+/// Transport failures retire the affected generation. Later instance/open requests
+/// recover before dispatch; failed operations and retained streams are never replayed.
 pub struct PluginDriver {
     info: DriverInfo,
     remote: Arc<RemoteInstances>,
@@ -126,25 +160,42 @@ pub struct PluginDriver {
 }
 impl PluginDriver {
     pub async fn connect(transport: Arc<dyn Transport>) -> Result<Self, DriverError> {
-        let reply = transport.call("", Op::Describe, vec![]).await?;
-        let Value::Description { description } = reply.value else {
-            return Err(convert::invalid());
-        };
-        if !reply.data.is_empty() {
-            return Err(convert::invalid());
-        }
+        let description = describe(transport.as_ref()).await?;
         let negotiated = p::negotiate(&description, transport.host_capabilities())
             .map_err(|_| StorageError::new(StorageErrorKind::UnsupportedOperation))?;
         let info = convert::driver_info(&description)?;
-        let runtime = Runtime::new(transport, description.generation);
+        let runtime = Runtime::new(transport.clone(), description.generation.clone());
         Ok(Self {
             info,
-            remote: Arc::new(RemoteInstances { runtime }),
+            remote: Arc::new(RemoteInstances {
+                transport,
+                description: description.clone(),
+                connection: Arc::new(tokio::sync::Mutex::new(Connection {
+                    runtime,
+                    settings: None,
+                })),
+            }),
             ownership: description.ownership,
             negotiated,
         })
     }
-    pub fn negotiated_protocol(&self) -> &p::NegotiatedProtocol { &self.negotiated }
+    pub fn negotiated_protocol(&self) -> &p::NegotiatedProtocol {
+        &self.negotiated
+    }
+
+    /// Refresh the generation and initialize a replacement with the original settings.
+    /// Declarations must remain identical; changed declarations require registration
+    /// of a new driver. Existing resources are never rebound or replayed.
+    pub async fn reconnect(&self) -> Result<(), DriverError> {
+        self.remote.reconnect(true).await.map(|_| ())
+    }
+}
+async fn describe(transport: &dyn Transport) -> Result<p::Description, DriverError> {
+    let reply = transport.call("", Op::Describe, vec![]).await?;
+    match reply.value {
+        Value::Description { description } if reply.data.is_empty() => Ok(description),
+        _ => Err(convert::invalid()),
+    }
 }
 impl Driver for PluginDriver {
     fn info(&self) -> &DriverInfo {
@@ -158,12 +209,19 @@ impl Driver for PluginDriver {
     }
     fn initialize(&self, settings: DriverSettings) -> DriverFuture<'_, ()> {
         Box::pin(async move {
-            self.remote
+            let mut connection = self.remote.connection.lock().await;
+            if connection.settings.is_some() {
+                return Err(StorageError::new(StorageErrorKind::Conflict).into());
+            }
+            let settings = settings.into_object();
+            connection
                 .runtime
                 .unit(Op::Initialize {
-                    settings: settings.into_object(),
+                    settings: settings.clone(),
                 })
-                .await
+                .await?;
+            connection.settings = Some(settings);
+            Ok(())
         })
     }
     fn open(&self, context: OpenContext) -> DriverFuture<'_, Arc<dyn Storage>> {
@@ -171,9 +229,8 @@ impl Driver for PluginDriver {
             if (self.ownership == p::Ownership::Host) != context.config().is_some() {
                 return Err(convert::invalid());
             }
-            let value = self
-                .remote
-                .runtime
+            let runtime = self.remote.runtime().await?;
+            let value = runtime
                 .value(Op::Open {
                     id: context.instance_id().as_str().into(),
                     config: context.config().cloned().map(InstanceConfig::into_object),
@@ -182,11 +239,7 @@ impl Driver for PluginDriver {
             let Value::Storage { handle, info } = value else {
                 return Err(convert::invalid());
             };
-            let lease = Lease::new(
-                self.remote.runtime.clone(),
-                p::ResourceKind::Storage,
-                handle,
-            )?;
+            let lease = Lease::new(runtime, p::ResourceKind::Storage, handle)?;
             let capabilities = convert::decode_capabilities(&info.capabilities)?;
             if info.chunk_size == 0 || info.chunk_size as usize > p::MAX_DATA_BYTES {
                 return Err(convert::invalid());
@@ -203,13 +256,75 @@ impl Driver for PluginDriver {
 }
 
 struct RemoteInstances {
+    transport: Arc<dyn Transport>,
+    description: p::Description,
+    connection: Arc<tokio::sync::Mutex<Connection>>,
+}
+struct Connection {
     runtime: Arc<Runtime>,
+    settings: Option<p::Object>,
+}
+impl RemoteInstances {
+    async fn runtime(&self) -> Result<Arc<Runtime>, DriverError> {
+        let connection = self.connection.lock().await;
+        if !connection.runtime.is_stale() {
+            return Ok(connection.runtime.clone());
+        }
+        drop(connection);
+        self.reconnect(false).await
+    }
+    async fn value(&self, op: Op) -> Result<Value, DriverError> {
+        self.runtime().await?.value(op).await
+    }
+    async fn reconnect(&self, force: bool) -> Result<Arc<Runtime>, DriverError> {
+        let transport = self.transport.clone();
+        let mut expected = self.description.clone();
+        let connection = self.connection.clone();
+        // Recovery owns initialization even if its initiating request is cancelled.
+        // Concurrent callers share the published runtime and never replay their op.
+        tokio::spawn(async move {
+            let mut connection = connection.lock().await;
+            if !force && !connection.runtime.is_stale() {
+                return Ok(connection.runtime.clone());
+            }
+            let mut description = describe(transport.as_ref()).await?;
+            let generation = description.generation.clone();
+            let changed = generation != connection.runtime.generation;
+            if changed {
+                connection.runtime.stale.store(true, Ordering::Release);
+            }
+            p::negotiate(&description, transport.host_capabilities())
+                .map_err(|_| StorageError::new(StorageErrorKind::UnsupportedOperation))?;
+            convert::driver_info(&description)?;
+            expected.generation.clear();
+            description.generation.clear();
+            if serde_json::to_value(&expected).map_err(|_| convert::invalid())?
+                != serde_json::to_value(&description).map_err(|_| convert::invalid())?
+            {
+                return Err(convert::invalid());
+            }
+            if !changed && !connection.runtime.is_stale() {
+                return Ok(connection.runtime.clone());
+            }
+            let runtime = Runtime::new(transport, generation);
+            if changed && let Some(settings) = &connection.settings {
+                runtime
+                    .unit(Op::Initialize {
+                        settings: settings.clone(),
+                    })
+                    .await?;
+            }
+            connection.runtime = runtime.clone();
+            Ok(runtime)
+        })
+        .await
+        .map_err(|_| StorageError::new(StorageErrorKind::Unavailable))?
+    }
 }
 impl InstanceProvisioner for RemoteInstances {
     fn prepare(&self, config: InstanceConfig) -> DriverFuture<'_, PreparedConfig> {
         Box::pin(async move {
             match self
-                .runtime
                 .value(Op::Prepare {
                     config: config.into_object(),
                 })
@@ -229,7 +344,6 @@ impl InstanceProvisioner for RemoteInstances {
     ) -> DriverFuture<'_, InstanceConfig> {
         Box::pin(async move {
             match self
-                .runtime
                 .value(Op::Migrate {
                     from_version,
                     config: config.into_object(),
@@ -243,7 +357,8 @@ impl InstanceProvisioner for RemoteInstances {
     }
     fn test_connection<'a>(&'a self, config: &'a InstanceConfig) -> DriverFuture<'a, ()> {
         Box::pin(async move {
-            self.runtime
+            self.runtime()
+                .await?
                 .unit(Op::TestConnection {
                     config: config.clone().into_object(),
                 })
@@ -255,7 +370,6 @@ impl InstanceRegistry for RemoteInstances {
     fn get(&self, id: InstanceId) -> DriverFuture<'_, Option<InstanceInfo>> {
         Box::pin(async move {
             match self
-                .runtime
                 .value(Op::GetInstance {
                     id: id.as_str().into(),
                 })
@@ -275,7 +389,6 @@ impl InstanceRegistry for RemoteInstances {
     fn list(&self, query: InstanceQuery) -> DriverFuture<'_, InstancePage> {
         Box::pin(async move {
             match self
-                .runtime
                 .value(Op::ListInstances {
                     after: query.after().map(|id| id.as_str().into()),
                     limit: query.limit().get() as u32,
@@ -317,7 +430,6 @@ impl InstanceRegistry for RemoteInstances {
     fn create(&self, config: InstanceConfig) -> DriverFuture<'_, InstanceInfo> {
         Box::pin(async move {
             match self
-                .runtime
                 .value(Op::CreateInstance {
                     config: config.into_object(),
                 })
@@ -333,7 +445,6 @@ impl InstanceRegistry for RemoteInstances {
     fn remove(&self, id: InstanceId) -> DriverFuture<'_, RemoveInstanceOutcome> {
         Box::pin(async move {
             match self
-                .runtime
                 .value(Op::RemoveInstance {
                     id: id.as_str().into(),
                 })
@@ -357,6 +468,9 @@ struct Lease {
 }
 impl Lease {
     fn new(runtime: Arc<Runtime>, kind: p::ResourceKind, handle: u64) -> Result<Self, DriverError> {
+        if runtime.is_stale() {
+            return Err(StorageError::new(StorageErrorKind::StaleHandle).into());
+        }
         if handle == 0 {
             return Err(convert::invalid());
         }
@@ -441,6 +555,9 @@ impl RemoteStorage {
     }
 }
 impl Storage for RemoteStorage {
+    fn is_stale(&self) -> bool {
+        self.lease.runtime.is_stale()
+    }
     fn capabilities(&self) -> StorageCapabilities {
         self.capabilities
     }

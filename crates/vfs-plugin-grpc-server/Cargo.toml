@@ -16,7 +16,14 @@ vfs-plugin-codec = { path = "../vfs-plugin-codec", version = "0.1.0" }
 vfs-plugin-protocol = { path = "../vfs-plugin-protocol", version = "0.1.0" }
 vfs-plugin-grpc-wire = { path = "../vfs-plugin-grpc-wire", version = "0.1.0" }
 serde_json = "1.0.154"
+sha2 = "0.10.9"
+subtle = "2.6.1"
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 tonic = { version = "0.14", features = ["transport", "tls-ring"] }
 tokio = { version = "1.54.1", features = ["net", "rt", "sync", "time", "macros"] }
 tokio-stream = { version = "0.1.19", features = ["net"] }
+
+[dev-dependencies]
+vfs-plugin-host = { path = "../vfs-plugin-host", version = "0.1.0" }
+vfs-plugin-grpc = { path = "../vfs-plugin-grpc", version = "0.1.0" }
+tokio = { version = "1.54.1", features = ["test-util"] }

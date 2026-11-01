@@ -31,7 +31,9 @@ pub struct HostGrants {
 }
 
 fn unix_time() -> wasmtime::Result<i64> {
-    Ok(i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs())?)
+    Ok(i64::try_from(
+        SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+    )?)
 }
 
 struct Host {
@@ -142,7 +144,7 @@ struct State {
     bindings: Plugin,
     resources: HashMap<u64, Resource>,
     next: u64,
-    initialized: bool,
+    initialized: Option<p::Object>,
     poisoned: bool,
     generation: String,
 }
@@ -214,18 +216,22 @@ impl State {
                 Value::Description { description }
             }
             Op::Initialize { settings } => {
-                if self.initialized {
-                    return Err(StorageError::new(StorageErrorKind::Conflict).into());
+                if let Some(previous) = &self.initialized {
+                    return if previous == &settings {
+                        Ok(p::Reply::unit())
+                    } else {
+                        Err(StorageError::new(StorageErrorKind::Conflict).into())
+                    };
                 }
                 result(
                     g.call_initialize(&mut self.store, &encode(&settings)?)
                         .await,
                     None,
                 )?;
-                self.initialized = true;
+                self.initialized = Some(settings);
                 Value::Unit
             }
-            _ if !self.initialized => {
+            _ if self.initialized.is_none() => {
                 return Err(StorageError::new(StorageErrorKind::Unavailable).into());
             }
             Op::Prepare { config } => {
@@ -444,7 +450,58 @@ fn result<T>(
 
 pub struct WasmTransport {
     state: Mutex<State>,
+    factory: InstanceFactory,
     ticker: tokio::task::JoinHandle<()>,
+}
+struct InstanceFactory {
+    engine: Engine,
+    component: Component,
+    client: reqwest::Client,
+    origins: Vec<String>,
+}
+impl InstanceFactory {
+    async fn instantiate(&self) -> Result<State, DriverError> {
+        let host = Host {
+            client: self.client.clone(),
+            origins: self.origins.clone(),
+            limits: StoreLimitsBuilder::new()
+                .memory_size(128 * 1024 * 1024)
+                .instances(16)
+                .memories(4)
+                .build(),
+        };
+        let mut store = Store::new(&self.engine, host);
+        store.limiter(|host| &mut host.limits);
+        store.set_fuel(2_000_000_000).map_err(|_| c::invalid())?;
+        store
+            .fuel_async_yield_interval(Some(100_000))
+            .map_err(|_| c::invalid())?;
+        store.set_epoch_deadline(3000);
+        let mut linker = Linker::new(&self.engine);
+        Plugin::add_to_linker::<Host, wasmtime::component::HasSelf<Host>>(&mut linker, |host| host)
+            .map_err(|_| c::invalid())?;
+        linker
+            .instantiate_pre(&self.component)
+            .map_err(|_| StorageError::new(StorageErrorKind::UnsupportedOperation))?;
+        let bindings = tokio::time::timeout(
+            Duration::from_secs(30),
+            Plugin::instantiate_async(&mut store, &self.component, &linker),
+        )
+        .await
+        .map_err(|_| StorageError::new(StorageErrorKind::TimedOut))?
+        .map_err(|error| {
+            StorageError::with_source(StorageErrorKind::InvalidData, std::io::Error::other(error))
+        })?;
+        Ok(State {
+            store,
+            bindings,
+            resources: HashMap::new(),
+            next: 0,
+            initialized: None,
+            poisoned: false,
+            generation: new_instance_id()?.as_str().into(),
+        })
+    }
 }
 impl Drop for WasmTransport {
     fn drop(&mut self) {
@@ -455,7 +512,13 @@ impl WasmTransport {
     /// Accept a portable component or a core module carrying WIT metadata. Only
     /// explicitly allowed origins can be contacted; no filesystem/WASI is linked.
     pub async fn load(bytes: Vec<u8>, origins: Vec<String>) -> Result<Self, DriverError> {
-        Self::load_with_grants(bytes, HostGrants { http_origins: origins }).await
+        Self::load_with_grants(
+            bytes,
+            HostGrants {
+                http_origins: origins,
+            },
+        )
+        .await
     }
     /// Load any plugin implementing the stable VFS ABI and service.v1 imports.
     /// Grants describe platform permissions, never a particular backend's fields.
@@ -481,13 +544,19 @@ impl WasmTransport {
         })
         .await
         .map_err(|_| c::invalid())??;
-        let origins = grants.http_origins
+        let origins = grants
+            .http_origins
             .into_iter()
             .map(|origin| {
                 let url = reqwest::Url::parse(&origin).map_err(|_| c::invalid())?;
-                if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none()
-                    || !url.username().is_empty() || url.password().is_some()
-                    || url.path() != "/" || url.query().is_some() || url.fragment().is_some() {
+                if !matches!(url.scheme(), "http" | "https")
+                    || url.host_str().is_none()
+                    || !url.username().is_empty()
+                    || url.password().is_some()
+                    || url.path() != "/"
+                    || url.query().is_some()
+                    || url.fragment().is_some()
+                {
                     return Err(c::invalid());
                 }
                 Ok(url.origin().ascii_serialization())
@@ -499,37 +568,15 @@ impl WasmTransport {
             .timeout(Duration::from_secs(20))
             .build()
             .map_err(|_| c::invalid())?;
-        let host = Host {
+        let factory = InstanceFactory {
+            engine: engine.clone(),
+            component,
             client,
             origins,
-            limits: StoreLimitsBuilder::new()
-                .memory_size(128 * 1024 * 1024)
-                .instances(16)
-                .memories(4)
-                .build(),
         };
-        let mut store = Store::new(&engine, host);
-        store.limiter(|host| &mut host.limits);
-        store.set_fuel(2_000_000_000).map_err(|_| c::invalid())?;
-        store
-            .fuel_async_yield_interval(Some(100_000))
-            .map_err(|_| c::invalid())?;
-        store.set_epoch_deadline(3000);
-        let mut linker = Linker::new(&engine);
-        Plugin::add_to_linker::<Host, wasmtime::component::HasSelf<Host>>(&mut linker, |host| host)
-            .map_err(|_| c::invalid())?;
         // Resolve every import before running component initialization. New
         // backends use this fixed profile rather than backend-specific linking.
-        linker.instantiate_pre(&component)
-            .map_err(|_| StorageError::new(StorageErrorKind::UnsupportedOperation))?;
-        let bindings = Plugin::instantiate_async(&mut store, &component, &linker)
-            .await
-            .map_err(|error| {
-                StorageError::with_source(
-                    StorageErrorKind::InvalidData,
-                    std::io::Error::other(error),
-                )
-            })?;
+        let state = factory.instantiate().await?;
         let ticker = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_millis(10));
             loop {
@@ -538,15 +585,8 @@ impl WasmTransport {
             }
         });
         Ok(Self {
-            state: Mutex::new(State {
-                store,
-                bindings,
-                resources: HashMap::new(),
-                next: 0,
-                initialized: false,
-                poisoned: false,
-                generation: new_instance_id()?.as_str().into(),
-            }),
+            state: Mutex::new(state),
+            factory,
             ticker,
         })
     }
@@ -563,6 +603,11 @@ impl Transport for WasmTransport {
             let mut state = tokio::time::timeout(Duration::from_secs(30), self.state.lock())
                 .await
                 .map_err(|_| StorageError::new(StorageErrorKind::TimedOut))?;
+            if state.poisoned && matches!(op, Op::Describe) {
+                // Discard the entire failed store. Guest resources and execution
+                // state are never reused, including after caller cancellation.
+                *state = self.factory.instantiate().await?;
+            }
             if state.poisoned || (!matches!(op, Op::Describe) && generation != state.generation) {
                 return Err(StorageError::new(StorageErrorKind::StaleHandle).into());
             }

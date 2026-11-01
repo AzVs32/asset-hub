@@ -5,9 +5,9 @@
 //! Staged PUT writes are bounded to max_write_bytes (at most 8 MiB), matching the
 //! current bounded HTTP import. Larger reads require server byte-range support.
 //! Atomic publication/rename, POSIX permissions and xattrs are not advertised.
-//! DELETE is restricted to conditionally identified files: RFC 4918 collection
-//! DELETE is recursive and cannot implement the VFS empty-directory contract.
-#![cfg(target_arch = "wasm32")]
+//! Removal is not advertised or implemented: RFC 4918 collection DELETE is
+//! recursive and cannot guarantee the VFS empty-directory removal contract.
+#![cfg(any(target_arch = "wasm32", test))]
 
 mod client;
 mod multistatus;
@@ -45,7 +45,7 @@ fn path(value: &str) -> Result<()> {
     Ok(())
 }
 fn capabilities() -> Vec<String> {
-    ["stat", "list", "range_read", "write_new", "write_replace", "hierarchical", "empty_dirs", "create_dir", "remove"]
+    ["stat", "list", "range_read", "write_new", "write_replace", "hierarchical", "empty_dirs", "create_dir"]
         .into_iter().map(str::to_owned).collect()
 }
 
@@ -138,7 +138,6 @@ impl GuestStorage for WebdavStorage {
                 Value::Page { entries, next_after }
             }
             p::StorageOp::CreateDir { path, recursive } => Value::Entry { entry: self.client.create_dir(&path, recursive)? },
-            p::StorageOp::Remove { path } => { self.client.remove_file(&path)?; Value::Unit }
             _ => return Err(failure("unsupported_operation")),
         };
         Ok(api::Reply { control: encode(&value)?, data: vec![] })
@@ -217,4 +216,57 @@ impl GuestWriter for WebdavWriter {
         Ok(())
     }
 }
+#[cfg(target_arch = "wasm32")]
 export!(WebdavDriver);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn storage() -> Result<WebdavStorage> {
+        let config = p::Object::from([("endpoint".into(), "https://webdav.invalid/root/".into())]);
+        Ok(WebdavStorage {
+            client: client::Client::parse(&config)?,
+        })
+    }
+
+    #[test]
+    fn driver_and_storage_do_not_advertise_partial_remove_support() -> Result<()> {
+        let description: p::Description = serde_json::from_slice(&WebdavDriver::describe())
+            .map_err(|_| failure("invalid_data"))?;
+        let info: p::StorageInfo =
+            serde_json::from_slice(&storage()?.info()).map_err(|_| failure("invalid_data"))?;
+        assert_eq!(description.capabilities, info.capabilities);
+        assert!(
+            !description
+                .capabilities
+                .iter()
+                .any(|capability| capability == "remove")
+        );
+        for capability in ["hierarchical", "empty_dirs", "create_dir"] {
+            assert!(
+                description
+                    .capabilities
+                    .iter()
+                    .any(|actual| actual == capability)
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn remove_is_rejected_without_http_for_every_entry_kind() -> Result<()> {
+        let storage = storage()?;
+        // Native WIT HTTP imports panic if called, so this also verifies that
+        // unsupported removal does not inspect or mutate remote resources.
+        for path in ["", "file", "empty-dir", "nonempty-dir", "missing"] {
+            let control = encode(&p::StorageOp::Remove { path: path.into() })?;
+            let error = storage
+                .call(control, vec![])
+                .err()
+                .ok_or_else(|| failure("invalid_data"))?;
+            assert_eq!(error.code, "unsupported_operation", "path: {path}");
+        }
+        Ok(())
+    }
+}

@@ -23,6 +23,13 @@ pub trait Storage: Send + Sync {
     /// Plugin proxies cache this declaration during open; this getter performs no I/O.
     fn capabilities(&self) -> StorageCapabilities;
 
+    /// Whether this handle's runtime generation has failed or been replaced.
+    /// This local, monotonic observation performs no I/O. Caches may reopen the
+    /// instance; retained handles and streams must never be silently rebound.
+    fn is_stale(&self) -> bool {
+        false
+    }
+
     /// A typed extension must be present exactly when permissions support is
     /// advertised; its read/write behavior must agree with that declaration.
     fn permissions(&self) -> Option<&dyn StoragePermissions> {

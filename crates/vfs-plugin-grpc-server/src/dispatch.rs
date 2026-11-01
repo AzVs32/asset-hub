@@ -8,7 +8,7 @@ use std::{
     collections::HashMap,
     panic::AssertUnwindSafe,
     sync::{
-        Arc,
+        Arc, RwLock,
         atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
@@ -79,19 +79,121 @@ fn get<T: Clone>(map: &mut HashMap<u64, Slot<T>>, handle: u64) -> Result<T, Driv
     Ok(s.value.clone())
 }
 
+/// Constructs a fresh backend after a panic; never return the failed driver again.
+pub type DriverFactory = dyn Fn() -> DriverFuture<'static, Arc<dyn Driver>> + Send + Sync;
+
+/// A replaceable generation. In-flight calls retain their original generation.
 pub struct Dispatcher {
-    driver: Arc<dyn Driver>,
-    description: p::Description,
-    initialized: Mutex<bool>,
-    resources: Mutex<Resources>,
+    current: RwLock<Arc<Generation>>,
+    recovery: Mutex<()>,
+    factory: Option<Arc<DriverFactory>>,
     ttl: Duration,
-    poisoned: AtomicBool,
 }
 impl Dispatcher {
     pub fn new(driver: Arc<dyn Driver>) -> Result<Self, DriverError> {
         Self::with_lease(driver, Duration::from_secs(300))
     }
     pub fn with_lease(driver: Arc<dyn Driver>, ttl: Duration) -> Result<Self, DriverError> {
+        Ok(Self {
+            current: RwLock::new(Arc::new(Generation::with_lease(driver, ttl)?)),
+            recovery: Mutex::new(()),
+            factory: None,
+            ttl,
+        })
+    }
+    /// Rebuild a poisoned backend when the host next describes the plugin.
+    pub async fn with_factory(factory: Arc<DriverFactory>) -> Result<Self, DriverError> {
+        let driver = factory().await?;
+        let mut dispatcher = Self::new(driver)?;
+        dispatcher.factory = Some(factory);
+        Ok(dispatcher)
+    }
+    fn snapshot(&self) -> Arc<Generation> {
+        self.current
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+    fn publish(&self, generation: Arc<Generation>) {
+        let previous = {
+            let mut current = self
+                .current
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            current.poisoned.store(true, Ordering::Release);
+            std::mem::replace(&mut *current, generation)
+        };
+        drop(previous);
+    }
+    /// Install a newly constructed backend without restarting the RPC server.
+    /// Its declarations are revalidated by the host before new opens are allowed.
+    pub async fn replace_driver(&self, driver: Arc<dyn Driver>) -> Result<(), DriverError> {
+        let _recovery = self.recovery.lock().await;
+        if Arc::ptr_eq(&driver, &self.snapshot().driver) {
+            return Err(StorageError::new(StorageErrorKind::Conflict).into());
+        }
+        self.publish(Arc::new(Generation::with_lease(driver, self.ttl)?));
+        Ok(())
+    }
+    pub fn generation(&self) -> String {
+        self.snapshot().generation().to_owned()
+    }
+    pub async fn expire(&self) {
+        self.snapshot().expire().await;
+    }
+    pub async fn call(
+        &self,
+        generation: &str,
+        op: Op,
+        data: Vec<u8>,
+    ) -> Result<p::Reply, DriverError> {
+        let mut current = self.snapshot();
+        if matches!(op, Op::Describe)
+            && current.poisoned.load(Ordering::Acquire)
+            && let Some(factory) = &self.factory
+        {
+            let _recovery = self.recovery.lock().await;
+            current = self.snapshot();
+            if current.poisoned.load(Ordering::Acquire) {
+                let replacement = AssertUnwindSafe(async {
+                    let driver = factory().await?;
+                    if Arc::ptr_eq(&driver, &current.driver) {
+                        return Err(StorageError::new(StorageErrorKind::Conflict).into());
+                    }
+                    Generation::with_lease(driver, self.ttl)
+                })
+                .catch_unwind()
+                .await
+                .map_err(|_| StorageError::new(StorageErrorKind::Unavailable))??;
+                current = Arc::new(replacement);
+                self.publish(current.clone());
+            }
+        }
+        current.call(generation, op, data).await
+    }
+}
+
+struct Generation {
+    driver: Arc<dyn Driver>,
+    description: p::Description,
+    initialized: Mutex<Option<p::Object>>,
+    resources: Mutex<Resources>,
+    ttl: Duration,
+    poisoned: AtomicBool,
+}
+struct InitializationGuard<'a> {
+    poisoned: &'a AtomicBool,
+    completed: bool,
+}
+impl Drop for InitializationGuard<'_> {
+    fn drop(&mut self) {
+        if !self.completed {
+            self.poisoned.store(true, Ordering::Release);
+        }
+    }
+}
+impl Generation {
+    fn with_lease(driver: Arc<dyn Driver>, ttl: Duration) -> Result<Self, DriverError> {
         if ttl.is_zero() {
             return Err(c::invalid());
         }
@@ -102,7 +204,7 @@ impl Dispatcher {
         Ok(Self {
             description,
             driver,
-            initialized: Mutex::new(false),
+            initialized: Mutex::new(None),
             resources: Mutex::new(Resources::default()),
             ttl,
             poisoned: AtomicBool::new(false),
@@ -185,14 +287,24 @@ impl Dispatcher {
         self.expire().await;
         if let Op::Initialize { settings } = op {
             let mut initialized = self.initialized.lock().await;
-            if *initialized {
-                return Err(StorageError::new(StorageErrorKind::Conflict).into());
+            if let Some(previous) = &*initialized {
+                return if previous == &settings {
+                    Ok(p::Reply::unit())
+                } else {
+                    Err(StorageError::new(StorageErrorKind::Conflict).into())
+                };
             }
-            self.driver.initialize(settings.into()).await?;
-            *initialized = true;
+            let mut guard = InitializationGuard {
+                poisoned: &self.poisoned,
+                completed: false,
+            };
+            let outcome = self.driver.initialize(settings.clone().into()).await;
+            guard.completed = true;
+            outcome?;
+            *initialized = Some(settings);
             return Ok(p::Reply::unit());
         }
-        if !*self.initialized.lock().await {
+        if self.initialized.lock().await.is_none() {
             return Err(StorageError::new(StorageErrorKind::Unavailable).into());
         }
         let value = match op {

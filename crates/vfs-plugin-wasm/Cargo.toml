@@ -22,3 +22,8 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 getrandom = "0.4.3"
 tokio = { version = "1.54.1", features = ["rt", "sync", "time"] }
 
+[dev-dependencies]
+tokio = { version = "1.54.1", features = ["macros", "test-util"] }
+wat = "1.262"
+wit-parser = "0.262"
+

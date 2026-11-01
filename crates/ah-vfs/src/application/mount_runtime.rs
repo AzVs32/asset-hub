@@ -27,6 +27,7 @@ struct Cache {
 /// and validates a mount snapshot; each instance is opened and validated once.
 /// Concurrent cold accesses share initialization without serializing other IDs.
 /// Failed or cancelled initialization can be retried and is never cached as success.
+/// Handles reporting a stale runtime generation are evicted before the next open.
 ///
 /// Service mutations invalidate the affected cache. Already-started operations
 /// and streams may retain their previous snapshot/handle. This cache does not
@@ -148,12 +149,24 @@ impl MountRuntime {
         instance: &DriverInstanceRef,
         driver: &dyn Driver,
     ) -> Result<Arc<dyn Storage>, DriverError> {
-        let cell = self
-            .cache()
-            .storage
-            .entry(instance.clone())
-            .or_default()
-            .clone();
+        let (cell, retired) = {
+            let mut cache = self.cache();
+            let retired = if cache
+                .storage
+                .get(instance)
+                .and_then(|cell| cell.get())
+                .is_some_and(|storage| storage.is_stale())
+            {
+                cache.storage.remove(instance)
+            } else {
+                None
+            };
+            (
+                cache.storage.entry(instance.clone()).or_default().clone(),
+                retired,
+            )
+        };
+        drop(retired);
         cell.get_or_try_init(|| async {
             let context = match driver.instances() {
                 super::port::InstanceManagement::SelfManaged(_) => {

@@ -269,18 +269,6 @@ impl Client {
         // PROPFIND turning a successful commit into a misleading read failure.
         Ok(p::Entry { path: relative.into(), kind: p::EntryKind::File, size: Some(size as u64), modified: header(&reply.response, "last-modified").and_then(modified) })
     }
-    pub fn remove_file(&self, relative: &str) -> Result<()> {
-        path(relative)?;
-        if relative.is_empty() { return Err(failure("root_protected")); }
-        let metadata = self.stat(relative)?;
-        // Collection DELETE is recursive. A preflight listing cannot eliminate
-        // concurrent child creation, so never use it for empty-directory removal.
-        if metadata.entry.kind != p::EntryKind::File { return Err(failure("unsupported_operation")); }
-        let etag = metadata.strong_etag().ok_or_else(|| failure("unsupported_operation"))?;
-        let reply = self.request("DELETE", self.url(relative, false)?, vec![("if-match", etag)], vec![])?;
-        if !matches!(reply.response.status, 200 | 204) { return Err(status_error(reply.response.status, true)); }
-        Ok(())
-    }
     fn make_collection(&self, relative: &str) -> Result<p::Entry> {
         let reply = self.request("MKCOL", self.url(relative, true)?, vec![], vec![])?;
         if reply.response.status == 405 {

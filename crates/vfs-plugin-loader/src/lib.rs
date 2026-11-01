@@ -62,7 +62,9 @@ pub struct PluginLoader {
 }
 impl PluginLoader {
     pub fn new(base_dir: impl Into<PathBuf>) -> Self {
-        Self { base_dir: base_dir.into() }
+        Self {
+            base_dir: base_dir.into(),
+        }
     }
 
     pub fn from_loaded(config: &ah_config::LoadedConfig) -> Self {
@@ -75,7 +77,9 @@ impl PluginLoader {
         config: &ah_config::LoadedConfig,
         builtins: DriverCatalog,
     ) -> Result<DriverCatalog, BootstrapError> {
-        let plugins = config.get::<PluginConfig>().map_err(BootstrapError::Configuration)?;
+        let plugins = config
+            .get::<PluginConfig>()
+            .map_err(BootstrapError::Configuration)?;
         Self::from_loaded(config)
             .load_catalog(&plugins, builtins)
             .await
@@ -98,28 +102,37 @@ impl PluginLoader {
         Ok(catalog)
     }
 
-    async fn register(&self, spec: &PluginSpec, catalog: &mut DriverCatalog) -> Result<(), LoadFailure> {
-        let expected = spec.expected_key.as_deref()
+    async fn register(
+        &self,
+        spec: &PluginSpec,
+        catalog: &mut DriverCatalog,
+    ) -> Result<(), LoadFailure> {
+        let expected = spec
+            .expected_key
+            .as_deref()
             .map(|key| DriverKey::parse(key).map_err(|_| LoadFailure::InvalidConfiguration))
             .transpose()?;
-        if expected.as_ref().is_some_and(|key| catalog.get(key).is_some()) {
+        if expected
+            .as_ref()
+            .is_some_and(|key| catalog.get(key).is_some())
+        {
             return Err(LoadFailure::InvalidConfiguration);
         }
         let transport: Arc<dyn Transport> = match &spec.source {
-            PluginSource::Grpc { endpoint, token_env, tls } => {
-                let url = url::Url::parse(endpoint).map_err(|_| LoadFailure::InvalidConfiguration)?;
-                if !matches!(url.scheme(), "http" | "https")
-                    || url.host_str().is_none()
-                    || !url.username().is_empty()
-                    || url.password().is_some()
-                    || url.path() != "/"
-                    || url.query().is_some()
-                    || url.fragment().is_some()
-                    || (tls.is_some() && url.scheme() != "https")
-                {
+            PluginSource::Grpc {
+                endpoint,
+                token_env,
+                tls,
+            } => {
+                GrpcTransport::validate_endpoint(endpoint)
+                    .map_err(|_| LoadFailure::InvalidConfiguration)?;
+                let url =
+                    url::Url::parse(endpoint).map_err(|_| LoadFailure::InvalidConfiguration)?;
+                if tls.is_some() && url.scheme() != "https" {
                     return Err(LoadFailure::InvalidConfiguration);
                 }
-                let token = std::env::var(token_env).map_err(|_| LoadFailure::CredentialUnavailable)?;
+                let token =
+                    std::env::var(token_env).map_err(|_| LoadFailure::CredentialUnavailable)?;
                 if token.is_empty() {
                     return Err(LoadFailure::CredentialUnavailable);
                 }
@@ -133,7 +146,11 @@ impl PluginLoader {
                         .map_err(LoadFailure::Driver)?,
                 )
             }
-            PluginSource::Wasm { module, profile, grants } => {
+            PluginSource::Wasm {
+                module,
+                profile,
+                grants,
+            } => {
                 if profile != vfs_plugin_protocol::WASM_HOST_PROFILE {
                     return Err(LoadFailure::InvalidConfiguration);
                 }
@@ -145,11 +162,19 @@ impl PluginLoader {
                 )
             }
         };
-        let driver = Arc::new(PluginDriver::connect(transport).await.map_err(LoadFailure::Driver)?);
-        if expected.as_ref().is_some_and(|key| key != driver.info().key()) {
+        let driver = Arc::new(
+            PluginDriver::connect(transport)
+                .await
+                .map_err(LoadFailure::Driver)?,
+        );
+        if expected
+            .as_ref()
+            .is_some_and(|key| key != driver.info().key())
+        {
             return Err(LoadFailure::InvalidConfiguration);
         }
-        catalog.register(driver, spec.settings.clone().into())
+        catalog
+            .register(driver, spec.settings.clone().into())
             .await
             .map_err(LoadFailure::Registration)
     }
@@ -170,7 +195,10 @@ impl PluginLoader {
         }
         match (&config.client_certificate, &config.client_key) {
             (Some(cert), Some(key)) => {
-                tls = tls.identity(Identity::from_pem(self.read(cert).await?, self.read(key).await?));
+                tls = tls.identity(Identity::from_pem(
+                    self.read(cert).await?,
+                    self.read(key).await?,
+                ));
             }
             (None, None) => {}
             _ => return Err(LoadFailure::InvalidConfiguration),
@@ -188,4 +216,51 @@ pub enum BootstrapError {
     Configuration(#[source] ah_config::ConfigError),
     #[error(transparent)]
     Plugin(#[from] PluginLoadError),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn insecure_endpoints_are_rejected_before_reading_credentials() {
+        for endpoint in [
+            "http://192.0.2.1:7443",
+            "http://plugin.example:7443",
+            "http://localhost:7443",
+        ] {
+            let spec = PluginSpec {
+                expected_key: None,
+                source: PluginSource::Grpc {
+                    endpoint: endpoint.into(),
+                    token_env: String::new(),
+                    tls: None,
+                },
+                settings: Default::default(),
+            };
+            let error = PluginLoader::new("/tmp")
+                .register(&spec, &mut DriverCatalog::new())
+                .await;
+            assert!(matches!(error, Err(LoadFailure::InvalidConfiguration)));
+        }
+        for endpoint in [
+            "http://127.0.0.1:7443",
+            "http://[::1]:7443",
+            "https://plugin.example:7443",
+        ] {
+            let spec = PluginSpec {
+                expected_key: None,
+                source: PluginSource::Grpc {
+                    endpoint: endpoint.into(),
+                    token_env: String::new(),
+                    tls: None,
+                },
+                settings: Default::default(),
+            };
+            let error = PluginLoader::new("/tmp")
+                .register(&spec, &mut DriverCatalog::new())
+                .await;
+            assert!(matches!(error, Err(LoadFailure::CredentialUnavailable)));
+        }
+    }
 }

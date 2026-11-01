@@ -111,6 +111,8 @@ fn lock_error(_: impl std::fmt::Display) -> MountRepositoryError {
 struct TestStorage {
     validations: Arc<AtomicUsize>,
     capabilities: StorageCapabilities,
+    generation: usize,
+    current_generation: Arc<AtomicUsize>,
 }
 
 fn capabilities() -> StorageCapabilities {
@@ -121,6 +123,9 @@ fn capabilities() -> StorageCapabilities {
 }
 
 impl Storage for TestStorage {
+    fn is_stale(&self) -> bool {
+        self.generation != self.current_generation.load(Ordering::SeqCst)
+    }
     fn capabilities(&self) -> StorageCapabilities {
         self.capabilities
     }
@@ -153,6 +158,7 @@ struct TestDriver {
     invalid_capabilities: AtomicBool,
     suspend_remove: AtomicBool,
     uncertain_remove: AtomicBool,
+    generation: Arc<AtomicUsize>,
 }
 
 impl TestDriver {
@@ -173,6 +179,7 @@ impl TestDriver {
             invalid_capabilities: AtomicBool::new(false),
             suspend_remove: AtomicBool::new(false),
             uncertain_remove: AtomicBool::new(false),
+            generation: Arc::new(AtomicUsize::new(1)),
         })
     }
     fn reference(&self, id: &str) -> TestResult<DriverInstanceRef> {
@@ -205,6 +212,8 @@ impl common::Backend for TestDriver {
                 return Err(StorageError::new(StorageErrorKind::Unavailable).into());
             }
             let storage: Arc<dyn Storage> = Arc::new(TestStorage {
+                generation: self.generation.load(Ordering::SeqCst),
+                current_generation: self.generation.clone(),
                 validations: self.validations.clone(),
                 capabilities: if self.invalid_capabilities.load(Ordering::SeqCst) {
                     StorageCapabilities {
@@ -306,6 +315,32 @@ async fn warm_io_reuses_namespace_and_the_handle_opened_during_mount() -> TestRe
     assert_eq!(f.repository.lists.load(Ordering::SeqCst), lists);
     assert_eq!(f.driver.opens.load(Ordering::SeqCst), 1);
     assert_eq!(f.driver.validations.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn stale_cached_handles_are_reopened_without_rebinding_retained_handles() -> TestResult {
+    let f = Fixture::new()?;
+    let reference = f.driver.reference("one")?;
+    let driver = common::managed(f.driver.clone());
+    let old = f.runtime.storage(&reference, driver.as_ref()).await?;
+    f.driver.generation.fetch_add(1, Ordering::SeqCst);
+    assert!(old.is_stale());
+    f.driver.fail_open.store(true, Ordering::SeqCst);
+    assert!(
+        f.runtime
+            .storage(&reference, driver.as_ref())
+            .await
+            .is_err()
+    );
+    f.driver.fail_open.store(false, Ordering::SeqCst);
+    let new = f.runtime.storage(&reference, driver.as_ref()).await?;
+    assert!(!new.is_stale());
+    assert!(!Arc::ptr_eq(&old, &new));
+    assert!(old.is_stale());
+    let cached = f.runtime.storage(&reference, driver.as_ref()).await?;
+    assert!(Arc::ptr_eq(&new, &cached));
+    assert_eq!(f.driver.opens.load(Ordering::SeqCst), 3);
     Ok(())
 }
 
