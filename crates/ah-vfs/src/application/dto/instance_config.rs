@@ -9,11 +9,11 @@ use std::collections::BTreeMap;
 #[derive(Clone, Default, PartialEq)]
 pub struct InstanceConfig(BTreeMap<String, serde_json::Value>);
 impl InstanceConfig {
-    /// Construct an empty object; the owning registry validates driver-specific fields.
+    /// Construct an empty object; the driver provisioner validates driver-specific fields.
     pub fn new() -> Self {
         Self::default()
     }
-    /// Wrap an object. Schema validation belongs to its owning registry/provisioner.
+    /// Wrap an object. Value validation belongs to the driver provisioner.
     pub fn from_object(fields: BTreeMap<String, serde_json::Value>) -> Self {
         Self(fields)
     }

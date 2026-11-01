@@ -4,34 +4,28 @@ use super::{TEMP_PREFIX, fs};
 use ah_vfs::domain::{StorageError, StorageErrorKind};
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::fs::{Dir, File, OpenOptions, OpenOptionsExt};
-use std::{
-    io,
-    mem::{offset_of, size_of},
-    os::windows::io::AsRawHandle,
-    ptr,
-};
+use std::{io, mem::{offset_of, size_of}, os::windows::io::AsRawHandle, ptr};
 use windows_sys::Win32::{
     Foundation::LocalFree,
     Security::{
-        ACL,
-        Authorization::{GetSecurityInfo, SE_FILE_OBJECT, SetSecurityInfo},
-        DACL_SECURITY_INFORMATION, GetSecurityDescriptorControl,
-        PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, SE_DACL_PROTECTED,
-        UNPROTECTED_DACL_SECURITY_INFORMATION,
+        Authorization::{GetSecurityInfo, SetSecurityInfo, SE_FILE_OBJECT},
+        ACL, PSECURITY_DESCRIPTOR, GetSecurityDescriptorControl,
+        DACL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
+        UNPROTECTED_DACL_SECURITY_INFORMATION, SE_DACL_PROTECTED,
     },
     Storage::FileSystem::{
-        DELETE, FILE_DISPOSITION_INFO, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-        FILE_READ_ATTRIBUTES, FILE_RENAME_INFO, FILE_RENAME_INFO_0, FILE_SHARE_DELETE,
-        FILE_SHARE_READ, FILE_SHARE_WRITE, FileDispositionInfo, FileRenameInfo,
-        GetFinalPathNameByHandleW, SYNCHRONIZE, SetFileInformationByHandle,
+        DELETE, FILE_READ_ATTRIBUTES, SYNCHRONIZE,
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+        FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_SHARE_DELETE,
+        FILE_RENAME_INFO, FILE_RENAME_INFO_0, FILE_DISPOSITION_INFO,
+        FileRenameInfo, FileDispositionInfo, SetFileInformationByHandle,
+        GetFinalPathNameByHandleW,
     },
 };
 
 pub(super) fn open_public(parent: &Dir, name: &str, access: u32) -> Result<File, StorageError> {
     let mut options = OpenOptions::new();
-    options
-        .read(true)
-        .access_mode(access | FILE_READ_ATTRIBUTES | SYNCHRONIZE)
+    options.read(true).access_mode(access | FILE_READ_ATTRIBUTES | SYNCHRONIZE)
         .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
         .follow(FollowSymlinks::No);
@@ -48,20 +42,11 @@ pub(super) fn public_handle(file: &File) -> Result<(), StorageError> {
         // SAFETY: the live file owns the handle; buffer contains the advertised
         // number of initialized UTF-16 elements and remains live for the call.
         let length = unsafe {
-            GetFinalPathNameByHandleW(
-                file.as_raw_handle(),
-                buffer.as_mut_ptr(),
-                buffer.len() as u32,
-                0,
-            )
+            GetFinalPathNameByHandleW(file.as_raw_handle(), buffer.as_mut_ptr(), buffer.len() as u32, 0)
         };
-        if length == 0 {
-            return Err(fs::error(io::Error::last_os_error()));
-        }
+        if length == 0 { return Err(fs::error(io::Error::last_os_error())); }
         if length as usize >= buffer.len() {
-            if length > 32_768 {
-                return Err(StorageError::new(StorageErrorKind::InvalidPath));
-            }
+            if length > 32_768 { return Err(StorageError::new(StorageErrorKind::InvalidPath)); }
             buffer.resize(length as usize + 1, 0);
             continue;
         }
@@ -75,45 +60,28 @@ pub(super) fn public_handle(file: &File) -> Result<(), StorageError> {
     }
 }
 
-pub(super) fn rename(
-    file: &File,
-    destination: &Dir,
-    name: &str,
-    replace: bool,
-) -> Result<(), StorageError> {
+pub(super) fn rename(file: &File, destination: &Dir, name: &str, replace: bool) -> Result<(), StorageError> {
     fs::validate_name(name)?;
     let name: Vec<u16> = name.encode_utf16().collect();
-    let name_bytes = name
-        .len()
-        .checked_mul(size_of::<u16>())
+    let name_bytes = name.len().checked_mul(size_of::<u16>())
         .ok_or_else(|| StorageError::new(StorageErrorKind::InvalidPath))?;
-    let length = offset_of!(FILE_RENAME_INFO, FileName)
-        .checked_add(name_bytes)
+    let length = offset_of!(FILE_RENAME_INFO, FileName).checked_add(name_bytes)
         .ok_or_else(|| StorageError::new(StorageErrorKind::InvalidPath))?
         .max(size_of::<FILE_RENAME_INFO>());
-    let length32 =
-        u32::try_from(length).map_err(|_| StorageError::new(StorageErrorKind::InvalidPath))?;
+    let length32 = u32::try_from(length).map_err(|_| StorageError::new(StorageErrorKind::InvalidPath))?;
     // usize storage supplies alignment for the Windows pointer-bearing header.
     let mut buffer = vec![0usize; length.div_ceil(size_of::<usize>())];
     let info = buffer.as_mut_ptr().cast::<FILE_RENAME_INFO>();
     // SAFETY: the aligned allocation holds the complete header and counted UTF-16
     // tail. Both handles remain owned by the caller. No terminating NUL is needed.
     let result = unsafe {
-        ptr::addr_of_mut!((*info).Anonymous).write(FILE_RENAME_INFO_0 {
-            ReplaceIfExists: replace,
-        });
+        ptr::addr_of_mut!((*info).Anonymous).write(FILE_RENAME_INFO_0 { ReplaceIfExists: replace });
         ptr::addr_of_mut!((*info).RootDirectory).write(destination.as_raw_handle());
         ptr::addr_of_mut!((*info).FileNameLength).write(name_bytes as u32);
-        ptr::copy_nonoverlapping(
-            name.as_ptr(),
-            ptr::addr_of_mut!((*info).FileName).cast::<u16>(),
-            name.len(),
-        );
+        ptr::copy_nonoverlapping(name.as_ptr(), ptr::addr_of_mut!((*info).FileName).cast::<u16>(), name.len());
         SetFileInformationByHandle(file.as_raw_handle(), FileRenameInfo, info.cast(), length32)
     };
-    if result == 0 {
-        return Err(fs::error(io::Error::last_os_error()));
-    }
+    if result == 0 { return Err(fs::error(io::Error::last_os_error())); }
     Ok(())
 }
 
@@ -122,16 +90,10 @@ pub(super) fn delete(file: &File) -> Result<(), StorageError> {
     // SAFETY: the structure and DELETE-capable live handle remain valid for this
     // synchronous call. Windows rejects nonempty directories; no recursive delete.
     let result = unsafe {
-        SetFileInformationByHandle(
-            file.as_raw_handle(),
-            FileDispositionInfo,
-            ptr::from_ref(&info).cast(),
-            size_of::<FILE_DISPOSITION_INFO>() as u32,
-        )
+        SetFileInformationByHandle(file.as_raw_handle(), FileDispositionInfo,
+            ptr::from_ref(&info).cast(), size_of::<FILE_DISPOSITION_INFO>() as u32)
     };
-    if result == 0 {
-        return Err(fs::error(io::Error::last_os_error()));
-    }
+    if result == 0 { return Err(fs::error(io::Error::last_os_error())); }
     Ok(())
 }
 
@@ -140,9 +102,7 @@ impl Drop for Descriptor {
     fn drop(&mut self) {
         if !self.0.is_null() {
             // SAFETY: GetSecurityInfo allocated this descriptor with LocalAlloc.
-            unsafe {
-                LocalFree(self.0);
-            }
+            unsafe { LocalFree(self.0); }
         }
     }
 }
@@ -154,24 +114,12 @@ pub(super) fn copy_dacl(source: &File, staged: &File) -> Result<(), StorageError
     let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
     // SAFETY: handles are live and all output pointers reference initialized locals.
     let result = unsafe {
-        GetSecurityInfo(
-            source.as_raw_handle(),
-            SE_FILE_OBJECT,
-            DACL_SECURITY_INFORMATION,
-            ptr::null_mut(),
-            ptr::null_mut(),
-            &mut dacl,
-            ptr::null_mut(),
-            &mut descriptor,
-        )
+        GetSecurityInfo(source.as_raw_handle(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
+            ptr::null_mut(), ptr::null_mut(), &mut dacl, ptr::null_mut(), &mut descriptor)
     };
     let descriptor = Descriptor(descriptor);
-    if result != 0 {
-        return Err(fs::error(io::Error::from_raw_os_error(result as i32)));
-    }
-    if descriptor.0.is_null() {
-        return Err(StorageError::new(StorageErrorKind::InvalidData));
-    }
+    if result != 0 { return Err(fs::error(io::Error::from_raw_os_error(result as i32))); }
+    if descriptor.0.is_null() { return Err(StorageError::new(StorageErrorKind::InvalidData)); }
     let mut control = 0u16;
     let mut revision = 0u32;
     // SAFETY: descriptor owns the security descriptor until the function returns.
@@ -186,19 +134,10 @@ pub(super) fn copy_dacl(source: &File, staged: &File) -> Result<(), StorageError
     // SAFETY: dacl is either null (a valid null DACL) or points into the owned
     // descriptor. The staged handle was opened with WRITE_DAC.
     let result = unsafe {
-        SetSecurityInfo(
-            staged.as_raw_handle(),
-            SE_FILE_OBJECT,
-            DACL_SECURITY_INFORMATION | inheritance,
-            ptr::null_mut(),
-            ptr::null_mut(),
-            dacl,
-            ptr::null_mut(),
-        )
+        SetSecurityInfo(staged.as_raw_handle(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION | inheritance,
+            ptr::null_mut(), ptr::null_mut(), dacl, ptr::null_mut())
     };
-    if result != 0 {
-        return Err(fs::error(io::Error::from_raw_os_error(result as i32)));
-    }
+    if result != 0 { return Err(fs::error(io::Error::from_raw_os_error(result as i32))); }
     Ok(())
 }
 

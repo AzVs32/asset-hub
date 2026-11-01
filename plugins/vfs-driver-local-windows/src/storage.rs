@@ -16,10 +16,10 @@ use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+mod native;
 mod file_reader;
 mod file_writer;
 mod fs;
-mod native;
 
 const CHUNK_SIZE: usize = 64 * 1024;
 // This namespace is inaccessible through Storage and omitted from listings.

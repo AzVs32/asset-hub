@@ -35,7 +35,9 @@ pub(crate) fn has_annotation(value: &Value, name: &str) -> bool {
 fn has_reference(value: &Value) -> bool {
     match value {
         Value::Object(map) => {
-            ["$ref", "$dynamicRef", "$recursiveRef"].iter().any(|key| map.contains_key(*key))
+            ["$ref", "$dynamicRef", "$recursiveRef"]
+                .iter()
+                .any(|key| map.contains_key(*key))
                 || map.values().any(has_reference)
         }
         Value::Array(values) => values.iter().any(has_reference),
@@ -75,7 +77,8 @@ pub(crate) fn validate_annotations(schema: &Value) -> Result<(), DriverError> {
                 }
                 _ if has_reference(value)
                     || has_annotation(value, "x-secret")
-                    || has_annotation(value, "x-immutable") => {
+                    || has_annotation(value, "x-immutable") =>
+                {
                     return Err(failure(StorageErrorKind::UnsupportedOperation));
                 }
                 _ => {}

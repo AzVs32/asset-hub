@@ -2,7 +2,7 @@ use super::{DriverInstanceRef, MountId, VirtualPath};
 use bon::Builder;
 use getset::{CopyGetters, Getters, Setters};
 
-/// A mount definition linking a virtual location to a driver-owned instance.
+/// A mount definition linking a virtual location to a host-managed instance.
 ///
 /// Disabling a mount preserves its definition. Routing and mount-conflict checks
 /// belong to the filesystem that manages the collection of mounts.

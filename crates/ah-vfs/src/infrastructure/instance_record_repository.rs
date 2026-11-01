@@ -1,4 +1,4 @@
-//! Host-owned SQLite records, independent of driver-owned instance tables.
+//! Host-owned SQLite instance records.
 use crate::{
     application::{
         dto::{InstanceQuery, RemoveInstanceOutcome},
@@ -15,7 +15,7 @@ pub struct SqliteInstanceRecordRepository {
     pool: SqlitePool,
 }
 impl SqliteInstanceRecordRepository {
-    /// Initialize only the host record table. Existing driver tables/data are retained.
+    /// Initialize the host record table without modifying other application data.
     pub async fn from_pool(pool: SqlitePool) -> Result<Self, DriverError> {
         sqlx::raw_sql(
             "CREATE TABLE IF NOT EXISTS vfs_instance_records (

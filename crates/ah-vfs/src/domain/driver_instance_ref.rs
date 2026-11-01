@@ -1,7 +1,7 @@
 use super::{DriverKey, InstanceId};
 use getset::Getters;
 
-/// Identifies an instance configuration row owned by a particular driver.
+/// Identifies a host-owned instance record scoped to a particular driver.
 ///
 /// This persistent reference contains no configuration or live storage handle.
 /// An instance identifier is scoped to its driver; both fields define identity.

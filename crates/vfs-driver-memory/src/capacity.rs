@@ -72,7 +72,7 @@ pub struct Capacity {
 }
 
 impl Capacity {
-    /// Reject zero, SQLite integer overflow and byte-conversion overflow.
+    /// Reject zero, unsupported numeric ranges and byte-conversion overflow.
     pub fn new(size: u64, unit: CapacityUnit) -> Result<Self, CapacityError> {
         if size == 0 {
             return Err(CapacityError::Zero);

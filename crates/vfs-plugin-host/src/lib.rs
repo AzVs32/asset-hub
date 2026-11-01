@@ -143,7 +143,7 @@ fn bad_response(mutates: bool) -> StorageError {
 }
 
 /// A fully described plugin. Register it normally to initialize plugin settings.
-/// Transport failures retire the affected generation. Later instance/open requests
+/// Transport failures retire the affected generation. Later configuration/open requests
 /// recover before dispatch; failed operations and retained streams are never replayed.
 pub struct PluginDriver {
     info: DriverInfo,
