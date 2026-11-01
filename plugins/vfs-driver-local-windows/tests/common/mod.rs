@@ -26,3 +26,20 @@ pub fn local_config(root: &Path) -> Result<InstanceConfig, DriverError> {
         root.into(),
     )]))
 }
+
+pub async fn registry(
+    driver: &dyn ah_vfs::application::port::Driver,
+    pool: sqlx::SqlitePool,
+) -> Result<
+    ah_vfs::application::host_instance_registry::HostInstanceRegistry,
+    Box<dyn std::error::Error>,
+> {
+    let ah_vfs::application::port::InstanceManagement::HostManaged(provisioner) =
+        driver.instances()
+    else {
+        return Err("expected host-managed driver".into());
+    };
+    Ok(ah_vfs::application::host_instance_registry::HostInstanceRegistry::new(
+        driver.info(), provisioner,
+        std::sync::Arc::new(ah_vfs::infrastructure::instance_record_repository::SqliteInstanceRecordRepository::from_pool(pool).await?), None))
+}

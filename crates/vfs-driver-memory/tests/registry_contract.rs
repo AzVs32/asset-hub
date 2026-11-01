@@ -1,12 +1,13 @@
 use ah_vfs::{
     application::{
         dto::InstanceConfig,
-        port::{Driver, DriverFuture, InstanceRegistry},
+        port::{DriverFuture, InstanceRegistry},
     },
     domain::InstanceId,
     testing::{RegistryFixture, assert_registry_contract},
 };
 use std::sync::Arc;
+mod common;
 
 struct Fixture {
     registry: Arc<dyn InstanceRegistry>,
@@ -31,11 +32,11 @@ impl RegistryFixture for Fixture {
     }
     fn corrupt(&self, id: InstanceId) -> DriverFuture<'_, ()> {
         Box::pin(async move {
-            sqlx::query("UPDATE memory_instances SET capacity_size = 9223372036854775807, capacity_unit = 'TiB' WHERE id = ?")
+            sqlx::query("UPDATE vfs_instance_records SET config_json = '{}' WHERE instance_id = ?")
                 .bind(id.as_str())
                 .execute(&self.pool)
                 .await
-                .map_err(vfs_driver_kit::database_error)?;
+                .map_err(ah_vfs::infrastructure::sqlite_error::database_error)?;
             Ok(())
         })
     }
@@ -62,9 +63,9 @@ async fn memory_registry_conforms_in_file_and_memory_databases()
                 "sqlite::memory:".parse()?
             })
             .await?;
-        let driver = vfs_driver_memory::MemoryDriver::from_pool(pool.clone()).await?;
+        let driver = vfs_driver_memory::MemoryDriver::new()?;
         assert_registry_contract(&Fixture {
-            registry: driver.instances().registry()?,
+            registry: Arc::new(common::registry(&driver, pool.clone()).await?),
             pool,
         })
         .await?;

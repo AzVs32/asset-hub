@@ -17,7 +17,7 @@ use ah_vfs::{
 use ah_vfs::{
     application::{
         dto::*,
-        port::{Driver, Storage},
+        port::{Driver, InstanceRegistry, Storage},
     },
     domain::{DriverError, FileReadSupport, InstanceId, StorageErrorKind, StoragePath},
 };
@@ -31,6 +31,7 @@ struct Fixture {
     root: PathBuf,
     driver: Arc<LinuxLocalDriver>,
     id: InstanceId,
+    registry: ah_vfs::application::host_instance_registry::HostInstanceRegistry,
     storage: Arc<dyn Storage>,
     pool: sqlx::SqlitePool,
 }
@@ -44,14 +45,18 @@ async fn fixture() -> Result<Fixture, Box<dyn Error>> {
         .max_connections(1)
         .connect("sqlite::memory:")
         .await?;
-    let driver = Arc::new(LinuxLocalDriver::from_pool(pool.clone()).await?);
-    let instance = driver.create_instance(common::local_config(&root)?).await?;
-    let storage = driver.open(instance.id.clone().into()).await?;
+    let driver = Arc::new(LinuxLocalDriver::new()?);
+    let registry = common::registry(driver.as_ref(), pool.clone()).await?;
+    let instance = registry.create(common::local_config(&root)?).await?;
+    let storage = driver
+        .open(registry.open_context(instance.id.clone()).await?)
+        .await?;
     Ok(Fixture {
         _dir: dir,
         root,
         driver,
         id: instance.id.clone(),
+        registry,
         storage,
         pool,
     })
@@ -65,7 +70,7 @@ async fn service(f: &Fixture) -> Result<EntryService, Box<dyn Error>> {
     let mut catalog = DriverCatalog::new();
     ah_vfs::testing::register_driver(&mut catalog, f.driver.clone())?;
     let catalog = Arc::new(catalog);
-    let runtime = Arc::new(MountRuntime::new(repository, catalog));
+    let runtime = Arc::new(MountRuntime::new(repository, catalog).with_host_instances(Arc::new(ah_vfs::infrastructure::instance_record_repository::SqliteInstanceRecordRepository::from_pool(f.pool.clone()).await?), None));
     MountService::new(runtime.clone())
         .initialize_root(DriverInstanceRef::new(
             DriverKey::parse("local")?,
@@ -120,8 +125,8 @@ async fn io_and_opening_errors_keep_categories_and_original_sources() -> TestRes
     );
     f.pool.close().await;
     let error = f
-        .driver
-        .open(f.id.clone().into())
+        .registry
+        .open_context(f.id.clone())
         .await
         .err()
         .ok_or("expected closed pool failure")?;
@@ -147,7 +152,7 @@ async fn unavailable_root_is_normalized_before_returning_from_driver_open() -> T
     std::fs::remove_dir_all(&f.root)?;
     let error = f
         .driver
-        .open(f.id.clone().into())
+        .open(f.registry.open_context(f.id.clone()).await?)
         .await
         .err()
         .ok_or("expected missing root")?;

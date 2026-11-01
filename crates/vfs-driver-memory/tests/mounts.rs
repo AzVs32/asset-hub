@@ -10,7 +10,7 @@ use ah_vfs::{
             WriteFileRequest,
         },
         error::EntryError,
-        port::MountRepository,
+        port::{InstanceRegistry, MountRepository},
         service::{EntryService, MountService},
     },
     domain::{
@@ -24,7 +24,7 @@ use std::{num::NonZeroUsize, sync::Arc};
 use vfs_driver_memory::{CapacityUnit, MemoryDriver};
 
 struct Fixture {
-    driver: Arc<MemoryDriver>,
+    registry: ah_vfs::application::host_instance_registry::HostInstanceRegistry,
     root: ah_vfs::application::dto::InstanceInfo,
     repository: Arc<SqliteMountRepository>,
     mounts: MountService,
@@ -43,15 +43,18 @@ fn reference(id: &InstanceId) -> TestResult<DriverInstanceRef> {
 
 async fn fixture() -> TestResult<Fixture> {
     let pool = pool().await?;
-    let driver = Arc::new(MemoryDriver::from_pool(pool.clone()).await?);
-    let root = driver
-        .create_instance(common::memory_config(64, CapacityUnit::KiB))
+    let driver = Arc::new(MemoryDriver::new()?);
+    let registry = common::registry(driver.as_ref(), pool.clone()).await?;
+    let records = Arc::new(ah_vfs::infrastructure::instance_record_repository::SqliteInstanceRecordRepository::from_pool(pool.clone()).await?);
+    let root = registry
+        .create(common::memory_config(64, CapacityUnit::KiB))
         .await?;
     let repository = Arc::new(SqliteMountRepository::from_pool(pool).await?);
     let mut catalog = DriverCatalog::new();
     ah_vfs::testing::register_driver(&mut catalog, driver.clone())?;
     let catalog = Arc::new(catalog);
-    let runtime = Arc::new(MountRuntime::new(repository.clone(), catalog));
+    let runtime =
+        Arc::new(MountRuntime::new(repository.clone(), catalog).with_host_instances(records, None));
     let mounts = MountService::new(runtime.clone());
     let entries = EntryService::new(runtime);
     mounts
@@ -61,7 +64,7 @@ async fn fixture() -> TestResult<Fixture> {
         })
         .await?;
     Ok(Fixture {
-        driver,
+        registry,
         root,
         repository,
         mounts,
@@ -102,8 +105,8 @@ async fn read(entries: &EntryService, value: &str) -> TestResult<Vec<u8>> {
 async fn mount_disable_enable_unmount_remount_preserves_instance_and_open_streams() -> TestResult {
     let f = fixture().await?;
     let instance = f
-        .driver
-        .create_instance(common::memory_config(8, CapacityUnit::KiB))
+        .registry
+        .create(common::memory_config(8, CapacityUnit::KiB))
         .await?;
     let mounted = f
         .mounts
@@ -145,7 +148,7 @@ async fn mount_disable_enable_unmount_remount_preserves_instance_and_open_stream
     f.mounts.enable(mounted.id).await?;
     assert_eq!(read(&f.entries, "/ram/file").await?, b"data");
     f.mounts.unmount(mounted.id).await?;
-    assert!(f.driver.get_instance(instance.id.clone()).await?.is_some());
+    assert!(f.registry.get(instance.id.clone()).await?.is_some());
     writer.commit().await?;
     f.mounts
         .mount(MountRequest {
@@ -212,8 +215,8 @@ async fn nested_mounts_overlay_backend_entries_and_synthesize_missing_parents() 
     let f = fixture().await?;
     write(&f.entries, "/virtual", b"shadowed backend file").await?;
     let instance = f
-        .driver
-        .create_instance(common::memory_config(1, CapacityUnit::KiB))
+        .registry
+        .create(common::memory_config(1, CapacityUnit::KiB))
         .await?;
     let nested = f
         .mounts
@@ -317,8 +320,8 @@ async fn create_dir_preserves_vfs_mount_boundaries_in_both_modes() -> TestResult
 async fn capacity_and_unsupported_attribute_failures_reach_vfs_as_domain_errors() -> TestResult {
     let f = fixture().await?;
     let instance = f
-        .driver
-        .create_instance(common::memory_config(3, CapacityUnit::B))
+        .registry
+        .create(common::memory_config(3, CapacityUnit::B))
         .await?;
     f.mounts
         .mount(MountRequest {
@@ -370,12 +373,12 @@ async fn capacity_and_unsupported_attribute_failures_reach_vfs_as_domain_errors(
 #[tokio::test]
 async fn root_initialization_and_enable_persist_configuration_without_opening_backend() -> TestResult
 {
-    let driver = Arc::new(MemoryDriver::from_pool(pool().await?).await?);
+    let driver = Arc::new(MemoryDriver::new()?);
     let repository = Arc::new(SqliteMountRepository::in_memory().await?);
     let mut catalog = DriverCatalog::new();
     ah_vfs::testing::register_driver(&mut catalog, driver)?;
     let catalog = Arc::new(catalog);
-    let runtime = Arc::new(MountRuntime::new(repository, catalog));
+    let runtime = Arc::new(MountRuntime::new(repository, catalog).with_host_instances(Arc::new(ah_vfs::infrastructure::instance_record_repository::SqliteInstanceRecordRepository::from_pool(pool().await?).await?), None));
     let mounts = MountService::new(runtime.clone());
     let entries = EntryService::new(runtime);
     let id = mounts

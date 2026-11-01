@@ -53,7 +53,7 @@ impl LocalFileWriter {
         let temporary = format!("{TEMP_PREFIX}{}", WriteId::new());
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
-                options.mode(0o600);
+        options.mode(0o600);
         let file = parent.open_with(&temporary, &options).map_err(fs::error)?;
         Ok(Self {
             session: Some(FileWriteSession {

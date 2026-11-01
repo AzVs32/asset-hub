@@ -1,4 +1,4 @@
-//! Local instance configuration and persistence failures.
+//! Local instance configuration failures.
 
 use ah_vfs::domain::{DriverError, StorageError, StorageErrorKind};
 use std::{io, path::PathBuf};
@@ -15,13 +15,12 @@ pub(crate) fn io_error_kind(error: &io::Error) -> StorageErrorKind {
             return StorageErrorKind::AttributeNotFound;
         }
     }
-    vfs_driver_kit::io_error_kind(error)
+    ah_vfs::infrastructure::sqlite_error::io_error_kind(error)
 }
 
 impl From<LinuxLocalDriverError> for DriverError {
     fn from(error: LinuxLocalDriverError) -> Self {
         let kind = match error {
-            LinuxLocalDriverError::Registry(error) => return error,
             LinuxLocalDriverError::Dir { ref source, .. } => io_error_kind(source),
             LinuxLocalDriverError::NotDir(_) => StorageErrorKind::NotDir,
             LinuxLocalDriverError::InvalidPathEncoding => StorageErrorKind::InvalidNameEncoding,
@@ -43,10 +42,8 @@ pub enum LinuxLocalDriverError {
     NotDir(PathBuf),
     #[error("local directory paths must be valid UTF-8")]
     InvalidPathEncoding,
-    #[error("stored local instance data is invalid")]
+    #[error("local instance configuration is invalid")]
     InvalidData,
-    #[error(transparent)]
-    Registry(#[from] DriverError),
 }
 
 #[cfg(test)]
@@ -75,7 +72,7 @@ mod tests {
             );
         }
     }
-        #[test]
+    #[test]
     fn stale_handles_and_missing_attributes_are_not_missing_entries() {
         let stale = io::Error::from_raw_os_error(rustix::io::Errno::STALE.raw_os_error());
         assert_eq!(io_error_kind(&stale), StorageErrorKind::StaleHandle);

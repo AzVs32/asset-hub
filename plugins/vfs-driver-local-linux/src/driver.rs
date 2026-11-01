@@ -1,14 +1,16 @@
-//! Local-directory instances backed by an independently supplied SQLite pool.
-
+//! Stateless local-directory validation and storage opening.
 use crate::{LinuxLocalDriverError, LinuxLocalStorage};
-use ah_vfs::application::driver_info::DriverInfo;
-use ah_vfs::application::dto::{
-    InstanceConfig, InstanceConfigSchema, InstanceInfo, InstancePage, InstanceQuery,
-    RemoveInstanceOutcome, instance_config_string, validate_instance_config_fields,
+use ah_vfs::application::{
+    driver_info::DriverInfo,
+    dto::{
+        InstanceConfig, InstanceConfigSchema, instance_config_string,
+        validate_instance_config_fields,
+    },
+    port::{Driver, DriverFuture, InstanceProvisioner, OpenContext, PreparedConfig, Storage},
 };
-use ah_vfs::application::port::{Driver, DriverFuture, Storage};
 use ah_vfs::domain::{
-    ChildMountPolicy, DriverError, DriverKey, InstanceConfigErrorKind, InstanceId,
+    ChildMountPolicy, DriverError, DriverKey, InstanceConfigErrorKind, StorageError,
+    StorageErrorKind,
 };
 use std::{
     collections::BTreeMap,
@@ -16,50 +18,25 @@ use std::{
     sync::Arc,
 };
 
-use sqlx::{Row, sqlite::SqliteRow};
-use vfs_driver_kit::{InstanceConfigRow, InstanceStore, SqliteInsert, StoredInstance};
-
-/// An instance's stable driver-owned identifier and canonical local directory.
-struct LocalConfig {
-    root: PathBuf,
-}
-type LocalInstance = StoredInstance<LocalConfig>;
-
-/// Linux-only gRPC plugin driver with self-managed instance records.
-/// Instance queries expose the canonical UTF-8 path as `details.root_path`.
+/// Local filesystem driver; instance records belong to the host.
 pub struct LinuxLocalDriver {
     info: DriverInfo,
-    registry: Arc<LocalRegistry>,
 }
-
 impl LinuxLocalDriver {
-    /// The declaration key and `[vfs.driver]` child key share the same identity.
     pub const KEY: &str = "local";
-
-    /// Initialize only LinuxLocalDriver's tables in the supplied driver database.
-    ///
-    /// The plugin owns the pool's connection settings and lifetime. Both file
-    /// and memory pools are accepted; the application host never supplies it over RPC.
-    pub async fn from_pool(pool: sqlx::SqlitePool) -> Result<Self, LinuxLocalDriverError> {
-        let key = DriverKey::parse(Self::KEY).map_err(|_| LinuxLocalDriverError::InvalidData)?;
+    pub fn new() -> Result<Self, LinuxLocalDriverError> {
         Ok(Self {
             info: DriverInfo::builder()
                 .maybe_instance_config_schema(instance_config_schema())
                 .capabilities(LinuxLocalStorage::supported_capabilities())
-                .key(key)
+                .key(DriverKey::parse(Self::KEY).map_err(|_| LinuxLocalDriverError::InvalidData)?)
                 .name("Local filesystem".into())
                 .version(semver::Version::new(0, 1, 0))
                 .child_mount_policy(ChildMountPolicy::Allow)
                 .build(),
-            registry: Arc::new(LocalRegistry {
-                instances: InstanceStore::from_pool(pool)
-                    .await
-                    .map_err(LinuxLocalDriverError::Registry)?,
-            }),
         })
     }
 }
-
 async fn canonical_dir(source: &Path) -> Result<PathBuf, LinuxLocalDriverError> {
     let root = tokio::fs::canonicalize(source)
         .await
@@ -67,12 +44,13 @@ async fn canonical_dir(source: &Path) -> Result<PathBuf, LinuxLocalDriverError> 
             path: source.to_path_buf(),
             source: source_error,
         })?;
-    let metadata = tokio::fs::metadata(&root)
-        .await
-        .map_err(|source| LinuxLocalDriverError::Dir {
-            path: root.clone(),
-            source,
-        })?;
+    let metadata =
+        tokio::fs::metadata(&root)
+            .await
+            .map_err(|source| LinuxLocalDriverError::Dir {
+                path: root.clone(),
+                source,
+            })?;
     if !metadata.is_dir() {
         return Err(LinuxLocalDriverError::NotDir(root));
     }
@@ -81,67 +59,34 @@ async fn canonical_dir(source: &Path) -> Result<PathBuf, LinuxLocalDriverError> 
 
 impl Driver for LinuxLocalDriver {
     fn instances(&self) -> ah_vfs::application::port::InstanceManagement {
-        ah_vfs::application::port::InstanceManagement::SelfManaged(self.registry.clone())
+        ah_vfs::application::port::InstanceManagement::HostManaged(Arc::new(LocalProvisioner))
     }
-
     fn info(&self) -> &DriverInfo {
         &self.info
     }
-
-    fn open(
-        &self,
-        context: ah_vfs::application::port::OpenContext,
-    ) -> DriverFuture<'_, Arc<dyn Storage>> {
-        let instance_id = context.instance_id().clone();
-        let registry = self.registry.clone();
+    fn open(&self, context: OpenContext) -> DriverFuture<'_, Arc<dyn Storage>> {
         Box::pin(async move {
-            let instance = registry
-                .instances
-                .get(&instance_id)
-                .await?
-                .ok_or(DriverError::InstanceNotFound(instance_id))?;
-            let root = canonical_dir(&instance.config().root)
+            let config = context
+                .config()
+                .ok_or_else(|| StorageError::new(StorageErrorKind::InvalidRequest))?;
+            let source = instance_config_string(config, "root_path")?;
+            let root = canonical_dir(Path::new(source))
                 .await
                 .map_err(DriverError::from)?;
-            if root != instance.config().root {
-                return Err(DriverError::from(LinuxLocalDriverError::InvalidData));
+            if root != Path::new(source) {
+                return Err(LinuxLocalDriverError::InvalidData.into());
             }
-            let storage = LinuxLocalStorage::open(root).await.map_err(DriverError::from)?;
-            Ok(Arc::new(storage) as Arc<dyn Storage>)
+            Ok(Arc::new(
+                LinuxLocalStorage::open(root)
+                    .await
+                    .map_err(DriverError::from)?,
+            ) as Arc<dyn Storage>)
         })
     }
 }
-
-fn instance_info(instance: LocalInstance) -> Result<InstanceInfo, LinuxLocalDriverError> {
-    let root = instance
-        .config()
-        .root
-        .to_str()
-        .ok_or(LinuxLocalDriverError::InvalidPathEncoding)?;
-    Ok(InstanceInfo {
-        id: instance.id().clone(),
-        details: BTreeMap::from([("root_path".into(), root.into())]),
-    })
-}
-
-struct LocalRegistry {
-    instances: InstanceStore<LocalConfig>,
-}
-
-fn instance_config_schema() -> Option<InstanceConfigSchema> {
-    Some(BTreeMap::from([
-        ("type".into(), "object".into()),
-        (
-            "properties".into(),
-            serde_json::json!({"root_path": {"type": "string", "minLength": 1, "description": "Existing UTF-8 directory; relative paths use the process working directory"}}),
-        ),
-        ("required".into(), serde_json::json!(["root_path"])),
-        ("additionalProperties".into(), false.into()),
-    ]))
-}
-
-impl ah_vfs::application::port::InstanceRegistry for LocalRegistry {
-    fn create(&self, config: InstanceConfig) -> DriverFuture<'_, InstanceInfo> {
+struct LocalProvisioner;
+impl InstanceProvisioner for LocalProvisioner {
+    fn prepare(&self, config: InstanceConfig) -> DriverFuture<'_, PreparedConfig> {
         Box::pin(async move {
             validate_instance_config_fields(&config, &["root_path"])?;
             let source = instance_config_string(&config, "root_path")?;
@@ -154,90 +99,22 @@ impl ah_vfs::application::port::InstanceRegistry for LocalRegistry {
             let root = canonical_dir(Path::new(source))
                 .await
                 .map_err(DriverError::from)?;
-            root.to_str().ok_or(LinuxLocalDriverError::InvalidPathEncoding)?;
-            let record = self.instances.insert(LocalConfig { root }).await?;
-            Ok(instance_info(record)?)
-        })
-    }
-    fn get(&self, id: InstanceId) -> DriverFuture<'_, Option<InstanceInfo>> {
-        Box::pin(async move {
-            self.instances
-                .get(&id)
-                .await?
-                .map(instance_info)
-                .transpose()
-                .map_err(DriverError::from)
-        })
-    }
-    fn list(&self, query: InstanceQuery) -> DriverFuture<'_, InstancePage> {
-        Box::pin(async move {
-            let page = self.instances.list(&query).await?;
-            Ok(InstancePage {
-                instances: page
-                    .instances
-                    .into_iter()
-                    .map(instance_info)
-                    .collect::<Result<_, _>>()?,
-                next_after: page.next_after,
-            })
-        })
-    }
-    fn remove(&self, id: InstanceId) -> DriverFuture<'_, RemoveInstanceOutcome> {
-        Box::pin(async move {
-            Ok(if self.instances.remove(&id).await? {
-                RemoveInstanceOutcome::Removed
-            } else {
-                RemoveInstanceOutcome::AlreadyAbsent
-            })
-        })
-    }
-}
-
-impl LinuxLocalDriver {
-    /// Forward to this driver's self-managed instance registry without opening storage.
-    pub fn create_instance(&self, config: InstanceConfig) -> DriverFuture<'_, InstanceInfo> {
-        ah_vfs::application::port::InstanceRegistry::create(self.registry.as_ref(), config)
-    }
-    /// Forward to this driver's self-managed instance registry without opening storage.
-    pub fn get_instance(&self, id: InstanceId) -> DriverFuture<'_, Option<InstanceInfo>> {
-        ah_vfs::application::port::InstanceRegistry::get(self.registry.as_ref(), id)
-    }
-    /// Forward to this driver's self-managed instance registry without opening storage.
-    pub fn list_instances(&self, query: InstanceQuery) -> DriverFuture<'_, InstancePage> {
-        ah_vfs::application::port::InstanceRegistry::list(self.registry.as_ref(), query)
-    }
-    /// Forward to this driver's self-managed instance registry without opening storage.
-    pub fn remove_instance(&self, id: InstanceId) -> DriverFuture<'_, RemoveInstanceOutcome> {
-        ah_vfs::application::port::InstanceRegistry::remove(self.registry.as_ref(), id)
-    }
-}
-
-impl InstanceConfigRow for LocalConfig {
-    const TABLE: &'static str = "local_instances";
-    const COLUMNS: &'static [&'static str] = &["root_path"];
-    const SCHEMA: &'static str = include_str!("driver/sqlite/schema.sql");
-    fn decode(row: &SqliteRow) -> Result<Self, DriverError> {
-        let root: PathBuf = row
-            .try_get::<String, _>("root_path")
-            .map_err(vfs_driver_kit::database_error)?
-            .into();
-        if !root.is_absolute()
-            || root.components().any(|part| {
-                matches!(
-                    part,
-                    std::path::Component::ParentDir | std::path::Component::CurDir
-                )
-            })
-        {
-            return Err(LinuxLocalDriverError::InvalidData.into());
-        }
-        Ok(Self { root })
-    }
-    fn bind<'a>(&'a self, query: SqliteInsert<'a>) -> Result<SqliteInsert<'a>, DriverError> {
-        Ok(query.bind(
-            self.root
+            let root = root
                 .to_str()
-                .ok_or(LinuxLocalDriverError::InvalidPathEncoding)?,
-        ))
+                .ok_or(LinuxLocalDriverError::InvalidPathEncoding)?;
+            let config = InstanceConfig::from([("root_path".into(), root.into())]);
+            Ok(PreparedConfig::new(config.clone(), config.into_object()))
+        })
     }
+}
+fn instance_config_schema() -> Option<InstanceConfigSchema> {
+    Some(BTreeMap::from([
+        ("type".into(), "object".into()),
+        (
+            "properties".into(),
+            serde_json::json!({"root_path": {"x-immutable": true, "type": "string", "minLength": 1, "description": "Existing UTF-8 directory; relative paths use the process working directory"}}),
+        ),
+        ("required".into(), serde_json::json!(["root_path"])),
+        ("additionalProperties".into(), false.into()),
+    ]))
 }

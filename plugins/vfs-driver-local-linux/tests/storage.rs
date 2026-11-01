@@ -1,5 +1,6 @@
 #![cfg(target_os = "linux")]
 mod common;
+use ah_vfs::application::port::InstanceRegistry;
 
 use ah_vfs::application::dto::{
     StorageCreateDirRequest, StorageDirQuery, StorageEntryKind, StorageMoveEntryRequest,
@@ -29,9 +30,12 @@ async fn fixture() -> TestResult<Fixture> {
         .max_connections(1)
         .connect("sqlite::memory:")
         .await?;
-    let driver = LinuxLocalDriver::from_pool(pool.clone()).await?;
-    let instance = driver.create_instance(common::local_config(&root)?).await?;
-    let storage = driver.open(instance.id.clone().into()).await?;
+    let driver = LinuxLocalDriver::new()?;
+    let registry = common::registry(&driver, pool.clone()).await?;
+    let instance = registry.create(common::local_config(&root)?).await?;
+    let storage = driver
+        .open(registry.open_context(instance.id.clone()).await?)
+        .await?;
     drop(driver);
     pool.close().await;
     Ok(Fixture {

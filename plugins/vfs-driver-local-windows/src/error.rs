@@ -1,4 +1,4 @@
-//! Local instance configuration and persistence failures.
+//! Local instance configuration failures.
 
 use ah_vfs::domain::{DriverError, StorageError, StorageErrorKind};
 use std::{io, path::PathBuf};
@@ -14,13 +14,12 @@ pub(crate) fn io_error_kind(error: &io::Error) -> StorageErrorKind {
         Some(145) => return StorageErrorKind::DirNotEmpty,
         _ => {}
     }
-    vfs_driver_kit::io_error_kind(error)
+    ah_vfs::infrastructure::sqlite_error::io_error_kind(error)
 }
 
 impl From<WindowsLocalDriverError> for DriverError {
     fn from(error: WindowsLocalDriverError) -> Self {
         let kind = match error {
-            WindowsLocalDriverError::Registry(error) => return error,
             WindowsLocalDriverError::Dir { ref source, .. } => io_error_kind(source),
             WindowsLocalDriverError::NotDir(_) => StorageErrorKind::NotDir,
             WindowsLocalDriverError::InvalidPathEncoding => StorageErrorKind::InvalidNameEncoding,
@@ -42,9 +41,6 @@ pub enum WindowsLocalDriverError {
     NotDir(PathBuf),
     #[error("local directory paths must be valid UTF-8")]
     InvalidPathEncoding,
-    #[error("stored local instance data is invalid")]
+    #[error("local instance configuration is invalid")]
     InvalidData,
-    #[error(transparent)]
-    Registry(#[from] DriverError),
 }
-

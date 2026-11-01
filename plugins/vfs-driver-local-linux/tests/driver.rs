@@ -2,7 +2,7 @@
 mod common;
 
 use ah_vfs::application::dto::{InstanceQuery, RemoveInstanceOutcome};
-use ah_vfs::application::port::Driver;
+use ah_vfs::application::port::{Driver, InstanceRegistry};
 use ah_vfs::domain::{DriverError, InstanceId};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use std::error::Error;
@@ -19,27 +19,29 @@ async fn local_instances_reopen_and_deleted_dirs_fail_to_open() -> TestResult {
         .filename(dir.path().join("local.sqlite"))
         .create_if_missing(true);
     let pool = SqlitePoolOptions::new().connect_with(options).await?;
-    let driver = LinuxLocalDriver::from_pool(pool.clone()).await?;
+    let driver = LinuxLocalDriver::new()?;
+    let registry = common::registry(&driver, pool.clone()).await?;
     assert_eq!(driver.info().key().as_str(), "local");
-    let instance = driver
-        .create_instance(common::local_config(&source)?)
-        .await?;
+    let instance = registry.create(common::local_config(&source)?).await?;
     assert_eq!(
         instance.details["root_path"].as_str(),
         std::fs::canonicalize(&source)?.to_str()
     );
     drop(driver);
 
-    let reopened = LinuxLocalDriver::from_pool(pool.clone()).await?;
-    let restored = reopened
-        .get_instance(instance.id.clone())
+    let reopened = LinuxLocalDriver::new()?;
+    let restored_registry = common::registry(&reopened, pool.clone()).await?;
+    let restored = restored_registry
+        .get(instance.id.clone())
         .await?
         .ok_or("instance missing")?;
     assert_eq!(
         restored.details["root_path"].as_str(),
         instance.details["root_path"].as_str()
     );
-    let storage = reopened.open(instance.id.clone().into()).await?;
+    let storage = reopened
+        .open(restored_registry.open_context(instance.id.clone()).await?)
+        .await?;
     let root = storage
         .stat_entry(ah_vfs::application::dto::StorageStatEntryRequest {
             path: ah_vfs::domain::StoragePath::root(),
@@ -48,13 +50,13 @@ async fn local_instances_reopen_and_deleted_dirs_fail_to_open() -> TestResult {
     assert_eq!(root.kind, ah_vfs::application::dto::StorageEntryKind::Dir);
     std::fs::remove_dir(&source)?;
     assert!(matches!(
-        reopened.open(instance.id.clone().into()).await,
+        reopened.open(restored_registry.open_context(instance.id.clone()).await?).await,
         Err(DriverError::Storage(error)) if error.kind() == ah_vfs::domain::StorageErrorKind::NotFound
     ));
-    assert!(reopened.get_instance(instance.id.clone()).await?.is_some());
-    reopened.remove_instance(instance.id.clone()).await?;
+    assert!(restored_registry.get(instance.id.clone()).await?.is_some());
+    restored_registry.remove(instance.id.clone()).await?;
     assert!(matches!(
-        reopened.open(instance.id.clone().into()).await,
+        restored_registry.open_context(instance.id.clone()).await,
         Err(DriverError::InstanceNotFound(_))
     ));
     pool.close().await;
@@ -63,29 +65,28 @@ async fn local_instances_reopen_and_deleted_dirs_fail_to_open() -> TestResult {
 
 #[tokio::test]
 async fn invalid_instance_rows_are_reported_without_silently_dropping_data() -> TestResult {
-    for (id, root) in [
-        ("bad id", "/absolute"),
-        ("valid-id", "relative"),
-        ("valid-id", "/path/../outside"),
+    for (id, json) in [
+        ("bad id", "{}"),
+        ("valid-id", "{}"),
+        ("valid-id", "not-json"),
     ] {
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await?;
-        let driver = LinuxLocalDriver::from_pool(pool.clone()).await?;
-        sqlx::query("INSERT INTO local_instances VALUES (?, ?)")
+        let pool = common::pool().await?;
+        let driver = LinuxLocalDriver::new()?;
+        let registry = common::registry(&driver, pool.clone()).await?;
+        sqlx::query("INSERT INTO vfs_instance_records VALUES ('local', ?, 1, 1, ?, 0, 0)")
             .bind(id)
-            .bind(root)
+            .bind(json)
             .execute(&pool)
             .await?;
-        assert!(matches!(
-            driver.list_instances(InstanceQuery::default()).await,
-            Err(DriverError::Storage(error)) if error.kind() == ah_vfs::domain::StorageErrorKind::InvalidData
-        ));
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM local_instances")
-            .fetch_one(&pool)
-            .await?;
-        assert_eq!(count, 1);
+        assert!(
+            matches!(registry.list(InstanceQuery::default()).await, Err(DriverError::Storage(error)) if error.kind() == ah_vfs::domain::StorageErrorKind::InvalidData)
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM vfs_instance_records")
+                .fetch_one(&pool)
+                .await?,
+            1
+        );
         pool.close().await;
     }
     Ok(())
@@ -98,31 +99,32 @@ async fn missing_instance_and_invalid_sources_return_errors_without_persisting()
         .max_connections(1)
         .connect("sqlite::memory:")
         .await?;
-    let driver = LinuxLocalDriver::from_pool(pool.clone()).await?;
+    let driver = LinuxLocalDriver::new()?;
+    let registry = common::registry(&driver, pool.clone()).await?;
     let id = InstanceId::parse("missing")?;
     assert!(matches!(
-        driver.open(id.clone().into()).await,
+        registry.open_context(id.clone()).await,
         Err(DriverError::InstanceNotFound(_))
     ));
     assert!(matches!(
-        driver.remove_instance(id).await,
+        registry.remove(id).await,
         Ok(RemoveInstanceOutcome::AlreadyAbsent)
     ));
     let file = dir.path().join("file");
     std::fs::write(&file, "untouched")?;
     assert!(matches!(
-        driver.create_instance(common::local_config(&file)?).await,
+        registry.create(common::local_config(&file)?).await,
         Err(DriverError::Storage(error)) if error.kind() == ah_vfs::domain::StorageErrorKind::NotDir
     ));
     assert!(
-        driver
-            .create_instance(common::local_config(&dir.path().join("missing"))?)
+        registry
+            .create(common::local_config(&dir.path().join("missing"))?)
             .await
             .is_err()
     );
     assert!(
-        driver
-            .list_instances(InstanceQuery::default())
+        registry
+            .list(InstanceQuery::default())
             .await?
             .instances
             .is_empty()
@@ -144,14 +146,15 @@ async fn non_utf8_canonical_roots_are_rejected_without_lossy_storage() -> TestRe
         .max_connections(1)
         .connect("sqlite::memory:")
         .await?;
-    let driver = LinuxLocalDriver::from_pool(pool.clone()).await?;
+    let driver = LinuxLocalDriver::new()?;
+    let registry = common::registry(&driver, pool.clone()).await?;
     assert!(matches!(
-        driver.create_instance(common::local_config(&alias)?).await,
+        registry.create(common::local_config(&alias)?).await,
         Err(DriverError::Storage(error)) if error.kind() == ah_vfs::domain::StorageErrorKind::InvalidNameEncoding
     ));
     assert!(
-        driver
-            .list_instances(InstanceQuery::default())
+        registry
+            .list(InstanceQuery::default())
             .await?
             .instances
             .is_empty()

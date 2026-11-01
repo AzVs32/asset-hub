@@ -1,4 +1,4 @@
-//! SQLite-backed instance settings with volatile, capacity-limited file contents.
+//! Host-managed settings with volatile, capacity-limited file contents.
 
 mod capacity;
 mod driver;

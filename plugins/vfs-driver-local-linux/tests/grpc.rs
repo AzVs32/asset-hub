@@ -1,5 +1,6 @@
 #![cfg(target_os = "linux")]
 //! End-to-end checks use the actual native plugin executable and a TCP channel.
+mod common;
 use ah_vfs::{
     application::{driver_catalog::DriverCatalog, dto::*, port::*},
     domain::*,
@@ -23,10 +24,9 @@ impl Drop for Process {
     }
 }
 impl Process {
-    fn start(database: &std::path::Path, address: &str) -> Result<Self> {
+    fn start(address: &str) -> Result<Self> {
         let mut child = Command::new(env!("CARGO_BIN_EXE_vfs-driver-local-linux"))
             .arg(address)
-            .arg(database)
             .env("VFS_PLUGIN_TOKEN", "isolated-test-token")
             .stdout(Stdio::piped())
             .spawn()?;
@@ -51,46 +51,54 @@ impl Process {
         ))
     }
 }
-async fn storage(driver: &dyn Driver, root: &std::path::Path) -> Result<Arc<dyn Storage>> {
-    let instance = driver
-        .instances()
-        .registry()?
-        .create(InstanceConfig::from([(
-            "root_path".into(),
-            root.to_str().ok_or("utf8")?.into(),
-        )]))
-        .await?;
-    Ok(driver.open(instance.id.into()).await?)
+async fn storage(
+    driver: &dyn Driver,
+    root: &std::path::Path,
+    records: sqlx::SqlitePool,
+) -> Result<Arc<dyn Storage>> {
+    let registry = common::registry(driver, records).await?;
+    let instance = registry.create(common::local_config(root)?).await?;
+    Ok(driver
+        .open(registry.open_context(instance.id).await?)
+        .await?)
 }
 #[tokio::test]
 async fn native_process_passes_shared_storage_contracts_over_grpc() -> Result {
-    let workspace = tempfile::tempdir()?;
-    let process = Process::start(&workspace.path().join("records.sqlite"), "127.0.0.1:0")?;
+    let records = common::pool().await?;
+    let process = Process::start("127.0.0.1:0")?;
     let driver = process.driver().await?;
     let mut catalog = DriverCatalog::new();
     catalog.register(driver.clone(), Default::default()).await?;
     let root = tempfile::tempdir()?;
     ah_vfs::testing::assert_range_read_contract(
-        storage(driver.as_ref(), root.path()).await?.as_ref(),
+        storage(driver.as_ref(), root.path(), records.clone())
+            .await?
+            .as_ref(),
     )
     .await?;
     let root = tempfile::tempdir()?;
     ah_vfs::testing::assert_create_dir_contract(
-        storage(driver.as_ref(), root.path()).await?.as_ref(),
+        storage(driver.as_ref(), root.path(), records.clone())
+            .await?
+            .as_ref(),
     )
     .await?;
     let root = tempfile::tempdir()?;
     ah_vfs::testing::assert_pagination_contract(
-        storage(driver.as_ref(), root.path()).await?.as_ref(),
+        storage(driver.as_ref(), root.path(), records.clone())
+            .await?
+            .as_ref(),
     )
     .await?;
     let root = tempfile::tempdir()?;
     ah_vfs::testing::assert_same_path_rename_contract(
-        storage(driver.as_ref(), root.path()).await?.as_ref(),
+        storage(driver.as_ref(), root.path(), records.clone())
+            .await?
+            .as_ref(),
     )
     .await?;
     let root = tempfile::tempdir()?;
-    let storage = storage(driver.as_ref(), root.path()).await?;
+    let storage = storage(driver.as_ref(), root.path(), records.clone()).await?;
     let mut writer = storage
         .write_file(StorageWriteFileRequest::new(StoragePath::parse(
             "retained",
@@ -126,9 +134,8 @@ async fn native_process_passes_shared_storage_contracts_over_grpc() -> Result {
 }
 #[tokio::test]
 async fn process_restart_rejects_old_resources_without_replaying_commit() -> Result {
-    let workspace = tempfile::tempdir()?;
-    let database = workspace.path().join("records.sqlite");
-    let mut process = Process::start(&database, "127.0.0.1:0")?;
+    let records = common::pool().await?;
+    let mut process = Process::start("127.0.0.1:0")?;
     let address = process
         .endpoint
         .strip_prefix("http://")
@@ -138,7 +145,7 @@ async fn process_restart_rejects_old_resources_without_replaying_commit() -> Res
     let mut catalog = DriverCatalog::new();
     catalog.register(driver.clone(), Default::default()).await?;
     let root = tempfile::tempdir()?;
-    let storage = storage(driver.as_ref(), root.path()).await?;
+    let storage = storage(driver.as_ref(), root.path(), records.clone()).await?;
     let mut pending = storage
         .write_file(StorageWriteFileRequest::new(StoragePath::parse(
             "uncertain",
@@ -160,7 +167,7 @@ async fn process_restart_rejects_old_resources_without_replaying_commit() -> Res
         StorageErrorKind::SessionClosed
     );
     assert!(!root.path().join("uncertain").exists());
-    let restarted = Process::start(&database, &address)?;
+    let restarted = Process::start(&address)?;
     let fresh = restarted.driver().await?;
     let mut fresh_catalog = DriverCatalog::new();
     fresh_catalog
@@ -175,9 +182,8 @@ async fn process_restart_rejects_old_resources_without_replaying_commit() -> Res
         .ok_or("old generation must fail")?;
     assert_eq!(old.kind(), StorageErrorKind::StaleHandle);
     assert_eq!(
-        fresh
-            .instances()
-            .registry()?
+        common::registry(fresh.as_ref(), records.clone())
+            .await?
             .list(InstanceQuery::default())
             .await?
             .instances
