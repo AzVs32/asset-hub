@@ -53,28 +53,28 @@
         local.get $pos local.get $ptr local.get $length i32.add i32.ge_u br_if $found
         local.get $pos call $varint local.set $pos local.set $tag
         local.get $pos call $varint local.set $pos local.set $size
-        local.get $tag i32.const 3 i32.shr_u local.tee $op i32.const 10 i32.ge_u br_if $found
+        local.get $tag i32.const 3 i32.shr_u local.tee $op i32.const 3 i32.ge_u br_if $found
         local.get $pos local.get $size i32.add local.set $pos
         br $field))
-    local.get $op i32.const 10 i32.eq if i32.const 0 return end
-    local.get $op i32.const 11 i32.eq if @@INITIALIZE@@ return end
-    local.get $op i32.const 12 i32.eq if @@PREPARE@@ return end
-    local.get $op i32.const 19 i32.eq if
+    local.get $op i32.const 3 i32.eq if i32.const 0 return end
+    local.get $op i32.const 4 i32.eq if @@INITIALIZE@@ return end
+    local.get $op i32.const 5 i32.eq if @@PREPARE@@ return end
+    local.get $op i32.const 8 i32.eq if
       global.get $initialized i32.const 1 i32.ne if unreachable end
       local.get $pos i32.const 2 i32.add i32.load8_u i32.const 98 i32.eq if unreachable end
       i32.const 32 return end
-    local.get $op i32.const 20 i32.eq if @@STAT@@ return end
-    local.get $op i32.const 21 i32.eq if
+    local.get $op i32.const 9 i32.eq if @@STAT@@ return end
+    local.get $op i32.const 10 i32.eq if
       global.get $next i32.const 1 i32.add global.set $next
       i32.const @@READER_HANDLE@@ global.get $next i32.store8
       i32.const 0 global.set $read i32.const 64 return end
-    local.get $op i32.const 22 i32.eq if
+    local.get $op i32.const 11 i32.eq if
       global.get $next i32.const 1 i32.add global.set $next
       i32.const @@WRITER_HANDLE@@ global.get $next i32.store8
       i32.const 80 return end
-    local.get $op i32.const 23 i32.eq if
+    local.get $op i32.const 12 i32.eq if
       global.get $read if i32.const 112 return end
       i32.const 1 global.set $read i32.const 96 return end
-    local.get $op i32.const 25 i32.eq if @@COMMIT@@ return end
+    local.get $op i32.const 14 i32.eq if @@COMMIT@@ return end
     i32.const 16)
 )

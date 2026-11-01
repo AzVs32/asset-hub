@@ -174,14 +174,10 @@ pub fn validate_request(request: &Request) -> Result<()> {
     }
     match operation {
         O::Initialize(v) => check_object(field(&v.settings)?, 0)?,
-        O::Prepare(v) | O::TestConnection(v) | O::CreateInstance(v) => {
-            check_object(field(&v.config)?, 0)?
-        }
+        O::Prepare(v) | O::TestConnection(v) => check_object(field(&v.config)?, 0)?,
         O::Migrate(v) => check_object(field(&v.config)?, 0)?,
         O::Open(v) => {
-            if let Some(v) = &v.config {
-                check_object(v, 0)?;
-            }
+            check_object(field(&v.config)?, 0)?;
         }
         O::Storage(v) => {
             if let StorageOp::SetXattr(v) = field(&v.operation)?
@@ -210,9 +206,7 @@ fn check_entry(value: &Entry) -> Result<()> {
     }
     Ok(())
 }
-fn check_instance(value: &Instance) -> Result<()> {
-    check_object(field(&value.details)?, 0)
-}
+
 pub fn validate_reply(reply: &Reply) -> Result<()> {
     let value = field(&reply.result)?;
     if !reply.data.is_empty() && !matches!(value, Value::Bytes(_) | Value::Chunk(_)) {
@@ -220,12 +214,6 @@ pub fn validate_reply(reply: &Reply) -> Result<()> {
     }
     match value {
         Value::Description(v) => {
-            if !matches!(
-                Ownership::try_from(v.ownership),
-                Ok(Ownership::Host | Ownership::Plugin)
-            ) {
-                return Err(CodecError::InvalidData);
-            }
             for schema in [&v.settings_schema, &v.instance_schema]
                 .into_iter()
                 .flatten()
@@ -238,17 +226,6 @@ pub fn validate_reply(reply: &Reply) -> Result<()> {
             check_object(field(&v.details)?, 0)?;
         }
         Value::Config(v) => check_object(field(&v.config)?, 0)?,
-        Value::Instance(v) => check_instance(v)?,
-        Value::MaybeInstance(v) => {
-            if let Some(v) = &v.instance {
-                check_instance(v)?;
-            }
-        }
-        Value::Instances(v) => {
-            for value in &v.instances {
-                check_instance(value)?;
-            }
-        }
         Value::Storage(v) => {
             field(&v.info)?;
         }

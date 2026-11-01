@@ -66,7 +66,7 @@ impl Peer {
                     p::Capability::WriteNew as i32,
                 ]
             },
-            ownership: p::Ownership::Host as i32,
+
             settings_schema: None,
             instance_schema: None,
             config_version: 1,

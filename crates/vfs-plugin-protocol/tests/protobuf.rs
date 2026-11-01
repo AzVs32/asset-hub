@@ -64,8 +64,8 @@ fn generated_bindings_preserve_integer_precision_and_field_presence() -> Result 
     );
     // Encoded independently by protoc --encode from the schema's text format.
     let protoc = [
-        10, 1, 103, 170, 1, 21, 8, 1, 18, 4, 102, 105, 108, 101, 24, 255, 255, 255, 255, 255, 255,
-        255, 255, 255, 1, 32, 0,
+        10, 1, 103, 82, 21, 8, 1, 18, 4, 102, 105, 108, 101, 24, 255, 255, 255, 255, 255, 255, 255,
+        255, 255, 1, 32, 0,
     ];
     assert_eq!(independent.encode_to_vec(), protoc);
     Ok(())
@@ -96,15 +96,6 @@ fn missing_alternatives_unknown_enums_and_invalid_numbers_are_rejected() -> Resu
         .is_err()
     );
     for kind in [0, i32::MAX] {
-        assert!(
-            p::from_reply(wire::Reply::new(wire::reply::Result::Description(
-                Box::new(wire::Description {
-                    ownership: kind,
-                    ..Default::default()
-                })
-            )))
-            .is_err()
-        );
         assert!(
             p::from_request(wire::Request {
                 generation: "g".into(),
@@ -209,7 +200,7 @@ fn exported_descriptor_contains_the_complete_language_independent_contract() -> 
         .find(|m| m.name.as_deref() == Some("Request"))
         .ok_or("Request")?;
     assert_eq!(request.oneof_decl.len(), 1);
-    assert_eq!(request.field.len(), 20);
+    assert_eq!(request.field.len(), 16);
     assert!(
         request
             .field
@@ -234,6 +225,22 @@ fn exported_descriptor_contains_the_complete_language_independent_contract() -> 
             method.output_type.as_deref(),
             Some(".assethub.vfs.v2.Reply")
         );
+    }
+    Ok(())
+}
+
+#[test]
+fn open_requires_an_explicit_configuration_object() -> Result {
+    for config in [None, Some(p::Object::new())] {
+        let request = p::Request {
+            generation: "g".into(),
+            data: vec![],
+            operation: Some(Op::Open(p::Open {
+                id: "one".into(),
+                config: config.clone(),
+            })),
+        };
+        assert_eq!(p::from_request(request).is_ok(), config.is_some());
     }
     Ok(())
 }

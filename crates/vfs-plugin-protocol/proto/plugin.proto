@@ -24,7 +24,6 @@ message JsonValue {
     Array array = 8;
   }
 }
-enum Ownership { OWNERSHIP_UNSPECIFIED = 0; OWNERSHIP_HOST = 1; OWNERSHIP_PLUGIN = 2; }
 enum Capability {
   CAPABILITY_UNSPECIFIED = 0; CAPABILITY_STAT = 1; CAPABILITY_LIST = 2;
   CAPABILITY_READ = 3; CAPABILITY_RANGE_READ = 4;
@@ -76,7 +75,7 @@ message Failure {
 }
 message Description {
   uint32 major = 1; uint32 minor = 2; // This schema uses major 2, minor 0.
-  // Feature identifiers: instances.host-managed.v1, instances.self-managed.v1,
+  // Feature identifiers: instances.host-managed.v1,
   // streams.chunked.v1, assethub.config.annotations.v1.
   // Unknown required identifiers reject loading; optional ones grant no support.
   repeated string required_features = 3;
@@ -90,9 +89,8 @@ message Description {
   // Unknown numeric capabilities grant no support. Read modes and dir models
   // are exclusive; writable attributes require their corresponding read flag.
   repeated Capability capabilities = 12;
-  Ownership ownership = 13;
-  Object settings_schema = 14; Object instance_schema = 15;
-  uint32 config_version = 16; // Positive schema version, independent of protocol/software.
+  Object settings_schema = 13; Object instance_schema = 14;
+  uint32 config_version = 15; // Positive schema version, independent of protocol/software.
 }
 // Effective instance capabilities must be covered by Description. Chunk size
 // must be 1..8 MiB and remains stable for the opened handle.
@@ -102,14 +100,11 @@ message Entry {
   string path = 1; EntryKind kind = 2;
   optional uint64 size = 3; Timestamp modified = 4;
 }
-message Instance { string id = 1; Object details = 2; }
 message ResourceRef { ResourceKind kind = 1; uint64 handle = 2; }
 message Initialize { Object settings = 1; }
 message Config { Object config = 1; }
 message Migrate { uint32 from_version = 1; Object config = 2; }
-message InstanceId { string id = 1; }
-message ListInstances { optional string after = 1; uint32 limit = 2; }
-message Open { string id = 1; Object config = 2; } // config present iff host-managed.
+message Open { string id = 1; Object config = 2; } // config is required; absence is InvalidRequest.
 // Paths are instance-relative UTF-8, at most 4096 bytes; empty denotes the root.
 // Absolute paths, empty components, dot/dot-dot, backslash, colon and NUL fail.
 message Path { string path = 1; }
@@ -153,19 +148,14 @@ message Request {
   // Binary bytes for WriterChunk/SetXattr only; all other requests leave it empty.
   bytes data = 2;
   oneof operation {
-    Empty describe = 10; Initialize initialize = 11; Config prepare = 12;
-    Migrate migrate = 13; Config test_connection = 14;
-    InstanceId get_instance = 15; ListInstances list_instances = 16;
-    Config create_instance = 17; InstanceId remove_instance = 18;
-    Open open = 19; StorageCall storage = 20; Read read = 21; Write write = 22;
-    Handle reader_next = 23; Handle writer_chunk = 24; Handle commit = 25;
-    Handle abort = 26; ResourceRef release = 27;
+    Empty describe = 3; Initialize initialize = 4; Config prepare = 5;
+    Migrate migrate = 6; Config test_connection = 7;
+    Open open = 8; StorageCall storage = 9; Read read = 10; Write write = 11;
+    Handle reader_next = 12; Handle writer_chunk = 13; Handle commit = 14;
+    Handle abort = 15; ResourceRef release = 16;
   }
 }
 message Prepared { Object config = 1; Object details = 2; }
-message MaybeInstance { Instance instance = 1; }
-message Instances { repeated Instance instances = 1; optional string next_after = 2; }
-message Removed { bool removed = 1; }
 message Storage { uint64 handle = 1; StorageInfo info = 2; }
 message Page { repeated Entry entries = 1; optional string next_after = 2; }
 message Permissions { uint32 mode = 1; }
@@ -176,15 +166,14 @@ message Chunk { bool eof = 1; } // eof => empty data; !eof => nonempty data.
 message Reply {
   bytes data = 1; // Bytes/Chunk results only.
   oneof result {
-    Description description = 10; Prepared prepared = 11; Config config = 12;
-    Instance instance = 13; MaybeInstance maybe_instance = 14; Instances instances = 15;
-    Removed removed = 16; Storage storage = 17; Handle reader = 18; Handle writer = 19;
-    Entry entry = 20; Page page = 21; Permissions permissions = 22; Names names = 23;
-    Empty bytes = 24; Chunk chunk = 25; Empty unit = 26; Failure failure = 27;
+    Description description = 2; Prepared prepared = 3; Config config = 4;
+    Storage storage = 5; Handle reader = 6; Handle writer = 7;
+    Entry entry = 8; Page page = 9; Permissions permissions = 10; Names names = 11;
+    Empty bytes = 12; Chunk chunk = 13; Empty unit = 14; Failure failure = 15;
   }
 }
 service Plugin {
-  // Driver metadata, initialization, configuration and instance management only.
+  // Driver metadata, initialization, configuration preparation only.
   // Storage resources can only be opened and used through Session.
   rpc Invoke(Request) returns (Reply);
   // One duplex stream owns one Storage and every child reader/writer. Its first

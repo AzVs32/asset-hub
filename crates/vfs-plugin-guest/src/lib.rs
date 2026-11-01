@@ -15,17 +15,14 @@ pub mod api {
     }
     pub trait Guest {
         fn describe() -> p::Description;
-        /// Called once per control/Storage Store. Self-managed instance records
-        /// must use shared backend state rather than Store-local globals.
-        /// Initialization must support independent Stores running concurrently.
+        /// Called once per control/Storage Store; independent Stores may run concurrently.
+        /// Instance records and decrypted opening parameters are supplied by the host.
         fn initialize(settings: p::Object) -> Result<()>;
         fn prepare(config: p::Object) -> Result<p::Prepared>;
         fn migrate(from_version: u32, config: p::Object) -> Result<p::Object>;
         fn test_connection(config: p::Object) -> Result<()>;
-        fn instances(_operation: Op) -> Result<Value> {
-            Err(Failure::new(p::FailureCode::UnsupportedOperation))
-        }
-        fn open(id: String, config: Option<p::Object>) -> Result<Storage>;
+
+        fn open(id: String, config: p::Object) -> Result<Storage>;
     }
     pub trait GuestStorage {
         fn info(&self) -> p::StorageInfo;
@@ -215,11 +212,10 @@ impl<D: api::Guest> Dispatcher<D> {
                 D::test_connection(config)?;
                 Value::Unit(p::Empty {})
             }
-            op @ (Op::GetInstance(_)
-            | Op::ListInstances(_)
-            | Op::CreateInstance(_)
-            | Op::RemoveInstance(_)) => D::instances(op)?,
-            Op::Open(p::Open { id, config }) => {
+            Op::Open(p::Open {
+                id,
+                config: Some(config),
+            }) => {
                 self.capacity()?;
                 let storage = D::open(id, config)?;
                 let info = storage.0.info();

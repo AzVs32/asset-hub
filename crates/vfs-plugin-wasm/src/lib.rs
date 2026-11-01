@@ -189,9 +189,7 @@ impl State {
             .await
             .map_err(|_| StorageError::new(StorageErrorKind::StaleHandle))?;
         let id = match op {
-            Op::GetInstance(p::InstanceId { id })
-            | Op::RemoveInstance(p::InstanceId { id })
-            | Op::Open(p::Open { id, .. }) => Some(id.as_str()),
+            Op::Open(p::Open { id, .. }) => Some(id.as_str()),
             _ => None,
         };
         let reply = p::decode_reply(&response)

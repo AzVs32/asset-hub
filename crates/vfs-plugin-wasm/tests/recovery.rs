@@ -27,7 +27,7 @@ fn fixture(prepare: &str, initialize: &str, stat: &str, commit: &str) -> Result<
         version: "1.0.0".into(),
         child_mounts: true,
         capabilities: capabilities.clone(),
-        ownership: p::Ownership::Host as i32,
+
         config_version: 1,
         ..Default::default()
     };

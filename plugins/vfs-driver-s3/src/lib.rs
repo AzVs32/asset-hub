@@ -91,7 +91,7 @@ impl Guest for S3Driver {
             version: env!("CARGO_PKG_VERSION").into(),
             child_mounts: true,
             capabilities: caps(),
-            ownership: p::Ownership::Host as i32,
+
             settings_schema: None,
             instance_schema: Some(schema.into()),
             config_version: 1,
@@ -130,9 +130,8 @@ impl Guest for S3Driver {
         s3::Client::parse(&p::json_object(config)?)?.check_bucket()
     }
 
-    fn open(_id: String, config: Option<p::Object>) -> Result<api::Storage> {
-        let config =
-            p::json_object(config.ok_or_else(|| failure(p::FailureCode::InvalidRequest))?)?;
+    fn open(_id: String, config: p::Object) -> Result<api::Storage> {
+        let config = p::json_object(config)?;
         let client = s3::Client::parse(&config)?;
         client.check_bucket()?;
         Ok(api::Storage::new(S3Storage { client }))

@@ -233,7 +233,7 @@ pub fn describe(driver: &dyn Driver, generation: String) -> p::Description {
         version: info.version().to_string(),
         child_mounts: info.child_mount_policy() == ChildMountPolicy::Allow,
         capabilities: capabilities(info.capabilities()),
-        ownership: p::Ownership::Host as i32,
+
         settings_schema: info.settings_schema().cloned().map(Into::into),
         instance_schema: info.instance_config_schema().cloned().map(Into::into),
         config_version: info.instance_config_version().get(),
@@ -249,13 +249,7 @@ pub fn driver_info(d: &p::Description) -> Result<DriverInfo, DriverError> {
             &p::json_object(schema.clone()).map_err(|_| invalid())?,
         )?;
     }
-    if !matches!(
-        p::Ownership::try_from(d.ownership),
-        Ok(p::Ownership::Host | p::Ownership::Plugin)
-    ) || d.generation.is_empty()
-        || d.generation.len() > 128
-        || d.name.len() > 4096
-    {
+    if d.generation.is_empty() || d.generation.len() > 128 || d.name.len() > 4096 {
         return Err(invalid());
     }
     Ok(DriverInfo::builder()
@@ -355,18 +349,7 @@ pub fn decode_entry(e: p::Entry) -> Result<StorageEntry, StorageError> {
         modified,
     })
 }
-pub fn instance(i: InstanceInfo) -> p::Instance {
-    p::Instance {
-        id: i.id.as_str().into(),
-        details: Some(i.details.into()),
-    }
-}
-pub fn decode_instance(i: p::Instance) -> Result<InstanceInfo, DriverError> {
-    Ok(InstanceInfo {
-        id: InstanceId::parse(&i.id).map_err(|_| invalid())?,
-        details: object(i.details)?,
-    })
-}
+
 pub fn limit(value: u32) -> Result<NonZeroUsize, StorageError> {
     NonZeroUsize::new(value as usize)
         .ok_or_else(|| StorageError::new(StorageErrorKind::InvalidRequest))

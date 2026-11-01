@@ -53,7 +53,7 @@ impl Transport for Peer {
                             p::Capability::RangeRead as i32,
                             p::Capability::WriteNew as i32,
                         ],
-                        ownership: p::Ownership::Plugin as i32,
+
                         settings_schema: None,
                         instance_schema: None,
                         config_version: 1,

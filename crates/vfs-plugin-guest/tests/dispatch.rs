@@ -19,7 +19,7 @@ impl Guest for Driver {
             version: "1.0.0".into(),
             child_mounts: true,
             capabilities: vec![p::Capability::Stat as i32, p::Capability::WriteNew as i32],
-            ownership: p::Ownership::Host as i32,
+
             settings_schema: None,
             instance_schema: None,
             config_version: 1,
@@ -40,9 +40,8 @@ impl Guest for Driver {
     fn test_connection(_: p::Object) -> Result<()> {
         Ok(())
     }
-    fn open(_: String, config: Option<p::Object>) -> Result<Storage> {
-        let config =
-            p::json_object(config.ok_or_else(|| p::Failure::new(p::FailureCode::InvalidRequest))?)?;
+    fn open(_: String, config: p::Object) -> Result<Storage> {
+        let config = p::json_object(config)?;
         OPENS.with(|v| v.set(v.get() + 1));
         Ok(Storage::new(Store {
             fail: config
@@ -357,5 +356,18 @@ fn capacity_is_checked_before_open_and_released_ids_are_not_reused() -> TestResu
         p::decode_reply(&dispatcher.call(b"{\"operation\":\"describe\"}"))?,
         Err(p::Failure::new(p::FailureCode::InvalidRequest))
     );
+    Ok(())
+}
+
+#[test]
+fn missing_open_configuration_is_invalid_request_without_opening_storage() -> TestResult {
+    let mut dispatcher = setup()?;
+    // Independently encoded Request: generation="g", Open(id="one"), no config.
+    let bytes = [10, 1, b'g', 66, 5, 10, 3, b'o', b'n', b'e'];
+    let error = p::decode_reply(&dispatcher.call(&bytes))?
+        .err()
+        .ok_or("missing config must fail")?;
+    assert_eq!(error.code, p::FailureCode::InvalidRequest as i32);
+    OPENS.with(|opens| assert_eq!(opens.get(), 0));
     Ok(())
 }

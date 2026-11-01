@@ -161,9 +161,7 @@ fn decode(reply: wire::Reply, op: &Op) -> Result<p::Reply, DriverError> {
         }
     };
     let id = match op {
-        Op::GetInstance(p::InstanceId { id })
-        | Op::RemoveInstance(p::InstanceId { id })
-        | Op::Open(p::Open { id, .. }) => Some(id.as_str()),
+        Op::Open(p::Open { id, .. }) => Some(id.as_str()),
         _ => None,
     };
     let reply = p::from_reply(reply)

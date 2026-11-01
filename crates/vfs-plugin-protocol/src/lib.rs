@@ -25,7 +25,6 @@ pub const HOST_RANDOM: &str = "random.v1";
 pub const WASM_HOST_CAPABILITIES: &[&str] = &[HOST_HTTP, HOST_CLOCK, HOST_RANDOM];
 pub const PROTOCOL_FEATURES: &[&str] = &[
     "instances.host-managed.v1",
-    "instances.self-managed.v1",
     "streams.chunked.v1",
     INSTANCE_SCHEMA_PROFILE,
 ];
@@ -154,10 +153,7 @@ impl Operation {
             | Self::Release(_) => matches!(value, Value::Unit(_)),
             Self::Prepare(_) => matches!(value, Value::Prepared(_)),
             Self::Migrate(_) => matches!(value, Value::Config(_)),
-            Self::GetInstance(_) => matches!(value, Value::MaybeInstance(_)),
-            Self::ListInstances(_) => matches!(value, Value::Instances(_)),
-            Self::CreateInstance(_) => matches!(value, Value::Instance(_)),
-            Self::RemoveInstance(_) => matches!(value, Value::Removed(_)),
+
             Self::Open(_) => matches!(value, Value::Storage(_)),
             Self::Read(_) => matches!(value, Value::Reader(_)),
             Self::Write(_) => matches!(value, Value::Writer(_)),
@@ -185,8 +181,6 @@ impl Operation {
     pub fn mutates(&self) -> bool {
         match self {
             Self::Initialize(_)
-            | Self::CreateInstance(_)
-            | Self::RemoveInstance(_)
             | Self::Write(_)
             | Self::WriterChunk(_)
             | Self::Commit(_)

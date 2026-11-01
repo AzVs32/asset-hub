@@ -102,7 +102,7 @@ impl Guest for WebdavDriver {
             version: env!("CARGO_PKG_VERSION").into(),
             child_mounts: true,
             capabilities: capabilities(),
-            ownership: p::Ownership::Host as i32,
+
             settings_schema: None,
             instance_schema: instance_schema.map(Into::into),
             config_version: 1,
@@ -142,9 +142,8 @@ impl Guest for WebdavDriver {
     fn test_connection(config: p::Object) -> Result<()> {
         client::Client::parse(&p::json_object(config)?)?.check_root()
     }
-    fn open(_id: String, config: Option<p::Object>) -> Result<api::Storage> {
-        let config =
-            p::json_object(config.ok_or_else(|| failure(p::FailureCode::InvalidRequest))?)?;
+    fn open(_id: String, config: p::Object) -> Result<api::Storage> {
+        let config = p::json_object(config)?;
         let client = client::Client::parse(&config)?;
         client.check_root()?;
         Ok(api::Storage::new(WebdavStorage { client }))

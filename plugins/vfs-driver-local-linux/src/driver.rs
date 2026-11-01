@@ -8,10 +8,7 @@ use ah_vfs::application::{
     },
     port::{Driver, DriverFuture, InstanceProvisioner, OpenContext, PreparedConfig, Storage},
 };
-use ah_vfs::domain::{
-    ChildMountPolicy, DriverError, DriverKey, InstanceConfigErrorKind, StorageError,
-    StorageErrorKind,
-};
+use ah_vfs::domain::{ChildMountPolicy, DriverError, DriverKey, InstanceConfigErrorKind};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},

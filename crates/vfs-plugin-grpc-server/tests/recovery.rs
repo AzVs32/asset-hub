@@ -68,7 +68,7 @@ impl Backend {
             .into_iter()
             .map(Into::into)
             .collect(),
-            ownership: p::Ownership::Host as i32,
+
             settings_schema: None,
             instance_schema: None,
             config_version: 1,
@@ -1271,5 +1271,41 @@ async fn shutdown_cannot_be_undone_by_an_inflight_backend_recovery() -> Result {
             .is_err()
     );
     assert_eq!(faults.constructions.load(Ordering::SeqCst), 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn grpc_rejects_missing_open_configuration_before_allocating_storage() -> Result {
+    let faults = Arc::new(Faults::default());
+    let (endpoint, server) = production(faults.clone(), ServerLimits::default()).await?;
+    let (mut client, generation) = ready(endpoint).await?;
+    let (tx, rx) = tokio::sync::mpsc::channel(1);
+    tx.send(p::Request {
+        generation,
+        data: vec![],
+        operation: Some(Op::Open(p::Open {
+            id: "instance".into(),
+            config: None,
+        })),
+    })
+    .await?;
+    let mut request = tonic::Request::new(tokio_stream::wrappers::ReceiverStream::new(rx));
+    request
+        .metadata_mut()
+        .insert("authorization", "Bearer test-token".parse()?);
+    match client.session(request).await {
+        Err(error) => assert_eq!(error.code(), tonic::Code::InvalidArgument),
+        Ok(response) => {
+            let error = response
+                .into_inner()
+                .message()
+                .await
+                .err()
+                .ok_or("missing config accepted")?;
+            assert_eq!(error.code(), tonic::Code::InvalidArgument);
+        }
+    }
+    drop(tx);
+    drop(server);
     Ok(())
 }
