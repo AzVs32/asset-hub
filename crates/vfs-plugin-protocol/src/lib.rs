@@ -23,11 +23,7 @@ pub const HOST_HTTP: &str = "http.v1";
 pub const HOST_CLOCK: &str = "clock.wall.v1";
 pub const HOST_RANDOM: &str = "random.v1";
 pub const WASM_HOST_CAPABILITIES: &[&str] = &[HOST_HTTP, HOST_CLOCK, HOST_RANDOM];
-pub const PROTOCOL_FEATURES: &[&str] = &[
-    "instances.host-managed.v1",
-    "streams.chunked.v1",
-    INSTANCE_SCHEMA_PROFILE,
-];
+pub const PROTOCOL_FEATURES: &[&str] = &["streams.chunked.v1"];
 
 /// Selected backward-compatible protocol revision. Minor revisions may add
 /// optional data but cannot change existing operation meanings or encodings.

@@ -244,3 +244,52 @@ fn open_requires_an_explicit_configuration_object() -> Result {
     }
     Ok(())
 }
+
+#[test]
+fn base_contract_negotiates_without_optional_features_but_requires_the_schema_profile() -> Result {
+    let mut description = p::Description {
+        major: p::PROTOCOL_MAJOR,
+        instance_schema_profile: p::INSTANCE_SCHEMA_PROFILE.into(),
+        ..Default::default()
+    };
+    assert_eq!(
+        p::negotiate_protocol(&description).map(|protocol| protocol.features),
+        Ok(Vec::<String>::new())
+    );
+    description.instance_schema_profile = "unknown.schema.v1".into();
+    assert_eq!(
+        p::negotiate_protocol(&description),
+        Err(p::IncompatiblePlugin::SchemaProfile)
+    );
+    Ok(())
+}
+
+#[test]
+fn optional_features_are_filtered_and_required_features_must_be_supported_and_advertised() -> Result
+{
+    let mut description = p::Description {
+        major: p::PROTOCOL_MAJOR,
+        instance_schema_profile: p::INSTANCE_SCHEMA_PROFILE.into(),
+        features: vec!["streams.chunked.v1".into(), "unknown.feature.v1".into()],
+        required_features: vec!["streams.chunked.v1".into()],
+        ..Default::default()
+    };
+    assert_eq!(
+        p::negotiate_protocol(&description).map(|protocol| protocol.features),
+        Ok(vec!["streams.chunked.v1".into()])
+    );
+    description
+        .required_features
+        .push("unknown.feature.v1".into());
+    assert_eq!(
+        p::negotiate_protocol(&description),
+        Err(p::IncompatiblePlugin::RequiredFeature)
+    );
+    description.required_features = vec!["streams.chunked.v1".into()];
+    description.features.clear();
+    assert_eq!(
+        p::negotiate_protocol(&description),
+        Err(p::IncompatiblePlugin::RequiredFeature)
+    );
+    Ok(())
+}

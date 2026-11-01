@@ -86,10 +86,7 @@ impl Guest for WebdavDriver {
         p::Description {
             major: p::PROTOCOL_MAJOR,
             minor: p::PROTOCOL_MINOR,
-            required_features: vec![
-                "instances.host-managed.v1".into(),
-                p::INSTANCE_SCHEMA_PROFILE.into(),
-            ],
+            required_features: vec![],
             features: p::PROTOCOL_FEATURES
                 .iter()
                 .map(|feature| (*feature).into())

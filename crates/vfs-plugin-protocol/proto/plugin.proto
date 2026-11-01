@@ -75,13 +75,13 @@ message Failure {
 }
 message Description {
   uint32 major = 1; uint32 minor = 2; // This schema uses major 2, minor 0.
-  // Feature identifiers: instances.host-managed.v1,
-  // streams.chunked.v1, assethub.config.annotations.v1.
+  // Feature identifiers: streams.chunked.v1.
   // Unknown required identifiers reject loading; optional ones grant no support.
   repeated string required_features = 3;
   repeated string features = 4;
   // Host service names: http.v1, clock.wall.v1, random.v1.
   repeated string required_host_capabilities = 5;
+  // Required schema contract, negotiated independently of optional features.
   string instance_schema_profile = 6; // assethub.config.annotations.v1
   string generation = 7;
   string key = 8; string name = 9; string version = 10;

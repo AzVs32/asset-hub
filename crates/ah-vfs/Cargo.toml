@@ -13,7 +13,6 @@ workspace = true
 testing = []
 
 [dependencies]
-ah-config = "0.2.0"
 ah-id = { workspace = true, features = ["uuid_v7"] }
 bon.workspace = true
 getset.workspace = true

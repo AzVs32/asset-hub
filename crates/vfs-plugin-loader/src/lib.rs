@@ -19,7 +19,7 @@
 //! Instance configuration is supplied later through InstanceService. Bootstrap
 //! paths resolve relative to the host configuration file, not the process cwd.
 mod config;
-pub use config::{GrpcTls, PluginConfig, PluginSource, PluginSpec};
+pub use config::{GrpcTls, PluginConfig, PluginSource, PluginSpec, VfsConfig};
 
 use ah_vfs::{
     application::{driver_catalog::DriverCatalog, error::DriverCatalogError, port::Driver},

@@ -99,7 +99,6 @@ name = "ah-vfs"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
- "ah-config",
  "ah-id",
  "bon",
  "derive_more",
@@ -2950,6 +2949,7 @@ dependencies = [
  "ah-vfs",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
  "tokio",
  "url",

@@ -5,10 +5,15 @@ use std::{fmt, path::PathBuf};
 use vfs_plugin_protocol::JsonObject;
 use vfs_plugin_wasm::HostGrants;
 
+/// Parent namespace for the host's plugin bootstrap configuration.
+#[derive(ah_config::Config)]
+#[config(key = "vfs", default)]
+pub struct VfsConfig {}
+
 /// Configure `[[vfs.plugins.entries]]` in a host using ah-config. The enclosing
 /// namespace is registered by linking this loader, not by linking plugin crates.
 #[derive(ah_config::Config)]
-#[config(parent = ah_vfs::config::VfsConfig, key = "plugins", default, deny_unknown_fields)]
+#[config(parent = VfsConfig, key = "plugins", default, deny_unknown_fields)]
 pub struct PluginConfig {
     #[config(default = Vec::new())]
     pub entries: Vec<PluginSpec>,
