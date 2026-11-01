@@ -1,6 +1,5 @@
 #![cfg(target_os = "linux")]
 mod common;
-use ah_vfs::application::port::InstanceRegistry;
 
 use ah_vfs::application::dto::{
     StorageCreateDirRequest, StorageDirQuery, StorageEntryKind, StorageMoveEntryRequest,

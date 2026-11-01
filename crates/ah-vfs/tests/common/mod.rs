@@ -1,82 +1,40 @@
 #![allow(dead_code)]
 use ah_vfs::{
-    application::{
-        dto::{InstanceInfo, InstancePage, InstanceQuery},
-        port::DriverFuture,
+    application::{driver_info::DriverInfo, dto::*, port::*},
+    domain::*,
+};
+use std::{
+    collections::{BTreeMap, HashMap},
+    future::pending,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
-    domain::{InstanceId, StorageError, StorageErrorKind},
 };
-use std::collections::BTreeMap;
-
-pub fn create_instance() -> DriverFuture<'static, InstanceInfo> {
-    Box::pin(async { Err(StorageError::new(StorageErrorKind::UnsupportedOperation).into()) })
-}
-
-pub fn remove_instance() -> DriverFuture<'static, ah_vfs::application::dto::RemoveInstanceOutcome> {
-    Box::pin(async { Err(StorageError::new(StorageErrorKind::UnsupportedOperation).into()) })
-}
-
-pub fn get_instance(id: InstanceId, known: &[&str]) -> DriverFuture<'static, Option<InstanceInfo>> {
-    let instance = known.contains(&id.as_str()).then_some(InstanceInfo {
-        id,
-        details: BTreeMap::new(),
-    });
-    Box::pin(async move { Ok(instance) })
-}
-
-pub fn list_instances(query: InstanceQuery, known: &[&str]) -> DriverFuture<'static, InstancePage> {
-    let records = known
-        .iter()
-        .map(|id| InstanceId::parse(id))
-        .collect::<Result<Vec<_>, _>>();
-    Box::pin(async move {
-        let mut ids = records
-            .map_err(|error| StorageError::with_source(StorageErrorKind::InvalidData, error))?;
-        ids.sort_by(|a, b| a.as_str().cmp(b.as_str()));
-        ids.retain(|id| {
-            query
-                .after()
-                .is_none_or(|after| id.as_str() > after.as_str())
-        });
-        let more = ids.len() > query.limit().get();
-        ids.truncate(query.limit().get());
-        let next_after = more.then(|| ids.last().cloned()).flatten();
-        Ok(InstancePage {
-            instances: ids
-                .into_iter()
-                .map(|id| InstanceInfo {
-                    id,
-                    details: BTreeMap::new(),
-                })
-                .collect(),
-            next_after,
-        })
-    })
-}
-
-use ah_vfs::application::{
-    driver_info::DriverInfo,
-    port::{Driver, InstanceManagement, InstanceRegistry, OpenContext, Storage},
-};
-use std::sync::Arc;
 
 pub trait Backend: Send + Sync + 'static {
-    fn registry(self: Arc<Self>) -> Arc<dyn InstanceRegistry> {
-        static_registry(&[])
+    fn provisioner(self: Arc<Self>) -> Arc<dyn InstanceProvisioner> {
+        Arc::new(Provisioner)
     }
     fn info(&self) -> &DriverInfo;
     fn open(&self, context: OpenContext) -> DriverFuture<'_, Arc<dyn Storage>>;
 }
-struct Managed<T>(Arc<T>, Arc<dyn InstanceRegistry>);
+struct Managed<T>(Arc<T>);
 impl<T: Backend> Driver for Managed<T> {
     fn info(&self) -> &DriverInfo {
         self.0.info()
     }
-    fn instances(&self) -> InstanceManagement {
-        InstanceManagement::SelfManaged(self.1.clone())
+    fn provisioner(&self) -> Arc<dyn InstanceProvisioner> {
+        self.0.clone().provisioner()
     }
     fn open(&self, context: OpenContext) -> DriverFuture<'_, Arc<dyn Storage>> {
         self.0.open(context)
+    }
+}
+pub struct Provisioner;
+impl InstanceProvisioner for Provisioner {
+    fn prepare(&self, config: InstanceConfig) -> DriverFuture<'_, PreparedConfig> {
+        Box::pin(async move { Ok(PreparedConfig::new(config, BTreeMap::new())) })
     }
 }
 pub trait IntoDriver {
@@ -84,10 +42,7 @@ pub trait IntoDriver {
 }
 impl<T: Backend> IntoDriver for Arc<T> {
     fn into_driver(self) -> Arc<dyn Driver> {
-        {
-            let registry = self.clone().registry();
-            Arc::new(Managed(self, registry))
-        }
+        Arc::new(Managed(self))
     }
 }
 impl IntoDriver for Arc<dyn Driver> {
@@ -95,12 +50,9 @@ impl IntoDriver for Arc<dyn Driver> {
         self
     }
 }
-/// Construct a registered test driver while sharing a separately inspectable backend.
 pub fn managed(value: impl IntoDriver) -> Arc<dyn Driver> {
     value.into_driver()
 }
-
-/// Register an already-assembled test provider whose default initializer is ready.
 pub fn register(
     catalog: &mut ah_vfs::application::driver_catalog::DriverCatalog,
     value: impl IntoDriver,
@@ -112,48 +64,161 @@ pub fn register(
     ) {
         std::task::Poll::Ready(result) => result,
         std::task::Poll::Pending => Err(
-            ah_vfs::application::error::DriverCatalogError::Initialization(
-                ah_vfs::domain::StorageError::new(
-                    ah_vfs::domain::StorageErrorKind::UnsupportedOperation,
-                )
-                .into(),
-            ),
+            ah_vfs::application::error::DriverCatalogError::Initialization(failure(
+                StorageErrorKind::UnsupportedOperation,
+            )),
         ),
     }
 }
+fn failure(kind: StorageErrorKind) -> DriverError {
+    StorageError::with_source(kind, std::io::Error::other("backend-private-token")).into()
+}
 
-struct StaticRegistry {
-    known: Vec<String>,
+/// Host-owned records with isolated persistence fault injection.
+#[derive(Default)]
+pub struct Records {
+    pub rows: Mutex<HashMap<DriverInstanceRef, InstanceRecord>>,
+    pub removals: AtomicUsize,
+    pub failure: Option<StorageErrorKind>,
+    pub suspend_remove: AtomicBool,
+    pub uncertain_remove: AtomicBool,
 }
-/// Construct one immutable registry shared by a test driver's entire lifetime.
-pub fn static_registry(known: &[&str]) -> Arc<dyn InstanceRegistry> {
-    Arc::new(StaticRegistry {
-        known: known.iter().map(|id| (*id).to_owned()).collect(),
-    })
+impl Records {
+    pub fn seeded(
+        catalog: &ah_vfs::application::driver_catalog::DriverCatalog,
+        known: &[&str],
+    ) -> Result<Arc<Self>, Box<dyn std::error::Error>> {
+        let records = Self::default();
+        for driver in catalog.list() {
+            for id in known {
+                let reference =
+                    DriverInstanceRef::new(driver.info().key().clone(), InstanceId::parse(id)?);
+                let record = InstanceRecord::new(
+                    reference.clone(),
+                    1,
+                    1,
+                    r#"{"parameters":{},"secret_paths":[],"details":{}}"#.into(),
+                    0,
+                    0,
+                )?;
+                records
+                    .rows
+                    .lock()
+                    .map_err(|_| "lock")?
+                    .insert(reference, record);
+            }
+        }
+        Ok(Arc::new(records))
+    }
+    pub fn contains(&self, reference: &DriverInstanceRef) -> bool {
+        self.rows
+            .lock()
+            .is_ok_and(|rows| rows.contains_key(reference))
+    }
 }
-impl InstanceRegistry for StaticRegistry {
-    fn create(
+impl InstanceRecordRepository for Records {
+    fn get(&self, reference: DriverInstanceRef) -> DriverFuture<'_, Option<InstanceRecord>> {
+        Box::pin(async move {
+            Ok(self
+                .rows
+                .lock()
+                .map_err(|_| failure(StorageErrorKind::Backend))?
+                .get(&reference)
+                .cloned())
+        })
+    }
+    fn list(
         &self,
-        _: ah_vfs::application::dto::InstanceConfig,
-    ) -> DriverFuture<'_, InstanceInfo> {
-        create_instance()
+        driver: DriverKey,
+        query: InstanceQuery,
+    ) -> DriverFuture<'_, InstanceRecordPage> {
+        Box::pin(async move {
+            let rows = self
+                .rows
+                .lock()
+                .map_err(|_| failure(StorageErrorKind::Backend))?;
+            let mut records: Vec<_> = rows
+                .values()
+                .filter(|r| {
+                    r.instance().driver_key() == &driver
+                        && query.after().is_none_or(|after| {
+                            r.instance().instance_id().as_str() > after.as_str()
+                        })
+                })
+                .cloned()
+                .collect();
+            records.sort_by(|a, b| {
+                a.instance()
+                    .instance_id()
+                    .as_str()
+                    .cmp(b.instance().instance_id().as_str())
+            });
+            let more = records.len() > query.limit().get();
+            records.truncate(query.limit().get());
+            let next_after = more
+                .then(|| records.last().map(|r| r.instance().instance_id().clone()))
+                .flatten();
+            Ok(InstanceRecordPage {
+                records,
+                next_after,
+            })
+        })
     }
-    fn remove(
-        &self,
-        _: InstanceId,
-    ) -> DriverFuture<'_, ah_vfs::application::dto::RemoveInstanceOutcome> {
-        remove_instance()
+    fn insert(&self, record: InstanceRecord) -> DriverFuture<'_, ()> {
+        Box::pin(async move {
+            if self.failure.is_none() || self.failure == Some(StorageErrorKind::OutcomeUnknown) {
+                self.rows
+                    .lock()
+                    .map_err(|_| failure(StorageErrorKind::Backend))?
+                    .insert(record.instance().clone(), record);
+            }
+            if let Some(kind) = self.failure {
+                return Err(failure(kind));
+            }
+            Ok(())
+        })
     }
-    fn get(&self, id: InstanceId) -> DriverFuture<'_, Option<InstanceInfo>> {
-        get_instance(
-            id,
-            &self.known.iter().map(String::as_str).collect::<Vec<_>>(),
-        )
+    fn update(&self, record: InstanceRecord, revision: u64) -> DriverFuture<'_, ()> {
+        Box::pin(async move {
+            let mut rows = self
+                .rows
+                .lock()
+                .map_err(|_| failure(StorageErrorKind::Backend))?;
+            if rows
+                .get(record.instance())
+                .is_none_or(|old| old.revision() != revision)
+            {
+                return Err(failure(StorageErrorKind::Conflict));
+            }
+            rows.insert(record.instance().clone(), record);
+            Ok(())
+        })
     }
-    fn list(&self, query: InstanceQuery) -> DriverFuture<'_, InstancePage> {
-        list_instances(
-            query,
-            &self.known.iter().map(String::as_str).collect::<Vec<_>>(),
-        )
+    fn remove(&self, reference: DriverInstanceRef) -> DriverFuture<'_, RemoveInstanceOutcome> {
+        Box::pin(async move {
+            self.removals.fetch_add(1, Ordering::SeqCst);
+            if self.suspend_remove.load(Ordering::SeqCst) {
+                pending::<()>().await;
+            }
+            if self.uncertain_remove.load(Ordering::SeqCst) {
+                return Err(failure(StorageErrorKind::OutcomeUnknown));
+            }
+            if self.failure.is_none() || self.failure == Some(StorageErrorKind::OutcomeUnknown) {
+                let removed = self
+                    .rows
+                    .lock()
+                    .map_err(|_| failure(StorageErrorKind::Backend))?
+                    .remove(&reference)
+                    .is_some();
+                if self.failure.is_none() {
+                    return Ok(if removed {
+                        RemoveInstanceOutcome::Removed
+                    } else {
+                        RemoveInstanceOutcome::AlreadyAbsent
+                    });
+                }
+            }
+            Err(failure(self.failure.unwrap_or(StorageErrorKind::Backend)))
+        })
     }
 }

@@ -163,10 +163,7 @@ async fn driver(factory: Arc<WasmTransport>) -> Result<PluginDriver> {
 }
 async fn open(driver: &PluginDriver, id: &str) -> Result<Arc<dyn Storage>> {
     Ok(driver
-        .open(OpenContext::host_managed(
-            InstanceId::parse(id)?,
-            Default::default(),
-        ))
+        .open(OpenContext::new(InstanceId::parse(id)?, Default::default()))
         .await?)
 }
 async fn stat(
@@ -217,9 +214,7 @@ async fn control_trap_uses_a_new_factory_instance_and_reinitializes_settings() -
     probe(fresh.as_ref(), &fresh_generation).await?;
     let driver = driver(factory).await?;
     let retained = open(&driver, "retained").await?;
-    let InstanceManagement::HostManaged(provisioner) = driver.instances() else {
-        return Err("ownership".into());
-    };
+    let provisioner = driver.provisioner();
     assert!(provisioner.prepare(Default::default()).await.is_err());
     assert!(!retained.is_stale());
     assert_eq!(stat(retained.as_ref(), "file").await?.size, Some(1));
@@ -360,7 +355,7 @@ async fn live_store_capacity_is_bounded_and_returned_when_storage_is_dropped() -
         retained.push(open(&driver, "retained").await?);
     }
     let error = driver
-        .open(OpenContext::host_managed(
+        .open(OpenContext::new(
             InstanceId::parse("excess")?,
             Default::default(),
         ))
@@ -373,10 +368,7 @@ async fn live_store_capacity_is_bounded_and_returned_when_storage_is_dropped() -
     let replacement = tokio::time::timeout(Duration::from_secs(1), async {
         loop {
             match driver
-                .open(OpenContext::host_managed(
-                    replacement_id.clone(),
-                    Default::default(),
-                ))
+                .open(OpenContext::new(replacement_id.clone(), Default::default()))
                 .await
             {
                 Ok(storage) => return Ok::<_, DriverError>(storage),
@@ -487,7 +479,7 @@ async fn failed_storage_open_does_not_replace_a_healthy_control_instance() -> Re
     driver.initialize(Default::default()).await?;
     let healthy = open(&driver, "healthy").await?;
     let error = driver
-        .open(OpenContext::host_managed(
+        .open(OpenContext::new(
             InstanceId::parse("bad")?,
             Default::default(),
         ))

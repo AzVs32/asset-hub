@@ -39,17 +39,15 @@ impl MemoryDriver {
     }
 }
 impl Driver for MemoryDriver {
-    fn instances(&self) -> ah_vfs::application::port::InstanceManagement {
-        ah_vfs::application::port::InstanceManagement::HostManaged(Arc::new(MemoryProvisioner))
+    fn provisioner(&self) -> Arc<dyn InstanceProvisioner> {
+        Arc::new(MemoryProvisioner)
     }
     fn info(&self) -> &DriverInfo {
         &self.info
     }
     fn open(&self, context: OpenContext) -> DriverFuture<'_, Arc<dyn Storage>> {
         Box::pin(async move {
-            let config = context
-                .config()
-                .ok_or_else(|| StorageError::new(StorageErrorKind::InvalidRequest))?;
+            let config = context.config();
             let capacity = capacity(config)?;
             let mut opened = self.opened.lock().await;
             let storage = opened

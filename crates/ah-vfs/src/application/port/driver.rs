@@ -1,4 +1,4 @@
-//! Driver declarations, instance queries and instance opening.
+//! Driver declarations, stateless preparation and storage opening.
 
 use crate::application::driver_info::DriverInfo;
 use crate::application::port::Storage;
@@ -7,11 +7,10 @@ use std::{future::Future, pin::Pin, sync::Arc};
 
 pub type DriverFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, DriverError>> + Send + 'a>>;
 
-/// One driver's declarations, registered instance views and storage opening.
+/// One driver's declarations, configuration validation and storage opening.
 ///
 /// Creation parameters remain driver-specific, behind a shared object contract.
-/// Queries expose public instance records without opening storage or returning
-/// backend-specific Rust types.
+/// The host owns instance records; drivers never persist their lifecycle.
 /// Storage handles and their streams must keep backend resources alive.
 /// Plugin adapters follow the loading and resource contract in this port module.
 pub trait Driver: Send + Sync {
@@ -44,13 +43,12 @@ pub trait Driver: Send + Sync {
         })
     }
 
-    /// Select record ownership. The returned port remains stable for this driver's lifetime.
-    fn instances(&self) -> super::InstanceManagement;
+    /// Return stateless configuration validation and connectivity logic.
+    fn provisioner(&self) -> Arc<dyn super::InstanceProvisioner>;
 
     /// Open the referenced instance. This does not create an instance or manage
-    /// its configuration. The source and representation of opening parameters
-    /// are not prescribed by this interface.
-    /// This is a cold path that may perform persistence reads and backend probes;
+    /// its configuration. The host supplies validated, decrypted parameters.
+    /// This is a cold path that may perform backend probes;
     /// the host's MountRuntime retains validated handles for repeated I/O.
     /// Returned capabilities must be covered by info().capabilities(). Backend
     /// failures use DriverError::Storage and retain the same domain categories

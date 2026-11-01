@@ -156,8 +156,6 @@ struct TestDriver {
     suspend_open: AtomicBool,
     open_gate: tokio::sync::Notify,
     invalid_capabilities: AtomicBool,
-    suspend_remove: AtomicBool,
-    uncertain_remove: AtomicBool,
     generation: Arc<AtomicUsize>,
 }
 
@@ -177,8 +175,6 @@ impl TestDriver {
             suspend_open: AtomicBool::new(false),
             open_gate: tokio::sync::Notify::new(),
             invalid_capabilities: AtomicBool::new(false),
-            suspend_remove: AtomicBool::new(false),
-            uncertain_remove: AtomicBool::new(false),
             generation: Arc::new(AtomicUsize::new(1)),
         })
     }
@@ -191,10 +187,6 @@ impl TestDriver {
 }
 
 impl common::Backend for TestDriver {
-    fn registry(self: Arc<Self>) -> Arc<dyn crate::application::port::InstanceRegistry> {
-        self
-    }
-
     fn info(&self) -> &DriverInfo {
         &self.info
     }
@@ -228,36 +220,10 @@ impl common::Backend for TestDriver {
         })
     }
 }
-impl ah_vfs::application::port::InstanceRegistry for TestDriver {
-    fn create(&self, _: InstanceConfig) -> DriverFuture<'_, InstanceInfo> {
-        Box::pin(async { Err(StorageError::new(StorageErrorKind::UnsupportedOperation).into()) })
-    }
-    fn get(&self, _: InstanceId) -> DriverFuture<'_, Option<InstanceInfo>> {
-        Box::pin(async { Ok(None) })
-    }
-    fn list(&self, _: InstanceQuery) -> DriverFuture<'_, InstancePage> {
-        Box::pin(async {
-            Ok(InstancePage {
-                instances: vec![],
-                next_after: None,
-            })
-        })
-    }
-    fn remove(&self, _: InstanceId) -> DriverFuture<'_, RemoveInstanceOutcome> {
-        Box::pin(async move {
-            if self.suspend_remove.load(Ordering::SeqCst) {
-                pending::<()>().await;
-            }
-            if self.uncertain_remove.load(Ordering::SeqCst) {
-                return Err(StorageError::new(StorageErrorKind::OutcomeUnknown).into());
-            }
-            Ok(RemoveInstanceOutcome::Removed)
-        })
-    }
-}
 
 struct Fixture {
     runtime: Arc<MountRuntime>,
+    records: Arc<common::Records>,
     repository: Arc<Repository>,
     driver: Arc<TestDriver>,
     mounts: MountService,
@@ -271,12 +237,20 @@ impl Fixture {
         let driver = Arc::new(TestDriver::new("external.demo")?);
         let mut drivers = DriverCatalog::new();
         common::register(&mut drivers, common::managed(driver.clone()))?;
-        let runtime = Arc::new(MountRuntime::new(repository.clone(), Arc::new(drivers)));
+        let records =
+            common::Records::seeded(&drivers, &["root", "one", "other", "unmounted", "child"])?;
+        let runtime = Arc::new(MountRuntime::new(
+            repository.clone(),
+            Arc::new(drivers),
+            records.clone(),
+            None,
+        ));
         Ok(Self {
             mounts: MountService::new(runtime.clone()),
             entries: EntryService::new(runtime.clone()),
             instances: InstanceService::new(runtime.clone()),
             runtime,
+            records,
             repository,
             driver,
         })
@@ -375,7 +349,13 @@ async fn storage_identity_includes_both_driver_key_and_instance_id() -> TestResu
     let mut catalog = DriverCatalog::new();
     common::register(&mut catalog, common::managed(one.clone()))?;
     common::register(&mut catalog, common::managed(two.clone()))?;
-    let runtime = MountRuntime::new(Arc::new(Repository::default()), Arc::new(catalog));
+    let records = common::Records::seeded(&catalog, &["same", "other"])?;
+    let runtime = MountRuntime::new(
+        Arc::new(Repository::default()),
+        Arc::new(catalog),
+        records,
+        None,
+    );
     let a = runtime
         .storage(
             &one.reference("same")?,
@@ -441,7 +421,9 @@ async fn removal_and_uncertain_removal_evict_retention_without_revoking_existing
             )
             .await?;
         let weak = Arc::downgrade(&retained);
-        f.driver.uncertain_remove.store(uncertain, Ordering::SeqCst);
+        f.records
+            .uncertain_remove
+            .store(uncertain, Ordering::SeqCst);
         let result = f.instances.remove_instance(&reference).await;
         if uncertain {
             assert_eq!(
@@ -669,7 +651,7 @@ async fn cancelled_removal_also_evicts_handles_opened_while_waiting() -> TestRes
         .await?;
     let before_weak = Arc::downgrade(&before);
     drop(before);
-    f.driver.suspend_remove.store(true, Ordering::SeqCst);
+    f.records.suspend_remove.store(true, Ordering::SeqCst);
     let mut remove = Box::pin(f.instances.remove_instance(&reference));
     assert!(poll_once(remove.as_mut()).await.is_pending());
     assert!(before_weak.upgrade().is_none());

@@ -96,8 +96,8 @@ impl Driver for Backend {
     fn info(&self) -> &DriverInfo {
         &self.info
     }
-    fn instances(&self) -> InstanceManagement {
-        InstanceManagement::HostManaged(Arc::new(Provisioner))
+    fn provisioner(&self) -> Arc<dyn InstanceProvisioner> {
+        Arc::new(Provisioner)
     }
     fn initialize(&self, _: DriverSettings) -> DriverFuture<'_, ()> {
         Box::pin(async move {
@@ -258,7 +258,7 @@ impl Transport for DirectSession {
 }
 async fn open(driver: &PluginDriver) -> Result<Arc<dyn Storage>> {
     Ok(driver
-        .open(OpenContext::host_managed(
+        .open(OpenContext::new(
             InstanceId::parse("instance")?,
             Default::default(),
         ))

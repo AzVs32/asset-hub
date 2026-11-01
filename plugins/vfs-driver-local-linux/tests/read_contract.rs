@@ -1,5 +1,4 @@
 #![cfg(target_os = "linux")]
-use ah_vfs::application::port::InstanceRegistry;
 mod common;
 
 use ah_vfs::{application::port::Driver, testing::assert_range_read_contract};

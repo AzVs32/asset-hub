@@ -17,7 +17,7 @@
 //! versions. A major mismatch or missing required feature rejects loading; minor
 //! negotiation selects the lower mutually supported revision. Unknown optional
 //! capabilities are unsupported, never inferred from a newer version number.
-//! The description includes DriverInfo, instance-record ownership and supported
+//! The description includes DriverInfo and supported
 //! protocol features. Validate identities, schemas, capabilities and transfer
 //! limits before registration. Initialize applies plugin-wide DriverSettings;
 //! only successful initialization publishes the registration. All synchronous
@@ -42,8 +42,7 @@
 //!
 //! The operation groups are describe/initialize, instance management, open,
 //! storage operations, reader next/close, and writer write/commit/abort/close.
-//! SelfManaged exposes InstanceRegistry operations. HostManaged exposes
-//! InstanceProvisioner operations; the host persists records and supplies
+//! Drivers expose InstanceProvisioner operations; the host persists records and supplies
 //! decrypted OpenContext configuration. Preparation and migration may await plugin
 //! execution but never persist host records or open storage. The host revalidates
 //! migrated configuration before a revision-checked write.
@@ -107,9 +106,7 @@ pub use storage::{Storage, StorageFileReader, StorageFileWriter, StorageFuture};
 mod storage_attributes;
 pub use storage_attributes::{StoragePermissions, StorageXattrs};
 
-mod instance_registry;
 mod open_context;
-pub use instance_registry::{InstanceManagement, InstanceRegistry};
 pub use open_context::OpenContext;
 
 mod instance_provisioner;

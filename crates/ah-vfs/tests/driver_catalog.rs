@@ -78,10 +78,6 @@ struct TestDriver {
 }
 
 impl common::Backend for TestDriver {
-    fn registry(self: Arc<Self>) -> Arc<dyn ah_vfs::application::port::InstanceRegistry> {
-        common::static_registry(if self.fail { &[] } else { &["42"] })
-    }
-
     fn info(&self) -> &DriverInfo {
         &self.info
     }
@@ -244,13 +240,19 @@ fn catalog_returns_the_original_driver_and_handles_outlive_registration() -> Tes
     assert!(common::register(&mut catalog, common::managed(duplicate.clone())).is_err());
     let retained = catalog.get(&key).ok_or("driver missing")?.clone();
     assert!(Arc::ptr_eq(&retained, &erased));
-    let storage = ready(retained.open(InstanceId::parse("42")?.into()))??;
+    let storage = ready(retained.open(ah_vfs::application::port::OpenContext::new(
+        InstanceId::parse("42")?,
+        Default::default(),
+    )))??;
     assert!(Arc::ptr_eq(&storage, &expected));
     assert_eq!(original.opens.load(Ordering::Relaxed), 1);
     assert_eq!(duplicate.opens.load(Ordering::Relaxed), 0);
     drop(catalog.unregister(&key)?);
     assert!(catalog.get(&key).is_none());
-    let reopened = ready(retained.open(InstanceId::parse("42")?.into()))??;
+    let reopened = ready(retained.open(ah_vfs::application::port::OpenContext::new(
+        InstanceId::parse("42")?,
+        Default::default(),
+    )))??;
     assert!(Arc::ptr_eq(&reopened, &expected));
     drop(retained);
     drop(erased);
@@ -266,12 +268,12 @@ fn driver_opening_errors_reach_the_caller() -> TestResult {
     let key = original.info().key().clone();
     common::register(&mut catalog, common::managed(original))?;
     assert!(matches!(
-        ready(
-            catalog
-                .get(&key)
-                .ok_or("driver missing")?
-                .open(InstanceId::parse("42")?.into())
-        )?,
+        ready(catalog.get(&key).ok_or("driver missing")?.open(
+            ah_vfs::application::port::OpenContext::new(
+                InstanceId::parse("42")?,
+                Default::default()
+            )
+        ))?,
         Err(DriverError::InstanceNotFound(_))
     ));
     Ok(())
@@ -321,6 +323,9 @@ fn mount_table_uses_driver_owned_declarations() -> TestResult {
     let selected = catalog
         .get(reference.driver_key())
         .ok_or("driver missing")?;
-    ready(selected.open(reference.instance_id().clone().into()))??;
+    ready(selected.open(ah_vfs::application::port::OpenContext::new(
+        reference.instance_id().clone(),
+        Default::default(),
+    )))??;
     Ok(())
 }

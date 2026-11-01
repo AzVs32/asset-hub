@@ -61,17 +61,15 @@ async fn canonical_dir(source: &Path) -> Result<PathBuf, WindowsLocalDriverError
 }
 
 impl Driver for WindowsLocalDriver {
-    fn instances(&self) -> ah_vfs::application::port::InstanceManagement {
-        ah_vfs::application::port::InstanceManagement::HostManaged(Arc::new(LocalProvisioner))
+    fn provisioner(&self) -> Arc<dyn InstanceProvisioner> {
+        Arc::new(LocalProvisioner)
     }
     fn info(&self) -> &DriverInfo {
         &self.info
     }
     fn open(&self, context: OpenContext) -> DriverFuture<'_, Arc<dyn Storage>> {
         Box::pin(async move {
-            let config = context
-                .config()
-                .ok_or_else(|| StorageError::new(StorageErrorKind::InvalidRequest))?;
+            let config = context.config();
             let source = instance_config_string(config, "root_path")?;
             let root = canonical_dir(Path::new(source))
                 .await

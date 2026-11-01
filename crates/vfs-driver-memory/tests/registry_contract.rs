@@ -1,8 +1,5 @@
 use ah_vfs::{
-    application::{
-        dto::InstanceConfig,
-        port::{DriverFuture, InstanceRegistry},
-    },
+    application::{dto::InstanceConfig, port::DriverFuture},
     domain::InstanceId,
     testing::{RegistryFixture, assert_registry_contract},
 };
@@ -10,12 +7,12 @@ use std::sync::Arc;
 mod common;
 
 struct Fixture {
-    registry: Arc<dyn InstanceRegistry>,
+    registry: Arc<ah_vfs::application::host_instance_registry::HostInstanceRegistry>,
     pool: sqlx::SqlitePool,
 }
 
 impl RegistryFixture for Fixture {
-    fn registry(&self) -> Arc<dyn InstanceRegistry> {
+    fn registry(&self) -> Arc<ah_vfs::application::host_instance_registry::HostInstanceRegistry> {
         self.registry.clone()
     }
     fn config(&self) -> InstanceConfig {

@@ -229,14 +229,8 @@ impl Generation {
     pub fn generation(&self) -> &str {
         &self.description.generation
     }
-    fn provisioner(&self) -> Result<Arc<dyn InstanceProvisioner>, DriverError> {
-        match self.driver.instances() {
-            InstanceManagement::HostManaged(p) => Ok(p),
-            _ => Err(unsupported()),
-        }
-    }
-    fn registry(&self) -> Result<Arc<dyn InstanceRegistry>, DriverError> {
-        self.driver.instances().registry()
+    fn provisioner(&self) -> Arc<dyn InstanceProvisioner> {
+        self.driver.provisioner()
     }
     pub async fn call(
         &self,
@@ -318,7 +312,7 @@ impl Generation {
                 config: Some(config),
             }) => {
                 let prepared = self
-                    .provisioner()?
+                    .provisioner()
                     .prepare(c::object(Some(config))?.into())
                     .await?;
                 Value::Prepared(p::Prepared {
@@ -331,7 +325,7 @@ impl Generation {
                 config: Some(config),
             }) => Value::Config(p::Config {
                 config: Some(
-                    self.provisioner()?
+                    self.provisioner()
                         .migrate_config(from_version, c::object(Some(config))?.into())
                         .await?
                         .into_object()
@@ -341,36 +335,11 @@ impl Generation {
             Op::TestConnection(p::Config {
                 config: Some(config),
             }) => {
-                self.provisioner()?
+                self.provisioner()
                     .test_connection(&c::object(Some(config))?.into())
                     .await?;
                 Value::Unit(p::Empty {})
             }
-            Op::GetInstance(p::InstanceId { id: raw }) => Value::MaybeInstance(p::MaybeInstance {
-                instance: self.registry()?.get(id(&raw)?).await?.map(c::instance),
-            }),
-            Op::ListInstances(p::ListInstances { after, limit }) => {
-                let mut q = InstanceQuery::new(c::limit(limit)?)?;
-                if let Some(after) = after {
-                    q = q.with_after(id(&after)?);
-                }
-                let page = self.registry()?.list(q).await?;
-                Value::Instances(p::Instances {
-                    instances: page.instances.into_iter().map(c::instance).collect(),
-                    next_after: page.next_after.map(|id| id.as_str().into()),
-                })
-            }
-            Op::CreateInstance(p::Config {
-                config: Some(config),
-            }) => Value::Instance(c::instance(
-                self.registry()?
-                    .create(c::object(Some(config))?.into())
-                    .await?,
-            )),
-            Op::RemoveInstance(p::InstanceId { id: raw }) => Value::Removed(p::Removed {
-                removed: self.registry()?.remove(id(&raw)?).await?
-                    == RemoveInstanceOutcome::Removed,
-            }),
             _ => return Err(unsupported()),
         };
         Ok(p::Reply::new(value))
@@ -388,16 +357,9 @@ impl Generation {
         }
         let p::Open { id: raw, config } = open;
         AssertUnwindSafe(async {
-            let host = self.description.ownership == p::Ownership::Host as i32;
-            if host != config.is_some() {
-                return Err(StorageError::new(StorageErrorKind::InvalidRequest).into());
-            }
-            let context = match config {
-                Some(config) => {
-                    OpenContext::host_managed(id(&raw)?, c::object(Some(config))?.into())
-                }
-                None => OpenContext::self_managed(id(&raw)?),
-            };
+            let config =
+                config.ok_or_else(|| StorageError::new(StorageErrorKind::InvalidRequest))?;
+            let context = OpenContext::new(id(&raw)?, c::object(Some(config))?.into());
             let capacity = self.reserve()?;
             let storage = self.driver.open(context).await?;
             validate_storage_capabilities(self.driver.info().capabilities(), storage.as_ref())?;

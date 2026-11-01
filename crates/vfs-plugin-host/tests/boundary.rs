@@ -113,7 +113,10 @@ async fn incompatible_versions_and_false_capabilities_are_rejected() -> Result {
     );
     let (driver, _) = peer(Fault::Capabilities).await?;
     let error = driver
-        .open(InstanceId::parse("instance")?.into())
+        .open(OpenContext::new(
+            InstanceId::parse("instance")?,
+            Default::default(),
+        ))
         .await
         .err()
         .ok_or("capability rejection")?;
@@ -126,7 +129,12 @@ async fn incompatible_versions_and_false_capabilities_are_rejected() -> Result {
 #[tokio::test]
 async fn malformed_commit_response_is_unknown_and_is_never_replayed() -> Result {
     let (driver, peer) = peer(Fault::Commit).await?;
-    let storage = driver.open(InstanceId::parse("instance")?.into()).await?;
+    let storage = driver
+        .open(OpenContext::new(
+            InstanceId::parse("instance")?,
+            Default::default(),
+        ))
+        .await?;
     let mut writer = storage
         .write_file(StorageWriteFileRequest::new(StoragePath::parse("file")?))
         .await?;
@@ -145,7 +153,12 @@ async fn malformed_commit_response_is_unknown_and_is_never_replayed() -> Result 
 #[tokio::test]
 async fn empty_non_eof_chunks_close_the_read_session() -> Result {
     let (driver, _) = peer(Fault::Reader).await?;
-    let storage = driver.open(InstanceId::parse("instance")?.into()).await?;
+    let storage = driver
+        .open(OpenContext::new(
+            InstanceId::parse("instance")?,
+            Default::default(),
+        ))
+        .await?;
     let mut reader = storage
         .read_file(StorageReadFileRequest::new(StoragePath::parse("file")?))
         .await?;

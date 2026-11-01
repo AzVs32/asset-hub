@@ -119,9 +119,7 @@ async fn protobuf_bootstrap_uses_the_shared_description_and_config_messages() ->
         vfs_plugin_protocol::PROTOCOL_MAJOR
     );
     driver.initialize(Default::default()).await?;
-    let InstanceManagement::HostManaged(provisioner) = driver.instances() else {
-        return Err("host ownership".into());
-    };
+    let provisioner = driver.provisioner();
     let config = InstanceConfig::from([
         ("endpoint".into(), "http://127.0.0.1:9".into()),
         ("bucket".into(), "fixture".into()),
@@ -155,9 +153,7 @@ async fn portable_component_describes_and_validates_without_network_permissions(
     assert_eq!(driver.info().key().as_str(), "s3");
     let mut catalog = DriverCatalog::new();
     catalog.register(driver.clone(), Default::default()).await?;
-    let InstanceManagement::HostManaged(provisioner) = driver.instances() else {
-        return Err("host ownership".into());
-    };
+    let provisioner = driver.provisioner();
     let error = provisioner
         .prepare(InstanceConfig::new())
         .await
@@ -188,9 +184,7 @@ async fn s3_component_runs_through_host_records_mounts_and_streams() -> Result {
             .connect("sqlite::memory:")
             .await?;
         let records = Arc::new(SqliteInstanceRecordRepository::from_pool(pool).await?);
-        let InstanceManagement::HostManaged(provisioner) = driver.instances() else {
-            return Err("host ownership".into());
-        };
+        let provisioner = driver.provisioner();
         let config = InstanceConfig::from([
             ("endpoint".into(), endpoint.clone().into()),
             ("bucket".into(), bucket.clone().into()),
@@ -200,13 +194,12 @@ async fn s3_component_runs_through_host_records_mounts_and_streams() -> Result {
         ]);
         provisioner.prepare(config.clone()).await?;
         provisioner.test_connection(&config).await?;
-        let runtime = Arc::new(
-            MountRuntime::new(
-                Arc::new(SqliteMountRepository::in_memory().await?),
-                Arc::new(catalog),
-            )
-            .with_host_instances(records.clone(), Some(Arc::new(common::Cipher::new()))),
-        );
+        let runtime = Arc::new(MountRuntime::new(
+            Arc::new(SqliteMountRepository::in_memory().await?),
+            Arc::new(catalog),
+            records.clone(),
+            Some(Arc::new(common::Cipher::new())),
+        ));
         let instances = InstanceService::new(runtime.clone());
         let instance = instances
             .create_instance(driver.info().key(), config.clone())
@@ -229,7 +222,7 @@ async fn s3_component_runs_through_host_records_mounts_and_streams() -> Result {
             .await?;
         let entries = EntryService::new(runtime);
         let storage = driver
-            .open(OpenContext::host_managed(
+            .open(OpenContext::new(
                 InstanceId::parse("s3-fixture")?,
                 config.clone(),
             ))
@@ -338,10 +331,7 @@ async fn s3_component_runs_through_host_records_mounts_and_streams() -> Result {
         let mut catalog = DriverCatalog::new();
         catalog.register(denied.clone(), Default::default()).await?;
         let error = denied
-            .open(OpenContext::host_managed(
-                InstanceId::parse("denied")?,
-                config,
-            ))
+            .open(OpenContext::new(InstanceId::parse("denied")?, config))
             .await
             .err()
             .ok_or("network must be denied")?;

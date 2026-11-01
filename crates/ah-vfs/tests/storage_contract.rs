@@ -107,10 +107,6 @@ struct TestDriver {
     open_failure: Option<StorageErrorKind>,
 }
 impl common::Backend for TestDriver {
-    fn registry(self: Arc<Self>) -> Arc<dyn ah_vfs::application::port::InstanceRegistry> {
-        common::static_registry(&["root"])
-    }
-
     fn info(&self) -> &DriverInfo {
         &self.info
     }
@@ -155,7 +151,11 @@ async fn fixture(
     )?;
     let drivers = Arc::new(drivers);
     let repository = Arc::new(SqliteMountRepository::in_memory().await?);
-    let runtime = Arc::new(MountRuntime::new(repository, drivers));
+    let runtime = Arc::new({
+        let drivers = drivers;
+        let records = common::Records::seeded(&drivers, &["root"])?;
+        MountRuntime::new(repository, drivers, records, None)
+    });
     MountService::new(runtime.clone())
         .initialize_root(DriverInstanceRef::new(key, InstanceId::parse("root")?))
         .await?;
@@ -371,10 +371,11 @@ async fn inconsistent_driver_capabilities_cannot_be_persisted_as_a_mount() -> Te
         })),
     )?;
     let repository = Arc::new(SqliteMountRepository::in_memory().await?);
-    let mounts = MountService::new(Arc::new(MountRuntime::new(
-        repository.clone(),
-        Arc::new(drivers),
-    )));
+    let mounts = MountService::new(Arc::new({
+        let drivers = Arc::new(drivers);
+        let records = common::Records::seeded(&drivers, &["root"])?;
+        MountRuntime::new(repository.clone(), drivers, records, None)
+    }));
     let error = mounts
         .mount(MountRequest {
             virtual_path: VirtualPath::root(),

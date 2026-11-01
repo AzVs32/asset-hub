@@ -42,10 +42,6 @@ fn unsupported<T: Send + 'static>() -> StorageFuture<'static, T> {
 }
 
 impl common::Backend for TestDriver {
-    fn registry(self: Arc<Self>) -> Arc<dyn ah_vfs::application::port::InstanceRegistry> {
-        common::static_registry(&["root", "leaf"])
-    }
-
     fn info(&self) -> &DriverInfo {
         &self.info
     }
@@ -161,7 +157,11 @@ async fn services(response: Response) -> TestResult<(EntryService, MountService)
     )?;
     let drivers = Arc::new(drivers);
     let repository = Arc::new(SqliteMountRepository::in_memory().await?);
-    let runtime = Arc::new(MountRuntime::new(repository, drivers));
+    let runtime = Arc::new({
+        let drivers = drivers;
+        let records = common::Records::seeded(&drivers, &["root", "leaf"])?;
+        MountRuntime::new(repository, drivers, records, None)
+    });
     let files = EntryService::new(runtime.clone());
     let mounts = MountService::new(runtime);
     mounts

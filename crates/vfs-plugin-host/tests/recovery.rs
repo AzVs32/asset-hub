@@ -148,7 +148,7 @@ async fn connect(peer: &Arc<Peer>) -> Result<Arc<PluginDriver>> {
 }
 async fn open(driver: &PluginDriver) -> Result<Arc<dyn Storage>> {
     Ok(driver
-        .open(OpenContext::host_managed(
+        .open(OpenContext::new(
             InstanceId::parse("instance")?,
             Default::default(),
         ))
@@ -185,9 +185,7 @@ async fn new_opens_share_recovery_and_old_resources_stay_stale() -> Result {
         let driver = driver.clone();
         let id = InstanceId::parse("instance")?;
         opens.push(tokio::spawn(async move {
-            driver
-                .open(OpenContext::host_managed(id, Default::default()))
-                .await
+            driver.open(OpenContext::new(id, Default::default())).await
         }));
     }
     for task in opens {

@@ -148,7 +148,6 @@ fn bad_response(mutates: bool) -> StorageError {
 pub struct PluginDriver {
     info: DriverInfo,
     remote: Arc<RemoteInstances>,
-    ownership: p::Ownership,
     negotiated: p::NegotiatedProtocol,
 }
 impl PluginDriver {
@@ -169,7 +168,6 @@ impl PluginDriver {
                     settings: None,
                 })),
             }),
-            ownership: description.ownership(),
             negotiated,
         })
     }
@@ -198,11 +196,8 @@ impl Driver for PluginDriver {
     fn info(&self) -> &DriverInfo {
         &self.info
     }
-    fn instances(&self) -> InstanceManagement {
-        match self.ownership {
-            p::Ownership::Host => InstanceManagement::HostManaged(self.remote.clone()),
-            _ => InstanceManagement::SelfManaged(self.remote.clone()),
-        }
+    fn provisioner(&self) -> Arc<dyn InstanceProvisioner> {
+        self.remote.clone()
     }
     fn initialize(&self, settings: DriverSettings) -> DriverFuture<'_, ()> {
         Box::pin(async move {
@@ -223,18 +218,12 @@ impl Driver for PluginDriver {
     }
     fn open(&self, context: OpenContext) -> DriverFuture<'_, Arc<dyn Storage>> {
         Box::pin(async move {
-            if (self.ownership == p::Ownership::Host) != context.config().is_some() {
-                return Err(convert::invalid());
-            }
             let mut attempt = 0;
             loop {
                 let runtime = self.remote.runtime().await?;
                 let request = p::Open {
                     id: context.instance_id().as_str().into(),
-                    config: context
-                        .config()
-                        .cloned()
-                        .map(|config| config.into_object().into()),
+                    config: Some(context.config().clone().into_object().into()),
                 };
                 let (runtime, storage) = if let Some(open) = runtime
                     .transport
@@ -402,100 +391,6 @@ impl InstanceProvisioner for RemoteInstances {
                     config: Some(config.clone().into_object().into()),
                 }))
                 .await
-        })
-    }
-}
-impl InstanceRegistry for RemoteInstances {
-    fn get(&self, id: InstanceId) -> DriverFuture<'_, Option<InstanceInfo>> {
-        Box::pin(async move {
-            match self
-                .value(Op::GetInstance(p::InstanceId {
-                    id: id.as_str().into(),
-                }))
-                .await?
-            {
-                Value::MaybeInstance(p::MaybeInstance { instance }) => {
-                    let result = instance.map(convert::decode_instance).transpose()?;
-                    if result.as_ref().is_some_and(|v| v.id != id) {
-                        return Err(convert::invalid());
-                    }
-                    Ok(result)
-                }
-                _ => Err(convert::invalid()),
-            }
-        })
-    }
-    fn list(&self, query: InstanceQuery) -> DriverFuture<'_, InstancePage> {
-        Box::pin(async move {
-            match self
-                .value(Op::ListInstances(p::ListInstances {
-                    after: query.after().map(|id| id.as_str().into()),
-                    limit: query.limit().get() as u32,
-                }))
-                .await?
-            {
-                Value::Instances(p::Instances {
-                    instances,
-                    next_after,
-                }) => {
-                    let instances = instances
-                        .into_iter()
-                        .map(convert::decode_instance)
-                        .collect::<Result<Vec<_>, _>>()?;
-                    if instances.len() > query.limit().get()
-                        || instances
-                            .windows(2)
-                            .any(|v| v[0].id.as_str() >= v[1].id.as_str())
-                        || instances.first().is_some_and(|v| {
-                            query.after().is_some_and(|a| v.id.as_str() <= a.as_str())
-                        })
-                        || next_after
-                            .as_deref()
-                            .is_some_and(|a| instances.last().is_none_or(|v| v.id.as_str() != a))
-                    {
-                        return Err(convert::invalid());
-                    }
-                    Ok(InstancePage {
-                        instances,
-                        next_after: next_after
-                            .map(|id| InstanceId::parse(&id).map_err(|_| convert::invalid()))
-                            .transpose()?,
-                    })
-                }
-                _ => Err(convert::invalid()),
-            }
-        })
-    }
-    fn create(&self, config: InstanceConfig) -> DriverFuture<'_, InstanceInfo> {
-        Box::pin(async move {
-            match self
-                .value(Op::CreateInstance(p::Config {
-                    config: Some(config.into_object().into()),
-                }))
-                .await?
-            {
-                Value::Instance(instance) => {
-                    convert::decode_instance(instance).map_err(|_| bad_response(true).into())
-                }
-                _ => Err(bad_response(true).into()),
-            }
-        })
-    }
-    fn remove(&self, id: InstanceId) -> DriverFuture<'_, RemoveInstanceOutcome> {
-        Box::pin(async move {
-            match self
-                .value(Op::RemoveInstance(p::InstanceId {
-                    id: id.as_str().into(),
-                }))
-                .await?
-            {
-                Value::Removed(p::Removed { removed }) => Ok(if removed {
-                    RemoveInstanceOutcome::Removed
-                } else {
-                    RemoveInstanceOutcome::AlreadyAbsent
-                }),
-                _ => Err(bad_response(true).into()),
-            }
         })
     }
 }

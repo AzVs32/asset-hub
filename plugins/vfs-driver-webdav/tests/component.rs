@@ -204,9 +204,7 @@ async fn protobuf_component_opens_writes_commits_reads_and_lists() -> Result {
         vfs_plugin_protocol::PROTOCOL_MAJOR
     );
     driver.initialize(Default::default()).await?;
-    let InstanceManagement::HostManaged(provisioner) = driver.instances() else {
-        return Err("ownership".into());
-    };
+    let provisioner = driver.provisioner();
     let config =
         InstanceConfig::from([("endpoint".into(), format!("{}/dav/", fixture.origin).into())]);
     let prepared = provisioner.prepare(config.clone()).await?;
@@ -219,10 +217,7 @@ async fn protobuf_component_opens_writes_commits_reads_and_lists() -> Result {
     );
     provisioner.test_connection(&config).await?;
     let storage = driver
-        .open(OpenContext::host_managed(
-            InstanceId::parse("fixture")?,
-            config,
-        ))
+        .open(OpenContext::new(InstanceId::parse("fixture")?, config))
         .await?;
     assert_eq!(storage.chunk_size().get(), 65536);
     assert!(!storage.capabilities().remove_entry);

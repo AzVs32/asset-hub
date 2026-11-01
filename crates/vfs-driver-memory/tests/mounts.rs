@@ -10,7 +10,7 @@ use ah_vfs::{
             WriteFileRequest,
         },
         error::EntryError,
-        port::{InstanceRegistry, MountRepository},
+        port::MountRepository,
         service::{EntryService, MountService},
     },
     domain::{
@@ -53,8 +53,12 @@ async fn fixture() -> TestResult<Fixture> {
     let mut catalog = DriverCatalog::new();
     ah_vfs::testing::register_driver(&mut catalog, driver.clone())?;
     let catalog = Arc::new(catalog);
-    let runtime =
-        Arc::new(MountRuntime::new(repository.clone(), catalog).with_host_instances(records, None));
+    let runtime = Arc::new(MountRuntime::new(
+        repository.clone(),
+        catalog,
+        records,
+        None,
+    ));
     let mounts = MountService::new(runtime.clone());
     let entries = EntryService::new(runtime);
     mounts
@@ -378,7 +382,7 @@ async fn root_initialization_and_enable_persist_configuration_without_opening_ba
     let mut catalog = DriverCatalog::new();
     ah_vfs::testing::register_driver(&mut catalog, driver)?;
     let catalog = Arc::new(catalog);
-    let runtime = Arc::new(MountRuntime::new(repository, catalog).with_host_instances(Arc::new(ah_vfs::infrastructure::instance_record_repository::SqliteInstanceRecordRepository::from_pool(pool().await?).await?), None));
+    let runtime = Arc::new(MountRuntime::new(repository, catalog, Arc::new(ah_vfs::infrastructure::instance_record_repository::SqliteInstanceRecordRepository::from_pool(pool().await?).await?), None));
     let mounts = MountService::new(runtime.clone());
     let entries = EntryService::new(runtime);
     let id = mounts

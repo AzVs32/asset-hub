@@ -17,7 +17,7 @@ use ah_vfs::{
 use ah_vfs::{
     application::{
         dto::*,
-        port::{Driver, InstanceRegistry, Storage},
+        port::{Driver, Storage},
     },
     domain::{DriverError, FileReadSupport, InstanceId, StorageErrorKind, StoragePath},
 };
@@ -70,7 +70,7 @@ async fn service(f: &Fixture) -> Result<EntryService, Box<dyn Error>> {
     let mut catalog = DriverCatalog::new();
     ah_vfs::testing::register_driver(&mut catalog, f.driver.clone())?;
     let catalog = Arc::new(catalog);
-    let runtime = Arc::new(MountRuntime::new(repository, catalog).with_host_instances(Arc::new(ah_vfs::infrastructure::instance_record_repository::SqliteInstanceRecordRepository::from_pool(f.pool.clone()).await?), None));
+    let runtime = Arc::new(MountRuntime::new(repository, catalog, Arc::new(ah_vfs::infrastructure::instance_record_repository::SqliteInstanceRecordRepository::from_pool(f.pool.clone()).await?), None));
     MountService::new(runtime.clone())
         .initialize_root(DriverInstanceRef::new(
             DriverKey::parse("local")?,

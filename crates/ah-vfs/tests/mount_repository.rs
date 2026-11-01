@@ -138,10 +138,6 @@ struct UnopenedDriver {
 }
 
 impl common::Backend for UnopenedDriver {
-    fn registry(self: Arc<Self>) -> Arc<dyn ah_vfs::application::port::InstanceRegistry> {
-        common::static_registry(&[])
-    }
-
     fn info(&self) -> &DriverInfo {
         &self.info
     }
@@ -213,7 +209,11 @@ fn ready<T>(future: impl Future<Output = T>) -> Result<T, Box<dyn std::error::Er
 #[test]
 fn initialization_creates_one_root_and_is_idempotent() -> TestResult {
     let repository = Arc::new(TestRepository::new(Vec::new()));
-    let service = MountService::new(Arc::new(MountRuntime::new(repository.clone(), catalog()?)));
+    let service = MountService::new(Arc::new({
+        let drivers = catalog()?;
+        let records = common::Records::seeded(&drivers, &[])?;
+        MountRuntime::new(repository.clone(), drivers, records, None)
+    }));
     let instance = reference("builtin.local", "42")?;
     let id = ready(service.initialize_root(instance.clone()))??;
     let root = ready(repository.get(id))??.ok_or("root missing")?;
@@ -240,7 +240,11 @@ fn existing_unordered_namespace_is_restored_without_writing_or_reenabling() -> T
     let child = mount("/data", "acme.s3", "99", true)?;
     let child_id = child.id();
     let repository = Arc::new(TestRepository::new(vec![child, root]));
-    let service = MountService::new(Arc::new(MountRuntime::new(repository.clone(), catalog()?)));
+    let service = MountService::new(Arc::new({
+        let drivers = catalog()?;
+        let records = common::Records::seeded(&drivers, &[])?;
+        MountRuntime::new(repository.clone(), drivers, records, None)
+    }));
     assert_eq!(
         ready(service.initialize_root(reference("unavailable.driver", "1")?))??,
         root_id
@@ -262,7 +266,11 @@ fn invalid_existing_data_is_not_replaced_with_a_new_root() -> TestResult {
     let orphan = mount("/data", "builtin.local", "42", true)?;
     let orphan_id = orphan.id();
     let repository = Arc::new(TestRepository::new(vec![orphan]));
-    let service = MountService::new(Arc::new(MountRuntime::new(repository.clone(), catalog()?)));
+    let service = MountService::new(Arc::new({
+        let drivers = catalog()?;
+        let records = common::Records::seeded(&drivers, &[])?;
+        MountRuntime::new(repository.clone(), drivers, records, None)
+    }));
     assert!(matches!(
         ready(service.initialize_root(reference("builtin.local", "1")?))?,
         Err(MountError::Table(MountTableError::RootRequired))
@@ -278,7 +286,11 @@ fn missing_parent_driver_policy_does_not_drop_persisted_mounts() -> TestResult {
         mount("/", "unavailable.driver", "42", true)?,
         mount("/data", "acme.s3", "99", true)?,
     ]));
-    let service = MountService::new(Arc::new(MountRuntime::new(repository.clone(), catalog()?)));
+    let service = MountService::new(Arc::new({
+        let drivers = catalog()?;
+        let records = common::Records::seeded(&drivers, &[])?;
+        MountRuntime::new(repository.clone(), drivers, records, None)
+    }));
     assert!(
         matches!(ready(service.initialize_root(reference("builtin.local", "1")?))?, Err(MountError::Table(MountTableError::PolicyUnavailable(key))) if key.as_str() == "unavailable.driver")
     );
@@ -290,7 +302,11 @@ fn missing_parent_driver_policy_does_not_drop_persisted_mounts() -> TestResult {
 #[test]
 fn new_root_requires_a_registered_driver() -> TestResult {
     let repository = Arc::new(TestRepository::new(Vec::new()));
-    let service = MountService::new(Arc::new(MountRuntime::new(repository.clone(), catalog()?)));
+    let service = MountService::new(Arc::new({
+        let drivers = catalog()?;
+        let records = common::Records::seeded(&drivers, &[])?;
+        MountRuntime::new(repository.clone(), drivers, records, None)
+    }));
     assert!(
         matches!(ready(service.initialize_root(reference("unavailable.driver", "42")?))?, Err(MountError::DriverNotRegistered(key)) if key.as_str() == "unavailable.driver")
     );
@@ -303,7 +319,11 @@ fn new_root_requires_a_registered_driver() -> TestResult {
 fn failed_initialization_keeps_namespace_empty_and_can_be_retried() -> TestResult {
     let repository = Arc::new(TestRepository::new(Vec::new()));
     repository.lock()?.fail_next_insert = true;
-    let service = MountService::new(Arc::new(MountRuntime::new(repository.clone(), catalog()?)));
+    let service = MountService::new(Arc::new({
+        let drivers = catalog()?;
+        let records = common::Records::seeded(&drivers, &[])?;
+        MountRuntime::new(repository.clone(), drivers, records, None)
+    }));
     let instance = reference("builtin.local", "42")?;
     assert!(matches!(
         ready(service.initialize_root(instance.clone()))?,

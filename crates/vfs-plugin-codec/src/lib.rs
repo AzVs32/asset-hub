@@ -233,10 +233,7 @@ pub fn describe(driver: &dyn Driver, generation: String) -> p::Description {
         version: info.version().to_string(),
         child_mounts: info.child_mount_policy() == ChildMountPolicy::Allow,
         capabilities: capabilities(info.capabilities()),
-        ownership: match driver.instances() {
-            InstanceManagement::HostManaged(_) => p::Ownership::Host as i32,
-            InstanceManagement::SelfManaged(_) => p::Ownership::Plugin as i32,
-        },
+        ownership: p::Ownership::Host as i32,
         settings_schema: info.settings_schema().cloned().map(Into::into),
         instance_schema: info.instance_config_schema().cloned().map(Into::into),
         config_version: info.instance_config_version().get(),

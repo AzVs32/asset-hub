@@ -2,7 +2,7 @@ mod common;
 use ah_vfs::{
     application::{
         dto::{InstanceConfig, InstanceQuery, RemoveInstanceOutcome},
-        port::{Driver, InstanceRegistry},
+        port::Driver,
     },
     domain::{DriverError, InstanceId, StorageErrorKind},
 };
@@ -162,11 +162,7 @@ async fn deletion_blocks_host_opens_and_retains_data_until_driver_is_dropped() -
 #[tokio::test]
 async fn prepare_rejects_missing_unknown_wrong_type_and_invalid_capacity() -> TestResult {
     let driver = MemoryDriver::new()?;
-    let ah_vfs::application::port::InstanceManagement::HostManaged(provisioner) =
-        driver.instances()
-    else {
-        return Err("ownership".into());
-    };
+    let provisioner = driver.provisioner();
     for config in [
         InstanceConfig::default(),
         InstanceConfig::from([("unknown".into(), true.into())]),

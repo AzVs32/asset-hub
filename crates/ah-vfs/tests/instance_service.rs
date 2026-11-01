@@ -7,9 +7,9 @@ use ah_vfs::{
     application::{
         driver_catalog::DriverCatalog,
         driver_info::DriverInfo,
-        dto::{InstanceInfo, InstancePage, InstanceQuery, MountFilter, RemoveInstanceOutcome},
+        dto::{InstanceQuery, MountFilter, RemoveInstanceOutcome},
         error::InstanceError,
-        port::{DriverFuture, MountRepository, Storage},
+        port::{DriverFuture, InstanceProvisioner, MountRepository, PreparedConfig, Storage},
         service::InstanceService,
     },
     domain::{
@@ -21,10 +21,9 @@ use ah_vfs::{
 use std::{
     collections::BTreeMap,
     error::Error,
-    io,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicUsize, Ordering},
     },
 };
 
@@ -33,16 +32,13 @@ type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 struct OpaqueDriver {
     info: DriverInfo,
     id: InstanceId,
-    present: AtomicBool,
-    removals: AtomicUsize,
     opens: AtomicUsize,
-    failure: Option<StorageErrorKind>,
     creation_supported: bool,
     creations: AtomicUsize,
 }
 
 impl common::Backend for OpaqueDriver {
-    fn registry(self: Arc<Self>) -> Arc<dyn ah_vfs::application::port::InstanceRegistry> {
+    fn provisioner(self: Arc<Self>) -> Arc<dyn InstanceProvisioner> {
         self
     }
 
@@ -57,18 +53,18 @@ impl common::Backend for OpaqueDriver {
         let id = context.instance_id().clone();
         self.opens.fetch_add(1, Ordering::SeqCst);
         Box::pin(async move {
-            if id != self.id || !self.present.load(Ordering::SeqCst) {
+            if id != self.id {
                 return Err(DriverError::InstanceNotFound(id));
             }
             Err(StorageError::new(StorageErrorKind::UnsupportedOperation).into())
         })
     }
 }
-impl ah_vfs::application::port::InstanceRegistry for OpaqueDriver {
-    fn create(
+impl InstanceProvisioner for OpaqueDriver {
+    fn prepare(
         &self,
         config: ah_vfs::application::dto::InstanceConfig,
-    ) -> DriverFuture<'_, ah_vfs::application::dto::InstanceInfo> {
+    ) -> DriverFuture<'_, PreparedConfig> {
         Box::pin(async move {
             use ah_vfs::application::dto::{
                 instance_config_string, validate_instance_config_fields,
@@ -80,78 +76,14 @@ impl ah_vfs::application::port::InstanceRegistry for OpaqueDriver {
             validate_instance_config_fields(&config, &["label", "password"])?;
             instance_config_string(&config, "label")?;
             instance_config_string(&config, "password")?;
-            if let Some(kind) = self.failure {
-                if kind == StorageErrorKind::OutcomeUnknown {
-                    self.present.store(true, Ordering::SeqCst);
-                }
-                return Err(StorageError::with_source(
-                    kind,
-                    io::Error::other("backend-private-token"),
-                )
-                .into());
-            }
-            self.present.store(true, Ordering::SeqCst);
-            Ok(InstanceInfo {
-                id: self.id.clone(),
-                details: BTreeMap::new(),
-            })
-        })
-    }
-    fn get(&self, id: InstanceId) -> DriverFuture<'_, Option<InstanceInfo>> {
-        Box::pin(async move {
-            Ok(
-                (self.present.load(Ordering::SeqCst) && id == self.id).then_some(InstanceInfo {
-                    id,
-                    details: BTreeMap::new(),
-                }),
-            )
-        })
-    }
-    fn list(&self, query: InstanceQuery) -> DriverFuture<'_, InstancePage> {
-        Box::pin(async move {
-            let visible = self.present.load(Ordering::SeqCst)
-                && query
-                    .after()
-                    .is_none_or(|after| after.as_str() < self.id.as_str());
-            Ok(InstancePage {
-                instances: if visible {
-                    vec![InstanceInfo {
-                        id: self.id.clone(),
-                        details: BTreeMap::new(),
-                    }]
-                } else {
-                    vec![]
-                },
-                next_after: None,
-            })
-        })
-    }
-    fn remove(&self, id: InstanceId) -> DriverFuture<'_, RemoveInstanceOutcome> {
-        Box::pin(async move {
-            self.removals.fetch_add(1, Ordering::SeqCst);
-            if let Some(kind) = self.failure {
-                if kind == StorageErrorKind::OutcomeUnknown {
-                    self.present.store(false, Ordering::SeqCst);
-                }
-                return Err(StorageError::with_source(
-                    kind,
-                    io::Error::other("backend-private-token"),
-                )
-                .into());
-            }
-            Ok(
-                if id == self.id && self.present.swap(false, Ordering::SeqCst) {
-                    RemoveInstanceOutcome::Removed
-                } else {
-                    RemoveInstanceOutcome::AlreadyAbsent
-                },
-            )
+            Ok(PreparedConfig::new(config, BTreeMap::new()))
         })
     }
 }
 
 struct Fixture {
     driver: Arc<OpaqueDriver>,
+    records: Arc<common::Records>,
     pool: sqlx::SqlitePool,
     repository: Arc<SqliteMountRepository>,
     service: InstanceService,
@@ -181,10 +113,7 @@ impl Fixture {
                 .capabilities(StorageCapabilities::default())
                 .build(),
             id: InstanceId::parse("instance")?,
-            present: AtomicBool::new(true),
-            removals: AtomicUsize::new(0),
             opens: AtomicUsize::new(0),
-            failure,
             creation_supported,
             creations: AtomicUsize::new(0),
         });
@@ -196,12 +125,19 @@ impl Fixture {
         let repository = Arc::new(SqliteMountRepository::from_pool(pool.clone()).await?);
         let mut catalog = DriverCatalog::new();
         common::register(&mut catalog, common::managed(driver.clone()))?;
+        let mut records = common::Records::seeded(&catalog, &["instance"])?;
+        Arc::get_mut(&mut records)
+            .ok_or("exclusive records")?
+            .failure = failure;
         let service = InstanceService::new(Arc::new(MountRuntime::new(
             repository.clone(),
             Arc::new(catalog),
+            records.clone(),
+            None,
         )));
         Ok(Self {
             driver,
+            records,
             pool,
             repository,
             service,
@@ -272,8 +208,8 @@ async fn enabled_disabled_and_root_references_all_block_removal() -> TestResult 
         assert!(
             matches!(error, InstanceError::InstanceInUse { instance, mounts } if instance == f.instance && mounts == vec![mount.id()])
         );
-        assert_eq!(f.driver.removals.load(Ordering::SeqCst), 0);
-        assert!(f.driver.present.load(Ordering::SeqCst));
+        assert_eq!(f.records.removals.load(Ordering::SeqCst), 0);
+        assert!(f.records.contains(&f.instance));
         assert_eq!(f.repository.list(MountFilter::default()).await?.len(), 1);
     }
     Ok(())
@@ -318,13 +254,13 @@ async fn all_aliases_are_reported_and_other_instance_identities_do_not_block() -
 #[tokio::test]
 async fn dangling_references_are_not_hidden_by_an_already_absent_driver_record() -> TestResult {
     let f = Fixture::new(None).await?;
-    f.driver.present.store(false, Ordering::SeqCst);
+    f.records.rows.lock().map_err(|_| "lock")?.clear();
     f.mount("/", f.instance.clone(), false).await?;
     assert!(matches!(
         f.service.remove_instance(&f.instance).await,
         Err(InstanceError::InstanceInUse { .. })
     ));
-    assert_eq!(f.driver.removals.load(Ordering::SeqCst), 0);
+    assert_eq!(f.records.removals.load(Ordering::SeqCst), 0);
     Ok(())
 }
 
@@ -336,8 +272,8 @@ async fn repository_failures_stop_removal_before_the_driver_is_called() -> TestR
         f.service.remove_instance(&f.instance).await,
         Err(InstanceError::Repository(_))
     ));
-    assert_eq!(f.driver.removals.load(Ordering::SeqCst), 0);
-    assert!(f.driver.present.load(Ordering::SeqCst));
+    assert_eq!(f.records.removals.load(Ordering::SeqCst), 0);
+    assert!(f.records.contains(&f.instance));
     Ok(())
 }
 
@@ -369,7 +305,7 @@ async fn unknown_drivers_fail_through_the_same_public_service() -> TestResult {
         f.service.remove_instance(&missing).await,
         Err(InstanceError::DriverNotRegistered(_))
     ));
-    assert_eq!(f.driver.removals.load(Ordering::SeqCst), 0);
+    assert_eq!(f.records.removals.load(Ordering::SeqCst), 0);
     Ok(())
 }
 
@@ -406,8 +342,8 @@ async fn creation_support_is_explicit_and_checked_before_invoking_the_driver() -
 #[tokio::test]
 async fn unknown_provider_creation_is_forwarded_without_host_field_or_type_knowledge() -> TestResult
 {
-    let f = Fixture::new_with_creation(None, true).await?;
-    f.driver.present.store(false, Ordering::SeqCst);
+    let mut f = Fixture::new_with_creation(None, true).await?;
+    f.records.rows.lock().map_err(|_| "lock")?.clear();
     let schema = f
         .service
         .instance_config_schema(f.instance.driver_key())?
@@ -417,6 +353,7 @@ async fn unknown_provider_creation_is_forwarded_without_host_field_or_type_knowl
         .service
         .create_instance(f.instance.driver_key(), opaque_config())
         .await?;
+    f.instance = DriverInstanceRef::new(f.instance.driver_key().clone(), created.id.clone());
     assert_eq!(
         f.service.get_instance(&f.instance).await?,
         Some(created.clone())
@@ -441,7 +378,7 @@ async fn creation_failures_are_not_retried_or_blindly_compensated() -> TestResul
         StorageErrorKind::OutcomeUnknown,
     ] {
         let f = Fixture::new_with_creation(Some(kind), true).await?;
-        f.driver.present.store(false, Ordering::SeqCst);
+        f.records.rows.lock().map_err(|_| "lock")?.clear();
         let error = f
             .service
             .create_instance(f.instance.driver_key(), opaque_config())
@@ -453,10 +390,14 @@ async fn creation_failures_are_not_retried_or_blindly_compensated() -> TestResul
         assert!(storage.source().is_some());
         assert!(!error.to_string().contains("backend-private-token"));
         assert_eq!(f.driver.creations.load(Ordering::SeqCst), 1);
-        assert_eq!(f.driver.removals.load(Ordering::SeqCst), 0);
+        assert_eq!(f.records.removals.load(Ordering::SeqCst), 0);
         assert_eq!(f.driver.opens.load(Ordering::SeqCst), 0);
         assert_eq!(
-            f.service.get_instance(&f.instance).await?.is_some(),
+            !f.service
+                .list_instances(f.instance.driver_key(), InstanceQuery::default())
+                .await?
+                .instances
+                .is_empty(),
             kind == StorageErrorKind::OutcomeUnknown
         );
     }
@@ -481,7 +422,7 @@ async fn unsupported_and_failed_removals_preserve_domain_categories_and_sources(
         assert_eq!(backend.kind(), kind);
         assert!(backend.source().is_some());
         assert!(!error.to_string().contains("backend-private-token"));
-        assert!(f.driver.present.load(Ordering::SeqCst));
+        assert!(f.records.contains(&f.instance));
     }
     Ok(())
 }

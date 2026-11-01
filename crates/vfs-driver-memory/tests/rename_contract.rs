@@ -1,4 +1,3 @@
-use ah_vfs::application::port::InstanceRegistry;
 mod common;
 
 use ah_vfs::{application::port::Driver, testing::assert_same_path_rename_contract};

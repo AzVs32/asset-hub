@@ -63,7 +63,7 @@ impl InstanceService {
         }
         Ok(self
             .runtime
-            .registry(driver.as_ref())?
+            .host_registry(driver.as_ref())
             .create(config)
             .await?)
     }
@@ -75,7 +75,7 @@ impl InstanceService {
     ) -> Result<Option<InstanceInfo>, InstanceError> {
         Ok(self
             .runtime
-            .registry(self.driver(instance.driver_key())?.as_ref())?
+            .host_registry(self.driver(instance.driver_key())?.as_ref())
             .get(instance.instance_id().clone())
             .await?)
     }
@@ -88,21 +88,20 @@ impl InstanceService {
     ) -> Result<InstancePage, InstanceError> {
         Ok(self
             .runtime
-            .registry(self.driver(driver_key)?.as_ref())?
+            .host_registry(self.driver(driver_key)?.as_ref())
             .list(query)
             .await?)
     }
 
-    /// Replace a host-managed instance's configuration. Immutable fields cannot
-    /// change; mount references permit mutable updates. Self-managed updates are
-    /// unsupported. Existing cache invalidation also covers errors/cancellation.
+    /// Replace instance configuration. Immutable fields cannot
+    /// change; mount references permit mutable updates. Existing cache invalidation also covers errors/cancellation.
     pub async fn update_instance(
         &self,
         instance: &DriverInstanceRef,
         config: InstanceConfig,
     ) -> Result<InstanceInfo, InstanceError> {
         let driver = self.driver(instance.driver_key())?;
-        let registry = self.runtime.host_registry(driver.as_ref())?;
+        let registry = self.runtime.host_registry(driver.as_ref());
         let _invalidation = self.runtime.changing_instance(instance.clone());
         Ok(registry
             .update(instance.instance_id().clone(), config)
@@ -134,7 +133,7 @@ impl InstanceService {
         let _invalidation = self.runtime.changing_instance(instance.clone());
         Ok(self
             .runtime
-            .registry(driver.as_ref())?
+            .host_registry(driver.as_ref())
             .remove(instance.instance_id().clone())
             .await?)
     }

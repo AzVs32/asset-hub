@@ -10,7 +10,7 @@ pub use storage_contract::{
 use crate::{
     application::{
         dto::{InstanceConfig, InstanceQuery, RemoveInstanceOutcome},
-        port::{DriverFuture, InstanceRegistry},
+        port::DriverFuture,
     },
     domain::{DriverError, InstanceId},
 };
@@ -18,7 +18,7 @@ use std::{error::Error, num::NonZeroUsize, sync::Arc};
 
 /// Isolated test fixture. Hooks affect its own records/database only.
 pub trait RegistryFixture: Send + Sync {
-    fn registry(&self) -> Arc<dyn InstanceRegistry>;
+    fn registry(&self) -> Arc<crate::application::host_instance_registry::HostInstanceRegistry>;
     fn config(&self) -> InstanceConfig;
     /// Make backend storage unavailable while retaining the record database.
     fn disable_storage(&self) -> DriverFuture<'_, ()>;

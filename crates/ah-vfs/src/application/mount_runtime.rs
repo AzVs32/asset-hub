@@ -41,64 +41,37 @@ pub struct MountRuntime {
     pub(crate) repository: Arc<dyn MountRepository>,
     pub(crate) drivers: Arc<DriverCatalog>,
     cache: Mutex<Cache>,
-    records: Option<Arc<dyn super::port::InstanceRecordRepository>>,
+    records: Arc<dyn super::port::InstanceRecordRepository>,
     cipher: Option<Arc<dyn super::port::SecretCipher>>,
 }
 
 impl MountRuntime {
-    pub fn new(repository: Arc<dyn MountRepository>, drivers: Arc<DriverCatalog>) -> Self {
-        Self {
-            repository,
-            drivers,
-            cache: Mutex::new(Cache::default()),
-            records: None,
-            cipher: None,
-        }
-    }
-
-    /// Configure host-owned record persistence and optional authenticated encryption.
-    /// Existing self-managed drivers do not depend on these resources.
-    pub fn with_host_instances(
-        mut self,
+    /// Host record persistence is required; encryption is optional for secret-free schemas.
+    pub fn new(
+        repository: Arc<dyn MountRepository>,
+        drivers: Arc<DriverCatalog>,
         records: Arc<dyn super::port::InstanceRecordRepository>,
         cipher: Option<Arc<dyn super::port::SecretCipher>>,
     ) -> Self {
-        self.records = Some(records);
-        self.cipher = cipher;
-        self
+        Self {
+            repository,
+            drivers,
+            records,
+            cipher,
+            cache: Mutex::new(Cache::default()),
+        }
     }
     pub(crate) fn host_registry(
         &self,
         driver: &dyn Driver,
-    ) -> Result<super::host_instance_registry::HostInstanceRegistry, DriverError> {
-        let super::port::InstanceManagement::HostManaged(provisioner) = driver.instances() else {
-            return Err(crate::domain::StorageError::new(
-                crate::domain::StorageErrorKind::UnsupportedOperation,
-            )
-            .into());
-        };
-        let records = self.records.clone().ok_or_else(|| {
-            crate::domain::StorageError::new(crate::domain::StorageErrorKind::UnsupportedOperation)
-        })?;
-        Ok(super::host_instance_registry::HostInstanceRegistry::new(
+    ) -> super::host_instance_registry::HostInstanceRegistry {
+        super::host_instance_registry::HostInstanceRegistry::new(
             driver.info(),
-            provisioner,
-            records,
+            driver.provisioner(),
+            self.records.clone(),
             self.cipher.clone(),
-        ))
+        )
     }
-    pub(crate) fn registry(
-        &self,
-        driver: &dyn Driver,
-    ) -> Result<Arc<dyn super::port::InstanceRegistry>, DriverError> {
-        match driver.instances() {
-            super::port::InstanceManagement::SelfManaged(registry) => Ok(registry),
-            super::port::InstanceManagement::HostManaged(_) => {
-                Ok(Arc::new(self.host_registry(driver)?))
-            }
-        }
-    }
-
     fn cache(&self) -> MutexGuard<'_, Cache> {
         // Cache edits contain no user code. Recover this disposable state if a
         // thread was interrupted while holding its short, synchronous lock.
@@ -168,16 +141,10 @@ impl MountRuntime {
         };
         drop(retired);
         cell.get_or_try_init(|| async {
-            let context = match driver.instances() {
-                super::port::InstanceManagement::SelfManaged(_) => {
-                    super::port::OpenContext::self_managed(instance.instance_id().clone())
-                }
-                super::port::InstanceManagement::HostManaged(_) => {
-                    self.host_registry(driver)?
-                        .open_context(instance.instance_id().clone())
-                        .await?
-                }
-            };
+            let context = self
+                .host_registry(driver)
+                .open_context(instance.instance_id().clone())
+                .await?;
             let storage = driver.open(context).await?;
             validate_storage_capabilities(driver.info().capabilities(), storage.as_ref())?;
             Ok(storage)

@@ -9,9 +9,7 @@ type Result = std::result::Result<(), Box<dyn std::error::Error>>;
 #[tokio::test]
 async fn prepare_validates_fields_and_normalizes_root() -> Result {
     let driver = WindowsLocalDriver::new()?;
-    let InstanceManagement::HostManaged(provisioner) = driver.instances() else {
-        return Err("ownership".into());
-    };
+    let provisioner = driver.provisioner();
     for config in [
         InstanceConfig::default(),
         InstanceConfig::from([("root_path".into(), 42.into())]),

@@ -246,14 +246,13 @@ impl Driver for HostedDriver {
     fn info(&self) -> &DriverInfo {
         &self.info
     }
-    fn instances(&self) -> InstanceManagement {
-        InstanceManagement::HostManaged(self.provisioner.clone())
+    fn provisioner(&self) -> Arc<dyn InstanceProvisioner> {
+        self.provisioner.clone()
     }
     fn open(&self, context: OpenContext) -> DriverFuture<'_, Arc<dyn Storage>> {
         Box::pin(async move {
             self.opens.fetch_add(1, Ordering::SeqCst);
-            *self.seen.lock().map_err(|_| invalid())? =
-                Some(context.config().ok_or_else(invalid)?.clone());
+            *self.seen.lock().map_err(|_| invalid())? = Some(context.config().clone());
             Ok(Arc::new(EmptyStorage) as Arc<dyn Storage>)
         })
     }
@@ -282,10 +281,12 @@ impl Fixture {
         catalog.register(driver.clone(), Default::default()).await?;
         let mounts = Arc::new(SqliteMountRepository::from_pool(pool.clone()).await?);
         let cipher = cipher.then(|| Arc::new(TestCipher::new()) as Arc<dyn SecretCipher>);
-        let runtime = Arc::new(
-            MountRuntime::new(mounts, Arc::new(catalog))
-                .with_host_instances(records.clone(), cipher.clone()),
-        );
+        let runtime = Arc::new(MountRuntime::new(
+            mounts,
+            Arc::new(catalog),
+            records.clone(),
+            cipher.clone(),
+        ));
         Ok(Self {
             pool,
             records,
@@ -458,7 +459,7 @@ async fn schema_migration_is_per_instance_and_independent_of_record_revision() -
     );
     provisioner.fail_migration.store(false, Ordering::SeqCst);
     let context = registry.open_context(second.id.clone()).await?;
-    assert!(context.config().is_some());
+    assert!(!context.config().is_empty());
     assert_eq!(
         f.records
             .get(f.reference(second.id))
@@ -510,7 +511,7 @@ async fn cancelled_async_migration_leaves_records_unchanged_and_can_be_retried()
 
     provisioner.release.notify_one();
     let context = registry.open_context(created.id).await?;
-    assert_eq!(context.config().ok_or("config")?["label"], "migrated");
+    assert_eq!(context.config()["label"], "migrated");
     let migrated = f.records.get(reference).await?.ok_or("record")?;
     assert_eq!(migrated.config_version(), 2);
     assert_eq!(migrated.revision(), before.revision() + 1);
@@ -638,7 +639,7 @@ async fn async_migration_cannot_overwrite_an_update_made_while_waiting() -> Test
 
 #[cfg(feature = "testing")]
 impl ah_vfs::testing::RegistryFixture for Fixture {
-    fn registry(&self) -> Arc<dyn InstanceRegistry> {
+    fn registry(&self) -> Arc<ah_vfs::application::host_instance_registry::HostInstanceRegistry> {
         Arc::new(HostInstanceRegistry::new(
             &self.driver.info,
             self.driver.provisioner.clone(),
@@ -667,7 +668,7 @@ impl ah_vfs::testing::RegistryFixture for Fixture {
 }
 #[cfg(feature = "testing")]
 #[tokio::test]
-async fn host_registry_passes_the_same_registry_contract_as_self_managed() -> TestResult {
+async fn host_registry_passes_cursor_corruption_and_failure_contract() -> TestResult {
     let fixture = Fixture::new(true, true).await?;
     ah_vfs::testing::assert_registry_contract(&fixture).await?;
     assert_eq!(fixture.driver.opens.load(Ordering::SeqCst), 0);
@@ -746,7 +747,7 @@ async fn ambiguous_secret_annotations_are_rejected_before_persistence() -> TestR
 fn secret_bearing_value_objects_and_errors_have_redacted_debug() -> TestResult {
     let raw = config();
     let id = InstanceId::parse("test-instance")?;
-    let context = OpenContext::host_managed(id, raw.clone());
+    let context = OpenContext::new(id, raw.clone());
     let prepared = PreparedConfig::new(
         raw,
         BTreeMap::from([("private".into(), "password-value-private".into())]),
@@ -833,11 +834,7 @@ async fn host_records_reopen_from_disk_without_plaintext_secrets() -> TestResult
         Some(created.clone())
     );
     let context = reopened.open_context(created.id).await?;
-    assert!(
-        context
-            .config()
-            .is_some_and(|config| config.get("password") == Some(&"password-value-private".into()))
-    );
+    assert!(context.config().get("password") == Some(&"password-value-private".into()));
     Ok(())
 }
 
@@ -1103,7 +1100,7 @@ async fn a_whole_config_secret_round_trips_through_the_persisted_envelope() -> T
         Some(created.clone())
     );
     let context = registry.open_context(created.id).await?;
-    let restored = context.config().ok_or("decrypted config")?;
+    let restored = context.config();
     assert_eq!(restored["label"], "first");
     assert_eq!(restored["password"], "password-value-private");
     assert_eq!(restored["auth"], config()["auth"]);

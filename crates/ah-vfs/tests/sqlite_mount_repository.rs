@@ -371,10 +371,6 @@ async fn schema_rejects_invalid_enabled_values_and_file_open_errors_are_returned
 struct UnopenedDriver(DriverInfo);
 
 impl common::Backend for UnopenedDriver {
-    fn registry(self: Arc<Self>) -> Arc<dyn ah_vfs::application::port::InstanceRegistry> {
-        common::static_registry(&[])
-    }
-
     fn info(&self) -> &DriverInfo {
         &self.0
     }
@@ -405,10 +401,11 @@ async fn mount_service_initializes_and_restores_using_real_sqlite() -> TestResul
                     .build(),
             ))),
         )?;
-        let service = MountService::new(Arc::new(MountRuntime::new(
-            repository.clone(),
-            Arc::new(catalog),
-        )));
+        let service = MountService::new(Arc::new({
+            let drivers = Arc::new(catalog);
+            let records = common::Records::seeded(&drivers, &[])?;
+            MountRuntime::new(repository.clone(), drivers, records, None)
+        }));
         let reference = DriverInstanceRef::new(
             DriverKey::parse("builtin.local")?,
             InstanceId::parse("root")?,

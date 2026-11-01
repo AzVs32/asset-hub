@@ -3,8 +3,8 @@
 mod envelope;
 pub(super) mod record;
 
-use envelope::Envelope;
 use super::schema::{has_annotation, validate_annotations};
+use envelope::Envelope;
 
 use super::{
     driver_info::DriverInfo,
@@ -13,8 +13,8 @@ use super::{
         RemoveInstanceOutcome,
     },
     port::{
-        DriverFuture, InstanceProvisioner, InstanceRecord, InstanceRecordRepository,
-        InstanceRegistry, OpenContext, PreparedConfig, SecretCipher, SecretContext,
+        DriverFuture, InstanceProvisioner, InstanceRecord, InstanceRecordRepository, OpenContext,
+        PreparedConfig, SecretCipher, SecretContext,
     },
 };
 use crate::domain::{
@@ -331,7 +331,7 @@ impl HostInstanceRegistry {
     /// Cancellation during persistence can have an unknown write outcome.
     pub async fn open_context(&self, id: InstanceId) -> Result<OpenContext, DriverError> {
         let (_, config) = self.load_current(&id).await?;
-        Ok(OpenContext::host_managed(id, config))
+        Ok(OpenContext::new(id, config))
     }
 
     /// Keep decrypted parameters and the revision used for writes in one snapshot.
@@ -373,8 +373,8 @@ impl HostInstanceRegistry {
         Ok((record, config))
     }
 }
-impl InstanceRegistry for HostInstanceRegistry {
-    fn create(&self, config: InstanceConfig) -> DriverFuture<'_, InstanceInfo> {
+impl HostInstanceRegistry {
+    pub fn create(&self, config: InstanceConfig) -> DriverFuture<'_, InstanceInfo> {
         Box::pin(async move {
             self.schema()?;
             let id = new_instance_id()?;
@@ -394,7 +394,7 @@ impl InstanceRegistry for HostInstanceRegistry {
             Ok(info)
         })
     }
-    fn get(&self, id: InstanceId) -> DriverFuture<'_, Option<InstanceInfo>> {
+    pub fn get(&self, id: InstanceId) -> DriverFuture<'_, Option<InstanceInfo>> {
         Box::pin(async move {
             Ok(self
                 .repository
@@ -404,7 +404,7 @@ impl InstanceRegistry for HostInstanceRegistry {
                 .map(Self::info))
         })
     }
-    fn list(&self, query: InstanceQuery) -> DriverFuture<'_, InstancePage> {
+    pub fn list(&self, query: InstanceQuery) -> DriverFuture<'_, InstancePage> {
         Box::pin(async move {
             let page = self.repository.list(self.key.clone(), query).await?;
             Ok(InstancePage {
@@ -413,7 +413,7 @@ impl InstanceRegistry for HostInstanceRegistry {
             })
         })
     }
-    fn remove(&self, id: InstanceId) -> DriverFuture<'_, RemoveInstanceOutcome> {
+    pub fn remove(&self, id: InstanceId) -> DriverFuture<'_, RemoveInstanceOutcome> {
         self.repository.remove(self.reference(id))
     }
 }

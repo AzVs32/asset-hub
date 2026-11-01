@@ -2,7 +2,7 @@
 mod common;
 
 use ah_vfs::application::dto::{InstanceQuery, RemoveInstanceOutcome};
-use ah_vfs::application::port::{Driver, InstanceRegistry};
+use ah_vfs::application::port::Driver;
 use ah_vfs::domain::{DriverError, InstanceId};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use std::error::Error;

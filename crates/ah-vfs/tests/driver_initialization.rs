@@ -23,30 +23,13 @@ fn unsupported() -> DriverError {
 struct Records {
     config: Mutex<Option<InstanceConfig>>,
 }
-impl InstanceRegistry for Records {
-    fn create(&self, config: InstanceConfig) -> DriverFuture<'_, InstanceInfo> {
+impl InstanceProvisioner for Records {
+    fn prepare(&self, config: InstanceConfig) -> DriverFuture<'_, PreparedConfig> {
         Box::pin(async move {
             assert!(!config.contains_key("database_url"));
-            *self.config.lock().map_err(|_| unsupported())? = Some(config);
-            Ok(InstanceInfo {
-                id: InstanceId::parse("demo").map_err(|_| unsupported())?,
-                details: BTreeMap::new(),
-            })
+            *self.config.lock().map_err(|_| unsupported())? = Some(config.clone());
+            Ok(PreparedConfig::new(config, BTreeMap::new()))
         })
-    }
-    fn get(&self, _: InstanceId) -> DriverFuture<'_, Option<InstanceInfo>> {
-        Box::pin(async { Ok(None) })
-    }
-    fn list(&self, _: InstanceQuery) -> DriverFuture<'_, InstancePage> {
-        Box::pin(async {
-            Ok(InstancePage {
-                instances: vec![],
-                next_after: None,
-            })
-        })
-    }
-    fn remove(&self, _: InstanceId) -> DriverFuture<'_, RemoveInstanceOutcome> {
-        Box::pin(async { Ok(RemoveInstanceOutcome::AlreadyAbsent) })
     }
 }
 struct Plugin {
@@ -62,7 +45,7 @@ impl Plugin {
         Ok(Self {
             info: DriverInfo::builder()
                 .key(DriverKey::parse("own.database")?)
-                .name("Self-managed plugin".into())
+                .name("Host-managed plugin".into())
                 .version(semver::Version::new(1, 0, 0))
                 .child_mount_policy(ChildMountPolicy::Allow)
                 .capabilities(StorageCapabilities::default())
@@ -87,8 +70,8 @@ impl Driver for Plugin {
     fn info(&self) -> &DriverInfo {
         &self.info
     }
-    fn instances(&self) -> InstanceManagement {
-        InstanceManagement::SelfManaged(self.registry.clone())
+    fn provisioner(&self) -> Arc<dyn InstanceProvisioner> {
+        self.registry.clone()
     }
     fn initialize(&self, settings: DriverSettings) -> DriverFuture<'_, ()> {
         Box::pin(async move {
@@ -133,14 +116,18 @@ async fn settings_initialize_before_registration_and_stay_separate_from_instance
     catalog.register(driver.clone(), settings()).await?;
     assert_eq!(driver.calls.load(Ordering::SeqCst), 1);
     let selected = catalog.get(driver.info.key()).ok_or("driver")?;
-    selected
-        .instances()
-        .registry()?
-        .create(InstanceConfig::from([(
-            "label".into(),
-            "per-instance".into(),
-        )]))
-        .await?;
+    let records=Arc::new(ah_vfs::infrastructure::instance_record_repository::SqliteInstanceRecordRepository::from_pool(sqlx::sqlite::SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await?).await?);
+    ah_vfs::application::host_instance_registry::HostInstanceRegistry::new(
+        selected.info(),
+        selected.provisioner(),
+        records,
+        None,
+    )
+    .create(InstanceConfig::from([(
+        "label".into(),
+        "per-instance".into(),
+    )]))
+    .await?;
     assert!(
         driver
             .registry
@@ -226,8 +213,8 @@ impl Driver for DefaultPlugin {
     fn info(&self) -> &DriverInfo {
         &self.info
     }
-    fn instances(&self) -> InstanceManagement {
-        InstanceManagement::SelfManaged(self.registry.clone())
+    fn provisioner(&self) -> Arc<dyn InstanceProvisioner> {
+        self.registry.clone()
     }
     fn open(&self, _: OpenContext) -> DriverFuture<'_, Arc<dyn Storage>> {
         Box::pin(async { Err(unsupported()) })
