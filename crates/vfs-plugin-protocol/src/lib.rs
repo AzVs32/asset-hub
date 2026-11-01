@@ -27,7 +27,6 @@ pub const PROTOCOL_FEATURES: &[&str] = &[
     "instances.host-managed.v1",
     "instances.self-managed.v1",
     "streams.chunked.v1",
-    "resources.leases.v1",
     INSTANCE_SCHEMA_PROFILE,
 ];
 
@@ -130,6 +129,20 @@ impl Reply {
     }
 }
 impl Operation {
+    /// Operations scoped to a live Storage rather than the driver control RPC.
+    pub fn is_resource(&self) -> bool {
+        matches!(
+            self,
+            Self::Storage(_)
+                | Self::Read(_)
+                | Self::Write(_)
+                | Self::ReaderNext(_)
+                | Self::WriterChunk(_)
+                | Self::Commit(_)
+                | Self::Abort(_)
+                | Self::Release(_)
+        )
+    }
     /// Check the result alternative before exposing a transport response.
     pub fn accepts_reply(&self, value: &Value) -> bool {
         match self {
@@ -138,8 +151,7 @@ impl Operation {
             | Self::TestConnection(_)
             | Self::WriterChunk(_)
             | Self::Abort(_)
-            | Self::Release(_)
-            | Self::Renew(_) => matches!(value, Value::Unit(_)),
+            | Self::Release(_) => matches!(value, Value::Unit(_)),
             Self::Prepare(_) => matches!(value, Value::Prepared(_)),
             Self::Migrate(_) => matches!(value, Value::Config(_)),
             Self::GetInstance(_) => matches!(value, Value::MaybeInstance(_)),

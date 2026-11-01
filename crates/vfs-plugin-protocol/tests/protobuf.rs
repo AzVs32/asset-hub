@@ -209,7 +209,7 @@ fn exported_descriptor_contains_the_complete_language_independent_contract() -> 
         .find(|m| m.name.as_deref() == Some("Request"))
         .ok_or("Request")?;
     assert_eq!(request.oneof_decl.len(), 1);
-    assert_eq!(request.field.len(), 21);
+    assert_eq!(request.field.len(), 20);
     assert!(
         request
             .field

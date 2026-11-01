@@ -2,10 +2,17 @@
 use ah_vfs::domain::{DriverError, StorageError, StorageErrorKind, new_instance_id};
 use std::{
     collections::HashMap,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    sync::{
+        Arc, RwLock,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tokio::sync::Mutex;
-use vfs_plugin_host::{Transport, TransportFuture, convert as c};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
+use vfs_plugin_host::{
+    ConnectFuture, OpenFuture, OpenedStorage, Transport, TransportFactory, TransportFuture,
+    convert as c,
+};
 use vfs_plugin_protocol::{self as p, Operation as Op, Value};
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Config, Engine, Store, StoreLimits, StoreLimitsBuilder};
@@ -18,6 +25,10 @@ wasmtime::component::bindgen!({
 });
 use assethub::vfs::http;
 use assethub::vfs::{clock, random};
+
+/// Bound concurrent guest memory independently from the 128 MiB per-Store limit.
+pub const MAX_STORAGE_INSTANCES: usize = 16;
+const MAX_CONTROL_INSTANCES: usize = 4;
 
 /// Permissions for the stable service.v1 profile. HTTP, clock and bounded random
 /// services are always linked; only explicitly granted HTTP origins are reachable.
@@ -132,7 +143,6 @@ impl random::Host for Host {
 }
 struct Resource {
     kind: p::ResourceKind,
-    touched: Instant,
 }
 struct State {
     store: Store<Host>,
@@ -143,6 +153,7 @@ struct State {
     poisoned: bool,
     faulted: bool,
     generation: String,
+    _capacity: OwnedSemaphorePermit,
 }
 impl State {
     fn resource(&mut self, kind: p::ResourceKind, handle: u64) -> Result<(), DriverError> {
@@ -153,7 +164,6 @@ impl State {
         if resource.kind != kind {
             return Err(c::invalid());
         }
-        resource.touched = Instant::now();
         Ok(())
     }
     fn invalid_reply(&mut self, op: &Op) -> DriverError {
@@ -197,23 +207,6 @@ impl State {
         Ok(reply)
     }
     async fn execute(&mut self, op: Op, data: Vec<u8>) -> Result<p::Reply, DriverError> {
-        let expired: Vec<_> = self
-            .resources
-            .iter()
-            .filter(|(_, resource)| resource.touched.elapsed() > Duration::from_secs(300))
-            .map(|(handle, resource)| (*handle, resource.kind))
-            .collect();
-        for (handle, kind) in expired {
-            self.resources.remove(&handle);
-            self.invoke(
-                &Op::Release(p::ResourceRef {
-                    kind: kind as i32,
-                    handle,
-                }),
-                vec![],
-            )
-            .await?;
-        }
         if let Op::Initialize(p::Initialize {
             settings: Some(settings),
         }) = &op
@@ -255,20 +248,6 @@ impl State {
                     return Err(c::invalid());
                 }
                 self.resources.remove(handle);
-            }
-            Op::Renew(p::Renew { resources }) => {
-                if resources.len() > p::MAX_RESOURCES {
-                    return Err(c::invalid());
-                }
-                for resource in resources {
-                    if self
-                        .resources
-                        .get(&resource.handle)
-                        .is_some_and(|entry| entry.kind as i32 == resource.kind)
-                    {
-                        self.resource(resource.kind(), resource.handle)?;
-                    }
-                }
             }
             _ => {}
         }
@@ -323,13 +302,7 @@ impl State {
                     return Err(self.invalid_reply(&op));
                 }
                 self.next = *handle;
-                self.resources.insert(
-                    *handle,
-                    Resource {
-                        kind,
-                        touched: Instant::now(),
-                    },
-                );
+                self.resources.insert(*handle, Resource { kind });
             }
             _ => {}
         }
@@ -343,19 +316,29 @@ impl State {
     }
 }
 
+/// Compiled plugin factory. Each connection and Storage owns a separate Store.
 pub struct WasmTransport {
-    state: Mutex<State>,
-    factory: InstanceFactory,
-    ticker: tokio::task::JoinHandle<()>,
+    factory: Arc<InstanceFactory>,
 }
 struct InstanceFactory {
-    engine: Engine,
-    component: Component,
+    pre: PluginPre<Host>,
     client: reqwest::Client,
     origins: Vec<String>,
+    controls: Arc<Semaphore>,
+    storages: Arc<Semaphore>,
+    ticker: tokio::task::JoinHandle<()>,
+}
+impl Drop for InstanceFactory {
+    fn drop(&mut self) {
+        self.ticker.abort();
+    }
 }
 impl InstanceFactory {
-    async fn instantiate(&self) -> Result<State, DriverError> {
+    async fn instantiate(&self, capacity: &Arc<Semaphore>) -> Result<Instance, DriverError> {
+        let capacity = capacity
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| StorageError::new(StorageErrorKind::CapacityExceeded))?;
         let host = Host {
             client: self.client.clone(),
             origins: self.origins.clone(),
@@ -365,45 +348,272 @@ impl InstanceFactory {
                 .memories(4)
                 .build(),
         };
-        let mut store = Store::new(&self.engine, host);
+        let mut store = Store::new(self.pre.engine(), host);
         store.limiter(|host| &mut host.limits);
         store.set_fuel(2_000_000_000).map_err(|_| c::invalid())?;
         store
             .fuel_async_yield_interval(Some(100_000))
             .map_err(|_| c::invalid())?;
         store.set_epoch_deadline(3000);
-        let mut linker = Linker::new(&self.engine);
-        Plugin::add_to_linker::<Host, wasmtime::component::HasSelf<Host>>(&mut linker, |host| host)
-            .map_err(|_| c::invalid())?;
-        linker
-            .instantiate_pre(&self.component)
-            .map_err(|_| StorageError::new(StorageErrorKind::UnsupportedOperation))?;
         let bindings = tokio::time::timeout(
             Duration::from_secs(30),
-            Plugin::instantiate_async(&mut store, &self.component, &linker),
+            self.pre.instantiate_async(&mut store),
         )
         .await
         .map_err(|_| StorageError::new(StorageErrorKind::TimedOut))?
         .map_err(|error| {
             StorageError::with_source(StorageErrorKind::InvalidData, std::io::Error::other(error))
         })?;
-        Ok(State {
-            store,
-            bindings,
-            resources: HashMap::new(),
-            next: 0,
-            initialized: None,
-            poisoned: false,
-            faulted: false,
-            generation: new_instance_id()?.as_str().into(),
+        Ok(Instance {
+            state: Mutex::new(Some(State {
+                store,
+                bindings,
+                resources: HashMap::new(),
+                next: 0,
+                initialized: None,
+                poisoned: false,
+                faulted: false,
+                generation: new_instance_id()?.as_str().into(),
+                _capacity: capacity,
+            })),
+            disconnected: Arc::new(AtomicBool::new(false)),
         })
     }
 }
-impl Drop for WasmTransport {
+struct Instance {
+    state: Mutex<Option<State>>,
+    disconnected: Arc<AtomicBool>,
+}
+struct Execution<'a> {
+    state: tokio::sync::MutexGuard<'a, Option<State>>,
+    disconnected: &'a AtomicBool,
+}
+impl Drop for Execution<'_> {
     fn drop(&mut self) {
-        self.ticker.abort();
+        if self.state.as_ref().is_some_and(|state| state.poisoned) {
+            // Drop the failed Store and its capacity immediately, even if stale
+            // proxies are retained. A cancelled future follows the same path.
+            self.state.take();
+            self.disconnected.store(true, Ordering::Release);
+        }
     }
 }
+impl Instance {
+    async fn call(&self, generation: &str, op: Op, data: Vec<u8>) -> Result<p::Reply, DriverError> {
+        if data.len() > p::MAX_DATA_BYTES {
+            return Err(StorageError::new(StorageErrorKind::TooLarge).into());
+        }
+        let state = tokio::time::timeout(Duration::from_secs(30), self.state.lock())
+            .await
+            .map_err(|_| StorageError::new(StorageErrorKind::TimedOut))?;
+        let mut execution = Execution {
+            state,
+            disconnected: &self.disconnected,
+        };
+        let state = execution
+            .state
+            .as_mut()
+            .ok_or_else(|| StorageError::new(StorageErrorKind::StaleHandle))?;
+        if state.poisoned || (!matches!(op, Op::Describe(_)) && generation != state.generation) {
+            return Err(StorageError::new(StorageErrorKind::StaleHandle).into());
+        }
+        state
+            .store
+            .set_fuel(2_000_000_000)
+            .map_err(|_| c::invalid())?;
+        state.store.set_epoch_deadline(3000);
+        state.poisoned = true;
+        let mutates = op.mutates();
+        match tokio::time::timeout(Duration::from_secs(30), state.execute(op, data)).await {
+            Ok(Err(error))
+                if error
+                    .storage_error()
+                    .is_some_and(|error| error.kind() == StorageErrorKind::StaleHandle) =>
+            {
+                if mutates {
+                    Err(StorageError::new(StorageErrorKind::OutcomeUnknown).into())
+                } else {
+                    Err(error)
+                }
+            }
+            Ok(result) => {
+                state.poisoned = state.faulted
+                    || result
+                        .as_ref()
+                        .err()
+                        .and_then(DriverError::storage_error)
+                        .is_some_and(|error| {
+                            matches!(
+                                error.kind(),
+                                StorageErrorKind::TimedOut
+                                    | StorageErrorKind::Unavailable
+                                    | StorageErrorKind::OutcomeUnknown
+                            )
+                        });
+                result
+            }
+            Err(_) => Err(StorageError::new(if mutates {
+                StorageErrorKind::OutcomeUnknown
+            } else {
+                StorageErrorKind::TimedOut
+            })
+            .into()),
+        }
+    }
+}
+
+#[derive(Default)]
+struct Bootstrap {
+    description: Option<p::Description>,
+    settings: Option<p::Object>,
+}
+struct ControlTransport {
+    instance: Instance,
+    bootstrap: RwLock<Bootstrap>,
+    factory: Arc<InstanceFactory>,
+}
+impl TransportFactory for WasmTransport {
+    fn connect(self: Arc<Self>) -> ConnectFuture {
+        Box::pin(async move {
+            let instance = self.factory.instantiate(&self.factory.controls).await?;
+            Ok(Arc::new(ControlTransport {
+                instance,
+                bootstrap: RwLock::new(Bootstrap::default()),
+                factory: self.factory.clone(),
+            }) as Arc<dyn Transport>)
+        })
+    }
+}
+impl Transport for ControlTransport {
+    fn host_capabilities(&self) -> &[&str] {
+        p::WASM_HOST_CAPABILITIES
+    }
+    fn disconnected(&self) -> Option<Arc<AtomicBool>> {
+        Some(self.instance.disconnected.clone())
+    }
+    fn call<'a>(&'a self, generation: &'a str, op: Op, data: Vec<u8>) -> TransportFuture<'a> {
+        Box::pin(async move {
+            if op.is_resource() || matches!(op, Op::Open(_)) {
+                return Err(StorageError::new(StorageErrorKind::InvalidRequest).into());
+            }
+            let settings = match &op {
+                Op::Initialize(p::Initialize { settings }) => settings.clone(),
+                _ => None,
+            };
+            let reply = self.instance.call(generation, op, data).await?;
+            let mut bootstrap = self
+                .bootstrap
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(Value::Description(description)) = &reply.result {
+                bootstrap.description = Some(*description.clone());
+            }
+            if let Some(settings) = settings {
+                bootstrap.settings = Some(settings);
+            }
+            Ok(reply)
+        })
+    }
+    fn open_session<'a>(&'a self, generation: &'a str, open: p::Open) -> Option<OpenFuture<'a>> {
+        Some(Box::pin(async move {
+            if self.instance.disconnected.load(Ordering::Acquire) {
+                return Err(StorageError::new(StorageErrorKind::StaleHandle).into());
+            }
+            // This snapshot never waits for execution in the control Store.
+            let (mut expected, settings) = {
+                let bootstrap = self
+                    .bootstrap
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let description = bootstrap
+                    .description
+                    .clone()
+                    .ok_or_else(|| StorageError::new(StorageErrorKind::Unavailable))?;
+                if description.generation != generation {
+                    return Err(StorageError::new(StorageErrorKind::StaleHandle).into());
+                }
+                (
+                    description,
+                    bootstrap
+                        .settings
+                        .clone()
+                        .ok_or_else(|| StorageError::new(StorageErrorKind::Unavailable))?,
+                )
+            };
+            let instance = self.factory.instantiate(&self.factory.storages).await?;
+            let Value::Description(description) = instance
+                .call("", Op::Describe(p::Empty {}), vec![])
+                .await?
+                .into_value()
+                .map_err(|_| c::invalid())?
+            else {
+                return Err(c::invalid());
+            };
+            let mut description = *description;
+            let generation = description.generation.clone();
+            expected.generation.clear();
+            description.generation.clear();
+            if expected != description {
+                return Err(c::invalid());
+            }
+            instance
+                .call(
+                    &generation,
+                    Op::Initialize(p::Initialize {
+                        settings: Some(settings),
+                    }),
+                    vec![],
+                )
+                .await?;
+            let Value::Storage(storage) = instance
+                .call(&generation, Op::Open(open), vec![])
+                .await
+                .map_err(|error| {
+                    // A fresh storage Store can fail without invalidating the
+                    // control instance or its cached bootstrap information.
+                    if error
+                        .storage_error()
+                        .is_some_and(|error| error.kind() == StorageErrorKind::StaleHandle)
+                    {
+                        StorageError::new(StorageErrorKind::Unavailable).into()
+                    } else {
+                        error
+                    }
+                })?
+                .into_value()
+                .map_err(|_| c::invalid())?
+            else {
+                return Err(c::invalid());
+            };
+            Ok(OpenedStorage {
+                storage,
+                generation,
+                transport: Arc::new(StorageTransport {
+                    instance,
+                    _factory: self.factory.clone(),
+                }),
+            })
+        }))
+    }
+}
+struct StorageTransport {
+    instance: Instance,
+    _factory: Arc<InstanceFactory>,
+}
+impl Transport for StorageTransport {
+    fn disconnected(&self) -> Option<Arc<AtomicBool>> {
+        Some(self.instance.disconnected.clone())
+    }
+    fn call<'a>(&'a self, generation: &'a str, op: Op, data: Vec<u8>) -> TransportFuture<'a> {
+        Box::pin(async move {
+            if !op.is_resource() {
+                return Err(StorageError::new(StorageErrorKind::InvalidRequest).into());
+            }
+            self.instance.call(generation, op, data).await
+        })
+    }
+}
+
 impl WasmTransport {
     /// Accept a portable component or a core module carrying WIT metadata. Only
     /// explicitly allowed origins can be contacted; no filesystem/WASI is linked.
@@ -464,15 +674,15 @@ impl WasmTransport {
             .timeout(Duration::from_secs(20))
             .build()
             .map_err(|_| c::invalid())?;
-        let factory = InstanceFactory {
-            engine: engine.clone(),
-            component,
-            client,
-            origins,
-        };
-        // Resolve every import before running component initialization. New
-        // backends use this fixed profile rather than backend-specific linking.
-        let state = factory.instantiate().await?;
+        let mut linker = Linker::new(&engine);
+        Plugin::add_to_linker::<Host, wasmtime::component::HasSelf<Host>>(&mut linker, |host| host)
+            .map_err(|_| c::invalid())?;
+        let pre = PluginPre::new(
+            linker
+                .instantiate_pre(&component)
+                .map_err(|_| StorageError::new(StorageErrorKind::UnsupportedOperation))?,
+        )
+        .map_err(|_| c::invalid())?;
         let ticker = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_millis(10));
             loop {
@@ -481,68 +691,14 @@ impl WasmTransport {
             }
         });
         Ok(Self {
-            state: Mutex::new(state),
-            factory,
-            ticker,
-        })
-    }
-}
-impl Transport for WasmTransport {
-    fn host_capabilities(&self) -> &[&str] {
-        p::WASM_HOST_CAPABILITIES
-    }
-    fn call<'a>(&'a self, generation: &'a str, op: Op, data: Vec<u8>) -> TransportFuture<'a> {
-        Box::pin(async move {
-            if data.len() > p::MAX_DATA_BYTES {
-                return Err(StorageError::new(StorageErrorKind::TooLarge).into());
-            }
-            let mut state = tokio::time::timeout(Duration::from_secs(30), self.state.lock())
-                .await
-                .map_err(|_| StorageError::new(StorageErrorKind::TimedOut))?;
-            if state.poisoned && matches!(op, Op::Describe(p::Empty {})) {
-                // Discard the entire failed store. Guest resources and execution
-                // state are never reused, including after caller cancellation.
-                *state = self.factory.instantiate().await?;
-            }
-            if state.poisoned
-                || (!matches!(op, Op::Describe(p::Empty {})) && generation != state.generation)
-            {
-                return Err(StorageError::new(StorageErrorKind::StaleHandle).into());
-            }
-            state
-                .store
-                .set_fuel(2_000_000_000)
-                .map_err(|_| c::invalid())?;
-            state.store.set_epoch_deadline(3000);
-            // Cancellation leaves the generation poisoned instead of reusing a store
-            // whose guest-side session progress may be unknown.
-            state.poisoned = true;
-            let mutates = op.mutates();
-            let outcome =
-                tokio::time::timeout(Duration::from_secs(30), state.execute(op, data)).await;
-            match outcome {
-                Ok(Err(error))
-                    if error
-                        .storage_error()
-                        .is_some_and(|e| e.kind() == StorageErrorKind::StaleHandle) =>
-                {
-                    if mutates {
-                        Err(StorageError::new(StorageErrorKind::OutcomeUnknown).into())
-                    } else {
-                        Err(error)
-                    }
-                }
-                Ok(result) => {
-                    state.poisoned = state.faulted;
-                    result
-                }
-                Err(_) => Err(StorageError::new(if mutates {
-                    StorageErrorKind::OutcomeUnknown
-                } else {
-                    StorageErrorKind::TimedOut
-                })
-                .into()),
-            }
+            factory: Arc::new(InstanceFactory {
+                pre,
+                client,
+                origins,
+                controls: Arc::new(Semaphore::new(MAX_CONTROL_INSTANCES)),
+                storages: Arc::new(Semaphore::new(MAX_STORAGE_INSTANCES)),
+                ticker,
+            }),
         })
     }
 }

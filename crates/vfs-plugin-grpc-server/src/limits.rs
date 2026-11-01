@@ -29,14 +29,16 @@ pub struct ServerLimits {
     /// Includes protobuf decoding and the full lifetime of a streaming response.
     pub max_concurrent_requests: usize,
     pub max_streams_per_connection: u32,
-    /// Counts RPC admission and every streamed read/write frame, including failures.
+    /// Counts RPC admission and every Storage session frame, including failures.
     pub operations_per_second: u32,
     pub operation_burst: u32,
     /// Maximum time for one backend operation or TLS handshake.
     pub request_timeout: Duration,
-    /// Maximum idle wait for a stream frame or downstream consumer.
+    /// Maximum wait for the opening frame or a blocked downstream consumer.
+    /// Established sessions have no idle expiry.
     pub stream_idle_timeout: Duration,
-    pub max_connection_age: Duration,
+    /// Optional forced connection rotation; disabled for long-lived sessions.
+    pub max_connection_age: Option<Duration>,
 }
 impl Default for ServerLimits {
     fn default() -> Self {
@@ -48,7 +50,7 @@ impl Default for ServerLimits {
             operation_burst: 2000,
             request_timeout: Duration::from_secs(30),
             stream_idle_timeout: Duration::from_secs(30),
-            max_connection_age: Duration::from_secs(600),
+            max_connection_age: None,
         }
     }
 }
@@ -63,7 +65,7 @@ impl ServerLimits {
             || self.operation_burst == 0
             || self.request_timeout.is_zero()
             || self.stream_idle_timeout.is_zero()
-            || self.max_connection_age.is_zero()
+            || self.max_connection_age.is_some_and(|age| age.is_zero())
         {
             return Err(c::invalid());
         }
@@ -117,11 +119,11 @@ impl Admission {
     }
 }
 
-pub(crate) struct ReadStream {
+pub(crate) struct SessionStream {
     pub inner: ReceiverStream<Result<wire::Reply, Status>>,
     pub permit: Option<Arc<OwnedSemaphorePermit>>,
 }
-impl Stream for ReadStream {
+impl Stream for SessionStream {
     type Item = Result<wire::Reply, Status>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let result = Pin::new(&mut self.inner).poll_next(cx);
@@ -226,13 +228,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn read_responses_hold_concurrency_until_dropped_or_consumed() -> Result {
+    async fn session_responses_hold_concurrency_until_dropped_or_consumed() -> Result {
         let admission = Admission::new(ServerLimits {
             max_concurrent_requests: 1,
             ..Default::default()
         })?;
         let (tx, rx) = tokio::sync::mpsc::channel(1);
-        let stream = ReadStream {
+        let stream = SessionStream {
             inner: ReceiverStream::new(rx),
             permit: Some(Arc::new(admission.acquire()?)),
         };
@@ -240,7 +242,7 @@ mod tests {
         drop(stream);
         let permit = admission.acquire()?;
         let (tx2, rx2) = tokio::sync::mpsc::channel(1);
-        let mut stream = ReadStream {
+        let mut stream = SessionStream {
             inner: ReceiverStream::new(rx2),
             permit: Some(Arc::new(permit)),
         };
@@ -287,7 +289,7 @@ mod tests {
                 ..Default::default()
             },
             ServerLimits {
-                max_connection_age: Duration::ZERO,
+                max_connection_age: Some(Duration::ZERO),
                 ..Default::default()
             },
         ] {

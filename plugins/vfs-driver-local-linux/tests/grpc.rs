@@ -147,8 +147,14 @@ async fn process_restart_rejects_old_resources_without_replaying_commit() -> Res
     pending.write_chunk(b"unpublished").await?;
     process.child.kill()?;
     process.child.wait()?;
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while !storage.is_stale() {
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+    })
+    .await?;
     let error = pending.commit().await.err().ok_or("commit must fail")?;
-    assert_eq!(error.kind(), StorageErrorKind::OutcomeUnknown);
+    assert_eq!(error.kind(), StorageErrorKind::StaleHandle);
     assert_eq!(
         pending.commit().await.err().ok_or("terminal")?.kind(),
         StorageErrorKind::SessionClosed

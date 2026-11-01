@@ -15,6 +15,9 @@ pub mod api {
     }
     pub trait Guest {
         fn describe() -> p::Description;
+        /// Called once per control/Storage Store. Self-managed instance records
+        /// must use shared backend state rather than Store-local globals.
+        /// Initialization must support independent Stores running concurrently.
         fn initialize(settings: p::Object) -> Result<()>;
         fn prepare(config: p::Object) -> Result<p::Prepared>;
         fn migrate(from_version: u32, config: p::Object) -> Result<p::Object>;
@@ -317,18 +320,6 @@ impl<D: api::Guest> Dispatcher<D> {
                     return Err(p::Failure::new(p::FailureCode::InvalidRequest));
                 }
                 self.resources.remove(&handle);
-                Value::Unit(p::Empty {})
-            }
-            Op::Renew(p::Renew { resources }) => {
-                if resources.len() > p::MAX_RESOURCES
-                    || resources.iter().any(|r| {
-                        self.resources
-                            .get(&r.handle)
-                            .is_some_and(|v| v.kind() as i32 != r.kind)
-                    })
-                {
-                    return Err(p::Failure::new(p::FailureCode::InvalidRequest));
-                }
                 Value::Unit(p::Empty {})
             }
             _ => return Err(p::Failure::new(p::FailureCode::InvalidRequest)),

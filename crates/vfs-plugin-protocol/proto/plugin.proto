@@ -77,7 +77,7 @@ message Failure {
 message Description {
   uint32 major = 1; uint32 minor = 2; // This schema uses major 2, minor 0.
   // Feature identifiers: instances.host-managed.v1, instances.self-managed.v1,
-  // streams.chunked.v1, resources.leases.v1, assethub.config.annotations.v1.
+  // streams.chunked.v1, assethub.config.annotations.v1.
   // Unknown required identifiers reject loading; optional ones grant no support.
   repeated string required_features = 3;
   repeated string features = 4;
@@ -135,20 +135,20 @@ message StorageCall {
   }
 }
 // File-byte range. Absent length reads through EOF; present zero is an empty
-// range. Streams retain their original generation and are never reopened/replayed.
+// range. Resources retain their original Store/session and are never reopened/replayed.
 message Read { uint64 handle = 1; string path = 2; uint64 offset = 3; optional uint64 length = 4; }
 // Writes stage a whole file until Commit. Unsupported atomic/mode requests fail
 // before staging. Commit and Abort are terminal, including errors/cancellation;
 // uncertain mutation results are OUTCOME_UNKNOWN and must never be replayed.
 message Write { uint64 handle = 1; string path = 2; bool replace = 3; bool atomic = 4; }
-// Allocated handles are nonzero and strictly increase across all resource kinds
-// within a generation, including after release; they are never rebound.
+// Allocated handles are nonzero and strictly increase across resource kinds
+// within a WASM Store or gRPC session, including after release; never rebound.
 message Handle { uint64 handle = 1; }
-message Renew { repeated ResourceRef resources = 1; }
 message Request {
-  // Required for all operations except Describe. The RPC dispatcher chooses its
-  // generation. A WASM host chooses one per Store and supplies it to the guest,
-  // including Describe.
+  // Required for gRPC driver calls except Describe and for the Session opening
+  // Open handshake. Later session frames leave this empty: the stream owns
+  // their resources. A WASM host chooses one per Store and supplies it on every
+  // call, including Describe.
   string generation = 1;
   // Binary bytes for WriterChunk/SetXattr only; all other requests leave it empty.
   bytes data = 2;
@@ -159,7 +159,7 @@ message Request {
     Config create_instance = 17; InstanceId remove_instance = 18;
     Open open = 19; StorageCall storage = 20; Read read = 21; Write write = 22;
     Handle reader_next = 23; Handle writer_chunk = 24; Handle commit = 25;
-    Handle abort = 26; ResourceRef release = 27; Renew renew = 28;
+    Handle abort = 26; ResourceRef release = 27;
   }
 }
 message Prepared { Object config = 1; Object details = 2; }
@@ -184,9 +184,17 @@ message Reply {
   }
 }
 service Plugin {
+  // Driver metadata, initialization, configuration and instance management only.
+  // Storage resources can only be opened and used through Session.
   rpc Invoke(Request) returns (Reply);
-  // Read accepts ReaderNext only; Write accepts WriterChunk only, for one handle
-  // and generation throughout the stream. Frames preserve binary data/backpressure.
-  rpc Read(Request) returns (stream Reply);
-  rpc Write(stream Request) returns (Reply);
+  // One duplex stream owns one Storage and every child reader/writer. Its first
+  // request is Open. Subsequent requests are Storage/Read/Write/ReaderNext/
+  // WriterChunk/Commit/Abort/Release, with exactly one ordered Reply per request.
+  // Requests are serialized within a session; separate Storage sessions run
+  // independently. Cancelling an in-flight request closes its entire session,
+  // since an uncertain response must never be matched to another request.
+  // Closing either direction releases all resources and aborts staged writes.
+  // Idle sessions remain valid without heartbeat, renewal or expiry scanning.
+  // Resource IDs are local to the stream (Storage is 1) and never reused there.
+  rpc Session(stream Request) returns (stream Reply);
 }

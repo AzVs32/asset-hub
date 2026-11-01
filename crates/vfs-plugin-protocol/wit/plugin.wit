@@ -20,6 +20,8 @@ interface driver {
     // Request and Reply are protobuf assethub.vfs.v2 messages from plugin.proto.
     // The host owns the Store generation. Guest resource IDs are scoped to it.
     // Both directions use one envelope, including metadata, errors and commit.
+    // Each Storage runs in a fresh Store after describe and initialize. Instance
+    // records managed by a guest must live in shared backend state.
     call: func(request: list<u8>) -> list<u8>;
 }
 

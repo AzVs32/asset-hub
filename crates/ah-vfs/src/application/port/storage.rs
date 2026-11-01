@@ -102,7 +102,7 @@ pub trait StorageFileReader: Send {
 /// cleanup is best effort. Cancellation during commit may leave publication's
 /// outcome unknown; callers must inspect the target before retrying.
 /// Once execution starts, cancellation of commit or abort makes the local session
-/// terminal. A remote resource is tied to its original runtime generation and must not be
+/// terminal. A remote resource is tied to its original Store/session and must not be
 /// transparently reopened after a crash. See the port module's plugin contract.
 pub trait StorageFileWriter: Send {
     /// Accept bytes for the pending write, including a final partial chunk.

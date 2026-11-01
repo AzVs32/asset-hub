@@ -9,7 +9,7 @@ use ah_vfs::{
     domain::{DriverError, StorageError, StorageErrorKind},
 };
 use dispatch::Dispatcher;
-use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
+use std::{future::Future, pin::Pin, sync::Arc};
 use tokio::{
     net::TcpListener,
     sync::{OwnedSemaphorePermit, mpsc},
@@ -18,9 +18,9 @@ use tokio_stream::{Stream, wrappers::ReceiverStream};
 use tonic::{Request, Response, Status, transport::Server};
 use vfs_plugin_codec as c;
 pub use vfs_plugin_grpc_wire as wire;
-use vfs_plugin_protocol::{self as p, Operation as Op, Value};
+use vfs_plugin_protocol::{self as p, Operation as Op};
 
-type ReadStream = Pin<Box<dyn Stream<Item = Result<wire::Reply, Status>> + Send>>;
+type SessionStream = Pin<Box<dyn Stream<Item = Result<wire::Reply, Status>> + Send>>;
 pub type GrpcService = tonic::service::interceptor::InterceptedService<
     wire::plugin_server::PluginServer<PluginService>,
     AdmissionInterceptor,
@@ -90,130 +90,156 @@ impl wire::plugin_server::Plugin for PluginService {
         request: Request<wire::Request>,
     ) -> Result<Response<wire::Reply>, Status> {
         let _permit = self.admit(&request)?;
-        let (generation, op, data) = self.decode(request.into_inner())?;
+        let (generation, operation, data) = self.decode(request.into_inner())?;
+        if operation.is_resource() || matches!(operation, Op::Open(_)) {
+            return Err(Status::invalid_argument(
+                "Storage requires a Session stream",
+            ));
+        }
         Ok(Response::new(encode(
             tokio::time::timeout(
                 self.admission.limits.request_timeout,
-                self.dispatcher.call(&generation, op, data),
+                self.dispatcher.call(&generation, operation, data),
             )
             .await
             .map_err(|_| Status::deadline_exceeded("plugin operation timed out"))?,
         )?))
     }
-    type ReadStream = ReadStream;
-    async fn read(
+    type SessionStream = SessionStream;
+    async fn session(
         &self,
-        request: Request<wire::Request>,
-    ) -> Result<Response<Self::ReadStream>, Status> {
+        request: Request<tonic::Streaming<wire::Request>>,
+    ) -> Result<Response<Self::SessionStream>, Status> {
         let permit = self.admit(&request)?;
-        let (generation, op, data) = self.decode(request.into_inner())?;
-        let Op::ReaderNext(p::Handle { handle }) = op else {
-            return Err(Status::invalid_argument("expected reader operation"));
+        let mut incoming = request.into_inner();
+        let first = tokio::time::timeout(
+            self.admission.limits.stream_idle_timeout,
+            incoming.message(),
+        )
+        .await
+        .map_err(|_| Status::deadline_exceeded("session opening timed out"))??
+        .ok_or_else(|| Status::invalid_argument("missing Open"))?;
+        let (generation, operation, data) = self.decode(first)?;
+        let Op::Open(open) = operation else {
+            return Err(Status::invalid_argument("expected Open"));
         };
         if !data.is_empty() {
-            return Err(Status::invalid_argument("unexpected reader data"));
+            return Err(Status::invalid_argument("unexpected Open data"));
         }
-        let dispatcher = self.dispatcher.clone();
-        let admission = self.admission.clone();
-        let task_permit = permit.clone();
+        let opened = tokio::time::timeout(
+            self.admission.limits.request_timeout,
+            self.dispatcher.open_session(&generation, open),
+        )
+        .await
+        .map_err(|_| Status::deadline_exceeded("session opening timed out"))?;
         let (tx, rx) = mpsc::channel(1);
+        let service = self.clone();
+        let task_permit = permit.clone();
         tokio::spawn(async move {
             let _permit = task_permit;
+            let session = match opened {
+                Ok(session) => session,
+                Err(error) => {
+                    let _ = service.send(&tx, encode(Err(error))).await;
+                    return;
+                }
+            };
+            let mut retired = session.retired();
+            if *retired.borrow() {
+                return;
+            }
+            if !service.send(&tx, encode(Ok(session.opened()))).await {
+                return;
+            }
+            let (requests, mut frames) = mpsc::channel(1);
+            let (closed, mut disconnected) = tokio::sync::watch::channel(false);
+            // Observe request half-close even while a backend call is pending.
+            // The bounded queue applies backpressure to malicious pipelining.
+            let _incoming = AbortOnDrop(tokio::spawn(async move {
+                while let Ok(Some(frame)) = incoming.message().await {
+                    if requests.send(frame).await.is_err() {
+                        break;
+                    }
+                }
+                closed.send_replace(true);
+            }));
             loop {
-                if tx.is_closed() {
+                let frame = tokio::select! {
+                    ()=tx.closed()=>break,
+                    _=retired.changed()=>break,
+                    _=disconnected.changed()=>break,
+                    frame=frames.recv()=>match frame {Some(frame)=>frame,None=>break},
+                };
+                if let Err(error) = service.admission.operation() {
+                    let _ = service.send(&tx, Err(error)).await;
                     break;
                 }
-                if let Err(error) = admission.operation() {
-                    let _ = tokio::time::timeout(
-                        admission.limits.stream_idle_timeout,
-                        tx.send(Err(error)),
-                    )
-                    .await;
+                let (generation, operation, data) = match service.decode(frame) {
+                    Ok(frame) => frame,
+                    Err(error) => {
+                        let _ = service.send(&tx, Err(error)).await;
+                        break;
+                    }
+                };
+                if !generation.is_empty() || !operation.is_resource() {
+                    let _ = service
+                        .send(
+                            &tx,
+                            Err(Status::invalid_argument(
+                                "expected Storage session operation",
+                            )),
+                        )
+                        .await;
                     break;
                 }
+                let mutates = operation.mutates();
                 let result = tokio::select! {
                     ()=tx.closed()=>break,
-                    result=tokio::time::timeout(admission.limits.request_timeout, dispatcher.call(&generation,Op::ReaderNext(p::Handle {handle}),vec![]))=>
-                        result.unwrap_or_else(|_| Err(StorageError::new(StorageErrorKind::TimedOut).into())),
+                    _=retired.changed()=>break,
+                    _=disconnected.changed()=>break,
+                    result=tokio::time::timeout(service.admission.limits.request_timeout,session.call(operation,data))=>
+                        result.unwrap_or_else(|_|Err(StorageError::new(if mutates {StorageErrorKind::OutcomeUnknown}else {StorageErrorKind::TimedOut}).into())),
                 };
-                let done = !matches!(
-                    &result,
-                    Ok(p::Reply {
-                        result: Some(Value::Chunk(p::Chunk { eof: false })),
-                        ..
-                    })
-                );
-                if !matches!(
-                    tokio::time::timeout(
-                        admission.limits.stream_idle_timeout,
-                        tx.send(encode(result))
-                    )
-                    .await,
-                    Ok(Ok(()))
-                ) || done
-                {
+                let broken = result
+                    .as_ref()
+                    .err()
+                    .and_then(DriverError::storage_error)
+                    .is_some_and(|error| {
+                        matches!(
+                            error.kind(),
+                            StorageErrorKind::OutcomeUnknown
+                                | StorageErrorKind::StaleHandle
+                                | StorageErrorKind::Unavailable
+                                | StorageErrorKind::TimedOut
+                        )
+                    });
+                if !service.send(&tx, encode(result)).await || broken {
                     break;
                 }
             }
-            let _ = tokio::time::timeout(
-                admission.limits.request_timeout,
-                dispatcher.call(
-                    &generation,
-                    Op::Release(p::ResourceRef {
-                        kind: p::ResourceKind::Reader as i32,
-                        handle,
-                    }),
-                    vec![],
-                ),
-            )
-            .await;
+            // Dropping Session drops its entire resource table. Uncommitted
+            // writers are aborted by their backend RAII, never committed here.
         });
-        Ok(Response::new(Box::pin(limits::ReadStream {
+        Ok(Response::new(Box::pin(limits::SessionStream {
             inner: ReceiverStream::new(rx),
             permit: Some(permit),
         })))
     }
-    async fn write(
+}
+impl PluginService {
+    async fn send(
         &self,
-        request: Request<tonic::Streaming<wire::Request>>,
-    ) -> Result<Response<wire::Reply>, Status> {
-        let _permit = self.admit(&request)?;
-        let mut stream = request.into_inner();
-        let mut identity = None;
-        while let Some(frame) =
-            tokio::time::timeout(self.admission.limits.stream_idle_timeout, stream.message())
-                .await
-                .map_err(|_| Status::deadline_exceeded("plugin stream idle timeout"))??
-        {
-            self.admission.operation()?;
-            let (generation, op, data) = self.decode(frame)?;
-            let Op::WriterChunk(p::Handle { handle }) = op else {
-                return Err(Status::invalid_argument("expected writer operation"));
-            };
-            if identity
-                .as_ref()
-                .is_some_and(|previous| previous != &(generation.clone(), handle))
-            {
-                return Err(Status::invalid_argument("mixed writer resources"));
-            }
-            identity = Some((generation.clone(), handle));
-            if let Err(error) = tokio::time::timeout(
-                self.admission.limits.request_timeout,
-                self.dispatcher
-                    .call(&generation, Op::WriterChunk(p::Handle { handle }), data),
-            )
-            .await
-            .map_err(|_| Status::deadline_exceeded("plugin operation timed out"))?
-            {
-                return Ok(Response::new(encode(Err(error))?));
-            }
-        }
-        if identity.is_none() {
-            return Err(Status::invalid_argument("empty writer stream"));
-        }
-        Ok(Response::new(encode(Ok(p::Reply::unit()))?))
+        tx: &mpsc::Sender<Result<wire::Reply, Status>>,
+        reply: Result<wire::Reply, Status>,
+    ) -> bool {
+        let valid = reply.is_ok();
+        matches!(
+            tokio::time::timeout(self.admission.limits.stream_idle_timeout, tx.send(reply)).await,
+            Ok(Ok(()))
+        ) && valid
     }
 }
+
 pub fn service(dispatcher: Arc<Dispatcher>, token: &str) -> Result<GrpcService, DriverError> {
     service_with_limits(dispatcher, token, ServerLimits::default())
 }
@@ -323,20 +349,21 @@ async fn serve_dispatcher(
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let svc = service_with_limits(dispatcher.clone(), token, limits.clone())?;
-    let expire = AbortOnDrop(tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(30));
-        loop {
-            interval.tick().await;
-            dispatcher.expire().await;
-        }
-    }));
+    let _sessions = CloseSessions(dispatcher.clone());
+    let shutdown = async move {
+        shutdown.await;
+        dispatcher.shutdown();
+    };
     let mut server = Server::builder()
         .concurrency_limit_per_connection(limits.max_streams_per_connection as usize)
         .max_concurrent_streams(limits.max_streams_per_connection)
         .http2_max_header_list_size(16 * 1024)
-        .max_connection_age(limits.max_connection_age)
-        .max_connection_age_grace(limits.stream_idle_timeout)
         .load_shed(true);
+    if let Some(age) = limits.max_connection_age {
+        server = server
+            .max_connection_age(age)
+            .max_connection_age_grace(limits.stream_idle_timeout);
+    }
     if let Some(tls) = tls {
         server = server.tls_config(tls.timeout(limits.request_timeout))?;
     }
@@ -344,12 +371,17 @@ async fn serve_dispatcher(
         .add_service(svc)
         .serve_with_incoming_shutdown(limits::incoming(listener, limits.max_connections), shutdown)
         .await;
-    drop(expire);
     result?;
     Ok(())
 }
 
 struct AbortOnDrop(tokio::task::JoinHandle<()>);
+struct CloseSessions(Arc<Dispatcher>);
+impl Drop for CloseSessions {
+    fn drop(&mut self) {
+        self.0.shutdown();
+    }
+}
 impl Drop for AbortOnDrop {
     fn drop(&mut self) {
         self.0.abort();

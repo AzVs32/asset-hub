@@ -31,7 +31,7 @@ use std::{
 };
 use thiserror::Error;
 use vfs_plugin_grpc::{Certificate, ClientTlsConfig, GrpcTransport, Identity};
-use vfs_plugin_host::{PluginDriver, Transport};
+use vfs_plugin_host::{PluginDriver, TransportFactory};
 use vfs_plugin_wasm::WasmTransport;
 
 #[derive(Debug, Error)]
@@ -118,7 +118,7 @@ impl PluginLoader {
         {
             return Err(LoadFailure::InvalidConfiguration);
         }
-        let transport: Arc<dyn Transport> = match &spec.source {
+        let factory: Arc<dyn TransportFactory> = match &spec.source {
             PluginSource::Grpc {
                 endpoint,
                 token_env,
@@ -163,7 +163,7 @@ impl PluginLoader {
             }
         };
         let driver = Arc::new(
-            PluginDriver::connect(transport)
+            PluginDriver::connect(factory)
                 .await
                 .map_err(LoadFailure::Driver)?,
         );

@@ -75,10 +75,10 @@
 //!
 //! ## Resource lifetime
 //!
-//! Each storage/reader/writer resource belongs to one runtime generation and one
-//! authenticated registration. Resource IDs cannot be reused within a generation
-//! or rebound across generations. Proxies retain their shared runtime independently
-//! of the catalog and MountRuntime. Unregistering prevents new routing; graceful
+//! Each storage/reader/writer resource belongs to one authenticated registration
+//! and its owning WASM Store or gRPC Storage session. Resource IDs cannot be reused
+//! within that scope or rebound across scopes. Proxies retain their runtime
+//! independently of the catalog and MountRuntime. Unregistering prevents new routing; graceful
 //! unloading stops new opens and drains retained resources before final shutdown.
 //! A crash cannot preserve remote resources: old proxies fail with StaleHandle
 //! or Unavailable, cached storage is invalidated, and new opens use the new
@@ -90,9 +90,9 @@
 //! return SessionClosed.
 //! Dropping a writer never initiates commit. If commit was already dispatched,
 //! dropping its future cannot guarantee rollback. Explicit close/drop only makes
-//! a best-effort release; RPC resources additionally need expiry or disconnect
-//! cleanup. Abandoned uncommitted writes are discarded, never published. A lost
-//! commit response is OutcomeUnknown. Transfers preserve backpressure and never
+//! a best-effort release; disconnecting a gRPC Storage stream drops its entire
+//! resource scope without renewal or expiry. Abandoned writes are discarded,
+//! never published. A lost commit response is OutcomeUnknown. Transfers preserve backpressure and never
 //! buffer an entire file merely to bridge transports.
 
 mod driver;

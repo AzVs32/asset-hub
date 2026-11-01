@@ -4,8 +4,16 @@
   (memory (export "memory") 1)
   (data (i32.const 1024) "@@DESCRIPTION@@")
   (data (i32.const 2048) "@@UNIT@@")
+  (data (i32.const 3072) "@@STORAGE@@")
+  (data (i32.const 3328) "@@ENTRY@@")
+  (data (i32.const 3456) "@@READER@@")
+  (data (i32.const 3584) "@@WRITER@@")
+  (data (i32.const 3712) "@@CHUNK@@")
+  (data (i32.const 3840) "@@EOF@@")
   (global $heap (mut i32) (i32.const 4096))
   (global $initialized (mut i32) (i32.const 0))
+  (global $next (mut i32) (i32.const 1))
+  (global $read (mut i32) (i32.const 0))
   (func (export "cabi_realloc") (param i32 i32 i32) (param $size i32) (result i32)
     (local $pointer i32)
     global.get $heap local.tee $pointer local.get $size i32.add
@@ -27,6 +35,18 @@
     i32.const 4 i32.const @@DESCRIPTION_LENGTH@@ i32.store
     i32.const 16 i32.const 2048 i32.store
     i32.const 20 i32.const @@UNIT_LENGTH@@ i32.store
+    i32.const 32 i32.const 3072 i32.store
+    i32.const 36 i32.const @@STORAGE_LENGTH@@ i32.store
+    i32.const 48 i32.const 3328 i32.store
+    i32.const 52 i32.const @@ENTRY_LENGTH@@ i32.store
+    i32.const 64 i32.const 3456 i32.store
+    i32.const 68 i32.const @@READER_LENGTH@@ i32.store
+    i32.const 80 i32.const 3584 i32.store
+    i32.const 84 i32.const @@WRITER_LENGTH@@ i32.store
+    i32.const 96 i32.const 3712 i32.store
+    i32.const 100 i32.const @@CHUNK_LENGTH@@ i32.store
+    i32.const 112 i32.const 3840 i32.store
+    i32.const 116 i32.const @@EOF_LENGTH@@ i32.store
     local.get $ptr local.set $pos
     (block $found
       (loop $field
@@ -39,5 +59,22 @@
     local.get $op i32.const 10 i32.eq if i32.const 0 return end
     local.get $op i32.const 11 i32.eq if @@INITIALIZE@@ return end
     local.get $op i32.const 12 i32.eq if @@PREPARE@@ return end
+    local.get $op i32.const 19 i32.eq if
+      global.get $initialized i32.const 1 i32.ne if unreachable end
+      local.get $pos i32.const 2 i32.add i32.load8_u i32.const 98 i32.eq if unreachable end
+      i32.const 32 return end
+    local.get $op i32.const 20 i32.eq if @@STAT@@ return end
+    local.get $op i32.const 21 i32.eq if
+      global.get $next i32.const 1 i32.add global.set $next
+      i32.const @@READER_HANDLE@@ global.get $next i32.store8
+      i32.const 0 global.set $read i32.const 64 return end
+    local.get $op i32.const 22 i32.eq if
+      global.get $next i32.const 1 i32.add global.set $next
+      i32.const @@WRITER_HANDLE@@ global.get $next i32.store8
+      i32.const 80 return end
+    local.get $op i32.const 23 i32.eq if
+      global.get $read if i32.const 112 return end
+      i32.const 1 global.set $read i32.const 96 return end
+    local.get $op i32.const 25 i32.eq if @@COMMIT@@ return end
     i32.const 16)
 )

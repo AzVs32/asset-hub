@@ -15,13 +15,35 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
-    time::Duration,
 };
 use vfs_plugin_protocol::{self as p, Operation as Op, Value};
 
 pub type TransportFuture<'a> =
     Pin<Box<dyn Future<Output = Result<p::Reply, DriverError>> + Send + 'a>>;
+pub type ConnectFuture =
+    Pin<Box<dyn Future<Output = Result<Arc<dyn Transport>, DriverError>> + Send>>;
+/// Creates a fresh control instance while retaining compiled code or RPC channels.
+pub trait TransportFactory: Send + Sync {
+    fn connect(self: Arc<Self>) -> ConnectFuture;
+}
+/// A Storage owns an independent transport and resource generation.
+pub struct OpenedStorage {
+    pub transport: Arc<dyn Transport>,
+    pub generation: String,
+    pub storage: p::Storage,
+}
+pub type OpenFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<OpenedStorage, DriverError>> + Send + 'a>>;
 pub trait Transport: Send + Sync {
+    /// A permanent status token for this connection incarnation. A later
+    /// reconnect publishes another token and can never revive existing handles.
+    fn disconnected(&self) -> Option<Arc<AtomicBool>> {
+        None
+    }
+    fn open_session<'a>(&'a self, _generation: &'a str, _open: p::Open) -> Option<OpenFuture<'a>> {
+        None
+    }
+
     /// Services this execution environment supplies to guest code. Native RPC
     /// plugins own their process resources and do not import host services.
     fn host_capabilities(&self) -> &[&str] {
@@ -31,68 +53,36 @@ pub trait Transport: Send + Sync {
     -> TransportFuture<'a>;
 }
 
+fn connection_failure(error: &DriverError) -> bool {
+    error.storage_error().is_some_and(|error| {
+        matches!(
+            error.kind(),
+            StorageErrorKind::StaleHandle
+                | StorageErrorKind::Unavailable
+                | StorageErrorKind::TimedOut
+                | StorageErrorKind::OutcomeUnknown
+        )
+    })
+}
+
 struct Runtime {
     transport: Arc<dyn Transport>,
     generation: String,
-    leases: Mutex<HashSet<(p::ResourceKind, u64)>>,
-    heartbeat: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    resources: Mutex<HashSet<(p::ResourceKind, u64)>>,
+    disconnected: Option<Arc<AtomicBool>>,
+    executor: Option<tokio::runtime::Handle>,
     stale: AtomicBool,
-}
-impl Drop for Runtime {
-    fn drop(&mut self) {
-        if let Some(task) = self
-            .heartbeat
-            .get_mut()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take()
-        {
-            task.abort();
-        }
-    }
 }
 impl Runtime {
     fn new(transport: Arc<dyn Transport>, generation: String) -> Arc<Self> {
-        let runtime = Arc::new(Self {
+        Arc::new(Self {
+            disconnected: transport.disconnected(),
+            executor: tokio::runtime::Handle::try_current().ok(),
             transport,
             generation,
-            leases: Mutex::new(HashSet::new()),
-            heartbeat: Mutex::new(None),
+            resources: Mutex::new(HashSet::new()),
             stale: AtomicBool::new(false),
-        });
-        let weak = Arc::downgrade(&runtime);
-        let task = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(30));
-            interval.tick().await;
-            loop {
-                interval.tick().await;
-                let Some(runtime) = weak.upgrade() else {
-                    break;
-                };
-                if runtime.is_stale() {
-                    break;
-                }
-                let resources = runtime
-                    .leases
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .iter()
-                    .map(|(kind, handle)| p::ResourceRef {
-                        kind: *kind as i32,
-                        handle: *handle,
-                    })
-                    .collect::<Vec<_>>();
-                if !resources.is_empty() {
-                    let _ = runtime
-                        .call(Op::Renew(p::Renew { resources }), vec![])
-                        .await;
-                }
-            }
-        });
-        *runtime
-            .heartbeat
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(task);
-        runtime
+        })
     }
     async fn call(&self, op: Op, data: Vec<u8>) -> Result<p::Reply, DriverError> {
         if self.is_stale() && !matches!(op, Op::Release(_)) {
@@ -107,15 +97,7 @@ impl Runtime {
             .call(&self.generation, op.clone(), data)
             .await
             .inspect_err(|error| {
-                if error.storage_error().is_some_and(|error| {
-                    matches!(
-                        error.kind(),
-                        StorageErrorKind::StaleHandle
-                            | StorageErrorKind::Unavailable
-                            | StorageErrorKind::TimedOut
-                            | StorageErrorKind::OutcomeUnknown
-                    )
-                }) {
+                if connection_failure(error) {
                     self.stale.store(true, Ordering::Release);
                 }
             })?;
@@ -131,6 +113,10 @@ impl Runtime {
     }
     fn is_stale(&self) -> bool {
         self.stale.load(Ordering::Acquire)
+            || self
+                .disconnected
+                .as_ref()
+                .is_some_and(|status| status.load(Ordering::Acquire))
     }
     async fn value(&self, op: Op) -> Result<Value, DriverError> {
         let mutates = op.mutates();
@@ -166,7 +152,8 @@ pub struct PluginDriver {
     negotiated: p::NegotiatedProtocol,
 }
 impl PluginDriver {
-    pub async fn connect(transport: Arc<dyn Transport>) -> Result<Self, DriverError> {
+    pub async fn connect(factory: Arc<dyn TransportFactory>) -> Result<Self, DriverError> {
+        let transport = factory.clone().connect().await?;
         let description = describe(transport.as_ref()).await?;
         let negotiated = p::negotiate(&description, transport.host_capabilities())
             .map_err(|_| StorageError::new(StorageErrorKind::UnsupportedOperation))?;
@@ -175,7 +162,7 @@ impl PluginDriver {
         Ok(Self {
             info,
             remote: Arc::new(RemoteInstances {
-                transport,
+                factory,
                 description: description.clone(),
                 connection: Arc::new(tokio::sync::Mutex::new(Connection {
                     runtime,
@@ -190,7 +177,7 @@ impl PluginDriver {
         &self.negotiated
     }
 
-    /// Refresh the generation and initialize a replacement with the original settings.
+    /// Create a fresh control transport and initialize it with the original settings.
     /// Declarations must remain identical; changed declarations require registration
     /// of a new driver. Existing resources are never rebound or replayed.
     pub async fn reconnect(&self) -> Result<(), DriverError> {
@@ -239,41 +226,73 @@ impl Driver for PluginDriver {
             if (self.ownership == p::Ownership::Host) != context.config().is_some() {
                 return Err(convert::invalid());
             }
-            let runtime = self.remote.runtime().await?;
-            let value = runtime
-                .value(Op::Open(p::Open {
+            let mut attempt = 0;
+            loop {
+                let runtime = self.remote.runtime().await?;
+                let request = p::Open {
                     id: context.instance_id().as_str().into(),
                     config: context
                         .config()
                         .cloned()
                         .map(|config| config.into_object().into()),
-                }))
-                .await?;
-            let Value::Storage(p::Storage {
-                handle,
-                info: Some(info),
-            }) = value
-            else {
-                return Err(convert::invalid());
-            };
-            let lease = Lease::new(runtime, p::ResourceKind::Storage, handle)?;
-            let capabilities = convert::decode_capabilities(&info.capabilities)?;
-            if info.chunk_size == 0 || info.chunk_size as usize > p::MAX_DATA_BYTES {
-                return Err(convert::invalid());
+                };
+                let (runtime, storage) = if let Some(open) = runtime
+                    .transport
+                    .open_session(&runtime.generation, request.clone())
+                {
+                    let opened = match open.await {
+                        Ok(opened) => opened,
+                        Err(error) => {
+                            if runtime.is_stale()
+                                || error.storage_error().is_some_and(|error| {
+                                    error.kind() == StorageErrorKind::StaleHandle
+                                })
+                            {
+                                runtime.stale.store(true, Ordering::Release);
+                            }
+                            if attempt == 0 && connection_failure(&error) {
+                                attempt += 1;
+                                continue;
+                            }
+                            return Err(error);
+                        }
+                    };
+                    (
+                        Runtime::new(opened.transport, opened.generation),
+                        opened.storage,
+                    )
+                } else {
+                    let Value::Storage(storage) = runtime.value(Op::Open(request)).await? else {
+                        return Err(convert::invalid());
+                    };
+                    (runtime, storage)
+                };
+                let p::Storage {
+                    handle,
+                    info: Some(info),
+                } = storage
+                else {
+                    return Err(convert::invalid());
+                };
+                let resource = Resource::new(runtime, p::ResourceKind::Storage, handle)?;
+                let capabilities = convert::decode_capabilities(&info.capabilities)?;
+                if info.chunk_size == 0 || info.chunk_size as usize > p::MAX_DATA_BYTES {
+                    return Err(convert::invalid());
+                }
+                let storage = RemoteStorage {
+                    resource,
+                    capabilities,
+                    chunk_size: convert::limit(info.chunk_size).map_err(DriverError::from)?,
+                };
+                validate_storage_capabilities(self.info.capabilities(), &storage)?;
+                return Ok(Arc::new(storage) as Arc<dyn Storage>);
             }
-            let storage = RemoteStorage {
-                lease,
-                capabilities,
-                chunk_size: convert::limit(info.chunk_size).map_err(DriverError::from)?,
-            };
-            validate_storage_capabilities(self.info.capabilities(), &storage)?;
-            Ok(Arc::new(storage) as Arc<dyn Storage>)
         })
     }
 }
 
 struct RemoteInstances {
-    transport: Arc<dyn Transport>,
+    factory: Arc<dyn TransportFactory>,
     description: p::Description,
     connection: Arc<tokio::sync::Mutex<Connection>>,
 }
@@ -294,7 +313,7 @@ impl RemoteInstances {
         self.runtime().await?.value(op).await
     }
     async fn reconnect(&self, force: bool) -> Result<Arc<Runtime>, DriverError> {
-        let transport = self.transport.clone();
+        let factory = self.factory.clone();
         let mut expected = self.description.clone();
         let connection = self.connection.clone();
         // Recovery owns initialization even if its initiating request is cancelled.
@@ -304,6 +323,7 @@ impl RemoteInstances {
             if !force && !connection.runtime.is_stale() {
                 return Ok(connection.runtime.clone());
             }
+            let transport = factory.connect().await?;
             let mut description = describe(transport.as_ref()).await?;
             let generation = description.generation.clone();
             let changed = generation != connection.runtime.generation;
@@ -318,17 +338,15 @@ impl RemoteInstances {
             if expected != description {
                 return Err(convert::invalid());
             }
-            if !changed && !connection.runtime.is_stale() {
-                return Ok(connection.runtime.clone());
-            }
             let runtime = Runtime::new(transport, generation);
-            if changed && let Some(settings) = &connection.settings {
+            if let Some(settings) = &connection.settings {
                 runtime
                     .unit(Op::Initialize(p::Initialize {
                         settings: Some(settings.clone()),
                     }))
                     .await?;
             }
+            connection.runtime.stale.store(true, Ordering::Release);
             connection.runtime = runtime.clone();
             Ok(runtime)
         })
@@ -482,12 +500,12 @@ impl InstanceRegistry for RemoteInstances {
     }
 }
 
-struct Lease {
+struct Resource {
     runtime: Arc<Runtime>,
     kind: p::ResourceKind,
     handle: u64,
 }
-impl Lease {
+impl Resource {
     fn new(runtime: Arc<Runtime>, kind: p::ResourceKind, handle: u64) -> Result<Self, DriverError> {
         if runtime.is_stale() {
             return Err(StorageError::new(StorageErrorKind::StaleHandle).into());
@@ -496,7 +514,7 @@ impl Lease {
             return Err(convert::invalid());
         }
         if !runtime
-            .leases
+            .resources
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert((kind, handle))
@@ -510,14 +528,14 @@ impl Lease {
         })
     }
 }
-impl Drop for Lease {
+impl Drop for Resource {
     fn drop(&mut self) {
         self.runtime
-            .leases
+            .resources
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(&(self.kind, self.handle));
-        if let Ok(executor) = tokio::runtime::Handle::try_current() {
+        if let Some(executor) = &self.runtime.executor {
             let runtime = self.runtime.clone();
             let operation = Op::Release(p::ResourceRef {
                 kind: self.kind as i32,
@@ -531,17 +549,17 @@ impl Drop for Lease {
 }
 
 struct RemoteStorage {
-    lease: Lease,
+    resource: Resource,
     capabilities: StorageCapabilities,
     chunk_size: NonZeroUsize,
 }
 impl RemoteStorage {
     async fn call(&self, request: p::StorageOp, data: Vec<u8>) -> Result<p::Reply, StorageError> {
-        self.lease
+        self.resource
             .runtime
             .call(
                 Op::Storage(p::StorageCall {
-                    handle: self.lease.handle,
+                    handle: self.resource.handle,
                     operation: Some(request),
                 }),
                 data,
@@ -577,7 +595,7 @@ impl RemoteStorage {
 }
 impl Storage for RemoteStorage {
     fn is_stale(&self) -> bool {
-        self.lease.runtime.is_stale()
+        self.resource.runtime.is_stale()
     }
     fn capabilities(&self) -> StorageCapabilities {
         self.capabilities
@@ -695,10 +713,10 @@ impl Storage for RemoteStorage {
     ) -> StorageFuture<'_, Box<dyn StorageFileReader>> {
         Box::pin(async move {
             let value = self
-                .lease
+                .resource
                 .runtime
                 .value(Op::Read(p::Read {
-                    handle: self.lease.handle,
+                    handle: self.resource.handle,
                     path: r.path.as_str().into(),
                     offset: r.offset,
                     length: r.length,
@@ -707,9 +725,13 @@ impl Storage for RemoteStorage {
                 .map_err(convert::storage_error)?;
             match value {
                 Value::Reader(p::Handle { handle }) => Ok(Box::new(RemoteReader {
-                    lease: Some(
-                        Lease::new(self.lease.runtime.clone(), p::ResourceKind::Reader, handle)
-                            .map_err(convert::storage_error)?,
+                    resource: Some(
+                        Resource::new(
+                            self.resource.runtime.clone(),
+                            p::ResourceKind::Reader,
+                            handle,
+                        )
+                        .map_err(convert::storage_error)?,
                     ),
                     eof: false,
                     remaining: r.length,
@@ -725,10 +747,10 @@ impl Storage for RemoteStorage {
     ) -> StorageFuture<'_, Box<dyn StorageFileWriter>> {
         Box::pin(async move {
             let value = self
-                .lease
+                .resource
                 .runtime
                 .value(Op::Write(p::Write {
-                    handle: self.lease.handle,
+                    handle: self.resource.handle,
                     path: r.path.as_str().into(),
                     replace: r.mode == StorageWriteFileMode::Replace,
                     atomic: r.require_atomic_publish,
@@ -737,9 +759,13 @@ impl Storage for RemoteStorage {
                 .map_err(convert::storage_error)?;
             match value {
                 Value::Writer(p::Handle { handle }) => Ok(Box::new(RemoteWriter {
-                    lease: Some(
-                        Lease::new(self.lease.runtime.clone(), p::ResourceKind::Writer, handle)
-                            .map_err(convert::storage_error)?,
+                    resource: Some(
+                        Resource::new(
+                            self.resource.runtime.clone(),
+                            p::ResourceKind::Writer,
+                            handle,
+                        )
+                        .map_err(convert::storage_error)?,
                     ),
                     path: r.path,
                 })
@@ -753,7 +779,7 @@ fn closed() -> StorageError {
     StorageError::new(StorageErrorKind::SessionClosed)
 }
 struct RemoteReader {
-    lease: Option<Lease>,
+    resource: Option<Resource>,
     eof: bool,
     remaining: Option<u64>,
 }
@@ -763,12 +789,12 @@ impl StorageFileReader for RemoteReader {
             if self.eof {
                 return Ok(None);
             }
-            let lease = self.lease.take().ok_or_else(closed)?;
-            let reply = lease
+            let resource = self.resource.take().ok_or_else(closed)?;
+            let reply = resource
                 .runtime
                 .call(
                     Op::ReaderNext(p::Handle {
-                        handle: lease.handle,
+                        handle: resource.handle,
                     }),
                     vec![],
                 )
@@ -785,7 +811,7 @@ impl StorageFileReader for RemoteReader {
                             .checked_sub(reply.data.len() as u64)
                             .ok_or_else(convert::storage_invalid)?;
                     }
-                    self.lease = Some(lease);
+                    self.resource = Some(resource);
                     Ok(Some(reply.data))
                 }
                 _ => Err(convert::storage_invalid()),
@@ -794,19 +820,19 @@ impl StorageFileReader for RemoteReader {
     }
 }
 struct RemoteWriter {
-    lease: Option<Lease>,
+    resource: Option<Resource>,
     path: StoragePath,
 }
 impl StorageFileWriter for RemoteWriter {
     fn write_chunk<'a>(&'a mut self, data: &'a [u8]) -> StorageFuture<'a, ()> {
         Box::pin(async move {
-            let lease = self.lease.take().ok_or_else(closed)?;
+            let resource = self.resource.take().ok_or_else(closed)?;
             for chunk in data.chunks(p::MAX_DATA_BYTES) {
-                let reply = lease
+                let reply = resource
                     .runtime
                     .call(
                         Op::WriterChunk(p::Handle {
-                            handle: lease.handle,
+                            handle: resource.handle,
                         }),
                         chunk.to_vec(),
                     )
@@ -820,17 +846,17 @@ impl StorageFileWriter for RemoteWriter {
                     return Err(bad_response(true));
                 }
             }
-            self.lease = Some(lease);
+            self.resource = Some(resource);
             Ok(())
         })
     }
     fn commit(&mut self) -> StorageFuture<'_, StorageEntry> {
         Box::pin(async move {
-            let lease = self.lease.take().ok_or_else(closed)?;
-            let reply = lease
+            let resource = self.resource.take().ok_or_else(closed)?;
+            let reply = resource
                 .runtime
                 .value(Op::Commit(p::Handle {
-                    handle: lease.handle,
+                    handle: resource.handle,
                 }))
                 .await
                 .map_err(convert::storage_error)?;
@@ -848,11 +874,11 @@ impl StorageFileWriter for RemoteWriter {
     }
     fn abort(&mut self) -> StorageFuture<'_, ()> {
         Box::pin(async move {
-            let lease = self.lease.take().ok_or_else(closed)?;
-            lease
+            let resource = self.resource.take().ok_or_else(closed)?;
+            resource
                 .runtime
                 .unit(Op::Abort(p::Handle {
-                    handle: lease.handle,
+                    handle: resource.handle,
                 }))
                 .await
                 .map_err(convert::storage_error)

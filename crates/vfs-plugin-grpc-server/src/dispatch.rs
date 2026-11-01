@@ -1,4 +1,4 @@
-//! Native server dispatch with generation-scoped, bounded, expiring resources.
+//! Native server dispatch with stream-owned, bounded Storage resources.
 use ah_vfs::{
     application::{dto::*, port::*},
     domain::*,
@@ -11,9 +11,8 @@ use std::{
         Arc, RwLock,
         atomic::{AtomicBool, Ordering},
     },
-    time::{Duration, Instant},
 };
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore, watch};
 use vfs_plugin_codec as c;
 use vfs_plugin_protocol::{self as p, Operation as Op, Value};
 
@@ -21,18 +20,18 @@ type Reader = Arc<Mutex<Box<dyn StorageFileReader>>>;
 type Writer = Arc<Mutex<Box<dyn StorageFileWriter>>>;
 struct Slot<T> {
     value: T,
-    touched: Instant,
+    _capacity: OwnedSemaphorePermit,
 }
 #[derive(Default)]
 struct Resources {
     next: u64,
-    storage: HashMap<u64, Slot<Arc<dyn Storage>>>,
+    storage: Option<Slot<Arc<dyn Storage>>>,
     readers: HashMap<u64, Slot<Reader>>,
     writers: HashMap<u64, Slot<Writer>>,
 }
 impl Resources {
     fn kind(&self, handle: u64) -> Option<p::ResourceKind> {
-        if self.storage.contains_key(&handle) {
+        if handle == 1 && self.storage.is_some() {
             Some(p::ResourceKind::Storage)
         } else if self.readers.contains_key(&handle) {
             Some(p::ResourceKind::Reader)
@@ -42,13 +41,10 @@ impl Resources {
             None
         }
     }
-    fn expire(&mut self, ttl: Duration) {
-        self.storage.retain(|_, s| s.touched.elapsed() < ttl);
-        self.readers.retain(|_, s| s.touched.elapsed() < ttl);
-        self.writers.retain(|_, s| s.touched.elapsed() < ttl);
-    }
     fn allocate(&mut self) -> Result<u64, DriverError> {
-        if self.storage.len() + self.readers.len() + self.writers.len() >= p::MAX_RESOURCES {
+        if usize::from(self.storage.is_some()) + self.readers.len() + self.writers.len()
+            >= p::MAX_RESOURCES
+        {
             return Err(StorageError::new(StorageErrorKind::CapacityExceeded).into());
         }
         self.next = self.next.checked_add(1).ok_or_else(c::invalid)?;
@@ -67,18 +63,11 @@ fn id(s: &str) -> Result<InstanceId, DriverError> {
 fn unsupported() -> DriverError {
     StorageError::new(StorageErrorKind::UnsupportedOperation).into()
 }
-fn slot<T>(value: T) -> Slot<T> {
-    Slot {
-        value,
-        touched: Instant::now(),
-    }
+fn get<T: Clone>(map: &HashMap<u64, Slot<T>>, handle: u64) -> Result<T, DriverError> {
+    map.get(&handle)
+        .map(|slot| slot.value.clone())
+        .ok_or_else(missing)
 }
-fn get<T: Clone>(map: &mut HashMap<u64, Slot<T>>, handle: u64) -> Result<T, DriverError> {
-    let s = map.get_mut(&handle).ok_or_else(missing)?;
-    s.touched = Instant::now();
-    Ok(s.value.clone())
-}
-
 /// Constructs a fresh backend after a panic; never return the failed driver again.
 pub type DriverFactory = dyn Fn() -> DriverFuture<'static, Arc<dyn Driver>> + Send + Sync;
 
@@ -87,18 +76,15 @@ pub struct Dispatcher {
     current: RwLock<Arc<Generation>>,
     recovery: Mutex<()>,
     factory: Option<Arc<DriverFactory>>,
-    ttl: Duration,
+    stopped: AtomicBool,
 }
 impl Dispatcher {
     pub fn new(driver: Arc<dyn Driver>) -> Result<Self, DriverError> {
-        Self::with_lease(driver, Duration::from_secs(300))
-    }
-    pub fn with_lease(driver: Arc<dyn Driver>, ttl: Duration) -> Result<Self, DriverError> {
         Ok(Self {
-            current: RwLock::new(Arc::new(Generation::with_lease(driver, ttl)?)),
+            current: RwLock::new(Arc::new(Generation::new(driver)?)),
             recovery: Mutex::new(()),
             factory: None,
-            ttl,
+            stopped: AtomicBool::new(false),
         })
     }
     /// Rebuild a poisoned backend when the host next describes the plugin.
@@ -120,7 +106,10 @@ impl Dispatcher {
                 .current
                 .write()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            current.poisoned.store(true, Ordering::Release);
+            current.retire();
+            if self.stopped.load(Ordering::Acquire) {
+                generation.retire();
+            }
             std::mem::replace(&mut *current, generation)
         };
         drop(previous);
@@ -129,17 +118,35 @@ impl Dispatcher {
     /// Its declarations are revalidated by the host before new opens are allowed.
     pub async fn replace_driver(&self, driver: Arc<dyn Driver>) -> Result<(), DriverError> {
         let _recovery = self.recovery.lock().await;
+        self.running()?;
         if Arc::ptr_eq(&driver, &self.snapshot().driver) {
             return Err(StorageError::new(StorageErrorKind::Conflict).into());
         }
-        self.publish(Arc::new(Generation::with_lease(driver, self.ttl)?));
+        self.publish(Arc::new(Generation::new(driver)?));
         Ok(())
     }
     pub fn generation(&self) -> String {
         self.snapshot().generation().to_owned()
     }
-    pub async fn expire(&self) {
-        self.snapshot().expire().await;
+    /// Close every Storage stream before shutting down the RPC server.
+    pub fn shutdown(&self) {
+        self.stopped.store(true, Ordering::Release);
+        self.snapshot().retire();
+    }
+    fn running(&self) -> Result<(), DriverError> {
+        if self.stopped.load(Ordering::Acquire) {
+            Err(StorageError::new(StorageErrorKind::Unavailable).into())
+        } else {
+            Ok(())
+        }
+    }
+    pub async fn open_session(
+        &self,
+        generation: &str,
+        open: p::Open,
+    ) -> Result<Session, DriverError> {
+        self.running()?;
+        self.snapshot().open(generation, open).await
     }
     pub async fn call(
         &self,
@@ -147,6 +154,7 @@ impl Dispatcher {
         op: Op,
         data: Vec<u8>,
     ) -> Result<p::Reply, DriverError> {
+        self.running()?;
         let mut current = self.snapshot();
         if matches!(op, Op::Describe(p::Empty {}))
             && current.poisoned.load(Ordering::Acquire)
@@ -160,7 +168,7 @@ impl Dispatcher {
                     if Arc::ptr_eq(&driver, &current.driver) {
                         return Err(StorageError::new(StorageErrorKind::Conflict).into());
                     }
-                    Generation::with_lease(driver, self.ttl)
+                    Generation::new(driver)
                 })
                 .catch_unwind()
                 .await
@@ -177,41 +185,46 @@ struct Generation {
     driver: Arc<dyn Driver>,
     description: p::Description,
     initialized: Mutex<Option<p::Object>>,
-    resources: Mutex<Resources>,
-    ttl: Duration,
     poisoned: AtomicBool,
+    retired: watch::Sender<bool>,
+    capacity: Arc<Semaphore>,
 }
 struct InitializationGuard<'a> {
-    poisoned: &'a AtomicBool,
+    generation: &'a Generation,
     completed: bool,
 }
 impl Drop for InitializationGuard<'_> {
     fn drop(&mut self) {
         if !self.completed {
-            self.poisoned.store(true, Ordering::Release);
+            self.generation.retire();
         }
     }
 }
 impl Generation {
-    fn with_lease(driver: Arc<dyn Driver>, ttl: Duration) -> Result<Self, DriverError> {
-        if ttl.is_zero() {
-            return Err(c::invalid());
-        }
+    fn new(driver: Arc<dyn Driver>) -> Result<Self, DriverError> {
         let generation = new_instance_id()?.as_str().to_owned();
         let description = c::describe(driver.as_ref(), generation);
         p::negotiate(&description, &[]).map_err(|_| unsupported())?;
         c::driver_info(&description)?;
+        let (retired, _) = watch::channel(false);
         Ok(Self {
             description,
             driver,
             initialized: Mutex::new(None),
-            resources: Mutex::new(Resources::default()),
-            ttl,
+            retired,
+            capacity: Arc::new(Semaphore::new(p::MAX_RESOURCES)),
             poisoned: AtomicBool::new(false),
         })
     }
-    pub async fn expire(&self) {
-        self.resources.lock().await.expire(self.ttl);
+    fn retire(&self) {
+        self.poisoned.store(true, Ordering::Release);
+        self.retired.send_replace(true);
+    }
+    fn reserve(&self) -> Result<OwnedSemaphorePermit, DriverError> {
+        self.capacity
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| StorageError::new(StorageErrorKind::CapacityExceeded).into())
     }
     pub fn generation(&self) -> &str {
         &self.description.generation
@@ -225,16 +238,13 @@ impl Generation {
     fn registry(&self) -> Result<Arc<dyn InstanceRegistry>, DriverError> {
         self.driver.instances().registry()
     }
-    async fn storage(&self, handle: u64) -> Result<Arc<dyn Storage>, DriverError> {
-        get(&mut self.resources.lock().await.storage, handle)
-    }
     pub async fn call(
         &self,
         generation: &str,
         op: Op,
         data: Vec<u8>,
     ) -> Result<p::Reply, DriverError> {
-        if self.poisoned.load(Ordering::Acquire) && !matches!(&op, Op::Release(_)) {
+        if self.poisoned.load(Ordering::Acquire) {
             return Err(StorageError::new(StorageErrorKind::StaleHandle).into());
         }
         let mutates = op.mutates();
@@ -245,8 +255,8 @@ impl Generation {
             .await
             .unwrap_or_else(|_| {
                 // Retained handles must never resume against possibly corrupted
-                // backend state. Releases remain available for best-effort cleanup.
-                self.poisoned.store(true, Ordering::Release);
+                // backend state. Retiring the generation closes its active streams.
+                self.retire();
                 Err(StorageError::new(if mutates {
                     StorageErrorKind::OutcomeUnknown
                 } else {
@@ -272,19 +282,9 @@ impl Generation {
         if generation != self.generation() {
             return Err(StorageError::new(StorageErrorKind::StaleHandle).into());
         }
-        if !data.is_empty()
-            && !matches!(
-                op,
-                Op::WriterChunk(_)
-                    | Op::Storage(p::StorageCall {
-                        operation: Some(p::StorageOp::SetXattr(_)),
-                        ..
-                    })
-            )
-        {
+        if !data.is_empty() {
             return Err(StorageError::new(StorageErrorKind::InvalidRequest).into());
         }
-        self.expire().await;
         if let Op::Initialize(p::Initialize {
             settings: Some(settings),
         }) = op
@@ -298,7 +298,7 @@ impl Generation {
                 };
             }
             let mut guard = InitializationGuard {
-                poisoned: &self.poisoned,
+                generation: self,
                 completed: false,
             };
             let outcome = self
@@ -371,36 +371,114 @@ impl Generation {
                 removed: self.registry()?.remove(id(&raw)?).await?
                     == RemoveInstanceOutcome::Removed,
             }),
-            Op::Open(p::Open { id: raw, config }) => {
-                let host = self.description.ownership == p::Ownership::Host as i32;
-                if host != config.is_some() {
-                    return Err(StorageError::new(StorageErrorKind::InvalidRequest).into());
-                }
-                let context = match config {
-                    Some(config) => {
-                        OpenContext::host_managed(id(&raw)?, c::object(Some(config))?.into())
-                    }
-                    None => OpenContext::self_managed(id(&raw)?),
-                };
-                let storage = self.driver.open(context).await?;
-                validate_storage_capabilities(self.driver.info().capabilities(), storage.as_ref())?;
-                let chunk_size =
-                    u32::try_from(storage.chunk_size().get()).map_err(|_| c::invalid())?;
-                if chunk_size as usize > p::MAX_DATA_BYTES {
-                    return Err(c::invalid());
-                }
-                let info = p::StorageInfo {
-                    capabilities: c::capabilities(storage.capabilities()),
-                    chunk_size,
-                };
-                let mut resources = self.resources.lock().await;
-                let handle = resources.allocate()?;
-                resources.storage.insert(handle, slot(storage));
-                Value::Storage(p::Storage {
-                    handle,
-                    info: Some(info),
-                })
+            _ => return Err(unsupported()),
+        };
+        Ok(p::Reply::new(value))
+    }
+    async fn open(
+        self: &Arc<Self>,
+        generation: &str,
+        open: p::Open,
+    ) -> Result<Session, DriverError> {
+        if generation != self.generation() || self.poisoned.load(Ordering::Acquire) {
+            return Err(StorageError::new(StorageErrorKind::StaleHandle).into());
+        }
+        if self.initialized.lock().await.is_none() {
+            return Err(StorageError::new(StorageErrorKind::Unavailable).into());
+        }
+        let p::Open { id: raw, config } = open;
+        AssertUnwindSafe(async {
+            let host = self.description.ownership == p::Ownership::Host as i32;
+            if host != config.is_some() {
+                return Err(StorageError::new(StorageErrorKind::InvalidRequest).into());
             }
+            let context = match config {
+                Some(config) => {
+                    OpenContext::host_managed(id(&raw)?, c::object(Some(config))?.into())
+                }
+                None => OpenContext::self_managed(id(&raw)?),
+            };
+            let capacity = self.reserve()?;
+            let storage = self.driver.open(context).await?;
+            validate_storage_capabilities(self.driver.info().capabilities(), storage.as_ref())?;
+            let chunk_size = u32::try_from(storage.chunk_size().get()).map_err(|_| c::invalid())?;
+            if chunk_size as usize > p::MAX_DATA_BYTES {
+                return Err(c::invalid());
+            }
+            let info = p::StorageInfo {
+                capabilities: c::capabilities(storage.capabilities()),
+                chunk_size,
+            };
+            Ok(Session {
+                generation: self.clone(),
+                info,
+                resources: Mutex::new(Resources {
+                    next: 1,
+                    storage: Some(Slot {
+                        value: storage,
+                        _capacity: capacity,
+                    }),
+                    ..Default::default()
+                }),
+            })
+        })
+        .catch_unwind()
+        .await
+        .unwrap_or_else(|_| {
+            self.retire();
+            Err(StorageError::new(StorageErrorKind::Unavailable).into())
+        })
+    }
+}
+
+/// One Storage and its child resources, owned exclusively by one duplex stream.
+pub struct Session {
+    generation: Arc<Generation>,
+    info: p::StorageInfo,
+    resources: Mutex<Resources>,
+}
+impl Session {
+    pub fn opened(&self) -> p::Reply {
+        p::Reply::new(Value::Storage(p::Storage {
+            handle: 1,
+            info: Some(self.info.clone()),
+        }))
+    }
+    pub fn retired(&self) -> watch::Receiver<bool> {
+        self.generation.retired.subscribe()
+    }
+    async fn storage(&self, handle: u64) -> Result<Arc<dyn Storage>, DriverError> {
+        if handle != 1 {
+            return Err(missing());
+        }
+        self.resources
+            .lock()
+            .await
+            .storage
+            .as_ref()
+            .map(|slot| slot.value.clone())
+            .ok_or_else(missing)
+    }
+    pub async fn call(&self, op: Op, data: Vec<u8>) -> Result<p::Reply, DriverError> {
+        if self.generation.poisoned.load(Ordering::Acquire) {
+            return Err(StorageError::new(StorageErrorKind::StaleHandle).into());
+        }
+        let mutates = op.mutates();
+        AssertUnwindSafe(self.call_inner(op, data))
+            .catch_unwind()
+            .await
+            .unwrap_or_else(|_| {
+                self.generation.retire();
+                Err(StorageError::new(if mutates {
+                    StorageErrorKind::OutcomeUnknown
+                } else {
+                    StorageErrorKind::Unavailable
+                })
+                .into())
+            })
+    }
+    async fn call_inner(&self, op: Op, data: Vec<u8>) -> Result<p::Reply, DriverError> {
+        let value = match op {
             Op::Storage(p::StorageCall {
                 handle,
                 operation: Some(request),
@@ -415,6 +493,7 @@ impl Generation {
                 offset,
                 length,
             }) => {
+                let capacity = self.generation.reserve()?;
                 let reader = self
                     .storage(handle)
                     .await?
@@ -426,9 +505,13 @@ impl Generation {
                     .await?;
                 let mut resources = self.resources.lock().await;
                 let handle = resources.allocate()?;
-                resources
-                    .readers
-                    .insert(handle, slot(Arc::new(Mutex::new(reader))));
+                resources.readers.insert(
+                    handle,
+                    Slot {
+                        value: Arc::new(Mutex::new(reader)),
+                        _capacity: capacity,
+                    },
+                );
                 Value::Reader(p::Handle { handle })
             }
             Op::Write(p::Write {
@@ -437,6 +520,7 @@ impl Generation {
                 replace,
                 atomic,
             }) => {
+                let capacity = self.generation.reserve()?;
                 let writer = self
                     .storage(handle)
                     .await?
@@ -452,13 +536,17 @@ impl Generation {
                     .await?;
                 let mut resources = self.resources.lock().await;
                 let handle = resources.allocate()?;
-                resources
-                    .writers
-                    .insert(handle, slot(Arc::new(Mutex::new(writer))));
+                resources.writers.insert(
+                    handle,
+                    Slot {
+                        value: Arc::new(Mutex::new(writer)),
+                        _capacity: capacity,
+                    },
+                );
                 Value::Writer(p::Handle { handle })
             }
             Op::ReaderNext(p::Handle { handle }) => {
-                let reader = get(&mut self.resources.lock().await.readers, handle)?;
+                let reader = get(&self.resources.lock().await.readers, handle)?;
                 let result = reader.lock().await.next_chunk().await;
                 match result {
                     Ok(Some(data)) if !data.is_empty() && data.len() <= p::MAX_DATA_BYTES => {
@@ -482,7 +570,7 @@ impl Generation {
                 }
             }
             Op::WriterChunk(p::Handle { handle }) => {
-                let writer = get(&mut self.resources.lock().await.writers, handle)?;
+                let writer = get(&self.resources.lock().await.writers, handle)?;
                 writer.lock().await.write_chunk(&data).await?;
                 Value::Unit(p::Empty {})
             }
@@ -493,9 +581,8 @@ impl Generation {
                     .await
                     .writers
                     .remove(&handle)
-                    .ok_or_else(missing)?
-                    .value;
-                let entry = writer.lock().await.commit().await?;
+                    .ok_or_else(missing)?;
+                let entry = writer.value.lock().await.commit().await?;
                 Value::Entry(c::entry(entry)?)
             }
             Op::Abort(p::Handle { handle }) => {
@@ -505,9 +592,8 @@ impl Generation {
                     .await
                     .writers
                     .remove(&handle)
-                    .ok_or_else(missing)?
-                    .value;
-                writer.lock().await.abort().await?;
+                    .ok_or_else(missing)?;
+                writer.value.lock().await.abort().await?;
                 Value::Unit(p::Empty {})
             }
             Op::Release(p::ResourceRef { kind, handle }) => {
@@ -520,7 +606,9 @@ impl Generation {
                 }
                 match p::ResourceKind::try_from(kind).map_err(|_| c::invalid())? {
                     p::ResourceKind::Storage => {
-                        resources.storage.remove(&handle);
+                        if handle == 1 {
+                            resources.storage = None;
+                        }
                     }
                     p::ResourceKind::Reader => {
                         resources.readers.remove(&handle);
@@ -532,34 +620,7 @@ impl Generation {
                 }
                 Value::Unit(p::Empty {})
             }
-            Op::Renew(p::Renew { resources }) => {
-                if resources.len() > p::MAX_RESOURCES {
-                    return Err(c::invalid());
-                }
-                let mut table = self.resources.lock().await;
-                for r in resources {
-                    match p::ResourceKind::try_from(r.kind).map_err(|_| c::invalid())? {
-                        p::ResourceKind::Storage => {
-                            if let Some(slot) = table.storage.get_mut(&r.handle) {
-                                slot.touched = Instant::now();
-                            }
-                        }
-                        p::ResourceKind::Reader => {
-                            if let Some(slot) = table.readers.get_mut(&r.handle) {
-                                slot.touched = Instant::now();
-                            }
-                        }
-                        p::ResourceKind::Writer => {
-                            if let Some(slot) = table.writers.get_mut(&r.handle) {
-                                slot.touched = Instant::now();
-                            }
-                        }
-                        _ => return Err(c::invalid()),
-                    }
-                }
-                Value::Unit(p::Empty {})
-            }
-            _ => return Err(c::invalid()),
+            _ => return Err(StorageError::new(StorageErrorKind::InvalidRequest).into()),
         };
         Ok(p::Reply::new(value))
     }

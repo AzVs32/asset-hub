@@ -22,6 +22,11 @@ struct Peer {
     fault: Fault,
     commits: AtomicUsize,
 }
+impl vfs_plugin_host::TransportFactory for Peer {
+    fn connect(self: Arc<Self>) -> vfs_plugin_host::ConnectFuture {
+        Box::pin(async move { Ok(self as Arc<dyn Transport>) })
+    }
+}
 impl Transport for Peer {
     fn call<'a>(&'a self, _generation: &'a str, op: Op, _data: Vec<u8>) -> TransportFuture<'a> {
         Box::pin(async move {

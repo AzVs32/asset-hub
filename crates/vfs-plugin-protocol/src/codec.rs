@@ -196,11 +196,6 @@ pub fn validate_request(request: &Request) -> Result<()> {
             }
         }
         O::Release(v) => check_resource(v)?,
-        O::Renew(v) => {
-            for value in &v.resources {
-                check_resource(value)?;
-            }
-        }
         _ => {}
     }
     bound(request.encoded_len(), &request.data)

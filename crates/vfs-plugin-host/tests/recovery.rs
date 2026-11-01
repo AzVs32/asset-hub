@@ -73,6 +73,11 @@ impl Peer {
         }
     }
 }
+impl vfs_plugin_host::TransportFactory for Peer {
+    fn connect(self: Arc<Self>) -> vfs_plugin_host::ConnectFuture {
+        Box::pin(async move { Ok(self as Arc<dyn Transport>) })
+    }
+}
 impl Transport for Peer {
     fn call<'a>(&'a self, generation: &'a str, op: Op, _data: Vec<u8>) -> TransportFuture<'a> {
         Box::pin(async move {
@@ -206,9 +211,10 @@ async fn new_opens_share_recovery_and_old_resources_stay_stale() -> Result {
         StorageErrorKind::StaleHandle
     );
     driver.reconnect().await?;
+    // A fresh control transport replays settings even for the same backend.
     assert_eq!(
         peer.initialized.lock().map_err(|_| "settings lock")?.len(),
-        2
+        3
     );
     Ok(())
 }
@@ -286,5 +292,82 @@ async fn failed_and_cancelled_recovery_can_be_followed_by_new_opens() -> Result 
         peer.initialized.lock().map_err(|_| "settings lock")?.len(),
         2
     );
+    Ok(())
+}
+
+struct ReopeningFactory {
+    peer: Arc<Peer>,
+    connections: AtomicUsize,
+}
+struct ReopeningControl {
+    peer: Arc<Peer>,
+    reject_open: bool,
+}
+impl vfs_plugin_host::TransportFactory for ReopeningFactory {
+    fn connect(self: Arc<Self>) -> vfs_plugin_host::ConnectFuture {
+        Box::pin(async move {
+            let first = self.connections.fetch_add(1, Ordering::SeqCst) == 0;
+            Ok(Arc::new(ReopeningControl {
+                peer: self.peer.clone(),
+                reject_open: first,
+            }) as Arc<dyn Transport>)
+        })
+    }
+}
+impl Transport for ReopeningControl {
+    fn call<'a>(
+        &'a self,
+        generation: &'a str,
+        operation: Op,
+        data: Vec<u8>,
+    ) -> TransportFuture<'a> {
+        self.peer.call(generation, operation, data)
+    }
+    fn open_session<'a>(
+        &'a self,
+        generation: &'a str,
+        open: p::Open,
+    ) -> Option<vfs_plugin_host::OpenFuture<'a>> {
+        Some(Box::pin(async move {
+            if self.reject_open {
+                self.peer.restart();
+                return Err(StorageError::new(StorageErrorKind::StaleHandle).into());
+            }
+            let Value::Storage(storage) = self
+                .peer
+                .call(generation, Op::Open(open), vec![])
+                .await?
+                .into_value()
+                .map_err(|_| vfs_plugin_host::convert::invalid())?
+            else {
+                return Err(vfs_plugin_host::convert::invalid());
+            };
+            Ok(vfs_plugin_host::OpenedStorage {
+                storage,
+                generation: generation.into(),
+                transport: self.peer.clone(),
+            })
+        }))
+    }
+}
+#[tokio::test]
+async fn stale_open_recreates_transport_describes_initializes_and_opens_once_more() -> Result {
+    let peer = Peer::new();
+    let factory = Arc::new(ReopeningFactory {
+        peer: peer.clone(),
+        connections: AtomicUsize::new(0),
+    });
+    let driver = PluginDriver::connect(factory.clone()).await?;
+    driver
+        .initialize([("setting".into(), "original".into())].into())
+        .await?;
+    let storage = open(&driver).await?;
+    assert_eq!(stat(storage.as_ref()).await?.size, Some(2));
+    assert_eq!(factory.connections.load(Ordering::SeqCst), 2);
+    assert_eq!(peer.descriptions.load(Ordering::SeqCst), 2);
+    let initialized = peer.initialized.lock().map_err(|_| "settings lock")?;
+    assert_eq!(initialized.len(), 2);
+    assert_eq!(initialized[0].1, initialized[1].1);
+    assert_eq!(peer.commits.load(Ordering::SeqCst), 0);
     Ok(())
 }
