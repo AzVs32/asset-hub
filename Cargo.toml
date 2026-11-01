@@ -3,7 +3,6 @@ resolver = "3"
 members = [
     "crates/ah-vfs",
     "crates/vfs-driver-memory",
-    "crates/vfs-driver-kit",
     "crates/vfs-plugin-protocol",
     "crates/vfs-plugin-guest",
     "crates/vfs-plugin-codec",
