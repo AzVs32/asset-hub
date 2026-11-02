@@ -50,8 +50,7 @@ impl EntryService {
             .drivers
             .get(reference.driver_key())
             .ok_or_else(|| EntryError::DriverNotRegistered(reference.driver_key().clone()))?;
-        let relative =
-            StoragePath::parse(resolution.relative_path()).map_err(StorageError::from)?;
+        let relative = resolution.storage_path().map_err(StorageError::from)?;
         let storage = self.runtime.storage(reference, driver.as_ref()).await?;
         Ok((relative, storage))
     }
@@ -342,8 +341,7 @@ impl EntryService {
         if source.mount().id() != destination.mount().id() {
             return Err(EntryError::CrossMountMove);
         }
-        let destination =
-            StoragePath::parse(destination.relative_path()).map_err(StorageError::from)?;
+        let destination = destination.storage_path().map_err(StorageError::from)?;
         let (source, storage) = self.open(&table, &request.source).await?;
         let support = storage.capabilities().rename;
         Self::require(if request.replace {

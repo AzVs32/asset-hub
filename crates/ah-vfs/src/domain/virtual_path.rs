@@ -7,6 +7,8 @@ use thiserror::Error;
 /// Paths use `/` on every platform. Repeated and trailing separators are removed;
 /// dot segments, backslashes and NUL are rejected instead of reinterpreted.
 /// Unicode names are preserved exactly, without case folding or normalization.
+/// Namespace names may contain `:` even though instance-local storage paths may
+/// not. Routing must validate the remaining suffix before passing it to storage.
 #[derive(Clone, Debug, Display, Eq, PartialEq)]
 pub struct VirtualPath(String);
 

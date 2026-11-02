@@ -179,7 +179,7 @@ pub fn decode_capabilities(names: &[i32]) -> Result<StorageCapabilities, DriverE
             AttributeSupport::None
         }
     };
-    Ok(StorageCapabilities {
+    let capabilities = StorageCapabilities {
         stat_entry: set.contains(&(p::Capability::Stat as i32)),
         list_entries: set.contains(&(p::Capability::List as i32)),
         read_file: if set.contains(&(p::Capability::RangeRead as i32)) {
@@ -213,7 +213,9 @@ pub fn decode_capabilities(names: &[i32]) -> Result<StorageCapabilities, DriverE
             p::Capability::PermissionsWrite,
         ),
         xattrs: attr(p::Capability::XattrsRead, p::Capability::XattrsWrite),
-    })
+    };
+    capabilities.validate().map_err(StorageError::from)?;
+    Ok(capabilities)
 }
 pub fn describe(driver: &dyn Driver, generation: String) -> p::Description {
     let info = driver.info();

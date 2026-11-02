@@ -1,5 +1,5 @@
 //! Backend-independent failures shared by instance opening and storage I/O.
-use super::{InstanceId, StoragePathError};
+use super::{InstanceId, StorageCapabilitiesError, StoragePathError};
 use std::{error::Error, fmt};
 use thiserror::Error;
 
@@ -94,6 +94,11 @@ impl Error for StorageError {
 impl From<StoragePathError> for StorageError {
     fn from(error: StoragePathError) -> Self {
         Self::with_source(StorageErrorKind::InvalidPath, error)
+    }
+}
+impl From<StorageCapabilitiesError> for StorageError {
+    fn from(error: StorageCapabilitiesError) -> Self {
+        Self::with_source(StorageErrorKind::InvalidData, error)
     }
 }
 /// Structured creation-parameter failures without disclosing parameter values.

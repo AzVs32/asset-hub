@@ -284,6 +284,83 @@ async fn opened_capabilities_must_match_declarations_and_extension_handles() -> 
 }
 
 #[tokio::test]
+async fn contradictory_opened_capabilities_fail_before_entry_io() -> TestResult {
+    let declared = StorageCapabilities {
+        read_file: FileReadSupport::Range,
+        write_file: FileWriteSupport {
+            create_new: true,
+            replace: true,
+            atomic_publish: true,
+        },
+        dir_model: DirModel::Hierarchical,
+        persistent_empty_dirs: true,
+        create_dir: true,
+        ..Default::default()
+    };
+    for actual in [
+        StorageCapabilities {
+            write_file: FileWriteSupport {
+                atomic_publish: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        StorageCapabilities {
+            persistent_empty_dirs: true,
+            ..Default::default()
+        },
+        StorageCapabilities {
+            create_dir: true,
+            ..Default::default()
+        },
+    ] {
+        let (service, calls) = fixture(actual, declared, None).await?;
+        let error = service
+            .write_file(request(false)?)
+            .await
+            .err()
+            .ok_or("expected invalid opened storage")?;
+        let storage = error.storage_error().ok_or("missing storage error")?;
+        assert_eq!(storage.kind(), StorageErrorKind::InvalidData);
+        assert_eq!(
+            storage
+                .source()
+                .and_then(|e| e.downcast_ref::<ah_vfs::domain::StorageCapabilitiesError>())
+                .copied(),
+            actual.validate().err()
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn invalid_routed_suffix_is_rejected_before_backend_open_or_io() -> TestResult {
+    // An open failure would be observed if path conversion happened too late.
+    let (service, calls) = fixture(
+        StorageCapabilities::default(),
+        StorageCapabilities::default(),
+        Some(StorageErrorKind::Unavailable),
+    )
+    .await?;
+    let error = service
+        .read_file(ReadFileRequest {
+            path: VirtualPath::parse("/file:stream")?,
+            offset: 0,
+            length: None,
+        })
+        .await
+        .err()
+        .ok_or("expected invalid storage path")?;
+    assert_eq!(
+        error.storage_error().ok_or("missing storage error")?.kind(),
+        StorageErrorKind::InvalidPath
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    Ok(())
+}
+
+#[tokio::test]
 async fn opening_streaming_and_committing_keep_domain_error_categories() -> TestResult {
     let caps = StorageCapabilities {
         read_file: FileReadSupport::Range,

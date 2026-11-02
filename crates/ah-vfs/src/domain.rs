@@ -1,4 +1,20 @@
-//! Mount entities and platform-independent virtual paths.
+//! Backend-independent VFS identities, paths, mount rules and storage semantics.
+//!
+//! [`MountTable`] owns namespace invariants. Mount definitions reference host-owned
+//! instances; they do not own instance configuration or live storage handles.
+//! Driver registration, persistence, authorization, asynchronous I/O and transport
+//! formats belong outside this module. Nesting policies must come from one stable
+//! driver-declaration snapshot during each table mutation or restoration.
+//!
+//! [`VirtualPath`] is a canonical namespace address; [`StoragePath`] is an
+//! instance-local address with stricter character rules. Convert a routing result
+//! explicitly with [`MountResolution::storage_path`]; a valid virtual name need not
+//! be a valid backend address. Neither type provides native filesystem confinement.
+//!
+//! [`StorageCapabilities`] is an adapter declaration and must be validated before
+//! acceptance. Future optional capabilities must default to unsupported; transport
+//! adapters own version negotiation and must preserve existing semantic guarantees.
+//! Domain types deliberately do not define a persistence or wire representation.
 
 mod child_mount_policy;
 mod driver_instance_ref;
@@ -26,6 +42,6 @@ mod storage_error;
 pub use storage_attributes::{EntryPermissions, XattrName, XattrWriteMode};
 pub use storage_capabilities::{
     AttributeSupport, DirModel, FileReadSupport, FileWriteSupport, RenameSupport,
-    StorageCapabilities,
+    StorageCapabilities, StorageCapabilitiesError,
 };
 pub use storage_error::{DriverError, InstanceConfigErrorKind, StorageError, StorageErrorKind};

@@ -5,6 +5,9 @@ use thiserror::Error;
 ///
 /// The empty string denotes the root. Other paths use `/` separators; absolute
 /// paths, empty/dot segments, backslashes, colons and NUL are rejected.
+/// No normalization or lossy conversion is performed. This is a portable logical
+/// address, not an OS path or a sandbox: adapters must enforce native name limits,
+/// symbolic-link policy and confinement to the instance root themselves.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StoragePath(String);
 

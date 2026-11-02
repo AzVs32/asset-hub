@@ -2,7 +2,7 @@
 
 use crate::application::error::DriverCatalogError;
 use crate::application::port::Driver;
-use crate::domain::DriverKey;
+use crate::domain::{DriverKey, StorageError};
 use std::collections::HashMap;
 use std::{fmt, sync::Arc};
 
@@ -33,6 +33,9 @@ impl DriverCatalog {
         if self.drivers.contains_key(&key) {
             return Err(DriverCatalogError::AlreadyRegistered(key));
         }
+        driver.info().capabilities().validate().map_err(|error| {
+            DriverCatalogError::InvalidDeclaration(StorageError::from(error).into())
+        })?;
         if let Some(schema) = driver.info().instance_config_schema() {
             super::schema::validate_instance_config_schema(schema)
                 .map_err(DriverCatalogError::InvalidDeclaration)?;

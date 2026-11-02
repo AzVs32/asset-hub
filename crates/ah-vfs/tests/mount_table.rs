@@ -412,3 +412,46 @@ fn restoration_cannot_bypass_driver_policies_in_any_row_order() -> TestResult {
     );
     Ok(())
 }
+
+#[test]
+fn storage_addresses_validate_only_the_suffix_after_namespace_resolution() -> TestResult {
+    use ah_vfs::domain::{StorageError, StorageErrorKind, StoragePath, StoragePathError};
+
+    let mut table = MountTable::new(mount("/", "builtin.local", true)?)?;
+    table.insert(mount("/cloud:archive", "builtin.local", true)?, policy)?;
+    table.insert(mount("/cloud:archive/nested", "acme.s3", true)?, policy)?;
+    for (virtual_path, storage_path) in [
+        ("/", ""),
+        ("/file.txt", "file.txt"),
+        ("/cloud:archive", ""),
+        ("//cloud:archive///文档/a.txt/", "文档/a.txt"),
+        ("/cloud:archive/nested/a.txt", "a.txt"),
+    ] {
+        let path = VirtualPath::parse(virtual_path)?;
+        let resolved = table.resolve(&path)?;
+        assert_eq!(resolved.storage_path()?, StoragePath::parse(storage_path)?);
+        assert_eq!(resolved.relative_path(), storage_path);
+    }
+    for virtual_path in [
+        "/file:stream",
+        "/cloud:archive/file:stream",
+        "/cloud:archive-other/file",
+    ] {
+        let path = VirtualPath::parse(virtual_path)?;
+        let resolved = table.resolve(&path)?;
+        assert_eq!(
+            resolved.storage_path(),
+            Err(StoragePathError::InvalidSegment)
+        );
+        let error = resolved.storage_path().map_err(StorageError::from);
+        assert!(matches!(error, Err(error) if error.kind() == StorageErrorKind::InvalidPath));
+    }
+    // The converted address owns its data independently of both table and request.
+    let address = {
+        let path = VirtualPath::parse("/cloud:archive/文档/a.txt")?;
+        table.resolve(&path)?.storage_path()?
+    };
+    drop(table);
+    assert_eq!(address.as_str(), "文档/a.txt");
+    Ok(())
+}

@@ -1,4 +1,6 @@
-use super::{ChildMountPolicy, DriverKey, Mount, MountId, VirtualPath};
+use super::{
+    ChildMountPolicy, DriverKey, Mount, MountId, StoragePath, StoragePathError, VirtualPath,
+};
 use thiserror::Error;
 
 /// A virtual namespace with one required root mount and unique mount IDs and paths.
@@ -49,6 +51,16 @@ impl<'mount, 'path> MountResolution<'mount, 'path> {
     /// Borrow the suffix without a leading slash; the mount point itself yields `""`.
     pub fn relative_path(&self) -> &'path str {
         self.relative_path
+    }
+
+    /// Validate the routed suffix as an instance-local storage address.
+    ///
+    /// Namespace prefixes may contain characters such as `:` that storage addresses
+    /// reject. Only the suffix is checked: mounting at `/cloud:archive` is valid,
+    /// while a suffix such as `file:stream` returns [`StoragePathError::InvalidSegment`].
+    /// The mount point itself maps to [`StoragePath::root`]. No backend is opened.
+    pub fn storage_path(&self) -> Result<StoragePath, StoragePathError> {
+        StoragePath::parse(self.relative_path)
     }
 }
 

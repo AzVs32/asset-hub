@@ -1,9 +1,12 @@
 //! Transport-independent storage capabilities and semantic guarantees.
 
+use thiserror::Error;
+
 /// Prefix dirs do not imply persistent empty dirs. Adapters must document marker
 /// creation and file/prefix collisions instead of silently pretending POSIX dirs.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum DirModel {
+    /// No child-directory semantics. Root listing is independently advertised.
     #[default]
     None,
     Hierarchical,
@@ -25,6 +28,16 @@ pub struct FileWriteSupport {
     pub create_new: bool,
     pub replace: bool,
     pub atomic_publish: bool,
+}
+
+impl FileWriteSupport {
+    /// Reject a publication guarantee without any supported write mode.
+    pub fn validate(self) -> Result<(), StorageCapabilitiesError> {
+        if self.atomic_publish && !self.create_new && !self.replace {
+            return Err(StorageCapabilitiesError::AtomicPublishWithoutWrite);
+        }
+        Ok(())
+    }
 }
 /// Both variants require atomic rename within the supported scope, never copy/delete.
 /// Cross-device requests may fail even when the instance advertises support.
@@ -53,6 +66,13 @@ impl AttributeSupport {
 /// instance/platform support, not authorization or success for every path/device.
 /// Unsupported operations fail before side effects; guarantees cannot be weakened.
 /// Unknown optional capabilities default to unsupported.
+///
+/// This is a declaration, not a validated handle: public fields allow adapters to
+/// assemble or decode it without a transport-specific builder. Call [`Self::validate`]
+/// at every acceptance boundary, before initialization or storage I/O. Validation
+/// rejects contradictions; it never infers capabilities or silently repairs data.
+/// Independent operations do not imply each other: listing need not imply stat,
+/// and persistent directories need not imply permission to create directories.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct StorageCapabilities {
     pub stat_entry: bool,
@@ -68,9 +88,48 @@ pub struct StorageCapabilities {
     pub xattrs: AttributeSupport,
 }
 
+/// Contradictory capability declarations, independent of any plugin transport.
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum StorageCapabilitiesError {
+    #[error("atomic publication requires at least one file write mode")]
+    AtomicPublishWithoutWrite,
+    #[error("persistent empty directories require a directory model")]
+    EmptyDirsWithoutDirModel,
+    #[error("directory creation requires a directory model")]
+    CreateDirWithoutDirModel,
+}
+
 impl StorageCapabilities {
+    /// Check semantic consistency, without probing a backend or checking access.
+    ///
+    /// Both hierarchical and prefix models may support persistent empty directories
+    /// and directory creation. Prefix adapters must define their marker semantics.
+    /// Read-only handles may report persistent directories without creation support.
+    pub fn validate(self) -> Result<(), StorageCapabilitiesError> {
+        self.write_file.validate()?;
+        if self.dir_model == DirModel::None {
+            if self.persistent_empty_dirs {
+                return Err(StorageCapabilitiesError::EmptyDirsWithoutDirModel);
+            }
+            if self.create_dir {
+                return Err(StorageCapabilitiesError::CreateDirWithoutDirModel);
+            }
+        }
+        Ok(())
+    }
+
     /// Whether this declaration covers every capability in an opened instance.
+    ///
+    /// Invalid declarations never cover or are covered by another declaration.
+    /// For valid declarations this is a partial order: reflexive, antisymmetric
+    /// and transitive. `None` is the bottom directory model; hierarchical and
+    /// prefix semantics are incomparable. Range reads cover sequential reads.
+    /// Coverage does not prove that an adapter implements its advertised behavior.
     pub fn supports(self, actual: Self) -> bool {
+        if self.validate().is_err() || actual.validate().is_err() {
+            return false;
+        }
         let read = matches!(
             (self.read_file, actual.read_file),
             (_, FileReadSupport::None)
