@@ -49,12 +49,12 @@ fn hmac(key: &[u8], bytes: &[u8]) -> Result<Vec<u8>> {
 fn xml(bytes: &[u8]) -> Result<&str> {
     std::str::from_utf8(bytes).map_err(|_| failure(p::FailureCode::InvalidData))
 }
-fn header(response: &http::Response, key: &str) -> Option<String> {
+fn header(response: &http::Response<Vec<u8>>, key: &str) -> Option<String> {
     response
-        .headers
-        .iter()
-        .find(|h| h.name.eq_ignore_ascii_case(key))
-        .map(|h| h.value.clone())
+        .headers()
+        .get(key)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned)
 }
 impl Client {
     pub fn parse(fields: &p::JsonObject) -> Result<Self> {
@@ -107,17 +107,35 @@ impl Client {
         query: Vec<(String, String)>,
         extra: Vec<(String, String)>,
         body: Vec<u8>,
-    ) -> Result<http::Response> {
-        let request = self.sign(method, key, query, extra, body, clock::unix_time())?;
+    ) -> Result<http::Response<Vec<u8>>> {
+        let request = self.sign(
+            method,
+            key,
+            query,
+            extra,
+            body,
+            i64::try_from(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|_| failure(p::FailureCode::Backend))?
+                    .as_secs(),
+            )
+            .map_err(|_| failure(p::FailureCode::Backend))?,
+        )?;
         let mutation = !matches!(method, "GET" | "HEAD");
-        let response = http::request_http(&request).map_err(|code| {
-            if mutation && matches!(code.as_str(), "timed_out" | "unavailable") {
+        let response = vfs_plugin_guest::wasi_http::send(request).map_err(|error| {
+            if mutation
+                && !matches!(
+                    error.code(),
+                    p::FailureCode::PermissionDenied | p::FailureCode::InvalidRequest
+                )
+            {
                 failure(p::FailureCode::OutcomeUnknown)
             } else {
-                api::host_failure(&code)
+                error
             }
         })?;
-        match response.status {
+        match response.status().as_u16() {
             200..=299 => Ok(response),
             403 => Err(failure(p::FailureCode::PermissionDenied)),
             404 => Err(failure(p::FailureCode::NotFound)),
@@ -140,7 +158,7 @@ impl Client {
         extra: Vec<(String, String)>,
         body: Vec<u8>,
         now: i64,
-    ) -> Result<http::Request> {
+    ) -> Result<http::Request<Vec<u8>>> {
         let time = OffsetDateTime::from_unix_timestamp(now)
             .map_err(|_| failure(p::FailureCode::InvalidData))?;
         let format = time::format_description::parse_borrowed::<2>(
@@ -192,23 +210,22 @@ impl Client {
         let signature = hex::encode(hmac(&k, to_sign.as_bytes())?);
         headers.remove("host");
         headers.insert("authorization".into(),format!("AWS4-HMAC-SHA256 Credential={}/{scope}, SignedHeaders={signed}, Signature={signature}",self.access));
-        Ok(http::Request {
-            method: method.into(),
-            url: format!(
-                "{}{uri}{}",
-                self.endpoint,
-                if query.is_empty() {
-                    String::new()
-                } else {
-                    format!("?{query}")
-                }
-            ),
-            headers: headers
-                .into_iter()
-                .map(|(name, value)| http::Header { name, value })
-                .collect(),
-            body,
-        })
+        let url = format!(
+            "{}{uri}{}",
+            self.endpoint,
+            if query.is_empty() {
+                String::new()
+            } else {
+                format!("?{query}")
+            }
+        );
+        let mut request = http::Request::builder().method(method).uri(url);
+        for (name, value) in headers {
+            request = request.header(name, value);
+        }
+        request
+            .body(body)
+            .map_err(|_| failure(p::FailureCode::InvalidRequest))
     }
     pub fn check_bucket(&self) -> Result<()> {
         self.request("HEAD", "", vec![], vec![], vec![])?;
@@ -258,7 +275,7 @@ impl Client {
             query.push(("start-after".into(), format!("{prefix}{after}")));
         }
         let r = self.request("GET", "", query, vec![], vec![])?;
-        quick_xml::de::from_str(xml(&r.body)?).map_err(|_| failure(p::FailureCode::InvalidData))
+        quick_xml::de::from_str(xml(r.body())?).map_err(|_| failure(p::FailureCode::InvalidData))
     }
     pub fn stat(&self, name: &str) -> Result<p::Entry> {
         path(name)?;
@@ -395,7 +412,7 @@ impl Client {
             vec![],
             vec![],
         )?;
-        let upload: Initiated = quick_xml::de::from_str(xml(&r.body)?)
+        let upload: Initiated = quick_xml::de::from_str(xml(r.body())?)
             .map_err(|_| failure(p::FailureCode::InvalidData))?;
         if upload.upload_id.is_empty() {
             return Err(failure(p::FailureCode::InvalidData));
@@ -461,7 +478,7 @@ impl Client {
             headers,
             body.into_bytes(),
         )?;
-        if xml(&r.body)?.contains("<Error>") {
+        if xml(r.body())?.contains("<Error>") {
             return Err(failure(p::FailureCode::Backend));
         }
         Ok(())

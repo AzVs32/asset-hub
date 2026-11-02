@@ -12,3 +12,7 @@ workspace = true
 
 [dependencies]
 vfs-plugin-protocol = { path = "../vfs-plugin-protocol", version = "0.1.0" }
+http = "1.5.0"
+
+[target.'cfg(target_os = "wasi")'.dependencies]
+wasip2 = "1.0.4"

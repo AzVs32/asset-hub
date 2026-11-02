@@ -1,5 +1,5 @@
 //! From this plugin's directory, build the guest with `cargo build --locked --target
-//! wasm32-unknown-unknown` before explicitly running these external-server tests.
+//! wasm32-wasip2` before explicitly running these external-server tests.
 mod common;
 use ah_vfs::{
     application::{
@@ -91,12 +91,23 @@ async fn component(origins: Vec<String>) -> Result<Arc<PluginDriver>> {
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("target/wasm32-unknown-unknown/debug/vfs_driver_s3.wasm")
+                .join("target/wasm32-wasip2/debug/vfs_driver_s3.wasm")
         });
     let bytes = std::fs::read(path)?;
     Ok(Arc::new(
         PluginDriver::connect(Arc::new(
-            WasmTransport::load(bytes, origins).await.map_err(|error| {
+            WasmTransport::load(
+                bytes,
+                vfs_plugin_wasm::HostGrants {
+                    http: vfs_plugin_wasm::HttpGrants {
+                        origins,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|error| {
                 let mut diagnostic = error.to_string();
                 let mut source = std::error::Error::source(&error);
                 while let Some(cause) = source {
@@ -113,7 +124,32 @@ async fn component(origins: Vec<String>) -> Result<Arc<PluginDriver>> {
 #[tokio::test]
 #[ignore = "requires the built S3 WASM component; no external service"]
 async fn protobuf_bootstrap_uses_the_shared_description_and_config_messages() -> Result {
-    let driver = component(vec![]).await?;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let endpoint = format!("http://{}", listener.local_addr()?);
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await?;
+        let mut request = Vec::new();
+        while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+            let mut chunk = [0; 4096];
+            let read = stream.read(&mut chunk).await?;
+            if read == 0 {
+                return Err(std::io::Error::other("request closed"));
+            }
+            request.extend_from_slice(&chunk[..read]);
+            assert!(request.len() < 16384);
+        }
+        let request = String::from_utf8_lossy(&request).to_ascii_lowercase();
+        assert!(request.starts_with("head /fixture"));
+        assert!(request.contains("authorization: aws4-hmac-sha256 "));
+        assert!(request.contains("x-amz-date:"));
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .await?;
+        stream.shutdown().await?;
+        std::io::Result::Ok(())
+    });
+    let driver = component(vec![endpoint.clone()]).await?;
     assert_eq!(
         driver.negotiated_protocol().major,
         vfs_plugin_protocol::PROTOCOL_MAJOR
@@ -121,7 +157,7 @@ async fn protobuf_bootstrap_uses_the_shared_description_and_config_messages() ->
     driver.initialize(Default::default()).await?;
     let provisioner = driver.provisioner();
     let config = InstanceConfig::from([
-        ("endpoint".into(), "http://127.0.0.1:9".into()),
+        ("endpoint".into(), endpoint.into()),
         ("bucket".into(), "fixture".into()),
         ("region".into(), "us-east-1".into()),
         ("access_key".into(), "test-access".into()),
@@ -134,6 +170,8 @@ async fn protobuf_bootstrap_uses_the_shared_description_and_config_messages() ->
         Some("fixture")
     );
     assert_eq!(provisioner.migrate_config(1, config.clone()).await?, config);
+    provisioner.test_connection(&config).await?;
+    tokio::time::timeout(std::time::Duration::from_secs(5), server).await???;
     Ok(())
 }
 async fn put(s: &dyn Storage, name: &str, bytes: &[u8]) -> Result {
@@ -148,18 +186,21 @@ async fn put(s: &dyn Storage, name: &str, bytes: &[u8]) -> Result {
 }
 #[tokio::test]
 #[ignore = "requires the cross-compiled S3 component"]
-async fn portable_component_describes_and_validates_without_network_permissions() -> Result {
-    let driver = component(vec![]).await?;
-    assert_eq!(driver.info().key().as_str(), "s3");
-    let mut catalog = DriverCatalog::new();
-    catalog.register(driver.clone(), Default::default()).await?;
-    let provisioner = driver.provisioner();
-    let error = provisioner
-        .prepare(InstanceConfig::new())
+async fn missing_required_http_grant_rejects_component_loading() -> Result {
+    let error = component(vec![])
         .await
         .err()
-        .ok_or("invalid config")?;
-    assert!(matches!(error, DriverError::InvalidInstanceConfig { .. }));
+        .ok_or("missing grant accepted")?;
+    let mut messages = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        messages.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    assert!(
+        messages.contains("ungranted WASI capabilities: http"),
+        "{messages}"
+    );
     Ok(())
 }
 #[tokio::test]

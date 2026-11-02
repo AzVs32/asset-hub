@@ -196,7 +196,17 @@ async fn protobuf_component_opens_writes_commits_reads_and_lists() -> Result {
     let path = std::env::var_os("VFS_WEBDAV_COMPONENT").ok_or("VFS_WEBDAV_COMPONENT")?;
     let fixture = Fixture::new().await?;
     let driver = PluginDriver::connect(Arc::new(
-        WasmTransport::load(std::fs::read(path)?, vec![fixture.origin.clone()]).await?,
+        WasmTransport::load(
+            std::fs::read(path)?,
+            vfs_plugin_wasm::HostGrants {
+                http: vfs_plugin_wasm::HttpGrants {
+                    origins: vec![fixture.origin.clone()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .await?,
     ))
     .await?;
     assert_eq!(

@@ -1,9 +1,9 @@
-//! Portable WebDAV driver using only the service.v1 HTTP import.
+//! Portable WebDAV driver using standard WASIp2 HTTP.
 //!
 //! Instance records and credential encryption belong to the host. Authentication
 //! is anonymous, Basic or Bearer. The endpoint is an existing collection URL.
 //! Staged PUT writes are bounded to max_write_bytes (at most 8 MiB), matching the
-//! current bounded HTTP import. Larger reads require server byte-range support.
+//! bounded whole-file staging policy. Larger reads require server byte-range support.
 //! Atomic publication/rename, POSIX permissions and xattrs are not advertised.
 //! Removal is not advertised or implemented: RFC 4918 collection DELETE is
 //! recursive and cannot guarantee the VFS empty-directory removal contract.
@@ -19,7 +19,6 @@ use std::{
 use vfs_plugin_protocol::{self as p, Value};
 
 vfs_plugin_guest::export_plugin!(WebdavDriver, "../../crates/vfs-plugin-protocol/wit");
-use assethub::vfs::http;
 use vfs_plugin_guest::api::{self, Guest, GuestReader, GuestStorage, GuestWriter};
 
 type Result<T> = std::result::Result<T, api::Failure>;
@@ -91,7 +90,7 @@ impl Guest for WebdavDriver {
                 .iter()
                 .map(|feature| (*feature).into())
                 .collect(),
-            required_host_capabilities: vec![p::HOST_HTTP.into()],
+            required_host_capabilities: vec!["http".into()],
             instance_schema_profile: p::INSTANCE_SCHEMA_PROFILE.into(),
             generation: String::new(),
             key: "webdav".into(),

@@ -2,6 +2,8 @@
 use std::{collections::BTreeMap, marker::PhantomData};
 use vfs_plugin_protocol::{self as p, Operation as Op, Value};
 
+pub mod wasi_http;
+
 pub mod api {
     use super::*;
     pub type Failure = p::Failure;

@@ -1,7 +1,6 @@
 //! S3-compatible storage plugin using path-style requests and AWS SigV4.
 //! Endpoint, bucket and signing region are supplied by instance configuration.
-//! The portable component imports only bounded HTTP
-//! and a wall clock. Directories are implicit prefixes; empty-directory creation,
+//! The portable component uses WASIp2 HTTP and the standard library clock. Directories are implicit prefixes; empty-directory creation,
 //! rename, permissions and xattrs are deliberately unsupported. File/prefix
 //! collisions are rejected rather than silently selecting one interpretation.
 #![cfg(target_arch = "wasm32")]
@@ -13,7 +12,6 @@ use std::{
 use vfs_plugin_protocol::{self as p, Value};
 
 vfs_plugin_guest::export_plugin!(S3Driver, "../../crates/vfs-plugin-protocol/wit");
-use assethub::vfs::{clock, http};
 use vfs_plugin_guest::api::{self, Guest, GuestReader, GuestStorage, GuestWriter};
 type Result<T> = std::result::Result<T, api::Failure>;
 fn failure(code: p::FailureCode) -> api::Failure {
@@ -83,7 +81,7 @@ impl Guest for S3Driver {
                 .iter()
                 .map(|feature| (*feature).into())
                 .collect(),
-            required_host_capabilities: vec![p::HOST_HTTP.into(), p::HOST_CLOCK.into()],
+            required_host_capabilities: vec!["http".into()],
             instance_schema_profile: p::INSTANCE_SCHEMA_PROFILE.into(),
             generation: String::new(),
             key: "s3".into(),
@@ -257,13 +255,15 @@ impl GuestReader for S3Reader {
             )],
             vec![],
         )?;
-        if response.status != 206 || response.body.is_empty() || response.body.len() as u64 > length
+        if response.status().as_u16() != 206
+            || response.body().is_empty()
+            || response.body().len() as u64 > length
         {
             return Err(failure(p::FailureCode::InvalidData));
         }
-        self.offset.set(offset + response.body.len() as u64);
-        self.remaining.set(remaining - response.body.len() as u64);
-        Ok(Some(response.body))
+        self.offset.set(offset + response.body().len() as u64);
+        self.remaining.set(remaining - response.body().len() as u64);
+        Ok(Some(response.into_body()))
     }
 }
 const PART_SIZE: usize = 5 * 1024 * 1024;
