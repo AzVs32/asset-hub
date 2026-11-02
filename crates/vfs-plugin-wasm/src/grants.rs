@@ -82,13 +82,13 @@ fn invalid(message: &str) -> DriverError {
     .into()
 }
 #[derive(Clone)]
-pub(crate) struct Destination {
-    pub host: String,
-    pub port: u16,
-    pub literal: Option<IpAddr>,
+struct Destination {
+    host: String,
+    port: u16,
+    literal: Option<IpAddr>,
 }
 impl Destination {
-    pub fn parse(value: &str) -> Result<Self, DriverError> {
+    fn parse(value: &str) -> Result<Self, DriverError> {
         let url = url::Url::parse(&format!("tcp://{value}"))
             .map_err(|_| invalid("invalid TCP host:port grant"))?;
         if url.path() != "" && url.path() != "/"
@@ -146,7 +146,7 @@ pub(crate) fn public_ip(ip: IpAddr) -> bool {
     }
 }
 impl HostGrants {
-    pub(crate) fn validate(&mut self) -> Result<(), DriverError> {
+    pub(crate) fn validate(&mut self) -> Result<NetworkPolicy, DriverError> {
         if self.limits.storage_instances > tokio::sync::Semaphore::MAX_PERMITS
             || self.limits.control_instances > tokio::sync::Semaphore::MAX_PERMITS
             || self.limits.memory_bytes == 0
@@ -177,9 +177,6 @@ impl HostGrants {
             }
             *origin = url.origin().ascii_serialization();
         }
-        for target in &self.tcp {
-            Destination::parse(target)?;
-        }
         for entry in &self.fs {
             if !entry.host.is_absolute()
                 || !entry.guest.starts_with('/')
@@ -197,7 +194,7 @@ impl HostGrants {
         {
             return Err(invalid("invalid environment variable grant"));
         }
-        Ok(())
+        NetworkPolicy::new(self)
     }
     pub(crate) fn capabilities(&self) -> Vec<&'static str> {
         let mut caps = vec![];
@@ -221,12 +218,12 @@ impl HostGrants {
 }
 #[derive(Clone)]
 pub(crate) struct NetworkPolicy {
-    pub targets: Vec<Destination>,
+    targets: Vec<Destination>,
     #[cfg(test)]
     test_dns: Option<std::sync::Arc<TestDns>>,
 }
 impl NetworkPolicy {
-    pub fn new(grants: &HostGrants) -> Result<Self, DriverError> {
+    fn new(grants: &HostGrants) -> Result<Self, DriverError> {
         Ok(Self {
             #[cfg(test)]
             test_dns: None,
@@ -295,8 +292,8 @@ impl NetworkPolicy {
         self.test_dns = dns;
         self
     }
+    #[cfg(test)]
     pub fn lookup_name(&self, name: &str) -> String {
-        #[cfg(test)]
         if let Some(dns) = &self.test_dns
             && name == dns.name
         {

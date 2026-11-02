@@ -509,7 +509,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "wasi-prototype"
+name = "wasi-probe"
 version = "0.1.0"
 dependencies = [
  "http",

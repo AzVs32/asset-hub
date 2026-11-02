@@ -198,7 +198,7 @@ async fn missing_required_http_grant_rejects_component_loading() -> Result {
         source = cause.source();
     }
     assert!(
-        messages.contains("ungranted WASI capabilities: http"),
+        messages.contains("ungranted host capabilities: http"),
         "{messages}"
     );
     Ok(())

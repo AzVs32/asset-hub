@@ -154,8 +154,10 @@ impl PluginDriver {
     pub async fn connect(factory: Arc<dyn TransportFactory>) -> Result<Self, DriverError> {
         let transport = factory.clone().connect().await?;
         let description = describe(transport.as_ref()).await?;
-        let negotiated = p::negotiate(&description, transport.host_capabilities())
-            .map_err(|_| StorageError::new(StorageErrorKind::UnsupportedOperation))?;
+        let negotiated =
+            p::negotiate(&description, transport.host_capabilities()).map_err(|error| {
+                StorageError::with_source(StorageErrorKind::UnsupportedOperation, error)
+            })?;
         let info = convert::driver_info(&description)?;
         let runtime = Runtime::new(transport.clone(), description.generation.clone());
         Ok(Self {
@@ -319,8 +321,9 @@ impl RemoteInstances {
             if changed {
                 connection.runtime.stale.store(true, Ordering::Release);
             }
-            p::negotiate(&description, transport.host_capabilities())
-                .map_err(|_| StorageError::new(StorageErrorKind::UnsupportedOperation))?;
+            p::negotiate(&description, transport.host_capabilities()).map_err(|error| {
+                StorageError::with_source(StorageErrorKind::UnsupportedOperation, error)
+            })?;
             convert::driver_info(&description)?;
             expected.generation.clear();
             description.generation.clear();

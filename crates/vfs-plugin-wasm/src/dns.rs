@@ -22,6 +22,7 @@ impl dns::Host for Host {
         if !self.network.allows_name(&name) {
             return Err(ErrorCode::AccessDenied.into());
         }
+        #[cfg(test)]
         let name = self.network.lookup_name(&name);
         dns::Host::resolve_addresses(&mut self.sockets(), network, name)
     }

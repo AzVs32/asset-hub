@@ -89,29 +89,12 @@ fn fixture(prepare: &str, initialize: &str, stat: &str, commit: &str) -> Result<
             );
         }
     }
-    let mut bytes = wat::parse_str(
+    Ok(wat::parse_str(
         wat.replace("@@PREPARE@@", prepare)
             .replace("@@INITIALIZE@@", initialize)
             .replace("@@STAT@@", stat)
             .replace("@@COMMIT@@", commit),
-    )?;
-    let mut resolve = wit_parser::Resolve::default();
-    let package = resolve.push_str(
-        "plugin.wit",
-        include_str!("../../vfs-plugin-protocol/wit/plugin.wit"),
-    )?;
-    let world = resolve.select_world(&[package], Some("plugin"))?;
-    wit_component::embed_component_metadata(
-        &mut bytes,
-        &resolve,
-        world,
-        wit_component::StringEncoding::UTF8,
-        false,
-    )?;
-    Ok(wit_component::ComponentEncoder::default()
-        .module(&bytes)?
-        .validate(true)
-        .encode()?)
+    )?)
 }
 async fn factory(
     prepare: &str,
@@ -358,7 +341,7 @@ async fn poisoned_stores_release_capacity_even_when_stale_proxies_are_retained()
 async fn live_store_capacity_is_bounded_and_returned_when_storage_is_dropped() -> Result {
     let driver = driver(factory("i32.const 16", INITIALIZE, STAT, "i32.const 48").await?).await?;
     let mut retained = vec![];
-    for _ in 0..vfs_plugin_wasm::MAX_STORAGE_INSTANCES {
+    for _ in 0..vfs_plugin_wasm::ExecutionLimits::default().storage_instances {
         retained.push(open(&driver, "retained").await?);
     }
     let error = driver

@@ -61,13 +61,12 @@ WebDAV 继续保留最大 8 MiB 的提交前暂存限制：当前实现要等 co
 ```sh
 rustup target add wasm32-wasip2
 scripts/build-wasi-plugins.sh --offline
-scripts/build-wasi-prototype.sh --offline
-VFS_WASI_PROTOTYPE_COMPONENT="$PWD/target/wasi-prototype/guest/wasm32-wasip2/debug/wasi_prototype.wasm" \
-  cargo test -p vfs-plugin-wasm -- --nocapture
+scripts/build-wasi-probe.sh --offline
+cargo test -p vfs-plugin-wasm -- --nocapture
 ```
 
 独立插件可直接 `cargo build --locked --target wasm32-wasip2`，产物已经是组件。Rust guest SDK 的 HTTP 客户端直接调用 `wasip2` 的标准 HTTP 绑定，使用标准 Rust `http::Request/Response`，不再引入自定义宿主 WIT 服务；时间使用 `SystemTime`。选择直接绑定是因为驱动导出仍是同步调用，这样能使用标准 pollable 阻塞等待，而无需额外 guest 异步运行时和客户端依赖。标准 HTTP 接口可流式传输，但当前 SDK 和宿主策略均收集有界的请求/响应体，尚未提供端到端流式上传。
 
-测试夹具通过真实 Rust 组件执行文件、环境、TCP、HTTP、限额及取消测试。DNS 重绑定测试在宿主测试构建中控制标准 WASI DNS 回答，使组件先得到公有 IP、再得到回环 IP，确认实际连接被拒；生产构建没有该注入入口。缺少工具或组件产物时测试打印 SKIP 原因，不使整个测试套件失败。
+测试夹具直接使用正式的 plugin.wit，仅导出驱动接口。默认自动发现上述脚本构建的组件，可通过 `VFS_WASI_TEST_COMPONENT` 指定其他路径。测试通过真实 Rust 组件执行文件、环境、TCP、HTTP、限额及取消测试。DNS 重绑定测试在宿主测试构建中控制标准 WASI DNS 回答，使组件先得到公有 IP、再得到回环 IP，确认实际连接被拒；生产构建没有该注入入口。缺少工具或组件产物时测试打印 SKIP 原因，不使整个测试套件失败。
 
-同步导出实际等待 p3 异步接口的原型曾返回 `CannotBlockSyncTask`，因此当前不链接或宣称支持 p3。Node 不存在时 JS 组件验证标记为未验证；真正的 p3 Rust 组件也未验证。
+当前仅支持 WASIp2。增加 p3 支持前，需要解决同步导出等待异步接口可能出现的 `CannotBlockSyncTask`，并使用真实组件验证。JS 组件尚未验证。

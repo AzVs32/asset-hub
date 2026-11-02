@@ -11,16 +11,16 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use vfs_plugin_host::PluginDriver;
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 fn component() -> Option<Vec<u8>> {
-    let path = std::env::var_os("VFS_WASI_PROTOTYPE_COMPONENT")
+    let path = std::env::var_os("VFS_WASI_TEST_COMPONENT")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../target/wasi-prototype/guest/wasm32-wasip2/debug/wasi_prototype.wasm")
+                .join("../../target/wasi-probe/guest/wasm32-wasip2/debug/wasi_probe.wasm")
         });
     match std::fs::read(path) {
         Ok(bytes) => Some(bytes),
         Err(_) => {
-            eprintln!("SKIP: build the real component with scripts/build-wasi-prototype.sh");
+            eprintln!("SKIP: build the real component with scripts/build-wasi-probe.sh");
             None
         }
     }
@@ -624,5 +624,97 @@ async fn components_only_and_configured_storage_concurrency_are_enforced() -> Re
         }
     })
     .await??;
+    Ok(())
+}
+
+#[tokio::test]
+async fn epoch_interrupts_real_guest_cpu_execution() -> Result {
+    let Some(bytes) = component() else {
+        return Ok(());
+    };
+    let mut grants = HostGrants::default();
+    grants.limits.fuel = u64::MAX;
+    grants.limits.timeout_ms = 5_000;
+    let epochs = grants.limits.timeout_ms.div_ceil(10);
+    let factory = Arc::new(WasmTransport::load(bytes, grants).await?);
+    factory.factory.ticker.abort();
+    let engine = factory.factory.pre.engine().clone();
+    let client = PluginDriver::connect(factory).await?;
+    client.initialize(Default::default()).await?;
+    let interrupt = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        for _ in 0..epochs {
+            engine.increment_epoch();
+        }
+    });
+    let error = run(&client, "cpu", &[])
+        .await
+        .err()
+        .ok_or("epoch ignored")?;
+    interrupt.await?;
+    let error = error.storage_error().ok_or("category")?;
+    assert_eq!(error.kind(), StorageErrorKind::TimedOut);
+    // An epoch trap carries its Wasmtime source; a wall deadline does not.
+    assert!(std::error::Error::source(error).is_some());
+    assert_eq!(
+        run(&client, "echo", &[("data", "fresh".into())]).await?,
+        "fresh"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn cpu_budgets_do_not_replace_wall_deadlines_for_pending_socket_io() -> Result {
+    let Some(bytes) = component() else {
+        return Ok(());
+    };
+    for mode in ["epoch", "fuel"] {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await?;
+            let _ = accepted_tx.send(());
+            let mut byte = [0];
+            socket.read(&mut byte).await
+        });
+        let mut grants = HostGrants {
+            tcp: vec![address.to_string()],
+            ..Default::default()
+        };
+        grants.limits.timeout_ms = 5_000;
+        grants.limits.fuel = if mode == "fuel" { 500_000 } else { u64::MAX };
+        let epochs = grants.limits.timeout_ms.div_ceil(10);
+        let factory = Arc::new(WasmTransport::load(bytes.clone(), grants).await?);
+        factory.factory.ticker.abort();
+        let engine = factory.factory.pre.engine().clone();
+        let client = PluginDriver::connect(factory).await?;
+        client.initialize(Default::default()).await?;
+        let fields = [("address", address.to_string().into())];
+        let mut pending = Box::pin(run(&client, "tcp", &fields));
+        tokio::select! {
+            result = &mut pending => return Err(format!("socket did not block: {result:?}").into()),
+            accepted = tokio::time::timeout(Duration::from_secs(2), accepted_rx) => { accepted??; }
+        }
+        if mode == "epoch" {
+            for _ in 0..epochs {
+                engine.increment_epoch();
+            }
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), &mut pending)
+                .await
+                .is_err()
+        );
+        drop(pending);
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(2), server).await???,
+            0
+        );
+        assert_eq!(
+            run(&client, "echo", &[("data", "fresh".into())]).await?,
+            "fresh"
+        );
+    }
     Ok(())
 }

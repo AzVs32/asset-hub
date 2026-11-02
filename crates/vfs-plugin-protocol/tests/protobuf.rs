@@ -293,3 +293,27 @@ fn optional_features_are_filtered_and_required_features_must_be_supported_and_ad
     );
     Ok(())
 }
+
+#[test]
+fn host_negotiation_reports_only_missing_capabilities() -> Result {
+    let description = p::Description {
+        major: p::PROTOCOL_MAJOR,
+        instance_schema_profile: p::INSTANCE_SCHEMA_PROFILE.into(),
+        required_host_capabilities: vec!["http".into(), "fs.read".into(), "env".into()],
+        ..Default::default()
+    };
+    let error = p::negotiate(&description, &["http"])
+        .err()
+        .ok_or("missing grants accepted")?;
+    assert_eq!(
+        error,
+        p::IncompatiblePlugin::HostCapabilities(vec!["fs.read".into(), "env".into()])
+    );
+    assert_eq!(
+        error.to_string(),
+        "ungranted host capabilities: fs.read, env"
+    );
+    assert!(p::negotiate(&description, &["http", "fs.read", "env"]).is_ok());
+    assert!(p::negotiate_protocol(&description).is_ok());
+    Ok(())
+}

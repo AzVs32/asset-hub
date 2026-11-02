@@ -28,11 +28,8 @@ use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
 wasmtime::component::bindgen!({
     path: "../vfs-plugin-protocol/wit",
     world: "plugin",
-    imports: { default: async | trappable },
     exports: { default: async },
 });
-/// Default concurrent Storage Stores for one plugin.
-pub const MAX_STORAGE_INSTANCES: usize = 16;
 struct Host {
     wasi: WasiCtx,
     table: ResourceTable,
@@ -114,10 +111,10 @@ struct State {
     _capacity: OwnedSemaphorePermit,
 }
 impl State {
-    fn resource(&mut self, kind: p::ResourceKind, handle: u64) -> Result<(), DriverError> {
+    fn resource(&self, kind: p::ResourceKind, handle: u64) -> Result<(), DriverError> {
         let resource = self
             .resources
-            .get_mut(&handle)
+            .get(&handle)
             .ok_or_else(|| StorageError::new(StorageErrorKind::SessionClosed))?;
         if resource.kind != kind {
             return Err(c::invalid());
@@ -295,6 +292,7 @@ pub struct WasmTransport {
 struct InstanceFactory {
     pre: PluginPre<Host>,
     grants: HostGrants,
+    network: NetworkPolicy,
     capabilities: Vec<&'static str>,
     controls: Arc<Semaphore>,
     storages: Arc<Semaphore>,
@@ -314,7 +312,7 @@ impl InstanceFactory {
             .try_acquire_owned()
             .map_err(|_| StorageError::new(StorageErrorKind::CapacityExceeded))?;
         let mut builder = WasiCtx::builder();
-        let network = NetworkPolicy::new(&self.grants)?;
+        let network = self.network.clone();
         #[cfg(test)]
         let network = network.with_test_dns(self.test_dns.clone());
         let check = network.clone();
@@ -529,22 +527,6 @@ impl Transport for ControlTransport {
                 .write()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             if let Some(Value::Description(description)) = &reply.result {
-                let missing = description
-                    .required_host_capabilities
-                    .iter()
-                    .filter(|cap| !self.factory.capabilities.contains(&cap.as_str()))
-                    .cloned()
-                    .collect::<Vec<_>>();
-                if !missing.is_empty() {
-                    return Err(StorageError::with_source(
-                        StorageErrorKind::UnsupportedOperation,
-                        std::io::Error::other(format!(
-                            "ungranted WASI capabilities: {}",
-                            missing.join(", ")
-                        )),
-                    )
-                    .into());
-                }
                 bootstrap.description = Some(*description.clone());
             }
             if let Some(settings) = settings {
@@ -656,7 +638,7 @@ impl Transport for StorageTransport {
 impl WasmTransport {
     /// Accept components only. Every import must resolve to the linked WASIp2 services.
     pub async fn load(bytes: Vec<u8>, mut grants: HostGrants) -> Result<Self, DriverError> {
-        grants.validate()?;
+        let network = grants.validate()?;
         let mut config = Config::new();
         config
             .wasm_component_model(true)
@@ -701,6 +683,7 @@ impl WasmTransport {
                 controls: Arc::new(Semaphore::new(grants.limits.control_instances)),
                 storages: Arc::new(Semaphore::new(grants.limits.storage_instances)),
                 grants,
+                network,
                 ticker,
                 #[cfg(test)]
                 test_dns: None,

@@ -39,10 +39,6 @@ pub(super) enum WriteCondition {
     Absent,
     Match(String),
 }
-struct Reply {
-    url: Url,
-    response: http::Response<Vec<u8>>,
-}
 fn optional_text(fields: &p::JsonObject, field: &str) -> Result<Option<String>> {
     fields
         .get(field)
@@ -256,7 +252,7 @@ impl Client {
         url: Url,
         extra: Vec<(&str, String)>,
         body: Vec<u8>,
-    ) -> Result<Reply> {
+    ) -> Result<http::Response<Vec<u8>>> {
         if body.len() > p::MAX_DATA_BYTES {
             return Err(failure(p::FailureCode::TooLarge));
         }
@@ -272,7 +268,7 @@ impl Client {
         if let Some(authorization) = &self.authorization {
             request = request.header("authorization", authorization);
         }
-        let response = vfs_plugin_guest::wasi_http::send(
+        vfs_plugin_guest::wasi_http::send(
             request
                 .body(body)
                 .map_err(|_| failure(p::FailureCode::InvalidRequest))?,
@@ -288,29 +284,28 @@ impl Client {
             } else {
                 error
             }
-        })?;
-        Ok(Reply { url, response })
+        })
     }
     fn propfind(&self, relative: &str, depth: u8) -> Result<Vec<Metadata>> {
+        let base = self.url(relative, depth == 1)?;
         let reply = self.request(
             "PROPFIND",
-            self.url(relative, depth == 1)?,
+            base.clone(),
             vec![
                 ("depth", depth.to_string()),
                 ("content-type", "application/xml; charset=utf-8".into()),
             ],
             PROPERTIES.to_vec(),
         )?;
-        if reply.response.status().as_u16() != 207 {
-            return Err(status_error(reply.response.status().as_u16(), false));
+        if reply.status().as_u16() != 207 {
+            return Err(status_error(reply.status().as_u16(), false));
         }
         let mut metadata = vec![];
-        for response in multistatus::parse(reply.response.body())? {
+        for response in multistatus::parse(reply.body())? {
             let href = response
                 .href
                 .ok_or_else(|| failure(p::FailureCode::InvalidData))?;
-            let url = reply
-                .url
+            let url = base
                 .join(href.trim())
                 .map_err(|_| failure(p::FailureCode::InvalidData))?;
             let path = self.relative(&url)?;
@@ -515,15 +510,15 @@ impl Client {
             ],
             bytes,
         )?;
-        if reply.response.status().as_u16() == 412 {
+        if reply.status().as_u16() == 412 {
             return Err(failure(if absent {
                 p::FailureCode::AlreadyExists
             } else {
                 p::FailureCode::Conflict
             }));
         }
-        if !matches!(reply.response.status().as_u16(), 200 | 201 | 204) {
-            return Err(status_error(reply.response.status().as_u16(), true));
+        if !matches!(reply.status().as_u16(), 200 | 201 | 204) {
+            return Err(status_error(reply.status().as_u16(), true));
         }
         // A successful PUT is already a known publication. Avoid a follow-up
         // PROPFIND turning a successful commit into a misleading read failure.
@@ -531,12 +526,12 @@ impl Client {
             path: relative.into(),
             kind: p::EntryKind::File as i32,
             size: Some(size as u64),
-            modified: header(&reply.response, "last-modified").and_then(modified),
+            modified: header(&reply, "last-modified").and_then(modified),
         })
     }
     fn make_collection(&self, relative: &str) -> Result<p::Entry> {
         let reply = self.request("MKCOL", self.url(relative, true)?, vec![], vec![])?;
-        if reply.response.status().as_u16() == 405 {
+        if reply.status().as_u16() == 405 {
             return match self.stat(relative) {
                 Ok(_) => Err(failure(p::FailureCode::AlreadyExists)),
                 Err(error) if error.code == p::FailureCode::NotFound as i32 => {
@@ -545,8 +540,8 @@ impl Client {
                 Err(error) => Err(error),
             };
         }
-        if reply.response.status().as_u16() != 201 {
-            return Err(status_error(reply.response.status().as_u16(), true));
+        if reply.status().as_u16() != 201 {
+            return Err(status_error(reply.status().as_u16(), true));
         }
         Ok(p::Entry {
             path: relative.into(),
@@ -619,8 +614,7 @@ impl Client {
         if let Some(etag) = etag {
             headers.push(("if-match", etag.into()));
         }
-        let reply = self.request("GET", self.url(relative, false)?, headers, vec![])?;
-        let response = reply.response;
+        let response = self.request("GET", self.url(relative, false)?, headers, vec![])?;
         if response.status().as_u16() == 412 || response.status().as_u16() == 416 {
             return Err(failure(p::FailureCode::Conflict));
         }

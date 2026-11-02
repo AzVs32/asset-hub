@@ -30,13 +30,27 @@ pub struct NegotiatedProtocol {
     pub instance_schema_profile: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum IncompatiblePlugin {
     MajorVersion,
     RequiredFeature,
     SchemaProfile,
-    HostCapability,
+    HostCapabilities(Vec<String>),
 }
+
+impl std::fmt::Display for IncompatiblePlugin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MajorVersion => f.write_str("incompatible plugin protocol major version"),
+            Self::RequiredFeature => f.write_str("unsupported required plugin feature"),
+            Self::SchemaProfile => f.write_str("unsupported plugin schema profile"),
+            Self::HostCapabilities(missing) => {
+                write!(f, "ungranted host capabilities: {}", missing.join(", "))
+            }
+        }
+    }
+}
+impl std::error::Error for IncompatiblePlugin {}
 
 /// Check declarations before initialize. Host capabilities are imported runtime
 /// services, distinct from backend Storage capabilities and runtime permissions.
@@ -45,18 +59,20 @@ pub fn negotiate(
     host_capabilities: &[&str],
 ) -> Result<NegotiatedProtocol, IncompatiblePlugin> {
     let negotiated = negotiate_protocol(description)?;
-    if description
+    let missing = description
         .required_host_capabilities
         .iter()
-        .any(|capability| !host_capabilities.contains(&capability.as_str()))
-    {
-        return Err(IncompatiblePlugin::HostCapability);
+        .filter(|capability| !host_capabilities.contains(&capability.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return Err(IncompatiblePlugin::HostCapabilities(missing));
     }
     Ok(negotiated)
 }
 
 /// Validate the portable contract without assuming a particular runtime's
-/// imports. Transports additionally call negotiate with their provided services.
+/// imports. The host additionally negotiates the services exposed by its transport.
 pub fn negotiate_protocol(
     description: &Description,
 ) -> Result<NegotiatedProtocol, IncompatiblePlugin> {

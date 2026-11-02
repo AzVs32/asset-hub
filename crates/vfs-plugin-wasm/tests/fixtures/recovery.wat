@@ -1,6 +1,7 @@
 ;; The single export takes protobuf Request and returns protobuf Reply. All
 ;; top-level Request fields are length-delimited. Tests inject prepare failures.
-(module
+(component
+(core module $guest
   (memory (export "memory") 1)
   (data (i32.const 1024) "@@DESCRIPTION@@")
   (data (i32.const 2048) "@@UNIT@@")
@@ -77,4 +78,13 @@
       i32.const 1 global.set $read i32.const 96 return end
     local.get $op i32.const 14 i32.eq if @@COMMIT@@ return end
     i32.const 16)
+)
+(core instance $guest (instantiate $guest))
+(alias core export $guest "memory" (core memory $memory))
+(alias core export $guest "cabi_realloc" (core func $realloc))
+(alias core export $guest "assethub:vfs/driver@2.0.0#call" (core func $call))
+(func $call (param "request" (list u8)) (result (list u8))
+  (canon lift (core func $call) (memory $memory) (realloc $realloc)))
+(instance $driver (export "call" (func $call)))
+(export "assethub:vfs/driver@2.0.0" (instance $driver))
 )
