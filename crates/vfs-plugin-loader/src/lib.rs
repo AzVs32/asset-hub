@@ -11,9 +11,8 @@
 //! [[vfs.plugins.entries]]
 //! transport = "wasm"
 //! module = "plugins/object-storage.wasm"
-//! profile = "assethub.service.v1"
-//! [vfs.plugins.entries.grants]
-//! http_origins = ["https://objects.example"]
+//! [vfs.plugins.entries.grants.http]
+//! origins = ["https://objects.example"]
 //! ```
 //!
 //! Instance configuration is supplied later through InstanceService. Bootstrap
@@ -146,17 +145,10 @@ impl PluginLoader {
                         .map_err(LoadFailure::Driver)?,
                 )
             }
-            PluginSource::Wasm {
-                module,
-                profile,
-                grants,
-            } => {
-                if profile != vfs_plugin_protocol::WASM_HOST_PROFILE {
-                    return Err(LoadFailure::InvalidConfiguration);
-                }
+            PluginSource::Wasm { module, grants } => {
                 let bytes = self.read(module).await?;
                 Arc::new(
-                    WasmTransport::load_with_grants(bytes, grants.clone())
+                    WasmTransport::load(bytes, grants.clone())
                         .await
                         .map_err(LoadFailure::Driver)?,
                 )

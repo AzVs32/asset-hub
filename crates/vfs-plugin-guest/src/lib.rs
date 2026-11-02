@@ -6,13 +6,6 @@ pub mod api {
     use super::*;
     pub type Failure = p::Failure;
     pub type Result<T> = std::result::Result<T, Failure>;
-    /// Translate the WIT host-service error identifier using the generated enum.
-    pub fn host_failure(code: &str) -> Failure {
-        Failure::new(
-            p::FailureCode::from_str_name(&format!("FAILURE_CODE_{}", code.to_ascii_uppercase()))
-                .unwrap_or(p::FailureCode::Backend),
-        )
-    }
     pub trait Guest {
         fn describe() -> p::Description;
         /// Called once per control/Storage Store; independent Stores may run concurrently.

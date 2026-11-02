@@ -51,8 +51,6 @@ pub enum PluginSource {
     },
     Wasm {
         module: PathBuf,
-        #[serde(default = "wasm_profile")]
-        profile: String,
         #[serde(default)]
         grants: HostGrants,
     },
@@ -64,10 +62,6 @@ impl fmt::Debug for PluginSource {
             Self::Wasm { .. } => "Wasm { .. }",
         })
     }
-}
-
-fn wasm_profile() -> String {
-    vfs_plugin_protocol::WASM_HOST_PROFILE.into()
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]

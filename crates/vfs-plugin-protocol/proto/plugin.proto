@@ -79,7 +79,7 @@ message Description {
   // Unknown required identifiers reject loading; optional ones grant no support.
   repeated string required_features = 3;
   repeated string features = 4;
-  // Host service names: http.v1, clock.wall.v1, random.v1.
+  // Required WASI grants: http, tcp, fs.read, fs.write, env.
   repeated string required_host_capabilities = 5;
   // Required schema contract, negotiated independently of optional features.
   string instance_schema_profile = 6; // assethub.config.annotations.v1

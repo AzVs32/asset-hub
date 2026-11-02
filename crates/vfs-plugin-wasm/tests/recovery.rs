@@ -108,7 +108,10 @@ fn fixture(prepare: &str, initialize: &str, stat: &str, commit: &str) -> Result<
         wit_component::StringEncoding::UTF8,
         false,
     )?;
-    Ok(bytes)
+    Ok(wit_component::ComponentEncoder::default()
+        .module(&bytes)?
+        .validate(true)
+        .encode()?)
 }
 async fn factory(
     prepare: &str,
@@ -117,7 +120,11 @@ async fn factory(
     commit: &str,
 ) -> Result<Arc<WasmTransport>> {
     Ok(Arc::new(
-        WasmTransport::load(fixture(prepare, initialize, stat, commit)?, vec![]).await?,
+        WasmTransport::load(
+            fixture(prepare, initialize, stat, commit)?,
+            Default::default(),
+        )
+        .await?,
     ))
 }
 async fn generation(transport: &dyn Transport) -> Result<String> {

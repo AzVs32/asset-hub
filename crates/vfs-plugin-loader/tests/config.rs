@@ -44,14 +44,10 @@ label = "configured"
     let entry = plugins.entries.first().ok_or("plugin entry")?;
     assert_eq!(entry.expected_key.as_deref(), Some("webdav"));
     assert_eq!(entry.settings["label"], "configured");
-    let PluginSource::Wasm {
-        module, profile, ..
-    } = &entry.source
-    else {
+    let PluginSource::Wasm { module, .. } = &entry.source else {
         return Err("expected WASM source".into());
     };
     assert_eq!(module, std::path::Path::new("plugins/webdav.wasm"));
-    assert_eq!(profile, vfs_plugin_protocol::WASM_HOST_PROFILE);
     std::fs::write(&path, "[vfs.plugins]\nunknown = true\n")?;
     assert!(Registry::for_space("default")?.load_required(path).is_err());
     Ok(())

@@ -8,7 +8,31 @@ use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpHooks, WasiHttpVi
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 #[derive(Default)]
 struct Hooks;
-impl WasiHttpHooks for Hooks {}
+impl WasiHttpHooks for Hooks {
+    fn send_request(
+        &mut self,
+        _request: http::Request<wasmtime_wasi_http::WasiBody>,
+        _options: Option<wasmtime_wasi_http::RequestOptions>,
+        _completion: Box<
+            dyn Future<Output = std::result::Result<(), wasmtime_wasi_http::Error>> + Send,
+        >,
+    ) -> Box<
+        dyn Future<
+                Output = std::result::Result<
+                    (
+                        http::Response<wasmtime_wasi_http::WasiBody>,
+                        Box<
+                            dyn Future<Output = std::result::Result<(), wasmtime_wasi_http::Error>>
+                                + Send,
+                        >,
+                    ),
+                    wasmtime_wasi_http::Error,
+                >,
+            > + Send,
+    > {
+        Box::new(async { Err(wasmtime_wasi_http::Error::HttpRequestDenied) })
+    }
+}
 struct Host {
     wasi: WasiCtx,
     table: ResourceTable,

@@ -32,11 +32,9 @@
 //! x-secret/x-immutable at the root and through properties/items/additionalProperties.
 //! References and annotations inside unsupported constructs reject loading or
 //! registration. Drivers retain authority over validation of configuration values.
-//! WASM plugins target a declared host profile independently of protocol features.
-//! `assethub.service.v1` provides bounded HTTP, wall clock and random bytes with
-//! explicit HTTP origin grants; it exposes no filesystem, environment or raw sockets.
-//! Missing imports or required host services reject loading. A new backend using
-//! this profile needs a component and configuration, without host code changes.
+//! WASM plugins import standard WASIp2 services. Filesystem, environment,
+//! TCP and HTTP authority is granted per plugin; missing imports or ungranted
+//! required capabilities reject loading. CPU budgets and wall deadlines bound execution.
 //!
 //! ## Operations and values
 //!

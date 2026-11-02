@@ -1,12 +1,17 @@
-//! Protobuf-over-WIT adapter with bounded execution and explicitly granted HTTP origins.
+//! Protobuf-over-WIT adapter with WASIp2 services and explicit per-plugin authority.
+mod dns;
+mod grants;
+mod http;
 use ah_vfs::domain::{DriverError, StorageError, StorageErrorKind, new_instance_id};
+use grants::NetworkPolicy;
+pub use grants::{DirectoryGrant, ExecutionLimits, HostGrants, HttpGrants};
 use std::{
     collections::HashMap,
     sync::{
         Arc, RwLock,
         atomic::{AtomicBool, Ordering},
     },
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use vfs_plugin_host::{
@@ -14,8 +19,11 @@ use vfs_plugin_host::{
     convert as c,
 };
 use vfs_plugin_protocol::{self as p, Operation as Op, Value};
+use wasmtime::component::ResourceTable;
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Config, Engine, Store, StoreLimits, StoreLimitsBuilder};
+use wasmtime_wasi::{FsPerms, WasiCtx, WasiCtxView, WasiView};
+use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpCtxView, WasiHttpView};
 
 wasmtime::component::bindgen!({
     path: "../vfs-plugin-protocol/wit",
@@ -23,122 +31,72 @@ wasmtime::component::bindgen!({
     imports: { default: async | trappable },
     exports: { default: async },
 });
-use assethub::vfs::http;
-use assethub::vfs::{clock, random};
-
-/// Bound concurrent guest memory independently from the 128 MiB per-Store limit.
+/// Default concurrent Storage Stores for one plugin.
 pub const MAX_STORAGE_INSTANCES: usize = 16;
-const MAX_CONTROL_INSTANCES: usize = 4;
-
-/// Permissions for the stable service.v1 profile. HTTP, clock and bounded random
-/// services are always linked; only explicitly granted HTTP origins are reachable.
-/// Filesystem access, environment variables and raw sockets are not exposed.
-#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct HostGrants {
-    #[serde(default)]
-    pub http_origins: Vec<String>,
-}
-
-fn unix_time() -> wasmtime::Result<i64> {
-    Ok(i64::try_from(
-        SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-    )?)
-}
-
 struct Host {
-    client: reqwest::Client,
-    origins: Vec<String>,
+    wasi: WasiCtx,
+    table: ResourceTable,
+    http: WasiHttpCtx,
+    hooks: http::HttpPolicy,
+    network: NetworkPolicy,
     limits: StoreLimits,
+    exhausted: bool,
+    memory_limit: usize,
+    used_memory: usize,
 }
-impl http::Host for Host {
-    async fn request_http(
+impl WasiView for Host {
+    fn ctx(&mut self) -> WasiCtxView<'_> {
+        WasiCtxView {
+            ctx: &mut self.wasi,
+            table: &mut self.table,
+        }
+    }
+}
+impl WasiHttpView for Host {
+    fn http(&mut self) -> WasiHttpCtxView<'_> {
+        WasiHttpCtxView {
+            ctx: &mut self.http,
+            table: &mut self.table,
+            hooks: &mut self.hooks,
+        }
+    }
+}
+impl wasmtime::ResourceLimiter for Host {
+    fn instances(&self) -> usize {
+        wasmtime::ResourceLimiter::instances(&self.limits)
+    }
+    fn memories(&self) -> usize {
+        wasmtime::ResourceLimiter::memories(&self.limits)
+    }
+    fn tables(&self) -> usize {
+        wasmtime::ResourceLimiter::tables(&self.limits)
+    }
+    fn memory_growing(
         &mut self,
-        request: http::Request,
-    ) -> wasmtime::Result<Result<http::Response, String>> {
-        let execute = async {
-            let url = reqwest::Url::parse(&request.url).map_err(|_| "invalid_request")?;
-            if !url.username().is_empty()
-                || url.password().is_some()
-                || !self.origins.contains(&url.origin().ascii_serialization())
-            {
-                return Err("permission_denied");
-            }
-            if request.body.len() > p::MAX_DATA_BYTES || request.headers.len() > 64 {
-                return Err("too_large");
-            }
-            let method = reqwest::Method::from_bytes(request.method.as_bytes())
-                .map_err(|_| "invalid_request")?;
-            let is_head = method == reqwest::Method::HEAD;
-            let mut builder = self.client.request(method, url);
-            for header in request.headers {
-                if header.name.eq_ignore_ascii_case("host")
-                    || header.name.eq_ignore_ascii_case("content-length")
-                    || header.name.eq_ignore_ascii_case("connection")
-                {
-                    return Err("invalid_request");
-                }
-                if header.name.len() + header.value.len() > 16 * 1024 {
-                    return Err("too_large");
-                }
-                builder = builder.header(header.name, header.value);
-            }
-            let mut response = builder.body(request.body).send().await.map_err(|e| {
-                if e.is_timeout() {
-                    "timed_out"
-                } else {
-                    "unavailable"
-                }
-            })?;
-            if !is_head
-                && response
-                    .content_length()
-                    .is_some_and(|n| n > p::MAX_DATA_BYTES as u64)
-            {
-                return Err("too_large");
-            }
-            let status = response.status().as_u16();
-            let headers = response
-                .headers()
-                .iter()
-                .filter_map(|(name, value)| {
-                    value.to_str().ok().map(|value| http::Header {
-                        name: name.as_str().into(),
-                        value: value.into(),
-                    })
-                })
-                .collect();
-            let mut body = Vec::new();
-            while let Some(chunk) = response.chunk().await.map_err(|_| "unavailable")? {
-                if body.len() + chunk.len() > p::MAX_DATA_BYTES {
-                    return Err("too_large");
-                }
-                body.extend_from_slice(&chunk);
-            }
-            Ok(http::Response {
-                status,
-                headers,
-                body,
-            })
+        current: usize,
+        desired: usize,
+        maximum: Option<usize>,
+    ) -> wasmtime::Result<bool> {
+        if desired.saturating_sub(current) > self.memory_limit.saturating_sub(self.used_memory) {
+            self.exhausted = true;
+            return Err(wasmtime::Error::msg("WASI Store memory budget exhausted"));
         }
-        .await;
-        Ok(execute.map_err(str::to_owned))
-    }
-}
-impl clock::Host for Host {
-    async fn unix_time(&mut self) -> wasmtime::Result<i64> {
-        unix_time()
-    }
-}
-impl random::Host for Host {
-    async fn random_bytes(&mut self, length: u32) -> wasmtime::Result<Result<Vec<u8>, String>> {
-        if length > 65536 {
-            return Ok(Err("too_large".into()));
+        let result = self.limits.memory_growing(current, desired, maximum);
+        if matches!(result, Ok(true)) {
+            self.used_memory += desired.saturating_sub(current);
         }
-        let mut bytes = vec![0; length as usize];
-        Ok(getrandom::fill(&mut bytes)
-            .map(|()| bytes)
-            .map_err(|_| "unavailable".into()))
+        self.exhausted |= !matches!(result, Ok(true));
+        result
+    }
+    fn table_growing(
+        &mut self,
+        current: usize,
+        desired: usize,
+        maximum: Option<usize>,
+    ) -> wasmtime::Result<bool> {
+        let result = self.limits.table_growing(current, desired, maximum);
+        self.exhausted |= !matches!(result, Ok(true));
+        result
     }
 }
 struct Resource {
@@ -182,12 +140,28 @@ impl State {
                 p::CodecError::InvalidData => StorageErrorKind::InvalidRequest,
             })
         })?;
-        let response = self
+        let response = match self
             .bindings
             .assethub_vfs_driver()
             .call_call(&mut self.store, &bytes)
             .await
-            .map_err(|_| StorageError::new(StorageErrorKind::StaleHandle))?;
+        {
+            Ok(response) => response,
+            Err(error) => {
+                self.faulted = true;
+                let kind = if self.store.data().exhausted
+                    || error.downcast_ref::<wasmtime::Trap>() == Some(&wasmtime::Trap::OutOfFuel)
+                {
+                    StorageErrorKind::CapacityExceeded
+                } else if error.downcast_ref::<wasmtime::Trap>() == Some(&wasmtime::Trap::Interrupt)
+                {
+                    StorageErrorKind::TimedOut
+                } else {
+                    StorageErrorKind::StaleHandle
+                };
+                return Err(StorageError::with_source(kind, std::io::Error::other(error)).into());
+            }
+        };
         let id = match op {
             Op::Open(p::Open { id, .. }) => Some(id.as_str()),
             _ => None,
@@ -320,8 +294,8 @@ pub struct WasmTransport {
 }
 struct InstanceFactory {
     pre: PluginPre<Host>,
-    client: reqwest::Client,
-    origins: Vec<String>,
+    grants: HostGrants,
+    capabilities: Vec<&'static str>,
     controls: Arc<Semaphore>,
     storages: Arc<Semaphore>,
     ticker: tokio::task::JoinHandle<()>,
@@ -337,24 +311,66 @@ impl InstanceFactory {
             .clone()
             .try_acquire_owned()
             .map_err(|_| StorageError::new(StorageErrorKind::CapacityExceeded))?;
+        let mut builder = WasiCtx::builder();
+        let network = NetworkPolicy::new(&self.grants)?;
+        let check = network.clone();
+        builder
+            .allow_tcp(!self.grants.tcp.is_empty())
+            .allow_udp(false)
+            .allow_ip_name_lookup(!self.grants.tcp.is_empty())
+            .socket_addr_check(move |addr, use_| {
+                let check = check.clone();
+                Box::pin(async move { check.allows(addr, use_).await })
+            });
+        for name in &self.grants.env {
+            if let Some(value) = std::env::var_os(name) {
+                builder.env(name, value.to_str().ok_or_else(c::invalid)?);
+            }
+        }
+        for directory in &self.grants.fs {
+            let perms = if directory.write {
+                FsPerms::ReadWrite
+            } else {
+                FsPerms::ReadOnly
+            };
+            builder
+                .preopened_dir(&directory.host, &directory.guest, perms)
+                .map_err(|error| {
+                    StorageError::with_source(
+                        StorageErrorKind::InvalidRequest,
+                        std::io::Error::other(error),
+                    )
+                })?;
+        }
         let host = Host {
-            client: self.client.clone(),
-            origins: self.origins.clone(),
+            wasi: builder.build(),
+            table: ResourceTable::new(),
+            http: WasiHttpCtx::new(),
+            hooks: http::HttpPolicy {
+                grants: self.grants.http.clone(),
+            },
+            network,
+            exhausted: false,
+            memory_limit: self.grants.limits.memory_bytes,
+            used_memory: 0,
             limits: StoreLimitsBuilder::new()
-                .memory_size(128 * 1024 * 1024)
+                .memory_size(self.grants.limits.memory_bytes)
                 .instances(16)
                 .memories(4)
+                .trap_on_grow_failure(true)
                 .build(),
         };
         let mut store = Store::new(self.pre.engine(), host);
-        store.limiter(|host| &mut host.limits);
-        store.set_fuel(2_000_000_000).map_err(|_| c::invalid())?;
+        store.limiter(|host| host);
+        store
+            .set_fuel(self.grants.limits.fuel)
+            .map_err(|_| c::invalid())?;
         store
             .fuel_async_yield_interval(Some(100_000))
             .map_err(|_| c::invalid())?;
-        store.set_epoch_deadline(3000);
+        store.set_epoch_deadline(self.grants.limits.timeout_ms.div_ceil(10));
         let bindings = tokio::time::timeout(
-            Duration::from_secs(30),
+            self.grants.limits.timeout(),
             self.pre.instantiate_async(&mut store),
         )
         .await
@@ -375,12 +391,14 @@ impl InstanceFactory {
                 _capacity: capacity,
             })),
             disconnected: Arc::new(AtomicBool::new(false)),
+            limits: self.grants.limits.clone(),
         })
     }
 }
 struct Instance {
     state: Mutex<Option<State>>,
     disconnected: Arc<AtomicBool>,
+    limits: ExecutionLimits,
 }
 struct Execution<'a> {
     state: tokio::sync::MutexGuard<'a, Option<State>>,
@@ -401,7 +419,7 @@ impl Instance {
         if data.len() > p::MAX_DATA_BYTES {
             return Err(StorageError::new(StorageErrorKind::TooLarge).into());
         }
-        let state = tokio::time::timeout(Duration::from_secs(30), self.state.lock())
+        let state = tokio::time::timeout(self.limits.timeout(), self.state.lock())
             .await
             .map_err(|_| StorageError::new(StorageErrorKind::TimedOut))?;
         let mut execution = Execution {
@@ -417,12 +435,14 @@ impl Instance {
         }
         state
             .store
-            .set_fuel(2_000_000_000)
+            .set_fuel(self.limits.fuel)
             .map_err(|_| c::invalid())?;
-        state.store.set_epoch_deadline(3000);
+        state
+            .store
+            .set_epoch_deadline(self.limits.timeout_ms.div_ceil(10));
         state.poisoned = true;
         let mutates = op.mutates();
-        match tokio::time::timeout(Duration::from_secs(30), state.execute(op, data)).await {
+        match tokio::time::timeout(self.limits.timeout(), state.execute(op, data)).await {
             Ok(Err(error))
                 if error
                     .storage_error()
@@ -484,7 +504,7 @@ impl TransportFactory for WasmTransport {
 }
 impl Transport for ControlTransport {
     fn host_capabilities(&self) -> &[&str] {
-        p::WASM_HOST_CAPABILITIES
+        &self.factory.capabilities
     }
     fn disconnected(&self) -> Option<Arc<AtomicBool>> {
         Some(self.instance.disconnected.clone())
@@ -504,6 +524,22 @@ impl Transport for ControlTransport {
                 .write()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             if let Some(Value::Description(description)) = &reply.result {
+                let missing = description
+                    .required_host_capabilities
+                    .iter()
+                    .filter(|cap| !self.factory.capabilities.contains(&cap.as_str()))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if !missing.is_empty() {
+                    return Err(StorageError::with_source(
+                        StorageErrorKind::UnsupportedOperation,
+                        std::io::Error::other(format!(
+                            "ungranted WASI capabilities: {}",
+                            missing.join(", ")
+                        )),
+                    )
+                    .into());
+                }
                 bootstrap.description = Some(*description.clone());
             }
             if let Some(settings) = settings {
@@ -613,20 +649,9 @@ impl Transport for StorageTransport {
 }
 
 impl WasmTransport {
-    /// Accept a portable component or a core module carrying WIT metadata. Only
-    /// explicitly allowed origins can be contacted; no filesystem/WASI is linked.
-    pub async fn load(bytes: Vec<u8>, origins: Vec<String>) -> Result<Self, DriverError> {
-        Self::load_with_grants(
-            bytes,
-            HostGrants {
-                http_origins: origins,
-            },
-        )
-        .await
-    }
-    /// Load any plugin implementing the stable VFS ABI and service.v1 imports.
-    /// Grants describe platform permissions, never a particular backend's fields.
-    pub async fn load_with_grants(bytes: Vec<u8>, grants: HostGrants) -> Result<Self, DriverError> {
+    /// Accept components only. Every import must resolve to the linked WASIp2 services.
+    pub async fn load(bytes: Vec<u8>, mut grants: HostGrants) -> Result<Self, DriverError> {
+        grants.validate()?;
         let mut config = Config::new();
         config
             .wasm_component_model(true)
@@ -635,51 +660,26 @@ impl WasmTransport {
         let engine = Engine::new(&config).map_err(|_| c::invalid())?;
         let compile_engine = engine.clone();
         let component = tokio::task::spawn_blocking(move || {
-            if let Ok(component) = Component::new(&compile_engine, &bytes) {
-                return Ok(component);
-            }
-            let component = wit_component::ComponentEncoder::default()
-                .module(&bytes)
-                .map_err(|_| c::invalid())?
-                .validate(true)
-                .encode()
-                .map_err(|_| c::invalid())?;
-            Component::new(&compile_engine, component).map_err(|_| c::invalid())
+            Component::from_binary(&compile_engine, &bytes).map_err(|_| c::invalid())
         })
         .await
         .map_err(|_| c::invalid())??;
-        let origins = grants
-            .http_origins
-            .into_iter()
-            .map(|origin| {
-                let url = reqwest::Url::parse(&origin).map_err(|_| c::invalid())?;
-                if !matches!(url.scheme(), "http" | "https")
-                    || url.host_str().is_none()
-                    || !url.username().is_empty()
-                    || url.password().is_some()
-                    || url.path() != "/"
-                    || url.query().is_some()
-                    || url.fragment().is_some()
-                {
-                    return Err(c::invalid());
-                }
-                Ok(url.origin().ascii_serialization())
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .retry(reqwest::retry::never())
-            .timeout(Duration::from_secs(20))
-            .build()
-            .map_err(|_| c::invalid())?;
         let mut linker = Linker::new(&engine);
-        Plugin::add_to_linker::<Host, wasmtime::component::HasSelf<Host>>(&mut linker, |host| host)
+        wasmtime_wasi::p2::add_to_linker_async(&mut linker).map_err(|_| c::invalid())?;
+        wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)
             .map_err(|_| c::invalid())?;
-        let pre = PluginPre::new(
-            linker
-                .instantiate_pre(&component)
-                .map_err(|_| StorageError::new(StorageErrorKind::UnsupportedOperation))?,
-        )
+        linker.allow_shadowing(true);
+        wasmtime_wasi::p2::bindings::sockets::ip_name_lookup::add_to_linker::<
+            Host,
+            wasmtime::component::HasSelf<Host>,
+        >(&mut linker, |host| host)
+        .map_err(|_| c::invalid())?;
+        let pre = PluginPre::new(linker.instantiate_pre(&component).map_err(|error| {
+            StorageError::with_source(
+                StorageErrorKind::UnsupportedOperation,
+                std::io::Error::other(error),
+            )
+        })?)
         .map_err(|_| c::invalid())?;
         let ticker = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_millis(10));
@@ -691,10 +691,10 @@ impl WasmTransport {
         Ok(Self {
             factory: Arc::new(InstanceFactory {
                 pre,
-                client,
-                origins,
-                controls: Arc::new(Semaphore::new(MAX_CONTROL_INSTANCES)),
-                storages: Arc::new(Semaphore::new(MAX_STORAGE_INSTANCES)),
+                capabilities: grants.capabilities(),
+                controls: Arc::new(Semaphore::new(grants.limits.control_instances)),
+                storages: Arc::new(Semaphore::new(grants.limits.storage_instances)),
+                grants,
                 ticker,
             }),
         })

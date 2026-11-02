@@ -1,33 +1,13 @@
 package assethub:vfs@2.0.0;
 
-interface http {
-    record header { name: string, value: string }
-    record request { method: string, url: string, headers: list<header>, body: list<u8> }
-    record response { status: u16, headers: list<header>, body: list<u8> }
-    request-http: func(request: request) -> result<response, string>;
-}
-
-interface clock {
-    unix-time: func() -> s64;
-}
-
-interface random {
-    // The service.v1 profile limits each request to 65536 bytes.
-    random-bytes: func(length: u32) -> result<list<u8>, string>;
-}
-
 interface driver {
     // Request and Reply are protobuf assethub.vfs.v2 messages from plugin.proto.
     // The host owns the Store generation. Guest resource IDs are scoped to it.
     // Both directions use one envelope, including metadata, errors and commit.
-    // Each Storage runs in a fresh Store after describe and initialize. Instance
-    // records managed by a guest must live in shared backend state.
+    // Each Storage runs in a fresh Store after describe and initialize.
     call: func(request: list<u8>) -> list<u8>;
 }
 
 world plugin {
-    import http;
-    import clock;
-    import random;
     export driver;
 }

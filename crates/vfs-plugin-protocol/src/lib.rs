@@ -18,11 +18,6 @@ pub const MAX_DATA_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_FRAME_BYTES: usize = MAX_CONTROL_BYTES + MAX_DATA_BYTES + 1024;
 pub const MAX_RESOURCES: usize = 1024;
 pub const INSTANCE_SCHEMA_PROFILE: &str = "assethub.config.annotations.v1";
-pub const WASM_HOST_PROFILE: &str = "assethub.service.v1";
-pub const HOST_HTTP: &str = "http.v1";
-pub const HOST_CLOCK: &str = "clock.wall.v1";
-pub const HOST_RANDOM: &str = "random.v1";
-pub const WASM_HOST_CAPABILITIES: &[&str] = &[HOST_HTTP, HOST_CLOCK, HOST_RANDOM];
 pub const PROTOCOL_FEATURES: &[&str] = &["streams.chunked.v1"];
 
 /// Selected backward-compatible protocol revision. Minor revisions may add

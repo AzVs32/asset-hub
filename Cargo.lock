@@ -2985,15 +2985,19 @@ name = "vfs-plugin-wasm"
 version = "0.1.0"
 dependencies = [
  "ah-vfs",
- "getrandom 0.4.3",
+ "bytes",
+ "http",
+ "http-body-util",
  "reqwest",
  "serde",
  "tokio",
+ "url",
  "vfs-plugin-host",
  "vfs-plugin-protocol",
  "wasmtime",
  "wasmtime-wasi",
  "wasmtime-wasi-http",
+ "wasmtime-wasi-io",
  "wat",
  "wit-component 0.262.0",
  "wit-parser 0.262.0",
@@ -3401,14 +3405,11 @@ dependencies = [
  "hyper",
  "pin-project-lite",
  "rustix",
- "rustls",
  "tokio",
- "tokio-rustls",
  "tracing",
  "wasmtime",
  "wasmtime-wasi",
  "wasmtime-wasi-io",
- "webpki-roots",
 ]
 
 [[package]]
