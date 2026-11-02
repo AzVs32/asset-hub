@@ -22,7 +22,9 @@ getrandom = "0.4.3"
 tokio = { version = "1.54.1", features = ["rt", "sync", "time"] }
 
 [dev-dependencies]
-tokio = { version = "1.54.1", features = ["macros", "test-util"] }
+tokio = { version = "1.54.1", features = ["macros", "test-util", "net", "io-util"] }
+wasmtime-wasi = { version = "50.0.1", default-features = false, features = ["p2"] }
+wasmtime-wasi-http = { version = "50.0.1", default-features = false, features = ["p2", "default-send-request"] }
 wat = "1.262"
 wit-parser = "0.262"
 
