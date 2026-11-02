@@ -299,6 +299,8 @@ struct InstanceFactory {
     controls: Arc<Semaphore>,
     storages: Arc<Semaphore>,
     ticker: tokio::task::JoinHandle<()>,
+    #[cfg(test)]
+    test_dns: Option<Arc<grants::TestDns>>,
 }
 impl Drop for InstanceFactory {
     fn drop(&mut self) {
@@ -313,6 +315,8 @@ impl InstanceFactory {
             .map_err(|_| StorageError::new(StorageErrorKind::CapacityExceeded))?;
         let mut builder = WasiCtx::builder();
         let network = NetworkPolicy::new(&self.grants)?;
+        #[cfg(test)]
+        let network = network.with_test_dns(self.test_dns.clone());
         let check = network.clone();
         builder
             .allow_tcp(!self.grants.tcp.is_empty())
@@ -444,9 +448,10 @@ impl Instance {
         let mutates = op.mutates();
         match tokio::time::timeout(self.limits.timeout(), state.execute(op, data)).await {
             Ok(Err(error))
-                if error
-                    .storage_error()
-                    .is_some_and(|error| error.kind() == StorageErrorKind::StaleHandle) =>
+                if state.faulted
+                    || error
+                        .storage_error()
+                        .is_some_and(|error| error.kind() == StorageErrorKind::StaleHandle) =>
             {
                 if mutates {
                     Err(StorageError::new(StorageErrorKind::OutcomeUnknown).into())
@@ -674,6 +679,7 @@ impl WasmTransport {
             wasmtime::component::HasSelf<Host>,
         >(&mut linker, |host| host)
         .map_err(|_| c::invalid())?;
+        linker.allow_shadowing(false);
         let pre = PluginPre::new(linker.instantiate_pre(&component).map_err(|error| {
             StorageError::with_source(
                 StorageErrorKind::UnsupportedOperation,
@@ -696,7 +702,12 @@ impl WasmTransport {
                 storages: Arc::new(Semaphore::new(grants.limits.storage_instances)),
                 grants,
                 ticker,
+                #[cfg(test)]
+                test_dns: None,
             }),
         })
     }
 }
+
+#[cfg(test)]
+mod integration_tests;

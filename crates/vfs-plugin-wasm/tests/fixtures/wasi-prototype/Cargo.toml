@@ -11,3 +11,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 wit-bindgen = "0.63"
+vfs-plugin-protocol = { path = "../../../../vfs-plugin-protocol", version = "0.1.0" }
+vfs-plugin-guest = { path = "../../../../vfs-plugin-guest", version = "0.1.0" }
+http = "1.5.0"

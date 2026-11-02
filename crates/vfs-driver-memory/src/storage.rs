@@ -44,7 +44,7 @@ struct Quota {
 impl Quota {
     fn reserve(&self, bytes: u64) -> Result<(), StorageError> {
         self.used
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
                 used.checked_add(bytes).filter(|total| *total <= self.limit)
             })
             .map(|_| ())

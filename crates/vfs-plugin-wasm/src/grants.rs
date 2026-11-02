@@ -222,10 +222,14 @@ impl HostGrants {
 #[derive(Clone)]
 pub(crate) struct NetworkPolicy {
     pub targets: Vec<Destination>,
+    #[cfg(test)]
+    test_dns: Option<std::sync::Arc<TestDns>>,
 }
 impl NetworkPolicy {
     pub fn new(grants: &HostGrants) -> Result<Self, DriverError> {
         Ok(Self {
+            #[cfg(test)]
+            test_dns: None,
             targets: grants
                 .tcp
                 .iter()
@@ -268,5 +272,41 @@ impl NetworkPolicy {
             }
         }
         false
+    }
+}
+
+#[cfg(test)]
+pub(crate) struct TestDns {
+    pub name: String,
+    pub calls: std::sync::atomic::AtomicUsize,
+}
+#[cfg(test)]
+impl TestDns {
+    pub fn new(name: &str) -> Self {
+        Self {
+            name: name.into(),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+}
+impl NetworkPolicy {
+    #[cfg(test)]
+    pub fn with_test_dns(mut self, dns: Option<std::sync::Arc<TestDns>>) -> Self {
+        self.test_dns = dns;
+        self
+    }
+    pub fn lookup_name(&self, name: &str) -> String {
+        #[cfg(test)]
+        if let Some(dns) = &self.test_dns
+            && name == dns.name
+        {
+            return if dns.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                "200.0.0.1"
+            } else {
+                "127.0.0.1"
+            }
+            .into();
+        }
+        name.into()
     }
 }

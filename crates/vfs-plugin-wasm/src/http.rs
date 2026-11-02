@@ -30,6 +30,18 @@ impl WasiHttpHooks for HttpPolicy {
     }
 }
 impl HttpPolicy {
+    fn check_origin(&self, url: &url::Url) -> Result<(), Error> {
+        if !url.username().is_empty()
+            || url.password().is_some()
+            || !self
+                .grants
+                .origins
+                .contains(&url.origin().ascii_serialization())
+        {
+            return Err(Error::HttpRequestDenied);
+        }
+        Ok(())
+    }
     async fn send(
         &self,
         request: http::Request<WasiBody>,
@@ -40,23 +52,21 @@ impl HttpPolicy {
         }
         let mut url =
             url::Url::parse(&parts.uri.to_string()).map_err(|_| Error::HttpRequestUriInvalid)?;
-        let mut body = Limited::new(body, self.grants.max_request_bytes)
+        self.check_origin(&url)?;
+        let collected = Limited::new(body, self.grants.max_request_bytes)
             .collect()
             .await
-            .map_err(|_| Error::HttpRequestBodySize(None))?
-            .to_bytes();
+            .map_err(|_| Error::HttpRequestBodySize(None))?;
+        if collected.trailers().is_some_and(|trailers| {
+            trailers.len() > self.grants.max_headers.saturating_sub(parts.headers.len())
+        }) {
+            return Err(Error::HttpRequestHeaderSectionSize(None));
+        }
+        let mut body = collected.to_bytes();
         let mut method = parts.method;
         let mut headers = parts.headers;
         for attempt in 0..=5 {
-            if !url.username().is_empty()
-                || url.password().is_some()
-                || !self
-                    .grants
-                    .origins
-                    .contains(&url.origin().ascii_serialization())
-            {
-                return Err(Error::HttpRequestDenied);
-            }
+            self.check_origin(&url)?;
             let host = url
                 .host_str()
                 .ok_or(Error::HttpRequestUriInvalid)?
