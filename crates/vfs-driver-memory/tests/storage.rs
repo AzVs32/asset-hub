@@ -14,15 +14,15 @@ use std::{num::NonZeroUsize, sync::Arc};
 use vfs_driver_memory::{Capacity, CapacityUnit, MemoryStorage};
 
 fn storage(bytes: u64) -> TestResult<MemoryStorage> {
-    Ok(MemoryStorage::new(Capacity::new(bytes, CapacityUnit::B)?))
+    Ok(MemoryStorage::new(Capacity::new(bytes, CapacityUnit::B)?)?)
 }
 
 #[tokio::test]
 async fn declarations_cover_all_ports_and_optional_attributes_are_absent() -> TestResult {
     let storage = storage(32)?;
     validate_storage_capabilities(storage.capabilities(), &storage)?;
-    assert_eq!(storage.capabilities().permissions, AttributeSupport::None);
-    assert_eq!(storage.capabilities().xattrs, AttributeSupport::None);
+    assert_eq!(storage.capabilities().permissions(), AttributeSupport::None);
+    assert_eq!(storage.capabilities().xattrs(), AttributeSupport::None);
     assert!(storage.permissions().is_none());
     assert!(storage.xattrs().is_none());
     assert_eq!(storage.chunk_size().get(), 64 * 1024);

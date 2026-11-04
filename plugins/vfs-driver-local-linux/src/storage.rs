@@ -7,8 +7,8 @@ use ah_vfs::{
     },
     domain::storage::{
         AttributeSupport, DirModel, FileReadSupport, FileWriteSupport, RenameSupport,
-        StorageCapabilities, StorageCreateDirRequest, StorageDirPage, StorageDirQuery,
-        StorageEntry, StorageError, StorageErrorKind, StorageMoveEntryRequest,
+        StorageCapabilities, StorageCapabilitiesError, StorageCreateDirRequest, StorageDirPage,
+        StorageDirQuery, StorageEntry, StorageError, StorageErrorKind, StorageMoveEntryRequest,
         StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
         StorageWriteFileRequest,
     },
@@ -54,27 +54,28 @@ pub struct LinuxLocalStorage {
 }
 
 impl LinuxLocalStorage {
-    pub(crate) fn supported_capabilities() -> StorageCapabilities {
-        StorageCapabilities {
-            stat_entry: true,
-            list_entries: true,
-            read_file: FileReadSupport::Range,
-            write_file: FileWriteSupport {
+    pub(crate) fn supported_capabilities() -> Result<StorageCapabilities, StorageCapabilitiesError>
+    {
+        StorageCapabilities::builder()
+            .stat_entry(true)
+            .list_entries(true)
+            .read_file(FileReadSupport::Range)
+            .write_file(FileWriteSupport {
                 create_new: true,
                 replace: true,
                 atomic_publish: true,
-            },
-            dir_model: DirModel::Hierarchical,
-            persistent_empty_dirs: true,
-            create_dir: true,
-            remove_entry: true,
-            rename: RenameSupport {
+            })
+            .dir_model(DirModel::Hierarchical)
+            .persistent_empty_dirs(true)
+            .create_dir(true)
+            .remove_entry(true)
+            .rename(RenameSupport {
                 no_replace: true,
                 replace: true,
-            },
-            permissions: AttributeSupport::ReadWrite,
-            xattrs: AttributeSupport::ReadWrite,
-        }
+            })
+            .permissions(AttributeSupport::ReadWrite)
+            .xattrs(AttributeSupport::ReadWrite)
+            .build()
     }
     pub(crate) async fn open(root: PathBuf) -> Result<Self, StorageError> {
         let path = root.clone();
@@ -102,14 +103,14 @@ impl Storage for LinuxLocalStorage {
     }
 
     fn permissions(&self) -> Option<&dyn StoragePermissions> {
-        if self.capabilities.permissions.can_read() {
+        if self.capabilities.permissions().can_read() {
             return Some(self);
         }
         None
     }
 
     fn xattrs(&self) -> Option<&dyn StorageXattrs> {
-        if self.capabilities.xattrs.can_read() {
+        if self.capabilities.xattrs().can_read() {
             return Some(self);
         }
         None
@@ -161,7 +162,7 @@ impl Storage for LinuxLocalStorage {
     }
 
     fn move_entry(&self, request: StorageMoveEntryRequest) -> StorageFuture<'_, StorageEntry> {
-        let support = self.capabilities.rename;
+        let support = self.capabilities.rename();
         if !(if request.replace {
             support.replace
         } else {

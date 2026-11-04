@@ -2,7 +2,7 @@
 
 use ah_vfs::domain::{
     DriverError,
-    storage::{StorageError, StorageErrorKind},
+    storage::{StorageCapabilitiesError, StorageError, StorageErrorKind},
 };
 use std::{io, path::PathBuf};
 use thiserror::Error;
@@ -27,7 +27,9 @@ impl From<LinuxLocalDriverError> for DriverError {
             LinuxLocalDriverError::Dir { ref source, .. } => io_error_kind(source),
             LinuxLocalDriverError::NotDir(_) => StorageErrorKind::NotDir,
             LinuxLocalDriverError::InvalidPathEncoding => StorageErrorKind::InvalidNameEncoding,
-            LinuxLocalDriverError::InvalidData => StorageErrorKind::InvalidData,
+            LinuxLocalDriverError::InvalidData | LinuxLocalDriverError::Capabilities(_) => {
+                StorageErrorKind::InvalidData
+            }
         };
         Self::Storage(StorageError::with_source(kind, error))
     }
@@ -35,6 +37,8 @@ impl From<LinuxLocalDriverError> for DriverError {
 
 #[derive(Debug, Error)]
 pub enum LinuxLocalDriverError {
+    #[error("storage capability declaration is invalid")]
+    Capabilities(#[from] StorageCapabilitiesError),
     #[error("local directory '{path}' is unavailable")]
     Dir {
         path: PathBuf,

@@ -511,10 +511,10 @@ impl Storage for RemoteStorage {
         self.chunk_size
     }
     fn permissions(&self) -> Option<&dyn StoragePermissions> {
-        self.capabilities.permissions.can_read().then_some(self)
+        self.capabilities.permissions().can_read().then_some(self)
     }
     fn xattrs(&self) -> Option<&dyn StorageXattrs> {
-        self.capabilities.xattrs.can_read().then_some(self)
+        self.capabilities.xattrs().can_read().then_some(self)
     }
     fn stat_entry(&self, r: StorageStatEntryRequest) -> StorageFuture<'_, StorageEntry> {
         Box::pin(async move {

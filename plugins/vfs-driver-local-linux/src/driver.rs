@@ -28,7 +28,7 @@ impl LinuxLocalDriver {
         Ok(Self {
             info: DriverInfo::builder()
                 .maybe_instance_config_schema(instance_config_schema())
-                .capabilities(LinuxLocalStorage::supported_capabilities())
+                .capabilities(LinuxLocalStorage::supported_capabilities()?)
                 .key(DriverKey::parse(Self::KEY).map_err(|_| LinuxLocalDriverError::InvalidData)?)
                 .name("Local filesystem".into())
                 .version(semver::Version::new(0, 1, 0))

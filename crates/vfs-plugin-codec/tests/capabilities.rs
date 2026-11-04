@@ -42,26 +42,26 @@ fn contradictory_wire_capabilities_preserve_the_domain_validation_cause()
 fn valid_capabilities_round_trip_and_unknown_optional_values_do_not_enable_features()
 -> Result<(), Box<dyn Error>> {
     for dir_model in [DirModel::Hierarchical, DirModel::Prefix] {
-        let declared = StorageCapabilities {
-            stat_entry: true,
-            list_entries: true,
-            read_file: FileReadSupport::Range,
-            write_file: FileWriteSupport {
+        let declared = StorageCapabilities::builder()
+            .stat_entry(true)
+            .list_entries(true)
+            .read_file(FileReadSupport::Range)
+            .write_file(FileWriteSupport {
                 create_new: true,
                 replace: true,
                 atomic_publish: true,
-            },
-            dir_model,
-            persistent_empty_dirs: true,
-            create_dir: true,
-            remove_entry: true,
-            rename: RenameSupport {
+            })
+            .dir_model(dir_model)
+            .persistent_empty_dirs(true)
+            .create_dir(true)
+            .remove_entry(true)
+            .rename(RenameSupport {
                 no_replace: true,
                 replace: true,
-            },
-            permissions: AttributeSupport::ReadWrite,
-            xattrs: AttributeSupport::Read,
-        };
+            })
+            .permissions(AttributeSupport::ReadWrite)
+            .xattrs(AttributeSupport::Read)
+            .build()?;
         let mut wire = capabilities(declared);
         wire.push(i32::MAX);
         assert_eq!(decode_capabilities(&wire)?, declared);

@@ -277,8 +277,8 @@ async fn s3_component_runs_through_host_records_mounts_and_streams() -> Result {
                 config.clone(),
             ))
             .await?;
-        assert_eq!(storage.capabilities().dir_model, DirModel::Prefix);
-        assert!(!storage.capabilities().rename.replace);
+        assert_eq!(storage.capabilities().dir_model(), DirModel::Prefix);
+        assert!(!storage.capabilities().rename().replace);
         let mut pending = storage
             .write_file(StorageWriteFileRequest::new(StoragePath::parse("staged")?))
             .await?;

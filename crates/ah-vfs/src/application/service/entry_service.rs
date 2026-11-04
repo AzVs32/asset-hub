@@ -110,7 +110,7 @@ impl EntryService {
             return Ok(EntryView::dir(path.clone(), EntryOrigin::SyntheticDir));
         }
         let (relative, storage) = self.open(&table, path).await?;
-        Self::require(storage.capabilities().stat_entry)?;
+        Self::require(storage.capabilities().stat_entry())?;
         let entry = storage
             .stat_entry(StorageStatEntryRequest { path: relative })
             .await?;
@@ -138,9 +138,9 @@ impl EntryService {
         let table = self.runtime.table().await?;
         let synthetic = matches!(Self::classify(&table, path), NamespaceEntry::SyntheticDir);
         let (relative, storage) = self.open(&table, path).await?;
-        Self::require(storage.capabilities().list_entries)?;
+        Self::require(storage.capabilities().list_entries())?;
         if synthetic {
-            Self::require(storage.capabilities().stat_entry)?;
+            Self::require(storage.capabilities().stat_entry())?;
         }
         let mut entries = BTreeMap::new();
         let mut after = None;
@@ -266,7 +266,7 @@ impl EntryService {
             return Err(StorageError::new(StorageErrorKind::IsDir).into());
         }
         let (relative, storage) = self.open(&table, &request.path).await?;
-        let support = storage.capabilities().read_file;
+        let support = storage.capabilities().read_file();
         Self::require(support != FileReadSupport::None)?;
         Self::require(
             (request.offset == 0 && request.length.is_none()) || support == FileReadSupport::Range,
@@ -289,7 +289,7 @@ impl EntryService {
         let table = self.runtime.table().await?;
         Self::protect(&table, &request.path)?;
         let (relative, storage) = self.open(&table, &request.path).await?;
-        let support = storage.capabilities().write_file;
+        let support = storage.capabilities().write_file();
         Self::require(match request.mode {
             crate::domain::storage::StorageWriteFileMode::CreateNew => support.create_new,
             crate::domain::storage::StorageWriteFileMode::Replace => support.replace,
@@ -315,7 +315,7 @@ impl EntryService {
         let table = self.runtime.table().await?;
         Self::protect(&table, &request.path)?;
         let (relative, storage) = self.open(&table, &request.path).await?;
-        Self::require(storage.capabilities().create_dir)?;
+        Self::require(storage.capabilities().create_dir())?;
         let entry = storage
             .create_dir(StorageCreateDirRequest {
                 path: relative,
@@ -330,7 +330,7 @@ impl EntryService {
         let table = self.runtime.table().await?;
         Self::protect(&table, &request.path)?;
         let (relative, storage) = self.open(&table, &request.path).await?;
-        Self::require(storage.capabilities().remove_entry)?;
+        Self::require(storage.capabilities().remove_entry())?;
         Ok(storage
             .remove_entry(StorageRemoveEntryRequest { path: relative })
             .await?)
@@ -348,7 +348,7 @@ impl EntryService {
         }
         let destination = destination.storage_path().map_err(StorageError::from)?;
         let (source, storage) = self.open(&table, &request.source).await?;
-        let support = storage.capabilities().rename;
+        let support = storage.capabilities().rename();
         Self::require(if request.replace {
             support.replace
         } else {
@@ -385,7 +385,7 @@ impl EntryService {
         path: &VirtualPath,
     ) -> Result<EntryPermissions, EntryError> {
         let (relative, storage) = self.attribute_storage(path, false).await?;
-        Self::require(storage.capabilities().permissions.can_read())?;
+        Self::require(storage.capabilities().permissions().can_read())?;
         let extension = storage
             .permissions()
             .ok_or(EntryError::InvalidStorageResponse(
@@ -401,7 +401,7 @@ impl EntryService {
         permissions: EntryPermissions,
     ) -> Result<(), EntryError> {
         let (relative, storage) = self.attribute_storage(path, true).await?;
-        Self::require(storage.capabilities().permissions.can_write())?;
+        Self::require(storage.capabilities().permissions().can_write())?;
         let extension = storage
             .permissions()
             .ok_or(EntryError::InvalidStorageResponse(
@@ -417,7 +417,7 @@ impl EntryService {
         max_bytes: NonZeroUsize,
     ) -> Result<Vec<XattrName>, EntryError> {
         let (relative, storage) = self.attribute_storage(path, false).await?;
-        Self::require(storage.capabilities().xattrs.can_read())?;
+        Self::require(storage.capabilities().xattrs().can_read())?;
         let extension = storage.xattrs().ok_or(EntryError::InvalidStorageResponse(
             "missing xattr extension",
         ))?;
@@ -432,7 +432,7 @@ impl EntryService {
         max_bytes: NonZeroUsize,
     ) -> Result<Vec<u8>, EntryError> {
         let (relative, storage) = self.attribute_storage(path, false).await?;
-        Self::require(storage.capabilities().xattrs.can_read())?;
+        Self::require(storage.capabilities().xattrs().can_read())?;
         let extension = storage.xattrs().ok_or(EntryError::InvalidStorageResponse(
             "missing xattr extension",
         ))?;
@@ -448,7 +448,7 @@ impl EntryService {
         mode: XattrWriteMode,
     ) -> Result<(), EntryError> {
         let (relative, storage) = self.attribute_storage(path, true).await?;
-        Self::require(storage.capabilities().xattrs.can_write())?;
+        Self::require(storage.capabilities().xattrs().can_write())?;
         let extension = storage.xattrs().ok_or(EntryError::InvalidStorageResponse(
             "missing xattr extension",
         ))?;
@@ -462,7 +462,7 @@ impl EntryService {
         name: XattrName,
     ) -> Result<(), EntryError> {
         let (relative, storage) = self.attribute_storage(path, true).await?;
-        Self::require(storage.capabilities().xattrs.can_write())?;
+        Self::require(storage.capabilities().xattrs().can_write())?;
         let extension = storage.xattrs().ok_or(EntryError::InvalidStorageResponse(
             "missing xattr extension",
         ))?;

@@ -133,31 +133,31 @@ pub fn driver_error(error: p::Failure, instance: Option<&str>) -> DriverError {
 pub fn capabilities(c: StorageCapabilities) -> Vec<i32> {
     let mut names = Vec::new();
     for (enabled, name) in [
-        (c.stat_entry, p::Capability::Stat),
-        (c.list_entries, p::Capability::List),
-        (c.create_dir, p::Capability::CreateDir),
-        (c.remove_entry, p::Capability::Remove),
-        (c.persistent_empty_dirs, p::Capability::EmptyDirs),
-        (c.write_file.create_new, p::Capability::WriteNew),
-        (c.write_file.replace, p::Capability::WriteReplace),
-        (c.write_file.atomic_publish, p::Capability::AtomicPublish),
-        (c.rename.no_replace, p::Capability::RenameNew),
-        (c.rename.replace, p::Capability::RenameReplace),
-        (c.permissions.can_read(), p::Capability::PermissionsRead),
-        (c.permissions.can_write(), p::Capability::PermissionsWrite),
-        (c.xattrs.can_read(), p::Capability::XattrsRead),
-        (c.xattrs.can_write(), p::Capability::XattrsWrite),
+        (c.stat_entry(), p::Capability::Stat),
+        (c.list_entries(), p::Capability::List),
+        (c.create_dir(), p::Capability::CreateDir),
+        (c.remove_entry(), p::Capability::Remove),
+        (c.persistent_empty_dirs(), p::Capability::EmptyDirs),
+        (c.write_file().create_new, p::Capability::WriteNew),
+        (c.write_file().replace, p::Capability::WriteReplace),
+        (c.write_file().atomic_publish, p::Capability::AtomicPublish),
+        (c.rename().no_replace, p::Capability::RenameNew),
+        (c.rename().replace, p::Capability::RenameReplace),
+        (c.permissions().can_read(), p::Capability::PermissionsRead),
+        (c.permissions().can_write(), p::Capability::PermissionsWrite),
+        (c.xattrs().can_read(), p::Capability::XattrsRead),
+        (c.xattrs().can_write(), p::Capability::XattrsWrite),
     ] {
         if enabled {
             names.push(name.into());
         }
     }
-    match c.read_file {
+    match c.read_file() {
         FileReadSupport::None => (),
         FileReadSupport::Sequential => names.push(p::Capability::Read.into()),
         FileReadSupport::Range => names.push(p::Capability::RangeRead.into()),
     }
-    match c.dir_model {
+    match c.dir_model() {
         DirModel::None => (),
         DirModel::Hierarchical => names.push(p::Capability::Hierarchical.into()),
         DirModel::Prefix => names.push(p::Capability::Prefix.into()),
@@ -187,42 +187,42 @@ pub fn decode_capabilities(names: &[i32]) -> Result<StorageCapabilities, DriverE
             AttributeSupport::None
         }
     };
-    let capabilities = StorageCapabilities {
-        stat_entry: set.contains(&(p::Capability::Stat as i32)),
-        list_entries: set.contains(&(p::Capability::List as i32)),
-        read_file: if set.contains(&(p::Capability::RangeRead as i32)) {
+    let capabilities = StorageCapabilities::builder()
+        .stat_entry(set.contains(&(p::Capability::Stat as i32)))
+        .list_entries(set.contains(&(p::Capability::List as i32)))
+        .read_file(if set.contains(&(p::Capability::RangeRead as i32)) {
             FileReadSupport::Range
         } else if set.contains(&(p::Capability::Read as i32)) {
             FileReadSupport::Sequential
         } else {
             FileReadSupport::None
-        },
-        write_file: FileWriteSupport {
+        })
+        .write_file(FileWriteSupport {
             create_new: set.contains(&(p::Capability::WriteNew as i32)),
             replace: set.contains(&(p::Capability::WriteReplace as i32)),
             atomic_publish: set.contains(&(p::Capability::AtomicPublish as i32)),
-        },
-        dir_model: if set.contains(&(p::Capability::Hierarchical as i32)) {
+        })
+        .dir_model(if set.contains(&(p::Capability::Hierarchical as i32)) {
             DirModel::Hierarchical
         } else if set.contains(&(p::Capability::Prefix as i32)) {
             DirModel::Prefix
         } else {
             DirModel::None
-        },
-        persistent_empty_dirs: set.contains(&(p::Capability::EmptyDirs as i32)),
-        create_dir: set.contains(&(p::Capability::CreateDir as i32)),
-        remove_entry: set.contains(&(p::Capability::Remove as i32)),
-        rename: RenameSupport {
+        })
+        .persistent_empty_dirs(set.contains(&(p::Capability::EmptyDirs as i32)))
+        .create_dir(set.contains(&(p::Capability::CreateDir as i32)))
+        .remove_entry(set.contains(&(p::Capability::Remove as i32)))
+        .rename(RenameSupport {
             no_replace: set.contains(&(p::Capability::RenameNew as i32)),
             replace: set.contains(&(p::Capability::RenameReplace as i32)),
-        },
-        permissions: attr(
+        })
+        .permissions(attr(
             p::Capability::PermissionsRead,
             p::Capability::PermissionsWrite,
-        ),
-        xattrs: attr(p::Capability::XattrsRead, p::Capability::XattrsWrite),
-    };
-    capabilities.validate().map_err(StorageError::from)?;
+        ))
+        .xattrs(attr(p::Capability::XattrsRead, p::Capability::XattrsWrite))
+        .build()
+        .map_err(StorageError::from)?;
     Ok(capabilities)
 }
 pub fn describe(driver: &dyn Driver, generation: String) -> p::Description {

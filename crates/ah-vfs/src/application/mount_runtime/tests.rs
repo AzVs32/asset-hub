@@ -119,11 +119,11 @@ struct TestStorage {
     current_generation: Arc<AtomicUsize>,
 }
 
-fn capabilities() -> StorageCapabilities {
-    StorageCapabilities {
-        stat_entry: true,
-        ..Default::default()
-    }
+fn capabilities() -> Result<StorageCapabilities, StorageError> {
+    StorageCapabilities::builder()
+        .stat_entry(true)
+        .build()
+        .map_err(StorageError::from)
 }
 
 impl Storage for TestStorage {
@@ -171,7 +171,7 @@ impl TestDriver {
                 .name(key.into())
                 .version(semver::Version::new(1, 0, 0))
                 .child_mount_policy(ChildMountPolicy::Allow)
-                .capabilities(capabilities())
+                .capabilities(capabilities()?)
                 .build(),
             opens: AtomicUsize::new(0),
             validations: Arc::new(AtomicUsize::new(0)),
@@ -212,12 +212,13 @@ impl common::Backend for TestDriver {
                 current_generation: self.generation.clone(),
                 validations: self.validations.clone(),
                 capabilities: if self.invalid_capabilities.load(Ordering::SeqCst) {
-                    StorageCapabilities {
-                        read_file: crate::domain::storage::FileReadSupport::Range,
-                        ..capabilities()
-                    }
+                    (capabilities()?)
+                        .to_builder()
+                        .read_file(crate::domain::storage::FileReadSupport::Range)
+                        .build()
+                        .map_err(StorageError::from)?
                 } else {
-                    capabilities()
+                    capabilities()?
                 },
             });
             Ok(storage)

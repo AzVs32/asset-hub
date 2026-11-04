@@ -6,10 +6,7 @@ use ah_vfs::{
     domain::{
         DriverError, DriverKey,
         namespace::ChildMountPolicy,
-        storage::{
-            FileWriteSupport, StorageCapabilities, StorageCapabilitiesError, StorageError,
-            StorageErrorKind,
-        },
+        storage::{StorageCapabilities, StorageError, StorageErrorKind},
     },
 };
 use std::{
@@ -172,58 +169,6 @@ async fn duplicates_are_rejected_before_initializing_the_replacement() -> TestRe
     ));
     assert_eq!(original.calls.load(Ordering::SeqCst), 1);
     assert_eq!(duplicate.calls.load(Ordering::SeqCst), 0);
-    Ok(())
-}
-
-#[tokio::test]
-async fn invalid_capabilities_fail_before_initialization_and_do_not_reserve_the_key() -> TestResult
-{
-    let declarations = [
-        StorageCapabilities {
-            write_file: FileWriteSupport {
-                atomic_publish: true,
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        StorageCapabilities {
-            persistent_empty_dirs: true,
-            ..Default::default()
-        },
-        StorageCapabilities {
-            create_dir: true,
-            ..Default::default()
-        },
-    ];
-    for capabilities in declarations {
-        let mut plugin = Plugin::new(false, None)?;
-        plugin.info = DriverInfo::builder()
-            .key(DriverKey::parse("own.database")?)
-            .name("Invalid declaration".into())
-            .version(semver::Version::new(1, 0, 0))
-            .child_mount_policy(ChildMountPolicy::Allow)
-            .capabilities(capabilities)
-            .build();
-        let plugin = Arc::new(plugin);
-        let mut catalog = DriverCatalog::new();
-        let error = catalog
-            .register(plugin.clone(), settings())
-            .await
-            .err()
-            .ok_or("expected invalid declaration")?;
-        assert!(
-            matches!(&error, DriverCatalogError::InvalidDeclaration(error) if error.storage_error().is_some_and(|e| e.kind() == StorageErrorKind::InvalidData))
-        );
-        let source = std::error::Error::source(&error)
-            .and_then(std::error::Error::source)
-            .and_then(|e| e.downcast_ref::<StorageCapabilitiesError>());
-        assert_eq!(source.copied(), capabilities.validate().err());
-        assert_eq!(plugin.calls.load(Ordering::SeqCst), 0);
-        assert!(catalog.list().is_empty());
-        let valid = Arc::new(Plugin::new(false, None)?);
-        catalog.register(valid, settings()).await?;
-        assert!(catalog.get(plugin.info.key()).is_some());
-    }
     Ok(())
 }
 

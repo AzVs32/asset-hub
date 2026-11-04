@@ -128,12 +128,10 @@ pub fn validate_storage_capabilities(
     declared: StorageCapabilities,
     storage: &dyn Storage,
 ) -> Result<(), StorageError> {
-    declared.validate().map_err(StorageError::from)?;
     let actual = storage.capabilities();
-    actual.validate().map_err(StorageError::from)?;
     if !declared.supports(actual)
-        || actual.permissions.can_read() != storage.permissions().is_some()
-        || actual.xattrs.can_read() != storage.xattrs().is_some()
+        || actual.permissions().can_read() != storage.permissions().is_some()
+        || actual.xattrs().can_read() != storage.xattrs().is_some()
     {
         return Err(StorageError::new(StorageErrorKind::InvalidData));
     }

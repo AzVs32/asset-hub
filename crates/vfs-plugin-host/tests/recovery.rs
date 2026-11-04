@@ -264,7 +264,7 @@ async fn changed_declarations_require_a_new_registration() -> Result {
         StorageErrorKind::InvalidData
     );
     assert!(old.is_stale());
-    assert!(driver.info().capabilities().stat_entry);
+    assert!(driver.info().capabilities().stat_entry());
     assert!(open(&driver).await.is_err());
     assert_eq!(
         peer.initialized.lock().map_err(|_| "settings lock")?.len(),

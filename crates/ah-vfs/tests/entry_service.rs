@@ -39,6 +39,7 @@ struct TestDriver {
     response: Response,
 }
 struct TestStorage {
+    capabilities: ah_vfs::domain::storage::StorageCapabilities,
     instance: InstanceId,
     response: Response,
 }
@@ -58,6 +59,7 @@ impl common::Backend for TestDriver {
         let instance = context.instance_id().clone();
         Box::pin(async move {
             Ok(Arc::new(TestStorage {
+                capabilities: self.info.capabilities(),
                 instance,
                 response: self.response,
             }) as Arc<dyn Storage>)
@@ -67,11 +69,7 @@ impl common::Backend for TestDriver {
 
 impl Storage for TestStorage {
     fn capabilities(&self) -> ah_vfs::domain::storage::StorageCapabilities {
-        ah_vfs::domain::storage::StorageCapabilities {
-            stat_entry: true,
-            list_entries: true,
-            ..Default::default()
-        }
+        self.capabilities
     }
     fn chunk_size(&self) -> NonZeroUsize {
         NonZeroUsize::MIN
@@ -148,11 +146,12 @@ async fn services(response: Response) -> TestResult<(EntryService, MountService)
         &mut drivers,
         common::managed(Arc::new(TestDriver {
             info: DriverInfo::builder()
-                .capabilities(ah_vfs::domain::storage::StorageCapabilities {
-                    stat_entry: true,
-                    list_entries: true,
-                    ..Default::default()
-                })
+                .capabilities(
+                    ah_vfs::domain::storage::StorageCapabilities::builder()
+                        .stat_entry(true)
+                        .list_entries(true)
+                        .build()?,
+                )
                 .key(key.clone())
                 .name("Test".into())
                 .version(semver::Version::new(0, 1, 0))

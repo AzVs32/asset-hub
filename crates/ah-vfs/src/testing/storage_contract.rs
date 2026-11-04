@@ -306,7 +306,7 @@ pub async fn assert_same_path_rename_contract(storage: &dyn Storage) -> TestResu
     put(storage, "dir/child", b"child content").await?;
 
     for replace in [false, true] {
-        let support = storage.capabilities().rename;
+        let support = storage.capabilities().rename();
         let supported = if replace {
             support.replace
         } else {

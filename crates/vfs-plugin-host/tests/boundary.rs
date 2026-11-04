@@ -214,9 +214,9 @@ fn timestamps_and_unknown_error_codes_preserve_boundary_semantics() -> Result {
         StorageErrorKind::Backend
     );
     assert!(convert::decode_capabilities(&[p::Capability::PermissionsWrite as i32]).is_err());
-    let mut caps = convert::decode_capabilities(&[i32::MAX])?;
+    let caps = convert::decode_capabilities(&[i32::MAX])?;
     assert_eq!(caps, StorageCapabilities::default());
-    caps.stat_entry = true;
+    let caps = caps.to_builder().stat_entry(true).build()?;
     assert_eq!(
         convert::decode_capabilities(&convert::capabilities(caps))?,
         caps

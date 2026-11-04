@@ -2,7 +2,7 @@
 
 use ah_vfs::domain::{
     DriverError,
-    storage::{StorageError, StorageErrorKind},
+    storage::{StorageCapabilitiesError, StorageError, StorageErrorKind},
 };
 use std::{io, path::PathBuf};
 use thiserror::Error;
@@ -26,7 +26,9 @@ impl From<WindowsLocalDriverError> for DriverError {
             WindowsLocalDriverError::Dir { ref source, .. } => io_error_kind(source),
             WindowsLocalDriverError::NotDir(_) => StorageErrorKind::NotDir,
             WindowsLocalDriverError::InvalidPathEncoding => StorageErrorKind::InvalidNameEncoding,
-            WindowsLocalDriverError::InvalidData => StorageErrorKind::InvalidData,
+            WindowsLocalDriverError::InvalidData | WindowsLocalDriverError::Capabilities(_) => {
+                StorageErrorKind::InvalidData
+            }
         };
         Self::Storage(StorageError::with_source(kind, error))
     }
@@ -34,6 +36,8 @@ impl From<WindowsLocalDriverError> for DriverError {
 
 #[derive(Debug, Error)]
 pub enum WindowsLocalDriverError {
+    #[error("storage capability declaration is invalid")]
+    Capabilities(#[from] StorageCapabilitiesError),
     #[error("local directory '{path}' is unavailable")]
     Dir {
         path: PathBuf,

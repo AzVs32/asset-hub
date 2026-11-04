@@ -4,7 +4,8 @@ use ah_vfs::domain::storage::{StorageCapabilities, StorageError};
 use cap_std::fs::Dir;
 
 pub(super) fn instance_capabilities(dir: &Dir) -> Result<StorageCapabilities, StorageError> {
-    let mut capabilities = LinuxLocalStorage::supported_capabilities();
+    let mut capabilities =
+        LinuxLocalStorage::supported_capabilities().map_err(StorageError::from)?;
     let handle = match dir.open(".") {
         Ok(handle) => handle,
         Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
@@ -15,7 +16,11 @@ pub(super) fn instance_capabilities(dir: &Dir) -> Result<StorageCapabilities, St
     let mut bytes = [0_u8; 0];
     if let Err(error) = rustix::fs::flistxattr(&handle, &mut bytes[..]) {
         if error == rustix::io::Errno::NOTSUP {
-            capabilities.xattrs = ah_vfs::domain::storage::AttributeSupport::None;
+            capabilities = capabilities
+                .to_builder()
+                .xattrs(ah_vfs::domain::storage::AttributeSupport::None)
+                .build()
+                .map_err(StorageError::from)?;
         } else if error != rustix::io::Errno::RANGE
             && error != rustix::io::Errno::ACCESS
             && error != rustix::io::Errno::PERM

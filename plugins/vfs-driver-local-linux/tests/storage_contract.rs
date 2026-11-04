@@ -85,14 +85,14 @@ async fn instance_support_matches_driver_and_atomic_publication_is_honored() -> 
     let f = fixture().await?;
     let caps = f.storage.capabilities();
     assert!(f.driver.info().capabilities().supports(caps));
-    assert_eq!(caps.read_file, FileReadSupport::Range);
+    assert_eq!(caps.read_file(), FileReadSupport::Range);
     assert_eq!(
-        caps.permissions.can_read(),
+        caps.permissions().can_read(),
         f.storage.permissions().is_some()
     );
-    assert_eq!(caps.xattrs.can_read(), f.storage.xattrs().is_some());
+    assert_eq!(caps.xattrs().can_read(), f.storage.xattrs().is_some());
     assert_eq!(
-        caps.rename.no_replace,
+        caps.rename().no_replace,
         cfg!(any(target_os = "linux", target_os = "android"))
     );
     let mut request = StorageWriteFileRequest::new(path("new")?);
@@ -195,7 +195,7 @@ async fn xattrs_support_binary_empty_and_bounded_values_with_atomic_existence_po
 -> TestResult {
     let f = fixture().await?;
     let entries = service(&f).await?;
-    if !f.storage.capabilities().xattrs.can_read() {
+    if !f.storage.capabilities().xattrs().can_read() {
         assert!(f.storage.xattrs().is_none());
         return Ok(());
     }

@@ -28,7 +28,7 @@ impl WindowsLocalDriver {
         Ok(Self {
             info: DriverInfo::builder()
                 .maybe_instance_config_schema(instance_config_schema())
-                .capabilities(WindowsLocalStorage::supported_capabilities())
+                .capabilities(WindowsLocalStorage::supported_capabilities()?)
                 .key(
                     DriverKey::parse(Self::KEY)
                         .map_err(|_| WindowsLocalDriverError::InvalidData)?,

@@ -201,27 +201,30 @@ fn normalized_errors_preserve_sources_without_exposing_backend_messages() -> Tes
 }
 
 #[test]
-fn capability_upper_bounds_preserve_semantics_and_read_only_attributes() {
-    let upper = StorageCapabilities {
-        read_file: FileReadSupport::Range,
-        permissions: AttributeSupport::ReadWrite,
-        dir_model: DirModel::Prefix,
-        ..Default::default()
-    };
-    let actual = StorageCapabilities {
-        read_file: FileReadSupport::Sequential,
-        permissions: AttributeSupport::Read,
-        dir_model: DirModel::Prefix,
-        ..Default::default()
-    };
+fn capability_upper_bounds_preserve_semantics_and_read_only_attributes() -> TestResult {
+    let upper = StorageCapabilities::builder()
+        .read_file(FileReadSupport::Range)
+        .permissions(AttributeSupport::ReadWrite)
+        .dir_model(DirModel::Prefix)
+        .build()?;
+    let actual = StorageCapabilities::builder()
+        .read_file(FileReadSupport::Sequential)
+        .permissions(AttributeSupport::Read)
+        .dir_model(DirModel::Prefix)
+        .build()?;
     assert!(upper.supports(actual));
     assert!(!actual.supports(upper));
-    assert!(!upper.supports(StorageCapabilities {
-        dir_model: DirModel::Hierarchical,
-        ..actual
-    }));
+    assert!(
+        !upper.supports(
+            (actual)
+                .to_builder()
+                .dir_model(DirModel::Hierarchical)
+                .build()?
+        )
+    );
     assert!(!StorageCapabilities::default().supports(actual));
-    assert!(!actual.permissions.can_write());
+    assert!(!actual.permissions().can_write());
+    Ok(())
 }
 
 #[test]
@@ -237,15 +240,14 @@ fn attribute_values_reject_invalid_input_without_normalizing_identity() -> TestR
 
 #[tokio::test]
 async fn unsupported_requests_are_rejected_before_backend_side_effects() -> TestResult {
-    let caps = StorageCapabilities {
-        read_file: FileReadSupport::Sequential,
-        write_file: FileWriteSupport {
+    let caps = StorageCapabilities::builder()
+        .read_file(FileReadSupport::Sequential)
+        .write_file(FileWriteSupport {
             create_new: true,
             replace: false,
             atomic_publish: false,
-        },
-        ..Default::default()
-    };
+        })
+        .build()?;
     let (service, calls) = fixture(caps, caps, None).await?;
     assert!(
         matches!(service.write_file(request(true)?).await, Err(error) if error.storage_error().is_some_and(|e| e.kind() == StorageErrorKind::UnsupportedOperation))
@@ -262,76 +264,23 @@ async fn unsupported_requests_are_rejected_before_backend_side_effects() -> Test
 
 #[tokio::test]
 async fn opened_capabilities_must_match_declarations_and_extension_handles() -> TestResult {
-    let caps = StorageCapabilities {
-        read_file: FileReadSupport::Range,
-        ..Default::default()
-    };
+    let caps = StorageCapabilities::builder()
+        .read_file(FileReadSupport::Range)
+        .build()?;
     let (service, calls) = fixture(caps, StorageCapabilities::default(), None).await?;
     assert!(matches!(
         service.capabilities(&VirtualPath::root()).await,
         Err(error) if error.storage_error().is_some_and(|e| e.kind() == StorageErrorKind::InvalidData)
     ));
     assert_eq!(calls.load(Ordering::SeqCst), 0);
-    let caps = StorageCapabilities {
-        permissions: AttributeSupport::Read,
-        ..Default::default()
-    };
+    let caps = StorageCapabilities::builder()
+        .permissions(AttributeSupport::Read)
+        .build()?;
     let (service, _) = fixture(caps, caps, None).await?;
     assert!(matches!(
         service.capabilities(&VirtualPath::root()).await,
         Err(error) if error.storage_error().is_some_and(|e| e.kind() == StorageErrorKind::InvalidData)
     ));
-    Ok(())
-}
-
-#[tokio::test]
-async fn contradictory_opened_capabilities_fail_before_entry_io() -> TestResult {
-    let declared = StorageCapabilities {
-        read_file: FileReadSupport::Range,
-        write_file: FileWriteSupport {
-            create_new: true,
-            replace: true,
-            atomic_publish: true,
-        },
-        dir_model: DirModel::Hierarchical,
-        persistent_empty_dirs: true,
-        create_dir: true,
-        ..Default::default()
-    };
-    for actual in [
-        StorageCapabilities {
-            write_file: FileWriteSupport {
-                atomic_publish: true,
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        StorageCapabilities {
-            persistent_empty_dirs: true,
-            ..Default::default()
-        },
-        StorageCapabilities {
-            create_dir: true,
-            ..Default::default()
-        },
-    ] {
-        let (service, calls) = fixture(actual, declared, None).await?;
-        let error = service
-            .write_file(request(false)?)
-            .await
-            .err()
-            .ok_or("expected invalid opened storage")?;
-        let storage = error.storage_error().ok_or("missing storage error")?;
-        assert_eq!(storage.kind(), StorageErrorKind::InvalidData);
-        assert_eq!(
-            storage
-                .source()
-                .and_then(|e| e.downcast_ref::<ah_vfs::domain::storage::StorageCapabilitiesError>())
-                .copied(),
-            actual.validate().err()
-        );
-        assert_eq!(calls.load(Ordering::SeqCst), 0);
-    }
     Ok(())
 }
 
@@ -363,15 +312,14 @@ async fn invalid_routed_suffix_is_rejected_before_backend_open_or_io() -> TestRe
 
 #[tokio::test]
 async fn opening_streaming_and_committing_keep_domain_error_categories() -> TestResult {
-    let caps = StorageCapabilities {
-        read_file: FileReadSupport::Range,
-        write_file: FileWriteSupport {
+    let caps = StorageCapabilities::builder()
+        .read_file(FileReadSupport::Range)
+        .write_file(FileWriteSupport {
             create_new: true,
             replace: false,
             atomic_publish: false,
-        },
-        ..Default::default()
-    };
+        })
+        .build()?;
     let (service, _) = fixture(caps, caps, Some(StorageErrorKind::Unavailable)).await?;
     assert!(
         matches!(service.capabilities(&VirtualPath::root()).await, Err(error) if error.storage_error().is_some_and(|e| e.kind() == StorageErrorKind::Unavailable))
@@ -425,10 +373,9 @@ async fn inconsistent_driver_capabilities_cannot_be_persisted_as_a_mount() -> Te
         dto::{MountFilter, MountRequest},
         port::MountRepository,
     };
-    let actual = StorageCapabilities {
-        read_file: FileReadSupport::Range,
-        ..Default::default()
-    };
+    let actual = StorageCapabilities::builder()
+        .read_file(FileReadSupport::Range)
+        .build()?;
     let key = DriverKey::parse("invalid-capabilities")?;
     let mut drivers = DriverCatalog::new();
     common::register(

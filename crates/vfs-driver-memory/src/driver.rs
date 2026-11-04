@@ -33,7 +33,7 @@ impl MemoryDriver {
                 .version(semver::Version::new(0, 1, 0))
                 .child_mount_policy(ChildMountPolicy::Allow)
                 .maybe_instance_config_schema(instance_config_schema())
-                .capabilities(MemoryStorage::supported_capabilities())
+                .capabilities(MemoryStorage::supported_capabilities()?)
                 .build(),
             opened: Mutex::default(),
         })
@@ -51,9 +51,12 @@ impl Driver for MemoryDriver {
             let config = context.config();
             let capacity = capacity(config)?;
             let mut opened = self.opened.lock().await;
-            let storage = opened
-                .entry(context.instance_id().as_str().into())
-                .or_insert_with(|| Arc::new(MemoryStorage::new(capacity)));
+            let storage = match opened.entry(context.instance_id().as_str().into()) {
+                std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+                std::collections::btree_map::Entry::Vacant(entry) => entry.insert(Arc::new(
+                    MemoryStorage::new(capacity).map_err(StorageError::from)?,
+                )),
+            };
             if storage.capacity() != capacity {
                 return Err(StorageError::new(StorageErrorKind::InvalidData).into());
             }
