@@ -1,5 +1,5 @@
-//! Backend-independent failures shared by instance opening and storage I/O.
-use super::{InstanceId, StorageCapabilitiesError, StoragePathError};
+//! Backend-independent storage I/O failures and diagnostic chains.
+use super::{StorageCapabilitiesError, StoragePathError};
 use std::{error::Error, fmt};
 use thiserror::Error;
 
@@ -101,40 +101,6 @@ impl From<StorageCapabilitiesError> for StorageError {
         Self::with_source(StorageErrorKind::InvalidData, error)
     }
 }
-/// Structured creation-parameter failures without disclosing parameter values.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum InstanceConfigErrorKind {
-    MissingField,
-    UnknownField,
-    InvalidType,
-    InvalidValue,
-}
-
-/// Driver operations distinguish malformed creation parameters from backend failures.
-#[derive(Debug, Error)]
-pub enum DriverError {
-    #[error("invalid instance configuration")]
-    InvalidInstanceConfig {
-        field: String,
-        kind: InstanceConfigErrorKind,
-    },
-    #[error("driver instance '{0}' was not found")]
-    InstanceNotFound(InstanceId),
-    #[error(transparent)]
-    Storage(#[from] StorageError),
-}
-
-impl DriverError {
-    /// Inspect a normalized storage failure. Configuration and missing-instance
-    /// errors have no storage classification.
-    pub fn storage_error(&self) -> Option<&StorageError> {
-        match self {
-            Self::Storage(error) => Some(error),
-            _ => None,
-        }
-    }
-}
-
 impl std::fmt::Debug for StorageError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("StorageError")

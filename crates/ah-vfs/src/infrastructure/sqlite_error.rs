@@ -1,5 +1,8 @@
 //! Normalized SQLite adapter failures shared by record stores.
-use crate::domain::{DriverError, StorageError, StorageErrorKind};
+use crate::domain::{
+    DriverError,
+    storage::{StorageError, StorageErrorKind},
+};
 use std::io;
 /// Portable I/O categories. Native filesystem-specific errno refinements remain
 /// in adapters, before this common fallback.

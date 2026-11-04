@@ -1,9 +1,9 @@
 use ah_vfs::{
-    application::dto::{
-        DEFAULT_DIR_PAGE_LIMIT, DirQuery, MAX_DIR_PAGE_LIMIT, StorageDirQuery,
+    application::dto::DirQuery,
+    domain::storage::{
+        DEFAULT_DIR_PAGE_LIMIT, MAX_DIR_PAGE_LIMIT, StorageDirQuery, StorageErrorKind, StoragePath,
         validate_dir_page_limit,
     },
-    domain::{StorageErrorKind, StoragePath},
 };
 use std::{error::Error, num::NonZeroUsize};
 

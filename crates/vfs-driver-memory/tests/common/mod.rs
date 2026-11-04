@@ -1,14 +1,11 @@
 #![allow(dead_code)]
 
 use ah_vfs::{
-    application::{
-        dto::{
-            StorageCreateDirRequest, StorageReadFileRequest, StorageStatEntryRequest,
-            StorageWriteFileRequest,
-        },
-        port::{Storage, StorageFileReader},
+    application::port::{Storage, StorageFileReader},
+    domain::storage::{
+        StorageCreateDirRequest, StoragePath, StorageReadFileRequest, StorageStatEntryRequest,
+        StorageWriteFileRequest,
     },
-    domain::StoragePath,
 };
 
 pub type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -79,7 +76,9 @@ pub async fn exists(storage: &dyn Storage, name: &str) -> TestResult<bool> {
         .await
     {
         Ok(_) => Ok(true),
-        Err(error) if error.kind() == ah_vfs::domain::StorageErrorKind::NotFound => Ok(false),
+        Err(error) if error.kind() == ah_vfs::domain::storage::StorageErrorKind::NotFound => {
+            Ok(false)
+        }
         Err(error) => Err(error.into()),
     }
 }

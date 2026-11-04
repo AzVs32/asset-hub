@@ -1,7 +1,6 @@
 use ah_vfs::application::mount_runtime::MountRuntime;
 mod common;
 
-use ah_vfs::domain::StorageErrorKind;
 use ah_vfs::{
     application::{
         driver_catalog::DriverCatalog,
@@ -12,11 +11,18 @@ use ah_vfs::{
         service::{EntryService, MountService},
     },
     domain::{
-        ChildMountPolicy, DriverInstance, DriverKey, InstanceId, StorageError, StoragePath,
-        VirtualPath,
+        DriverInstance, DriverKey, InstanceId,
+        namespace::{ChildMountPolicy, VirtualPath},
+        storage::{
+            StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageEntry,
+            StorageEntryKind, StorageError, StorageErrorKind, StorageMoveEntryRequest, StoragePath,
+            StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
+            StorageWriteFileRequest,
+        },
     },
     infrastructure::mount_repository::SqliteMountRepository,
 };
+
 use std::{error::Error, num::NonZeroUsize, sync::Arc};
 
 type TestResult<T = ()> = Result<T, Box<dyn Error>>;
@@ -60,8 +66,8 @@ impl common::Backend for TestDriver {
 }
 
 impl Storage for TestStorage {
-    fn capabilities(&self) -> ah_vfs::domain::StorageCapabilities {
-        ah_vfs::domain::StorageCapabilities {
+    fn capabilities(&self) -> ah_vfs::domain::storage::StorageCapabilities {
+        ah_vfs::domain::storage::StorageCapabilities {
             stat_entry: true,
             list_entries: true,
             ..Default::default()
@@ -142,7 +148,7 @@ async fn services(response: Response) -> TestResult<(EntryService, MountService)
         &mut drivers,
         common::managed(Arc::new(TestDriver {
             info: DriverInfo::builder()
-                .capabilities(ah_vfs::domain::StorageCapabilities {
+                .capabilities(ah_vfs::domain::storage::StorageCapabilities {
                     stat_entry: true,
                     list_entries: true,
                     ..Default::default()
@@ -301,7 +307,7 @@ async fn mount_points_and_synthetic_dirs_keep_distinct_namespace_behavior() -> T
         EntryOrigin::MountPoint { enabled: false }
     );
     assert!(matches!(files.stat_entry(&nested).await,
-        Err(EntryError::Table(ah_vfs::domain::MountTableError::Disabled(id))) if id == mounted.id
+        Err(EntryError::Table(ah_vfs::domain::namespace::MountTableError::Disabled(id))) if id == mounted.id
     ));
     let error = files
         .read_file(ReadFileRequest {
@@ -313,7 +319,7 @@ async fn mount_points_and_synthetic_dirs_keep_distinct_namespace_behavior() -> T
         .err()
         .ok_or("disabled mount")?;
     assert!(matches!(error,
-        EntryError::Table(ah_vfs::domain::MountTableError::Disabled(id)) if id == mounted.id
+        EntryError::Table(ah_vfs::domain::namespace::MountTableError::Disabled(id)) if id == mounted.id
     ));
     Ok(())
 }

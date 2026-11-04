@@ -1,5 +1,8 @@
 //! Explicit per-plugin authority. Runtime execution limits are independent of I/O grants.
-use ah_vfs::domain::{DriverError, StorageError, StorageErrorKind};
+use ah_vfs::domain::{
+    DriverError,
+    storage::{StorageError, StorageErrorKind},
+};
 use serde::{Deserialize, Serialize};
 use std::{
     net::{IpAddr, SocketAddr},

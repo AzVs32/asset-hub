@@ -1,7 +1,7 @@
 //! Windows handle operations. Namespace mutations never fall back to copy/delete
 //! or re-resolve an absolute path after opening the parent directory.
 use super::{TEMP_PREFIX, fs};
-use ah_vfs::domain::{StorageError, StorageErrorKind};
+use ah_vfs::domain::storage::{StorageError, StorageErrorKind};
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::fs::{Dir, File, OpenOptions, OpenOptionsExt};
 use std::{io, mem::{offset_of, size_of}, os::windows::io::AsRawHandle, ptr};

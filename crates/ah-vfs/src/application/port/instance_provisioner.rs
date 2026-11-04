@@ -2,7 +2,7 @@
 use super::DriverFuture;
 use crate::{
     application::dto::InstanceConfig,
-    domain::{StorageError, StorageErrorKind},
+    domain::storage::{StorageError, StorageErrorKind},
 };
 use std::collections::BTreeMap;
 

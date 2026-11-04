@@ -1,16 +1,21 @@
 use ah_vfs::application::mount_runtime::MountRuntime;
 mod common;
 
-use ah_vfs::application::driver_catalog::DriverCatalog;
-use ah_vfs::application::driver_info::DriverInfo;
-use ah_vfs::application::dto::MountFilter;
-use ah_vfs::application::error::{MountError, MountRepositoryError};
-use ah_vfs::application::port::{DriverFuture, MountRepository, MountRepositoryFuture, Storage};
-use ah_vfs::application::service::MountService;
-use ah_vfs::domain::{
-    ChildMountPolicy, DriverError, DriverInstance, DriverKey, InstanceId, Mount, MountId,
-    MountTableError, VirtualPath,
+use ah_vfs::{
+    application::{
+        driver_catalog::DriverCatalog,
+        driver_info::DriverInfo,
+        dto::MountFilter,
+        error::{MountError, MountRepositoryError},
+        port::{DriverFuture, MountRepository, MountRepositoryFuture, Storage},
+        service::MountService,
+    },
+    domain::{
+        DriverError, DriverInstance, DriverKey, InstanceId,
+        namespace::{ChildMountPolicy, Mount, MountId, MountTableError, VirtualPath},
+    },
 };
+
 use std::future::Future;
 use std::io;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -161,7 +166,7 @@ fn catalog() -> Result<Arc<DriverCatalog>, Box<dyn std::error::Error>> {
             &mut catalog,
             common::managed(Arc::new(UnopenedDriver {
                 info: DriverInfo::builder()
-                    .capabilities(ah_vfs::domain::StorageCapabilities::default())
+                    .capabilities(ah_vfs::domain::storage::StorageCapabilities::default())
                     .key(DriverKey::parse(key)?)
                     .name(key.into())
                     .version(semver::Version::new(0, 1, 0))

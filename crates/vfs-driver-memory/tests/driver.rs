@@ -4,7 +4,7 @@ use ah_vfs::{
         dto::{InstanceConfig, InstanceQuery, RemoveInstanceOutcome},
         port::Driver,
     },
-    domain::{DriverError, InstanceId, StorageErrorKind},
+    domain::{DriverError, InstanceId, storage::StorageErrorKind},
 };
 use common::*;
 use std::sync::Arc;

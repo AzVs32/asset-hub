@@ -1,5 +1,8 @@
 //! Host-side gRPC transport. Plugin servers depend on vfs-plugin-grpc-server.
-use ah_vfs::domain::{DriverError, StorageError, StorageErrorKind};
+use ah_vfs::domain::{
+    DriverError,
+    storage::{StorageError, StorageErrorKind},
+};
 use std::{
     net::IpAddr,
     sync::{

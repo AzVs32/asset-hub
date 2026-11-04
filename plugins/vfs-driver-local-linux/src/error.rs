@@ -1,6 +1,9 @@
 //! Local instance configuration failures.
 
-use ah_vfs::domain::{DriverError, StorageError, StorageErrorKind};
+use ah_vfs::domain::{
+    DriverError,
+    storage::{StorageError, StorageErrorKind},
+};
 use std::{io, path::PathBuf};
 use thiserror::Error;
 

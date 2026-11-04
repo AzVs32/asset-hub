@@ -7,18 +7,20 @@ use ah_vfs::{
     application::{
         driver_catalog::DriverCatalog,
         error::EntryError,
+        port::{Driver, Storage},
         service::{EntryService, MountService},
     },
-    domain::{DriverInstance, DriverKey, EntryPermissions, VirtualPath, XattrName, XattrWriteMode},
+    domain::{
+        DriverError, DriverInstance, DriverKey, InstanceId,
+        namespace::VirtualPath,
+        storage::{
+            EntryPermissions, FileReadSupport, StorageErrorKind, StoragePath,
+            StorageStatEntryRequest, StorageWriteFileRequest, XattrName, XattrWriteMode,
+        },
+    },
     infrastructure::mount_repository::SqliteMountRepository,
 };
-use ah_vfs::{
-    application::{
-        dto::*,
-        port::{Driver, Storage},
-    },
-    domain::{DriverError, FileReadSupport, InstanceId, StorageErrorKind, StoragePath},
-};
+
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use std::num::NonZeroUsize;
 use std::{error::Error, path::PathBuf, sync::Arc};

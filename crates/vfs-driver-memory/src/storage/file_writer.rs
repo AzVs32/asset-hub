@@ -1,10 +1,9 @@
 use super::{Blob, Entry, EntryData, Shared, error, require_dir, writable_target};
 use ah_vfs::{
-    application::{
-        dto::{StorageEntry, StorageWriteFileMode, StorageWriteFileRequest},
-        port::{StorageFileWriter, StorageFuture},
+    application::port::{StorageFileWriter, StorageFuture},
+    domain::storage::{
+        StorageEntry, StorageErrorKind, StoragePath, StorageWriteFileMode, StorageWriteFileRequest,
     },
-    domain::{StorageErrorKind, StoragePath},
 };
 use std::{sync::Arc, time::SystemTime};
 

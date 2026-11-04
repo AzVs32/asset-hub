@@ -1,9 +1,17 @@
 //! Mount management use cases.
 
-use crate::application::dto::{MountFilter, MountRequest, MountView};
-use crate::application::error::MountError;
-use crate::application::mount_runtime::MountRuntime;
-use crate::domain::{DriverInstance, Mount, MountId, MountTable, VirtualPath};
+use crate::{
+    application::{
+        dto::{MountFilter, MountRequest, MountView},
+        error::MountError,
+        mount_runtime::MountRuntime,
+    },
+    domain::{
+        DriverInstance,
+        namespace::{Mount, MountId, MountTable, VirtualPath},
+    },
+};
+
 use std::sync::Arc;
 
 pub struct MountService {

@@ -5,7 +5,10 @@
 //! and annotations hidden in combinators/patterns are unsupported. Other JSON
 //! Schema validation remains authoritative inside the driver/provisioner.
 use super::dto::InstanceConfigSchema;
-use crate::domain::{DriverError, StorageError, StorageErrorKind};
+use crate::domain::{
+    DriverError,
+    storage::{StorageError, StorageErrorKind},
+};
 use serde_json::Value;
 
 fn failure(kind: StorageErrorKind) -> DriverError {

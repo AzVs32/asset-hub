@@ -9,7 +9,16 @@ use ah_vfs::{
         port::*,
         service::{EntryService, InstanceService, MountService},
     },
-    domain::*,
+    domain::{
+        DriverInstance, InstanceId,
+        namespace::VirtualPath,
+        new_instance_id,
+        storage::{
+            DirModel, StorageDirQuery, StorageErrorKind, StorageMoveEntryRequest, StoragePath,
+            StorageReadFileRequest, StorageStatEntryRequest, StorageWriteFileMode,
+            StorageWriteFileRequest,
+        },
+    },
     infrastructure::{
         instance_record_repository::SqliteInstanceRecordRepository,
         mount_repository::SqliteMountRepository,

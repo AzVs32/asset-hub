@@ -1,4 +1,4 @@
-use ah_vfs::domain::{StoragePath, StoragePathError};
+use ah_vfs::domain::storage::{StoragePath, StoragePathError};
 use std::error::Error;
 
 #[test]

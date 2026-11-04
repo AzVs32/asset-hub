@@ -5,10 +5,7 @@ use ah_vfs::{
     application::{
         driver_catalog::DriverCatalog,
         driver_info::DriverInfo,
-        dto::{
-            ReadFileRequest, StorageEntry, StorageReadFileRequest, StorageWriteFileMode,
-            StorageWriteFileRequest, WriteFileRequest,
-        },
+        dto::{ReadFileRequest, WriteFileRequest},
         error::EntryError,
         port::{
             DriverFuture, Storage, StorageFileReader, StorageFileWriter, StorageFuture,
@@ -17,9 +14,13 @@ use ah_vfs::{
         service::{EntryService, MountService},
     },
     domain::{
-        AttributeSupport, ChildMountPolicy, DirModel, DriverError, DriverInstance, DriverKey,
-        EntryPermissions, FileReadSupport, FileWriteSupport, InstanceId, StorageCapabilities,
-        StorageError, StorageErrorKind, StoragePath, VirtualPath, XattrName,
+        DriverError, DriverInstance, DriverKey, InstanceId,
+        namespace::{ChildMountPolicy, VirtualPath},
+        storage::{
+            AttributeSupport, DirModel, EntryPermissions, FileReadSupport, FileWriteSupport,
+            StorageCapabilities, StorageEntry, StorageError, StorageErrorKind, StoragePath,
+            StorageReadFileRequest, StorageWriteFileMode, StorageWriteFileRequest, XattrName,
+        },
     },
     infrastructure::mount_repository::SqliteMountRepository,
 };
@@ -325,7 +326,7 @@ async fn contradictory_opened_capabilities_fail_before_entry_io() -> TestResult 
         assert_eq!(
             storage
                 .source()
-                .and_then(|e| e.downcast_ref::<ah_vfs::domain::StorageCapabilitiesError>())
+                .and_then(|e| e.downcast_ref::<ah_vfs::domain::storage::StorageCapabilitiesError>())
                 .copied(),
             actual.validate().err()
         );
@@ -413,7 +414,7 @@ async fn read_only_extension_and_missing_base_operations_reject_mutation() -> Te
         calls: Arc::new(AtomicUsize::new(0)),
     };
     assert!(
-        matches!(storage.create_dir(ah_vfs::application::dto::StorageCreateDirRequest { path: StoragePath::parse("dir")?, recursive: false }).await, Err(error) if error.kind() == StorageErrorKind::UnsupportedOperation)
+        matches!(storage.create_dir(ah_vfs::domain::storage::StorageCreateDirRequest { path: StoragePath::parse("dir")?, recursive: false }).await, Err(error) if error.kind() == StorageErrorKind::UnsupportedOperation)
     );
     Ok(())
 }

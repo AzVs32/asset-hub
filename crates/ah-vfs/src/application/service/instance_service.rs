@@ -10,7 +10,10 @@ use crate::{
         mount_runtime::MountRuntime,
         port::Driver,
     },
-    domain::{DriverError, DriverInstance, DriverKey, StorageError, StorageErrorKind},
+    domain::{
+        DriverError, DriverInstance, DriverKey,
+        storage::{StorageError, StorageErrorKind},
+    },
 };
 use std::sync::Arc;
 

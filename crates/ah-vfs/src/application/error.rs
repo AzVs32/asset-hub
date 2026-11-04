@@ -1,7 +1,9 @@
 //! Errors returned by virtual filesystem application services.
 
 use crate::domain::{
-    DriverError, DriverInstance, DriverKey, MountId, MountTableError, StorageError, VirtualPath,
+    DriverError, DriverInstance, DriverKey,
+    namespace::{MountId, MountTableError, VirtualPath},
+    storage::StorageError,
 };
 use thiserror::Error;
 
@@ -103,7 +105,7 @@ pub enum EntryError {
     #[error(transparent)]
     Storage(#[from] StorageError),
     #[error(transparent)]
-    InvalidPath(#[from] crate::domain::VirtualPathError),
+    InvalidPath(#[from] crate::domain::namespace::VirtualPathError),
     #[error("'{0}' is a mount point or contains mounts; entry operations cannot modify it")]
     MountBoundary(VirtualPath),
     #[error("moving entries between different mounts is not supported")]

@@ -1,7 +1,15 @@
 //! Native server dispatch with stream-owned, bounded Storage resources.
 use ah_vfs::{
-    application::{dto::*, port::*},
-    domain::*,
+    application::port::*,
+    domain::{
+        DriverError, InstanceId, new_instance_id,
+        storage::{
+            EntryPermissions, StorageCreateDirRequest, StorageDirQuery, StorageError,
+            StorageErrorKind, StorageMoveEntryRequest, StoragePath, StorageReadFileRequest,
+            StorageRemoveEntryRequest, StorageStatEntryRequest, StorageWriteFileMode,
+            StorageWriteFileRequest, XattrName, XattrWriteMode,
+        },
+    },
 };
 use futures_util::FutureExt;
 use std::{

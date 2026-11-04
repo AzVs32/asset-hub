@@ -1,12 +1,12 @@
 //! Storage entry operations and file byte streams, independent of plugin transport.
 
 use super::{StoragePermissions, StorageXattrs};
-use crate::application::dto::{
-    StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageEntry,
-    StorageMoveEntryRequest, StorageReadFileRequest, StorageRemoveEntryRequest,
-    StorageStatEntryRequest, StorageWriteFileRequest,
+use crate::domain::storage::{
+    StorageCapabilities, StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageEntry,
+    StorageError, StorageErrorKind, StorageMoveEntryRequest, StorageReadFileRequest,
+    StorageRemoveEntryRequest, StorageStatEntryRequest, StorageWriteFileRequest,
 };
-use crate::domain::{StorageCapabilities, StorageError, StorageErrorKind};
+
 use std::{future::Future, num::NonZeroUsize, pin::Pin};
 
 /// A boxed asynchronous result that allows storage ports to be used as trait objects.

@@ -5,7 +5,7 @@ use super::{
     error::EntryError,
     port::{StorageFileReader, StorageFileWriter},
 };
-use crate::domain::VirtualPath;
+use crate::domain::namespace::VirtualPath;
 use std::num::NonZeroUsize;
 
 pub struct FileReadHandle {

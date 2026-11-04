@@ -1,8 +1,10 @@
 //! Persistence of mount definitions.
 
-use crate::application::dto::MountFilter;
-use crate::application::error::MountRepositoryError;
-use crate::domain::{Mount, MountId};
+use crate::{
+    application::{dto::MountFilter, error::MountRepositoryError},
+    domain::namespace::{Mount, MountId},
+};
+
 use std::{future::Future, pin::Pin};
 
 pub type MountRepositoryFuture<'a, T> =

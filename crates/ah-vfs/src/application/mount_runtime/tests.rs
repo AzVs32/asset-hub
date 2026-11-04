@@ -10,8 +10,12 @@ use crate::{
         service::{EntryService, InstanceService, MountService},
     },
     domain::{
-        ChildMountPolicy, DriverKey, InstanceId, MountId, MountTableError, StorageCapabilities,
-        StorageError, StorageErrorKind, VirtualPath,
+        DriverKey, InstanceId,
+        namespace::{ChildMountPolicy, MountId, MountTableError, VirtualPath},
+        storage::{
+            StorageCapabilities, StorageEntry, StorageEntryKind, StorageError, StorageErrorKind,
+            StorageStatEntryRequest,
+        },
     },
 };
 use std::{
@@ -209,7 +213,7 @@ impl common::Backend for TestDriver {
                 validations: self.validations.clone(),
                 capabilities: if self.invalid_capabilities.load(Ordering::SeqCst) {
                     StorageCapabilities {
-                        read_file: crate::domain::FileReadSupport::Range,
+                        read_file: crate::domain::storage::FileReadSupport::Range,
                         ..capabilities()
                     }
                 } else {

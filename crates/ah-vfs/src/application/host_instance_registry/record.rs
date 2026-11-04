@@ -1,7 +1,10 @@
 //! Validated host records; their persistence representation stays private.
 
 use super::envelope::Envelope;
-use crate::domain::{DriverError, DriverInstance, StorageError, StorageErrorKind};
+use crate::domain::{
+    DriverError, DriverInstance,
+    storage::{StorageError, StorageErrorKind},
+};
 
 /// One persisted host record. config_json is an opaque encrypted-parameters/public-
 /// details envelope, never a plaintext secret object. Debug omits the envelope.

@@ -1,6 +1,9 @@
 //! Requests, filters and views for mount management.
 
-use crate::domain::{DriverInstance, DriverKey, Mount, MountId, VirtualPath};
+use crate::domain::{
+    DriverInstance, DriverKey,
+    namespace::{Mount, MountId, VirtualPath},
+};
 
 /// Attach an existing driver instance at a virtual path, initially enabled.
 pub struct MountRequest {

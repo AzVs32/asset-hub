@@ -1,5 +1,7 @@
-use super::{
-    ChildMountPolicy, DriverKey, Mount, MountId, StoragePath, StoragePathError, VirtualPath,
+use super::{ChildMountPolicy, Mount, MountId, VirtualPath};
+use crate::domain::{
+    DriverKey,
+    storage::{StoragePath, StoragePathError},
 };
 use thiserror::Error;
 

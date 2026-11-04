@@ -26,8 +26,8 @@ impl RegistryFixture for Fixture {
     fn disable_storage(&self) -> DriverFuture<'_, ()> {
         Box::pin(async move {
             std::fs::remove_dir(&self.root).map_err(|source| {
-                ah_vfs::domain::StorageError::with_source(
-                    ah_vfs::domain::StorageErrorKind::Backend,
+                ah_vfs::domain::storage::StorageError::with_source(
+                    ah_vfs::domain::storage::StorageErrorKind::Backend,
                     source,
                 )
             })?;

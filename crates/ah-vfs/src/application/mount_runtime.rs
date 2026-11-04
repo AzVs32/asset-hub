@@ -6,7 +6,10 @@ use crate::{
         error::EntryError,
         port::{Driver, MountRepository, Storage, validate_storage_capabilities},
     },
-    domain::{DriverError, DriverInstance, Mount, MountTable, MountTableError},
+    domain::{
+        DriverError, DriverInstance,
+        namespace::{Mount, MountTable, MountTableError},
+    },
 };
 use std::{
     collections::HashMap,

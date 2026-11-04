@@ -1,26 +1,9 @@
-//! Instance-local requests and results, independent of global VFS views.
+//! Instance-local operation requests and directory query results.
 
-use super::{DEFAULT_DIR_PAGE_LIMIT, validate_dir_page_limit};
-use crate::domain::{StorageError, StoragePath};
-use std::{num::NonZeroUsize, time::SystemTime};
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum StorageEntryKind {
-    File,
-    Dir,
-    Symlink,
-    Other,
-}
-
-/// Metadata of an entry without following its final symbolic link.
-#[derive(Clone, Debug)]
-pub struct StorageEntry {
-    pub path: StoragePath,
-    pub kind: StorageEntryKind,
-    /// Byte length for regular files; absent for other entry kinds.
-    pub size: Option<u64>,
-    pub modified: Option<SystemTime>,
-}
+use super::{
+    DEFAULT_DIR_PAGE_LIMIT, StorageEntry, StorageError, StoragePath, validate_dir_page_limit,
+};
+use std::num::NonZeroUsize;
 
 pub struct StorageStatEntryRequest {
     pub path: StoragePath,
@@ -85,7 +68,7 @@ pub enum StorageWriteFileMode {
     /// Publish a complete replacement; an existing regular file may be replaced.
     Replace,
 }
-/// A complete-file write published only by `StorageFileWriter::commit`.
+/// A complete-file write staged until its writer commits publication.
 pub struct StorageWriteFileRequest {
     /// Require atomic complete-file publication. Never emulate with incremental overwrite.
     pub require_atomic_publish: bool,

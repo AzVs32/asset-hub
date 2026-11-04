@@ -1,8 +1,8 @@
 //! Windows names, reparse-point policy and directory-relative filesystem I/O.
 use super::{TEMP_PREFIX, native};
-use ah_vfs::{
-    application::dto::{StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageEntry, StorageEntryKind, StorageMoveEntryRequest},
-    domain::{StorageError, StorageErrorKind, StoragePath},
+use ah_vfs::domain::storage::{
+    StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageEntry, StorageEntryKind,
+    StorageError, StorageErrorKind, StorageMoveEntryRequest, StoragePath,
 };
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::fs::{Dir, File, Metadata, MetadataExt, OpenOptions, OpenOptionsExt};

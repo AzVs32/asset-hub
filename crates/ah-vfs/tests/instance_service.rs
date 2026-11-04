@@ -2,22 +2,24 @@
 use common::Backend;
 mod common;
 
-use ah_vfs::application::mount_runtime::MountRuntime;
 use ah_vfs::{
     application::{
         driver_catalog::DriverCatalog,
         driver_info::DriverInfo,
         dto::{InstanceQuery, MountFilter, RemoveInstanceOutcome},
         error::InstanceError,
+        mount_runtime::MountRuntime,
         port::{DriverFuture, InstanceProvisioner, MountRepository, PreparedConfig, Storage},
         service::InstanceService,
     },
     domain::{
-        ChildMountPolicy, DriverError, DriverInstance, DriverKey, InstanceId, Mount,
-        StorageCapabilities, StorageError, StorageErrorKind, VirtualPath,
+        DriverError, DriverInstance, DriverKey, InstanceId,
+        namespace::{ChildMountPolicy, Mount, VirtualPath},
+        storage::{StorageCapabilities, StorageError, StorageErrorKind},
     },
     infrastructure::mount_repository::SqliteMountRepository,
 };
+
 use std::{
     collections::BTreeMap,
     error::Error,
@@ -152,7 +154,7 @@ impl Fixture {
         enabled: bool,
     ) -> TestResult<Mount> {
         let mount = Mount::builder()
-            .id(ah_vfs::domain::MountId::new())
+            .id(ah_vfs::domain::namespace::MountId::new())
             .virtual_path(VirtualPath::parse(path)?)
             .driver_instance(instance)
             .enabled(enabled)

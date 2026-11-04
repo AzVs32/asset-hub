@@ -1,6 +1,9 @@
 //! Private persisted representation of encrypted parameters and public details.
 
-use crate::domain::{DriverError, StorageError, StorageErrorKind};
+use crate::domain::{
+    DriverError,
+    storage::{StorageError, StorageErrorKind},
+};
 use serde_json::Value;
 use std::collections::BTreeMap;
 

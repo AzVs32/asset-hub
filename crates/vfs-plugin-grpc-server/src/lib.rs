@@ -6,7 +6,10 @@ pub use limits::ServerLimits;
 
 use ah_vfs::{
     application::port::Driver,
-    domain::{DriverError, StorageError, StorageErrorKind},
+    domain::{
+        DriverError,
+        storage::{StorageError, StorageErrorKind},
+    },
 };
 use dispatch::Dispatcher;
 use std::{future::Future, pin::Pin, sync::Arc};

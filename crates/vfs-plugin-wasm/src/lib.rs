@@ -2,7 +2,10 @@
 mod dns;
 mod grants;
 mod http;
-use ah_vfs::domain::{DriverError, StorageError, StorageErrorKind, new_instance_id};
+use ah_vfs::domain::{
+    DriverError, new_instance_id,
+    storage::{StorageError, StorageErrorKind},
+};
 use grants::NetworkPolicy;
 pub use grants::{DirectoryGrant, ExecutionLimits, HostGrants, HttpGrants};
 use std::{

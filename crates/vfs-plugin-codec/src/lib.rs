@@ -1,7 +1,15 @@
 //! Checked conversion between portable values and shared VFS domain types.
 use ah_vfs::{
-    application::{driver_info::DriverInfo, dto::*, port::*},
-    domain::*,
+    application::{driver_info::DriverInfo, port::*},
+    domain::{
+        DriverError, DriverKey, InstanceConfigErrorKind, InstanceId,
+        namespace::ChildMountPolicy,
+        storage::{
+            AttributeSupport, DirModel, FileReadSupport, FileWriteSupport, RenameSupport,
+            StorageCapabilities, StorageEntry, StorageEntryKind, StorageError, StorageErrorKind,
+            StoragePath,
+        },
+    },
 };
 use std::{
     collections::BTreeSet,

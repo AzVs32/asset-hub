@@ -105,8 +105,8 @@ pub fn register_driver(
         std::task::Poll::Ready(result) => result,
         std::task::Poll::Pending => Err(
             crate::application::error::DriverCatalogError::Initialization(
-                crate::domain::StorageError::new(
-                    crate::domain::StorageErrorKind::UnsupportedOperation,
+                crate::domain::storage::StorageError::new(
+                    crate::domain::storage::StorageErrorKind::UnsupportedOperation,
                 )
                 .into(),
             ),

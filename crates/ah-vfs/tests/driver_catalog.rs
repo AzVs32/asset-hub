@@ -1,22 +1,26 @@
 use common::Backend;
 mod common;
 
-use ah_vfs::application::driver_catalog::DriverCatalog;
-use ah_vfs::application::driver_info::DriverInfo;
-use ah_vfs::application::dto::{
-    StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageEntry,
-    StorageMoveEntryRequest, StorageReadFileRequest, StorageRemoveEntryRequest,
-    StorageStatEntryRequest, StorageWriteFileRequest,
+use ah_vfs::{
+    application::{
+        driver_catalog::DriverCatalog,
+        driver_info::DriverInfo,
+        error::DriverCatalogError,
+        port::{
+            Driver, DriverFuture, Storage, StorageFileReader, StorageFileWriter, StorageFuture,
+        },
+    },
+    domain::{
+        DriverError, DriverInstance, DriverKey, DriverKeyError, InstanceId,
+        namespace::{ChildMountPolicy, Mount, MountId, MountTable, MountTableError, VirtualPath},
+        storage::{
+            StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageEntry, StorageError,
+            StorageErrorKind, StorageMoveEntryRequest, StorageReadFileRequest,
+            StorageRemoveEntryRequest, StorageStatEntryRequest, StorageWriteFileRequest,
+        },
+    },
 };
-use ah_vfs::application::error::DriverCatalogError;
-use ah_vfs::application::port::{
-    Driver, DriverFuture, Storage, StorageFileReader, StorageFileWriter, StorageFuture,
-};
-use ah_vfs::domain::{
-    ChildMountPolicy, DriverInstance, DriverKey, DriverKeyError, InstanceId, Mount, MountId,
-    MountTable, MountTableError, VirtualPath,
-};
-use ah_vfs::domain::{DriverError, StorageError, StorageErrorKind};
+
 use std::future::Future;
 use std::num::NonZeroUsize;
 use std::sync::{
@@ -35,8 +39,8 @@ fn unsupported<T: Send + 'static>() -> StorageFuture<'static, T> {
 }
 
 impl Storage for TestStorage {
-    fn capabilities(&self) -> ah_vfs::domain::StorageCapabilities {
-        ah_vfs::domain::StorageCapabilities::default()
+    fn capabilities(&self) -> ah_vfs::domain::storage::StorageCapabilities {
+        ah_vfs::domain::storage::StorageCapabilities::default()
     }
     fn chunk_size(&self) -> NonZeroUsize {
         NonZeroUsize::MIN
@@ -106,7 +110,7 @@ fn driver(
 ) -> Result<Arc<TestDriver>, Box<dyn std::error::Error>> {
     Ok(Arc::new(TestDriver {
         info: DriverInfo::builder()
-            .capabilities(ah_vfs::domain::StorageCapabilities::default())
+            .capabilities(ah_vfs::domain::storage::StorageCapabilities::default())
             .key(DriverKey::parse(key)?)
             .name(name.into())
             .version(semver::Version::new(0, 1, 0))

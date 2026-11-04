@@ -1,4 +1,7 @@
-use ah_vfs::domain::{DriverError, StorageError, StorageErrorKind};
+use ah_vfs::domain::{
+    DriverError,
+    storage::{StorageError, StorageErrorKind},
+};
 use thiserror::Error;
 
 #[derive(Debug, Error)]

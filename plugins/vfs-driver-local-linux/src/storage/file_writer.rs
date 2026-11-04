@@ -1,9 +1,14 @@
 //! Staged complete-file writes with explicit publication and best-effort cleanup.
 
 use super::{TEMP_PREFIX, blocking, fs};
-use ah_vfs::application::dto::{StorageEntry, StorageWriteFileMode, StorageWriteFileRequest};
-use ah_vfs::application::port::{StorageFileWriter, StorageFuture};
-use ah_vfs::domain::{StorageError, StorageErrorKind, StoragePath};
+use ah_vfs::{
+    application::port::{StorageFileWriter, StorageFuture},
+    domain::storage::{
+        StorageEntry, StorageError, StorageErrorKind, StoragePath, StorageWriteFileMode,
+        StorageWriteFileRequest,
+    },
+};
+
 use cap_std::fs::OpenOptionsExt;
 use cap_std::fs::{Dir, File, OpenOptions, Permissions};
 use std::{
@@ -53,7 +58,7 @@ impl LocalFileWriter {
         let temporary = format!("{TEMP_PREFIX}{}", WriteId::new());
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
-                options.mode(0o600);
+        options.mode(0o600);
         let file = parent.open_with(&temporary, &options).map_err(fs::error)?;
         Ok(Self {
             session: Some(FileWriteSession {

@@ -1,6 +1,12 @@
 use ah_vfs::{
-    application::{dto::*, port::*},
-    domain::*,
+    application::port::*,
+    domain::{
+        DriverError, InstanceId,
+        storage::{
+            StorageCapabilities, StorageEntry, StorageEntryKind, StorageErrorKind, StoragePath,
+            StorageReadFileRequest, StorageWriteFileRequest,
+        },
+    },
 };
 use std::{
     sync::{

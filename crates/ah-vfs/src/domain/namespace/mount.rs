@@ -1,4 +1,5 @@
-use super::{DriverInstance, MountId, VirtualPath};
+use super::{MountId, VirtualPath};
+use crate::domain::DriverInstance;
 use bon::Builder;
 use getset::{CopyGetters, Getters, Setters};
 
@@ -20,8 +21,8 @@ pub struct Mount {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{DriverKey, InstanceId};
     use super::*;
+    use crate::domain::{DriverKey, InstanceId};
 
     #[test]
     fn disabling_preserves_mount_identity_location_and_instance()

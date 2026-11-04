@@ -1,17 +1,19 @@
 //! Directory-handle based local storage, with staged complete-file writes.
 
-use ah_vfs::application::dto::{
-    StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageEntry,
-    StorageMoveEntryRequest, StorageReadFileRequest, StorageRemoveEntryRequest,
-    StorageStatEntryRequest, StorageWriteFileRequest,
+use ah_vfs::{
+    application::port::{
+        Storage, StorageFileReader, StorageFileWriter, StorageFuture, StoragePermissions,
+        StorageXattrs,
+    },
+    domain::storage::{
+        AttributeSupport, DirModel, FileReadSupport, FileWriteSupport, RenameSupport,
+        StorageCapabilities, StorageCreateDirRequest, StorageDirPage, StorageDirQuery,
+        StorageEntry, StorageError, StorageErrorKind, StorageMoveEntryRequest,
+        StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
+        StorageWriteFileRequest,
+    },
 };
-use ah_vfs::application::port::{Storage, StorageFileReader, StorageFileWriter, StorageFuture};
-use ah_vfs::application::port::{StoragePermissions, StorageXattrs};
-use ah_vfs::domain::StorageErrorKind;
-use ah_vfs::domain::{
-    AttributeSupport, DirModel, FileReadSupport, FileWriteSupport, RenameSupport,
-    StorageCapabilities, StorageError,
-};
+
 use cap_std::fs::Dir;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};

@@ -1,15 +1,13 @@
 mod common;
 
 use ah_vfs::{
-    application::{
-        dto::{
-            StorageCreateDirRequest, StorageDirQuery, StorageEntryKind, StorageMoveEntryRequest,
-            StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
-            StorageWriteFileMode, StorageWriteFileRequest,
-        },
-        port::{Storage, validate_storage_capabilities},
+    application::port::{Storage, validate_storage_capabilities},
+    domain::storage::{
+        AttributeSupport, StorageCreateDirRequest, StorageDirQuery, StorageEntryKind,
+        StorageErrorKind as Kind, StorageMoveEntryRequest, StorageReadFileRequest,
+        StorageRemoveEntryRequest, StorageStatEntryRequest, StorageWriteFileMode,
+        StorageWriteFileRequest,
     },
-    domain::{AttributeSupport, StorageErrorKind as Kind},
 };
 use common::*;
 use std::{num::NonZeroUsize, sync::Arc};
@@ -532,13 +530,13 @@ async fn concurrent_writers_cannot_overcommit_instance_quota() -> TestResult {
         tasks.push(tokio::spawn(async move {
             let mut writer = storage
                 .write_file(StorageWriteFileRequest::new(
-                    ah_vfs::domain::StoragePath::parse(&format!("file{index}"))?,
+                    ah_vfs::domain::storage::StoragePath::parse(&format!("file{index}"))?,
                 ))
                 .await?;
             barrier.wait().await;
             writer.write_chunk(b"1234").await?;
             writer.commit().await?;
-            Ok::<_, ah_vfs::domain::StorageError>(())
+            Ok::<_, ah_vfs::domain::storage::StorageError>(())
         }));
     }
     let mut success = 0;

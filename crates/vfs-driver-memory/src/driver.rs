@@ -9,8 +9,9 @@ use ah_vfs::{
         port::{Driver, DriverFuture, InstanceProvisioner, OpenContext, PreparedConfig, Storage},
     },
     domain::{
-        ChildMountPolicy, DriverError, DriverKey, InstanceConfigErrorKind, StorageError,
-        StorageErrorKind,
+        DriverError, DriverKey, InstanceConfigErrorKind,
+        namespace::ChildMountPolicy,
+        storage::{StorageError, StorageErrorKind},
     },
 };
 use std::{collections::BTreeMap, sync::Arc};

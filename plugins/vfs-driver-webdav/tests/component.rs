@@ -1,6 +1,13 @@
 use ah_vfs::{
     application::{dto::*, port::*},
-    domain::*,
+    domain::{
+        InstanceId,
+        storage::{
+            StorageCreateDirRequest, StorageDirQuery, StorageEntryKind, StorageErrorKind,
+            StoragePath, StorageReadFileRequest, StorageRemoveEntryRequest,
+            StorageWriteFileRequest,
+        },
+    },
 };
 use std::{
     collections::BTreeMap,

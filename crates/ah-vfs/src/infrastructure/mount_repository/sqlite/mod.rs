@@ -1,9 +1,17 @@
 //! One SQLite repository for persistent files and isolated in-memory databases.
 
-use crate::application::dto::MountFilter;
-use crate::application::error::MountRepositoryError;
-use crate::application::port::{MountRepository, MountRepositoryFuture};
-use crate::domain::{DriverInstance, DriverKey, InstanceId, Mount, MountId, VirtualPath};
+use crate::{
+    application::{
+        dto::MountFilter,
+        error::MountRepositoryError,
+        port::{MountRepository, MountRepositoryFuture},
+    },
+    domain::{
+        DriverInstance, DriverKey, InstanceId,
+        namespace::{Mount, MountId, VirtualPath},
+    },
+};
+
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteRow};
 use sqlx::{Connection, Row, SqliteConnection, SqlitePool};
 use std::{error::Error, io, path::Path};

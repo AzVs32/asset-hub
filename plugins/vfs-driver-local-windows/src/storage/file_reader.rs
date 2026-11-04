@@ -1,9 +1,9 @@
 //! Bounded chunk reads retaining the opened file independently of its storage.
 
 use super::{CHUNK_SIZE, blocking, fs};
-use ah_vfs::application::dto::StorageReadFileRequest;
 use ah_vfs::application::port::{StorageFileReader, StorageFuture};
-use ah_vfs::domain::{StorageError, StorageErrorKind};
+use ah_vfs::domain::storage::StorageReadFileRequest;
+use ah_vfs::domain::storage::{StorageError, StorageErrorKind};
 use cap_std::fs::{Dir, File};
 use std::io::{Read, Seek, SeekFrom};
 

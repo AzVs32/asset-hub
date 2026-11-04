@@ -18,8 +18,8 @@ use super::{
     },
 };
 use crate::domain::{
-    DriverError, DriverInstance, DriverKey, InstanceId, StorageError, StorageErrorKind,
-    new_instance_id,
+    DriverError, DriverInstance, DriverKey, InstanceId, new_instance_id,
+    storage::{StorageError, StorageErrorKind},
 };
 use serde_json::Value;
 use std::{

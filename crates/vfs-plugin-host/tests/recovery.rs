@@ -1,6 +1,12 @@
 use ah_vfs::{
-    application::{dto::*, port::*},
-    domain::*,
+    application::port::*,
+    domain::{
+        InstanceId,
+        storage::{
+            StorageEntry, StorageError, StorageErrorKind, StoragePath, StorageReadFileRequest,
+            StorageStatEntryRequest, StorageWriteFileRequest,
+        },
+    },
 };
 use std::sync::{
     Arc, Mutex,

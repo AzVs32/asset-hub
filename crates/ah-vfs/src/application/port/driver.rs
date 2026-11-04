@@ -1,8 +1,10 @@
 //! Driver declarations, stateless preparation and storage opening.
 
-use crate::application::driver_info::DriverInfo;
-use crate::application::port::Storage;
-use crate::domain::DriverError;
+use crate::{
+    application::{driver_info::DriverInfo, port::Storage},
+    domain::DriverError,
+};
+
 use std::{future::Future, pin::Pin, sync::Arc};
 
 pub type DriverFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, DriverError>> + Send + 'a>>;
@@ -35,8 +37,8 @@ pub trait Driver: Send + Sync {
             if supported {
                 Ok(())
             } else {
-                Err(crate::domain::StorageError::new(
-                    crate::domain::StorageErrorKind::UnsupportedOperation,
+                Err(crate::domain::storage::StorageError::new(
+                    crate::domain::storage::StorageErrorKind::UnsupportedOperation,
                 )
                 .into())
             }

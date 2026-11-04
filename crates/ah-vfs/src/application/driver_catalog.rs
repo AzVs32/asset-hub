@@ -1,8 +1,10 @@
 //! In-memory registration of available driver implementations.
 
-use crate::application::error::DriverCatalogError;
-use crate::application::port::Driver;
-use crate::domain::{DriverKey, StorageError};
+use crate::{
+    application::{error::DriverCatalogError, port::Driver},
+    domain::{DriverKey, storage::StorageError},
+};
+
 use std::collections::HashMap;
 use std::{fmt, sync::Arc};
 

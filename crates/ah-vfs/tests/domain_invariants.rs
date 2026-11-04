@@ -1,5 +1,6 @@
 use ah_vfs::domain::{
-    DriverInstance, DriverKey, InstanceId, Mount, MountId, VirtualPath, VirtualPathError,
+    DriverInstance, DriverKey, InstanceId,
+    namespace::{Mount, MountId, VirtualPath, VirtualPathError},
 };
 
 #[test]

@@ -1,8 +1,11 @@
 //! Staged Windows writes, published by handle and disposed by handle on abort.
 use super::{TEMP_PREFIX, blocking, fs, native};
 use ah_vfs::{
-    application::{dto::{StorageEntry, StorageWriteFileMode, StorageWriteFileRequest}, port::{StorageFileWriter, StorageFuture}},
-    domain::{StorageError, StorageErrorKind, StoragePath},
+    application::port::{StorageFileWriter, StorageFuture},
+    domain::storage::{
+        StorageEntry, StorageError, StorageErrorKind, StoragePath, StorageWriteFileMode,
+        StorageWriteFileRequest,
+    },
 };
 use cap_std::fs::{Dir, File, OpenOptions, OpenOptionsExt};
 use std::{io::Write, sync::Arc};

@@ -1,17 +1,12 @@
 use crate::Capacity;
 use ah_vfs::{
-    application::{
-        dto::{
-            StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageEntry,
-            StorageEntryKind, StorageMoveEntryRequest, StorageReadFileRequest,
-            StorageRemoveEntryRequest, StorageStatEntryRequest, StorageWriteFileMode,
-            StorageWriteFileRequest,
-        },
-        port::{Storage, StorageFileReader, StorageFileWriter, StorageFuture},
-    },
-    domain::{
+    application::port::{Storage, StorageFileReader, StorageFileWriter, StorageFuture},
+    domain::storage::{
         DirModel, FileReadSupport, FileWriteSupport, RenameSupport, StorageCapabilities,
-        StorageError, StorageErrorKind, StoragePath,
+        StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageEntry, StorageEntryKind,
+        StorageError, StorageErrorKind, StorageMoveEntryRequest, StoragePath,
+        StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
+        StorageWriteFileMode, StorageWriteFileRequest,
     },
 };
 use std::{

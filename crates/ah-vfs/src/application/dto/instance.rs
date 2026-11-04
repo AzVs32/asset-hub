@@ -1,6 +1,9 @@
 //! Public instance views and driver-scoped live pagination.
 
-use crate::domain::{DriverError, InstanceId, StorageError, StorageErrorKind};
+use crate::domain::{
+    DriverError, InstanceId,
+    storage::{StorageError, StorageErrorKind},
+};
 use std::{collections::BTreeMap, num::NonZeroUsize};
 
 /// Public information about one registered instance, not a live storage handle.

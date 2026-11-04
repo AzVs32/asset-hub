@@ -6,16 +6,16 @@ use ah_vfs::{
         driver_catalog::DriverCatalog,
         dto::{
             CreateDirRequest, DirQuery, EntryOrigin, MountFilter, MountRequest, MoveEntryRequest,
-            ReadFileRequest, RemoveEntryRequest, StorageEntryKind, StorageWriteFileMode,
-            WriteFileRequest,
+            ReadFileRequest, RemoveEntryRequest, WriteFileRequest,
         },
         error::EntryError,
         port::MountRepository,
         service::{EntryService, MountService},
     },
     domain::{
-        DriverError, DriverInstance, DriverKey, InstanceId, MountTableError,
-        StorageErrorKind as Kind, VirtualPath,
+        DriverError, DriverInstance, DriverKey, InstanceId,
+        namespace::{MountTableError, VirtualPath},
+        storage::{StorageEntryKind, StorageErrorKind as Kind, StorageWriteFileMode},
     },
     infrastructure::mount_repository::SqliteMountRepository,
 };

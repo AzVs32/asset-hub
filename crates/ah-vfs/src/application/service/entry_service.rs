@@ -1,23 +1,28 @@
 //! Driver-independent entry access, namespace overlays and mount-boundary protection.
 
-use crate::application::{
-    dto::{
-        CreateDirRequest, DirPage, DirQuery, EntryOrigin, EntryView, MAX_DIR_PAGE_LIMIT,
-        MoveEntryRequest, ReadFileRequest, RemoveEntryRequest, StorageCreateDirRequest,
-        StorageDirQuery, StorageEntryKind, StorageMoveEntryRequest, StorageReadFileRequest,
-        StorageRemoveEntryRequest, StorageStatEntryRequest, StorageWriteFileRequest,
-        WriteFileRequest, validate_dir_page_limit,
+use crate::{
+    application::{
+        dto::{
+            CreateDirRequest, DirPage, DirQuery, EntryOrigin, EntryView, MoveEntryRequest,
+            ReadFileRequest, RemoveEntryRequest, WriteFileRequest,
+        },
+        error::EntryError,
+        mount_runtime::MountRuntime,
+        port::Storage,
+        session::{FileReadHandle, FileWriteHandle},
     },
-    error::EntryError,
-    mount_runtime::MountRuntime,
-    port::Storage,
-    session::{FileReadHandle, FileWriteHandle},
+    domain::{
+        namespace::{Mount, MountTable, VirtualPath},
+        storage::{
+            EntryPermissions, FileReadSupport, MAX_DIR_PAGE_LIMIT, StorageCapabilities,
+            StorageCreateDirRequest, StorageDirQuery, StorageEntryKind, StorageError,
+            StorageErrorKind, StorageMoveEntryRequest, StoragePath, StorageReadFileRequest,
+            StorageRemoveEntryRequest, StorageStatEntryRequest, StorageWriteFileRequest, XattrName,
+            XattrWriteMode, validate_dir_page_limit,
+        },
+    },
 };
-use crate::domain::{
-    EntryPermissions, FileReadSupport, StorageCapabilities, StorageError, StorageErrorKind,
-    XattrName, XattrWriteMode,
-};
-use crate::domain::{Mount, MountTable, StoragePath, VirtualPath};
+
 use std::{collections::BTreeMap, num::NonZeroUsize, sync::Arc};
 
 /// Resolve paths through a shared runtime snapshot and reuse validated storage.
@@ -286,8 +291,8 @@ impl EntryService {
         let (relative, storage) = self.open(&table, &request.path).await?;
         let support = storage.capabilities().write_file;
         Self::require(match request.mode {
-            crate::application::dto::StorageWriteFileMode::CreateNew => support.create_new,
-            crate::application::dto::StorageWriteFileMode::Replace => support.replace,
+            crate::domain::storage::StorageWriteFileMode::CreateNew => support.create_new,
+            crate::domain::storage::StorageWriteFileMode::Replace => support.replace,
         })?;
         Self::require(!request.require_atomic_publish || support.atomic_publish)?;
         let writer = storage

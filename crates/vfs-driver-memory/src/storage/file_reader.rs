@@ -1,7 +1,7 @@
 use super::{Blob, CHUNK_SIZE, error};
 use ah_vfs::{
     application::port::{StorageFileReader, StorageFuture},
-    domain::StorageErrorKind,
+    domain::storage::StorageErrorKind,
 };
 use std::sync::Arc;
 
@@ -37,7 +37,7 @@ impl StorageFileReader for MemoryFileReader {
             chunk
                 .try_reserve_exact(next - self.position)
                 .map_err(|source| {
-                    ah_vfs::domain::StorageError::with_source(
+                    ah_vfs::domain::storage::StorageError::with_source(
                         StorageErrorKind::CapacityExceeded,
                         source,
                     )

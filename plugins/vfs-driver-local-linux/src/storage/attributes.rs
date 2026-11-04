@@ -1,6 +1,6 @@
 //! Attribute operations on pinned file/dir handles; paths never follow symlinks.
 use super::LinuxLocalStorage;
-use ah_vfs::domain::{StorageCapabilities, StorageError};
+use ah_vfs::domain::storage::{StorageCapabilities, StorageError};
 use cap_std::fs::Dir;
 
 pub(super) fn instance_capabilities(dir: &Dir) -> Result<StorageCapabilities, StorageError> {
@@ -15,7 +15,7 @@ pub(super) fn instance_capabilities(dir: &Dir) -> Result<StorageCapabilities, St
     let mut bytes = [0_u8; 0];
     if let Err(error) = rustix::fs::flistxattr(&handle, &mut bytes[..]) {
         if error == rustix::io::Errno::NOTSUP {
-            capabilities.xattrs = ah_vfs::domain::AttributeSupport::None;
+            capabilities.xattrs = ah_vfs::domain::storage::AttributeSupport::None;
         } else if error != rustix::io::Errno::RANGE
             && error != rustix::io::Errno::ACCESS
             && error != rustix::io::Errno::PERM
@@ -31,7 +31,7 @@ mod posix {
     use super::*;
     use ah_vfs::{
         application::port::{StorageFuture, StoragePermissions},
-        domain::{EntryPermissions, StoragePath},
+        domain::storage::{EntryPermissions, StoragePath},
     };
     use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
     use cap_std::fs::{File, OpenOptions, Permissions, PermissionsExt};
@@ -91,7 +91,7 @@ mod posix {
         use super::*;
         use ah_vfs::{
             application::port::StorageXattrs,
-            domain::{StorageErrorKind, XattrName, XattrWriteMode},
+            domain::storage::{StorageErrorKind, XattrName, XattrWriteMode},
         };
         use std::num::NonZeroUsize;
 

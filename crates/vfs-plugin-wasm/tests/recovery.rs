@@ -1,6 +1,12 @@
 use ah_vfs::{
-    application::{dto::*, port::*},
-    domain::*,
+    application::port::*,
+    domain::{
+        DriverError, InstanceId,
+        storage::{
+            StorageEntry, StorageError, StorageErrorKind, StoragePath, StorageReadFileRequest,
+            StorageStatEntryRequest, StorageWriteFileRequest,
+        },
+    },
 };
 use std::{future::poll_fn, sync::Arc, task::Poll, time::Duration};
 use vfs_plugin_host::{PluginDriver, Transport, TransportFactory};

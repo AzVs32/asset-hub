@@ -1,6 +1,6 @@
 use ah_vfs::domain::{
-    ChildMountPolicy, DriverInstance, DriverKey, InstanceId, Mount, MountId, MountTable,
-    MountTableError, VirtualPath,
+    DriverInstance, DriverKey, InstanceId,
+    namespace::{ChildMountPolicy, Mount, MountId, MountTable, MountTableError, VirtualPath},
 };
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -415,7 +415,7 @@ fn restoration_cannot_bypass_driver_policies_in_any_row_order() -> TestResult {
 
 #[test]
 fn storage_addresses_validate_only_the_suffix_after_namespace_resolution() -> TestResult {
-    use ah_vfs::domain::{StorageError, StorageErrorKind, StoragePath, StoragePathError};
+    use ah_vfs::domain::storage::{StorageError, StorageErrorKind, StoragePath, StoragePathError};
 
     let mut table = MountTable::new(mount("/", "builtin.local", true)?)?;
     table.insert(mount("/cloud:archive", "builtin.local", true)?, policy)?;

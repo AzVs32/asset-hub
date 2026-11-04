@@ -1,11 +1,11 @@
 //! Relative directory traversal and backend-neutral error/metadata conversion.
 
 use super::TEMP_PREFIX;
-use ah_vfs::application::dto::{
+use ah_vfs::domain::storage::{
     StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageEntry, StorageEntryKind,
-    StorageMoveEntryRequest,
+    StorageError, StorageErrorKind, StorageMoveEntryRequest, StoragePath,
 };
-use ah_vfs::domain::{StorageError, StorageErrorKind, StoragePath};
+
 use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::fs::{Dir, File, Metadata, OpenOptions};
 use std::io;

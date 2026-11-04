@@ -1,14 +1,17 @@
 //! Stateless local-directory validation and storage opening.
 use crate::{LinuxLocalDriverError, LinuxLocalStorage};
-use ah_vfs::application::{
-    driver_info::DriverInfo,
-    dto::{
-        InstanceConfig, InstanceConfigSchema, instance_config_string,
-        validate_instance_config_fields,
+use ah_vfs::{
+    application::{
+        driver_info::DriverInfo,
+        dto::{
+            InstanceConfig, InstanceConfigSchema, instance_config_string,
+            validate_instance_config_fields,
+        },
+        port::{Driver, DriverFuture, InstanceProvisioner, OpenContext, PreparedConfig, Storage},
     },
-    port::{Driver, DriverFuture, InstanceProvisioner, OpenContext, PreparedConfig, Storage},
+    domain::{DriverError, DriverKey, InstanceConfigErrorKind, namespace::ChildMountPolicy},
 };
-use ah_vfs::domain::{ChildMountPolicy, DriverError, DriverKey, InstanceConfigErrorKind};
+
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},

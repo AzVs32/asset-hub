@@ -1,4 +1,4 @@
-use ah_vfs::domain::{EntryPermissions, StorageErrorKind, XattrName};
+use ah_vfs::domain::storage::{EntryPermissions, StorageErrorKind, XattrName};
 
 #[test]
 fn permissions_accept_exactly_mode_bits_without_entry_type_bits()

@@ -1,7 +1,10 @@
 //! Immutable declarations owned by a driver implementation.
 
-use crate::application::dto::{DriverSettingsSchema, InstanceConfigSchema};
-use crate::domain::{ChildMountPolicy, DriverKey, StorageCapabilities};
+use crate::{
+    application::dto::{DriverSettingsSchema, InstanceConfigSchema},
+    domain::{DriverKey, namespace::ChildMountPolicy, storage::StorageCapabilities},
+};
+
 use bon::Builder;
 use getset::{CopyGetters, Getters};
 use semver::Version;

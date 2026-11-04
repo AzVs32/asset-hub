@@ -1,14 +1,15 @@
 #![cfg(target_os = "linux")]
 mod common;
 
-use ah_vfs::application::dto::{
-    StorageCreateDirRequest, StorageDirQuery, StorageEntryKind, StorageMoveEntryRequest,
-    StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
-    StorageWriteFileMode, StorageWriteFileRequest,
+use ah_vfs::{
+    application::port::{Driver, Storage, StorageFileReader},
+    domain::storage::{
+        StorageCreateDirRequest, StorageDirQuery, StorageEntryKind, StorageErrorKind,
+        StorageMoveEntryRequest, StoragePath, StorageReadFileRequest, StorageRemoveEntryRequest,
+        StorageStatEntryRequest, StorageWriteFileMode, StorageWriteFileRequest,
+    },
 };
-use ah_vfs::application::port::{Driver, Storage, StorageFileReader};
-use ah_vfs::domain::StorageErrorKind;
-use ah_vfs::domain::StoragePath;
+
 use sqlx::sqlite::SqlitePoolOptions;
 use std::{error::Error, num::NonZeroUsize, path::PathBuf, sync::Arc};
 use vfs_driver_local_linux::LinuxLocalDriver;
@@ -44,7 +45,7 @@ async fn fixture() -> TestResult<Fixture> {
     })
 }
 
-fn path(value: &str) -> Result<StoragePath, ah_vfs::domain::StoragePathError> {
+fn path(value: &str) -> Result<StoragePath, ah_vfs::domain::storage::StoragePathError> {
     StoragePath::parse(value)
 }
 

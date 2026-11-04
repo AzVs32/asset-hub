@@ -1,4 +1,4 @@
-use ah_vfs::domain::{
+use ah_vfs::domain::storage::{
     AttributeSupport, DirModel, FileReadSupport, FileWriteSupport, RenameSupport,
     StorageCapabilities, StorageCapabilitiesError, StorageErrorKind,
 };

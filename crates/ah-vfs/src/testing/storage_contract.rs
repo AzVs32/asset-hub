@@ -1,15 +1,12 @@
 //! Storage behavior shared by independent driver test suites.
 
 use crate::{
-    application::{
-        dto::{
-            DEFAULT_DIR_PAGE_LIMIT, MAX_DIR_PAGE_LIMIT, StorageCreateDirRequest, StorageDirQuery,
-            StorageEntryKind, StorageMoveEntryRequest, StorageReadFileRequest,
-            StorageStatEntryRequest, StorageWriteFileRequest,
-        },
-        port::{Storage, StorageFileReader},
+    application::port::{Storage, StorageFileReader},
+    domain::storage::{
+        DEFAULT_DIR_PAGE_LIMIT, MAX_DIR_PAGE_LIMIT, StorageCreateDirRequest, StorageDirQuery,
+        StorageEntryKind, StorageErrorKind, StorageMoveEntryRequest, StoragePath,
+        StorageReadFileRequest, StorageStatEntryRequest, StorageWriteFileRequest,
     },
-    domain::{StorageErrorKind, StoragePath},
 };
 use std::num::NonZeroUsize;
 

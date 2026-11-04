@@ -1,7 +1,10 @@
 //! Requests and namespace views using absolute virtual paths.
 
-use super::{DEFAULT_DIR_PAGE_LIMIT, StorageEntry, StorageEntryKind, StorageWriteFileMode};
-use crate::domain::VirtualPath;
+use crate::domain::{
+    namespace::VirtualPath,
+    storage::{DEFAULT_DIR_PAGE_LIMIT, StorageEntry, StorageEntryKind, StorageWriteFileMode},
+};
+
 use std::{num::NonZeroUsize, time::SystemTime};
 
 /// Namespace entries can shadow backend entries at mount boundaries.

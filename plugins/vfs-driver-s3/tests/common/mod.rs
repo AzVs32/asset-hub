@@ -4,7 +4,7 @@ use aes_gcm::{
 };
 use ah_vfs::{
     application::port::{DriverFuture, SecretCipher, SecretContext},
-    domain::{StorageError, StorageErrorKind},
+    domain::storage::{StorageError, StorageErrorKind},
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 

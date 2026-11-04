@@ -4,7 +4,10 @@ use crate::{
         dto::{InstanceQuery, RemoveInstanceOutcome},
         port::{DriverFuture, InstanceRecord, InstanceRecordPage, InstanceRecordRepository},
     },
-    domain::{DriverError, DriverInstance, DriverKey, InstanceId, StorageError, StorageErrorKind},
+    domain::{
+        DriverError, DriverInstance, DriverKey, InstanceId,
+        storage::{StorageError, StorageErrorKind},
+    },
     infrastructure::sqlite_error::database_error,
 };
 use sqlx::{Row, SqlitePool, sqlite::SqliteRow};

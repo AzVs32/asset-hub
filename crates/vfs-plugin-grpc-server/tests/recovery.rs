@@ -1,6 +1,13 @@
 use ah_vfs::{
     application::{driver_info::DriverInfo, dto::*, port::*},
-    domain::*,
+    domain::{
+        InstanceId,
+        storage::{
+            StorageCapabilities, StorageEntry, StorageEntryKind, StorageError, StorageErrorKind,
+            StoragePath, StorageReadFileRequest, StorageRemoveEntryRequest,
+            StorageStatEntryRequest, StorageWriteFileRequest,
+        },
+    },
 };
 use std::{
     num::NonZeroUsize,

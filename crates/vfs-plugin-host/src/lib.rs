@@ -4,7 +4,16 @@ pub use vfs_plugin_codec as convert;
 
 use ah_vfs::{
     application::{driver_info::DriverInfo, dto::*, port::*},
-    domain::*,
+    domain::{
+        DriverError,
+        storage::{
+            EntryPermissions, StorageCapabilities, StorageCreateDirRequest, StorageDirPage,
+            StorageDirQuery, StorageEntry, StorageError, StorageErrorKind, StorageMoveEntryRequest,
+            StoragePath, StorageReadFileRequest, StorageRemoveEntryRequest,
+            StorageStatEntryRequest, StorageWriteFileMode, StorageWriteFileRequest, XattrName,
+            XattrWriteMode,
+        },
+    },
 };
 use std::{
     collections::HashSet,

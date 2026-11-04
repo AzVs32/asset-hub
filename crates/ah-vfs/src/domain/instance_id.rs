@@ -59,6 +59,10 @@ struct GeneratedInstanceId(ah_id::UuidV7);
 /// Generate the host/default driver's UUIDv7 identity without constraining custom IDs.
 pub fn new_instance_id() -> Result<InstanceId, super::DriverError> {
     InstanceId::parse(&GeneratedInstanceId::new().to_string()).map_err(|source| {
-        super::StorageError::with_source(super::StorageErrorKind::InvalidData, source).into()
+        super::storage::StorageError::with_source(
+            super::storage::StorageErrorKind::InvalidData,
+            source,
+        )
+        .into()
     })
 }

@@ -1,6 +1,6 @@
 //! Optional typed storage attributes, independent of file formats.
 use super::StorageFuture;
-use crate::domain::{
+use crate::domain::storage::{
     EntryPermissions, StorageError, StorageErrorKind, StoragePath, XattrName, XattrWriteMode,
 };
 use std::num::NonZeroUsize;
