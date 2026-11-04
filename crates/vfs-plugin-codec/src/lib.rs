@@ -5,9 +5,8 @@ use ah_vfs::{
         DriverError, DriverKey, InstanceConfigErrorKind, InstanceId,
         namespace::ChildMountPolicy,
         storage::{
-            AttributeSupport, DirModel, FileReadSupport, FileWriteSupport, RenameSupport,
-            StorageCapabilities, StorageEntry, StorageEntryKind, StorageError, StorageErrorKind,
-            StoragePath,
+            AttributeSupport, DirModel, Entry, FileReadSupport, FileWriteSupport, RenameSupport,
+            StorageCapabilities, StorageEntryKind, StorageError, StorageErrorKind, StoragePath,
         },
     },
 };
@@ -289,7 +288,7 @@ pub fn driver_info(d: &p::Description) -> Result<DriverInfo, DriverError> {
         .instance_config_version(NonZeroU32::new(d.config_version).ok_or_else(invalid)?)
         .build())
 }
-pub fn entry(e: StorageEntry) -> Result<p::Entry, DriverError> {
+pub fn entry(e: Entry) -> Result<p::Entry, DriverError> {
     let modified = e
         .modified
         .map(|time| {
@@ -323,7 +322,7 @@ pub fn entry(e: StorageEntry) -> Result<p::Entry, DriverError> {
         modified,
     })
 }
-pub fn decode_entry(e: p::Entry) -> Result<StorageEntry, StorageError> {
+pub fn decode_entry(e: p::Entry) -> Result<Entry, StorageError> {
     let modified = e
         .modified
         .map(|t| {
@@ -346,7 +345,7 @@ pub fn decode_entry(e: p::Entry) -> Result<StorageEntry, StorageError> {
     if e.kind != p::EntryKind::File as i32 && e.size.is_some() {
         return Err(storage_invalid());
     }
-    Ok(StorageEntry {
+    Ok(Entry {
         path: StoragePath::parse(&e.path).map_err(|_| storage_invalid())?,
         kind: match e.kind() {
             p::EntryKind::File => StorageEntryKind::File,

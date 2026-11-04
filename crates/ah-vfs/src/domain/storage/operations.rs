@@ -1,8 +1,6 @@
 //! Instance-local operation requests and directory query results.
 
-use super::{
-    DEFAULT_DIR_PAGE_LIMIT, StorageEntry, StorageError, StoragePath, validate_dir_page_limit,
-};
+use super::{DEFAULT_DIR_PAGE_LIMIT, Entry, StorageError, StoragePath, validate_dir_page_limit};
 use std::num::NonZeroUsize;
 
 pub struct StorageStatEntryRequest {
@@ -40,7 +38,7 @@ impl StorageDirQuery {
     }
 }
 pub struct StorageDirPage {
-    pub entries: Vec<StorageEntry>,
+    pub entries: Vec<Entry>,
     /// Pass as `after`; `None` means there are no more entries now.
     pub next_after: Option<String>,
 }

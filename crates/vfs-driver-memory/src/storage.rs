@@ -2,7 +2,7 @@ use crate::Capacity;
 use ah_vfs::{
     application::port::{Storage, StorageFileReader, StorageFileWriter, StorageFuture},
     domain::storage::{
-        StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageEntry, StorageEntryKind,
+        Entry, StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageEntryKind,
         StorageError, StorageErrorKind, StorageMoveEntryRequest, StoragePath,
         StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
         StorageWriteFileMode, StorageWriteFileRequest,
@@ -83,12 +83,12 @@ enum EntryData {
 }
 
 #[derive(Clone)]
-struct Entry {
+struct MemoryEntry {
     data: EntryData,
     modified: SystemTime,
 }
 
-impl Entry {
+impl MemoryEntry {
     fn dir() -> Self {
         Self {
             data: EntryData::Dir(Arc::new(())),
@@ -96,12 +96,12 @@ impl Entry {
         }
     }
 
-    fn metadata(&self, path: StoragePath) -> StorageEntry {
+    fn metadata(&self, path: StoragePath) -> Entry {
         let (kind, size) = match &self.data {
             EntryData::Dir(_) => (StorageEntryKind::Dir, None),
             EntryData::File(blob) => (StorageEntryKind::File, Some(blob.bytes.len() as u64)),
         };
-        StorageEntry {
+        Entry {
             path,
             kind,
             size,
@@ -111,12 +111,12 @@ impl Entry {
 }
 
 struct Shared {
-    entries: Mutex<BTreeMap<String, Entry>>,
+    entries: Mutex<BTreeMap<String, MemoryEntry>>,
     quota: Arc<Quota>,
 }
 
 impl Shared {
-    fn lock(&self) -> Result<MutexGuard<'_, BTreeMap<String, Entry>>, StorageError> {
+    fn lock(&self) -> Result<MutexGuard<'_, BTreeMap<String, MemoryEntry>>, StorageError> {
         self.entries.lock().map_err(|_| {
             StorageError::with_source(
                 StorageErrorKind::Backend,
@@ -135,7 +135,7 @@ fn descendant(path: &str, parent: &str) -> bool {
 }
 
 fn require_dir<'a>(
-    entries: &'a BTreeMap<String, Entry>,
+    entries: &'a BTreeMap<String, MemoryEntry>,
     path: &str,
 ) -> Result<&'a Arc<()>, StorageError> {
     match &entries
@@ -149,7 +149,7 @@ fn require_dir<'a>(
 }
 
 fn require_parents(
-    entries: &BTreeMap<String, Entry>,
+    entries: &BTreeMap<String, MemoryEntry>,
     path: &StoragePath,
 ) -> Result<(), StorageError> {
     let mut current = StoragePath::root();
@@ -165,7 +165,7 @@ fn require_parents(
 }
 
 fn writable_target(
-    entries: &BTreeMap<String, Entry>,
+    entries: &BTreeMap<String, MemoryEntry>,
     path: &StoragePath,
     mode: StorageWriteFileMode,
 ) -> Result<(), StorageError> {
@@ -201,7 +201,7 @@ impl MemoryStorage {
         Self {
             capacity,
             shared: Arc::new(Shared {
-                entries: Mutex::new(BTreeMap::from([(String::new(), Entry::dir())])),
+                entries: Mutex::new(BTreeMap::from([(String::new(), MemoryEntry::dir())])),
                 quota: Arc::new(Quota {
                     limit: capacity.bytes(),
                     used: AtomicU64::new(0),
@@ -225,7 +225,7 @@ impl Storage for MemoryStorage {
         NonZeroUsize::new(CHUNK_SIZE).unwrap_or(NonZeroUsize::MIN)
     }
 
-    fn stat_entry(&self, request: StorageStatEntryRequest) -> StorageFuture<'_, StorageEntry> {
+    fn stat_entry(&self, request: StorageStatEntryRequest) -> StorageFuture<'_, Entry> {
         Box::pin(async move {
             let entries = self.shared.lock()?;
             require_parents(&entries, &request.path)?;
@@ -328,7 +328,7 @@ impl Storage for MemoryStorage {
         })
     }
 
-    fn create_dir(&self, request: StorageCreateDirRequest) -> StorageFuture<'_, StorageEntry> {
+    fn create_dir(&self, request: StorageCreateDirRequest) -> StorageFuture<'_, Entry> {
         Box::pin(async move {
             let mut entries = self.shared.lock()?;
             if !request.recursive {
@@ -352,7 +352,7 @@ impl Storage for MemoryStorage {
                 }
             }
             for path in missing {
-                entries.insert(path, Entry::dir());
+                entries.insert(path, MemoryEntry::dir());
             }
             Ok(entries
                 .get(request.path.as_str())
@@ -383,7 +383,7 @@ impl Storage for MemoryStorage {
         })
     }
 
-    fn move_entry(&self, request: StorageMoveEntryRequest) -> StorageFuture<'_, StorageEntry> {
+    fn move_entry(&self, request: StorageMoveEntryRequest) -> StorageFuture<'_, Entry> {
         Box::pin(async move {
             if request.source.is_root() || request.destination.is_root() {
                 return Err(error(StorageErrorKind::RootProtected));

@@ -3,7 +3,7 @@ use ah_vfs::{
     domain::{
         InstanceId,
         storage::{
-            StorageEntry, StorageEntryKind, StorageError, StorageErrorKind, StoragePath,
+            Entry, StorageEntryKind, StorageError, StorageErrorKind, StoragePath,
             StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
             StorageWriteFileRequest,
         },
@@ -138,12 +138,12 @@ impl Storage for BackendStorage {
     fn chunk_size(&self) -> NonZeroUsize {
         NonZeroUsize::MIN
     }
-    fn stat_entry(&self, request: StorageStatEntryRequest) -> StorageFuture<'_, StorageEntry> {
+    fn stat_entry(&self, request: StorageStatEntryRequest) -> StorageFuture<'_, Entry> {
         Box::pin(async move {
             if self.faults.invalid_stat.load(Ordering::SeqCst) {
                 return Err(StorageError::new(StorageErrorKind::InvalidData));
             }
-            Ok(StorageEntry {
+            Ok(Entry {
                 path: request.path,
                 kind: StorageEntryKind::File,
                 size: Some(self.marker as u64),
@@ -215,7 +215,7 @@ impl StorageFileWriter for Writer {
             Ok(())
         })
     }
-    fn commit(&mut self) -> StorageFuture<'_, StorageEntry> {
+    fn commit(&mut self) -> StorageFuture<'_, Entry> {
         Box::pin(async move {
             self.0.commits.fetch_add(1, Ordering::SeqCst);
             Err(StorageError::new(StorageErrorKind::UnsupportedOperation))

@@ -3,9 +3,9 @@ use ah_vfs::{
     domain::{
         DriverError, InstanceId,
         storage::{
-            EntryPermissionsError, StorageCapabilities, StorageEntry, StorageEntryKind,
-            StorageErrorKind, StoragePath, StorageReadFileRequest, StorageWriteFileRequest,
-            XattrName, XattrNameError,
+            Entry, EntryPermissionsError, StorageCapabilities, StorageEntryKind, StorageErrorKind,
+            StoragePath, StorageReadFileRequest, StorageWriteFileRequest, XattrName,
+            XattrNameError,
         },
     },
 };
@@ -208,7 +208,7 @@ fn timestamps_and_unknown_error_codes_preserve_boundary_semantics() -> Result {
         UNIX_EPOCH - Duration::from_millis(1500),
         UNIX_EPOCH + Duration::from_nanos(1),
     ] {
-        let entry = StorageEntry {
+        let entry = Entry {
             path: StoragePath::parse("file")?,
             kind: StorageEntryKind::File,
             size: Some(u64::MAX),

@@ -2,7 +2,7 @@
 
 use super::{StoragePermissions, StorageXattrs};
 use crate::domain::storage::{
-    StorageCapabilities, StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageEntry,
+    Entry, StorageCapabilities, StorageCreateDirRequest, StorageDirPage, StorageDirQuery,
     StorageError, StorageErrorKind, StorageMoveEntryRequest, StorageReadFileRequest,
     StorageRemoveEntryRequest, StorageStatEntryRequest, StorageWriteFileRequest,
 };
@@ -42,7 +42,7 @@ pub trait Storage: Send + Sync {
     fn chunk_size(&self) -> NonZeroUsize;
 
     /// Retrieve entry metadata without following its final symbolic link.
-    fn stat_entry(&self, _request: StorageStatEntryRequest) -> StorageFuture<'_, StorageEntry> {
+    fn stat_entry(&self, _request: StorageStatEntryRequest) -> StorageFuture<'_, Entry> {
         unsupported()
     }
 
@@ -68,7 +68,7 @@ pub trait Storage: Send + Sync {
     }
 
     /// Create a directory in the backend.
-    fn create_dir(&self, _request: StorageCreateDirRequest) -> StorageFuture<'_, StorageEntry> {
+    fn create_dir(&self, _request: StorageCreateDirRequest) -> StorageFuture<'_, Entry> {
         unsupported()
     }
 
@@ -78,7 +78,7 @@ pub trait Storage: Send + Sync {
     }
 
     /// Rename an entry within this instance according to its replacement policy.
-    fn move_entry(&self, _request: StorageMoveEntryRequest) -> StorageFuture<'_, StorageEntry> {
+    fn move_entry(&self, _request: StorageMoveEntryRequest) -> StorageFuture<'_, Entry> {
         unsupported()
     }
 }
@@ -108,7 +108,7 @@ pub trait StorageFileWriter: Send {
     /// are backend-specific; this interface does not promise power-loss durability.
     /// A failure whose publication outcome cannot be determined is classified as
     /// OutcomeUnknown. Callers must not infer rollback or blindly retry it.
-    fn commit(&mut self) -> StorageFuture<'_, StorageEntry>;
+    fn commit(&mut self) -> StorageFuture<'_, Entry>;
 
     /// Cancel the pending write and release its temporary resources.
     fn abort(&mut self) -> StorageFuture<'_, ()>;

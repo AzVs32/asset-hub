@@ -1,8 +1,8 @@
-use super::{Blob, Entry, EntryData, Shared, error, require_dir, writable_target};
+use super::{Blob, EntryData, MemoryEntry, Shared, error, require_dir, writable_target};
 use ah_vfs::{
     application::port::{StorageFileWriter, StorageFuture},
     domain::storage::{
-        StorageEntry, StorageErrorKind, StoragePath, StorageWriteFileMode, StorageWriteFileRequest,
+        Entry, StorageErrorKind, StoragePath, StorageWriteFileMode, StorageWriteFileRequest,
     },
 };
 use std::{sync::Arc, time::SystemTime};
@@ -52,7 +52,7 @@ impl StorageFileWriter for MemoryFileWriter {
         })
     }
 
-    fn commit(&mut self) -> StorageFuture<'_, StorageEntry> {
+    fn commit(&mut self) -> StorageFuture<'_, Entry> {
         Box::pin(async move {
             let session = self
                 .session
@@ -69,7 +69,7 @@ impl StorageFileWriter for MemoryFileWriter {
                 return Err(error(StorageErrorKind::Conflict));
             }
             writable_target(&entries, &session.path, session.mode)?;
-            let entry = Entry {
+            let entry = MemoryEntry {
                 data: EntryData::File(Arc::new(session.blob)),
                 modified: SystemTime::now(),
             };

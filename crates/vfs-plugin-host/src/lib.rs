@@ -7,8 +7,8 @@ use ah_vfs::{
     domain::{
         DriverError,
         storage::{
-            EntryPermissions, StorageCreateDirRequest, StorageDirPage, StorageDirQuery,
-            StorageEntry, StorageError, StorageErrorKind, StorageMoveEntryRequest, StoragePath,
+            Entry, EntryPermissions, StorageCreateDirRequest, StorageDirPage, StorageDirQuery,
+            StorageError, StorageErrorKind, StorageMoveEntryRequest, StoragePath,
             StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
             StorageWriteFileMode, StorageWriteFileRequest, XattrName, XattrWriteMode,
         },
@@ -471,11 +471,7 @@ impl RemoteStorage {
             .await
             .map_err(convert::storage_error)
     }
-    async fn entry(
-        &self,
-        request: p::StorageOp,
-        path: StoragePath,
-    ) -> Result<StorageEntry, StorageError> {
+    async fn entry(&self, request: p::StorageOp, path: StoragePath) -> Result<Entry, StorageError> {
         let mutates = !matches!(request, p::StorageOp::Stat(_));
         let r = self.call(request, vec![]).await?;
         match r.result.ok_or_else(convert::storage_invalid)? {
@@ -518,7 +514,7 @@ impl Storage for RemoteStorage {
             .can_read()
             .then_some(self)
     }
-    fn stat_entry(&self, r: StorageStatEntryRequest) -> StorageFuture<'_, StorageEntry> {
+    fn stat_entry(&self, r: StorageStatEntryRequest) -> StorageFuture<'_, Entry> {
         Box::pin(async move {
             self.entry(
                 p::StorageOp::Stat(p::Path {
@@ -529,7 +525,7 @@ impl Storage for RemoteStorage {
             .await
         })
     }
-    fn create_dir(&self, r: StorageCreateDirRequest) -> StorageFuture<'_, StorageEntry> {
+    fn create_dir(&self, r: StorageCreateDirRequest) -> StorageFuture<'_, Entry> {
         Box::pin(async move {
             self.entry(
                 p::StorageOp::CreateDir(p::CreateDir {
@@ -541,7 +537,7 @@ impl Storage for RemoteStorage {
             .await
         })
     }
-    fn move_entry(&self, r: StorageMoveEntryRequest) -> StorageFuture<'_, StorageEntry> {
+    fn move_entry(&self, r: StorageMoveEntryRequest) -> StorageFuture<'_, Entry> {
         Box::pin(async move {
             self.entry(
                 p::StorageOp::Move(p::Move {
@@ -759,7 +755,7 @@ impl StorageFileWriter for RemoteWriter {
             Ok(())
         })
     }
-    fn commit(&mut self) -> StorageFuture<'_, StorageEntry> {
+    fn commit(&mut self) -> StorageFuture<'_, Entry> {
         Box::pin(async move {
             let resource = self.resource.take().ok_or_else(closed)?;
             let reply = resource

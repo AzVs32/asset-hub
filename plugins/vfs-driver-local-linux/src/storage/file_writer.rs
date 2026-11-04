@@ -4,7 +4,7 @@ use super::{TEMP_PREFIX, blocking, fs};
 use ah_vfs::{
     application::port::{StorageFileWriter, StorageFuture},
     domain::storage::{
-        StorageEntry, StorageError, StorageErrorKind, StoragePath, StorageWriteFileMode,
+        Entry, StorageError, StorageErrorKind, StoragePath, StorageWriteFileMode,
         StorageWriteFileRequest,
     },
 };
@@ -74,7 +74,7 @@ impl LocalFileWriter {
 }
 
 impl FileWriteSession {
-    fn commit(mut self) -> Result<StorageEntry, StorageError> {
+    fn commit(mut self) -> Result<Entry, StorageError> {
         let file = self
             .file
             .take()
@@ -154,7 +154,7 @@ impl StorageFileWriter for LocalFileWriter {
         })
     }
 
-    fn commit(&mut self) -> StorageFuture<'_, StorageEntry> {
+    fn commit(&mut self) -> StorageFuture<'_, Entry> {
         Box::pin(async move {
             let session = self
                 .session

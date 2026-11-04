@@ -3,7 +3,7 @@ use super::{TEMP_PREFIX, blocking, fs, native};
 use ah_vfs::{
     application::port::{StorageFileWriter, StorageFuture},
     domain::storage::{
-        StorageEntry, StorageError, StorageErrorKind, StoragePath, StorageWriteFileMode,
+        Entry, StorageError, StorageErrorKind, StoragePath, StorageWriteFileMode,
         StorageWriteFileRequest,
     },
 };
@@ -53,7 +53,7 @@ impl LocalFileWriter {
     }
 }
 impl FileWriteSession {
-    fn commit(mut self) -> Result<StorageEntry, StorageError> {
+    fn commit(mut self) -> Result<Entry, StorageError> {
         let file = self.file.as_ref().ok_or_else(|| StorageError::new(StorageErrorKind::SessionClosed))?;
         if let Some(destination) = check_target(&self.parent, &self.target, self.mode)? {
             native::copy_dacl(&destination, file)?;
@@ -92,7 +92,7 @@ impl StorageFileWriter for LocalFileWriter {
             Ok(())
         })
     }
-    fn commit(&mut self) -> StorageFuture<'_, StorageEntry> {
+    fn commit(&mut self) -> StorageFuture<'_, Entry> {
         Box::pin(async move {
             let session = self.session.take().ok_or_else(|| StorageError::new(StorageErrorKind::SessionClosed))?;
             tokio::task::spawn_blocking(move || session.commit()).await

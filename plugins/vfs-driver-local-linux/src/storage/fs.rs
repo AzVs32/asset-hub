@@ -2,7 +2,7 @@
 
 use super::TEMP_PREFIX;
 use ah_vfs::domain::storage::{
-    StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageEntry, StorageEntryKind,
+    Entry, StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageEntryKind,
     StorageError, StorageErrorKind, StorageMoveEntryRequest, StoragePath,
 };
 
@@ -57,7 +57,7 @@ pub(super) fn parent(root: &Dir, path: &StoragePath) -> Result<(Dir, String), St
     Ok((dir(root, &parent, false)?, name))
 }
 
-pub(super) fn entry(path: StoragePath, metadata: Metadata) -> StorageEntry {
+pub(super) fn entry(path: StoragePath, metadata: Metadata) -> Entry {
     let kind = if metadata.file_type().is_symlink() {
         StorageEntryKind::Symlink
     } else if metadata.is_file() {
@@ -67,7 +67,7 @@ pub(super) fn entry(path: StoragePath, metadata: Metadata) -> StorageEntry {
     } else {
         StorageEntryKind::Other
     };
-    StorageEntry {
+    Entry {
         path,
         kind,
         size: metadata.is_file().then(|| metadata.len()),
@@ -75,7 +75,7 @@ pub(super) fn entry(path: StoragePath, metadata: Metadata) -> StorageEntry {
     }
 }
 
-pub(super) fn stat_entry(root: &Dir, path: StoragePath) -> Result<StorageEntry, StorageError> {
+pub(super) fn stat_entry(root: &Dir, path: StoragePath) -> Result<Entry, StorageError> {
     let metadata = if path.is_root() {
         root.dir_metadata().map_err(error)?
     } else {
@@ -149,7 +149,7 @@ pub(super) fn list_entries(
 pub(super) fn create_dir(
     root: &Dir,
     request: StorageCreateDirRequest,
-) -> Result<StorageEntry, StorageError> {
+) -> Result<Entry, StorageError> {
     if request.path.is_root() && !request.recursive {
         return Err(StorageError::new(StorageErrorKind::AlreadyExists));
     }
@@ -179,7 +179,7 @@ pub(super) fn remove_entry(root: &Dir, path: StoragePath) -> Result<(), StorageE
 pub(super) fn move_entry(
     root: &Dir,
     request: StorageMoveEntryRequest,
-) -> Result<StorageEntry, StorageError> {
+) -> Result<Entry, StorageError> {
     let (source_parent, source) = parent(root, &request.source)?;
     let (destination_parent, destination) = parent(root, &request.destination)?;
     let metadata = source_parent.symlink_metadata(&source).map_err(error)?;

@@ -14,7 +14,7 @@ use ah_vfs::{
         DriverError, DriverInstance, DriverKey, DriverKeyError, InstanceId,
         namespace::{ChildMountPolicy, Mount, MountId, MountTable, MountTableError, VirtualPath},
         storage::{
-            StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageEntry, StorageError,
+            Entry, StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageError,
             StorageErrorKind, StorageMoveEntryRequest, StorageReadFileRequest,
             StorageRemoveEntryRequest, StorageStatEntryRequest, StorageWriteFileRequest,
         },
@@ -42,7 +42,7 @@ impl Storage for TestStorage {
     fn chunk_size(&self) -> NonZeroUsize {
         NonZeroUsize::MIN
     }
-    fn stat_entry(&self, _: StorageStatEntryRequest) -> StorageFuture<'_, StorageEntry> {
+    fn stat_entry(&self, _: StorageStatEntryRequest) -> StorageFuture<'_, Entry> {
         unsupported()
     }
     fn list_entries(&self, _: StorageDirQuery) -> StorageFuture<'_, StorageDirPage> {
@@ -60,13 +60,13 @@ impl Storage for TestStorage {
     ) -> StorageFuture<'_, Box<dyn StorageFileWriter>> {
         unsupported()
     }
-    fn create_dir(&self, _: StorageCreateDirRequest) -> StorageFuture<'_, StorageEntry> {
+    fn create_dir(&self, _: StorageCreateDirRequest) -> StorageFuture<'_, Entry> {
         unsupported()
     }
     fn remove_entry(&self, _: StorageRemoveEntryRequest) -> StorageFuture<'_, ()> {
         unsupported()
     }
-    fn move_entry(&self, _: StorageMoveEntryRequest) -> StorageFuture<'_, StorageEntry> {
+    fn move_entry(&self, _: StorageMoveEntryRequest) -> StorageFuture<'_, Entry> {
         unsupported()
     }
 }

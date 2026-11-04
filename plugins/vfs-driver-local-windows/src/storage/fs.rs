@@ -1,7 +1,7 @@
 //! Windows names, reparse-point policy and directory-relative filesystem I/O.
 use super::{TEMP_PREFIX, native};
 use ah_vfs::domain::storage::{
-    StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageEntry, StorageEntryKind,
+    Entry, StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageEntryKind,
     StorageError, StorageErrorKind, StorageMoveEntryRequest, StoragePath,
 };
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
@@ -73,16 +73,16 @@ pub(super) fn parent(root: &Dir, path: &StoragePath) -> Result<(Dir, String), St
     let name = path.name().ok_or_else(|| StorageError::new(StorageErrorKind::RootProtected))?.to_owned();
     Ok((dir(root, &parent, false)?, name))
 }
-pub(super) fn entry(path: StoragePath, metadata: Metadata) -> StorageEntry {
+pub(super) fn entry(path: StoragePath, metadata: Metadata) -> Entry {
     let kind = if metadata.file_type().is_symlink() { StorageEntryKind::Symlink }
         else if reparse(&metadata) { StorageEntryKind::Other }
         else if metadata.is_file() { StorageEntryKind::File }
         else if metadata.is_dir() { StorageEntryKind::Dir }
         else { StorageEntryKind::Other };
-    StorageEntry { path, kind, size: (kind == StorageEntryKind::File).then(|| metadata.len()),
+    Entry { path, kind, size: (kind == StorageEntryKind::File).then(|| metadata.len()),
         modified: metadata.modified().ok().map(|time| time.into_std()) }
 }
-pub(super) fn stat_entry(root: &Dir, path: StoragePath) -> Result<StorageEntry, StorageError> {
+pub(super) fn stat_entry(root: &Dir, path: StoragePath) -> Result<Entry, StorageError> {
     let metadata = if path.is_root() { root.dir_metadata().map_err(error)? } else {
         let (parent, name) = parent(root, &path)?;
         checked_metadata(&parent, &name)?
@@ -129,7 +129,7 @@ pub(super) fn list_entries(root: &Dir, query: StorageDirQuery) -> Result<Storage
     }).collect::<Result<_, StorageError>>()?;
     Ok(StorageDirPage { entries, next_after })
 }
-pub(super) fn create_dir(root: &Dir, request: StorageCreateDirRequest) -> Result<StorageEntry, StorageError> {
+pub(super) fn create_dir(root: &Dir, request: StorageCreateDirRequest) -> Result<Entry, StorageError> {
     if request.path.is_root() && !request.recursive { return Err(StorageError::new(StorageErrorKind::AlreadyExists)); }
     if request.recursive {
         let dir = dir(root, &request.path, true)?;
@@ -146,7 +146,7 @@ pub(super) fn remove_entry(root: &Dir, path: StoragePath) -> Result<(), StorageE
     if reparse(&file.metadata().map_err(error)?) { return Err(StorageError::new(StorageErrorKind::UnsupportedOperation)); }
     native::delete(&file)
 }
-pub(super) fn move_entry(root: &Dir, request: StorageMoveEntryRequest) -> Result<StorageEntry, StorageError> {
+pub(super) fn move_entry(root: &Dir, request: StorageMoveEntryRequest) -> Result<Entry, StorageError> {
     let (source_parent, source) = parent(root, &request.source)?;
     let (destination_parent, destination) = parent(root, &request.destination)?;
     let file = native::mutation_handle(&source_parent, &source)?;

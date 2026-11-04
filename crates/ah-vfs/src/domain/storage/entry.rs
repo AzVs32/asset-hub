@@ -13,7 +13,7 @@ pub enum StorageEntryKind {
 
 /// Metadata of an entry without following its final symbolic link.
 #[derive(Clone, Debug)]
-pub struct StorageEntry {
+pub struct Entry {
     pub path: StoragePath,
     pub kind: StorageEntryKind,
     /// Byte length for regular files; absent for other entry kinds.

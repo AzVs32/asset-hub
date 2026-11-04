@@ -14,8 +14,8 @@ use ah_vfs::{
         DriverInstance, DriverKey, InstanceId,
         namespace::{ChildMountPolicy, VirtualPath},
         storage::{
-            StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageEntry,
-            StorageEntryKind, StorageError, StorageErrorKind, StorageMoveEntryRequest, StoragePath,
+            Entry, StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageEntryKind,
+            StorageError, StorageErrorKind, StorageMoveEntryRequest, StoragePath,
             StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
             StorageWriteFileRequest,
         },
@@ -69,9 +69,9 @@ impl Storage for TestStorage {
     fn chunk_size(&self) -> NonZeroUsize {
         NonZeroUsize::MIN
     }
-    fn stat_entry(&self, request: StorageStatEntryRequest) -> StorageFuture<'_, StorageEntry> {
+    fn stat_entry(&self, request: StorageStatEntryRequest) -> StorageFuture<'_, Entry> {
         Box::pin(async move {
-            Ok(StorageEntry {
+            Ok(Entry {
                 kind: if request.path.is_root() {
                     StorageEntryKind::Dir
                 } else {
@@ -99,7 +99,7 @@ impl Storage for TestStorage {
                 entries: names
                     .into_iter()
                     .map(|name| {
-                        Ok(StorageEntry {
+                        Ok(Entry {
                             path: StoragePath::parse(name)?,
                             kind: StorageEntryKind::File,
                             size: Some(1),
@@ -123,13 +123,13 @@ impl Storage for TestStorage {
     ) -> StorageFuture<'_, Box<dyn StorageFileWriter>> {
         unsupported()
     }
-    fn create_dir(&self, _: StorageCreateDirRequest) -> StorageFuture<'_, StorageEntry> {
+    fn create_dir(&self, _: StorageCreateDirRequest) -> StorageFuture<'_, Entry> {
         unsupported()
     }
     fn remove_entry(&self, _: StorageRemoveEntryRequest) -> StorageFuture<'_, ()> {
         unsupported()
     }
-    fn move_entry(&self, _: StorageMoveEntryRequest) -> StorageFuture<'_, StorageEntry> {
+    fn move_entry(&self, _: StorageMoveEntryRequest) -> StorageFuture<'_, Entry> {
         unsupported()
     }
 }

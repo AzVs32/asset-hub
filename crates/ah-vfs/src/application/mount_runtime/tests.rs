@@ -13,7 +13,7 @@ use crate::{
         DriverKey, InstanceId,
         namespace::{ChildMountPolicy, MountId, MountTableError, VirtualPath},
         storage::{
-            StorageCapabilities, StorageEntry, StorageEntryKind, StorageError, StorageErrorKind,
+            Entry, StorageCapabilities, StorageEntryKind, StorageError, StorageErrorKind,
             StorageStatEntryRequest,
         },
     },
@@ -139,9 +139,9 @@ impl Storage for TestStorage {
     fn chunk_size(&self) -> NonZeroUsize {
         NonZeroUsize::MIN
     }
-    fn stat_entry(&self, request: StorageStatEntryRequest) -> StorageFuture<'_, StorageEntry> {
+    fn stat_entry(&self, request: StorageStatEntryRequest) -> StorageFuture<'_, Entry> {
         Box::pin(async move {
-            Ok(StorageEntry {
+            Ok(Entry {
                 path: request.path,
                 kind: StorageEntryKind::File,
                 size: Some(1),

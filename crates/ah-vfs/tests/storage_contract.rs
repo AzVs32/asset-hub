@@ -17,8 +17,8 @@ use ah_vfs::{
         DriverError, DriverInstance, DriverKey, InstanceId,
         namespace::{ChildMountPolicy, VirtualPath},
         storage::{
-            AttributeSupport, EntryPermissions, FileReadSupport, FileWriteSupport,
-            StorageCapabilities, StorageEntry, StorageError, StorageErrorKind, StoragePath,
+            AttributeSupport, Entry, EntryPermissions, FileReadSupport, FileWriteSupport,
+            StorageCapabilities, StorageError, StorageErrorKind, StoragePath,
             StorageReadFileRequest, StorageWriteFileMode, StorageWriteFileRequest, XattrName,
         },
     },
@@ -57,7 +57,7 @@ impl StorageFileWriter for TestWriter {
             }
         })
     }
-    fn commit(&mut self) -> StorageFuture<'_, StorageEntry> {
+    fn commit(&mut self) -> StorageFuture<'_, Entry> {
         Box::pin(async {
             if self.closed {
                 return Err(StorageError::new(StorageErrorKind::SessionClosed));

@@ -3,7 +3,7 @@
 use ah_vfs::{
     application::port::{Storage, StorageFileReader, StorageFileWriter, StorageFuture},
     domain::storage::{
-        StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageEntry, StorageError,
+        Entry, StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageError,
         StorageErrorKind, StorageMoveEntryRequest, StorageReadFileRequest,
         StorageRemoveEntryRequest, StorageStatEntryRequest, StorageWriteFileRequest,
     },
@@ -71,7 +71,7 @@ impl Storage for WindowsLocalStorage {
         NonZeroUsize::new(CHUNK_SIZE).unwrap_or(NonZeroUsize::MIN)
     }
 
-    fn stat_entry(&self, request: StorageStatEntryRequest) -> StorageFuture<'_, StorageEntry> {
+    fn stat_entry(&self, request: StorageStatEntryRequest) -> StorageFuture<'_, Entry> {
         let dir = self.dir.clone();
         Box::pin(blocking(move || fs::stat_entry(&dir, request.path)))
     }
@@ -103,7 +103,7 @@ impl Storage for WindowsLocalStorage {
         }))
     }
 
-    fn create_dir(&self, request: StorageCreateDirRequest) -> StorageFuture<'_, StorageEntry> {
+    fn create_dir(&self, request: StorageCreateDirRequest) -> StorageFuture<'_, Entry> {
         let dir = self.dir.clone();
         Box::pin(blocking(move || fs::create_dir(&dir, request)))
     }
@@ -113,7 +113,7 @@ impl Storage for WindowsLocalStorage {
         Box::pin(blocking(move || fs::remove_entry(&dir, request.path)))
     }
 
-    fn move_entry(&self, request: StorageMoveEntryRequest) -> StorageFuture<'_, StorageEntry> {
+    fn move_entry(&self, request: StorageMoveEntryRequest) -> StorageFuture<'_, Entry> {
         let dir = self.dir.clone();
         Box::pin(blocking(move || fs::move_entry(&dir, request)))
     }

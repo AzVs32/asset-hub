@@ -3,7 +3,7 @@ use ah_vfs::{
     domain::{
         InstanceId,
         storage::{
-            StorageEntry, StorageError, StorageErrorKind, StoragePath, StorageReadFileRequest,
+            Entry, StorageError, StorageErrorKind, StoragePath, StorageReadFileRequest,
             StorageStatEntryRequest, StorageWriteFileRequest,
         },
     },
@@ -157,7 +157,7 @@ async fn open(driver: &PluginDriver) -> Result<Arc<dyn Storage>> {
         ))
         .await?)
 }
-async fn stat(storage: &dyn Storage) -> std::result::Result<StorageEntry, StorageError> {
+async fn stat(storage: &dyn Storage) -> std::result::Result<Entry, StorageError> {
     storage
         .stat_entry(StorageStatEntryRequest {
             path: StoragePath::parse("file")?,
