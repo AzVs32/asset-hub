@@ -32,3 +32,15 @@ fn instance_id_inputs_preserve_identity_and_share_validation() -> Result<(), Ins
     }
     Ok(())
 }
+
+#[test]
+fn generated_ids_are_valid_uuid_v7_values_and_round_trip() -> Result<(), Box<dyn std::error::Error>>
+{
+    let id: InstanceId = InstanceId::generate();
+    let uuid: ah_id::UuidV7 = id.as_str().parse()?;
+    assert_eq!(uuid.to_string(), id.as_str());
+    assert_eq!(InstanceId::parse(id.as_str())?, id);
+    assert_eq!(InstanceId::try_from(id.to_string())?, id);
+    assert_ne!(InstanceId::generate(), id);
+    Ok(())
+}

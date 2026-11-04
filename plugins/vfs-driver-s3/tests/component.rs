@@ -12,7 +12,6 @@ use ah_vfs::{
     domain::{
         DriverInstance, InstanceId,
         namespace::VirtualPath,
-        new_instance_id,
         storage::{
             DirModel, StorageDirQuery, StorageErrorKind, StorageMoveEntryRequest, StoragePath,
             StorageReadFileRequest, StorageStatEntryRequest, StorageWriteFileMode,
@@ -218,7 +217,7 @@ async fn s3_component_runs_through_host_records_mounts_and_streams() -> Result {
     let endpoint = std::env::var("VFS_TEST_S3_ENDPOINT")?;
     let access = std::env::var("VFS_TEST_S3_ACCESS_KEY")?;
     let secret = std::env::var("VFS_TEST_S3_SECRET_KEY")?;
-    let bucket = format!("vfs-{}", new_instance_id()?.as_str().replace('-', ""));
+    let bucket = format!("vfs-{}", InstanceId::generate().as_str().replace('-', ""));
     if !fixture_request("PUT", &endpoint, &bucket, None, &access, &secret)
         .await?
         .is_success()

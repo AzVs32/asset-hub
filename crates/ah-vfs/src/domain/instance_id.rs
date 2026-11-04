@@ -19,6 +19,12 @@ pub enum InstanceIdError {
 }
 
 impl InstanceId {
+    /// Generate a UUID v7 identity without restricting parsed custom identifiers.
+    pub fn generate() -> Self {
+        // The generator's canonical UUID text always satisfies the ID constraints.
+        Self(ah_id::UuidV7::new().to_string())
+    }
+
     pub fn parse(input: &str) -> Result<Self, InstanceIdError> {
         if input.is_empty() {
             return Err(InstanceIdError::Empty);
@@ -51,18 +57,4 @@ impl TryFrom<String> for InstanceId {
     fn try_from(input: String) -> Result<Self, Self::Error> {
         Self::parse(&input)
     }
-}
-
-#[derive(ah_id::Id)]
-#[id(generate, display)]
-struct GeneratedInstanceId(ah_id::UuidV7);
-/// Generate the host/default driver's UUIDv7 identity without constraining custom IDs.
-pub fn new_instance_id() -> Result<InstanceId, super::DriverError> {
-    InstanceId::parse(&GeneratedInstanceId::new().to_string()).map_err(|source| {
-        super::storage::StorageError::with_source(
-            super::storage::StorageErrorKind::InvalidData,
-            source,
-        )
-        .into()
-    })
 }

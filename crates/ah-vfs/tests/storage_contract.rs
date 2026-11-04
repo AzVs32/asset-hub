@@ -348,7 +348,10 @@ async fn opening_streaming_and_committing_keep_domain_error_categories() -> Test
 struct ReadOnlyPermissions;
 impl StoragePermissions for ReadOnlyPermissions {
     fn get_permissions(&self, _: StoragePath) -> StorageFuture<'_, EntryPermissions> {
-        Box::pin(async { EntryPermissions::new(0o444) })
+        Box::pin(async {
+            EntryPermissions::new(0o444)
+                .map_err(|error| StorageError::with_source(StorageErrorKind::InvalidData, error))
+        })
     }
 }
 #[tokio::test]

@@ -9,7 +9,9 @@ use thiserror::Error;
 /// Unicode names are preserved exactly, without case folding or normalization.
 /// Namespace names may contain `:` even though instance-local storage paths may
 /// not. Routing must validate the remaining suffix before passing it to storage.
-#[derive(Clone, Debug, Display, Eq, PartialEq)]
+/// Equality, hashing and ordering use the canonical text. Ordering is
+/// case-sensitive lexicographic UTF-8 order, not directory-tree traversal order.
+#[derive(Clone, Debug, Display, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct VirtualPath(String);
 
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]

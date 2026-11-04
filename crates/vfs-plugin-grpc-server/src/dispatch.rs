@@ -2,7 +2,7 @@
 use ah_vfs::{
     application::port::*,
     domain::{
-        DriverError, InstanceId, new_instance_id,
+        DriverError, InstanceId,
         storage::{
             EntryPermissions, StorageCreateDirRequest, StorageDirQuery, StorageError,
             StorageErrorKind, StorageMoveEntryRequest, StoragePath, StorageReadFileRequest,
@@ -64,6 +64,15 @@ fn missing() -> DriverError {
 }
 fn path(s: &str) -> Result<StoragePath, DriverError> {
     StoragePath::parse(s).map_err(|e| StorageError::from(e).into())
+}
+// Attribute validation errors acquire request semantics only at this boundary.
+fn permissions(mode: u32) -> Result<EntryPermissions, DriverError> {
+    EntryPermissions::new(mode)
+        .map_err(|error| StorageError::with_source(StorageErrorKind::InvalidRequest, error).into())
+}
+fn xattr_name(name: &str) -> Result<XattrName, DriverError> {
+    XattrName::parse(name)
+        .map_err(|error| StorageError::with_source(StorageErrorKind::InvalidRequest, error).into())
 }
 fn id(s: &str) -> Result<InstanceId, DriverError> {
     InstanceId::parse(s).map_err(|_| StorageError::new(StorageErrorKind::InvalidRequest).into())
@@ -210,7 +219,7 @@ impl Drop for InitializationGuard<'_> {
 }
 impl Generation {
     fn new(driver: Arc<dyn Driver>) -> Result<Self, DriverError> {
-        let generation = new_instance_id()?.as_str().to_owned();
+        let generation = InstanceId::generate().as_str().to_owned();
         let description = c::describe(driver.as_ref(), generation);
         p::negotiate(&description, &[]).map_err(|_| unsupported())?;
         c::driver_info(&description)?;
@@ -666,7 +675,7 @@ impl Session {
             p::StorageOp::SetPermissions(p::SetPermissions { path: raw, mode }) => {
                 s.permissions()
                     .ok_or_else(unsupported)?
-                    .set_permissions(path(&raw)?, EntryPermissions::new(mode)?)
+                    .set_permissions(path(&raw)?, permissions(mode)?)
                     .await?;
                 Value::Unit(p::Empty {})
             }
@@ -693,7 +702,7 @@ impl Session {
                     data: s
                         .xattrs()
                         .ok_or_else(unsupported)?
-                        .get_xattr(path(&raw)?, XattrName::parse(&name)?, c::limit(max_bytes)?)
+                        .get_xattr(path(&raw)?, xattr_name(&name)?, c::limit(max_bytes)?)
                         .await?,
                 });
             }
@@ -710,18 +719,63 @@ impl Session {
                 };
                 s.xattrs()
                     .ok_or_else(unsupported)?
-                    .set_xattr(path(&raw)?, XattrName::parse(&name)?, data, mode)
+                    .set_xattr(path(&raw)?, xattr_name(&name)?, data, mode)
                     .await?;
                 Value::Unit(p::Empty {})
             }
             p::StorageOp::RemoveXattr(p::RemoveXattr { path: raw, name }) => {
                 s.xattrs()
                     .ok_or_else(unsupported)?
-                    .remove_xattr(path(&raw)?, XattrName::parse(&name)?)
+                    .remove_xattr(path(&raw)?, xattr_name(&name)?)
                     .await?;
                 Value::Unit(p::Empty {})
             }
         };
         Ok(p::Reply::new(value))
+    }
+}
+
+#[cfg(test)]
+mod attribute_validation_tests {
+    use super::*;
+    use ah_vfs::domain::storage::{EntryPermissionsError, XattrNameError};
+    use std::error::Error;
+
+    #[test]
+    fn request_permissions_keep_the_value_validation_cause() -> Result<(), Box<dyn Error>> {
+        let error = permissions(0o100644)
+            .err()
+            .ok_or("accepted entry type bits")?;
+        let storage = error.storage_error().ok_or("missing storage category")?;
+        assert_eq!(storage.kind(), StorageErrorKind::InvalidRequest);
+        assert_eq!(
+            storage
+                .source()
+                .and_then(|e| e.downcast_ref::<EntryPermissionsError>()),
+            Some(&EntryPermissionsError::InvalidBits)
+        );
+        assert_eq!(permissions(0o7640)?.bits(), 0o7640);
+        Ok(())
+    }
+
+    #[test]
+    fn request_xattr_names_keep_each_validation_cause() -> Result<(), Box<dyn Error>> {
+        for (name, expected) in [
+            (String::new(), XattrNameError::Empty),
+            ("a".repeat(XattrName::MAX_LEN + 1), XattrNameError::TooLong),
+            ("user.\0name".to_owned(), XattrNameError::InvalidCharacter),
+        ] {
+            let error = xattr_name(&name).err().ok_or("accepted invalid name")?;
+            let storage = error.storage_error().ok_or("missing storage category")?;
+            assert_eq!(storage.kind(), StorageErrorKind::InvalidRequest);
+            assert_eq!(
+                storage
+                    .source()
+                    .and_then(|e| e.downcast_ref::<XattrNameError>()),
+                Some(&expected)
+            );
+        }
+        assert_eq!(xattr_name("user.名字")?.as_str(), "user.名字");
+        Ok(())
     }
 }

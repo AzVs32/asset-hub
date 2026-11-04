@@ -18,7 +18,7 @@ use super::{
     },
 };
 use crate::domain::{
-    DriverError, DriverInstance, DriverKey, InstanceId, new_instance_id,
+    DriverError, DriverInstance, DriverKey, InstanceId,
     storage::{StorageError, StorageErrorKind},
 };
 use serde_json::Value;
@@ -377,7 +377,7 @@ impl HostInstanceRegistry {
     pub fn create(&self, config: InstanceConfig) -> DriverFuture<'_, InstanceInfo> {
         Box::pin(async move {
             self.schema()?;
-            let id = new_instance_id()?;
+            let id = InstanceId::generate();
             let time = now()?;
             let prepared = self.prepare(config.clone()).await?;
             let envelope = self.encode(&id, prepared, &config).await?;

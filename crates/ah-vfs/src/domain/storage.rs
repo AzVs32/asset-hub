@@ -17,7 +17,9 @@ mod operations;
 mod pagination;
 mod path;
 
-pub use attributes::{EntryPermissions, XattrName, XattrWriteMode};
+pub use attributes::{
+    EntryPermissions, EntryPermissionsError, XattrName, XattrNameError, XattrWriteMode,
+};
 pub use capabilities::{
     AttributeSupport, DirModel, FileReadSupport, FileWriteSupport, RenameSupport,
     StorageCapabilities, StorageCapabilitiesBuilder, StorageCapabilitiesError,

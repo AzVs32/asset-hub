@@ -3,7 +3,7 @@ mod dns;
 mod grants;
 mod http;
 use ah_vfs::domain::{
-    DriverError, new_instance_id,
+    DriverError, InstanceId,
     storage::{StorageError, StorageErrorKind},
 };
 use grants::NetworkPolicy;
@@ -392,7 +392,7 @@ impl InstanceFactory {
                 initialized: None,
                 poisoned: false,
                 faulted: false,
-                generation: new_instance_id()?.as_str().into(),
+                generation: InstanceId::generate().as_str().into(),
                 _capacity: capacity,
             })),
             disconnected: Arc::new(AtomicBool::new(false)),

@@ -8,7 +8,9 @@ use thiserror::Error;
 /// No normalization or lossy conversion is performed. This is a portable logical
 /// address, not an OS path or a sandbox: adapters must enforce native name limits,
 /// symbolic-link policy and confinement to the instance root themselves.
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// Equality, hashing and ordering use the exact validated text. Ordering is
+/// case-sensitive lexicographic UTF-8 order, without Unicode normalization.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct StoragePath(String);
 
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]

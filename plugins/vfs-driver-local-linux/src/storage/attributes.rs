@@ -36,7 +36,7 @@ mod posix {
     use super::*;
     use ah_vfs::{
         application::port::{StorageFuture, StoragePermissions},
-        domain::storage::{EntryPermissions, StoragePath},
+        domain::storage::{EntryPermissions, StorageErrorKind, StoragePath},
     };
     use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
     use cap_std::fs::{File, OpenOptions, Permissions, PermissionsExt};
@@ -76,6 +76,7 @@ mod posix {
                         .mode()
                         & 0o7777,
                 )
+                .map_err(|error| StorageError::with_source(StorageErrorKind::InvalidData, error))
             }))
         }
         fn set_permissions(
@@ -131,7 +132,9 @@ mod posix {
                                     error,
                                 )
                             })?;
-                            XattrName::parse(name)
+                            XattrName::parse(name).map_err(|error| {
+                                StorageError::with_source(StorageErrorKind::InvalidData, error)
+                            })
                         })
                         .collect::<Result<Vec<_>, StorageError>>()?;
                     names.sort_by(|a, b| a.as_str().cmp(b.as_str()));

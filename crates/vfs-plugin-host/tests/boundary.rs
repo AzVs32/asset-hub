@@ -3,12 +3,15 @@ use ah_vfs::{
     domain::{
         DriverError, InstanceId,
         storage::{
-            StorageCapabilities, StorageEntry, StorageEntryKind, StorageErrorKind, StoragePath,
-            StorageReadFileRequest, StorageWriteFileRequest,
+            EntryPermissionsError, StorageCapabilities, StorageEntry, StorageEntryKind,
+            StorageErrorKind, StoragePath, StorageReadFileRequest, StorageWriteFileRequest,
+            XattrName, XattrNameError,
         },
     },
 };
 use std::{
+    error::Error,
+    num::NonZeroUsize,
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -23,10 +26,27 @@ enum Fault {
     Capabilities,
     Commit,
     Reader,
+    Attributes(String),
 }
 struct Peer {
     fault: Fault,
     commits: AtomicUsize,
+}
+impl Peer {
+    fn capabilities(&self) -> Vec<i32> {
+        let mut capabilities = vec![
+            p::Capability::Stat as i32,
+            p::Capability::RangeRead as i32,
+            p::Capability::WriteNew as i32,
+        ];
+        if matches!(self.fault, Fault::Attributes(_)) {
+            capabilities.extend([
+                p::Capability::PermissionsRead as i32,
+                p::Capability::XattrsRead as i32,
+            ]);
+        }
+        capabilities
+    }
 }
 impl vfs_plugin_host::TransportFactory for Peer {
     fn connect(self: Arc<Self>) -> vfs_plugin_host::ConnectFuture {
@@ -54,11 +74,7 @@ impl Transport for Peer {
                         name: "Opaque peer".into(),
                         version: "1.0.0".into(),
                         child_mounts: true,
-                        capabilities: vec![
-                            p::Capability::Stat as i32,
-                            p::Capability::RangeRead as i32,
-                            p::Capability::WriteNew as i32,
-                        ],
+                        capabilities: self.capabilities(),
 
                         settings_schema: None,
                         instance_schema: None,
@@ -72,15 +88,23 @@ impl Transport for Peer {
                         capabilities: if matches!(self.fault, Fault::Capabilities) {
                             vec![p::Capability::RenameReplace as i32]
                         } else {
-                            vec![
-                                p::Capability::Stat as i32,
-                                p::Capability::RangeRead as i32,
-                                p::Capability::WriteNew as i32,
-                            ]
+                            self.capabilities()
                         },
                         chunk_size: 65536,
                     }),
                 }),
+                Op::Storage(call) => match call.operation {
+                    Some(p::StorageOp::GetPermissions(_)) => {
+                        Value::Permissions(p::Permissions { mode: 0o100644 })
+                    }
+                    Some(p::StorageOp::ListXattrs(_)) => Value::Names(p::Names {
+                        names: vec![match &self.fault {
+                            Fault::Attributes(name) => name.clone(),
+                            _ => "user.valid".into(),
+                        }],
+                    }),
+                    _ => Value::Unit(p::Empty {}),
+                },
                 Op::Write(_) => Value::Writer(p::Handle { handle: 2 }),
                 Op::Read(_) => Value::Reader(p::Handle { handle: 3 }),
                 Op::ReaderNext(_) => Value::Chunk(p::Chunk { eof: false }),
@@ -221,5 +245,66 @@ fn timestamps_and_unknown_error_codes_preserve_boundary_semantics() -> Result {
         convert::decode_capabilities(&convert::capabilities(caps))?,
         caps
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn malformed_permissions_response_is_backend_data_with_its_validation_cause() -> Result {
+    let (driver, _) = peer(Fault::Attributes("user.valid".into())).await?;
+    let storage = driver
+        .open(OpenContext::new(
+            InstanceId::parse("instance")?,
+            Default::default(),
+        ))
+        .await?;
+    let error = storage
+        .permissions()
+        .ok_or("missing permissions extension")?
+        .get_permissions(StoragePath::root())
+        .await
+        .err()
+        .ok_or("accepted entry type bits")?;
+    assert_eq!(error.kind(), StorageErrorKind::InvalidData);
+    assert_eq!(
+        error
+            .source()
+            .and_then(|e| e.downcast_ref::<EntryPermissionsError>()),
+        Some(&EntryPermissionsError::InvalidBits)
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn malformed_xattr_responses_keep_each_value_validation_cause() -> Result {
+    for (name, expected) in [
+        (String::new(), XattrNameError::Empty),
+        ("a".repeat(XattrName::MAX_LEN + 1), XattrNameError::TooLong),
+        ("user.\0name".to_owned(), XattrNameError::InvalidCharacter),
+    ] {
+        let (driver, _) = peer(Fault::Attributes(name)).await?;
+        let storage = driver
+            .open(OpenContext::new(
+                InstanceId::parse("instance")?,
+                Default::default(),
+            ))
+            .await?;
+        let error = storage
+            .xattrs()
+            .ok_or("missing xattrs extension")?
+            .list_xattrs(
+                StoragePath::root(),
+                NonZeroUsize::new(1024).ok_or("zero limit")?,
+            )
+            .await
+            .err()
+            .ok_or("accepted invalid attribute name")?;
+        assert_eq!(error.kind(), StorageErrorKind::InvalidData);
+        assert_eq!(
+            error
+                .source()
+                .and_then(|e| e.downcast_ref::<XattrNameError>()),
+            Some(&expected)
+        );
+    }
     Ok(())
 }

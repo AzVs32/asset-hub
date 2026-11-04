@@ -806,7 +806,9 @@ impl StoragePermissions for RemoteStorage {
                 .await?;
             match r.result.ok_or_else(convert::storage_invalid)? {
                 Value::Permissions(p::Permissions { mode }) if r.data.is_empty() => {
-                    EntryPermissions::new(mode).map_err(|_| convert::storage_invalid())
+                    EntryPermissions::new(mode).map_err(|error| {
+                        StorageError::with_source(StorageErrorKind::InvalidData, error)
+                    })
                 }
                 _ => Err(convert::storage_invalid()),
             }
@@ -856,7 +858,11 @@ impl StorageXattrs for RemoteStorage {
                     }
                     names
                         .into_iter()
-                        .map(|n| XattrName::parse(&n).map_err(|_| convert::storage_invalid()))
+                        .map(|n| {
+                            XattrName::parse(&n).map_err(|error| {
+                                StorageError::with_source(StorageErrorKind::InvalidData, error)
+                            })
+                        })
                         .collect()
                 }
                 _ => Err(convert::storage_invalid()),

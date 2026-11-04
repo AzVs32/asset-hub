@@ -20,4 +20,4 @@ mod instance_id;
 pub use driver_error::{DriverError, InstanceConfigErrorKind};
 pub use driver_instance::DriverInstance;
 pub use driver_key::{DriverKey, DriverKeyError};
-pub use instance_id::{InstanceId, InstanceIdError, new_instance_id};
+pub use instance_id::{InstanceId, InstanceIdError};
