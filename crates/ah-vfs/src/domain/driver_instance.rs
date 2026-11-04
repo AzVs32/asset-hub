@@ -1,19 +1,19 @@
 use super::{DriverKey, InstanceId};
 use getset::Getters;
 
-/// Identifies a host-owned instance record scoped to a particular driver.
+/// The persistent identity of a host-owned instance scoped to a particular driver.
 ///
-/// This persistent reference contains no configuration or live storage handle.
+/// This value contains no configuration or live storage handle.
 /// An instance identifier is scoped to its driver; both fields define identity.
 #[derive(Clone, Debug, Eq, Getters, Hash, PartialEq)]
-pub struct DriverInstanceRef {
+pub struct DriverInstance {
     #[getset(get = "pub")]
     driver_key: DriverKey,
     #[getset(get = "pub")]
     instance_id: InstanceId,
 }
 
-impl DriverInstanceRef {
+impl DriverInstance {
     pub fn new(driver_key: DriverKey, instance_id: InstanceId) -> Self {
         Self {
             driver_key,

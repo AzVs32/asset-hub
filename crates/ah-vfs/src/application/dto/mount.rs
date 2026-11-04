@@ -1,11 +1,11 @@
 //! Requests, filters and views for mount management.
 
-use crate::domain::{DriverInstanceRef, DriverKey, Mount, MountId, VirtualPath};
+use crate::domain::{DriverInstance, DriverKey, Mount, MountId, VirtualPath};
 
 /// Attach an existing driver instance at a virtual path, initially enabled.
 pub struct MountRequest {
     pub virtual_path: VirtualPath,
-    pub driver_instance: DriverInstanceRef,
+    pub driver_instance: DriverInstance,
 }
 
 /// Persisted mount settings; this view does not imply backend health.
@@ -13,7 +13,7 @@ pub struct MountRequest {
 pub struct MountView {
     pub id: MountId,
     pub virtual_path: VirtualPath,
-    pub driver_instance: DriverInstanceRef,
+    pub driver_instance: DriverInstance,
     pub enabled: bool,
 }
 

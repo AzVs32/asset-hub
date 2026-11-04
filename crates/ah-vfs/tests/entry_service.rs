@@ -12,7 +12,7 @@ use ah_vfs::{
         service::{EntryService, MountService},
     },
     domain::{
-        ChildMountPolicy, DriverInstanceRef, DriverKey, InstanceId, StorageError, StoragePath,
+        ChildMountPolicy, DriverInstance, DriverKey, InstanceId, StorageError, StoragePath,
         VirtualPath,
     },
     infrastructure::mount_repository::SqliteMountRepository,
@@ -165,7 +165,7 @@ async fn services(response: Response) -> TestResult<(EntryService, MountService)
     let files = EntryService::new(runtime.clone());
     let mounts = MountService::new(runtime);
     mounts
-        .initialize_root(DriverInstanceRef::new(key, InstanceId::parse("root")?))
+        .initialize_root(DriverInstance::new(key, InstanceId::parse("root")?))
         .await?;
     Ok((files, mounts))
 }
@@ -176,7 +176,7 @@ async fn resolves_the_deepest_driver_instance_and_maps_metadata_to_virtual_paths
     mounts
         .mount(MountRequest {
             virtual_path: VirtualPath::parse("/docs")?,
-            driver_instance: DriverInstanceRef::new(
+            driver_instance: DriverInstance::new(
                 DriverKey::parse("fake")?,
                 InstanceId::parse("leaf")?,
             ),
@@ -203,7 +203,7 @@ async fn namespace_pagination_merges_every_backend_page_before_slicing() -> Test
     mounts
         .mount(MountRequest {
             virtual_path: VirtualPath::parse("/docs")?,
-            driver_instance: DriverInstanceRef::new(
+            driver_instance: DriverInstance::new(
                 DriverKey::parse("fake")?,
                 InstanceId::parse("leaf")?,
             ),
@@ -254,7 +254,7 @@ async fn mount_points_and_synthetic_dirs_keep_distinct_namespace_behavior() -> T
     let mounted = mounts
         .mount(MountRequest {
             virtual_path: nested.clone(),
-            driver_instance: DriverInstanceRef::new(
+            driver_instance: DriverInstance::new(
                 DriverKey::parse("fake")?,
                 InstanceId::parse("leaf")?,
             ),

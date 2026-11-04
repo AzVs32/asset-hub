@@ -1,13 +1,13 @@
 //! Validated host records; their persistence representation stays private.
 
 use super::envelope::Envelope;
-use crate::domain::{DriverError, DriverInstanceRef, StorageError, StorageErrorKind};
+use crate::domain::{DriverError, DriverInstance, StorageError, StorageErrorKind};
 
 /// One persisted host record. config_json is an opaque encrypted-parameters/public-
 /// details envelope, never a plaintext secret object. Debug omits the envelope.
 #[derive(Clone)]
 pub struct InstanceRecord {
-    instance: DriverInstanceRef,
+    instance: DriverInstance,
     config_version: u32,
     revision: u64,
     envelope: Envelope,
@@ -18,7 +18,7 @@ impl InstanceRecord {
     /// Validate numeric ranges, envelope/ciphertext shape and timestamps on every
     /// load, including pagination lookahead records before they are truncated.
     pub fn new(
-        instance: DriverInstanceRef,
+        instance: DriverInstance,
         config_version: u32,
         revision: u64,
         config_json: String,
@@ -36,7 +36,7 @@ impl InstanceRecord {
     }
 
     pub(super) fn from_envelope(
-        instance: DriverInstanceRef,
+        instance: DriverInstance,
         config_version: u32,
         revision: u64,
         envelope: Envelope,
@@ -64,7 +64,7 @@ impl InstanceRecord {
         &self.envelope
     }
 
-    pub fn instance(&self) -> &DriverInstanceRef {
+    pub fn instance(&self) -> &DriverInstance {
         &self.instance
     }
     /// Configuration schema version, unrelated to the update revision.

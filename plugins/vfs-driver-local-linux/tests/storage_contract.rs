@@ -9,9 +9,7 @@ use ah_vfs::{
         error::EntryError,
         service::{EntryService, MountService},
     },
-    domain::{
-        DriverInstanceRef, DriverKey, EntryPermissions, VirtualPath, XattrName, XattrWriteMode,
-    },
+    domain::{DriverInstance, DriverKey, EntryPermissions, VirtualPath, XattrName, XattrWriteMode},
     infrastructure::mount_repository::SqliteMountRepository,
 };
 use ah_vfs::{
@@ -72,7 +70,7 @@ async fn service(f: &Fixture) -> Result<EntryService, Box<dyn Error>> {
     let catalog = Arc::new(catalog);
     let runtime = Arc::new(MountRuntime::new(repository, catalog, Arc::new(ah_vfs::infrastructure::instance_record_repository::SqliteInstanceRecordRepository::from_pool(f.pool.clone()).await?), None));
     MountService::new(runtime.clone())
-        .initialize_root(DriverInstanceRef::new(
+        .initialize_root(DriverInstance::new(
             DriverKey::parse("local")?,
             f.id.clone(),
         ))

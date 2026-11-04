@@ -1,5 +1,5 @@
 use ah_vfs::domain::{
-    ChildMountPolicy, DriverInstanceRef, DriverKey, InstanceId, Mount, MountId, MountTable,
+    ChildMountPolicy, DriverInstance, DriverKey, InstanceId, Mount, MountId, MountTable,
     MountTableError, VirtualPath,
 };
 
@@ -9,7 +9,7 @@ fn mount(path: &str, driver: &str, enabled: bool) -> Result<Mount, Box<dyn std::
     Ok(Mount::builder()
         .id(MountId::new())
         .virtual_path(VirtualPath::parse(path)?)
-        .driver_instance(DriverInstanceRef::new(
+        .driver_instance(DriverInstance::new(
             DriverKey::parse(driver)?,
             InstanceId::parse("42")?,
         ))
@@ -54,7 +54,7 @@ fn duplicate_ids_and_canonical_paths_leave_the_table_unchanged() -> TestResult {
     let duplicate_id = Mount::builder()
         .id(root_id)
         .virtual_path(VirtualPath::parse("/another")?)
-        .driver_instance(DriverInstanceRef::new(
+        .driver_instance(DriverInstance::new(
             DriverKey::parse("builtin.local")?,
             InstanceId::parse("43")?,
         ))

@@ -10,7 +10,7 @@ use crate::{
         mount_runtime::MountRuntime,
         port::Driver,
     },
-    domain::{DriverError, DriverInstanceRef, DriverKey, StorageError, StorageErrorKind},
+    domain::{DriverError, DriverInstance, DriverKey, StorageError, StorageErrorKind},
 };
 use std::sync::Arc;
 
@@ -48,7 +48,7 @@ impl InstanceService {
 
     /// Select the driver by key, then forward parameters for authoritative validation.
     /// No instance ID exists before creation. Combine the selected key and returned
-    /// ID into DriverInstanceRef for subsequent operations. Never open storage here.
+    /// ID into DriverInstance for subsequent operations. Never open storage here.
     pub async fn create_instance(
         &self,
         driver_key: &DriverKey,
@@ -71,7 +71,7 @@ impl InstanceService {
     /// Read the driver's public view without opening storage or checking health.
     pub async fn get_instance(
         &self,
-        instance: &DriverInstanceRef,
+        instance: &DriverInstance,
     ) -> Result<Option<InstanceInfo>, InstanceError> {
         Ok(self
             .runtime
@@ -97,7 +97,7 @@ impl InstanceService {
     /// change; mount references permit mutable updates. Existing cache invalidation also covers errors/cancellation.
     pub async fn update_instance(
         &self,
-        instance: &DriverInstanceRef,
+        instance: &DriverInstance,
         config: InstanceConfig,
     ) -> Result<InstanceInfo, InstanceError> {
         let driver = self.driver(instance.driver_key())?;
@@ -114,7 +114,7 @@ impl InstanceService {
     /// Evict runtime retention before/after removal, including errors and cancellation.
     pub async fn remove_instance(
         &self,
-        instance: &DriverInstanceRef,
+        instance: &DriverInstance,
     ) -> Result<RemoveInstanceOutcome, InstanceError> {
         let driver = self.driver(instance.driver_key())?;
         let mut mounts = self

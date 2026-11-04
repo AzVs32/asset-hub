@@ -17,7 +17,7 @@ use ah_vfs::{
         service::{EntryService, MountService},
     },
     domain::{
-        AttributeSupport, ChildMountPolicy, DirModel, DriverError, DriverInstanceRef, DriverKey,
+        AttributeSupport, ChildMountPolicy, DirModel, DriverError, DriverInstance, DriverKey,
         EntryPermissions, FileReadSupport, FileWriteSupport, InstanceId, StorageCapabilities,
         StorageError, StorageErrorKind, StoragePath, VirtualPath, XattrName,
     },
@@ -157,7 +157,7 @@ async fn fixture(
         MountRuntime::new(repository, drivers, records, None)
     });
     MountService::new(runtime.clone())
-        .initialize_root(DriverInstanceRef::new(key, InstanceId::parse("root")?))
+        .initialize_root(DriverInstance::new(key, InstanceId::parse("root")?))
         .await?;
     Ok((EntryService::new(runtime), calls))
 }
@@ -456,7 +456,7 @@ async fn inconsistent_driver_capabilities_cannot_be_persisted_as_a_mount() -> Te
     let error = mounts
         .mount(MountRequest {
             virtual_path: VirtualPath::root(),
-            driver_instance: DriverInstanceRef::new(key, InstanceId::parse("root")?),
+            driver_instance: DriverInstance::new(key, InstanceId::parse("root")?),
         })
         .await
         .err()

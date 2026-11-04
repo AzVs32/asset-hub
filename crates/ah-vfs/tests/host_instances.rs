@@ -295,8 +295,8 @@ impl Fixture {
             cipher,
         })
     }
-    fn reference(&self, id: InstanceId) -> DriverInstanceRef {
-        DriverInstanceRef::new(self.driver.info.key().clone(), id)
+    fn reference(&self, id: InstanceId) -> DriverInstance {
+        DriverInstance::new(self.driver.info.key().clone(), id)
     }
     fn service(&self) -> InstanceService {
         InstanceService::new(self.runtime.clone())
@@ -874,7 +874,7 @@ struct SnapshotRepository {
 }
 
 impl InstanceRecordRepository for SnapshotRepository {
-    fn get(&self, instance: DriverInstanceRef) -> DriverFuture<'_, Option<InstanceRecord>> {
+    fn get(&self, instance: DriverInstance) -> DriverFuture<'_, Option<InstanceRecord>> {
         Box::pin(async move {
             self.reads.fetch_add(1, Ordering::SeqCst);
             let record = self.inner.get(instance.clone()).await?;
@@ -906,7 +906,7 @@ impl InstanceRecordRepository for SnapshotRepository {
         self.inner.update(record, revision)
     }
 
-    fn remove(&self, instance: DriverInstanceRef) -> DriverFuture<'_, RemoveInstanceOutcome> {
+    fn remove(&self, instance: DriverInstance) -> DriverFuture<'_, RemoveInstanceOutcome> {
         self.inner.remove(instance)
     }
 }

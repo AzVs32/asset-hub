@@ -13,7 +13,7 @@ use ah_vfs::application::port::{
     Driver, DriverFuture, Storage, StorageFileReader, StorageFileWriter, StorageFuture,
 };
 use ah_vfs::domain::{
-    ChildMountPolicy, DriverInstanceRef, DriverKey, DriverKeyError, InstanceId, Mount, MountId,
+    ChildMountPolicy, DriverInstance, DriverKey, DriverKeyError, InstanceId, Mount, MountId,
     MountTable, MountTableError, VirtualPath,
 };
 use ah_vfs::domain::{DriverError, StorageError, StorageErrorKind};
@@ -295,7 +295,7 @@ fn mount_table_uses_driver_owned_declarations() -> TestResult {
         Ok(Mount::builder()
             .id(MountId::new())
             .virtual_path(VirtualPath::parse(path)?)
-            .driver_instance(DriverInstanceRef::new(
+            .driver_instance(DriverInstance::new(
                 DriverKey::parse(key)?,
                 InstanceId::parse("42")?,
             ))

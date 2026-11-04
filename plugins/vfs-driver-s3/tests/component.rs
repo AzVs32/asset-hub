@@ -245,7 +245,7 @@ async fn s3_component_runs_through_host_records_mounts_and_streams() -> Result {
         let instance = instances
             .create_instance(driver.info().key(), config.clone())
             .await?;
-        let reference = DriverInstanceRef::new(driver.info().key().clone(), instance.id.clone());
+        let reference = DriverInstance::new(driver.info().key().clone(), instance.id.clone());
         assert!(
             !records
                 .get(reference.clone())

@@ -14,7 +14,7 @@ use ah_vfs::{
         service::{EntryService, MountService},
     },
     domain::{
-        DriverError, DriverInstanceRef, DriverKey, InstanceId, MountTableError,
+        DriverError, DriverInstance, DriverKey, InstanceId, MountTableError,
         StorageErrorKind as Kind, VirtualPath,
     },
     infrastructure::mount_repository::SqliteMountRepository,
@@ -34,8 +34,8 @@ struct Fixture {
 fn virtual_path(value: &str) -> TestResult<VirtualPath> {
     Ok(VirtualPath::parse(value)?)
 }
-fn reference(id: &InstanceId) -> TestResult<DriverInstanceRef> {
-    Ok(DriverInstanceRef::new(
+fn reference(id: &InstanceId) -> TestResult<DriverInstance> {
+    Ok(DriverInstance::new(
         DriverKey::parse(MemoryDriver::KEY)?,
         id.clone(),
     ))

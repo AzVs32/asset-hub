@@ -4,9 +4,7 @@ use crate::{
         dto::{InstanceQuery, RemoveInstanceOutcome},
         port::{DriverFuture, InstanceRecord, InstanceRecordPage, InstanceRecordRepository},
     },
-    domain::{
-        DriverError, DriverInstanceRef, DriverKey, InstanceId, StorageError, StorageErrorKind,
-    },
+    domain::{DriverError, DriverInstance, DriverKey, InstanceId, StorageError, StorageErrorKind},
     infrastructure::sqlite_error::database_error,
 };
 use sqlx::{Row, SqlitePool, sqlite::SqliteRow};
@@ -46,7 +44,7 @@ fn decode(row: SqliteRow) -> Result<InstanceRecord, DriverError> {
     let created: i64 = row.try_get("created_at").map_err(database_error)?;
     let updated: i64 = row.try_get("updated_at").map_err(database_error)?;
     InstanceRecord::new(
-        DriverInstanceRef::new(
+        DriverInstance::new(
             DriverKey::parse(&key).map_err(|_| invalid())?,
             InstanceId::parse(&id).map_err(|_| invalid())?,
         ),
@@ -58,7 +56,7 @@ fn decode(row: SqliteRow) -> Result<InstanceRecord, DriverError> {
     )
 }
 impl InstanceRecordRepository for SqliteInstanceRecordRepository {
-    fn get(&self, instance: DriverInstanceRef) -> DriverFuture<'_, Option<InstanceRecord>> {
+    fn get(&self, instance: DriverInstance) -> DriverFuture<'_, Option<InstanceRecord>> {
         Box::pin(async move {
             sqlx::query(
                 "SELECT * FROM vfs_instance_records WHERE driver_key = ? AND instance_id = ?",
@@ -121,7 +119,7 @@ impl InstanceRecordRepository for SqliteInstanceRecordRepository {
             Ok(())
         })
     }
-    fn remove(&self, instance: DriverInstanceRef) -> DriverFuture<'_, RemoveInstanceOutcome> {
+    fn remove(&self, instance: DriverInstance) -> DriverFuture<'_, RemoveInstanceOutcome> {
         Box::pin(async move {
             let result = sqlx::query(
                 "DELETE FROM vfs_instance_records WHERE driver_key = ? AND instance_id = ?",

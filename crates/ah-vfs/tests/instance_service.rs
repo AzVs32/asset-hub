@@ -13,7 +13,7 @@ use ah_vfs::{
         service::InstanceService,
     },
     domain::{
-        ChildMountPolicy, DriverError, DriverInstanceRef, DriverKey, InstanceId, Mount,
+        ChildMountPolicy, DriverError, DriverInstance, DriverKey, InstanceId, Mount,
         StorageCapabilities, StorageError, StorageErrorKind, VirtualPath,
     },
     infrastructure::mount_repository::SqliteMountRepository,
@@ -87,7 +87,7 @@ struct Fixture {
     pool: sqlx::SqlitePool,
     repository: Arc<SqliteMountRepository>,
     service: InstanceService,
-    instance: DriverInstanceRef,
+    instance: DriverInstance,
 }
 
 impl Fixture {
@@ -117,7 +117,7 @@ impl Fixture {
             creation_supported,
             creations: AtomicUsize::new(0),
         });
-        let instance = DriverInstanceRef::new(driver.info().key().clone(), driver.id.clone());
+        let instance = DriverInstance::new(driver.info().key().clone(), driver.id.clone());
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -148,7 +148,7 @@ impl Fixture {
     async fn mount(
         &self,
         path: &str,
-        instance: DriverInstanceRef,
+        instance: DriverInstance,
         enabled: bool,
     ) -> TestResult<Mount> {
         let mount = Mount::builder()
@@ -233,13 +233,13 @@ async fn all_aliases_are_reported_and_other_instance_identities_do_not_block() -
     f.repository.remove(last.id()).await?;
     f.mount(
         "/other-driver",
-        DriverInstanceRef::new(DriverKey::parse("another.provider")?, f.driver.id.clone()),
+        DriverInstance::new(DriverKey::parse("another.provider")?, f.driver.id.clone()),
         true,
     )
     .await?;
     f.mount(
         "/other-instance",
-        DriverInstanceRef::new(f.instance.driver_key().clone(), InstanceId::parse("other")?),
+        DriverInstance::new(f.instance.driver_key().clone(), InstanceId::parse("other")?),
         false,
     )
     .await?;
@@ -280,7 +280,7 @@ async fn repository_failures_stop_removal_before_the_driver_is_called() -> TestR
 #[tokio::test]
 async fn unknown_drivers_fail_through_the_same_public_service() -> TestResult {
     let f = Fixture::new(None).await?;
-    let missing = DriverInstanceRef::new(DriverKey::parse("missing")?, f.driver.id.clone());
+    let missing = DriverInstance::new(DriverKey::parse("missing")?, f.driver.id.clone());
     assert!(matches!(
         f.service.instance_config_schema(missing.driver_key()),
         Err(InstanceError::DriverNotRegistered(_))
@@ -353,7 +353,7 @@ async fn unknown_provider_creation_is_forwarded_without_host_field_or_type_knowl
         .service
         .create_instance(f.instance.driver_key(), opaque_config())
         .await?;
-    f.instance = DriverInstanceRef::new(f.instance.driver_key().clone(), created.id.clone());
+    f.instance = DriverInstance::new(f.instance.driver_key().clone(), created.id.clone());
     assert_eq!(
         f.service.get_instance(&f.instance).await?,
         Some(created.clone())

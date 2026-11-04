@@ -17,7 +17,7 @@
 //! Domain types deliberately do not define a persistence or wire representation.
 
 mod child_mount_policy;
-mod driver_instance_ref;
+mod driver_instance;
 mod driver_key;
 mod instance_id;
 mod mount;
@@ -27,7 +27,7 @@ mod storage_path;
 mod virtual_path;
 
 pub use child_mount_policy::ChildMountPolicy;
-pub use driver_instance_ref::DriverInstanceRef;
+pub use driver_instance::DriverInstance;
 pub use driver_key::{DriverKey, DriverKeyError};
 pub use instance_id::{InstanceId, InstanceIdError, new_instance_id};
 pub use mount::Mount;

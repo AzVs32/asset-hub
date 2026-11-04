@@ -1,7 +1,7 @@
 //! Errors returned by virtual filesystem application services.
 
 use crate::domain::{
-    DriverError, DriverInstanceRef, DriverKey, MountId, MountTableError, StorageError, VirtualPath,
+    DriverError, DriverInstance, DriverKey, MountId, MountTableError, StorageError, VirtualPath,
 };
 use thiserror::Error;
 
@@ -74,7 +74,7 @@ pub enum InstanceError {
     Driver(#[from] DriverError),
     #[error("driver instance is still referenced by mounts")]
     InstanceInUse {
-        instance: DriverInstanceRef,
+        instance: DriverInstance,
         mounts: Vec<MountId>,
     },
 }

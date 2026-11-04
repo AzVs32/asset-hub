@@ -8,7 +8,7 @@ use ah_vfs::application::error::{MountError, MountRepositoryError};
 use ah_vfs::application::port::{DriverFuture, MountRepository, MountRepositoryFuture, Storage};
 use ah_vfs::application::service::MountService;
 use ah_vfs::domain::{
-    ChildMountPolicy, DriverError, DriverInstanceRef, DriverKey, InstanceId, Mount, MountId,
+    ChildMountPolicy, DriverError, DriverInstance, DriverKey, InstanceId, Mount, MountId,
     MountTableError, VirtualPath,
 };
 use std::future::Future;
@@ -173,8 +173,8 @@ fn catalog() -> Result<Arc<DriverCatalog>, Box<dyn std::error::Error>> {
     Ok(Arc::new(catalog))
 }
 
-fn reference(driver: &str, id: &str) -> Result<DriverInstanceRef, Box<dyn std::error::Error>> {
-    Ok(DriverInstanceRef::new(
+fn reference(driver: &str, id: &str) -> Result<DriverInstance, Box<dyn std::error::Error>> {
+    Ok(DriverInstance::new(
         DriverKey::parse(driver)?,
         InstanceId::parse(id)?,
     ))

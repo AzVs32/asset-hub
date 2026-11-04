@@ -3,7 +3,7 @@
 use crate::application::dto::{MountFilter, MountRequest, MountView};
 use crate::application::error::MountError;
 use crate::application::mount_runtime::MountRuntime;
-use crate::domain::{DriverInstanceRef, Mount, MountId, MountTable, VirtualPath};
+use crate::domain::{DriverInstance, Mount, MountId, MountTable, VirtualPath};
 use std::sync::Arc;
 
 pub struct MountService {
@@ -20,10 +20,7 @@ impl MountService {
     /// Existing definitions are validated and retained, even if `instance` differs.
     /// Invalid non-empty data is reported, never replaced. This does not create
     /// or open a driver instance.
-    pub async fn initialize_root(
-        &self,
-        instance: DriverInstanceRef,
-    ) -> Result<MountId, MountError> {
+    pub async fn initialize_root(&self, instance: DriverInstance) -> Result<MountId, MountError> {
         let mounts = self.runtime.repository.list(MountFilter::default()).await?;
         if !mounts.is_empty() {
             return Ok(self.runtime.restore(mounts)?.root().id());

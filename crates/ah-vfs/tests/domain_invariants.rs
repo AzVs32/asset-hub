@@ -1,5 +1,5 @@
 use ah_vfs::domain::{
-    DriverInstanceRef, DriverKey, InstanceId, Mount, MountId, VirtualPath, VirtualPathError,
+    DriverInstance, DriverKey, InstanceId, Mount, MountId, VirtualPath, VirtualPathError,
 };
 
 #[test]
@@ -39,7 +39,7 @@ fn all_path_input_interfaces_apply_the_same_rules() -> Result<(), VirtualPathErr
 fn mount_builder_preserves_the_validated_path_and_instance()
 -> Result<(), Box<dyn std::error::Error>> {
     let path = VirtualPath::parse("//文档///保存/")?;
-    let instance = DriverInstanceRef::new(DriverKey::parse("acme.s3")?, InstanceId::parse("42")?);
+    let instance = DriverInstance::new(DriverKey::parse("acme.s3")?, InstanceId::parse("42")?);
     let mount = Mount::builder()
         .id(MountId::new())
         .virtual_path(path)
@@ -58,8 +58,8 @@ fn restored_mount_keeps_its_identity() -> Result<(), Box<dyn std::error::Error>>
     let original = MountId::new();
     let persisted = original.to_string();
     let restored = MountId::try_from(persisted)?;
-    let instance = DriverInstanceRef::new(DriverKey::parse("acme.s3")?, InstanceId::parse("42")?);
-    let restored_instance = DriverInstanceRef::new(
+    let instance = DriverInstance::new(DriverKey::parse("acme.s3")?, InstanceId::parse("42")?);
+    let restored_instance = DriverInstance::new(
         instance.driver_key().to_string().parse()?,
         instance.instance_id().to_string().parse()?,
     );
@@ -85,18 +85,18 @@ fn restored_mount_keeps_its_identity() -> Result<(), Box<dyn std::error::Error>>
 #[test]
 fn instance_reference_identity_includes_driver_and_instance()
 -> Result<(), Box<dyn std::error::Error>> {
-    let reference = DriverInstanceRef::new(DriverKey::parse("acme.s3")?, InstanceId::parse("42")?);
+    let reference = DriverInstance::new(DriverKey::parse("acme.s3")?, InstanceId::parse("42")?);
     assert_eq!(
         reference,
-        DriverInstanceRef::new(DriverKey::parse("acme.s3")?, InstanceId::parse("42")?)
+        DriverInstance::new(DriverKey::parse("acme.s3")?, InstanceId::parse("42")?)
     );
     assert_ne!(
         reference,
-        DriverInstanceRef::new(DriverKey::parse("acme.memory")?, InstanceId::parse("42")?)
+        DriverInstance::new(DriverKey::parse("acme.memory")?, InstanceId::parse("42")?)
     );
     assert_ne!(
         reference,
-        DriverInstanceRef::new(DriverKey::parse("acme.s3")?, InstanceId::parse("43")?)
+        DriverInstance::new(DriverKey::parse("acme.s3")?, InstanceId::parse("43")?)
     );
     Ok(())
 }

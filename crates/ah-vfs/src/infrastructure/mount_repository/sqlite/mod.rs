@@ -3,7 +3,7 @@
 use crate::application::dto::MountFilter;
 use crate::application::error::MountRepositoryError;
 use crate::application::port::{MountRepository, MountRepositoryFuture};
-use crate::domain::{DriverInstanceRef, DriverKey, InstanceId, Mount, MountId, VirtualPath};
+use crate::domain::{DriverInstance, DriverKey, InstanceId, Mount, MountId, VirtualPath};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteRow};
 use sqlx::{Connection, Row, SqliteConnection, SqlitePool};
 use std::{error::Error, io, path::Path};
@@ -200,7 +200,7 @@ fn decode(row: SqliteRow) -> Result<Mount, MountRepositoryError> {
     Ok(Mount::builder()
         .id(id.parse::<MountId>().map_err(invalid_data)?)
         .virtual_path(virtual_path)
-        .driver_instance(DriverInstanceRef::new(
+        .driver_instance(DriverInstance::new(
             DriverKey::parse(&key).map_err(invalid_data)?,
             InstanceId::parse(&instance).map_err(invalid_data)?,
         ))
@@ -234,7 +234,7 @@ mod tests {
                 Mount::builder()
                     .id(id)
                     .virtual_path(VirtualPath::root())
-                    .driver_instance(DriverInstanceRef::new(
+                    .driver_instance(DriverInstance::new(
                         DriverKey::parse("builtin.local")?,
                         InstanceId::parse("root")?,
                     ))

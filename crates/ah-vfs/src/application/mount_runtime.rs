@@ -6,7 +6,7 @@ use crate::{
         error::EntryError,
         port::{Driver, MountRepository, Storage, validate_storage_capabilities},
     },
-    domain::{DriverError, DriverInstanceRef, Mount, MountTable, MountTableError},
+    domain::{DriverError, DriverInstance, Mount, MountTable, MountTableError},
 };
 use std::{
     collections::HashMap,
@@ -19,7 +19,7 @@ type StorageCell = Arc<OnceCell<Arc<dyn Storage>>>;
 #[derive(Default)]
 struct Cache {
     table: Arc<OnceCell<Arc<MountTable>>>,
-    storage: HashMap<DriverInstanceRef, StorageCell>,
+    storage: HashMap<DriverInstance, StorageCell>,
 }
 
 /// Shared state for one host's mount namespace. Construct once and pass the same
@@ -90,7 +90,7 @@ impl MountRuntime {
 
     /// Forget a storage handle after external configuration changes or removal.
     /// This neither removes the registration nor changes mount definitions.
-    pub fn invalidate_instance(&self, instance: &DriverInstanceRef) {
+    pub fn invalidate_instance(&self, instance: &DriverInstance) {
         let previous = self.cache().storage.remove(instance);
         drop(previous);
     }
@@ -119,7 +119,7 @@ impl MountRuntime {
 
     pub(crate) async fn storage(
         &self,
-        instance: &DriverInstanceRef,
+        instance: &DriverInstance,
         driver: &dyn Driver,
     ) -> Result<Arc<dyn Storage>, DriverError> {
         let (cell, retired) = {
@@ -162,7 +162,7 @@ impl MountRuntime {
         guard
     }
 
-    pub(crate) fn changing_instance(&self, instance: DriverInstanceRef) -> Invalidation<'_> {
+    pub(crate) fn changing_instance(&self, instance: DriverInstance) -> Invalidation<'_> {
         let guard = Invalidation {
             runtime: self,
             instance: Some(instance),
@@ -176,7 +176,7 @@ impl MountRuntime {
 /// cancellation. Detached OnceCells cannot republish old results into the cache.
 pub(crate) struct Invalidation<'a> {
     runtime: &'a MountRuntime,
-    instance: Option<DriverInstanceRef>,
+    instance: Option<DriverInstance>,
 }
 
 impl Invalidation<'_> {

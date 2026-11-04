@@ -18,7 +18,7 @@ use super::{
     },
 };
 use crate::domain::{
-    DriverError, DriverInstanceRef, DriverKey, InstanceId, StorageError, StorageErrorKind,
+    DriverError, DriverInstance, DriverKey, InstanceId, StorageError, StorageErrorKind,
     new_instance_id,
 };
 use serde_json::Value;
@@ -165,8 +165,8 @@ impl HostInstanceRegistry {
             cipher,
         }
     }
-    fn reference(&self, id: InstanceId) -> DriverInstanceRef {
-        DriverInstanceRef::new(self.key.clone(), id)
+    fn reference(&self, id: InstanceId) -> DriverInstance {
+        DriverInstance::new(self.key.clone(), id)
     }
     fn schema(&self) -> Result<Value, DriverError> {
         let schema = serde_json::to_value(

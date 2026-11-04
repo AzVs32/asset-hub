@@ -77,7 +77,7 @@ fn failure(kind: StorageErrorKind) -> DriverError {
 /// Host-owned records with isolated persistence fault injection.
 #[derive(Default)]
 pub struct Records {
-    pub rows: Mutex<HashMap<DriverInstanceRef, InstanceRecord>>,
+    pub rows: Mutex<HashMap<DriverInstance, InstanceRecord>>,
     pub removals: AtomicUsize,
     pub failure: Option<StorageErrorKind>,
     pub suspend_remove: AtomicBool,
@@ -92,7 +92,7 @@ impl Records {
         for driver in catalog.list() {
             for id in known {
                 let reference =
-                    DriverInstanceRef::new(driver.info().key().clone(), InstanceId::parse(id)?);
+                    DriverInstance::new(driver.info().key().clone(), InstanceId::parse(id)?);
                 let record = InstanceRecord::new(
                     reference.clone(),
                     1,
@@ -110,14 +110,14 @@ impl Records {
         }
         Ok(Arc::new(records))
     }
-    pub fn contains(&self, reference: &DriverInstanceRef) -> bool {
+    pub fn contains(&self, reference: &DriverInstance) -> bool {
         self.rows
             .lock()
             .is_ok_and(|rows| rows.contains_key(reference))
     }
 }
 impl InstanceRecordRepository for Records {
-    fn get(&self, reference: DriverInstanceRef) -> DriverFuture<'_, Option<InstanceRecord>> {
+    fn get(&self, reference: DriverInstance) -> DriverFuture<'_, Option<InstanceRecord>> {
         Box::pin(async move {
             Ok(self
                 .rows
@@ -194,7 +194,7 @@ impl InstanceRecordRepository for Records {
             Ok(())
         })
     }
-    fn remove(&self, reference: DriverInstanceRef) -> DriverFuture<'_, RemoveInstanceOutcome> {
+    fn remove(&self, reference: DriverInstance) -> DriverFuture<'_, RemoveInstanceOutcome> {
         Box::pin(async move {
             self.removals.fetch_add(1, Ordering::SeqCst);
             if self.suspend_remove.load(Ordering::SeqCst) {

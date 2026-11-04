@@ -8,7 +8,7 @@ use ah_vfs::application::error::MountRepositoryError;
 use ah_vfs::application::port::{DriverFuture, MountRepository, Storage};
 use ah_vfs::application::service::MountService;
 use ah_vfs::domain::{
-    ChildMountPolicy, DriverError, DriverInstanceRef, DriverKey, InstanceId, Mount, MountId,
+    ChildMountPolicy, DriverError, DriverInstance, DriverKey, InstanceId, Mount, MountId,
     VirtualPath,
 };
 use ah_vfs::infrastructure::mount_repository::SqliteMountRepository;
@@ -45,7 +45,7 @@ fn mount(path: &str, driver: &str, instance: &str, enabled: bool) -> Result<Moun
     Ok(Mount::builder()
         .id(MountId::new())
         .virtual_path(VirtualPath::parse(path)?)
-        .driver_instance(DriverInstanceRef::new(
+        .driver_instance(DriverInstance::new(
             DriverKey::parse(driver)?,
             InstanceId::parse(instance)?,
         ))
@@ -406,7 +406,7 @@ async fn mount_service_initializes_and_restores_using_real_sqlite() -> TestResul
             let records = common::Records::seeded(&drivers, &[])?;
             MountRuntime::new(repository.clone(), drivers, records, None)
         }));
-        let reference = DriverInstanceRef::new(
+        let reference = DriverInstance::new(
             DriverKey::parse("builtin.local")?,
             InstanceId::parse("root")?,
         );

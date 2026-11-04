@@ -178,8 +178,8 @@ impl TestDriver {
             generation: Arc::new(AtomicUsize::new(1)),
         })
     }
-    fn reference(&self, id: &str) -> TestResult<DriverInstanceRef> {
-        Ok(DriverInstanceRef::new(
+    fn reference(&self, id: &str) -> TestResult<DriverInstance> {
+        Ok(DriverInstance::new(
             self.info.key().clone(),
             InstanceId::parse(id)?,
         ))

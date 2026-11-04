@@ -1,4 +1,4 @@
-use super::{DriverInstanceRef, MountId, VirtualPath};
+use super::{DriverInstance, MountId, VirtualPath};
 use bon::Builder;
 use getset::{CopyGetters, Getters, Setters};
 
@@ -13,7 +13,7 @@ pub struct Mount {
     #[getset(get = "pub")]
     virtual_path: VirtualPath,
     #[getset(get = "pub")]
-    driver_instance: DriverInstanceRef,
+    driver_instance: DriverInstance,
     #[getset(get_copy = "pub", set = "pub")]
     enabled: bool,
 }
@@ -29,7 +29,7 @@ mod tests {
         let path = VirtualPath::parse("/documents")?;
         let id = MountId::new();
         let instance =
-            DriverInstanceRef::new(DriverKey::parse("builtin.local")?, InstanceId::parse("42")?);
+            DriverInstance::new(DriverKey::parse("builtin.local")?, InstanceId::parse("42")?);
         let mut mount = Mount::builder()
             .id(id)
             .virtual_path(path.clone())
