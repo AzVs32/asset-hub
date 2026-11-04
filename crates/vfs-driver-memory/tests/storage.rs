@@ -3,7 +3,7 @@ mod common;
 use ah_vfs::{
     application::port::{Driver, Storage, validate_storage_extensions},
     domain::storage::{
-        AttributeSupport, StorageCreateDirRequest, StorageDirQuery, StorageEntryKind,
+        AttributeSupport, EntryKind, StorageCreateDirRequest, StorageDirQuery,
         StorageErrorKind as Kind, StorageMoveEntryRequest, StorageReadFileRequest,
         StorageRemoveEntryRequest, StorageStatEntryRequest, StorageWriteFileMode,
         StorageWriteFileRequest,
@@ -30,7 +30,7 @@ async fn declarations_cover_all_ports_and_optional_attributes_are_absent() -> Te
     let root = storage
         .stat_entry(StorageStatEntryRequest { path: path("")? })
         .await?;
-    assert_eq!(root.kind, StorageEntryKind::Dir);
+    assert_eq!(root.kind, EntryKind::Dir);
     assert_eq!(root.size, None);
     Ok(())
 }

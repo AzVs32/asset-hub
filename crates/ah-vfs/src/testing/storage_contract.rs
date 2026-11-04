@@ -3,9 +3,9 @@
 use crate::{
     application::port::{Storage, StorageFileReader},
     domain::storage::{
-        DEFAULT_DIR_PAGE_LIMIT, MAX_DIR_PAGE_LIMIT, RenameSupport, StorageCreateDirRequest,
-        StorageDirQuery, StorageEntryKind, StorageErrorKind, StorageMoveEntryRequest, StoragePath,
-        StorageReadFileRequest, StorageStatEntryRequest, StorageWriteFileRequest,
+        DEFAULT_DIR_PAGE_LIMIT, EntryKind, MAX_DIR_PAGE_LIMIT, RenameSupport,
+        StorageCreateDirRequest, StorageDirQuery, StorageErrorKind, StorageMoveEntryRequest,
+        StoragePath, StorageReadFileRequest, StorageStatEntryRequest, StorageWriteFileRequest,
     },
 };
 use std::num::NonZeroUsize;
@@ -175,7 +175,7 @@ pub async fn assert_create_dir_contract(storage: &dyn Storage) -> TestResult {
             })
             .await?;
         assert_eq!(entry.path, before.path);
-        assert_eq!(entry.kind, StorageEntryKind::Dir);
+        assert_eq!(entry.kind, EntryKind::Dir);
         assert_eq!(entry.size, before.size);
         assert_eq!(entry.modified, before.modified);
         let after = storage
@@ -204,14 +204,14 @@ pub async fn assert_create_dir_contract(storage: &dyn Storage) -> TestResult {
         })
         .await?;
     assert_eq!(entry.path, path("new/parents/leaf")?);
-    assert_eq!(entry.kind, StorageEntryKind::Dir);
+    assert_eq!(entry.kind, EntryKind::Dir);
     for name in ["new", "new/parents", "new/parents/leaf"] {
         assert_eq!(
             storage
                 .stat_entry(StorageStatEntryRequest { path: path(name)? })
                 .await?
                 .kind,
-            StorageEntryKind::Dir
+            EntryKind::Dir
         );
     }
     let entry = storage
@@ -220,7 +220,7 @@ pub async fn assert_create_dir_contract(storage: &dyn Storage) -> TestResult {
             recursive: false,
         })
         .await?;
-    assert_eq!(entry.kind, StorageEntryKind::Dir);
+    assert_eq!(entry.kind, EntryKind::Dir);
     Ok(())
 }
 

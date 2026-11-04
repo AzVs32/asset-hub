@@ -3,9 +3,8 @@ use ah_vfs::{
     domain::{
         InstanceId,
         storage::{
-            Entry, StorageEntryKind, StorageError, StorageErrorKind, StoragePath,
-            StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
-            StorageWriteFileRequest,
+            Entry, EntryKind, StorageError, StorageErrorKind, StoragePath, StorageReadFileRequest,
+            StorageRemoveEntryRequest, StorageStatEntryRequest, StorageWriteFileRequest,
         },
     },
 };
@@ -145,7 +144,7 @@ impl Storage for BackendStorage {
             }
             Ok(Entry {
                 path: request.path,
-                kind: StorageEntryKind::File,
+                kind: EntryKind::File,
                 size: Some(self.marker as u64),
                 modified: None,
             })

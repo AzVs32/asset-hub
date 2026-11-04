@@ -15,7 +15,7 @@ use ah_vfs::{
     domain::{
         DriverError, DriverInstance, DriverKey, InstanceId,
         namespace::{MountTableError, VirtualPath},
-        storage::{StorageEntryKind, StorageErrorKind as Kind, StorageWriteFileMode},
+        storage::{EntryKind, StorageErrorKind as Kind, StorageWriteFileMode},
     },
     infrastructure::mount_repository::SqliteMountRepository,
 };
@@ -232,7 +232,7 @@ async fn nested_mounts_overlay_backend_entries_and_synthesize_missing_parents() 
     write(&f.entries, "/virtual/ram/file", b"nested").await?;
     let view = f.entries.stat_entry(&virtual_path("/virtual")?).await?;
     assert_eq!(view.origin, EntryOrigin::SyntheticDir);
-    assert_eq!(view.kind, StorageEntryKind::Dir);
+    assert_eq!(view.kind, EntryKind::Dir);
     let page = f
         .entries
         .list_entries(&virtual_path("/virtual")?, DirQuery::default())

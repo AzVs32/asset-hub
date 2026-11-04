@@ -3,9 +3,8 @@ use ah_vfs::{
     domain::{
         InstanceId,
         storage::{
-            StorageCreateDirRequest, StorageDirQuery, StorageEntryKind, StorageErrorKind,
-            StoragePath, StorageReadFileRequest, StorageRemoveEntryRequest,
-            StorageWriteFileRequest,
+            EntryKind, StorageCreateDirRequest, StorageDirQuery, StorageErrorKind, StoragePath,
+            StorageReadFileRequest, StorageRemoveEntryRequest, StorageWriteFileRequest,
         },
     },
 };
@@ -262,7 +261,7 @@ async fn protobuf_component_opens_writes_commits_reads_and_lists() -> Result {
             recursive: false,
         })
         .await?;
-    assert_eq!(directory.kind, StorageEntryKind::Dir);
+    assert_eq!(directory.kind, EntryKind::Dir);
     let page = storage
         .list_entries(StorageDirQuery::new(StoragePath::root()))
         .await?;

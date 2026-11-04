@@ -14,9 +14,9 @@ use crate::{
     domain::{
         namespace::{Mount, MountTable, VirtualPath},
         storage::{
-            EntryPermissions, FileReadSupport, MAX_DIR_PAGE_LIMIT, StorageCapabilities,
-            StorageCreateDirRequest, StorageDirQuery, StorageEntryKind, StorageError,
-            StorageErrorKind, StorageMoveEntryRequest, StoragePath, StorageReadFileRequest,
+            EntryKind, EntryPermissions, FileReadSupport, MAX_DIR_PAGE_LIMIT, StorageCapabilities,
+            StorageCreateDirRequest, StorageDirQuery, StorageError, StorageErrorKind,
+            StorageMoveEntryRequest, StoragePath, StorageReadFileRequest,
             StorageRemoveEntryRequest, StorageStatEntryRequest, StorageWriteFileRequest, XattrName,
             XattrWriteMode, validate_dir_page_limit,
         },
@@ -158,7 +158,7 @@ impl EntryService {
                 })
                 .await
             {
-                Ok(entry) => entry.kind == StorageEntryKind::Dir,
+                Ok(entry) => entry.kind == EntryKind::Dir,
                 Err(error)
                     if matches!(
                         error.kind(),

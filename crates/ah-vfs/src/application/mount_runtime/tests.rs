@@ -13,7 +13,7 @@ use crate::{
         DriverKey, InstanceId,
         namespace::{ChildMountPolicy, MountId, MountTableError, VirtualPath},
         storage::{
-            Entry, StorageCapabilities, StorageEntryKind, StorageError, StorageErrorKind,
+            Entry, EntryKind, StorageCapabilities, StorageError, StorageErrorKind,
             StorageStatEntryRequest,
         },
     },
@@ -143,7 +143,7 @@ impl Storage for TestStorage {
         Box::pin(async move {
             Ok(Entry {
                 path: request.path,
-                kind: StorageEntryKind::File,
+                kind: EntryKind::File,
                 size: Some(1),
                 modified: None,
             })

@@ -2,8 +2,8 @@
 
 use super::TEMP_PREFIX;
 use ah_vfs::domain::storage::{
-    Entry, StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageEntryKind,
-    StorageError, StorageErrorKind, StorageMoveEntryRequest, StoragePath,
+    Entry, EntryKind, StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageError,
+    StorageErrorKind, StorageMoveEntryRequest, StoragePath,
 };
 
 use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
@@ -59,13 +59,13 @@ pub(super) fn parent(root: &Dir, path: &StoragePath) -> Result<(Dir, String), St
 
 pub(super) fn entry(path: StoragePath, metadata: Metadata) -> Entry {
     let kind = if metadata.file_type().is_symlink() {
-        StorageEntryKind::Symlink
+        EntryKind::Symlink
     } else if metadata.is_file() {
-        StorageEntryKind::File
+        EntryKind::File
     } else if metadata.is_dir() {
-        StorageEntryKind::Dir
+        EntryKind::Dir
     } else {
-        StorageEntryKind::Other
+        EntryKind::Other
     };
     Entry {
         path,

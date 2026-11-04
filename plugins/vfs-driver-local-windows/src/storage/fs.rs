@@ -1,7 +1,7 @@
 //! Windows names, reparse-point policy and directory-relative filesystem I/O.
 use super::{TEMP_PREFIX, native};
 use ah_vfs::domain::storage::{
-    Entry, StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageEntryKind,
+    Entry, EntryKind, StorageCreateDirRequest, StorageDirPage, StorageDirQuery,
     StorageError, StorageErrorKind, StorageMoveEntryRequest, StoragePath,
 };
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
@@ -74,12 +74,12 @@ pub(super) fn parent(root: &Dir, path: &StoragePath) -> Result<(Dir, String), St
     Ok((dir(root, &parent, false)?, name))
 }
 pub(super) fn entry(path: StoragePath, metadata: Metadata) -> Entry {
-    let kind = if metadata.file_type().is_symlink() { StorageEntryKind::Symlink }
-        else if reparse(&metadata) { StorageEntryKind::Other }
-        else if metadata.is_file() { StorageEntryKind::File }
-        else if metadata.is_dir() { StorageEntryKind::Dir }
-        else { StorageEntryKind::Other };
-    Entry { path, kind, size: (kind == StorageEntryKind::File).then(|| metadata.len()),
+    let kind = if metadata.file_type().is_symlink() { EntryKind::Symlink }
+        else if reparse(&metadata) { EntryKind::Other }
+        else if metadata.is_file() { EntryKind::File }
+        else if metadata.is_dir() { EntryKind::Dir }
+        else { EntryKind::Other };
+    Entry { path, kind, size: (kind == EntryKind::File).then(|| metadata.len()),
         modified: metadata.modified().ok().map(|time| time.into_std()) }
 }
 pub(super) fn stat_entry(root: &Dir, path: StoragePath) -> Result<Entry, StorageError> {

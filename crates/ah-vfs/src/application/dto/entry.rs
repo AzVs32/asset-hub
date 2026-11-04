@@ -2,7 +2,7 @@
 
 use crate::domain::{
     namespace::VirtualPath,
-    storage::{DEFAULT_DIR_PAGE_LIMIT, Entry, StorageEntryKind, StorageWriteFileMode},
+    storage::{DEFAULT_DIR_PAGE_LIMIT, Entry, EntryKind, StorageWriteFileMode},
 };
 
 use std::{num::NonZeroUsize, time::SystemTime};
@@ -18,7 +18,7 @@ pub enum EntryOrigin {
 #[derive(Clone, Debug)]
 pub struct EntryView {
     pub path: VirtualPath,
-    pub kind: StorageEntryKind,
+    pub kind: EntryKind,
     pub size: Option<u64>,
     pub modified: Option<SystemTime>,
     pub origin: EntryOrigin,
@@ -38,7 +38,7 @@ impl EntryView {
     pub(crate) fn dir(path: VirtualPath, origin: EntryOrigin) -> Self {
         Self {
             path,
-            kind: StorageEntryKind::Dir,
+            kind: EntryKind::Dir,
             size: None,
             modified: None,
             origin,

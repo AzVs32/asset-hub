@@ -5,8 +5,8 @@ use ah_vfs::{
         DriverError, DriverKey, InstanceConfigErrorKind, InstanceId,
         namespace::ChildMountPolicy,
         storage::{
-            AttributeSupport, DirModel, Entry, FileReadSupport, FileWriteSupport, RenameSupport,
-            StorageCapabilities, StorageEntryKind, StorageError, StorageErrorKind, StoragePath,
+            AttributeSupport, DirModel, Entry, EntryKind, FileReadSupport, FileWriteSupport,
+            RenameSupport, StorageCapabilities, StorageError, StorageErrorKind, StoragePath,
         },
     },
 };
@@ -313,10 +313,10 @@ pub fn entry(e: Entry) -> Result<p::Entry, DriverError> {
     Ok(p::Entry {
         path: e.path.as_str().into(),
         kind: match e.kind {
-            StorageEntryKind::File => p::EntryKind::File as i32,
-            StorageEntryKind::Dir => p::EntryKind::Dir as i32,
-            StorageEntryKind::Symlink => p::EntryKind::Symlink as i32,
-            StorageEntryKind::Other => p::EntryKind::Other as i32,
+            EntryKind::File => p::EntryKind::File as i32,
+            EntryKind::Dir => p::EntryKind::Dir as i32,
+            EntryKind::Symlink => p::EntryKind::Symlink as i32,
+            EntryKind::Other => p::EntryKind::Other as i32,
         },
         size: e.size,
         modified,
@@ -348,10 +348,10 @@ pub fn decode_entry(e: p::Entry) -> Result<Entry, StorageError> {
     Ok(Entry {
         path: StoragePath::parse(&e.path).map_err(|_| storage_invalid())?,
         kind: match e.kind() {
-            p::EntryKind::File => StorageEntryKind::File,
-            p::EntryKind::Dir => StorageEntryKind::Dir,
-            p::EntryKind::Symlink => StorageEntryKind::Symlink,
-            p::EntryKind::Other => StorageEntryKind::Other,
+            p::EntryKind::File => EntryKind::File,
+            p::EntryKind::Dir => EntryKind::Dir,
+            p::EntryKind::Symlink => EntryKind::Symlink,
+            p::EntryKind::Other => EntryKind::Other,
             _ => return Err(storage_invalid()),
         },
         size: e.size,

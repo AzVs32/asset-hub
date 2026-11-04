@@ -4,7 +4,7 @@ mod common;
 use ah_vfs::{
     application::port::{Driver, Storage, StorageFileReader},
     domain::storage::{
-        StorageCreateDirRequest, StorageDirQuery, StorageEntryKind, StorageErrorKind,
+        EntryKind, StorageCreateDirRequest, StorageDirQuery, StorageErrorKind,
         StorageMoveEntryRequest, StoragePath, StorageReadFileRequest, StorageRemoveEntryRequest,
         StorageStatEntryRequest, StorageWriteFileMode, StorageWriteFileRequest,
     },
@@ -70,7 +70,7 @@ async fn metadata_and_sorted_pagination_use_instance_relative_paths() -> TestRes
         .storage
         .stat_entry(StorageStatEntryRequest { path: path("")? })
         .await?;
-    assert_eq!(root.kind, StorageEntryKind::Dir);
+    assert_eq!(root.kind, EntryKind::Dir);
     assert_eq!(root.size, None);
     let file = f
         .storage
@@ -79,7 +79,7 @@ async fn metadata_and_sorted_pagination_use_instance_relative_paths() -> TestRes
         })
         .await?;
     assert_eq!(file.path.as_str(), "c.txt");
-    assert_eq!(file.kind, StorageEntryKind::File);
+    assert_eq!(file.kind, EntryKind::File);
     assert_eq!(file.size, Some(3));
     assert!(file.modified.is_some());
     assert!(matches!(
@@ -102,7 +102,7 @@ async fn metadata_and_sorted_pagination_use_instance_relative_paths() -> TestRes
             .collect::<Vec<_>>(),
         ["a.txt", "b"]
     );
-    assert_eq!(first.entries[1].kind, StorageEntryKind::Dir);
+    assert_eq!(first.entries[1].kind, EntryKind::Dir);
     assert_eq!(first.next_after.as_deref(), Some("b"));
     let second = f
         .storage
@@ -175,7 +175,7 @@ async fn dir_creation_and_removal_preserve_root_and_nonempty_dirs() -> TestResul
             recursive: true,
         })
         .await?;
-    assert_eq!(entry.kind, StorageEntryKind::Dir);
+    assert_eq!(entry.kind, EntryKind::Dir);
     f.storage
         .create_dir(StorageCreateDirRequest {
             path: path("a/b")?,
@@ -218,7 +218,7 @@ async fn dir_creation_and_removal_preserve_root_and_nonempty_dirs() -> TestResul
         })
         .await?;
     assert_eq!(root.path, path("")?);
-    assert_eq!(root.kind, StorageEntryKind::Dir);
+    assert_eq!(root.kind, EntryKind::Dir);
     assert!(matches!(
         f.storage
             .create_dir(StorageCreateDirRequest {
@@ -561,7 +561,7 @@ async fn rename_handles_files_dirs_conflicts_and_replacement() -> TestResult {
             replace: false,
         })
         .await?;
-    assert_eq!(entry.kind, StorageEntryKind::Dir);
+    assert_eq!(entry.kind, EntryKind::Dir);
     assert_eq!(std::fs::read(f.root.join("new/child"))?, b"child");
     assert!(
         f.storage
@@ -657,18 +657,14 @@ async fn symlinks_are_visible_as_links_but_never_followed() -> TestResult {
                 .stat_entry(StorageStatEntryRequest { path: path(name)? })
                 .await?
                 .kind,
-            StorageEntryKind::Symlink
+            EntryKind::Symlink
         );
     }
     let page = f
         .storage
         .list_entries(StorageDirQuery::new(path("")?))
         .await?;
-    assert!(
-        page.entries
-            .iter()
-            .all(|n| n.kind == StorageEntryKind::Symlink)
-    );
+    assert!(page.entries.iter().all(|n| n.kind == EntryKind::Symlink));
     assert!(matches!(
         f.storage
             .read_file(StorageReadFileRequest::new(path("leaf")?))

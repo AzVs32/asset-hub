@@ -14,7 +14,7 @@ use ah_vfs::{
         DriverInstance, DriverKey, InstanceId,
         namespace::{ChildMountPolicy, VirtualPath},
         storage::{
-            Entry, StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageEntryKind,
+            Entry, EntryKind, StorageCreateDirRequest, StorageDirPage, StorageDirQuery,
             StorageError, StorageErrorKind, StorageMoveEntryRequest, StoragePath,
             StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
             StorageWriteFileRequest,
@@ -73,9 +73,9 @@ impl Storage for TestStorage {
         Box::pin(async move {
             Ok(Entry {
                 kind: if request.path.is_root() {
-                    StorageEntryKind::Dir
+                    EntryKind::Dir
                 } else {
-                    StorageEntryKind::File
+                    EntryKind::File
                 },
                 path: request.path,
                 size: Some(if self.instance.as_str() == "leaf" {
@@ -101,7 +101,7 @@ impl Storage for TestStorage {
                     .map(|name| {
                         Ok(Entry {
                             path: StoragePath::parse(name)?,
-                            kind: StorageEntryKind::File,
+                            kind: EntryKind::File,
                             size: Some(1),
                             modified: None,
                         })
@@ -266,7 +266,7 @@ async fn mount_points_and_synthetic_dirs_keep_distinct_namespace_behavior() -> T
     assert_eq!(root.size, Some(7));
     let synthetic = files.stat_entry(&ancestor).await?;
     assert_eq!(synthetic.origin, EntryOrigin::SyntheticDir);
-    assert_eq!(synthetic.kind, StorageEntryKind::Dir);
+    assert_eq!(synthetic.kind, EntryKind::Dir);
     let leaf = files.stat_entry(&nested).await?;
     assert_eq!(leaf.origin, EntryOrigin::MountPoint { enabled: true });
     assert_eq!(leaf.size, Some(42));

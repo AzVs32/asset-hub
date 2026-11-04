@@ -4,7 +4,7 @@ use super::StoragePath;
 use std::time::SystemTime;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum StorageEntryKind {
+pub enum EntryKind {
     File,
     Dir,
     Symlink,
@@ -15,7 +15,7 @@ pub enum StorageEntryKind {
 #[derive(Clone, Debug)]
 pub struct Entry {
     pub path: StoragePath,
-    pub kind: StorageEntryKind,
+    pub kind: EntryKind,
     /// Byte length for regular files; absent for other entry kinds.
     pub size: Option<u64>,
     pub modified: Option<SystemTime>,

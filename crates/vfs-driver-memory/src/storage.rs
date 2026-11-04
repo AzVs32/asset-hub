@@ -2,10 +2,10 @@ use crate::Capacity;
 use ah_vfs::{
     application::port::{Storage, StorageFileReader, StorageFileWriter, StorageFuture},
     domain::storage::{
-        Entry, StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageEntryKind,
-        StorageError, StorageErrorKind, StorageMoveEntryRequest, StoragePath,
-        StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
-        StorageWriteFileMode, StorageWriteFileRequest,
+        Entry, EntryKind, StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageError,
+        StorageErrorKind, StorageMoveEntryRequest, StoragePath, StorageReadFileRequest,
+        StorageRemoveEntryRequest, StorageStatEntryRequest, StorageWriteFileMode,
+        StorageWriteFileRequest,
     },
 };
 use std::{
@@ -98,8 +98,8 @@ impl MemoryEntry {
 
     fn metadata(&self, path: StoragePath) -> Entry {
         let (kind, size) = match &self.data {
-            EntryData::Dir(_) => (StorageEntryKind::Dir, None),
-            EntryData::File(blob) => (StorageEntryKind::File, Some(blob.bytes.len() as u64)),
+            EntryData::Dir(_) => (EntryKind::Dir, None),
+            EntryData::File(blob) => (EntryKind::File, Some(blob.bytes.len() as u64)),
         };
         Entry {
             path,

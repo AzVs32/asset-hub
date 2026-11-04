@@ -52,7 +52,7 @@ async fn local_instances_reopen_and_deleted_dirs_fail_to_open() -> TestResult {
             path: ah_vfs::domain::storage::StoragePath::root(),
         })
         .await?;
-    assert_eq!(root.kind, ah_vfs::domain::storage::StorageEntryKind::Dir);
+    assert_eq!(root.kind, ah_vfs::domain::storage::EntryKind::Dir);
     std::fs::remove_dir(&source)?;
     assert!(matches!(
         reopened.open(restored_registry.open_context(instance.id.clone()).await?).await,

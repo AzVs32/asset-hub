@@ -26,7 +26,7 @@ pub use capabilities::{
     AttributeSupport, DirModel, FileReadSupport, FileWriteSupport, RenameSupport,
     StorageCapabilities, StorageCapabilitiesBuilder, StorageCapabilitiesError,
 };
-pub use entry::{Entry, StorageEntryKind};
+pub use entry::{Entry, EntryKind};
 pub use error::{StorageError, StorageErrorKind};
 pub use operations::{
     StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageMoveEntryRequest,
