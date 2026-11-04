@@ -239,9 +239,6 @@ struct HostedDriver {
 }
 struct EmptyStorage;
 impl Storage for EmptyStorage {
-    fn capabilities(&self) -> StorageCapabilities {
-        StorageCapabilities::default()
-    }
     fn chunk_size(&self) -> NonZeroUsize {
         NonZeroUsize::MIN
     }
@@ -360,7 +357,10 @@ async fn host_lifecycle_encrypts_nested_secrets_and_passes_decrypted_open_contex
         Some(&"password-value-private".into())
     );
     let entries = EntryService::new(f.runtime.clone());
-    entries.capabilities(&VirtualPath::root()).await?;
+    assert!(
+        matches!(entries.stat_entry(&VirtualPath::parse("/probe")?).await,
+        Err(error) if error.storage_error().is_some_and(|error| error.kind() == StorageErrorKind::UnsupportedOperation))
+    );
     let mut fields = config().into_object();
     fields.insert("label".into(), "second".into());
     service.update_instance(&reference, fields.into()).await?;
@@ -368,7 +368,10 @@ async fn host_lifecycle_encrypts_nested_secrets_and_passes_decrypted_open_contex
     assert_eq!(changed.config_version(), 1);
     assert_eq!(changed.revision(), 2);
     assert!(changed.updated_at() > record.updated_at());
-    entries.capabilities(&VirtualPath::root()).await?;
+    assert!(
+        matches!(entries.stat_entry(&VirtualPath::parse("/probe")?).await,
+        Err(error) if error.storage_error().is_some_and(|error| error.kind() == StorageErrorKind::UnsupportedOperation))
+    );
     assert_eq!(f.driver.opens.load(Ordering::SeqCst), 2);
     let mut fields = config().into_object();
     fields.insert("endpoint".into(), "changed".into());

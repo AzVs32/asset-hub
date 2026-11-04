@@ -11,7 +11,10 @@ use ah_vfs::{
     domain::{
         DriverError, DriverKey, InstanceConfigErrorKind,
         namespace::ChildMountPolicy,
-        storage::{StorageError, StorageErrorKind},
+        storage::{
+            DirModel, FileReadSupport, FileWriteSupport, RenameSupport, StorageCapabilities,
+            StorageCapabilitiesError, StorageError, StorageErrorKind,
+        },
     },
 };
 use std::{collections::BTreeMap, sync::Arc};
@@ -24,6 +27,27 @@ pub struct MemoryDriver {
     opened: Mutex<BTreeMap<String, Arc<MemoryStorage>>>,
 }
 impl MemoryDriver {
+    fn supported_capabilities() -> Result<StorageCapabilities, StorageCapabilitiesError> {
+        StorageCapabilities::builder()
+            .stat_entry(true)
+            .list_entries(true)
+            .read_file(FileReadSupport::Range)
+            .write_file(FileWriteSupport {
+                create_new: true,
+                replace: true,
+                atomic_publish: true,
+            })
+            .dir_model(DirModel::Hierarchical)
+            .persistent_empty_dirs(true)
+            .create_dir(true)
+            .remove_entry(true)
+            .rename(RenameSupport {
+                no_replace: true,
+                replace: true,
+            })
+            .build()
+    }
+
     pub const KEY: &'static str = "memory";
     pub fn new() -> Result<Self, MemoryDriverError> {
         Ok(Self {
@@ -33,7 +57,7 @@ impl MemoryDriver {
                 .version(semver::Version::new(0, 1, 0))
                 .child_mount_policy(ChildMountPolicy::Allow)
                 .maybe_instance_config_schema(instance_config_schema())
-                .capabilities(MemoryStorage::supported_capabilities()?)
+                .capabilities(Self::supported_capabilities()?)
                 .build(),
             opened: Mutex::default(),
         })
@@ -53,9 +77,9 @@ impl Driver for MemoryDriver {
             let mut opened = self.opened.lock().await;
             let storage = match opened.entry(context.instance_id().as_str().into()) {
                 std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
-                std::collections::btree_map::Entry::Vacant(entry) => entry.insert(Arc::new(
-                    MemoryStorage::new(capacity).map_err(StorageError::from)?,
-                )),
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert(Arc::new(MemoryStorage::new(capacity)))
+                }
             };
             if storage.capacity() != capacity {
                 return Err(StorageError::new(StorageErrorKind::InvalidData).into());

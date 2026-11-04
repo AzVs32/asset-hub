@@ -14,5 +14,5 @@ async fn memory_same_path_rename_obeys_storage_contract() -> TestResult {
     let storage = driver
         .open(registry.open_context(instance.id.clone()).await?)
         .await?;
-    assert_same_path_rename_contract(storage.as_ref()).await
+    assert_same_path_rename_contract(storage.as_ref(), driver.info().capabilities().rename()).await
 }

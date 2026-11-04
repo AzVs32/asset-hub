@@ -18,11 +18,6 @@ pub type StorageFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, StorageErr
 /// limitations never silently weaken atomicity, range or staged-write contracts.
 /// Prefix adapters define persistent empty dirs and file/prefix collision policy.
 pub trait Storage: Send + Sync {
-    /// Effective instance support, stable for this handle. Authorization and
-    /// path/device-specific restrictions are checked by the operation itself.
-    /// Plugin proxies cache this declaration during open; this getter performs no I/O.
-    fn capabilities(&self) -> StorageCapabilities;
-
     /// Whether this handle's runtime generation has failed or been replaced.
     /// This local, monotonic observation performs no I/O. Caches may reopen the
     /// instance; retained handles and streams must never be silently rebound.
@@ -30,13 +25,14 @@ pub trait Storage: Send + Sync {
         false
     }
 
-    /// A typed extension must be present exactly when permissions support is
-    /// advertised; its read/write behavior must agree with that declaration.
+    /// Present exactly when DriverInfo declares permissions support. Instance,
+    /// path and authorization restrictions are reported by the operation itself.
     fn permissions(&self) -> Option<&dyn StoragePermissions> {
         None
     }
 
-    /// A typed extension must agree with the advertised xattr support.
+    /// Present exactly when DriverInfo declares xattr support. Backends that
+    /// cannot serve a particular instance/path return UnsupportedOperation.
     fn xattrs(&self) -> Option<&dyn StorageXattrs> {
         None
     }
@@ -122,16 +118,14 @@ fn unsupported<T: Send + 'static>() -> StorageFuture<'static, T> {
     Box::pin(async { Err(StorageError::new(StorageErrorKind::UnsupportedOperation)) })
 }
 
-/// Verify an opened adapter before using it or persisting a mount that refers to it.
-/// A false declaration is invalid adapter data, distinct from an unsupported request.
-pub fn validate_storage_capabilities(
+/// Check independent extension interfaces against the driver's single declaration.
+/// No instance capability negotiation or backend probing is performed.
+pub fn validate_storage_extensions(
     declared: StorageCapabilities,
     storage: &dyn Storage,
 ) -> Result<(), StorageError> {
-    let actual = storage.capabilities();
-    if !declared.supports(actual)
-        || actual.permissions().can_read() != storage.permissions().is_some()
-        || actual.xattrs().can_read() != storage.xattrs().is_some()
+    if declared.permissions().can_read() != storage.permissions().is_some()
+        || declared.xattrs().can_read() != storage.xattrs().is_some()
     {
         return Err(StorageError::new(StorageErrorKind::InvalidData));
     }

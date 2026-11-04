@@ -98,6 +98,7 @@ async fn native_process_passes_shared_storage_contracts_over_grpc() -> Result {
         storage(driver.as_ref(), root.path(), records.clone())
             .await?
             .as_ref(),
+        driver.info().capabilities().rename(),
     )
     .await?;
     let root = tempfile::tempdir()?;

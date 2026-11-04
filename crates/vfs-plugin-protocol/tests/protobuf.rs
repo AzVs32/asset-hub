@@ -193,7 +193,20 @@ fn bounds_apply_to_control_data_and_nested_configuration() {
 fn exported_descriptor_contains_the_complete_language_independent_contract() -> Result {
     let descriptor = prost_types::FileDescriptorSet::decode(p::FILE_DESCRIPTOR_SET)?;
     let file = descriptor.file.first().ok_or("schema")?;
-    assert_eq!(file.package.as_deref(), Some("assethub.vfs.v2"));
+    assert_eq!(file.package.as_deref(), Some("assethub.vfs.v3"));
+    let storage_info = file
+        .message_type
+        .iter()
+        .find(|message| message.name.as_deref() == Some("StorageInfo"))
+        .ok_or("StorageInfo")?;
+    assert_eq!(storage_info.field.len(), 1);
+    assert_eq!(storage_info.field[0].name.as_deref(), Some("chunk_size"));
+    assert!(
+        storage_info
+            .reserved_name
+            .iter()
+            .any(|name| name == "capabilities")
+    );
     let request = file
         .message_type
         .iter()
@@ -219,11 +232,11 @@ fn exported_descriptor_contains_the_complete_language_independent_contract() -> 
     for method in &file.service.first().ok_or("Plugin")?.method {
         assert_eq!(
             method.input_type.as_deref(),
-            Some(".assethub.vfs.v2.Request")
+            Some(".assethub.vfs.v3.Request")
         );
         assert_eq!(
             method.output_type.as_deref(),
-            Some(".assethub.vfs.v2.Reply")
+            Some(".assethub.vfs.v3.Reply")
         );
     }
     Ok(())
@@ -262,6 +275,21 @@ fn base_contract_negotiates_without_optional_features_but_requires_the_schema_pr
         Err(p::IncompatiblePlugin::SchemaProfile)
     );
     Ok(())
+}
+
+#[test]
+fn instance_capability_protocol_versions_are_rejected() {
+    for major in [1, 2] {
+        let description = p::Description {
+            major,
+            instance_schema_profile: p::INSTANCE_SCHEMA_PROFILE.into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            p::negotiate_protocol(&description),
+            Err(p::IncompatiblePlugin::MajorVersion)
+        );
+    }
 }
 
 #[test]

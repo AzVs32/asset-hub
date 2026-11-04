@@ -141,7 +141,6 @@ struct S3Storage {
 impl GuestStorage for S3Storage {
     fn info(&self) -> p::StorageInfo {
         p::StorageInfo {
-            capabilities: caps(),
             chunk_size: 64 * 1024,
         }
     }

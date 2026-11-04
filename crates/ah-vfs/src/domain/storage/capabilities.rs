@@ -63,8 +63,9 @@ impl AttributeSupport {
         self == Self::ReadWrite
     }
 }
-/// Driver declarations are implementation upper bounds. Storage reports effective
-/// instance/platform support, not authorization or success for every path/device.
+/// A driver-wide declaration of supported operations and successful-operation
+/// guarantees. All instances share it; authorization, instance and path limitations
+/// are reported by operations, not by instance-specific capability declarations.
 /// Unsupported operations fail before side effects; guarantees cannot be weakened.
 /// Unknown optional capabilities default to unsupported.
 ///
@@ -106,7 +107,7 @@ impl AttributeSupport {
 /// ```compile_fail
 /// use ah_vfs::domain::storage::StorageCapabilities;
 /// let capabilities = StorageCapabilities::builder().create_dir(true).build();
-/// capabilities.supports(StorageCapabilities::default());
+/// capabilities.stat_entry();
 /// ```
 /// Independent operations do not imply each other: listing need not imply stat,
 /// and persistent directories need not imply permission to create directories.
@@ -160,39 +161,6 @@ impl StorageCapabilities {
             permissions: self.permissions,
             xattrs: self.xattrs,
         }
-    }
-
-    /// Whether this declaration covers every capability in an opened instance.
-    ///
-    /// Both values have already passed construction checks. This comparison is a
-    /// partial order: reflexive, antisymmetric and transitive. `None` is the bottom directory model; hierarchical and
-    /// prefix semantics are incomparable. Range reads cover sequential reads.
-    /// Coverage does not prove that an adapter implements its advertised behavior.
-    pub fn supports(self, actual: Self) -> bool {
-        let read = matches!(
-            (self.read_file, actual.read_file),
-            (_, FileReadSupport::None)
-                | (FileReadSupport::Range, _)
-                | (FileReadSupport::Sequential, FileReadSupport::Sequential)
-        );
-        let attribute = |declared: AttributeSupport, actual: AttributeSupport| {
-            (!actual.can_read() || declared.can_read())
-                && (!actual.can_write() || declared.can_write())
-        };
-        (!actual.stat_entry || self.stat_entry)
-            && (!actual.list_entries || self.list_entries)
-            && read
-            && (!actual.write_file.create_new || self.write_file.create_new)
-            && (!actual.write_file.replace || self.write_file.replace)
-            && (!actual.write_file.atomic_publish || self.write_file.atomic_publish)
-            && (actual.dir_model == DirModel::None || actual.dir_model == self.dir_model)
-            && (!actual.persistent_empty_dirs || self.persistent_empty_dirs)
-            && (!actual.create_dir || self.create_dir)
-            && (!actual.remove_entry || self.remove_entry)
-            && (!actual.rename.no_replace || self.rename.no_replace)
-            && (!actual.rename.replace || self.rename.replace)
-            && attribute(self.permissions, actual.permissions)
-            && attribute(self.xattrs, actual.xattrs)
     }
 }
 

@@ -74,7 +74,11 @@ impl Transport for Peer {
                         name: "Opaque peer".into(),
                         version: "1.0.0".into(),
                         child_mounts: true,
-                        capabilities: self.capabilities(),
+                        capabilities: if matches!(self.fault, Fault::Capabilities) {
+                            vec![p::Capability::AtomicPublish as i32]
+                        } else {
+                            self.capabilities()
+                        },
 
                         settings_schema: None,
                         instance_schema: None,
@@ -84,14 +88,7 @@ impl Transport for Peer {
                 ),
                 Op::Open(_) => Value::Storage(p::Storage {
                     handle: 1,
-                    info: Some(p::StorageInfo {
-                        capabilities: if matches!(self.fault, Fault::Capabilities) {
-                            vec![p::Capability::RenameReplace as i32]
-                        } else {
-                            self.capabilities()
-                        },
-                        chunk_size: 65536,
-                    }),
+                    info: Some(p::StorageInfo { chunk_size: 65536 }),
                 }),
                 Op::Storage(call) => match call.operation {
                     Some(p::StorageOp::GetPermissions(_)) => {
@@ -141,15 +138,11 @@ async fn incompatible_versions_and_false_capabilities_are_rejected() -> Result {
             .kind(),
         StorageErrorKind::UnsupportedOperation
     );
-    let (driver, _) = peer(Fault::Capabilities).await?;
-    let error = driver
-        .open(OpenContext::new(
-            InstanceId::parse("instance")?,
-            Default::default(),
-        ))
+    let error = peer(Fault::Capabilities)
         .await
         .err()
         .ok_or("capability rejection")?;
+    let error = error.downcast_ref::<DriverError>().ok_or("driver error")?;
     assert_eq!(
         error.storage_error().ok_or("category")?.kind(),
         StorageErrorKind::InvalidData

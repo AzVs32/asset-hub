@@ -3,9 +3,9 @@ use ah_vfs::{
     domain::{
         InstanceId,
         storage::{
-            StorageCapabilities, StorageEntry, StorageEntryKind, StorageError, StorageErrorKind,
-            StoragePath, StorageReadFileRequest, StorageRemoveEntryRequest,
-            StorageStatEntryRequest, StorageWriteFileRequest,
+            StorageEntry, StorageEntryKind, StorageError, StorageErrorKind, StoragePath,
+            StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
+            StorageWriteFileRequest,
         },
     },
 };
@@ -121,7 +121,6 @@ impl Driver for Backend {
             Ok(Arc::new(BackendStorage {
                 marker: self.marker,
                 faults: self.faults.clone(),
-                capabilities: self.info.capabilities(),
             }) as Arc<dyn Storage>)
         })
     }
@@ -129,7 +128,6 @@ impl Driver for Backend {
 struct BackendStorage {
     marker: usize,
     faults: Arc<Faults>,
-    capabilities: StorageCapabilities,
 }
 impl Drop for BackendStorage {
     fn drop(&mut self) {
@@ -137,9 +135,6 @@ impl Drop for BackendStorage {
     }
 }
 impl Storage for BackendStorage {
-    fn capabilities(&self) -> StorageCapabilities {
-        self.capabilities
-    }
     fn chunk_size(&self) -> NonZeroUsize {
         NonZeroUsize::MIN
     }

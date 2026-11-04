@@ -237,7 +237,7 @@ async fn protobuf_component_opens_writes_commits_reads_and_lists() -> Result {
         .open(OpenContext::new(InstanceId::parse("fixture")?, config))
         .await?;
     assert_eq!(storage.chunk_size().get(), 65536);
-    assert!(!storage.capabilities().remove_entry());
+    assert!(!driver.info().capabilities().remove_entry());
     let file = StoragePath::parse("file")?;
     let mut writer = storage
         .write_file(StorageWriteFileRequest::new(file.clone()))

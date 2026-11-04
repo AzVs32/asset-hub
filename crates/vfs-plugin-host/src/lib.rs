@@ -7,11 +7,10 @@ use ah_vfs::{
     domain::{
         DriverError,
         storage::{
-            EntryPermissions, StorageCapabilities, StorageCreateDirRequest, StorageDirPage,
-            StorageDirQuery, StorageEntry, StorageError, StorageErrorKind, StorageMoveEntryRequest,
-            StoragePath, StorageReadFileRequest, StorageRemoveEntryRequest,
-            StorageStatEntryRequest, StorageWriteFileMode, StorageWriteFileRequest, XattrName,
-            XattrWriteMode,
+            EntryPermissions, StorageCreateDirRequest, StorageDirPage, StorageDirQuery,
+            StorageEntry, StorageError, StorageErrorKind, StorageMoveEntryRequest, StoragePath,
+            StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
+            StorageWriteFileMode, StorageWriteFileRequest, XattrName, XattrWriteMode,
         },
     },
 };
@@ -155,7 +154,7 @@ fn bad_response(mutates: bool) -> StorageError {
 /// Transport failures retire the affected generation. Later configuration/open requests
 /// recover before dispatch; failed operations and retained streams are never replayed.
 pub struct PluginDriver {
-    info: DriverInfo,
+    info: Arc<DriverInfo>,
     remote: Arc<RemoteInstances>,
     negotiated: p::NegotiatedProtocol,
 }
@@ -167,7 +166,7 @@ impl PluginDriver {
             p::negotiate(&description, transport.host_capabilities()).map_err(|error| {
                 StorageError::with_source(StorageErrorKind::UnsupportedOperation, error)
             })?;
-        let info = convert::driver_info(&description)?;
+        let info = Arc::new(convert::driver_info(&description)?);
         let runtime = Runtime::new(transport.clone(), description.generation.clone());
         Ok(Self {
             info,
@@ -275,16 +274,14 @@ impl Driver for PluginDriver {
                     return Err(convert::invalid());
                 };
                 let resource = Resource::new(runtime, p::ResourceKind::Storage, handle)?;
-                let capabilities = convert::decode_capabilities(&info.capabilities)?;
                 if info.chunk_size == 0 || info.chunk_size as usize > p::MAX_DATA_BYTES {
                     return Err(convert::invalid());
                 }
                 let storage = RemoteStorage {
                     resource,
-                    capabilities,
+                    driver_info: self.info.clone(),
                     chunk_size: convert::limit(info.chunk_size).map_err(DriverError::from)?,
                 };
-                validate_storage_capabilities(self.info.capabilities(), &storage)?;
                 return Ok(Arc::new(storage) as Arc<dyn Storage>);
             }
         })
@@ -457,7 +454,7 @@ impl Drop for Resource {
 
 struct RemoteStorage {
     resource: Resource,
-    capabilities: StorageCapabilities,
+    driver_info: Arc<DriverInfo>,
     chunk_size: NonZeroUsize,
 }
 impl RemoteStorage {
@@ -504,17 +501,22 @@ impl Storage for RemoteStorage {
     fn is_stale(&self) -> bool {
         self.resource.runtime.is_stale()
     }
-    fn capabilities(&self) -> StorageCapabilities {
-        self.capabilities
-    }
     fn chunk_size(&self) -> NonZeroUsize {
         self.chunk_size
     }
     fn permissions(&self) -> Option<&dyn StoragePermissions> {
-        self.capabilities.permissions().can_read().then_some(self)
+        self.driver_info
+            .capabilities()
+            .permissions()
+            .can_read()
+            .then_some(self)
     }
     fn xattrs(&self) -> Option<&dyn StorageXattrs> {
-        self.capabilities.xattrs().can_read().then_some(self)
+        self.driver_info
+            .capabilities()
+            .xattrs()
+            .can_read()
+            .then_some(self)
     }
     fn stat_entry(&self, r: StorageStatEntryRequest) -> StorageFuture<'_, StorageEntry> {
         Box::pin(async move {

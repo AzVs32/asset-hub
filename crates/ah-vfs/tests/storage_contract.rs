@@ -9,7 +9,7 @@ use ah_vfs::{
         error::EntryError,
         port::{
             DriverFuture, Storage, StorageFileReader, StorageFileWriter, StorageFuture,
-            StoragePermissions,
+            StoragePermissions, validate_storage_extensions,
         },
         service::{EntryService, MountService},
     },
@@ -17,7 +17,7 @@ use ah_vfs::{
         DriverError, DriverInstance, DriverKey, InstanceId,
         namespace::{ChildMountPolicy, VirtualPath},
         storage::{
-            AttributeSupport, DirModel, EntryPermissions, FileReadSupport, FileWriteSupport,
+            AttributeSupport, EntryPermissions, FileReadSupport, FileWriteSupport,
             StorageCapabilities, StorageEntry, StorageError, StorageErrorKind, StoragePath,
             StorageReadFileRequest, StorageWriteFileMode, StorageWriteFileRequest, XattrName,
         },
@@ -77,13 +77,9 @@ impl StorageFileWriter for TestWriter {
     }
 }
 struct TestStorage {
-    capabilities: StorageCapabilities,
     calls: Arc<AtomicUsize>,
 }
 impl Storage for TestStorage {
-    fn capabilities(&self) -> StorageCapabilities {
-        self.capabilities
-    }
     fn chunk_size(&self) -> NonZeroUsize {
         NonZeroUsize::MIN
     }
@@ -125,14 +121,12 @@ impl common::Backend for TestDriver {
     }
 }
 async fn fixture(
-    actual: StorageCapabilities,
     declared: StorageCapabilities,
     open_failure: Option<StorageErrorKind>,
 ) -> Result<(EntryService, Arc<AtomicUsize>), Box<dyn Error>> {
     let key = DriverKey::parse("test")?;
     let calls = Arc::new(AtomicUsize::new(0));
     let storage = Arc::new(TestStorage {
-        capabilities: actual,
         calls: calls.clone(),
     });
     let mut drivers = DriverCatalog::new();
@@ -201,33 +195,6 @@ fn normalized_errors_preserve_sources_without_exposing_backend_messages() -> Tes
 }
 
 #[test]
-fn capability_upper_bounds_preserve_semantics_and_read_only_attributes() -> TestResult {
-    let upper = StorageCapabilities::builder()
-        .read_file(FileReadSupport::Range)
-        .permissions(AttributeSupport::ReadWrite)
-        .dir_model(DirModel::Prefix)
-        .build()?;
-    let actual = StorageCapabilities::builder()
-        .read_file(FileReadSupport::Sequential)
-        .permissions(AttributeSupport::Read)
-        .dir_model(DirModel::Prefix)
-        .build()?;
-    assert!(upper.supports(actual));
-    assert!(!actual.supports(upper));
-    assert!(
-        !upper.supports(
-            (actual)
-                .to_builder()
-                .dir_model(DirModel::Hierarchical)
-                .build()?
-        )
-    );
-    assert!(!StorageCapabilities::default().supports(actual));
-    assert!(!actual.permissions().can_write());
-    Ok(())
-}
-
-#[test]
 fn attribute_values_reject_invalid_input_without_normalizing_identity() -> TestResult {
     assert_eq!(EntryPermissions::new(0o7640)?.bits(), 0o7640);
     assert!(EntryPermissions::new(0o100644).is_err());
@@ -248,7 +215,7 @@ async fn unsupported_requests_are_rejected_before_backend_side_effects() -> Test
             atomic_publish: false,
         })
         .build()?;
-    let (service, calls) = fixture(caps, caps, None).await?;
+    let (service, calls) = fixture(caps, None).await?;
     assert!(
         matches!(service.write_file(request(true)?).await, Err(error) if error.storage_error().is_some_and(|e| e.kind() == StorageErrorKind::UnsupportedOperation))
     );
@@ -263,32 +230,9 @@ async fn unsupported_requests_are_rejected_before_backend_side_effects() -> Test
 }
 
 #[tokio::test]
-async fn opened_capabilities_must_match_declarations_and_extension_handles() -> TestResult {
-    let caps = StorageCapabilities::builder()
-        .read_file(FileReadSupport::Range)
-        .build()?;
-    let (service, calls) = fixture(caps, StorageCapabilities::default(), None).await?;
-    assert!(matches!(
-        service.capabilities(&VirtualPath::root()).await,
-        Err(error) if error.storage_error().is_some_and(|e| e.kind() == StorageErrorKind::InvalidData)
-    ));
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
-    let caps = StorageCapabilities::builder()
-        .permissions(AttributeSupport::Read)
-        .build()?;
-    let (service, _) = fixture(caps, caps, None).await?;
-    assert!(matches!(
-        service.capabilities(&VirtualPath::root()).await,
-        Err(error) if error.storage_error().is_some_and(|e| e.kind() == StorageErrorKind::InvalidData)
-    ));
-    Ok(())
-}
-
-#[tokio::test]
 async fn invalid_routed_suffix_is_rejected_before_backend_open_or_io() -> TestResult {
     // An open failure would be observed if path conversion happened too late.
     let (service, calls) = fixture(
-        StorageCapabilities::default(),
         StorageCapabilities::default(),
         Some(StorageErrorKind::Unavailable),
     )
@@ -320,11 +264,11 @@ async fn opening_streaming_and_committing_keep_domain_error_categories() -> Test
             atomic_publish: false,
         })
         .build()?;
-    let (service, _) = fixture(caps, caps, Some(StorageErrorKind::Unavailable)).await?;
+    let (service, _) = fixture(caps, Some(StorageErrorKind::Unavailable)).await?;
     assert!(
-        matches!(service.capabilities(&VirtualPath::root()).await, Err(error) if error.storage_error().is_some_and(|e| e.kind() == StorageErrorKind::Unavailable))
+        matches!(service.read_file(ReadFileRequest { path: VirtualPath::parse("/file")?, offset: 0, length: None }).await, Err(error) if error.storage_error().is_some_and(|e| e.kind() == StorageErrorKind::Unavailable))
     );
-    let (service, _) = fixture(caps, caps, None).await?;
+    let (service, _) = fixture(caps, None).await?;
     let mut reader = service
         .read_file(ReadFileRequest {
             path: VirtualPath::parse("/file")?,
@@ -354,6 +298,44 @@ impl StoragePermissions for ReadOnlyPermissions {
         })
     }
 }
+
+struct PermissionStorage(ReadOnlyPermissions);
+impl Storage for PermissionStorage {
+    fn chunk_size(&self) -> NonZeroUsize {
+        NonZeroUsize::MIN
+    }
+    fn permissions(&self) -> Option<&dyn StoragePermissions> {
+        Some(&self.0)
+    }
+}
+
+#[test]
+fn independent_attribute_interfaces_must_match_the_driver_declaration() -> TestResult {
+    let declared = StorageCapabilities::builder()
+        .permissions(AttributeSupport::Read)
+        .build()?;
+    let supported = PermissionStorage(ReadOnlyPermissions);
+    validate_storage_extensions(declared, &supported)?;
+    let absent = TestStorage {
+        calls: Arc::new(AtomicUsize::new(0)),
+    };
+    let missing = validate_storage_extensions(declared, &absent)
+        .err()
+        .ok_or("missing declared interface")?;
+    assert_eq!(missing.kind(), StorageErrorKind::InvalidData);
+    let unexpected = validate_storage_extensions(StorageCapabilities::default(), &supported)
+        .err()
+        .ok_or("unexpected interface")?;
+    assert_eq!(unexpected.kind(), StorageErrorKind::InvalidData);
+    let xattrs = StorageCapabilities::builder()
+        .xattrs(AttributeSupport::Read)
+        .build()?;
+    assert!(
+        matches!(validate_storage_extensions(xattrs, &absent), Err(error) if error.kind() == StorageErrorKind::InvalidData)
+    );
+    assert_eq!(absent.calls.load(Ordering::SeqCst), 0);
+    Ok(())
+}
 #[tokio::test]
 async fn read_only_extension_and_missing_base_operations_reject_mutation() -> TestResult {
     let extension = ReadOnlyPermissions;
@@ -361,64 +343,10 @@ async fn read_only_extension_and_missing_base_operations_reject_mutation() -> Te
         matches!(extension.set_permissions(StoragePath::root(), EntryPermissions::new(0o600)?).await, Err(error) if error.kind() == StorageErrorKind::UnsupportedOperation)
     );
     let storage = TestStorage {
-        capabilities: StorageCapabilities::default(),
         calls: Arc::new(AtomicUsize::new(0)),
     };
     assert!(
         matches!(storage.create_dir(ah_vfs::domain::storage::StorageCreateDirRequest { path: StoragePath::parse("dir")?, recursive: false }).await, Err(error) if error.kind() == StorageErrorKind::UnsupportedOperation)
     );
-    Ok(())
-}
-
-#[tokio::test]
-async fn inconsistent_driver_capabilities_cannot_be_persisted_as_a_mount() -> TestResult {
-    use ah_vfs::application::{
-        dto::{MountFilter, MountRequest},
-        port::MountRepository,
-    };
-    let actual = StorageCapabilities::builder()
-        .read_file(FileReadSupport::Range)
-        .build()?;
-    let key = DriverKey::parse("invalid-capabilities")?;
-    let mut drivers = DriverCatalog::new();
-    common::register(
-        &mut drivers,
-        common::managed(Arc::new(TestDriver {
-            info: DriverInfo::builder()
-                .key(key.clone())
-                .name("Test".into())
-                .version(semver::Version::new(0, 1, 0))
-                .child_mount_policy(ChildMountPolicy::Allow)
-                .capabilities(StorageCapabilities::default())
-                .build(),
-            storage: Arc::new(TestStorage {
-                capabilities: actual,
-                calls: Arc::new(AtomicUsize::new(0)),
-            }),
-            open_failure: None,
-        })),
-    )?;
-    let repository = Arc::new(SqliteMountRepository::in_memory().await?);
-    let mounts = MountService::new(Arc::new({
-        let drivers = Arc::new(drivers);
-        let records = common::Records::seeded(&drivers, &["root"])?;
-        MountRuntime::new(repository.clone(), drivers, records, None)
-    }));
-    let error = mounts
-        .mount(MountRequest {
-            virtual_path: VirtualPath::root(),
-            driver_instance: DriverInstance::new(key, InstanceId::parse("root")?),
-        })
-        .await
-        .err()
-        .ok_or("expected invalid adapter")?;
-    assert_eq!(
-        error
-            .storage_error()
-            .ok_or("missing normalized failure")?
-            .kind(),
-        StorageErrorKind::InvalidData
-    );
-    assert!(repository.list(MountFilter::default()).await?.is_empty());
     Ok(())
 }

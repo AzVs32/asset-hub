@@ -18,8 +18,9 @@
 //! negotiation selects the lower mutually supported revision. Unknown optional
 //! capabilities are unsupported, never inferred from a newer version number.
 //! The description includes DriverInfo and supported
-//! protocol features. Validate identities, schemas, capabilities and transfer
-//! limits before registration. Initialize applies plugin-wide DriverSettings;
+//! protocol features. Validate identities, schemas and driver capabilities before
+//! registration. Validate transfer limits when opening each storage session.
+//! Initialize applies plugin-wide DriverSettings;
 //! only successful initialization publishes the registration. All synchronous
 //! declarations are local immutable snapshots, including after reconnects.
 //! A reconnect with changed declarations requires a new registration rather than
@@ -98,7 +99,7 @@ mod storage;
 
 pub use driver::{Driver, DriverFuture};
 pub use mount_repository::{MountRepository, MountRepositoryFuture};
-pub use storage::validate_storage_capabilities;
+pub use storage::validate_storage_extensions;
 pub use storage::{Storage, StorageFileReader, StorageFileWriter, StorageFuture};
 
 mod storage_attributes;

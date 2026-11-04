@@ -47,7 +47,7 @@ impl EntryService {
         &self,
         table: &MountTable,
         path: &VirtualPath,
-    ) -> Result<(StoragePath, Arc<dyn Storage>), EntryError> {
+    ) -> Result<(StoragePath, Arc<dyn Storage>, StorageCapabilities), EntryError> {
         let resolution = table.resolve(path)?;
         let reference = resolution.mount().driver_instance();
         let driver = self
@@ -57,7 +57,7 @@ impl EntryService {
             .ok_or_else(|| EntryError::DriverNotRegistered(reference.driver_key().clone()))?;
         let relative = resolution.storage_path().map_err(StorageError::from)?;
         let storage = self.runtime.storage(reference, driver.as_ref()).await?;
-        Ok((relative, storage))
+        Ok((relative, storage, driver.info().capabilities()))
     }
 
     fn require(supported: bool) -> Result<(), EntryError> {
@@ -68,15 +68,21 @@ impl EntryService {
         }
     }
 
-    /// Effective backing-instance capabilities, not path authorization. Namespace
-    /// protection and synthetic-dir behavior are checked by each operation.
+    /// Driver-wide capabilities for the resolved mount. No instance is opened and
+    /// no backend path is probed. This does not report authorization or availability.
     pub async fn capabilities(
         &self,
         path: &VirtualPath,
     ) -> Result<StorageCapabilities, EntryError> {
         let table = self.runtime.table().await?;
-        let (_, storage) = self.open(&table, path).await?;
-        Ok(storage.capabilities())
+        let resolution = table.resolve(path)?;
+        let key = resolution.mount().driver_instance().driver_key();
+        let driver = self
+            .runtime
+            .drivers
+            .get(key)
+            .ok_or_else(|| EntryError::DriverNotRegistered(key.clone()))?;
+        Ok(driver.info().capabilities())
     }
 
     fn classify<'a>(table: &'a MountTable, path: &VirtualPath) -> NamespaceEntry<'a> {
@@ -109,8 +115,8 @@ impl EntryService {
         if matches!(namespace, NamespaceEntry::SyntheticDir) {
             return Ok(EntryView::dir(path.clone(), EntryOrigin::SyntheticDir));
         }
-        let (relative, storage) = self.open(&table, path).await?;
-        Self::require(storage.capabilities().stat_entry())?;
+        let (relative, storage, capabilities) = self.open(&table, path).await?;
+        Self::require(capabilities.stat_entry())?;
         let entry = storage
             .stat_entry(StorageStatEntryRequest { path: relative })
             .await?;
@@ -137,10 +143,10 @@ impl EntryService {
         }
         let table = self.runtime.table().await?;
         let synthetic = matches!(Self::classify(&table, path), NamespaceEntry::SyntheticDir);
-        let (relative, storage) = self.open(&table, path).await?;
-        Self::require(storage.capabilities().list_entries())?;
+        let (relative, storage, capabilities) = self.open(&table, path).await?;
+        Self::require(capabilities.list_entries())?;
         if synthetic {
-            Self::require(storage.capabilities().stat_entry())?;
+            Self::require(capabilities.stat_entry())?;
         }
         let mut entries = BTreeMap::new();
         let mut after = None;
@@ -265,8 +271,8 @@ impl EntryService {
         ) {
             return Err(StorageError::new(StorageErrorKind::IsDir).into());
         }
-        let (relative, storage) = self.open(&table, &request.path).await?;
-        let support = storage.capabilities().read_file();
+        let (relative, storage, capabilities) = self.open(&table, &request.path).await?;
+        let support = capabilities.read_file();
         Self::require(support != FileReadSupport::None)?;
         Self::require(
             (request.offset == 0 && request.length.is_none()) || support == FileReadSupport::Range,
@@ -288,8 +294,8 @@ impl EntryService {
     ) -> Result<FileWriteHandle, EntryError> {
         let table = self.runtime.table().await?;
         Self::protect(&table, &request.path)?;
-        let (relative, storage) = self.open(&table, &request.path).await?;
-        let support = storage.capabilities().write_file();
+        let (relative, storage, capabilities) = self.open(&table, &request.path).await?;
+        let support = capabilities.write_file();
         Self::require(match request.mode {
             crate::domain::storage::StorageWriteFileMode::CreateNew => support.create_new,
             crate::domain::storage::StorageWriteFileMode::Replace => support.replace,
@@ -314,8 +320,8 @@ impl EntryService {
     pub async fn create_dir(&self, request: CreateDirRequest) -> Result<EntryView, EntryError> {
         let table = self.runtime.table().await?;
         Self::protect(&table, &request.path)?;
-        let (relative, storage) = self.open(&table, &request.path).await?;
-        Self::require(storage.capabilities().create_dir())?;
+        let (relative, storage, capabilities) = self.open(&table, &request.path).await?;
+        Self::require(capabilities.create_dir())?;
         let entry = storage
             .create_dir(StorageCreateDirRequest {
                 path: relative,
@@ -329,8 +335,8 @@ impl EntryService {
     pub async fn remove_entry(&self, request: RemoveEntryRequest) -> Result<(), EntryError> {
         let table = self.runtime.table().await?;
         Self::protect(&table, &request.path)?;
-        let (relative, storage) = self.open(&table, &request.path).await?;
-        Self::require(storage.capabilities().remove_entry())?;
+        let (relative, storage, capabilities) = self.open(&table, &request.path).await?;
+        Self::require(capabilities.remove_entry())?;
         Ok(storage
             .remove_entry(StorageRemoveEntryRequest { path: relative })
             .await?)
@@ -347,8 +353,8 @@ impl EntryService {
             return Err(EntryError::CrossMountMove);
         }
         let destination = destination.storage_path().map_err(StorageError::from)?;
-        let (source, storage) = self.open(&table, &request.source).await?;
-        let support = storage.capabilities().rename();
+        let (source, storage, capabilities) = self.open(&table, &request.source).await?;
+        let support = capabilities.rename();
         Self::require(if request.replace {
             support.replace
         } else {
@@ -367,7 +373,7 @@ impl EntryService {
         &self,
         path: &VirtualPath,
         write: bool,
-    ) -> Result<(StoragePath, Arc<dyn Storage>), EntryError> {
+    ) -> Result<(StoragePath, Arc<dyn Storage>, StorageCapabilities), EntryError> {
         let table = self.runtime.table().await?;
         if write {
             Self::protect(&table, path)?;
@@ -375,8 +381,7 @@ impl EntryService {
         if matches!(Self::classify(&table, path), NamespaceEntry::SyntheticDir) {
             return Err(StorageError::new(StorageErrorKind::UnsupportedOperation).into());
         }
-        let (relative, storage) = self.open(&table, path).await?;
-        Ok((relative, storage))
+        self.open(&table, path).await
     }
 
     /// Read POSIX mode bits. Synthetic dirs have no backend attributes.
@@ -384,8 +389,8 @@ impl EntryService {
         &self,
         path: &VirtualPath,
     ) -> Result<EntryPermissions, EntryError> {
-        let (relative, storage) = self.attribute_storage(path, false).await?;
-        Self::require(storage.capabilities().permissions().can_read())?;
+        let (relative, storage, capabilities) = self.attribute_storage(path, false).await?;
+        Self::require(capabilities.permissions().can_read())?;
         let extension = storage
             .permissions()
             .ok_or(EntryError::InvalidStorageResponse(
@@ -400,8 +405,8 @@ impl EntryService {
         path: &VirtualPath,
         permissions: EntryPermissions,
     ) -> Result<(), EntryError> {
-        let (relative, storage) = self.attribute_storage(path, true).await?;
-        Self::require(storage.capabilities().permissions().can_write())?;
+        let (relative, storage, capabilities) = self.attribute_storage(path, true).await?;
+        Self::require(capabilities.permissions().can_write())?;
         let extension = storage
             .permissions()
             .ok_or(EntryError::InvalidStorageResponse(
@@ -416,8 +421,8 @@ impl EntryService {
         path: &VirtualPath,
         max_bytes: NonZeroUsize,
     ) -> Result<Vec<XattrName>, EntryError> {
-        let (relative, storage) = self.attribute_storage(path, false).await?;
-        Self::require(storage.capabilities().xattrs().can_read())?;
+        let (relative, storage, capabilities) = self.attribute_storage(path, false).await?;
+        Self::require(capabilities.xattrs().can_read())?;
         let extension = storage.xattrs().ok_or(EntryError::InvalidStorageResponse(
             "missing xattr extension",
         ))?;
@@ -431,8 +436,8 @@ impl EntryService {
         name: XattrName,
         max_bytes: NonZeroUsize,
     ) -> Result<Vec<u8>, EntryError> {
-        let (relative, storage) = self.attribute_storage(path, false).await?;
-        Self::require(storage.capabilities().xattrs().can_read())?;
+        let (relative, storage, capabilities) = self.attribute_storage(path, false).await?;
+        Self::require(capabilities.xattrs().can_read())?;
         let extension = storage.xattrs().ok_or(EntryError::InvalidStorageResponse(
             "missing xattr extension",
         ))?;
@@ -447,8 +452,8 @@ impl EntryService {
         value: Vec<u8>,
         mode: XattrWriteMode,
     ) -> Result<(), EntryError> {
-        let (relative, storage) = self.attribute_storage(path, true).await?;
-        Self::require(storage.capabilities().xattrs().can_write())?;
+        let (relative, storage, capabilities) = self.attribute_storage(path, true).await?;
+        Self::require(capabilities.xattrs().can_write())?;
         let extension = storage.xattrs().ok_or(EntryError::InvalidStorageResponse(
             "missing xattr extension",
         ))?;
@@ -461,8 +466,8 @@ impl EntryService {
         path: &VirtualPath,
         name: XattrName,
     ) -> Result<(), EntryError> {
-        let (relative, storage) = self.attribute_storage(path, true).await?;
-        Self::require(storage.capabilities().xattrs().can_write())?;
+        let (relative, storage, capabilities) = self.attribute_storage(path, true).await?;
+        Self::require(capabilities.xattrs().can_write())?;
         let extension = storage.xattrs().ok_or(EntryError::InvalidStorageResponse(
             "missing xattr extension",
         ))?;

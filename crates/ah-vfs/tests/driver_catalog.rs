@@ -39,9 +39,6 @@ fn unsupported<T: Send + 'static>() -> StorageFuture<'static, T> {
 }
 
 impl Storage for TestStorage {
-    fn capabilities(&self) -> ah_vfs::domain::storage::StorageCapabilities {
-        ah_vfs::domain::storage::StorageCapabilities::default()
-    }
     fn chunk_size(&self) -> NonZeroUsize {
         NonZeroUsize::MIN
     }

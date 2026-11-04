@@ -6,7 +6,9 @@
 //! services. Async storage handles and stream lifetimes are application ports.
 //!
 //! Capability construction rejects inconsistent declarations. Runtime acceptance
-//! still checks adapter conformance. Unsupported operations fail before side effects.
+//! checks independent attribute interfaces against the driver declaration. All
+//! instances share it; instance/path limitations are reported by operations.
+//! Unsupported operations fail before side effects.
 //! Transport adapters preserve these semantics using their own wire formats.
 
 mod attributes;

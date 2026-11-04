@@ -144,7 +144,6 @@ impl exports::assethub::vfs::driver::Guest for Probe {
                 Op::Open(_) => Value::Storage(p::Storage {
                     handle: 1,
                     info: Some(p::StorageInfo {
-                        capabilities: vec![p::Capability::Stat as i32],
                         chunk_size: 1024,
                     }),
                 }),

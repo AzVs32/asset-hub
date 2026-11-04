@@ -52,7 +52,9 @@ pub trait Driver: Send + Sync {
     /// its configuration. The host supplies validated, decrypted parameters.
     /// This is a cold path that may perform backend probes;
     /// the host's MountRuntime retains validated handles for repeated I/O.
-    /// Returned capabilities must be covered by info().capabilities(). Backend
+    /// All instances share info().capabilities(); declared independent attribute
+    /// interfaces must be present. Instance/path limitations are operation errors.
+    /// Backend
     /// failures use DriverError::Storage and retain the same domain categories
     /// used during I/O. Opening never selects file formats or viewers.
     fn open(&self, context: super::OpenContext) -> DriverFuture<'_, Arc<dyn Storage>>;

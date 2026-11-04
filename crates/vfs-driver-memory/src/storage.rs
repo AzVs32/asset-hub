@@ -2,10 +2,9 @@ use crate::Capacity;
 use ah_vfs::{
     application::port::{Storage, StorageFileReader, StorageFileWriter, StorageFuture},
     domain::storage::{
-        DirModel, FileReadSupport, FileWriteSupport, RenameSupport, StorageCapabilities,
-        StorageCapabilitiesError, StorageCreateDirRequest, StorageDirPage, StorageDirQuery,
-        StorageEntry, StorageEntryKind, StorageError, StorageErrorKind, StorageMoveEntryRequest,
-        StoragePath, StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
+        StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageEntry, StorageEntryKind,
+        StorageError, StorageErrorKind, StorageMoveEntryRequest, StoragePath,
+        StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
         StorageWriteFileMode, StorageWriteFileRequest,
     },
 };
@@ -192,17 +191,14 @@ fn writable_target(
 /// by readers, not metadata, allocator overhead or chunks returned to callers.
 /// Replacement needs room for the old and staged versions until publication.
 pub struct MemoryStorage {
-    capabilities: StorageCapabilities,
     capacity: Capacity,
     shared: Arc<Shared>,
 }
 
 impl MemoryStorage {
     /// Create a fresh instance with an empty, persistent-in-runtime root directory.
-    /// Reject an inconsistent built-in capability declaration before allocating storage.
-    pub fn new(capacity: Capacity) -> Result<Self, StorageCapabilitiesError> {
-        Ok(Self {
-            capabilities: Self::supported_capabilities()?,
+    pub fn new(capacity: Capacity) -> Self {
+        Self {
             capacity,
             shared: Arc::new(Shared {
                 entries: Mutex::new(BTreeMap::from([(String::new(), Entry::dir())])),
@@ -211,7 +207,7 @@ impl MemoryStorage {
                     used: AtomicU64::new(0),
                 }),
             }),
-        })
+        }
     }
 
     pub fn capacity(&self) -> Capacity {
@@ -222,34 +218,9 @@ impl MemoryStorage {
     pub fn used_bytes(&self) -> u64 {
         self.shared.quota.used.load(Ordering::Acquire)
     }
-
-    pub(crate) fn supported_capabilities() -> Result<StorageCapabilities, StorageCapabilitiesError>
-    {
-        StorageCapabilities::builder()
-            .stat_entry(true)
-            .list_entries(true)
-            .read_file(FileReadSupport::Range)
-            .write_file(FileWriteSupport {
-                create_new: true,
-                replace: true,
-                atomic_publish: true,
-            })
-            .dir_model(DirModel::Hierarchical)
-            .persistent_empty_dirs(true)
-            .create_dir(true)
-            .remove_entry(true)
-            .rename(RenameSupport {
-                no_replace: true,
-                replace: true,
-            })
-            .build()
-    }
 }
 
 impl Storage for MemoryStorage {
-    fn capabilities(&self) -> StorageCapabilities {
-        self.capabilities
-    }
     fn chunk_size(&self) -> NonZeroUsize {
         NonZeroUsize::new(CHUNK_SIZE).unwrap_or(NonZeroUsize::MIN)
     }

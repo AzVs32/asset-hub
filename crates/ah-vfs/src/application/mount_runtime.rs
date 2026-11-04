@@ -4,7 +4,7 @@ use crate::{
     application::{
         driver_catalog::DriverCatalog,
         error::EntryError,
-        port::{Driver, MountRepository, Storage, validate_storage_capabilities},
+        port::{Driver, MountRepository, Storage, validate_storage_extensions},
     },
     domain::{
         DriverError, DriverInstance,
@@ -27,7 +27,7 @@ struct Cache {
 
 /// Shared state for one host's mount namespace. Construct once and pass the same
 /// Arc to EntryService, MountService and InstanceService. The first access loads
-/// and validates a mount snapshot; each instance is opened and validated once.
+/// and validates a mount snapshot; each instance is opened and its attribute interfaces checked once.
 /// Concurrent cold accesses share initialization without serializing other IDs.
 /// Failed or cancelled initialization can be retried and is never cached as success.
 /// Handles reporting a stale runtime generation are evicted before the next open.
@@ -149,7 +149,7 @@ impl MountRuntime {
                 .open_context(instance.instance_id().clone())
                 .await?;
             let storage = driver.open(context).await?;
-            validate_storage_capabilities(driver.info().capabilities(), storage.as_ref())?;
+            validate_storage_extensions(driver.info().capabilities(), storage.as_ref())?;
             Ok(storage)
         })
         .await

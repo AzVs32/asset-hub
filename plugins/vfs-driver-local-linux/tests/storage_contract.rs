@@ -83,8 +83,7 @@ async fn service(f: &Fixture) -> Result<EntryService, Box<dyn Error>> {
 #[tokio::test]
 async fn instance_support_matches_driver_and_atomic_publication_is_honored() -> TestResult {
     let f = fixture().await?;
-    let caps = f.storage.capabilities();
-    assert!(f.driver.info().capabilities().supports(caps));
+    let caps = f.driver.info().capabilities();
     assert_eq!(caps.read_file(), FileReadSupport::Range);
     assert_eq!(
         caps.permissions().can_read(),
@@ -195,21 +194,26 @@ async fn xattrs_support_binary_empty_and_bounded_values_with_atomic_existence_po
 -> TestResult {
     let f = fixture().await?;
     let entries = service(&f).await?;
-    if !f.storage.capabilities().xattrs().can_read() {
-        assert!(f.storage.xattrs().is_none());
-        return Ok(());
-    }
     let target = VirtualPath::parse("/file")?;
     let name = XattrName::parse("user.asset-hub-test")?;
     let limit = NonZeroUsize::new(4096).ok_or("zero limit")?;
-    entries
+    let result = entries
         .set_xattr(
             &target,
             name.clone(),
             vec![0, 255, 1, 0],
             XattrWriteMode::CreateNew,
         )
-        .await?;
+        .await;
+    if result.as_ref().err().is_some_and(|error| {
+        error
+            .storage_error()
+            .is_some_and(|error| error.kind() == StorageErrorKind::UnsupportedOperation)
+    }) {
+        assert!(f.storage.xattrs().is_some());
+        return Ok(());
+    }
+    result?;
     assert_eq!(
         entries.get_xattr(&target, name.clone(), limit).await?,
         [0, 255, 1, 0]

@@ -1,35 +1,7 @@
 //! Attribute operations on pinned file/dir handles; paths never follow symlinks.
 use super::LinuxLocalStorage;
-use ah_vfs::domain::storage::{StorageCapabilities, StorageError};
+use ah_vfs::domain::storage::StorageError;
 use cap_std::fs::Dir;
-
-pub(super) fn instance_capabilities(dir: &Dir) -> Result<StorageCapabilities, StorageError> {
-    let mut capabilities =
-        LinuxLocalStorage::supported_capabilities().map_err(StorageError::from)?;
-    let handle = match dir.open(".") {
-        Ok(handle) => handle,
-        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-            return Ok(capabilities);
-        }
-        Err(error) => return Err(super::fs::error(error)),
-    };
-    let mut bytes = [0_u8; 0];
-    if let Err(error) = rustix::fs::flistxattr(&handle, &mut bytes[..]) {
-        if error == rustix::io::Errno::NOTSUP {
-            capabilities = capabilities
-                .to_builder()
-                .xattrs(ah_vfs::domain::storage::AttributeSupport::None)
-                .build()
-                .map_err(StorageError::from)?;
-        } else if error != rustix::io::Errno::RANGE
-            && error != rustix::io::Errno::ACCESS
-            && error != rustix::io::Errno::PERM
-        {
-            return Err(super::fs::error(error.into()));
-        }
-    }
-    Ok(capabilities)
-}
 
 mod posix {
     use super::super::{blocking, fs};

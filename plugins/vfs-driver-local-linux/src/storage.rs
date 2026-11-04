@@ -6,11 +6,9 @@ use ah_vfs::{
         StorageXattrs,
     },
     domain::storage::{
-        AttributeSupport, DirModel, FileReadSupport, FileWriteSupport, RenameSupport,
-        StorageCapabilities, StorageCapabilitiesError, StorageCreateDirRequest, StorageDirPage,
-        StorageDirQuery, StorageEntry, StorageError, StorageErrorKind, StorageMoveEntryRequest,
-        StorageReadFileRequest, StorageRemoveEntryRequest, StorageStatEntryRequest,
-        StorageWriteFileRequest,
+        StorageCreateDirRequest, StorageDirPage, StorageDirQuery, StorageEntry, StorageError,
+        StorageErrorKind, StorageMoveEntryRequest, StorageReadFileRequest,
+        StorageRemoveEntryRequest, StorageStatEntryRequest, StorageWriteFileRequest,
     },
 };
 
@@ -50,46 +48,20 @@ async fn blocking<T: Send + 'static>(
 pub struct LinuxLocalStorage {
     root: PathBuf,
     dir: Arc<Dir>,
-    capabilities: StorageCapabilities,
 }
 
 impl LinuxLocalStorage {
-    pub(crate) fn supported_capabilities() -> Result<StorageCapabilities, StorageCapabilitiesError>
-    {
-        StorageCapabilities::builder()
-            .stat_entry(true)
-            .list_entries(true)
-            .read_file(FileReadSupport::Range)
-            .write_file(FileWriteSupport {
-                create_new: true,
-                replace: true,
-                atomic_publish: true,
-            })
-            .dir_model(DirModel::Hierarchical)
-            .persistent_empty_dirs(true)
-            .create_dir(true)
-            .remove_entry(true)
-            .rename(RenameSupport {
-                no_replace: true,
-                replace: true,
-            })
-            .permissions(AttributeSupport::ReadWrite)
-            .xattrs(AttributeSupport::ReadWrite)
-            .build()
-    }
     pub(crate) async fn open(root: PathBuf) -> Result<Self, StorageError> {
         let path = root.clone();
-        let (dir, capabilities) = blocking(move || {
+        let dir = blocking(move || {
             let dir =
                 Dir::open_ambient_dir(path, cap_std::ambient_authority()).map_err(fs::error)?;
-            let capabilities = attributes::instance_capabilities(&dir)?;
-            Ok((dir, capabilities))
+            Ok(dir)
         })
         .await?;
         Ok(Self {
             root,
             dir: Arc::new(dir),
-            capabilities,
         })
     }
     pub fn root(&self) -> &Path {
@@ -98,22 +70,12 @@ impl LinuxLocalStorage {
 }
 
 impl Storage for LinuxLocalStorage {
-    fn capabilities(&self) -> StorageCapabilities {
-        self.capabilities
-    }
-
     fn permissions(&self) -> Option<&dyn StoragePermissions> {
-        if self.capabilities.permissions().can_read() {
-            return Some(self);
-        }
-        None
+        Some(self)
     }
 
     fn xattrs(&self) -> Option<&dyn StorageXattrs> {
-        if self.capabilities.xattrs().can_read() {
-            return Some(self);
-        }
-        None
+        Some(self)
     }
     fn chunk_size(&self) -> NonZeroUsize {
         NonZeroUsize::new(CHUNK_SIZE).unwrap_or(NonZeroUsize::MIN)
@@ -162,16 +124,6 @@ impl Storage for LinuxLocalStorage {
     }
 
     fn move_entry(&self, request: StorageMoveEntryRequest) -> StorageFuture<'_, StorageEntry> {
-        let support = self.capabilities.rename();
-        if !(if request.replace {
-            support.replace
-        } else {
-            support.no_replace
-        }) {
-            return Box::pin(async {
-                Err(StorageError::new(StorageErrorKind::UnsupportedOperation))
-            });
-        }
         let dir = self.dir.clone();
         Box::pin(blocking(move || fs::move_entry(&dir, request)))
     }

@@ -29,51 +29,6 @@ fn full() -> Result<StorageCapabilities, StorageCapabilitiesError> {
         .build()
 }
 
-type Toggle = fn(StorageCapabilitiesBuilder, bool) -> StorageCapabilitiesBuilder;
-const FLAGS: [(&str, Toggle); 10] = [
-    ("stat", StorageCapabilitiesBuilder::stat_entry),
-    ("list", StorageCapabilitiesBuilder::list_entries),
-    ("write new", |c, v| {
-        c.write_file(FileWriteSupport {
-            create_new: v,
-            replace: true,
-            atomic_publish: true,
-        })
-    }),
-    ("write replace", |c, v| {
-        c.write_file(FileWriteSupport {
-            create_new: true,
-            replace: v,
-            atomic_publish: true,
-        })
-    }),
-    ("atomic publish", |c, v| {
-        c.write_file(FileWriteSupport {
-            create_new: true,
-            replace: true,
-            atomic_publish: v,
-        })
-    }),
-    (
-        "empty dirs",
-        StorageCapabilitiesBuilder::persistent_empty_dirs,
-    ),
-    ("create dir", StorageCapabilitiesBuilder::create_dir),
-    ("remove", StorageCapabilitiesBuilder::remove_entry),
-    ("rename new", |c, v| {
-        c.rename(RenameSupport {
-            no_replace: v,
-            replace: true,
-        })
-    }),
-    ("rename replace", |c, v| {
-        c.rename(RenameSupport {
-            no_replace: true,
-            replace: v,
-        })
-    }),
-];
-
 #[test]
 fn defaults_disable_every_optional_capability() -> TestResult {
     let caps = StorageCapabilities::default();
@@ -150,72 +105,7 @@ fn directory_guarantees_require_a_model_but_operations_remain_independent() -> T
 }
 
 #[test]
-fn each_boolean_guarantee_is_checked_in_both_coverage_directions() -> TestResult {
-    for (name, toggle) in FLAGS {
-        for declared in [false, true] {
-            for actual in [false, true] {
-                let upper = toggle(full()?.to_builder(), declared).build()?;
-                let opened = toggle(full()?.to_builder(), actual).build()?;
-                assert_eq!(upper.supports(opened), declared || !actual, "{name}");
-            }
-        }
-    }
-    Ok(())
-}
-
-#[test]
-fn read_and_attribute_levels_cover_exactly_their_lower_levels() -> TestResult {
-    let reads = [
-        FileReadSupport::None,
-        FileReadSupport::Sequential,
-        FileReadSupport::Range,
-    ];
-    let attrs = [
-        AttributeSupport::None,
-        AttributeSupport::Read,
-        AttributeSupport::ReadWrite,
-    ];
-    for declared in 0..3 {
-        assert_eq!(attrs[declared].can_read(), declared >= 1);
-        assert_eq!(attrs[declared].can_write(), declared == 2);
-        for actual in 0..3 {
-            let upper = StorageCapabilities::builder()
-                .read_file(reads[declared])
-                .build()?;
-            let opened = StorageCapabilities::builder()
-                .read_file(reads[actual])
-                .build()?;
-            assert_eq!(upper.supports(opened), actual <= declared);
-            for attribute in [
-                StorageCapabilitiesBuilder::permissions,
-                StorageCapabilitiesBuilder::xattrs,
-            ] {
-                let upper = attribute(StorageCapabilities::builder(), attrs[declared]).build()?;
-                let opened = attribute(StorageCapabilities::builder(), attrs[actual]).build()?;
-                assert_eq!(upper.supports(opened), actual <= declared);
-            }
-        }
-    }
-    Ok(())
-}
-
-#[test]
-fn directory_models_are_not_interchangeable() -> TestResult {
-    for declared in [DirModel::None, DirModel::Hierarchical, DirModel::Prefix] {
-        for actual in [DirModel::None, DirModel::Hierarchical, DirModel::Prefix] {
-            let upper = StorageCapabilities::builder().dir_model(declared).build()?;
-            let opened = StorageCapabilities::builder().dir_model(actual).build()?;
-            assert_eq!(
-                upper.supports(opened),
-                actual == DirModel::None || actual == declared
-            );
-        }
-    }
-    Ok(())
-}
-
-#[test]
-fn construction_errors_are_distinct_from_insufficient_coverage() -> TestResult {
+fn construction_errors_retain_their_validation_cause() -> TestResult {
     for (builder, expected) in [
         (
             StorageCapabilities::builder().write_file(FileWriteSupport {
@@ -243,8 +133,6 @@ fn construction_errors_are_distinct_from_insufficient_coverage() -> TestResult {
             Some(&expected)
         );
     }
-    assert!(!StorageCapabilities::default().supports(full()?));
-    assert!(full()?.supports(StorageCapabilities::default()));
     Ok(())
 }
 
@@ -270,54 +158,8 @@ fn rebuilding_revalidates_and_getters_cannot_mutate_the_original() -> TestResult
         .dir_model(DirModel::None)
         .xattrs(AttributeSupport::None)
         .build()?;
-    assert!(original.supports(reduced));
-    assert!(!reduced.supports(original));
-    Ok(())
-}
-
-#[test]
-fn coverage_is_a_partial_order_for_valid_combined_declarations() -> TestResult {
-    let mut samples = vec![StorageCapabilities::default(), full()?];
-    for (_, toggle) in FLAGS {
-        samples.push(toggle(full()?.to_builder(), false).build()?);
-    }
-    for dir_model in [DirModel::None, DirModel::Hierarchical, DirModel::Prefix] {
-        for read_file in [
-            FileReadSupport::None,
-            FileReadSupport::Sequential,
-            FileReadSupport::Range,
-        ] {
-            for attribute in [
-                AttributeSupport::None,
-                AttributeSupport::Read,
-                AttributeSupport::ReadWrite,
-            ] {
-                samples.push(
-                    StorageCapabilities::builder()
-                        .dir_model(dir_model)
-                        .read_file(read_file)
-                        .permissions(attribute)
-                        .xattrs(attribute)
-                        .build()?,
-                );
-            }
-        }
-    }
-    for &a in &samples {
-        assert!(a.supports(a));
-        for &b in &samples {
-            if !a.supports(b) {
-                continue;
-            }
-            if b.supports(a) {
-                assert_eq!(a, b);
-            }
-            for &c in &samples {
-                if b.supports(c) {
-                    assert!(a.supports(c), "{a:?} >= {b:?} >= {c:?}");
-                }
-            }
-        }
-    }
+    assert_eq!(reduced.dir_model(), DirModel::None);
+    assert_eq!(reduced.xattrs(), AttributeSupport::None);
+    assert_eq!(original, full()?);
     Ok(())
 }

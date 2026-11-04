@@ -13,5 +13,5 @@ async fn local_same_path_rename_obeys_storage_contract() -> Result<(), Box<dyn s
     let storage = driver
         .open(registry.open_context(instance.id.clone()).await?)
         .await?;
-    assert_same_path_rename_contract(storage.as_ref()).await
+    assert_same_path_rename_contract(storage.as_ref(), driver.info().capabilities().rename()).await
 }

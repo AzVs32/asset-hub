@@ -30,7 +30,7 @@
       local.get $shift i32.const 7 i32.add local.set $shift
       local.get $byte i32.const 128 i32.and br_if $read)
     local.get $value local.get $pos)
-  (func (export "assethub:vfs/driver@2.0.0#call") (param $ptr i32) (param $length i32) (result i32)
+  (func (export "assethub:vfs/driver@3.0.0#call") (param $ptr i32) (param $length i32) (result i32)
     (local $pos i32) (local $tag i32) (local $size i32) (local $op i32)
     i32.const 0 i32.const 1024 i32.store
     i32.const 4 i32.const @@DESCRIPTION_LENGTH@@ i32.store
@@ -82,9 +82,9 @@
 (core instance $guest (instantiate $guest))
 (alias core export $guest "memory" (core memory $memory))
 (alias core export $guest "cabi_realloc" (core func $realloc))
-(alias core export $guest "assethub:vfs/driver@2.0.0#call" (core func $call))
+(alias core export $guest "assethub:vfs/driver@3.0.0#call" (core func $call))
 (func $call (param "request" (list u8)) (result (list u8))
   (canon lift (core func $call) (memory $memory) (realloc $realloc)))
 (instance $driver (export "call" (func $call)))
-(export "assethub:vfs/driver@2.0.0" (instance $driver))
+(export "assethub:vfs/driver@3.0.0" (instance $driver))
 )

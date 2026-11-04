@@ -1,7 +1,7 @@
 mod common;
 
 use ah_vfs::{
-    application::port::{Storage, validate_storage_capabilities},
+    application::port::{Driver, Storage, validate_storage_extensions},
     domain::storage::{
         AttributeSupport, StorageCreateDirRequest, StorageDirQuery, StorageEntryKind,
         StorageErrorKind as Kind, StorageMoveEntryRequest, StorageReadFileRequest,
@@ -11,18 +11,19 @@ use ah_vfs::{
 };
 use common::*;
 use std::{num::NonZeroUsize, sync::Arc};
-use vfs_driver_memory::{Capacity, CapacityUnit, MemoryStorage};
+use vfs_driver_memory::{Capacity, CapacityUnit, MemoryDriver, MemoryStorage};
 
 fn storage(bytes: u64) -> TestResult<MemoryStorage> {
-    Ok(MemoryStorage::new(Capacity::new(bytes, CapacityUnit::B)?)?)
+    Ok(MemoryStorage::new(Capacity::new(bytes, CapacityUnit::B)?))
 }
 
 #[tokio::test]
 async fn declarations_cover_all_ports_and_optional_attributes_are_absent() -> TestResult {
     let storage = storage(32)?;
-    validate_storage_capabilities(storage.capabilities(), &storage)?;
-    assert_eq!(storage.capabilities().permissions(), AttributeSupport::None);
-    assert_eq!(storage.capabilities().xattrs(), AttributeSupport::None);
+    let capabilities = MemoryDriver::new()?.info().capabilities();
+    validate_storage_extensions(capabilities, &storage)?;
+    assert_eq!(capabilities.permissions(), AttributeSupport::None);
+    assert_eq!(capabilities.xattrs(), AttributeSupport::None);
     assert!(storage.permissions().is_none());
     assert!(storage.xattrs().is_none());
     assert_eq!(storage.chunk_size().get(), 64 * 1024);

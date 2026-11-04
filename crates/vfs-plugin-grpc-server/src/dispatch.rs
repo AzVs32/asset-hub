@@ -379,15 +379,12 @@ impl Generation {
             let context = OpenContext::new(id(&raw)?, c::object(Some(config))?.into());
             let capacity = self.reserve()?;
             let storage = self.driver.open(context).await?;
-            validate_storage_capabilities(self.driver.info().capabilities(), storage.as_ref())?;
+            validate_storage_extensions(self.driver.info().capabilities(), storage.as_ref())?;
             let chunk_size = u32::try_from(storage.chunk_size().get()).map_err(|_| c::invalid())?;
             if chunk_size as usize > p::MAX_DATA_BYTES {
                 return Err(c::invalid());
             }
-            let info = p::StorageInfo {
-                capabilities: c::capabilities(storage.capabilities()),
-                chunk_size,
-            };
+            let info = p::StorageInfo { chunk_size };
             Ok(Session {
                 generation: self.clone(),
                 info,
@@ -420,7 +417,7 @@ impl Session {
     pub fn opened(&self) -> p::Reply {
         p::Reply::new(Value::Storage(p::Storage {
             handle: 1,
-            info: Some(self.info.clone()),
+            info: Some(self.info),
         }))
     }
     pub fn retired(&self) -> watch::Receiver<bool> {

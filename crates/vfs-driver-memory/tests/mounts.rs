@@ -390,8 +390,14 @@ async fn root_initialization_and_enable_persist_configuration_without_opening_ba
         .await?;
     mounts.disable(id).await?;
     mounts.enable(id).await?;
+    assert!(
+        entries
+            .capabilities(&virtual_path("/")?)
+            .await?
+            .stat_entry()
+    );
     let error = entries
-        .capabilities(&virtual_path("/")?)
+        .stat_entry(&virtual_path("/file")?)
         .await
         .err()
         .ok_or("opening must fail")?;

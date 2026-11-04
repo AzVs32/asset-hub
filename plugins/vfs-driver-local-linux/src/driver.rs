@@ -9,7 +9,14 @@ use ah_vfs::{
         },
         port::{Driver, DriverFuture, InstanceProvisioner, OpenContext, PreparedConfig, Storage},
     },
-    domain::{DriverError, DriverKey, InstanceConfigErrorKind, namespace::ChildMountPolicy},
+    domain::{
+        DriverError, DriverKey, InstanceConfigErrorKind,
+        namespace::ChildMountPolicy,
+        storage::{
+            AttributeSupport, DirModel, FileReadSupport, FileWriteSupport, RenameSupport,
+            StorageCapabilities, StorageCapabilitiesError,
+        },
+    },
 };
 
 use std::{
@@ -23,12 +30,35 @@ pub struct LinuxLocalDriver {
     info: DriverInfo,
 }
 impl LinuxLocalDriver {
+    fn supported_capabilities() -> Result<StorageCapabilities, StorageCapabilitiesError> {
+        StorageCapabilities::builder()
+            .stat_entry(true)
+            .list_entries(true)
+            .read_file(FileReadSupport::Range)
+            .write_file(FileWriteSupport {
+                create_new: true,
+                replace: true,
+                atomic_publish: true,
+            })
+            .dir_model(DirModel::Hierarchical)
+            .persistent_empty_dirs(true)
+            .create_dir(true)
+            .remove_entry(true)
+            .rename(RenameSupport {
+                no_replace: true,
+                replace: true,
+            })
+            .permissions(AttributeSupport::ReadWrite)
+            .xattrs(AttributeSupport::ReadWrite)
+            .build()
+    }
+
     pub const KEY: &str = "local";
     pub fn new() -> Result<Self, LinuxLocalDriverError> {
         Ok(Self {
             info: DriverInfo::builder()
                 .maybe_instance_config_schema(instance_config_schema())
-                .capabilities(LinuxLocalStorage::supported_capabilities()?)
+                .capabilities(Self::supported_capabilities()?)
                 .key(DriverKey::parse(Self::KEY).map_err(|_| LinuxLocalDriverError::InvalidData)?)
                 .name("Local filesystem".into())
                 .version(semver::Version::new(0, 1, 0))

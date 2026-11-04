@@ -39,7 +39,6 @@ struct TestDriver {
     response: Response,
 }
 struct TestStorage {
-    capabilities: ah_vfs::domain::storage::StorageCapabilities,
     instance: InstanceId,
     response: Response,
 }
@@ -59,7 +58,6 @@ impl common::Backend for TestDriver {
         let instance = context.instance_id().clone();
         Box::pin(async move {
             Ok(Arc::new(TestStorage {
-                capabilities: self.info.capabilities(),
                 instance,
                 response: self.response,
             }) as Arc<dyn Storage>)
@@ -68,9 +66,6 @@ impl common::Backend for TestDriver {
 }
 
 impl Storage for TestStorage {
-    fn capabilities(&self) -> ah_vfs::domain::storage::StorageCapabilities {
-        self.capabilities
-    }
     fn chunk_size(&self) -> NonZeroUsize {
         NonZeroUsize::MIN
     }

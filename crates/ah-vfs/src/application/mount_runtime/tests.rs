@@ -114,7 +114,7 @@ fn lock_error(_: impl std::fmt::Display) -> MountRepositoryError {
 
 struct TestStorage {
     validations: Arc<AtomicUsize>,
-    capabilities: StorageCapabilities,
+    invalid_extensions: Arc<AtomicBool>,
     generation: usize,
     current_generation: Arc<AtomicUsize>,
 }
@@ -130,12 +130,11 @@ impl Storage for TestStorage {
     fn is_stale(&self) -> bool {
         self.generation != self.current_generation.load(Ordering::SeqCst)
     }
-    fn capabilities(&self) -> StorageCapabilities {
-        self.capabilities
-    }
     fn permissions(&self) -> Option<&dyn StoragePermissions> {
         self.validations.fetch_add(1, Ordering::SeqCst);
-        None
+        self.invalid_extensions
+            .load(Ordering::SeqCst)
+            .then_some(self)
     }
     fn chunk_size(&self) -> NonZeroUsize {
         NonZeroUsize::MIN
@@ -152,6 +151,15 @@ impl Storage for TestStorage {
     }
 }
 
+impl StoragePermissions for TestStorage {
+    fn get_permissions(
+        &self,
+        _: crate::domain::storage::StoragePath,
+    ) -> StorageFuture<'_, crate::domain::storage::EntryPermissions> {
+        Box::pin(async { Err(StorageError::new(StorageErrorKind::UnsupportedOperation)) })
+    }
+}
+
 struct TestDriver {
     info: DriverInfo,
     opens: AtomicUsize,
@@ -159,7 +167,7 @@ struct TestDriver {
     fail_open: AtomicBool,
     suspend_open: AtomicBool,
     open_gate: tokio::sync::Notify,
-    invalid_capabilities: AtomicBool,
+    invalid_extensions: Arc<AtomicBool>,
     generation: Arc<AtomicUsize>,
 }
 
@@ -178,7 +186,7 @@ impl TestDriver {
             fail_open: AtomicBool::new(false),
             suspend_open: AtomicBool::new(false),
             open_gate: tokio::sync::Notify::new(),
-            invalid_capabilities: AtomicBool::new(false),
+            invalid_extensions: Arc::new(AtomicBool::new(false)),
             generation: Arc::new(AtomicUsize::new(1)),
         })
     }
@@ -211,15 +219,7 @@ impl common::Backend for TestDriver {
                 generation: self.generation.load(Ordering::SeqCst),
                 current_generation: self.generation.clone(),
                 validations: self.validations.clone(),
-                capabilities: if self.invalid_capabilities.load(Ordering::SeqCst) {
-                    (capabilities()?)
-                        .to_builder()
-                        .read_file(crate::domain::storage::FileReadSupport::Range)
-                        .build()
-                        .map_err(StorageError::from)?
-                } else {
-                    capabilities()?
-                },
+                invalid_extensions: self.invalid_extensions.clone(),
             });
             Ok(storage)
         })
@@ -294,6 +294,47 @@ async fn warm_io_reuses_namespace_and_the_handle_opened_during_mount() -> TestRe
     assert_eq!(f.repository.lists.load(Ordering::SeqCst), lists);
     assert_eq!(f.driver.opens.load(Ordering::SeqCst), 1);
     assert_eq!(f.driver.validations.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn capability_queries_share_driver_metadata_without_opening_any_instance() -> TestResult {
+    let f = Fixture::new()?;
+    // Neither identity has an instance record. Metadata queries must not load it.
+    f.mounts
+        .initialize_root(f.driver.reference("missing-root")?)
+        .await?;
+    f.repository
+        .insert(
+            Mount::builder()
+                .id(MountId::new())
+                .virtual_path(VirtualPath::parse("/other")?)
+                .driver_instance(f.driver.reference("missing-other")?)
+                .enabled(true)
+                .build(),
+        )
+        .await?;
+    f.driver.fail_open.store(true, Ordering::SeqCst);
+    f.driver.invalid_extensions.store(true, Ordering::SeqCst);
+    let declared = f.driver.info.capabilities();
+    for path in ["/", "/other", "/file:stream", "/other/nonexistent"] {
+        assert_eq!(
+            f.entries.capabilities(&VirtualPath::parse(path)?).await?,
+            declared
+        );
+    }
+    assert_eq!(f.driver.opens.load(Ordering::SeqCst), 0);
+    assert_eq!(f.driver.validations.load(Ordering::SeqCst), 0);
+    let error = f
+        .entries
+        .stat_entry(&VirtualPath::parse("/file")?)
+        .await
+        .err()
+        .ok_or("missing instance should fail I/O")?;
+    assert!(matches!(
+        error,
+        EntryError::Driver(DriverError::InstanceNotFound(_))
+    ));
     Ok(())
 }
 
@@ -456,15 +497,20 @@ async fn failures_are_retryable_and_explicit_invalidation_reloads_external_state
     assert!(f.runtime.table().await.is_err());
     f.mounts.initialize_root(f.driver.reference("one")?).await?;
     f.driver.fail_open.store(true, Ordering::SeqCst);
-    assert!(f.entries.capabilities(&VirtualPath::root()).await.is_err());
+    assert!(
+        f.entries
+            .stat_entry(&VirtualPath::parse("/probe")?)
+            .await
+            .is_err()
+    );
     f.driver.fail_open.store(false, Ordering::SeqCst);
-    f.entries.capabilities(&VirtualPath::root()).await?;
+    f.entries.stat_entry(&VirtualPath::parse("/probe")?).await?;
     assert_eq!(f.driver.opens.load(Ordering::SeqCst), 2);
     let old = f.runtime.table().await?;
     f.runtime.invalidate();
     let new = f.runtime.table().await?;
     assert!(!Arc::ptr_eq(&old, &new));
-    f.entries.capabilities(&VirtualPath::root()).await?;
+    f.entries.stat_entry(&VirtualPath::parse("/probe")?).await?;
     assert_eq!(f.driver.opens.load(Ordering::SeqCst), 3);
     Ok(())
 }
@@ -604,10 +650,10 @@ async fn table_initialization_is_shared_and_detached_loads_cannot_replace_new_sn
 }
 
 #[tokio::test]
-async fn invalid_capabilities_are_not_retained_as_successful_handles() -> TestResult {
+async fn invalid_extensions_are_not_retained_as_successful_handles() -> TestResult {
     let f = Fixture::new()?;
     let reference = f.driver.reference("one")?;
-    f.driver.invalid_capabilities.store(true, Ordering::SeqCst);
+    f.driver.invalid_extensions.store(true, Ordering::SeqCst);
     let error = f
         .runtime
         .storage(
@@ -624,7 +670,7 @@ async fn invalid_capabilities_are_not_retained_as_successful_handles() -> TestRe
     assert!(
         matches!(error, DriverError::Storage(error) if error.kind() == StorageErrorKind::InvalidData)
     );
-    f.driver.invalid_capabilities.store(false, Ordering::SeqCst);
+    f.driver.invalid_extensions.store(false, Ordering::SeqCst);
     f.runtime
         .storage(
             &reference,

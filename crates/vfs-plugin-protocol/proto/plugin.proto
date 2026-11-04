@@ -1,5 +1,5 @@
 syntax = "proto3";
-package assethub.vfs.v2;
+package assethub.vfs.v3;
 
 // The sole plugin message schema, shared by gRPC and the WASM call export.
 // Request/Reply control fields are limited to 1 MiB, data to 8 MiB. Missing
@@ -74,7 +74,7 @@ message Failure {
   optional ConfigErrorKind config_kind = 3;
 }
 message Description {
-  uint32 major = 1; uint32 minor = 2; // This schema uses major 2, minor 0.
+  uint32 major = 1; uint32 minor = 2; // This schema uses major 3, minor 0.
   // Feature identifiers: streams.chunked.v1.
   // Unknown required identifiers reject loading; optional ones grant no support.
   repeated string required_features = 3;
@@ -92,9 +92,13 @@ message Description {
   Object settings_schema = 13; Object instance_schema = 14;
   uint32 config_version = 15; // Positive schema version, independent of protocol/software.
 }
-// Effective instance capabilities must be covered by Description. Chunk size
-// must be 1..8 MiB and remains stable for the opened handle.
-message StorageInfo { repeated Capability capabilities = 1; uint32 chunk_size = 2; }
+// Capabilities are declared only in Description. Chunk size must be 1..8 MiB
+// and remains stable for the opened handle.
+message StorageInfo {
+  reserved 1;
+  reserved "capabilities";
+  uint32 chunk_size = 2;
+}
 message Timestamp { sint64 seconds = 1; uint32 nanos = 2; } // nanos < 1,000,000,000.
 message Entry {
   string path = 1; EntryKind kind = 2;

@@ -23,7 +23,8 @@ pub struct DriverInfo {
     version: Version,
     #[getset(get_copy = "pub")]
     child_mount_policy: ChildMountPolicy,
-    /// Implementation upper bound; inspect the opened Storage for instance support.
+    /// Driver-wide operations and successful-operation guarantees, shared by every
+    /// instance. Backend/path limitations are operation errors, not new declarations.
     #[getset(get_copy = "pub")]
     capabilities: StorageCapabilities,
     /// Stable creation metadata using the shared annotation profile.

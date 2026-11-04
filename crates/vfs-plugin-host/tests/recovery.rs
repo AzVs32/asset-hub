@@ -114,10 +114,7 @@ impl Transport for Peer {
                 }
                 Op::Open(_) => Value::Storage(p::Storage {
                     handle: self.next.fetch_add(1, Ordering::SeqCst),
-                    info: Some(p::StorageInfo {
-                        capabilities: self.description().capabilities,
-                        chunk_size: 65536,
-                    }),
+                    info: Some(p::StorageInfo { chunk_size: 65536 }),
                 }),
                 Op::Storage(p::StorageCall {
                     operation: Some(p::StorageOp::Stat(p::Path { path })),

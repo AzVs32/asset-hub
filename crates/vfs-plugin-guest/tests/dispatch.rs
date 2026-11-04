@@ -64,10 +64,7 @@ struct Store {
 }
 impl GuestStorage for Store {
     fn info(&self) -> p::StorageInfo {
-        p::StorageInfo {
-            capabilities: vec![p::Capability::Stat as i32, p::Capability::WriteNew as i32],
-            chunk_size: 65536,
-        }
+        p::StorageInfo { chunk_size: 65536 }
     }
     fn call(&self, request: p::StorageOp, _: Vec<u8>) -> Result<p::Reply> {
         match request {

@@ -3,8 +3,8 @@
 use crate::{
     application::port::{Storage, StorageFileReader},
     domain::storage::{
-        DEFAULT_DIR_PAGE_LIMIT, MAX_DIR_PAGE_LIMIT, StorageCreateDirRequest, StorageDirQuery,
-        StorageEntryKind, StorageErrorKind, StorageMoveEntryRequest, StoragePath,
+        DEFAULT_DIR_PAGE_LIMIT, MAX_DIR_PAGE_LIMIT, RenameSupport, StorageCreateDirRequest,
+        StorageDirQuery, StorageEntryKind, StorageErrorKind, StorageMoveEntryRequest, StoragePath,
         StorageReadFileRequest, StorageStatEntryRequest, StorageWriteFileRequest,
     },
 };
@@ -300,13 +300,15 @@ pub async fn assert_pagination_contract(storage: &dyn Storage) -> TestResult {
 
 /// Assert same-path rename semantics for the modes advertised by fresh writable storage.
 /// The fixture must be empty and isolated; the assertion writes files and dirs.
-pub async fn assert_same_path_rename_contract(storage: &dyn Storage) -> TestResult {
+pub async fn assert_same_path_rename_contract(
+    storage: &dyn Storage,
+    support: RenameSupport,
+) -> TestResult {
     put(storage, "file", b"file content").await?;
     mkdir(storage, "dir").await?;
     put(storage, "dir/child", b"child content").await?;
 
     for replace in [false, true] {
-        let support = storage.capabilities().rename();
         let supported = if replace {
             support.replace
         } else {

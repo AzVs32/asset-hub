@@ -32,7 +32,7 @@ fn fixture(prepare: &str, initialize: &str, stat: &str, commit: &str) -> Result<
         name: "Recovery fixture".into(),
         version: "1.0.0".into(),
         child_mounts: true,
-        capabilities: capabilities.clone(),
+        capabilities,
 
         config_version: 1,
         ..Default::default()
@@ -53,10 +53,7 @@ fn fixture(prepare: &str, initialize: &str, stat: &str, commit: &str) -> Result<
             "STORAGE",
             p::Reply::new(Value::Storage(p::Storage {
                 handle: 1,
-                info: Some(p::StorageInfo {
-                    capabilities,
-                    chunk_size: 65536,
-                }),
+                info: Some(p::StorageInfo { chunk_size: 65536 }),
             })),
         ),
         ("ENTRY", p::Reply::new(Value::Entry(entry))),

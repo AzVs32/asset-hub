@@ -152,7 +152,6 @@ struct WebdavStorage {
 impl GuestStorage for WebdavStorage {
     fn info(&self) -> p::StorageInfo {
         p::StorageInfo {
-            capabilities: capabilities(),
             chunk_size: CHUNK_SIZE,
         }
     }
@@ -345,10 +344,11 @@ mod tests {
     }
 
     #[test]
-    fn driver_and_storage_do_not_advertise_partial_remove_support() -> Result<()> {
+    fn driver_declaration_excludes_partial_remove_support() -> Result<()> {
         let description = WebdavDriver::describe();
         let info = storage()?.info();
-        assert_eq!(description.capabilities, info.capabilities);
+        assert_eq!(description.capabilities, capabilities());
+        assert_eq!(info.chunk_size, CHUNK_SIZE);
         assert!(
             !description
                 .capabilities
