@@ -5,6 +5,7 @@ use thiserror::Error;
 
 /// Structured creation-parameter failures without disclosing parameter values.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum InstanceConfigErrorKind {
     MissingField,
     UnknownField,
@@ -14,6 +15,7 @@ pub enum InstanceConfigErrorKind {
 
 /// Driver operations distinguish malformed creation parameters from backend failures.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum DriverError {
     #[error("invalid instance configuration")]
     InvalidInstanceConfig {

@@ -16,6 +16,7 @@ pub struct MountTable {
 }
 
 #[derive(Debug, Error, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum MountTableError {
     #[error("the initial mount must be at the virtual root")]
     RootRequired,

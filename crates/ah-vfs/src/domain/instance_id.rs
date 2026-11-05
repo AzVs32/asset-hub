@@ -11,6 +11,7 @@ use thiserror::Error;
 pub struct InstanceId(String);
 
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum InstanceIdError {
     #[error("instance identifiers cannot be empty")]
     Empty,

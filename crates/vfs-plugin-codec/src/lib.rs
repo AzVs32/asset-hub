@@ -36,10 +36,14 @@ pub fn failure(error: DriverError) -> p::Failure {
                     InstanceConfigErrorKind::UnknownField => p::ConfigErrorKind::UnknownField,
                     InstanceConfigErrorKind::InvalidType => p::ConfigErrorKind::InvalidType,
                     InstanceConfigErrorKind::InvalidValue => p::ConfigErrorKind::InvalidValue,
+                    // Older protocol adapters cannot represent a newer domain category.
+                    _ => return p::Failure::new(p::FailureCode::Backend),
                 }
                 .into(),
             ),
         },
+        // Future driver failures retain a conservative, diagnostic-free wire category.
+        _ => p::Failure::new(p::FailureCode::Backend),
     }
 }
 pub fn error_code(kind: StorageErrorKind) -> p::FailureCode {

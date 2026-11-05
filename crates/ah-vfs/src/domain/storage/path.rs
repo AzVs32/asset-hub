@@ -14,6 +14,7 @@ use thiserror::Error;
 pub struct StoragePath(String);
 
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum StoragePathError {
     #[error("storage paths must be relative")]
     Absolute,

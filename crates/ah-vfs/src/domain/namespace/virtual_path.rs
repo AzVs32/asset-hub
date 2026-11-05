@@ -15,6 +15,7 @@ use thiserror::Error;
 pub struct VirtualPath(String);
 
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum VirtualPathError {
     #[error("virtual paths must start with '/'")]
     NotAbsolute,

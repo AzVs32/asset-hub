@@ -10,6 +10,7 @@ use thiserror::Error;
 pub struct DriverKey(String);
 
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum DriverKeyError {
     #[error("driver keys cannot be empty")]
     Empty,
