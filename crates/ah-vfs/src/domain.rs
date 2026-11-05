@@ -11,6 +11,8 @@
 
 pub mod namespace;
 pub mod storage;
+/// Independently designed storage contracts for a future migration.
+pub mod storage2;
 
 mod driver_error;
 mod driver_instance;
