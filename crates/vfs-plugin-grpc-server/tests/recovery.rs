@@ -29,6 +29,7 @@ type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error + Send + 
 #[derive(Default)]
 struct Faults {
     invalid_stat: AtomicBool,
+    corrupt_data: AtomicBool,
     panic_remove: AtomicBool,
     fail_factory: AtomicBool,
     constructions: AtomicUsize,
@@ -140,6 +141,9 @@ impl Storage for BackendStorage {
     fn stat_entry(&self, request: StorageStatEntryRequest) -> StorageFuture<'_, Entry> {
         Box::pin(async move {
             if self.faults.invalid_stat.load(Ordering::SeqCst) {
+                return Err(StorageError::new(StorageErrorKind::ProtocolViolation));
+            }
+            if self.faults.corrupt_data.load(Ordering::SeqCst) {
                 return Err(StorageError::new(StorageErrorKind::InvalidData));
             }
             Ok(Entry {
@@ -234,10 +238,12 @@ impl Transport for Direct {
     fn open_session<'a>(&'a self, generation: &'a str, open: p::Open) -> Option<OpenFuture<'a>> {
         Some(Box::pin(async move {
             let session = self.0.open_session(generation, open).await?;
-            let p::Value::Storage(storage) =
-                session.opened().into_value().map_err(|_| c::invalid())?
+            let p::Value::Storage(storage) = session
+                .opened()
+                .into_value()
+                .map_err(|_| c::protocol_violation())?
             else {
-                return Err(c::invalid());
+                return Err(c::protocol_violation());
             };
             Ok(OpenedStorage {
                 generation: generation.into(),
@@ -293,7 +299,7 @@ async fn panic_recovery_uses_a_fresh_backend_and_never_replays_the_mutation() ->
                 }
                 let marker = faults.constructions.fetch_add(1, Ordering::SeqCst) + 1;
                 Ok(
-                    Arc::new(Backend::new(marker, faults).map_err(|_| c::invalid())?)
+                    Arc::new(Backend::new(marker, faults).map_err(|_| c::protocol_violation())?)
                         as Arc<dyn Driver>,
                 )
             })
@@ -1226,7 +1232,7 @@ async fn shutdown_cannot_be_undone_by_an_inflight_backend_recovery() -> Result {
                     resume.notified().await;
                 }
                 Ok(
-                    Arc::new(Backend::new(marker, faults).map_err(|_| c::invalid())?)
+                    Arc::new(Backend::new(marker, faults).map_err(|_| c::protocol_violation())?)
                         as Arc<dyn Driver>,
                 )
             })
@@ -1307,6 +1313,35 @@ async fn grpc_rejects_missing_open_configuration_before_allocating_storage() -> 
         }
     }
     drop(tx);
+    drop(server);
+    Ok(())
+}
+
+#[tokio::test]
+async fn corrupt_backend_data_does_not_retire_a_valid_protocol_session() -> Result {
+    let faults = Arc::new(Faults::default());
+    let (endpoint, server) = production(faults.clone(), ServerLimits::default()).await?;
+    let driver = PluginDriver::connect(Arc::new(
+        GrpcTransport::connect(endpoint, "test-token").await?,
+    ))
+    .await?;
+    driver.initialize(Default::default()).await?;
+    let storage = open(&driver).await?;
+    faults.corrupt_data.store(true, Ordering::SeqCst);
+    let error = stat(storage.as_ref())
+        .await
+        .err()
+        .ok_or("corrupt data accepted")?;
+    assert_eq!(
+        error
+            .downcast_ref::<StorageError>()
+            .ok_or("storage error")?
+            .kind(),
+        StorageErrorKind::InvalidData
+    );
+    assert!(!storage.is_stale());
+    faults.corrupt_data.store(false, Ordering::SeqCst);
+    assert_eq!(stat(storage.as_ref()).await?, 1);
     drop(server);
     Ok(())
 }

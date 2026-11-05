@@ -125,7 +125,7 @@ fn construction_errors_retain_their_validation_cause() -> TestResult {
     ] {
         assert_eq!(builder.build(), Err(expected));
         let error = StorageError::from(expected);
-        assert_eq!(error.kind(), StorageErrorKind::InvalidData);
+        assert_eq!(error.kind(), StorageErrorKind::ProtocolViolation);
         assert_eq!(
             error
                 .source()

@@ -62,7 +62,7 @@
 //! Debug strings or backend error messages. DriverError distinguishes invalid
 //! configuration (safe field identifier plus InstanceConfigErrorKind), missing
 //! instance, and StorageErrorKind. Unknown remote categories map to Backend;
-//! malformed responses map to InvalidData. Diagnostics and credentials are not
+//! malformed responses map to ProtocolViolation. Diagnostics and credentials are not
 //! transmitted in public errors. RPC status or a WASM trap alone does not establish
 //! whether a mutation happened. Operations without side effects preserve transport
 //! categories such as Unavailable, TimedOut and Cancelled. A dispatched mutation

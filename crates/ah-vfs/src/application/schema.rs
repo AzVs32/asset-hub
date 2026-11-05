@@ -15,7 +15,7 @@ fn failure(kind: StorageErrorKind) -> DriverError {
     StorageError::new(kind).into()
 }
 fn invalid() -> DriverError {
-    failure(StorageErrorKind::InvalidData)
+    failure(StorageErrorKind::ProtocolViolation)
 }
 
 /// Check the shared metadata profile before initializing a driver. This does

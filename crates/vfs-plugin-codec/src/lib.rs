@@ -17,11 +17,30 @@ use std::{
 };
 use vfs_plugin_protocol as p;
 
-pub fn invalid() -> DriverError {
-    StorageError::new(StorageErrorKind::InvalidData).into()
+pub fn protocol_violation() -> DriverError {
+    StorageError::new(StorageErrorKind::ProtocolViolation).into()
 }
-pub fn storage_invalid() -> StorageError {
-    StorageError::new(StorageErrorKind::InvalidData)
+pub fn storage_protocol_violation() -> StorageError {
+    StorageError::new(StorageErrorKind::ProtocolViolation)
+}
+pub fn protocol_violation_with_source(
+    source: impl std::error::Error + Send + Sync + 'static,
+) -> DriverError {
+    storage_protocol_violation_with_source(source).into()
+}
+pub fn storage_protocol_violation_with_source(
+    source: impl std::error::Error + Send + Sync + 'static,
+) -> StorageError {
+    StorageError::with_source(StorageErrorKind::ProtocolViolation, source)
+}
+/// A malformed mutation response cannot establish whether the mutation completed.
+/// Preserve the adapter violation as the cause of the uncertain outcome.
+pub fn response_error(mutates: bool, source: StorageError) -> StorageError {
+    if mutates {
+        StorageError::with_source(StorageErrorKind::OutcomeUnknown, source)
+    } else {
+        source
+    }
 }
 pub fn failure(error: DriverError) -> p::Failure {
     match error {
@@ -58,6 +77,7 @@ pub fn error_code(kind: StorageErrorKind) -> p::FailureCode {
         StorageErrorKind::InvalidRequest => p::FailureCode::InvalidRequest,
         StorageErrorKind::InvalidNameEncoding => p::FailureCode::InvalidNameEncoding,
         StorageErrorKind::InvalidData => p::FailureCode::InvalidData,
+        StorageErrorKind::ProtocolViolation => p::FailureCode::ProtocolViolation,
         StorageErrorKind::RootProtected => p::FailureCode::RootProtected,
         StorageErrorKind::SessionClosed => p::FailureCode::SessionClosed,
         StorageErrorKind::UnsupportedOperation => p::FailureCode::UnsupportedOperation,
@@ -88,6 +108,7 @@ pub fn error_kind(code: p::FailureCode) -> StorageErrorKind {
         p::FailureCode::InvalidRequest => StorageErrorKind::InvalidRequest,
         p::FailureCode::InvalidNameEncoding => StorageErrorKind::InvalidNameEncoding,
         p::FailureCode::InvalidData => StorageErrorKind::InvalidData,
+        p::FailureCode::ProtocolViolation => StorageErrorKind::ProtocolViolation,
         p::FailureCode::RootProtected => StorageErrorKind::RootProtected,
         p::FailureCode::SessionClosed => StorageErrorKind::SessionClosed,
         p::FailureCode::UnsupportedOperation => StorageErrorKind::UnsupportedOperation,
@@ -108,27 +129,27 @@ pub fn error_kind(code: p::FailureCode) -> StorageErrorKind {
 }
 pub fn driver_error(error: p::Failure, instance: Option<&str>) -> DriverError {
     match error.code() {
-        p::FailureCode::InstanceNotFound => {
-            match instance.and_then(|id| InstanceId::parse(id).ok()) {
-                Some(id) => DriverError::InstanceNotFound(id),
-                None => invalid(),
-            }
-        }
+        p::FailureCode::InstanceNotFound => match instance.map(InstanceId::parse) {
+            Some(Ok(id)) => DriverError::InstanceNotFound(id),
+            Some(Err(source)) => protocol_violation_with_source(source),
+            None => protocol_violation(),
+        },
         p::FailureCode::InvalidInstanceConfig => {
-            let kind = match error
-                .config_kind
-                .and_then(|v| p::ConfigErrorKind::try_from(v).ok())
-            {
-                Some(p::ConfigErrorKind::MissingField) => InstanceConfigErrorKind::MissingField,
-                Some(p::ConfigErrorKind::UnknownField) => InstanceConfigErrorKind::UnknownField,
-                Some(p::ConfigErrorKind::InvalidType) => InstanceConfigErrorKind::InvalidType,
-                Some(p::ConfigErrorKind::InvalidValue) => InstanceConfigErrorKind::InvalidValue,
-                _ => return invalid(),
+            let Some(raw_kind) = error.config_kind else {
+                return protocol_violation();
             };
-            DriverError::InvalidInstanceConfig {
-                field: error.field.unwrap_or_default(),
-                kind,
-            }
+            let kind = match p::ConfigErrorKind::try_from(raw_kind) {
+                Ok(p::ConfigErrorKind::MissingField) => InstanceConfigErrorKind::MissingField,
+                Ok(p::ConfigErrorKind::UnknownField) => InstanceConfigErrorKind::UnknownField,
+                Ok(p::ConfigErrorKind::InvalidType) => InstanceConfigErrorKind::InvalidType,
+                Ok(p::ConfigErrorKind::InvalidValue) => InstanceConfigErrorKind::InvalidValue,
+                Ok(_) => return protocol_violation(),
+                Err(source) => return protocol_violation_with_source(source),
+            };
+            let Some(field) = error.field else {
+                return protocol_violation();
+            };
+            DriverError::InvalidInstanceConfig { field, kind }
         }
         _ => StorageError::new(error_kind(error.code())).into(),
     }
@@ -179,7 +200,7 @@ pub fn decode_capabilities(names: &[i32]) -> Result<StorageCapabilities, DriverE
         || (set.contains(&(p::Capability::XattrsWrite as i32))
             && !set.contains(&(p::Capability::XattrsRead as i32)))
     {
-        return Err(invalid());
+        return Err(protocol_violation());
     }
     let attr = |r: p::Capability, w: p::Capability| {
         if set.contains(&(w as i32)) {
@@ -254,21 +275,21 @@ pub fn describe(driver: &dyn Driver, generation: String) -> p::Description {
 }
 pub fn driver_info(d: &p::Description) -> Result<DriverInfo, DriverError> {
     // Import availability is transport-specific; portable declarations are not.
-    p::negotiate_protocol(d).map_err(|_| {
-        DriverError::from(StorageError::new(StorageErrorKind::UnsupportedOperation))
+    p::negotiate_protocol(d).map_err(|error| {
+        StorageError::with_source(StorageErrorKind::UnsupportedOperation, error)
     })?;
     if let Some(schema) = &d.instance_schema {
         ah_vfs::application::schema::validate_instance_config_schema(
-            &p::json_object(schema.clone()).map_err(|_| invalid())?,
+            &p::json_object(schema.clone()).map_err(protocol_violation_with_source)?,
         )?;
     }
     if d.generation.is_empty() || d.generation.len() > 128 || d.name.len() > 4096 {
-        return Err(invalid());
+        return Err(protocol_violation());
     }
     Ok(DriverInfo::builder()
-        .key(DriverKey::parse(&d.key).map_err(|_| invalid())?)
+        .key(DriverKey::parse(&d.key).map_err(protocol_violation_with_source)?)
         .name(d.name.clone())
-        .version(semver::Version::parse(&d.version).map_err(|_| invalid())?)
+        .version(semver::Version::parse(&d.version).map_err(protocol_violation_with_source)?)
         .child_mount_policy(if d.child_mounts {
             ChildMountPolicy::Allow
         } else {
@@ -280,16 +301,16 @@ pub fn driver_info(d: &p::Description) -> Result<DriverInfo, DriverError> {
                 .clone()
                 .map(p::json_object)
                 .transpose()
-                .map_err(|_| invalid())?,
+                .map_err(protocol_violation_with_source)?,
         )
         .maybe_instance_config_schema(
             d.instance_schema
                 .clone()
                 .map(p::json_object)
                 .transpose()
-                .map_err(|_| invalid())?,
+                .map_err(protocol_violation_with_source)?,
         )
-        .instance_config_version(NonZeroU32::new(d.config_version).ok_or_else(invalid)?)
+        .instance_config_version(NonZeroU32::new(d.config_version).ok_or_else(protocol_violation)?)
         .build())
 }
 pub fn entry(e: Entry) -> Result<p::Entry, DriverError> {
@@ -298,12 +319,13 @@ pub fn entry(e: Entry) -> Result<p::Entry, DriverError> {
         .map(|time| {
             let (seconds, nanos) = match time.duration_since(UNIX_EPOCH) {
                 Ok(d) => (
-                    i64::try_from(d.as_secs()).map_err(|_| invalid())?,
+                    i64::try_from(d.as_secs()).map_err(protocol_violation_with_source)?,
                     d.subsec_nanos(),
                 ),
                 Err(e) => {
                     let d = e.duration();
-                    let seconds = i64::try_from(d.as_secs()).map_err(|_| invalid())?;
+                    let seconds =
+                        i64::try_from(d.as_secs()).map_err(protocol_violation_with_source)?;
                     if d.subsec_nanos() == 0 {
                         (-seconds, 0)
                     } else {
@@ -331,7 +353,7 @@ pub fn decode_entry(e: p::Entry) -> Result<Entry, StorageError> {
         .modified
         .map(|t| {
             if t.nanos >= 1_000_000_000 {
-                return Err(storage_invalid());
+                return Err(storage_protocol_violation());
             }
             let time = if t.seconds >= 0 {
                 UNIX_EPOCH.checked_add(Duration::new(t.seconds as u64, t.nanos))
@@ -343,20 +365,22 @@ pub fn decode_entry(e: p::Entry) -> Result<Entry, StorageError> {
                     1_000_000_000 - t.nanos,
                 ))
             };
-            time.ok_or_else(storage_invalid)
+            time.ok_or_else(storage_protocol_violation)
         })
         .transpose()?;
     if e.kind != p::EntryKind::File as i32 && e.size.is_some() {
-        return Err(storage_invalid());
+        return Err(storage_protocol_violation());
     }
     Ok(Entry {
-        path: StoragePath::parse(&e.path).map_err(|_| storage_invalid())?,
-        kind: match e.kind() {
+        path: StoragePath::parse(&e.path).map_err(storage_protocol_violation_with_source)?,
+        kind: match p::EntryKind::try_from(e.kind)
+            .map_err(storage_protocol_violation_with_source)?
+        {
             p::EntryKind::File => EntryKind::File,
             p::EntryKind::Dir => EntryKind::Dir,
             p::EntryKind::Symlink => EntryKind::Symlink,
             p::EntryKind::Other => EntryKind::Other,
-            _ => return Err(storage_invalid()),
+            _ => return Err(storage_protocol_violation()),
         },
         size: e.size,
         modified,
@@ -370,11 +394,18 @@ pub fn limit(value: u32) -> Result<NonZeroUsize, StorageError> {
 pub fn storage_error(error: DriverError) -> StorageError {
     match error {
         DriverError::Storage(e) => e,
-        _ => storage_invalid(),
+        error => storage_protocol_violation_with_source(error),
     }
 }
 
-/// Decode required configuration objects at the VFS application boundary.
-pub fn object(value: Option<p::Object>) -> Result<p::JsonObject, DriverError> {
-    p::json_object(value.ok_or_else(invalid)?).map_err(|_| invalid())
+/// Decode required request configuration objects, preserving validation causes.
+pub fn request_object(value: Option<p::Object>) -> Result<p::JsonObject, DriverError> {
+    let invalid = || StorageError::new(StorageErrorKind::InvalidRequest);
+    p::json_object(value.ok_or_else(invalid)?).map_err(|source| {
+        StorageError::with_source(StorageErrorKind::InvalidRequest, source).into()
+    })
+}
+/// Decode configuration objects returned by an adapter.
+pub fn response_object(value: Option<p::Object>) -> Result<p::JsonObject, DriverError> {
+    p::json_object(value.ok_or_else(protocol_violation)?).map_err(protocol_violation_with_source)
 }

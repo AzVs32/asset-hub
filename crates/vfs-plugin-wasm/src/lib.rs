@@ -120,25 +120,25 @@ impl State {
             .get(&handle)
             .ok_or_else(|| StorageError::new(StorageErrorKind::SessionClosed))?;
         if resource.kind != kind {
-            return Err(c::invalid());
+            return Err(c::protocol_violation());
         }
         Ok(())
     }
     fn invalid_reply(&mut self, op: &Op) -> DriverError {
         self.faulted = true;
-        StorageError::new(if op.mutates() {
-            StorageErrorKind::OutcomeUnknown
-        } else {
-            StorageErrorKind::InvalidData
-        })
-        .into()
+        c::response_error(op.mutates(), c::storage_protocol_violation()).into()
     }
     async fn invoke(&mut self, op: &Op, data: Vec<u8>) -> Result<p::Reply, DriverError> {
         let bytes = p::encode_request(&self.generation, op, data).map_err(|error| {
-            StorageError::new(match error {
-                p::CodecError::TooLarge => StorageErrorKind::TooLarge,
-                p::CodecError::InvalidData => StorageErrorKind::InvalidRequest,
-            })
+            StorageError::with_source(
+                match error {
+                    p::CodecError::TooLarge => StorageErrorKind::TooLarge,
+                    p::CodecError::InvalidData | p::CodecError::Decode(_) => {
+                        StorageErrorKind::InvalidRequest
+                    }
+                },
+                error,
+            )
         })?;
         let response = match self
             .bindings
@@ -167,7 +167,13 @@ impl State {
             _ => None,
         };
         let reply = p::decode_reply(&response)
-            .map_err(|_| self.invalid_reply(op))?
+            .map_err(|source| {
+                self.faulted = true;
+                c::response_error(
+                    op.mutates(),
+                    c::storage_protocol_violation_with_source(source),
+                )
+            })?
             .map_err(|failure| c::driver_error(failure, id))?;
         if !reply
             .result
@@ -217,7 +223,7 @@ impl State {
                     .get(handle)
                     .is_some_and(|resource| resource.kind as i32 != *kind)
                 {
-                    return Err(c::invalid());
+                    return Err(c::protocol_violation());
                 }
                 self.resources.remove(handle);
             }
@@ -260,7 +266,7 @@ impl State {
             }
         }
         let mut reply = result?;
-        match reply.result.as_mut().ok_or_else(c::invalid)? {
+        match reply.result.as_mut().ok_or_else(c::protocol_violation)? {
             Value::Description(description) => description.generation = self.generation.clone(),
             Value::Storage(p::Storage { handle, .. })
             | Value::Reader(p::Handle { handle })
@@ -329,7 +335,12 @@ impl InstanceFactory {
             });
         for name in &self.grants.env {
             if let Some(value) = std::env::var_os(name) {
-                builder.env(name, value.to_str().ok_or_else(c::invalid)?);
+                builder.env(
+                    name,
+                    value
+                        .to_str()
+                        .ok_or_else(|| StorageError::new(StorageErrorKind::InvalidRequest))?,
+                );
             }
         }
         for directory in &self.grants.fs {
@@ -367,12 +378,14 @@ impl InstanceFactory {
         };
         let mut store = Store::new(self.pre.engine(), host);
         store.limiter(|host| host);
-        store
-            .set_fuel(self.grants.limits.fuel)
-            .map_err(|_| c::invalid())?;
+        store.set_fuel(self.grants.limits.fuel).map_err(|source| {
+            StorageError::with_source(StorageErrorKind::Backend, std::io::Error::other(source))
+        })?;
         store
             .fuel_async_yield_interval(Some(100_000))
-            .map_err(|_| c::invalid())?;
+            .map_err(|source| {
+                StorageError::with_source(StorageErrorKind::Backend, std::io::Error::other(source))
+            })?;
         store.set_epoch_deadline(self.grants.limits.timeout_ms.div_ceil(10));
         let bindings = tokio::time::timeout(
             self.grants.limits.timeout(),
@@ -381,7 +394,10 @@ impl InstanceFactory {
         .await
         .map_err(|_| StorageError::new(StorageErrorKind::TimedOut))?
         .map_err(|error| {
-            StorageError::with_source(StorageErrorKind::InvalidData, std::io::Error::other(error))
+            StorageError::with_source(
+                StorageErrorKind::ProtocolViolation,
+                std::io::Error::other(error),
+            )
         })?;
         Ok(Instance {
             state: Mutex::new(Some(State {
@@ -438,10 +454,9 @@ impl Instance {
         if state.poisoned || (!matches!(op, Op::Describe(_)) && generation != state.generation) {
             return Err(StorageError::new(StorageErrorKind::StaleHandle).into());
         }
-        state
-            .store
-            .set_fuel(self.limits.fuel)
-            .map_err(|_| c::invalid())?;
+        state.store.set_fuel(self.limits.fuel).map_err(|source| {
+            StorageError::with_source(StorageErrorKind::Backend, std::io::Error::other(source))
+        })?;
         state
             .store
             .set_epoch_deadline(self.limits.timeout_ms.div_ceil(10));
@@ -569,16 +584,18 @@ impl Transport for ControlTransport {
                 .call("", Op::Describe(p::Empty {}), vec![])
                 .await?
                 .into_value()
-                .map_err(|_| c::invalid())?
+                .map_err(|source| {
+                    c::protocol_violation_with_source(std::io::Error::other(source))
+                })?
             else {
-                return Err(c::invalid());
+                return Err(c::protocol_violation());
             };
             let mut description = *description;
             let generation = description.generation.clone();
             expected.generation.clear();
             description.generation.clear();
             if expected != description {
-                return Err(c::invalid());
+                return Err(c::protocol_violation());
             }
             instance
                 .call(
@@ -605,9 +622,11 @@ impl Transport for ControlTransport {
                     }
                 })?
                 .into_value()
-                .map_err(|_| c::invalid())?
+                .map_err(|source| {
+                    c::protocol_violation_with_source(std::io::Error::other(source))
+                })?
             else {
-                return Err(c::invalid());
+                return Err(c::protocol_violation());
             };
             Ok(OpenedStorage {
                 storage,
@@ -647,23 +666,31 @@ impl WasmTransport {
             .wasm_component_model(true)
             .consume_fuel(true)
             .epoch_interruption(true);
-        let engine = Engine::new(&config).map_err(|_| c::invalid())?;
+        let engine = Engine::new(&config).map_err(|source| {
+            StorageError::with_source(StorageErrorKind::Backend, std::io::Error::other(source))
+        })?;
         let compile_engine = engine.clone();
         let component = tokio::task::spawn_blocking(move || {
-            Component::from_binary(&compile_engine, &bytes).map_err(|_| c::invalid())
+            Component::from_binary(&compile_engine, &bytes)
+                .map_err(|source| c::protocol_violation_with_source(std::io::Error::other(source)))
         })
         .await
-        .map_err(|_| c::invalid())??;
+        .map_err(|source| StorageError::with_source(StorageErrorKind::Unavailable, source))??;
         let mut linker = Linker::new(&engine);
-        wasmtime_wasi::p2::add_to_linker_async(&mut linker).map_err(|_| c::invalid())?;
-        wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)
-            .map_err(|_| c::invalid())?;
+        wasmtime_wasi::p2::add_to_linker_async(&mut linker).map_err(|source| {
+            StorageError::with_source(StorageErrorKind::Backend, std::io::Error::other(source))
+        })?;
+        wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker).map_err(|source| {
+            StorageError::with_source(StorageErrorKind::Backend, std::io::Error::other(source))
+        })?;
         linker.allow_shadowing(true);
         wasmtime_wasi::p2::bindings::sockets::ip_name_lookup::add_to_linker::<
             Host,
             wasmtime::component::HasSelf<Host>,
         >(&mut linker, |host| host)
-        .map_err(|_| c::invalid())?;
+        .map_err(|source| {
+            StorageError::with_source(StorageErrorKind::Backend, std::io::Error::other(source))
+        })?;
         linker.allow_shadowing(false);
         let pre = PluginPre::new(linker.instantiate_pre(&component).map_err(|error| {
             StorageError::with_source(
@@ -671,7 +698,7 @@ impl WasmTransport {
                 std::io::Error::other(error),
             )
         })?)
-        .map_err(|_| c::invalid())?;
+        .map_err(|source| c::protocol_violation_with_source(std::io::Error::other(source)))?;
         let ticker = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_millis(10));
             loop {

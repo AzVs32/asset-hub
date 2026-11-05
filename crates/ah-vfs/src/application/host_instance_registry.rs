@@ -132,10 +132,10 @@ fn now() -> Result<u64, DriverError> {
     u64::try_from(
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_err(|_| invalid())?
+            .map_err(|source| StorageError::with_source(StorageErrorKind::InvalidData, source))?
             .as_millis(),
     )
-    .map_err(|_| invalid())
+    .map_err(|source| StorageError::with_source(StorageErrorKind::InvalidData, source).into())
 }
 
 /// One driver's host-owned registry. Supports nested properties, array items and
@@ -174,7 +174,7 @@ impl HostInstanceRegistry {
                 .as_ref()
                 .ok_or_else(|| failure(StorageErrorKind::UnsupportedOperation))?,
         )
-        .map_err(|_| invalid())?;
+        .map_err(|source| StorageError::with_source(StorageErrorKind::InvalidData, source))?;
         validate_annotations(&schema)?;
         if has_annotation(&schema, "x-secret") && self.cipher.is_none() {
             return Err(failure(StorageErrorKind::UnsupportedOperation));
@@ -206,10 +206,12 @@ impl HostInstanceRegistry {
                 )
                 .await
                 .map_err(cipher_failure)?;
-            *target = serde_json::from_slice(&plaintext).map_err(|_| invalid())?;
+            *target = serde_json::from_slice(&plaintext).map_err(|source| {
+                StorageError::with_source(StorageErrorKind::InvalidData, source)
+            })?;
         }
-        let fields: BTreeMap<String, Value> =
-            serde_json::from_value(value).map_err(|_| invalid())?;
+        let fields: BTreeMap<String, Value> = serde_json::from_value(value)
+            .map_err(|source| StorageError::with_source(StorageErrorKind::InvalidData, source))?;
         Ok(fields.into())
     }
     async fn prepare(&self, config: InstanceConfig) -> Result<PreparedConfig, DriverError> {
@@ -217,7 +219,9 @@ impl HostInstanceRegistry {
             Ok(prepared) => Ok(prepared),
             Err(DriverError::InvalidInstanceConfig { field, kind }) => {
                 let schema = self.schema()?;
-                let value = serde_json::to_value(config.into_object()).map_err(|_| invalid())?;
+                let value = serde_json::to_value(config.into_object()).map_err(|source| {
+                    StorageError::with_source(StorageErrorKind::InvalidData, source)
+                })?;
                 let mut locations = Vec::new();
                 paths(&schema, &value, "x-secret", "", &mut locations);
                 let mut secrets = Vec::new();
@@ -246,12 +250,13 @@ impl HostInstanceRegistry {
         raw: &InstanceConfig,
     ) -> Result<Envelope, DriverError> {
         let schema = self.schema()?;
-        let mut value =
-            serde_json::to_value(prepared.config().clone().into_object()).map_err(|_| invalid())?;
+        let mut value = serde_json::to_value(prepared.config().clone().into_object())
+            .map_err(|source| StorageError::with_source(StorageErrorKind::InvalidData, source))?;
         let mut secret_paths = Vec::new();
         paths(&schema, &value, "x-secret", "", &mut secret_paths);
         let mut secrets = Vec::new();
-        let raw_value = serde_json::to_value(raw.clone().into_object()).map_err(|_| invalid())?;
+        let raw_value = serde_json::to_value(raw.clone().into_object())
+            .map_err(|source| StorageError::with_source(StorageErrorKind::InvalidData, source))?;
         let mut raw_paths = Vec::new();
         paths(&schema, &raw_value, "x-secret", "", &mut raw_paths);
         for path in raw_paths {
@@ -266,14 +271,19 @@ impl HostInstanceRegistry {
                 .ok_or_else(|| failure(StorageErrorKind::UnsupportedOperation))?;
             let target = value.pointer_mut(path).ok_or_else(invalid)?;
             redaction_values(target, &mut secrets);
-            let plaintext = serde_json::to_vec(target).map_err(|_| invalid())?;
+            let plaintext = serde_json::to_vec(target).map_err(|source| {
+                StorageError::with_source(StorageErrorKind::InvalidData, source)
+            })?;
             let ciphertext = cipher
                 .encrypt(&plaintext, self.secret_context(id, path.clone()))
                 .await
                 .map_err(cipher_failure)?;
-            *target = serde_json::to_value(ciphertext).map_err(|_| invalid())?;
+            *target = serde_json::to_value(ciphertext).map_err(|source| {
+                StorageError::with_source(StorageErrorKind::InvalidData, source)
+            })?;
         }
-        let mut details = serde_json::to_value(prepared.details()).map_err(|_| invalid())?;
+        let mut details = serde_json::to_value(prepared.details())
+            .map_err(|source| StorageError::with_source(StorageErrorKind::InvalidData, source))?;
         redact(&mut details, &secrets);
         if !details.is_object() {
             details = serde_json::json!({});
@@ -281,7 +291,9 @@ impl HostInstanceRegistry {
         Envelope::new(
             value,
             secret_paths,
-            serde_json::from_value(details).map_err(|_| invalid())?,
+            serde_json::from_value(details).map_err(|source| {
+                StorageError::with_source(StorageErrorKind::InvalidData, source)
+            })?,
         )
     }
     async fn load(&self, id: &InstanceId) -> Result<InstanceRecord, DriverError> {
@@ -300,9 +312,10 @@ impl HostInstanceRegistry {
         let schema = self.schema()?;
         let (old, previous) = self.load_current(&id).await?;
         let prepared = self.prepare(config.clone()).await?;
-        let old_value = serde_json::to_value(previous.into_object()).map_err(|_| invalid())?;
-        let new_value =
-            serde_json::to_value(prepared.config().clone().into_object()).map_err(|_| invalid())?;
+        let old_value = serde_json::to_value(previous.into_object())
+            .map_err(|source| StorageError::with_source(StorageErrorKind::InvalidData, source))?;
+        let new_value = serde_json::to_value(prepared.config().clone().into_object())
+            .map_err(|source| StorageError::with_source(StorageErrorKind::InvalidData, source))?;
         let mut immutable = Vec::new();
         paths(&schema, &old_value, "x-immutable", "", &mut immutable);
         paths(&schema, &new_value, "x-immutable", "", &mut immutable);

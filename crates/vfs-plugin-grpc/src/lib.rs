@@ -56,14 +56,16 @@ impl GrpcTransport {
     ) -> Result<Self, DriverError> {
         let mut endpoint = endpoint_config(&endpoint)?;
         if tls.is_some() && endpoint.uri().scheme_str() != Some("https") {
-            return Err(c::invalid());
+            return Err(StorageError::new(StorageErrorKind::InvalidRequest).into());
         }
         let tls = tls.or_else(|| {
             (endpoint.uri().scheme_str() == Some("https"))
                 .then(|| ClientTlsConfig::new().with_enabled_roots())
         });
         if let Some(tls) = tls {
-            endpoint = endpoint.tls_config(tls).map_err(|_| c::invalid())?;
+            endpoint = endpoint.tls_config(tls).map_err(|source| {
+                StorageError::with_source(StorageErrorKind::InvalidRequest, source)
+            })?;
         }
         Self::connect_endpoint(endpoint, token).await
     }
@@ -76,7 +78,7 @@ impl GrpcTransport {
             .connect_timeout(Duration::from_secs(10))
             .connect()
             .await
-            .map_err(|_| StorageError::new(StorageErrorKind::Unavailable))?;
+            .map_err(|source| StorageError::with_source(StorageErrorKind::Unavailable, source))?;
         Ok(Self::from_channel(channel, token))
     }
     // An opaque Channel cannot prove which endpoint or TLS policy it uses.
@@ -98,17 +100,24 @@ impl GrpcTransport {
     }
     fn encode(generation: &str, op: &Op, data: Vec<u8>) -> Result<wire::Request, DriverError> {
         p::to_request(generation, op, data).map_err(|error| {
-            StorageError::new(match error {
-                p::CodecError::TooLarge => StorageErrorKind::TooLarge,
-                p::CodecError::InvalidData => StorageErrorKind::InvalidRequest,
-            })
+            StorageError::with_source(
+                match error {
+                    p::CodecError::TooLarge => StorageErrorKind::TooLarge,
+                    p::CodecError::InvalidData | p::CodecError::Decode(_) => {
+                        StorageErrorKind::InvalidRequest
+                    }
+                },
+                error,
+            )
             .into()
         })
     }
 }
 fn endpoint_config(raw: &str) -> Result<Endpoint, DriverError> {
-    let url = url::Url::parse(raw).map_err(|_| c::invalid())?;
-    let endpoint = Endpoint::from_shared(raw.to_owned()).map_err(|_| c::invalid())?;
+    let url = url::Url::parse(raw)
+        .map_err(|source| StorageError::with_source(StorageErrorKind::InvalidRequest, source))?;
+    let endpoint = Endpoint::from_shared(raw.to_owned())
+        .map_err(|source| StorageError::with_source(StorageErrorKind::InvalidRequest, source))?;
     if !matches!(endpoint.uri().scheme_str(), Some("http" | "https"))
         || url.host_str().is_none()
         || !url.username().is_empty()
@@ -117,12 +126,15 @@ fn endpoint_config(raw: &str) -> Result<Endpoint, DriverError> {
         || url.query().is_some()
         || url.fragment().is_some()
     {
-        return Err(c::invalid());
+        return Err(StorageError::new(StorageErrorKind::InvalidRequest).into());
     }
     if endpoint.uri().scheme_str() == Some("http") {
         // Check the exact URI passed to the connector, without DNS resolution or
         // URL normalization of noncanonical IPv4 spellings.
-        let host = endpoint.uri().host().ok_or_else(c::invalid)?;
+        let host = endpoint
+            .uri()
+            .host()
+            .ok_or_else(|| StorageError::new(StorageErrorKind::InvalidRequest))?;
         let host = host
             .strip_prefix('[')
             .and_then(|host| host.strip_suffix(']'))
@@ -138,7 +150,8 @@ fn bearer_token(token: &str) -> Result<MetadataValue<Ascii>, DriverError> {
     {
         return Err(StorageError::new(StorageErrorKind::PermissionDenied).into());
     }
-    let mut value = MetadataValue::try_from(format!("Bearer {token}")).map_err(|_| c::invalid())?;
+    let mut value = MetadataValue::try_from(format!("Bearer {token}"))
+        .map_err(|source| StorageError::with_source(StorageErrorKind::InvalidRequest, source))?;
     value.set_sensitive(true);
     Ok(value)
 }
@@ -153,29 +166,28 @@ fn transport_error(status: Status, mutates: bool) -> DriverError {
         tonic::Code::Cancelled => StorageErrorKind::Cancelled,
         _ => StorageErrorKind::Unavailable,
     };
-    StorageError::new(kind).into()
+    StorageError::with_source(kind, status).into()
 }
 fn decode(reply: wire::Reply, op: &Op) -> Result<p::Reply, DriverError> {
-    let invalid = || {
-        if op.mutates() {
-            StorageError::new(StorageErrorKind::OutcomeUnknown).into()
-        } else {
-            c::invalid()
-        }
-    };
+    let invalid = || c::response_error(op.mutates(), c::storage_protocol_violation());
     let id = match op {
         Op::Open(p::Open { id, .. }) => Some(id.as_str()),
         _ => None,
     };
     let reply = p::from_reply(reply)
-        .map_err(|_| invalid())?
+        .map_err(|source| {
+            c::response_error(
+                op.mutates(),
+                c::storage_protocol_violation_with_source(source),
+            )
+        })?
         .map_err(|error| c::driver_error(error, id))?;
     if !reply
         .result
         .as_ref()
         .is_some_and(|value| op.accepts_reply(value))
     {
-        return Err(invalid());
+        return Err(invalid().into());
     }
     Ok(reply)
 }
@@ -207,7 +219,9 @@ impl Transport for GrpcTransport {
             let operation = Op::Open(open);
             let request = Self::encode(generation, &operation, vec![])?;
             let (tx, rx) = mpsc::channel(1);
-            tx.send(request).await.map_err(|_| c::invalid())?;
+            tx.send(request)
+                .await
+                .map_err(|_| c::protocol_violation())?;
             let mut request = Request::new(tokio_stream::wrappers::ReceiverStream::new(rx));
             request
                 .metadata_mut()
@@ -242,10 +256,10 @@ impl Transport for GrpcTransport {
                 .into_value()
                 .map_err(|error| c::driver_error(error, None))?
             else {
-                return Err(c::invalid());
+                return Err(c::protocol_violation());
             };
             if storage.handle != 1 {
-                return Err(c::invalid());
+                return Err(c::protocol_violation());
             }
             let disconnected = Arc::new(AtomicBool::new(false));
             let (pending, requests) = mpsc::channel(1);
@@ -434,7 +448,7 @@ async fn run_session(
                         | StorageErrorKind::StaleHandle
                         | StorageErrorKind::Unavailable
                         | StorageErrorKind::TimedOut
-                        | StorageErrorKind::InvalidData
+                        | StorageErrorKind::ProtocolViolation
                 )
             });
         let _ = pending.reply.send(result);

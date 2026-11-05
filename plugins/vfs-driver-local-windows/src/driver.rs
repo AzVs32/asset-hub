@@ -61,7 +61,7 @@ impl WindowsLocalDriver {
                 .capabilities(Self::supported_capabilities()?)
                 .key(
                     DriverKey::parse(Self::KEY)
-                        .map_err(|_| WindowsLocalDriverError::InvalidData)?,
+                        .map_err(WindowsLocalDriverError::from)?,
                 )
                 .name("Local filesystem".into())
                 .version(semver::Version::new(0, 1, 0))

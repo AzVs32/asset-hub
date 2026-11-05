@@ -127,7 +127,7 @@ pub fn validate_storage_extensions(
     if declared.permissions().can_read() != storage.permissions().is_some()
         || declared.xattrs().can_read() != storage.xattrs().is_some()
     {
-        return Err(StorageError::new(StorageErrorKind::InvalidData));
+        return Err(StorageError::new(StorageErrorKind::ProtocolViolation));
     }
     Ok(())
 }

@@ -77,13 +77,26 @@ impl PluginService {
     fn decode(&self, request: wire::Request) -> Result<(String, Op, Vec<u8>), Status> {
         p::from_request(request).map_err(|error| match error {
             p::CodecError::TooLarge => Status::resource_exhausted("plugin frame is too large"),
-            p::CodecError::InvalidData => Status::invalid_argument("invalid plugin request"),
+            p::CodecError::InvalidData | p::CodecError::Decode(_) => {
+                Status::invalid_argument("invalid plugin request")
+            }
         })
     }
 }
-fn encode(reply: Result<p::Reply, DriverError>) -> Result<wire::Reply, Status> {
-    p::to_reply(reply.map_err(c::failure))
-        .map_err(|_| Status::resource_exhausted("invalid or oversized plugin response"))
+fn encode(reply: Result<p::Reply, DriverError>, mutates: bool) -> Result<wire::Reply, Status> {
+    let reply = reply.map_err(|error| match error {
+        DriverError::Storage(error) if error.kind() == StorageErrorKind::ProtocolViolation => {
+            c::response_error(mutates, error).into()
+        }
+        error => error,
+    });
+    Ok(p::to_reply(reply.map_err(c::failure)).unwrap_or_else(|_| {
+        p::Reply::new(p::Value::Failure(p::Failure::new(if mutates {
+            p::FailureCode::OutcomeUnknown
+        } else {
+            p::FailureCode::ProtocolViolation
+        })))
+    }))
 }
 
 #[tonic::async_trait]
@@ -99,6 +112,7 @@ impl wire::plugin_server::Plugin for PluginService {
                 "Storage requires a Session stream",
             ));
         }
+        let mutates = operation.mutates();
         Ok(Response::new(encode(
             tokio::time::timeout(
                 self.admission.limits.request_timeout,
@@ -106,6 +120,7 @@ impl wire::plugin_server::Plugin for PluginService {
             )
             .await
             .map_err(|_| Status::deadline_exceeded("plugin operation timed out"))?,
+            mutates,
         )?))
     }
     type SessionStream = SessionStream;
@@ -143,7 +158,7 @@ impl wire::plugin_server::Plugin for PluginService {
             let session = match opened {
                 Ok(session) => session,
                 Err(error) => {
-                    let _ = service.send(&tx, encode(Err(error))).await;
+                    let _ = service.send(&tx, encode(Err(error), false)).await;
                     return;
                 }
             };
@@ -151,7 +166,7 @@ impl wire::plugin_server::Plugin for PluginService {
             if *retired.borrow() {
                 return;
             }
-            if !service.send(&tx, encode(Ok(session.opened()))).await {
+            if !service.send(&tx, encode(Ok(session.opened()), false)).await {
                 return;
             }
             let (requests, mut frames) = mpsc::channel(1);
@@ -216,7 +231,7 @@ impl wire::plugin_server::Plugin for PluginService {
                                 | StorageErrorKind::TimedOut
                         )
                     });
-                if !service.send(&tx, encode(result)).await || broken {
+                if !service.send(&tx, encode(result, mutates)).await || broken {
                     break;
                 }
             }
@@ -388,5 +403,42 @@ impl Drop for CloseSessions {
 impl Drop for AbortOnDrop {
     fn drop(&mut self) {
         self.0.abort();
+    }
+}
+
+#[cfg(test)]
+mod response_tests {
+    use super::*;
+
+    #[test]
+    fn malformed_backend_results_report_contract_bugs_without_claiming_mutations_rolled_back()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for mutates in [false, true] {
+            for reply in [
+                Ok(p::Reply {
+                    result: None,
+                    data: vec![],
+                }),
+                Ok(p::Reply {
+                    result: Some(p::Value::Bytes(p::Empty {})),
+                    data: vec![0; p::MAX_DATA_BYTES + 1],
+                }),
+                Err(c::protocol_violation()),
+            ] {
+                let reply = encode(reply, mutates)?;
+                let failure = p::from_reply(reply)?
+                    .err()
+                    .ok_or("invalid response accepted")?;
+                assert_eq!(
+                    failure.code(),
+                    if mutates {
+                        p::FailureCode::OutcomeUnknown
+                    } else {
+                        p::FailureCode::ProtocolViolation
+                    }
+                );
+            }
+        }
+        Ok(())
     }
 }

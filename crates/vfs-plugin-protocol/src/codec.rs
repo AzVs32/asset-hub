@@ -1,9 +1,10 @@
 use super::*;
 use prost::Message;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CodecError {
     InvalidData,
+    Decode(prost::DecodeError),
     TooLarge,
 }
 impl std::fmt::Display for CodecError {
@@ -11,11 +12,20 @@ impl std::fmt::Display for CodecError {
         write!(f, "invalid or oversized plugin protobuf message")
     }
 }
-impl std::error::Error for CodecError {}
+impl std::error::Error for CodecError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Decode(source) => Some(source),
+            _ => None,
+        }
+    }
+}
+/// Default classification for malformed request input. Response encoders and
+/// decoders must explicitly choose ProtocolViolation (or OutcomeUnknown after a mutation).
 impl From<CodecError> for Failure {
     fn from(error: CodecError) -> Self {
         Self::new(match error {
-            CodecError::InvalidData => FailureCode::InvalidData,
+            CodecError::InvalidData | CodecError::Decode(_) => FailureCode::InvalidRequest,
             CodecError::TooLarge => FailureCode::TooLarge,
         })
     }
@@ -264,7 +274,7 @@ pub fn decode_request(bytes: &[u8]) -> Result<(String, Operation, Vec<u8>)> {
     if bytes.len() > MAX_FRAME_BYTES {
         return Err(CodecError::TooLarge);
     }
-    let request = Request::decode(bytes).map_err(|_| CodecError::InvalidData)?;
+    let request = Request::decode(bytes).map_err(CodecError::Decode)?;
     bound(bytes.len(), &request.data)?;
     from_request(request)
 }
@@ -291,7 +301,7 @@ pub fn decode_reply(bytes: &[u8]) -> Result<std::result::Result<Reply, Failure>>
     if bytes.len() > MAX_FRAME_BYTES {
         return Err(CodecError::TooLarge);
     }
-    let reply = Reply::decode(bytes).map_err(|_| CodecError::InvalidData)?;
+    let reply = Reply::decode(bytes).map_err(CodecError::Decode)?;
     bound(bytes.len(), &reply.data)?;
     from_reply(reply)
 }

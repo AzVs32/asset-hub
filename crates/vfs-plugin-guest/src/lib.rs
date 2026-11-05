@@ -95,7 +95,9 @@ impl<D: api::Guest> Dispatcher<D> {
             .map_err(|error| {
                 p::Failure::new(match error {
                     p::CodecError::TooLarge => p::FailureCode::TooLarge,
-                    p::CodecError::InvalidData => p::FailureCode::InvalidRequest,
+                    p::CodecError::InvalidData | p::CodecError::Decode(_) => {
+                        p::FailureCode::InvalidRequest
+                    }
                 })
             })
             .and_then(|(generation, operation, data)| {
@@ -119,7 +121,7 @@ impl<D: api::Guest> Dispatcher<D> {
         } else {
             None
         };
-        p::encode_reply(result).unwrap_or_else(|error| {
+        p::encode_reply(result).unwrap_or_else(|_| {
             if let Some(handle) = allocated {
                 self.resources.remove(&handle);
             }
@@ -127,10 +129,7 @@ impl<D: api::Guest> Dispatcher<D> {
             let code = if mutates {
                 p::wire::FailureCode::OutcomeUnknown
             } else {
-                match error {
-                    p::CodecError::TooLarge => p::wire::FailureCode::TooLarge,
-                    p::CodecError::InvalidData => p::wire::FailureCode::InvalidData,
-                }
+                p::wire::FailureCode::ProtocolViolation
             };
             p::encode_status(code)
         })
@@ -268,7 +267,7 @@ impl<D: api::Guest> Dispatcher<D> {
                             data: bytes,
                         });
                     }
-                    Some(_) => return Err(p::Failure::new(p::FailureCode::InvalidData)),
+                    Some(_) => return Err(p::Failure::new(p::FailureCode::ProtocolViolation)),
                 }
             }
             Op::WriterChunk(p::Handle { handle }) => {

@@ -63,3 +63,102 @@ fn known_driver_failures_keep_their_categories_without_backend_diagnostics() -> 
     assert!(!storage.to_string().contains("private backend diagnostic"));
     Ok(())
 }
+
+#[test]
+fn data_corruption_and_adapter_violations_remain_distinct_on_the_wire() -> Result {
+    for kind in [
+        StorageErrorKind::InvalidData,
+        StorageErrorKind::ProtocolViolation,
+    ] {
+        let decoded = round_trip(
+            StorageError::with_source(kind, std::io::Error::other("secret")).into(),
+            None,
+        )?;
+        let storage = decoded.storage_error().ok_or("storage error")?;
+        assert_eq!(storage.kind(), kind);
+        assert!(!storage.to_string().contains("secret"));
+        assert!(storage.source().is_none());
+    }
+    Ok(())
+}
+
+#[test]
+fn response_paths_keep_their_validation_cause_instead_of_becoming_request_errors() -> Result {
+    use ah_vfs::domain::storage::StoragePathError;
+    let error = vfs_plugin_codec::decode_entry(p::Entry {
+        path: "../private-location".into(),
+        kind: p::EntryKind::File.into(),
+        size: None,
+        modified: None,
+    })
+    .err()
+    .ok_or("invalid response path accepted")?;
+    assert_eq!(error.kind(), StorageErrorKind::ProtocolViolation);
+    assert!(
+        error
+            .source()
+            .and_then(|e| e.downcast_ref::<StoragePathError>())
+            .is_some()
+    );
+    assert!(!error.to_string().contains("private-location"));
+    let error = vfs_plugin_codec::response_error(true, error);
+    assert_eq!(error.kind(), StorageErrorKind::OutcomeUnknown);
+    let violation = error
+        .source()
+        .and_then(|e| e.downcast_ref::<StorageError>())
+        .ok_or("violation cause")?;
+    assert_eq!(violation.kind(), StorageErrorKind::ProtocolViolation);
+    assert!(
+        violation
+            .source()
+            .and_then(|e| e.downcast_ref::<StoragePathError>())
+            .is_some()
+    );
+    Ok(())
+}
+
+#[test]
+fn configuration_objects_are_classified_by_direction_and_keep_the_codec_cause() -> Result {
+    let malformed = p::Object {
+        fields: [("field".into(), p::JsonValue { kind: None })].into(),
+    };
+    for (error, kind) in [
+        (
+            vfs_plugin_codec::request_object(Some(malformed.clone())).err(),
+            StorageErrorKind::InvalidRequest,
+        ),
+        (
+            vfs_plugin_codec::response_object(Some(malformed)).err(),
+            StorageErrorKind::ProtocolViolation,
+        ),
+    ] {
+        let error = error.ok_or("invalid object accepted")?;
+        let storage = error.storage_error().ok_or("storage error")?;
+        assert_eq!(storage.kind(), kind);
+        assert!(
+            storage
+                .source()
+                .and_then(|e| e.downcast_ref::<p::CodecError>())
+                .is_some()
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn malformed_instance_failure_keeps_the_id_validation_cause() -> Result {
+    use ah_vfs::domain::InstanceIdError;
+    let error = driver_error(
+        p::Failure::new(p::FailureCode::InstanceNotFound),
+        Some("bad id"),
+    );
+    let storage = error.storage_error().ok_or("storage error")?;
+    assert_eq!(storage.kind(), StorageErrorKind::ProtocolViolation);
+    assert!(
+        storage
+            .source()
+            .and_then(|e| e.downcast_ref::<InstanceIdError>())
+            .is_some()
+    );
+    Ok(())
+}

@@ -130,7 +130,7 @@ impl Reply {
         match self.result {
             Some(Value::Failure(error)) => Err(error),
             Some(value) => Ok(value),
-            None => Err(Failure::new(FailureCode::InvalidData)),
+            None => Err(Failure::new(FailureCode::ProtocolViolation)),
         }
     }
 }

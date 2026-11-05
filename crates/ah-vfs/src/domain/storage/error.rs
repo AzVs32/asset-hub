@@ -1,5 +1,5 @@
 //! Backend-independent storage I/O failures and diagnostic chains.
-use super::{StorageCapabilitiesError, StoragePathError};
+use super::{EntryPermissionsError, StorageCapabilitiesError, StoragePathError, XattrNameError};
 use std::{error::Error, fmt};
 use thiserror::Error;
 
@@ -26,8 +26,12 @@ pub enum StorageErrorKind {
     InvalidRequest,
     #[error("entry name cannot be represented without loss")]
     InvalidNameEncoding,
-    #[error("stored instance data is invalid")]
+    /// Stored records or backend data are corrupt or cannot be interpreted.
+    #[error("stored or backend data is invalid")]
     InvalidData,
+    /// An adapter declaration, implementation or response violates the storage contract.
+    #[error("storage adapter violated its contract")]
+    ProtocolViolation,
     #[error("the storage instance root cannot be modified")]
     RootProtected,
     #[error("storage session is closed")]
@@ -62,6 +66,13 @@ pub enum StorageErrorKind {
 
 /// A normalized category retaining its original internal diagnostic chain.
 /// Display excludes backend messages, which may contain credentials or locations.
+///
+/// `From` conversions for storage value validation errors assume request input:
+/// paths become `InvalidPath`; permissions and attribute names become `InvalidRequest`.
+/// Response decoders and persistence adapters must use `with_source` with their
+/// context's category instead. Capability validation is an adapter declaration
+/// failure, so `From<StorageCapabilitiesError>` yields `ProtocolViolation`.
+/// Validation errors themselves remain independent of these classifications.
 pub struct StorageError {
     kind: StorageErrorKind,
     source: Option<Box<dyn Error + Send + Sync>>,
@@ -96,9 +107,19 @@ impl From<StoragePathError> for StorageError {
         Self::with_source(StorageErrorKind::InvalidPath, error)
     }
 }
+impl From<EntryPermissionsError> for StorageError {
+    fn from(error: EntryPermissionsError) -> Self {
+        Self::with_source(StorageErrorKind::InvalidRequest, error)
+    }
+}
+impl From<XattrNameError> for StorageError {
+    fn from(error: XattrNameError) -> Self {
+        Self::with_source(StorageErrorKind::InvalidRequest, error)
+    }
+}
 impl From<StorageCapabilitiesError> for StorageError {
     fn from(error: StorageCapabilitiesError) -> Self {
-        Self::with_source(StorageErrorKind::InvalidData, error)
+        Self::with_source(StorageErrorKind::ProtocolViolation, error)
     }
 }
 impl std::fmt::Debug for StorageError {

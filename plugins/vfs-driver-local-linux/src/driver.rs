@@ -59,7 +59,7 @@ impl LinuxLocalDriver {
             info: DriverInfo::builder()
                 .maybe_instance_config_schema(instance_config_schema())
                 .capabilities(Self::supported_capabilities()?)
-                .key(DriverKey::parse(Self::KEY).map_err(|_| LinuxLocalDriverError::InvalidData)?)
+                .key(DriverKey::parse(Self::KEY).map_err(LinuxLocalDriverError::from)?)
                 .name("Local filesystem".into())
                 .version(semver::Version::new(0, 1, 0))
                 .child_mount_policy(ChildMountPolicy::Allow)

@@ -145,7 +145,7 @@ async fn incompatible_versions_and_false_capabilities_are_rejected() -> Result {
     let error = error.downcast_ref::<DriverError>().ok_or("driver error")?;
     assert_eq!(
         error.storage_error().ok_or("category")?.kind(),
-        StorageErrorKind::InvalidData
+        StorageErrorKind::ProtocolViolation
     );
     Ok(())
 }
@@ -162,10 +162,13 @@ async fn malformed_commit_response_is_unknown_and_is_never_replayed() -> Result 
         .write_file(StorageWriteFileRequest::new(StoragePath::parse("file")?))
         .await?;
     writer.write_chunk(b"accepted").await?;
-    assert_eq!(
-        writer.commit().await.err().ok_or("unknown outcome")?.kind(),
-        StorageErrorKind::OutcomeUnknown
-    );
+    let error = writer.commit().await.err().ok_or("unknown outcome")?;
+    assert_eq!(error.kind(), StorageErrorKind::OutcomeUnknown);
+    let violation = error
+        .source()
+        .and_then(|e| e.downcast_ref::<ah_vfs::domain::storage::StorageError>())
+        .ok_or("protocol violation cause")?;
+    assert_eq!(violation.kind(), StorageErrorKind::ProtocolViolation);
     assert_eq!(
         writer.commit().await.err().ok_or("terminal")?.kind(),
         StorageErrorKind::SessionClosed
@@ -192,7 +195,7 @@ async fn empty_non_eof_chunks_close_the_read_session() -> Result {
             .err()
             .ok_or("invalid chunk")?
             .kind(),
-        StorageErrorKind::InvalidData
+        StorageErrorKind::ProtocolViolation
     );
     assert_eq!(
         reader.next_chunk().await.err().ok_or("closed")?.kind(),
@@ -242,7 +245,8 @@ fn timestamps_and_unknown_error_codes_preserve_boundary_semantics() -> Result {
 }
 
 #[tokio::test]
-async fn malformed_permissions_response_is_backend_data_with_its_validation_cause() -> Result {
+async fn malformed_permissions_response_is_a_protocol_violation_with_its_validation_cause() -> Result
+{
     let (driver, _) = peer(Fault::Attributes("user.valid".into())).await?;
     let storage = driver
         .open(OpenContext::new(
@@ -257,7 +261,7 @@ async fn malformed_permissions_response_is_backend_data_with_its_validation_caus
         .await
         .err()
         .ok_or("accepted entry type bits")?;
-    assert_eq!(error.kind(), StorageErrorKind::InvalidData);
+    assert_eq!(error.kind(), StorageErrorKind::ProtocolViolation);
     assert_eq!(
         error
             .source()
@@ -291,7 +295,7 @@ async fn malformed_xattr_responses_keep_each_value_validation_cause() -> Result 
             .await
             .err()
             .ok_or("accepted invalid attribute name")?;
-        assert_eq!(error.kind(), StorageErrorKind::InvalidData);
+        assert_eq!(error.kind(), StorageErrorKind::ProtocolViolation);
         assert_eq!(
             error
                 .source()

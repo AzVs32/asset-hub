@@ -54,7 +54,7 @@ async fn run(
         .get("result")
         .and_then(|value| value.as_str())
         .map(str::to_owned)
-        .ok_or_else(c::invalid)
+        .ok_or_else(c::protocol_violation)
 }
 fn http_grant(origin: String) -> HostGrants {
     HostGrants {

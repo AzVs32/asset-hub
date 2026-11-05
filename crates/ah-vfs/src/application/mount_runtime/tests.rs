@@ -668,7 +668,7 @@ async fn invalid_extensions_are_not_retained_as_successful_handles() -> TestResu
         .err()
         .ok_or("invalid adapter")?;
     assert!(
-        matches!(error, DriverError::Storage(error) if error.kind() == StorageErrorKind::InvalidData)
+        matches!(error, DriverError::Storage(error) if error.kind() == StorageErrorKind::ProtocolViolation)
     );
     f.driver.invalid_extensions.store(false, Ordering::SeqCst);
     f.runtime

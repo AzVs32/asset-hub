@@ -1,4 +1,7 @@
-use ah_vfs::domain::DriverError;
+use ah_vfs::domain::{
+    DriverError,
+    storage::{StorageError, StorageErrorKind},
+};
 use std::{
     io,
     pin::Pin,
@@ -17,7 +20,6 @@ use tonic::{
     Status,
     transport::server::{Connected, TcpConnectInfo},
 };
-use vfs_plugin_codec as c;
 use vfs_plugin_grpc_wire as wire;
 
 /// Shared admission limits for one plugin server, across all connections.
@@ -67,7 +69,7 @@ impl ServerLimits {
             || self.stream_idle_timeout.is_zero()
             || self.max_connection_age.is_some_and(|age| age.is_zero())
         {
-            return Err(c::invalid());
+            return Err(StorageError::new(StorageErrorKind::InvalidRequest).into());
         }
         Ok(())
     }

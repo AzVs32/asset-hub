@@ -52,7 +52,7 @@ impl MemoryDriver {
     pub fn new() -> Result<Self, MemoryDriverError> {
         Ok(Self {
             info: DriverInfo::builder()
-                .key(DriverKey::parse(Self::KEY).map_err(|_| MemoryDriverError::InvalidData)?)
+                .key(DriverKey::parse(Self::KEY).map_err(MemoryDriverError::from)?)
                 .name("Memory storage".into())
                 .version(semver::Version::new(0, 1, 0))
                 .child_mount_policy(ChildMountPolicy::Allow)

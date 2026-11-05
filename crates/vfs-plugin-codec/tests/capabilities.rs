@@ -27,7 +27,7 @@ fn contradictory_wire_capabilities_preserve_the_domain_validation_cause()
             .err()
             .ok_or("accepted invalid wire capabilities")?;
         let storage = error.storage_error().ok_or("missing storage error")?;
-        assert_eq!(storage.kind(), StorageErrorKind::InvalidData);
+        assert_eq!(storage.kind(), StorageErrorKind::ProtocolViolation);
         assert_eq!(
             storage
                 .source()

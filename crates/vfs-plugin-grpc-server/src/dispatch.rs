@@ -55,7 +55,10 @@ impl Resources {
         {
             return Err(StorageError::new(StorageErrorKind::CapacityExceeded).into());
         }
-        self.next = self.next.checked_add(1).ok_or_else(c::invalid)?;
+        self.next = self
+            .next
+            .checked_add(1)
+            .ok_or_else(|| StorageError::new(StorageErrorKind::CapacityExceeded))?;
         Ok(self.next)
     }
 }
@@ -67,15 +70,14 @@ fn path(s: &str) -> Result<StoragePath, DriverError> {
 }
 // Attribute validation errors acquire request semantics only at this boundary.
 fn permissions(mode: u32) -> Result<EntryPermissions, DriverError> {
-    EntryPermissions::new(mode)
-        .map_err(|error| StorageError::with_source(StorageErrorKind::InvalidRequest, error).into())
+    EntryPermissions::new(mode).map_err(|error| StorageError::from(error).into())
 }
 fn xattr_name(name: &str) -> Result<XattrName, DriverError> {
-    XattrName::parse(name)
-        .map_err(|error| StorageError::with_source(StorageErrorKind::InvalidRequest, error).into())
+    XattrName::parse(name).map_err(|error| StorageError::from(error).into())
 }
 fn id(s: &str) -> Result<InstanceId, DriverError> {
-    InstanceId::parse(s).map_err(|_| StorageError::new(StorageErrorKind::InvalidRequest).into())
+    InstanceId::parse(s)
+        .map_err(|error| StorageError::with_source(StorageErrorKind::InvalidRequest, error).into())
 }
 fn unsupported() -> DriverError {
     StorageError::new(StorageErrorKind::UnsupportedOperation).into()
@@ -221,7 +223,9 @@ impl Generation {
     fn new(driver: Arc<dyn Driver>) -> Result<Self, DriverError> {
         let generation = InstanceId::generate().as_str().to_owned();
         let description = c::describe(driver.as_ref(), generation);
-        p::negotiate(&description, &[]).map_err(|_| unsupported())?;
+        p::negotiate(&description, &[]).map_err(|source| {
+            StorageError::with_source(StorageErrorKind::UnsupportedOperation, source)
+        })?;
         c::driver_info(&description)?;
         let (retired, _) = watch::channel(false);
         Ok(Self {
@@ -238,10 +242,9 @@ impl Generation {
         self.retired.send_replace(true);
     }
     fn reserve(&self) -> Result<OwnedSemaphorePermit, DriverError> {
-        self.capacity
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| StorageError::new(StorageErrorKind::CapacityExceeded).into())
+        self.capacity.clone().try_acquire_owned().map_err(|source| {
+            StorageError::with_source(StorageErrorKind::CapacityExceeded, source).into()
+        })
     }
     pub fn generation(&self) -> &str {
         &self.description.generation
@@ -314,7 +317,7 @@ impl Generation {
             };
             let outcome = self
                 .driver
-                .initialize(c::object(Some(settings.clone()))?.into())
+                .initialize(c::request_object(Some(settings.clone()))?.into())
                 .await;
             guard.completed = true;
             outcome?;
@@ -330,7 +333,7 @@ impl Generation {
             }) => {
                 let prepared = self
                     .provisioner()
-                    .prepare(c::object(Some(config))?.into())
+                    .prepare(c::request_object(Some(config))?.into())
                     .await?;
                 Value::Prepared(p::Prepared {
                     config: Some(prepared.config().clone().into_object().into()),
@@ -343,7 +346,7 @@ impl Generation {
             }) => Value::Config(p::Config {
                 config: Some(
                     self.provisioner()
-                        .migrate_config(from_version, c::object(Some(config))?.into())
+                        .migrate_config(from_version, c::request_object(Some(config))?.into())
                         .await?
                         .into_object()
                         .into(),
@@ -353,7 +356,7 @@ impl Generation {
                 config: Some(config),
             }) => {
                 self.provisioner()
-                    .test_connection(&c::object(Some(config))?.into())
+                    .test_connection(&c::request_object(Some(config))?.into())
                     .await?;
                 Value::Unit(p::Empty {})
             }
@@ -376,13 +379,14 @@ impl Generation {
         AssertUnwindSafe(async {
             let config =
                 config.ok_or_else(|| StorageError::new(StorageErrorKind::InvalidRequest))?;
-            let context = OpenContext::new(id(&raw)?, c::object(Some(config))?.into());
+            let context = OpenContext::new(id(&raw)?, c::request_object(Some(config))?.into());
             let capacity = self.reserve()?;
             let storage = self.driver.open(context).await?;
             validate_storage_extensions(self.driver.info().capabilities(), storage.as_ref())?;
-            let chunk_size = u32::try_from(storage.chunk_size().get()).map_err(|_| c::invalid())?;
+            let chunk_size = u32::try_from(storage.chunk_size().get())
+                .map_err(c::protocol_violation_with_source)?;
             if chunk_size as usize > p::MAX_DATA_BYTES {
-                return Err(c::invalid());
+                return Err(c::protocol_violation());
             }
             let info = p::StorageInfo { chunk_size };
             Ok(Session {
@@ -537,7 +541,7 @@ impl Session {
                     }
                     Ok(_) => {
                         self.resources.lock().await.readers.remove(&handle);
-                        return Err(c::invalid());
+                        return Err(c::protocol_violation());
                     }
                     Err(error) => {
                         self.resources.lock().await.readers.remove(&handle);
@@ -578,9 +582,11 @@ impl Session {
                     .kind(handle)
                     .is_some_and(|actual| actual as i32 != kind)
                 {
-                    return Err(c::invalid());
+                    return Err(StorageError::new(StorageErrorKind::InvalidRequest).into());
                 }
-                match p::ResourceKind::try_from(kind).map_err(|_| c::invalid())? {
+                match p::ResourceKind::try_from(kind).map_err(|source| {
+                    StorageError::with_source(StorageErrorKind::InvalidRequest, source)
+                })? {
                     p::ResourceKind::Storage => {
                         if handle == 1 {
                             resources.storage = None;
@@ -592,7 +598,7 @@ impl Session {
                     p::ResourceKind::Writer => {
                         resources.writers.remove(&handle);
                     }
-                    _ => return Err(c::invalid()),
+                    _ => return Err(StorageError::new(StorageErrorKind::InvalidRequest).into()),
                 }
                 Value::Unit(p::Empty {})
             }
@@ -737,6 +743,20 @@ mod attribute_validation_tests {
     use super::*;
     use ah_vfs::domain::storage::{EntryPermissionsError, XattrNameError};
     use std::error::Error;
+
+    #[test]
+    fn request_ids_keep_the_value_validation_cause() -> Result<(), Box<dyn Error>> {
+        let error = id("bad id").err().ok_or("invalid ID accepted")?;
+        let storage = error.storage_error().ok_or("storage category")?;
+        assert_eq!(storage.kind(), StorageErrorKind::InvalidRequest);
+        assert!(
+            storage
+                .source()
+                .and_then(|e| e.downcast_ref::<ah_vfs::domain::InstanceIdError>())
+                .is_some()
+        );
+        Ok(())
+    }
 
     #[test]
     fn request_permissions_keep_the_value_validation_cause() -> Result<(), Box<dyn Error>> {

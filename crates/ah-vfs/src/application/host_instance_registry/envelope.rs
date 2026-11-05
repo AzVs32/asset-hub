@@ -29,14 +29,15 @@ fn invalid() -> DriverError {
 
 impl Envelope {
     pub(super) fn parse(json: String) -> Result<Self, DriverError> {
-        let mut fields: serde_json::Map<String, Value> =
-            serde_json::from_str(&json).map_err(|_| invalid())?;
+        let mut fields: serde_json::Map<String, Value> = serde_json::from_str(&json)
+            .map_err(|source| StorageError::with_source(StorageErrorKind::InvalidData, source))?;
         let parameters = fields.remove("parameters").ok_or_else(invalid)?;
-        let paths: Vec<String> =
-            serde_json::from_value(fields.remove("secret_paths").ok_or_else(invalid)?)
-                .map_err(|_| invalid())?;
+        let paths: Vec<String> = serde_json::from_value(
+            fields.remove("secret_paths").ok_or_else(invalid)?,
+        )
+        .map_err(|source| StorageError::with_source(StorageErrorKind::InvalidData, source))?;
         let details = serde_json::from_value(fields.remove("details").ok_or_else(invalid)?)
-            .map_err(|_| invalid())?;
+            .map_err(|source| StorageError::with_source(StorageErrorKind::InvalidData, source))?;
         let secrets = Self::validate_secrets(&parameters, paths)?;
         Ok(Self {
             json,
@@ -58,7 +59,7 @@ impl Envelope {
             "secret_paths": paths,
             "details": details,
         }))
-        .map_err(|_| invalid())?;
+        .map_err(|source| StorageError::with_source(StorageErrorKind::InvalidData, source))?;
         Ok(Self {
             json,
             parameters,
@@ -85,7 +86,9 @@ impl Envelope {
             }
             let ciphertext =
                 serde_json::from_value(parameters.pointer(&path).ok_or_else(invalid)?.clone())
-                    .map_err(|_| invalid())?;
+                    .map_err(|source| {
+                        StorageError::with_source(StorageErrorKind::InvalidData, source)
+                    })?;
             secrets.push(EncryptedSecret { path, ciphertext });
         }
         Ok(secrets)
@@ -107,5 +110,30 @@ impl Envelope {
 
     pub(super) fn details(&self) -> &BTreeMap<String, Value> {
         &self.details
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::error::Error;
+
+    #[test]
+    fn corrupted_records_keep_the_json_cause_without_exposing_the_record()
+    -> Result<(), Box<dyn Error>> {
+        let error = Envelope::parse("private malformed record".into())
+            .err()
+            .ok_or("malformed record accepted")?;
+        let storage = error.storage_error().ok_or("storage error")?;
+        assert_eq!(storage.kind(), StorageErrorKind::InvalidData);
+        assert!(
+            storage
+                .source()
+                .and_then(|e| e.downcast_ref::<serde_json::Error>())
+                .is_some()
+        );
+        assert!(!storage.to_string().contains("private"));
+        assert!(!format!("{storage:?}").contains("private"));
+        Ok(())
     }
 }

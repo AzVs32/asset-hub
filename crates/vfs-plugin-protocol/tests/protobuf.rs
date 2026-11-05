@@ -345,3 +345,17 @@ fn host_negotiation_reports_only_missing_capabilities() -> Result {
     assert!(p::negotiate_protocol(&description).is_ok());
     Ok(())
 }
+
+#[test]
+fn malformed_protobuf_retains_the_original_decode_error() -> Result {
+    use std::error::Error;
+    for error in [
+        p::decode_request(&[0xff]).err(),
+        p::decode_reply(&[0xff]).err(),
+    ] {
+        let error = error.ok_or("invalid protobuf accepted")?;
+        assert!(matches!(error, p::CodecError::Decode(_)));
+        assert!(error.source().is_some());
+    }
+    Ok(())
+}

@@ -293,8 +293,9 @@ struct ReadOnlyPermissions;
 impl StoragePermissions for ReadOnlyPermissions {
     fn get_permissions(&self, _: StoragePath) -> StorageFuture<'_, EntryPermissions> {
         Box::pin(async {
-            EntryPermissions::new(0o444)
-                .map_err(|error| StorageError::with_source(StorageErrorKind::InvalidData, error))
+            EntryPermissions::new(0o444).map_err(|error| {
+                StorageError::with_source(StorageErrorKind::ProtocolViolation, error)
+            })
         })
     }
 }
@@ -322,16 +323,16 @@ fn independent_attribute_interfaces_must_match_the_driver_declaration() -> TestR
     let missing = validate_storage_extensions(declared, &absent)
         .err()
         .ok_or("missing declared interface")?;
-    assert_eq!(missing.kind(), StorageErrorKind::InvalidData);
+    assert_eq!(missing.kind(), StorageErrorKind::ProtocolViolation);
     let unexpected = validate_storage_extensions(StorageCapabilities::default(), &supported)
         .err()
         .ok_or("unexpected interface")?;
-    assert_eq!(unexpected.kind(), StorageErrorKind::InvalidData);
+    assert_eq!(unexpected.kind(), StorageErrorKind::ProtocolViolation);
     let xattrs = StorageCapabilities::builder()
         .xattrs(AttributeSupport::Read)
         .build()?;
     assert!(
-        matches!(validate_storage_extensions(xattrs, &absent), Err(error) if error.kind() == StorageErrorKind::InvalidData)
+        matches!(validate_storage_extensions(xattrs, &absent), Err(error) if error.kind() == StorageErrorKind::ProtocolViolation)
     );
     assert_eq!(absent.calls.load(Ordering::SeqCst), 0);
     Ok(())

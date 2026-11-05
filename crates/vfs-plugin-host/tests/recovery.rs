@@ -104,7 +104,7 @@ impl Transport for Peer {
                 }) => {
                     self.initialized
                         .lock()
-                        .map_err(|_| vfs_plugin_host::convert::invalid())?
+                        .map_err(|_| vfs_plugin_host::convert::protocol_violation())?
                         .push((current, settings));
                     if self.suspend_initialize.load(Ordering::SeqCst) {
                         self.initializing.notify_one();
@@ -258,7 +258,7 @@ async fn changed_declarations_require_a_new_registration() -> Result {
             .storage_error()
             .ok_or("category")?
             .kind(),
-        StorageErrorKind::InvalidData
+        StorageErrorKind::ProtocolViolation
     );
     assert!(old.is_stale());
     assert!(driver.info().capabilities().stat_entry());
@@ -339,9 +339,9 @@ impl Transport for ReopeningControl {
                 .call(generation, Op::Open(open), vec![])
                 .await?
                 .into_value()
-                .map_err(|_| vfs_plugin_host::convert::invalid())?
+                .map_err(|_| vfs_plugin_host::convert::protocol_violation())?
             else {
-                return Err(vfs_plugin_host::convert::invalid());
+                return Err(vfs_plugin_host::convert::protocol_violation());
             };
             Ok(vfs_plugin_host::OpenedStorage {
                 storage,
