@@ -3,11 +3,9 @@ use super::{
     Operation, Publication, ReadRange, ReadRequest, Rejection, RenameMode, RenameRequest,
     WriteMode, WriteRequest,
 };
-use bon::{Builder, bon};
 use getset::CopyGetters;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum ReadSupport {
     #[default]
     None,
@@ -27,7 +25,6 @@ impl ReadSupport {
 /// A nonempty set of write modes. There is no empty mode set to contradict
 /// an atomic-publication promise; absence of writing is WriteSupport::None.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum WriteModes {
     CreateNew,
     Replace,
@@ -55,11 +52,9 @@ pub enum WriteSupport {
         atomic_publish: bool,
     },
 }
-#[bon]
 impl WriteSupport {
     /// Declare staged writes with an explicit, nonempty set of supported modes.
-    #[builder(finish_fn = build, state_mod(vis = "pub"))]
-    pub fn staged(modes: WriteModes, #[builder(default)] atomic_publish: bool) -> Self {
+    pub fn staged(modes: WriteModes, atomic_publish: bool) -> Self {
         Self::Staged {
             modes,
             atomic_publish,
@@ -97,25 +92,16 @@ pub enum DirectorySupport {
         persistent_empty: bool,
     },
 }
-#[bon]
 impl DirectorySupport {
-    /// Declare a hierarchy; each optional guarantee defaults to unsupported.
-    #[builder(finish_fn = build, state_mod(vis = "pub"))]
-    pub fn hierarchical(
-        #[builder(default)] create: bool,
-        #[builder(default)] persistent_empty: bool,
-    ) -> Self {
+    /// Declare a hierarchy with explicit creation and empty-directory guarantees.
+    pub fn hierarchical(create: bool, persistent_empty: bool) -> Self {
         Self::Hierarchical {
             create,
             persistent_empty,
         }
     }
     /// Declare prefix directories without assuming marker or empty-directory support.
-    #[builder(finish_fn = build, state_mod(vis = "pub"))]
-    pub fn prefix(
-        #[builder(default)] create: bool,
-        #[builder(default)] persistent_empty: bool,
-    ) -> Self {
+    pub fn prefix(create: bool, persistent_empty: bool) -> Self {
         Self::Prefix {
             create,
             persistent_empty,
@@ -141,7 +127,6 @@ impl DirectorySupport {
 }
 /// All supported renames are atomic within one instance, never copy/delete.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum RenameSupport {
     #[default]
     None,
@@ -162,7 +147,6 @@ impl RenameSupport {
 }
 /// Attribute writing always includes reading; authorization is checked per call.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum AttributeSupport {
     #[default]
     None,
@@ -186,32 +170,75 @@ impl AttributeSupport {
 
 /// Driver-wide operation and guarantee declarations, shared by all instances.
 /// Composition is infallible because each supported mode carries its prerequisites.
-/// The builder needs no additional validate step. Backend/path/authorization restrictions
+/// The default declaration supports no operations. Each `with_*` method
+/// updates one capability. Backend/path/authorization restrictions
 /// remain operation failures, and declarations do not prove implementation correctness.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Builder, CopyGetters)]
-#[builder(state_mod(vis = "pub"))]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, CopyGetters)]
 #[getset(get_copy = "pub")]
 pub struct Capabilities {
-    #[builder(default)]
     stat: bool,
-    #[builder(default)]
     list: bool,
-    #[builder(default)]
     remove: bool,
-    #[builder(default)]
     read: ReadSupport,
-    #[builder(default)]
+    /// Reading a link's stored target is independent of following it in lookup.
+    read_link: bool,
     write: WriteSupport,
-    #[builder(default)]
     directories: DirectorySupport,
-    #[builder(default)]
     rename: RenameSupport,
-    #[builder(default)]
     permissions: AttributeSupport,
-    #[builder(default)]
     xattrs: AttributeSupport,
 }
 impl Capabilities {
+    pub fn with_stat(mut self, stat: bool) -> Self {
+        self.stat = stat;
+        self
+    }
+
+    pub fn with_list(mut self, list: bool) -> Self {
+        self.list = list;
+        self
+    }
+
+    pub fn with_remove(mut self, remove: bool) -> Self {
+        self.remove = remove;
+        self
+    }
+
+    pub fn with_read(mut self, read: ReadSupport) -> Self {
+        self.read = read;
+        self
+    }
+
+    pub fn with_read_link(mut self, read_link: bool) -> Self {
+        self.read_link = read_link;
+        self
+    }
+
+    pub fn with_write(mut self, write: WriteSupport) -> Self {
+        self.write = write;
+        self
+    }
+
+    pub fn with_directories(mut self, directories: DirectorySupport) -> Self {
+        self.directories = directories;
+        self
+    }
+
+    pub fn with_rename(mut self, rename: RenameSupport) -> Self {
+        self.rename = rename;
+        self
+    }
+
+    pub fn with_permissions(mut self, permissions: AttributeSupport) -> Self {
+        self.permissions = permissions;
+        self
+    }
+
+    pub fn with_xattrs(mut self, xattrs: AttributeSupport) -> Self {
+        self.xattrs = xattrs;
+        self
+    }
+
     /// Coarse operation admission; read/write/rename requests must additionally
     /// check their requested modes and guarantees with the require_* methods.
     pub fn supports(self, operation: Operation) -> bool {
@@ -223,6 +250,7 @@ impl Capabilities {
                 ReadSupport::None => false,
                 ReadSupport::Sequential | ReadSupport::Range => true,
             },
+            Operation::ReadLink => self.read_link,
             Operation::Write => match self.write {
                 WriteSupport::None => false,
                 WriteSupport::Staged { .. } => true,

@@ -1,0 +1,87 @@
+syntax = "proto3";
+package assethub.storage.v1;
+
+// A stream binds one instance, uses its root as cwd, and owns one listing
+// one range reader, and one writer. Calls and replies are ordered. Closing a stream discards
+// private staging. No command is replayed by the server.
+service StorageContract {
+  rpc Session(stream Command) returns (stream Reply);
+}
+message Unit {}
+message Operand { string path = 1; }
+enum FinalLink { FINAL_LINK_UNSPECIFIED = 0; FOLLOW = 1; PRESERVE = 2; }
+message Stat { string path = 1; FinalLink final_link = 2; }
+message List { string path = 1; uint32 page_size = 2; }
+message CreateDirectory { string path = 1; bool recursive = 2; }
+enum RemoveKind { REMOVE_KIND_UNSPECIFIED = 0; NON_DIRECTORY = 1; EMPTY_DIRECTORY = 2; }
+message Remove { string path = 1; RemoveKind kind = 2; }
+enum WriteMode { WRITE_MODE_UNSPECIFIED = 0; CREATE_NEW = 1; REPLACE = 2; }
+enum Publication { PUBLICATION_UNSPECIFIED = 0; STAGED = 1; ATOMIC = 2; }
+message Write { string path = 1; WriteMode mode = 2; Publication publication = 3; }
+message Read { string path = 1; uint64 offset = 2; optional uint64 length = 3; }
+message Command {
+  // Applies to ordinary path lookups. The final link has its own policy.
+  bool reject_intermediate_links = 1;
+  oneof action {
+    Stat stat = 2;
+    List select_directory = 3;
+    Unit next_page = 4;
+    CreateDirectory create_directory = 5;
+    Remove remove = 6;
+    Write begin_write = 7;
+    bytes stage = 8;
+    Unit commit = 9;
+    Unit abort = 10;
+    Operand read_link = 11;
+    Operand get_permissions = 12;
+    Read begin_read = 13;
+    Unit read_next = 14;
+  }
+}
+message Timestamp { sint64 seconds = 1; uint32 nanos = 2; }
+enum EntryKind { ENTRY_KIND_UNSPECIFIED = 0; FILE = 1; DIRECTORY = 2; SYMLINK = 3; }
+message Entry {
+  string address = 1;
+  EntryKind kind = 2;
+  optional uint64 size = 3;
+  Timestamp modified = 4;
+}
+message Selection { string address = 1; bytes identity = 2; }
+message Page {
+  Selection reported = 1;
+  // Consecutive length-delimited Entry messages. The receiver enforces its
+  // page count before decoding each message, without an unbounded repeated
+  // field allocation in the generated decoder.
+  bytes entries = 2;
+  oneof completion { Unit end = 3; string after = 4; }
+}
+enum Operation {
+  OPERATION_UNSPECIFIED = 0;
+  STAT = 1;
+  LIST = 2;
+  READ_LINK = 3;
+  WRITE = 4;
+  CREATE_DIRECTORY = 5;
+  REMOVE = 6;
+  GET_PERMISSIONS = 7;
+  READ = 8;
+}
+enum Outcome { OUTCOME_UNSPECIFIED = 0; UNCHANGED = 1; UNKNOWN = 2; }
+message Failure {
+  Operation operation = 1;
+  string family = 2;
+  string reason = 3;
+  Outcome outcome = 4;
+}
+message Reply {
+  oneof result {
+    Unit unit = 1;
+    Entry entry = 2;
+    Selection selected_directory = 3;
+    Page page = 4;
+    bytes link_target = 5;
+    Failure failure = 6;
+    bytes chunk = 7;
+    Unit end_of_file = 8;
+  }
+}

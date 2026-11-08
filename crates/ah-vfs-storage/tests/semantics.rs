@@ -1,0 +1,697 @@
+use ah_vfs_storage::*;
+use std::error::Error;
+type Result<T = ()> = std::result::Result<T, Box<dyn Error>>;
+const READS: [Operation; 7] = [
+    Operation::Stat,
+    Operation::List,
+    Operation::Read,
+    Operation::ReadLink,
+    Operation::GetPermissions,
+    Operation::ListXattrs,
+    Operation::GetXattr,
+];
+const MUTATIONS: [Operation; 7] = [
+    Operation::Write,
+    Operation::CreateDirectory,
+    Operation::Remove,
+    Operation::Rename,
+    Operation::SetPermissions,
+    Operation::SetXattr,
+    Operation::RemoveXattr,
+];
+
+#[test]
+fn outcome_is_independent_of_failure_reason_and_conservative_after_dispatch() {
+    for failure in [
+        Failure::Rejected(Rejection::Conflict),
+        Failure::Backend(BackendFailure::TimedOut),
+        Failure::Backend(BackendFailure::Cancelled),
+        Failure::Backend(BackendFailure::CorruptData),
+        Failure::Contract(ContractViolation::InvalidResponse),
+    ] {
+        for operation in MUTATIONS {
+            let error = StorageError::after_dispatch(operation, failure, None);
+            assert_eq!(error.failure(), failure);
+            assert_eq!(error.operation(), operation);
+            assert_eq!(error.outcome(), MutationOutcome::Unknown);
+            assert_eq!(
+                StorageError::without_effects(operation, failure, None).outcome(),
+                MutationOutcome::Unchanged
+            );
+        }
+        for operation in READS {
+            assert_eq!(
+                StorageError::after_dispatch(operation, failure, None).outcome(),
+                MutationOutcome::Unchanged
+            );
+        }
+    }
+}
+#[test]
+fn diagnostics_are_typed_private_and_do_not_change_failure_or_outcome() -> Result {
+    fn thread_safe<T: Error + Send + Sync + 'static>() {}
+    thread_safe::<StorageError>();
+    let cause = StoragePath::parse("private-location/..")
+        .err()
+        .ok_or("invalid address")?;
+    let failure = Failure::Contract(ContractViolation::InvalidEntry);
+    let error = StorageError::after_dispatch(Operation::Write, failure, Some(Box::new(cause)));
+    assert_eq!(error.failure(), failure);
+    assert_eq!(error.outcome(), MutationOutcome::Unknown);
+    assert!(
+        error
+            .source()
+            .and_then(|e| e.downcast_ref::<PathError>())
+            .is_some()
+    );
+    let error = StorageError::after_dispatch(Operation::Write, failure, Some(Box::new(error)));
+    let nested = error
+        .source()
+        .and_then(|e| e.downcast_ref::<StorageError>())
+        .ok_or("nested cause")?;
+    assert!(
+        nested
+            .source()
+            .and_then(|e| e.downcast_ref::<PathError>())
+            .is_some()
+    );
+    let error = StorageError::after_dispatch(
+        Operation::Write,
+        failure,
+        Some(Box::new(std::io::Error::other("token=private-secret"))),
+    );
+    let same_public_fields = StorageError::after_dispatch(Operation::Write, failure, None);
+    assert_eq!(error.to_string(), same_public_fields.to_string());
+    assert_eq!(format!("{error:?}"), format!("{same_public_fields:?}"));
+    assert!(
+        error
+            .source()
+            .ok_or("source")?
+            .to_string()
+            .contains("private-secret")
+    );
+    Ok(())
+}
+#[test]
+fn malformed_responses_and_stored_corruption_are_distinct_failure_families() -> Result {
+    let request = ListRequest::new(ListTarget::Path(PathExpr::parse("/")?), PageSize::DEFAULT);
+    let bound = request.bind_selection(DirectorySelection::from_lookup(
+        StoragePath::root(),
+        DirectoryIdentity::from_bytes([1; 16]),
+    ))?;
+    let invalid_page = DirectoryPage::new(&bound, vec![], true)
+        .err()
+        .ok_or("malformed page")?;
+    let protocol = StorageError::after_dispatch(
+        Operation::List,
+        Failure::Contract(ContractViolation::InvalidPage),
+        Some(Box::new(invalid_page)),
+    );
+    assert_eq!(
+        protocol.failure(),
+        Failure::Contract(ContractViolation::InvalidPage)
+    );
+    assert_eq!(protocol.outcome(), MutationOutcome::Unchanged);
+    assert_eq!(
+        protocol
+            .source()
+            .and_then(|e| e.downcast_ref::<DirectoryPageError>()),
+        Some(&DirectoryPageError::EmptyContinuation)
+    );
+    let corrupt = StorageError::after_dispatch(
+        Operation::Read,
+        Failure::Backend(BackendFailure::CorruptData),
+        None,
+    );
+    assert_ne!(protocol.failure(), corrupt.failure());
+    Ok(())
+}
+#[test]
+fn capability_defaults_disable_every_optional_operation() {
+    let capabilities = Capabilities::default();
+    for operation in READS.into_iter().chain(MUTATIONS) {
+        assert!(!capabilities.supports(operation));
+    }
+}
+#[test]
+fn declarations_remain_infallible_and_immutable_when_composed() {
+    let base = Capabilities::default();
+    let extended = Capabilities::default()
+        .with_stat(true)
+        .with_list(true)
+        .with_permissions(AttributeSupport::ReadWrite)
+        .with_xattrs(AttributeSupport::Read);
+    assert!(!base.supports(Operation::Stat));
+    for operation in [
+        Operation::Stat,
+        Operation::List,
+        Operation::GetPermissions,
+        Operation::SetPermissions,
+        Operation::GetXattr,
+        Operation::ListXattrs,
+    ] {
+        assert!(extended.supports(operation));
+    }
+    assert!(!extended.supports(Operation::SetXattr));
+    assert!(!extended.supports(Operation::Remove));
+}
+#[test]
+fn write_admission_checks_modes_and_atomicity_before_side_effects() -> Result {
+    for modes in [WriteModes::CreateNew, WriteModes::Replace, WriteModes::Both] {
+        for atomic_publish in [false, true] {
+            let capabilities =
+                Capabilities::default().with_write(WriteSupport::staged(modes, atomic_publish));
+            for mode in [WriteMode::CreateNew, WriteMode::Replace] {
+                for publication in [Publication::Staged, Publication::Atomic] {
+                    let request = WriteRequest::new(PathExpr::parse("file")?, mode, publication);
+                    let mode_supported = modes == WriteModes::Both
+                        || matches!(
+                            (modes, mode),
+                            (WriteModes::CreateNew, WriteMode::CreateNew)
+                                | (WriteModes::Replace, WriteMode::Replace)
+                        );
+                    let expected =
+                        mode_supported && (publication == Publication::Staged || atomic_publish);
+                    assert_eq!(capabilities.require_write(&request).is_ok(), expected);
+                }
+            }
+        }
+    }
+    let capabilities = Capabilities::default();
+    let request = WriteRequest::new(
+        PathExpr::parse("file")?,
+        WriteMode::CreateNew,
+        Publication::Staged,
+    );
+    let cause = capabilities
+        .require_write(&request)
+        .err()
+        .ok_or("unsupported write admitted")?;
+    let failure = StorageError::without_effects(Operation::Write, Failure::Rejected(cause), None);
+    assert_eq!(failure.failure(), Failure::Rejected(Rejection::Unsupported));
+    assert_eq!(failure.outcome(), MutationOutcome::Unchanged);
+    Ok(())
+}
+#[test]
+fn read_admission_distinguishes_sequential_prefixes_from_arbitrary_ranges() -> Result {
+    let prefix = ReadRequest::new(PathExpr::parse("file")?, ReadRange::new(0, Some(3))?);
+    let range = ReadRequest::new(PathExpr::parse("file")?, ReadRange::new(1, Some(3))?);
+    let sequential = Capabilities::default().with_read(ReadSupport::Sequential);
+    assert!(sequential.require_read(&prefix).is_ok());
+    assert_eq!(sequential.require_read(&range), Err(Rejection::Unsupported));
+    assert!(
+        Capabilities::default()
+            .with_read(ReadSupport::Range)
+            .require_read(&range)
+            .is_ok()
+    );
+    assert_eq!(
+        Capabilities::default().require_read(&prefix),
+        Err(Rejection::Unsupported)
+    );
+    Ok(())
+}
+#[test]
+fn directory_and_attribute_guarantees_carry_their_prerequisites() {
+    assert!(!DirectorySupport::None.can_create());
+    assert!(!DirectorySupport::None.persistent_empty());
+    for create in [false, true] {
+        for persistent_empty in [false, true] {
+            for support in [
+                DirectorySupport::hierarchical(create, persistent_empty),
+                DirectorySupport::prefix(create, persistent_empty),
+            ] {
+                let capabilities = Capabilities::default().with_directories(support);
+                assert_eq!(capabilities.supports(Operation::CreateDirectory), create);
+                assert_eq!(
+                    capabilities.directories().persistent_empty(),
+                    persistent_empty
+                );
+            }
+        }
+    }
+    for support in [
+        AttributeSupport::None,
+        AttributeSupport::Read,
+        AttributeSupport::ReadWrite,
+    ] {
+        let capabilities = Capabilities::default()
+            .with_xattrs(support)
+            .with_permissions(support);
+        assert!(!support.can_write() || support.can_read());
+        assert_eq!(
+            capabilities.supports(Operation::GetPermissions),
+            support.can_read()
+        );
+        assert_eq!(
+            capabilities.supports(Operation::SetXattr),
+            support.can_write()
+        );
+    }
+}
+#[test]
+fn rename_admission_preserves_the_requested_replacement_guarantee() -> Result {
+    for (support, no_replace, replace) in [
+        (RenameSupport::None, false, false),
+        (RenameSupport::NoReplace, true, false),
+        (RenameSupport::Replace, false, true),
+        (RenameSupport::Both, true, true),
+    ] {
+        let capabilities = Capabilities::default().with_rename(support);
+        for (mode, supported) in [
+            (RenameMode::NoReplace, no_replace),
+            (RenameMode::Replace, replace),
+        ] {
+            let request =
+                RenameRequest::new(PathExpr::parse("file")?, PathExpr::parse("file")?, mode)?;
+            assert_eq!(capabilities.require_rename(&request).is_ok(), supported);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn directory_creation_has_one_existing_target_policy_for_each_mode() -> Result {
+    let address = StoragePath::parse("dir")?;
+    let operand = PathExpr::parse("dir")?;
+    let single_request = CreateDirectoryRequest::new(operand.clone(), CreateDirectoryMode::Single);
+    let recursive_request = CreateDirectoryRequest::new(operand, CreateDirectoryMode::Recursive);
+    assert_eq!(
+        single_request.lookup().final_symlink(),
+        SymlinkAction::Preserve
+    );
+    assert_eq!(
+        recursive_request.lookup().final_symlink(),
+        SymlinkAction::FollowWithinInstance
+    );
+    for (entry_type, single, recursive) in [
+        (EntryType::Directory, Err(Rejection::AlreadyExists), Ok(())),
+        (
+            EntryType::file(Some(0)),
+            Err(Rejection::AlreadyExists),
+            Err(Rejection::NotDirectory),
+        ),
+        (
+            EntryType::Symlink,
+            Err(Rejection::AlreadyExists),
+            Err(Rejection::NotDirectory),
+        ),
+        (
+            EntryType::Other,
+            Err(Rejection::AlreadyExists),
+            Err(Rejection::NotDirectory),
+        ),
+    ] {
+        assert_eq!(
+            single_request
+                .lookup()
+                .check_existing_target(&address, entry_type),
+            single
+        );
+        assert_eq!(
+            recursive_request
+                .lookup()
+                .check_existing_target(&address, entry_type),
+            recursive
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn file_and_entry_operations_use_different_final_link_policies() -> Result {
+    let path = PathExpr::parse("link")?;
+    let link = StoragePath::parse("work/link")?;
+    let target = StoragePath::parse("work/target")?;
+    let file = EntryType::file(None);
+    let read = ReadRequest::new(path.clone(), ReadRange::FULL);
+    let read_link = ReadLinkRequest::new(path.clone());
+    let remove = RemoveRequest::new(path, RemoveKind::NonDirectory)?;
+
+    assert_eq!(
+        read.lookup().final_symlink(),
+        SymlinkAction::FollowWithinInstance
+    );
+    assert_eq!(read.lookup().check_existing_target(&target, file), Ok(()));
+    assert_eq!(read_link.lookup().final_symlink(), SymlinkAction::Preserve);
+    assert_eq!(
+        read_link
+            .lookup()
+            .check_existing_target(&link, EntryType::Symlink),
+        Ok(())
+    );
+    assert_eq!(
+        read_link.lookup().check_existing_target(&link, file),
+        Err(Rejection::NotSymlink)
+    );
+    assert_eq!(remove.lookup().final_symlink(), SymlinkAction::Preserve);
+    assert_eq!(
+        remove
+            .lookup()
+            .check_existing_target(&link, EntryType::Symlink),
+        Ok(())
+    );
+
+    let slash = RemoveRequest::new(PathExpr::parse("link/")?, RemoveKind::NonDirectory)?;
+    assert_eq!(
+        slash
+            .lookup()
+            .check_existing_target(&link, EntryType::Symlink),
+        Err(Rejection::NotDirectory)
+    );
+    Ok(())
+}
+
+#[test]
+fn destination_rules_apply_to_absent_and_existing_entries() -> Result {
+    let file = EntryType::file(None);
+    let address = StoragePath::parse("work/dest")?;
+    let create = WriteRequest::new(
+        PathExpr::parse("dest")?,
+        WriteMode::CreateNew,
+        Publication::Atomic,
+    );
+    assert_eq!(create.check_new_destination(&address), Ok(()));
+    assert_eq!(
+        create.lookup().check_existing_target(&address, file),
+        Err(Rejection::AlreadyExists)
+    );
+
+    let write = WriteRequest::new(
+        PathExpr::parse("dest/")?,
+        WriteMode::CreateNew,
+        Publication::Atomic,
+    );
+    assert_eq!(
+        write.check_new_destination(&address),
+        Err(Rejection::NotDirectory)
+    );
+    let rename = RenameRequest::new(
+        PathExpr::parse("src")?,
+        PathExpr::parse("dest/")?,
+        RenameMode::Replace,
+    )?;
+    assert_eq!(
+        rename.decide_destination(&address, EntryType::Directory, RenameDestination::Missing),
+        Ok(RenameDecision::Move)
+    );
+    assert_eq!(
+        rename.decide_destination(&address, file, RenameDestination::Missing),
+        Err(Rejection::NotDirectory)
+    );
+    assert_eq!(
+        rename.decide_destination(&address, file, RenameDestination::SameSlot),
+        Err(Rejection::NotDirectory)
+    );
+    assert_eq!(
+        rename.decide_destination(
+            &address,
+            file,
+            RenameDestination::Occupied(EntryType::Directory)
+        ),
+        Err(Rejection::IsDirectory)
+    );
+    Ok(())
+}
+
+#[test]
+fn effective_suffix_controls_link_policy_even_after_expansion() -> Result {
+    let path = PathExpr::parse("/a//link/")?;
+    let stat = StatRequest::new(path.clone(), SymlinkAction::Preserve);
+    let read = ReadRequest::new(path, ReadRange::FULL);
+    let parent = StoragePath::parse("a")?;
+    let link_address = parent.join(&EntryName::parse("link")?)?;
+    let mut links = SymlinkTraversal::new(IntermediateSymlinks::Reject);
+    assert_eq!(
+        links.encounter(stat.lookup(), &[]),
+        Ok(SymlinkAction::Preserve)
+    );
+    assert_eq!(
+        stat.lookup()
+            .check_existing_target(&link_address, EntryType::Symlink),
+        Err(Rejection::NotDirectory)
+    );
+
+    assert_eq!(
+        links.encounter(read.lookup(), &[]),
+        Ok(SymlinkAction::FollowWithinInstance)
+    );
+    let target = LinkTarget::new(b"/.././second//last/".to_vec()).prepare_lookup(&parent, &[])?;
+    assert_eq!(target.start(), LookupStart::InstanceRoot);
+    assert_eq!(
+        target.components()[..2],
+        [
+            PathComponent::ParentDirectory,
+            PathComponent::CurrentDirectory
+        ]
+    );
+    assert!(target.requires_directory());
+    assert_eq!(
+        links.encounter(read.lookup(), &target.components()[3..]),
+        Err(Rejection::SymlinkNotAllowed)
+    );
+    assert_eq!(
+        links.encounter(read.lookup(), &[]),
+        Ok(SymlinkAction::FollowWithinInstance)
+    );
+    assert_eq!(
+        read.lookup()
+            .check_existing_target(&StoragePath::root(), EntryType::Directory),
+        Err(Rejection::IsDirectory)
+    );
+    Ok(())
+}
+
+#[test]
+fn rename_shares_an_expansion_budget_across_its_two_operands() -> Result {
+    let rename = RenameRequest::new(
+        PathExpr::parse("prefix/source")?,
+        PathExpr::parse("/alias/destination")?,
+        RenameMode::NoReplace,
+    )?;
+    let (source, destination) = rename.lookups();
+    let mut links = SymlinkTraversal::default();
+    let source_suffix = &source.path().components()[1..];
+    let destination_suffix = &destination.path().components()[1..];
+    for _ in 1..MAX_SYMLINK_EXPANSIONS {
+        assert_eq!(
+            links.encounter(source, source_suffix),
+            Ok(SymlinkAction::FollowWithinInstance)
+        );
+    }
+    assert_eq!(
+        links.encounter(destination, destination_suffix),
+        Ok(SymlinkAction::FollowWithinInstance)
+    );
+    assert_eq!(
+        links.encounter(destination, destination_suffix),
+        Err(Rejection::TooManySymlinks)
+    );
+    assert_eq!(
+        links.encounter(destination, &[]),
+        Ok(SymlinkAction::Preserve)
+    );
+    Ok(())
+}
+
+#[test]
+fn link_target_bytes_are_lossless_and_following_checks_expanded_length() -> Result {
+    let raw = b"a//\xff/../";
+    let root = StoragePath::root();
+    let unreadable = LinkTarget::new(raw.to_vec());
+    assert_eq!(unreadable.as_bytes(), raw);
+    assert_eq!(
+        unreadable.prepare_lookup(&root, &[]),
+        Err(Failure::Backend(BackendFailure::UnrepresentableLinkTarget)),
+    );
+    assert_eq!(unreadable.into_bytes(), raw);
+    for raw in [b"".as_slice(), b"name\0", b"a:b", b"a\\b", b"C:\\docs"] {
+        assert_eq!(
+            LinkTarget::new(raw.to_vec()).prepare_lookup(&root, &[]),
+            Err(Failure::Backend(BackendFailure::UnrepresentableLinkTarget))
+        );
+    }
+    let raw = "/Report//../e\u{301}/";
+    let link = LinkTarget::new(raw.as_bytes().to_vec());
+    assert_eq!(link.as_bytes(), raw.as_bytes());
+    assert_eq!(
+        link.prepare_lookup(&root, &[])?.to_string(),
+        "/Report/../e\u{301}/"
+    );
+
+    let directory = StoragePath::parse(&"d".repeat(MAX_PATH_BYTES - 4))?;
+    let target = LinkTarget::new(b"a/".to_vec());
+    let suffix = PathExpr::parse("b")?;
+    let prepared = target.prepare_lookup(&directory, suffix.components())?;
+    assert_eq!(prepared, PathExpr::parse("a/")?);
+    assert_eq!(
+        prepared.check_directory_requirement(false),
+        Err(Rejection::NotDirectory)
+    );
+    assert_eq!(prepared.check_directory_requirement(true), Ok(()));
+    let long_suffix = PathExpr::parse("b/c")?;
+    let too_long = Err(Failure::Rejected(Rejection::PathTooLong));
+    assert_eq!(
+        target.prepare_lookup(&directory, long_suffix.components()),
+        too_long
+    );
+    let full = StoragePath::parse(&"d".repeat(MAX_PATH_BYTES))?;
+    assert_eq!(
+        LinkTarget::new(b"..".to_vec()).prepare_lookup(&full, &[]),
+        too_long
+    );
+    assert_eq!(
+        LinkTarget::new(b"/a/".to_vec()).prepare_lookup(&full, long_suffix.components())?,
+        PathExpr::parse("/a/")?
+    );
+    assert_eq!(
+        LinkTarget::new(vec![b'/'; MAX_PATH_EXPR_BYTES + 1]).prepare_lookup(&root, &[]),
+        too_long
+    );
+    Ok(())
+}
+
+#[test]
+fn creation_policy_distinguishes_operand_names_from_dangling_targets() -> Result {
+    let path = PathExpr::parse("prefix/../new/")?;
+    let address = StoragePath::parse("prefix")?;
+    let single = CreateDirectoryRequest::new(path.clone(), CreateDirectoryMode::Single);
+    let recursive = CreateDirectoryRequest::new(path, CreateDirectoryMode::Recursive);
+    for (request, intermediate) in [(&single, Err(Rejection::NotFound)), (&recursive, Ok(()))] {
+        let lookup = request.lookup();
+        assert_eq!(
+            lookup.check_missing_name(&address, MissingName::OperandIntermediate),
+            intermediate
+        );
+        assert_eq!(
+            lookup.check_missing_name(&address, MissingName::OperandFinal),
+            Ok(())
+        );
+        assert_eq!(
+            lookup.check_missing_name(&address, MissingName::LinkTarget),
+            Err(Rejection::NotFound)
+        );
+    }
+
+    let read = ReadRequest::new(PathExpr::parse("prefix/../new/")?, ReadRange::FULL);
+    assert_eq!(
+        read.lookup()
+            .check_missing_name(&address, MissingName::OperandIntermediate),
+        Err(Rejection::NotFound)
+    );
+    assert_eq!(
+        read.lookup()
+            .check_missing_name(&address, MissingName::OperandFinal),
+        Err(Rejection::NotFound)
+    );
+    Ok(())
+}
+
+#[test]
+fn extensible_payloads_are_built_and_matched_through_the_public_contract() -> Result {
+    let EntryType::File { size, .. } = EntryType::file(Some(42)) else {
+        return Err("expected a file".into());
+    };
+    assert_eq!(size, Some(42));
+    let WriteSupport::Staged {
+        modes,
+        atomic_publish,
+        ..
+    } = WriteSupport::staged(WriteModes::Both, true)
+    else {
+        return Err("expected staged write support".into());
+    };
+    assert_eq!(modes, WriteModes::Both);
+    assert!(atomic_publish);
+    for support in [
+        DirectorySupport::hierarchical(true, false),
+        DirectorySupport::prefix(true, false),
+    ] {
+        match support {
+            DirectorySupport::Hierarchical {
+                create,
+                persistent_empty,
+                ..
+            }
+            | DirectorySupport::Prefix {
+                create,
+                persistent_empty,
+                ..
+            } => {
+                assert!(create);
+                assert!(!persistent_empty);
+            }
+            _ => return Err("expected directory support".into()),
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn attribute_requests_admit_only_their_own_capability_family_and_preserve_links() -> Result {
+    use std::num::NonZeroUsize;
+
+    let none = Capabilities::default();
+    let declarations = [
+        none,
+        none.with_permissions(AttributeSupport::Read),
+        none.with_permissions(AttributeSupport::ReadWrite),
+        none.with_xattrs(AttributeSupport::Read),
+        none.with_xattrs(AttributeSupport::ReadWrite),
+    ];
+    let name = XattrName::parse("user.note")?;
+    let path = PathExpr::parse("/work/link")?;
+    let selected = StoragePath::parse("work/link")?;
+    for (action, expected, admitted) in [
+        (
+            AttributeAction::GetPermissions,
+            Operation::GetPermissions,
+            [false, true, true, false, false],
+        ),
+        (
+            AttributeAction::SetPermissions(Permissions::new(0o7777)?),
+            Operation::SetPermissions,
+            [false, false, true, false, false],
+        ),
+        (
+            AttributeAction::list_xattrs(NonZeroUsize::MIN),
+            Operation::ListXattrs,
+            [false, false, false, true, true],
+        ),
+        (
+            AttributeAction::get_xattr(name.clone(), NonZeroUsize::MAX),
+            Operation::GetXattr,
+            [false, false, false, true, true],
+        ),
+        (
+            AttributeAction::set_xattr(name.clone(), Vec::new(), XattrWriteMode::CreateNew),
+            Operation::SetXattr,
+            [false, false, false, false, true],
+        ),
+        (
+            AttributeAction::RemoveXattr(name),
+            Operation::RemoveXattr,
+            [false, false, false, false, true],
+        ),
+    ] {
+        let request = AttributeRequest::new(path.clone(), action);
+        assert_eq!(request.operation(), expected);
+        assert_eq!(
+            declarations.map(|caps| caps.supports(request.operation())),
+            admitted,
+            "{expected:?}"
+        );
+        assert_eq!(
+            request.lookup().final_symlink(),
+            SymlinkAction::Preserve,
+            "{expected:?}"
+        );
+        assert_eq!(
+            request
+                .lookup()
+                .check_existing_target(&selected, EntryType::Symlink),
+            Ok(())
+        );
+    }
+    Ok(())
+}

@@ -16,10 +16,33 @@ pub enum Rejection {
     NotDirectory,
     #[error("entry is a directory")]
     IsDirectory,
+    #[error("entry is not a regular file")]
+    NotRegularFile,
+    #[error("entry is not a symbolic link")]
+    NotSymlink,
+    #[error("the instance root is protected")]
+    RootProtected,
+    #[error("symbolic links are not allowed by the lookup policy")]
+    SymlinkNotAllowed,
+    #[error("symbolic link traversal limit was exceeded")]
+    TooManySymlinks,
+    /// One logical entry component or attribute key exceeds the backend's
+    /// native length limit, measured in the backend's own units.
+    #[error("name exceeds the backend component or key length limit")]
+    NameTooLong,
+    /// The backend cannot address or store this valid logical spelling
+    /// exactly, for example because it reserves the name or rewrites it.
+    #[error("exact name is unsupported by the backend")]
+    UnsupportedName,
+    /// The logical address or operand exceeds its UTF-8 byte bound.
+    #[error("path exceeds the logical address limit")]
+    PathTooLong,
     #[error("directory is not empty")]
     DirectoryNotEmpty,
     #[error("requested operation or guarantee is unsupported")]
     Unsupported,
+    /// Also used when an absent exact name cannot be created because a
+    /// differently spelled, backend-equivalent name occupies the native slot.
     #[error("operation precondition was not satisfied")]
     Conflict,
     #[error("operation crosses a device boundary")]
@@ -47,8 +70,12 @@ pub enum BackendFailure {
     CapacityExceeded,
     #[error("stored entry data is corrupt")]
     CorruptData,
+    /// An authoritative native directory entry name or attribute key is outside
+    /// the logical namespace and cannot be returned as a logical name.
     #[error("backend name cannot be represented losslessly")]
     UnrepresentableName,
+    #[error("symbolic link target cannot be represented as a lookup operand")]
+    UnrepresentableLinkTarget,
     #[error("resource is closed")]
     Closed,
     #[error("resource belongs to a stale generation")]
@@ -73,6 +100,8 @@ pub enum ContractViolation {
     InvalidAttributes,
     #[error("adapter violated the byte-stream contract")]
     InvalidStream,
+    /// The adapter failed to uphold a declared capability, such as atomic
+    /// visibility during a write publication.
     #[error("adapter interfaces disagree with its declaration")]
     CapabilityMismatch,
 }
@@ -89,14 +118,23 @@ pub enum Failure {
     Contract(ContractViolation),
 }
 
-/// Effects on content and explicitly managed attributes, not incidental access times.
-/// Neither variant is an automatic retry instruction: identity and preconditions
-/// may have changed even when the failed operation made no changes.
+/// The failed attempt's effects on visible directory entries, published
+/// contents and explicitly managed attributes, including permissions and
+/// extended attributes. Incidental access times and other automatic
+/// bookkeeping, private staging and cleanup of private resources are outside
+/// this scope. Effects on visible parents count as well as effects on the
+/// final target.
+///
+/// This is independent of the cause and carries no retry authorization.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
 pub enum MutationOutcome {
+    /// The entire attempt is confirmed to have made no covered changes and
+    /// cannot make any later. A visible change followed by cleanup does not
+    /// qualify.
     Unchanged,
-    /// Includes partial effects. Reconcile the target before retrying a mutation.
+    /// Covered effects are possible or known to have occurred. This includes
+    /// confirmed partial changes and publication followed by a failure to
+    /// complete the operation. Reconcile before any unprotected replay.
     Unknown,
 }
 impl std::fmt::Display for MutationOutcome {

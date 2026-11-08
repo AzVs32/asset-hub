@@ -18,6 +18,7 @@ use std::{
     time::SystemTime,
 };
 
+pub(crate) mod contract;
 mod file_reader;
 mod file_writer;
 
@@ -36,13 +37,12 @@ struct Quota {
 }
 
 impl Quota {
-    fn reserve(&self, bytes: u64) -> Result<(), StorageError> {
+    fn reserve(&self, bytes: u64) -> bool {
         self.used
             .try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
                 used.checked_add(bytes).filter(|total| *total <= self.limit)
             })
-            .map(|_| ())
-            .map_err(|_| error(StorageErrorKind::CapacityExceeded))
+            .is_ok()
     }
 
     fn release(&self, bytes: u64) {
@@ -56,18 +56,25 @@ struct Blob {
 }
 
 impl Blob {
-    fn append(&mut self, bytes: &[u8]) -> Result<(), StorageError> {
-        self.quota.reserve(bytes.len() as u64)?;
+    fn append(&mut self, bytes: &[u8]) -> Result<(), BlobError> {
+        if !self.quota.reserve(bytes.len() as u64) {
+            return Err(BlobError::Quota);
+        }
         if let Err(source) = self.bytes.try_reserve_exact(bytes.len()) {
             self.quota.release(bytes.len() as u64);
-            return Err(StorageError::with_source(
-                StorageErrorKind::CapacityExceeded,
-                source,
-            ));
+            return Err(BlobError::Allocation(source));
         }
         self.bytes.extend_from_slice(bytes);
         Ok(())
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+enum BlobError {
+    #[error("memory payload quota exceeded")]
+    Quota,
+    #[error("memory payload allocation failed")]
+    Allocation(#[source] std::collections::TryReserveError),
 }
 
 impl Drop for Blob {
@@ -78,8 +85,9 @@ impl Drop for Blob {
 
 #[derive(Clone)]
 enum EntryData {
-    Dir(Arc<()>),
+    Dir(Arc<ah_vfs_storage::DirectoryIdentity>),
     File(Arc<Blob>),
+    Link(ah_vfs_storage::LinkTarget),
 }
 
 #[derive(Clone)]
@@ -91,7 +99,9 @@ struct MemoryEntry {
 impl MemoryEntry {
     fn dir() -> Self {
         Self {
-            data: EntryData::Dir(Arc::new(())),
+            data: EntryData::Dir(Arc::new(ah_vfs_storage::DirectoryIdentity::from_bytes(
+                *ah_id::UuidV7::new().as_ref().as_bytes(),
+            ))),
             modified: SystemTime::now(),
         }
     }
@@ -100,6 +110,7 @@ impl MemoryEntry {
         let (kind, size) = match &self.data {
             EntryData::Dir(_) => (EntryKind::Dir, None),
             EntryData::File(blob) => (EntryKind::File, Some(blob.bytes.len() as u64)),
+            EntryData::Link(_) => (EntryKind::Symlink, None),
         };
         Entry {
             path,
@@ -134,17 +145,34 @@ fn descendant(path: &str, parent: &str) -> bool {
                 .is_some_and(|tail| tail.starts_with('/')))
 }
 
+fn children<'a>(
+    entries: &'a BTreeMap<String, MemoryEntry>,
+    parent: &'a str,
+) -> impl Iterator<Item = (&'a str, &'a str, &'a MemoryEntry)> {
+    entries.iter().filter_map(move |(path, entry)| {
+        if !descendant(path, parent) {
+            return None;
+        }
+        let name = if parent.is_empty() {
+            path.as_str()
+        } else {
+            &path[parent.len() + 1..]
+        };
+        (!name.contains('/')).then_some((path.as_str(), name, entry))
+    })
+}
+
 fn require_dir<'a>(
     entries: &'a BTreeMap<String, MemoryEntry>,
     path: &str,
-) -> Result<&'a Arc<()>, StorageError> {
+) -> Result<&'a Arc<ah_vfs_storage::DirectoryIdentity>, StorageError> {
     match &entries
         .get(path)
         .ok_or_else(|| error(StorageErrorKind::NotFound))?
         .data
     {
         EntryData::Dir(identity) => Ok(identity),
-        EntryData::File(_) => Err(error(StorageErrorKind::NotDir)),
+        EntryData::File(_) | EntryData::Link(_) => Err(error(StorageErrorKind::NotDir)),
     }
 }
 
@@ -244,20 +272,11 @@ impl Storage for MemoryStorage {
             require_dir(&entries, query.path.as_str())?;
             let mut page = Vec::new();
             let mut has_more = false;
-            for (path, entry) in entries.iter() {
-                if !descendant(path, query.path.as_str()) {
-                    continue;
-                }
-                let relative = if query.path.is_root() {
-                    path.as_str()
-                } else {
-                    &path[query.path.as_str().len() + 1..]
-                };
-                if relative.contains('/')
-                    || query
-                        .after
-                        .as_ref()
-                        .is_some_and(|after| relative <= after.as_str())
+            for (path, name, entry) in children(&entries, query.path.as_str()) {
+                if query
+                    .after
+                    .as_ref()
+                    .is_some_and(|after| name <= after.as_str())
                 {
                     continue;
                 }
@@ -293,18 +312,11 @@ impl Storage for MemoryStorage {
             let EntryData::File(blob) = &entry.data else {
                 return Err(error(StorageErrorKind::IsDir));
             };
-            let start = usize::try_from(request.offset)
-                .unwrap_or(usize::MAX)
-                .min(blob.bytes.len());
-            let length = request
-                .length
-                .map(|length| usize::try_from(length).unwrap_or(usize::MAX))
-                .unwrap_or(usize::MAX)
-                .min(blob.bytes.len() - start);
-            Ok(
-                Box::new(MemoryFileReader::new(blob.clone(), start, start + length))
-                    as Box<dyn StorageFileReader>,
-            )
+            Ok(Box::new(MemoryFileReader::new(
+                blob.clone(),
+                request.offset,
+                request.length,
+            )) as Box<dyn StorageFileReader>)
         })
     }
 
@@ -409,10 +421,10 @@ impl Storage for MemoryStorage {
                     return Err(error(StorageErrorKind::AlreadyExists));
                 }
                 match (&source.data, &target.data) {
-                    (EntryData::Dir(_), EntryData::File(_)) => {
+                    (EntryData::Dir(_), EntryData::File(_) | EntryData::Link(_)) => {
                         return Err(error(StorageErrorKind::NotDir));
                     }
-                    (EntryData::File(_), EntryData::Dir(_)) => {
+                    (EntryData::File(_) | EntryData::Link(_), EntryData::Dir(_)) => {
                         return Err(error(StorageErrorKind::IsDir));
                     }
                     (EntryData::Dir(_), EntryData::Dir(_))

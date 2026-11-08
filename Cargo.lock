@@ -112,6 +112,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ah-vfs-storage"
+version = "0.1.0"
+dependencies = [
+ "getset",
+ "thiserror",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2872,7 +2880,9 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "vfs-driver-memory"
 version = "0.1.0"
 dependencies = [
+ "ah-id",
  "ah-vfs",
+ "ah-vfs-storage",
  "semver",
  "serde_json",
  "sqlx",
@@ -2910,12 +2920,16 @@ name = "vfs-plugin-grpc-server"
 version = "0.1.0"
 dependencies = [
  "ah-vfs",
+ "ah-vfs-storage",
  "futures-util",
+ "hyper-util",
  "sha2",
  "subtle",
  "tokio",
  "tokio-stream",
  "tonic",
+ "tower",
+ "vfs-driver-memory",
  "vfs-plugin-codec",
  "vfs-plugin-grpc",
  "vfs-plugin-grpc-wire",
@@ -2927,6 +2941,8 @@ dependencies = [
 name = "vfs-plugin-grpc-wire"
 version = "0.1.0"
 dependencies = [
+ "ah-vfs-storage",
+ "prost",
  "protoc-bin-vendored",
  "tonic",
  "tonic-prost",

@@ -1,0 +1,15 @@
+[package]
+name = "ah-vfs-storage"
+description = "Backend-independent storage contracts for Asset Hub"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+getset.workspace = true
+thiserror.workspace = true

@@ -1,6 +1,5 @@
 //! Operational context and private diagnostics. Value validation stays in its own errors.
 use super::{Failure, MutationOutcome, Operation};
-use bon::bon;
 use getset::CopyGetters;
 use std::{error::Error, fmt};
 use thiserror::Error;
@@ -25,16 +24,17 @@ pub struct StorageError {
     #[getset(skip)]
     source: Option<Box<dyn Error + Send + Sync>>,
 }
-#[bon]
 impl StorageError {
-    /// The adapter attests that the operation made no content/attribute changes.
-    /// Use for failures before dispatch or a backend's confirmed atomic rejection;
-    /// never infer this property solely from an error reason or transport status.
-    #[builder(finish_fn = build, state_mod(vis = "pub"))]
+    /// Attest [`MutationOutcome::Unchanged`] for the entire failed attempt.
+    /// Evidence can be a local rejection before dispatching any step that can
+    /// change covered state, confinement to private staging with publication
+    /// ruled out, or a correlated backend guarantee that the attempt neither
+    /// applied nor can apply later.
+    /// Include earlier steps and visible parent changes in this check.
+    /// A failure reason, transport status or later matching read is not proof.
     pub fn without_effects(
         operation: Operation,
         failure: Failure,
-        #[builder(with = |source: impl Error + Send + Sync + 'static| Box::new(source) as Box<dyn Error + Send + Sync>)]
         source: Option<Box<dyn Error + Send + Sync>>,
     ) -> Self {
         Self {
@@ -44,14 +44,14 @@ impl StorageError {
             source,
         }
     }
-    /// The request was dispatched and completion cannot be established.
-    /// Mutations conservatively require reconciliation; read-only operations
-    /// remain effect-free even when their result could not be decoded.
-    #[builder(finish_fn = build, state_mod(vis = "pub"))]
+    /// Use when mutation dispatch occurred or cannot be ruled out, and there
+    /// is no proof of [`MutationOutcome::Unchanged`] for the whole attempt.
+    /// Also use for known effects, including partial creation or publication.
+    /// Read-only operations are `Unchanged` under their execution contract.
+    /// A successful abort or cleanup cannot resolve an earlier uncertain commit.
     pub fn after_dispatch(
         operation: Operation,
         failure: Failure,
-        #[builder(with = |source: impl Error + Send + Sync + 'static| Box::new(source) as Box<dyn Error + Send + Sync>)]
         source: Option<Box<dyn Error + Send + Sync>>,
     ) -> Self {
         Self {
@@ -72,7 +72,6 @@ impl fmt::Debug for StorageError {
             .field("operation", &self.operation)
             .field("failure", &self.failure)
             .field("outcome", &self.outcome)
-            .field("has_source", &self.source.is_some())
             .finish()
     }
 }

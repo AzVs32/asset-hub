@@ -20,7 +20,6 @@ use tonic::{
     Status,
     transport::server::{Connected, TcpConnectInfo},
 };
-use vfs_plugin_grpc_wire as wire;
 
 /// Shared admission limits for one plugin server, across all connections.
 /// `serve_*` also applies connection and HTTP/2 limits. Custom server builders
@@ -121,12 +120,12 @@ impl Admission {
     }
 }
 
-pub(crate) struct SessionStream {
-    pub inner: ReceiverStream<Result<wire::Reply, Status>>,
+pub(crate) struct SessionStream<T> {
+    pub inner: ReceiverStream<Result<T, Status>>,
     pub permit: Option<Arc<OwnedSemaphorePermit>>,
 }
-impl Stream for SessionStream {
-    type Item = Result<wire::Reply, Status>;
+impl<T> Stream for SessionStream<T> {
+    type Item = Result<T, Status>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let result = Pin::new(&mut self.inner).poll_next(cx);
         if matches!(result, Poll::Ready(None)) {
@@ -236,7 +235,7 @@ mod tests {
             ..Default::default()
         })?;
         let (tx, rx) = tokio::sync::mpsc::channel(1);
-        let stream = SessionStream {
+        let stream: SessionStream<()> = SessionStream {
             inner: ReceiverStream::new(rx),
             permit: Some(Arc::new(admission.acquire()?)),
         };
@@ -244,7 +243,7 @@ mod tests {
         drop(stream);
         let permit = admission.acquire()?;
         let (tx2, rx2) = tokio::sync::mpsc::channel(1);
-        let mut stream = SessionStream {
+        let mut stream: SessionStream<()> = SessionStream {
             inner: ReceiverStream::new(rx2),
             permit: Some(Arc::new(permit)),
         };

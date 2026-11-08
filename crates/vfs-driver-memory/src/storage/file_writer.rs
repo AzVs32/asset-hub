@@ -1,4 +1,4 @@
-use super::{Blob, EntryData, MemoryEntry, Shared, error, require_dir, writable_target};
+use super::{Blob, BlobError, EntryData, MemoryEntry, Shared, error, require_dir, writable_target};
 use ah_vfs::{
     application::port::{StorageFileWriter, StorageFuture},
     domain::storage::{
@@ -10,7 +10,7 @@ use std::{sync::Arc, time::SystemTime};
 struct WriteSession {
     shared: Arc<Shared>,
     path: StoragePath,
-    parent: Arc<()>,
+    parent: Arc<ah_vfs_storage::DirectoryIdentity>,
     mode: StorageWriteFileMode,
     blob: Blob,
 }
@@ -23,7 +23,7 @@ impl MemoryFileWriter {
     pub(super) fn new(
         shared: Arc<Shared>,
         request: StorageWriteFileRequest,
-        parent: Arc<()>,
+        parent: Arc<ah_vfs_storage::DirectoryIdentity>,
     ) -> Self {
         let blob = Blob {
             bytes: Vec::new(),
@@ -49,6 +49,15 @@ impl StorageFileWriter for MemoryFileWriter {
                 .ok_or_else(|| error(StorageErrorKind::SessionClosed))?
                 .blob
                 .append(bytes)
+                .map_err(|cause| match cause {
+                    BlobError::Quota => error(StorageErrorKind::CapacityExceeded),
+                    BlobError::Allocation(source) => {
+                        ah_vfs::domain::storage::StorageError::with_source(
+                            StorageErrorKind::CapacityExceeded,
+                            source,
+                        )
+                    }
+                })
         })
     }
 
